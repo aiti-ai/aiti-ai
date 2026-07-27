@@ -258,6 +258,14 @@ export function AppShell() {
     setBranchActiveLeafId(null);
     setSystemPrompt(null);
     setActiveTopPanel(null);
+    // File tabs are keyed by absolute path, so tabs opened in the previous
+    // project would otherwise linger after switching to a different project.
+    // Reached only past the same-project early return above, so worktrees of
+    // one repo keep their open tabs. Mirror handleCloseFileTab and close the
+    // now-empty right panel.
+    setFileTabs([]);
+    setActiveFileTabId(null);
+    setRightPanelOpen(false);
     router.replace("/", { scroll: false });
   }, [router, selectedSession]);
 
