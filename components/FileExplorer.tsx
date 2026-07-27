@@ -472,7 +472,7 @@ function ChangeRow({
         gap: 6,
         paddingLeft: 10,
         paddingRight: 8,
-        height: 22,
+        height: 24,
         cursor: "pointer",
         background: hovered ? "var(--bg-hover)" : "transparent",
         borderRadius: 4,
@@ -516,6 +516,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
   const [highlightedPaths, setHighlightedPaths] = useState<Set<string>>(new Set());
   const [gitFiles, setGitFiles] = useState<GitFileStatus[]>([]);
+  const [gitLineStats, setGitLineStats] = useState({ additions: 0, deletions: 0 });
   const [uploadPhase, setUploadPhase] = useState<UploadPhase>("idle");
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -680,10 +681,18 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     let cancelled = false;
     fetchGitStatus(cwd)
       .then((status) => {
-        if (!cancelled) setGitFiles(status.isGitRepository ? status.files : []);
+        if (!cancelled) {
+          setGitFiles(status.isGitRepository ? status.files : []);
+          setGitLineStats(status.isGitRepository
+            ? { additions: status.additions, deletions: status.deletions }
+            : { additions: 0, deletions: 0 });
+        }
       })
       .catch(() => {
-        if (!cancelled) setGitFiles([]);
+        if (!cancelled) {
+          setGitFiles([]);
+          setGitLineStats({ additions: 0, deletions: 0 });
+        }
       });
     return () => { cancelled = true; };
   }, [cwd, refreshKey, treeRefreshKey]);
@@ -823,12 +832,20 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       )}
 
       {!changesCollapsed && gitFiles.length > 0 && (
-        <div style={{ borderTop: "1px solid var(--border)" }}>
-          <div style={{ padding: "2px 0" }}>
-            {gitFiles.map((status) => (
-              <ChangeRow key={status.filePath} status={status} cwd={cwd} onOpenFile={onOpenFile} />
-            ))}
+        <div style={{ padding: "0 4px 2px" }}>
+          <div
+            aria-label={`${gitFiles.length} changed files, ${gitLineStats.additions} lines added, ${gitLineStats.deletions} lines deleted`}
+            style={{ display: "flex", alignItems: "center", gap: 6, height: 24, padding: "0 10px", fontSize: 12 }}
+          >
+            <span style={{ color: "var(--text-dim)" }}>
+              {gitFiles.length} file{gitFiles.length === 1 ? "" : "s"}
+            </span>
+            <span style={{ color: GIT_STATUS_COLORS.added, fontFamily: "var(--font-mono)" }}>+{gitLineStats.additions}</span>
+            <span style={{ color: GIT_STATUS_COLORS.deleted, fontFamily: "var(--font-mono)" }}>-{gitLineStats.deletions}</span>
           </div>
+          {gitFiles.map((status) => (
+            <ChangeRow key={status.filePath} status={status} cwd={cwd} onOpenFile={onOpenFile} />
+          ))}
         </div>
       )}
 

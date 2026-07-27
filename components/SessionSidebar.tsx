@@ -1473,7 +1473,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             flexDirection: "column",
             flex: explorerOpen ? "1 1 0" : "0 0 auto",
             minHeight: 0,
-            overflow: "visible",
+            overflow: "hidden",
           }}
         >
           <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
@@ -1511,16 +1511,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 title={`${changesCount} changed file${changesCount === 1 ? "" : "s"}`}
                 ariaPressed={!changesCollapsed}
                 color={changesCollapsed ? "var(--text-dim)" : "var(--accent)"}
-                background={changesCollapsed ? "none" : "var(--bg-hover)"}
+                background={changesCollapsed ? "none" : "var(--bg-selected)"}
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <circle cx="12" cy="12" r="3" />
                   <path d="M3 12h6" />
                   <path d="M15 12h6" />
                 </svg>
-                <span style={{ position: "absolute", top: -3, right: -3, minWidth: 13, height: 13, padding: "0 3px", display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 7, background: "var(--accent)", color: "var(--bg)", fontSize: 9, fontWeight: 700, lineHeight: 1 }}>
-                  {changesCount}
-                </span>
               </ToolbarIconButton>
             )}
             {explorerOpen && (
