@@ -232,11 +232,14 @@ function Toggle({
 
 function SegmentedScope({
   value,
+  projectResourcesLoaded,
   onChange,
 }: {
   value: PluginScope;
+  projectResourcesLoaded: boolean;
   onChange: (scope: PluginScope) => void;
 }) {
+  const { t } = useI18n();
   return (
     <div
       style={{
@@ -249,17 +252,23 @@ function SegmentedScope({
     >
       {(["global", "project"] as PluginScope[]).map((scope) => {
         const active = value === scope;
+        const disabled = scope === "project" && !projectResourcesLoaded;
         return (
           <button
             key={scope}
-            onClick={() => onChange(scope)}
+            onClick={() => {
+              if (!disabled) onChange(scope);
+            }}
+            disabled={disabled}
+            title={disabled ? t("trust.projectScopeUnavailable") : undefined}
             style={{
               width: 76,
               border: "none",
               borderRight: scope === "global" ? "1px solid var(--border)" : "none",
               background: active ? "var(--bg-selected)" : "none",
               color: active ? "var(--text)" : "var(--text-muted)",
-              cursor: "pointer",
+              cursor: disabled ? "not-allowed" : "pointer",
+              opacity: disabled ? 0.45 : 1,
               fontSize: 12,
             }}
           >
@@ -275,6 +284,7 @@ function AddPluginPanel({
   cwd,
   source,
   scope,
+  projectResourcesLoaded,
   busy,
   actionError,
   onSourceChange,
@@ -284,6 +294,7 @@ function AddPluginPanel({
   cwd: string;
   source: string;
   scope: PluginScope;
+  projectResourcesLoaded: boolean;
   busy: boolean;
   actionError: string | null;
   onSourceChange: (value: string) => void;
@@ -338,7 +349,11 @@ function AddPluginPanel({
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-        <SegmentedScope value={scope} onChange={onScopeChange} />
+        <SegmentedScope
+          value={scope}
+          projectResourcesLoaded={projectResourcesLoaded}
+          onChange={onScopeChange}
+        />
         <button
           type="button"
           onClick={onInstall}
@@ -584,6 +599,7 @@ export function PluginsConfig({
 
   const packages = useMemo(() => data?.packages ?? [], [data?.packages]);
   const selectedPackage = packages.find((pkg) => packageKey(pkg) === selected) ?? null;
+  const projectResourcesLoaded = data?.projectResourcesLoaded ?? true;
 
   const groupedPackages = useMemo(() => {
     return (["project", "global"] as PluginScope[])
@@ -769,6 +785,21 @@ export function PluginsConfig({
           </button>
         </div>
 
+        {!projectResourcesLoaded && (
+          <div
+            role="status"
+            style={{
+              padding: "8px 18px",
+              borderBottom: "1px solid var(--border)",
+              background: "var(--bg-panel)",
+              color: "var(--text-muted)",
+              fontSize: 12,
+            }}
+          >
+            {t("trust.pluginsNotLoaded")}
+          </div>
+        )}
+
         <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: "hidden" }}>
           <div
             style={{
@@ -946,6 +977,7 @@ export function PluginsConfig({
                 cwd={cwd}
                 source={installSource}
                 scope={installScope}
+                projectResourcesLoaded={projectResourcesLoaded}
                 busy={addBusy}
                 actionError={actionError}
                 onSourceChange={setInstallSource}

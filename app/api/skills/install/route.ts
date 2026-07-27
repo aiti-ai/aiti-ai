@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { runNpx } from "@/lib/npx";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
+import { getProjectTrustStatus } from "@/lib/project-trust";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +20,12 @@ export async function POST(req: Request) {
       const allowedRoots = await getAllowedFileRoots();
       if (!isExistingFilePathAllowed(cwd, allowedRoots)) {
         return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      }
+      if (!getProjectTrustStatus(cwd, getAgentDir()).trusted) {
+        return NextResponse.json(
+          { error: "Project resources must be trusted before installing project skills" },
+          { status: 403 },
+        );
       }
     }
     const args = ["skills", "add", pkg.trim(), "-y", "--agent", "pi"];
