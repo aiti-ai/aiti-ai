@@ -11,6 +11,8 @@ import {
   normalizeFilePathSlashes,
 } from "@/lib/file-paths";
 import type { GitFileStatus, GitFileStatusKind, GitStatusResponse } from "@/lib/git-types";
+import { useI18n } from "@/hooks/useI18n";
+type Translate = ReturnType<typeof useI18n>["t"];
 
 interface FileEntry {
   name: string;
@@ -103,13 +105,13 @@ async function fetchGitStatus(cwd: string): Promise<GitStatusResponse> {
   return res.json() as Promise<GitStatusResponse>;
 }
 
-const GIT_STATUS_LABELS: Record<GitFileStatusKind, string> = {
-  modified: "Modified",
-  added: "Added",
-  deleted: "Deleted",
-  renamed: "Renamed",
-  untracked: "Untracked",
-  conflict: "Conflict",
+const GIT_STATUS_KEYS: Record<GitFileStatusKind, string> = {
+  modified: "files.modified",
+  added: "files.added",
+  deleted: "files.deleted",
+  renamed: "files.renamed",
+  untracked: "files.untracked",
+  conflict: "files.conflict",
 };
 
 const GIT_STATUS_COLORS: Record<GitFileStatusKind, string> = {
@@ -121,19 +123,22 @@ const GIT_STATUS_COLORS: Record<GitFileStatusKind, string> = {
   conflict: "#f87171",
 };
 
-function GitStatusBadge({ status }: { status: GitFileStatus }) {
+function GitStatusBadge({ status, t }: { status: GitFileStatus; t: Translate }) {
   return (
     <span
-      title={GIT_STATUS_LABELS[status.status]}
-      aria-label={GIT_STATUS_LABELS[status.status]}
+      title={t(GIT_STATUS_KEYS[status.status])}
+      aria-label={t(GIT_STATUS_KEYS[status.status])}
       style={{
         width: 14,
+        height: 14,
         flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
         color: GIT_STATUS_COLORS[status.status],
         fontFamily: "var(--font-mono)",
         fontSize: 11,
         fontWeight: 600,
-        textAlign: "center",
       }}
     >
       {status.code}
@@ -216,6 +221,7 @@ function TreeNode({
   highlightedPaths,
   gitStatusByPath,
   changedDirectoryPaths,
+  t,
 }: {
   node: FileNode;
   depth: number;
@@ -228,6 +234,7 @@ function TreeNode({
   highlightedPaths: Set<string>;
   gitStatusByPath: Map<string, GitFileStatus>;
   changedDirectoryPaths: Set<string>;
+  t: Translate;
 }) {
   const open = expandedPaths.has(node.fullPath);
   const highlighted = highlightedPaths.has(node.fullPath);
@@ -321,26 +328,31 @@ function TreeNode({
         </span>
         {highlighted && (
           <span
-            title="Newly uploaded"
-            aria-label="Newly uploaded"
-            style={{ width: 6, height: 6, flexShrink: 0, borderRadius: "50%", background: "#3b82f6" }}
-          />
+            title={t("files.newlyUploaded")}
+            aria-label={t("files.newlyUploaded")}
+            style={{ width: 14, height: 14, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#3b82f6" }} />
+          </span>
         )}
         {!hovered && !node.isDir && gitStatus && (
-          <GitStatusBadge status={gitStatus} />
+          <GitStatusBadge status={gitStatus} t={t} />
         )}
         {!hovered && containsGitChanges && (
           <span
-            title="Contains changed files"
-            aria-label="Contains changed files"
+            title={t("files.containsChangedFiles")}
+            aria-label={t("files.containsChangedFiles")}
             style={{
-              width: 6,
-              height: 6,
+              width: 14,
+              height: 14,
               flexShrink: 0,
-              borderRadius: "50%",
-              background: "#d6a84b",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
-          />
+          >
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#d6a84b" }} />
+          </span>
         )}
         {loading && (
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round">
@@ -353,7 +365,7 @@ function TreeNode({
               e.stopPropagation();
               onAtMention(getRelativeFilePath(node.fullPath, cwd), node.isDir);
             }}
-            title="Insert path into chat"
+            title={t("files.insertPath")}
             style={{
               position: "absolute",
               right: !node.isDir ? 28 : 4,
@@ -376,7 +388,7 @@ function TreeNode({
             }}
           >
             <MentionIcon />
-            mention
+            {t("files.mention")}
           </button>
         )}
         {hovered && !node.isDir && (
@@ -384,7 +396,7 @@ function TreeNode({
             href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
             download
             onClick={(e) => e.stopPropagation()}
-            title="Download file"
+            title={t("files.download")}
             style={{
               position: "absolute",
               right: 4,
@@ -431,6 +443,7 @@ function TreeNode({
               highlightedPaths={highlightedPaths}
               gitStatusByPath={gitStatusByPath}
               changedDirectoryPaths={changedDirectoryPaths}
+              t={t}
             />
           ))}
           {children.length === 0 && loaded && (
@@ -452,10 +465,12 @@ function ChangeRow({
   status,
   cwd,
   onOpenFile,
+  t,
 }: {
   status: GitFileStatus;
   cwd: string;
   onOpenFile: OpenFileHandler;
+  t: Translate;
 }) {
   const [hovered, setHovered] = useState(false);
   const name = getFileName(status.filePath);
@@ -479,7 +494,7 @@ function ChangeRow({
         userSelect: "none",
       }}
     >
-      <GitStatusBadge status={status} />
+      <GitStatusBadge status={status} t={t} />
       <span style={{ flexShrink: 0, display: "flex", alignItems: "center", opacity: 0.85 }}>
         {getFileIcon(name, 13)}
       </span>
@@ -509,6 +524,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
   changesCollapsed,
   onChangesCountChange,
 }, ref) {
+  const { t } = useI18n();
   const [roots, setRoots] = useState<FileNode[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -716,7 +732,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       {showUploadFeedback && (
         <div style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)" }}>
         {uploadBusy && (
-          <div role="status" aria-live="polite" aria-label={uploadPhase === "checking" ? "Checking files" : `Uploading, ${uploadProgress}%`}>
+          <div role="status" aria-live="polite" aria-label={uploadPhase === "checking" ? t("files.checking") : t("files.uploading", { progress: uploadProgress })}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, minHeight: 14, color: "var(--text-muted)" }}>
               {uploadPhase === "checking" ? (
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" style={{ animation: "spin 0.8s linear infinite" }} aria-hidden="true">
@@ -742,22 +758,22 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         {pendingConflict && (
           <div role="alert" style={{ padding: 7, border: "1px solid color-mix(in srgb, #f59e0b 55%, var(--border))", borderRadius: 4, background: "color-mix(in srgb, #f59e0b 9%, var(--bg-panel))" }}>
             <div style={{ fontSize: 11, color: "var(--text)", lineHeight: 1.35, overflowWrap: "anywhere" }}>
-              {pendingConflict.conflicts.length} file{pendingConflict.conflicts.length === 1 ? "" : "s"} already exist: {pendingConflict.conflicts.join(", ")}
+              {t("files.conflictSummary", { count: pendingConflict.conflicts.length, countSuffix: pendingConflict.conflicts.length === 1 ? "" : "s", files: pendingConflict.conflicts.join(", ") })}
             </div>
             {pendingConflict.nonReplaceable.length > 0 && (
               <div style={{ marginTop: 3, fontSize: 10, color: "#f59e0b", lineHeight: 1.35, overflowWrap: "anywhere" }}>
-                Cannot replace: {pendingConflict.nonReplaceable.join(", ")}
+                {t("files.cannotReplace", { files: pendingConflict.nonReplaceable.join(", ") })}
               </div>
             )}
             <div style={{ display: "flex", gap: 5, marginTop: 7 }}>
               <button type="button" onClick={() => void performUpload(pendingConflict.files, "overwrite")} style={{ height: 22, padding: "0 7px", border: "1px solid #ef4444", borderRadius: 4, background: "transparent", color: "#ef4444", cursor: "pointer", fontSize: 10 }}>
-                Replace
+                {t("files.replace")}
               </button>
               <button type="button" onClick={() => void performUpload(pendingConflict.files, "skip")} style={{ height: 22, padding: "0 7px", border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer", fontSize: 10 }}>
-                Skip existing
+                {t("files.skipExisting")}
               </button>
               <button type="button" onClick={() => setPendingConflict(null)} style={{ height: 22, padding: "0 7px", border: "none", borderRadius: 4, background: "transparent", color: "var(--text-muted)", cursor: "pointer", fontSize: 10 }}>
-                Cancel
+                {t("files.cancel")}
               </button>
             </div>
           </div>
@@ -766,7 +782,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
         {uploadError && (
           <div role="alert" style={{ display: "flex", alignItems: "flex-start", gap: 6, fontSize: 11, lineHeight: 1.35, color: "#f87171" }}>
             <span style={{ minWidth: 0, flex: 1, overflowWrap: "anywhere" }}>{uploadError}</span>
-            <DismissButton onClick={() => setUploadError(null)} title="Dismiss error" />
+            <DismissButton onClick={() => setUploadError(null)} title={t("files.dismissError")} />
           </div>
         )}
 
@@ -806,15 +822,15 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 <button
                   type="button"
                   onClick={addUploadedFilesToChat}
-                  title={uploadSummary.uploaded.length === 1 ? "Add uploaded file to chat" : "Add all uploaded files to chat"}
-                  aria-label={uploadSummary.uploaded.length === 1 ? "Add uploaded file to chat" : "Add all uploaded files to chat"}
+                  title={uploadSummary.uploaded.length === 1 ? t("files.addUploadedFile") : t("files.addAllUploadedFiles")}
+                  aria-label={uploadSummary.uploaded.length === 1 ? t("files.addUploadedFile") : t("files.addAllUploadedFiles")}
                   style={{ height: 22, padding: "0 7px", display: "flex", alignItems: "center", justifyContent: "center", gap: 4, flexShrink: 0, border: "1px solid var(--border)", borderRadius: 4, background: "var(--bg-panel)", color: "var(--accent)", cursor: "pointer", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" }}
                 >
                   <MentionIcon />
-                  mention
+                  {t("files.mention")}
                 </button>
               )}
-              <DismissButton onClick={() => setUploadSummary(null)} title="Dismiss upload results" />
+              <DismissButton onClick={() => setUploadSummary(null)} title={t("files.dismissUploadResults")} />
             </div>
             {uploadSummary.errors.map((item) => (
               <div key={item.name} title={item.error} style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 3, minWidth: 0, fontSize: 10, color: "#f87171" }}>
@@ -834,17 +850,21 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
       {!changesCollapsed && gitFiles.length > 0 && (
         <div style={{ padding: "0 4px 2px" }}>
           <div
-            aria-label={`${gitFiles.length} changed files, ${gitLineStats.additions} lines added, ${gitLineStats.deletions} lines deleted`}
+            aria-label={t("files.changeStats", {
+              count: gitFiles.length,
+              additions: gitLineStats.additions,
+              deletions: gitLineStats.deletions,
+            })}
             style={{ display: "flex", alignItems: "center", gap: 6, height: 24, padding: "0 10px", fontSize: 12 }}
           >
             <span style={{ color: "var(--text-dim)" }}>
-              {gitFiles.length} file{gitFiles.length === 1 ? "" : "s"}
+              {t("files.changedCount", { count: gitFiles.length })}
             </span>
             <span style={{ color: GIT_STATUS_COLORS.added, fontFamily: "var(--font-mono)" }}>+{gitLineStats.additions}</span>
             <span style={{ color: GIT_STATUS_COLORS.deleted, fontFamily: "var(--font-mono)" }}>-{gitLineStats.deletions}</span>
           </div>
           {gitFiles.map((status) => (
-            <ChangeRow key={status.filePath} status={status} cwd={cwd} onOpenFile={onOpenFile} />
+            <ChangeRow key={status.filePath} status={status} cwd={cwd} onOpenFile={onOpenFile} t={t} />
           ))}
         </div>
       )}
@@ -870,12 +890,13 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 highlightedPaths={highlightedPaths}
                 gitStatusByPath={gitStatusByPath}
                 changedDirectoryPaths={changedDirectoryPaths}
+                t={t}
               />
             ))
           )}
           {!loading && !error && roots.length === 0 && (
             <div style={{ padding: "8px 12px", fontSize: 11, color: "var(--text-dim)" }}>
-              No files found
+              {t("files.noFiles")}
             </div>
           )}
         </div>

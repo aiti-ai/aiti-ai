@@ -2,6 +2,7 @@
 
 import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
+import { useI18n } from "@/hooks/useI18n";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 
@@ -382,6 +383,7 @@ function PiWebTitle() {
 }
 
 export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions }: Props) {
+  const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -796,20 +798,20 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     && !showWorktreeSwitcher
     ? (worktreeState.isGit
         ? {
-            label: "Open repo root",
-            title: "Open the repository root to manage worktrees.",
+             label: t("sidebar.openRepoRoot"),
+             title: t("sidebar.openRepoRootTitle"),
           }
         : {
-            label: "Git repo root only",
-            title: "Worktrees are available in Git repository roots.",
+             label: t("sidebar.gitRepoRootOnly"),
+             title: t("sidebar.gitRepoRootOnlyTitle"),
           })
     : null;
   const worktreeLoading = Boolean(selectedCwd && worktreeLoadingCwd === selectedCwd);
   const inactiveWorktreeSelector = worktreeGuide
     ?? (worktreeLoading && !showWorktreeSwitcher
       ? {
-          label: "Worktrees...",
-          title: "Checking worktrees for this directory.",
+           label: t("sidebar.worktrees"),
+           title: t("sidebar.checkingWorktrees"),
         }
       : null);
 
@@ -859,7 +861,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 flexShrink: 0,
                 transition: "background 0.12s, color 0.12s, border-color 0.12s",
               }}
-              title={selectedCwd ? `New session in ${selectedCwd}` : "Select a project first"}
+             title={selectedCwd ? t("sidebar.newSessionTitle", { path: selectedCwd }) : t("sidebar.selectProject")}
               onMouseEnter={(e) => {
                 if (!selectedCwd) return;
                 e.currentTarget.style.background = "var(--bg-selected)";
@@ -876,7 +878,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 <line x1="6" y1="1" x2="6" y2="11" />
                 <line x1="1" y1="6" x2="11" y2="6" />
               </svg>
-              New
+              {t("sidebar.new")}
             </button>
             <button
               onClick={() => loadSessions(false)}
@@ -904,7 +906,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 e.currentTarget.style.color = "var(--text-muted)";
                 e.currentTarget.style.borderColor = "var(--border)";
               }}
-              title="Refresh"
+               title={t("sidebar.refresh")}
             >
               {sessionRefreshDone ? (
                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -962,7 +964,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   color: "var(--text-dim)",
                 }}
               >
-                {initialSessionId && !restoredRef.current ? "" : "Select project…"}
+                 {initialSessionId && !restoredRef.current ? "" : t("sidebar.selectProject")}
               </span>
             )}
           </button>
@@ -993,7 +995,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                         setDropdownOpen(false);
                       }
                     }}
-                    placeholder="Filter projects…"
+                     placeholder={t("sidebar.filterProjects")}
                     autoFocus
                     style={{
                       width: "100%",
@@ -1052,7 +1054,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   </button>
                 ))}
                 {visibleProjects.length === 0 && projectFilter.trim() && (
-                  <div style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-dim)" }}>No matching projects</div>
+                   <div style={{ padding: "8px 10px", fontSize: 11, color: "var(--text-dim)" }}>{t("sidebar.noMatchingProjects")}</div>
                 )}
               </div>
 
@@ -1078,7 +1080,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                     <path d="M1 3A1 1 0 0 1 2 2H4L5 3.5H8.5a.5.5 0 0 1 .5.5v4a.5.5 0 0 1-.5.5h-7A.5.5 0 0 1 1 8V3Z" />
                   </svg>
-                  <span>Use default directory</span>
+                   <span>{t("sidebar.useDefaultDirectory")}</span>
                 </button>
               )}
 
@@ -1106,7 +1108,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   <line x1="5" y1="1" x2="5" y2="9" />
                   <line x1="1" y1="5" x2="9" y2="5" />
                 </svg>
-                <span>Custom path…</span>
+                <span>{t("sidebar.customPath")}</span>
               </button>
           </AnimatedDropdown>
         </div>
@@ -1126,7 +1128,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             <div ref={wtDropdownRef} style={{ position: "relative", marginTop: 6 }}>
               <button
                 onClick={() => setWtDropdownOpen((v) => !v)}
-                title={currentWt ? `Switch worktree: ${currentWt.path}` : "Switch worktree"}
+                 title={currentWt ? t("sidebar.switchWorktreeTitle", { path: currentWt.path }) : t("sidebar.switchWorktree")}
                 style={{
                   width: "100%",
                   height: 29,
@@ -1156,7 +1158,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   style={{ flex: 1, fontFamily: "var(--font-mono)", color: "var(--text)" }}
                 />
                 {currentWt?.isMain && (
-                  <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>main</span>
+                   <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>{t("sidebar.main")}</span>
                 )}
                 {worktreeState.worktrees.length > 1 && (
                   <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>
@@ -1190,20 +1192,20 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                         return (
                           <div key={wt.path} style={{ display: "flex", alignItems: "center", gap: 6, padding: "7px 10px", borderBottom: "1px solid var(--border)", background: "rgba(239,68,68,0.06)" }}>
                             <span style={{ flex: 1, fontSize: 11, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                              Uncommitted changes. Force remove checkout?
+                              {t("sidebar.forceRemoveCheckout")}
                             </span>
                             <button
                               onClick={() => void handleRemoveWorktree(wt.path, true)}
                               disabled={wtBusy}
                               style={{ padding: "3px 9px", background: "#ef4444", border: "none", borderRadius: 5, color: "#fff", fontSize: 11, fontWeight: 600, cursor: "pointer", flexShrink: 0 }}
                             >
-                              Force
+                              {t("sidebar.force")}
                             </button>
                             <button
                               onClick={() => setWtConfirmRemove(null)}
                               style={{ padding: "3px 9px", background: "var(--bg-hover)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-muted)", fontSize: 11, cursor: "pointer", flexShrink: 0 }}
                             >
-                              Cancel
+                              {t("sidebar.cancel")}
                             </button>
                           </div>
                         );
@@ -1245,13 +1247,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                               <span style={{ width: 10, flexShrink: 0 }} />
                             )}
                             <PathLabel text={wt.branch ?? displayCwd(wt.path, homeDir)} style={{ flex: 1 }} />
-                            {wt.isMain && <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>main</span>}
+                            {wt.isMain && <span style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10 }}>{t("sidebar.main")}</span>}
                           </button>
                           {!wt.isMain && (
                             <button
                               onClick={() => void handleRemoveWorktree(wt.path, false)}
                               disabled={wtBusy}
-                              title={`Remove worktree checkout ${wt.path}; the branch is kept`}
+                               title={t("sidebar.removeWorktreeTitle", { path: wt.path })}
                               style={{
                                 display: "flex", alignItems: "center", justifyContent: "center",
                                 width: 34, height: 28, padding: 0, marginRight: 4,
@@ -1284,7 +1286,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                         setWtError(null);
                         setTimeout(() => wtNewInputRef.current?.focus(), 0);
                       }}
-                      title="Create a worktree checkout for a branch"
+                      title={t("sidebar.createWorktreeTitle")}
                       style={{
                         display: "flex",
                         alignItems: "center",
@@ -1303,7 +1305,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                         <line x1="5" y1="1" x2="5" y2="9" />
                         <line x1="1" y1="5" x2="9" y2="5" />
                       </svg>
-                      <span>New worktree…</span>
+                       <span>{t("sidebar.newWorktree")}</span>
                     </button>
                   ) : (
                     <div style={{ padding: "6px 8px" }}>
@@ -1325,7 +1327,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                             setWtError(null);
                           }
                         }}
-                        placeholder="branch name"
+                         placeholder={t("sidebar.branchName")}
                         style={{
                           width: "100%",
                           fontSize: 11,
@@ -1356,7 +1358,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                             opacity: wtBusy || !wtNewBranch.trim() ? 0.65 : 1,
                           }}
                         >
-                          {wtBusy ? "Creating…" : "Create"}
+                           {wtBusy ? t("sidebar.creating") : t("sidebar.create")}
                         </button>
                         <button
                           onClick={() => { setWtNewOpen(false); setWtNewBranch(""); setWtError(null); }}
@@ -1371,7 +1373,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                             cursor: "pointer",
                           }}
                         >
-                          Cancel
+                           {t("sidebar.cancel")}
                         </button>
                       </div>
                     </div>
@@ -1433,7 +1435,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       <div style={{ flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", overflowY: "auto", padding: "0", minHeight: 80 }}>
         {loading && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
-            Loading...
+            {t("sidebar.loading")}
           </div>
         )}
         {error && (
@@ -1443,7 +1445,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         )}
         {!loading && !error && filteredSessions.length === 0 && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
-            No sessions found
+            {t("sidebar.noSessions")}
           </div>
         )}
         {sessionTree.map((node) => (
@@ -1503,12 +1505,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               >
                 <polyline points="3 2 7 5 3 8" />
               </svg>
-              Explorer
+              {t("files.explorer")}
             </button>
             {explorerOpen && changesCount > 0 && (
               <ToolbarIconButton
                 onClick={() => setChangesCollapsed((v) => !v)}
-                title={`${changesCount} changed file${changesCount === 1 ? "" : "s"}`}
+                title={t("sidebar.changedFiles", { count: changesCount })}
                 ariaPressed={!changesCollapsed}
                 color={changesCollapsed ? "var(--text-dim)" : "var(--accent)"}
                 background={changesCollapsed ? "none" : "var(--bg-selected)"}
@@ -1524,7 +1526,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               <ToolbarIconButton
                 onClick={() => fileExplorerRef.current?.openUploadPicker()}
                 disabled={explorerUploadBusy}
-                title="Upload files to project root"
+                title={t("sidebar.uploadFilesTitle")}
                 color="var(--text-dim)"
               >
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -1542,7 +1544,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 if (explorerRefreshTimerRef.current) clearTimeout(explorerRefreshTimerRef.current);
                 explorerRefreshTimerRef.current = setTimeout(() => setExplorerRefreshDone(false), 2000);
               }}
-              title="Refresh explorer"
+              title={t("sidebar.refreshExplorer")}
               skipHover={explorerRefreshDone}
               color={explorerRefreshDone ? "#4ade80" : "var(--text-dim)"}
               background={explorerRefreshDone ? "rgba(74,222,128,0.18)" : "none"}
@@ -1653,10 +1655,11 @@ function SessionTreeItem({
 }
 
 function RunningSessionIndicator() {
+  const { t } = useI18n();
   return (
     <span
-      title="Agent running…"
-      aria-label="Agent running"
+      title={t("sidebar.agentRunning")}
+      aria-label={t("sidebar.agentRunning")}
       style={{
         width: 14,
         height: 14,
@@ -1690,10 +1693,11 @@ function RunningSessionIndicator() {
 }
 
 function UnreadSessionIndicator() {
+  const { t } = useI18n();
   return (
     <span
-      title="New activity"
-      aria-label="New session activity"
+      title={t("sidebar.newActivity")}
+      aria-label={t("sidebar.newSessionActivity")}
       style={{
         width: 14,
         height: 14,
@@ -1740,6 +1744,7 @@ function SessionItem({
   collapsed?: boolean;
   onToggleCollapse?: () => void;
 }) {
+  const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -1772,13 +1777,7 @@ function SessionItem({
     }
   }, [renameValue, session.id, session.name, onRenamed]);
 
-  const handleDeleteClick = useCallback((e: React.MouseEvent) => {
-    e.stopPropagation();
-    setConfirmDelete(true);
-  }, []);
-
-  const handleDeleteConfirm = useCallback(async (e: React.MouseEvent) => {
-    e.stopPropagation();
+  const performDelete = useCallback(async () => {
     setConfirmDelete(false);
     setDeleting(true);
     try {
@@ -1788,6 +1787,20 @@ function SessionItem({
       setDeleting(false);
     }
   }, [session.id, onDeleted]);
+
+  const handleDeleteClick = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (e.shiftKey) {
+      void performDelete();
+    } else {
+      setConfirmDelete(true);
+    }
+  }, [performDelete]);
+
+  const handleDeleteConfirm = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    void performDelete();
+  }, [performDelete]);
 
   const handleDeleteCancel = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
@@ -1825,7 +1838,7 @@ function SessionItem({
         /* ── Delete confirmation: same height, two flat buttons ── */
         <>
           <div style={{ flex: 1, minWidth: 0, fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            Delete <span style={{ fontWeight: 600 }}>&ldquo;{title.slice(0, 22)}{title.length > 22 ? "…" : ""}&rdquo;</span>?
+            {t("sidebar.deleteSession", { title: title.slice(0, 22) + (title.length > 22 ? "…" : "") })}
           </div>
           <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
             <button
@@ -1845,7 +1858,7 @@ function SessionItem({
                 <path d="M10 11v6M14 11v6" />
                 <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
               </svg>
-              Delete
+              {t("sidebar.delete")}
             </button>
             <button
               onClick={handleDeleteCancel}
@@ -1858,7 +1871,7 @@ function SessionItem({
                 whiteSpace: "nowrap",
               }}
             >
-              Cancel
+              {t("sidebar.cancel")}
             </button>
           </div>
         </>
@@ -1924,7 +1937,7 @@ function SessionItem({
               ) : (
                 <span title={session.modified}>{formatRelativeTime(session.modified)}</span>
               )}
-              <span>{session.messageCount} msgs</span>
+              <span>{t("sidebar.messagesCount", { count: session.messageCount })}</span>
               {session.worktreeBranch && (
                 <span
                   title={`Worktree: ${session.cwd}`}
@@ -1967,7 +1980,7 @@ function SessionItem({
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
               <button
                 onClick={startRename}
-                title="Rename"
+                title={t("sidebar.rename")}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center",
                   width: 32, height: 32, padding: 0,
@@ -1993,7 +2006,7 @@ function SessionItem({
               </button>
               <button
                 onClick={handleDeleteClick}
-                title="Delete"
+                title={t("sidebar.deleteWithShiftClick")}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center",
                   width: 32, height: 32, padding: 0,
