@@ -11,6 +11,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
+import { getProjectTrustStatus } from "@/lib/project-trust";
 import type {
   PluginDiagnostic,
   PluginPackageInfo,
@@ -201,10 +202,14 @@ function collectResources(paths: ResolvedPaths): {
 }
 
 async function readPlugins(cwd: string): Promise<PluginsResponse> {
-  const settingsManager = SettingsManager.create(cwd, getAgentDir());
+  const agentDir = getAgentDir();
+  const projectTrust = getProjectTrustStatus(cwd, agentDir);
+  const settingsManager = SettingsManager.create(cwd, agentDir, {
+    projectTrusted: projectTrust.trusted,
+  });
   const packageManager = new DefaultPackageManager({
     cwd,
-    agentDir: getAgentDir(),
+    agentDir,
     settingsManager,
   });
 
@@ -261,7 +266,12 @@ async function readPlugins(cwd: string): Promise<PluginsResponse> {
     } satisfies PluginPackageInfo;
   });
 
-  return { packages, totals, diagnostics };
+  return {
+    packages,
+    totals,
+    diagnostics,
+    projectResourcesLoaded: projectTrust.trusted,
+  };
 }
 
 function readScope(scope: unknown): PluginScope {
@@ -307,14 +317,25 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
 
-    const settingsManager = SettingsManager.create(body.cwd, getAgentDir());
+    const agentDir = getAgentDir();
+    const projectTrust = getProjectTrustStatus(body.cwd, agentDir);
+    const settingsManager = SettingsManager.create(body.cwd, agentDir, {
+      projectTrusted: projectTrust.trusted,
+    });
+    const scope = readScope(body.scope);
+    if (scope === "project" && !projectTrust.trusted) {
+      return NextResponse.json(
+        { error: "Project resources must be trusted before modifying project plugins" },
+        { status: 403 },
+      );
+    }
     const packageManager = new DefaultPackageManager({
       cwd: body.cwd,
-      agentDir: getAgentDir(),
+      agentDir,
       settingsManager,
     });
     const source = body.source?.trim();
-    const local = readScope(body.scope) === "project";
+    const local = scope === "project";
 
     if (body.action === "install") {
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
@@ -326,11 +347,11 @@ export async function POST(req: Request) {
       await packageManager.update(source);
     } else if (body.action === "disable") {
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
-      setPackageDisabled(settingsManager, source, readScope(body.scope), true);
+      setPackageDisabled(settingsManager, source, scope, true);
       await settingsManager.flush();
     } else if (body.action === "enable") {
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
-      setPackageDisabled(settingsManager, source, readScope(body.scope), false);
+      setPackageDisabled(settingsManager, source, scope, false);
       await settingsManager.flush();
     } else {
       return NextResponse.json({ error: `Unsupported action: ${body.action}` }, { status: 400 });
