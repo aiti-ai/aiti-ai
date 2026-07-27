@@ -498,7 +498,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
         <div ref={scrollContainerRef} className="flex-1 overflow-y-auto pt-4 [scrollbar-width:none]">
           <div style={{ padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div style={{ maxWidth: 820, margin: "0 auto" }}>
-              <ExtensionStatusBar statuses={extensionStatuses} />
               <ExtensionWidgets widgets={aboveEditorWidgets} />
 
             {(() => {
@@ -738,6 +737,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
           </div>
         </div>
         {chatInputElement}
+        <ExtensionStatusBar statuses={extensionStatuses} />
       </div>
       </>
       )}

@@ -29,20 +29,30 @@ export function ExtensionStatusBar({ statuses }: { statuses: ExtensionStatusItem
       aria-label={plainStatusLine}
       title={plainStatusLine}
       style={{
+        display: "flex",
+        alignItems: "center",
+        flexShrink: 0,
         minWidth: 0,
-        marginBottom: 10,
-        overflow: "hidden",
-        color: "var(--text-muted)",
-        fontFamily: "var(--font-mono)",
-        fontSize: 12,
-        lineHeight: "18px",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
+        height: 36,
+        padding: "0 12px",
+        borderTop: "1px solid var(--border)",
+        background: "var(--bg-panel)",
       }}
     >
-      {parseAnsiLine(statusLine).map((segment, index) => (
-        <span key={index} style={segment.style}>{segment.text}</span>
-      ))}
+      <span
+        style={{
+          minWidth: 0,
+          overflow: "hidden",
+          color: "var(--text-muted)",
+          fontSize: 11,
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {parseAnsiLine(statusLine).map((segment, index) => (
+          <span key={index} style={segment.style}>{segment.text}</span>
+        ))}
+      </span>
     </div>
   );
 }
