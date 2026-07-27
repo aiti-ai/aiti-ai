@@ -191,6 +191,7 @@ export function AppShell() {
 
   const initialSessionId = initialNavigation.sessionId;
   const [activeCwd, setActiveCwd] = useState<string | null>(null);
+  const activeProjectRootRef = useRef<string | null>(null);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
   // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
@@ -233,8 +234,15 @@ export function AppShell() {
 
   const handleCwdChange = useCallback((cwd: string | null, projectRoot?: string | null) => {
     setActiveCwd(cwd);
-    // Skip if cwd is null (initial mount) or during the initial URL restore.
+    // Skip if cwd is null (initial mount).
     if (!cwd) return;
+    const newProject = projectRoot ?? cwd;
+    const currentProject = activeProjectRootRef.current
+      ?? (selectedSession ? (selectedSession.projectRoot ?? selectedSession.cwd) : null);
+    activeProjectRootRef.current = newProject;
+
+    // Keep the project identity in sync during the initial URL restore without
+    // remounting the just-created or restored chat.
     if (suppressCwdBumpRef.current) {
       suppressCwdBumpRef.current = false;
       return;
@@ -242,8 +250,7 @@ export function AppShell() {
     // Worktrees of one repo share a project root. Moving the effective cwd
     // within the same project (e.g. switching worktree, or clicking a session
     // that lives in another worktree) must not close the open session.
-    const newProject = projectRoot ?? cwd;
-    if (selectedSession && (selectedSession.projectRoot ?? selectedSession.cwd) === newProject) {
+    if (currentProject === newProject) {
       return;
     }
     // Close any session that belongs to a different project — it no longer
