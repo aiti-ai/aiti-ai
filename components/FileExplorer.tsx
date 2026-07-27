@@ -304,8 +304,10 @@ function TreeNode({
           <span
             title={t("files.newlyUploaded")}
             aria-label={t("files.newlyUploaded")}
-            style={{ width: 6, height: 6, flexShrink: 0, borderRadius: "50%", background: "#3b82f6" }}
-          />
+            style={{ width: 14, height: 14, flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center" }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#3b82f6" }} />
+          </span>
         )}
         {!hovered && !node.isDir && gitStatus && (
           <span
@@ -313,12 +315,15 @@ function TreeNode({
             aria-label={t(GIT_STATUS_KEYS[gitStatus.status])}
             style={{
               width: 14,
+              height: 14,
               flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
               color: GIT_STATUS_COLORS[gitStatus.status],
               fontFamily: "var(--font-mono)",
               fontSize: 11,
               fontWeight: 600,
-              textAlign: "center",
             }}
           >
             {gitStatus.code}
@@ -329,13 +334,16 @@ function TreeNode({
             title={t("files.containsChangedFiles")}
             aria-label={t("files.containsChangedFiles")}
             style={{
-              width: 6,
-              height: 6,
+              width: 14,
+              height: 14,
               flexShrink: 0,
-              borderRadius: "50%",
-              background: "#d6a84b",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
             }}
-          />
+          >
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#d6a84b" }} />
+          </span>
         )}
         {loading && (
           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2" strokeLinecap="round">
