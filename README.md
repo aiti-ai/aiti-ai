@@ -72,6 +72,7 @@ npx @agegr/pi-web@latest
 - **Chat beside the project**: browse files on the left and preview source, docs, images, audio, and PDFs on the right while the agent works.
 - **See session state clearly**: context usage, cost, compaction state, and system prompt details are visible from the top bar.
 - **Configure less from the terminal**: manage models, login/API keys, model tests, and skill switches from the web UI.
+- **Use the interface in your language**: switch between the supported UI languages from the top bar.
 
 ## Notes
 
@@ -81,6 +82,7 @@ npx @agegr/pi-web@latest
 - **File access**: file browsing and preview are scoped to the selected project directory and working directories that appear in sessions.
 - **Git worktrees**: see [Worktrees in Pi Web](./docs/worktrees.md) for when the switcher appears, how new worktrees are created, and what removal does.
 - **Forks vs in-session branches**: Fork creates a new `.jsonl` file. "Edit from here" creates another branch inside the same session file.
+- **Internationalization**: see [Internationalization](./docs/i18n.md) for using translations and adding languages or UI text.
 
 ## Development
 

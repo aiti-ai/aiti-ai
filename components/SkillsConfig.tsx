@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useI18n } from "@/hooks/useI18n";
 import type {
   SkillInfo as Skill,
   SkillInstallScope,
@@ -41,14 +42,15 @@ function Toggle({
   loading: boolean;
   onToggle: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <button
       onClick={onToggle}
       disabled={loading}
       title={
         enabled
-          ? "Visible in model prompt — click to disable"
-          : "Hidden from model prompt — click to enable"
+          ? t("i18n.visibleInPrompt")
+          : t("i18n.hiddenFromPrompt")
       }
       style={{
         flexShrink: 0,
@@ -106,6 +108,7 @@ function SkillDetail({
   onCheckUpdate: () => void;
   onUpdate: () => void;
 }) {
+  const { t } = useI18n();
   const label = sourceLabel(skill);
   const enabled = !skill.disableModelInvocation;
 
@@ -238,7 +241,7 @@ function SkillDetail({
                   fontSize: 11,
                 }}
               >
-                Check
+                 {t("i18n.check")}
               </button>
             )}
             {updateStatus?.state === "update-available" && (
@@ -267,12 +270,12 @@ function SkillDetail({
                 }}
               >
                 {checkingUpdate
-                  ? "Checking..."
+                   ? t("i18n.checking")
                   : updateStatus?.state === "up-to-date"
-                    ? "Up to date"
+                     ? t("i18n.upToDate")
                     : updateStatus?.state === "unsupported"
-                        ? "Automatic checks unavailable"
-                        : updateStatus?.message || "Check failed"}
+                         ? t("i18n.automaticChecksUnavailable")
+                         : updateStatus?.message || t("i18n.checkFailed")}
               </span>
             )}
             {updateStatus?.state === "update-available" && (
@@ -291,7 +294,7 @@ function SkillDetail({
                   fontWeight: 600,
                 }}
               >
-                {updating ? "Updating..." : "Update"}
+                 {updating ? t("i18n.updating") : t("i18n.update")}
               </button>
             )}
           </div>
@@ -343,6 +346,7 @@ function AddSkillPanel({
   installedPackages: Record<SkillInstallScope, ReadonlySet<string>>;
   onInstalled: () => void;
 }) {
+  const { t } = useI18n();
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SkillSearchResult[]>([]);
   const [searching, setSearching] = useState(false);
@@ -432,7 +436,7 @@ function AddSkillPanel({
         }}
       >
         <div style={{ fontSize: 14, fontWeight: 600, color: "var(--text)" }}>
-          Add Skill
+           {t("i18n.addSkill")}
         </div>
 
         {/* Search row */}
@@ -444,7 +448,7 @@ function AddSkillPanel({
             onKeyDown={(e) => {
               if (e.key === "Enter") search(query);
             }}
-            placeholder="e.g. react, testing, deploy"
+             placeholder={t("i18n.skillSearchPlaceholder")}
             style={{
               flex: 1,
               padding: "7px 10px",
@@ -471,7 +475,7 @@ function AddSkillPanel({
               flexShrink: 0,
             }}
           >
-            {searching ? "Searching…" : "Search"}
+             {searching ? t("i18n.searching") : t("i18n.search")}
           </button>
         </div>
 
@@ -637,10 +641,10 @@ function AddSkillPanel({
                   }}
                 >
                   {isInstalled
-                    ? "✓ Installed"
+                     ? `✓ ${t("i18n.installed")}`
                     : isInstalling
-                      ? "Installing…"
-                      : "Install"}
+                       ? t("i18n.installing")
+                       : t("i18n.install")}
                 </button>
               </div>
             );
@@ -677,6 +681,7 @@ export function SkillsConfig({
   onClose: () => void;
 }) {
   const isMobile = useIsMobile();
+  const { t } = useI18n();
   const [skills, setSkills] = useState<Skill[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -886,7 +891,7 @@ export function SkillsConfig({
             <span
               style={{ fontSize: 15, fontWeight: 700, color: "var(--text)" }}
             >
-              Skills
+               {t("common.skills")}
             </span>
             <code
               style={{
@@ -942,7 +947,7 @@ export function SkillsConfig({
                     color: "var(--text-muted)",
                   }}
                 >
-                  Loading…
+                   {t("i18n.loading")}
                 </div>
               ) : error ? (
                 <div
@@ -962,7 +967,7 @@ export function SkillsConfig({
                     color: "var(--text-dim)",
                   }}
                 >
-                  No skills found
+                   {t("i18n.noSkills")}
                 </div>
               ) : (
                 (() => {
@@ -1087,7 +1092,7 @@ export function SkillsConfig({
                                 if (status?.state !== "update-available") return null;
                                 return (
                                   <span
-                                    title="Update available"
+                                     title={t("i18n.updateAvailable")}
                                     style={{
                                       color: "#d97706",
                                       fontSize: 13,
@@ -1150,7 +1155,7 @@ export function SkillsConfig({
                   <line x1="12" y1="5" x2="12" y2="19" />
                   <line x1="5" y1="12" x2="19" y2="12" />
                 </svg>
-                Add skill
+                 {t("i18n.addSkill")}
               </div>
             </div>
           </div>
@@ -1210,7 +1215,7 @@ export function SkillsConfig({
                   fontSize: 13,
                 }}
               >
-                Select a skill
+                 {t("i18n.selectSkill")}
               </div>
             )}
           </div>
@@ -1246,7 +1251,7 @@ export function SkillsConfig({
                   fontSize: 12,
                 }}
               >
-                {checkingAll ? "Checking..." : "Check updates"}
+                 {checkingAll ? t("i18n.checking") : t("i18n.checkUpdates")}
               </button>
             )}
             {Object.values(updateStatuses).filter(
@@ -1261,8 +1266,8 @@ export function SkillsConfig({
                 {Object.values(updateStatuses).filter(
                   (status) => status.state === "update-available",
                 ).length === 1
-                  ? "update"
-                  : "updates"}
+                   ? t("i18n.update")
+                   : t("i18n.updates")}
               </span>
             )}
           </div>
@@ -1278,7 +1283,7 @@ export function SkillsConfig({
               fontSize: 13,
             }}
           >
-            Close
+             {t("i18n.close")}
           </button>
         </div>
       </div>
