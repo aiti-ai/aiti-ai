@@ -7,6 +7,7 @@ import type {
   SkillInfo as Skill,
   SkillInstallScope,
   SkillSearchResult,
+  SkillsResponse,
   SkillUpdateResult,
 } from "@/lib/api-types";
 
@@ -340,10 +341,12 @@ function SkillDetail({
 function AddSkillPanel({
   cwd,
   installedPackages,
+  projectResourcesLoaded,
   onInstalled,
 }: {
   cwd: string;
   installedPackages: Record<SkillInstallScope, ReadonlySet<string>>;
+  projectResourcesLoaded: boolean;
   onInstalled: () => void;
 }) {
   const { t } = useI18n();
@@ -494,14 +497,19 @@ function AddSkillPanel({
             {(["global", "project"] as const).map((s) => (
               <button
                 key={s}
-                onClick={() => setScope(s)}
+                onClick={() => {
+                  if (s === "global" || projectResourcesLoaded) setScope(s);
+                }}
+                disabled={s === "project" && !projectResourcesLoaded}
+                title={s === "project" && !projectResourcesLoaded ? t("trust.projectScopeUnavailable") : undefined}
                 style={{
                   padding: "3px 10px",
                   border: "none",
-                  cursor: "pointer",
+                  cursor: s === "project" && !projectResourcesLoaded ? "not-allowed" : "pointer",
                   background: scope === s ? "var(--bg-selected)" : "none",
                   color: scope === s ? "var(--text)" : "var(--text-dim)",
                   fontWeight: scope === s ? 600 : 400,
+                  opacity: s === "project" && !projectResourcesLoaded ? 0.45 : 1,
                   borderRight:
                     s === "global" ? "1px solid var(--border)" : "none",
                 }}
@@ -694,16 +702,18 @@ export function SkillsConfig({
   const [checkingAll, setCheckingAll] = useState(false);
   const [updatingSkill, setUpdatingSkill] = useState<string | null>(null);
   const [updateError, setUpdateError] = useState<string | null>(null);
+  const [projectResourcesLoaded, setProjectResourcesLoaded] = useState(true);
 
   const loadSkills = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/skills?cwd=${encodeURIComponent(cwd)}`);
-      const d = (await res.json()) as { skills?: Skill[]; error?: string };
+      const d = (await res.json()) as Partial<SkillsResponse> & { error?: string };
       if (!res.ok || d.error) throw new Error(d.error ?? `HTTP ${res.status}`);
       const list = d.skills ?? [];
       setSkills(list);
+      setProjectResourcesLoaded(d.projectResourcesLoaded ?? true);
       if (list.length > 0 && !selected) setSelected(list[0].filePath);
       return list;
     } catch (e) {
@@ -922,6 +932,21 @@ export function SkillsConfig({
             ×
           </button>
         </div>
+
+        {!projectResourcesLoaded && (
+          <div
+            role="status"
+            style={{
+              padding: "8px 18px",
+              borderBottom: "1px solid var(--border)",
+              background: "var(--bg-panel)",
+              color: "var(--text-muted)",
+              fontSize: 12,
+            }}
+          >
+            {t("trust.skillsNotLoaded")}
+          </div>
+        )}
 
         {/* Body */}
         <div style={{ flex: 1, display: "flex", flexDirection: isMobile ? "column" : "row", overflow: "hidden" }}>
@@ -1165,6 +1190,7 @@ export function SkillsConfig({
             {addMode ? (
               <AddSkillPanel
                 cwd={cwd}
+                projectResourcesLoaded={projectResourcesLoaded}
                 installedPackages={{
                   global: new Set(
                     skills
