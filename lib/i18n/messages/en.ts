@@ -91,6 +91,8 @@ export const enLocale: LocalePlugin = {
     "sidebar.gitRepoRootOnlyTitle": "Worktrees are available in Git repository roots.",
     "sidebar.worktrees": "Worktrees...",
     "sidebar.checkingWorktrees": "Checking worktrees for this directory.",
+    "sidebar.filterWorktrees": "Filter worktrees…",
+    "sidebar.noMatchingWorktrees": "No matching worktrees",
     "sidebar.switchWorktree": "Switch worktree",
     "sidebar.switchWorktreeTitle": "Switch worktree: {path}",
     "sidebar.main": "main",

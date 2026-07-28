@@ -91,6 +91,8 @@ export const zhCNLocale: LocalePlugin = {
     "sidebar.gitRepoRootOnlyTitle": "只能在 Git 仓库根目录使用 worktree。",
     "sidebar.worktrees": "Worktrees...",
     "sidebar.checkingWorktrees": "正在检查此目录的 worktree。",
+    "sidebar.filterWorktrees": "筛选 worktree…",
+    "sidebar.noMatchingWorktrees": "没有匹配的 worktree",
     "sidebar.switchWorktree": "切换 worktree",
     "sidebar.switchWorktreeTitle": "切换 worktree：{path}",
     "sidebar.main": "主分支",
