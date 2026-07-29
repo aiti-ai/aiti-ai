@@ -1591,13 +1591,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     return () => controller.abort();
   }, [loadModels, modelsRefreshKey]);
 
-  // Compact error auto-dismiss
-  useEffect(() => {
-    if (!compactError) return;
-    const t = setTimeout(() => setCompactError(null), 3000);
-    return () => clearTimeout(t);
-  }, [compactError]);
-
   useEffect(() => {
     if (!compactResult) return;
     const t = setTimeout(() => setCompactResult(null), 6000);
