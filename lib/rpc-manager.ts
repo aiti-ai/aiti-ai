@@ -149,6 +149,7 @@ export class AgentSessionWrapper {
   private unsubscribe: (() => void) | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private onDestroyCallback: (() => void) | null = null;
+  private shutdownPromise: Promise<void> | null = null;
   private _alive = true;
 
   constructor(public readonly inner: AgentSessionLike) {}
@@ -296,7 +297,9 @@ export class AgentSessionWrapper {
         this.resetIdleTimer();
         return;
       }
-      this.destroy();
+      void this.shutdown().catch((error) => {
+        console.error("[pi-web] failed to shut down idle session:", error instanceof Error ? error.message : error);
+      });
     }, 10 * 60 * 1000);
   }
 
@@ -456,7 +459,7 @@ export class AgentSessionWrapper {
         const newSessionId = SessionManager.open(newSessionFile, sessionDir).getSessionId();
         cacheSessionPath(newSessionId, newSessionFile);
         invalidateSessionListCache();
-        this.destroy();
+        await this.shutdown();
         return { cancelled: false, newSessionId };
       }
 
@@ -655,8 +658,37 @@ export class AgentSessionWrapper {
     for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
-    this.onDestroyCallback?.();
-    notifyRunningChange();
+    try {
+      this.inner.dispose();
+    } finally {
+      try {
+        this.onDestroyCallback?.();
+      } finally {
+        notifyRunningChange();
+      }
+    }
+  }
+
+  async shutdown(): Promise<void> {
+    if (this.shutdownPromise) return this.shutdownPromise;
+    if (!this._alive) return;
+
+    this.shutdownPromise = (async () => {
+      try {
+        try {
+          await this.waitForExtensionsBound();
+        } catch (error) {
+          console.error(
+            "[pi-web] extension binding failed before session shutdown:",
+            error instanceof Error ? error.message : error,
+          );
+        }
+        await this.inner.extensionRunner.emit?.({ type: "session_shutdown", reason: "quit" });
+      } finally {
+        this.destroy();
+      }
+    })();
+    return this.shutdownPromise;
   }
 
   private resolveExtensionUiResponse(response: ExtensionUiResponse): void {
@@ -1062,12 +1094,12 @@ export function hasBusyRpcSessionForCwd(cwd: string): boolean {
   );
 }
 
-export function destroyRpcSessionsForCwd(cwd: string): number {
+export async function destroyRpcSessionsForCwd(cwd: string): Promise<number> {
   const targetCwd = normalizeRpcCwd(cwd);
   const sessions = Array.from(getRegistry().values()).filter(
     (session) => normalizeRpcCwd(session.cwd) === targetCwd,
   );
-  for (const session of sessions) session.destroy();
+  await Promise.all(sessions.map((session) => session.shutdown()));
   return sessions.length;
 }
 
