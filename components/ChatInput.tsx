@@ -1284,7 +1284,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         )}
 
         {/* Main input */}
-        <div style={{ position: "relative" }}>
+        <div style={{ position: "relative", minWidth: 0 }}>
           {historyMenuOpen && inputHistory.length > 0 && (
             <div
               ref={historyMenuRef}
@@ -1615,6 +1615,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           })()}
           <div
             style={{
+              minWidth: 0,
               display: "flex",
               gap: 8,
               alignItems: "center",
@@ -1661,6 +1662,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             rows={1}
             style={{
               flex: 1,
+              minWidth: 0,
+              width: "100%",
               background: "none",
               border: "none",
               outline: "none",
