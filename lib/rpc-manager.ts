@@ -9,6 +9,7 @@ import { invalidateModelsCache } from "./models-cache";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import { cacheSessionPath, invalidateSessionListCache } from "./session-reader";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
+import { persistExplicitStartupPreferences } from "./startup-preferences";
 import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
 import type { ExtensionUiRequest, ExtensionUiResponse, ExtensionWidgetItem } from "./types";
@@ -1159,7 +1160,8 @@ export async function startRpcSession(
     );
     const defaultProvider = services.settingsManager.getDefaultProvider();
     const defaultModelId = services.settingsManager.getDefaultModel();
-    const initial = sessionFile
+    const hasExistingMessages = sessionManager.buildSessionContext().messages.length > 0;
+    const initial = hasExistingMessages
       ? { scopedModels: [...scope.scopedModels] }
       : selectInitialModelScope(scope, {
         ...(initialModel ? { requestedModel: initialModel } : {}),
@@ -1176,6 +1178,22 @@ export async function startRpcSession(
       ...(initial.scopedModels.length > 0 ? { scopedModels: initial.scopedModels } : {}),
       ...(toolsOption !== undefined ? { tools: toolsOption } : {}),
     });
+
+    const persistedPreferences = await persistExplicitStartupPreferences(
+      services.settingsManager,
+      {
+        ...(initialModel ? { model: initialModel } : {}),
+        ...(thinkingLevel ? { thinkingLevel } : {}),
+      },
+      {
+        ...(inner.model
+          ? { model: { provider: inner.model.provider, modelId: inner.model.id } }
+          : {}),
+        thinkingLevel: inner.thinkingLevel,
+        supportsThinking: inner.supportsThinking(),
+      },
+    );
+    if (persistedPreferences.modelDefaultChanged) invalidateModelsCache();
 
     // If specific tool names were requested (non-empty), set the active tools to the
     // requested builtin coding tools PLUS all extension/package tools, so installed
