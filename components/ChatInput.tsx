@@ -464,21 +464,23 @@ function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove
 
 /** Windows-10 "show desktop"-style thin vertical bar cycling the bottom panel states.
  *  The visible line stays thin, but the tap target is 32px wide (mobile-friendly). */
-function BottomModeBar({ mode, onClick, height = 32, tapWidth = 32, count }: {
+function BottomModeBar({ mode, onClick, height = 32, tapWidth = 32, count, label }: {
   mode: "full" | "queueHidden" | "minimal";
   onClick: () => void;
   height?: number;
   tapWidth?: number;
   count?: number;
+  label?: string;
 }) {
   const { t } = useI18n();
-  const label = mode === "full" ? t("chat.minimizeQueue") : mode === "queueHidden" ? t("chat.minimizeInput") : t("chat.restoreBottom");
+  const defaultLabel = mode === "full" ? t("chat.minimizeQueue") : mode === "queueHidden" ? t("chat.minimizeInput") : t("chat.restoreBottom");
+  const effectiveLabel = label ?? defaultLabel;
   return (
     <button
       type="button"
       onClick={onClick}
-      title={label}
-      aria-label={label}
+      title={effectiveLabel}
+      aria-label={effectiveLabel}
       style={{
         flexShrink: 0,
         display: "flex",
@@ -3212,7 +3214,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </button>
             )}
             </div>
-            <BottomModeBar mode={bottomMode} onClick={() => cycleBottomMode()} count={queueCount} />
+            <BottomModeBar
+              mode={bottomMode}
+              onClick={isMobile ? () => cycleBottomMode() : toggleQueueCollapsed}
+              label={isMobile ? undefined : (queueCollapsed ? t("chat.queueExpand") : t("chat.queueCollapse"))}
+              count={queueCount}
+            />
           </div>
         </div>
         )}
