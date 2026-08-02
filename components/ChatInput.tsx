@@ -464,11 +464,12 @@ function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove
 
 /** Windows-10 "show desktop"-style thin vertical bar cycling the bottom panel states.
  *  The visible line stays thin, but the tap target is 32px wide (mobile-friendly). */
-function BottomModeBar({ mode, onClick, height = 32, tapWidth = 32 }: {
+function BottomModeBar({ mode, onClick, height = 32, tapWidth = 32, count }: {
   mode: "full" | "queueHidden" | "minimal";
   onClick: () => void;
   height?: number;
   tapWidth?: number;
+  count?: number;
 }) {
   const { t } = useI18n();
   const label = mode === "full" ? t("chat.minimizeQueue") : mode === "queueHidden" ? t("chat.minimizeInput") : t("chat.restoreBottom");
@@ -504,6 +505,19 @@ function BottomModeBar({ mode, onClick, height = 32, tapWidth = 32 }: {
         e.currentTarget.style.color = "var(--text-muted)";
       }}
     >
+      {typeof count === "number" && count > 0 && (
+        <span
+          style={{
+            flexShrink: 0,
+            fontSize: 10.5,
+            fontFamily: "var(--font-mono)",
+            color: mode === "minimal" ? "var(--accent)" : "inherit",
+            lineHeight: 1,
+          }}
+        >
+          {count}
+        </span>
+      )}
       <svg width="2" height="16" viewBox="0 0 2 16" style={{ flexShrink: 0, borderRadius: 1 }}>
         <rect x="0" y="0" width="2" height="16" fill={mode === "minimal" ? "var(--accent)" : "currentColor"} />
       </svg>
@@ -2425,7 +2439,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   {t("chat.queued", { count: String(queueCount) })}
                 </button>
               )}
-              <BottomModeBar mode="minimal" onClick={() => cycleBottomMode()} height={44} />
+              <BottomModeBar mode="minimal" onClick={() => cycleBottomMode()} height={44} count={queueCount} />
             </div>
           ) : (
           <div
@@ -3223,7 +3237,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </button>
             )}
             </div>
-            {isMobile && <BottomModeBar mode={bottomMode} onClick={() => cycleBottomMode()} />}
+            {isMobile && <BottomModeBar mode={bottomMode} onClick={() => cycleBottomMode()} count={queueCount} />}
           </div>
         </div>
         )}
