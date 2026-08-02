@@ -9,6 +9,7 @@ import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
+import type { QueueEntry } from "@/lib/queue-store";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
@@ -38,6 +39,8 @@ interface Props {
   onSessionStatsPanelOpen?: () => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string) => void;
+  /** Expose the queue-export resolver to the parent (AppShell export dialog). */
+  onExportQueue?: (resolver: () => Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null>) => void;
 }
 
 function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, string | number>) => string): string | null {
@@ -171,7 +174,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, children, t }: { mes
   );
 }
 
-export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile }: Props) {
+export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onExportQueue }: Props) {
   const { t } = useI18n();
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio } = useAudio();
   const isMobile = useIsMobile();
@@ -224,6 +227,10 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
   });
+  // Expose the queue-export resolver to the parent (AppShell export dialog).
+  useEffect(() => {
+    onExportQueue?.(exportQueueData);
+  }, [onExportQueue, exportQueueData]);
   const sessionBusy = agentRunning || bashRunning;
   const [recoveryDismissed, setRecoveryDismissed] = useState(false);
 
