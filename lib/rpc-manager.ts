@@ -203,19 +203,6 @@ export class AgentSessionWrapper {
           (event as { followUp?: string[] }).followUp,
         );
       }
-      // pi only emits queue_update on enqueue/clear — not when a queued
-      // message is consumed at the start of a run. Sync the queue (and the
-      // UI count) after a drain as well.
-      if (event.type === "message_start" || event.type === "agent_settled") {
-        const liveSteering = [...this.inner.getSteeringMessages()];
-        const liveFollowUp = [...this.inner.getFollowUpMessages()];
-        this.reconcileQueue(liveSteering, liveFollowUp);
-        this.emit({
-          type: "queue_update",
-          steering: liveSteering,
-          followUp: liveFollowUp,
-        } as AgentEvent);
-      }
       if (IDLE_RESET_EVENT_TYPES.has(event.type)) this.resetIdleTimer();
       this.emit(event);
       if (RUNNING_STATE_EVENT_TYPES.has(event.type)) notifyRunningChange();

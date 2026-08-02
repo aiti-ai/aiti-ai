@@ -899,10 +899,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         eventStreamGraceActiveRef.current = false;
         eventStreamGraceTimerRef.current = null;
-        // Keep the stream open: queued-message changes (enqueue/drain) must
-        // keep arriving while the page is idle, so the count/list stay in
-        // sync without polling. The EventSource auto-reconnects if the
-        // server closes it.
+        closeEvents();
       } catch {
         // Keep the stream alive while state cannot be verified.
         if (
