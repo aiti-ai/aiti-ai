@@ -899,7 +899,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         eventStreamGraceActiveRef.current = false;
         eventStreamGraceTimerRef.current = null;
-        closeEvents();
+        // Keep the stream open: queued-message changes (enqueue/drain) must
+        // keep arriving while the page is idle, so the count/list stay in
+        // sync without polling. The EventSource auto-reconnects if the
+        // server closes it.
       } catch {
         // Keep the stream alive while state cannot be verified.
         if (
@@ -1053,28 +1056,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   useEffect(() => {
     agentRunningRef.current = agentRunning;
   }, [agentRunning]);
-
-  // Keep the queued-message count/list in sync even when idle: the SSE
-  // stream closes after the run settles, so enqueue/drain events stop
-  // arriving. Lightly poll just the queue state so the count on the cycle
-  // bar and the "queued N" banner stay consistent with the real queue.
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const sid = sessionIdRef.current;
-      if (!sid) return;
-      void (async () => {
-        try {
-          const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`);
-          if (!res.ok) return;
-          const data = await res.json() as { state?: AgentStateResponse };
-          setQueuedMessages(normalizeQueuedMessages(data.state?.queuedMessages));
-        } catch {
-          // network down — next tick retries
-        }
-      })();
-    }, 6000);
-    return () => clearInterval(interval);
-  }, []);
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
