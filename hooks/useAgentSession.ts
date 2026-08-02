@@ -1054,6 +1054,28 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunningRef.current = agentRunning;
   }, [agentRunning]);
 
+  // Keep the queued-message count/list in sync even when idle: the SSE
+  // stream closes after the run settles, so enqueue/drain events stop
+  // arriving. Lightly poll just the queue state so the count on the cycle
+  // bar and the "queued N" banner stay consistent with the real queue.
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      void (async () => {
+        try {
+          const res = await fetch(`/api/agent/${encodeURIComponent(sid)}`);
+          if (!res.ok) return;
+          const data = await res.json() as { state?: AgentStateResponse };
+          setQueuedMessages(normalizeQueuedMessages(data.state?.queuedMessages));
+        } catch {
+          // network down — next tick retries
+        }
+      })();
+    }, 6000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
       case "agent_start":
