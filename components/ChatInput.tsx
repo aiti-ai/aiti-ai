@@ -1710,15 +1710,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 >
                   <polyline points="6 9 12 15 18 9" />
                 </svg>
-                <span style={{
-                  fontSize: 10,
-                  fontFamily: "var(--font-mono)",
-                  color: "var(--text-dim)",
-                  textTransform: "uppercase",
-                  letterSpacing: 0.4,
-                }}>
-                  {t("chat.queued", { count: (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0) })}
-                </span>
               </button>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", marginTop: isMobile ? 2 : 0 }}>
@@ -1859,9 +1850,6 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 e.currentTarget.style.color = "var(--text-dim)";
               }}
             >
-              <span style={{ flexShrink: 0, fontSize: 10.5, fontFamily: "var(--font-mono)", color: "var(--text-dim)" }}>
-                {queueCount}
-              </span>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: "rotate(-90deg)" }}>
                 <polyline points="6 9 12 15 18 9" />
               </svg>
