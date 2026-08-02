@@ -283,6 +283,7 @@ export const zhCNLocale: LocalePlugin = {
     "export.done": "已导出 {count} 条",
     "export.noneSelected": "请先选择要导出的条目",
     "export.close": "关闭",
+    "export.revealDir": "定位到文件夹",
     "chat.stopAgent": "停止 Agent",
     "chat.stop": "停止",
     "chat.disableSound": "关闭完成提示音",

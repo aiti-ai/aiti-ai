@@ -123,19 +123,32 @@ export function formatQuote(seg: string, value?: string): string {
  * paths without trailing punctuation. The caller should verify existence via
  * the backend before offering them as "open" actions.
  */
-export function extractFilePaths(text: string): string[] {
-  // 1) Paths containing a slash with an extension: dir/name.ext, ./dir/name.ext
-  // 2) Bare filenames with a common source/doc extension
-  const re = /(?:\.[\w-]+\/|[\w-]+\/)+[\w.@-]+\.\w+|\b[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|md|mdx|json|py|go|rs|css|scss|html|sh|yml|yaml|toml|lock|txt|sql|env)\b/gu;
+/**
+ * Extract candidate file/directory paths from plain text (e.g.
+ * "design/foo.md" or "docs/video-campaign/" written inline, not as markdown
+ * links). Returns de-duplicated entries; the caller verifies existence via
+ * the backend before offering actions.
+ */
+export interface ExtractedPath {
+  path: string;
+  isDir: boolean;
+}
+
+export function extractFilePaths(text: string): ExtractedPath[] {
+  // 1) dir/name.ext, ./dir/name.ext
+  // 2) bare filenames with a common source/doc extension
+  // 3) dir/ (trailing slash, no extension) — a folder
+  const re = /(?:(?:\.\w+\/|[\w-]+\/)+[\w.@-]+\.\w+|\b[A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|md|mdx|json|py|go|rs|css|scss|html|sh|yml|yaml|toml|lock|txt|sql|env)\b|(?:[\w-]+\/){1,}[\w.@-]*\/?)/gu;
   const seen = new Set<string>();
-  const out: string[] = [];
+  const out: ExtractedPath[] = [];
   for (const m of text.matchAll(re)) {
     let p = m[0];
-    // Strip trailing punctuation that the regex might have swallowed.
     p = p.replace(/[），。、；：!！?？)>"'`]$/u, "");
+    const isDir = p.endsWith("/");
+    if (isDir) p = p.slice(0, -1);
     if (p.length >= 3 && !seen.has(p)) {
       seen.add(p);
-      out.push(p);
+      out.push({ path: p, isDir });
     }
   }
   return out;

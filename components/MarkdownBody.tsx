@@ -16,6 +16,8 @@ interface MarkdownBodyProps {
   isStreaming?: boolean;
   cwd?: string;
   onOpenFile?: (filePath: string, fileName?: string) => void;
+  /** Reveal a directory in the sidebar file tree (from the popover). */
+  onRevealDir?: (absPath: string) => void;
   /** When set (assistant messages), each paragraph becomes hoverable/clickable
    *  to pop a quote-reply popover. */
   onQuoteReply?: (quote: string) => void;
@@ -27,7 +29,7 @@ const QuoteOpenContext = createContext<{ openId: string | null; setOpenId: (id: 
   setOpenId: () => {},
 });
 
-export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, onQuoteReply }: MarkdownBodyProps) {
+export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, onRevealDir, onQuoteReply }: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
   const [openId, setOpenId] = useState<string | null>(null);
   // Stable renderer identities keep stateful blocks mounted across message hover updates.
@@ -97,7 +99,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       const pid = useId();
       if (!onQuoteReply) return <p {...props}>{children}</p>;
       return (
-        <QuoteableParagraph pid={pid} onQuoteReply={onQuoteReply} onOpenFile={onOpenFile} cwd={cwd}>
+        <QuoteableParagraph pid={pid} onQuoteReply={onQuoteReply} onOpenFile={onOpenFile} onRevealDir={onRevealDir} cwd={cwd}>
           {children}
         </QuoteableParagraph>
       );
@@ -107,7 +109,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       const pid = useId();
       if (!onQuoteReply) return <li {...props}>{children}</li>;
       return (
-        <QuoteableParagraph as="li" pid={pid} onQuoteReply={onQuoteReply} onOpenFile={onOpenFile} cwd={cwd}>
+        <QuoteableParagraph as="li" pid={pid} onQuoteReply={onQuoteReply} onOpenFile={onOpenFile} onRevealDir={onRevealDir} cwd={cwd}>
           {children}
         </QuoteableParagraph>
       );
@@ -124,12 +126,12 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       const pid = useId();
       if (!onQuoteReply) return <tr {...props}>{children}</tr>;
       return (
-        <QuoteableParagraph as="tr" pid={pid} onQuoteReply={onQuoteReply} onOpenFile={onOpenFile} cwd={cwd}>
+        <QuoteableParagraph as="tr" pid={pid} onQuoteReply={onQuoteReply} onOpenFile={onOpenFile} onRevealDir={onRevealDir} cwd={cwd}>
           {children}
         </QuoteableParagraph>
       );
     },
-  }), [cwd, isStreaming, onOpenFile, onQuoteReply]);
+  }), [cwd, isStreaming, onOpenFile, onRevealDir, onQuoteReply]);
 
   return (
     <QuoteOpenContext.Provider value={{ openId, setOpenId }}>
@@ -149,7 +151,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
 /** A <p>/<li> whose plain text is parsed on hover (desktop) / click (mobile)
  *  to pop a quote-reply popover. The parse result is locked once shown so a
  *  streaming tail doesn't make the popover flicker; re-engaging re-parses. */
-function QuoteableParagraph({ children, onQuoteReply, onOpenFile, cwd, as = "p", pid }: { children: ReactNode; onQuoteReply: (quote: string) => void; onOpenFile?: (filePath: string, fileName?: string) => void; cwd?: string; as?: "p" | "li" | "tr"; pid: string }) {
+function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, cwd, as = "p", pid }: { children: ReactNode; onQuoteReply: (quote: string) => void; onOpenFile?: (filePath: string, fileName?: string) => void; onRevealDir?: (absPath: string) => void; cwd?: string; as?: "p" | "li" | "tr"; pid: string }) {
   const { openId, setOpenId } = useContext(QuoteOpenContext);
   const { t } = useI18n();
   const open = openId === pid;
@@ -256,6 +258,7 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, cwd, as = "p",
           segments={segments}
           onPick={(q) => { onQuoteReply(q); closePopover(); }}
           onOpenFile={onOpenFile}
+          onRevealDir={onRevealDir}
           cwd={cwd}
         />
       )}

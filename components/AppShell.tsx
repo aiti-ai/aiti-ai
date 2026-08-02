@@ -38,6 +38,7 @@ import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { QueueEntry } from "@/lib/queue-store";
 import { ExportDialog } from "./ExportDialog";
+import type { FileExplorerHandle } from "./FileExplorer";
 
 type SessionCopyField = "file" | "id";
 type AutoNameStatus =
@@ -67,6 +68,7 @@ export function AppShell() {
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
+  const fileExplorerRef = useRef<FileExplorerHandle>(null);
   const [modelsConfigOpen, setModelsConfigOpen] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
@@ -267,6 +269,12 @@ export function AppShell() {
     chatInputRef.current?.insertText(buildFileLineMentionText(relativePath, startLine, endLine));
     if (isMobile) { setRightPanelOpen(false); setSidebarOpen(false); }
   }, [isMobile]);
+
+  // Reveal a directory in the sidebar file tree (from an @ mention popover).
+  const handleRevealDir = useCallback((absPath: string) => {
+    fileExplorerRef.current?.revealPath(absPath);
+    setSidebarOpen(true);
+  }, []);
 
   const initialSessionId = initialNavigation.sessionId;
   const [activeCwd, setActiveCwd] = useState<string | null>(null);
@@ -645,6 +653,7 @@ export function AppShell() {
         onExplorerRefresh={handleExplorerRefresh}
         onAtMention={handleAtMention}
         onAtMentions={handleAtMentions}
+        fileExplorerRef={fileExplorerRef}
       />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
@@ -1556,6 +1565,7 @@ export function AppShell() {
               onContextUsageChange={handleContextUsageChange}
               onExportQueue={(resolver) => { exportQueueDataRef.current = resolver; }}
               onOpenFile={handleOpenLinkedFile}
+              onRevealDir={handleRevealDir}
             />
           ) : initialCwdStatus === "validating" ? (
             <div

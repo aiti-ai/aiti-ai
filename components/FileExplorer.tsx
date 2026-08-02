@@ -43,6 +43,8 @@ interface Props {
 
 export interface FileExplorerHandle {
   openUploadPicker: () => void;
+  /** Expand to (and highlight + scroll into view) a directory/file path. */
+  revealPath: (absPath: string) => void;
 }
 
 type UploadPhase = "idle" | "checking" | "uploading";
@@ -270,6 +272,14 @@ function TreeNode({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshToken]);
 
+  // Load children when the directory becomes open (covers both user clicks and
+  // programmatic expansion via revealPath).
+  useEffect(() => {
+    if (open && !loaded) {
+      void loadChildren();
+    }
+  }, [open, loaded, loadChildren]);
+
   const handleClick = useCallback(() => {
     if (node.isDir) {
       const next = !open;
@@ -283,6 +293,7 @@ function TreeNode({
   return (
     <div>
       <div
+        data-file-node={node.fullPath}
         onClick={handleClick}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -662,7 +673,34 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     openUploadPicker() {
       if (!uploadBusy) uploadInputRef.current?.click();
     },
-  }), [uploadBusy]);
+    revealPath(absPath) {
+      // Expand the target itself plus every ancestor directory, then highlight
+      // and scroll it into view once it's rendered (expansion loads children
+      // asynchronously, so poll briefly for the node).
+      const toExpand: string[] = [absPath];
+      let cur = getFileDirectory(absPath);
+      while (cur && (!cwd || cur.length >= cwd.length)) {
+        toExpand.push(cur);
+        if (cur === cwd) break;
+        const parent = getFileDirectory(cur);
+        if (!parent || parent === cur) break;
+        cur = parent;
+      }
+      setExpandedPaths((prev) => new Set([...prev, ...toExpand]));
+      setHighlightedPaths(new Set([absPath]));
+      const find = () => document.querySelector(`[data-file-node="${absPath.replace(/"/g, "&quot;")}"]`);
+      const started = Date.now();
+      const poll = () => {
+        const el = find();
+        if (el) {
+          el.scrollIntoView({ block: "center", behavior: "smooth" });
+          return;
+        }
+        if (Date.now() - started < 3000) setTimeout(poll, 120);
+      };
+      setTimeout(poll, 60);
+    },
+  }), [uploadBusy, cwd]);
 
   useEffect(() => {
     onUploadBusyChange?.(uploadBusy);
