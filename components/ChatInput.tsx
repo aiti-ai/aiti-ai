@@ -3237,7 +3237,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </button>
             )}
             </div>
-            {isMobile && <BottomModeBar mode={bottomMode} onClick={() => cycleBottomMode()} count={queueCount} />}
+            <BottomModeBar mode={bottomMode} onClick={() => cycleBottomMode()} count={queueCount} />
           </div>
         </div>
         )}
