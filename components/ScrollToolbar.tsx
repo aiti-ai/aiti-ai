@@ -55,6 +55,16 @@ export function ScrollToolbar({
   const dragRef = useRef<{ startX: number; startY: number; startY0: number; moved: boolean; pointerId: number } | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const dragModeRef = useRef(false);
+  // Set when a tap (touch pointerup without drag) already navigated, so the
+  // trailing click doesn't navigate twice.
+  const tapNavigatedRef = useRef(false);
+  // Mirror of pos so the pointer-up handler can persist the LATEST dragged
+  // position (the pos state captured in its closure would be stale).
+  const posRef = useRef(pos);
+  const setPosAndRef = useCallback((p: { align: "left" | "right"; y: number }) => {
+    posRef.current = p;
+    setPos(p);
+  }, []);
 
   // Track whether the message list is at the top / bottom so the buttons only
   // appear when there is something to scroll to. Buttons show while scrolling
@@ -87,6 +97,10 @@ export function ScrollToolbar({
   // against the current viewport and the saved vertical offset is applied.
   const onToolbarPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
+    // Capture the pointer so drag moves continue even when the finger/mouse
+    // leaves the small button column — otherwise the drag stops as soon as
+    // the pointer moves off the buttons.
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     dragRef.current = {
       startX: e.clientX,
       startY: e.clientY,
@@ -113,8 +127,8 @@ export function ScrollToolbar({
     // Snap horizontal to the nearer edge based on the pointer's side of the
     // screen midpoint.
     const nx = e.clientX < window.innerWidth / 2 ? "left" : "right";
-    setPos({ align: nx, y: ny });
-  }, [clearLongPress]);
+    setPosAndRef({ align: nx, y: ny });
+  }, [clearLongPress, setPosAndRef]);
 
   const onToolbarPointerUp = useCallback(() => {
     const drag = dragRef.current;
@@ -124,10 +138,10 @@ export function ScrollToolbar({
     dragModeRef.current = false;
     if (wasDrag) {
       try {
-        localStorage.setItem("pi-scroll-toolbar-pos", JSON.stringify({ align: pos.align, y: pos.y }));
+        localStorage.setItem("pi-scroll-toolbar-pos", JSON.stringify({ align: posRef.current.align, y: posRef.current.y }));
       } catch { /* ignore */ }
     }
-  }, [pos]);
+  }, []);
 
   const handleScrollAnchorChange = useCallback(() => {
     const c = scrollContainerRef.current;
@@ -196,22 +210,17 @@ export function ScrollToolbar({
    */
   // Latest reference so the lazy-load retry can re-invoke navigation.
   const scrollToUserMessageRef = useRef<((dir: -1 | 1) => void) | null>(null);
-  const navRetryCountRef = useRef(0);
   const scrollToUserMessage = useCallback((dir: -1 | 1) => {
     updateFollowStreaming(false);
     const c = scrollContainerRef.current;
     if (!c) return;
     const refs = messageRefs.current;
     if (!refs || refs.length === 0) return;
-    // Lazy pagination: navigation must be able to reach ANY user question, so
-    // load the whole list once before jumping (refs for unrendered messages
-    // are null and would otherwise corrupt the anchor search). Retry the jump
-    // shortly after the list renders so a single click works.
-    if (setVisibleCount && visibleMessages.length < messagesLength) {
-      setVisibleCount((current) => Math.max(current, messagesLength * 2));
-      setTimeout(() => scrollToUserMessageRef.current?.(dir), 250);
-      return;
-    }
+    // How many messages are actually RENDERED (refs filled). Lazy pagination
+    // renders only a window of the list; navigation needs all user messages
+    // to be present, so load more when the rendered count is short of the
+    // full list.
+    const renderedCount = refs.filter(Boolean).length;
     let anchor = -1;
     if (dir === -1) {
       // prev: anchor = the last user message at/above the VIEWPORT TOP (the
@@ -263,7 +272,13 @@ export function ScrollToolbar({
         return;
       }
     }
-    // No earlier user message found within the loaded window — stop quietly.
+    // No user message found within the loaded window — there may be older/
+    // newer messages hidden by lazy pagination. Load more and retry so the
+    // button eventually works even on a long history.
+    if (setVisibleCount && renderedCount < messagesLength) {
+      setVisibleCount((current) => Math.max(current, messagesLength * 2));
+      setTimeout(() => scrollToUserMessageRef.current?.(dir), 250);
+    }
   }, [messageRefs, visibleMessages, messagesLength, scrollContainerRef, setVisibleCount, updateFollowStreaming]);
   scrollToUserMessageRef.current = scrollToUserMessage;
 
@@ -334,7 +349,22 @@ export function ScrollToolbar({
           )}
           {(
             <button
-              onClick={() => scrollToUserMessage(-1)}
+              onClick={() => {
+                if (tapNavigatedRef.current) { tapNavigatedRef.current = false; return; }
+                scrollToUserMessage(-1);
+              }}
+              onPointerUp={(e) => {
+                // Touch fallback: some touch environments swallow the click
+                // after our container's pointer handlers. If this was a tap
+                // (no drag movement) and click hasn't fired yet, navigate
+                // directly. alert proves the handler runs on your phone.
+                const drag = dragRef.current;
+                if (drag && !drag.moved) {
+                  tapNavigatedRef.current = true;
+                  
+                  scrollToUserMessage(-1);
+                }
+              }}
               aria-label="scrollToPrevUser"
               onMouseEnter={(e) => {
                 setScrollTooltip("prevUser");
@@ -371,7 +401,18 @@ export function ScrollToolbar({
           )}
           {(
             <button
-              onClick={() => scrollToUserMessage(1)}
+              onClick={() => {
+                if (tapNavigatedRef.current) { tapNavigatedRef.current = false; return; }
+                scrollToUserMessage(1);
+              }}
+              onPointerUp={(e) => {
+                const drag = dragRef.current;
+                if (drag && !drag.moved) {
+                  tapNavigatedRef.current = true;
+                  
+                  scrollToUserMessage(1);
+                }
+              }}
               aria-label="scrollToNextUser"
               onMouseEnter={(e) => {
                 setScrollTooltip("nextUser");
