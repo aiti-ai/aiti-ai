@@ -9,6 +9,7 @@ import { MessageView } from "./MessageView";
 import { ChatInput, type ChatInputHandle } from "./ChatInput";
 import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
+import { ScrollToolbar } from "./ScrollToolbar";
 import type { QueueEntry } from "@/lib/queue-store";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { useI18n } from "@/hooks/useI18n";
@@ -206,16 +207,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     chatInputRef?.current?.prependText(quote);
   }, [chatInputRef]);
 
-  // Long-press on the last message toggles auto-follow of streaming output.
-  // True → the list scrolls with the latest message even while the agent
-  // runs; clicking any scroll-navigation button clears it. The state mirrors
-  // the ref so the 'latest' button can highlight while following.
+  // Follow-streaming toggle (long-press on the 'latest' scroll button).
   const followStreamingRef = useRef<boolean>(false);
-  const [followStreaming, setFollowStreaming] = useState(false);
-  const updateFollowStreaming = useCallback((v: boolean) => {
-    followStreamingRef.current = v;
-    setFollowStreaming(v);
-  }, []);
 
   const {
     loading, error, messages, entryIds, streamState,
@@ -275,65 +268,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   }, [sessionBusy, handleAbort]);
 
   // --- Scroll-to-earliest / scroll-to-latest floating buttons ---
-  // Track whether the message list is at the top / bottom so the buttons only
-  // appear when the corresponding direction is reachable (WeChat-style).
-  // The buttons show while scrolling and hide shortly after scrolling stops;
-  // hovering them keeps them visible so a click never loses its target.
-  const SCROLL_ANCHOR_THRESHOLD = 80;
-  const [scrollAnchors, setScrollAnchors] = useState<{ atTop: boolean; atBottom: boolean }>({ atTop: true, atBottom: true });
-  const [scrollActive, setScrollActive] = useState(false);
-  const [scrollBtnsHovered, setScrollBtnsHovered] = useState(false);
-  const [scrollTooltip, setScrollTooltip] = useState<"earliest" | "prevUser" | "nextUser" | "latest" | null>(null);
-  const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Brief "auto-scroll follow on" toast after a successful long-press.
-  const [followToast, setFollowToast] = useState(false);
-  const followToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const handleScrollAnchorChange = useCallback(() => {
-    const c = scrollContainerRef.current;
-    if (!c) return;
-    const atTop = c.scrollTop <= SCROLL_ANCHOR_THRESHOLD;
-    const atBottom = c.scrollHeight - c.scrollTop - c.clientHeight <= SCROLL_ANCHOR_THRESHOLD;
-    setScrollAnchors((prev) => (prev.atTop === atTop && prev.atBottom === atBottom ? prev : { atTop, atBottom }));
-    setScrollActive(true);
-    if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
-    scrollIdleTimerRef.current = setTimeout(() => setScrollActive(false), 2000);
-  }, []);
-  useEffect(() => () => {
-    if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
-  }, []);
-  const showScrollButtons = (!scrollAnchors.atTop || !scrollAnchors.atBottom) && (scrollActive || scrollBtnsHovered);
-  const scrollToEarliest = useCallback(() => {
-    updateFollowStreaming(false);
-    scrollContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-  }, [followStreamingRef]);
-  const scrollToLatest = useCallback(() => {
-    updateFollowStreaming(false);
-    const c = scrollContainerRef.current;
-    if (!c) return;
-    // Scroll so the LAST MESSAGE's bottom sits at the viewport bottom.
-    //
-    // Layout (top → bottom):
-    //   [...messages]
-    //   [agent-running spacer, height = clientHeight]  ← only when agentRunning
-    //   <div ref={messagesEndRef}/>
-    //
-    // messagesEndRef.offsetTop already includes the spacer, but offsetTop is
-    // relative to the nearest positioned ancestor (not necessarily the scroll
-    // container). Compute the end sentinel's position inside the container
-    // via getBoundingClientRect, then back off by the spacer height AND the
-    // viewport height so the last message lands at the bottom and the spacer
-    // stays below the fold (no blank screen).
-    const end = messagesEndRef.current;
-    if (end) {
-      const endInContainer =
-        end.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
-      const spacerH = agentRunning ? c.clientHeight : 0;
-      const target = Math.max(0, endInContainer - spacerH - c.clientHeight);
-      c.scrollTo({ top: target, behavior: "smooth" });
-      return;
-    }
-    c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
-  }, [agentRunning, followStreamingRef]);
+
 
 
   // --- Lazy-load historical messages ---
@@ -432,88 +367,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   }, [messages]);
   const messageRefs = useMessageRefs(visibleMessages.length);
 
-  // Long-press on the BOTTOM AREA of the message list toggles
-  // follow-streaming. Delegate on the scroll container so the hit area is
-  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Set when a long-press on the 'latest' button actually fired, so the
-  // trailing click event doesn't ALSO jump to the latest message.
-  const didLongPressRef = useRef(false);
-  const clearLongPress = useCallback(() => {
-    if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
-  }, []);
 
-  /**
-   * Scroll to the previous/next user message relative to the current viewport.
-   * Buttons sit between "earliest" and "latest" and jump from question to
-   * question, skipping assistant/tool content.
-   */
-  const scrollToUserMessage = useCallback((dir: -1 | 1) => {
-    updateFollowStreaming(false);
-    const c = scrollContainerRef.current;
-    if (!c) return;
-    const refs = messageRefs.current;
-    if (!refs || refs.length === 0) return;
-    // Lazy pagination: navigation must be able to reach ANY user question, so
-    // load the whole list once before jumping (refs for unrendered messages
-    // are null and would otherwise corrupt the anchor search). The follow-up
-    // click then works on the fully rendered list.
-    if (visibleCount < messages.length) {
-      setVisibleCount(messages.length * 2);
-      return;
-    }
-    let anchor = -1;
-    if (dir === -1) {
-      // prev: anchor = the last user message at/above the VIEWPORT TOP (the
-      // question we're currently reading). If it sits above the viewport,
-      // jump TO it; if it's at the top already, go one earlier.
-      const limit = c.scrollTop + 8;
-      for (let i = 0; i < refs.length; i++) {
-        const el = refs[i];
-        if (!el || visibleMessages[i]?.role !== "user") continue;
-        const elTop = el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
-        if (elTop <= limit + 4) { anchor = i; continue; }
-        if (anchor === -1) anchor = i;
-        break;
-      }
-      if (anchor === -1) anchor = refs.length - 1;
-      const anchorEl = refs[anchor];
-      const anchorTop = anchorEl
-        ? anchorEl.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop
-        : -1;
-      const anchorVisible = anchorTop >= c.scrollTop;
-      // Search before the anchor (start = anchor - 1) if the anchor is on
-      // screen; otherwise jump to the anchor itself.
-      const start = anchorVisible ? anchor - 1 : anchor;
-      for (let i = start; i >= 0; i--) {
-        if (visibleMessages[i]?.role !== "user") continue;
-        const el = refs[i];
-        if (!el) continue;
-        const elTop = el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
-        c.scrollTo({ top: Math.max(0, elTop - 24), behavior: "smooth" });
-        return;
-      }
-    } else {
-      // next: anchor = the FIRST message at/at-below the VIEWPORT TOP (any
-      // role). "Next user" = the user message after that first visible one,
-      // so we never re-select the question sitting at the top of the screen.
-      for (let i = 0; i < refs.length; i++) {
-        const el = refs[i];
-        if (!el) continue;
-        const elTop = el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
-        if (elTop >= c.scrollTop) { anchor = i; break; }
-      }
-      if (anchor === -1) anchor = refs.length - 1;
-      for (let i = anchor + 1; i < visibleMessages.length; i++) {
-        if (visibleMessages[i]?.role !== "user") continue;
-        const el = refs[i];
-        if (!el) continue;
-        const elTop = el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
-        c.scrollTo({ top: Math.max(0, elTop - 24), behavior: "smooth" });
-        return;
-      }
-    }
-    // No earlier user message found within the loaded window — stop quietly.
-  }, [messageRefs, visibleMessages, followStreamingRef, setVisibleCount, messages.length]);
   const revealHistoryForMinimap = useCallback(() => {
     setVisibleCount((current) => Math.max(current, messages.length * 2));
   }, [messages.length]);
@@ -719,7 +573,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             <NoticeShelf notices={notices} floating align="right" />
           </div>
         </div>
-        <div ref={scrollContainerRef} onScroll={handleScrollAnchorChange} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
+        <div ref={scrollContainerRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
               <ExtensionWidgets widgets={aboveEditorWidgets} />
@@ -945,276 +799,19 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             </div>
           </div>
         </div>
-        {showScrollButtons && (
-          <div style={{
-            position: "absolute",
-            // Align to the right edge of the centered message column (820px)
-            // instead of the viewport edge, so the buttons (and tooltips)
-            // stay close to the content on large screens.
-            right: isMobile
-              ? 12
-              : `max(${CHAT_MINIMAP_WIDTH + 12}px, calc((100% - 820px) / 2 - 12px))`,
-            bottom: 12,
-            display: "flex",
-            flexDirection: "column",
-            gap: 10,
-            zIndex: 30,
-            pointerEvents: "none",
-          }}
-            onMouseEnter={() => setScrollBtnsHovered(true)}
-            onMouseLeave={() => setScrollBtnsHovered(false)}
-          >
-            {(
-              <button
-                onClick={scrollToEarliest}
-                aria-label="scrollToEarliest"
-                onMouseEnter={(e) => {
-                  setScrollTooltip("earliest");
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  setScrollTooltip(null);
-                  e.currentTarget.style.background = "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                }}
-                style={{
-                  pointerEvents: "auto",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  border: "1px solid var(--border)",
-                  background: "color-mix(in srgb, var(--bg-panel) 92%, transparent)",
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  boxShadow: "0 2px 8px rgba(15,23,42,0.18)",
-                  transition: "color 0.12s, background 0.12s",
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="18 15 12 9 6 15" />
-                </svg>
-              </button>
-            )}
-            {(
-              <button
-                onClick={() => scrollToUserMessage(-1)}
-                aria-label="scrollToPrevUser"
-                onMouseEnter={(e) => {
-                  setScrollTooltip("prevUser");
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  setScrollTooltip(null);
-                  e.currentTarget.style.background = "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                }}
-                style={{
-                  pointerEvents: "auto",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  border: "1px solid var(--border)",
-                  background: "color-mix(in srgb, var(--bg-panel) 92%, transparent)",
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  boxShadow: "0 2px 8px rgba(15,23,42,0.18)",
-                  transition: "color 0.12s, background 0.12s",
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="5" r="1.6" />
-                  <path d="M12 8v6" />
-                  <path d="M8 13h8" />
-                </svg>
-              </button>
-            )}
-            {(
-              <button
-                onClick={() => scrollToUserMessage(1)}
-                aria-label="scrollToNextUser"
-                onMouseEnter={(e) => {
-                  setScrollTooltip("nextUser");
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  setScrollTooltip(null);
-                  e.currentTarget.style.background = "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                }}
-                style={{
-                  pointerEvents: "auto",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  border: "1px solid var(--border)",
-                  background: "color-mix(in srgb, var(--bg-panel) 92%, transparent)",
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  boxShadow: "0 2px 8px rgba(15,23,42,0.18)",
-                  transition: "color 0.12s, background 0.12s",
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="19" r="1.6" />
-                  <path d="M12 16v-6" />
-                  <path d="M8 11h8" />
-                </svg>
-              </button>
-            )}
-            {(
-              // 50px hit area wrapper for the long-press gesture (visual
-              // button stays 34px inside).
-              <div
-                style={{
-                  pointerEvents: "auto",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 60,
-                  height: 60,
-                  margin: -8,
-                }}
-                onPointerDown={(e) => {
-                  // Long-press (>600ms) toggles follow-streaming; a quick
-                  // press/click still jumps to the latest message. Bound on
-                  // the 50px hit-area wrapper so the gesture is easy to land
-                  // on and small screens don't trigger text selection.
-                  clearLongPress();
-                  e.preventDefault();
-                  longPressTimerRef.current = setTimeout(() => {
-                    didLongPressRef.current = true;
-                    updateFollowStreaming(true);
-                    setFollowToast(true);
-                    document.getSelection()?.removeAllRanges();
-                    const prev = document.body.style.userSelect;
-                    document.body.style.userSelect = "none";
-                    if (followToastTimerRef.current) clearTimeout(followToastTimerRef.current);
-                    followToastTimerRef.current = setTimeout(() => {
-                      setFollowToast(false);
-                      document.body.style.userSelect = prev;
-                    }, 2000);
-                  }, 600);
-                }}
-                onPointerUp={clearLongPress}
-                onPointerCancel={clearLongPress}
-                onPointerLeave={clearLongPress}
-                onContextMenu={(e) => e.preventDefault()}
-              >
-              <button
-                onClick={() => {
-                  // Locked (long-press enabled follow): a normal click now
-                  // UNLOCKS follow (does not jump — you're already at latest).
-                  if (followStreaming) {
-                    updateFollowStreaming(false);
-                    return;
-                  }
-                  // A long-press just enabled follow — the click that follows
-                  // the gesture must not ALSO jump to the latest.
-                  if (didLongPressRef.current) { didLongPressRef.current = false; return; }
-                  scrollToLatest();
-                }}
-                aria-label="scrollToLatest"
-                onMouseEnter={(e) => {
-                  setScrollTooltip("latest");
-                  e.currentTarget.style.background = followStreaming
-                    ? "color-mix(in srgb, var(--accent) 26%, var(--bg-panel))"
-                    : "var(--bg-hover)";
-                  e.currentTarget.style.color = followStreaming ? "var(--accent)" : "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  setScrollTooltip(null);
-                  e.currentTarget.style.background = followStreaming
-                    ? "color-mix(in srgb, var(--accent) 18%, var(--bg-panel))"
-                    : "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
-                  e.currentTarget.style.color = followStreaming ? "var(--accent)" : "var(--text-muted)";
-                }}
-                style={{
-                  pointerEvents: "auto",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 44,
-                  height: 44,
-                  borderRadius: "50%",
-                  border: followStreaming
-                    ? "1px solid color-mix(in srgb, var(--accent) 55%, var(--border))"
-                    : "1px solid var(--border)",
-                  background: followStreaming
-                    ? "color-mix(in srgb, var(--accent) 18%, var(--bg-panel))"
-                    : "color-mix(in srgb, var(--bg-panel) 92%, transparent)",
-                  color: followStreaming ? "var(--accent)" : "var(--text-muted)",
-                  cursor: "pointer",
-                  boxShadow: "0 2px 8px rgba(15,23,42,0.22)",
-                  transition: "color 0.12s, background 0.12s",
-                }}
-              >
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-              </button>
-              </div>
-            )}
-            {scrollTooltip && (
-              <div style={{
-                position: "absolute",
-                // Show on the left side of the buttons, toward the message
-                // column, instead of the viewport edge.
-                right: "calc(100% + 10px)",
-                top: scrollTooltip === "earliest" ? 17
-                  : scrollTooltip === "prevUser" ? 71
-                  : scrollTooltip === "nextUser" ? 125
-                  : 179,
-                whiteSpace: "nowrap",
-                fontSize: 12,
-                color: "var(--text)",
-                background: "color-mix(in srgb, var(--bg-panel) 96%, transparent)",
-                border: "1px solid var(--border)",
-                borderRadius: 6,
-                padding: "4px 8px",
-                boxShadow: "0 2px 10px rgba(15,23,42,0.25)",
-                pointerEvents: "none",
-                zIndex: 31,
-              }}>
-                {scrollTooltip === "earliest" ? t("chat.scrollToEarliest")
-                  : scrollTooltip === "prevUser" ? t("chat.scrollToPrevUser")
-                  : scrollTooltip === "nextUser" ? t("chat.scrollToNextUser")
-                  : t("chat.scrollToLatestFollowHint")}
-              </div>
-            )}
-          </div>
-        )}
-        {followToast && (
-          <div style={{
-            position: "absolute",
-            bottom: 12,
-            left: "50%",
-            transform: "translateX(-50%)",
-            zIndex: 40,
-            fontSize: 13,
-            color: "var(--text)",
-            background: "color-mix(in srgb, var(--bg-panel) 96%, transparent)",
-            border: "1px solid color-mix(in srgb, var(--accent) 50%, var(--border))",
-            borderRadius: 8,
-            padding: "6px 14px",
-            boxShadow: "0 2px 12px rgba(15,23,42,0.25)",
-            pointerEvents: "none",
-            whiteSpace: "nowrap",
-          }}>
-            {t("chat.followStreamingOn")}
-          </div>
-        )}
+
+        <ScrollToolbar
+          scrollContainerRef={scrollContainerRef}
+          messagesEndRef={messagesEndRef}
+          messageRefs={messageRefs}
+          visibleMessages={visibleMessages}
+          messagesLength={messages.length}
+          agentRunning={agentRunning}
+          isMobile={isMobile}
+          setVisibleCount={setVisibleCount}
+          followStreamingRef={followStreamingRef}
+        />
+
         {isMobile ? null : (
           <ChatMinimap
             messages={messages}

@@ -161,12 +161,16 @@ export interface UseAgentSessionOptions {
    * Clicking any scroll-navigation button flips it back to false.
    */
   followStreamingRef?: React.RefObject<boolean | null>;
+  /** Called when follow-streaming turns on/off (re-arms auto-scroll). */
+  onFollowStreamingChange?: (v: boolean) => void;
 }
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 const PROGRAMMATIC_SCROLL_IGNORE_MS = 700;
-const USER_SCROLL_INTENT_MS = 1200;
+// While follow-streaming is on, a manual scroll pauses auto-follow for this
+// window; after it expires the list resumes following the latest message.
+const USER_SCROLL_INTENT_MS = 10000;
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
@@ -2059,7 +2063,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleScrollPositionChange = useCallback(() => {
     if (!agentRunningRef.current) return;
     if (Date.now() < ignoreProgrammaticScrollUntilRef.current) return;
-    if (Date.now() > userScrollIntentUntilRef.current) return;
+    // The user scrolled manually (within the programmatic-scroll grace
+    // window). Record WHEN so auto-follow can pause for USER_SCROLL_INTENT_MS
+    // and then resume — instead of disabling follow permanently.
+    userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
     completionScrollAllowedRef.current = false;
   }, []);
 
@@ -2158,7 +2165,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       } else if (!initialScrollDoneRef.current) {
         initialScrollDoneRef.current = true;
         scrollToBottom("instant");
-      } else if ((!agentRunningRef.current || opts.followStreamingRef?.current) && completionScrollAllowedRef.current) {
+      } else if (!agentRunningRef.current && completionScrollAllowedRef.current) {
+        scrollToBottom("smooth");
+      } else if (opts.followStreamingRef?.current && Date.now() > userScrollIntentUntilRef.current) {
+        // Follow-streaming on: follow unless the user scrolled within the
+        // pause window (userScrollIntentUntilRef records the manual scroll).
         scrollToBottom("smooth");
       }
     }
