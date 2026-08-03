@@ -2050,7 +2050,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // ~40px above the viewport bottom.
     const endInContainer = end.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
     // Short spacer (96px) below the last message while the agent runs.
-    const spacerH = agentRunningRef.current ? 96 : 0;
+    // The agent-running spacer (3/4 viewport) sits between the last message
+    // and the sentinel; back it out so the LAST MESSAGE lands ~40px above the
+    // viewport bottom.
+    const spacerH = agentRunningRef.current ? container.clientHeight * 0.75 : 0;
     // Visual keep-out below the last message ≈40px. The sentinel is 28px tall
     // and the last message's own bottom margin (~16px) sits between it and the
     // sentinel, so back off (40 - 28 - 16) = -4 on top of the sentinel.
@@ -2182,7 +2185,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const end = messagesEndRef.current;
     if (!container || !end) return;
     const endTop = end.getBoundingClientRect().top - container.getBoundingClientRect().top;
-    const spacerH = agentRunningRef.current ? 96 : 0;
+    const spacerH = agentRunningRef.current ? container.clientHeight * 0.75 : 0;
     const lastMsgBottom = endTop - 28 - spacerH;
     // Step-follow: when new content pushes the last message past the small
     // keep-out zone, step so the last message lands at the top 1/4 of the
