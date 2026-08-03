@@ -788,7 +788,12 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             )}
 
             {agentRunning && (
-              <div style={{ height: scrollContainerRef.current ? scrollContainerRef.current.clientHeight : "80vh" }} />
+              /* Short buffer below the last message while the agent runs.
+                 Was a full viewport tall (clientHeight) — that put a whole
+                 blank screen under the message right after sending (the
+                 message is scrolled to the top). A small spacer keeps the
+                 scroll-lock intent without the white void. */
+              <div style={{ height: 96 }} />
             )}
 
             {/* The end sentinel doubles as the long-press target for toggling

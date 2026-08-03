@@ -163,7 +163,7 @@ export function ScrollToolbar({
     setScrollAnchors((prev) => (prev.atTop === atTop && prev.atBottom === atBottom ? prev : { atTop, atBottom }));
     setScrollActive(true);
     if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
-    scrollIdleTimerRef.current = setTimeout(() => setScrollActive(false), 5000);
+    scrollIdleTimerRef.current = setTimeout(() => setScrollActive(false), 2000);
   }, [scrollContainerRef]);
 
   // Bind the scroll-position tracking to the container so ChatWindow does
@@ -179,7 +179,10 @@ export function ScrollToolbar({
     if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
   }, []);
 
-  const showScrollButtons = (!scrollAnchors.atTop || !scrollAnchors.atBottom) && (scrollActive || scrollBtnsHovered);
+  // Touch devices have no real hover: a tap fires mouseenter but the matching
+  // mouseleave never arrives, so scrollBtnsHovered would stay true forever and
+  // the buttons would never auto-hide. On mobile ignore hover entirely.
+  const showScrollButtons = (!scrollAnchors.atTop || !scrollAnchors.atBottom) && (scrollActive || (!isMobile && scrollBtnsHovered));
 
   const scrollToEarliest = useCallback(() => {
     updateFollowStreaming(false);
@@ -202,13 +205,16 @@ export function ScrollToolbar({
     // container). Compute the end sentinel's position inside the container
     // via getBoundingClientRect, then back off by the spacer height AND the
     // viewport height so the last message lands at the bottom and the spacer
-    // stays below the fold (no blank screen).
+    // stays below the fold (no blank screen). Keep ~100px of breathing room
+    // below the last message (sentinel is 28px tall → extra 100-28).
     const end = messagesEndRef.current;
     if (end) {
       const endInContainer =
         end.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
-      const spacerH = agentRunning ? c.clientHeight : 0;
-      const target = Math.max(0, endInContainer - spacerH - c.clientHeight);
+      const spacerH = agentRunning ? 96 : 0;
+      // ≈40px visual keep-out below the last message (sentinel 28px + the
+      // last message's own ~16px bottom margin → extra 40-28-16 = -4).
+      const target = Math.max(0, endInContainer - spacerH - c.clientHeight - 4);
       c.scrollTo({ top: target, behavior: "smooth" });
       return;
     }
