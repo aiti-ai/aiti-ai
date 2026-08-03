@@ -313,7 +313,7 @@ export const enLocale: LocalePlugin = {
     "chat.scrollToLatest": "Jump to latest message",
     "chat.scrollToPrevUser": "Previous user message",
     "chat.scrollToNextUser": "Next user message",
-    "chat.scrollToLatestFollowHint": "Jump to latest (long-press the last message to follow streaming)",
+    "chat.scrollToLatestFollowHint": "Jump to latest (long-press this button to follow streaming)",
     "chat.followStreamingOn": "Auto-scroll following enabled",
     "i18n.close": "Close",
     "i18n.copy": "Copy",
