@@ -315,10 +315,18 @@ export class AgentSessionWrapper {
   /** Re-queue a recovered or imported entry into the live queue. */
   private async requeueEntry(entry: QueueEntry): Promise<void> {
     this.hintQueueImages(entry.kind, entry.images);
-    if (entry.kind === "steer") {
-      await this.inner.steer(entry.text, entry.images);
-    } else {
-      await this.inner.followUp(entry.text, entry.images);
+    try {
+      if (entry.kind === "steer") {
+        await this.inner.steer(entry.text, entry.images);
+      } else {
+        await this.inner.followUp(entry.text, entry.images);
+      }
+    } catch (error) {
+      console.error(
+        `[pi-web] requeueEntry failed kind=${entry.kind} text=${JSON.stringify(entry.text?.slice(0, 80))}:`,
+        error,
+      );
+      throw error;
     }
   }
 
@@ -909,14 +917,26 @@ export class AgentSessionWrapper {
         const discardIds = new Set((command.discard as string[] | undefined) ?? []);
         const continueRun = command.continueRun === true;
         let keptCount = 0;
+        const failedIds = new Set<string>();
+        const failedTexts: string[] = [];
         for (const entry of this.queueRecovery) {
           if (!keptIds.has(entry.id)) continue;
-          await this.requeueEntry(entry);
-          this.ensureMirrored(entry);
-          keptCount += 1;
+          try {
+            await this.requeueEntry(entry);
+            this.ensureMirrored(entry);
+            keptCount += 1;
+          } catch (error) {
+            failedIds.add(entry.id);
+            failedTexts.push(entry.text?.slice(0, 60) ?? entry.id);
+            console.error(`[pi-web] resolve_recovery: keeping entry failed (${entry.kind}):`, error);
+          }
         }
+        // Successful keeps and discards leave recovery; failed keeps stay in
+        // recovery so the user can retry or export them instead of losing them.
         const remaining = this.queueRecovery.filter(
-          (entry) => !keptIds.has(entry.id) && !discardIds.has(entry.id),
+          (entry) =>
+            !(keptIds.has(entry.id) && !failedIds.has(entry.id))
+            && !discardIds.has(entry.id),
         );
         const resolved = this.queueRecovery.length - remaining.length;
         this.queueRecovery = remaining;
@@ -924,10 +944,14 @@ export class AgentSessionWrapper {
         if (continueRun && keptCount > 0) {
           this.runAgentContinue();
         }
+        if (failedIds.size > 0) {
+          console.error(`[pi-web] resolve_recovery: kept=${keptCount} failed=${failedIds.size} keptInRecovery=${remaining.length} texts=${JSON.stringify(failedTexts)}`);
+        }
         return {
           resolved,
           kept: keptCount,
           remaining: this.getPendingRecoveryView(),
+          failed: failedTexts,
         };
       }
 
