@@ -2152,7 +2152,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       } else if (!initialScrollDoneRef.current) {
         initialScrollDoneRef.current = true;
         scrollToBottom("instant");
-      } else if (!agentRunningRef.current && completionScrollAllowedRef.current) {
+      } else if (completionScrollAllowedRef.current) {
         scrollToBottom("smooth");
       }
     }

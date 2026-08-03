@@ -293,17 +293,30 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   const scrollToLatest = useCallback(() => {
     const c = scrollContainerRef.current;
     if (!c) return;
-    // Scroll the last message into view at the bottom. We must not use
-    // scrollHeight here: during an agent run there is a viewport-tall spacer
-    // after the messages (scroll-lock design), so scrollHeight would land on
-    // a blank screen. Anchor on the end sentinel element instead.
+    // Scroll so the LAST MESSAGE's bottom sits at the viewport bottom.
+    //
+    // Layout (top → bottom):
+    //   [...messages]
+    //   [agent-running spacer, height = clientHeight]  ← only when agentRunning
+    //   <div ref={messagesEndRef}/>
+    //
+    // messagesEndRef.offsetTop already includes the spacer, but offsetTop is
+    // relative to the nearest positioned ancestor (not necessarily the scroll
+    // container). Compute the end sentinel's position inside the container
+    // via getBoundingClientRect, then back off by the spacer height AND the
+    // viewport height so the last message lands at the bottom and the spacer
+    // stays below the fold (no blank screen).
     const end = messagesEndRef.current;
     if (end) {
-      end.scrollIntoView({ block: "end", behavior: "smooth" });
+      const endInContainer =
+        end.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+      const spacerH = agentRunning ? c.clientHeight : 0;
+      const target = Math.max(0, endInContainer - spacerH - c.clientHeight);
+      c.scrollTo({ top: target, behavior: "smooth" });
       return;
     }
     c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
-  }, []);
+  }, [agentRunning]);
 
   // --- Lazy-load historical messages ---
   // Only render the last N messages initially. When the user scrolls to the
