@@ -2519,7 +2519,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             rows={1}
             style={{
               flex: "1 1 0",
-              minWidth: 0,
+              minWidth: "60%",
               background: "none",
               border: "none",
               outline: "none",
@@ -2535,7 +2535,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           />
 
           {isStreaming ? (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end", marginLeft: "auto" }}>
               {onSteer && (
                 <button
                   onClick={() => sendQueued("steer")}
@@ -2591,6 +2591,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               style={{
                 flexShrink: 0,
                 alignSelf: "flex-end",
+                marginLeft: "auto",
                 display: "flex", alignItems: "center", gap: 6,
                 padding: "7px 14px",
                 background: (value.trim() || attachedImages.length) ? "var(--accent)" : "var(--bg-panel)",
