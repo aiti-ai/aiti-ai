@@ -311,6 +311,8 @@ export const zhCNLocale: LocalePlugin = {
     "chat.tokensSaved": "节省 {saved}",
     "chat.scrollToEarliest": "到最早消息",
     "chat.scrollToLatest": "到最新消息",
+    "chat.scrollToPrevUser": "上一个用户输入",
+    "chat.scrollToNextUser": "下一个用户输入",
     "i18n.close": "关闭",
     "i18n.copy": "复制",
     "i18n.copied": "已复制",

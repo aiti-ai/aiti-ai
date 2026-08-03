@@ -311,6 +311,8 @@ export const enLocale: LocalePlugin = {
     "chat.tokensSaved": "{saved} saved",
     "chat.scrollToEarliest": "Jump to earliest message",
     "chat.scrollToLatest": "Jump to latest message",
+    "chat.scrollToPrevUser": "Previous user message",
+    "chat.scrollToNextUser": "Next user message",
     "i18n.close": "Close",
     "i18n.copy": "Copy",
     "i18n.copied": "Copied",

@@ -271,7 +271,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   const [scrollAnchors, setScrollAnchors] = useState<{ atTop: boolean; atBottom: boolean }>({ atTop: true, atBottom: true });
   const [scrollActive, setScrollActive] = useState(false);
   const [scrollBtnsHovered, setScrollBtnsHovered] = useState(false);
-  const [scrollTooltip, setScrollTooltip] = useState<"earliest" | "latest" | null>(null);
+  const [scrollTooltip, setScrollTooltip] = useState<"earliest" | "prevUser" | "nextUser" | "latest" | null>(null);
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleScrollAnchorChange = useCallback(() => {
     const c = scrollContainerRef.current;
@@ -317,6 +317,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     }
     c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
   }, [agentRunning]);
+
 
   // --- Lazy-load historical messages ---
   // Only render the last N messages initially. When the user scrolls to the
@@ -413,6 +414,54 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     return history.reverse();
   }, [messages]);
   const messageRefs = useMessageRefs(visibleMessages.length);
+
+  /**
+   * Scroll to the previous/next user message relative to the current viewport.
+   * Buttons sit between "earliest" and "latest" and jump from question to
+   * question, skipping assistant/tool content.
+   */
+  const scrollToUserMessage = useCallback((dir: -1 | 1) => {
+    const c = scrollContainerRef.current;
+    if (!c) return;
+    const refs = messageRefs.current;
+    if (!refs || refs.length === 0) return;
+    // Find the first visible message whose top is at/below the viewport top
+    // (the "current anchor" message). Fall back to the last element.
+    // Anchor on the message at the viewport top. "Previous user" searches
+    // BEFORE the anchor (start = anchor-1), so the currently visible user
+    // message is naturally skipped without also skipping the immediate
+    // previous question (a large upward offset did exactly that).
+    const viewportTopInDoc = c.scrollTop + 8;
+    // The "current" user message: the last user message whose top is above
+    // the viewport top (i.e. the one we're currently reading), or the first
+    // user message below it. Searching from here (inclusive) gives a natural
+    // "previous question / next question" navigation.
+    let anchor = -1;
+    for (let i = 0; i < refs.length; i++) {
+      const el = refs[i];
+      if (!el || visibleMessages[i]?.role !== "user") continue;
+      const elTop = el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+      if (elTop <= viewportTopInDoc + 4) { anchor = i; continue; }
+      if (anchor === -1) anchor = i;
+      break;
+    }
+    if (anchor === -1) anchor = refs.length - 1;
+    const start = dir === -1 ? anchor - 1 : anchor + 1;
+    const step = dir;
+    for (let i = start; i >= 0 && i < visibleMessages.length; i += step) {
+      if (visibleMessages[i]?.role === "user") {
+        const el = refs[i];
+        if (el) {
+          const elTop = el.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
+          // Scroll further up so the target question sits in the upper half
+          // of the viewport with some of its context visible above it.
+          c.scrollTo({ top: Math.max(0, elTop - 140), behavior: "smooth" });
+        }
+        return;
+      }
+    }
+  }, [messageRefs, visibleMessages]);
+
   const revealHistoryForMinimap = useCallback(() => {
     setVisibleCount((current) => Math.max(current, messages.length * 2));
   }, [messages.length]);
@@ -894,6 +943,80 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 </svg>
               </button>
             )}
+            {!scrollAnchors.atTop && (
+              <button
+                onClick={() => scrollToUserMessage(-1)}
+                aria-label="scrollToPrevUser"
+                onMouseEnter={(e) => {
+                  setScrollTooltip("prevUser");
+                  e.currentTarget.style.background = "var(--bg-hover)";
+                  e.currentTarget.style.color = "var(--text)";
+                }}
+                onMouseLeave={(e) => {
+                  setScrollTooltip(null);
+                  e.currentTarget.style.background = "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
+                  e.currentTarget.style.color = "var(--text-muted)";
+                }}
+                style={{
+                  pointerEvents: "auto",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 34,
+                  height: 34,
+                  borderRadius: "50%",
+                  border: "1px solid var(--border)",
+                  background: "color-mix(in srgb, var(--bg-panel) 92%, transparent)",
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                  boxShadow: "0 2px 8px rgba(15,23,42,0.18)",
+                  transition: "color 0.12s, background 0.12s",
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="5" r="1.6" />
+                  <path d="M12 8v6" />
+                  <path d="M8 13h8" />
+                </svg>
+              </button>
+            )}
+            {!scrollAnchors.atBottom && (
+              <button
+                onClick={() => scrollToUserMessage(1)}
+                aria-label="scrollToNextUser"
+                onMouseEnter={(e) => {
+                  setScrollTooltip("nextUser");
+                  e.currentTarget.style.background = "var(--bg-hover)";
+                  e.currentTarget.style.color = "var(--text)";
+                }}
+                onMouseLeave={(e) => {
+                  setScrollTooltip(null);
+                  e.currentTarget.style.background = "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
+                  e.currentTarget.style.color = "var(--text-muted)";
+                }}
+                style={{
+                  pointerEvents: "auto",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 34,
+                  height: 34,
+                  borderRadius: "50%",
+                  border: "1px solid var(--border)",
+                  background: "color-mix(in srgb, var(--bg-panel) 92%, transparent)",
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                  boxShadow: "0 2px 8px rgba(15,23,42,0.18)",
+                  transition: "color 0.12s, background 0.12s",
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="19" r="1.6" />
+                  <path d="M12 16v-6" />
+                  <path d="M8 11h8" />
+                </svg>
+              </button>
+            )}
             {!scrollAnchors.atBottom && (
               <button
                 onClick={scrollToLatest}
@@ -933,7 +1056,10 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 // Show on the left side of the buttons, toward the message
                 // column, instead of the viewport edge.
                 right: "calc(100% + 10px)",
-                top: scrollTooltip === "earliest" ? 17 : (scrollTooltip === "latest" && !scrollAnchors.atTop ? 17 + 42 : 17),
+                top: scrollTooltip === "earliest" ? 17
+                  : scrollTooltip === "prevUser" ? 17 + 42
+                  : scrollTooltip === "nextUser" ? 17 + 84
+                  : 17 + 126,
                 whiteSpace: "nowrap",
                 fontSize: 12,
                 color: "var(--text)",
@@ -945,7 +1071,10 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                 pointerEvents: "none",
                 zIndex: 31,
               }}>
-                {scrollTooltip === "earliest" ? t("chat.scrollToEarliest") : t("chat.scrollToLatest")}
+                {scrollTooltip === "earliest" ? t("chat.scrollToEarliest")
+                  : scrollTooltip === "prevUser" ? t("chat.scrollToPrevUser")
+                  : scrollTooltip === "nextUser" ? t("chat.scrollToNextUser")
+                  : t("chat.scrollToLatest")}
               </div>
             )}
           </div>
