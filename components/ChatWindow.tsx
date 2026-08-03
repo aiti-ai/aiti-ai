@@ -260,6 +260,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   const [scrollAnchors, setScrollAnchors] = useState<{ atTop: boolean; atBottom: boolean }>({ atTop: true, atBottom: true });
   const [scrollActive, setScrollActive] = useState(false);
   const [scrollBtnsHovered, setScrollBtnsHovered] = useState(false);
+  const [scrollTooltip, setScrollTooltip] = useState<"earliest" | "latest" | null>(null);
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleScrollAnchorChange = useCallback(() => {
     const c = scrollContainerRef.current;
@@ -809,7 +810,12 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
         {showScrollButtons && (
           <div style={{
             position: "absolute",
-            right: isMobile ? 12 : CHAT_MINIMAP_WIDTH + 12,
+            // Align to the right edge of the centered message column (820px)
+            // instead of the viewport edge, so the buttons (and tooltips)
+            // stay close to the content on large screens.
+            right: isMobile
+              ? 12
+              : `max(${CHAT_MINIMAP_WIDTH + 12}px, calc((100% - 820px) / 2 - 12px))`,
             bottom: 12,
             display: "flex",
             flexDirection: "column",
@@ -823,8 +829,17 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             {!scrollAnchors.atTop && (
               <button
                 onClick={scrollToEarliest}
-                title={t("chat.scrollToEarliest")}
                 aria-label="scrollToEarliest"
+                onMouseEnter={(e) => {
+                  setScrollTooltip("earliest");
+                  e.currentTarget.style.background = "var(--bg-hover)";
+                  e.currentTarget.style.color = "var(--text)";
+                }}
+                onMouseLeave={(e) => {
+                  setScrollTooltip(null);
+                  e.currentTarget.style.background = "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
+                  e.currentTarget.style.color = "var(--text-muted)";
+                }}
                 style={{
                   pointerEvents: "auto",
                   display: "flex",
@@ -840,14 +855,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                   boxShadow: "0 2px 8px rgba(15,23,42,0.18)",
                   transition: "color 0.12s, background 0.12s",
                 }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="18 15 12 9 6 15" />
@@ -857,8 +864,15 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             {!scrollAnchors.atBottom && (
               <button
                 onClick={scrollToLatest}
-                title={t("chat.scrollToLatest")}
                 aria-label="scrollToLatest"
+                onMouseEnter={(e) => {
+                  setScrollTooltip("latest");
+                  e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 22%, var(--bg-panel))";
+                }}
+                onMouseLeave={(e) => {
+                  setScrollTooltip(null);
+                  e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 14%, var(--bg-panel))";
+                }}
                 style={{
                   pointerEvents: "auto",
                   display: "flex",
@@ -874,17 +888,32 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
                   boxShadow: "0 2px 8px rgba(15,23,42,0.22)",
                   transition: "color 0.12s, background 0.12s",
                 }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 22%, var(--bg-panel))";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 14%, var(--bg-panel))";
-                }}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="6 9 12 15 18 9" />
                 </svg>
               </button>
+            )}
+            {scrollTooltip && (
+              <div style={{
+                position: "absolute",
+                // Show on the left side of the buttons, toward the message
+                // column, instead of the viewport edge.
+                right: "calc(100% + 10px)",
+                top: scrollTooltip === "earliest" ? 17 : (scrollTooltip === "latest" && !scrollAnchors.atTop ? 17 + 42 : 17),
+                whiteSpace: "nowrap",
+                fontSize: 12,
+                color: "var(--text)",
+                background: "color-mix(in srgb, var(--bg-panel) 96%, transparent)",
+                border: "1px solid var(--border)",
+                borderRadius: 6,
+                padding: "4px 8px",
+                boxShadow: "0 2px 10px rgba(15,23,42,0.25)",
+                pointerEvents: "none",
+                zIndex: 31,
+              }}>
+                {scrollTooltip === "earliest" ? t("chat.scrollToEarliest") : t("chat.scrollToLatest")}
+              </div>
             )}
           </div>
         )}
