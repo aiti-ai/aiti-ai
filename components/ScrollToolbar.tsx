@@ -82,11 +82,12 @@ export function ScrollToolbar({
   const followToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Per-page-session hint counters (a refresh resets them, i.e. the refs
   // start at 0 again on a fresh page load):
-  // - toolbarCycleCountRef: toolbar show → hide cycles. The 'long-press to
-  //   follow' tooltip shows for the first 3 cycles, then stops.
+  // - tooltipShowCountRef: how many times a toolbar tooltip has actually
+  //   appeared. Each button tooltip shows for the first 3 shows total, then
+  //   stops obstructing the view.
   // - followToastCountRef: how many times the 'following on' toast appeared
   //   (max 3 per page session).
-  const toolbarCycleCountRef = useRef(0);
+  const tooltipShowCountRef = useRef(0);
   const followToastCountRef = useRef(0);
   const [followStreaming, setFollowStreaming] = useState(false);
   const updateFollowStreaming = useCallback((v: boolean) => {
@@ -194,19 +195,6 @@ export function ScrollToolbar({
   // mouseleave never arrives, so scrollBtnsHovered would stay true forever and
   // the buttons would never auto-hide. On mobile ignore hover entirely.
   const showScrollButtons = (!scrollAnchors.atTop || !scrollAnchors.atBottom) && (scrollActive || (!isMobile && scrollBtnsHovered));
-
-  // Count each show → hide cycle of the toolbar: the 'long-press to follow'
-  // tooltip (after the first long-press) and the toast stop after 3 cycles /
-  // 3 shows per page session.
-  const toolbarWasShownRef = useRef(false);
-  useEffect(() => {
-    if (showScrollButtons && !toolbarWasShownRef.current) {
-      toolbarWasShownRef.current = true;
-      toolbarCycleCountRef.current += 1;
-    } else if (!showScrollButtons) {
-      toolbarWasShownRef.current = false;
-    }
-  }, [showScrollButtons]);
 
   const scrollToEarliest = useCallback(() => {
     updateFollowStreaming(false);
@@ -380,7 +368,10 @@ export function ScrollToolbar({
               onClick={scrollToEarliest}
               aria-label="scrollToEarliest"
               onMouseEnter={(e) => {
-                if (toolbarCycleCountRef.current <= 3) setScrollTooltip("earliest");
+                if (tooltipShowCountRef.current < 3) {
+                  tooltipShowCountRef.current += 1;
+                  setScrollTooltip("earliest");
+                }
                 e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = "var(--text)";
               }}
@@ -429,7 +420,10 @@ export function ScrollToolbar({
               }}
               aria-label="scrollToPrevUser"
               onMouseEnter={(e) => {
-                if (toolbarCycleCountRef.current <= 3) setScrollTooltip("prevUser");
+                if (tooltipShowCountRef.current < 3) {
+                  tooltipShowCountRef.current += 1;
+                  setScrollTooltip("prevUser");
+                }
                 e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = "var(--text)";
               }}
@@ -476,7 +470,10 @@ export function ScrollToolbar({
               }}
               aria-label="scrollToNextUser"
               onMouseEnter={(e) => {
-                if (toolbarCycleCountRef.current <= 3) setScrollTooltip("nextUser");
+                if (tooltipShowCountRef.current < 3) {
+                  tooltipShowCountRef.current += 1;
+                  setScrollTooltip("nextUser");
+                }
                 e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = "var(--text)";
               }}
@@ -586,7 +583,10 @@ export function ScrollToolbar({
                   // The "long-press to follow" hint shows for the first 3
                   // toolbar show → hide cycles of this page session, then
                   // stops obstructing the view (refresh resets it).
-                  if (toolbarCycleCountRef.current <= 3) setScrollTooltip("latest");
+                  if (tooltipShowCountRef.current < 3) {
+                    tooltipShowCountRef.current += 1;
+                    setScrollTooltip("latest");
+                  }
                   e.currentTarget.style.background = followStreaming
                     ? "color-mix(in srgb, var(--accent) 26%, var(--bg-panel))"
                     : "var(--bg-hover)";
