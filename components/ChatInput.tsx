@@ -975,9 +975,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!el || !ta) return;
     const measure = () => {
       const rowWidth = el.clientWidth;
-      // Keep the textarea at least ~9ch even with both buttons expanded.
-      const textareaMin = ta.getBoundingClientRect().height > 30 ? 0 : 140;
-      setQueueButtonsCollapsed(rowWidth < 520 || (ta.scrollWidth > ta.clientWidth + 4 && rowWidth < 720));
+      // Collapse button labels only when the text itself is overflowing the
+      // textarea and the row is tight — not just because the viewport is
+      // narrow. Otherwise small screens keep full labels by wrapping the
+      // buttons onto their own row (flex-wrap) instead of hiding text.
+      setQueueButtonsCollapsed(ta.scrollWidth > ta.clientWidth + 4 && rowWidth < 720);
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -2493,8 +2495,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             }
             rows={1}
             style={{
-              flex: "1 1 auto",
-              minWidth: 80,
+              flex: "1 1 0",
+              minWidth: 0,
               background: "none",
               border: "none",
               outline: "none",
