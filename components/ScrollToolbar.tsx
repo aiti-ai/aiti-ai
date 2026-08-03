@@ -380,7 +380,7 @@ export function ScrollToolbar({
               onClick={scrollToEarliest}
               aria-label="scrollToEarliest"
               onMouseEnter={(e) => {
-                setScrollTooltip("earliest");
+                if (toolbarCycleCountRef.current <= 3) setScrollTooltip("earliest");
                 e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = "var(--text)";
               }}
@@ -429,7 +429,7 @@ export function ScrollToolbar({
               }}
               aria-label="scrollToPrevUser"
               onMouseEnter={(e) => {
-                setScrollTooltip("prevUser");
+                if (toolbarCycleCountRef.current <= 3) setScrollTooltip("prevUser");
                 e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = "var(--text)";
               }}
@@ -476,7 +476,7 @@ export function ScrollToolbar({
               }}
               aria-label="scrollToNextUser"
               onMouseEnter={(e) => {
-                setScrollTooltip("nextUser");
+                if (toolbarCycleCountRef.current <= 3) setScrollTooltip("nextUser");
                 e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = "var(--text)";
               }}
