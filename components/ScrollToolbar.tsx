@@ -76,6 +76,21 @@ export function ScrollToolbar({
   const [scrollActive, setScrollActive] = useState(false);
   const [scrollBtnsHovered, setScrollBtnsHovered] = useState(false);
   const [scrollTooltip, setScrollTooltip] = useState<"earliest" | "prevUser" | "nextUser" | "latest" | null>(null);
+  // Tooltips auto-dismiss after ~1.5s. On touch there is no reliable
+  // pointer-leave, so without this a tapped button's tooltip would stay
+  // pinned to the toolbar forever; on mouse it also avoids waiting for the
+  // cursor to leave the button.
+  const tooltipTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showScrollTooltip = useCallback((kind: "earliest" | "prevUser" | "nextUser" | "latest") => {
+    if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current);
+    setScrollTooltip(kind);
+    tooltipTimerRef.current = setTimeout(() => setScrollTooltip(null), 1500);
+  }, []);
+  const hideScrollTooltip = useCallback(() => {
+    if (tooltipTimerRef.current) clearTimeout(tooltipTimerRef.current);
+    tooltipTimerRef.current = null;
+    setScrollTooltip(null);
+  }, []);
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Brief "auto-scroll follow on" toast after a successful long-press.
   const [followToast, setFollowToast] = useState(false);
@@ -370,13 +385,13 @@ export function ScrollToolbar({
               onMouseEnter={(e) => {
                 if (tooltipShowCountRef.current < 3) {
                   tooltipShowCountRef.current += 1;
-                  setScrollTooltip("earliest");
+                  showScrollTooltip("earliest");
                 }
                 e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = "var(--text)";
               }}
               onMouseLeave={(e) => {
-                setScrollTooltip(null);
+                hideScrollTooltip();
                 e.currentTarget.style.background = "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
                 e.currentTarget.style.color = "var(--text-muted)";
               }}
@@ -422,13 +437,13 @@ export function ScrollToolbar({
               onMouseEnter={(e) => {
                 if (tooltipShowCountRef.current < 3) {
                   tooltipShowCountRef.current += 1;
-                  setScrollTooltip("prevUser");
+                  showScrollTooltip("prevUser");
                 }
                 e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = "var(--text)";
               }}
               onMouseLeave={(e) => {
-                setScrollTooltip(null);
+                hideScrollTooltip();
                 e.currentTarget.style.background = "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
                 e.currentTarget.style.color = "var(--text-muted)";
               }}
@@ -472,13 +487,13 @@ export function ScrollToolbar({
               onMouseEnter={(e) => {
                 if (tooltipShowCountRef.current < 3) {
                   tooltipShowCountRef.current += 1;
-                  setScrollTooltip("nextUser");
+                  showScrollTooltip("nextUser");
                 }
                 e.currentTarget.style.background = "var(--bg-hover)";
                 e.currentTarget.style.color = "var(--text)";
               }}
               onMouseLeave={(e) => {
-                setScrollTooltip(null);
+                hideScrollTooltip();
                 e.currentTarget.style.background = "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
                 e.currentTarget.style.color = "var(--text-muted)";
               }}
@@ -585,7 +600,7 @@ export function ScrollToolbar({
                   // stops obstructing the view (refresh resets it).
                   if (tooltipShowCountRef.current < 3) {
                     tooltipShowCountRef.current += 1;
-                    setScrollTooltip("latest");
+                    showScrollTooltip("latest");
                   }
                   e.currentTarget.style.background = followStreaming
                     ? "color-mix(in srgb, var(--accent) 26%, var(--bg-panel))"
@@ -593,7 +608,7 @@ export function ScrollToolbar({
                   e.currentTarget.style.color = followStreaming ? "var(--accent)" : "var(--text)";
                 }}
                 onMouseLeave={(e) => {
-                  setScrollTooltip(null);
+                  hideScrollTooltip();
                   e.currentTarget.style.background = followStreaming
                     ? "color-mix(in srgb, var(--accent) 18%, var(--bg-panel))"
                     : "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
