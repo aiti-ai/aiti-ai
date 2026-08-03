@@ -18,11 +18,6 @@ const nextConfig: NextConfig = {
   // at https://host/dev/. Client code reads NEXT_PUBLIC_BASE_PATH via
   // lib/base-path.ts. Empty (default) = root deployment.
   basePath: basePath || undefined,
-  // Keep the trailing slash in sub-path deployments so `/dev/` is canonical:
-  // Next redirects `/dev/` → `/dev` by default, which breaks nginx
-  // prefix-matching on `location /dev/` and causes a redirect loop. Only
-  // enabled when a basePath is configured — root deployments are unchanged.
-  trailingSlash: basePath ? true : false,
   // Dev server runs against its own build directory (.next-dev) so it can
   // coexist with the production `next start` (.next) on a different port.
   distDir: process.env.PI_WEB_DEV_DIST ? ".next-dev" : ".next",
