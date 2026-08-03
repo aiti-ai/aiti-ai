@@ -998,15 +998,30 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!el || !ta) return;
     const measure = () => {
       const rowWidth = el.clientWidth;
-      // Collapse button labels only when the text itself is overflowing the
-      // textarea and the row is tight — not just because the viewport is
-      // narrow. Otherwise small screens keep full labels by wrapping the
-      // buttons onto their own row (flex-wrap) instead of hiding text.
-      setQueueButtonsCollapsed(ta.scrollWidth > ta.clientWidth + 4 && rowWidth < 720);
+      // Measure on a detached clone at the FULL row width so results do not
+      // depend on the textarea's current width — otherwise toggling flex-basis
+      // changes the width, which changes scrollHeight/scrollWidth, which can
+      // flip the flags forever (page jumping, especially on narrow screens
+      // with long unbroken strings).
+      const clone = ta.cloneNode(true) as HTMLTextAreaElement;
+      clone.style.position = "absolute";
+      clone.style.visibility = "hidden";
+      clone.style.width = `${el.clientWidth - 2}px`;
+      clone.style.height = "auto";
+      clone.style.minHeight = "0";
+      document.body.appendChild(clone);
+      const fullWidthHeight = clone.scrollHeight;
+      const fullWidthScrollW = clone.scrollWidth;
+      const fullWidthClientW = clone.clientWidth;
+      clone.remove();
+      // Collapse button labels only when the text itself overflows the
+      // textarea at full width AND the row is tight (small screens keep full
+      // labels by wrapping the buttons instead of hiding text).
+      setQueueButtonsCollapsed(fullWidthScrollW > fullWidthClientW + 4 && rowWidth < 720);
       // Buttons wrap below only once the textarea grows past a single line
       // (multi-line input), so the default layout stays one row: textarea
       // filling the space + buttons on the right.
-      setButtonsWrapped(ta.scrollHeight > 30);
+      setButtonsWrapped(fullWidthHeight > 30);
     };
     measure();
     const ro = new ResizeObserver(measure);
