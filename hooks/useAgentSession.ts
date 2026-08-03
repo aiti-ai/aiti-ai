@@ -308,6 +308,7 @@ export interface ChatInputHandle {
   insertIfEmpty: (content: string) => void;
   prependText: (text: string) => void;
   addImages: (files: File[]) => void;
+  expandQueue?: () => void;
 }
 
 export interface AttachedImage {
@@ -1773,17 +1774,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setPendingRecovery(remaining);
       // Re-queued entries may not be reflected locally if the queue_update SSE
       // was missed (or the SSE connection was not yet up) — refresh the live
-      // queue from state so the restored messages show up immediately.
+      // queue from state so the restored messages show up immediately, and
+      // auto-expand the queue panel (it collapses automatically when there
+      // are >3 entries).
       void (async () => {
         try {
           const stateRes = await fetch(`/api/agent/${encodeURIComponent(sid)}`);
           if (!stateRes.ok) return;
-          const agentState = await stateRes.json() as { state?: AgentStateResponse };
+          const agentState = await stateRes.json() as { running?: boolean; state?: AgentStateResponse };
           if (agentState.state?.queuedMessages !== undefined) {
             setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
           }
         } catch { /* non-critical */ }
       })();
+      opts.chatInputRef?.current?.expandQueue?.();
       if (continueRun && keep.length > 0) {
         // The run was started server-side, possibly before any SSE was
         // connected (e.g. right after a restart) — pick it up so streaming,
@@ -1828,7 +1832,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       addNotice({ type: "error", message: "Failed to resolve queued message recovery" });
       return pendingRecovery;
     }
-  }, [pendingRecovery, addNotice, connectEvents, waitForPromptSettlement, loadSession]);
+  }, [pendingRecovery, addNotice, connectEvents, waitForPromptSettlement, loadSession, normalizeQueuedMessages, opts.chatInputRef]);
 
   /** Fetch the full live queue + recovery entries (with images) for export. */
   const exportQueueData = useCallback(async (): Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null> => {
