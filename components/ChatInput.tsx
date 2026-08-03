@@ -36,6 +36,8 @@ interface Props {
   onAbort: () => void;
   onSteer?: (message: string, images?: AttachedImage[]) => void;
   onFollowUp?: (message: string, images?: AttachedImage[]) => void;
+  /** Send a queued follow-up as a steer (interrupt now). Available even when idle. */
+  onQueueSteerSend?: (message: string) => void;
   onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => void;
   isStreaming: boolean;
   model?: { provider: string; modelId: string } | null;
@@ -239,7 +241,7 @@ function revokeImagePreview(image: AttachedImage): void {
   }
 }
 
-function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove, onDragStart, onDragOver, onDrop, dragging, onTouchMoveTo }: {
+function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove, onSteerSend, onDragStart, onDragOver, onDrop, dragging, onTouchMoveTo }: {
   kind: "steer" | "follow-up";
   text: string;
   index: number;
@@ -247,6 +249,8 @@ function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove
   onMove?: (dir: -1 | 1) => void;
   onRecall?: () => void;
   onRemove?: () => void;
+  /** Follow-up rows: dispatch this message as a steer (interrupt now). */
+  onSteerSend?: () => void;
   onDragStart?: (index: number) => void;
   onDragOver?: (index: number) => void;
   onDrop?: (targetIndex: number) => void;
@@ -422,6 +426,24 @@ function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove
           </button>
         </span>
       )}
+      {onSteerSend && kind === "follow-up" && (
+        <button
+          title={t("chat.queueSteerSend")}
+          aria-label="queueSteerSend"
+          onClick={onSteerSend}
+          style={{ ...iconBtn, color: "rgba(180,130,0,1)" }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "rgba(234,179,8,0.12)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12h14" /><polyline points="12 5 19 12 12 19" />
+          </svg>
+        </button>
+      )}
       {onRecall && (
         <button
           title={t("chat.queueRecallOne")}
@@ -590,7 +612,7 @@ export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
-  onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange,
+  onSend, onAbort, onSteer, onFollowUp, onQueueSteerSend, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
@@ -1927,6 +1949,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 onMove={(dir) => void handleMoveQueue("followUp", i, dir)}
                 onRecall={() => void handleRecallOne("followUp", i)}
                 onRemove={() => void handleRemoveQueueItem("followUp", i)}
+                onSteerSend={() => { onQueueSteerSend?.(text); void handleRemoveQueueItem("followUp", i); }}
                 onDragStart={(idx) => handleDragStart("followUp", idx)}
                 onDragOver={(idx) => handleDragOver("followUp", idx)}
                 onDrop={(idx) => handleDrop("followUp", idx)}
