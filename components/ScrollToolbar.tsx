@@ -37,6 +37,25 @@ export function ScrollToolbar({
 }: ScrollToolbarProps) {
   const { t } = useI18n();
 
+  // Draggable toolbar position. Default: bottom-right (aligned to the message
+  // column). Stored in localStorage so the user's hand preference survives
+  // reloads. Coordinates are viewport-relative (left/top of the button
+  // column).
+  const DEFAULT_POS = { align: "right" as "left" | "right", y: 12 };
+  const [pos, setPos] = useState<{ align: "left" | "right"; y: number }>(() => {
+    try {
+      const raw = localStorage.getItem("pi-scroll-toolbar-pos");
+      if (raw) {
+        const parsed = JSON.parse(raw) as { align?: "left" | "right"; y: number };
+        if (typeof parsed.y === "number" && (parsed.align === "left" || parsed.align === "right")) return { align: parsed.align, y: parsed.y };
+      }
+    } catch { /* ignore */ }
+    return DEFAULT_POS;
+  });
+  const dragRef = useRef<{ startX: number; startY: number; startY0: number; moved: boolean; pointerId: number } | null>(null);
+  const toolbarRef = useRef<HTMLDivElement | null>(null);
+  const dragModeRef = useRef(false);
+
   // Track whether the message list is at the top / bottom so the buttons only
   // appear when there is something to scroll to. Buttons show while scrolling
   // and hide shortly after it stops; hovering keeps them visible.
@@ -61,6 +80,55 @@ export function ScrollToolbar({
     if (longPressTimerRef.current) { clearTimeout(longPressTimerRef.current); longPressTimerRef.current = null; }
   }, []);
 
+  // --- Drag-to-reposition the whole toolbar (long-press + move) ---
+  // Horizontal position snaps to LEFT or RIGHT edge only (the user chooses
+  // which side by dragging across the screen midpoint). Vertical position is
+  // free. Both are persisted; on reload the horizontal edge is recomputed
+  // against the current viewport and the saved vertical offset is applied.
+  const onToolbarPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return;
+    dragRef.current = {
+      startX: e.clientX,
+      startY: e.clientY,
+      startY0: pos.y,
+      moved: false,
+      pointerId: e.pointerId,
+    };
+    dragModeRef.current = true;
+  }, [pos.y]);
+
+  const onToolbarPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current;
+    if (!drag || e.pointerId !== drag.pointerId) return;
+    const dx = e.clientX - drag.startX;
+    const dy = e.clientY - drag.startY;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 6) return;
+    drag.moved = true;
+    // Cancel any long-press follow toggle started on the latest button.
+    clearLongPress();
+    const el = toolbarRef.current;
+    if (!el) return;
+    const maxY = Math.max(8, window.innerHeight - el.offsetHeight - 8);
+    const ny = Math.min(Math.max(8, drag.startY0 + dy), maxY);
+    // Snap horizontal to the nearer edge based on the pointer's side of the
+    // screen midpoint.
+    const nx = e.clientX < window.innerWidth / 2 ? "left" : "right";
+    setPos({ align: nx, y: ny });
+  }, [clearLongPress]);
+
+  const onToolbarPointerUp = useCallback(() => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    const wasDrag = drag.moved;
+    dragRef.current = null;
+    dragModeRef.current = false;
+    if (wasDrag) {
+      try {
+        localStorage.setItem("pi-scroll-toolbar-pos", JSON.stringify({ align: pos.align, y: pos.y }));
+      } catch { /* ignore */ }
+    }
+  }, [pos]);
+
   const handleScrollAnchorChange = useCallback(() => {
     const c = scrollContainerRef.current;
     if (!c) return;
@@ -69,7 +137,7 @@ export function ScrollToolbar({
     setScrollAnchors((prev) => (prev.atTop === atTop && prev.atBottom === atBottom ? prev : { atTop, atBottom }));
     setScrollActive(true);
     if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
-    scrollIdleTimerRef.current = setTimeout(() => setScrollActive(false), 2000);
+    scrollIdleTimerRef.current = setTimeout(() => setScrollActive(false), 5000);
   }, [scrollContainerRef]);
 
   // Bind the scroll-position tracking to the container so ChatWindow does
@@ -126,6 +194,9 @@ export function ScrollToolbar({
    * Buttons sit between "earliest" and "latest" and jump from question to
    * question, skipping assistant/tool content.
    */
+  // Latest reference so the lazy-load retry can re-invoke navigation.
+  const scrollToUserMessageRef = useRef<((dir: -1 | 1) => void) | null>(null);
+  const navRetryCountRef = useRef(0);
   const scrollToUserMessage = useCallback((dir: -1 | 1) => {
     updateFollowStreaming(false);
     const c = scrollContainerRef.current;
@@ -134,10 +205,11 @@ export function ScrollToolbar({
     if (!refs || refs.length === 0) return;
     // Lazy pagination: navigation must be able to reach ANY user question, so
     // load the whole list once before jumping (refs for unrendered messages
-    // are null and would otherwise corrupt the anchor search). The follow-up
-    // click then works on the fully rendered list.
+    // are null and would otherwise corrupt the anchor search). Retry the jump
+    // shortly after the list renders so a single click works.
     if (setVisibleCount && visibleMessages.length < messagesLength) {
       setVisibleCount((current) => Math.max(current, messagesLength * 2));
+      setTimeout(() => scrollToUserMessageRef.current?.(dir), 250);
       return;
     }
     let anchor = -1;
@@ -193,24 +265,34 @@ export function ScrollToolbar({
     }
     // No earlier user message found within the loaded window — stop quietly.
   }, [messageRefs, visibleMessages, messagesLength, scrollContainerRef, setVisibleCount, updateFollowStreaming]);
+  scrollToUserMessageRef.current = scrollToUserMessage;
 
   return (
     <>
       {showScrollButtons && (
-        <div style={{
+        <div
+          ref={toolbarRef}
+          onPointerDown={onToolbarPointerDown}
+          onPointerMove={onToolbarPointerMove}
+          onPointerUp={onToolbarPointerUp}
+          onPointerCancel={onToolbarPointerUp}
+          style={{
           position: "absolute",
-          // Align to the right edge of the centered message column (820px)
-          // instead of the viewport edge, so the buttons (and tooltips)
-          // stay close to the content on large screens.
-          right: isMobile
+          // Horizontal snaps to the left or right edge (dragged choice);
+          // vertical uses the saved offset. Right edge aligns to the message
+          // column on large screens.
+          left: pos.align === "left" ? 12 : undefined,
+          right: pos.align === "right" ? (isMobile
             ? 12
-            : `max(${CHAT_MINIMAP_WIDTH + 12}px, calc((100% - 820px) / 2 - 12px))`,
-          bottom: 12,
+            : `max(${CHAT_MINIMAP_WIDTH + 12}px, calc((100% - 820px) / 2 - 12px))`)
+            : undefined,
+          top: pos.y,
           display: "flex",
           flexDirection: "column",
           gap: 10,
           zIndex: 30,
-          pointerEvents: "none",
+          pointerEvents: "auto",
+          cursor: dragModeRef.current ? "grabbing" : "grab",
         }}
           onMouseEnter={() => setScrollBtnsHovered(true)}
           onMouseLeave={() => setScrollBtnsHovered(false)}
