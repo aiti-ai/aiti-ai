@@ -293,6 +293,15 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   const scrollToLatest = useCallback(() => {
     const c = scrollContainerRef.current;
     if (!c) return;
+    // Scroll the last message into view at the bottom. We must not use
+    // scrollHeight here: during an agent run there is a viewport-tall spacer
+    // after the messages (scroll-lock design), so scrollHeight would land on
+    // a blank screen. Anchor on the end sentinel element instead.
+    const end = messagesEndRef.current;
+    if (end) {
+      end.scrollIntoView({ block: "end", behavior: "smooth" });
+      return;
+    }
     c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
   }, []);
 
