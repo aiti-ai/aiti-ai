@@ -2043,11 +2043,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const container = scrollContainerRef.current;
     const end = messagesEndRef.current;
     if (!container || !end) return;
-    // The end sentinel sits BELOW the agent-running spacer (height =
-    // clientHeight). scrollIntoView on the sentinel would put that blank
-    // spacer in the viewport — hence the blank screen while follow-streaming
-    // during a run. Back off by the spacer + viewport height so the LAST
-    // MESSAGE lands at the viewport bottom instead.
+    // The end sentinel sits BELOW the agent-running spacer (96px).
+    // scrollIntoView on the sentinel would put that blank spacer in the
+    // viewport — hence the blank screen while follow-streaming during a run.
+    // Back off by the spacer + viewport height so the LAST MESSAGE lands
+    // ~40px above the viewport bottom.
     const endInContainer = end.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
     // Short spacer (96px) below the last message while the agent runs.
     const spacerH = agentRunningRef.current ? 96 : 0;
@@ -2172,7 +2172,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [messages.length, loading, handleScrollPositionChange, markUserScrollIntent]);
 
   // Smart follow: only scroll when the last message is about to leave the
-  // viewport (100px keep-out below), so a visible last message does not cause
+  // viewport (40px keep-out below), so a visible last message does not cause
   // constant jumping. Called on message-count changes AND on streaming chunk
   // updates (streaming grows the visible message without changing the count).
   const smartFollowCheck = useCallback(() => {
@@ -2184,20 +2184,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const endTop = end.getBoundingClientRect().top - container.getBoundingClientRect().top;
     const spacerH = agentRunningRef.current ? 96 : 0;
     const lastMsgBottom = endTop - 28 - spacerH;
-    // Half-viewport step-follow: when new content pushes the last message past
-    // the small keep-out zone, step so the last message lands at ~55% of the
-    // viewport height. The growing output refills the lower half before the
-    // next step — gentler than a full jump-to-bottom every message, and the
-    // output is always visible.
+    // Step-follow: when new content pushes the last message past the small
+    // keep-out zone, step so the last message lands at the top 1/3 of the
+    // viewport. The bottom 2/3 refills as the output grows — gentler than a
+    // full jump-to-bottom every message, and the output is always visible.
     if (lastMsgBottom > container.clientHeight - 40) {
       const lastMsgAbs =
         end.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 28 - spacerH;
       // Land the last message at the top 1/3 of the viewport: more room below
       // for the output to grow, so steps are less frequent and the agent has
-      // longer to stream before the next jump. The bottom 2/3 refills as the
-      // output grows.
+      // longer to stream before the next jump.
       const target = Math.max(0, lastMsgAbs - container.clientHeight / 3);
-      ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
+      // Longer programmatic-scroll grace than 700ms: the step covers 2/3 of
+      // the viewport and its smooth animation can exceed the default window,
+      // which would mark the tail of the animation as a manual scroll and
+      // pause follow for USER_SCROLL_INTENT_MS.
+      ignoreProgrammaticScrollUntilRef.current = Date.now() + 1200;
       container.scrollTo({ top: target, behavior: "smooth" });
     }
   }, [opts.followStreamingRef, scrollContainerRef, messagesEndRef]);
