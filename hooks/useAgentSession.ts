@@ -1801,11 +1801,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               setAgentRunning(true);
               setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
               dispatch({ type: "start" });
-              void connectEvents(sid);
+              // Only (re)connect when there is no live SSE for this session:
+              // reconnecting an already-open stream would drop the events
+              // emitted while the restored queue is being processed, which
+              // delayed the restored messages appearing in the chat.
+              if (!eventSourceRef.current || eventSourceSessionIdRef.current !== sid) {
+                void connectEvents(sid);
+              }
               if (!st.isStreaming && st.isPromptRunning) {
                 void waitForPromptSettlement(sid);
               }
             }
+          } catch { /* non-critical */ }
+          // Refresh the message list shortly after the run starts so the
+          // restored messages show up in the chat even if the SSE stream was
+          // not delivering events reliably.
+          try {
+            await new Promise((r) => setTimeout(r, 800));
+            if (sessionIdRef.current === sid) await loadSession(sid);
           } catch { /* non-critical */ }
         })();
       }
@@ -1815,7 +1828,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       addNotice({ type: "error", message: "Failed to resolve queued message recovery" });
       return pendingRecovery;
     }
-  }, [pendingRecovery, addNotice, connectEvents, waitForPromptSettlement]);
+  }, [pendingRecovery, addNotice, connectEvents, waitForPromptSettlement, loadSession]);
 
   /** Fetch the full live queue + recovery entries (with images) for export. */
   const exportQueueData = useCallback(async (): Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null> => {
