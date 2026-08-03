@@ -768,6 +768,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // steer/followUp buttons collapse to icons so they don't push the textarea
   // or wrap awkwardly. Measured from the input row container.
   const [queueButtonsCollapsed, setQueueButtonsCollapsed] = useState(false);
+  const [buttonsWrapped, setButtonsWrapped] = useState(false);
   const inputRowRef = useRef<HTMLDivElement>(null);
   const handleRecallOne = useCallback(async (kind: "steer" | "followUp", index: number) => {
     if (!onRecallOne) return;
@@ -1002,6 +1003,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       // narrow. Otherwise small screens keep full labels by wrapping the
       // buttons onto their own row (flex-wrap) instead of hiding text.
       setQueueButtonsCollapsed(ta.scrollWidth > ta.clientWidth + 4 && rowWidth < 720);
+      // Buttons wrap below only once the textarea grows past a single line
+      // (multi-line input), so the default layout stays one row: textarea
+      // filling the space + buttons on the right.
+      setButtonsWrapped(ta.scrollHeight > 30);
     };
     measure();
     const ro = new ResizeObserver(measure);
@@ -2518,7 +2523,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             }
             rows={1}
             style={{
-              flex: "1 1 100%",
+              flex: buttonsWrapped ? "1 1 100%" : "1 1 0",
               minWidth: 0,
               background: "none",
               border: "none",
