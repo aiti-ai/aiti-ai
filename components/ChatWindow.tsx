@@ -251,6 +251,27 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     registerAbortHandler(sessionBusy ? handleAbort : null);
   }, [sessionBusy, handleAbort]);
 
+  // --- Scroll-to-earliest / scroll-to-latest floating buttons ---
+  // Track whether the message list is at the top / bottom so the buttons only
+  // appear when the corresponding direction is reachable (WeChat-style).
+  const SCROLL_ANCHOR_THRESHOLD = 80;
+  const [scrollAnchors, setScrollAnchors] = useState<{ atTop: boolean; atBottom: boolean }>({ atTop: true, atBottom: true });
+  const handleScrollAnchorChange = useCallback(() => {
+    const c = scrollContainerRef.current;
+    if (!c) return;
+    const atTop = c.scrollTop <= SCROLL_ANCHOR_THRESHOLD;
+    const atBottom = c.scrollHeight - c.scrollTop - c.clientHeight <= SCROLL_ANCHOR_THRESHOLD;
+    setScrollAnchors((prev) => (prev.atTop === atTop && prev.atBottom === atBottom ? prev : { atTop, atBottom }));
+  }, []);
+  const scrollToEarliest = useCallback(() => {
+    scrollContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+  const scrollToLatest = useCallback(() => {
+    const c = scrollContainerRef.current;
+    if (!c) return;
+    c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
+  }, []);
+
   // --- Lazy-load historical messages ---
   // Only render the last N messages initially. When the user scrolls to the
   // top, load another page while keeping the scroll position stable.
@@ -551,7 +572,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             <NoticeShelf notices={notices} floating align="right" />
           </div>
         </div>
-        <div ref={scrollContainerRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
+        <div ref={scrollContainerRef} onScroll={handleScrollAnchorChange} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
               <ExtensionWidgets widgets={aboveEditorWidgets} />
@@ -773,6 +794,85 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             </div>
           </div>
         </div>
+        {(!scrollAnchors.atTop || !scrollAnchors.atBottom) && (
+          <div style={{
+            position: "absolute",
+            right: isMobile ? 12 : CHAT_MINIMAP_WIDTH + 12,
+            bottom: 12,
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+            zIndex: 30,
+            pointerEvents: "none",
+          }}>
+            {!scrollAnchors.atTop && (
+              <button
+                onClick={scrollToEarliest}
+                title={t("chat.scrollToEarliest")}
+                aria-label="scrollToEarliest"
+                style={{
+                  pointerEvents: "auto",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 34,
+                  height: 34,
+                  borderRadius: "50%",
+                  border: "1px solid var(--border)",
+                  background: "color-mix(in srgb, var(--bg-panel) 92%, transparent)",
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                  boxShadow: "0 2px 8px rgba(15,23,42,0.18)",
+                  transition: "color 0.12s, background 0.12s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "var(--bg-hover)";
+                  e.currentTarget.style.color = "var(--text)";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
+                  e.currentTarget.style.color = "var(--text-muted)";
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="18 15 12 9 6 15" />
+                </svg>
+              </button>
+            )}
+            {!scrollAnchors.atBottom && (
+              <button
+                onClick={scrollToLatest}
+                title={t("chat.scrollToLatest")}
+                aria-label="scrollToLatest"
+                style={{
+                  pointerEvents: "auto",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  width: 34,
+                  height: 34,
+                  borderRadius: "50%",
+                  border: "1px solid color-mix(in srgb, var(--accent) 45%, var(--border))",
+                  background: "color-mix(in srgb, var(--accent) 14%, var(--bg-panel))",
+                  color: "var(--accent)",
+                  cursor: "pointer",
+                  boxShadow: "0 2px 8px rgba(15,23,42,0.22)",
+                  transition: "color 0.12s, background 0.12s",
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 22%, var(--bg-panel))";
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = "color-mix(in srgb, var(--accent) 14%, var(--bg-panel))";
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+            )}
+          </div>
+        )}
         {isMobile ? null : (
           <ChatMinimap
             messages={messages}

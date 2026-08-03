@@ -309,6 +309,8 @@ export const zhCNLocale: LocalePlugin = {
     "chat.commandCopy": "复制最后一条助手消息",
     "chat.compacted": "已压缩",
     "chat.tokensSaved": "节省 {saved}",
+    "chat.scrollToEarliest": "到最早消息",
+    "chat.scrollToLatest": "到最新消息",
     "i18n.close": "关闭",
     "i18n.copy": "复制",
     "i18n.copied": "已复制",

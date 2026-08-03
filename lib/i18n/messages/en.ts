@@ -309,6 +309,8 @@ export const enLocale: LocalePlugin = {
     "chat.commandCopy": "Copy the last assistant message",
     "chat.compacted": "Compacted",
     "chat.tokensSaved": "{saved} saved",
+    "chat.scrollToEarliest": "Jump to earliest message",
+    "chat.scrollToLatest": "Jump to latest message",
     "i18n.close": "Close",
     "i18n.copy": "Copy",
     "i18n.copied": "Copied",
