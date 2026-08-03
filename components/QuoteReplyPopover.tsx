@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
+import { apiUrl } from "@/lib/base-path";
+
 import type { CSSProperties, Ref } from "react";
 import { encodeFilePathForApi, getFileDirectory, joinFilePath } from "@/lib/file-paths";
 import type { ParsedSegment, QuoteOption } from "@/lib/quote-reply";
@@ -46,7 +48,7 @@ export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, c
         const abs = p.path.startsWith("/") ? p.path : (cwd ? joinFilePath(cwd, p.path) : p.path);
         try {
           const type = p.isDir ? "list" : "meta";
-          const res = await fetch(`/api/files/${encodeFilePathForApi(abs)}?type=${type}`);
+          const res = await fetch(apiUrl(`/api/files/${encodeFilePathForApi(abs)}?type=${type}`));
           return res.ok ? { path: abs, isDir: p.isDir } : null;
         } catch {
           return null;

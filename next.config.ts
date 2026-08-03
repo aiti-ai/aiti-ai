@@ -9,7 +9,20 @@ try {
   piVersion = (JSON.parse(readFileSync(piPkgPath, "utf8")) as { version: string }).version;
 } catch { /* package not found, use default */ }
 
+// Optional sub-path deployment, e.g. PI_WEB_BASE_PATH=/dev serves the app at
+// https://host/dev/. Empty string = root deployment.
+const basePath = (process.env.PI_WEB_BASE_PATH ?? "").replace(/\/+$/, "");
+
 const nextConfig: NextConfig = {
+  // Optional sub-path deployment, e.g. PI_WEB_BASE_PATH=/dev serves the app
+  // at https://host/dev/. Client code reads NEXT_PUBLIC_BASE_PATH via
+  // lib/base-path.ts. Empty (default) = root deployment.
+  basePath: basePath || undefined,
+  // Keep the trailing slash in sub-path deployments so `/dev/` is canonical:
+  // Next redirects `/dev/` → `/dev` by default, which breaks nginx
+  // prefix-matching on `location /dev/` and causes a redirect loop. Only
+  // enabled when a basePath is configured — root deployments are unchanged.
+  trailingSlash: basePath ? true : false,
   // Dev server runs against its own build directory (.next-dev) so it can
   // coexist with the production `next start` (.next) on a different port.
   distDir: process.env.PI_WEB_DEV_DIST ? ".next-dev" : ".next",
@@ -47,6 +60,7 @@ const nextConfig: NextConfig = {
   env: {
     NEXT_PUBLIC_APP_VERSION: version,
     NEXT_PUBLIC_PI_VERSION: piVersion,
+    NEXT_PUBLIC_BASE_PATH: basePath,
   },
 };
 

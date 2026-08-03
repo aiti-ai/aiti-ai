@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { apiUrl } from "@/lib/base-path";
+
 import type { QueueEntry } from "@/lib/queue-store";
 import { queueToMarkdown, queueToJson, downloadQueueExport } from "@/lib/queue-export";
 import {
@@ -58,7 +60,7 @@ export function ExportDialog({ sessionId, onExportQueue, onClose }: Props) {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/context`);
+        const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/context`));
         const data = await res.json();
         const ctx = data?.context;
         const messages: Array<{ role?: string; content?: unknown; timestamp?: number }> = ctx?.messages ?? [];
