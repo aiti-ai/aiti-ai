@@ -77,16 +77,12 @@ export function ScrollToolbar({
   // Brief "auto-scroll follow on" toast after a successful long-press.
   const [followToast, setFollowToast] = useState(false);
   const followToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Per-page-session hint state (a refresh resets it):
-  // - followEnabledRef: has the user ever long-pressed to enable follow?
-  //   Until then the 'long-press to follow' tooltip always shows (the user is
-  //   still learning the gesture). After the first long-press, the toolbar
-  //   show → hide cycle counter restarts and the tooltip shows for only 3
-  //   cycles — then it stops getting in the way.
-  // - toolbarCycleCountRef: toolbar show → hide cycles since the last
-  //   long-press (restarts on each long-press enable).
-  // - followToastCountRef: how many times the 'following on' toast appeared.
-  const followEnabledRef = useRef(false);
+  // Per-page-session hint counters (a refresh resets them, i.e. the refs
+  // start at 0 again on a fresh page load):
+  // - toolbarCycleCountRef: toolbar show → hide cycles. The 'long-press to
+  //   follow' tooltip shows for the first 3 cycles, then stops.
+  // - followToastCountRef: how many times the 'following on' toast appeared
+  //   (max 3 per page session).
   const toolbarCycleCountRef = useRef(0);
   const followToastCountRef = useRef(0);
   const [followStreaming, setFollowStreaming] = useState(false);
@@ -533,10 +529,6 @@ export function ScrollToolbar({
                   // times; after that it's noise. Show it at most 3 times per
                   // page session (a refresh resets the counter).
                   if (nowOn) {
-                    followEnabledRef.current = true;
-                    // Restart the cycle counter so the tooltip gets its 3
-                    // fresh shows after this long-press.
-                    toolbarCycleCountRef.current = 0;
                     // The "following on" toast is only useful the first few
                     // times; after that it's noise. Show it at most 3 times
                     // per page session (a refresh resets the counter).
@@ -574,13 +566,10 @@ export function ScrollToolbar({
                 }}
                 aria-label="scrollToLatest"
                 onMouseEnter={(e) => {
-                  // The "long-press to follow" hint always shows until the
-                  // user has actually enabled follow at least once; after the
-                  // first long-press it shows for only 3 toolbar cycles, then
-                  // stops obstructing the view.
-                  if (!followEnabledRef.current || toolbarCycleCountRef.current <= 3) {
-                    setScrollTooltip("latest");
-                  }
+                  // The "long-press to follow" hint shows for the first 3
+                  // toolbar show → hide cycles of this page session, then
+                  // stops obstructing the view (refresh resets it).
+                  if (toolbarCycleCountRef.current <= 3) setScrollTooltip("latest");
                   e.currentTarget.style.background = followStreaming
                     ? "color-mix(in srgb, var(--accent) 26%, var(--bg-panel))"
                     : "var(--bg-hover)";
