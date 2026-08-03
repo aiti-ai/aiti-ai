@@ -742,6 +742,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // Entry pulled out for editing; sending re-inserts it at its original spot.
   const recalledRef = useRef<{ kind: "steer" | "followUp"; index: number; text: string; images?: ChatDraftImage[] } | null>(null);
   const [recalledVisible, setRecalledVisible] = useState(false);
+  // When the input is crowded (small screens / lots of text), the
+  // steer/followUp buttons collapse to icons so they don't push the textarea
+  // or wrap awkwardly. Measured from the input row container.
+  const [queueButtonsCollapsed, setQueueButtonsCollapsed] = useState(false);
+  const inputRowRef = useRef<HTMLDivElement>(null);
   const handleRecallOne = useCallback(async (kind: "steer" | "followUp", index: number) => {
     if (!onRecallOne) return;
     const entry = await onRecallOne(kind, index);
@@ -960,6 +965,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     ta.style.height = "auto";
     if (value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [value]);
+
+  // Collapse the steer/followUp button labels when the input row gets
+  // crowded (narrow viewport or long text), so buttons stay icon-only
+  // instead of squeezing the textarea or wrapping onto their own row.
+  useEffect(() => {
+    const el = inputRowRef.current;
+    const ta = textareaRef.current;
+    if (!el || !ta) return;
+    const measure = () => {
+      const rowWidth = el.clientWidth;
+      // Keep the textarea at least ~9ch even with both buttons expanded.
+      const textareaMin = ta.getBoundingClientRect().height > 30 ? 0 : 140;
+      setQueueButtonsCollapsed(rowWidth < 520 || (ta.scrollWidth > ta.clientWidth + 4 && rowWidth < 720));
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [value, isStreaming]);
 
   useEffect(() => {
     return () => {
@@ -2420,9 +2444,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             </div>
           ) : (
           <div
+            ref={inputRowRef}
             style={{
               minWidth: 0,
               display: "flex",
+              flexWrap: "wrap",
               gap: 8,
               alignItems: "center",
               background: "var(--bg)",
@@ -2467,9 +2493,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             }
             rows={1}
             style={{
-              flex: 1,
-              minWidth: 0,
-              width: "100%",
+              flex: "1 1 auto",
+              minWidth: 80,
               background: "none",
               border: "none",
               outline: "none",
@@ -2493,7 +2518,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   title={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Interrupt the current run and inject this message now"}
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
-                    padding: isMobile ? "7px 9px" : "7px 12px",
+                    padding: "7px 12px",
                     background: canQueueStreamingMessage ? "rgba(234,179,8,0.12)" : "none",
                     border: "1px solid rgba(234,179,8,0.35)",
                     borderRadius: 8,
@@ -2506,7 +2531,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M5 1 L9 5 L5 9" /><line x1="1" y1="5" x2="9" y2="5" />
                   </svg>
-                  {!isMobile && t("chat.steer")}
+                  {!queueButtonsCollapsed && t("chat.steer")}
                 </button>
               )}
               {onFollowUp && (
@@ -2516,7 +2541,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   title={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Queue this message after the agent finishes"}
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
-                    padding: isMobile ? "7px 9px" : "7px 12px",
+                    padding: "7px 12px",
                     background: canQueueStreamingMessage ? "rgba(129,140,248,0.12)" : "none",
                     border: "1px solid rgba(129,140,248,0.35)",
                     borderRadius: 8,
@@ -2530,7 +2555,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     <line x1="5" y1="1" x2="5" y2="6" /><polyline points="2.5 3.5 5 1 7.5 3.5" />
                     <line x1="2" y1="9" x2="8" y2="9" />
                   </svg>
-                  {!isMobile && t("chat.followUp")}
+                  {!queueButtonsCollapsed && t("chat.followUp")}
                 </button>
               )}
             </div>
@@ -2559,7 +2584,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <line x1="2" y1="7" x2="11" y2="7" />
                 <polyline points="7.5 3 12 7 7.5 11" />
               </svg>
-              {t("chat.send")}
+              {!queueButtonsCollapsed && t("chat.send")}
             </button>
           )}
           </div>
