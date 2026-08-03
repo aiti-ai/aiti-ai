@@ -469,17 +469,24 @@ export function ScrollToolbar({
                 width: 60,
                 height: 60,
                 margin: -8,
+                userSelect: "none",
+                WebkitUserSelect: "none",
               }}
               onPointerDown={(e) => {
                 // Long-press (>600ms) toggles follow-streaming; a quick
                 // press/click still jumps to the latest message. Bound on
                 // the hit-area wrapper so the gesture is easy to land on and
-                // small screens don't trigger text selection.
+                // small screens don't trigger text selection. NOTE: do NOT
+                // preventDefault here — on mobile that suppresses the
+                // subsequent click, so follow could never be unlocked again.
+                // stopPropagation: a long-press must not also start a toolbar
+                // drag when the finger wiggles a few px.
+                e.stopPropagation();
                 clearLongPress();
-                e.preventDefault();
                 longPressTimerRef.current = setTimeout(() => {
                   didLongPressRef.current = true;
-                  updateFollowStreaming(true);
+                  // Toggle: long-press again turns follow OFF.
+                  updateFollowStreaming(!(followStreamingRef.current ?? false));
                   setFollowToast(true);
                   document.getSelection()?.removeAllRanges();
                   const prev = document.body.style.userSelect;
@@ -498,15 +505,17 @@ export function ScrollToolbar({
             >
               <button
                 onClick={() => {
+                  // A long-press just enabled follow — the click that follows
+                  // the gesture must not unlock it (nor jump). Check this
+                  // FIRST: otherwise the click would immediately disable the
+                  // follow the long-press just turned on.
+                  if (didLongPressRef.current) { didLongPressRef.current = false; return; }
                   // Locked (long-press enabled follow): a normal click now
                   // UNLOCKS follow (does not jump — you're already at latest).
                   if (followStreaming) {
                     updateFollowStreaming(false);
                     return;
                   }
-                  // A long-press just enabled follow — the click that follows
-                  // the gesture must not ALSO jump to the latest.
-                  if (didLongPressRef.current) { didLongPressRef.current = false; return; }
                   scrollToLatest();
                 }}
                 aria-label="scrollToLatest"

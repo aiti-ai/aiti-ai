@@ -2040,7 +2040,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
-    messagesEndRef.current?.scrollIntoView({ behavior });
+    const container = scrollContainerRef.current;
+    const end = messagesEndRef.current;
+    if (!container || !end) return;
+    // The end sentinel sits BELOW the agent-running spacer (height =
+    // clientHeight). scrollIntoView on the sentinel would put that blank
+    // spacer in the viewport — hence the blank screen while follow-streaming
+    // during a run. Back off by the spacer + viewport height so the LAST
+    // MESSAGE lands at the viewport bottom instead.
+    const endInContainer = end.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
+    const spacerH = agentRunningRef.current ? container.clientHeight : 0;
+    const target = Math.max(0, endInContainer - spacerH - container.clientHeight);
+    container.scrollTo({ top: target, behavior });
   }, []);
 
   const scrollUserMsgToTop = useCallback(() => {
