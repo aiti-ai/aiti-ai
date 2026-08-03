@@ -358,11 +358,25 @@ export class AgentSessionWrapper {
     if (this.inner.isStreaming || this.inner.isBashRunning || this.promptRunning) return;
     const all = [...this.queueMirror];
     if (all.length === 0) return;
-    this.queueMirror = [];
-    this.persistQueue();
+    // Keep queueMirror populated with the pending entries so the frontend
+    // stays showing "N queued" while we bootstrapping-run them one by one.
+    // Each completed prompt removes its entry from the mirror and emits a
+    // queue_update so the UI counts down in real time.
     this.promptRunning = true;
     notifyRunningChange();
     void this.bootstrapQueuedRun(all);
+  }
+
+  private emitQueueMirrorUpdate(): void {
+    this.emit({
+      type: "queue_update",
+      steering: this.queueMirror
+        .filter((e) => e.kind === "steer")
+        .map((e) => e.text),
+      followUp: this.queueMirror
+        .filter((e) => e.kind === "followUp")
+        .map((e) => e.text),
+    });
   }
 
   private async bootstrapQueuedRun(all: QueueEntry[]): Promise<void> {
@@ -375,12 +389,23 @@ export class AgentSessionWrapper {
     this.pendingQueueHints = { steer: [], followUp: [] };
     for (let i = 0; i < all.length; i++) {
       const entry = all[i];
+      // Remove this entry from the mirror BEFORE prompting so the UI shows
+      // it as "in progress" (no longer queued) while the prompt runs.
+      this.queueMirror = this.queueMirror.filter((e) => e.id !== entry.id);
+      this.persistQueue();
+      this.emitQueueMirrorUpdate();
       try {
         await this.inner.prompt(
           entry.text,
           entry.images?.length ? { images: entry.images } : undefined,
         );
       } catch (error: unknown) {
+        // Put the failed entry (and any not-yet-prompted remaining ones) back
+        // into the mirror so the user can see/recover them instead of losing.
+        const remaining = all.slice(i);
+        this.queueMirror = [...this.queueMirror, ...remaining];
+        this.persistQueue();
+        this.emitQueueMirrorUpdate();
         this.promptRunning = false;
         this.resetIdleTimer();
         invalidateSessionListCache();
@@ -393,6 +418,9 @@ export class AgentSessionWrapper {
         return;
       }
     }
+    this.queueMirror = [];
+    this.persistQueue();
+    this.emitQueueMirrorUpdate();
     this.promptRunning = false;
     this.resetIdleTimer();
     this.emit({ type: "prompt_done" });

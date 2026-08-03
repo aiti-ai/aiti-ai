@@ -1063,10 +1063,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const handleSend = useCallback(async () => {
     const msg = value.trim();
     if (!msg && !attachedImages.length) return;
-    if (isStreaming) return;
     onAudioUnlock?.();
     // Edited entry pulled out of the queue: sending puts it back at its
-    // original position instead of dispatching it as a new prompt.
+    // original position instead of dispatching it as a new prompt. Re-queueing
+    // is a queue-only operation and must work even while the agent is
+    // streaming (it does not start a new prompt), so this branch runs before
+    // the isStreaming guard below.
     const recalled = recalledRef.current;
     if (recalled) {
       recalledRef.current = null;
@@ -1082,6 +1084,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return;
       }
     }
+    if (isStreaming) return;
     if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
       const result = await onBuiltinCommand(msg);
       if (result.handled) {
