@@ -155,6 +155,12 @@ export interface UseAgentSessionOptions {
   onSystemPromptChange?: (prompt: string | null) => void;
   onSessionStatsPanelOpen?: () => void;
   setToolPreset?: (preset: "none" | "default" | "full") => void;
+  /**
+   * Long-press on the last message flips this to true → the message list
+   * follows streaming output automatically even while the agent runs.
+   * Clicking any scroll-navigation button flips it back to false.
+   */
+  followStreamingRef?: React.RefObject<boolean | null>;
 }
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -2152,11 +2158,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       } else if (!initialScrollDoneRef.current) {
         initialScrollDoneRef.current = true;
         scrollToBottom("instant");
-      } else if (completionScrollAllowedRef.current) {
+      } else if ((!agentRunningRef.current || opts.followStreamingRef?.current) && completionScrollAllowedRef.current) {
         scrollToBottom("smooth");
       }
     }
-  }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
+  }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop, opts.followStreamingRef]);
 
   // Load model list
   useEffect(() => {

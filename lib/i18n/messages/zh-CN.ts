@@ -313,6 +313,8 @@ export const zhCNLocale: LocalePlugin = {
     "chat.scrollToLatest": "到最新消息",
     "chat.scrollToPrevUser": "上一个用户输入",
     "chat.scrollToNextUser": "下一个用户输入",
+    "chat.scrollToLatestFollowHint": "到最新消息（长按最后一条消息可开启自动跟随）",
+    "chat.followStreamingOn": "已开启自动滚动跟随",
     "i18n.close": "关闭",
     "i18n.copy": "复制",
     "i18n.copied": "已复制",
