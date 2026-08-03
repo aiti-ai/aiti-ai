@@ -351,15 +351,14 @@ export class AgentSessionWrapper {
    * Re-queuing/import only enqueues entries into pi's steer/followUp queues
    * (exactly like the steer/followUp commands do) — it never starts a run.
    * When the user asks to "re-queue & continue" we need to start a run so
-   * pi's own _runAgentPrompt loop drains the queue.
+   * pi's own agent loop drains the queue.
    *
-   * pi's AgentSession._runAgentPrompt runs `agent.prompt(first); while (await
-   * _handlePostAgentRun()) await agent.continue();` — and `agent.continue()`
-   * drains the followUp/steer queues. So we only need to fire ONE prompt with
-   * the first queued entry; pi then processes the rest of the queue itself
-   * via its normal continue() loop. The remaining entries stay in pi's queue
-   * and in our mirror; pi emits queue_update events as it drains them, so the
-   * frontend stays in sync automatically.
+   * pi's agent loop (agent-loop runLoop) checks getFollowUpMessages() after
+   * every turn and its PendingMessageQueue drains one-at-a-time by default,
+   * so queued entries run sequentially after the first prompt finishes. We
+   * only fire ONE prompt with the first queued entry; the rest are re-queued
+   * into pi and pi processes them in order. queue_update events fire as each
+   * entry is drained so the frontend count ticks down.
    */
   private async runAgentContinue(): Promise<void> {
     if (this.inner.isStreaming || this.inner.isBashRunning || this.promptRunning) return;
@@ -969,7 +968,10 @@ export class AgentSessionWrapper {
         this.queueRecovery = remaining;
         this.persistQueue();
         if (continueRun && keptCount > 0) {
-          this.runAgentContinue();
+          void this.runAgentContinue().catch((error) => {
+            console.error("[pi-web] runAgentContinue failed:", error);
+            this.emit({ type: "prompt_error", errorMessage: error instanceof Error ? error.message : String(error) });
+          });
         }
         if (failedIds.size > 0) {
           console.error(`[pi-web] resolve_recovery: kept=${keptCount} failed=${failedIds.size} keptInRecovery=${remaining.length} texts=${JSON.stringify(failedTexts)}`);
