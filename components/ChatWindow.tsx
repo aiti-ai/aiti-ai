@@ -254,15 +254,27 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   // --- Scroll-to-earliest / scroll-to-latest floating buttons ---
   // Track whether the message list is at the top / bottom so the buttons only
   // appear when the corresponding direction is reachable (WeChat-style).
+  // The buttons show while scrolling and hide shortly after scrolling stops;
+  // hovering them keeps them visible so a click never loses its target.
   const SCROLL_ANCHOR_THRESHOLD = 80;
   const [scrollAnchors, setScrollAnchors] = useState<{ atTop: boolean; atBottom: boolean }>({ atTop: true, atBottom: true });
+  const [scrollActive, setScrollActive] = useState(false);
+  const [scrollBtnsHovered, setScrollBtnsHovered] = useState(false);
+  const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const handleScrollAnchorChange = useCallback(() => {
     const c = scrollContainerRef.current;
     if (!c) return;
     const atTop = c.scrollTop <= SCROLL_ANCHOR_THRESHOLD;
     const atBottom = c.scrollHeight - c.scrollTop - c.clientHeight <= SCROLL_ANCHOR_THRESHOLD;
     setScrollAnchors((prev) => (prev.atTop === atTop && prev.atBottom === atBottom ? prev : { atTop, atBottom }));
+    setScrollActive(true);
+    if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
+    scrollIdleTimerRef.current = setTimeout(() => setScrollActive(false), 2000);
   }, []);
+  useEffect(() => () => {
+    if (scrollIdleTimerRef.current) clearTimeout(scrollIdleTimerRef.current);
+  }, []);
+  const showScrollButtons = (!scrollAnchors.atTop || !scrollAnchors.atBottom) && (scrollActive || scrollBtnsHovered);
   const scrollToEarliest = useCallback(() => {
     scrollContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -794,7 +806,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             </div>
           </div>
         </div>
-        {(!scrollAnchors.atTop || !scrollAnchors.atBottom) && (
+        {showScrollButtons && (
           <div style={{
             position: "absolute",
             right: isMobile ? 12 : CHAT_MINIMAP_WIDTH + 12,
@@ -804,7 +816,10 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             gap: 8,
             zIndex: 30,
             pointerEvents: "none",
-          }}>
+          }}
+            onMouseEnter={() => setScrollBtnsHovered(true)}
+            onMouseLeave={() => setScrollBtnsHovered(false)}
+          >
             {!scrollAnchors.atTop && (
               <button
                 onClick={scrollToEarliest}
