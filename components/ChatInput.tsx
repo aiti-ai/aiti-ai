@@ -2518,8 +2518,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             }
             rows={1}
             style={{
-              flex: "1 1 0",
-              minWidth: "60%",
+              flex: "1 1 100%",
+              minWidth: 0,
               background: "none",
               border: "none",
               outline: "none",
