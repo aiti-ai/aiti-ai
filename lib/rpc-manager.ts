@@ -361,23 +361,30 @@ export class AgentSessionWrapper {
    * and in our mirror; pi emits queue_update events as it drains them, so the
    * frontend stays in sync automatically.
    */
-  private runAgentContinue(): void {
+  private async runAgentContinue(): Promise<void> {
     if (this.inner.isStreaming || this.inner.isBashRunning || this.promptRunning) return;
     const all = [...this.queueMirror];
     if (all.length === 0) return;
     const first = all[0];
     const rest = all.slice(1);
-    // Pull the first entry out of pi's queue (it will be sent as the prompt
-    // payload) and keep the rest queued so pi's continue() loop drains them.
+    // Send the first entry as a prompt, then re-queue the rest into pi's
+    // followUp/steer queues. pi's queue mode is one-at-a-time, so its agent
+    // loop drains the remaining entries one by one after the first turn —
+    // exactly the "run one, queue the rest, pi continues them" behavior the
+    // user expects. queue_update events fire as each entry is drained so the
+    // frontend count ticks down.
+    // IMPORTANT: await each steer/followUp call — they are async internally
+    // (they emit queue_update) and prompt(first) below must see the rest
+    // already in pi's queue, otherwise the agent loop drains nothing and the
+    // remainder never runs.
     this.inner.clearQueue();
     this.pendingQueueHints = { steer: [], followUp: [] };
     for (const e of rest) {
       this.hintQueueImages(e.kind, e.images);
-      // re-enqueue synchronously — these calls just push to pi's arrays
       if (e.kind === "steer") {
-        void this.inner.steer(e.text, e.images?.length ? e.images : undefined);
+        await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
       } else {
-        void this.inner.followUp(e.text, e.images?.length ? e.images : undefined);
+        await this.inner.followUp(e.text, e.images?.length ? e.images : undefined);
       }
     }
     this.queueMirror = [...rest];
@@ -636,8 +643,8 @@ export class AgentSessionWrapper {
           messageCount: 0,
           pendingMessageCount: this.inner.pendingMessageCount,
           queuedMessages: {
-            steering: [...this.inner.getSteeringMessages()],
-            followUp: [...this.inner.getFollowUpMessages()],
+            steering: this.queueMirror.filter((e) => e.kind === "steer").map((e) => e.text),
+            followUp: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => e.text),
           },
           pendingRecovery: this.getPendingRecoveryView(),
           contextUsage: contextUsage
