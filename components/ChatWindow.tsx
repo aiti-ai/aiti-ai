@@ -240,6 +240,17 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     setRecoveryDismissed(false);
   }, [session?.id]);
 
+  // After recovery/import resolution (pendingRecovery drops to zero), expand
+  // the queue panel so the restored messages are visible immediately instead
+  // of being hidden behind the auto-collapse threshold.
+  const prevRecoveryCountRef = useRef(pendingRecovery.length);
+  useEffect(() => {
+    if (pendingRecovery.length === 0 && prevRecoveryCountRef.current > 0) {
+      chatInputRef?.current?.expandQueue();
+    }
+    prevRecoveryCountRef.current = pendingRecovery.length;
+  }, [pendingRecovery.length, chatInputRef]);
+
   useEffect(() => {
     if (!extensionDialog || soundedExtensionDialogIdRef.current === extensionDialog.id) return;
     soundedExtensionDialogIdRef.current = extensionDialog.id;

@@ -1771,6 +1771,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       });
       const remaining = result?.remaining ?? [];
       setPendingRecovery(remaining);
+      // Re-queued entries may not be reflected locally if the queue_update SSE
+      // was missed (or the SSE connection was not yet up) — refresh the live
+      // queue from state so the restored messages show up immediately.
+      void (async () => {
+        try {
+          const stateRes = await fetch(`/api/agent/${encodeURIComponent(sid)}`);
+          if (!stateRes.ok) return;
+          const agentState = await stateRes.json() as { state?: AgentStateResponse };
+          if (agentState.state?.queuedMessages !== undefined) {
+            setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
+          }
+        } catch { /* non-critical */ }
+      })();
       if (continueRun && keep.length > 0) {
         // The run was started server-side, possibly before any SSE was
         // connected (e.g. right after a restart) — pick it up so streaming,

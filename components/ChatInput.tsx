@@ -100,6 +100,8 @@ export interface ChatInputHandle {
   insertIfEmpty: (text: string) => void;
   prependText: (text: string) => void;
   addImages: (files: File[]) => void;
+  /** Force the queue panel to expand (used after recovery/import resolution). */
+  expandQueue: () => void;
 }
 
 const TOOL_PRESETS = ["off", "default", "full"] as const;
@@ -903,6 +905,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     },
     addImages(files: File[]) {
       processImageFiles(files);
+    },
+    expandQueue() {
+      setQueueCollapsedUser(false);
     },
   }));
 
