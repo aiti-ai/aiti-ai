@@ -52,7 +52,7 @@ export function ScrollToolbar({
     } catch { /* ignore */ }
     return DEFAULT_POS;
   });
-  const dragRef = useRef<{ startX: number; startY: number; startY0: number; moved: boolean; pointerId: number } | null>(null);
+  const dragRef = useRef<{ startX: number; startY: number; startY0: number; moved: boolean; pointerId: number; startTime: number } | null>(null);
   const toolbarRef = useRef<HTMLDivElement | null>(null);
   const dragModeRef = useRef(false);
   // Set when a tap (touch pointerup without drag) already navigated, so the
@@ -95,53 +95,65 @@ export function ScrollToolbar({
   // which side by dragging across the screen midpoint). Vertical position is
   // free. Both are persisted; on reload the horizontal edge is recomputed
   // against the current viewport and the saved vertical offset is applied.
+  // Drag via window-level native listeners: once the pointer goes down on the
+  // toolbar, ALL subsequent pointermove/up are tracked globally so the drag
+  // never stops when the finger leaves the small button column (real touch
+  // pointer events do not bubble after leaving the element).
+  const dragMoveHandlerRef = useRef<((e: PointerEvent) => void) | null>(null);
+  const dragUpHandlerRef = useRef<(() => void) | null>(null);
+
   const onToolbarPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.button !== 0) return;
-    // Capture the pointer so drag moves continue even when the finger/mouse
-    // leaves the small button column — otherwise the drag stops as soon as
-    // the pointer moves off the buttons.
-    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* ignore */ }
     dragRef.current = {
       startX: e.clientX,
       startY: e.clientY,
       startY0: pos.y,
       moved: false,
       pointerId: e.pointerId,
+      startTime: Date.now(),
     };
     dragModeRef.current = true;
-  }, [pos.y]);
 
-  const onToolbarPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
-    const drag = dragRef.current;
-    if (!drag || e.pointerId !== drag.pointerId) return;
-    const dx = e.clientX - drag.startX;
-    const dy = e.clientY - drag.startY;
-    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 6) return;
-    drag.moved = true;
-    // Cancel any long-press follow toggle started on the latest button.
-    clearLongPress();
-    const el = toolbarRef.current;
-    if (!el) return;
-    const maxY = Math.max(8, window.innerHeight - el.offsetHeight - 8);
-    const ny = Math.min(Math.max(8, drag.startY0 + dy), maxY);
-    // Snap horizontal to the nearer edge based on the pointer's side of the
-    // screen midpoint.
-    const nx = e.clientX < window.innerWidth / 2 ? "left" : "right";
-    setPosAndRef({ align: nx, y: ny });
-  }, [clearLongPress, setPosAndRef]);
-
-  const onToolbarPointerUp = useCallback(() => {
-    const drag = dragRef.current;
-    if (!drag) return;
-    const wasDrag = drag.moved;
-    dragRef.current = null;
-    dragModeRef.current = false;
-    if (wasDrag) {
-      try {
-        localStorage.setItem("pi-scroll-toolbar-pos", JSON.stringify({ align: posRef.current.align, y: posRef.current.y }));
-      } catch { /* ignore */ }
-    }
-  }, []);
+    const onMove = (ev: PointerEvent) => {
+      const drag = dragRef.current;
+      if (!drag || ev.pointerId !== drag.pointerId) return;
+      const dx = ev.clientX - drag.startX;
+      const dy = ev.clientY - drag.startY;
+      if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 8) return;
+      drag.moved = true;
+      // Stop the browser from hijacking the gesture as scroll/touch panning.
+      try { ev.preventDefault(); } catch { /* ignore */ }
+      clearLongPress();
+      const el = toolbarRef.current;
+      if (!el) return;
+      const maxY = Math.max(8, window.innerHeight - el.offsetHeight - 8);
+      const ny = Math.min(Math.max(8, drag.startY0 + dy), maxY);
+      const nx = ev.clientX < window.innerWidth / 2 ? "left" : "right";
+      setPosAndRef({ align: nx, y: ny });
+    };
+    const onUp = () => {
+      const drag = dragRef.current;
+      if (!drag) return;
+      const wasDrag = drag.moved;
+      dragRef.current = null;
+      dragModeRef.current = false;
+      if (wasDrag) {
+        try {
+          localStorage.setItem("pi-scroll-toolbar-pos", JSON.stringify({ align: posRef.current.align, y: posRef.current.y }));
+        } catch { /* ignore */ }
+      }
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+      dragMoveHandlerRef.current = null;
+      dragUpHandlerRef.current = null;
+    };
+    dragMoveHandlerRef.current = onMove;
+    dragUpHandlerRef.current = onUp;
+    window.addEventListener("pointermove", onMove, { passive: false });
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+  }, [pos.y, clearLongPress, setPosAndRef]);
 
   const handleScrollAnchorChange = useCallback(() => {
     const c = scrollContainerRef.current;
@@ -288,9 +300,6 @@ export function ScrollToolbar({
         <div
           ref={toolbarRef}
           onPointerDown={onToolbarPointerDown}
-          onPointerMove={onToolbarPointerMove}
-          onPointerUp={onToolbarPointerUp}
-          onPointerCancel={onToolbarPointerUp}
           style={{
           position: "absolute",
           // Horizontal snaps to the left or right edge (dragged choice);
@@ -308,6 +317,7 @@ export function ScrollToolbar({
           zIndex: 30,
           pointerEvents: "auto",
           cursor: dragModeRef.current ? "grabbing" : "grab",
+          touchAction: "none",
         }}
           onMouseEnter={() => setScrollBtnsHovered(true)}
           onMouseLeave={() => setScrollBtnsHovered(false)}
