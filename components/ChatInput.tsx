@@ -1818,6 +1818,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 >
                   <polyline points="6 9 12 15 18 9" />
                 </svg>
+                {/* Queued-count label next to the collapse button so the header
+                    is not a lone chevron on any screen size. */}
+                <span style={{ fontSize: 11.5, color: "var(--text-dim)", whiteSpace: "nowrap", lineHeight: 1 }}>
+                  {t("chat.queued", { count: String(queueCount) })}
+                </span>
               </button>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", marginTop: isMobile ? 2 : 0 }}>
