@@ -2493,7 +2493,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   title={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Interrupt the current run and inject this message now"}
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
-                    padding: "7px 12px",
+                    padding: isMobile ? "7px 9px" : "7px 12px",
                     background: canQueueStreamingMessage ? "rgba(234,179,8,0.12)" : "none",
                     border: "1px solid rgba(234,179,8,0.35)",
                     borderRadius: 8,
@@ -2506,7 +2506,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M5 1 L9 5 L5 9" /><line x1="1" y1="5" x2="9" y2="5" />
                   </svg>
-                  {t("chat.steer")}
+                  {!isMobile && t("chat.steer")}
                 </button>
               )}
               {onFollowUp && (
@@ -2516,7 +2516,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   title={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Queue this message after the agent finishes"}
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
-                    padding: "7px 12px",
+                    padding: isMobile ? "7px 9px" : "7px 12px",
                     background: canQueueStreamingMessage ? "rgba(129,140,248,0.12)" : "none",
                     border: "1px solid rgba(129,140,248,0.35)",
                     borderRadius: 8,
@@ -2530,7 +2530,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     <line x1="5" y1="1" x2="5" y2="6" /><polyline points="2.5 3.5 5 1 7.5 3.5" />
                     <line x1="2" y1="9" x2="8" y2="9" />
                   </svg>
-                  {t("chat.followUp")}
+                  {!isMobile && t("chat.followUp")}
                 </button>
               )}
             </div>
