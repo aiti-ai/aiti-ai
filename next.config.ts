@@ -66,6 +66,7 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  transpilePackages: ["service-tunnels"],
   env: {
     NEXT_PUBLIC_APP_VERSION: version,
     NEXT_PUBLIC_PI_VERSION: piVersion,

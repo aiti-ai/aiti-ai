@@ -1,6 +1,6 @@
 import { homedir } from "os";
 import { join } from "path";
-import { createServiceTunnels, type ServiceTunnels } from "../../service-tunnels/src/index.ts";
+import { createServiceTunnels, type ServiceTunnels } from "service-tunnels/src/index.ts";
 
 /**
  * service-tunnels integration — library mode inside pi-web.
