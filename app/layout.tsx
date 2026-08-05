@@ -1,15 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import { Noto_Sans_Mono } from "next/font/google";
 import { PwaRegistration } from "@/components/PwaRegistration";
 import { withBasePath } from "@/lib/base-path";
 import "katex/dist/katex.min.css";
 import "./globals.css";
 
-const notoSansMono = Noto_Sans_Mono({
-  subsets: ["latin", "cyrillic"],
-  variable: "--font-noto-mono",
-  display: "swap",
-});
+// next/font/google requires fetching Noto Sans Mono from Google Fonts at
+// build time — unreachable on CN networks, so use a local system mono stack
+// instead (the CSS var keeps its name so globals.css needs no change).
+const notoSansMono = { variable: "--font-noto-mono" };
 
 export const metadata: Metadata = {
   title: "Pi Web",

@@ -77,7 +77,7 @@
 - **开启此端口隧道**（`PortTunnelSection`）：就地列出该端口的隧道命令模板
   （cloudflared / localtunnel / ngrok / serveo，端口号已代入，可复制），点击"开启"
   即在当前位置启动隧道、**就地显示解析出的公网 URL**（可点击）与"停止"按钮；
-  隧道名 `port-<端口>-<工具>`，3s 轮询不丢失
+  隧道名 `port-<端口>-<工具>`，URL 缓存在 globalThis，对话框刷新不丢失
 - **顶部全局栏**：有已开启隧道（`port-*`）时，列表上方显示"已开启的端口隧道"——
   **一行一个隧道**（端口号 + 工具 + 状态），running 且有 URL 的带**打开**（新 tab
   开公网 URL），每行带**详情**按钮——点击自动展开该端口卡片并平滑滚动到它
@@ -86,9 +86,13 @@
 所有"打开"动作（直连、虚拟主机、隧道 URL）均在**新浏览器 tab** 打开
 （`window.open(url, "_blank", "noopener,noreferrer")`）。
 
-弹窗底部常驻**泛域名配置说明**：本机（RFC 6761 零配置）/ 局域网（dnsmasq
-`address=/pi.lan/<服务器IP>` + 两个环境变量）/ 公网（DNS 通配 A 记录 + 域名加入
-`PI_WEB_ALLOWED_HOSTS`），并附当前部署的地址形态示例。
+弹窗底部说明区（端口页签底部）不再是常驻折叠文档："已配置隧道"独立折叠
+（带运行计数与启停按钮，无配置时隐藏），另有两个**纯文字入口**点击打开弹窗——
+**如何让其他设备访问**（本机 RFC 6761 零配置 / 局域网 dnsmasq
+`address=/pi.lan/<服务器IP>` + 两个环境变量 / 公网 DNS 通配 A 记录 + 域名加入
+`PI_WEB_ALLOWED_HOSTS`，附当前部署的地址形态示例）与**认证说明**（已内置
+portal/basic/authelia + 可自行扩展的 Authelia/Authentik/oauth2-proxy/Keycloak/
+Cloudflare Access，见下文「暴露前的授权管理」）。
 
 ### D7. basePath 处理
 
@@ -111,7 +115,7 @@
 
 1. **端口卡片就地开启**（主路径）：弹窗展开端口 → "开启此端口隧道"，工具模板
    自动代入端口（cloudflared / localtunnel / ngrok / serveo），一键开启后**就地显示
-   公网 URL**，3s 轮询不丢失，随时可停止（`POST /api/tunnels` start/stop
+   公网 URL**，URL 缓存在 globalThis 不丢失，随时可停止（`POST /api/tunnels` start/stop
    `{port, tool}` / `{name}`）
 2. **启动时配置**：`PI_WEB_TUNNELS`（JSON）/ `PI_WEB_TUNNEL_CMD` 指向**服务端口**：
 
@@ -129,8 +133,13 @@ PI_WEB_TUNNELS='[{"name":"cfd","cmd":"cloudflared tunnel --url http://127.0.0.1:
   URL 缓存在 globalThis，**轮询刷新不丢失**
 - 停止即 kill 进程；pi-web 退出（exit/SIGINT/SIGTERM）时全部清理
 - 工具模板路径可探测（`~/pi-tunnels/<name>` / PATH）或 `PI_WEB_TUNNEL_TOOL_PATHS`
-  JSON 覆盖；ngrok 需先 `ngrok config add-authtoken`；隧道进程以独立进程组运行
-  （`detached`），停止/退出时整组清理，测试不会因残留 pipe 挂起
+  JSON 覆盖；隧道进程以独立进程组运行（`detached`），停止/退出时整组清理，测试不会因残留 pipe 挂起
+- **serveo**：必须带 `-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o
+  ExitOnForwardFailure=yes`，否则首次 Host key 确认在非交互环境直接失败；公网
+  URL 域名是 `serveousercontent.com`（已在已知域名列表）
+- **ngrok**：有免费版（Free Hobbyist，1 在线隧道），但需先免费注册后在
+  ngrok.com 控制台拿 token，执行 `ngrok config add-authtoken <token>`；UI 的
+  "需 token" 标注悬停可见注册说明
 - 服务后缀（`getServiceHostSuffixes`）自动过滤 IP 字面量（如 `PI_WEB_HOSTNAME=127.0.0.1`
   不会产生 `.127.0.0.1` 通配后缀）
 
@@ -153,11 +162,11 @@ Browser                                  Next.js Server
   │                                        → stripBasePath(路径, basePath)
   │                                        → rewrite http://127.0.0.1:5173/
   │                                        · 静态/动态/表单/fetch 全通
-  │  ServicesDialog（顶部工具条按钮，大小屏可见）
-  │  · 每 3s 自动刷新 · 点击端口行展开：
+  │  ServicesDialog（顶部工具条按钮，大小屏可见；端口/用户双页签）
+  │  · 每 10s 自动刷新 · 点击端口行展开：
   │    直连地址（不带 basePath）+ 虚拟主机地址（带 basePath，scheme/端口取自页面）
   │  · 每行在新独立浏览器窗口打开 + 复制
-  │  · 底部两级折叠章节：暴露方案（DNS/隧道 + 隧道状态）· 授权管理（Authelia 等）
+  │  · 底部：已配置隧道折叠（启停）+ 两个说明弹窗入口（DNS/泛域名 · 认证指南）
   │
   │  启动时（instrumentation.ts）
   │  · PI_WEB_CHILD_MARKER → lib/service-ports（守护进程兜底）
@@ -171,7 +180,7 @@ Browser                                  Next.js Server
 | `proxy.ts` | 虚拟主机反代入口（根目录，Next 16 proxy 约定）：多后缀匹配 + basePath 剥离 + 原有安全门 |
 | `lib/service-ports.ts` | 跨平台发现 + 缓存白名单 + 多地址收集 + `getServiceHostSuffixes()` + `stripBasePath()` |
 | `app/api/services/route.ts` | GET 端口列表 + `serviceHostSuffix(es)` + `platform` |
-| `components/ServicesDialog.tsx` | 弹窗 UI（可展开行 + 直连/虚拟主机链接 + 新窗口打开 + 复制 + 泛域名说明） |
+| `components/ServicesDialog.tsx` | 弹窗 UI（端口/用户页签 + 可展开行 + 直连/虚拟主机链接 + 新窗口打开 + 复制 + 已配置隧道折叠 + 说明弹窗） |
 | `components/AppShell.tsx` | 顶部工具条图标按钮（13px，与历史/分支同规格）+ 弹窗挂载 |
 | `instrumentation.ts` | 启动时写 `PI_WEB_CHILD_MARKER` + 启动隧道（`PI_WEB_TUNNEL_CMD`） |
 | `lib/tunnels.ts` | 多隧道管理：配置解析、spawn/stop、URL 解析、输出缓存（globalThis 防丢） |
@@ -191,7 +200,7 @@ Browser                                  Next.js Server
 | `PI_WEB_TUNNEL_CMD` / `PI_WEB_TUNNEL_NAME` | — | 旧单条写法（等价于一条 `auto:true` 隧道） |
 | `PI_WEB_CHILD_MARKER` | 自动 | 子进程标记（一般无需手动设） |
 
-## 泛域名解析配置（弹窗底部同款说明）
+## 泛域名解析配置（弹窗内同款说明）
 
 | 场景 | 做法 |
 |---|---|
@@ -212,9 +221,16 @@ lt                         # v2.0.2，npm -g localtunnel（npmmirror 镜像）
 PI_WEB_TUNNEL_CMD="lt --port 8901"  npm run dev
 ```
 
-## 暴露前的授权管理（弹窗底部同款提示）
+## 暴露前的授权管理（弹窗内同款说明）
 
-任何暴露方式（DNS 或隧道）都应先配置 HTTPS 与认证，推荐按需选择：
+任何暴露方式（DNS 或隧道）都应先配置 HTTPS 与认证。
+
+**已内置支持**（端口卡片「立即公开」中直接选用 provider）：
+- `portal` —— 内置认证门户：自带用户管理与 TOTP 2FA（弹窗「用户」页签管理）
+- `basic` —— HTTP Basic 认证：用户名 + 密码
+- `authelia` —— 接入自托管 Authelia（forward_auth；Windows 不可用）
+
+**可自行扩展**（在 pi-web / 隧道前置的 nginx 或 Caddy 上配置）：
 
 | 工具 | 说明 |
 |---|---|

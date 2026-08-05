@@ -39,6 +39,8 @@ Browser                Next.js Server              AgentSession (in-process)
 
 ```
 app/api/
+  services/route.ts                  GET discovered service ports + tunnels (+?refresh=1)
+  service-tunnels/route.ts           GET status/detect/logs | POST expose/tunnel/user/TOTP/allow-download
   sessions/route.ts               GET  list all sessions
   sessions/[id]/route.ts          GET/PATCH/DELETE session
   sessions/[id]/context/route.ts  GET ?leafId= — context for a specific leaf
@@ -82,6 +84,14 @@ lib/
   types.ts            shared TypeScript types
   normalize.ts        normalizeToolCalls() — field name mismatch between file format and our types
   worktree.ts         project/worktree resolution and git worktree operations
+  service-tunnels-integration.ts  singleton ServiceTunnels (globalThis) + listPiServices/exposeService
+  service-ports.ts    discovery cache + proxy allow-list write (lib-owned)
+  service-proxy-shared.ts  middleware-safe helpers (suffixes, allowed ports, stripBasePath)
+  tunnels.ts          thin adapter: tunnel info shape for the Services dialog
+  request-security.ts DNS-rebinding gate: isApiRequestAllowed / host+origin checks
+  web-auth.ts         optional Basic password gate (PI_WEB_PASSWORD)
+  base-path.ts        client-side basePath helpers (NEXT_PUBLIC_BASE_PATH)
+  startup-preferences.ts  persists explicit model/thinking selections (no replay)
 
 components/
   AppShell.tsx        layout + URL state + tab management
@@ -95,15 +105,19 @@ components/
   ModelsConfig.tsx    modal for editing models.json (opened from sidebar bottom)
   PluginsConfig.tsx   modal for installed package plugins
   SkillsConfig.tsx    modal for loaded/search/installable skills
+  ServicesDialog.tsx  service ports + exposes + tunnel/auth forms + user/TOTP management
   FileExplorer.tsx    file tree inside sidebar
   FileIcons.tsx       file icon helpers
   FileViewer.tsx      file content in a tab
   TabBar.tsx          tab bar (Chat + open file tabs)
+  ScrollToolbar.tsx   draggable follow/jump toolbar (prev/next user message, latest)
+  QueueRecoveryDialog.tsx  queue crash-recovery checklist (re-queue/discard/export/import)
 
 hooks/
   useAgentSession.ts  messages + streaming + SSE + fork/navigate/reconciliation logic
   useAudio.ts         completion sound + browser AudioContext unlock
   useDragDrop.ts      shared drag/drop state
+  useI18n.tsx         i18n context (en/zh-CN message maps)
   useIsMobile.ts      responsive breakpoint hook
   useTheme.ts         theme state
 ```
@@ -223,12 +237,14 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 --font-mono
 ```
 
-## Service port proxy (`proxy.ts` + `lib/service-ports.ts`)
+## Service port proxy & expose (`proxy.ts` + `lib/service-*` + service-tunnels lib)
 
-- Test servers started by pi sessions (descendants of the in-process AgentSession) are reachable from the browser at `http://<port><suffix>/` (default suffix `.pi.localhost`). `proxy.ts` rewrites that virtual host to `http://127.0.0.1:<port>` with the path unchanged except pi-web's own basePath prefix, which is stripped before forwarding (`stripBasePath`, e.g. `/dev/foo → /foo`), so full web pages (absolute asset URLs, SPA routes, forms, fetch) work — no HTML rewriting. Accepted suffixes: `.pi.localhost` + `PI_WEB_SVC_HOST_SUFFIX` + every host in `PI_WEB_ALLOWED_HOSTS`/`PI_WEB_HOSTNAME` (so a deployment at `example.com` serves `<port>.example.com` automatically).
-- **No manual port allow-list.** The allowed set is the discovery cache in `lib/service-ports.ts`: BFS over pi-web's process tree ∪ processes carrying the `PI_WEB_CHILD_MARKER` env value in `/proc/<pid>/environ` (set in `instrumentation.ts` at boot; survives daemonization/re-parenting). Only `127.0.0.1` targets are ever proxied; unrelated local services (Redis etc.) are never reachable.
-- Backends: Linux `/proc` (+environ marker), macOS `ps` + `lsof`, Windows PowerShell `Get-CimInstance` + `netstat -ano`. See `docs/service-port-proxy.md`.
-- WebSocket upgrades are NOT proxied (Next server no-ops non-HMR upgrades) — Vite HMR etc. need direct localhost or a tunnel.
-- `GET /api/services?refresh=1` lists discovered ports (each with ALL listening addresses, wildcards expanded) + `serviceHostSuffixes`; the top-toolbar globe button (visible on both large and small screens) opens `ServicesDialog` (3s auto-refresh). Clicking a port expands it to direct URLs (no basePath) + virtual-host URLs per suffix (scheme/port/basePath taken from the current page, current-domain suffix first), each opening in a genuine new browser window (`window.open` with size features) or copyable; proxy.ts strips pi-web's basePath (`stripBasePath`, e.g. `/dev/foo → /foo`) before forwarding, so only proxy URLs carry the basePath (reverse proxies that path-route pi-web need it). The dialog footer explains wildcard-DNS setup for same-machine / LAN (dnsmasq) / public-domain deployments. See `docs/service-port-proxy.md`.
-- Tests: `node --test lib/service-ports.test.mjs lib/tunnels.test.mjs` (pure decoders, child discovery, daemonized-descendant marker discovery, stripBasePath, tunnel spawn/output/idempotence).
-- Tunnels expose ONE service port (or its virtual-host subdomain) — **never pi-web itself**. Per-port cards in the Services dialog list tool templates (cloudflared/localtunnel/ngrok/serveo with the port substituted), start/stop in place and show the parsed public URL at the same spot (`POST /api/tunnels` `{port, tool}`); alternatively configure at startup via `PI_WEB_TUNNELS` (JSON) / `PI_WEB_TUNNEL_CMD` pointing at a SERVICE port (e.g. `lt --port 8901`). URLs parsed from output (known tunnel domains first, re-parsed each chunk, cached in globalThis so 3s polling never loses them). ngrok needs an authtoken; CN-network cloudflared may need `--edge` (see docs). Do NOT point tunnels at pi-web's own port (30142): the DNS-rebinding gate would 403 it, and whitelisting the tunnel domain would expose pi-web unprotected. All "open" actions open in a new browser TAB. Dialog footer has collapsible sections for expose methods (DNS wildcard + tunnel config) and access control (Authelia/Authentik/oauth2-proxy/Keycloak/Cloudflare Access).
+- Test servers started by pi sessions are reachable at `http://<port><suffix>/` (default `.pi.localhost`). `proxy.ts` (Next middleware) rewrites that virtual host to `http://127.0.0.1:<port>`; the target is built with the library's `proxyTarget()` (path appended AFTER an explicit authority — `//evil.com`, `//127.0.0.1:9999`, backslashes can never override host/port, no SSRF). pi-web's basePath is stripped before forwarding. Accepted suffixes: `.pi.localhost` + `PI_WEB_SVC_HOST_SUFFIX` + every `PI_WEB_ALLOWED_HOSTS`/`PI_WEB_HOSTNAME` host.
+- **No manual port allow-list.** The allowed set = discovery cache (service-tunnels lib: BFS over pi-web's process tree ∪ `PI_WEB_CHILD_MARKER`-carrying processes in `/proc/<pid>/environ`, set in `instrumentation.ts`; survives daemonization). `getServicePorts()` mirrors the set to `allowed-ports.json` (4s TTL) for the middleware. Only `127.0.0.1` targets are ever proxied.
+- `lib/service-ports.ts` = server-side discovery adapter (library-owned); `lib/service-proxy-shared.ts` = middleware-safe helpers (suffixes, allowed-ports file, stripBasePath) with NO library dependency; `lib/tunnels.ts` = thin info adapter; `lib/service-tunnels-integration.ts` = the `globalThis.__piServiceTunnels` singleton + `exposeService()`.
+- Middleware CAN `import { proxyTarget } from "service-tunnels"` (npm package) — the old "can't import the file: dependency" restriction is gone.
+- **Security gates**: service hosts pass the same host allow-list (suffix regex) + optional `PI_WEB_PASSWORD` Basic gate; ports must be in the discovery cache. The standalone library `createProxyServer()` additionally supports forward-auth (portal/authelia/oauth2-proxy) and its own allow-list.
+- WebSocket upgrades are NOT proxied by the middleware (Next no-ops non-HMR upgrades) — Vite HMR etc. need direct localhost or a tunnel.
+- `GET /api/services?refresh=1` lists discovered ports + `serviceHostSuffixes`; `GET /api/service-tunnels` returns exposes/status/provider order/default provider/user managers/tool status/allow-download. The top-toolbar globe opens `ServicesDialog` (10s auto-refresh): **Ports** tab = per-port access methods (direct + virtual-host URLs, `window.open` with `noopener,noreferrer`), protocol auto-detect (http/https/tcp), expose form (tunnel type + auth provider, schema-driven), active exposes (stop, nginx logs), allow-tool-download toggle; **Users** tab = provider user management + TOTP 2FA enroll/activate.
+- **Provider knowledge lives in the library**: pi-web consumes `providerOrder`/`defaultProvider`/`userManagers`/`tunnelSchemas`/`tunnelTcpSupport` — no provider names hardcoded in pi-web (tcp exposes carry no auth: the library's tcp path ignores the provider).
+- Tests: `node --test lib/service-ports.test.mjs lib/request-security.test.mjs lib/web-auth.test.mjs` (middleware-safe helpers, discovery cache, gates).

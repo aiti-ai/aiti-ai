@@ -66,7 +66,10 @@ const nextConfig: NextConfig = {
       },
     ];
   },
-  transpilePackages: ["service-tunnels"],
+  // dist is compiled JS now; transpiling the file: tgz made turbopack resolve
+  // the package's .ts source instead (which it cannot compile under
+  // node_modules) → Can't resolve. Keep it off.
+
   env: {
     NEXT_PUBLIC_APP_VERSION: version,
     NEXT_PUBLIC_PI_VERSION: piVersion,

@@ -7,7 +7,8 @@ import {
   isValidBasicAuthorization,
   isWebPasswordEnabled,
 } from "@/lib/web-auth";
-import { isServicePortAllowed, getServiceHostSuffixes, stripBasePath } from "@/lib/service-ports";
+import { isServicePortAllowed, getServiceHostSuffixes, stripBasePath } from "@/lib/service-proxy-shared";
+import { proxyTarget } from "service-tunnels";
 
 /**
  * Virtual-host service proxy + pi-web security gate.
@@ -77,11 +78,12 @@ export function proxy(request: NextRequest) {
         },
       });
     }
-    const target = new URL(
-      stripBasePath(request.nextUrl.pathname, BASE_PATH) + request.nextUrl.search,
-      `http://127.0.0.1:${svcPort}`,
+    // target 由库的 proxyTarget() 构造：path 拼在显式 127.0.0.1:<port>
+    // authority 之后，永不被 URL 解析器当 base-relative 覆盖（//evil.com、
+    // //127.0.0.1:9999、反斜杠都只是普通 path）→ 无 SSRF 注入面。
+    return NextResponse.rewrite(
+      proxyTarget(svcPort, stripBasePath(request.nextUrl.pathname, BASE_PATH) + request.nextUrl.search),
     );
-    return NextResponse.rewrite(target);
   }
 
   // pi-web's own security gate: DNS-rebinding protection + password.
