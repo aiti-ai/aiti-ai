@@ -7,12 +7,12 @@ export async function register(): Promise<void> {
   // time, so the marker survives even when the process tree link does not.
   process.env.PI_WEB_CHILD_MARKER ??= `pi-web-${process.pid}-${Date.now().toString(36)}`;
 
-  // Launch-command tunnels (ngrok / cloudflared / localtunnel / ssh -R) — see
-  // lib/tunnels.ts. `auto: true` ones spawn at boot and die with the server;
-  // the rest are started/stopped from the Services dialog.
-  const { startAutoTunnels } = await import("@/lib/tunnels");
-  startAutoTunnels();
-
   const { configureHttpDispatcher } = await import("@/lib/http-dispatcher");
   configureHttpDispatcher();
+
+  // Optional auth-proxy listener (PI_WEB_PROXY_PORT): pi-web's own process
+  // also answers virtual hosts like `30142-portal.localhost:<port>`. Off by
+  // default — only starts when the env var is set.
+  const { startProxyIfEnabled } = await import("@/lib/service-tunnels-integration");
+  startProxyIfEnabled();
 }

@@ -72,6 +72,29 @@ export function getServiceTunnels(): ServiceTunnels {
   return globalThis.__piServiceTunnels;
 }
 
+/**
+ * Start pi-web's own auth-proxy listener when PI_WEB_PROXY_PORT is set
+ * (integer 0-65535; 0 = random free port). Off by default — without the env
+ * var pi-web serves only its own UI port; with it, the process also answers
+ * virtual hosts like `30142-portal.localhost:<port>` (service-tunnels proxy
+ * grammar: open `30142.localhost:<port>`, labeled/auth `30142-<site>.*`).
+ * Idempotent — expose --mode proxy/both shares this transport. Call once at
+ * server start (instrumentation.ts); no-op when already running.
+ */
+export function startProxyIfEnabled(): void {
+  const raw = process.env.PI_WEB_PROXY_PORT;
+  if (raw === undefined || raw.trim() === "") return;
+  const port = Number(raw.trim());
+  if (!Number.isInteger(port) || port < 0 || port > 65535) {
+    console.error(`[pi-web] invalid PI_WEB_PROXY_PORT: ${JSON.stringify(raw)} (integer 0-65535; 0 = random)`);
+    return;
+  }
+  const st = getServiceTunnels();
+  void st.proxy.start({ port })
+    .then((p) => console.log(`[pi-web] auth proxy listening on 127.0.0.1:${p}`))
+    .catch((e) => console.error("[pi-web] auth proxy start failed:", e));
+}
+
 /** pi-web's own process cmdline patterns (never "services"). */
 const PI_WEB_OWN = [/next[\\/]dist[\\/]bin[\\/]next/, /next-server/, /pi-web(-options)?\.js/, /bin[\\/]pi-web/];
 
