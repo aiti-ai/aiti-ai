@@ -46,7 +46,7 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
-    "service-tunnels": "file:../service-tunnels/service-tunnels-0.2.39.tgz",
+    "service-tunnels": "file:../service-tunnels/service-tunnels-0.2.40.tgz",
     "undici": "8.5.0"
   },
   "devDependencies": {
