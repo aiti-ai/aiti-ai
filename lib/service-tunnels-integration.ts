@@ -73,20 +73,21 @@ export function getServiceTunnels(): ServiceTunnels {
 }
 
 /**
- * Start pi-web's own auth-proxy listener when PI_WEB_PROXY_PORT is set
- * (integer 0-65535; 0 = random free port). Off by default — without the env
- * var pi-web serves only its own UI port; with it, the process also answers
- * virtual hosts like `30142-portal.localhost:<port>` (service-tunnels proxy
- * grammar: open `30142.localhost:<port>`, labeled/auth `30142-<site>.*`).
+ * Start pi-web's own auth-proxy listener when PIWEBPROXYPORT (or the
+ * compatible PI_WEB_PROXY_PORT) is set (integer 0-65535; 0 = random free
+ * port). Off by default — without the env var pi-web serves only its own UI
+ * port; with it, the process also answers virtual hosts like
+ * `30142-portal.localhost:<port>` (service-tunnels proxy grammar: open
+ * `30142.localhost:<port>`, labeled/auth `30142-<site>.*`).
  * Idempotent — expose --mode proxy/both shares this transport. Call once at
  * server start (instrumentation.ts); no-op when already running.
  */
 export function startProxyIfEnabled(): void {
-  const raw = process.env.PI_WEB_PROXY_PORT;
+  const raw = process.env.PIWEBPROXYPORT ?? process.env.PI_WEB_PROXY_PORT;
   if (raw === undefined || raw.trim() === "") return;
   const port = Number(raw.trim());
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    console.error(`[pi-web] invalid PI_WEB_PROXY_PORT: ${JSON.stringify(raw)} (integer 0-65535; 0 = random)`);
+    console.error(`[pi-web] invalid PIWEBPROXYPORT: ${JSON.stringify(raw)} (integer 0-65535; 0 = random)`);
     return;
   }
   const st = getServiceTunnels();
