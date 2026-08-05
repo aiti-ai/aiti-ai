@@ -847,7 +847,9 @@ function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, stri
         }
       }
     }).catch(() => setError(String(t("services.error"))));
-  }, [provider]);
+    // site must be a dep: the post closure captures it — the user list is
+    // per auth realm, switching the site must reload that realm's users.
+  }, [provider, site]);
 
   useEffect(() => {
     fetch(apiUrl("/api/service-tunnels"))
