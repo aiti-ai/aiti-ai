@@ -46,6 +46,20 @@ function toolPathsFromEnv(): Record<string, string> {
 
 export function getServiceTunnels(): ServiceTunnels {
   if (!globalThis.__piServiceTunnels) {
+    // Deployment domains (PI_WEB_HOSTNAME / PI_WEB_ALLOWED_HOSTS, e.g.
+    // example.com) become service-tunnels base domains: the proxy serves
+    // `<port>[-<label>].<domain>` and expose returns portless baseUrls under
+    // them (user nginx reverse-proxies *.<domain> to the proxy port).
+    const deployHosts = [...new Set([
+      ...(process.env.PI_WEB_HOSTNAME ?? "").split(","),
+      ...(process.env.PI_WEB_ALLOWED_HOSTS ?? "").split(","),
+    ].map((h) => h.trim().toLowerCase()).filter((h) => h && !/^(\d{1,3}\.){3}\d{1,3}$/.test(h)))];
+    if (deployHosts.length) {
+      process.env.SERVICE_TUNNELS_BASE_DOMAIN = [
+        ...(process.env.SERVICE_TUNNELS_BASE_DOMAIN ?? "").split(",").map((d) => d.trim()).filter(Boolean),
+        ...deployHosts,
+      ].join(",");
+    }
     globalThis.__piServiceTunnels = createServiceTunnels({
       configDir: join(homedir(), ".pi", "service-tunnels"),
       cacheDir: join(homedir(), ".pi", "service-tunnels-cache"),

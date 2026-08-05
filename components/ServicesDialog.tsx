@@ -318,13 +318,18 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
               const directUrls = s.addresses.map((addr) => ({ addr, url: directUrl(s.port, addr) }));
               // REAL proxy addresses from service-tunnels exposes (mode
               // proxy/both) — the old default "port.basehost" display is gone.
-              const proxyUrls = (data?.exposes ?? [])
-                .filter((e) => e.port === s.port && (e.localUrl || e.baseUrl || e.domainUrl))
-                .flatMap((e) => [
-                  ...(e.localUrl ? [{ url: e.localUrl, label: e.site && e.site !== "default" ? e.site : t("services.proxyLocal") }] : []),
-                  ...(e.baseUrl ? [{ url: e.baseUrl, label: t("services.proxyDomain") }] : []),
-                  ...(e.domainUrl ? [{ url: e.domainUrl, label: t("services.proxyDomain") }] : []),
-                ]);
+              const proxyExposes = (data?.exposes ?? []).filter((e) => e.port === s.port && (e.localUrl || e.baseUrl || e.domainUrl));
+              const proxyUrls = proxyExposes.flatMap((e) => [
+                ...(e.localUrl ? [{ url: e.localUrl, label: e.site && e.site !== "default" ? e.site : t("services.proxyLocal") }] : []),
+                ...(e.baseUrl ? [{ url: e.baseUrl, label: t("services.proxyDomain") }] : []),
+                ...(e.domainUrl ? [{ url: e.domainUrl, label: t("services.proxyDomain") }] : []),
+              ]);
+              // Deployment entry: <port>.<page-domain><basePath> — served by
+              // pi-web's own virtual-host proxy (PI_WEB_HOSTNAME/ALLOWED_HOSTS
+              // base domain + PI_WEB_BASE_PATH), only for actually-exposed ports.
+              if (proxyExposes.length > 0 && currentDomainSuffix && !currentDomainSuffix.startsWith(".localhost") && currentDomainSuffix !== ".pi.localhost") {
+                proxyUrls.push({ url: `${scheme}//${s.port}${currentDomainSuffix}${BASE_PATH}`, label: t("services.proxyDeploy") });
+              }
               const primaryUrl = proxyUrls[0]?.url ?? directUrls[0]?.url ?? "";
               return (
                 <div key={s.port} id={`port-card-${s.port}`} style={{ marginBottom: 6, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
