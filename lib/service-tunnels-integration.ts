@@ -72,7 +72,7 @@ export function listPiServices() {
 export function ensureSites(): void {
   const st = getServiceTunnels();
   const existing = st.sites.list().map((s) => s.name);
-  const presets: Record<string, { provider?: string; domain?: string; policy?: string }> = {
+  const presets: Record<string, { provider?: string; domain?: string; policy?: "one_factor" | "two_factor" | "deny" }> = {
     "pi-web": { provider: "portal", policy: "two_factor" },
     services: { provider: "basic" },
   };
