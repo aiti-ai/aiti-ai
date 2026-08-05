@@ -36,6 +36,12 @@ interface ExposeInfo {
   pid: number | null;
   accessLog: string | null;
   errorLog: string | null;
+  site?: string;
+  label?: string;
+  localUrl?: string;
+  baseUrl?: string;
+  domainUrl?: string;
+  mode?: string;
 }
 
 interface ServicesResponse {
@@ -115,19 +121,13 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
   // Suffixes in display priority: current page domain first (so a deployment at
   // example.com proposes <port>.example.com:<page-port>), then the configured ones.
   const suffixes = data?.serviceHostSuffixes ?? [".pi.localhost"];
-  const currentDomainSuffix =
-    hostname && !isLikelyIp(hostname) && hostname !== "localhost"
+  const currentDomainSuffix = hostname && !isLikelyIp(hostname) && hostname !== "localhost"
       ? `.${hostname}`
       : null;
-  const orderedSuffixes = currentDomainSuffix
-    ? [currentDomainSuffix, ...suffixes.filter((s) => s !== currentDomainSuffix)]
-    : suffixes;
 
-  // Service URLs carry pi-web's basePath (e.g. /dev) so reverse proxies that
-  // path-route pi-web (nginx `location /dev/`) forward them here; proxy.ts
-  // strips the basePath before reaching the service. No trailing slash: with a
-  // basePath, ".../dev/" triggers Next's basePath 308 redirect.
-  const proxyUrl = (port: number, suffix: string) => `${scheme}//${port}${suffix}${pagePort}${BASE_PATH}`;
+  // REAL registered proxy virtual hosts / tunnels — no default URL is
+  // synthesized for un-exposed ports (the old pi-web "port.basehost" default
+  // reverse-proxy display is removed; only actually-exposed URLs show).
   const directUrl = (port: number, addr: string) => `http://${formatAddrForUrl(addr)}:${port}/`;
 
   // Open in a new browser TAB: window.open without size features opens a tab,
@@ -272,12 +272,19 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
               {(data?.exposes ?? []).map((ex) => (
                 <div key={ex.name} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", flexWrap: "wrap", fontSize: 11 }}>
                   <span style={{ fontFamily: "var(--font-mono)", color: "var(--text)", flexShrink: 0 }}>127.0.0.1:{ex.port}</span>
-                  <span style={{ padding: "1px 6px", background: "var(--bg-hover)", borderRadius: 4, color: "var(--text-muted)", flexShrink: 0 }}>{ex.tunnelType ?? "?"}</span>
+                  <span style={{ padding: "1px 6px", background: "var(--bg-hover)", borderRadius: 4, color: "var(--text-muted)", flexShrink: 0 }}>{ex.localUrl && !ex.url ? "proxy" : (ex.tunnelType ?? "?")}</span>
                   <span style={{ padding: "1px 6px", background: "var(--bg-hover)", borderRadius: 4, color: "var(--text-dim)", flexShrink: 0 }}>{ex.protocol ?? "http"}</span>
                   <span style={{ padding: "1px 6px", background: "var(--bg-hover)", borderRadius: 4, color: "var(--text-muted)", flexShrink: 0 }}>{ex.provider ? `auth: ${ex.provider}` : "no auth"}</span>
                   <span style={{ fontSize: 10, color: ex.running ? "#16a34a" : "var(--text-dim)", flexShrink: 0 }}>{ex.running ? t("services.tunnelRunning") : t("services.tunnelStopped")}</span>
-                  {ex.url && ex.running && (
-                    <button onClick={() => openInNewTab(ex.url!)} style={{ flex: 1, minWidth: 120, textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontSize: 11, fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={ex.url}>{ex.url}</button>
+                  {ex.running && (ex.url || ex.localUrl) && (
+                    <div style={{ flex: 1, minWidth: 120, display: "flex", flexDirection: "column", gap: 2 }}>
+                      {[ex.url, ex.localUrl, ex.baseUrl, ex.domainUrl].filter((x): x is string => Boolean(x)).map((u) => (
+                        <button key={u} onClick={() => openInNewTab(u!)}
+                          style={{ textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontSize: 11, fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={u}>
+                          {u}
+                        </button>
+                      ))}
+                    </div>
                   )}
                   {ex.running && (
                     <button onClick={() => stopExpose(ex.name)} style={{ flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-muted)", cursor: "pointer", fontSize: 11 }}>{t("services.exposeStop")}</button>
@@ -309,7 +316,15 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
             data.services.map((s) => {
               const isOpen = expanded.has(s.port);
               const directUrls = s.addresses.map((addr) => ({ addr, url: directUrl(s.port, addr) }));
-              const proxyUrls = orderedSuffixes.map((suffix) => ({ suffix, url: proxyUrl(s.port, suffix) }));
+              // REAL proxy addresses from service-tunnels exposes (mode
+              // proxy/both) — the old default "port.basehost" display is gone.
+              const proxyUrls = (data?.exposes ?? [])
+                .filter((e) => e.port === s.port && (e.localUrl || e.baseUrl || e.domainUrl))
+                .flatMap((e) => [
+                  ...(e.localUrl ? [{ url: e.localUrl, label: e.site && e.site !== "default" ? e.site : t("services.proxyLocal") }] : []),
+                  ...(e.baseUrl ? [{ url: e.baseUrl, label: t("services.proxyDomain") }] : []),
+                  ...(e.domainUrl ? [{ url: e.domainUrl, label: t("services.proxyDomain") }] : []),
+                ]);
               const primaryUrl = proxyUrls[0]?.url ?? directUrls[0]?.url ?? "";
               return (
                 <div key={s.port} id={`port-card-${s.port}`} style={{ marginBottom: 6, border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden" }}>
@@ -352,13 +367,17 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
                           ))}
                         </>
                       )}
-                      <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", margin: "10px 0 6px" }}>{t("services.viaProxy")}</div>
-                      {proxyUrls.map(({ suffix, url }) => (
-                        <UrlRow key={url} url={url}
-                          isMobile={isMobile}
-                          label={suffix === currentDomainSuffix ? t("services.currentDomain") : suffix === ".pi.localhost" ? t("services.sameMachine") : suffix}
-                          copied={copiedKey === url} onCopy={() => copy(url, url)} onOpen={() => openInNewTab(url)} />
-                      ))}
+                      {proxyUrls.length > 0 && (
+                        <>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", margin: "10px 0 6px" }}>{t("services.viaProxy")}</div>
+                          {proxyUrls.map(({ url, label }) => (
+                            <UrlRow key={url} url={url}
+                              isMobile={isMobile}
+                              label={label}
+                              copied={copiedKey === url} onCopy={() => copy(url, url)} onOpen={() => openInNewTab(url)} />
+                          ))}
+                        </>
+                      )}
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
                         <button
                           onClick={() => openInNewTab(primaryUrl)}

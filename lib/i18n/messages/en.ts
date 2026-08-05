@@ -89,6 +89,8 @@ export const enLocale: LocalePlugin = {
     "services.close": "Close",
     "services.direct": "Direct (bypass pi-web)",
     "services.viaProxy": "Via pi-web (virtual host)",
+    "services.proxyLocal": "local proxy",
+    "services.proxyDomain": "domain",
     "services.listenOn": "Listening on",
     "services.sameMachine": "same machine",
     "services.currentDomain": "current domain",

@@ -89,6 +89,8 @@ export const zhCNLocale: LocalePlugin = {
     "services.close": "关闭",
     "services.direct": "直连（绕过 pi-web）",
     "services.viaProxy": "通过 pi-web 虚拟主机",
+    "services.proxyLocal": "本地代理",
+    "services.proxyDomain": "域名",
     "services.listenOn": "监听",
     "services.sameMachine": "本机",
     "services.currentDomain": "当前域名",
