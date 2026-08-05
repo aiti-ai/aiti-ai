@@ -328,7 +328,7 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
               // pi-web's own virtual-host proxy (PI_WEB_HOSTNAME/ALLOWED_HOSTS
               // base domain + PI_WEB_BASE_PATH), only for actually-exposed ports.
               if (proxyExposes.length > 0 && currentDomainSuffix && !currentDomainSuffix.startsWith(".localhost") && currentDomainSuffix !== ".pi.localhost") {
-                proxyUrls.push({ url: `${scheme}//${s.port}${currentDomainSuffix}${BASE_PATH}`, label: t("services.proxyDeploy") });
+                proxyUrls.push({ url: `${scheme}//${s.port}${currentDomainSuffix}${pagePort}${BASE_PATH}`, label: t("services.proxyDeploy") });
               }
               const primaryUrl = proxyUrls[0]?.url ?? directUrls[0]?.url ?? "";
               return (

@@ -54,7 +54,15 @@ export function getServiceTunnels(): ServiceTunnels {
     const deployHosts = [...new Set([
       ...(process.env.PI_WEB_HOSTNAME ?? "").split(","),
       ...(process.env.PI_WEB_ALLOWED_HOSTS ?? "").split(","),
-    ].map((h) => h.trim().toLowerCase()).filter((h) => h && !/^(\d{1,3}\.){3}\d{1,3}$/.test(h)))];
+    ].map((h) => h.trim().toLowerCase()).filter((h) => {
+      if (!h) return false;
+      // strip the optional port before the IP check: "127.0.0.1:8080" and
+      // "10.0.0.1" are loopback/LAN literals, never wildcard suffixes. The
+      // host:port form ("example.com:8080") IS kept — service-tunnels base
+      // domains accept it (virtual hosts match the host; URLs keep the port).
+      const host = h.replace(/:\d{1,5}$/, "");
+      return !/^(\d{1,3}\.){3}\d{1,3}$/.test(host) && !host.includes(":");
+    }))];
     globalThis.__piServiceTunnels = createServiceTunnels({
       configDir: join(homedir(), ".pi", "service-tunnels"),
       cacheDir: join(homedir(), ".pi", "service-tunnels-cache"),
