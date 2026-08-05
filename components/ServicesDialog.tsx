@@ -800,12 +800,14 @@ function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, stri
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [site, setSite] = useState("");
+  const [sites, setSites] = useState<string[]>([]);
 
   const post = (action: string, extra: Record<string, unknown> = {}) =>
     fetch(apiUrl("/api/service-tunnels"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, provider, ...extra }),
+      body: JSON.stringify({ action, provider, site: site || undefined, ...extra }),
     }).then((r) => r.json());
 
   const loadUsers = useCallback((prov: string = provider ?? "") => {
@@ -826,7 +828,7 @@ function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, stri
   useEffect(() => {
     fetch(apiUrl("/api/service-tunnels"))
       .then((r) => r.json())
-      .then((d: { userManagers?: string[]; defaultProvider?: string; totpProviders?: string[] }) => {
+      .then((d: { userManagers?: string[]; defaultProvider?: string; totpProviders?: string[]; sites?: { name: string }[] }) => {
         // User-management providers come from the library's userManagers()
         // (providers with a local user db — oauth2-proxy etc. excluded there,
         // not hardcoded here).
@@ -835,11 +837,12 @@ function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, stri
         const preferred = d.defaultProvider ?? ps[0] ?? "portal";
         setProvider((cur) => (cur === null ? (ps.includes(preferred) ? preferred : (ps[0] ?? "portal")) : cur));
         if (d.totpProviders) setTotpProviders(d.totpProviders);
+        if (d.sites) setSites(d.sites.filter((s) => s.name !== "default").map((s) => s.name));
       })
       .catch(() => {});
   }, []);
 
-  useEffect(() => { if (provider) loadUsers(); }, [provider]);
+  useEffect(() => { if (provider) loadUsers(); }, [provider, site]);
 
   const addUser = () => {
     if (!name || !password) return;
@@ -933,6 +936,12 @@ function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, stri
           style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 11 }}>
           <option value="" disabled>{t("services.selectProvider")}</option>
           {providers.map((p) => <option key={p} value={p}>{p}</option>)}
+        </select>
+        <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeSite")}</span>
+        <select value={site} onChange={(e) => setSite(e.target.value)}
+          style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 11 }}>
+          <option value="">{t("services.exposeSiteDefault")}</option>
+          {sites.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
       </div>
 
