@@ -60,6 +60,10 @@ export function getServiceTunnels(): ServiceTunnels {
       cacheDir: join(homedir(), ".pi", "service-tunnels-cache"),
       marker: "pi-web",
       toolPaths: toolPathsFromEnv(),
+      // Deployment base path merges under auth-provider login paths:
+      // PI_WEB_BASE_PATH=/dev → portal login at /dev/portal/login
+      // (plain /portal/login when pi-web is root-deployed).
+      ...((process.env.PI_WEB_BASE_PATH ?? "").replace(/\/+$/, "") ? { deployBasePath: (process.env.PI_WEB_BASE_PATH ?? "").replace(/\/+$/, "") } : {}),
       ...(deployHosts.length
         ? { baseDomain: deployHosts[0], baseDomains: deployHosts.slice(1) }
         : {}),
