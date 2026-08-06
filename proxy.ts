@@ -140,9 +140,32 @@ export async function proxy(request: NextRequest) {
       // 临时 block(两阶段关闭中)提示剩余恢复时间,永久 block 保持原文案
       const pending = getAllowLocalPending();
       const remain = pending.pending ? Math.max(0, Math.ceil((pending.expiresAt - Date.now()) / 1000)) : 0;
-      const msg = pending.pending
-        ? `访问被拒绝：本地直连已禁用（allowlocal=false），临时封禁 ${remain}s 后自动恢复`
-        : "访问被拒绝：本地直连已禁用（allowlocal=false）";
+      if (pending.pending) {
+        // 临时封禁:返回 HTML 页面,meta refresh + JS 双保险——TTL 到期自动恢复后
+        // 浏览器自动重载,无需手动 F5;永久封禁不自动刷新(避免死循环)
+        const refreshSec = Math.max(1, remain);
+        const title = "访问被拒绝";
+        const body = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+<meta http-equiv="refresh" content="${refreshSec}">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>${title}</title>
+<style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0d0d0d;color:#e5e5e5}.card{text-align:center;padding:26px 30px;border:1px solid #333;border-radius:10px;max-width:440px;line-height:1.7}code{color:#f87171;background:#1c1c1c;padding:1px 6px;border-radius:4px}strong{color:#f87171}</style></head>
+<body><div class="card">
+<h3 style="margin-top:0">${title}</h3>
+<p>本地直连已禁用（<code>allowlocal=false</code>）</p>
+<p>临时封禁 <strong>${remain}s</strong> 后自动恢复，页面将自动刷新…</p>
+</div>
+<script>setTimeout(function(){ location.reload(); }, ${(remain + 1) * 1000});</script>
+</body></html>`;
+        return new NextResponse(body, {
+          status: 403,
+          headers: {
+            "cache-control": "no-store",
+            "content-type": "text/html; charset=utf-8",
+          },
+        });
+      }
+      const msg = `访问被拒绝：本地直连已禁用（allowlocal=false）`;
       return new NextResponse(msg, {
         status: 403,
         headers: { "cache-control": "no-store" },
