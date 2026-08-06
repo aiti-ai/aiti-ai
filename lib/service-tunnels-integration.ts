@@ -118,10 +118,14 @@ export async function exposeService(
     allowToolDownload: opts.allowToolDownload,
     tunnelParams: opts.tunnelParams,
     providerParams: opts.providerParams,
-    // Caller-side naming: same port can be exposed with several providers;
-    // distinct tunnelName keeps them coexisting (service-tunnels default would
-    // collide on expose-<port>).
-    tunnelName: `expose-${port}-${opts.provider ?? "direct"}`,
+    // Caller-side naming: the SAME port can be exposed several ways at once
+    // (redundant channels — a dead tunnel/provider never takes the others
+    // down). tunnelName carries provider + site + tunnel type (+ mode for
+    // proxy/both) so each combo gets its own tunnel process; service-tunnels'
+    // default would collide on expose-<port>. The default cloudflared/tunnel
+    // combo keeps the legacy `expose-<port>-<provider>` name (existing
+    // exposes are not renamed).
+    tunnelName: `expose-${port}-${opts.provider ?? "direct"}${opts.site && opts.site !== "default" ? `-${opts.site}` : ""}${opts.tunnel && opts.tunnel !== "cloudflared" ? `-${opts.tunnel}` : ""}${opts.mode && opts.mode !== "tunnel" ? `-${opts.mode}` : ""}`,
     // The middleware serves vhosts in-process (st.proxy.resolve) — no
     // separate proxy transport listener.
     startTransport: false,
@@ -158,28 +162,23 @@ export async function exposeSelf(opts: SelfExposeOptions = {}) {
   const authNone = opts.auth === "none";
   const provider = opts.auth && opts.auth !== "auto" && !authNone ? opts.auth : "portal";
   const mode = opts.mode ?? "proxy";
-  // Tunnel-only mode still registers the proxy virtual-host binding so the
-  // middleware can map the public tunnel domain back to <port>-pi-web.<suffix>
-  // and authenticate it through resolve() — all authorized access flows
-  // through the proxy, there is no whitelist backdoor.
-  if (mode === "tunnel") {
-    try {
-      st.proxy.addBinding({
-        port,
-        label: "pi-web",
-        site: "pi-web",
-        provider: opts.auth === "none" ? "" : provider,
-        ...(opts.policy ? { policy: { policy: opts.policy } } : {}),
-      });
-    } catch {
-      // binding already exists — fine
-    }
-  }
+  // 所有模式都注册 labeled 绑定(label "pi-web"):pi-web 是 basePath 应用,
+  // labeled vhost 走 pipe 保留完整路径(裸 open vhost 会 strip /dev → 404),
+  // 且 auth=none 时 provider="" 由 resolveSite 短路开放。隧道域经 middleware
+  // 映射回该 vhost 统一认证,无白名单后门。
+  st.proxy.addBinding({
+    port,
+    label: "pi-web",
+    site: "pi-web",
+    provider: authNone ? "" : provider,
+    ...(opts.policy ? { policy: { policy: opts.policy } } : {}),
+  });
   return st.auth.expose(port, {
     // auth "none" → open binding (no gateway); everything else is gated.
     auth: authNone ? "none" : true,
     mode,
     site: "pi-web",
+    label: "pi-web",
     ...(provider !== "portal" && !authNone ? { provider } : {}),
     tunnelType: opts.tunnel ?? "cloudflared",
     tunnelName: `expose-self-${port}`,

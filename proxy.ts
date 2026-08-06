@@ -61,9 +61,18 @@ export async function proxy(request: NextRequest) {
   if (host && st?.proxy?.parseHost(host)) {
     let decision: Awaited<ReturnType<typeof st.proxy.resolve>>;
     try {
+      // Next 的 nextUrl 在 basePath 模式下会剥除 /dev——服务 vhost 转发必须
+      // 携带应用完整路径,补回 basePath(否则 /dev 变成 / → pipe 到根 → 302 循环)。
+      // nextUrl.pathname 剥后剩 "/"(带斜杠),补回时去尾斜杠避免 /dev/ 触发
+      // Next 的 308 规范化循环
+      const bp = process.env.NEXT_PUBLIC_BASE_PATH || "";
+      const stripped = request.nextUrl.pathname;
+      const requestPath = bp && !stripped.startsWith(bp)
+        ? bp + (stripped === "/" ? "" : stripped)
+        : stripped;
       decision = await st.proxy.resolve({
         host,
-        url: request.nextUrl.pathname + request.nextUrl.search,
+        url: requestPath + request.nextUrl.search,
         method: request.method,
         authorization: request.headers.get("authorization") ?? undefined,
         cookie: request.headers.get("cookie") ?? undefined,
@@ -94,6 +103,7 @@ export async function proxy(request: NextRequest) {
         const url = new URL(`http://127.0.0.1:${decision.port}`);
         url.pathname = decision.url.split("?")[0] ?? "/";
         url.search = decision.url.includes("?") ? `?${decision.url.split("?")[1]}` : "";
+        console.log("[pi-web][dbg] pipe:", { host, decisionUrl: decision.url, port: decision.port, rewriteTarget: url.href, rawUrl: request.url, nextPath: request.nextUrl.pathname });
         if (decision.port === getPiWebPort()) {
           // 根路径重定向到 basePath:pi-web 无根页面(登录后 next=/ 会 404),
           // 裸 / 应落到部署前缀下
