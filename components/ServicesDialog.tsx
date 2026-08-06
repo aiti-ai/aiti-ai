@@ -1117,6 +1117,10 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   // 类型都会出现,command 等 dangerous 类型隐藏——不再硬编码 4 项
   const [tunnelSchemas, setTunnelSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
   const [tunnelMetas, setTunnelMetas] = useState<Record<string, { favorite?: boolean; dangerous?: boolean }> | null>(null);
+  // 隧道/provider 参数(schema 驱动,与 Ports 页同款)——ngrok 等类型需要 token/domain
+  const [tunnelParams, setTunnelParams] = useState<Record<string, string>>({});
+  const [providerParams, setProviderParams] = useState<Record<string, string>>({});
+  const [authSchemas, setAuthSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [copiedEnv, setCopiedEnv] = useState(false);
@@ -1151,9 +1155,10 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   useEffect(() => {
     fetch(apiUrl("/api/service-tunnels"))
       .then((r) => r.json())
-      .then((d: { tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }> }) => {
+      .then((d: { tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]> }) => {
         if (d.tunnelSchemas) setTunnelSchemas(d.tunnelSchemas);
         if (d.tunnelMetas) setTunnelMetas(d.tunnelMetas);
+        if (d.authProviderSchemas) setAuthSchemas(d.authProviderSchemas);
         if (d.tunnelSchemas && d.tunnelMetas) {
           const available = Object.keys(d.tunnelSchemas).filter(
             (k) => !d.tunnelMetas?.[k]?.dangerous && k !== "command",
@@ -1194,7 +1199,14 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
     fetch(apiUrl("/api/service-tunnels"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "self-expose", mode, provider: auth === "none" ? undefined : auth, tunnel }),
+      body: JSON.stringify({
+        action: "self-expose",
+        mode,
+        provider: auth === "none" ? undefined : auth,
+        tunnel,
+        tunnelParams,
+        providerParams,
+      }),
     })
       .then((r) => r.json())
       .then((d: { error?: string }) => { if (d.error) setErr(d.error); else onChanged(); })
@@ -1216,9 +1228,12 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   };
 
   // 永久配置文本:allowHost 用当前生效值(env + UI 保存的运行时 override 合并,
-  // 保存后 onChanged 刷新即同步) — 复制到启动脚本即持久化
+  // 保存后 onChanged 刷新即同步) — 复制到启动脚本即持久化;tunnel/provider
+  // 参数按 PI_WEB_EXPOSE 的 tunnel./provider. 前缀嵌套键序列化
   const allowHosts = self?.allowHosts ?? [];
-  const envSnippet = `PI_WEB_EXPOSE="mode=${mode},auth=${auth}${mode !== "proxy" ? `,tunnel=${tunnel}` : ""}${allowHosts.length ? `,allowHost=${allowHosts.join(",allowHost=")}` : ""}"`;
+  const tunnelParamStr = Object.entries(tunnelParams).map(([k, v]) => `tunnel.${k}=${v}`).join(",");
+  const providerParamStr = Object.entries(providerParams).map(([k, v]) => `provider.${k}=${v}`).join(",");
+  const envSnippet = `PI_WEB_EXPOSE="mode=${mode},auth=${auth}${mode !== "proxy" ? `,tunnel=${tunnel}` : ""}${tunnelParamStr ? `,${tunnelParamStr}` : ""}${providerParamStr ? `,${providerParamStr}` : ""}${allowHosts.length ? `,allowHost=${allowHosts.join(",allowHost=")}` : ""}"`;
   const copyEnv = () => {
     copyText(envSnippet).then(() => {
       setCopiedEnv(true);
@@ -1351,6 +1366,28 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
             </button>
           )}
         </div>
+        {/* 隧道参数(schema 驱动,同 Ports 页):ngrok 的 token/domain、frpc 的
+            server/token 等随所选隧道类型出现 */}
+        {mode !== "proxy" && tunnelSchemas?.[tunnel] && (
+          <div style={{ marginTop: 8, padding: "6px 8px", borderRadius: 6, background: "var(--bg)", border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, color: "var(--text-dim)", fontWeight: 600 }}>
+              {t("services.tunnelParams")}
+              {tunnelMetas?.[tunnel]?.favorite && (
+                <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "var(--accent)", color: "#fff", fontSize: 9, fontWeight: 600 }}>
+                  {t("services.recommended")}
+                </span>
+              )}
+            </div>
+            <SchemaForm specs={tunnelSchemas[tunnel]} values={tunnelParams} onChange={(k, v) => setTunnelParams((prev) => ({ ...prev, [k]: v }))} t={t} />
+          </div>
+        )}
+        {/* auth provider 参数(schema 驱动) */}
+        {auth && auth !== "none" && authSchemas?.[auth] && authSchemas[auth].length > 0 && (
+          <div style={{ marginTop: 8, padding: "6px 8px", borderRadius: 6, background: "var(--bg)", border: "1px solid var(--border)" }}>
+            <div style={{ fontSize: 10, color: "var(--text-dim)", fontWeight: 600 }}>{t("services.authParams")}</div>
+            <SchemaForm specs={authSchemas[auth]} values={providerParams} onChange={(k, v) => setProviderParams((prev) => ({ ...prev, [k]: v }))} t={t} />
+          </div>
+        )}
         {err && <div style={{ fontSize: 12, color: "#f87171", marginTop: 8 }}>{err}</div>}
       </div>
 
