@@ -45,3 +45,6 @@ next-env.d.ts
 
 # Playwright MCP test artifacts
 .playwright-mcp/
+
+# test server runtime log (scripts/test-server.js)
+test-server.log
