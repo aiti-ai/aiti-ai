@@ -99,6 +99,7 @@ export const zhCNLocale: LocalePlugin = {
     "services.lockoutTitle": "allowlocal 已临时关闭（{ttl} 秒内自动恢复）",
     "services.lockoutCountdown": "本地直连已临时关闭，{ttl} 秒内自动恢复。请确认你仍能访问 pi-web（可打开下方入口验证登录），并在 {window} 秒内点击「确认关闭」永久生效——否则自动回退，不会锁死。",
     "services.lockoutAutoRestore": "不做任何操作 → allowlocal 自动恢复（不会被锁）。",
+    "services.lockoutBlockedHint": "直连已被屏蔽（403）：该操作需通过认证入口（虚拟主机/隧道）访问才能完成。等待自动恢复（约 {ttl}s）…",
     "services.lockoutStillWorks": "关闭期间仍可访问：",
     "services.lockoutVerify": "打开并验证登录",
     "services.lockoutRestore": "立即恢复",

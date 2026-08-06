@@ -1175,6 +1175,12 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
 
   const toggleAllowLocal = (v: boolean) => {
     if (v === false) {
+      // 关闭期间仍可访问的认证入口/例外域名(authEntries 含 allowHost 白名单)
+      // 为空 → 直接拒绝,不进入临时关闭——没有任何方式可访问,临时 30s 无意义
+      if (authEntries.length === 0) {
+        setErr(t("services.lockoutNoEntry"));
+        return;
+      }
       // 第一阶段:服务端临时关闭(TTL 自动恢复),随即进入 30s 二次确认窗口
       setErr(null);
       setRestoredNotice(false);
@@ -1213,8 +1219,11 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "self-allowlocal", allowLocal: false, confirm: true }),
     })
-      .then((r) => r.json())
-      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else { setConfirmCountdown(null); onChanged(); } })
+      .then(async (r) => {
+        if (r.status === 403) { setBlockedHint(true); return null; } // 裸直连已被屏蔽:等自动恢复
+        return r.json();
+      })
+      .then((d: { error?: string } | null) => { if (d === null) return; if (d.error) setErr(d.error); else { setConfirmCountdown(null); onChanged(); } })
       .catch(() => setErr(String(t("services.error"))));
   };
 
@@ -1226,8 +1235,11 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "self-allowlocal", allowLocal: true, confirm: true }),
     })
-      .then((r) => r.json())
-      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else { setConfirmCountdown(null); setRestoredNotice(true); onChanged(); } })
+      .then(async (r) => {
+        if (r.status === 403) { setBlockedHint(true); return null; } // 裸直连已被屏蔽:等自动恢复
+        return r.json();
+      })
+      .then((d: { error?: string } | null) => { if (d === null) return; if (d.error) setErr(d.error); else { setConfirmCountdown(null); setRestoredNotice(true); onChanged(); } })
       .catch(() => setErr(String(t("services.error"))));
   };
 
@@ -1235,6 +1247,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   // 30s 倒计时内二次确认才永久;超时/被锁点不了 → 服务端自动恢复,不会锁死
   const [confirmCountdown, setConfirmCountdown] = useState<number | null>(null); // null=未在确认
   const [restoredNotice, setRestoredNotice] = useState(false); // 超时自动恢复提示
+  const [blockedHint, setBlockedHint] = useState(false); // 屏蔽期间按钮被 403 的温和提示
   const CONFIRM_WINDOW = 30; // 二次确认窗口(秒)
   const TTL_MS = 30_000; // 服务端临时关闭 TTL(与确认窗口一致,到期自动恢复)
   useEffect(() => {
@@ -1507,6 +1520,11 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
               </div>
               <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.lockoutAutoRestore")}</div>
             </div>
+            {blockedHint && (
+              <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(217,119,6,0.1)", border: "1px solid rgba(217,119,6,0.35)", fontSize: 11, color: "#d97706" }}>
+                {t("services.lockoutBlockedHint", { ttl: String(TTL_MS / 1000) })}
+              </div>
+            )}
             {/* 仍可用入口:可点开验证 */}
             <div style={{ marginTop: 10 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>{t("services.lockoutStillWorks")}</div>
