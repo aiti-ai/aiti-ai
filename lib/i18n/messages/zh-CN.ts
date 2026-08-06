@@ -104,6 +104,8 @@ export const zhCNLocale: LocalePlugin = {
     "services.lockoutVerify": "打开并验证登录",
     "services.lockoutRestore": "立即恢复",
     "services.lockoutConfirm": "确认关闭（保留）",
+    "services.lockoutNoEntryTitle": "无法关闭本地直连",
+    "services.lockoutNoEntry": "当前没有任何关闭后仍可访问的入口：pi-web 未暴露（无虚拟主机/隧道），也未配置例外域名（allowHost）。关闭后将无法访问。请先暴露 pi-web（虚拟主机/隧道认证入口）或添加例外域名。",
     "services.lockoutRestored": "allowlocal 已恢复（true），直连可用",
     "services.copy": "复制",
     "services.selfEnvHint": "永久配置（复制到启动脚本）：",

@@ -1176,9 +1176,9 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   const toggleAllowLocal = (v: boolean) => {
     if (v === false) {
       // 关闭期间仍可访问的认证入口/例外域名(authEntries 含 allowHost 白名单)
-      // 为空 → 直接拒绝,不进入临时关闭——没有任何方式可访问,临时 30s 无意义
+      // 为空 → 弹窗提示并拒绝,不进入临时关闭——没有任何方式可访问,临时 30s 无意义
       if (authEntries.length === 0) {
-        setErr(t("services.lockoutNoEntry"));
+        setRejectDialog(true);
         return;
       }
       // 第一阶段:服务端临时关闭(TTL 自动恢复),随即进入 30s 二次确认窗口
@@ -1248,6 +1248,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   const [confirmCountdown, setConfirmCountdown] = useState<number | null>(null); // null=未在确认
   const [restoredNotice, setRestoredNotice] = useState(false); // 超时自动恢复提示
   const [blockedHint, setBlockedHint] = useState(false); // 屏蔽期间按钮被 403 的温和提示
+  const [rejectDialog, setRejectDialog] = useState(false); // 无可访问入口时拒绝关闭的弹窗
   const CONFIRM_WINDOW = 30; // 二次确认窗口(秒)
   const TTL_MS = 30_000; // 服务端临时关闭 TTL(与确认窗口一致,到期自动恢复)
   useEffect(() => {
@@ -1551,6 +1552,18 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
               >
                 {t("services.lockoutConfirm")}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* 无可访问入口:拒绝关闭的弹窗提示 */}
+      {rejectDialog && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setRejectDialog(false)}>
+          <div onClick={(e) => e.stopPropagation()} style={{ width: 460, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 8 }}>⚠ {t("services.lockoutNoEntryTitle")}</div>
+            <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }}>{t("services.lockoutNoEntry")}</div>
+            <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 12 }}>
+              <button onClick={() => setRejectDialog(false)} style={{ ...btn }}>{t("services.close")}</button>
             </div>
           </div>
         </div>

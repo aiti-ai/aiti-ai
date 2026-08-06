@@ -104,6 +104,8 @@ export const enLocale: LocalePlugin = {
     "services.lockoutVerify": "Open & verify login",
     "services.lockoutRestore": "Restore now",
     "services.lockoutConfirm": "Confirm: keep off",
+    "services.lockoutNoEntryTitle": "Cannot turn off direct access",
+    "services.lockoutNoEntry": "There is no reachable entry while it is off: pi-web is not exposed (no vhost/tunnel) and no allowHost exception is configured. Turning it off would lock you out. Expose pi-web (vhost/tunnel auth entry) or add allowHost domains first.",
     "services.lockoutRestored": "allowlocal restored (true) — direct access works again",
     "services.copy": "Copy",
     "services.selfEnvHint": "Permanent config — copy to your start script:",
