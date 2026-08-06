@@ -1527,7 +1527,6 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
                   <span style={{ fontFamily: "var(--font-mono)" }}>{h}</span> <span style={{ color: "var(--text-dim)" }}>(allowHost)</span>
                 </div>
               ))}
-              <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("services.lockoutLoopback")}</div>
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" }}>
               <button onClick={restoreNow} style={{ ...btn, flexShrink: 0 }}>{t("services.lockoutRestore")}</button>

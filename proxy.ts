@@ -11,6 +11,7 @@ import {
   getPiWebPort,
   getAllowLocal,
   getAllowLocalHosts,
+  getAllowLocalPending,
   mapSelfTunnelToVhost,
   issueSelfForwardToken,
   isValidSelfForwardToken,
@@ -123,24 +124,26 @@ export async function proxy(request: NextRequest) {
 
   // pi-web's own traffic: direct-access gate. With allowlocal=false, requests
   // whose Host is NOT an operator-trusted host (deployment domains / explicit
-  // allowHost list) are refused — including LOOPBACK hosts. External traffic
-  // must go through an authenticated gateway (service virtual host or tunnel
-  // exposure); a raw `http://127.0.0.1:<port>` request must NOT bypass it. The
-  // ONLY loopback exception is a request carrying a valid self-exposure
-  // forward token: that is pi-web's own vhost→self forward re-entering this
-  // middleware after Next's external rewrite (custom headers do not survive
-  // the rewrite, so the proof rides in the rewrite URL). API paths are
-  // EXEMPT: they are already guarded by isApiRequestAllowed below
-  // (Origin/DNS-rebinding/CSRF checks), and the two-phase allowlocal flow
-  // needs the confirm/rescue API reachable while temporarily disabled.
-  const isApiPath = request.nextUrl.pathname === "/api" || request.nextUrl.pathname.startsWith("/api/");
-  if (!getAllowLocal() && !isApiPath) {
+  // allowHost list) are refused — including LOOPBACK hosts and API paths
+  // (防的就是 API,一视同仁). The ONLY exception is a valid self-exposure
+  // forward token (pi-web's own vhost→self forward re-entering after Next's
+  // external rewrite, the proof rides in the rewrite URL). This is the whole
+  // two-phase point: if you have a working authenticated entry you can reach
+  // the page/API and confirm (permanent); if you are blocked you cannot — the
+  // TTL auto-restores. No API whitelist.
+  if (!getAllowLocal()) {
     const hostHeader = (request.headers.get("host") ?? "").toLowerCase();
     const hostname = hostHeader.replace(/^\[|\]$/g, "").split(":")[0];
     const fwdToken = request.nextUrl.searchParams.get("__piSelfFwd");
     const isSelfForward = isValidSelfForwardToken(fwdToken ?? "");
     if (!isSelfForward && !getAllowLocalHosts().includes(hostname)) {
-      return new NextResponse("Forbidden: direct access is disabled (allowlocal=false)", {
+      // 临时 block(两阶段关闭中)提示剩余恢复时间,永久 block 保持原文案
+      const pending = getAllowLocalPending();
+      const remain = pending.pending ? Math.max(0, Math.ceil((pending.expiresAt - Date.now()) / 1000)) : 0;
+      const msg = pending.pending
+        ? `Forbidden: direct access is disabled (allowlocal=false), 临时block ${remain}s 后恢复`
+        : "Forbidden: direct access is disabled (allowlocal=false)";
+      return new NextResponse(msg, {
         status: 403,
         headers: { "cache-control": "no-store" },
       });

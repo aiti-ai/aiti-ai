@@ -14,6 +14,10 @@ declare global {
   var __piWebPort: number | undefined;
   /** Self-exposure forward proof tokens (allowlocal=false gate): token → issued-at. */
   var __piWebSelfForwardTokens: Map<string, number> | undefined;
+  // 两阶段关闭 pending 状态放 globalThis:middleware(独立 bundle)与 app server
+  // 共享同一实例,临时 block 的 403 文案才能读到剩余恢复时间
+  var __piWebAllowLocalTimer: ReturnType<typeof setTimeout> | undefined;
+  var __piWebAllowLocalPendingExpires: number | undefined;
 }
 
 /** pi-web's own port (PORT env ?? 30141); overridable via PI_WEB_EXPOSE port=. */
@@ -44,18 +48,17 @@ export function setAllowLocal(v: boolean): void {
 }
 
 // 两阶段关闭(Windows 分辨率式防锁):第一阶段临时关闭 + TTL 自动恢复,
-// 用户 30s 窗口内二次确认才永久;超时/不确认直接退回。
-let allowLocalPendingTimer: ReturnType<typeof setTimeout> | null = null;
-let allowLocalPendingExpires = 0;
+// 用户 30s 窗口内二次确认才永久;超时/不确认直接退回。状态存 globalThis
+// (middleware 独立 bundle 也要读到 pending 来生成 403 临时文案)。
 
 /** 第一阶段:临时关闭,ttlMs 后自动恢复(override 回到 env/默认值)。 */
 export function setAllowLocalTemporary(v: boolean, ttlMs: number): void {
-  if (allowLocalPendingTimer) clearTimeout(allowLocalPendingTimer);
+  if (globalThis.__piWebAllowLocalTimer) clearTimeout(globalThis.__piWebAllowLocalTimer);
   globalThis.__piWebAllowLocalOverride = v;
-  allowLocalPendingExpires = Date.now() + ttlMs;
-  allowLocalPendingTimer = setTimeout(() => {
-    allowLocalPendingTimer = null;
-    allowLocalPendingExpires = 0;
+  globalThis.__piWebAllowLocalPendingExpires = Date.now() + ttlMs;
+  globalThis.__piWebAllowLocalTimer = setTimeout(() => {
+    globalThis.__piWebAllowLocalTimer = undefined;
+    globalThis.__piWebAllowLocalPendingExpires = undefined;
     // 回到 env/默认(不强制 true:若启动时 env 显式 allowlocal=false 则尊重它)
     globalThis.__piWebAllowLocalOverride = undefined;
   }, ttlMs);
@@ -63,15 +66,16 @@ export function setAllowLocalTemporary(v: boolean, ttlMs: number): void {
 
 /** 第二阶段:二次确认,永久生效(取消 TTL 自动恢复)。 */
 export function confirmAllowLocal(v: boolean): void {
-  if (allowLocalPendingTimer) clearTimeout(allowLocalPendingTimer);
-  allowLocalPendingTimer = null;
-  allowLocalPendingExpires = 0;
+  if (globalThis.__piWebAllowLocalTimer) clearTimeout(globalThis.__piWebAllowLocalTimer);
+  globalThis.__piWebAllowLocalTimer = undefined;
+  globalThis.__piWebAllowLocalPendingExpires = undefined;
   globalThis.__piWebAllowLocalOverride = v;
 }
 
-/** 待二次确认状态(UI 倒计时展示):{ pending, expiresAt }。 */
+/** 待二次确认状态(UI 倒计时 / middleware 403 文案):{ pending, expiresAt }。 */
 export function getAllowLocalPending(): { pending: boolean; expiresAt: number } {
-  return { pending: allowLocalPendingTimer !== null, expiresAt: allowLocalPendingExpires };
+  const exp = globalThis.__piWebAllowLocalPendingExpires;
+  return { pending: exp !== undefined && exp > Date.now(), expiresAt: exp ?? 0 };
 }
 
 function normalizeHost(raw: string): string {

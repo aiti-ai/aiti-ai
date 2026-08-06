@@ -100,7 +100,6 @@ export const enLocale: LocalePlugin = {
     "services.lockoutCountdown": "Direct local access is temporarily disabled. It auto-restores in {ttl}s. Verify you can still reach pi-web (open an entry below to check login), then confirm within {window}s to keep it off permanently — otherwise it reverts automatically.",
     "services.lockoutAutoRestore": "No action → allowlocal auto-restores (nothing is locked).",
     "services.lockoutStillWorks": "Still reachable while off:",
-    "services.lockoutLoopback": "Loopback 127.0.0.1 (also refused — only the gateway-authenticated self-exposure forward passes)",
     "services.lockoutVerify": "Open & verify login",
     "services.lockoutRestore": "Restore now",
     "services.lockoutConfirm": "Confirm: keep off",
