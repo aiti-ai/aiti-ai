@@ -124,6 +124,10 @@ export async function proxy(request: NextRequest) {
             url.search = `${url.search ? url.search + "&" : "?"}__piSelfFwd=${issueSelfForwardToken()}`;
           }
           request.headers.set("x-forwarded-host", host);
+          // 还原外部 scheme 给 origin 校验:nginx 会带 X-Forwarded-Proto(https),
+          // 直连/局域网时补 http;否则 API 的预期 origin 会用内部 http 与
+          // 浏览器 https Origin 不匹配。
+          request.headers.set("x-forwarded-proto", request.headers.get("x-forwarded-proto") ?? "http");
           request.headers.set("host", `127.0.0.1:${decision.port}`);
         } else {
           // Child-process dev server: keep the public host untouched.

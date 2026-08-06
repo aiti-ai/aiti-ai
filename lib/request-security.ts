@@ -59,8 +59,12 @@ function canonicalOrigin(value: string): string | null {
 
 function getRequestOrigin(request: Request): string | null {
   const requestUrl = new URL(request.url);
-  const host = request.headers.get("host");
-  return host ? canonicalOrigin(`${requestUrl.protocol}//${host}`) : null;
+  // 中间件 self-forward 重写后 host=127.0.0.1:port、requestUrl 为内部目标;
+  // 浏览器实际连的是 vhost(nginx 置 X-Forwarded-Host/Proto)。用转发头还原
+  // 真实预期 origin,否则 Origin(https://vhost) 与 http://127.0.0.1 永远不匹配。
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  const proto = request.headers.get("x-forwarded-proto") ?? requestUrl.protocol.replace(":", "");
+  return host ? canonicalOrigin(`${proto}://${host}`) : null;
 }
 
 function isUserInitiatedSessionExportNavigation(request: Request): boolean {
@@ -80,6 +84,21 @@ function isUserInitiatedSessionExportNavigation(request: Request): boolean {
   }
 }
 
+/** 配置的 base domain(如 pi.example.com):服务 vhost(*.pi.example.com)是其子域,
+ *  经中间件 resolve + 认证后才到达 API,视为可信。 */
+function baseDomainHostnames(): string[] {
+  const out: string[] = [];
+  for (const v of [process.env.PI_WEB_BASE_DOMAIN, process.env.PI_WEB_HOSTNAME]) {
+    const h = normalizeConfiguredHostname(v);
+    if (h && !isIP(h)) out.push(h);
+  }
+  return out;
+}
+
+function isBaseDomainSubdomain(hostname: string): boolean {
+  return baseDomainHostnames().some((b) => hostname === b || hostname.endsWith(`.${b}`));
+}
+
 /**
  * Only trust local names, IP literals, or the hostname explicitly selected by
  * the operator. IP literals preserve LAN access but cannot be DNS-rebound
@@ -93,6 +112,8 @@ export function isApiRequestHostAllowed(
   const hostname = host ? hostnameFromAuthority(host) : null;
   if (!hostname) return false;
   if (isLoopbackHostname(hostname) || isIP(hostname)) return true;
+  // 服务 vhost(*.pi.example.com)为 operator 域名子域——中间件已 resolve+认证
+  if (isBaseDomainSubdomain(hostname)) return true;
 
   return configuredHostnames.some(
     (configured) => normalizeConfiguredHostname(configured) === hostname,
@@ -107,7 +128,18 @@ export function isApiRequestOriginAllowed(request: Request): boolean {
   if (!origin) return true;
 
   const requestOrigin = getRequestOrigin(request);
-  return requestOrigin !== null && canonicalOrigin(origin) === requestOrigin;
+  if (requestOrigin === null) return false;
+  // 预期 origin 若来自 x-forwarded-host(而非实际 host),转发头必须本身可信
+  // (loopback/IP/operator 域名子域),否则恶意页可用伪造 XFH 匹配自己的 Origin
+  // 绕过 CSRF 门禁。
+  if (request.headers.get("x-forwarded-host")) {
+    const fh = request.headers.get("x-forwarded-host");
+    const hostname = fh ? hostnameFromAuthority(fh) : null;
+    if (hostname && !(isLoopbackHostname(hostname) || isIP(hostname) || isBaseDomainSubdomain(hostname))) {
+      return false;
+    }
+  }
+  return canonicalOrigin(origin) === requestOrigin;
 }
 
 export function shouldCheckApiRequestOrigin(request: Request): boolean {
