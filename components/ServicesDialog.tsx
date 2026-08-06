@@ -58,6 +58,7 @@ interface ServicesResponse {
 interface SelfState {
   exposing: boolean;
   allowLocal: boolean;
+  allowLocalPending: { pending: boolean; expiresAt: number };
   allowHosts: string[];
   port: number;
   mode: string | null;
@@ -1130,9 +1131,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   const [allowHostsTouched, setAllowHostsTouched] = useState(false);
 
   const exposing = self?.exposing ?? false;
-  // 乐观更新:点击立即切换,POST 失败回滚到服务器值(解决“点不掉”)
-  const [allowLocalLocal, setAllowLocalLocal] = useState<boolean | null>(null);
-  const allowLocal = allowLocalLocal ?? self?.allowLocal ?? true;
+  const allowLocal = self?.allowLocal ?? true;
   const hostname = typeof window !== "undefined" ? window.location.hostname.toLowerCase() : "";
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname.endsWith(".localhost");
   const warnNonLoopback = exposing && !loopback;
@@ -1175,51 +1174,84 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   }, []);
 
   const toggleAllowLocal = (v: boolean) => {
-    // 关闭(allowlocal=false)是高危操作:非回环访问会被 403 锁住 → 先弹确认
     if (v === false) {
-      setVerifiedEntry(null); // 每次打开重新验证
-      setConfirmDisable(true);
+      // 第一阶段:服务端临时关闭(TTL 自动恢复),随即进入 30s 二次确认窗口
+      setErr(null);
+      setRestoredNotice(false);
+      fetch(apiUrl("/api/service-tunnels"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "self-allowlocal", allowLocal: false, ttlMs: TTL_MS }),
+      })
+        .then((r) => r.json())
+        .then((d: { error?: string }) => {
+          if (d.error) { setErr(d.error); onChanged(); }
+          else { setConfirmCountdown(CONFIRM_WINDOW); onChanged(); }
+        })
+        .catch(() => setErr(String(t("services.error"))))
+        .finally(() => {});
       return;
     }
-    doSetAllowLocal(true);
-  };
-
-  const doSetAllowLocal = (v: boolean) => {
+    // 开启/恢复:立即生效(安全操作)
     setErr(null);
-    setAllowLocalLocal(v); // 乐观:立即视觉响应
+    setRestoredNotice(false);
     fetch(apiUrl("/api/service-tunnels"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "self-allowlocal", allowLocal: v }),
+      body: JSON.stringify({ action: "self-allowlocal", allowLocal: true, confirm: true }),
     })
       .then((r) => r.json())
-      .then((d: { error?: string }) => { if (d.error) { setAllowLocalLocal(null); setErr(d.error); } else onChanged(); })
-      .catch(() => { setAllowLocalLocal(null); setErr(String(t("services.error"))); });
+      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else onChanged(); })
+      .catch(() => setErr(String(t("services.error"))));
   };
 
-  // 关闭确认弹窗:检测当前访问方式,防止把自己锁在外面
-  const [confirmDisable, setConfirmDisable] = useState(false);
-  // 用户点开验证过的认证入口(新窗口登录后回来确认)
-  const [verifiedEntry, setVerifiedEntry] = useState<string | null>(null);
-  const accessHost = typeof window !== "undefined" ? window.location.hostname.toLowerCase() : "";
-  const accessViaLoopback =
-    accessHost === "localhost" || accessHost === "127.0.0.1" || accessHost === "::1" ||
-    accessHost === "[::1]" || accessHost.startsWith("127.") || accessHost.endsWith(".localhost");
+  // 第二阶段:二次确认 → 永久关闭
+  const confirmDisableNow = () => {
+    setErr(null);
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "self-allowlocal", allowLocal: false, confirm: true }),
+    })
+      .then((r) => r.json())
+      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else { setConfirmCountdown(null); onChanged(); } })
+      .catch(() => setErr(String(t("services.error"))));
+  };
+
+  // 取消/立即恢复(不等 TTL)
+  const restoreNow = () => {
+    setErr(null);
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "self-allowlocal", allowLocal: true, confirm: true }),
+    })
+      .then((r) => r.json())
+      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else { setConfirmCountdown(null); setRestoredNotice(true); onChanged(); } })
+      .catch(() => setErr(String(t("services.error"))));
+  };
+
+  // 两阶段关闭(Windows 分辨率式):第一阶段临时关闭(服务端 TTL 60s 自动恢复),
+  // 30s 倒计时内二次确认才永久;超时/被锁点不了 → 服务端自动恢复,不会锁死
+  const [confirmCountdown, setConfirmCountdown] = useState<number | null>(null); // null=未在确认
+  const [restoredNotice, setRestoredNotice] = useState(false); // 超时自动恢复提示
+  const CONFIRM_WINDOW = 30; // 二次确认窗口(秒)
+  const TTL_MS = 60_000; // 服务端临时关闭 TTL
+  useEffect(() => {
+    if (confirmCountdown === null) return;
+    if (confirmCountdown <= 0) {
+      // 窗口结束未确认 → 服务端 TTL 已自动恢复;关窗 + 提示
+      setConfirmCountdown(null);
+      setRestoredNotice(true);
+      onChanged();
+      return;
+    }
+    const t = setTimeout(() => setConfirmCountdown((c) => (c ?? 1) - 1), 1000);
+    return () => clearTimeout(t);
+  }, [confirmCountdown, onChanged]);
   // 关闭后仍可用的认证入口(虚拟主机/隧道 — 走代理认证,不受直连门禁影响)
   const authEntries = (self?.urls ?? []).filter((u) => u.gated !== true);
   const allowHostList = self?.allowHosts ?? [];
-  // 当前访问地址关闭后仍可用?回环 / allowHost 例外域名 / 正在通过认证入口域名访问
-  const currentSafe =
-    accessViaLoopback ||
-    allowHostList.includes(accessHost) ||
-    authEntries.some((u) => {
-      try { return new URL(u.url).hostname === accessHost; } catch { return false; }
-    });
-  // 彻底禁止:当前访问将被锁 且 没有任何替代入口(未暴露、无 allowHost)
-  const hardBlocked = !currentSafe && authEntries.length === 0 && allowHostList.length === 0;
-  // 非回环访问 → 必须先打开一个认证入口、在新窗口确认能登录,回来点确认才允许关
-  const needsVerify = !currentSafe;
-  const canConfirm = !hardBlocked && (!needsVerify || verifiedEntry !== null);
 
   // allowHosts 输入框预填当前生效值(仅首次/未编辑时)
   useEffect(() => {
@@ -1456,64 +1488,63 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
         <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>{t("services.selfEnvNote")}</div>
       </div>
 
-      {/* 关闭 allowlocal 的防锁死确认弹窗 */}
-      {confirmDisable && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setConfirmDisable(false)}>
-          <div onClick={(e) => e.stopPropagation()} style={{ width: 520, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
+      {/* 两阶段关闭确认窗:已临时关闭,30s 内二次确认才永久;超时自动恢复 */}
+      {confirmCountdown !== null && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ width: 520, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
             <div style={{ fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 8 }}>⚠ {t("services.lockoutTitle")}</div>
-            <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }}>{t("services.lockoutBody")}</div>
-            {!currentSafe && (
-              <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "rgba(248,113,113,0.1)", border: "1px solid rgba(248,113,113,0.35)", fontSize: 11, color: "#f87171" }}>
-                {t("services.lockoutCurrentLocked", { host: accessHost || "?" })}
+            <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }}>
+              {t("services.lockoutCountdown", { window: String(CONFIRM_WINDOW), ttl: String(TTL_MS / 1000) })}
+            </div>
+            {/* 倒计时 + 进度条 */}
+            <div style={{ marginTop: 10 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ fontSize: 20, fontWeight: 700, color: confirmCountdown <= 10 ? "#f87171" : "var(--text)", fontVariantNumeric: "tabular-nums", minWidth: 40 }}>{confirmCountdown}s</span>
+                <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--bg-hover)", overflow: "hidden" }}>
+                  <div style={{ height: "100%", width: `${(confirmCountdown / CONFIRM_WINDOW) * 100}%`, background: confirmCountdown <= 10 ? "#f87171" : "var(--accent)", transition: "width 1s linear" }} />
+                </div>
               </div>
-            )}
+              <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.lockoutAutoRestore")}</div>
+            </div>
+            {/* 仍可用入口:可点开验证 */}
             <div style={{ marginTop: 10 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>{t("services.lockoutStillWorks")}</div>
-              {/* 认证入口(虚拟主机/隧道):可点击打开验证登录 */}
               {authEntries.length > 0 && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 6 }}>
                   {authEntries.map((u) => (
                     <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
                       <span style={{ color: "var(--text-dim)", flexShrink: 0 }}>{u.label}</span>
                       <span style={{ flex: 1, fontFamily: "var(--font-mono)", overflowWrap: "anywhere", color: "var(--text)" }}>{u.url}</span>
-                      {verifiedEntry === u.url ? (
-                        <span style={{ color: "#16a34a", flexShrink: 0, fontSize: 10 }}>✓ {t("services.lockoutVerified")}</span>
-                      ) : (
-                        <button
-                          onClick={() => { openInNewTab(u.url); setVerifiedEntry(u.url); }}
-                          style={{ ...btn, padding: "3px 10px", flexShrink: 0, color: "var(--accent)" }}
-                        >
-                          {t("services.lockoutVerify")}
-                        </button>
-                      )}
+                      <button onClick={() => openInNewTab(u.url)} style={{ ...btn, padding: "3px 10px", flexShrink: 0, color: "var(--accent)" }}>
+                        {t("services.lockoutVerify")}
+                      </button>
                     </div>
                   ))}
                 </div>
               )}
-              {/* allowHost 例外域名(文本,入口由用户自己的反代提供) */}
               {allowHostList.map((h) => (
                 <div key={h} style={{ fontSize: 11, lineHeight: 1.8 }}>
                   <span style={{ fontFamily: "var(--font-mono)" }}>{h}</span> <span style={{ color: "var(--text-dim)" }}>(allowHost)</span>
                 </div>
               ))}
               <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("services.lockoutLoopback")}</div>
-              {hardBlocked && (
-                <div style={{ marginTop: 6, fontSize: 11, color: "#d97706" }}>⚠ {t("services.lockoutNoEntry")}</div>
-              )}
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" }}>
+              <button onClick={restoreNow} style={{ ...btn, flexShrink: 0 }}>{t("services.lockoutRestore")}</button>
               <span style={{ flex: 1 }} />
-              <button onClick={() => setConfirmDisable(false)} style={{ ...btn }}>{t("services.close")}</button>
               <button
-                onClick={() => { setConfirmDisable(false); setVerifiedEntry(null); doSetAllowLocal(false); }}
-                disabled={!canConfirm}
-                title={!canConfirm ? (hardBlocked ? t("services.lockoutNoEntry") : t("services.lockoutConfirmDisabled")) : undefined}
-                style={{ ...btn, background: "#f87171", border: "none", color: "#fff", fontWeight: 600, opacity: canConfirm ? 1 : 0.5, cursor: canConfirm ? "pointer" : "not-allowed" }}
+                onClick={confirmDisableNow}
+                style={{ ...btn, background: "#f87171", border: "none", color: "#fff", fontWeight: 600 }}
               >
                 {t("services.lockoutConfirm")}
               </button>
             </div>
           </div>
+        </div>
+      )}
+      {restoredNotice && (
+        <div style={{ marginTop: 6, padding: "6px 10px", borderRadius: 6, background: "rgba(22,163,74,0.1)", border: "1px solid rgba(22,163,74,0.35)", fontSize: 11, color: "#16a34a" }}>
+          ✓ {t("services.lockoutRestored")}
         </div>
       )}
     </div>

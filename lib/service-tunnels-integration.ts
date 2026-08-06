@@ -1,7 +1,7 @@
 import { homedir, networkInterfaces } from "os";
 import { join } from "path";
 import { createServiceTunnels, type ServiceTunnels } from "service-tunnels";
-import { getBaseDomains, getPiWebPort, getAllowLocal, getAllowLocalHosts } from "./service-proxy-shared.ts";
+import { getBaseDomains, getPiWebPort, getAllowLocal, getAllowLocalHosts, getAllowLocalPending } from "./service-proxy-shared.ts";
 
 /**
  * service-tunnels integration — library mode inside pi-web.
@@ -232,6 +232,7 @@ export function getSelfExposeState() {
     exposing,
     allowLocal: getAllowLocal(),
     allowHosts: getAllowLocalHosts(),
+    allowLocalPending: getAllowLocalPending(),
     port,
     mode: (first?.label ? "proxy" : undefined) ?? globalThis.__piWebExposeConfig?.mode ?? null,
     auth: first?.provider ?? globalThis.__piWebExposeConfig?.auth ?? null,

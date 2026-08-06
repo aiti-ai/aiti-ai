@@ -43,6 +43,37 @@ export function setAllowLocal(v: boolean): void {
   globalThis.__piWebAllowLocalOverride = v;
 }
 
+// 两阶段关闭(Windows 分辨率式防锁):第一阶段临时关闭 + TTL 自动恢复,
+// 用户 30s 窗口内二次确认才永久;超时/不确认直接退回。
+let allowLocalPendingTimer: ReturnType<typeof setTimeout> | null = null;
+let allowLocalPendingExpires = 0;
+
+/** 第一阶段:临时关闭,ttlMs 后自动恢复(override 回到 env/默认值)。 */
+export function setAllowLocalTemporary(v: boolean, ttlMs: number): void {
+  if (allowLocalPendingTimer) clearTimeout(allowLocalPendingTimer);
+  globalThis.__piWebAllowLocalOverride = v;
+  allowLocalPendingExpires = Date.now() + ttlMs;
+  allowLocalPendingTimer = setTimeout(() => {
+    allowLocalPendingTimer = null;
+    allowLocalPendingExpires = 0;
+    // 回到 env/默认(不强制 true:若启动时 env 显式 allowlocal=false 则尊重它)
+    globalThis.__piWebAllowLocalOverride = undefined;
+  }, ttlMs);
+}
+
+/** 第二阶段:二次确认,永久生效(取消 TTL 自动恢复)。 */
+export function confirmAllowLocal(v: boolean): void {
+  if (allowLocalPendingTimer) clearTimeout(allowLocalPendingTimer);
+  allowLocalPendingTimer = null;
+  allowLocalPendingExpires = 0;
+  globalThis.__piWebAllowLocalOverride = v;
+}
+
+/** 待二次确认状态(UI 倒计时展示):{ pending, expiresAt }。 */
+export function getAllowLocalPending(): { pending: boolean; expiresAt: number } {
+  return { pending: allowLocalPendingTimer !== null, expiresAt: allowLocalPendingExpires };
+}
+
 function normalizeHost(raw: string): string {
   return raw.trim().toLowerCase().replace(/^\\./, "").replace(/:\d{1,5}$/, "");
 }

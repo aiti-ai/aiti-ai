@@ -129,8 +129,12 @@ export async function proxy(request: NextRequest) {
   // ONLY loopback exception is a request carrying a valid self-exposure
   // forward token: that is pi-web's own vhost→self forward re-entering this
   // middleware after Next's external rewrite (custom headers do not survive
-  // the rewrite, so the proof rides in the rewrite URL).
-  if (!getAllowLocal()) {
+  // the rewrite, so the proof rides in the rewrite URL). API paths are
+  // EXEMPT: they are already guarded by isApiRequestAllowed below
+  // (Origin/DNS-rebinding/CSRF checks), and the two-phase allowlocal flow
+  // needs the confirm/rescue API reachable while temporarily disabled.
+  const isApiPath = request.nextUrl.pathname === "/api" || request.nextUrl.pathname.startsWith("/api/");
+  if (!getAllowLocal() && !isApiPath) {
     const hostHeader = (request.headers.get("host") ?? "").toLowerCase();
     const hostname = hostHeader.replace(/^\[|\]$/g, "").split(":")[0];
     const fwdToken = request.nextUrl.searchParams.get("__piSelfFwd");

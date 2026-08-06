@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isApiRequestAllowed } from "@/lib/request-security";
-import { setAllowLocal, setAllowLocalHosts } from "@/lib/service-proxy-shared";
+import { setAllowLocal, setAllowLocalHosts, setAllowLocalTemporary, confirmAllowLocal, getAllowLocalPending } from "@/lib/service-proxy-shared";
 import {
   getServiceTunnels,
   listPiServices,
@@ -204,11 +204,32 @@ export async function POST(request: NextRequest) {
       }
       case "self-allowlocal": {
         const v = (body as { allowLocal?: boolean }).allowLocal;
+        const confirm = (body as { confirm?: boolean }).confirm === true;
+        const ttlMs = (body as { ttlMs?: number }).ttlMs;
         if (typeof v !== "boolean") {
           return NextResponse.json({ error: "allowLocal required (boolean)" }, { status: 400 });
         }
-        setAllowLocal(v);
-        return NextResponse.json({ allowLocal: getSelfExposeState().allowLocal });
+        if (confirm) {
+          // 第二阶段:30s 窗口内二次确认 → 永久生效
+          confirmAllowLocal(v);
+        } else if (v === false) {
+          // 第一阶段:临时关闭,ttlMs 后自动恢复(防锁死,Windows 分辨率式)
+          if (!Number.isInteger(ttlMs) || (ttlMs as number) <= 0) {
+            return NextResponse.json(
+              { error: "allowLocal=false 需带 ttlMs 临时关闭,并在窗口内二次确认 (confirm:true)" },
+              { status: 400 },
+            );
+          }
+          setAllowLocalTemporary(false, ttlMs as number);
+        } else {
+          confirmAllowLocal(true); // 开启是安全操作,立即生效
+        }
+        const st = getSelfExposeState();
+        return NextResponse.json({
+          allowLocal: st.allowLocal,
+          allowHosts: st.allowHosts,
+          allowLocalPending: getAllowLocalPending(),
+        });
       }
       case "self-allowhosts": {
         const hosts = (body as { hosts?: string[] }).hosts;
