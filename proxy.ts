@@ -61,18 +61,19 @@ export async function proxy(request: NextRequest) {
   if (host && st?.proxy?.parseHost(host)) {
     let decision: Awaited<ReturnType<typeof st.proxy.resolve>>;
     try {
-      // Next 的 nextUrl 在 basePath 模式下会剥除 /dev——服务 vhost 转发必须
-      // 携带应用完整路径,补回 basePath(否则 /dev 变成 / → pipe 到根 → 302 循环)。
-      // nextUrl.pathname 剥后剩 "/"(带斜杠),补回时去尾斜杠避免 /dev/ 触发
-      // Next 的 308 规范化循环
-      const bp = process.env.NEXT_PUBLIC_BASE_PATH || "";
-      const stripped = request.nextUrl.pathname;
-      const requestPath = bp && !stripped.startsWith(bp)
-        ? bp + (stripped === "/" ? "" : stripped)
-        : stripped;
+      // Next 的 nextUrl.pathname 在 basePath 模式下会剥除 /dev,而 request.url
+      // 保留原始完整路径——resolve 必须用原始路径(/dev 开头、/portal/login 等
+      // provider 路径原样),否则 strip/pipe 到错误目标
+      const raw = new URL(request.url);
+      // pi-web 自身 vhost(部署域/隧道域映射)的根路径 → basePath:否则 Next
+      // 根无页面 404(basic 经 gateway 转发 Host=127.0.0.1 后同样 404)
+      const base = process.env.NEXT_PUBLIC_BASE_PATH || "";
+      if (base && st.proxy.parseHost(host)?.label === "pi-web" && (raw.pathname === "/" || raw.pathname === "")) {
+        return NextResponse.redirect(new URL(base + "/", request.url), 302);
+      }
       decision = await st.proxy.resolve({
         host,
-        url: requestPath + request.nextUrl.search,
+        url: raw.pathname + raw.search,
         method: request.method,
         authorization: request.headers.get("authorization") ?? undefined,
         cookie: request.headers.get("cookie") ?? undefined,
