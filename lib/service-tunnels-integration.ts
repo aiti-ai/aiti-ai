@@ -279,7 +279,7 @@ export function getSelfExposeState() {
 }
 
 /** Every address pi-web's UI is reachable at (loopback / LAN / vhost / tunnel). */
-export function getSelfAccessUrls(): Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string }> {
+export function getSelfAccessUrls(): Array<{ label: string; labelKey?: string; labelParams?: Record<string, string>; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string }> {
   const st = getServiceTunnels();
   const port = getPiWebPort();
   const base = (process.env.PI_WEB_BASE_PATH ?? "").replace(/\/+$/, "");
@@ -287,12 +287,13 @@ export function getSelfAccessUrls(): Array<{ label: string; url: string; gated?:
   // self-forward token 的内部转发放行);虚拟主机/隧道入口走代理认证不受
   // 直连门禁影响(authEntry=true,关闭期间仍可访问)。
   const allowLocal = getAllowLocal();
-  const out: Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string }> = [];
-  out.push({ label: "本机（回环）", url: `http://127.0.0.1:${port}${base}`, gated: !allowLocal });
+  // labelKey = 稳定翻译 id(前端按 locale 翻译;label 为中文回退)
+  const out: Array<{ label: string; labelKey?: string; labelParams?: Record<string, string>; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string }> = [];
+  out.push({ label: "本机（回环）", labelKey: "services.selfUrl.loopback", url: `http://127.0.0.1:${port}${base}`, gated: !allowLocal });
   for (const [name, addrs] of Object.entries(networkInterfaces())) {
     for (const a of addrs ?? []) {
       if (a.family === "IPv4" && !a.internal) {
-        out.push({ label: `局域网（${name}）`, url: `http://${a.address}:${port}${base}`, gated: !allowLocal });
+        out.push({ label: `局域网（${name}）`, labelKey: "services.selfUrl.lan", labelParams: { name }, url: `http://${a.address}:${port}${base}`, gated: !allowLocal });
       }
     }
   }
@@ -301,13 +302,13 @@ export function getSelfAccessUrls(): Array<{ label: string; url: string; gated?:
     if (!isSelf || e.port !== port) continue;
     // baseUrl 已由库拼接部署前缀(0.3.13+,见 expose.proxyExpose withDeploy);
     // exposeName 让客户端加载即知该 vhost 的停止目标
-    if (e.localUrl) out.push({ label: "服务虚拟主机（本机）", url: e.localUrl, authEntry: true, exposeName: e.name });
-    if (e.baseUrl) out.push({ label: "服务虚拟主机（部署域）", url: e.baseUrl, authEntry: true, exposeName: e.name });
-    if (e.url) out.push({ label: "隧道公网", url: e.url, authEntry: true, tunnel: e.name });
+    if (e.localUrl) out.push({ label: "服务虚拟主机（本机）", labelKey: "services.selfUrl.vhostLocal", url: e.localUrl, authEntry: true, exposeName: e.name });
+    if (e.baseUrl) out.push({ label: "服务虚拟主机（部署域）", labelKey: "services.selfUrl.vhostBase", url: e.baseUrl, authEntry: true, exposeName: e.name });
+    if (e.url) out.push({ label: "隧道公网", labelKey: "services.selfUrl.tunnel", url: e.url, authEntry: true, tunnel: e.name });
   }
   // allowHost 白名单:关闭期间仍可直连的例外域名(用户自己的反代入口,无端口信息)
   for (const h of getAllowLocalHosts()) {
-    out.push({ label: "例外域名（allowHost）", url: h, authEntry: true });
+    out.push({ label: "例外域名（allowHost）", labelKey: "services.selfUrl.allowhost", url: h, authEntry: true });
   }
   return out;
 }

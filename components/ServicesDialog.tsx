@@ -69,7 +69,7 @@ interface SelfState {
   auth: string | null;
   tunnel: string | null;
   config: Record<string, unknown> | null;
-  urls: Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string }>;
+  urls: Array<{ label: string; labelKey?: string; labelParams?: Record<string, string>; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string }>;
 }
 
 function formatAddrForUrl(addr: string): string {
@@ -1892,7 +1892,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
               const gated = !allowLocal && u.gated === true;
               return (
                 <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: gated ? 0.45 : 1 }}>
-                  <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 110 }}>{u.label}</span>
+                  <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 110 }}>{u.labelKey ? t(u.labelKey, u.labelParams) : u.label}</span>
                   <button onClick={() => { if (!gated) openOrDetail(u); }}
                     title={gated ? t("services.selfGatedHint") : u.url}
                     disabled={gated}
@@ -1942,7 +1942,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {exposeUrls.map((u) => (
                 <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
-                  <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 96 }}>{u.label}</span>
+                  <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 96 }}>{u.labelKey ? t(u.labelKey, u.labelParams) : u.label}</span>
                   <button onClick={() => openOrDetail(u)} title={u.url}
                     style={{ flex: 1, textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {u.url}
@@ -2113,7 +2113,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 6 }}>
                   {authEntries.map((u) => (
                     <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
-                      <span style={{ color: "var(--text-dim)", flexShrink: 0 }}>{u.label}</span>
+                      <span style={{ color: "var(--text-dim)", flexShrink: 0 }}>{u.labelKey ? t(u.labelKey, u.labelParams) : u.label}</span>
                       <span style={{ flex: 1, fontFamily: "var(--font-mono)", overflowWrap: "anywhere", color: "var(--text)" }}>{u.url}</span>
                       <button onClick={() => openInNewTab(u.url)} style={{ ...btn, padding: "3px 10px", flexShrink: 0, color: "var(--accent)" }}>
                         {t("services.lockoutVerify")}
