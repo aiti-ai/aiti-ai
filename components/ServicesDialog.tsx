@@ -1113,6 +1113,10 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   const [mode, setMode] = useState("proxy");
   const [auth, setAuth] = useState("portal");
   const [tunnel, setTunnel] = useState("cloudflared");
+  // 隧道类型 schema 驱动(与 Ports 页同一数据源):serveo/bore/natapp/自定义
+  // 类型都会出现,command 等 dangerous 类型隐藏——不再硬编码 4 项
+  const [tunnelSchemas, setTunnelSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
+  const [tunnelMetas, setTunnelMetas] = useState<Record<string, { favorite?: boolean; dangerous?: boolean }> | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [copiedEnv, setCopiedEnv] = useState(false);
@@ -1141,6 +1145,24 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
     color: "var(--text)",
     fontSize: 12,
   };
+
+  // 隧道类型 schema 来自库(与 Ports 页同一数据源),默认 cloudflared;
+  // 不可用时回退到第一个非危险类型
+  useEffect(() => {
+    fetch(apiUrl("/api/service-tunnels"))
+      .then((r) => r.json())
+      .then((d: { tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }> }) => {
+        if (d.tunnelSchemas) setTunnelSchemas(d.tunnelSchemas);
+        if (d.tunnelMetas) setTunnelMetas(d.tunnelMetas);
+        if (d.tunnelSchemas && d.tunnelMetas) {
+          const available = Object.keys(d.tunnelSchemas).filter(
+            (k) => !d.tunnelMetas?.[k]?.dangerous && k !== "command",
+          );
+          if (!available.includes("cloudflared")) setTunnel(available[0] ?? "cloudflared");
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const toggleAllowLocal = (v: boolean) => {
     setErr(null);
@@ -1304,10 +1326,18 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
             <label style={{ fontSize: 12, color: "var(--text-muted)" }}>
               {t("services.selfTunnel")}:
               <select value={tunnel} onChange={(e) => setTunnel(e.target.value)} style={{ ...select, marginLeft: 4 }}>
-                <option value="cloudflared">cloudflared</option>
-                <option value="ngrok">ngrok</option>
-                <option value="frpc">frpc</option>
-                <option value="localtunnel">localtunnel</option>
+                {[...Object.entries(tunnelSchemas ?? {})]
+                  // 与 Ports 页同一过滤:dangerous 类型(纯 command 等)不出现
+                  .filter(([p]) => !tunnelMetas?.[p]?.dangerous && p !== "command")
+                  .sort((a, b) => {
+                    const fa = tunnelMetas?.[a[0]]?.favorite ? 1 : 0;
+                    const fb = tunnelMetas?.[b[0]]?.favorite ? 1 : 0;
+                    if (fa !== fb) return fb - fa;
+                    return a[1].length - b[1].length;
+                  })
+                  .map(([k]) => (
+                    <option key={k} value={k}>{k}{tunnelMetas?.[k]?.favorite ? " ★" : ""}</option>
+                  ))}
               </select>
             </label>
           )}
