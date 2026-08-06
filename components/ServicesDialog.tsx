@@ -81,7 +81,7 @@ function isLikelyIp(hostname: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
 }
 
-export function ServicesDialog({ onClose }: { onClose: () => void }) {
+export function ServicesDialog({ onClose, onOpenFile }: { onClose: () => void; onOpenFile?: (filePath: string, fileName: string) => void }) {
   const isMobile = useIsMobile();
   const { t } = useI18n();
   const [data, setData] = useState<ServicesResponse | null>(null);
@@ -497,6 +497,7 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
             onCopy={copy}
             copiedKey={copiedKey}
             onStop={() => { stopExpose(detailFor.name); setDetailFor(null); }}
+            onOpenFile={onOpenFile}
           />
         )}
       </div>
@@ -587,7 +588,7 @@ function SummarySection({ title, children }: { title: string; children: ReactNod
 /** 暴露详情弹窗 —— 活动暴露的链接点击后先看来源详情(mode / auth / 隧道 /
  *  参数 / 链接 / 开启时间),确认后再点链接才新窗口打开;停止按钮只停该条
  *  通道(同端口其他暴露不受影响)。 */
-function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, onStop }: {
+function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, onStop, onOpenFile }: {
   ex: ExposeInfo;
   t: (key: string, params?: Record<string, string>) => string;
   onClose: () => void;
@@ -595,8 +596,10 @@ function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, onStop }
   onCopy: (key: string, url: string) => void;
   copiedKey: string | null;
   onStop: () => void;
+  onOpenFile?: (filePath: string, fileName: string) => void;
 }) {
   const isMobile = useIsMobile();
+  const [logFiles, setLogFiles] = useState<Array<{ name: string; path: string; size: number; mtime: number }> | null>(null);
   const links = [ex.url, ex.localUrl, ex.baseUrl, ex.domainUrl, ex.loginUrl].filter((u): u is string => Boolean(u));
   const mode: string = (ex.name ?? "").startsWith("proxy:")
     ? "proxy"
@@ -662,12 +665,73 @@ function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, onStop }
               ))}
             </div>
           ))}
+          <LogFilesSection
+            exposeName={ex.name}
+            t={t}
+            onOpenFile={onOpenFile}
+          />
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
           <span style={{ fontSize: 10, color: "var(--text-dim)", flex: 1 }}>{t("services.exposeDetailHint")}</span>
           <button onClick={onStop} style={{ flexShrink: 0, padding: "5px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "#f87171", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>{t("services.exposeStop")}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 详情页日志区:列出该暴露的全部日志文件(nginx access/error × 各 host),
+ *  点击在 pi-web 文件窗口打开(/api/files 经 allowFileRoot 已放行日志目录)。 */
+function LogFilesSection({ exposeName, t, onOpenFile }: {
+  exposeName: string;
+  t: (key: string, params?: Record<string, string>) => string;
+  onOpenFile?: (filePath: string, fileName: string) => void;
+}) {
+  const [files, setFiles] = useState<Array<{ name: string; path: string; size: number; mtime: number }> | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    fetch(apiUrl(`/api/service-tunnels?logs-list=${encodeURIComponent(exposeName)}`))
+      .then((r) => r.json())
+      .then((d: { files?: Array<{ name: string; path: string; size: number; mtime: number }>; error?: string }) => {
+        if (!alive) return;
+        if (d.error) setErr(d.error);
+        else setFiles(d.files ?? []);
+      })
+      .catch(() => { if (alive) setErr("(failed to load logs)"); });
+    return () => { alive = false; };
+  }, [exposeName]);
+  return (
+    <div style={{ padding: "5px 0" }}>
+      <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{t("services.exposeLogFiles")}</div>
+      {files === null ? (
+        <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeLogFilesLoading")}</div>
+      ) : err ? (
+        <div style={{ fontSize: 10, color: "#f87171" }}>{err}</div>
+      ) : files.length === 0 ? (
+        <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeNoLogs")}</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+          {files.map((f) => (
+            <div key={f.path} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {onOpenFile ? (
+                <button
+                  onClick={() => onOpenFile(f.path, f.name)}
+                  title={f.path}
+                  style={{ flex: 1, minWidth: 0, textAlign: "left", padding: "3px 8px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                >
+                  {f.name}
+                </button>
+              ) : (
+                <span style={{ flex: 1, minWidth: 0, fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.name}</span>
+              )}
+              <span style={{ flexShrink: 0, fontSize: 10, color: "var(--text-dim)" }}>
+                {f.size >= 1024 * 1024 ? `${(f.size / 1024 / 1024).toFixed(1)} MB` : f.size >= 1024 ? `${(f.size / 1024).toFixed(1)} KB` : `${f.size} B`}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

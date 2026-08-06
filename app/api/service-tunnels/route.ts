@@ -60,6 +60,46 @@ export async function GET(request: NextRequest) {
       const tail = (p: string) => (existsSync(p) ? readFileSync(p, "utf8").split("\n").slice(-50).join("\n") : "(no log yet)");
       return NextResponse.json({ access: tail(expose.accessLog), error: tail(expose.errorLog ?? "") });
     }
+    // ?logs-list=<exposeName> → 该暴露的全部日志文件(access/error × 各 host),
+    // 供详情页列出、点开在 pi-web 文件窗口查看。
+    const logsListName = request.nextUrl.searchParams.get("logs-list");
+    if (logsListName) {
+      const expose = st.exposes().find((e) => e.name === logsListName);
+      if (!expose) return NextResponse.json({ error: "expose not found" }, { status: 404 });
+      const { readdirSync, statSync, existsSync } = await import("node:fs");
+      const { resolve, dirname, basename, join } = await import("node:path");
+      // 该暴露各公开 URL 的 host(vhost + 隧道域)→ 对应 <host>.access/error.log
+      const hosts = new Set<string>();
+      for (const u of [expose.url, expose.localUrl, expose.baseUrl, expose.domainUrl, expose.loginUrl]) {
+        if (!u) continue;
+        try { hosts.add(new URL(u).host); } catch { /* ignore */ }
+      }
+      const paths = new Set<string>();
+      for (const p of [expose.accessLog, expose.errorLog]) if (p) paths.add(p);
+      const gatewayDir = expose.accessLog ? dirname(expose.accessLog) : null;
+      if (gatewayDir && existsSync(gatewayDir)) {
+        for (const host of hosts) {
+          for (const suffix of [".access.log", ".error.log"]) paths.add(join(gatewayDir, `${host}${suffix}`));
+        }
+        // 兜底:该目录下与 expose 名相关的 host 日志(如历史 host 变化)
+        for (const f of readdirSync(gatewayDir)) {
+          if (f.endsWith(".access.log") || f.endsWith(".error.log")) {
+            const host = f.replace(/\.(access|error)\.log$/, "");
+            if (hosts.has(host)) paths.add(join(gatewayDir, f));
+          }
+        }
+      }
+      const files = [...paths]
+        .filter((p) => p && existsSync(p))
+        .map((p) => { const stt = statSync(p); return { name: basename(p), path: p, size: stt.size, mtime: stt.mtimeMs }; })
+        .sort((a, b) => a.name.localeCompare(b.name));
+      if (files.length) {
+        // 让 /api/files 能读日志目录(不再需要额外白名单)
+        const { allowFileRoot } = await import("@/lib/file-access");
+        allowFileRoot(resolve(dirname(files[0]!.path)));
+      }
+      return NextResponse.json({ files });
+    }
     // ?detect=<port> → probe the port's protocol (http/https/tcp) for the UI
     const detectPort = Number(request.nextUrl.searchParams.get("detect"));
     if (Number.isInteger(detectPort) && detectPort >= 1 && detectPort <= 65535) {

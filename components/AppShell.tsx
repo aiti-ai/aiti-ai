@@ -1761,7 +1761,7 @@ export function AppShell() {
         onReloaded={() => setSessionKey((k) => k + 1)}
       />
     )}
-    {servicesOpen && <ServicesDialog onClose={() => setServicesOpen(false)} />}
+    {servicesOpen && <ServicesDialog onClose={() => setServicesOpen(false)} onOpenFile={handleOpenFile} />}
     {exportDialogOpen && selectedSession && (
       <ExportDialog
         sessionId={selectedSession.id}
