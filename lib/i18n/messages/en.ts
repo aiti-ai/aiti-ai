@@ -53,8 +53,6 @@ export const enLocale: LocalePlugin = {
     "services.exposeDetailHint": "Click a link to open it in a new tab; Stop only stops this channel",
     "services.exposeStartedAt": "Started",
     "services.exposeParams": "Params",
-    "services.exposeKeepBasePath": "Keep {base} in vhost links",
-    "services.exposeKeepBasePathHint": "Vhost links carry the deployment base path so they route to this instance via nginx path routing; off = bare root (may be 'not enrolled' if nginx doesn't route by port)",
     "services.openLogin": "Open login page",
     "services.authUsers": "Auth & users",
     "services.usersPickCombo": "Users are maintained per site + auth combo. Click a row to manage that combination's users.",

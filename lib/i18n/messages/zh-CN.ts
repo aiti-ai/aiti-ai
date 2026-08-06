@@ -53,8 +53,6 @@ export const zhCNLocale: LocalePlugin = {
     "services.exposeDetailHint": "点击链接在新窗口打开;停止仅停止这一条通道",
     "services.exposeStartedAt": "开启时间",
     "services.exposeParams": "参数",
-    "services.exposeKeepBasePath": "vhost 链接保留 {base}",
-    "services.exposeKeepBasePathHint": "vhost 链接带上部署 basePath(如 /dev),点击走 nginx 路径路由直达本实例;关闭则用根路径(若 nginx 未按端口分发可能 not enrolled)",
     "services.openLogin": "打开登录页",
     "services.authUsers": "认证与用户",
     "services.usersPickCombo": "用户按站点与认证方式分开维护。点击一行管理该组合的用户。",

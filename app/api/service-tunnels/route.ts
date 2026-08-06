@@ -10,8 +10,6 @@ import {
   stopSelf,
   getSelfExposeState,
   getExposeStartedAt,
-  getExposeKeepBasePath,
-  getPiWebBasePath,
   removeExposeStartedAt,
   type SelfExposeOptions,
 } from "@/lib/service-tunnels-integration";
@@ -84,18 +82,12 @@ export async function GET(request: NextRequest) {
         if ((e.name ?? "").startsWith("proxy:") && e.label !== undefined) {
           running = Boolean(st.proxy.bindings().some((b) => b.port === e.port && (b.label ?? "") === (e.label ?? "")));
         }
-        // keepBasePath 开启 → vhost 链接拼接部署路径(点击走 nginx 路径路由直达
-        // 本实例,避免根路径 not enrolled);隧道 URL 不拼。
-        const base = getPiWebBasePath();
-        const keepBase = getExposeKeepBasePath(e.name) && base ? base : "";
+        // baseUrl/localUrl 已由库拼接部署前缀(0.3.13+);隧道 URL 不拼。
         return {
           ...e,
           running,
           startedAt: getExposeStartedAt(e.name) ?? null,
           params: cfg ? exposeParams(cfg) : null,
-          localUrl: e.localUrl ? `${e.localUrl}${keepBase}` : e.localUrl,
-          baseUrl: e.baseUrl ? `${e.baseUrl}${keepBase}` : e.baseUrl,
-          domainUrl: e.domainUrl ? `${e.domainUrl}${keepBase}` : e.domainUrl,
         };
       }),
       providers,
@@ -139,7 +131,7 @@ export async function POST(request: NextRequest) {
       allowToolDownload?: boolean;
       tunnelParams?: Record<string, unknown>;
       providerParams?: Record<string, unknown>;
-      keepBasePath?: boolean;
+      serviceBasePath?: string;
       name?: string;
       allowDownload?: boolean;
       code?: string;
@@ -171,7 +163,7 @@ export async function POST(request: NextRequest) {
         policy: body.policy,
         tunnelParams: body.tunnelParams,
         providerParams: body.providerParams,
-        keepBasePath: body.keepBasePath,
+        serviceBasePath: body.serviceBasePath,
       });
       return NextResponse.json(res);
     }
@@ -281,7 +273,7 @@ export async function POST(request: NextRequest) {
           allowToolDownload: body.allowToolDownload,
           tunnelParams: body.tunnelParams,
           providerParams: body.providerParams,
-          keepBasePath: body.keepBasePath,
+          serviceBasePath: body.serviceBasePath,
         } as SelfExposeOptions);
         return NextResponse.json({ ok: true, result: res, self: getSelfExposeState() });
       }

@@ -798,9 +798,6 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
   const [mode, setMode] = useState<"tunnel" | "proxy" | "both">("tunnel");
   const [site, setSite] = useState("");
   const [sites, setSites] = useState<string[]>([]);
-  // proxy/both 时是否保留部署 basePath 到 vhost 链接——服务端口默认关(多数
-  // 子进程服务服务于根路径,带 /dev 反而 404);需要时勾选切情况3。
-  const [keepBasePath, setKeepBasePath] = useState(false);
   const [tcpTunnels, setTcpTunnels] = useState<string[]>([]);
   const [tunnelSchemas, setTunnelSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
   const [tunnelMetas, setTunnelMetas] = useState<Record<string, { favorite?: boolean; dangerous?: boolean }> | null>(null);
@@ -883,7 +880,6 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
         site: site || undefined,
         tunnelParams,
         providerParams,
-        keepBasePath,
       }),
     })
       .then((r) => r.json())
@@ -994,14 +990,6 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
           <option value="">{t("services.exposeSiteDefault")}</option>
           {sites.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
-        {/* 本实例有部署 basePath 时,proxy/both 可选是否保留:开启则 vhost 链接带路径 */}
-        {BASE_PATH && mode !== "tunnel" && protocol !== "tcp" && (
-          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--text)", cursor: "pointer" }} title={t("services.exposeKeepBasePathHint")}>
-            <input type="checkbox" checked={keepBasePath} onChange={(e) => setKeepBasePath(e.target.checked)}
-              style={{ accentColor: "var(--accent)", cursor: "pointer", margin: 0 }} />
-            {t("services.exposeKeepBasePath", { base: BASE_PATH })}
-          </label>
-        )}
       </div>
       {/* tunnel 选项 + 协议（proxy 模式无隧道） */}
       {mode !== "proxy" && (
@@ -1530,11 +1518,9 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
     );
     return ex && (ex.name ?? "").startsWith("proxy:") ? ex.name : undefined;
   };
-  const [mode, setMode] = useState("proxy");
+  const [mode, setMode] = useState("tunnel");
   const [auth, setAuth] = useState("portal");
   const [tunnel, setTunnel] = useState("cloudflared");
-  // 本实例带部署 basePath 时,vhost 链接默认保留(点击走 nginx 路径路由直达本实例)
-  const [keepBasePath, setKeepBasePath] = useState(BASE_PATH ? true : false);
   // 隧道类型 schema 驱动(与 Ports 页同一数据源):serveo/bore/natapp/自定义
   // 类型都会出现,command 等 dangerous 类型隐藏——不再硬编码 4 项
   const [tunnelSchemas, setTunnelSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
@@ -1736,7 +1722,6 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
         tunnel,
         tunnelParams,
         providerParams,
-        keepBasePath,
       }),
     })
       .then((r) => r.json())
@@ -1979,14 +1964,6 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
                     <option key={k} value={k}>{k}{tunnelMetas?.[k]?.favorite ? " ★" : ""}</option>
                   ))}
               </select>
-            </label>
-          )}
-          {/* 本实例有部署 basePath 时,proxy/both 可选是否保留到 vhost 链接 */}
-          {BASE_PATH && mode !== "tunnel" && (
-            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text)", cursor: "pointer" }} title={t("services.exposeKeepBasePathHint")}>
-              <input type="checkbox" checked={keepBasePath} onChange={(e) => setKeepBasePath(e.target.checked)}
-                style={{ accentColor: "var(--accent)", cursor: "pointer" }} />
-              {t("services.exposeKeepBasePath", { base: BASE_PATH })}
             </label>
           )}
           {!exposing ? (
