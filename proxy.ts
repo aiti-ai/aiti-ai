@@ -141,8 +141,8 @@ export async function proxy(request: NextRequest) {
       const pending = getAllowLocalPending();
       const remain = pending.pending ? Math.max(0, Math.ceil((pending.expiresAt - Date.now()) / 1000)) : 0;
       const msg = pending.pending
-        ? `Forbidden: direct access is disabled (allowlocal=false), 临时block ${remain}s 后恢复`
-        : "Forbidden: direct access is disabled (allowlocal=false)";
+        ? `访问被拒绝：本地直连已禁用（allowlocal=false），临时封禁 ${remain}s 后自动恢复`
+        : "访问被拒绝：本地直连已禁用（allowlocal=false）";
       return new NextResponse(msg, {
         status: 403,
         headers: { "cache-control": "no-store" },

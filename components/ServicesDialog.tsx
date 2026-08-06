@@ -65,7 +65,7 @@ interface SelfState {
   auth: string | null;
   tunnel: string | null;
   config: Record<string, unknown> | null;
-  urls: Array<{ label: string; url: string; gated?: boolean }>;
+  urls: Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean }>;
 }
 
 function formatAddrForUrl(addr: string): string {
@@ -1236,7 +1236,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   const [confirmCountdown, setConfirmCountdown] = useState<number | null>(null); // null=未在确认
   const [restoredNotice, setRestoredNotice] = useState(false); // 超时自动恢复提示
   const CONFIRM_WINDOW = 30; // 二次确认窗口(秒)
-  const TTL_MS = 60_000; // 服务端临时关闭 TTL
+  const TTL_MS = 30_000; // 服务端临时关闭 TTL(与确认窗口一致,到期自动恢复)
   useEffect(() => {
     if (confirmCountdown === null) return;
     if (confirmCountdown <= 0) {
@@ -1250,8 +1250,9 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
     return () => clearTimeout(t);
   }, [confirmCountdown, onChanged]);
   // 关闭后仍可用的认证入口(虚拟主机/隧道 — 走代理认证,不受直连门禁影响)
-  const authEntries = (self?.urls ?? []).filter((u) => u.gated !== true);
-  const allowHostList = self?.allowHosts ?? [];
+  // 关闭期间仍可访问的认证入口:仅虚拟主机/隧道(authEntry),回环与局域网裸
+  // 直连在 allowlocal=false 时同样 403,绝不列入
+  const authEntries = (self?.urls ?? []).filter((u) => u.authEntry === true);
 
   // allowHosts 输入框预填当前生效值(仅首次/未编辑时)
   useEffect(() => {
@@ -1522,11 +1523,6 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
                   ))}
                 </div>
               )}
-              {allowHostList.map((h) => (
-                <div key={h} style={{ fontSize: 11, lineHeight: 1.8 }}>
-                  <span style={{ fontFamily: "var(--font-mono)" }}>{h}</span> <span style={{ color: "var(--text-dim)" }}>(allowHost)</span>
-                </div>
-              ))}
             </div>
             <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center", justifyContent: "flex-end", flexWrap: "wrap" }}>
               <button onClick={restoreNow} style={{ ...btn, flexShrink: 0 }}>{t("services.lockoutRestore")}</button>

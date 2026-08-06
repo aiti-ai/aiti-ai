@@ -243,15 +243,16 @@ export function getSelfExposeState() {
 }
 
 /** Every address pi-web's UI is reachable at (loopback / LAN / vhost / tunnel). */
-export function getSelfAccessUrls(): Array<{ label: string; url: string; gated?: boolean }> {
+export function getSelfAccessUrls(): Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean }> {
   const st = getServiceTunnels();
   const port = getPiWebPort();
   const base = (process.env.PI_WEB_BASE_PATH ?? "").replace(/\/+$/, "");
-  // allowlocal=false → 非回环直连(局域网 IP)被门禁 403;回环始终可用;
-  // 虚拟主机/隧道入口走代理认证,不受直连门禁影响。
+  // allowlocal=false → 回环与局域网裸直连都被门禁 403(回环也不例外,仅带
+  // self-forward token 的内部转发放行);虚拟主机/隧道入口走代理认证不受
+  // 直连门禁影响(authEntry=true,关闭期间仍可访问)。
   const allowLocal = getAllowLocal();
-  const out: Array<{ label: string; url: string; gated?: boolean }> = [];
-  out.push({ label: "本机（回环）", url: `http://127.0.0.1:${port}${base}` });
+  const out: Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean }> = [];
+  out.push({ label: "本机（回环）", url: `http://127.0.0.1:${port}${base}`, gated: !allowLocal });
   for (const [name, addrs] of Object.entries(networkInterfaces())) {
     for (const a of addrs ?? []) {
       if (a.family === "IPv4" && !a.internal) {
@@ -262,9 +263,13 @@ export function getSelfAccessUrls(): Array<{ label: string; url: string; gated?:
   for (const e of st.exposes()) {
     const isSelf = e.site === "pi-web" || e.name?.startsWith("expose-self-");
     if (!isSelf || e.port !== port) continue;
-    if (e.localUrl) out.push({ label: "服务虚拟主机（本机）", url: e.localUrl });
-    if (e.baseUrl) out.push({ label: "服务虚拟主机（部署域）", url: e.baseUrl });
-    if (e.url) out.push({ label: "隧道公网", url: e.url });
+    if (e.localUrl) out.push({ label: "服务虚拟主机（本机）", url: e.localUrl, authEntry: true });
+    if (e.baseUrl) out.push({ label: "服务虚拟主机（部署域）", url: e.baseUrl, authEntry: true });
+    if (e.url) out.push({ label: "隧道公网", url: e.url, authEntry: true });
+  }
+  // allowHost 白名单:关闭期间仍可直连的例外域名(用户自己的反代入口,无端口信息)
+  for (const h of getAllowLocalHosts()) {
+    out.push({ label: "例外域名（allowHost）", url: h, authEntry: true });
   }
   return out;
 }
