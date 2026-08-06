@@ -38,10 +38,13 @@ export function getServiceTunnels(): ServiceTunnels {
       configDir: join(homedir(), ".pi", "service-tunnels"),
       cacheDir: join(homedir(), ".pi", "service-tunnels-cache"),
       marker: "pi-web",
-      // 注意:pi-web 的 NEXT_PUBLIC_BASE_PATH(/dev)是 Next 应用内部路由前缀,
-      // 不是库的部署转发前缀(deployBasePath)——传了会把 provider.basePath
-      // 合并成 /dev/portal(实际监听 /portal)导致 vhost 的 providerPaths 不匹配
-      // → 登录 302 嵌套。转发前缀由 labeled pipe 保留完整路径处理。
+      // 部署转发前缀(deployBasePath)必须传:provider 登录路径合并成 /dev/portal-xxx,
+      // 登录重定向/登录页都带部署前缀,走 nginx 路径路由直达本实例。service-tunnels
+      // 0.3.11 修复了 hasPath 恒真导致合并失效的问题(此前 provider 监听 /portal 但
+      // DEPLOY_BASE_PATH=/dev → 登录 302 嵌套,故该行曾被移除)。
+      ...(process.env.PI_WEB_BASE_PATH ?? "").replace(/\/+$/, "")
+        ? { deployBasePath: (process.env.PI_WEB_BASE_PATH ?? "").replace(/\/+$/, "") }
+        : {},
       ...(deployHosts.length
         ? { baseDomain: deployHosts[0], baseDomains: deployHosts.slice(1) }
         : {}),

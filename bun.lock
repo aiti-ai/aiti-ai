@@ -14,7 +14,7 @@
         "qrcode": "^1.5.4",
         "react": "^19.2.4",
         "react-dom": "^19.2.4",
-        "service-tunnels": "file:../service-tunnels/service-tunnels-0.2.42.tgz",
+        "service-tunnels": "^0.3.12",
         "undici": "8.5.0",
       },
       "devDependencies": {
@@ -1966,7 +1966,7 @@
 
     "semver-compare": ["semver-compare@1.0.0", "https://registry.npmjs.org/semver-compare/-/semver-compare-1.0.0.tgz", {}, "sha512-YM3/ITh2MJ5MtzaM429anh+x2jiLVjqILF4m4oyQB18W7Ggea7BfqdH/wGMK7dDiMghv/6WG7znWMwUDzJiXow=="],
 
-    "service-tunnels": ["service-tunnels@../service-tunnels/service-tunnels-0.2.42.tgz", { "dependencies": { "justget": "^0.1.6" }, "bin": { "service-tunnels": "./dist/cli.js" } }],
+    "service-tunnels": ["service-tunnels@0.3.12", "https://registry.npmjs.org/service-tunnels/-/service-tunnels-0.3.12.tgz", { "dependencies": { "justget": "^0.1.6" }, "bin": { "service-tunnels": "dist/cli.js", "sts": "dist/cli.js" } }, "sha512-opXEYEi989KMr1cD9kO5rOYeUM6dwof3x+I9j367I4r7pievk/d+/tDEZgtRNPh0wd+icotS3+E/PJZg91PBgw=="],
 
     "set-blocking": ["set-blocking@2.0.0", "https://registry.npmjs.org/set-blocking/-/set-blocking-2.0.0.tgz", {}, "sha512-KiKBS8AnWGEyLzofFfmvKwpdPzqiy16LvQfK3yv/fVH7Bj13/wl3JSR1J+rfgRE9q7xUJK4qvgS8raSOeLUehw=="],
 
