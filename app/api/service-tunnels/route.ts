@@ -202,6 +202,16 @@ export async function POST(request: NextRequest) {
         await stopSelf();
         return NextResponse.json({ ok: true, self: getSelfExposeState() });
       }
+      case "self-stop-tunnel": {
+        // 单渠道停止:仅停掉该隧道进程(如 localtunnel),保留 vhost 绑定
+        const name = (body as { name?: string }).name;
+        const st = getServiceTunnels();
+        if (typeof name !== "string" || !name.startsWith("expose-self-")) {
+          return NextResponse.json({ error: "name required (self tunnel)" }, { status: 400 });
+        }
+        await st.tunnels.stop(name);
+        return NextResponse.json({ ok: true, self: getSelfExposeState() });
+      }
       case "self-allowlocal": {
         const v = (body as { allowLocal?: boolean }).allowLocal;
         const confirm = (body as { confirm?: boolean }).confirm === true;

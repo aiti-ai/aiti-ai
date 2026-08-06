@@ -65,7 +65,7 @@ interface SelfState {
   auth: string | null;
   tunnel: string | null;
   config: Record<string, unknown> | null;
-  urls: Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean }>;
+  urls: Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string }>;
 }
 
 function formatAddrForUrl(addr: string): string {
@@ -1323,6 +1323,20 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
       .finally(() => setBusy(false));
   };
 
+  // 单渠道停止:只停该隧道进程(如 localtunnel),vhost 绑定保留
+  const doStopTunnel = (name: string) => {
+    setBusy(true); setErr(null);
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "self-stop-tunnel", name }),
+    })
+      .then((r) => r.json())
+      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else onChanged(); })
+      .catch(() => setErr(String(t("services.error"))))
+      .finally(() => setBusy(false));
+  };
+
   // 永久配置文本:allowHost 用输入框**实时值**(输入即同步,不等保存);tunnel/
   // provider 参数按 PI_WEB_EXPOSE 的 tunnel./provider. 前缀嵌套键序列化
   const liveAllowHosts = allowHostsInput.split(/[\s,]+/).map((h) => h.trim()).filter(Boolean);
@@ -1362,6 +1376,12 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
                   <button onClick={() => copy(`self-${u.url}`, u.url)} style={{ ...btn, padding: "3px 8px", flexShrink: 0 }}>
                     {copiedKey === `self-${u.url}` ? "✓" : t("services.copy")}
                   </button>
+                  {u.tunnel && (
+                    <button onClick={() => doStopTunnel(u.tunnel!)} disabled={busy} title={t("services.selfStopTunnelHint")}
+                      style={{ ...btn, padding: "3px 8px", flexShrink: 0, color: "#f87171" }}>
+                      {t("services.selfStopTunnel")}
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -1484,8 +1504,8 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
               {busy ? "…" : t("services.selfExposeBtn")}
             </button>
           ) : (
-            <button onClick={doStop} disabled={busy} style={{ ...btn }}>
-              {busy ? "…" : t("services.selfStopBtn")}
+            <button onClick={doStop} disabled={busy} title={t("services.selfStopAllHint")} style={{ ...btn }}>
+              {busy ? "…" : t("services.selfStopAll")}
             </button>
           )}
         </div>
