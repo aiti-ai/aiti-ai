@@ -94,6 +94,8 @@ export const enLocale: LocalePlugin = {
     "services.selfAllowHostsHint": "Hostnames allowed to reach pi-web directly even when allowlocal=false — your own reverse-proxy fronts. Only the hosts you list here count (deployment domains are NOT auto-allowed: they must go through the proxy auth or be listed explicitly).",
     "services.selfAllowHostsCurrent": "Currently allowed",
     "services.selfAllowHostsSave": "Save",
+    "services.selfGatedHint": "allowlocal=false: direct access is refused (403) — use the vhost/tunnel auth entry instead",
+    "services.selfNotExposingHint": "Not exposing pi-web: allowlocal only gates direct access once there are external entries (vhost/tunnel); now only loopback works with it off.",
     "services.copy": "Copy",
     "services.selfEnvHint": "Permanent config — copy to your start script:",
     "services.selfEnvNote": "UI changes are one-shot; they reset on restart. Set PI_WEB_EXPOSE in the environment to persist.",

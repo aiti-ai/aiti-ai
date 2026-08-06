@@ -64,7 +64,7 @@ interface SelfState {
   auth: string | null;
   tunnel: string | null;
   config: Record<string, unknown> | null;
-  urls: Array<{ label: string; url: string }>;
+  urls: Array<{ label: string; url: string; gated?: boolean }>;
 }
 
 function formatAddrForUrl(addr: string): string {
@@ -1130,7 +1130,9 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   const [allowHostsTouched, setAllowHostsTouched] = useState(false);
 
   const exposing = self?.exposing ?? false;
-  const allowLocal = self?.allowLocal ?? true;
+  // 乐观更新:点击立即切换,POST 失败回滚到服务器值(解决“点不掉”)
+  const [allowLocalLocal, setAllowLocalLocal] = useState<boolean | null>(null);
+  const allowLocal = allowLocalLocal ?? self?.allowLocal ?? true;
   const hostname = typeof window !== "undefined" ? window.location.hostname.toLowerCase() : "";
   const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname.endsWith(".localhost");
   const warnNonLoopback = exposing && !loopback;
@@ -1174,14 +1176,15 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
 
   const toggleAllowLocal = (v: boolean) => {
     setErr(null);
+    setAllowLocalLocal(v); // 乐观:立即视觉响应
     fetch(apiUrl("/api/service-tunnels"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "self-allowlocal", allowLocal: v }),
     })
       .then((r) => r.json())
-      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else onChanged(); })
-      .catch(() => setErr(String(t("services.error"))));
+      .then((d: { error?: string }) => { if (d.error) { setAllowLocalLocal(null); setErr(d.error); } else onChanged(); })
+      .catch(() => { setAllowLocalLocal(null); setErr(String(t("services.error"))); });
   };
 
   // allowHosts 输入框预填当前生效值(仅首次/未编辑时)
@@ -1261,18 +1264,24 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
           <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("services.none")}</div>
         ) : (
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {self.urls.map((u) => (
-              <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
-                <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 110 }}>{u.label}</span>
-                <button onClick={() => openInNewTab(u.url)}
-                  style={{ flex: 1, textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={u.url}>
-                  {u.url}
-                </button>
-                <button onClick={() => copy(`self-${u.url}`, u.url)} style={{ ...btn, padding: "3px 8px", flexShrink: 0 }}>
-                  {copiedKey === `self-${u.url}` ? "✓" : t("services.copy")}
-                </button>
-              </div>
-            ))}
+            {self.urls.map((u) => {
+              // allowlocal=false 时,局域网直连入口被门禁拒绝 → 标灰不可打开
+              const gated = !allowLocal && u.gated === true;
+              return (
+                <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: gated ? 0.45 : 1 }}>
+                  <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 110 }}>{u.label}</span>
+                  <button onClick={() => { if (!gated) openInNewTab(u.url); }}
+                    title={gated ? t("services.selfGatedHint") : u.url}
+                    disabled={gated}
+                    style={{ flex: 1, textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: gated ? "var(--text-dim)" : "var(--accent)", cursor: gated ? "not-allowed" : "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: gated ? "line-through" : "none" }}>
+                    {u.url}
+                  </button>
+                  <button onClick={() => copy(`self-${u.url}`, u.url)} style={{ ...btn, padding: "3px 8px", flexShrink: 0 }}>
+                    {copiedKey === `self-${u.url}` ? "✓" : t("services.copy")}
+                  </button>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -1294,6 +1303,9 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
         <span style={{ fontSize: 12, color: "var(--text)" }}>
           <b>{t("services.selfAllowLocal")}</b>
           <span style={{ display: "block", color: "var(--text-dim)", fontSize: 11, marginTop: 2 }}>{t("services.selfAllowLocalHint")}</span>
+          {!exposing && !allowLocal && (
+            <span style={{ display: "block", color: "#d97706", fontSize: 11, marginTop: 4 }}>⚠ {t("services.selfNotExposingHint")}</span>
+          )}
         </span>
       </label>
 

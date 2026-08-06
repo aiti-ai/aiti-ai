@@ -242,16 +242,19 @@ export function getSelfExposeState() {
 }
 
 /** Every address pi-web's UI is reachable at (loopback / LAN / vhost / tunnel). */
-export function getSelfAccessUrls(): Array<{ label: string; url: string }> {
+export function getSelfAccessUrls(): Array<{ label: string; url: string; gated?: boolean }> {
   const st = getServiceTunnels();
   const port = getPiWebPort();
   const base = (process.env.PI_WEB_BASE_PATH ?? "").replace(/\/+$/, "");
-  const out: Array<{ label: string; url: string }> = [];
+  // allowlocal=false → 非回环直连(局域网 IP)被门禁 403;回环始终可用;
+  // 虚拟主机/隧道入口走代理认证,不受直连门禁影响。
+  const allowLocal = getAllowLocal();
+  const out: Array<{ label: string; url: string; gated?: boolean }> = [];
   out.push({ label: "本机（回环）", url: `http://127.0.0.1:${port}${base}` });
   for (const [name, addrs] of Object.entries(networkInterfaces())) {
     for (const a of addrs ?? []) {
       if (a.family === "IPv4" && !a.internal) {
-        out.push({ label: `局域网（${name}）`, url: `http://${a.address}:${port}${base}` });
+        out.push({ label: `局域网（${name}）`, url: `http://${a.address}:${port}${base}`, gated: !allowLocal });
       }
     }
   }
