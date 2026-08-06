@@ -12,6 +12,8 @@ import {
   getAllowLocal,
   getAllowLocalHosts,
   mapSelfTunnelToVhost,
+  issueSelfForwardToken,
+  isValidSelfForwardToken,
 } from "@/lib/service-proxy-shared";
 
 /**
@@ -95,10 +97,14 @@ export async function proxy(request: NextRequest) {
           // Self-exposure forward: switch Host to the loopback target so the
           // request does NOT match a service virtual host again on re-entry
           // (avoids a rewrite loop); the public host is preserved under
-          // x-forwarded-host. NOTE: custom headers do NOT survive Next's
-          // external rewrite, so no secret header is attached here — the
-          // allowlocal gate below accepts loopback hosts, which covers both
-          // our own forward and localhost direct access.
+          // x-forwarded-host. With allowlocal=false the direct-access gate
+          // refuses loopback hosts too — so the forward carries a one-shot
+          // proof token (random, server-side only, never seen by the browser)
+          // that lets the gate tell this authenticated forward from a raw
+          // direct connection.
+          if (!getAllowLocal()) {
+            url.search = `${url.search ? url.search + "&" : "?"}__piSelfFwd=${issueSelfForwardToken()}`;
+          }
           request.headers.set("x-forwarded-host", host);
           request.headers.set("host", `127.0.0.1:${decision.port}`);
         } else {
@@ -116,23 +122,20 @@ export async function proxy(request: NextRequest) {
   }
 
   // pi-web's own traffic: direct-access gate. With allowlocal=false, requests
-  // whose Host is NOT loopback AND NOT an operator-trusted host (deployment
-  // domains / explicit allowHost list) are refused — external traffic must go
-  // through an authenticated gateway. Loopback hosts pass: that covers the
-  // self-exposure forward re-entering this middleware and localhost use.
-  // pi-web's own traffic: direct-access gate. With allowlocal=false, requests
-  // whose Host is NOT loopback AND NOT an operator-trusted host (deployment
-  // domains / explicit allowHost list) are refused — external traffic must go
-  // through an authenticated gateway. Loopback hosts pass: that covers the
-  // self-exposure forward re-entering this middleware and localhost use.
+  // whose Host is NOT an operator-trusted host (deployment domains / explicit
+  // allowHost list) are refused — including LOOPBACK hosts. External traffic
+  // must go through an authenticated gateway (service virtual host or tunnel
+  // exposure); a raw `http://127.0.0.1:<port>` request must NOT bypass it. The
+  // ONLY loopback exception is a request carrying a valid self-exposure
+  // forward token: that is pi-web's own vhost→self forward re-entering this
+  // middleware after Next's external rewrite (custom headers do not survive
+  // the rewrite, so the proof rides in the rewrite URL).
   if (!getAllowLocal()) {
     const hostHeader = (request.headers.get("host") ?? "").toLowerCase();
     const hostname = hostHeader.replace(/^\[|\]$/g, "").split(":")[0];
-    const isLoopbackHost = hostname === "localhost"
-      || hostname === "127.0.0.1"
-      || hostname === "::1"
-      || hostname.endsWith(".localhost");
-    if (!isLoopbackHost && !getAllowLocalHosts().includes(hostname)) {
+    const fwdToken = request.nextUrl.searchParams.get("__piSelfFwd");
+    const isSelfForward = isValidSelfForwardToken(fwdToken ?? "");
+    if (!isSelfForward && !getAllowLocalHosts().includes(hostname)) {
       return new NextResponse("Forbidden: direct access is disabled (allowlocal=false)", {
         status: 403,
         headers: { "cache-control": "no-store" },

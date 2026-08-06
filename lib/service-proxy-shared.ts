@@ -12,6 +12,8 @@ declare global {
   var __piWebAllowLocalOverride: boolean | undefined;
   var __piWebAllowHostsOverride: string[] | undefined;
   var __piWebPort: number | undefined;
+  /** Self-exposure forward proof tokens (allowlocal=false gate): token → issued-at. */
+  var __piWebSelfForwardTokens: Map<string, number> | undefined;
 }
 
 /** pi-web's own port (PORT env ?? 30141); overridable via PI_WEB_EXPOSE port=. */
@@ -76,6 +78,48 @@ export function setAllowLocalHosts(hosts: string[]): void {
   globalThis.__piWebAllowHostsOverride = (hosts ?? [])
     .map((h) => normalizeHost(h))
     .filter(Boolean);
+}
+
+/** Self-exposure forward tokens are valid for this long (ms). */
+const SELF_FORWARD_TTL_MS = 30_000;
+
+/**
+ * Issue a one-shot proof that a request is a gateway-authenticated
+ * self-exposure forward (not a raw direct connection).
+ *
+ * Why: with allowlocal=false the direct-access gate must refuse EVERY host —
+ * including loopback — otherwise a raw `http://127.0.0.1:<port>` request
+ * bypasses the exposure/auth gateway (the bug being fixed). But the
+ * self-exposure forward (vhost → pi-web itself) re-enters this middleware
+ * with a loopback Host after Next's external rewrite, and custom headers do
+ * NOT survive that rewrite. So the forward carries a random token in the
+ * rewrite URL; the gate accepts loopback hosts ONLY when the token is valid.
+ * The browser never sees it (the internal hop is server-side) and the token
+ * is unobservable to LAN clients, so TTL-only (no one-shot delete) keeps
+ * concurrent forwards and the app's internal re-fetches working.
+ */
+export function issueSelfForwardToken(): string {
+  const now = Date.now();
+  const tokens = globalThis.__piWebSelfForwardTokens ??= new Map<string, number>();
+  // prune expired entries
+  for (const [t, ts] of tokens) {
+    if (now - ts > SELF_FORWARD_TTL_MS) tokens.delete(t);
+  }
+  const token = crypto.randomUUID();
+  tokens.set(token, now);
+  return token;
+}
+
+/** True when `token` is an unexpired self-exposure forward proof. */
+export function isValidSelfForwardToken(token: string): boolean {
+  if (!token) return false;
+  const ts = globalThis.__piWebSelfForwardTokens?.get(token);
+  return typeof ts === "number" && Date.now() - ts <= SELF_FORWARD_TTL_MS;
+}
+
+/** Forget every self-exposure forward token (tests / shutdown). */
+export function clearSelfForwardTokens(): void {
+  globalThis.__piWebSelfForwardTokens = undefined;
 }
 
 /**
