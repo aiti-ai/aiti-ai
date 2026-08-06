@@ -1125,6 +1125,9 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   const [err, setErr] = useState<string | null>(null);
   const [copiedEnv, setCopiedEnv] = useState(false);
   const [allowHostsInput, setAllowHostsInput] = useState("");
+  // 用户是否编辑过 allowHosts 输入框:未编辑时用当前生效值预填(输入即同步预览),
+  // 一旦编辑就不再被轮询刷新覆盖
+  const [allowHostsTouched, setAllowHostsTouched] = useState(false);
 
   const exposing = self?.exposing ?? false;
   const allowLocal = self?.allowLocal ?? true;
@@ -1181,6 +1184,13 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
       .catch(() => setErr(String(t("services.error"))));
   };
 
+  // allowHosts 输入框预填当前生效值(仅首次/未编辑时)
+  useEffect(() => {
+    if (!allowHostsTouched && (self?.allowHosts ?? []).length > 0) {
+      setAllowHostsInput(self!.allowHosts.join(" "));
+    }
+  }, [self, allowHostsTouched]);
+
   const saveAllowHosts = () => {
     setErr(null);
     const hosts = allowHostsInput.split(/[\s,]+/).map((h) => h.trim()).filter(Boolean);
@@ -1227,13 +1237,12 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
       .finally(() => setBusy(false));
   };
 
-  // 永久配置文本:allowHost 用当前生效值(env + UI 保存的运行时 override 合并,
-  // 保存后 onChanged 刷新即同步) — 复制到启动脚本即持久化;tunnel/provider
-  // 参数按 PI_WEB_EXPOSE 的 tunnel./provider. 前缀嵌套键序列化
-  const allowHosts = self?.allowHosts ?? [];
+  // 永久配置文本:allowHost 用输入框**实时值**(输入即同步,不等保存);tunnel/
+  // provider 参数按 PI_WEB_EXPOSE 的 tunnel./provider. 前缀嵌套键序列化
+  const liveAllowHosts = allowHostsInput.split(/[\s,]+/).map((h) => h.trim()).filter(Boolean);
   const tunnelParamStr = Object.entries(tunnelParams).map(([k, v]) => `tunnel.${k}=${v}`).join(",");
   const providerParamStr = Object.entries(providerParams).map(([k, v]) => `provider.${k}=${v}`).join(",");
-  const envSnippet = `PI_WEB_EXPOSE="mode=${mode},auth=${auth}${mode !== "proxy" ? `,tunnel=${tunnel}` : ""}${tunnelParamStr ? `,${tunnelParamStr}` : ""}${providerParamStr ? `,${providerParamStr}` : ""}${allowHosts.length ? `,allowHost=${allowHosts.join(",allowHost=")}` : ""}"`;
+  const envSnippet = `PI_WEB_EXPOSE="mode=${mode},auth=${auth}${mode !== "proxy" ? `,tunnel=${tunnel}` : ""}${tunnelParamStr ? `,${tunnelParamStr}` : ""}${providerParamStr ? `,${providerParamStr}` : ""}${liveAllowHosts.length ? `,allowHost=${liveAllowHosts.join(",allowHost=")}` : ""}"`;
   const copyEnv = () => {
     copyText(envSnippet).then(() => {
       setCopiedEnv(true);
@@ -1297,7 +1306,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
         <div style={{ display: "flex", gap: 6 }}>
           <input
             value={allowHostsInput}
-            onChange={(e) => setAllowHostsInput(e.target.value)}
+            onChange={(e) => { setAllowHostsInput(e.target.value); setAllowHostsTouched(true); }}
             placeholder="pi.example.com backup.example.com"
             style={{ flex: 1, padding: "4px 8px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 12, fontFamily: "var(--font-mono)" }}
           />
