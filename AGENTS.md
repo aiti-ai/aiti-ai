@@ -247,3 +247,14 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 - `GET /api/services?refresh=1` lists discovered ports + `serviceHostSuffixes`; `GET /api/service-tunnels` returns exposes/status/provider order/default provider/user managers/tool status/allow-download. The top-toolbar globe opens `ServicesDialog` (10s auto-refresh): **Ports** tab = per-port access methods (direct + virtual-host URLs, `window.open` with `noopener,noreferrer`), protocol auto-detect (http/https/tcp), expose form (tunnel type + auth provider, schema-driven), active exposes (stop, nginx logs), allow-tool-download toggle; **Users** tab = provider user management + TOTP 2FA enroll/activate.
 - **Provider knowledge lives in the library**: pi-web consumes `providerOrder`/`defaultProvider`/`userManagers`/`tunnelSchemas`/`tunnelTcpSupport` — no provider names hardcoded in pi-web (tcp exposes carry no auth: the library's tcp path ignores the provider).
 - Tests: `node --test lib/service-ports.test.mjs lib/request-security.test.mjs lib/web-auth.test.mjs` (middleware-safe helpers, discovery cache, gates).
+
+## service-tunnels 依赖与发布
+
+- pi-web 依赖**本地镜像**（registry.npmjs.org / 127.0.0.1:4873）的 service-tunnels
+  内部构建；升级用 **`bun install`**（勿用 `npm i` —— 会破坏 node_modules，
+  曾导致 enhanced-resolve 缺失）。
+- **base path 内部化**：只向 `createServiceTunnels` 传 `deployBasePath`
+  （如 /dev）与 `serviceBasePath`；URL 前缀拼接、转发路径映射（mapServicePath）、
+  provider 登录路径合并全部由库处理 —— pi-web 不自行拼接、无 keepBasePath。
+- service-tunnels 上公共 npm 前需**迁移清洗**（见其 `AGENTS.md`）：移除内部
+  域名/端口/路径/内部文件，注释不出现 pi-web，只保留必要代码、基本测试与文档。
