@@ -90,6 +90,13 @@ export async function POST(request: NextRequest) {
       allowDownload?: boolean;
       code?: string;
     };
+    // The "command" tunnel type executes a raw shell command — too dangerous
+    // for a web UI; reject it fail-closed on every expose path (existing
+    // command tunnels keep running, new ones can't be created through this
+    // API). The UI also hides it from the tunnel picker (TunnelMeta.dangerous).
+    if (body.tunnel === "command") {
+      return NextResponse.json({ error: "tunnel type 'command' is not allowed" }, { status: 400 });
+    }
     if (body.action === "expose" || (!body.action && body.port)) {
       const port = Number(body.port);
       if (!Number.isInteger(port) || port < 1 || port > 65535) {

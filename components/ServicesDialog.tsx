@@ -197,7 +197,7 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div style={{
-        width: isMobile ? "calc(100vw - 16px)" : 600,
+        width: isMobile ? "calc(100vw - 16px)" : 760,
         maxWidth: "calc(100vw - 16px)",
         height: isMobile ? "calc(100dvh - 16px)" : "min(620px, 82vh)",
         background: "var(--bg)",
@@ -641,7 +641,7 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
   const [sites, setSites] = useState<string[]>([]);
   const [tcpTunnels, setTcpTunnels] = useState<string[]>([]);
   const [tunnelSchemas, setTunnelSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
-  const [tunnelMetas, setTunnelMetas] = useState<Record<string, { favorite?: boolean }> | null>(null);
+  const [tunnelMetas, setTunnelMetas] = useState<Record<string, { favorite?: boolean; dangerous?: boolean }> | null>(null);
   const [authSchemas, setAuthSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
   const [tunnelParams, setTunnelParams] = useState<Record<string, string>>({});
   const [providerParams, setProviderParams] = useState<Record<string, string>>({});
@@ -655,7 +655,7 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
   useEffect(() => {
     fetch(apiUrl("/api/service-tunnels"))
       .then((r) => r.json())
-      .then((d: { providerOrder?: string[]; defaultProvider?: string; tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; tunnelTcpSupport?: string[]; sites?: { name: string }[] }) => {
+      .then((d: { providerOrder?: string[]; defaultProvider?: string; tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; tunnelTcpSupport?: string[]; sites?: { name: string }[] }) => {
         // providerOrder/defaultProvider come from the library — no provider
         // names hardcoded here (authelia availability, Windows fallback etc.
         // are decided in service-tunnels).
@@ -666,7 +666,10 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
         if (d.tunnelSchemas) setTunnelSchemas(d.tunnelSchemas);
         if (d.tunnelMetas) setTunnelMetas(d.tunnelMetas);
         if (d.authProviderSchemas) setAuthSchemas(d.authProviderSchemas);
-        if (d.tunnelTcpSupport) setTcpTunnels(d.tunnelTcpSupport);
+        // Skip dangerous tunnel types (TunnelMeta.dangerous — e.g. "command",
+        // which runs a raw shell command) when picking a tcp-capable default;
+        // name fallback covers service-tunnels versions without the flag.
+        if (d.tunnelTcpSupport) setTcpTunnels(d.tunnelTcpSupport.filter((k) => !d.tunnelMetas?.[k]?.dangerous && k !== "command"));
         if (d.sites) setSites(d.sites.filter((s) => s.name !== "default").map((s) => s.name));
       })
       .catch(() => {});
@@ -753,6 +756,10 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
         <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeTunnelTool")}</span>
         <select value={tunnel} onChange={(e) => setTunnel(e.target.value)} style={select}>
           {[...Object.entries(tunnelSchemas ?? {})]
+            // dangerous types (library TunnelMeta.dangerous — "command" runs a
+            // raw shell command) are hidden from the one-click picker; name
+            // fallback keeps older service-tunnels versions safe too.
+            .filter(([p]) => !tunnelMetas?.[p]?.dangerous && p !== "command")
             .filter(([p]) => protocol !== "tcp" || tcpTunnels.includes(p))
             // 推荐(零账号/参数少)优先, 再按参数数量少在前
             .sort((a, b) => {
