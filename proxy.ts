@@ -137,38 +137,33 @@ export async function proxy(request: NextRequest) {
     const fwdToken = request.nextUrl.searchParams.get("__piSelfFwd");
     const isSelfForward = isValidSelfForwardToken(fwdToken ?? "");
     if (!isSelfForward && !getAllowLocalHosts().includes(hostname)) {
-      // 临时 block(两阶段关闭中)提示剩余恢复时间,永久 block 保持原文案
+      // 403 统一返回 HTML 自动刷新页:临时封禁每 1s 刷(剩余倒计时实时更新,
+      // TTL 到期立即重载);永久封禁每 5s 刷(用户可能重启服务/其他途径解除,
+      // 页面自动重试检测,解除后自动恢复)。
       const pending = getAllowLocalPending();
       const remain = pending.pending ? Math.max(0, Math.ceil((pending.expiresAt - Date.now()) / 1000)) : 0;
-      if (pending.pending) {
-        // 临时封禁:返回 HTML 页面,meta refresh + JS 双保险——TTL 到期自动恢复后
-        // 浏览器自动重载,无需手动 F5;永久封禁不自动刷新(避免死循环)
-        const refreshSec = Math.max(1, remain);
-        const title = "访问被拒绝";
-        const body = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
+      const refreshSec = pending.pending ? 1 : 5;
+      const hint = pending.pending
+        ? `<p>临时封禁中（剩余 <strong>${remain}s</strong>），页面每 1 秒自动刷新，恢复后立即重载…</p>`
+        : `<p>本地直连已禁用（<code>allowlocal=false</code>），每 5 秒自动重试；解除后自动恢复。</p>`;
+      const title = "访问被拒绝";
+      const body = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8">
 <meta http-equiv="refresh" content="${refreshSec}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
 <style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0d0d0d;color:#e5e5e5}.card{text-align:center;padding:26px 30px;border:1px solid #333;border-radius:10px;max-width:440px;line-height:1.7}code{color:#f87171;background:#1c1c1c;padding:1px 6px;border-radius:4px}strong{color:#f87171}</style></head>
 <body><div class="card">
 <h3 style="margin-top:0">${title}</h3>
-<p>本地直连已禁用（<code>allowlocal=false</code>）</p>
-<p>临时封禁 <strong>${remain}s</strong> 后自动恢复，页面将自动刷新…</p>
+${hint}
 </div>
-<script>setTimeout(function(){ location.reload(); }, ${(remain + 1) * 1000});</script>
+<script>setTimeout(function(){ location.reload(); }, ${refreshSec * 1000});</script>
 </body></html>`;
-        return new NextResponse(body, {
-          status: 403,
-          headers: {
-            "cache-control": "no-store",
-            "content-type": "text/html; charset=utf-8",
-          },
-        });
-      }
-      const msg = `访问被拒绝：本地直连已禁用（allowlocal=false）`;
-      return new NextResponse(msg, {
+      return new NextResponse(body, {
         status: 403,
-        headers: { "cache-control": "no-store" },
+        headers: {
+          "cache-control": "no-store",
+          "content-type": "text/html; charset=utf-8",
+        },
       });
     }
   }
