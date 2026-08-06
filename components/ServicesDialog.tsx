@@ -83,7 +83,9 @@ function isLikelyIp(hostname: string): boolean {
 
 export function ServicesDialog({ onClose, onOpenFile }: { onClose: () => void; onOpenFile?: (filePath: string, fileName: string) => void }) {
   const isMobile = useIsMobile();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
+  // 多语:GET /api/service-tunnels 显式带 ?lang=,与 pi-web 内切换的语言一致
+  // (否则 route 只认 Accept-Language = 浏览器语言,切换后描述仍中文)
   const [data, setData] = useState<ServicesResponse | null>(null);
   const [allowDownload, setAllowDownload] = useState<boolean | null>(null);
   const [loading, setLoading] = useState(true);
@@ -114,7 +116,7 @@ export function ServicesDialog({ onClose, onOpenFile }: { onClose: () => void; o
       .finally(() => setLoading(false));
     // exposes (live, from service-tunnels) — merge into data so the
     // "Active exposes" section at the top shows them.
-    fetch(apiUrl("/api/service-tunnels"))
+    fetch(`${apiUrl("/api/service-tunnels")}?lang=${encodeURIComponent(locale)}`)
       .then((r) => r.json())
       .then((d: { exposes?: ExposeInfo[]; allowToolDownload?: boolean; toolStatus?: ServicesResponse["toolStatus"]; self?: SelfState }) => {
         // 两个请求并行:service-tunnels 可能先于 /api/services 返回(prev 为 null)。
@@ -131,7 +133,7 @@ export function ServicesDialog({ onClose, onOpenFile }: { onClose: () => void; o
         if (d.self) setSelf(d.self);
       })
       .catch(() => {});
-  }, [t]);
+  }, [t, locale]);
 
   useEffect(() => {
     refresh(true);
@@ -854,6 +856,8 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
   /** Switch to the Users tab (no users for the selected auth combo). */
   onGoManageUsers: () => void;
 }) {
+  // 多语:子组件独立拿 locale(与服务页一致,?lang= 与切换同步)
+  const { locale: secLocale } = useI18n();
   const [provider, setProvider] = useState<string | null>(null);
   // Provider list arrives from the server (library-computed); empty until then.
   const [providers, setProviders] = useState<string[]>([]);
@@ -887,7 +891,7 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
   // (data-driven — adding a tunnel type / auth provider needs NO dialog
   // changes). Provider order/default come from the library too.
   useEffect(() => {
-    fetch(apiUrl("/api/service-tunnels"))
+    fetch(`${apiUrl("/api/service-tunnels")}?lang=${encodeURIComponent(secLocale)}`)
       .then((r) => r.json())
       .then((d: { providerOrder?: string[]; defaultProvider?: string; tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; tunnelTcpSupport?: string[]; sites?: { name: string }[]; userManagers?: string[] }) => {
         // providerOrder/defaultProvider come from the library — no provider
@@ -1196,6 +1200,8 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
  * users, add / set-password / remove, and toggle TOTP 2FA (portal provider).
  */
 function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<string, string>) => string; isMobile: boolean }) {
+  // 多语:子组件独立拿 locale(与服务页一致,?lang= 与切换同步)
+  const { locale: usersLocale } = useI18n();
   // 两级视图:总表(站点 × provider 计数)→ 点某行 → 该组合的用户管理页
   // (带返回按钮)。添加用户只有 3 个输入,site/provider 由点选的行决定。
   const [rows, setRows] = useState<{ site: string; provider: string; count: number; totp: number }[] | null>(null);
@@ -1262,7 +1268,7 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
   }, [selected, totpProviders]);
 
   useEffect(() => {
-    fetch(apiUrl("/api/service-tunnels"))
+    fetch(`${apiUrl("/api/service-tunnels")}?lang=${encodeURIComponent(usersLocale)}`)
       .then((r) => r.json())
       .then((d: { totpProviders?: string[] }) => {
         if (d.totpProviders) setTotpProviders(d.totpProviders);
@@ -1553,6 +1559,8 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
   /** Stop ONE expose by name (proxy vhost rows — removes binding + record). */
   onStopExpose: (name: string) => void;
 }) {
+  // 多语:SelfTab 自身组件,单独拿 locale(与 ServicesDialog 的 stApi 一致)
+  const { locale: selfLocale } = useI18n();
   // 暴露地址(tunnel / proxy vhost)点击 → 先弹详情,详情里可打开/停止;
   // 直连(回环/局域网)与例外域名仍直接打开。
   /** 暴露条目定位:tunnel 行按隧道名,vhost 行按 URL 匹配。 */
@@ -1639,7 +1647,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
   // 隧道类型 schema 来自库(与 Ports 页同一数据源),默认 cloudflared;
   // 不可用时回退到第一个非危险类型
   useEffect(() => {
-    fetch(apiUrl("/api/service-tunnels"))
+    fetch(`${apiUrl("/api/service-tunnels")}?lang=${encodeURIComponent(selfLocale)}`)
       .then((r) => r.json())
       .then((d: { tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; userManagers?: string[] }) => {
         if (d.tunnelSchemas) setTunnelSchemas(d.tunnelSchemas);
