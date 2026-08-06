@@ -203,7 +203,7 @@ Browser                                  Next.js Server
 PI_WEB_EXPOSE="mode=proxy" npm run dev
 
 # 仅配置 allowlocal/allowHost，不暴露自身（mode 省略 = none）
-PI_WEB_EXPOSE="allowlocal=false,allowHost=pi.example.com" npm run dev
+PI_WEB_EXPOSE="allowlocal=false,allowHost=backup.example.com" npm run dev
 
 # 公网隧道 + 双因素
 PI_WEB_EXPOSE="mode=both,tunnel=cloudflared,auth=portal,policy=two_factor" npm run dev
@@ -212,7 +212,7 @@ PI_WEB_EXPOSE="mode=both,tunnel=cloudflared,auth=portal,policy=two_factor" npm r
 PI_WEB_EXPOSE="mode=tunnel,tunnel=ngrok,tunnel.domain=alice.ngrok-free.app,ngrokAuthtoken=xxx,user.name=admin,user.password=pw" npm run dev
 
 # 自防护反代直连例外（必须显式声明：裸部署域默认走 proxy 认证）
-PI_WEB_EXPOSE="mode=proxy,allowlocal=false,allowHost=pi.example.com,allowHost=backup.example.com" npm run dev
+PI_WEB_EXPOSE="mode=proxy,allowlocal=false,allowHost=backup.example.com,allowHost=vpn.example.com" npm run dev
 ```
 
 **字段**（键名对齐 service-tunnels CLI）：
@@ -226,7 +226,7 @@ PI_WEB_EXPOSE="mode=proxy,allowlocal=false,allowHost=pi.example.com,allowHost=ba
 | `protocol` | auto-detect | `http` / `https` / `tcp` |
 | `allowToolDownload` | 库默认 | `true` / `false` |
 | `allowlocal` | `true` | 直连门控，见下 |
-| `allowHost` | — | **例外域名**（可重复键，如 `allowHost=pi.example.com,allowHost=backup.example.com`，或单键空格分隔）；allowlocal=false 时仍允许直连的域名——你自己防护层（反代）转发的入口。**部署域不会自动例外**，需要显式列出 |
+| `allowHost` | — | **例外域名**（可重复键，如 `allowHost=backup.example.com,allowHost=vpn.example.com`，或单键空格分隔）；allowlocal=false 时仍允许直连的域名——你自己防护层（反代）转发的入口。**部署域不会自动例外**，需要显式列出 |
 | `port` | `PORT ?? 30141` | 显式覆盖自身端口（应对 `--port` 自定义 + 未设 PORT） |
 | `ngrokAuthtoken` | — | ngrok 专用 |
 | `user.name` / `user.password` | — | 预置认证用户 |

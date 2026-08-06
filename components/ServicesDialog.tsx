@@ -1319,7 +1319,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
           <input
             value={allowHostsInput}
             onChange={(e) => { setAllowHostsInput(e.target.value); setAllowHostsTouched(true); }}
-            placeholder="pi.example.com backup.example.com"
+            placeholder="backup.example.com vpn.example.com"
             style={{ flex: 1, padding: "4px 8px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 12, fontFamily: "var(--font-mono)" }}
           />
           <button onClick={saveAllowHosts} style={{ ...btn, flexShrink: 0 }}>{t("services.selfAllowHostsSave")}</button>
