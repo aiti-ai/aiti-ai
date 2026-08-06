@@ -51,6 +51,8 @@ export async function GET(request: NextRequest) {
     const st = getServiceTunnels();
     ensureSites(); // idempotent preset of pi-web + services realms
     const providers = st.auth.providers();
+    // 多语:?lang= 显式 > Accept-Language 头(浏览器自动带);缺省英文
+    const lang = request.nextUrl.searchParams.get("lang") ?? request.headers.get("accept-language")?.split(",")[0] ?? undefined;
     // ?logs=<exposeName> → read that expose's per-host nginx access/error logs
     const logsName = request.nextUrl.searchParams.get("logs");
     if (logsName) {
@@ -133,11 +135,11 @@ export async function GET(request: NextRequest) {
       providers,
       providerOrder: st.auth.providerOrder(),
       defaultProvider: st.auth.defaultProvider(),
-      tunnelSchemas: st.schemas.tunnels(),
+      tunnelSchemas: st.schemas.tunnels(lang),
       tunnelMetas: st.schemas.metas(),
       totpProviders: st.auth.totpProviders(),
       userManagers: st.auth.userManagers(),
-      authProviderSchemas: await st.schemas.authProviders(),
+      authProviderSchemas: await st.schemas.authProviders(lang),
       tunnelTcpSupport: st.tunnels.tcpSupport ? st.tunnels.tcpSupport() : [],
       allowToolDownload: st.tools.allowDownload(),
       toolStatus: st.tools.list(),
