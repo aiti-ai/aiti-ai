@@ -1193,7 +1193,10 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
       .finally(() => setBusy(false));
   };
 
-  const envSnippet = `PI_WEB_EXPOSE="mode=${mode},auth=${auth}${mode !== "proxy" ? `,tunnel=${tunnel}` : ""}${self?.config?.allowHost ? `,allowHost=${String((self.config.allowHost as string[]).join(",allowHost="))}` : ""}"`;
+  // 永久配置文本:allowHost 用当前生效值(env + UI 保存的运行时 override 合并,
+  // 保存后 onChanged 刷新即同步) — 复制到启动脚本即持久化
+  const allowHosts = self?.allowHosts ?? [];
+  const envSnippet = `PI_WEB_EXPOSE="mode=${mode},auth=${auth}${mode !== "proxy" ? `,tunnel=${tunnel}` : ""}${allowHosts.length ? `,allowHost=${allowHosts.join(",allowHost=")}` : ""}"`;
   const copyEnv = () => {
     copyText(envSnippet).then(() => {
       setCopiedEnv(true);

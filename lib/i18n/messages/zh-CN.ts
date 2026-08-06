@@ -94,6 +94,7 @@ export const zhCNLocale: LocalePlugin = {
     "services.selfAllowHostsHint": "allowlocal=false 时仍允许直连的域名——你自己防护层（反向代理）转发的入口。只认你显式列出的域名（部署域不会自动放行：裸部署域要么走 proxy 认证，要么显式列在这里）。",
     "services.selfAllowHostsCurrent": "当前允许",
     "services.selfAllowHostsSave": "保存",
+    "services.copy": "复制",
     "services.selfEnvHint": "永久配置（复制到启动脚本）：",
     "services.selfEnvNote": "界面改动一次性生效，重启恢复环境变量值。如需持久化请设置 PI_WEB_EXPOSE。",
     "services.selfWarning": "pi-web 正在暴露且可从非回环地址访问——局域网直连会绕过网关认证。建议仅监听 127.0.0.1 或启用密码。",
