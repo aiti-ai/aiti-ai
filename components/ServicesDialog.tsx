@@ -1296,7 +1296,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
       body: JSON.stringify({
         action: "self-expose",
         mode,
-        provider: auth === "none" ? undefined : auth,
+        provider: auth, // "none" 必须保留字符串,exposeSelf 判断 opts.auth === "none";传 undefined 会走默认 portal
         tunnel,
         tunnelParams,
         providerParams,

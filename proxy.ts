@@ -95,6 +95,12 @@ export async function proxy(request: NextRequest) {
         url.pathname = decision.url.split("?")[0] ?? "/";
         url.search = decision.url.includes("?") ? `?${decision.url.split("?")[1]}` : "";
         if (decision.port === getPiWebPort()) {
+          // 根路径重定向到 basePath:pi-web 无根页面(登录后 next=/ 会 404),
+          // 裸 / 应落到部署前缀下
+          const base = process.env.NEXT_PUBLIC_BASE_PATH || "";
+          if (base && (url.pathname === "/" || url.pathname === "")) {
+            return NextResponse.redirect(new URL(base + "/", request.url), 302);
+          }
           // Self-exposure forward: switch Host to the loopback target so the
           // request does NOT match a service virtual host again on re-entry
           // (avoids a rewrite loop); the public host is preserved under
