@@ -80,6 +80,7 @@ export const zhCNLocale: LocalePlugin = {
     "services.tabSelf": "Pi-web",
     "services.selfAccessUrls": "可访问地址",
     "services.selfExpose": "暴露 pi-web 自身",
+    "services.selfExposeUrls": "已暴露地址（认证入口）:",
     "services.selfExposeHint": "开启一个带认证的公网入口（portal/basic/authelia）。外部用户只能通过该网关访问 pi-web；直连 127/局域网由下方 allowlocal 开关控制。",
     "services.selfExposing": "已暴露",
     "services.selfNotExposing": "未暴露",

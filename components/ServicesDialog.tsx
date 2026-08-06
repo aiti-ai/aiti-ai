@@ -1267,6 +1267,8 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   // 关闭期间仍可访问的认证入口:仅虚拟主机/隧道(authEntry),回环与局域网裸
   // 直连在 allowlocal=false 时同样 403,绝不列入
   const authEntries = (self?.urls ?? []).filter((u) => u.authEntry === true);
+  // 暴露区地址:仅隧道/虚拟主机入口(排除 allowHost 例外域名)
+  const exposeUrls = (self?.urls ?? []).filter((u) => u.authEntry === true && !u.label.includes("allowHost"));
 
   // allowHosts 输入框预填当前生效值(仅首次/未编辑时)
   useEffect(() => {
@@ -1420,6 +1422,25 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
             ● {exposing ? t("services.selfExposing") : t("services.selfNotExposing")}
           </span>
         </div>
+        {exposing && exposeUrls.length > 0 && (
+          <div style={{ border: "1px solid rgba(22,163,74,0.3)", background: "rgba(22,163,74,0.06)", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: "#16a34a", marginBottom: 5 }}>{t("services.selfExposeUrls")}</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {exposeUrls.map((u) => (
+                <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                  <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 96 }}>{u.label}</span>
+                  <button onClick={() => openInNewTab(u.url)} title={u.url}
+                    style={{ flex: 1, textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {u.url}
+                  </button>
+                  <button onClick={() => copy(`self-expose-${u.url}`, u.url)} style={{ ...btn, padding: "3px 8px", flexShrink: 0 }}>
+                    {copiedKey === `self-expose-${u.url}` ? "✓" : t("services.copy")}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
         <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 10 }}>{t("services.selfExposeHint")}</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <label style={{ fontSize: 12, color: "var(--text-muted)" }}>

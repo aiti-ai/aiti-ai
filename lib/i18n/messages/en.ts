@@ -80,6 +80,7 @@ export const enLocale: LocalePlugin = {
     "services.tabSelf": "Pi-web",
     "services.selfAccessUrls": "Access URLs",
     "services.selfExpose": "Expose pi-web itself",
+    "services.selfExposeUrls": "Exposed addresses (auth entries):",
     "services.selfExposeHint": "Opens an authenticated public entry (portal/basic/authelia). External users reach pi-web only through this gateway; direct 127/LAN access is governed by the allowlocal switch below.",
     "services.selfExposing": "exposing",
     "services.selfNotExposing": "not exposing",
