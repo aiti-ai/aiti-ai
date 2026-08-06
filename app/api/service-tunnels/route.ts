@@ -9,8 +9,36 @@ import {
   exposeSelf,
   stopSelf,
   getSelfExposeState,
+  getExposeStartedAt,
+  getExposeKeepBasePath,
+  getPiWebBasePath,
+  removeExposeStartedAt,
   type SelfExposeOptions,
 } from "@/lib/service-tunnels-integration";
+
+import type { TunnelConfig } from "service-tunnels";
+
+/** Expose 详情弹窗的隧道参数:从 TunnelConfig 挑有意义的字段展示。令牌类
+ *  值一律掩码(只留末 4 位)。返回扁平 { key: value }。 */
+function exposeParams(cfg: TunnelConfig): Record<string, string> {
+  const out: Record<string, string> = {};
+  const mask = (v: string) => `••••${v.slice(-4)}`;
+  if (cfg.domain) out.domain = cfg.domain;
+  if (cfg.server) out.server = cfg.server;
+  if (cfg.host) out.host = cfg.host;
+  if (cfg.user) out.user = cfg.user;
+  if (cfg.port) out.port = String(cfg.port);
+  if (cfg.remotePort) out.remotePort = String(cfg.remotePort);
+  if (cfg.token) out.token = mask(cfg.token);
+  if (cfg.args?.length) out.args = cfg.args.join(" ");
+  if (cfg.cmd) out.cmd = cfg.cmd;
+  if (cfg.env) {
+    for (const [k, v] of Object.entries(cfg.env)) {
+      out[k] = /token|secret|password|key/i.test(k) ? mask(v) : v;
+    }
+  }
+  return out;
+}
 
 /**
  * GET /api/service-tunnels          — service-tunnels 状态（发现/内部端口/隧道/provider/站点）
@@ -44,7 +72,32 @@ export async function GET(request: NextRequest) {
       services: listPiServices(),
       internal: st.internal.list(),
       tunnels: st.tunnels.list(),
-      exposes: st.exposes(),
+      // Detail modal needs the expose's start time (pi-web-side record) and
+      // tunnel params (from the tunnel config: domain/server/token/…). Token
+      // values are masked; proxy-mode exposes have no tunnel config → null.
+      exposes: st.exposes().map((e) => {
+        const cfg = st.tunnels.configs().find((c) => c.name === e.name);
+        // proxy 模式(pi-web 内进程代理,startTransport:false → localUrl 为空):
+        // 库内 running 恒为 false,实际以 binding 是否仍注册为准 —— 否则 proxy
+        // 暴露永远不显示在活动列表、也无法从表单切到“停止”。
+        let running = e.running;
+        if ((e.name ?? "").startsWith("proxy:") && e.label !== undefined) {
+          running = Boolean(st.proxy.bindings().some((b) => b.port === e.port && (b.label ?? "") === (e.label ?? "")));
+        }
+        // keepBasePath 开启 → vhost 链接拼接部署路径(点击走 nginx 路径路由直达
+        // 本实例,避免根路径 not enrolled);隧道 URL 不拼。
+        const base = getPiWebBasePath();
+        const keepBase = getExposeKeepBasePath(e.name) && base ? base : "";
+        return {
+          ...e,
+          running,
+          startedAt: getExposeStartedAt(e.name) ?? null,
+          params: cfg ? exposeParams(cfg) : null,
+          localUrl: e.localUrl ? `${e.localUrl}${keepBase}` : e.localUrl,
+          baseUrl: e.baseUrl ? `${e.baseUrl}${keepBase}` : e.baseUrl,
+          domainUrl: e.domainUrl ? `${e.domainUrl}${keepBase}` : e.domainUrl,
+        };
+      }),
       providers,
       providerOrder: st.auth.providerOrder(),
       defaultProvider: st.auth.defaultProvider(),
@@ -86,6 +139,7 @@ export async function POST(request: NextRequest) {
       allowToolDownload?: boolean;
       tunnelParams?: Record<string, unknown>;
       providerParams?: Record<string, unknown>;
+      keepBasePath?: boolean;
       name?: string;
       allowDownload?: boolean;
       code?: string;
@@ -117,6 +171,7 @@ export async function POST(request: NextRequest) {
         policy: body.policy,
         tunnelParams: body.tunnelParams,
         providerParams: body.providerParams,
+        keepBasePath: body.keepBasePath,
       });
       return NextResponse.json(res);
     }
@@ -126,6 +181,7 @@ export async function POST(request: NextRequest) {
         return NextResponse.json(await st.tunnels.start(body.name ?? ""));
       case "tunnel-stop":
         await st.tunnels.stop(body.name ?? "");
+        removeExposeStartedAt(body.name ?? "");
         return NextResponse.json({ stopped: body.name });
       case "tunnel-stop-all":
         await st.tunnels.stopAll();
@@ -184,6 +240,36 @@ export async function POST(request: NextRequest) {
         st.tools.setAllowDownload(!!body.allowDownload);
         return NextResponse.json({ allowToolDownload: st.tools.allowDownload() });
       }
+      case "user-summary": {
+        // 站点 × 有本地用户库的 provider 矩阵:每格用户数 + TOTP 用户数。
+        // 供「用户」页表格一次拿全(避免前端 N×(1+每格用户数) 次请求)。
+        const siteNames = ["default", ...st.sites.list().map((s) => s.name).filter((n) => n !== "default")];
+        const managers = st.auth.userManagers();
+        const totpProviders = st.auth.totpProviders();
+        const rows: { site: string; provider: string; count: number; totp: number }[] = [];
+        for (const site of siteNames) {
+          for (const provider of managers) {
+            try {
+              const res = await st.auth.users(provider, site);
+              const users = res.find((x) => x.provider === provider)?.users ?? [];
+              let totp = 0;
+              if (totpProviders.includes(provider)) {
+                for (const u of users) {
+                  try {
+                    if ((await st.auth.totpStatus(u.name, provider, site)).enrolled) totp++;
+                  } catch {
+                    // 单用户 totp 状态查询失败 —— 忽略该用户
+                  }
+                }
+              }
+              rows.push({ site, provider, count: users.length, totp });
+            } catch {
+              // 该 provider/site 组合不可用(如 provider 未安装)→ 跳过
+            }
+          }
+        }
+        return NextResponse.json({ rows });
+      }
       // ---- Pi-web self-exposure (runtime override of PI_WEB_EXPOSE) ----
       case "self-expose": {
         const res = await exposeSelf({
@@ -195,6 +281,7 @@ export async function POST(request: NextRequest) {
           allowToolDownload: body.allowToolDownload,
           tunnelParams: body.tunnelParams,
           providerParams: body.providerParams,
+          keepBasePath: body.keepBasePath,
         } as SelfExposeOptions);
         return NextResponse.json({ ok: true, result: res, self: getSelfExposeState() });
       }

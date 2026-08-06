@@ -53,6 +53,35 @@ export function getServiceTunnels(): ServiceTunnels {
 /** pi-web's own process cmdline patterns (never "services"). */
 const PI_WEB_OWN = [/next[\\/]dist[\\/]bin[\\/]next/, /next-server/, /pi-web(-options)?\.js/, /bin[\\/]pi-web/];
 
+/** Expose start timestamps (per expose name) — the library's exposes() has no
+ *  time; pi-web records it at expose time for the detail modal. Keyed by the
+ *  expose name (tunnel name, or `proxy:port:label` for proxy mode). In-memory
+ *  only, same lifetime as the library's exposes registry. */
+const exposeStartedAt = new Map<string, number>();
+
+/** 每个暴露的 vhost 链接是否保留部署 basePath(如 /dev)。库的 baseUrl 无路径,
+ *  pi-web 带 basePath 部署时点击根路径会落到 nginx 其它实例 → not enrolled;
+ *  显示层据此决定是否拼接。In-memory,与 exposes 同生命周期。 */
+const exposeKeepBasePath = new Map<string, boolean>();
+
+/** 当前实例的部署 basePath(与 proxy.ts 的根路径重定向 / pipe 一致)。 */
+export function getPiWebBasePath(): string {
+  return (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/+$/, "");
+}
+
+export function getExposeStartedAt(name: string): number | undefined {
+  return exposeStartedAt.get(name);
+}
+
+export function getExposeKeepBasePath(name: string): boolean {
+  return exposeKeepBasePath.get(name) ?? false;
+}
+
+export function removeExposeStartedAt(name: string): void {
+  exposeStartedAt.delete(name);
+  exposeKeepBasePath.delete(name);
+}
+
 /** User test services only (framework ports excluded by the registry). */
 export function listPiServices() {
   return getServiceTunnels().discovery.getPorts({ excludeCmdline: PI_WEB_OWN });
@@ -103,10 +132,12 @@ export async function exposeService(
     allowToolDownload?: boolean;
     tunnelParams?: Record<string, unknown>;
     providerParams?: Record<string, unknown>;
+    /** vhost 链接保留部署 basePath(如 /dev)。默认 false——服务端口通常服务于根路径。 */
+    keepBasePath?: boolean;
   } = {},
 ) {
   const st = getServiceTunnels();
-  return st.auth.expose(port, {
+  const res = await st.auth.expose(port, {
     auth: opts.auth ?? false,
     mode: opts.mode,
     site: opts.site,
@@ -130,6 +161,12 @@ export async function exposeService(
     // separate proxy transport listener.
     startTransport: false,
   });
+  // Record when this expose was created (detail modal 开启时间). The library
+  // keys exposes the same way: tunnel name, or `proxy:port:label` for proxy.
+  const name = res.tunnel || `proxy:${port}:${res.label ?? ""}`;
+  exposeStartedAt.set(name, Date.now());
+  exposeKeepBasePath.set(name, Boolean(opts.keepBasePath));
+  return res;
 }
 
 /** pi-web's OWN UI under site "pi-web" — separate users from dev services. */
@@ -151,6 +188,8 @@ export interface SelfExposeOptions {
   port?: number;
   /** Direct local access gate: false → only authenticated forwards pass. */
   allowlocal?: boolean;
+  /** vhost 链接保留部署 basePath(如 /dev)——本实例有 basePath 时默认开启。 */
+  keepBasePath?: boolean;
 }
 
 export async function exposeSelf(opts: SelfExposeOptions = {}) {
@@ -173,7 +212,7 @@ export async function exposeSelf(opts: SelfExposeOptions = {}) {
     provider: authNone ? "" : provider,
     ...(opts.policy ? { policy: { policy: opts.policy } } : {}),
   });
-  return st.auth.expose(port, {
+  const res = await st.auth.expose(port, {
     // auth "none" → open binding (no gateway); everything else is gated.
     auth: authNone ? "none" : true,
     mode,
@@ -192,6 +231,11 @@ export async function exposeSelf(opts: SelfExposeOptions = {}) {
     // Middleware serves vhosts in-process — no separate transport listener.
     startTransport: false,
   });
+  // 自暴露同样记录时间 + basePath 选项(详情弹窗 开启时间 / vhost 链接)。
+  const name = res.tunnel || `proxy:${port}:${res.label ?? ""}`;
+  exposeStartedAt.set(name, Date.now());
+  exposeKeepBasePath.set(name, opts.keepBasePath ?? Boolean(getPiWebBasePath()));
+  return res;
 }
 
 /** Stop pi-web's own exposure: tunnel processes + proxy enrollment. */
@@ -250,7 +294,7 @@ export function getSelfAccessUrls(): Array<{ label: string; url: string; gated?:
   // self-forward token 的内部转发放行);虚拟主机/隧道入口走代理认证不受
   // 直连门禁影响(authEntry=true,关闭期间仍可访问)。
   const allowLocal = getAllowLocal();
-  const out: Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string }> = [];
+  const out: Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string }> = [];
   out.push({ label: "本机（回环）", url: `http://127.0.0.1:${port}${base}`, gated: !allowLocal });
   for (const [name, addrs] of Object.entries(networkInterfaces())) {
     for (const a of addrs ?? []) {
@@ -262,8 +306,12 @@ export function getSelfAccessUrls(): Array<{ label: string; url: string; gated?:
   for (const e of st.exposes()) {
     const isSelf = e.site === "pi-web" || e.name?.startsWith("expose-self-");
     if (!isSelf || e.port !== port) continue;
-    if (e.localUrl) out.push({ label: "服务虚拟主机（本机）", url: e.localUrl, authEntry: true });
-    if (e.baseUrl) out.push({ label: "服务虚拟主机（部署域）", url: e.baseUrl, authEntry: true });
+    // keepBasePath 开启 → vhost 链接拼接部署路径,点击走 nginx 路径路由直达
+    // 本实例(binding 所在处),避免根路径落到其它实例 not enrolled。
+    const keepBase = getExposeKeepBasePath(e.name) && base ? base : "";
+    // exposeName 让客户端加载即知该 vhost 的停止目标(无需等 exposes 列表异步就绪)
+    if (e.localUrl) out.push({ label: "服务虚拟主机（本机）", url: `${e.localUrl}${keepBase}`, authEntry: true, exposeName: e.name });
+    if (e.baseUrl) out.push({ label: "服务虚拟主机（部署域）", url: `${e.baseUrl}${keepBase}`, authEntry: true, exposeName: e.name });
     if (e.url) out.push({ label: "隧道公网", url: e.url, authEntry: true, tunnel: e.name });
   }
   // allowHost 白名单:关闭期间仍可直连的例外域名(用户自己的反代入口,无端口信息)

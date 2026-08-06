@@ -42,6 +42,10 @@ interface ExposeInfo {
   baseUrl?: string;
   domainUrl?: string;
   mode?: string;
+  /** Expose creation time (pi-web-side record; null for pre-restart exposes). */
+  startedAt?: number | null;
+  /** Tunnel params (masked secrets) — for the detail modal. */
+  params?: Record<string, string> | null;
 }
 
 interface ServicesResponse {
@@ -65,7 +69,7 @@ interface SelfState {
   auth: string | null;
   tunnel: string | null;
   config: Record<string, unknown> | null;
-  urls: Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string }>;
+  urls: Array<{ label: string; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string }>;
 }
 
 function formatAddrForUrl(addr: string): string {
@@ -89,6 +93,9 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
   const [logsFor, setLogsFor] = useState<string | null>(null);
   const [logsData, setLogsData] = useState<{ access: string; error: string } | null>(null);
   const [logsLoading, setLogsLoading] = useState(false);
+  // 活动暴露的详情弹窗:点链接不直接打开页面,先看来源详情(mode/auth/隧道/
+  // 参数/链接/开启时间),链接在弹窗内点击才新窗口打开。
+  const [detailFor, setDetailFor] = useState<ExposeInfo | null>(null);
   const [tab, setTab] = useState<"ports" | "self" | "users">("ports");
   const [self, setSelf] = useState<SelfState | null>(null);
   const [infoModal, setInfoModal] = useState<"access" | "auth" | null>(null);
@@ -98,7 +105,9 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
     fetch(apiUrl(`/api/services${force ? "?refresh=1" : ""}`))
       .then((r) => r.json())
       .then((d: ServicesResponse) => {
-        setData(d);
+        // /api/services 响应不含 exposes —— 整体替换会把 service-tunnels 合并
+        // 进来的 exposes 冲掉(vhost 行停止按钮依赖它,导致时有时无)。合并保留。
+        setData((prev) => ({ ...(prev ?? {}), ...d, exposes: prev?.exposes ?? [] }));
         setError(null);
       })
       .catch(() => setError(String(t("services.error"))))
@@ -108,13 +117,16 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
     fetch(apiUrl("/api/service-tunnels"))
       .then((r) => r.json())
       .then((d: { exposes?: ExposeInfo[]; allowToolDownload?: boolean; toolStatus?: ServicesResponse["toolStatus"]; self?: SelfState }) => {
+        // 两个请求并行:service-tunnels 可能先于 /api/services 返回(prev 为 null)。
+        // 必须无条件合并,否则 exposes 被丢弃 → vhost 停止按钮依赖 exposes 永远
+        // 找不到(直到下次轮询)。
         if (d.exposes) {
           const ex = d.exposes;
-          setData((prev) => (prev ? { ...prev, exposes: ex } : prev));
+          setData((prev) => ({ ...(prev ?? ({} as ServicesResponse)), exposes: ex }));
         }
         if (typeof d.allowToolDownload === "boolean") setAllowDownload(d.allowToolDownload);
         if (d.toolStatus) {
-          setData((prev) => (prev ? { ...prev, toolStatus: d.toolStatus } : prev));
+          setData((prev) => ({ ...(prev ?? ({} as ServicesResponse)), toolStatus: d.toolStatus }));
         }
         if (d.self) setSelf(d.self);
       })
@@ -281,34 +293,42 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
 
         {/* List */}
         <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px" }}>
-          {(data?.exposes ?? []).length > 0 && (
+          {(data?.exposes ?? []).some((e) => e.running) && (
             <div style={{ padding: "8px 10px", border: "1px solid var(--accent)", borderRadius: 8, background: "var(--bg-panel)", marginBottom: 10 }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>{t("services.activeExposes")}</div>
-              {(data?.exposes ?? []).map((ex) => (
+              {(data?.exposes ?? []).filter((e) => e.running).map((ex) => {
+                const primaryUrl = [ex.url, ex.localUrl, ex.baseUrl, ex.domainUrl].find((x): x is string => Boolean(x)) ?? "";
+                return (
                 <div key={ex.name} style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 0", flexWrap: "wrap", fontSize: 11 }}>
                   <span style={{ fontFamily: "var(--font-mono)", color: "var(--text)", flexShrink: 0 }}>127.0.0.1:{ex.port}</span>
-                  <span style={{ padding: "1px 6px", background: "var(--bg-hover)", borderRadius: 4, color: "var(--text-muted)", flexShrink: 0 }}>{ex.localUrl && !ex.url ? "proxy" : (ex.tunnelType ?? "?")}</span>
+                  <span style={{ padding: "1px 6px", background: "var(--bg-hover)", borderRadius: 4, color: "var(--text-muted)", flexShrink: 0 }}>{(ex.name ?? "").startsWith("proxy:") ? "proxy" : (ex.tunnelType ?? "?")}</span>
                   <span style={{ padding: "1px 6px", background: "var(--bg-hover)", borderRadius: 4, color: "var(--text-dim)", flexShrink: 0 }}>{ex.protocol ?? "http"}</span>
-                  <span style={{ padding: "1px 6px", background: "var(--bg-hover)", borderRadius: 4, color: "var(--text-muted)", flexShrink: 0 }}>{ex.provider ? `auth: ${ex.provider}` : "no auth"}</span>
+                  {ex.provider ? (
+                    <span style={{ padding: "1px 6px", background: "var(--bg-hover)", borderRadius: 4, color: "var(--text-muted)", flexShrink: 0 }}>auth: {ex.provider}</span>
+                  ) : (
+                    /* auth=none → 无认证告警,标红 */
+                    <span title={t("services.noAuthWarnHint")}
+                      style={{ padding: "1px 7px", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", borderRadius: 4, color: "#f87171", fontWeight: 600, flexShrink: 0 }}>
+                      ⚠ {t("services.exposeProviderNone")}
+                    </span>
+                  )}
                   <span style={{ fontSize: 10, color: ex.running ? "#16a34a" : "var(--text-dim)", flexShrink: 0 }}>{ex.running ? t("services.tunnelRunning") : t("services.tunnelStopped")}</span>
-                  {ex.running && (ex.url || ex.localUrl) && (
-                    <div style={{ flex: 1, minWidth: 120, display: "flex", flexDirection: "column", gap: 2 }}>
-                      {[ex.url, ex.localUrl, ex.baseUrl, ex.domainUrl].filter((x): x is string => Boolean(x)).map((u) => (
-                        <button key={u} onClick={() => openInNewTab(u!)}
-                          style={{ textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontSize: 11, fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={u}>
-                          {u}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {ex.running && (
-                    <button onClick={() => stopExpose(ex.name)} style={{ flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-muted)", cursor: "pointer", fontSize: 11 }}>{t("services.exposeStop")}</button>
-                  )}
+                  {/* 点击不直接打开页面 → 弹详情(来源详情 + 停止),链接在弹窗内才新窗口打开 */}
+                  <button onClick={() => setDetailFor(ex)} title={t("services.exposeDetailHint")}
+                    style={{ flex: 1, minWidth: 120, textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontSize: 11, fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {primaryUrl || t("services.exposeDetail")} ›
+                  </button>
+                  {/* 列表页直接停止(tunnel 停隧道进程 / proxy 移除 binding+记录) */}
+                  <button onClick={() => stopExpose(ex.name)} title={t("services.exposeStopHint")}
+                    style={{ flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "#f87171", cursor: "pointer", fontSize: 11 }}>
+                    {t("services.exposeStop")}
+                  </button>
                   {ex.accessLog && (
                     <button onClick={() => { setLogsFor(logsFor === ex.name ? null : ex.name); if (logsFor !== ex.name) { setLogsLoading(true); fetch(apiUrl(`/api/service-tunnels?logs=${encodeURIComponent(ex.name)}`)).then((r) => r.json()).then((d: { access?: string; error?: string }) => { setLogsData({ access: d.access ?? "", error: d.error ?? "" }); setLogsLoading(false); }).catch(() => { setLogsLoading(false); setLogsData({ access: "(failed to read logs)", error: "" }); }); } }} style={{ flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-muted)", cursor: "pointer", fontSize: 11 }}>{logsFor === ex.name ? t("services.exposeLogsHide") : t("services.exposeLogs")}</button>
                   )}
                 </div>
-              ))}
+                );
+              })}
               {logsFor && logsData && (
                 <div style={{ marginTop: 6, borderTop: "1px solid var(--border)", paddingTop: 6 }}>
                   <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 4 }}>access log{logsLoading ? " …" : ""}</div>
@@ -334,17 +354,19 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
               // REAL proxy addresses from service-tunnels exposes (mode
               // proxy/both) — the old default "port.basehost" display is gone.
               const proxyExposes = (data?.exposes ?? []).filter((e) => e.port === s.port && (e.localUrl || e.baseUrl || e.domainUrl));
+              // 每条暴露链接挂上它所属的 expose —— 点击不直接打开页面,
+              // 而是弹该通道的详情(mode/auth/隧道/参数/开启时间/停止)。
               const proxyUrls = proxyExposes.flatMap((e) => [
-                ...(e.localUrl ? [{ url: e.localUrl, label: e.site && e.site !== "default" ? e.site : t("services.proxyLocal") }] : []),
-                ...(e.baseUrl ? [{ url: e.baseUrl, label: t("services.proxyDomain") }] : []),
-                ...(e.domainUrl ? [{ url: e.domainUrl, label: t("services.proxyDomain") }] : []),
+                ...(e.localUrl ? [{ url: e.localUrl, label: e.site && e.site !== "default" ? e.site : t("services.proxyLocal"), ex: e }] : []),
+                ...(e.baseUrl ? [{ url: e.baseUrl, label: t("services.proxyDomain"), ex: e }] : []),
+                ...(e.domainUrl ? [{ url: e.domainUrl, label: t("services.proxyDomain"), ex: e }] : []),
               ]);
               // Deployment entry: <port>.<page-domain><basePath> — served by
               // pi-web's own virtual-host proxy (deployment domain from
               // PI_WEB_BASE_DOMAIN / page host + PI_WEB_BASE_PATH), only for
               // actually-exposed ports.
               if (proxyExposes.length > 0 && currentDomainSuffix && !currentDomainSuffix.startsWith(".localhost") && currentDomainSuffix !== ".pi.localhost") {
-                proxyUrls.push({ url: `${scheme}//${s.port}${currentDomainSuffix}${pagePort}${BASE_PATH}`, label: t("services.proxyDeploy") });
+                proxyUrls.push({ url: `${scheme}//${s.port}${currentDomainSuffix}${pagePort}${BASE_PATH}`, label: t("services.proxyDeploy"), ex: proxyExposes[0] });
               }
               const primaryUrl = proxyUrls[0]?.url ?? directUrls[0]?.url ?? "";
               return (
@@ -391,24 +413,28 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
                       {proxyUrls.length > 0 && (
                         <>
                           <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", margin: "10px 0 6px" }}>{t("services.viaProxy")}</div>
-                          {proxyUrls.map(({ url, label }) => (
+                          {proxyUrls.map(({ url, label, ex }) => (
                             <UrlRow key={url} url={url}
                               isMobile={isMobile}
                               label={label}
-                              copied={copiedKey === url} onCopy={() => copy(url, url)} onOpen={() => openInNewTab(url)} />
+                              copied={copiedKey === url} onCopy={() => copy(url, url)} onOpen={() => setDetailFor(ex)} />
                           ))}
                         </>
                       )}
                       <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10 }}>
                         <button
-                          onClick={() => openInNewTab(primaryUrl)}
+                          onClick={() => (proxyUrls[0]?.ex ? setDetailFor(proxyUrls[0].ex) : openInNewTab(primaryUrl))}
                           style={{ padding: "5px 14px", background: "var(--accent)", border: "none", borderRadius: 6, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600, flexShrink: 0 }}
                         >
                           {t("services.open")}
                         </button>
                         <span style={{ fontSize: 11, color: "var(--text-dim)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{primaryUrl}</span>
                       </div>
-                      <AuthExposeSection port={s.port} t={t} isMobile={isMobile} openInNewTab={openInNewTab} />
+                      <AuthExposeSection port={s.port} t={t} isMobile={isMobile} openInNewTab={openInNewTab}
+                        exposes={(data?.exposes ?? []).filter((e) => e.port === s.port)}
+                        onStopExpose={stopExpose}
+                        onChanged={() => refresh(false)}
+                        onGoManageUsers={() => setTab("users")} />
                     </div>
                   )}
                 </div>
@@ -437,17 +463,18 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
         {/* Pi-web tab — self-exposure + direct-access gate */}
         {tab === "self" && (
           <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
-            <SelfTab self={self} t={t} openInNewTab={openInNewTab} copy={copy} copiedKey={copiedKey} onChanged={refresh} />
+            <SelfTab self={self} t={t} openInNewTab={openInNewTab} copy={copy} copiedKey={copiedKey} onChanged={refresh}
+              onGoManageUsers={() => setTab("users")}
+              exposes={data?.exposes ?? []}
+              onShowDetail={setDetailFor}
+              onStopExpose={stopExpose} />
           </div>
         )}
 
         {/* Users tab — auth user management (library UserManager) */}
         {tab === "users" && (
           <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 10 }}>
-              {t("services.authUsers")}
-            </div>
-            <AuthUsersSection t={t} />
+            <AuthUsersSection t={t} isMobile={isMobile} />
           </div>
         )}
 
@@ -459,6 +486,17 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
             pagePort={pagePort}
             basePath={BASE_PATH}
             onClose={() => setInfoModal(null)}
+          />
+        )}
+        {detailFor && (
+          <ExposeDetailModal
+            ex={detailFor}
+            t={t}
+            onClose={() => setDetailFor(null)}
+            onOpen={openInNewTab}
+            onCopy={copy}
+            copiedKey={copiedKey}
+            onStop={() => { stopExpose(detailFor.name); setDetailFor(null); }}
           />
         )}
       </div>
@@ -546,6 +584,94 @@ function SummarySection({ title, children }: { title: string; children: ReactNod
   );
 }
 
+/** 暴露详情弹窗 —— 活动暴露的链接点击后先看来源详情(mode / auth / 隧道 /
+ *  参数 / 链接 / 开启时间),确认后再点链接才新窗口打开;停止按钮只停该条
+ *  通道(同端口其他暴露不受影响)。 */
+function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, onStop }: {
+  ex: ExposeInfo;
+  t: (key: string, params?: Record<string, string>) => string;
+  onClose: () => void;
+  onOpen: (url: string) => void;
+  onCopy: (key: string, url: string) => void;
+  copiedKey: string | null;
+  onStop: () => void;
+}) {
+  const isMobile = useIsMobile();
+  const links = [ex.url, ex.localUrl, ex.baseUrl, ex.domainUrl, ex.loginUrl].filter((u): u is string => Boolean(u));
+  const mode: string = (ex.name ?? "").startsWith("proxy:")
+    ? "proxy"
+    : ex.localUrl !== undefined
+      ? "both"
+      : "tunnel";
+  const startedAt = typeof ex.startedAt === "number" ? new Date(ex.startedAt) : null;
+  const params = ex.params ?? null;
+
+  const field = (label: string, value: ReactNode) => (
+    <div style={{ display: "flex", gap: 8, padding: "5px 0", borderBottom: "1px solid var(--border)" }}>
+      <span style={{ flexShrink: 0, width: 68, color: "var(--text-dim)", fontSize: 11, paddingTop: 2 }}>{label}</span>
+      <span style={{ flex: 1, minWidth: 0, fontSize: 11, color: "var(--text)", overflowWrap: "anywhere" }}>{value}</span>
+    </div>
+  );
+
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.35)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: isMobile ? "calc(100vw - 32px)" : 520, maxWidth: "calc(100vw - 32px)", maxHeight: "min(620px, 82vh)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, display: "flex", flexDirection: "column", boxShadow: "0 8px 32px rgba(0,0,0,0.18)", overflow: "hidden" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>
+            <span style={{ fontFamily: "var(--font-mono)" }}>127.0.0.1:{ex.port}</span>
+            <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: ex.running ? "#16a34a" : "var(--text-dim)" }}>● {ex.running ? t("services.tunnelRunning") : t("services.tunnelStopped")}</span>
+          </span>
+          <button onClick={onClose} title={t("services.close")} aria-label={t("services.close")} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: 4, display: "flex" }}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div style={{ flex: 1, overflowY: "auto", padding: "8px 16px" }}>
+          {field(t("services.exposeMode"), mode)}
+          {field(t("services.exposeProvider"), ex.provider ? ex.provider : (
+            /* auth=none → 标红告警(与列表行一致) */
+            <span style={{ color: "#f87171", fontWeight: 600 }} title={t("services.noAuthWarnHint")}>⚠ {t("services.exposeProviderNone")}</span>
+          ))}
+          {field(t("services.exposeTunnelTool"), ex.tunnelType ?? "—")}
+          {field(t("services.exposeSite"), ex.site && ex.site !== "" ? ex.site : "default")}
+          {field(t("services.exposeProtocol"), ex.protocol ?? "http")}
+          {field(t("services.exposeStartedAt"), startedAt ? startedAt.toLocaleString() : "—")}
+          {field(t("services.exposeParams"), !params || Object.keys(params).length === 0 ? "—" : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+              {Object.entries(params).map(([k, v]) => (
+                <div key={k} style={{ fontFamily: "var(--font-mono)" }}>
+                  <span style={{ color: "var(--text-dim)" }}>{k}</span>: {v}
+                </div>
+              ))}
+            </div>
+          ))}
+          {field(t("services.exposeResult"), links.length === 0 ? "—" : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              {links.map((u) => (
+                <div key={u} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <button onClick={() => onOpen(u)} title={u}
+                    style={{ flex: 1, minWidth: 0, textAlign: "left", padding: "4px 8px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {u}
+                  </button>
+                  <button onClick={() => onCopy(`expose-detail-${u}`, u)}
+                    style={{ flexShrink: 0, width: 28, height: 26, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: copiedKey === `expose-detail-${u}` ? "#16a34a" : "var(--text-dim)", cursor: "pointer", fontSize: 11 }}>
+                    {copiedKey === `expose-detail-${u}` ? "✓" : "⧉"}
+                  </button>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
+          <span style={{ fontSize: 10, color: "var(--text-dim)", flex: 1 }}>{t("services.exposeDetailHint")}</span>
+          <button onClick={onStop} style={{ flexShrink: 0, padding: "5px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "#f87171", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>{t("services.exposeStop")}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Productized info modal — “how other devices reach these services” (DNS /
  *  wildcard domain / tunnels) and “authentication guide” (what's built in,
  *  what you can add yourself). Opened from the small text entries at the
@@ -607,6 +733,30 @@ function InfoModal({ kind, t, currentDomainSuffix, pagePort, basePath, onClose }
   );
 }
 
+/** 通用确认窗 —— 泄露风险确认 / 无用户提示 / 用户可登录确认,服务端口与
+ *  pi-web 自暴露共用。body 可为任意节点(如用户名列表)。 */
+function ConfirmDialog({ title, body, confirmLabel, cancelLabel, onConfirm, onCancel }: {
+  title: string;
+  body: ReactNode;
+  confirmLabel: string;
+  cancelLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onCancel}>
+      <div onClick={(e) => e.stopPropagation()} style={{ width: 440, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 8 }}>⚠ {title}</div>
+        <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }}>{body}</div>
+        <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end", flexWrap: "wrap" }}>
+          <button onClick={onCancel} style={{ padding: "5px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: "pointer", fontSize: 12 }}>{cancelLabel}</button>
+          <button onClick={onConfirm} style={{ padding: "5px 14px", background: "#dc2626", border: "none", borderRadius: 6, color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>{confirmLabel}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function UrlRow({ url, label, copied, onCopy, onOpen, isMobile }: { url: string; label: string; copied: boolean; onCopy: () => void; onOpen: () => void; isMobile: boolean }) {
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 6px", borderRadius: 6, background: "var(--bg)" }}>
@@ -626,11 +776,19 @@ function UrlRow({ url, label, copied, onCopy, onOpen, isMobile }: { url: string;
  * Public access with auth — pick a provider, optionally require sign-in,
  * and open the tunnel through the service-tunnels nginx gateway.
  */
-function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
+function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExpose, onChanged, onGoManageUsers }: {
   port: number;
   t: (key: string, params?: Record<string, string>) => string;
   isMobile: boolean;
   openInNewTab: (url: string) => void;
+  /** This port's exposes (running or not) — decides the button state. */
+  exposes: ExposeInfo[];
+  /** Stop ONE expose by name (the currently-selected combo's channel). */
+  onStopExpose: (name: string) => void;
+  /** Re-fetch exposes after a successful expose (so the button flips to stop). */
+  onChanged: () => void;
+  /** Switch to the Users tab (no users for the selected auth combo). */
+  onGoManageUsers: () => void;
 }) {
   const [provider, setProvider] = useState<string | null>(null);
   // Provider list arrives from the server (library-computed); empty until then.
@@ -640,6 +798,9 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
   const [mode, setMode] = useState<"tunnel" | "proxy" | "both">("tunnel");
   const [site, setSite] = useState("");
   const [sites, setSites] = useState<string[]>([]);
+  // proxy/both 时是否保留部署 basePath 到 vhost 链接——服务端口默认关(多数
+  // 子进程服务服务于根路径,带 /dev 反而 404);需要时勾选切情况3。
+  const [keepBasePath, setKeepBasePath] = useState(false);
   const [tcpTunnels, setTcpTunnels] = useState<string[]>([]);
   const [tunnelSchemas, setTunnelSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
   const [tunnelMetas, setTunnelMetas] = useState<Record<string, { favorite?: boolean; dangerous?: boolean }> | null>(null);
@@ -649,6 +810,17 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ url?: string | null; loginUrl?: string; localUrl?: string; baseUrl?: string; domainUrl?: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // auth=none / tcp 裸隧道(无网关认证)→ 公开前需要泄露风险确认
+  const [confirmNone, setConfirmNone] = useState(false);
+  // 有本地用户库的 provider(portal/basic/authelia…)——公开前检查该组合是否有用户
+  const [userManagers, setUserManagers] = useState<string[]>([]);
+  // userManagers 清单是否已就绪(schema 拉取失败 → fail-closed,阻止直接公开)
+  const [userManagersReady, setUserManagersReady] = useState(false);
+  const [checking, setChecking] = useState(false);
+  // 该 provider+site 无用户 → 提示去管理用户
+  const [noUsers, setNoUsers] = useState<{ provider: string; site: string } | null>(null);
+  // 有用户 → 列出用户名,让用户确认自己可登录
+  const [userConfirm, setUserConfirm] = useState<{ provider: string; site: string; users: string[] } | null>(null);
 
   // Tunnel types + provider params come from service-tunnels schemas
   // (data-driven — adding a tunnel type / auth provider needs NO dialog
@@ -656,7 +828,7 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
   useEffect(() => {
     fetch(apiUrl("/api/service-tunnels"))
       .then((r) => r.json())
-      .then((d: { providerOrder?: string[]; defaultProvider?: string; tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; tunnelTcpSupport?: string[]; sites?: { name: string }[] }) => {
+      .then((d: { providerOrder?: string[]; defaultProvider?: string; tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; tunnelTcpSupport?: string[]; sites?: { name: string }[]; userManagers?: string[] }) => {
         // providerOrder/defaultProvider come from the library — no provider
         // names hardcoded here (authelia availability, Windows fallback etc.
         // are decided in service-tunnels).
@@ -672,6 +844,8 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
         // name fallback covers service-tunnels versions without the flag.
         if (d.tunnelTcpSupport) setTcpTunnels(d.tunnelTcpSupport.filter((k) => !d.tunnelMetas?.[k]?.dangerous && k !== "command"));
         if (d.sites) setSites(d.sites.filter((s) => s.name !== "default").map((s) => s.name));
+        if (d.userManagers) setUserManagers(d.userManagers);
+        setUserManagersReady(true);
       })
       .catch(() => {});
   }, []);
@@ -690,7 +864,7 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
     return () => { cancelled = true; };
   }, [port]);
 
-  const go = () => {
+  const doExpose = () => {
     setBusy(true);
     setError(null);
     fetch(apiUrl("/api/service-tunnels"), {
@@ -709,6 +883,7 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
         site: site || undefined,
         tunnelParams,
         providerParams,
+        keepBasePath,
       }),
     })
       .then((r) => r.json())
@@ -718,10 +893,85 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
           setResult(null);
         } else {
           setResult({ url: d.url ?? null, loginUrl: d.loginUrl, localUrl: d.localUrl, baseUrl: d.baseUrl, domainUrl: d.domainUrl });
+          onChanged();
         }
       })
       .catch((e) => setError(String(e)))
       .finally(() => setBusy(false));
+  };
+
+  const checkUsers = () => {
+    // 用户库清单未就绪(schema 拉取失败/进行中)→ fail-closed,提示重试而非静默公开
+    if (!userManagersReady) {
+      setError(t("services.userCheckUnavailable"));
+      return;
+    }
+    // 无本地用户库的 provider(oauth2-proxy 等)→ 无可检查,直接公开
+    if (!provider || !userManagers.includes(provider)) { doExpose(); return; }
+    setChecking(true);
+    setError(null);
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "user-list", provider, site: site || undefined }),
+    })
+      .then((r) => r.json())
+      .then((d: { users?: { provider: string; users: { name: string; displayName: string }[] }[]; error?: string }) => {
+        if (d.error) { setError(d.error); return; }
+        const entry = (d.users ?? []).find((x) => x.provider === provider);
+        const users = entry?.users ?? [];
+        if (users.length === 0) { setNoUsers({ provider, site: site || "default" }); return; }
+        setUserConfirm({
+          provider,
+          site: site || "default",
+          users: users.map((u) => u.displayName || u.name),
+        });
+      })
+      .catch(() => setError(String(t("services.error"))))
+      .finally(() => setChecking(false));
+  };
+
+  const go = () => {
+    // auth=none(或 tcp 裸隧道,无网关认证)→ 直接公开有泄露风险,先确认
+    if (provider === "none" || protocol === "tcp") {
+      setConfirmNone(true);
+      return;
+    }
+    // 带认证 → 检查对应 site+provider 是否有可登录用户,再公开
+    checkUsers();
+  };
+
+  // 当前表单选择是否已经有一条 RUNNING 的暴露:端口 + 模式 + provider + 隧道
+  // + 协议 + 站点全部一致才算“已暴露”→ 按钮变“停止”(只停这一条,同端口
+  // 其他通道不受影响);其他情况按钮为“公开”——同一端口可同时开多条通道
+  // (不同隧道 / 不同 provider)互为备份,一条挂了不至于掉线。
+  const effectiveMode: "tunnel" | "proxy" | "both" = protocol === "tcp" ? "tunnel" : mode;
+  const selectedProvider = protocol === "tcp" ? undefined : provider === "none" ? undefined : provider;
+  const normSite = (s?: string) => (s === undefined || s === "" ? "default" : s);
+  const existing = exposes.find((e) => {
+    if (e.port !== port || !e.running) return false;
+    const m: "tunnel" | "proxy" | "both" = (e.name ?? "").startsWith("proxy:")
+      ? "proxy"
+      : // both-mode records carry localUrl ("" when transport is in-process,
+        // i.e. pi-web's middleware); tunnel-only records have none.
+        e.localUrl !== undefined
+        ? "both"
+        : "tunnel";
+    if (m !== effectiveMode) return false;
+    if (effectiveMode !== "proxy") {
+      if (e.tunnelType !== tunnel) return false;
+      if (e.protocol && e.protocol !== protocol) return false;
+    }
+    if ((e.provider ?? undefined) !== (selectedProvider ?? undefined)) return false;
+    if (normSite(e.site) !== normSite(site || undefined)) return false;
+    return true;
+  });
+
+  const stop = () => {
+    if (!existing) return;
+    setResult(null);
+    setError(null);
+    onStopExpose(existing.name);
   };
 
   const select = { padding: "4px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 11, flexShrink: 0 };
@@ -744,6 +994,14 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
           <option value="">{t("services.exposeSiteDefault")}</option>
           {sites.map((s) => <option key={s} value={s}>{s}</option>)}
         </select>
+        {/* 本实例有部署 basePath 时,proxy/both 可选是否保留:开启则 vhost 链接带路径 */}
+        {BASE_PATH && mode !== "tunnel" && protocol !== "tcp" && (
+          <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 10, color: "var(--text)", cursor: "pointer" }} title={t("services.exposeKeepBasePathHint")}>
+            <input type="checkbox" checked={keepBasePath} onChange={(e) => setKeepBasePath(e.target.checked)}
+              style={{ accentColor: "var(--accent)", cursor: "pointer", margin: 0 }} />
+            {t("services.exposeKeepBasePath", { base: BASE_PATH })}
+          </label>
+        )}
       </div>
       {/* tunnel 选项 + 协议（proxy 模式无隧道） */}
       {mode !== "proxy" && (
@@ -797,13 +1055,23 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
           {providers.map((p) => <option key={p} value={p}>{p === "none" ? t("services.exposeProviderNone") : p}</option>)}
         </select>
         <span style={{ flex: 1 }} />
-        <button
-          onClick={go}
-          disabled={busy}
-          style={{ flexShrink: 0, padding: "5px 14px", background: "var(--accent)", border: "none", borderRadius: 6, color: "#fff", cursor: busy ? "default" : "pointer", fontSize: 11, fontWeight: 600 }}
-        >
-          {busy ? t("services.exposing") : t("services.exposeGo")}
-        </button>
+        {existing ? (
+          <button
+            onClick={stop}
+            title={t("services.exposeStopHint")}
+            style={{ flexShrink: 0, padding: "5px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: "pointer", fontSize: 11, fontWeight: 600 }}
+          >
+            {t("services.exposeStop")}
+          </button>
+        ) : (
+          <button
+            onClick={go}
+            disabled={busy || checking}
+            style={{ flexShrink: 0, padding: "5px 14px", background: "var(--accent)", border: "none", borderRadius: 6, color: "#fff", cursor: busy || checking ? "default" : "pointer", fontSize: 11, fontWeight: 600 }}
+          >
+            {busy ? t("services.exposing") : t("services.exposeGo")}
+          </button>
+        )}
       </div>
       {/* auth 参数 */}
       {provider && provider !== "none" && authSchemas?.[provider] && authSchemas[provider].length > 0 && (
@@ -830,6 +1098,43 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
           )}
         </div>
       )}
+      {confirmNone && (
+        <ConfirmDialog
+          title={t("services.confirmNoAuthTitle")}
+          body={t("services.confirmNoAuthBodyPort", { port: String(port) })}
+          confirmLabel={t("services.exposeConfirm")}
+          cancelLabel={t("services.exposeAbort")}
+          onConfirm={() => { setConfirmNone(false); doExpose(); }}
+          onCancel={() => setConfirmNone(false)}
+        />
+      )}
+      {noUsers && (
+        <ConfirmDialog
+          title={t("services.confirmNoUsersTitle")}
+          body={t("services.confirmNoUsersBody", { provider: noUsers.provider, site: noUsers.site })}
+          confirmLabel={t("services.confirmNoUsersGo")}
+          cancelLabel={t("services.exposeAbort")}
+          onConfirm={() => { setNoUsers(null); onGoManageUsers(); }}
+          onCancel={() => setNoUsers(null)}
+        />
+      )}
+      {userConfirm && (
+        <ConfirmDialog
+          title={t("services.confirmUsersTitle")}
+          body={
+            <div>
+              <div style={{ fontSize: 11, lineHeight: 1.7 }}>{t("services.confirmUsersBody", { provider: userConfirm.provider, site: userConfirm.site })}</div>
+              <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, color: "var(--text)" }}>
+                {userConfirm.users.map((u) => <li key={u}>{u}</li>)}
+              </ul>
+            </div>
+          }
+          confirmLabel={t("services.confirmUsersConfirm")}
+          cancelLabel={t("services.exposeAbort")}
+          onConfirm={() => { setUserConfirm(null); doExpose(); }}
+          onCancel={() => setUserConfirm(null)}
+        />
+      )}
     </div>
   );
 }
@@ -838,11 +1143,14 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab }: {
  * Auth user management — pick a provider with a local user database, list
  * users, add / set-password / remove, and toggle TOTP 2FA (portal provider).
  */
-function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, string>) => string }) {
-  const [providers, setProviders] = useState<string[]>(["portal"]);
-  const [provider, setProvider] = useState<string | null>(null);
+function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<string, string>) => string; isMobile: boolean }) {
+  // 两级视图:总表(站点 × provider 计数)→ 点某行 → 该组合的用户管理页
+  // (带返回按钮)。添加用户只有 3 个输入,site/provider 由点选的行决定。
+  const [rows, setRows] = useState<{ site: string; provider: string; count: number; totp: number }[] | null>(null);
+  const [summaryError, setSummaryError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<{ site: string; provider: string } | null>(null);
   const [totpProviders, setTotpProviders] = useState<string[]>([]);
-  const [users, setUsers] = useState<{ name: string; displayName: string; totp?: boolean }[]>([]);
+  const [users, setUsers] = useState<{ name: string; displayName: string }[]>([]);
   const [totpState, setTotpState] = useState<Record<string, boolean>>({});
   const [name, setName] = useState("");
   const [password, setPassword] = useState("");
@@ -854,58 +1162,95 @@ function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, stri
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [site, setSite] = useState("");
-  const [sites, setSites] = useState<string[]>([]);
 
-  const post = (action: string, extra: Record<string, unknown> = {}) =>
+  // 详情页内所有操作都作用于所选组合(site/provider 由点选的行确定)
+  const post = (action: string, extra: Record<string, unknown> = {}) => {
+    const s = selected;
+    if (!s) return Promise.resolve({ error: "no combo selected" }) as Promise<Record<string, unknown>>;
+    return fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action, provider: s.provider, site: s.site === "default" ? undefined : s.site, ...extra }),
+    }).then((r) => r.json());
+  };
+
+  /** 汇总表格:每个 site × userManager provider 一行(用户数 + TOTP 数)。 */
+  const loadSummary = useCallback(() => {
     fetch(apiUrl("/api/service-tunnels"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action, provider, site: site || undefined, ...extra }),
-    }).then((r) => r.json());
+      body: JSON.stringify({ action: "user-summary" }),
+    })
+      .then((r) => r.json())
+      .then((d: { rows?: { site: string; provider: string; count: number; totp: number }[]; error?: string }) => {
+        if (d.error) { setSummaryError(d.error); return; }
+        setRows(d.rows ?? []);
+        setSummaryError(null);
+      })
+      .catch(() => setSummaryError(String(t("services.error"))));
+  }, [t]);
 
-  const loadUsers = useCallback((prov: string = provider ?? "") => {
-    post("user-list", { provider: prov }).then((d: { users?: { provider: string; users: { name: string; displayName: string }[] }[] }) => {
-      const entry = (d.users ?? []).find((x) => x.provider === prov);
-      setUsers((entry?.users ?? []).map((u) => ({ ...u, totp: Boolean(totpState[u.name]) })));
-      // TOTP status for each provider that supports it (portal + authelia)
-      if (totpProviders.includes(prov)) {
-        for (const u of entry?.users ?? []) {
-          post("totp-status", { provider: prov, name: u.name }).then((s: { enrolled?: boolean }) => {
-            setTotpState((prev) => ({ ...prev, [u.name]: Boolean(s.enrolled) }));
-          }).catch(() => {});
+  // 所选组合的用户列表 + TOTP 状态
+  const loadUsers = useCallback(() => {
+    if (!selected) return;
+    post("user-list", { provider: selected.provider })
+      .then((d: { users?: { provider: string; users: { name: string; displayName: string }[] }[]; error?: string }) => {
+        if (d.error) { setError(d.error); return; }
+        const entry = (d.users ?? []).find((x) => x.provider === selected.provider);
+        setUsers(entry?.users ?? []);
+        if (totpProviders.includes(selected.provider)) {
+          for (const u of entry?.users ?? []) {
+            post("totp-status", { provider: selected.provider, name: u.name })
+              .then((s: { enrolled?: boolean }) => setTotpState((prev) => ({ ...prev, [u.name]: Boolean(s.enrolled) })))
+              .catch(() => {});
+          }
         }
-      }
-    }).catch(() => setError(String(t("services.error"))));
-    // site must be a dep: the post closure captures it — the user list is
-    // per auth realm, switching the site must reload that realm's users.
-  }, [provider, site]);
+      })
+      .catch(() => setError(String(t("services.error"))));
+  }, [selected, totpProviders]);
 
   useEffect(() => {
     fetch(apiUrl("/api/service-tunnels"))
       .then((r) => r.json())
-      .then((d: { userManagers?: string[]; defaultProvider?: string; totpProviders?: string[]; sites?: { name: string }[] }) => {
-        // User-management providers come from the library's userManagers()
-        // (providers with a local user db — oauth2-proxy etc. excluded there,
-        // not hardcoded here).
-        const ps = d.userManagers ?? ["portal", "basic"];
-        setProviders(ps.length ? ps : ["portal", "basic"]);
-        const preferred = d.defaultProvider ?? ps[0] ?? "portal";
-        setProvider((cur) => (cur === null ? (ps.includes(preferred) ? preferred : (ps[0] ?? "portal")) : cur));
+      .then((d: { totpProviders?: string[] }) => {
         if (d.totpProviders) setTotpProviders(d.totpProviders);
-        if (d.sites) setSites(d.sites.filter((s) => s.name !== "default").map((s) => s.name));
       })
       .catch(() => {});
-  }, []);
+    loadSummary();
+  }, [loadSummary]);
 
-  useEffect(() => { if (provider) loadUsers(); }, [provider, site]);
+  // 点选/返回时加载或清空用户
+  useEffect(() => { if (selected) loadUsers(); }, [selected]);
+
+  const selectCombo = (r: { site: string; provider: string }) => {
+    setSelected({ site: r.site, provider: r.provider });
+    setError(null);
+    setPwUser(null);
+    setTotpEnrolled(null);
+    setQrUrl(null);
+    setTotpCode("");
+    setUsers([]);
+    setTotpState({});
+  };
+
+  const back = () => {
+    setSelected(null);
+    setUsers([]);
+    setTotpState({});
+    setError(null);
+    setPwUser(null);
+    setTotpEnrolled(null);
+    setQrUrl(null);
+    setTotpCode("");
+    loadSummary();
+  };
 
   const addUser = () => {
     if (!name || !password) return;
     setBusy(true);
     setError(null);
     post("user-add", { name, password, displayName: displayName || undefined })
-      .then(() => { setName(""); setPassword(""); setDisplayName(""); loadUsers(); })
+      .then((d: { error?: string }) => { if (d.error) setError(d.error); else { setName(""); setPassword(""); setDisplayName(""); loadUsers(); loadSummary(); } })
       .catch((e) => setError(String(e)))
       .finally(() => setBusy(false));
   };
@@ -922,7 +1267,7 @@ function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, stri
     setBusy(true);
     post("user-remove", { name: uname })
       .catch((e) => setError(String(e)))
-      .finally(() => { setBusy(false); loadUsers(); });
+      .finally(() => { setBusy(false); loadUsers(); loadSummary(); });
   };
 
   const enrollTotp = (uname: string) => {
@@ -930,25 +1275,28 @@ function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, stri
     setTotpEnrolled(null);
     setQrUrl(null);
     setTotpCode("");
-    post("totp-enroll", { provider: provider ?? undefined, name: uname })
-      .then((d: { secret?: string; otpauthUrl?: string }) => {
+    post("totp-enroll", { name: uname })
+      .then((d: { secret?: string; otpauthUrl?: string; error?: string }) => {
+        if (d.error) { setError(d.error); return; }
         setTotpEnrolled(d.secret ? { name: uname, secret: d.secret, otpauthUrl: d.otpauthUrl ?? "" } : null);
         loadUsers();
+        loadSummary();
       })
       .catch((e) => setError(String(e)))
       .finally(() => setBusy(false));
   };
 
-  const activateTotp = (uname: string) => {
-    if (!totpCode) return;
+  const activateTotp = () => {
+    if (!totpCode || !totpEnrolled) return;
     setBusy(true);
-    post("totp-activate", { provider: provider ?? undefined, name: uname, code: totpCode })
+    post("totp-activate", { name: totpEnrolled.name, code: totpCode })
       .then((d: { activated?: boolean; error?: string }) => {
         if (d.activated) {
           setTotpEnrolled(null);
           setQrUrl(null);
           setTotpCode("");
           loadUsers();
+          loadSummary();
         } else {
           setError(d.error ?? t("services.totpActivateFailed"));
         }
@@ -959,9 +1307,9 @@ function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, stri
 
   const disableTotp = (uname: string) => {
     setBusy(true);
-    post("totp-disable", { provider: provider ?? undefined, name: uname })
+    post("totp-disable", { name: uname })
       .catch((e) => setError(String(e)))
-      .finally(() => { setBusy(false); loadUsers(); });
+      .finally(() => { setBusy(false); loadUsers(); loadSummary(); });
   };
 
   // QR for the otpauth URL — generated client-side (offline, no external API).
@@ -984,136 +1332,209 @@ function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, stri
   const input = { padding: "4px 8px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 11, flex: 1, minWidth: 0, boxSizing: "border-box" as const };
   const btn = { padding: "4px 12px", border: "1px solid var(--border)", borderRadius: 5, background: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 11, flexShrink: 0 };
 
+  // ── 详情视图:所选组合的用户管理(带返回按钮) ─────────────────────
+  if (selected) {
+    return (
+      <div style={{ padding: "6px 0" }}>
+        <button onClick={back} style={{ ...btn, marginBottom: 10, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          ← {t("services.usersBack")}
+        </button>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", marginBottom: 2 }}>
+          {t("services.usersEditing")} · <span style={{ fontFamily: "var(--font-mono)" }}>{selected.site}</span> / <span style={{ fontFamily: "var(--font-mono)" }}>{selected.provider}</span>
+          <span style={{ marginLeft: 6, color: "var(--text-dim)", fontWeight: 400 }}>({users.length})</span>
+        </div>
+        {error && <div style={{ fontSize: 11, color: "#f87171", margin: "6px 0" }}>{error}</div>}
+
+        {/* 添加用户:3 个输入即可,site/provider 由点选的行确定;小屏纵向堆叠 */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "10px 0 10px", flexWrap: "wrap", flexDirection: isMobile ? "column" : "row" }}>
+          <input placeholder={t("services.userName")} value={name} onChange={(e) => setName(e.target.value)} style={{ ...input, flex: 1, width: isMobile ? "100%" : undefined, boxSizing: "border-box" }} />
+          <input placeholder={t("services.userPassword")} type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ ...input, flex: 1, width: isMobile ? "100%" : undefined, boxSizing: "border-box" }} />
+          <input placeholder={t("services.userDisplayName")} value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={{ ...input, flex: 1, width: isMobile ? "100%" : undefined, boxSizing: "border-box" }} />
+          <button onClick={addUser} disabled={busy || !name || !password}
+            style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600, width: isMobile ? "100%" : undefined, textAlign: "center" }}>
+            {busy ? t("services.adding") : t("services.addUser")}
+          </button>
+        </div>
+
+        {/* 用户列表 */}
+        {users.length === 0 ? (
+          <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("services.noUsers")}</div>
+        ) : users.map((u) => (
+          <div key={u.name} style={{ padding: "6px 8px", borderRadius: 6, background: "var(--bg)", border: "1px solid var(--border)", marginBottom: 4 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", flexShrink: 0 }}>{u.displayName}</span>
+              <span style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)", flexShrink: 0 }}>{u.name}</span>
+              <span style={{ fontSize: 10, color: totpState[u.name] ? "#16a34a" : "var(--text-dim)", flexShrink: 0 }}>
+                {totpState[u.name] ? t("services.totpEnrolled") : t("services.totpOff")}
+              </span>
+              <span style={{ flex: 1 }} />
+              {totpProviders.includes(selected.provider) && (
+                totpState[u.name] ? (
+                  <button onClick={() => disableTotp(u.name)} style={btn}>{t("services.totpDisable")}</button>
+                ) : (
+                  <button onClick={() => enrollTotp(u.name)} style={btn}>{t("services.totpEnroll")}</button>
+                )
+              )}
+              <button onClick={() => setPwUser(pwUser === u.name ? null : u.name)} style={btn}>{t("services.userSetPassword")}</button>
+              <button onClick={() => removeUser(u.name)} style={{ ...btn, color: "#f87171" }}>{t("services.userRemove")}</button>
+            </div>
+            {pwUser === u.name && (
+              <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
+                <input type="password" placeholder={t("services.newPassword")} value={newPw} onChange={(e) => setNewPw(e.target.value)} style={input} />
+                <button onClick={() => updateUserPassword(u.name)} disabled={busy || !newPw} style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600 }}>
+                  {t("services.update")}
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+
+        {totpEnrolled && (
+          <div style={{ marginTop: 8, padding: "10px", borderRadius: 6, background: "var(--bg)", border: "1px solid #f0c36d" }}>
+            <div style={{ fontSize: 10, color: "#8a6d1a" }}>{t("services.totpSecret")} ({totpEnrolled.name})</div>
+            <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginTop: 6, flexWrap: "wrap" }}>
+              {qrUrl && (
+                <img src={qrUrl} alt="TOTP QR" width={176} height={176}
+                  style={{ border: "1px solid var(--border)", borderRadius: 6, flexShrink: 0, background: "#fff" }} />
+              )}
+              <div style={{ flex: 1, minWidth: 220 }}>
+                <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.totpManual")}</div>
+                <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text)", marginTop: 2, overflowWrap: "anywhere", wordBreak: "break-all", letterSpacing: 1 }}>{totpEnrolled.secret}</div>
+                {totpEnrolled.otpauthUrl && (
+                  <a href={totpEnrolled.otpauthUrl} style={{ display: "inline-block", marginTop: 4, fontSize: 11, color: "var(--accent)" }}>
+                    {t("services.otpauthOpen")}
+                  </a>
+                )}
+                <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 8, fontWeight: 600 }}>{t("services.totpApps")}</div>
+                <ul style={{ margin: "4px 0 0", paddingLeft: 16, fontSize: 11, color: "var(--text)", lineHeight: 1.7 }}>
+                  <li>
+                    {t("services.totpAppMs")}{" "}
+                    <a href="https://www.microsoft.com/security/mobile-authenticator-app" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>{t("services.officialSite")}</a>
+                    {" · "}
+                    <a href="https://apps.apple.com/cn/app/microsoft-authenticator/id983156458" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>{t("services.appStore")}</a>
+                    {" · "}
+                    {t("services.totpAppCnStore")}
+                  </li>
+                  <li>{t("services.totpAppTencent")}{" "}{t("services.totpAppCnStore")}</li>
+                  <li>
+                    {t("services.totpAppGoogle")}{" "}
+                    <a href="https://gitee.com/justdb-mirrors/downloads/releases/download/google-authenticator-6.0/GoogleAuthenticator-6.0.apk" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
+                      {t("services.totpApkMirror")}
+                    </a>
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4 }}>{t("services.totpActivateHint")}</div>
+              <div style={{ display: "flex", gap: 6 }}>
+                <input type="text" placeholder={t("services.totpCode")} value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  style={input} />
+                <button onClick={() => activateTotp()} disabled={busy || !totpCode}
+                  style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600 }}>
+                  {busy ? t("services.activating") : t("services.totpActivate")}
+                </button>
+              </div>
+            </div>
+            <button onClick={() => { setTotpEnrolled(null); setQrUrl(null); setTotpCode(""); }} style={{ ...btn, marginTop: 8, display: "block" }}>{t("services.close")}</button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── 总表视图:站点 × provider 计数,点行进入详情 ──────────────────
   return (
     <div style={{ padding: "6px 0" }}>
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-        <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeProvider")}</span>
-        <select value={provider ?? ""} onChange={(e) => setProvider(e.target.value)}
-          style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 11 }}>
-          <option value="" disabled>{t("services.selectProvider")}</option>
-          {providers.map((p) => <option key={p} value={p}>{p}</option>)}
-        </select>
-        <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeSite")}</span>
-        <select value={site} onChange={(e) => setSite(e.target.value)}
-          style={{ padding: "4px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 11 }}>
-          <option value="">{t("services.exposeSiteDefault")}</option>
-          {sites.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-      </div>
-
-      {error && <div style={{ fontSize: 11, color: "#f87171", margin: "0 0 6px" }}>{error}</div>}
-
-      {/* add user */}
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
-        <input placeholder={t("services.userName")} value={name} onChange={(e) => setName(e.target.value)} style={{ ...input, flex: 1 }} />
-        <input placeholder={t("services.userPassword")} type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={{ ...input, flex: 1 }} />
-        <input placeholder={t("services.userDisplayName")} value={displayName} onChange={(e) => setDisplayName(e.target.value)} style={{ ...input, flex: 1 }} />
-        <button onClick={addUser} disabled={busy || !name || !password}
-          style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600 }}>
-          {busy ? t("services.adding") : t("services.addUser")}
-        </button>
-      </div>
-
-      {/* user list */}
-      {users.length === 0 ? (
-        <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("services.noUsers")}</div>
-      ) : users.map((u) => (
-        <div key={u.name} style={{ padding: "6px 8px", borderRadius: 6, background: "var(--bg)", border: "1px solid var(--border)", marginBottom: 4 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", flexShrink: 0 }}>{u.displayName}</span>
-            <span style={{ fontSize: 11, color: "var(--text-dim)", fontFamily: "var(--font-mono)", flexShrink: 0 }}>{u.name}</span>
-            <span style={{ fontSize: 10, color: totpState[u.name] ? "#16a34a" : "var(--text-dim)", flexShrink: 0 }}>
-              {totpState[u.name] ? t("services.totpEnrolled") : t("services.totpOff")}
-            </span>
-            <span style={{ flex: 1 }} />
-            {provider && totpProviders.includes(provider) && (
-              totpState[u.name] ? (
-                <button onClick={() => disableTotp(u.name)} style={btn}>{t("services.totpDisable")}</button>
-              ) : (
-                <button onClick={() => enrollTotp(u.name)} style={btn}>{t("services.totpEnroll")}</button>
-              )
-            )}
-            <button onClick={() => setPwUser(pwUser === u.name ? null : u.name)} style={btn}>{t("services.userSetPassword")}</button>
-            <button onClick={() => removeUser(u.name)} style={{ ...btn, color: "#f87171" }}>{t("services.userRemove")}</button>
-          </div>
-          {pwUser === u.name && (
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
-              <input type="password" placeholder={t("services.newPassword")} value={newPw} onChange={(e) => setNewPw(e.target.value)} style={input} />
-              <button onClick={() => updateUserPassword(u.name)} disabled={busy || !newPw} style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600 }}>
-                {t("services.update")}
-              </button>
-            </div>
-          )}
-        </div>
-      ))}
-
-      {totpEnrolled && (
-        <div style={{ marginTop: 8, padding: "10px", borderRadius: 6, background: "var(--bg)", border: "1px solid #f0c36d" }}>
-          <div style={{ fontSize: 10, color: "#8a6d1a" }}>{t("services.totpSecret")} ({totpEnrolled.name})</div>
-          <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginTop: 6, flexWrap: "wrap" }}>
-            {qrUrl && (
-              <img src={qrUrl} alt="TOTP QR" width={176} height={176}
-                style={{ border: "1px solid var(--border)", borderRadius: 6, flexShrink: 0, background: "#fff" }} />
-            )}
-            <div style={{ flex: 1, minWidth: 220 }}>
-              <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.totpManual")}</div>
-              <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text)", marginTop: 2, overflowWrap: "anywhere", wordBreak: "break-all", letterSpacing: 1 }}>{totpEnrolled.secret}</div>
-              {totpEnrolled.otpauthUrl && (
-                <a href={totpEnrolled.otpauthUrl} style={{ display: "inline-block", marginTop: 4, fontSize: 11, color: "var(--accent)" }}>
-                  {t("services.otpauthOpen")}
-                </a>
-              )}
-              <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 8, fontWeight: 600 }}>{t("services.totpApps")}</div>
-              <ul style={{ margin: "4px 0 0", paddingLeft: 16, fontSize: 11, color: "var(--text)", lineHeight: 1.7 }}>
-                <li>
-                  {t("services.totpAppMs")}{" "}
-                  <a href="https://www.microsoft.com/security/mobile-authenticator-app" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>{t("services.officialSite")}</a>
-                  {" · "}
-                  <a href="https://apps.apple.com/cn/app/microsoft-authenticator/id983156458" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>{t("services.appStore")}</a>
-                  {" · "}
-                  {t("services.totpAppCnStore")}
-                </li>
-                <li>{t("services.totpAppTencent")}{" "}{t("services.totpAppCnStore")}</li>
-                <li>
-                  {t("services.totpAppGoogle")}{" "}
-                  <a href="https://gitee.com/justdb-mirrors/downloads/releases/download/google-authenticator-6.0/GoogleAuthenticator-6.0.apk" target="_blank" rel="noreferrer" style={{ color: "var(--accent)" }}>
-                    {t("services.totpApkMirror")}
-                  </a>
-                </li>
-              </ul>
-            </div>
-          </div>
-          <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4 }}>{t("services.totpActivateHint")}</div>
-            <div style={{ display: "flex", gap: 6 }}>
-              <input type="text" placeholder={t("services.totpCode")} value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value)}
-                style={input} />
-              <button onClick={() => activateTotp(totpEnrolled.name)} disabled={busy || !totpCode}
-                style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600 }}>
-                {busy ? t("services.activating") : t("services.totpActivate")}
-              </button>
-            </div>
-          </div>
-          <button onClick={() => { setTotpEnrolled(null); setQrUrl(null); setTotpCode(""); }} style={{ ...btn, marginTop: 8, display: "block" }}>{t("services.close")}</button>
-        </div>
+      <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>{t("services.authUsers")}</div>
+      <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }}>{t("services.usersPickCombo")}</div>
+      {summaryError && <div style={{ fontSize: 11, color: "#f87171", margin: "0 0 6px" }}>{summaryError}</div>}
+      {rows === null ? (
+        <div style={{ fontSize: 11, color: "var(--text-dim)", padding: "8px 4px" }}>{t("services.loading")}</div>
+      ) : rows.length === 0 ? (
+        <div style={{ fontSize: 11, color: "var(--text-dim)", padding: "8px 4px" }}>{t("services.noUserCombos")}</div>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-dim)", fontWeight: 600 }}>{t("services.usersSite")}</th>
+              <th style={{ textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-dim)", fontWeight: 600 }}>{t("services.usersAuth")}</th>
+              <th style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-dim)", fontWeight: 600 }}>{t("services.usersCount")}</th>
+              <th style={{ textAlign: "right", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-dim)", fontWeight: 600 }}>{t("services.usersTotpCount")}</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={`${r.site}:${r.provider}`}
+                onClick={() => selectCombo(r)}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                style={{ cursor: "pointer" }}>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text)", fontFamily: "var(--font-mono)", fontSize: 11 }}>{r.site}</td>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text)", fontSize: 11 }}>{r.provider}</td>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text)", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.count}</td>
+                <td style={{ padding: "6px 8px", borderBottom: "1px solid var(--border)", color: r.totp > 0 ? "#16a34a" : "var(--text-dim)", textAlign: "right", fontVariantNumeric: "tabular-nums" }}>{r.totp}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );
 }
 
 /** Pi-web tab: self-exposure control + direct-access gate (allowlocal). */
-function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
+function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManageUsers, exposes, onShowDetail, onStopExpose }: {
   self: SelfState | null;
   t: (k: string, params?: Record<string, string>) => string;
   openInNewTab: (url: string) => void;
   copy: (key: string, url: string) => void;
   copiedKey: string | null;
   onChanged: () => void;
+  /** Switch to the Users tab (no users for the selected auth combo). */
+  onGoManageUsers: () => void;
+  /** All exposes — to find the one behind a tunnel/vhost URL for the detail modal. */
+  exposes: ExposeInfo[];
+  /** Open the expose detail modal (link open + stop live there). */
+  onShowDetail: (ex: ExposeInfo) => void;
+  /** Stop ONE expose by name (proxy vhost rows — removes binding + record). */
+  onStopExpose: (name: string) => void;
 }) {
+  // 暴露地址(tunnel / proxy vhost)点击 → 先弹详情,详情里可打开/停止;
+  // 直连(回环/局域网)与例外域名仍直接打开。
+  /** 暴露条目定位:tunnel 行按隧道名,vhost 行按 URL 匹配。 */
+  const exposeFor = (u: { url: string; tunnel?: string }): ExposeInfo | undefined =>
+    u.tunnel
+      ? exposes.find((e) => e.name === u.tunnel)
+      : exposes.find((e) => e.localUrl === u.url || e.baseUrl === u.url || e.domainUrl === u.url);
+
+  const openOrDetail = (u: { url: string; tunnel?: string; authEntry?: boolean; label?: string }) => {
+    if (!u.authEntry || (u.label ?? "").includes("allowHost")) { openInNewTab(u.url); return; }
+    const ex = exposeFor(u);
+    if (ex) onShowDetail(ex);
+    else openInNewTab(u.url);
+  };
+
+  // proxy 虚拟主机行的停止目标(与 tunnel 行的红色停止一致):proxy 模式 →
+  // 移除 binding + 记录;tunnel 行用各自的 doStopTunnel。
+  const vhostStopName = (u: { url: string; tunnel?: string; authEntry?: boolean; label?: string; exposeName?: string }): string | undefined => {
+    if (u.tunnel || !u.authEntry || (u.label ?? "").includes("allowHost")) return undefined;
+    // exposeName 由服务端随 URL 条目下发(加载即有,不等 exposes 异步就绪)
+    if (u.exposeName && (u.exposeName ?? "").startsWith("proxy:")) return u.exposeName;
+    // fallback:先按 URL 匹配;URL 拼接不一致(basePath 来源不同等)时按 端口+site 兜底:
+    // 自暴露的 proxy binding 一定是 site "pi-web" 的 proxy: 记录。
+    const ex = exposeFor(u) ?? exposes.find((e) =>
+      e.port === self?.port && (e.site === "pi-web" || (e.name ?? "").startsWith("expose-self-"))
+      && (e.name ?? "").startsWith("proxy:"),
+    );
+    return ex && (ex.name ?? "").startsWith("proxy:") ? ex.name : undefined;
+  };
   const [mode, setMode] = useState("proxy");
   const [auth, setAuth] = useState("portal");
   const [tunnel, setTunnel] = useState("cloudflared");
+  // 本实例带部署 basePath 时,vhost 链接默认保留(点击走 nginx 路径路由直达本实例)
+  const [keepBasePath, setKeepBasePath] = useState(BASE_PATH ? true : false);
   // 隧道类型 schema 驱动(与 Ports 页同一数据源):serveo/bore/natapp/自定义
   // 类型都会出现,command 等 dangerous 类型隐藏——不再硬编码 4 项
   const [tunnelSchemas, setTunnelSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
@@ -1129,6 +1550,17 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   // 用户是否编辑过 allowHosts 输入框:未编辑时用当前生效值预填(输入即同步预览),
   // 一旦编辑就不再被轮询刷新覆盖
   const [allowHostsTouched, setAllowHostsTouched] = useState(false);
+  // auth=none(无认证直接公开 pi-web)→ 泄露风险确认
+  const [confirmNone, setConfirmNone] = useState(false);
+  // 有本地用户库的 provider(portal/basic/authelia…)——公开前检查 site "pi-web" 是否有用户
+  const [userManagers, setUserManagers] = useState<string[]>([]);
+  // userManagers 清单是否已就绪(schema 拉取失败 → fail-closed,阻止直接公开)
+  const [userManagersReady, setUserManagersReady] = useState(false);
+  const [checking, setChecking] = useState(false);
+  // 该 provider+site 无用户 → 提示去管理用户
+  const [noUsers, setNoUsers] = useState<{ provider: string; site: string } | null>(null);
+  // 有用户 → 列出用户名,让用户确认自己可登录
+  const [userConfirm, setUserConfirm] = useState<{ provider: string; site: string; users: string[] } | null>(null);
 
   const exposing = self?.exposing ?? false;
   const allowLocal = self?.allowLocal ?? true;
@@ -1159,10 +1591,12 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
   useEffect(() => {
     fetch(apiUrl("/api/service-tunnels"))
       .then((r) => r.json())
-      .then((d: { tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]> }) => {
+      .then((d: { tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; userManagers?: string[] }) => {
         if (d.tunnelSchemas) setTunnelSchemas(d.tunnelSchemas);
         if (d.tunnelMetas) setTunnelMetas(d.tunnelMetas);
         if (d.authProviderSchemas) setAuthSchemas(d.authProviderSchemas);
+        if (d.userManagers) setUserManagers(d.userManagers);
+        setUserManagersReady(true);
         if (d.tunnelSchemas && d.tunnelMetas) {
           const available = Object.keys(d.tunnelSchemas).filter(
             (k) => !d.tunnelMetas?.[k]?.dangerous && k !== "command",
@@ -1302,12 +1736,47 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
         tunnel,
         tunnelParams,
         providerParams,
+        keepBasePath,
       }),
     })
       .then((r) => r.json())
       .then((d: { error?: string }) => { if (d.error) setErr(d.error); else onChanged(); })
       .catch(() => setErr(String(t("services.error"))))
       .finally(() => setBusy(false));
+  };
+
+  const checkUsers = () => {
+    // 用户库清单未就绪(schema 拉取失败/进行中)→ fail-closed,提示重试而非静默公开
+    if (!userManagersReady) {
+      setErr(t("services.userCheckUnavailable"));
+      return;
+    }
+    // 无本地用户库的 provider(oauth2-proxy 等)→ 无可检查,直接公开
+    if (!userManagers.includes(auth)) { doExpose(); return; }
+    setChecking(true); setErr(null);
+    // pi-web 自暴露的认证域是 site "pi-web"(独立用户库,与 dev 服务分开)
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "user-list", provider: auth, site: "pi-web" }),
+    })
+      .then((r) => r.json())
+      .then((d: { users?: { provider: string; users: { name: string; displayName: string }[] }[]; error?: string }) => {
+        if (d.error) { setErr(d.error); return; }
+        const entry = (d.users ?? []).find((x) => x.provider === auth);
+        const users = entry?.users ?? [];
+        if (users.length === 0) { setNoUsers({ provider: auth, site: "pi-web" }); return; }
+        setUserConfirm({ provider: auth, site: "pi-web", users: users.map((u) => u.displayName || u.name) });
+      })
+      .catch(() => setErr(String(t("services.error"))))
+      .finally(() => setChecking(false));
+  };
+
+  const startExpose = () => {
+    // auth=none → pi-web 无认证直接公开,泄露风险确认
+    if (auth === "none") { setConfirmNone(true); return; }
+    // 带认证 → 检查 site "pi-web" 下该 provider 是否有可登录用户,再公开
+    checkUsers();
   };
 
   const doStop = () => {
@@ -1367,7 +1836,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
               return (
                 <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: gated ? 0.45 : 1 }}>
                   <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 110 }}>{u.label}</span>
-                  <button onClick={() => { if (!gated) openInNewTab(u.url); }}
+                  <button onClick={() => { if (!gated) openOrDetail(u); }}
                     title={gated ? t("services.selfGatedHint") : u.url}
                     disabled={gated}
                     style={{ flex: 1, textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: gated ? "var(--text-dim)" : "var(--accent)", cursor: gated ? "not-allowed" : "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", textDecoration: gated ? "line-through" : "none" }}>
@@ -1380,6 +1849,13 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
                     <button onClick={() => doStopTunnel(u.tunnel!)} disabled={busy} title={t("services.selfStopTunnelHint")}
                       style={{ ...btn, padding: "3px 8px", flexShrink: 0, color: "#f87171" }}>
                       {t("services.selfStopTunnel")}
+                    </button>
+                  )}
+                  {vhostStopName(u) && (
+                    /* proxy 虚拟主机行:与 tunnel 行一致,外面直接可停止(移除 binding) */
+                    <button onClick={() => onStopExpose(vhostStopName(u)!)} disabled={busy} title={t("services.selfStopVhostHint")}
+                      style={{ ...btn, padding: "3px 8px", flexShrink: 0, color: "#f87171" }}>
+                      {t("services.exposeStop")}
                     </button>
                   )}
                 </div>
@@ -1449,13 +1925,19 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
               {exposeUrls.map((u) => (
                 <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
                   <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 96 }}>{u.label}</span>
-                  <button onClick={() => openInNewTab(u.url)} title={u.url}
+                  <button onClick={() => openOrDetail(u)} title={u.url}
                     style={{ flex: 1, textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {u.url}
                   </button>
                   <button onClick={() => copy(`self-expose-${u.url}`, u.url)} style={{ ...btn, padding: "3px 8px", flexShrink: 0 }}>
                     {copiedKey === `self-expose-${u.url}` ? "✓" : t("services.copy")}
                   </button>
+                  {vhostStopName(u) && (
+                    <button onClick={() => onStopExpose(vhostStopName(u)!)} disabled={busy} title={t("services.selfStopVhostHint")}
+                      style={{ ...btn, padding: "3px 8px", flexShrink: 0, color: "#f87171" }}>
+                      {t("services.exposeStop")}
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -1499,8 +1981,16 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
               </select>
             </label>
           )}
+          {/* 本实例有部署 basePath 时,proxy/both 可选是否保留到 vhost 链接 */}
+          {BASE_PATH && mode !== "tunnel" && (
+            <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text)", cursor: "pointer" }} title={t("services.exposeKeepBasePathHint")}>
+              <input type="checkbox" checked={keepBasePath} onChange={(e) => setKeepBasePath(e.target.checked)}
+                style={{ accentColor: "var(--accent)", cursor: "pointer" }} />
+              {t("services.exposeKeepBasePath", { base: BASE_PATH })}
+            </label>
+          )}
           {!exposing ? (
-            <button onClick={doExpose} disabled={busy} style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600 }}>
+            <button onClick={startExpose} disabled={busy || checking} style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600 }}>
               {busy ? "…" : t("services.selfExposeBtn")}
             </button>
           ) : (
@@ -1613,6 +2103,43 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
         <div style={{ marginTop: 6, padding: "6px 10px", borderRadius: 6, background: "rgba(22,163,74,0.1)", border: "1px solid rgba(22,163,74,0.35)", fontSize: 11, color: "#16a34a" }}>
           ✓ {t("services.lockoutRestored")}
         </div>
+      )}
+      {confirmNone && (
+        <ConfirmDialog
+          title={t("services.confirmNoAuthTitle")}
+          body={t("services.confirmNoAuthBodySelf")}
+          confirmLabel={t("services.exposeConfirm")}
+          cancelLabel={t("services.exposeAbort")}
+          onConfirm={() => { setConfirmNone(false); doExpose(); }}
+          onCancel={() => setConfirmNone(false)}
+        />
+      )}
+      {noUsers && (
+        <ConfirmDialog
+          title={t("services.confirmNoUsersTitle")}
+          body={t("services.confirmNoUsersBody", { provider: noUsers.provider, site: noUsers.site })}
+          confirmLabel={t("services.confirmNoUsersGo")}
+          cancelLabel={t("services.exposeAbort")}
+          onConfirm={() => { setNoUsers(null); onGoManageUsers(); }}
+          onCancel={() => setNoUsers(null)}
+        />
+      )}
+      {userConfirm && (
+        <ConfirmDialog
+          title={t("services.confirmUsersTitle")}
+          body={
+            <div>
+              <div style={{ fontSize: 11, lineHeight: 1.7 }}>{t("services.confirmUsersBody", { provider: userConfirm.provider, site: userConfirm.site })}</div>
+              <ul style={{ margin: "8px 0 0", paddingLeft: 18, fontSize: 12, color: "var(--text)" }}>
+                {userConfirm.users.map((u) => <li key={u}>{u}</li>)}
+              </ul>
+            </div>
+          }
+          confirmLabel={t("services.confirmUsersConfirm")}
+          cancelLabel={t("services.exposeAbort")}
+          onConfirm={() => { setUserConfirm(null); doExpose(); }}
+          onCancel={() => setUserConfirm(null)}
+        />
       )}
     </div>
   );
