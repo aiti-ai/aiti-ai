@@ -9,9 +9,6 @@ import type { TunnelInfo as LibTunnelInfo } from "service-tunnels";
  * `st.auth.expose` (the dialog's 公网访问 section): pick a tunnel type +
  * auth provider, the library owns the whole flow. This module only adapts
  * the tunnel info shape for the Services dialog / /api/services.
- *
- * NOTE: the legacy boot-time env tunnels (PI_WEB_TUNNELS / PI_WEB_TUNNEL_CMD)
- * were removed — expose in place from the dialog instead.
  */
 
 export interface TunnelInfo {

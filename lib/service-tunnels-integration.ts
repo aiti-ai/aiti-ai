@@ -1,7 +1,7 @@
-import { homedir } from "os";
-import { existsSync } from "fs";
+import { homedir, networkInterfaces } from "os";
 import { join } from "path";
 import { createServiceTunnels, type ServiceTunnels } from "service-tunnels";
+import { getBaseDomains, getPiWebPort, getAllowLocal, getAllowLocalHosts } from "./service-proxy-shared.ts";
 
 /**
  * service-tunnels integration — library mode inside pi-web.
@@ -25,49 +25,19 @@ declare global {
   var __piServiceTunnels: ServiceTunnels | undefined;
 }
 
-/** Default tool paths: PI_WEB_TUNNEL_TOOL_PATHS overrides, then ~/pi-tunnels. */
-function toolPathsFromEnv(): Record<string, string> {
-  const out: Record<string, string> = {};
-  try {
-    const overrides = JSON.parse(process.env.PI_WEB_TUNNEL_TOOL_PATHS ?? "{}") as Record<string, string>;
-    for (const [k, v] of Object.entries(overrides ?? {})) {
-      if (typeof v === "string" && v.trim()) out[k] = v.trim();
-    }
-  } catch {
-    // ignore invalid JSON
-  }
-  // Local installs (pi-tunnels dir) are a default, not an override.
-  for (const name of ["cloudflared", "ngrok", "frpc", "localtunnel"]) {
-    const p = join(homedir(), "pi-tunnels", name);
-    if (existsSync(p)) out[name] ??= p;
-  }
-  return out;
-}
-
 export function getServiceTunnels(): ServiceTunnels {
   if (!globalThis.__piServiceTunnels) {
-    // Deployment domains (PI_WEB_HOSTNAME / PI_WEB_ALLOWED_HOSTS, e.g.
-    // example.com) are passed to the service-tunnels API as the base domain:
-    // the proxy serves `<port>[-<label>].<domain>` and expose returns
-    // portless baseUrls under them (user nginx reverse-proxies *.<domain>
-    // to the proxy port). First host is the primary.
-    const deployHosts = [...new Set([
-      ...(process.env.PI_WEB_HOSTNAME ?? "").split(","),
-      ...(process.env.PI_WEB_ALLOWED_HOSTS ?? "").split(","),
-    ].map((h) => h.trim().toLowerCase()).filter((h) => {
-      if (!h) return false;
-      // strip the optional port before the IP check: "127.0.0.1:8080" and
-      // "10.0.0.1" are loopback/LAN literals, never wildcard suffixes. The
-      // host:port form ("example.com:8080") IS kept — service-tunnels base
-      // domains accept it (virtual hosts match the host; URLs keep the port).
-      const host = h.replace(/:\d{1,5}$/, "");
-      return !/^(\d{1,3}\.){3}\d{1,3}$/.test(host) && !host.includes(":");
-    }))];
+    // Deployment domains (PI_WEB_BASE_DOMAIN — explicit, host:port allowed;
+    // legacy fallbacks PI_WEB_ALLOWED_HOSTS / PI_WEB_HOSTNAME) are passed to
+    // the service-tunnels API as the base domain: the proxy serves
+    // `<port>[-<label>].<domain>` and expose returns portless baseUrls under
+    // them (user nginx reverse-proxies *.<domain> to the proxy port). First
+    // host is the primary; host:port forms keep their port in generated URLs.
+    const deployHosts = getBaseDomains();
     globalThis.__piServiceTunnels = createServiceTunnels({
       configDir: join(homedir(), ".pi", "service-tunnels"),
       cacheDir: join(homedir(), ".pi", "service-tunnels-cache"),
       marker: "pi-web",
-      toolPaths: toolPathsFromEnv(),
       // Deployment base path merges under auth-provider login paths:
       // PI_WEB_BASE_PATH=/dev → portal login at /dev/portal/login
       // (plain /portal/login when pi-web is root-deployed).
@@ -78,30 +48,6 @@ export function getServiceTunnels(): ServiceTunnels {
     });
   }
   return globalThis.__piServiceTunnels;
-}
-
-/**
- * Start pi-web's own auth-proxy listener when PIWEBPROXYPORT (or the
- * compatible PI_WEB_PROXY_PORT) is set (integer 0-65535; 0 = random free
- * port). Off by default — without the env var pi-web serves only its own UI
- * port; with it, the process also answers virtual hosts like
- * `30142-portal.localhost:<port>` (service-tunnels proxy grammar: open
- * `30142.localhost:<port>`, labeled/auth `30142-<site>.*`).
- * Idempotent — expose --mode proxy/both shares this transport. Call once at
- * server start (instrumentation.ts); no-op when already running.
- */
-export function startProxyIfEnabled(): void {
-  const raw = process.env.PIWEBPROXYPORT ?? process.env.PI_WEB_PROXY_PORT;
-  if (raw === undefined || raw.trim() === "") return;
-  const port = Number(raw.trim());
-  if (!Number.isInteger(port) || port < 0 || port > 65535) {
-    console.error(`[pi-web] invalid PIWEBPROXYPORT: ${JSON.stringify(raw)} (integer 0-65535; 0 = random)`);
-    return;
-  }
-  const st = getServiceTunnels();
-  void st.proxy.start({ port })
-    .then((p) => console.log(`[pi-web] auth proxy listening on 127.0.0.1:${p}`))
-    .catch((e) => console.error("[pi-web] auth proxy start failed:", e));
 }
 
 /** pi-web's own process cmdline patterns (never "services"). */
@@ -176,19 +122,247 @@ export async function exposeService(
     // distinct tunnelName keeps them coexisting (service-tunnels default would
     // collide on expose-<port>).
     tunnelName: `expose-${port}-${opts.provider ?? "direct"}`,
+    // The middleware serves vhosts in-process (st.proxy.resolve) — no
+    // separate proxy transport listener.
+    startTransport: false,
   });
 }
 
 /** pi-web's OWN UI under site "pi-web" — separate users from dev services. */
-export async function exposeSelf(
-  port: number,
-  opts: { tunnel?: boolean; mode?: "proxy" | "both" } = {},
-) {
-  return getServiceTunnels().auth.expose(port, {
-    auth: true,
-    mode: opts.mode ?? (opts.tunnel ? "both" : "proxy"),
+export interface SelfExposeOptions {
+  mode?: "tunnel" | "proxy" | "both";
+  /** Auth provider name (site "pi-web" default is portal). */
+  auth?: string;
+  policy?: "one_factor" | "two_factor" | "deny";
+  /** Tunnel type (mode tunnel/both). */
+  tunnel?: string;
+  protocol?: "http" | "https" | "tcp";
+  allowToolDownload?: boolean;
+  ngrokAuthtoken?: string;
+  tunnelParams?: Record<string, unknown>;
+  providerParams?: Record<string, unknown>;
+  /** Pre-provision an auth user (basic/portal). */
+  user?: { name: string; password: string };
+  /** Override pi-web's own port (default PORT ?? 30141). */
+  port?: number;
+  /** Direct local access gate: false → only authenticated forwards pass. */
+  allowlocal?: boolean;
+}
+
+export async function exposeSelf(opts: SelfExposeOptions = {}) {
+  const st = getServiceTunnels();
+  const port = opts.port ?? getPiWebPort();
+  // Idempotent: an already-running self expose wins (hot reload / re-invoke).
+  const existing = st.exposes().find((e) => e.site === "pi-web" && e.port === port && e.running);
+  if (existing) return existing;
+  const authNone = opts.auth === "none";
+  const provider = opts.auth && opts.auth !== "auto" && !authNone ? opts.auth : "portal";
+  const mode = opts.mode ?? "proxy";
+  // Tunnel-only mode still registers the proxy virtual-host binding so the
+  // middleware can map the public tunnel domain back to <port>-pi-web.<suffix>
+  // and authenticate it through resolve() — all authorized access flows
+  // through the proxy, there is no whitelist backdoor.
+  if (mode === "tunnel") {
+    try {
+      st.proxy.addBinding({
+        port,
+        label: "pi-web",
+        site: "pi-web",
+        provider: opts.auth === "none" ? "" : provider,
+        ...(opts.policy ? { policy: { policy: opts.policy } } : {}),
+      });
+    } catch {
+      // binding already exists — fine
+    }
+  }
+  return st.auth.expose(port, {
+    // auth "none" → open binding (no gateway); everything else is gated.
+    auth: authNone ? "none" : true,
+    mode,
     site: "pi-web",
-    tunnelType: "cloudflared",
+    ...(provider !== "portal" && !authNone ? { provider } : {}),
+    tunnelType: opts.tunnel ?? "cloudflared",
     tunnelName: `expose-self-${port}`,
+    protocol: opts.protocol,
+    policy: opts.policy,
+    allowToolDownload: opts.allowToolDownload,
+    ngrokAuthtoken: opts.ngrokAuthtoken,
+    tunnelParams: opts.tunnelParams,
+    providerParams: opts.providerParams,
+    user: opts.user,
+    // Middleware serves vhosts in-process — no separate transport listener.
+    startTransport: false,
   });
+}
+
+/** Stop pi-web's own exposure: tunnel processes + proxy enrollment. */
+export async function stopSelf(): Promise<void> {
+  const st = getServiceTunnels();
+  const port = getPiWebPort();
+  const selfs = st.exposes().filter((e) => e.port === port && (e.site === "pi-web" || e.name?.startsWith("expose-self-")));
+  for (const e of selfs) {
+    try {
+      await st.tunnels.stop(e.name);
+    } catch {
+      // not a tunnel expose
+    }
+  }
+  // Drop every binding for pi-web's own port (open "" and labeled "pi-web")
+  // — an auth="none" self-expose registers an open binding that the
+  // site/label filter above would miss.
+  for (const b of st.proxy.bindings()) {
+    if (b.port === port) {
+      try {
+        st.proxy.removeBinding(b.port, b.label);
+      } catch {
+        // already gone
+      }
+    }
+  }
+}
+
+/** Current effective self-expose config (env parsed + runtime overrides). */
+export function getSelfExposeState() {
+  const st = getServiceTunnels();
+  const port = getPiWebPort();
+  const selfs = st.exposes().filter((e) => e.port === port && (e.site === "pi-web" || e.name?.startsWith("expose-self-")));
+  const exposing = selfs.some((e) => e.running);
+  const first = selfs[0];
+  return {
+    exposing,
+    allowLocal: getAllowLocal(),
+    allowHosts: getAllowLocalHosts(),
+    port,
+    mode: (first?.label ? "proxy" : undefined) ?? globalThis.__piWebExposeConfig?.mode ?? null,
+    auth: first?.provider ?? globalThis.__piWebExposeConfig?.auth ?? null,
+    tunnel: first?.tunnelType ?? null,
+    config: globalThis.__piWebExposeConfig ?? null,
+    urls: getSelfAccessUrls(),
+  };
+}
+
+/** Every address pi-web's UI is reachable at (loopback / LAN / vhost / tunnel). */
+export function getSelfAccessUrls(): Array<{ label: string; url: string }> {
+  const st = getServiceTunnels();
+  const port = getPiWebPort();
+  const base = (process.env.PI_WEB_BASE_PATH ?? "").replace(/\/+$/, "");
+  const out: Array<{ label: string; url: string }> = [];
+  out.push({ label: "本机（回环）", url: `http://127.0.0.1:${port}${base}` });
+  for (const [name, addrs] of Object.entries(networkInterfaces())) {
+    for (const a of addrs ?? []) {
+      if (a.family === "IPv4" && !a.internal) {
+        out.push({ label: `局域网（${name}）`, url: `http://${a.address}:${port}${base}` });
+      }
+    }
+  }
+  for (const e of st.exposes()) {
+    const isSelf = e.site === "pi-web" || e.name?.startsWith("expose-self-");
+    if (!isSelf || e.port !== port) continue;
+    if (e.localUrl) out.push({ label: "服务虚拟主机（本机）", url: e.localUrl });
+    if (e.baseUrl) out.push({ label: "服务虚拟主机（部署域）", url: e.baseUrl });
+    if (e.url) out.push({ label: "隧道公网", url: e.url });
+  }
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// PI_WEB_EXPOSE env parsing — plain "k=v,k2=v2" (no JSON), dotted keys nest:
+//   mode=both,auth=portal,tunnel=cloudflared,allowlocal=false
+//   tunnel.domain=alice.ngrok-free.app,user.name=admin,user.password=pw
+//   provider.oidc.issuerUrl=https://...
+// ---------------------------------------------------------------------------
+
+const EXPOSE_SCALAR_KEYS = new Set([
+  "mode", "auth", "policy", "tunnel", "protocol", "allowToolDownload",
+  "port", "ngrokAuthtoken", "allowlocal",
+]);
+
+function coerce(value: string): unknown {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (/^-?\d+$/.test(value)) return Number(value);
+  return value;
+}
+
+function setDotted(obj: Record<string, unknown>, dotted: string, value: unknown): void {
+  const parts = dotted.split(".");
+  let cur = obj;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const k = parts[i];
+    if (typeof cur[k] !== "object" || cur[k] === null) cur[k] = {};
+    cur = cur[k] as Record<string, unknown>;
+  }
+  cur[parts[parts.length - 1]] = value;
+}
+
+/** Parse PI_WEB_EXPOSE. Unknown keys warn+skip; invalid mode → null (fail-closed). */
+export function parseExposeEnv(raw: string): Record<string, unknown> | null {
+  const out: Record<string, unknown> = {};
+  let hasKey = false;
+  for (const part of raw.split(",")) {
+    const eq = part.indexOf("=");
+    if (eq <= 0) continue;
+    const key = part.slice(0, eq).trim();
+    const value = part.slice(eq + 1).trim();
+    if (!key || value === "") continue;
+    hasKey = true;
+    if (key.startsWith("tunnel.")) {
+      const tp = (out.tunnelParams ??= {}) as Record<string, unknown>;
+      tp[key.slice(7)] = coerce(value);
+    } else if (key.startsWith("provider.")) {
+      const pp = (out.providerParams ??= {}) as Record<string, unknown>;
+      setDotted(pp, key.slice(9), coerce(value));
+    } else if (key.startsWith("user.")) {
+      const u = (out.user ??= {}) as Record<string, unknown>;
+      u[key.slice(5)] = coerce(value);
+    } else if (key === "allowHost") {
+      // repeatable key: allowHost=a.com,allowHost=b.com (or space-separated)
+      const arr = (out.allowHost ??= []) as string[];
+      for (const h of value.split(/[\s,]+/)) {
+        if (h.trim()) arr.push(h.trim());
+      }
+    } else if (EXPOSE_SCALAR_KEYS.has(key)) {
+      out[key] = coerce(value);
+    } else {
+      console.warn(`[pi-web] PI_WEB_EXPOSE: 未知键 "${key}"，已忽略`);
+    }
+  }
+  if (!hasKey) return null;
+  // mode defaults to "none": PI_WEB_EXPOSE applies configuration
+  // (allowlocal / allowHost) without exposing pi-web itself unless explicitly
+  // requested. "none" also guards against accidental self-exposure.
+  out.mode = out.mode ?? "none";
+  const mode = out.mode;
+  if (!["tunnel", "proxy", "both", "none"].includes(String(mode))) {
+    console.warn(`[pi-web] PI_WEB_EXPOSE: 非法 mode "${mode}"（tunnel|proxy|both|none），不启用自暴露`);
+    return null;
+  }
+  return out;
+}
+
+/** Startup hook: parse PI_WEB_EXPOSE and expose pi-web itself (best-effort). */
+export async function maybeExposeSelf(): Promise<void> {
+  const raw = process.env.PI_WEB_EXPOSE;
+  if (!raw?.trim()) return;
+  const cfg = parseExposeEnv(raw);
+  if (!cfg) {
+    console.warn("[pi-web] PI_WEB_EXPOSE 无效，不启用自暴露（fail-closed）");
+    return;
+  }
+  globalThis.__piWebExposeConfig = cfg;
+  if (typeof cfg.allowlocal === "boolean") {
+    globalThis.__piWebAllowLocalOverride = cfg.allowlocal;
+  }
+  if (cfg.mode === "none") {
+    console.log(`[pi-web] PI_WEB_EXPOSE: mode=none — 仅应用 allowlocal/allowHost 配置，不暴露自身`);
+    return;
+  }
+  try {
+    await exposeSelf(cfg as unknown as SelfExposeOptions);
+    const mode = cfg.mode ?? "proxy";
+    const auth = typeof cfg.auth === "string" ? cfg.auth : "portal";
+    console.log(`[pi-web] 自暴露已启用: mode=${mode} auth=${auth} port=${cfg.port ?? getPiWebPort()}`);
+  } catch (err) {
+    console.error("[pi-web] 自暴露失败:", err);
+  }
 }

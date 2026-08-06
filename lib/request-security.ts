@@ -31,10 +31,22 @@ function isLoopbackHostname(hostname: string): boolean {
 }
 
 function configuredHostnamesFromEnvironment(): string[] {
-  return [
+  const out = [
     process.env.PI_WEB_HOSTNAME,
+    process.env.PI_WEB_BASE_DOMAIN,
     ...(process.env.PI_WEB_ALLOWED_HOSTS?.split(",") ?? []),
   ].filter((value): value is string => Boolean(value?.trim()));
+  // allowlocal exception hosts (PI_WEB_EXPOSE allowHost / runtime overrides) —
+  // operator-protected front domains that pass the host gate even when
+  // allowlocal=false.
+  if (Array.isArray(globalThis.__piWebAllowHostsOverride)) {
+    out.push(...globalThis.__piWebAllowHostsOverride);
+  }
+  const cfg = globalThis.__piWebExposeConfig;
+  const ah = cfg?.allowHost;
+  if (Array.isArray(ah)) out.push(...ah.map(String));
+  else if (typeof ah === "string") out.push(ah);
+  return out;
 }
 
 function canonicalOrigin(value: string): string | null {

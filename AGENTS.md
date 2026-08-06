@@ -85,8 +85,8 @@ lib/
   normalize.ts        normalizeToolCalls() — field name mismatch between file format and our types
   worktree.ts         project/worktree resolution and git worktree operations
   service-tunnels-integration.ts  singleton ServiceTunnels (globalThis) + listPiServices/exposeService
-  service-ports.ts    discovery cache + proxy allow-list write (lib-owned)
-  service-proxy-shared.ts  middleware-safe helpers (suffixes, allowed ports, stripBasePath)
+  service-ports.ts    server-side discovery adapter (lib-owned)
+  service-proxy-shared.ts  middleware-safe helpers (suffixes, basePath strip, self-access gate)
   tunnels.ts          thin adapter: tunnel info shape for the Services dialog
   request-security.ts DNS-rebinding gate: isApiRequestAllowed / host+origin checks
   web-auth.ts         optional Basic password gate (PI_WEB_PASSWORD)
@@ -239,10 +239,9 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 
 ## Service port proxy & expose (`proxy.ts` + `lib/service-*` + service-tunnels lib)
 
-- Test servers started by pi sessions are reachable at `http://<port><suffix>/` (default `.pi.localhost`). `proxy.ts` (Next middleware) rewrites that virtual host to `http://127.0.0.1:<port>`; the target is built with the library's `proxyTarget()` (path appended AFTER an explicit authority — `//evil.com`, `//127.0.0.1:9999`, backslashes can never override host/port, no SSRF). pi-web's basePath is stripped before forwarding. Accepted suffixes: `.pi.localhost` + `PI_WEB_SVC_HOST_SUFFIX` + every `PI_WEB_ALLOWED_HOSTS`/`PI_WEB_HOSTNAME` host.
-- **No manual port allow-list.** The allowed set = discovery cache (service-tunnels lib: BFS over pi-web's process tree ∪ `PI_WEB_CHILD_MARKER`-carrying processes in `/proc/<pid>/environ`, set in `instrumentation.ts`; survives daemonization). `getServicePorts()` mirrors the set to `allowed-ports.json` (4s TTL) for the middleware. Only `127.0.0.1` targets are ever proxied.
-- `lib/service-ports.ts` = server-side discovery adapter (library-owned); `lib/service-proxy-shared.ts` = middleware-safe helpers (suffixes, allowed-ports file, stripBasePath) with NO library dependency; `lib/tunnels.ts` = thin info adapter; `lib/service-tunnels-integration.ts` = the `globalThis.__piServiceTunnels` singleton + `exposeService()`.
-- Middleware CAN `import { proxyTarget } from "service-tunnels"` (npm package) — the old "can't import the file: dependency" restriction is gone.
+- Test servers started by pi sessions are reachable at `http://<port><suffix>/` (default `.pi.localhost`). `proxy.ts` (Next middleware) runs the library's IN-PROCESS decision API (`st.proxy.resolve()`, shared `globalThis` instance) — the library owns vhost parsing, enrollment and per-site auth; Next forwards the rewritten target (HTTP + WebSocket). Only `127.0.0.1` targets are ever proxied. Accepted suffixes: `.pi.localhost` + `PI_WEB_SVC_HOST_SUFFIX` + every configured deployment domain (`PI_WEB_BASE_DOMAIN` primary — comma-separated, `host:port` allowed; legacy fallbacks `PI_WEB_ALLOWED_HOSTS`/`PI_WEB_HOSTNAME`). `PI_WEB_HOSTNAME` is the LISTEN address only (`next start -H`); deployment domains live in `PI_WEB_BASE_DOMAIN`.
+- **No manual port allow-list** — enrollment (expose) is the gate; un-enrolled vhosts get 403 from the library. Only `127.0.0.1` targets are ever proxied.
+- `lib/service-ports.ts` = server-side discovery adapter (library-owned); `lib/service-proxy-shared.ts` = middleware-safe helpers (suffixes, basePath strip, self-access gate) with NO library dependency; `lib/service-tunnels-integration.ts` = the `globalThis.__piServiceTunnels` singleton + `exposeService()`/self-expose. Middleware reads the singleton directly — no file/IPC channel.
 - **Security gates**: service hosts pass the same host allow-list (suffix regex) + optional `PI_WEB_PASSWORD` Basic gate; ports must be in the discovery cache. The standalone library `createProxyServer()` additionally supports forward-auth (portal/authelia/oauth2-proxy) and its own allow-list.
 - WebSocket upgrades are NOT proxied by the middleware (Next no-ops non-HMR upgrades) — Vite HMR etc. need direct localhost or a tunnel.
 - `GET /api/services?refresh=1` lists discovered ports + `serviceHostSuffixes`; `GET /api/service-tunnels` returns exposes/status/provider order/default provider/user managers/tool status/allow-download. The top-toolbar globe opens `ServicesDialog` (10s auto-refresh): **Ports** tab = per-port access methods (direct + virtual-host URLs, `window.open` with `noopener,noreferrer`), protocol auto-detect (http/https/tcp), expose form (tunnel type + auth provider, schema-driven), active exposes (stop, nginx logs), allow-tool-download toggle; **Users** tab = provider user management + TOTP 2FA enroll/activate.

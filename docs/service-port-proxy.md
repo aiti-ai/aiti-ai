@@ -1,7 +1,13 @@
 # 服务端口代理（Service Port Proxy）— 方案文档
 
 > 目标：让 pi-web 的用户（浏览器）能直接访问 pi 会话里启动的测试服务端口，
-> 完整支持网页（HTML/CSS/JS、SPA、表单、fetch），无需手动配置端口白名单。
+> 完整支持网页（HTML/CSS/JS、SPA、表单、fetch、WebSocket），无需手动配置
+> 端口白名单。
+
+实现基于 **service-tunnels 库**（npm 依赖）的进程内集成：发现、虚拟主机路由、
+暴露/隧道、认证（provider/站点/用户/TOTP）全部由库负责，pi-web 只做薄适配
+（`lib/service-tunnels-integration.ts` 单例 + `app/api/service-tunnels` 路由 +
+弹窗 UI）。
 
 ## 方案决策
 
@@ -14,191 +20,257 @@
 | 同源（无 CORS） | ✅ | ✅ |
 | 浏览器解析 | — | `*.localhost` 原生 → 127.0.0.1（RFC 6761，无需改 hosts） |
 
-**决策：`proxy.ts` 按 `Host: <port><suffix>` 匹配，`NextResponse.rewrite()` 到
-`http://127.0.0.1:<port>`；路径除 basePath 前缀外保持不变（见 D7）。**
+**决策：`proxy.ts` 按 `Host: <port>[-<label>].<domain>` 匹配（库的
+`parseHost`），`resolve()` 给出放行/认证/转发决策，Next 通过 rewrite 转发。**
 
-### D2. 端口白名单 = 自动发现 + 缓存（不做手动配置）
+### D2. 端口白名单 = 显式 enrollment（default zero-forward）
 
-不做手工白名单。允许代理的端口集合 = **发现缓存**：
+不做手工白名单、不做进程树宽泛发现。可被代理的端口集合 = **库的持久化
+enrollment**（`~/.pi/service-tunnels-cache/state.json` 的 bindings）：
 
-1. **进程树**：pi-web 的 AgentSession 在 next-server 进程内，测试服务是其后代
-   （pi-web → pi 会话 → bash → python → …）。BFS 遍历 pi-web 根进程的所有后代。
-2. **环境变量标记**（跨 re-parent 兜底）：`nohup` / `setsid` / double-fork 的守护进程
-   会被 re-parent 到 init，脱离进程树。`instrumentation.ts` 在服务启动时写入
-   `PI_WEB_CHILD_MARKER`，子进程 spawn 时继承 env —— **即使树断了标记还在**，
-   发现时读取 `/proc/<pid>/environ` 匹配标记（仅 Linux）。
+1. **发现**（`discovery.getPorts()`）只负责给 UI 列候选端口：跨平台进程树遍历
+   （Linux `/proc`、macOS `ps`、Windows `Get-CimInstance`）+ 监听端口枚举
+   （`/proc/net/tcp{,6}`、`lsof`、`netstat`）+ 守护进程 env 标记兜底
+   （`PI_WEB_CHILD_MARKER` 风格，仅 Linux 可读 `/proc/<pid>/environ`）。
+2. **enrollment**：用户在弹窗里「暴露」（expose）一个端口后才进 allow-list；
+   未 enrolled 的端口一律不代理（`proxy` 的默认决策是 deny）。
 
-**决策：候选进程 = 树后代 ∪ 标记携带者 − pi-web 自身（祖先链 + cmdline 特征）。**
+**决策：代理 = enrolled 且 running 的 expose（`proxy`/`both` 模式产生本地
+虚拟主机）。发现结果只是候选，不是授权。**
 
-### D3. 跨平台后端（全部用系统自带工具，无 npm 依赖）
+### D3. 跨平台后端
 
-| 平台 | 进程树 / cmdline | 监听端口 |
-|---|---|---|
-| Linux | `/proc/<pid>/task/*/children`、`/proc/<pid>/cmdline`、`/proc/<pid>/environ` | `/proc/<pid>/fd` socket inode → `/proc/net/tcp{,6}`（仅 LISTEN 0A） |
-| macOS | `ps -axo pid=,ppid=,command=` | `lsof -nP -iTCP -sTCP:LISTEN` |
-| Windows | PowerShell `Get-CimInstance Win32_Process` | `netstat -ano`（过滤 LISTENING） |
-
-每个端口收集**所有**监听地址（IPv4+IPv6、SO_REUSEPORT 多 fd），通配绑定
-（`0.0.0.0` / `::`）展开为 127.0.0.1/::1 + 本机网卡 IP，供弹窗直接展示可点链接。
+进程树 / cmdline / 端口枚举的平台差异全部在 service-tunnels 库内实现
+（Linux /proc、macOS ps+lsof、Windows CIM+netstat，通配地址展开为
+127.0.0.1/::1 + 网卡 IP）。pi-web 侧只提供本进程 cmdline 特征
+（`PI_WEB_OWN`）把 pi-web 自身排除在「服务」之外。
 
 ### D4. 安全模型
 
-- 代理目标**只允许 127.0.0.1**（代码写死，不做 host 转发）
-- 端口必须命中发现缓存：远程攻击者无法把 pi-web 当跳板访问同机的 Redis/MySQL 等
-  （它们不是我们的子进程，也没有标记）
-- 服务虚拟主机的主机白名单 = **后缀正则本身**（只匹配 loopback + `PI_WEB_SVC_HOST_SUFFIX`
-  + `PI_WEB_ALLOWED_HOSTS`/`PI_WEB_HOSTNAME` 中的域名），服务分支**不额外**调用
-  `isApiRequestHostAllowed`（否则 `5173.example.com` 会被拦，因为完整 hostname 不等于
-  已配置主机名）；DNS rebinding 防护由正则约束 + 端口发现缓存共同保证
-- 服务虚拟主机是独立 origin 命名空间：该 host 下所有路径（含 `/api/*`）都归测试
-  服务，与 pi-web 自身的路由互不干扰
+- 代理目标**只允许 127.0.0.1**（库内写死，不做 host 转发）
+- 端口必须命中 **enrollment**：远程攻击者无法把 pi-web 当跳板访问同机的
+  Redis/MySQL 等（未 enrolled 即 deny）
+- 虚拟主机的路由 / allow-list / 403 **只有一份实现**——库的
+  `proxy.parseHost` + `proxy.resolve`，在 proxy.ts（middleware，与 app
+  server 同进程共享 globalThis）里进程内调用；无独立代理端口
+- 站点认证：`pi-web`（自己的管理 UI）与 `services`（子进程 dev 服务）是
+  **两个隔离的认证域**（不同域名、不同用户库、不同 provider），
+  `ensureSites()` 幂等预设；暴露时可选 portal / basic / authelia 认证，
+  `resolve()` 内完成 forward-auth 探测与登录跳转
+- 服务虚拟主机是独立 origin 命名空间：该 host 下所有路径（含 `/api/*`）
+  归测试服务，与 pi-web 自身路由互不干扰
 
 ### D5. 服务虚拟主机后缀的匹配集合
 
-`proxy.ts` 接受的后缀（`lib/service-ports.ts#getServiceHostSuffixes()`，按优先级）：
+库接受的部署域（`getBaseDomains()`，按优先级）：
 
-1. `.pi.localhost`（内置，loopback）
-2. `PI_WEB_SVC_HOST_SUFFIX`（显式自定义）
-3. `PI_WEB_HOSTNAME` / `PI_WEB_ALLOWED_HOSTS` 中的每个域名
+1. `PI_WEB_BASE_DOMAIN`（显式，逗号分隔，`host:port` 形式允许——匹配用
+   host，生成的 URL 保留端口）
+2. `PI_WEB_ALLOWED_HOSTS`（旧 fallback）
+3. `PI_WEB_HOSTNAME`（旧 fallback；IP 字面量被丢弃，永不产生通配后缀）
 
-所以部署在 `example.com` 的实例（request-security 已要求把该域名配进
-`PI_WEB_ALLOWED_HOSTS`）**自动**支持 `5173.example.com`，无需额外配置。
+本地回环后缀 `.pi.localhost`（内置）与 `PI_WEB_SVC_HOST_SUFFIX`（显式自定义）
+同样生效。`lib/service-proxy-shared.ts#getServiceHostSuffixes()` 汇总全部
+可接受后缀（middleware 与 server 共用，避免两处不一致）。
 
-### D6. 弹窗内每端口的访问方式（点击展开）
+### D6. ServicesDialog（弹窗，顶部工具条进入，10s 自动刷新）
 
-对每个发现端口展示：
+**Ports 页签**：每个发现端口一行，点击展开：
 
 - **直连（绕过 pi-web）**：`http://<监听IP>:<port>/`，每个监听地址一行
-  （127.0.0.1 / ::1 / LAN IP / 具体绑定 IP，IPv6 加方括号）——**不带 basePath**
-- **通过 pi-web 虚拟主机**：每个后缀一行，`<scheme>//<port><suffix><pagePort><basePath>`
-  - **scheme 与端口取自当前页面 URL**（`location.protocol` / `location.port`）
-  - 当前页面域名优先排在首位（标注"当前域名"），`.pi.localhost` 标注"本机"
-  - 每行可点击打开 + 一键复制
-- **开启此端口隧道**（`PortTunnelSection`）：就地列出该端口的隧道命令模板
-  （cloudflared / localtunnel / ngrok / serveo，端口号已代入，可复制），点击"开启"
-  即在当前位置启动隧道、**就地显示解析出的公网 URL**（可点击）与"停止"按钮；
-  隧道名 `port-<端口>-<工具>`，URL 缓存在 globalThis，对话框刷新不丢失
-- **顶部全局栏**：有已开启隧道（`port-*`）时，列表上方显示"已开启的端口隧道"——
-  **一行一个隧道**（端口号 + 工具 + 状态），running 且有 URL 的带**打开**（新 tab
-  开公网 URL），每行带**详情**按钮——点击自动展开该端口卡片并平滑滚动到它
-  （`scrollIntoView`，卡片 id `port-card-<端口>`）；同端口多工具并列多行
+  （127.0.0.1 / ::1 / LAN IP / 具体绑定 IP，IPv6 加方括号）——不带 basePath
+- **通过 pi-web 虚拟主机**：`<scheme>//<port>.<domain><pagePort><basePath>`
+  （scheme/端口取自当前页面 URL；当前域名优先、`.pi.localhost` 标注本机）
+- **暴露表单（schema 驱动）**：选择模式 `tunnel`（公网 URL）/ `proxy`
+  （本地虚拟主机，不建隧道）/ `both`（两者，同一站点）、隧道类型
+  （cloudflared / ngrok / frpc / localtunnel，schema 来自库的
+  `tunnelSchemas`）、认证 provider（portal / basic / authelia，schema 来自
+  `authProviderSchemas`）、站点（`services` / `pi-web` / `default`）、
+  策略（one_factor / two_factor）、协议（http / https / tcp——**tcp 暴露
+  不带认证**）；部分 provider 需要额外参数（如 ngrok authtoken）
+- **已开启的暴露**：状态、本地/公网 URL（打开 + 复制）、nginx 访问/错误日志
+  （`?logs=<exposeName>`）、停止
+- **允许工具下载**开关（`set-allow-tool-download`）
 
-所有"打开"动作（直连、虚拟主机、隧道 URL）均在**新浏览器 tab** 打开
-（`window.open(url, "_blank", "noopener,noreferrer")`）。
+**Users 页签**：provider 用户管理（`userManagers` 驱动）——增删用户、改密、
+站点切换（`pi-web` / `services` 分开的用户库）、TOTP 2FA 登记/激活/停用。
 
-弹窗底部说明区（端口页签底部）不再是常驻折叠文档："已配置隧道"独立折叠
-（带运行计数与启停按钮，无配置时隐藏），另有两个**纯文字入口**点击打开弹窗——
-**如何让其他设备访问**（本机 RFC 6761 零配置 / 局域网 dnsmasq
-`address=/pi.lan/<服务器IP>` + 两个环境变量 / 公网 DNS 通配 A 记录 + 域名加入
-`PI_WEB_ALLOWED_HOSTS`，附当前部署的地址形态示例）与**认证说明**（已内置
-portal/basic/authelia + 可自行扩展的 Authelia/Authentik/oauth2-proxy/Keycloak/
-Cloudflare Access，见下文「暴露前的授权管理」）。
+所有「打开」动作都在新浏览器 tab（`window.open(..., "noopener,noreferrer")`）。
 
 ### D7. basePath 处理
 
 带 `PI_WEB_BASE_PATH` 部署（如 `https://example.com:8080/dev/`）时：
 
-1. **走代理的 URL 带 basePath**：`http://5173.example.com:8080/dev`——反向代理
-   按路径路由（nginx `location /dev/`）才能把请求送到 pi-web
-2. **直连 URL 不带 basePath**：`http://127.0.0.1:5173/` 绕过 pi-web，无此需求
-3. **proxy 转发前剥离**（`stripBasePath`，纯函数）：`/dev/foo → /foo`、`/dev → /`；
-   不匹配 basePath 前缀的路径原样透传（页面引用的 `/assets/x.js` 照常）
-4. **URL 不带尾斜杠**：`.../dev` 而非 `.../dev/`，避免 Next 的 basePath 308 重定向
+1. **走代理的 URL 带 basePath**：`http://5173.example.com:8080/dev`——反向
+   代理按路径路由才能把请求送到 pi-web
+2. **直连 URL 不带 basePath**：绕过 pi-web，无此需求
+3. **库的 `deployBasePath`**：合并到认证登录路径下（portal 登录在
+   `/dev/portal/login`）；转发前按 basePath 剥离路径前缀
+4. URL 不带尾斜杠（避免 Next 的 basePath 308 重定向）
 
-> 前端页面资产因此无需重写：页面在 `/dev`（剥成 `/`），其引用的绝对路径
-> `/assets/x.js`（无 basePath 前缀）原样透传到服务。
+### D8. 隧道与暴露：只暴露服务端口，绝不 tunnel pi-web 本体
 
-### D8. 隧道：只暴露服务端口 / 服务子域名，绝不 tunnel pi-web 本体
+隧道/暴露全部走库的 `auth.expose`（弹窗「暴露」表单或
+`POST /api/service-tunnels/expose`）——**无启动时环境变量配置**，一律就地开启。
 
-隧道只用于把**单个测试服务端口**（或它的虚拟主机子域名）暴露出去——pi-web
-本体未经认证防护**绝不允许**走隧道。两种方式：
+- 暴露 = 把**单个服务端口**（或它的虚拟主机）通过隧道/本地虚拟主机公开，
+  URL 由库解析（已知隧道域名优先，无关链接被真 URL 覆盖）、缓存持久化，
+  可随时停止；pi-web 退出时库的清理钩子（角色标记 + guardian）随进程回收
+- 工具路径由库解析（PATH + 库缓存/下载），无需 pi-web 侧配置
+- **不要把隧道指向 pi-web 本体端口**：隧道域名不在允许列表会被
+  DNS-rebinding 防护 403；加白名单则等于无防护暴露 pi-web——危险
 
-1. **端口卡片就地开启**（主路径）：弹窗展开端口 → "开启此端口隧道"，工具模板
-   自动代入端口（cloudflared / localtunnel / ngrok / serveo），一键开启后**就地显示
-   公网 URL**，URL 缓存在 globalThis 不丢失，随时可停止（`POST /api/tunnels` start/stop
-   `{port, tool}` / `{name}`）
-2. **启动时配置**：`PI_WEB_TUNNELS`（JSON）/ `PI_WEB_TUNNEL_CMD` 指向**服务端口**：
+### D9. 认证 provider（弹窗「立即公开」）
 
-```bash
-PI_WEB_TUNNEL_CMD="lt --port 8901"  npm run dev
-PI_WEB_TUNNEL_CMD="/home/pi/pi-tunnels/cloudflared tunnel --url http://127.0.0.1:8901" npm run dev
-PI_WEB_TUNNEL_CMD="ssh -R 80:127.0.0.1:8901 serveo.net" npm run dev
-PI_WEB_TUNNELS='[{"name":"cfd","cmd":"cloudflared tunnel --url http://127.0.0.1:8901","auto":true}]'
-```
+- `portal` —— 内置认证门户：自带用户管理与 TOTP 2FA（「用户」页签管理）
+- `basic` —— HTTP Basic：用户名 + 密码
+- `authelia` —— 接入自托管 Authelia（forward_auth；Windows 不可用）
 
-- `auto: true` 启动时自动开启；其余列出但停止，弹窗里手动开
-- 公网地址从进程输出解析（`extractTunnelUrl`）：**每段输出重算、已知隧道域名
-  优先**（ngrok.io / trycloudflare.com / loca.lt / serveo.net / …），无关链接
-  （如 cloudflared 打印的 cloudflare.com 官网）会被后面的真 URL 覆盖；输出与
-  URL 缓存在 globalThis，**轮询刷新不丢失**
-- 停止即 kill 进程；pi-web 退出（exit/SIGINT/SIGTERM）时全部清理
-- 工具模板路径可探测（`~/pi-tunnels/<name>` / PATH）或 `PI_WEB_TUNNEL_TOOL_PATHS`
-  JSON 覆盖；隧道进程以独立进程组运行（`detached`），停止/退出时整组清理，测试不会因残留 pipe 挂起
-- **serveo**：必须带 `-o StrictHostKeyChecking=no -o ConnectTimeout=10 -o
-  ExitOnForwardFailure=yes`，否则首次 Host key 确认在非交互环境直接失败；公网
-  URL 域名是 `serveousercontent.com`（已在已知域名列表）
-- **ngrok**：有免费版（Free Hobbyist，1 在线隧道），但需先免费注册后在
-  ngrok.com 控制台拿 token，执行 `ngrok config add-authtoken <token>`；UI 的
-  "需 token" 标注悬停可见注册说明
-- 服务后缀（`getServiceHostSuffixes`）自动过滤 IP 字面量（如 `PI_WEB_HOSTNAME=127.0.0.1`
-  不会产生 `.127.0.0.1` 通配后缀）
-
-**国内网络实测（2026-08）**：cloudflared 的 QUIC/HTTP2 edge 发现走 SRV 查询，
-本地 DNS 会被 GFW 污染，需 `--edge <边缘IP>:7844 --edge-ip-version 4` 绕过（IP 从
-`dig @1.1.1.1 a region1.v2.argotunnel.com +short` 取）。localtunnel 无此问题。
-**不要把隧道指向 pi-web 端口（如 30142）**：隧道域名不在 `PI_WEB_ALLOWED_HOSTS`
-时会被 DNS rebinding 防护 403，加白名单则等于无防护暴露 pi-web——危险。
+provider 知识（顺序、默认值、用户管理器、schema）**全部来自库**
+（`providerOrder` / `defaultProvider` / `userManagers` / `tunnelSchemas` /
+`authProviderSchemas`），pi-web 不硬编码任何 provider 名。
 
 ## 架构
 
 ```
 Browser                                  Next.js Server
-  │  GET /api/services?refresh=1            app/api/services/route.ts
-  │  ──────────────────────────────────▶   lib/service-ports.ts (发现 + 缓存 5s)
-  │                                        · 进程树 BFS + 环境标记
-  │                                        · 每端口多监听地址（通配展开）
-  │  GET http://5173.pi.localhost:30142/    proxy.ts
-  │  ──────────────────────────────────▶   Host 匹配多后缀正则 → isServicePortAllowed(5173)
-  │                                        → stripBasePath(路径, basePath)
-  │                                        → rewrite http://127.0.0.1:5173/
-  │                                        · 静态/动态/表单/fetch 全通
-  │  ServicesDialog（顶部工具条按钮，大小屏可见；端口/用户双页签）
-  │  · 每 10s 自动刷新 · 点击端口行展开：
-  │    直连地址（不带 basePath）+ 虚拟主机地址（带 basePath，scheme/端口取自页面）
-  │  · 每行在新独立浏览器窗口打开 + 复制
-  │  · 底部：已配置隧道折叠（启停）+ 两个说明弹窗入口（DNS/泛域名 · 认证指南）
+  │  GET /api/services?refresh=1          app/api/services/route.ts
+  │  ──────────────────────────────────▶ lib/service-ports.ts (候选端口列表)
+  │
+  │  GET /api/service-tunnels             app/api/service-tunnels/route.ts
+  │  ──────────────────────────────────▶ 状态：发现/内部端口/隧道/暴露/provider/站点
+  │  POST /api/service-tunnels/expose     exposeService()（enroll → 本地虚拟主机/隧道）
+  │  POST /api/service-tunnels/tunnel     tunnel start/stop/stop-all
+  │  POST /api/service-tunnels/user-*     provider 用户管理 + TOTP
+  │
+  │  GET http://5173.pi.localhost:30141/  proxy.ts（middleware，同进程）
+  │  ──────────────────────────────────▶ st.proxy.parseHost(host) → resolve()
+  │                                     · deny / deny-auth(401) / pipe(rewrite
+  │                                       127.0.0.1:<port>，含 WS upgrade) /
+  │                                       redirect(登录) / forward
+  │
+  │  ServicesDialog（顶部工具条；Ports / Users 双页签，10s 自动刷新）
+  │  · 端口行展开：直连 + 虚拟主机地址 + 暴露表单（schema 驱动）+ 已开暴露
+  │  · 用户页签：增删用户/改密/TOTP（按站点隔离）
   │
   │  启动时（instrumentation.ts）
-  │  · PI_WEB_CHILD_MARKER → lib/service-ports（守护进程兜底）
-  │  · PI_WEB_TUNNEL_CMD → lib/tunnels（spawn 隧道，退出时 kill）
+  │  · getServiceTunnels() → globalThis.__piServiceTunnels（库单例）
 ```
 
-### 文件清单
+**关键：middleware（proxy.ts）与 app server 同进程、共享 globalThis** ——
+路由决策在 middleware 里进程内调用库实例，无文件/IPC 通道、无 TTL 缓存。
+
+## 文件清单
 
 | 文件 | 职责 |
 |---|---|
-| `proxy.ts` | 虚拟主机反代入口（根目录，Next 16 proxy 约定）：多后缀匹配 + basePath 剥离 + 原有安全门 |
-| `lib/service-ports.ts` | 跨平台发现 + 缓存白名单 + 多地址收集 + `getServiceHostSuffixes()` + `stripBasePath()` |
-| `app/api/services/route.ts` | GET 端口列表 + `serviceHostSuffix(es)` + `platform` |
-| `components/ServicesDialog.tsx` | 弹窗 UI（端口/用户页签 + 可展开行 + 直连/虚拟主机链接 + 新窗口打开 + 复制 + 已配置隧道折叠 + 说明弹窗） |
-| `components/AppShell.tsx` | 顶部工具条图标按钮（13px，与历史/分支同规格）+ 弹窗挂载 |
-| `instrumentation.ts` | 启动时写 `PI_WEB_CHILD_MARKER` + 启动隧道（`PI_WEB_TUNNEL_CMD`） |
-| `lib/tunnels.ts` | 多隧道管理：配置解析、spawn/stop、URL 解析、输出缓存（globalThis 防丢） |
-| `app/api/tunnels/route.ts` | POST start/stop 隧道，返回最新列表 |
-| `lib/i18n/messages/{en,zh-CN}.ts` | `common.services` + `services.*` |
-| `lib/service-ports.test.mjs` | 9 个测试：解码、解析、子进程发现、多地址、stripBasePath、守护进程标记 |
-| `lib/tunnels.test.mjs` | 4 个测试：配置解析（多隧道+兼容）、URL 解析、start/stop 幂等、URL 跨刷新保持 |
+| `proxy.ts` | 安全门 + 服务虚拟主机入口：`st.proxy.parseHost/resolve` → deny/401/rewrite/redirect；Next 内部 http-proxy 处理 HTTP + WebSocket |
+| `lib/service-tunnels-integration.ts` | 库单例（globalThis）：configDir/cacheDir/marker/deployBasePath/baseDomain 装配；`exposeService`/`exposeSelf`/`ensureSites` |
+| `lib/service-ports.ts` | 发现适配（候选列表）+ 后缀/baseDomain helpers（复用 middleware-safe 版本） |
+| `lib/service-proxy-shared.ts` | middleware-safe helpers（无库依赖）：`getBaseDomains`/`getServiceHostSuffixes`/`isServicePortAllowed`（从 globalThis 读 enrollment） |
+| `lib/tunnels.ts` | 隧道信息适配（thin adapter，管理逻辑在库内） |
+| `app/api/service-tunnels/route.ts` | GET 状态（+logs/detect 子查询）；POST expose/tunnel/user/TOTP/allow-download |
+| `app/api/services/route.ts` | GET 端口候选列表 + 后缀 + 平台 |
+| `components/ServicesDialog.tsx` | 弹窗 UI（Ports/Users 页签、schema 驱动表单、URL 打开/复制、日志、TOTP） |
+| `instrumentation.ts` | 启动时初始化库单例 + `maybeExposeSelf`（PI_WEB_EXPOSE） |
+| `lib/service-proxy-shared.ts` | middleware-safe：后缀/部署域、self 门控（allowlocal）、隧道域名→虚拟主机映射 |
+| `lib/service-proxy-shared.test.mjs` | secret/allowlocal/端口/映射/解析单元测试 |
+| `lib/service-ports.test.mjs` | 发现/解码/多地址/子进程/守护进程标记测试 |
+| `lib/request-security.test.mjs` | API origin / host 校验测试 |
+| `lib/web-auth.test.mjs` | 可选密码门测试 |
 
 ## 配置（环境变量）
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `PI_WEB_SVC_HOST_SUFFIX` | `.pi.localhost` | 显式自定义服务后缀，如 `.pi.lan` |
-| `PI_WEB_ALLOWED_HOSTS` / `PI_WEB_HOSTNAME` | — | 已有配置；其域名自动成为服务后缀（如 `example.com` → `*.example.com`） |
-| `PI_WEB_BASE_PATH` | — | 已有配置；服务 URL 携带、proxy 转发前剥离（见 D7） |
-| `PI_WEB_TUNNELS` | — | 隧道清单 JSON：`[{name, cmd, auto?}]`，弹窗内可开/停（见 D8） |
-| `PI_WEB_TUNNEL_CMD` / `PI_WEB_TUNNEL_NAME` | — | 旧单条写法（等价于一条 `auto:true` 隧道） |
-| `PI_WEB_CHILD_MARKER` | 自动 | 子进程标记（一般无需手动设） |
+| `PI_WEB_BASE_DOMAIN` | — | 部署域（逗号分隔，`host:port` 允许）；`<port>.<domain>` 服务虚拟主机 + expose 的 portless baseUrl；首个为主域 |
+| `PI_WEB_ALLOWED_HOSTS` / `PI_WEB_HOSTNAME` | — | 旧 fallback；域名自动成为服务后缀 |
+| `PI_WEB_BASE_PATH` | — | 子路径部署（如 `/dev`）；作为 `deployBasePath` 传给库（认证登录路径合并 + 转发前剥离） |
+| `PI_WEB_PASSWORD` | — | pi-web 自身的可选 Basic 密码门（沿用） |
+| `PI_WEB_EXPOSE` | — | **启动时暴露 pi-web 自身**（纯 `k=v,k2=v2` 逗号格式，无 JSON），见下节 |
+
+> 服务端口隧道无启动时环境变量配置——一律从弹窗「暴露」就地开启；`PI_WEB_EXPOSE`
+> 只负责 pi-web **自身**的暴露。
+
+## 暴露 pi-web 自身（PI_WEB_EXPOSE）
+
+把 pi-web 自己的管理 UI 暴露给外部用户，**所有授权访问都走 proxy 认证**（没有
+放行后门）。环境变量用纯 `a=b,c=d` 格式（不要求 JSON）：
+
+```bash
+# 本地虚拟主机 + portal 认证（最简）
+PI_WEB_EXPOSE="mode=proxy" npm run dev
+
+# 仅配置 allowlocal/allowHost，不暴露自身（mode 省略 = none）
+PI_WEB_EXPOSE="allowlocal=false,allowHost=pi.example.com" npm run dev
+
+# 公网隧道 + 双因素
+PI_WEB_EXPOSE="mode=both,tunnel=cloudflared,auth=portal,policy=two_factor" npm run dev
+
+# ngrok 自定义域名 + 预置用户
+PI_WEB_EXPOSE="mode=tunnel,tunnel=ngrok,tunnel.domain=alice.ngrok-free.app,ngrokAuthtoken=xxx,user.name=admin,user.password=pw" npm run dev
+
+# 自防护反代直连例外（必须显式声明：裸部署域默认走 proxy 认证）
+PI_WEB_EXPOSE="mode=proxy,allowlocal=false,allowHost=pi.example.com,allowHost=backup.example.com" npm run dev
+```
+
+**字段**（键名对齐 service-tunnels CLI）：
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `mode` | `none` | `none`（默认，仅应用 allowlocal/allowHost 配置，**不暴露自身**）/ `proxy`（本地虚拟主机，不建隧道）/ `both` / `tunnel` |
+| `auth` | `portal` | `portal` / `basic` / `authelia` / `auto` / `none` |
+| `policy` | 跟随 site（two_factor） | `one_factor` / `two_factor` / `deny` |
+| `tunnel` | `cloudflared` | 隧道类型（mode 含 tunnel 时） |
+| `protocol` | auto-detect | `http` / `https` / `tcp` |
+| `allowToolDownload` | 库默认 | `true` / `false` |
+| `allowlocal` | `true` | 直连门控，见下 |
+| `allowHost` | — | **例外域名**（可重复键，如 `allowHost=pi.example.com,allowHost=backup.example.com`，或单键空格分隔）；allowlocal=false 时仍允许直连的域名——你自己防护层（反代）转发的入口。**部署域不会自动例外**，需要显式列出 |
+| `port` | `PORT ?? 30141` | 显式覆盖自身端口（应对 `--port` 自定义 + 未设 PORT） |
+| `ngrokAuthtoken` | — | ngrok 专用 |
+| `user.name` / `user.password` | — | 预置认证用户 |
+| `tunnel.<字段>` | — | 隧道 schema 参数（`domain`/`server`/`token`/…） |
+| `provider.<路径>` | — | provider 参数（点号嵌套） |
+
+**固定值**：`site="pi-web"`（与 dev 服务隔离的认证域）、
+`tunnelName=expose-self-<port>`；解析规则：逗号分隔、未知键警告忽略、
+`mode` 省略默认 `none`（只应用配置不暴露），非法 mode 不启用（fail-closed）；启动失败只打日志不阻塞。
+
+**安全模型**（self-expose 的三个入口，全部经 proxy 认证）：
+
+```
+外部用户 ──▶ 虚拟主机域名（<port>-pi-web.<domain>）──▶ proxy resolve（cookie 认证）──▶ 放行
+外部用户 ──▶ 隧道公网域名（ngrok/trycloudflare/…）────▶ 映射为虚拟主机 ──▶ 同上一行
+LAN 直连（192.168.x.x:<port>，仅监听外网时）───────────▶ allowlocal=false → 403
+回环直连（127.0.0.1/localhost）───────────────────────▶ 本机可信，放行（可配 PI_WEB_PASSWORD）
+```
+
+- **隧道域名映射**：middleware 把 self 暴露的隧道公网域名请求的 Host 映射为
+  该暴露的虚拟主机域名，走同一个 `resolve()`（portal/basic cookie 校验）——
+  无 cookie → 302 登录页，伪造 Host 也无法绕过认证（无白名单后门）。
+  tunnel 模式暴露时自动注册对应的 proxy binding（`<port>-pi-web.<suffix>`）。
+- **allowlocal=false**：拦截非回环 Host 的直连（LAN/公网 403）；**例外只认显式
+  `allowHost` 列表**（env + UI 运行时覆盖）——部署域**不会自动放行**：裸部署域
+  请求要么走 proxy 认证（虚拟主机形式 `<port>-pi-web.<domain>`），要么显式
+  列进 `allowHost`（声明由你自己的防护层负责）。这样「所有授权访问走 proxy」
+  的默认语义不被隐式例外破坏。锁死后管理入口（UI 页签/API）仍可通过认证
+  网关访问。
+- **铁律**：暴露期间保持 pi-web 只监听回环（不要 `-H 0.0.0.0`）——一旦监听
+  外网，局域网直连虽然被 allowlocal 拦，但隧道/虚拟主机入口依赖网关认证，
+  监听外网会把攻击面扩大到本地端口本身。
+- 附带机制：旋转 internal secret（**60 秒轮换 + 15s 宽限**）作为纵深——
+  middleware 转发时附加 `x-pi-web-internal`。**注意**：Next 的外部 rewrite
+  不传递 middleware 修改的自定义 header，当前门控实际由「回环 Host 判断」
+  承担；若未来转发改为 http-proxy（可控 header）即可直接启用 secret 校验。
+  轮换不是防爆破（128-bit 随机不可爆破），而是让泄漏自动过期：宽限期覆盖
+  in-flight 转发（毫秒级），15s 绰绰有余。
+- UI 里可实时管理（ServicesDialog「Pi-web」页签）：地址列表、暴露开关、
+  allowlocal 切换、生成 `PI_WEB_EXPOSE` 片段供抄到启动脚本（界面改动一次性
+  生效，重启恢复环境变量值）。
+- **与 `PI_WEB_PASSWORD` 互斥**：self-expose 时不要同时设 `PI_WEB_PASSWORD`
+  （网关转发的请求不带 Basic 头，会被密码门拦）；本机直连由 allowlocal
+  语义（回环放行）承担，外部由网关认证承担。
 
 ## 泛域名解析配置（弹窗内同款说明）
 
@@ -206,67 +278,51 @@ Browser                                  Next.js Server
 |---|---|
 | 本机 | `*.pi.localhost` 零配置，浏览器自动映射 127.0.0.1（RFC 6761） |
 | 局域网 | dnsmasq 加 `address=/pi.lan/<服务器IP>`；设置 `PI_WEB_SVC_HOST_SUFFIX=.pi.lan`、`PI_WEB_ALLOWED_HOSTS=pi.lan` |
-| 公网域名 | DNS 加通配 A 记录 `*.pi.example.com → <服务器IP>`；域名加入 `PI_WEB_ALLOWED_HOSTS` |
-| 隧道 | 端口卡片就地开启（工具模板自动代入端口），或启动时 `PI_WEB_TUNNELS`/`PI_WEB_TUNNEL_CMD` 指向服务端口；**不要 tunnel pi-web 本体** |
+| 公网域名 | DNS 加通配 A 记录 `*.example.com → <服务器IP>`；域名加入 `PI_WEB_BASE_DOMAIN`（或旧 `PI_WEB_ALLOWED_HOSTS`） |
+| 隧道 | 弹窗「暴露」就地开启（schema 驱动，自动代入端口）；**不要 tunnel pi-web 本体** |
 
-## 本机已装工具（~/pi-tunnels）
+## 暴露前的授权管理
 
-```bash
-~/pi-tunnels/cloudflared   # v2026.7.3，GitHub release（国内走 ghfast.top 镜像）
-~/pi-tunnels/ngrok         # v3.39.10，equinox.io 直连；需先 ngrok config add-authtoken
-lt                         # v2.0.2，npm -g localtunnel（npmmirror 镜像）
-
-# 端口卡片就地开启（推荐）：弹窗展开端口 → "开启此端口隧道" → 选择工具
-# 启动时配置（指向服务端口，示例）：
-PI_WEB_TUNNEL_CMD="lt --port 8901"  npm run dev
-```
-
-## 暴露前的授权管理（弹窗内同款说明）
-
-任何暴露方式（DNS 或隧道）都应先配置 HTTPS 与认证。
-
-**已内置支持**（端口卡片「立即公开」中直接选用 provider）：
-- `portal` —— 内置认证门户：自带用户管理与 TOTP 2FA（弹窗「用户」页签管理）
-- `basic` —— HTTP Basic 认证：用户名 + 密码
-- `authelia` —— 接入自托管 Authelia（forward_auth；Windows 不可用）
-
-**可自行扩展**（在 pi-web / 隧道前置的 nginx 或 Caddy 上配置）：
+任何暴露方式（DNS 或隧道）都应先配置 HTTPS 与认证。弹窗「暴露」表单中
+直接选用 provider（portal / basic / authelia），或用 forward-auth 接入外部
+身份平台：
 
 | 工具 | 说明 |
 |---|---|
-| **Authelia**（28k★） | 自托管 SSO + 2FA 门户，配合 Caddy/nginx `forward_auth`（推荐首选） |
-| **Authentik**（22k★） | 开源身份平台，OIDC/SAML/LDAP |
-| **oauth2-proxy**（15k★） | 轻量反向代理认证，对接 Google/GitHub/OIDC |
-| **Keycloak**（36k★） | 企业级 IAM（较重） |
+| **Authelia** | 自托管 SSO + 2FA 门户，配合 Caddy/nginx `forward_auth`（推荐首选） |
+| **Authentik** | 开源身份平台，OIDC/SAML/LDAP |
+| **oauth2-proxy** | 轻量反向代理认证，对接 Google/GitHub/OIDC |
+| **Keycloak** | 企业级 IAM（较重） |
 | **Cloudflare Access** | 托管式零信任网关（免费额度） |
 
 ## 限制（已知）
 
-1. **WebSocket 不过代理**：Next 服务器对非 HMR 的 upgrade 是 no-op。Vite HMR 等纯
-   WS 链路需直连（同机 `http://localhost:<port>`）或隧道。
-2. **硬编码绝对 URL**（页面里写死 `http://localhost:5173/x`）绕过代理：同机浏览器
-   仍能直连所以可用，远程部署会失败。
-3. **`*.pi.localhost` 只在浏览器本机生效**：远程浏览器需要按上表配置泛域名解析
-   （dnsmasq 通配 / 域名通配 A 记录），或 hosts 逐条。
-4. Windows 上 re-parent 守护进程无 env 标记兜底（CIM 读不到其他进程 env），依赖
+1. **WebSocket**：通过 proxy 的服务虚拟主机 **支持** WS 升级（Next rewrite
+   的内部 http-proxy 处理 HTTP + WS）。不经过 pi-web 的直连/独立监听不受影响。
+2. **硬编码绝对 URL**（页面里写死 `http://localhost:5173/x`）绕过代理：
+   同机浏览器仍能直连，远程部署会失败。
+3. **`*.pi.localhost` 只在浏览器本机生效**：远程浏览器需要按上表配置泛域名
+   解析（dnsmasq 通配 / 域名通配 A 记录），或 hosts 逐条。
+4. **Windows 的守护进程 env 标记不可读**（CIM 读不到其他进程 env），依赖
    进程树；Windows 测试场景少见 daemonize，可接受。
+5. **tcp 暴露不带认证**（库的 tcp 路径忽略 provider），仅限可信网络。
 
 ## 测试
 
 ```bash
-node --test lib/service-ports.test.mjs lib/tunnels.test.mjs
+node --test lib/service-ports.test.mjs lib/request-security.test.mjs lib/web-auth.test.mjs
 # service-ports：IPv4/IPv6 解码、cmdline 特征、lsof/netstat 解析、子进程端口发现、
 #               多监听地址/通配展开、stripBasePath、daemonized 后代（env 标记）发现
-# tunnels：配置解析（PI_WEB_TUNNELS + 旧 CMD 兼容）、URL 解析、start/stop、幂等、URL 跨刷新保持
+# request-security：API origin/host 校验（DNS-rebinding 门）
+# web-auth：可选 Basic 密码门
 ```
 
-端到端验证路径（已实测）：浏览器开新会话 → 让 pi 起测试服务 → `GET /api/services`
-发现端口 → 弹窗展开显示直连（不带 basePath）+ 多后缀虚拟主机地址（带 basePath，
-端口取自页面 URL）→ 端口卡片就地开启隧道（模板自动代入端口）→ 就地显示公网
-URL → 所有"打开"在新浏览器 tab 打开；proxy 剥离 basePath 后服务返回正确内容
-（echo 服务验证 `/dev/foo → /foo`）。
+端到端验证路径：浏览器开新会话 → 让 pi 起测试服务 → `GET /api/services` 列出
+端口 → 弹窗展开显示直连 + 虚拟主机地址 → 暴露（proxy 模式）→ 通过
+`<port>.pi.localhost` 访问服务（HTTP + WS）→ 带 provider 的暴露验证登录跳转 →
+Users 页签验证用户管理 + TOTP。
 
 ## 未来工作
 
-- [ ] WS 代理：自定义 server 或 sidecar（`ws` + http-proxy）
-- [ ] macOS/Windows 的 env 标记读取（macOS `ps eww` 解析）
+- [ ] 更多隧道 provider 的 schema 透传（跟随 service-tunnels 库演进）
+- [ ] 暴露粒度细化：按路径 / 按 header 的访问控制策略

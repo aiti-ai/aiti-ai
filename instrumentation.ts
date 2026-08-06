@@ -10,9 +10,11 @@ export async function register(): Promise<void> {
   const { configureHttpDispatcher } = await import("@/lib/http-dispatcher");
   configureHttpDispatcher();
 
-  // Optional auth-proxy listener (PI_WEB_PROXY_PORT): pi-web's own process
-  // also answers virtual hosts like `30142-portal.localhost:<port>`. Off by
-  // default — only starts when the env var is set.
-  const { startProxyIfEnabled } = await import("@/lib/service-tunnels-integration");
-  startProxyIfEnabled();
+  // Initialize the service-tunnels instance on globalThis — the middleware
+  // (proxy.ts) resolves service virtual hosts through it in-process. No
+  // separate proxy listener anymore (decisions are embedded in the middleware).
+  const { getServiceTunnels, maybeExposeSelf } = await import("@/lib/service-tunnels-integration");
+  getServiceTunnels();
+  // Optional self-exposure from PI_WEB_EXPOSE (best-effort, non-blocking).
+  void maybeExposeSelf();
 }

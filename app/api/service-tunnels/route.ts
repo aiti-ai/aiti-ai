@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isApiRequestAllowed } from "@/lib/request-security";
+import { setAllowLocal, setAllowLocalHosts } from "@/lib/service-proxy-shared";
 import {
   getServiceTunnels,
   listPiServices,
   exposeService,
   ensureSites,
+  exposeSelf,
+  stopSelf,
+  getSelfExposeState,
+  type SelfExposeOptions,
 } from "@/lib/service-tunnels-integration";
 
 /**
@@ -55,6 +60,7 @@ export async function GET(request: NextRequest) {
       daemon: st.daemon.status(),
       sites: st.sites.list(),
       proxy: st.proxy.status ? st.proxy.status() : null,
+      self: getSelfExposeState(),
     });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
@@ -170,6 +176,40 @@ export async function POST(request: NextRequest) {
       case "set-allow-tool-download": {
         st.tools.setAllowDownload(!!body.allowDownload);
         return NextResponse.json({ allowToolDownload: st.tools.allowDownload() });
+      }
+      // ---- Pi-web self-exposure (runtime override of PI_WEB_EXPOSE) ----
+      case "self-expose": {
+        const res = await exposeSelf({
+          mode: body.mode as SelfExposeOptions["mode"],
+          auth: body.provider as string | undefined,
+          tunnel: body.tunnel,
+          protocol: body.protocol,
+          policy: body.policy as SelfExposeOptions["policy"],
+          allowToolDownload: body.allowToolDownload,
+          tunnelParams: body.tunnelParams,
+          providerParams: body.providerParams,
+        } as SelfExposeOptions);
+        return NextResponse.json({ ok: true, result: res, self: getSelfExposeState() });
+      }
+      case "self-stop": {
+        await stopSelf();
+        return NextResponse.json({ ok: true, self: getSelfExposeState() });
+      }
+      case "self-allowlocal": {
+        const v = (body as { allowLocal?: boolean }).allowLocal;
+        if (typeof v !== "boolean") {
+          return NextResponse.json({ error: "allowLocal required (boolean)" }, { status: 400 });
+        }
+        setAllowLocal(v);
+        return NextResponse.json({ allowLocal: getSelfExposeState().allowLocal });
+      }
+      case "self-allowhosts": {
+        const hosts = (body as { hosts?: string[] }).hosts;
+        if (!Array.isArray(hosts)) {
+          return NextResponse.json({ error: "hosts required (string array)" }, { status: 400 });
+        }
+        setAllowLocalHosts(hosts);
+        return NextResponse.json({ allowHosts: getSelfExposeState().allowHosts });
       }
       default:
         return NextResponse.json({ error: `unknown action: ${body.action}` }, { status: 400 });

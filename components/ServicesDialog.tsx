@@ -55,6 +55,18 @@ interface ServicesResponse {
   toolStatus?: Array<{ name: string; path: string | null; source: "toolPaths" | "path" | "cache" | null }>;
 }
 
+interface SelfState {
+  exposing: boolean;
+  allowLocal: boolean;
+  allowHosts: string[];
+  port: number;
+  mode: string | null;
+  auth: string | null;
+  tunnel: string | null;
+  config: Record<string, unknown> | null;
+  urls: Array<{ label: string; url: string }>;
+}
+
 function formatAddrForUrl(addr: string): string {
   return addr.includes(":") ? `[${addr}]` : addr;
 }
@@ -76,7 +88,8 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
   const [logsFor, setLogsFor] = useState<string | null>(null);
   const [logsData, setLogsData] = useState<{ access: string; error: string } | null>(null);
   const [logsLoading, setLogsLoading] = useState(false);
-  const [tab, setTab] = useState<"ports" | "users">("ports");
+  const [tab, setTab] = useState<"ports" | "self" | "users">("ports");
+  const [self, setSelf] = useState<SelfState | null>(null);
   const [infoModal, setInfoModal] = useState<"access" | "auth" | null>(null);
 
   const refresh = useCallback((force = false) => {
@@ -93,7 +106,7 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
     // "Active exposes" section at the top shows them.
     fetch(apiUrl("/api/service-tunnels"))
       .then((r) => r.json())
-      .then((d: { exposes?: ExposeInfo[]; allowToolDownload?: boolean; toolStatus?: ServicesResponse["toolStatus"] }) => {
+      .then((d: { exposes?: ExposeInfo[]; allowToolDownload?: boolean; toolStatus?: ServicesResponse["toolStatus"]; self?: SelfState }) => {
         if (d.exposes) {
           const ex = d.exposes;
           setData((prev) => (prev ? { ...prev, exposes: ex } : prev));
@@ -102,6 +115,7 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
         if (d.toolStatus) {
           setData((prev) => (prev ? { ...prev, toolStatus: d.toolStatus } : prev));
         }
+        if (d.self) setSelf(d.self);
       })
       .catch(() => {});
   }, [t]);
@@ -216,7 +230,7 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
 
         {/* Tabs: ports | users */}
         <div style={{ display: "flex", gap: 2, padding: "6px 14px 0", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-          {(["ports", "users"] as const).map((k) => (
+          {(["ports", "self", "users"] as const).map((k) => (
             <button
               key={k}
               onClick={() => setTab(k)}
@@ -231,7 +245,7 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
                 fontWeight: tab === k ? 600 : 400,
               }}
             >
-              {k === "ports" ? t("services.tabPorts") : t("services.tabUsers")}
+              {k === "ports" ? t("services.tabPorts") : k === "self" ? t("services.tabSelf") : t("services.tabUsers")}
             </button>
           ))}
         </div>
@@ -325,8 +339,9 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
                 ...(e.domainUrl ? [{ url: e.domainUrl, label: t("services.proxyDomain") }] : []),
               ]);
               // Deployment entry: <port>.<page-domain><basePath> — served by
-              // pi-web's own virtual-host proxy (PI_WEB_HOSTNAME/ALLOWED_HOSTS
-              // base domain + PI_WEB_BASE_PATH), only for actually-exposed ports.
+              // pi-web's own virtual-host proxy (deployment domain from
+              // PI_WEB_BASE_DOMAIN / page host + PI_WEB_BASE_PATH), only for
+              // actually-exposed ports.
               if (proxyExposes.length > 0 && currentDomainSuffix && !currentDomainSuffix.startsWith(".localhost") && currentDomainSuffix !== ".pi.localhost") {
                 proxyUrls.push({ url: `${scheme}//${s.port}${currentDomainSuffix}${pagePort}${BASE_PATH}`, label: t("services.proxyDeploy") });
               }
@@ -416,6 +431,13 @@ export function ServicesDialog({ onClose }: { onClose: () => void }) {
           </div>
         </div>
           </>
+        )}
+
+        {/* Pi-web tab — self-exposure + direct-access gate */}
+        {tab === "self" && (
+          <div style={{ flex: 1, overflowY: "auto", padding: "12px 14px" }}>
+            <SelfTab self={self} t={t} openInNewTab={openInNewTab} copy={copy} copiedKey={copiedKey} onChanged={refresh} />
+          </div>
         )}
 
         {/* Users tab — auth user management (library UserManager) */}
@@ -1068,6 +1090,239 @@ function AuthUsersSection({ t }: { t: (key: string, params?: Record<string, stri
           <button onClick={() => { setTotpEnrolled(null); setQrUrl(null); setTotpCode(""); }} style={{ ...btn, marginTop: 8, display: "block" }}>{t("services.close")}</button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** Pi-web tab: self-exposure control + direct-access gate (allowlocal). */
+function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged }: {
+  self: SelfState | null;
+  t: (k: string) => string;
+  openInNewTab: (url: string) => void;
+  copy: (key: string, url: string) => void;
+  copiedKey: string | null;
+  onChanged: () => void;
+}) {
+  const [mode, setMode] = useState("proxy");
+  const [auth, setAuth] = useState("portal");
+  const [tunnel, setTunnel] = useState("cloudflared");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [copiedEnv, setCopiedEnv] = useState(false);
+  const [allowHostsInput, setAllowHostsInput] = useState("");
+
+  const exposing = self?.exposing ?? false;
+  const allowLocal = self?.allowLocal ?? true;
+  const hostname = typeof window !== "undefined" ? window.location.hostname.toLowerCase() : "";
+  const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1" || hostname.endsWith(".localhost");
+  const warnNonLoopback = exposing && !loopback;
+
+  const btn: React.CSSProperties = {
+    padding: "5px 12px",
+    borderRadius: 5,
+    cursor: "pointer",
+    fontSize: 12,
+    border: "1px solid var(--border)",
+    background: "none",
+    color: "var(--text)",
+  };
+  const select: React.CSSProperties = {
+    padding: "4px 6px",
+    borderRadius: 5,
+    border: "1px solid var(--border)",
+    background: "var(--bg-panel)",
+    color: "var(--text)",
+    fontSize: 12,
+  };
+
+  const toggleAllowLocal = (v: boolean) => {
+    setErr(null);
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "self-allowlocal", allowLocal: v }),
+    })
+      .then((r) => r.json())
+      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else onChanged(); })
+      .catch(() => setErr(String(t("services.error"))));
+  };
+
+  const saveAllowHosts = () => {
+    setErr(null);
+    const hosts = allowHostsInput.split(/[\s,]+/).map((h) => h.trim()).filter(Boolean);
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "self-allowhosts", hosts }),
+    })
+      .then((r) => r.json())
+      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else onChanged(); })
+      .catch(() => setErr(String(t("services.error"))));
+  };
+
+  const doExpose = () => {
+    setBusy(true); setErr(null);
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "self-expose", mode, provider: auth === "none" ? undefined : auth, tunnel }),
+    })
+      .then((r) => r.json())
+      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else onChanged(); })
+      .catch(() => setErr(String(t("services.error"))))
+      .finally(() => setBusy(false));
+  };
+
+  const doStop = () => {
+    setBusy(true); setErr(null);
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "self-stop" }),
+    })
+      .then((r) => r.json())
+      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else onChanged(); })
+      .catch(() => setErr(String(t("services.error"))))
+      .finally(() => setBusy(false));
+  };
+
+  const envSnippet = `PI_WEB_EXPOSE="mode=${mode},auth=${auth}${mode !== "proxy" ? `,tunnel=${tunnel}` : ""}${self?.config?.allowHost ? `,allowHost=${String((self.config.allowHost as string[]).join(",allowHost="))}` : ""}"`;
+  const copyEnv = () => {
+    copyText(envSnippet).then(() => {
+      setCopiedEnv(true);
+      setTimeout(() => setCopiedEnv(false), 1500);
+    }).catch(() => {});
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Access URLs */}
+      <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 8 }}>
+          {t("services.selfAccessUrls")} <span style={{ fontWeight: 400, color: "var(--text-dim)" }}>· port {self?.port ?? "?"}</span>
+        </div>
+        {!self?.urls?.length ? (
+          <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("services.none")}</div>
+        ) : (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {self.urls.map((u) => (
+              <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
+                <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 110 }}>{u.label}</span>
+                <button onClick={() => openInNewTab(u.url)}
+                  style={{ flex: 1, textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={u.url}>
+                  {u.url}
+                </button>
+                <button onClick={() => copy(`self-${u.url}`, u.url)} style={{ ...btn, padding: "3px 8px", flexShrink: 0 }}>
+                  {copiedKey === `self-${u.url}` ? "✓" : t("services.copy")}
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {warnNonLoopback && (
+        <div style={{ border: "1px solid #f87171", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "#f87171" }}>
+          ⚠ {t("services.selfWarning")}
+        </div>
+      )}
+
+      {/* allowlocal */}
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }} title={t("services.selfAllowLocalHint")}>
+        <input
+          type="checkbox"
+          checked={allowLocal}
+          onChange={(e) => toggleAllowLocal(e.target.checked)}
+          style={{ accentColor: "var(--accent)", cursor: "pointer", marginTop: 2 }}
+        />
+        <span style={{ fontSize: 12, color: "var(--text)" }}>
+          <b>{t("services.selfAllowLocal")}</b>
+          <span style={{ display: "block", color: "var(--text-dim)", fontSize: 11, marginTop: 2 }}>{t("services.selfAllowLocalHint")}</span>
+        </span>
+      </label>
+
+      {/* allowHosts — operator-protected front domains kept reachable when allowlocal=false */}
+      <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+          {t("services.selfAllowHosts")}
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }}>{t("services.selfAllowHostsHint")}</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input
+            value={allowHostsInput}
+            onChange={(e) => setAllowHostsInput(e.target.value)}
+            placeholder="pi.example.com backup.example.com"
+            style={{ flex: 1, padding: "4px 8px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 12, fontFamily: "var(--font-mono)" }}
+          />
+          <button onClick={saveAllowHosts} style={{ ...btn, flexShrink: 0 }}>{t("services.selfAllowHostsSave")}</button>
+        </div>
+        {(self?.allowHosts ?? []).length > 0 && (
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>
+            {t("services.selfAllowHostsCurrent")}: <span style={{ fontFamily: "var(--font-mono)" }}>{self!.allowHosts.join(", ")}</span>
+          </div>
+        )}
+      </div>
+
+      {/* Expose controls */}
+      <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+          {t("services.selfExpose")}
+          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: exposing ? "#16a34a" : "var(--text-dim)" }}>
+            ● {exposing ? t("services.selfExposing") : t("services.selfNotExposing")}
+          </span>
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 10 }}>{t("services.selfExposeHint")}</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <label style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            {t("services.selfMode")}:
+            <select value={mode} onChange={(e) => setMode(e.target.value)} style={{ ...select, marginLeft: 4 }}>
+              <option value="proxy">proxy</option>
+              <option value="both">both</option>
+              <option value="tunnel">tunnel</option>
+            </select>
+          </label>
+          <label style={{ fontSize: 12, color: "var(--text-muted)" }}>
+            {t("services.selfAuth")}:
+            <select value={auth} onChange={(e) => setAuth(e.target.value)} style={{ ...select, marginLeft: 4 }}>
+              <option value="portal">portal</option>
+              <option value="basic">basic</option>
+              <option value="authelia">authelia</option>
+              <option value="none">none</option>
+            </select>
+          </label>
+          {mode !== "proxy" && (
+            <label style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              {t("services.selfTunnel")}:
+              <select value={tunnel} onChange={(e) => setTunnel(e.target.value)} style={{ ...select, marginLeft: 4 }}>
+                <option value="cloudflared">cloudflared</option>
+                <option value="ngrok">ngrok</option>
+                <option value="frpc">frpc</option>
+                <option value="localtunnel">localtunnel</option>
+              </select>
+            </label>
+          )}
+          {!exposing ? (
+            <button onClick={doExpose} disabled={busy} style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600 }}>
+              {busy ? "…" : t("services.selfExposeBtn")}
+            </button>
+          ) : (
+            <button onClick={doStop} disabled={busy} style={{ ...btn }}>
+              {busy ? "…" : t("services.selfStopBtn")}
+            </button>
+          )}
+        </div>
+        {err && <div style={{ fontSize: 12, color: "#f87171", marginTop: 8 }}>{err}</div>}
+      </div>
+
+      {/* env snippet */}
+      <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>{t("services.selfEnvHint")}</div>
+        <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+          <code style={{ flex: 1, fontFamily: "var(--font-mono)", fontSize: 11, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, padding: "5px 8px", color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{envSnippet}</code>
+          <button onClick={copyEnv} style={{ ...btn, flexShrink: 0 }}>{copiedEnv ? "✓" : t("services.copy")}</button>
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>{t("services.selfEnvNote")}</div>
+      </div>
     </div>
   );
 }

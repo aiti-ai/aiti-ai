@@ -62,6 +62,9 @@ nextArgs.push("-H", hostname);
 
 // Always run next's JS entry with node directly — avoids .bin symlink issues
 // and path-with-spaces problems on Windows when shell: true is used.
+// PI_WEB_HOSTNAME is the LISTEN address only (next start -H); deployment
+// domains are configured separately via PI_WEB_BASE_DOMAIN so overriding it
+// here is safe (IP literals are never treated as virtual-host suffixes).
 const child = spawn(process.execPath, [nextBin, ...nextArgs], {
   cwd: pkgDir,
   stdio: ["inherit", "pipe", "inherit"],

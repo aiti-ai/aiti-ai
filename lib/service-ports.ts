@@ -1,33 +1,45 @@
-import { writeFileSync } from "fs";
 import type { ServicePortInfo } from "service-tunnels";
-import { getServiceTunnels } from "./service-tunnels-integration";
-import { allowedPortsFile } from "./service-proxy-shared";
+import { getServiceTunnels } from "./service-tunnels-integration.ts";
+import { getBaseDomains as getBaseDomainsShared, getServiceHostSuffixes } from "./service-proxy-shared.ts";
 
 /**
  * Service-port discovery — thin adapter over the service-tunnels library.
  *
  * Everything platform-specific (Linux /proc, macOS ps+lsof, Windows
  * Get-CimInstance+netstat, wildcard address expansion, marker-based child
- * discovery) now lives in the library; this module keeps pi-web's proxy
- * allow-list + virtual-host suffix machinery on top of it.
+ * discovery) now lives in the library; this module keeps pi-web's discovery
+ * + virtual-host suffix machinery on top of it.
+ *
+ * Discovery here is a CANDIDATE LIST for the UI only. The proxy allow-list is
+ * read directly from the library's persisted enrollment (state.json bindings)
+ * by the middleware — no pi-web-owned cache file is written anymore.
  */
 
 export type { ServicePortInfo } from "service-tunnels";
 
+// Platform parsers + address expansion live in the library (re-exported so
+// pi-web and its tests use exactly the same implementations as discovery).
+export { decodeIpv4, decodeIpv6, expandListeningAddresses, parseLsofAddress, parseNetstatAddress } from "service-tunnels";
+
 /** pi-web's own process cmdline patterns (never "services"). */
 const PI_WEB_OWN = [/next[\\/]dist[\\/]bin[\\/]next/, /next-server/, /pi-web(-options)?\.js/, /bin[\\/]pi-web/];
 
-/** Cached discovery — the cache doubles as the proxy allow-list. Every run
- *  also mirrors the port set to a cache file that the middleware (proxy.ts,
- *  which cannot import the library) reads as its allow-list. */
+/** True for command lines that are pi-web itself (not a user test service). */
+export function isPiWebProcess(cmdline: string): boolean {
+  return PI_WEB_OWN.some((re) => re.test(cmdline));
+}
+
+/** Uncached, Map-form discovery (port → info) — for tests / ad-hoc use. */
+export function discoverServicePorts(): Map<number, ServicePortInfo> {
+  return new Map(
+    getServiceTunnels().discovery.discoverPorts({ excludeCmdline: PI_WEB_OWN }).map((p) => [p.port, p]),
+  );
+}
+
+/** Discovery — candidate list for the UI (the proxy allow-list is read from
+ *  the library's persisted state.json by the middleware, no cache file here). */
 export function getServicePorts(force = false): ServicePortInfo[] {
-  const ports = getServiceTunnels().discovery.getPorts({ excludeCmdline: PI_WEB_OWN, force });
-  try {
-    writeFileSync(allowedPortsFile(), JSON.stringify({ ports: ports.map((p) => p.port), at: Date.now() }), "utf8");
-  } catch {
-    // best-effort — the proxy falls back to an empty allow-list
-  }
-  return ports;
+  return getServiceTunnels().discovery.getPorts({ excludeCmdline: PI_WEB_OWN, force });
 }
 
 /** Whether a port may be proxied (server-side; middleware uses the file). */
@@ -41,31 +53,13 @@ export function getServiceHostSuffix(): string {
   return raw.startsWith(".") ? raw : `.${raw}`;
 }
 
-/**
- * All suffixes that proxy.ts accepts as service virtual hosts, in priority
- * order: the built-in .pi.localhost, the explicit PI_WEB_SVC_HOST_SUFFIX, and
- * the operator-configured hosts (PI_WEB_HOSTNAME / PI_WEB_ALLOWED_HOSTS) so a
- * deployment at example.com automatically serves <port>.example.com too.
- */
-export function getServiceHostSuffixes(): string[] {
-  const out: string[] = [];
-  const add = (raw: string) => {
-    const s = raw.trim().toLowerCase().replace(/^\./, "");
-    // IP literals (e.g. PI_WEB_HOSTNAME=127.0.0.1) cannot be wildcard suffixes.
-    if (!s || isIP(s) !== 0) return;
-    if (!out.includes(`.${s}`)) out.push(`.${s}`);
-  };
-  add(getServiceHostSuffix());
-  for (const h of (process.env.PI_WEB_HOSTNAME ?? "").split(",")) add(h);
-  for (const h of (process.env.PI_WEB_ALLOWED_HOSTS ?? "").split(",")) add(h);
-  return out;
-}
+/** Base domains for the service-tunnels integration (PI_WEB_BASE_DOMAIN
+ *  primary, PI_WEB_ALLOWED_HOSTS / PI_WEB_HOSTNAME fallbacks; host:port kept).
+ *  Re-exported from the middleware-safe helper so both sides agree. */
+export const getBaseDomains = getBaseDomainsShared;
 
-function isIP(s: string): number {
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(s)) return 4;
-  if (s.includes(":")) return 6;
-  return 0;
-}
+/** Virtual-host suffixes accepted by proxy.ts (shared with middleware). */
+export { getServiceHostSuffixes };
 
 /**
  * Strip pi-web's own basePath (e.g. /dev) from a path before forwarding it to
