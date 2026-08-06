@@ -1920,45 +1920,6 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
         </div>
       )}
 
-      {/* allowlocal */}
-      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }} title={t("services.selfAllowLocalHint")}>
-        <input
-          type="checkbox"
-          checked={allowLocal}
-          onChange={(e) => toggleAllowLocal(e.target.checked)}
-          style={{ accentColor: "var(--accent)", cursor: "pointer", marginTop: 2 }}
-        />
-        <span style={{ fontSize: 12, color: "var(--text)" }}>
-          <b>{t("services.selfAllowLocal")}</b>
-          <span style={{ display: "block", color: "var(--text-dim)", fontSize: 11, marginTop: 2 }}>{t("services.selfAllowLocalHint")}</span>
-          {!exposing && !allowLocal && (
-            <span style={{ display: "block", color: "#d97706", fontSize: 11, marginTop: 4 }}>⚠ {t("services.selfNotExposingHint")}</span>
-          )}
-        </span>
-      </label>
-
-      {/* allowHosts — operator-protected front domains kept reachable when allowlocal=false */}
-      <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
-        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
-          {t("services.selfAllowHosts")}
-        </div>
-        <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }}>{t("services.selfAllowHostsHint")}</div>
-        <div style={{ display: "flex", gap: 6 }}>
-          <input
-            value={allowHostsInput}
-            onChange={(e) => { setAllowHostsInput(e.target.value); setAllowHostsTouched(true); }}
-            placeholder="backup.example.com vpn.example.com"
-            style={{ flex: 1, padding: "4px 8px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 12, fontFamily: "var(--font-mono)" }}
-          />
-          <button onClick={saveAllowHosts} style={{ ...btn, flexShrink: 0 }}>{t("services.selfAllowHostsSave")}</button>
-        </div>
-        {(self?.allowHosts ?? []).length > 0 && (
-          <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>
-            {t("services.selfAllowHostsCurrent")}: <span style={{ fontFamily: "var(--font-mono)" }}>{self!.allowHosts.join(", ")}</span>
-          </div>
-        )}
-      </div>
-
       {/* Expose controls */}
       <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
@@ -2063,6 +2024,45 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
           </div>
         )}
         {err && <div style={{ fontSize: 12, color: "#f87171", marginTop: 8 }}>{err}</div>}
+      </div>
+
+      {/* allowlocal — 放暴露控制下方（selfExposeHint 提示“直连 127/局域网由下方 allowlocal 开关控制”） */}
+      <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }} title={t("services.selfAllowLocalHint")}>
+        <input
+          type="checkbox"
+          checked={allowLocal}
+          onChange={(e) => toggleAllowLocal(e.target.checked)}
+          style={{ accentColor: "var(--accent)", cursor: "pointer", marginTop: 2 }}
+        />
+        <span style={{ fontSize: 12, color: "var(--text)" }}>
+          <b>{t("services.selfAllowLocal")}</b>
+          <span style={{ display: "block", color: "var(--text-dim)", fontSize: 11, marginTop: 2 }}>{t("services.selfAllowLocalHint")}</span>
+          {!exposing && !allowLocal && (
+            <span style={{ display: "block", color: "#d97706", fontSize: 11, marginTop: 4 }}>⚠ {t("services.selfNotExposingHint")}</span>
+          )}
+        </span>
+      </label>
+
+      {/* allowHosts — operator-protected front domains kept reachable when allowlocal=false */}
+      <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }}>
+          {t("services.selfAllowHosts")}
+        </div>
+        <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }}>{t("services.selfAllowHostsHint")}</div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input
+            value={allowHostsInput}
+            onChange={(e) => { setAllowHostsInput(e.target.value); setAllowHostsTouched(true); }}
+            placeholder="backup.example.com vpn.example.com"
+            style={{ flex: 1, padding: "4px 8px", borderRadius: 5, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: 12, fontFamily: "var(--font-mono)" }}
+          />
+          <button onClick={saveAllowHosts} style={{ ...btn, flexShrink: 0 }}>{t("services.selfAllowHostsSave")}</button>
+        </div>
+        {(self?.allowHosts ?? []).length > 0 && (
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 6 }}>
+            {t("services.selfAllowHostsCurrent")}: <span style={{ fontFamily: "var(--font-mono)" }}>{self!.allowHosts.join(", ")}</span>
+          </div>
+        )}
       </div>
 
       {/* env snippet */}
