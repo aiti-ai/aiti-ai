@@ -517,7 +517,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
       if (leafId) params.set("leafId", leafId);
-      const url = `/api/sessions/${encodeURIComponent(sid)}/context?${params}`;
+      const url = apiUrl(`/api/sessions/${encodeURIComponent(sid)}/context?${params}`);
       const res = await fetch(url);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json() as { context: { messages: AgentMessage[]; entryIds: string[] } };
