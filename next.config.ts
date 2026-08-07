@@ -41,6 +41,11 @@ const nextConfig: NextConfig = {
     "@earendil-works/pi-agent-core",
     "@earendil-works/pi-ai",
     "@earendil-works/pi-tui",
+    // service-tunnels loads runtime plugin files (configDir/providers/*.js)
+    // and probes http/https via computed import() — must not be bundled.
+    // Safe to externalize: server-only runtime; client code uses type imports
+    // only; the middleware (proxy.ts) never imports it (shared globalThis).
+    "service-tunnels",
   ],
   allowedDevOrigins: ['192.168.*.*'],
   async headers() {
