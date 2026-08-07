@@ -230,7 +230,7 @@ export function getServiceHostSuffix(): string {
 /**
  * Operator-configured deployment domains, in priority order:
  *  1. PI_WEB_BASE_DOMAIN (explicit — comma-separated, host:port allowed,
- *     e.g. "example.com:57442,backup.example.com")
+ *     e.g. "example.com:8443,backup.example.com")
  *  2. PI_WEB_ALLOWED_HOSTS (trusted hosts — legacy fallback)
  *  3. PI_WEB_HOSTNAME (legacy — originally the LISTEN address; only kept as
  *     a fallback so existing deployments keep working)

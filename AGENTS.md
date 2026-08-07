@@ -253,3 +253,14 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 - pi-web 依赖**本地镜像**（registry.npmjs.org / 127.0.0.1:4873）的 service-tunnels
   内部构建；升级用 **`bun install`**（勿用 `npm i` —— 会破坏 node_modules，
   曾导致 enhanced-resolve 缺失）。
+
+## 代码中禁止出现内部地址
+
+- **代码/测试/注释里一律不得出现真实部署地址**（内网 IP、内部部署域名、
+  生产端口号等）——仓库对外可见（含推送到外部镜像），泄露内部拓扑。
+- 需要示例主机名时用 RFC 2606 保留域名（`example.com`、`web.example.com`、
+  `attacker.example` 等）；端口用通用值（3000/8443/443）；回环 `127.0.0.1`
+  与 RFC 1918 私有网段（`192.168.x.x`）仅作通用示例可用。
+- 部署相关配置只存在于运行时环境（systemd unit 的 `Environment=`、nginx
+  配置、`~/.pi/service-tunnels` 等），不进仓库。
+- 本条同样适用于 AGENTS.md 自身——记录规则时不得点名内部域名。

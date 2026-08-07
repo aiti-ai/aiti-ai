@@ -84,7 +84,7 @@ function isUserInitiatedSessionExportNavigation(request: Request): boolean {
   }
 }
 
-/** 配置的 base domain(如 pi.example.com):服务 vhost(*.pi.example.com)是其子域,
+/** 配置的 base domain(如 example.com):服务 vhost(*.example.com)是其子域,
  *  经中间件 resolve + 认证后才到达 API,视为可信。 */
 function baseDomainHostnames(): string[] {
   const out: string[] = [];
@@ -99,6 +99,18 @@ function isBaseDomainSubdomain(hostname: string): boolean {
   return baseDomainHostnames().some((b) => hostname === b || hostname.endsWith(`.${b}`));
 }
 
+/** 操作者信任的主机:回环/IP 字面量、配置的 base domain 及其子域、以及显式配置
+ *  的主机(PI_WEB_HOSTNAME / PI_WEB_BASE_DOMAIN / PI_WEB_ALLOWED_HOSTS / 运行时
+ *  allowHost)。IP 字面量保留 LAN 访问且无法被 DNS rebinding。 */
+function isTrustedHostname(hostname: string, configuredHostnames: string[]): boolean {
+  if (isLoopbackHostname(hostname) || isIP(hostname)) return true;
+  // 服务 vhost(*.example.com)为 operator 域名子域——中间件已 resolve+认证
+  if (isBaseDomainSubdomain(hostname)) return true;
+  return configuredHostnames.some(
+    (configured) => normalizeConfiguredHostname(configured) === hostname,
+  );
+}
+
 /**
  * Only trust local names, IP literals, or the hostname explicitly selected by
  * the operator. IP literals preserve LAN access but cannot be DNS-rebound
@@ -111,17 +123,14 @@ export function isApiRequestHostAllowed(
   const host = request.headers.get("host");
   const hostname = host ? hostnameFromAuthority(host) : null;
   if (!hostname) return false;
-  if (isLoopbackHostname(hostname) || isIP(hostname)) return true;
-  // 服务 vhost(*.pi.example.com)为 operator 域名子域——中间件已 resolve+认证
-  if (isBaseDomainSubdomain(hostname)) return true;
-
-  return configuredHostnames.some(
-    (configured) => normalizeConfiguredHostname(configured) === hostname,
-  );
+  return isTrustedHostname(hostname, configuredHostnames);
 }
 
 /** Reject browser cross-site API requests while preserving non-browser clients. */
-export function isApiRequestOriginAllowed(request: Request): boolean {
+export function isApiRequestOriginAllowed(
+  request: Request,
+  configuredHostnames = configuredHostnamesFromEnvironment(),
+): boolean {
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
   if (fetchSite === "cross-site") return false;
@@ -130,12 +139,12 @@ export function isApiRequestOriginAllowed(request: Request): boolean {
   const requestOrigin = getRequestOrigin(request);
   if (requestOrigin === null) return false;
   // 预期 origin 若来自 x-forwarded-host(而非实际 host),转发头必须本身可信
-  // (loopback/IP/operator 域名子域),否则恶意页可用伪造 XFH 匹配自己的 Origin
-  // 绕过 CSRF 门禁。
+  // (回环/IP/operator 域名子域或显式配置主机),否则恶意页可用伪造 XFH 匹配
+  // 自己的 Origin 绕过 CSRF 门禁。
   if (request.headers.get("x-forwarded-host")) {
     const fh = request.headers.get("x-forwarded-host");
     const hostname = fh ? hostnameFromAuthority(fh) : null;
-    if (hostname && !(isLoopbackHostname(hostname) || isIP(hostname) || isBaseDomainSubdomain(hostname))) {
+    if (hostname && !isTrustedHostname(hostname, configuredHostnames)) {
       return false;
     }
   }
@@ -152,7 +161,7 @@ export function isApiRequestAllowed(
 ): boolean {
   if (!isApiRequestHostAllowed(request, configuredHostnames)) return false;
   if (isUserInitiatedSessionExportNavigation(request)) return true;
-  return !shouldCheckApiRequestOrigin(request) || isApiRequestOriginAllowed(request);
+  return !shouldCheckApiRequestOrigin(request) || isApiRequestOriginAllowed(request, configuredHostnames);
 }
 
 export function hasJsonContentType(request: Request): boolean {
