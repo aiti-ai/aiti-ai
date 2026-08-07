@@ -5,6 +5,13 @@ const eslintConfig = [
   ...coreWebVitals,
   ...typescript,
   {
+    ignores: [
+      "**/.next/**",
+      "**/.next-dev/**", // dev server distDir (PI_WEB_DEV_DIST)
+      "**/node_modules/**",
+    ],
+  },
+  {
     rules: {
       "react-hooks/immutability": "off",
       "react-hooks/refs": "off",
