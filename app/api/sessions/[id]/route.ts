@@ -13,6 +13,7 @@ import {
 import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { removeQueue } from "@/lib/queue-store";
+import { computeSessionTotalActiveMs } from "@/lib/session-timing";
 
 // BranchNavigator still traverses recursively, so keep the response tree shallow.
 const MAX_PROJECTED_TREE_DEPTH = 200;
@@ -126,13 +127,14 @@ export async function GET(
     }
 
     const sm = SessionManager.open(filePath);
-    const entries = sm.getEntries() as never;
+    const entries = sm.getEntries();
     const leafId = sm.getLeafId();
     const tree = projectTreeForResponse(sm.getTree());
     const searchParams = new URL(req.url).searchParams;
     const deferThinking = searchParams.has("deferThinking");
     const deferToolResultImages = searchParams.has("deferMedia");
-    const context = buildSessionContext(entries, leafId, { deferThinking, deferToolResultImages });
+    const context = buildSessionContext(entries as never, leafId, { deferThinking, deferToolResultImages });
+    const totalActiveMs = computeSessionTotalActiveMs(entries);
 
     const header = sm.getHeader();
     let modified = header?.timestamp ?? new Date().toISOString();
@@ -165,6 +167,7 @@ export async function GET(
       leafId,
       tree,
       context,
+      totalActiveMs,
     });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
