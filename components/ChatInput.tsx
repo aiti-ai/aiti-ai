@@ -10,7 +10,6 @@ import { clearDraft, flushAllDrafts, getDraft, setDraft, type ChatDraft, type Ch
 import { apiUrl } from "@/lib/base-path";
 
 import {
-import {
   MAX_ATTACHED_IMAGE_BYTES,
   MAX_ATTACHED_IMAGES,
   isBase64ImageWithinLimits,

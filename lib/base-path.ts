@@ -15,6 +15,12 @@ export function getBasePath(): string {
   return (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/+$/, "");
 }
 
+/**
+ * Constant form of getBasePath(), computed at module load. Next.js inlines
+ * NEXT_PUBLIC_* at build time so this is a fixed string in production.
+ */
+export const BASE_PATH: string = getBasePath();
+
 /** Prefix a root-absolute path with the configured base path. */
 export function withBasePath(path: string): string {
   const basePath = getBasePath();
