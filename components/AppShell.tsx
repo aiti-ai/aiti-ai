@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { apiUrl } from "@/lib/base-path";
+import { apiUrl, withBasePath } from "@/lib/base-path";
 
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
@@ -441,7 +441,7 @@ export function AppShell() {
     const targetSession = selectedSession;
     const fire = () => {
       const title = selectedSession?.name ?? translate("i18n.sessionComplete");
-      const sessionUrl = targetSession ? `/?session=${encodeURIComponent(targetSession.id)}` : "/";
+      const sessionUrl = targetSession ? withBasePath(`/?session=${encodeURIComponent(targetSession.id)}`) : withBasePath("/");
       void showCompletionNotification({
         title,
         body: translate("i18n.taskFinished"),
@@ -589,7 +589,7 @@ export function AppShell() {
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
     window.open(
-      `/api/sessions/${encodeURIComponent(selectedSession.id)}/export?inline=1`,
+      apiUrl(`/api/sessions/${encodeURIComponent(selectedSession.id)}/export?inline=1`),
       "_blank",
       "noopener,noreferrer",
     );

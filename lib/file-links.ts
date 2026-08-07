@@ -1,3 +1,5 @@
+import { getBasePath } from "./base-path";
+
 function safeDecode(value: string): string {
   try {
     return decodeURIComponent(value);
@@ -91,7 +93,13 @@ export function resolveLocalFileHref(
   const normalizedHref = normalizeFilePathSlashes(decodedHref);
   const lowerHref = normalizedHref.toLowerCase();
 
-  if (lowerHref.startsWith("/api/") || lowerHref.startsWith("/_next/")) return null;
+  // Links to the app's own API/static assets are not local files. Under a
+  // sub-path deployment they are prefixed with the base path, so strip it
+  // before the check.
+  const basePath = getBasePath();
+  const strippedHref = basePath && normalizedHref.startsWith(basePath) ? normalizedHref.slice(basePath.length) : normalizedHref;
+  const lowerStripped = strippedHref.toLowerCase();
+  if (lowerStripped.startsWith("/api/") || lowerStripped.startsWith("/_next/")) return null;
   if (!isBackslashUncPath && normalizedHref.startsWith("//")) return null;
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/i.test(normalizedHref) && !lowerHref.startsWith("file:") && !/^[a-zA-Z]:\//.test(normalizedHref)) {
     return null;

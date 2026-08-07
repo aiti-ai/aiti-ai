@@ -9,23 +9,35 @@ const CACHE_PREFIX = "pi-web";
 const CACHE_VERSION = new URL(self.location.href).searchParams.get("v") || "dev";
 const STATIC_CACHE = `${CACHE_PREFIX}-static-${CACHE_VERSION}`;
 
-// self.registration.scope is "/" for root deployments and "/dev/" etc. for
-// sub-path deployments.
-const SCOPE = self.registration.scope.replace(/\/+$/, "") + "/";
-const OFFLINE_URL = `${SCOPE}offline.html`;
-const PRECACHE_URLS = [
-  OFFLINE_URL,
-  `${SCOPE}manifest.webmanifest`,
-  `${SCOPE}icons/icon-192.png`,
-  `${SCOPE}icons/icon-512.png`,
-  `${SCOPE}icons/apple-touch-icon.png`,
-];
+// self.registration.scope is a full URL (e.g. "https://host/dev/"). Derive
+// the pathname form (e.g. "/dev/") for pathname comparisons and the scope-
+// relative absolute paths for cache keys. Root deployments get "/". Scope is
+// read lazily (per event) so the worker stays correct even if it is moved or
+// re-registered under a different prefix without a cache reset.
+function getScopePath() {
+  return new URL(self.registration.scope).pathname.replace(/\/+$/, "") + "/";
+}
+
+function getOfflineUrl() {
+  return `${getScopePath()}offline.html`;
+}
+
+function getPrecacheUrls() {
+  const scopePath = getScopePath();
+  return [
+    getOfflineUrl(),
+    `${scopePath}manifest.webmanifest`,
+    `${scopePath}icons/icon-192.png`,
+    `${scopePath}icons/icon-512.png`,
+    `${scopePath}icons/apple-touch-icon.png`,
+  ];
+}
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
     caches
       .open(STATIC_CACHE)
-      .then((cache) => cache.addAll(PRECACHE_URLS))
+      .then((cache) => cache.addAll(getPrecacheUrls()))
       .then(() => self.skipWaiting()),
   );
 });
@@ -53,12 +65,13 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
 
   // Session data and live agent traffic must always come from the local server.
-  if (url.pathname.startsWith(`${SCOPE}api/`) || url.pathname === `${SCOPE}sw.js`) return;
+  const scopePath = getScopePath();
+  if (url.pathname.startsWith(`${scopePath}api/`) || url.pathname === `${scopePath}sw.js`) return;
 
   if (request.mode === "navigate") {
     event.respondWith(
       fetch(request).catch(async () => {
-        const fallback = await caches.match(OFFLINE_URL);
+        const fallback = await caches.match(getOfflineUrl());
         return fallback ?? Response.error();
       }),
     );
@@ -66,8 +79,8 @@ self.addEventListener("fetch", (event) => {
   }
 
   const isStaticAsset =
-    url.pathname.startsWith(`${SCOPE}_next/static/`) ||
-    PRECACHE_URLS.includes(url.pathname);
+    url.pathname.startsWith(`${getScopePath()}_next/static/`) ||
+    getPrecacheUrls().includes(url.pathname);
 
   if (isStaticAsset) {
     event.respondWith(cacheFirst(request));
@@ -79,8 +92,8 @@ self.addEventListener("notificationclick", (event) => {
 
   const requestedUrl = typeof event.notification.data?.url === "string"
     ? event.notification.data.url
-    : "/";
-  let targetUrl = new URL("/", self.location.origin);
+    : getScopePath();
+  let targetUrl = new URL(getScopePath(), self.location.origin);
   try {
     const candidate = new URL(requestedUrl, self.location.origin);
     if (candidate.origin === self.location.origin) targetUrl = candidate;

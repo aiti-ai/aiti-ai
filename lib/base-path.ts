@@ -6,17 +6,23 @@
 // base-path aware so the app can be served under e.g. `https://host/dev/`.
 //
 // The value comes from `NEXT_PUBLIC_BASE_PATH` (set alongside `basePath` in
-// next.config.ts) and is empty for a root deployment.
+// next.config.ts) and is empty for a root deployment. It is read per call —
+// Next.js statically inlines NEXT_PUBLIC_* at build time, so this is a
+// constant in production builds, and it keeps the module unit-testable.
 
-export const BASE_PATH: string = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/+$/, "");
+/** The configured base path (`/dev`) or empty string for root deployments. */
+export function getBasePath(): string {
+  return (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/+$/, "");
+}
 
 /** Prefix a root-absolute path with the configured base path. */
 export function withBasePath(path: string): string {
-  if (!BASE_PATH) return path;
-  if (path === BASE_PATH || path.startsWith(`${BASE_PATH}/`) || path.startsWith(`${BASE_PATH}?`)) {
+  const basePath = getBasePath();
+  if (!basePath) return path;
+  if (path === basePath || path.startsWith(`${basePath}/`) || path.startsWith(`${basePath}?`)) {
     return path;
   }
-  return `${BASE_PATH}${path.startsWith("/") ? path : `/${path}`}`;
+  return `${basePath}${path.startsWith("/") ? path : `/${path}`}`;
 }
 
 /** Prefix an API path (`/api/...`) with the configured base path. */
