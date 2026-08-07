@@ -1953,19 +1953,6 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
     checkUsers();
   };
 
-  const doStop = () => {
-    setBusy(true); setErr(null);
-    fetch(apiUrl("/api/service-tunnels"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "self-stop" }),
-    })
-      .then((r) => r.json())
-      .then((d: { error?: string }) => { if (d.error) setErr(d.error); else onChanged(); })
-      .catch(() => setErr(String(t("services.error"))))
-      .finally(() => setBusy(false));
-  };
-
   // 单渠道停止:只停该隧道进程(如 localtunnel),vhost 绑定保留
   const doStopTunnel = (name: string) => {
     setBusy(true); setErr(null);
@@ -2116,15 +2103,11 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
               </select>
             </label>
           )}
-          {!exposing ? (
-            <button onClick={startExpose} disabled={busy || checking} style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600 }}>
-              {busy ? "…" : t("services.selfExposeBtn")}
-            </button>
-          ) : (
-            <button onClick={doStop} disabled={busy} title={t("services.selfStopAllHint")} style={{ ...btn }}>
-              {busy ? "…" : t("services.selfStopAll")}
-            </button>
-          )}
+          {/* 始终显示"暴露"按钮——可同时启用多个渠道(隧道/虚拟主机);
+              单个渠道在地址行用各自的红色"停止"按钮,不再提供"停止全部" */}
+          <button onClick={startExpose} disabled={busy || checking} style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600 }}>
+            {busy ? "…" : t("services.selfExposeBtn")}
+          </button>
         </div>
         {/* 隧道参数(schema 驱动,同 Ports 页):ngrok 的 token/domain、frpc 的
             server/token 等随所选隧道类型出现 */}

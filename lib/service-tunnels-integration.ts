@@ -203,6 +203,11 @@ export async function exposeSelf(opts: SelfExposeOptions = {}) {
     label: "pi-web",
     site: "pi-web",
     provider: authNone ? "" : provider,
+    // pi-web 自身服务在部署前缀下(/dev):labeled vhost 的 pipe 必须带上
+    // serviceBasePath,否则 mapServicePath 剥 deploy 前缀后不接回 → 重写
+    // 到 http://127.0.0.1:<port>/api/... 丢掉 /dev → Next 404(自暴露隧道
+    // 打开即 404 的根因;裸 open vhost 才会 strip)。
+    serviceBasePath: opts.serviceBasePath ?? getPiWebBasePath(),
     ...(opts.policy ? { policy: { policy: opts.policy } } : {}),
   });
   const res = await st.auth.expose(port, {
