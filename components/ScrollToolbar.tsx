@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentMessage } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
+import { useWakeLock } from "@/hooks/useWakeLock";
 
 const SCROLL_ANCHOR_THRESHOLD = 80;
 const CHAT_MINIMAP_WIDTH = 4;
@@ -105,6 +106,10 @@ export function ScrollToolbar({
   const tooltipShowCountRef = useRef(0);
   const followToastCountRef = useRef(0);
   const [followStreaming, setFollowStreaming] = useState(false);
+  // While follow-streaming is locked, keep the device screen awake so the
+  // user can watch the agent's output without the display dimming/locking.
+  // No-ops in browsers without the Screen Wake Lock API.
+  const wakeLockSupported = useWakeLock(followStreaming);
   const updateFollowStreaming = useCallback((v: boolean) => {
     if (followStreamingRef) followStreamingRef.current = v;
     setFollowStreaming(v);
@@ -684,9 +689,10 @@ export function ScrollToolbar({
           padding: "6px 14px",
           boxShadow: "0 2px 12px rgba(15,23,42,0.25)",
           pointerEvents: "none",
-          whiteSpace: "nowrap",
+          textAlign: "center",
+          maxWidth: "min(80vw, 480px)",
         }}>
-          {t("chat.followStreamingOn")}
+          {t(wakeLockSupported ? "chat.followStreamingOnAwake" : "chat.followStreamingOn")}
         </div>
       )}
     </>
