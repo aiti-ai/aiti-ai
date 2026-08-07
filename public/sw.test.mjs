@@ -7,6 +7,7 @@ globalThis.self = {
     href: "https://pi.test/sw.js?v=test",
     origin: "https://pi.test",
   },
+  registration: { scope: "https://pi.test/" },
   addEventListener: (type, listener) => listeners.set(type, listener),
   clients: null,
 };
