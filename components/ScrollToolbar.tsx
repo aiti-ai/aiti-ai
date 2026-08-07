@@ -93,7 +93,7 @@ export function ScrollToolbar({
     setScrollTooltip(null);
   }, []);
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Brief "auto-scroll follow on" toast after a successful long-press.
+  // Brief "step-follow on" toast after a successful long-press.
   const [followToast, setFollowToast] = useState(false);
   const followToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Per-page-session hint counters (a refresh resets them, i.e. the refs

@@ -167,9 +167,6 @@ export interface UseAgentSessionOptions {
    *  last message actually ends. */
   promptAnchorSpacerHeightRef?: React.MutableRefObject<number>;
   bottomComposerHeightRef?: React.MutableRefObject<number>;
-  /** Live height of the step-follow spacer (owned by ChatWindow) that keeps
-   *  the scroll height tall enough for the 200px step target. */
-  stepFollowSpacerHeightRef?: React.MutableRefObject<number>;
 }
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -469,20 +466,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // The bottom-composer spacer sits between the last message and the
     // sentinel; back it out so we measure the last message's real bottom.
     const spacerH = (opts.promptAnchorSpacerHeightRef?.current ?? 0)
-      + (opts.bottomComposerHeightRef?.current ?? 0)
-      + (opts.stepFollowSpacerHeightRef?.current ?? 0);
+      + (opts.bottomComposerHeightRef?.current ?? 0);
     const lastMsgBottom = endTop - spacerH;
     if (lastMsgBottom > container.clientHeight - 40) {
       const lastMsgAbs =
         end.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - spacerH;
-      // Land the last message 200px below the top of the viewport: a little
+      // Land the last message 120px below the top of the viewport: a little
       // history stays visible above, the lower area refills with output
       // before the next step.
-      const target = Math.max(0, lastMsgAbs - 200);
+      const target = Math.max(0, lastMsgAbs - 120);
       ignoreProgrammaticScrollUntilRef.current = Date.now() + 1200;
       container.scrollTo({ top: target, behavior: "instant" });
     }
-  }, [opts.followStreamingRef, opts.promptAnchorSpacerHeightRef, opts.bottomComposerHeightRef, opts.stepFollowSpacerHeightRef, scrollContainerRef, messagesEndRef]);
+  }, [opts.followStreamingRef, opts.promptAnchorSpacerHeightRef, opts.bottomComposerHeightRef, scrollContainerRef, messagesEndRef]);
 
   const currentModel = currentModelOverride ?? data?.context.model ?? pendingModel ?? null;
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
@@ -1361,11 +1357,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setAgentPhase(isSlashCommandPrompt ? { kind: "running_command" } : { kind: "waiting_model" });
     dispatch({ type: "start" });
     pendingScrollToUserRef.current = true;
-    // Step-follow (long-press on) disables prompt anchoring — the step scroll
-    // targets the top 1/4 of the viewport and must not fight the anchor
-    // spacer that pins the user message to the first line.
-    if (!opts.followStreamingRef?.current) setPromptAnchorActive(true);
-    else setPromptAnchorActive(false);
+    setPromptAnchorActive(true);
     completionScrollAllowedRef.current = true;
 
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));

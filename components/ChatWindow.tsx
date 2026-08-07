@@ -219,12 +219,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   const bottomComposerHeightRef = useRef(0);
   const [promptAnchorSpacerHeight, setPromptAnchorSpacerHeight] = useState(0);
   const promptAnchorSpacerHeightRef = useRef(0);
-  // Step-follow spacer: keeps the scroll height tall enough that the last
-  // message can be scrolled to 200px below the viewport top (the step-follow
-  // target). Without it, scrollTo is clamped by maxScrollTop and the step
-  // lands short. Recalculated like the prompt-anchor spacer (dynamic).
-  const [stepFollowSpacerHeight, setStepFollowSpacerHeight] = useState(0);
-  const stepFollowSpacerHeightRef = useRef(0);
 
   const {
     loading, error, messages, entryIds, streamState,
@@ -250,7 +244,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     followStreamingRef,
     promptAnchorSpacerHeightRef,
     bottomComposerHeightRef,
-    stepFollowSpacerHeightRef,
   });
   // Expose the queue-export resolver to the parent (AppShell export dialog).
   useEffect(() => {
@@ -555,14 +548,29 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     }
 
     const container = scrollContainerRef.current;
-    const userMessage = lastUserMsgRef.current;
-    if (!container || !userMessage) return;
+    const isStepFollow = !!followStreamingRef.current;
+    // Anchor differs by mode: prompt-anchor pins the user message near the
+    // top; step-follow pins the LAST message 120px below the top (a little
+    // history stays visible above). Same spacer machinery, different target.
+    const anchor = isStepFollow ? messagesEndRef.current : lastUserMsgRef.current;
+    if (!container || !anchor) return;
 
     const updatePromptAnchorSpacer = () => {
-      const userMessageTop = userMessage.getBoundingClientRect().top
+      const anchorTop = anchor.getBoundingClientRect().top
         - container.getBoundingClientRect().top
         + container.scrollTop;
-      const targetTop = Math.max(0, userMessageTop - 16);
+      // Step-follow anchors on the END sentinel, which sits BELOW the spacer
+      // (and composer). Exclude them so the measured anchor position does not
+      // chase the spacer height — otherwise every spacer change moves the
+      // sentinel, recomputes a new spacer, and loops forever. Prompt-anchoring
+      // anchors on the user message (above the spacer) and needs no exclusion.
+      const anchorExclSpacer = isStepFollow
+        ? anchorTop - promptAnchorSpacerHeightRef.current - bottomComposerHeightRef.current
+        : anchorTop;
+      // Step-follow target offset: last message 120px below the viewport top.
+      // Prompt-anchor target offset: user message 16px below the top.
+      const offset = isStepFollow ? 120 : 16;
+      const targetTop = Math.max(0, anchorExclSpacer - offset);
       // Exclude the current spacer so each measurement converges instead of
       // alternating between adding it and removing it.
       const maxScrollTopWithoutAnchor = Math.max(
@@ -578,12 +586,14 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
         const needsInitialScroll = promptAnchorSpacerHeightRef.current === 0
           && nextPromptAnchorSpacerHeight > 0;
         promptAnchorSpacerHeightRef.current = nextPromptAnchorSpacerHeight;
-        promptAnchorScrollPendingRef.current ||= needsInitialScroll;
+        promptAnchorScrollPendingRef.current ||= needsInitialScroll && !isStepFollow;
         setPromptAnchorSpacerHeight(nextPromptAnchorSpacerHeight);
         return;
       }
 
-      if (promptAnchorScrollPendingRef.current) {
+      // Step-follow never re-anchors to the user message; only prompt-anchoring
+      // does the initial scroll-to-user-message jump once the spacer settles.
+      if (!isStepFollow && promptAnchorScrollPendingRef.current) {
         promptAnchorScrollPendingRef.current = false;
         scrollUserMsgToTop();
       }
@@ -594,59 +604,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       ? null
       : new ResizeObserver(updatePromptAnchorSpacer);
     observer?.observe(container);
-    observer?.observe(userMessage);
-    return () => observer?.disconnect();
-  }, [
-    agentRunning,
-    bottomComposerHeight,
-    lastUserMsgRef,
-    messages.length,
-    promptAnchorActive,
-    promptAnchorSpacerHeight,
-    scrollContainerRef,
-    scrollUserMsgToTop,
-    streamState.streamingMessage,
-  ]);
-
-  // Step-follow spacer: while step-follow is on and the agent runs, keep the
-  // scroll height tall enough that the last message can reach 200px below the
-  // viewport top (the step target). Recalculated on the same signals as the
-  // prompt-anchor spacer so it converges instead of fighting the step scroll.
-  useLayoutEffect(() => {
-    if (!followStreamingRef.current || !agentRunning || messages.length === 0) {
-      if (stepFollowSpacerHeightRef.current !== 0) {
-        stepFollowSpacerHeightRef.current = 0;
-        setStepFollowSpacerHeight(0);
-      }
-      return;
-    }
-    const container = scrollContainerRef.current;
-    const end = messagesEndRef.current;
-    if (!container || !end) return;
-    const updateStepFollowSpacer = () => {
-      const endTop = end.getBoundingClientRect().top - container.getBoundingClientRect().top;
-      // Where the last message currently sits in document space.
-      const lastMsgAbs = endTop + container.scrollTop - bottomComposerHeightRef.current;
-      // Target scrollTop: last message 200px below the viewport top.
-      const targetTop = Math.max(0, lastMsgAbs - 200);
-      // Exclude the current spacer so the measurement converges instead of
-      // alternating between adding it and removing it.
-      const maxScrollTopWithoutAnchor = Math.max(
-        0,
-        container.scrollHeight - stepFollowSpacerHeightRef.current - container.clientHeight,
-      );
-      const nextSpacer = Math.max(0, Math.ceil(targetTop - maxScrollTopWithoutAnchor));
-      if (nextSpacer !== stepFollowSpacerHeightRef.current) {
-        stepFollowSpacerHeightRef.current = nextSpacer;
-        setStepFollowSpacerHeight(nextSpacer);
-      }
-    };
-    updateStepFollowSpacer();
-    const observer = typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(updateStepFollowSpacer);
-    observer?.observe(container);
-    observer?.observe(end);
+    observer?.observe(anchor);
     return () => observer?.disconnect();
   }, [
     agentRunning,
@@ -654,10 +612,14 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     followStreamingRef,
     lastUserMsgRef,
     messages.length,
+    messagesEndRef,
+    promptAnchorActive,
+    promptAnchorSpacerHeight,
     scrollContainerRef,
-    stepFollowSpacerHeightRef,
+    scrollUserMsgToTop,
     streamState.streamingMessage,
   ]);
+
 
   const availableThinkingLevels = displayModelValue
     ? (modelThinkingLevels[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
@@ -1073,10 +1035,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
 
             {promptAnchorSpacerHeight > 0 && (
               <div aria-hidden="true" style={{ height: promptAnchorSpacerHeight }} />
-            )}
-
-            {stepFollowSpacerHeight > 0 && (
-              <div aria-hidden="true" style={{ height: stepFollowSpacerHeight }} />
             )}
 
             {/* Match the trailing space to the live bottom composer height. */}

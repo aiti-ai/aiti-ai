@@ -106,7 +106,7 @@ test("keeps a newly sent user message at the top while its response starts", () 
 
   assert.match(streamUpdateSource, /!pendingScrollToUserRef\.current && isNearBottomRef\.current/);
   assert.match(source, /const \[promptAnchorActive, setPromptAnchorActive\] = useState\(false\)/);
-  assert.match(source, /pendingScrollToUserRef\.current = true;\s*\/\/ Step-follow \(long-press on\) disables prompt anchoring/);
+  assert.match(source, /pendingScrollToUserRef\.current = true;\s*setPromptAnchorActive\(true\)/);
   assert.match(userScrollSource, /const targetTop = Math\.min\(Math\.max\(0, elAbsTop - 16\), maxScrollTop\)/);
   assert.match(userScrollSource, /cancelAnimationFrame\(liveFollowFrameRef\.current\)/);
   assert.match(userScrollSource, /isNearBottomRef\.current = targetTop >= maxScrollTop - SCROLL_BOTTOM_THRESHOLD/);
