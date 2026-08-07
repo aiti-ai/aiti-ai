@@ -167,6 +167,9 @@ export interface UseAgentSessionOptions {
    *  last message actually ends. */
   promptAnchorSpacerHeightRef?: React.MutableRefObject<number>;
   bottomComposerHeightRef?: React.MutableRefObject<number>;
+  /** Live height of the step-follow spacer (owned by ChatWindow) that keeps
+   *  the scroll height tall enough for the 200px step target. */
+  stepFollowSpacerHeightRef?: React.MutableRefObject<number>;
 }
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -465,16 +468,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const endTop = end.getBoundingClientRect().top - container.getBoundingClientRect().top;
     // The bottom-composer spacer sits between the last message and the
     // sentinel; back it out so we measure the last message's real bottom.
-    const spacerH = opts.bottomComposerHeightRef?.current ?? 0;
+    const spacerH = (opts.promptAnchorSpacerHeightRef?.current ?? 0)
+      + (opts.bottomComposerHeightRef?.current ?? 0)
+      + (opts.stepFollowSpacerHeightRef?.current ?? 0);
     const lastMsgBottom = endTop - spacerH;
     if (lastMsgBottom > container.clientHeight - 40) {
       const lastMsgAbs =
         end.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - spacerH;
-      const target = Math.max(0, lastMsgAbs - container.clientHeight / 4);
+      // Land the last message 200px below the top of the viewport: a little
+      // history stays visible above, the lower area refills with output
+      // before the next step.
+      const target = Math.max(0, lastMsgAbs - 200);
       ignoreProgrammaticScrollUntilRef.current = Date.now() + 1200;
       container.scrollTo({ top: target, behavior: "instant" });
     }
-  }, [opts.followStreamingRef, opts.bottomComposerHeightRef, scrollContainerRef, messagesEndRef]);
+  }, [opts.followStreamingRef, opts.promptAnchorSpacerHeightRef, opts.bottomComposerHeightRef, opts.stepFollowSpacerHeightRef, scrollContainerRef, messagesEndRef]);
 
   const currentModel = currentModelOverride ?? data?.context.model ?? pendingModel ?? null;
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
