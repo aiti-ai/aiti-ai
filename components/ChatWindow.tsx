@@ -891,18 +891,9 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
             )}
 
             {agentRunning && (
-              /* Room below the last message while the agent runs so the
-                 follow-step can land the last message at the top 1/4 of the
-                 viewport with 3/4 of blank space below for the output to
-                 grow. (Was a full viewport, then 96px — both broke the step's
-                 landing.) */
-              <div style={{ height: scrollContainerRef.current ? scrollContainerRef.current.clientHeight * 0.75 : "60vh" }} />
+              <div style={{ height: scrollContainerRef.current ? scrollContainerRef.current.clientHeight : "80vh" }} />
             )}
 
-            {/* The end sentinel doubles as the long-press target for toggling
-                follow-streaming: give it a small hit area so a long press on
-                the bottom of the message list (the "last message" region) is
-                easy to land on. */}
             <div ref={messagesEndRef} style={{ height: 28 }} />
             </div>
           </div>

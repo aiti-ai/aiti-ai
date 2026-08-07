@@ -167,10 +167,6 @@ export interface UseAgentSessionOptions {
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
-const PROGRAMMATIC_SCROLL_IGNORE_MS = 700;
-// While follow-streaming is on, a manual scroll pauses auto-follow for this
-// window; after it expires the list resumes following the latest message.
-const USER_SCROLL_INTENT_MS = 6000;
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
@@ -181,7 +177,6 @@ const EVENT_STREAM_CONNECT_TIMEOUT_MS = 5_000;
 const MAX_NOTICES = 5;
 const NOTICE_VISIBLE_MS = 5000;
 const NOTICE_EXIT_ANIMATION_MS = 180;
-const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Space", "Spacebar"]);
 
 type EventStreamConnectionStatus = "connected" | "timeout" | "closed";
 
@@ -423,10 +418,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const initialScrollDoneRef = useRef(false);
   const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
   const pendingScrollToUserRef = useRef(false);
-  const completionScrollAllowedRef = useRef(true);
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
-  const userScrollIntentUntilRef = useRef(0);
-  const ignoreProgrammaticScrollUntilRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
@@ -1299,7 +1291,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setAgentPhase(isSlashCommandPrompt ? { kind: "running_command" } : { kind: "waiting_model" });
     dispatch({ type: "start" });
     pendingScrollToUserRef.current = true;
-    completionScrollAllowedRef.current = true;
 
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
     let sentSessionId: string | null = null;
@@ -2039,26 +2030,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [setToolPresetState]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
-    const container = scrollContainerRef.current;
-    const end = messagesEndRef.current;
-    if (!container || !end) return;
-    // The end sentinel sits BELOW the agent-running spacer (96px).
-    // scrollIntoView on the sentinel would put that blank spacer in the
-    // viewport — hence the blank screen while follow-streaming during a run.
-    // Back off by the spacer + viewport height so the LAST MESSAGE lands
-    // ~40px above the viewport bottom.
-    const endInContainer = end.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
-    // Short spacer (96px) below the last message while the agent runs.
-    // The agent-running spacer (3/4 viewport) sits between the last message
-    // and the sentinel; back it out so the LAST MESSAGE lands ~40px above the
-    // viewport bottom.
-    const spacerH = agentRunningRef.current ? container.clientHeight * 0.75 : 0;
-    // Visual keep-out below the last message ≈40px. The sentinel is 28px tall
-    // and the last message's own bottom margin (~16px) sits between it and the
-    // sentinel, so back off (40 - 28 - 16) = -4 on top of the sentinel.
-    const target = Math.max(0, endInContainer - spacerH - container.clientHeight - 4);
-    container.scrollTo({ top: target, behavior });
+    messagesEndRef.current?.scrollIntoView({ behavior });
   }, []);
 
   const scrollUserMsgToTop = useCallback(() => {
@@ -2066,26 +2038,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const el = lastUserMsgRef.current;
     if (!container || !el) return;
     const elAbsTop = el.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop;
-    ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
     container.scrollTo({ top: elAbsTop - 16, behavior: "smooth" });
-  }, []);
-
-  const markUserScrollIntent = useCallback((event: Event) => {
-    if (event instanceof KeyboardEvent) {
-      if (!SCROLL_KEYS.has(event.key)) return;
-      if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable='true']")) return;
-    }
-    userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
-  }, []);
-
-  const handleScrollPositionChange = useCallback(() => {
-    if (!agentRunningRef.current) return;
-    if (Date.now() < ignoreProgrammaticScrollUntilRef.current) return;
-    // The user scrolled manually (within the programmatic-scroll grace
-    // window). Record WHEN so auto-follow can pause for USER_SCROLL_INTENT_MS
-    // and then resume — instead of disabling follow permanently.
-    userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
-    completionScrollAllowedRef.current = false;
   }, []);
 
   // Load session on mount
@@ -2153,61 +2106,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [data?.tree, activeLeafId, handleLeafChange, onBranchDataChange]);
 
   useEffect(() => {
-    window.addEventListener("keydown", markUserScrollIntent);
-    window.addEventListener("pointerdown", markUserScrollIntent, { passive: true });
-    return () => {
-      window.removeEventListener("keydown", markUserScrollIntent);
-      window.removeEventListener("pointerdown", markUserScrollIntent);
-    };
-  }, [markUserScrollIntent]);
-
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    container.addEventListener("wheel", markUserScrollIntent, { passive: true });
-    container.addEventListener("touchstart", markUserScrollIntent, { passive: true });
-    container.addEventListener("scroll", handleScrollPositionChange, { passive: true });
-    return () => {
-      container.removeEventListener("wheel", markUserScrollIntent);
-      container.removeEventListener("touchstart", markUserScrollIntent);
-      container.removeEventListener("scroll", handleScrollPositionChange);
-    };
-  }, [messages.length, loading, handleScrollPositionChange, markUserScrollIntent]);
-
-  // Smart follow: only scroll when the last message is about to leave the
-  // viewport (40px keep-out below), so a visible last message does not cause
-  // constant jumping. Called on message-count changes AND on streaming chunk
-  // updates (streaming grows the visible message without changing the count).
-  const smartFollowCheck = useCallback(() => {
-    if (!opts.followStreamingRef?.current) return;
-    if (Date.now() < userScrollIntentUntilRef.current) return;
-    const container = scrollContainerRef.current;
-    const end = messagesEndRef.current;
-    if (!container || !end) return;
-    const endTop = end.getBoundingClientRect().top - container.getBoundingClientRect().top;
-    const spacerH = agentRunningRef.current ? container.clientHeight * 0.75 : 0;
-    const lastMsgBottom = endTop - 28 - spacerH;
-    // Step-follow: when new content pushes the last message past the small
-    // keep-out zone, step so the last message lands at the top 1/4 of the
-    // viewport. The bottom 3/4 refills as the output grows — gentler than a
-    // full jump-to-bottom every message, and the output is always visible.
-    if (lastMsgBottom > container.clientHeight - 40) {
-      const lastMsgAbs =
-        end.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 28 - spacerH;
-      // Land the last message at the top 1/4 of the viewport: plenty of room
-      // below for the output to grow before the next step. INSTANT, not
-      // smooth: a streaming chunk arrives every few hundred ms and re-runs
-      // this check — a smooth animation gets cancelled mid-flight by the next
-      // chunk's scrollTo, so the step never completes and the view only
-      // creeps up a little (no big blank area below). Instant lands the full
-      // step every time.
-      const target = Math.max(0, lastMsgAbs - container.clientHeight / 4);
-      ignoreProgrammaticScrollUntilRef.current = Date.now() + 1200;
-      container.scrollTo({ top: target, behavior: "instant" });
-    }
-  }, [opts.followStreamingRef, scrollContainerRef, messagesEndRef]);
-
-  useEffect(() => {
     if (messages.length > 0) {
       if (pendingScrollToUserRef.current) {
         pendingScrollToUserRef.current = false;
@@ -2216,35 +2114,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       } else if (!initialScrollDoneRef.current) {
         initialScrollDoneRef.current = true;
         scrollToBottom("instant");
-      } else if (!agentRunningRef.current && completionScrollAllowedRef.current) {
+      } else if (!agentRunningRef.current) {
         scrollToBottom("smooth");
-      } else if (opts.followStreamingRef?.current) {
-        // Follow-streaming on: scroll only when new content pushes the last
-        // message out of view; while it is still visible, don't jump.
-        smartFollowCheck();
       }
     }
-  }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop, opts.followStreamingRef, smartFollowCheck]);
-
-  // Streaming chunks grow the visible message without changing messages.length;
-  // re-run the smart-follow check on every chunk so the growing message is
-  // scrolled into view once it exceeds the viewport.
-  useEffect(() => {
-    if (streamState.isStreaming) smartFollowCheck();
-  }, [streamState, smartFollowCheck]);
-
-  // The queue banner / input area sits BELOW the scroll container in a flex
-  // column. When the queue grows (or shrinks), the container's clientHeight
-  // changes without any message event — the last message can end up hidden
-  // behind the queue banner. Re-run the smart-follow check on size changes so
-  // follow re-aims at the new (smaller) viewport.
-  useEffect(() => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-    const ro = new ResizeObserver(() => smartFollowCheck());
-    ro.observe(container);
-    return () => ro.disconnect();
-  }, [smartFollowCheck, scrollContainerRef]);
+  }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
 
   // Load model list
   useEffect(() => {
