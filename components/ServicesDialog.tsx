@@ -511,6 +511,20 @@ export function ServicesDialog({ onClose, onOpenFile }: { onClose: () => void; o
  *  password/number/select inputs). Rendered for every tunnel type / auth
  *  provider from service-tunnels' ParamSpec — adding a provider or tunnel
  *  type needs NO dialog changes. */
+/** provider 显示名:pi-web i18n key(services.provider.*) → 库 authMetas label
+ *  (如 "GitHub OAuth") → 原始 id(如 oauth2-github)。绝不显示 i18n key。 */
+function providerDisplayLabel(
+  p: string,
+  t: (key: string) => string,
+  authMetas?: Record<string, { label?: string }> | null,
+): string {
+  if (p === "none") return t("services.exposeProviderNone");
+  const k = `services.provider.${p}`;
+  const tr = t(k);
+  if (tr !== k) return tr;
+  return authMetas?.[p]?.label ?? p;
+}
+
 function SchemaForm({ specs, values, onChange, t }: {
   specs: ParamSpec[];
   values: Record<string, string>;
@@ -530,17 +544,28 @@ function SchemaForm({ specs, values, onChange, t }: {
   } as const;
   return (
     <div style={{ marginTop: 6 }}>
-      {specs.map((s) => (
+      {specs.map((s) => {
+        // 预定义固定参数(变体 provider/scope/端点):只读展示,默认值已填入
+        const fixed = (s as ParamSpec & { fixed?: boolean }).fixed === true;
+        return (
         <div key={s.key}>
           <label style={{ fontSize: 10, color: "var(--text-muted)", display: "block", marginTop: 5 }}>
-            {s.label ?? s.key}{s.required ? " *" : ""}
+            {s.label ?? s.key}{s.required ? " *" : ""}{fixed ? " 🔒" : ""}
             {s.link && (
               <a href={s.link} target="_blank" rel="noreferrer" style={{ color: "var(--accent)", marginLeft: 6, fontSize: 9 }}>
                 {s.linkTitle ?? t("services.docs")}
               </a>
             )}
           </label>
-          {s.options ? (
+          {fixed ? (
+            <input
+              type="text"
+              value={String((s as ParamSpec & { value?: string }).value ?? s.default ?? "")}
+              disabled
+              title={t("services.fixedParamHint")}
+              style={{ ...inputStyle, opacity: 0.75, cursor: "not-allowed" }}
+            />
+          ) : s.options ? (
             <select
               value={values[s.key] ?? String(s.default ?? "")}
               onChange={(e) => onChange(s.key, e.target.value)}
@@ -561,7 +586,8 @@ function SchemaForm({ specs, values, onChange, t }: {
             <div style={{ fontSize: 9, color: "var(--text-dim)", marginTop: 1 }}>{s.description}</div>
           )}
         </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -870,6 +896,8 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
   const [tunnelSchemas, setTunnelSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
   const [tunnelMetas, setTunnelMetas] = useState<Record<string, { favorite?: boolean; dangerous?: boolean }> | null>(null);
   const [authSchemas, setAuthSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
+  // provider 页面元数据(label/已配置)来自库——picker 显示友好名称用
+  const [authMetas, setAuthMetas] = useState<Record<string, { label?: string }> | null>(null);
   const [tunnelParams, setTunnelParams] = useState<Record<string, string>>({});
   const [providerParams, setProviderParams] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
@@ -893,7 +921,7 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
   useEffect(() => {
     fetch(`${apiUrl("/api/service-tunnels")}?lang=${encodeURIComponent(secLocale)}`)
       .then((r) => r.json())
-      .then((d: { providerOrder?: string[]; defaultProvider?: string; tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; tunnelTcpSupport?: string[]; sites?: { name: string }[]; userManagers?: string[] }) => {
+      .then((d: { providerOrder?: string[]; defaultProvider?: string; tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; authMetas?: Record<string, { label?: string }>; tunnelTcpSupport?: string[]; sites?: { name: string }[]; userManagers?: string[] }) => {
         // providerOrder/defaultProvider come from the library — no provider
         // names hardcoded here (authelia availability, Windows fallback etc.
         // are decided in service-tunnels).
@@ -904,6 +932,7 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
         if (d.tunnelSchemas) setTunnelSchemas(d.tunnelSchemas);
         if (d.tunnelMetas) setTunnelMetas(d.tunnelMetas);
         if (d.authProviderSchemas) setAuthSchemas(d.authProviderSchemas);
+        if (d.authMetas) setAuthMetas(d.authMetas);
         // Skip dangerous tunnel types (TunnelMeta.dangerous — e.g. "command",
         // which runs a raw shell command) when picking a tcp-capable default;
         // name fallback covers service-tunnels versions without the flag.
@@ -1108,7 +1137,7 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
         <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeProvider")}</span>
         <select value={provider ?? ""} onChange={(e) => setProvider(e.target.value)} style={select}>
           <option value="" disabled>{t("services.selectProvider")}</option>
-          {providers.map((p) => <option key={p} value={p}>{p === "none" ? t("services.exposeProviderNone") : p}</option>)}
+          {providers.map((p) => <option key={p} value={p}>{providerDisplayLabel(p, t, authMetas)}</option>)}
         </select>
         <span style={{ flex: 1 }} />
         {existing ? (
@@ -1668,6 +1697,9 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
   };
   const [mode, setMode] = useState("tunnel");
   const [auth, setAuth] = useState("portal");
+  // provider 列表来自库(数据驱动,与 Ports 页同源):oauth2-proxy / oauth2 变体 /
+  // 插件 provider 自动出现——不硬编码 portal/basic/authelia
+  const [providers, setProviders] = useState<string[] | null>(null);
   const [tunnel, setTunnel] = useState("cloudflared");
   // 隧道类型 schema 驱动(与 Ports 页同一数据源):serveo/bore/natapp/自定义
   // 类型都会出现,command 等 dangerous 类型隐藏——不再硬编码 4 项
@@ -1677,6 +1709,8 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
   const [tunnelParams, setTunnelParams] = useState<Record<string, string>>({});
   const [providerParams, setProviderParams] = useState<Record<string, string>>({});
   const [authSchemas, setAuthSchemas] = useState<Record<string, ParamSpec[]> | null>(null);
+  // provider 页面元数据(label/已配置)来自库——picker 显示友好名称用
+  const [authMetas, setAuthMetas] = useState<Record<string, { label?: string }> | null>(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [copiedEnv, setCopiedEnv] = useState(false);
@@ -1725,10 +1759,17 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
   useEffect(() => {
     fetch(`${apiUrl("/api/service-tunnels")}?lang=${encodeURIComponent(selfLocale)}`)
       .then((r) => r.json())
-      .then((d: { tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; userManagers?: string[] }) => {
+      .then((d: { providerOrder?: string[]; defaultProvider?: string; tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; authMetas?: Record<string, { label?: string }>; userManagers?: string[] }) => {
+        // provider 顺序/默认值由库下发(authelia 可用性、Windows 回退等都在
+        // service-tunnels 内决定)——oauth2-proxy 等在此出现,无硬编码
+        const order = d.providerOrder ?? ["portal", "basic"];
+        setProviders(["none", ...order]);
+        // 预填当前生效的 provider(self.auth = 正在暴露的 provider / env 配置)
+        if (self?.auth && order.includes(self.auth)) setAuth(self.auth);
         if (d.tunnelSchemas) setTunnelSchemas(d.tunnelSchemas);
         if (d.tunnelMetas) setTunnelMetas(d.tunnelMetas);
         if (d.authProviderSchemas) setAuthSchemas(d.authProviderSchemas);
+        if (d.authMetas) setAuthMetas(d.authMetas);
         if (d.userManagers) setUserManagers(d.userManagers);
         setUserManagersReady(true);
         if (d.tunnelSchemas && d.tunnelMetas) {
@@ -2050,10 +2091,10 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
           <label style={{ fontSize: 12, color: "var(--text-muted)" }}>
             {t("services.selfAuth")}:
             <select value={auth} onChange={(e) => setAuth(e.target.value)} style={{ ...select, marginLeft: 4 }}>
-              <option value="portal">portal</option>
-              <option value="basic">basic</option>
-              <option value="authelia">authelia</option>
-              <option value="none">none</option>
+              {/* 数据驱动:与 Ports 页同一 provider 列表(schema 拉取失败时回退 4 项) */}
+              {(providers ?? ["none", "portal", "basic", "authelia"]).map((p) => (
+                <option key={p} value={p}>{providerDisplayLabel(p, t, authMetas)}</option>
+              ))}
             </select>
           </label>
           {mode !== "proxy" && (

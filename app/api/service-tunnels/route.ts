@@ -14,7 +14,43 @@ import {
   type SelfExposeOptions,
 } from "@/lib/service-tunnels-integration";
 
-import type { TunnelConfig } from "service-tunnels";
+import type { TunnelConfig, ParamSpec } from "service-tunnels";
+
+/** 库端漏翻修复:localizeSpecs 对 zh/en 目录都没有的 key,会把 label/
+ *  description/… 替换成 i18n key 本身(translate 最后兑底返回 key)。检测到
+ *  字段 === 其 key(漏翻)时,回落 raw(en,未本地化)响应的默认值;默认值
+ *  也没有 → 保持原样,客户端再兑底 key 参数名。库端修复后此函数为 no-op。 */
+function repairSchemaL10n(
+  localized: Record<string, ParamSpec[]>,
+  raw: Record<string, ParamSpec[]>,
+): Record<string, ParamSpec[]> {
+  const out: Record<string, ParamSpec[]> = {};
+  for (const [type, specs] of Object.entries(localized)) {
+    const rawSpecs = raw[type] ?? [];
+    out[type] = specs.map((s, i) => {
+      const r = rawSpecs[i];
+      if (!r) return s;
+      const fixed: ParamSpec = { ...s };
+      for (const f of ["label", "description", "placeholder", "linkTitle"] as const) {
+        const keyName = (s as unknown as Record<string, unknown>)[`${f}Key`] as string | undefined;
+        if (keyName && (s as unknown as Record<string, unknown>)[f] === keyName && r[f] !== undefined) {
+          (fixed as unknown as Record<string, unknown>)[f] = r[f];
+        }
+      }
+      if (s.options && r.options) {
+        fixed.options = s.options.map((o, j) => {
+          const ro = r.options?.[j];
+          if (ro && o.labelKey && o.label === o.labelKey && ro.label !== undefined) {
+            return { ...o, label: ro.label };
+          }
+          return o;
+        });
+      }
+      return fixed;
+    });
+  }
+  return out;
+}
 
 /** Expose 详情弹窗的隧道参数:从 TunnelConfig 挑有意义的字段展示。令牌类
  *  值一律掩码(只留末 4 位)。返回扁平 { key: value }。 */
@@ -139,7 +175,14 @@ export async function GET(request: NextRequest) {
       tunnelMetas: st.schemas.metas(),
       totpProviders: st.auth.totpProviders(),
       userManagers: st.auth.userManagers(),
-      authProviderSchemas: await st.schemas.authProviders(lang),
+      // 漏翻修复:raw(en)与本地化两份合并——zh/en 目录未收录的 key 回落默认值
+      // (库端已修则本地化结果无漏翻,此步 no-op)。
+      authProviderSchemas: repairSchemaL10n(
+        await st.schemas.authProviders(lang),
+        await st.schemas.authProviders("en"),
+      ),
+      // provider 页面元数据(label/已配置/待填项)——picker 显示友好名称用
+      authMetas: st.schemas.authMetas(),
       tunnelTcpSupport: st.tunnels.tcpSupport ? st.tunnels.tcpSupport() : [],
       allowToolDownload: st.tools.allowDownload(),
       toolStatus: st.tools.list(),
