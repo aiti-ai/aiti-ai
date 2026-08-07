@@ -1195,6 +1195,30 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
   );
 }
 
+/** 明显是 IP/本机回环的 host：TOTP 标识不直接用（退回 pi-web 部署域名）。 */
+function isIpLikeHost(h: string): boolean {
+  if (!h) return true;
+  if (h === "localhost" || h.endsWith(".localhost") || h.endsWith(".local")) return true;
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) return true; // IPv4
+  return h.includes(":"); // IPv6
+}
+
+/** 公开隧道服务的随机子域（bore/ngrok/cloudflared/localtunnel/…）。 */
+const TUNNEL_HOST_SUFFIXES = [
+  ".bore.pub", ".loca.lt", ".localhost.run", ".ngrok.io", ".ngrok-free.app", ".ngrok.app",
+  ".trycloudflare.com", ".serveo.net", ".tunnelmole.net", ".sharedwithexpose.com",
+  ".natappfree.cc", ".natapp.cc",
+];
+
+/** TOTP 标识的默认 host：浏览器当前域名；明显是 IP 或隧道随机域名时
+ *  用 pi-web 预定义部署域名（PI_WEB_BASE_DOMAIN 等环境变量）。 */
+function pickTotpHost(browserHost: string | undefined, piWebHost: string): string {
+  const h = (browserHost ?? "").toLowerCase();
+  if (isIpLikeHost(h)) return piWebHost;
+  if (TUNNEL_HOST_SUFFIXES.some((s) => h.endsWith(s))) return piWebHost;
+  return h || piWebHost;
+}
+
 /**
  * Auth user management — pick a provider with a local user database, list
  * users, add / set-password / remove, and toggle TOTP 2FA (portal provider).
@@ -1215,8 +1239,11 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
   const [displayName, setDisplayName] = useState("");
   const [pwUser, setPwUser] = useState<string | null>(null);
   const [newPw, setNewPw] = useState("");
-  const [totpEnrolled, setTotpEnrolled] = useState<{ name: string; secret: string; otpauthUrl: string } | null>(null);
+  const [totpEnrolled, setTotpEnrolled] = useState<{ name: string; label: string; secret: string; otpauthUrl: string } | null>(null);
   const [totpCode, setTotpCode] = useState("");
+  // 登记前的标识确认步骤：点「开启 2FA」先取默认标识预填，用户可改，确认后才生成密钥
+  const [enrollTarget, setEnrollTarget] = useState<string | null>(null);
+  const [totpLabel, setTotpLabel] = useState("");
   const [qrUrl, setQrUrl] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1287,6 +1314,8 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
     setTotpEnrolled(null);
     setQrUrl(null);
     setTotpCode("");
+    setEnrollTarget(null);
+    setTotpLabel("");
     setUsers([]);
     setTotpState({});
   };
@@ -1300,6 +1329,8 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
     setTotpEnrolled(null);
     setQrUrl(null);
     setTotpCode("");
+    setEnrollTarget(null);
+    setTotpLabel("");
     loadSummary();
   };
 
@@ -1328,17 +1359,43 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
       .finally(() => { setBusy(false); loadUsers(); loadSummary(); });
   };
 
-  const enrollTotp = (uname: string) => {
+  /** 点「开启 2FA」：先取默认标识预填，用户确认/修改后再真正登记——避免直接
+   *  生成无法改名的密钥。默认标识 `<name>-<auth>-<site>@<host>`：host 取
+   *  浏览器当前域名，若明显是 IP/隧道随机域名则用 pi-web 预定义部署域名。 */
+  const startTotpEnroll = (uname: string) => {
+    const s = selected;
+    if (!s) return;
+    setBusy(true);
+    setError(null);
+    post("totp-default-label", { name: uname })
+      .then((d: { label?: string; piWebHost?: string; error?: string }) => {
+        if (d.error) { setError(d.error); return; }
+        const host = pickTotpHost(typeof window !== "undefined" ? window.location.hostname : undefined, d.piWebHost ?? "");
+        const base = `${uname}-${s.provider}-${s.site}`;
+        setEnrollTarget(uname);
+        setTotpLabel(host ? `${base}@${host}` : (d.label ?? base));
+      })
+      .catch((e) => setError(String(e)))
+      .finally(() => setBusy(false));
+  };
+
+  const confirmTotpEnroll = () => {
+    if (!enrollTarget) return;
     setBusy(true);
     setTotpEnrolled(null);
     setQrUrl(null);
     setTotpCode("");
-    post("totp-enroll", { name: uname })
-      .then((d: { secret?: string; otpauthUrl?: string; error?: string }) => {
+    post("totp-enroll", { name: enrollTarget, label: totpLabel })
+      .then((d: { secret?: string; label?: string; otpauthUrl?: string; error?: string }) => {
         if (d.error) { setError(d.error); return; }
-        setTotpEnrolled(d.secret ? { name: uname, secret: d.secret, otpauthUrl: d.otpauthUrl ?? "" } : null);
-        loadUsers();
-        loadSummary();
+        if (d.secret) {
+          setTotpEnrolled({ name: enrollTarget, label: d.label ?? totpLabel, secret: d.secret, otpauthUrl: d.otpauthUrl ?? "" });
+          setEnrollTarget(null);
+          loadUsers();
+          loadSummary();
+        } else {
+          setError(d.error ?? t("services.totpEnrollFailed"));
+        }
       })
       .catch((e) => setError(String(e)))
       .finally(() => setBusy(false));
@@ -1414,6 +1471,25 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
           </button>
         </div>
 
+        {/* 登记前确认标识：默认 <name>-<auth>-<site>@<host>，用户可改 */}
+        {enrollTarget && (
+          <div style={{ margin: "8px 0", padding: "8px 10px", borderRadius: 6, background: "var(--bg)", border: "1px solid #f0c36d" }}>
+            <div style={{ fontSize: 10, color: "#8a6d1a", marginBottom: 4 }}>
+              {t("services.totpLabelHint")} · <span style={{ fontFamily: "var(--font-mono)" }}>{enrollTarget}</span>
+            </div>
+            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+              <input value={totpLabel} onChange={(e) => setTotpLabel(e.target.value)}
+                placeholder={t("services.totpLabelPlaceholder")}
+                style={{ ...input, fontFamily: "var(--font-mono)" }} />
+              <button onClick={confirmTotpEnroll} disabled={busy || !totpLabel.trim()}
+                style={{ ...btn, background: "var(--accent)", border: "none", color: "#fff", fontWeight: 600 }}>
+                {busy ? t("services.adding") : t("services.totpEnrollConfirm")}
+              </button>
+              <button onClick={() => { setEnrollTarget(null); setTotpLabel(""); }} style={btn}>{t("services.close")}</button>
+            </div>
+          </div>
+        )}
+
         {/* 用户列表 */}
         {users.length === 0 ? (
           <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("services.noUsers")}</div>
@@ -1430,7 +1506,7 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
                 totpState[u.name] ? (
                   <button onClick={() => disableTotp(u.name)} style={btn}>{t("services.totpDisable")}</button>
                 ) : (
-                  <button onClick={() => enrollTotp(u.name)} style={btn}>{t("services.totpEnroll")}</button>
+                  <button onClick={() => startTotpEnroll(u.name)} style={btn}>{t("services.totpEnroll")}</button>
                 )
               )}
               <button onClick={() => setPwUser(pwUser === u.name ? null : u.name)} style={btn}>{t("services.userSetPassword")}</button>
@@ -1449,7 +1525,7 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
 
         {totpEnrolled && (
           <div style={{ marginTop: 8, padding: "10px", borderRadius: 6, background: "var(--bg)", border: "1px solid #f0c36d" }}>
-            <div style={{ fontSize: 10, color: "#8a6d1a" }}>{t("services.totpSecret")} ({totpEnrolled.name})</div>
+            <div style={{ fontSize: 10, color: "#8a6d1a" }}>{t("services.totpSecret")} ({totpEnrolled.label})</div>
             <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginTop: 6, flexWrap: "wrap" }}>
               {qrUrl && (
                 <img src={qrUrl} alt="TOTP QR" width={176} height={176}

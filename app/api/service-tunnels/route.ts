@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isApiRequestAllowed } from "@/lib/request-security";
-import { setAllowLocal, setAllowLocalHosts, setAllowLocalTemporary, confirmAllowLocal, getAllowLocalPending } from "@/lib/service-proxy-shared";
+import { setAllowLocal, setAllowLocalHosts, setAllowLocalTemporary, confirmAllowLocal, getAllowLocalPending, getBaseDomains } from "@/lib/service-proxy-shared";
 import {
   getServiceTunnels,
   listPiServices,
@@ -250,9 +250,19 @@ export async function POST(request: NextRequest) {
       case "user-managers":
         return NextResponse.json({ providers: st.auth.userManagers() });
       case "totp-enroll": {
+        const p = body as { name?: string; provider?: string; site?: string; label?: string };
+        if (!p.name) return NextResponse.json({ error: "name required" }, { status: 400 });
+        return NextResponse.json(await st.auth.totpEnroll(p.name, p.provider, p.site, p.label));
+      }
+      case "totp-default-label": {
         const p = body as { name?: string; provider?: string; site?: string };
         if (!p.name) return NextResponse.json({ error: "name required" }, { status: 400 });
-        return NextResponse.json(await st.auth.totpEnroll(p.name, p.provider, p.site));
+        const res = await st.auth.totpDefaultLabel(p.name, p.provider, p.site);
+        // pi-web 自身部署域名（PI_WEB_BASE_DOMAIN / PI_WEB_ALLOWED_HOSTS /
+        // PI_WEB_HOSTNAME 首个，去端口）：浏览器域名明显是 IP/隧道随机域名时，
+        // UI 用此域名拼默认标识的 @host。
+        const piWebHost = (getBaseDomains()[0] ?? "").replace(/^\s*\.?/, "").replace(/:\d{1,5}$/, "");
+        return NextResponse.json({ ...res, piWebHost });
       }
       case "totp-disable": {
         const p = body as { name?: string; provider?: string; site?: string };
