@@ -162,6 +162,11 @@ export interface UseAgentSessionOptions {
   followStreamingRef?: React.RefObject<boolean | null>;
   /** Called when follow-streaming turns on/off (re-arms auto-scroll). */
   onFollowStreamingChange?: (v: boolean) => void;
+  /** Live heights of the prompt-anchor spacer and bottom composer spacer
+   *  (owned by ChatWindow). Step-follow geometry needs them to know where the
+   *  last message actually ends. */
+  promptAnchorSpacerHeightRef?: React.MutableRefObject<number>;
+  bottomComposerHeightRef?: React.MutableRefObject<number>;
 }
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -446,6 +451,30 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
     messagesEndRef.current?.scrollIntoView({ behavior });
   }, []);
+
+  // Step-follow (long-press enabled): instead of scrolling to the bottom on
+  // every streaming event, only scroll when new output pushes the last message
+  // past a small keep-out zone — then step it back to the top 1/4 of the
+  // viewport so the lower 3/4 refills with output before the next step.
+  const smartFollowStep = useCallback(() => {
+    if (!opts.followStreamingRef?.current) return;
+    if (Date.now() < userScrollIntentUntilRef.current) return;
+    const container = scrollContainerRef.current;
+    const end = messagesEndRef.current;
+    if (!container || !end) return;
+    const endTop = end.getBoundingClientRect().top - container.getBoundingClientRect().top;
+    // The bottom-composer spacer sits between the last message and the
+    // sentinel; back it out so we measure the last message's real bottom.
+    const spacerH = opts.bottomComposerHeightRef?.current ?? 0;
+    const lastMsgBottom = endTop - spacerH;
+    if (lastMsgBottom > container.clientHeight - 40) {
+      const lastMsgAbs =
+        end.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - spacerH;
+      const target = Math.max(0, lastMsgAbs - container.clientHeight / 4);
+      ignoreProgrammaticScrollUntilRef.current = Date.now() + 1200;
+      container.scrollTo({ top: target, behavior: "instant" });
+    }
+  }, [opts.followStreamingRef, opts.bottomComposerHeightRef, scrollContainerRef, messagesEndRef]);
 
   const currentModel = currentModelOverride ?? data?.context.model ?? pendingModel ?? null;
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
@@ -1171,12 +1200,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setAgentPhase(null);
         // Live-follow the streaming output only when the user is already near
         // the bottom of the message list. If they scrolled up, leave them there.
+        // Step-follow (long-press on): don't scroll to the bottom on every
+        // event — smartFollowStep only steps when output actually pushes the
+        // last message out of view.
         if (!pendingScrollToUserRef.current && isNearBottomRef.current && liveFollowFrameRef.current === null) {
           // Defer the scroll so React has time to update the DOM with the new
           // streaming content; otherwise scrollIntoView may target stale layout.
           liveFollowFrameRef.current = requestAnimationFrame(() => {
             liveFollowFrameRef.current = null;
-            if (isNearBottomRef.current) scrollToBottom("auto");
+            if (isNearBottomRef.current) {
+              if (opts.followStreamingRef?.current) smartFollowStep();
+              else scrollToBottom("auto");
+            }
           });
         }
         break;
@@ -1280,7 +1315,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, cancelEventStreamGrace, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, scrollToBottom, settleUiStage]);
+  }, [addNotice, cancelEventStreamGrace, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, scrollToBottom, settleUiStage, smartFollowStep]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
@@ -1318,7 +1353,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setAgentPhase(isSlashCommandPrompt ? { kind: "running_command" } : { kind: "waiting_model" });
     dispatch({ type: "start" });
     pendingScrollToUserRef.current = true;
-    setPromptAnchorActive(true);
+    // Step-follow (long-press on) disables prompt anchoring — the step scroll
+    // targets the top 1/4 of the viewport and must not fight the anchor
+    // spacer that pins the user message to the first line.
+    if (!opts.followStreamingRef?.current) setPromptAnchorActive(true);
+    else setPromptAnchorActive(false);
     completionScrollAllowedRef.current = true;
 
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
@@ -2209,6 +2248,26 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     }
   }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
+
+  // Streaming chunks grow the visible message without changing messages.length;
+  // re-run the step-follow check on every chunk so the growing message is
+  // stepped into view once it exceeds the viewport (step-follow mode only).
+  useEffect(() => {
+    if (streamState.isStreaming) smartFollowStep();
+  }, [streamState, smartFollowStep]);
+
+  // The queue banner / input area sits BELOW the scroll container in a flex
+  // column. When the queue grows (or shrinks), the container's clientHeight
+  // changes without any message event — the last message can end up hidden
+  // behind the queue banner. Re-run the step-follow check on size changes so
+  // follow re-aims at the new (smaller) viewport.
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    const ro = new ResizeObserver(() => smartFollowStep());
+    ro.observe(container);
+    return () => ro.disconnect();
+  }, [smartFollowStep, scrollContainerRef]);
 
   // Load model list
   useEffect(() => {

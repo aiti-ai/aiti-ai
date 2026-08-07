@@ -212,6 +212,14 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   // Follow-streaming toggle (long-press on the 'latest' scroll button).
   const followStreamingRef = useRef<boolean>(false);
 
+  // Spacer heights measured/derived below (bottom composer + prompt anchor).
+  // Reflected up-front so they can be passed into useAgentSession for
+  // step-follow geometry.
+  const [bottomComposerHeight, setBottomComposerHeight] = useState(0);
+  const bottomComposerHeightRef = useRef(0);
+  const [promptAnchorSpacerHeight, setPromptAnchorSpacerHeight] = useState(0);
+  const promptAnchorSpacerHeightRef = useRef(0);
+
   const {
     loading, error, messages, entryIds, streamState,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
@@ -234,6 +242,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
     followStreamingRef,
+    promptAnchorSpacerHeightRef,
+    bottomComposerHeightRef,
   });
   // Expose the queue-export resolver to the parent (AppShell export dialog).
   useEffect(() => {
@@ -478,11 +488,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
   const bottomComposerRef = useRef<HTMLDivElement | null>(null);
-  const [bottomComposerHeight, setBottomComposerHeight] = useState(0);
-  const bottomComposerHeightRef = useRef(0);
   const bottomComposerScrollFrameRef = useRef<number | null>(null);
-  const [promptAnchorSpacerHeight, setPromptAnchorSpacerHeight] = useState(0);
-  const promptAnchorSpacerHeightRef = useRef(0);
   const promptAnchorScrollPendingRef = useRef(false);
 
   useLayoutEffect(() => {
