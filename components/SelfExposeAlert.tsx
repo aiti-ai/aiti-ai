@@ -55,6 +55,12 @@ export function SelfExposeAlert({ sessionLoadedKey, onOpenServices }: {
     return () => clearTimeout(timer);
   }, [sessionLoadedKey, load]);
 
+  // 切到新会话（sessionLoadedKey 变化）时恢复提示——「本次会话不再提示」只对
+  // 当前会话生效，而不是一直隐藏到页面刷新。
+  useEffect(() => {
+    setDismissed(false);
+  }, [sessionLoadedKey]);
+
   // 后台标签暂停；回到可见 / focus / online 时防抖 + 延迟刷新
   useEffect(() => {
     const schedule = () => {

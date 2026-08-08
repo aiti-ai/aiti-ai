@@ -1,6 +1,6 @@
 import { homedir, networkInterfaces } from "os";
 import { join } from "path";
-import { createServiceTunnels, type ServiceTunnels } from "service-tunnels";
+import { createServiceTunnels, tunnelParamSchemas, AUTH_PARAM_SCHEMAS, type ServiceTunnels } from "service-tunnels";
 import { getBaseDomains, getPiWebPort, getAllowLocal, getAllowLocalHosts, getAllowLocalPending } from "./service-proxy-shared.ts";
 
 /**
@@ -250,9 +250,10 @@ export async function stopSelf(): Promise<void> {
   }
   // Drop every binding for pi-web's own port (open "" and labeled "pi-web")
   // — an auth="none" self-expose registers an open binding that the
-  // site/label filter above would miss.
+  // site/label filter above would miss. 只删自暴露拥有的 label：同端口上其他
+  // 用户服务（label 不同）的 binding 不受影响。
   for (const b of st.proxy.bindings()) {
-    if (b.port === port) {
+    if (b.port === port && (b.label === "" || b.label === "pi-web")) {
       try {
         st.proxy.removeBinding(b.port, b.label);
       } catch {
@@ -260,6 +261,59 @@ export async function stopSelf(): Promise<void> {
       }
     }
   }
+}
+
+/**
+ * 敏感参数键集——以库的 ParamSpec 标记（type: "password"）为准：隧道 schema
+ * （ngrok/frpc/natapp/bore 的 token 等）+ 内置认证 provider schema
+ * （oauth2-proxy 的 oidc.clientSecret / oidc.cookieSecret 等）。同步、零 IO
+ * （tunnelParamSchemas 只读 process.env 的自定义隧道模板）。
+ */
+const SENSITIVE_PARAM_KEYS: ReadonlySet<string> = (() => {
+  const keys = new Set<string>();
+  for (const specs of Object.values(tunnelParamSchemas())) {
+    for (const s of specs) if (s.type === "password") keys.add(s.key);
+  }
+  for (const specs of Object.values(AUTH_PARAM_SCHEMAS)) {
+    for (const s of specs) if (s.type === "password") keys.add(s.key);
+  }
+  return keys;
+})();
+
+/** 叶键名启发式兜底：末段命中即视为秘密。覆盖 schema 外的敏感值——oauth2
+ *  变体 schema 的 clientSecret/cookieSecret、自定义 provider 插件、以及
+ *  PI_WEB_EXPOSE 顶层 ngrokAuthtoken 与 user.password。不匹配非秘密键
+ *  （server/domain/port/allowToolDownload 等）。 */
+const SENSITIVE_LEAF_RE = /token|secret|password|passwd|authtoken|apikey|api[_-]?key|credential|private[_-]?key/i;
+
+function maskSecret(v: string): string {
+  return v.length <= 4 ? "••••" : `••••${v.slice(-4)}`;
+}
+
+/** 深拷贝并掩码 __piWebExposeConfig 的敏感值（以库的 ParamSpec type:
+ *  "password" 标记为准，叶键名启发式兜底）。config 只作状态查询/展示，
+ *  绝不原样下发明文凭据——与 GET /api/service-tunnels 的 exposeParams 掩码一致。 */
+export function sanitizeExposeConfig(cfg: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!cfg) return null;
+  const seen = new Set<object>();
+  const walk = (node: Record<string, unknown>, prefix: string): Record<string, unknown> => {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(node)) {
+      const path = prefix ? `${prefix}.${k}` : k;
+      if (SENSITIVE_PARAM_KEYS.has(path) || SENSITIVE_LEAF_RE.test(k)) {
+        out[k] = typeof v === "string" ? maskSecret(v) : "••••";
+        continue;
+      }
+      if (v && typeof v === "object" && !Array.isArray(v) && !seen.has(v as object)) {
+        seen.add(v as object);
+        out[k] = walk(v as Record<string, unknown>, path);
+      } else {
+        out[k] = v;
+      }
+    }
+    return out;
+  };
+  return walk(cfg, "");
 }
 
 /** Current effective self-expose config (env parsed + runtime overrides). */
@@ -292,7 +346,7 @@ export function getSelfExposeState() {
     mode: (first?.label ? "proxy" : undefined) ?? globalThis.__piWebExposeConfig?.mode ?? null,
     auth: first?.provider ?? globalThis.__piWebExposeConfig?.auth ?? null,
     tunnel: first?.tunnelType ?? null,
-    config: globalThis.__piWebExposeConfig ?? null,
+    config: sanitizeExposeConfig(globalThis.__piWebExposeConfig ?? null),
     urls: getSelfAccessUrls(),
   };
 }
