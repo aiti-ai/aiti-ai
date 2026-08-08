@@ -174,7 +174,11 @@ export interface UseAgentSessionOptions {
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 const PROGRAMMATIC_SCROLL_IGNORE_MS = 700;
-const USER_SCROLL_INTENT_MS = 10_000;
+// Time window after a scroll interaction during which auto-follow pauses.
+// Short enough that a fast agent can't stream more than ~a screen of output
+// while the view is frozen; the walked-away distance guard (not this timer)
+// protects the "reading history" case indefinitely.
+const USER_SCROLL_INTENT_MS = 2_000;
 // Distance from the bottom of the scroll container within which live-follow
 // scrolling is active. Larger values make follow more lenient; smaller values
 // require the user to stay closer to the bottom.
@@ -439,12 +443,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const spacerH = (opts.promptAnchorSpacerHeightRef?.current ?? 0)
       + (opts.bottomComposerHeightRef?.current ?? 0);
     const lastMsgBottom = endTop - spacerH;
-    // Walked-away guard: if the last message's bottom sits at least a full
-    // viewport below the viewport bottom edge, the user scrolled up to read
-    // history — treat that as deliberately leaving and do NOT yank them back
-    // (streamState/ResizeObserver callers run without a near-bottom gate).
-    // Following resumes automatically once they return to the tail.
-    if (lastMsgBottom >= container.clientHeight * 2) return;
+    // Walked-away guard: if the last message's bottom sits at least half a
+    // viewport below the viewport bottom edge (1.5× viewport from the top),
+    // the user scrolled up to read history — treat that as deliberately
+    // leaving and do NOT yank them back (streamState/ResizeObserver callers
+    // run without a near-bottom gate). Following resumes automatically once
+    // they return to the tail.
+    if (lastMsgBottom >= container.clientHeight * 1.5) return;
     // Step when the output has filled the chat down to ~1 line (16px) from
     // the viewport bottom. The old 40px keep-out read as "4-5 lines short of
     // the bottom" on small screens, so the view rolled back before the
