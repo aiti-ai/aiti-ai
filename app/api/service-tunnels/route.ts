@@ -85,6 +85,11 @@ export async function GET(request: NextRequest) {
   }
   try {
     const st = getServiceTunnels();
+    // ?self-only=1 → 顶栏自暴露告警的轻量单次拉取：只返回 self 状态，不跑
+    // ensureSites / 发现 / schemas 本地化等重活（事件驱动，无轮询）。
+    if (request.nextUrl.searchParams.get("self-only") === "1") {
+      return NextResponse.json({ self: getSelfExposeState() });
+    }
     ensureSites(); // idempotent preset of pi-web + services realms
     const providers = st.auth.providers();
     // 多语:?lang= 显式 > Accept-Language 头(浏览器自动带);缺省英文

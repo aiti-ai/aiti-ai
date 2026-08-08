@@ -61,6 +61,8 @@ interface ServicesResponse {
 
 interface SelfState {
   exposing: boolean;
+  /** 任一 running 自暴露通道未挂 provider（auth-none / tcp）→ 无认证暴露。 */
+  unauthenticated?: boolean;
   allowLocal: boolean;
   allowLocalPending: { pending: boolean; expiresAt: number };
   allowHosts: string[];
@@ -69,7 +71,7 @@ interface SelfState {
   auth: string | null;
   tunnel: string | null;
   config: Record<string, unknown> | null;
-  urls: Array<{ label: string; labelKey?: string; labelParams?: Record<string, string>; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string }>;
+  urls: Array<{ label: string; labelKey?: string; labelParams?: Record<string, string>; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string; noAuth?: boolean }>;
 }
 
 function formatAddrForUrl(addr: string): string {
@@ -81,7 +83,22 @@ function isLikelyIp(hostname: string): boolean {
   return /^\d{1,3}(\.\d{1,3}){3}$/.test(hostname);
 }
 
-export function ServicesDialog({ onClose, onOpenFile }: { onClose: () => void; onOpenFile?: (filePath: string, fileName: string) => void }) {
+/** 无认证（auth-none / tcp）入口的红色 ⚠ 徽标 —— 与 Ports 页活动暴露列表一致。 */
+function NoAuthBadge({ t }: { t: (key: string) => string }) {
+  return (
+    <span title={t("services.noAuthWarnHint")}
+      style={{ padding: "1px 7px", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", borderRadius: 4, color: "#f87171", fontWeight: 600, flexShrink: 0, fontSize: 10 }}>
+      ⚠ {t("services.exposeProviderNone")}
+    </span>
+  );
+}
+
+export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
+  onClose: () => void;
+  onOpenFile?: (filePath: string, fileName: string) => void;
+  /** 打开时停靠的标签页：从顶栏无认证告警进入时传 "self"。 */
+  initialTab?: "ports" | "self" | "users";
+}) {
   const isMobile = useIsMobile();
   const { t, locale } = useI18n();
   // 多语:GET /api/service-tunnels 显式带 ?lang=,与 pi-web 内切换的语言一致
@@ -98,7 +115,7 @@ export function ServicesDialog({ onClose, onOpenFile }: { onClose: () => void; o
   // 活动暴露的详情弹窗:点链接不直接打开页面,先看来源详情(mode/auth/隧道/
   // 参数/链接/开启时间),链接在弹窗内点击才新窗口打开。
   const [detailFor, setDetailFor] = useState<ExposeInfo | null>(null);
-  const [tab, setTab] = useState<"ports" | "self" | "users">("ports");
+  const [tab, setTab] = useState<"ports" | "self" | "users">(initialTab);
   const [self, setSelf] = useState<SelfState | null>(null);
   const [infoModal, setInfoModal] = useState<"access" | "auth" | null>(null);
 
@@ -1997,6 +2014,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
               return (
                 <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, opacity: gated ? 0.45 : 1 }}>
                   <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 110 }}>{u.labelKey ? t(u.labelKey, u.labelParams) : u.label}</span>
+                  {u.noAuth && <NoAuthBadge t={t} />}
                   <button onClick={() => { if (!gated) openOrDetail(u); }}
                     title={gated ? t("services.selfGatedHint") : u.url}
                     disabled={gated}
@@ -2026,6 +2044,13 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
         )}
       </div>
 
+      {/* 无认证暴露 → 红色告警框（与页面顶部 🔴 条幅同源） */}
+      {self?.unauthenticated && (
+        <div style={{ border: "1px solid #f87171", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "#f87171" }}>
+          🔴 {t("services.selfNoAuth")} — {t("services.selfNoAuthSummary")}
+        </div>
+      )}
+
       {warnNonLoopback && (
         <div style={{ border: "1px solid #f87171", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "#f87171" }}>
           ⚠ {t("services.selfWarning")}
@@ -2036,17 +2061,18 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
       <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
           {t("services.selfExpose")}
-          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: exposing ? "#16a34a" : "var(--text-dim)" }}>
+          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: exposing ? (self?.unauthenticated ? "#f87171" : "#16a34a") : "var(--text-dim)" }}>
             ● {exposing ? t("services.selfExposing") : t("services.selfNotExposing")}
           </span>
         </div>
         {exposing && exposeUrls.length > 0 && (
-          <div style={{ border: "1px solid rgba(22,163,74,0.3)", background: "rgba(22,163,74,0.06)", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: "#16a34a", marginBottom: 5 }}>{t("services.selfExposeUrls")}</div>
+          <div style={{ border: self?.unauthenticated ? "1px solid rgba(248,113,113,0.45)" : "1px solid rgba(22,163,74,0.3)", background: self?.unauthenticated ? "rgba(248,113,113,0.06)" : "rgba(22,163,74,0.06)", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: self?.unauthenticated ? "#f87171" : "#16a34a", marginBottom: 5 }}>{t("services.selfExposeUrls")}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {exposeUrls.map((u) => (
                 <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
                   <span style={{ flexShrink: 0, color: "var(--text-dim)", width: 96 }}>{u.labelKey ? t(u.labelKey, u.labelParams) : u.label}</span>
+                  {u.noAuth && <NoAuthBadge t={t} />}
                   <button onClick={() => openOrDetail(u)} title={u.url}
                     style={{ flex: 1, textAlign: "left", padding: "3px 6px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--accent)", cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     {u.url}

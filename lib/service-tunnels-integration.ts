@@ -267,10 +267,27 @@ export function getSelfExposeState() {
   const st = getServiceTunnels();
   const port = getPiWebPort();
   const selfs = st.exposes().filter((e) => e.port === port && (e.site === "pi-web" || e.name?.startsWith("expose-self-")));
-  const exposing = selfs.some((e) => e.running);
+  // proxy 模式（pi-web 内进程代理，startTransport:false）库内 running 恒为 false，
+  // 实际以 binding 是否仍注册为准 —— 与 GET /api/service-tunnels 的 exposes 修正一致。
+  const isRunning = (e: { name?: string; label?: string; port: number; running: boolean }) => {
+    if (e.running) return true;
+    if ((e.name ?? "").startsWith("proxy:") && e.label !== undefined) {
+      return Boolean(st.proxy.bindings().some((b) => b.port === e.port && (b.label ?? "") === (e.label ?? "")));
+    }
+    return false;
+  };
+  const exposing = selfs.some(isRunning);
   const first = selfs[0];
+  // 无认证（不带秘）暴露：任一 running 自暴露通道未挂 provider（auth-none 记录
+  // provider 为空/undefined，tcp 自暴露同样无 provider），或 env 配置显式
+  // auth=none。mode=none 未暴露时 exposing=false，已被排除，不会误报。
+  const unauthenticated = exposing && (
+    selfs.some((e) => isRunning(e) && !e.provider)
+    || globalThis.__piWebExposeConfig?.auth === "none"
+  );
   return {
     exposing,
+    unauthenticated,
     allowLocal: getAllowLocal(),
     allowHosts: getAllowLocalHosts(),
     allowLocalPending: getAllowLocalPending(),
@@ -283,8 +300,9 @@ export function getSelfExposeState() {
   };
 }
 
-/** Every address pi-web's UI is reachable at (loopback / LAN / vhost / tunnel). */
-export function getSelfAccessUrls(): Array<{ label: string; labelKey?: string; labelParams?: Record<string, string>; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string }> {
+/** Every address pi-web's UI is reachable at (loopback / LAN / vhost / tunnel).
+ *  noAuth=true → 该入口的无认证（auth-none / tcp）暴露，前端行内标红提示。 */
+export function getSelfAccessUrls(): Array<{ label: string; labelKey?: string; labelParams?: Record<string, string>; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string; noAuth?: boolean }> {
   const st = getServiceTunnels();
   const port = getPiWebPort();
   const base = (process.env.PI_WEB_BASE_PATH ?? "").replace(/\/+$/, "");
@@ -293,7 +311,7 @@ export function getSelfAccessUrls(): Array<{ label: string; labelKey?: string; l
   // 直连门禁影响(authEntry=true,关闭期间仍可访问)。
   const allowLocal = getAllowLocal();
   // labelKey = 稳定翻译 id(前端按 locale 翻译;label 为中文回退)
-  const out: Array<{ label: string; labelKey?: string; labelParams?: Record<string, string>; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string }> = [];
+  const out: Array<{ label: string; labelKey?: string; labelParams?: Record<string, string>; url: string; gated?: boolean; authEntry?: boolean; tunnel?: string; exposeName?: string; noAuth?: boolean }> = [];
   out.push({ label: "本机（回环）", labelKey: "services.selfUrl.loopback", url: `http://127.0.0.1:${port}${base}`, gated: !allowLocal });
   for (const [name, addrs] of Object.entries(networkInterfaces())) {
     for (const a of addrs ?? []) {
@@ -305,11 +323,13 @@ export function getSelfAccessUrls(): Array<{ label: string; labelKey?: string; l
   for (const e of st.exposes()) {
     const isSelf = e.site === "pi-web" || e.name?.startsWith("expose-self-");
     if (!isSelf || e.port !== port) continue;
+    // 无认证（auth-none / tcp）入口 → noAuth=true，行内标红（与 Ports 页活动列表一致）
+    const noAuth = !e.provider;
     // baseUrl 已由库拼接部署前缀(0.3.13+,见 expose.proxyExpose withDeploy);
     // exposeName 让客户端加载即知该 vhost 的停止目标
-    if (e.localUrl) out.push({ label: "服务虚拟主机（本机）", labelKey: "services.selfUrl.vhostLocal", url: e.localUrl, authEntry: true, exposeName: e.name });
-    if (e.baseUrl) out.push({ label: "服务虚拟主机（部署域）", labelKey: "services.selfUrl.vhostBase", url: e.baseUrl, authEntry: true, exposeName: e.name });
-    if (e.url) out.push({ label: "隧道公网", labelKey: "services.selfUrl.tunnel", url: e.url, authEntry: true, tunnel: e.name });
+    if (e.localUrl) out.push({ label: "服务虚拟主机（本机）", labelKey: "services.selfUrl.vhostLocal", url: e.localUrl, authEntry: true, exposeName: e.name, noAuth });
+    if (e.baseUrl) out.push({ label: "服务虚拟主机（部署域）", labelKey: "services.selfUrl.vhostBase", url: e.baseUrl, authEntry: true, exposeName: e.name, noAuth });
+    if (e.url) out.push({ label: "隧道公网", labelKey: "services.selfUrl.tunnel", url: e.url, authEntry: true, tunnel: e.name, noAuth });
   }
   // allowHost 白名单:关闭期间仍可直连的例外域名(用户自己的反代入口,无端口信息)
   for (const h of getAllowLocalHosts()) {

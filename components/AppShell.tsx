@@ -13,6 +13,7 @@ import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ServicesDialog } from "./ServicesDialog";
+import { SelfExposeAlert } from "./SelfExposeAlert";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
 import { useTheme } from "@/hooks/useTheme";
@@ -79,6 +80,8 @@ export function AppShell() {
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
   const [pluginsConfigOpen, setPluginsConfigOpen] = useState(false);
   const [servicesOpen, setServicesOpen] = useState(false);
+  // 从顶栏告警进入时先停在 Self 页；普通打开默认 Ports 页，关闭时复位。
+  const [servicesInitialTab, setServicesInitialTab] = useState<"ports" | "self" | "users">("ports");
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
@@ -1615,6 +1618,13 @@ export function AppShell() {
 
         </div>
 
+        {/* 自暴露无认证（expose self 不带秘）的页面顶部红色 🔴 告警 —— 事件驱动，不轮询：
+            新/老会话加载完成后延迟拉一次；回到前台/focus/online 时防抖延迟刷新。 */}
+        <SelfExposeAlert
+          sessionLoadedKey={`${sessionKey}:${selectedSession?.id ?? "new"}`}
+          onOpenServices={() => { setServicesInitialTab("self"); setServicesOpen(true); }}
+        />
+
         {/* Chat content */}
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
           {showChat ? (
@@ -1799,7 +1809,13 @@ export function AppShell() {
         onReloaded={() => setSessionKey((k) => k + 1)}
       />
     )}
-    {servicesOpen && <ServicesDialog onClose={() => setServicesOpen(false)} onOpenFile={handleOpenFile} />}
+    {servicesOpen && (
+      <ServicesDialog
+        onClose={() => { setServicesOpen(false); setServicesInitialTab("ports"); }}
+        onOpenFile={handleOpenFile}
+        initialTab={servicesInitialTab}
+      />
+    )}
     {exportDialogOpen && selectedSession && (
       <ExportDialog
         sessionId={selectedSession.id}
