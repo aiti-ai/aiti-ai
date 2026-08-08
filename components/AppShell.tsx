@@ -1721,6 +1721,7 @@ export function AppShell() {
 
         {/* Chat content */}
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+          <ExtSlot name="pages" extra={{ activeCwd, onSelectSession: handleSelectSession }} />
           {showChat ? (
             <ChatWindow
               key={sessionKey}
@@ -1918,7 +1919,6 @@ export function AppShell() {
         onClose={() => setExportDialogOpen(false)}
       />
     )}
-    <ExtSlot name="pages" />
     </>
     </ExtSlotsProvider>
   );
