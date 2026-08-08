@@ -141,11 +141,14 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
         // 找不到(直到下次轮询)。
         if (d.exposes) {
           const ex = d.exposes;
-          setData((prev) => ({ ...(prev ?? ({} as ServicesResponse)), exposes: ex }));
+          // 无条件合并(两个请求并行,service-tunnels 可能先返回)。必须保留
+          // services 字段 —— 否则 data.services 为 undefined,渲染读
+          // data.services.length 直接抛 TypeError(曾在打开对话框时崩溃)。
+          setData((prev) => ({ ...(prev ?? ({} as ServicesResponse)), exposes: ex, services: prev?.services ?? [] }));
         }
         if (typeof d.allowToolDownload === "boolean") setAllowDownload(d.allowToolDownload);
         if (d.toolStatus) {
-          setData((prev) => ({ ...(prev ?? ({} as ServicesResponse)), toolStatus: d.toolStatus }));
+          setData((prev) => ({ ...(prev ?? ({} as ServicesResponse)), toolStatus: d.toolStatus, services: prev?.services ?? [] }));
         }
         if (d.self) setSelf(d.self);
       })
@@ -362,12 +365,12 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
             <div style={{ fontSize: 13, color: "#f87171", padding: 12 }}>{error}</div>
           ) : loading && !data ? (
             <div style={{ fontSize: 13, color: "var(--text-dim)", padding: 12 }}>{t("services.loading")}</div>
-          ) : !data || data.services.length === 0 ? (
+          ) : !data || (data.services ?? []).length === 0 ? (
             <div style={{ fontSize: 13, color: "var(--text-dim)", padding: 20, textAlign: "center" }}>
               {t("services.none")}
             </div>
           ) : (
-            data.services.map((s) => {
+            (data.services ?? []).map((s) => {
               const isOpen = expanded.has(s.port);
               const directUrls = s.addresses.map((addr) => ({ addr, url: directUrl(s.port, addr) }));
               // REAL proxy addresses from service-tunnels exposes (mode
