@@ -1357,7 +1357,7 @@ export function AppShell() {
               )}
             </div>
           )}
-          <ExtSlot name="sessionTopbar" currentSession={selectedSession} />
+          <ExtSlot name="sessionTopbar" currentSession={selectedSession} extra={{ newSessionCwd: effectiveNewSessionCwd }} />
           {/* Session stats — right-aligned in top bar */}
           {showChat && (sessionStats || contextUsage) && (() => {
              const tokens = sessionStats?.tokens;
