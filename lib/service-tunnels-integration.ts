@@ -267,23 +267,20 @@ export function getSelfExposeState() {
   const st = getServiceTunnels();
   const port = getPiWebPort();
   const selfs = st.exposes().filter((e) => e.port === port && (e.site === "pi-web" || e.name?.startsWith("expose-self-")));
-  // proxy 模式（pi-web 内进程代理，startTransport:false）库内 running 恒为 false，
-  // 实际以 binding 是否仍注册为准 —— 与 GET /api/service-tunnels 的 exposes 修正一致。
-  const isRunning = (e: { name?: string; label?: string; port: number; running: boolean }) => {
-    if (e.running) return true;
-    if ((e.name ?? "").startsWith("proxy:") && e.label !== undefined) {
-      return Boolean(st.proxy.bindings().some((b) => b.port === e.port && (b.label ?? "") === (e.label ?? "")));
-    }
-    return false;
-  };
-  const exposing = selfs.some(isRunning);
+  // 自暴露入口信号以 labeled binding 为准：exposeSelf 所有模式（proxy/both/tunnel）
+  // 都注册 (port, "pi-web", "pi-web") 绑定；proxy 模式库内 running 恒为 false、
+  // 隧道模式由隧道进程决定且隧道挂了 binding 仍在（虚拟主机入口可达）、expose
+  // 中途失败还会留下孤儿 binding——只查记录会漏报。mode=none 未暴露时无 binding。
+  const selfBindings = st.proxy.bindings().filter((b) => b.port === port && b.label === "pi-web");
+  const exposing = selfBindings.length > 0 || selfs.some((e) => e.running);
   const first = selfs[0];
-  // 无认证（不带秘）暴露：任一 running 自暴露通道未挂 provider（auth-none 记录
-  // provider 为空/undefined，tcp 自暴露同样无 provider），或 env 配置显式
-  // auth=none。mode=none 未暴露时 exposing=false，已被排除，不会误报。
+  // 无认证（不带秘）暴露：开放 binding（provider ""）或任一 running 自暴露通道
+  // 未挂 provider（auth-none 记录 provider 为空/undefined，tcp 自暴露同样无
+  // provider）。运行时换成带认证的暴露方法后 binding/记录同步替换 → 自动消除；
+  // 不依赖 env 配置（auth=none 只是启动初始值，不能作为持久信号）。
   const unauthenticated = exposing && (
-    selfs.some((e) => isRunning(e) && !e.provider)
-    || globalThis.__piWebExposeConfig?.auth === "none"
+    selfBindings.some((b) => !b.provider)
+    || selfs.some((e) => e.running && !e.provider)
   );
   return {
     exposing,
