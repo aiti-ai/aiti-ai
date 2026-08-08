@@ -11,6 +11,7 @@ export const enLocale: LocalePlugin = {
     "common.skills": "Skills",
     "common.plugins": "Plugins",
     "common.services": "Services",
+    "common.more": "More",
     "services.exposeSection": "Public access (auth gateway)",
     "services.exposeMode": "Mode",
     "services.exposeModeTunnel": "tunnel (public URL)",

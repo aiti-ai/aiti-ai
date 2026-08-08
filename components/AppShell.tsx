@@ -55,6 +55,15 @@ type AutoNameStatus =
   | { kind: "error"; message: string };
 
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
+
+/** Mobile top-bar "⋯" menu item style (export / generate title / system). */
+const mobileMoreItemStyle: React.CSSProperties = {
+  display: "flex", alignItems: "center", gap: 8,
+  width: "100%", padding: "9px 14px",
+  background: "none", border: "none",
+  color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 12,
+  borderBottom: "1px solid var(--border)",
+};
 const LANGUAGE_MENU_WIDTH = 176;
 
 export function AppShell() {
@@ -86,6 +95,7 @@ export function AppShell() {
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
   const exportQueueDataRef = useRef<(() => Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null>) | null>(null);
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
   const [projectTrustError, setProjectTrustError] = useState<string | null>(null);
@@ -1105,6 +1115,7 @@ export function AppShell() {
                 </svg>
                  {!isMobile && <span>{translate("history.label")}</span>}
               </button>
+              {!isMobile && (
               <button
                 onClick={handleExportPrompts}
                 disabled={!selectedSession}
@@ -1154,7 +1165,8 @@ export function AppShell() {
                 </svg>
                 {!isMobile && <span>{translate("history.exportPrompts")}</span>}
               </button>
-              {(() => {
+              )}
+              {!isMobile && (() => {
                 // 上下文压缩后当前消息可能不再包含 user 消息，需同时参考会话文件的消息总数。
                 const hasMessages = Boolean(
                   selectedSession
@@ -1238,6 +1250,7 @@ export function AppShell() {
                 onToggle={() => toggleTopPanel("branches")}
                 hasSession
               />
+              {!isMobile && (
               <button
                 ref={systemBtnRef}
                 onClick={() => toggleTopPanel("system")}
@@ -1266,6 +1279,82 @@ export function AppShell() {
                 </svg>
                  {!isMobile && <span>{translate("system.label")}</span>}
               </button>
+              )}
+              {isMobile && (
+                <div style={{ position: "relative", display: "flex", alignItems: "center", height: "100%" }}>
+                  <button
+                    onClick={() => setMoreOpen((v) => !v)}
+                    title={translate("common.more")}
+                    aria-label={translate("common.more")}
+                    aria-expanded={moreOpen}
+                    style={{
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      height: "100%", padding: "0 12px",
+                      background: moreOpen ? "var(--bg-selected)" : "none",
+                      border: "none",
+                      borderTop: moreOpen ? "2px solid var(--accent)" : "2px solid transparent",
+                      borderRight: "1px solid var(--border)",
+                      color: "var(--text-muted)", cursor: "pointer", flexShrink: 0,
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                      <circle cx="12" cy="5" r="1.6" />
+                      <circle cx="12" cy="12" r="1.6" />
+                      <circle cx="12" cy="19" r="1.6" />
+                    </svg>
+                  </button>
+                  {moreOpen && (
+                    <>
+                      <div style={{ position: "fixed", inset: 0, zIndex: 120 }} onClick={() => setMoreOpen(false)} />
+                      <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 121, minWidth: 168, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", overflow: "hidden" }}>
+                        <button
+                          onClick={() => { setMoreOpen(false); handleExportPrompts(); }}
+                          disabled={!selectedSession}
+                          style={mobileMoreItemStyle}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <polyline points="7 10 12 15 17 10" />
+                            <line x1="12" y1="15" x2="12" y2="3" />
+                          </svg>
+                          {translate("history.exportPrompts")}
+                        </button>
+                        <button
+                          onClick={() => { setMoreOpen(false); void handleAutoName(); }}
+                          disabled={!selectedSession || autoNameStatus.kind === "naming"}
+                          style={mobileMoreItemStyle}
+                        >
+                          {autoNameStatus.kind === "naming" ? (
+                            <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+                              <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                            </svg>
+                          ) : (
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="m15 4 5 5L7 22l-5-5Z" />
+                              <path d="m14 5 5 5" />
+                            </svg>
+                          )}
+                          {autoNameStatus.kind === "naming" ? translate("title.generating") : translate("title.generate")}
+                        </button>
+                        <button
+                          onClick={() => { setMoreOpen(false); toggleTopPanel("system"); }}
+                          aria-pressed={activeTopPanel === "system"}
+                          style={mobileMoreItemStyle}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <polyline points="14 2 14 8 20 8" />
+                            <line x1="8" y1="13" x2="16" y2="13" />
+                            <line x1="8" y1="17" x2="13" y2="17" />
+                          </svg>
+                          {translate("system.label")}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           )}
           <ExtSlot name="sessionTopbar" currentSession={selectedSession} />
@@ -1821,7 +1910,7 @@ export function AppShell() {
         initialTab={servicesInitialTab}
       />
     )}
-    <ExtSlot name="dialogs" />
+    <ExtSlot name="dialogs" extra={{ onSelectSession: handleSelectSession }} />
     {exportDialogOpen && selectedSession && (
       <ExportDialog
         sessionId={selectedSession.id}

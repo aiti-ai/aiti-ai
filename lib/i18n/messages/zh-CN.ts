@@ -11,6 +11,7 @@ export const zhCNLocale: LocalePlugin = {
     "common.skills": "技能",
     "common.plugins": "插件",
     "common.services": "服务端口",
+    "common.more": "更多",
     "services.exposeSection": "公网访问（认证网关）",
     "services.exposeMode": "模式",
     "services.exposeModeTunnel": "tunnel（公网隧道）",
