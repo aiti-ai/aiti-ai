@@ -65,6 +65,10 @@ app/api/
   models-config/discover/route.ts POST fetch a configured provider's upstream model list
   models-config/test/route.ts     POST test a configured model/provider
   plugins/route.ts                GET/POST package plugin management
+  extensions/[...path]/route.ts   GET/POST/PUT/DELETE/PATCH extension api dispatch + assets（门禁后分发，asset 防穿越）
+  extensions/manifest/route.ts    GET client manifest（ui 元数据 + clientUrl + i18n）
+  extensions/status/route.ts      GET extension load status
+  extensions/reload/route.ts      POST hot reload（shutdown→loadAll→startAll）
   skills/route.ts                 GET/PATCH loaded skills and disable-model-invocation
   skills/install/route.ts         POST install skills through npx skills add
   skills/search/route.ts          GET/POST skills.sh search
@@ -72,6 +76,12 @@ app/api/
 
 lib/
   agent-client.ts      typed fetch helper for /api/agent commands
+  ext/types.ts         PiWebExtension contract（server hooks + ui 元数据 + ExtCoreApi 数据契约）
+  ext/loader.ts        jiti 加载 ~/.pi/web/extensions/<id>/（moduleCache:false 支持 reload）
+  ext/registry.ts      globalThis.__piWebExt 单例：loadAll/startAll/shutdown/reload/api 分发/middleware 链/manifest/assetPath 防穿越
+  ext/core.ts          makeExtCore()：listSessions/getRunningSessionIds/getHomeDir
+  ext/data-dir.ts      代码 ~/.pi/web/extensions、数据 ~/.pi/web/data/<extId>/（PI_WEB_EXTENSIONS_DIR/PI_WEB_DATA_DIR 覆盖）
+  ext-ui-store.ts      client 插槽注册表（window.__piWebExtUI + subscribe 版本号）
   draft-store.ts       local draft persistence helpers
   file-access.ts       allowed file roots for /api/files and worktrees
   file-paths.ts        client/server path encoding helpers
@@ -94,7 +104,8 @@ lib/
   startup-preferences.ts  persists explicit model/thinking selections (no replay)
 
 components/
-  AppShell.tsx        layout + URL state + tab management
+  AppShell.tsx        layout + URL state + tab management + ExtSlot 挂载点（toolbar/sessionTopbar/banners/dialogs/pages）
+  ExtSlots.tsx        ExtSlotsProvider（拉 manifest + 动态 import client bundle + register(ctx)）+ <ExtSlot name=.../>（sidebar/sessionRowActions 在 SessionSidebar 内）
   SessionSidebar.tsx  session tree + FileExplorer
   ChatWindow.tsx      chat composition + completion sound wrapper
   ChatInput.tsx       input bar + model/thinking/tools/compact controls
