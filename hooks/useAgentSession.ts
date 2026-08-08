@@ -286,6 +286,7 @@ export interface ChatInputHandle {
   insertIfEmpty: (content: string) => void;
   replaceMessage: (message: UserMessage) => void;
   prependText: (text: string) => void;
+  appendText: (text: string) => void;
   addImages: (files: File[]) => void;
   expandQueue?: () => void;
 }

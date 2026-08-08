@@ -205,9 +205,11 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     chatInputRef?.current?.replaceMessage(message);
   }, [chatInputRef]);
 
-  /** Insert a quoted reply into the input box (user decides how to send it). */
+  /** Insert a quoted reply into the END of the input box (user decides how
+   *  to send it). It starts on its own line — a single newline separates it
+   *  from whatever was already typed (no blank line). */
   const handleQuoteReply = useCallback((quote: string) => {
-    chatInputRef?.current?.prependText(quote);
+    chatInputRef?.current?.appendText(quote);
   }, [chatInputRef]);
 
   // Spacer heights measured/derived below (bottom composer + prompt anchor).

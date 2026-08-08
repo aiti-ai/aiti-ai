@@ -104,6 +104,7 @@ export interface ChatInputHandle {
   insertIfEmpty: (text: string) => void;
   replaceMessage: (message: UserMessage) => void;
   prependText: (text: string) => void;
+  appendText: (text: string) => void;
   addImages: (files: File[]) => void;
   /** Restore an unsent draft (crash recovery) into the input box. */
   restoreDraft: (draft: ChatDraft) => void;
@@ -942,6 +943,30 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         // whole combined value), so further typing continues the recalled
         // message instead of jumping below the user's existing input.
         ta.setSelectionRange(text.length, text.length);
+        ta.style.height = "auto";
+        ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+      });
+    },
+    /** Append to the END of the input. Only a single newline separates the
+     *  inserted text from whatever was already typed (no blank line); if the
+     *  current value already ends with a newline (or is empty) nothing extra
+     *  is added, so the quote starts on its own line without glueing to the
+     *  previous input. Cursor lands at the tail of the combined value. */
+    appendText(text: string) {
+      if (!text.trim()) return;
+      const ta = textareaRef.current;
+      const current = ta ? ta.value : value;
+      const hasContent = current.trim().length > 0;
+      const sep = hasContent && !current.endsWith("\n") ? "\n" : "";
+      const combined = (hasContent ? current : "") + sep + text;
+      setValue(combined);
+      setAtQuery(null);
+      requestAnimationFrame(() => {
+        if (!ta) return;
+        ta.focus();
+        ta.setSelectionRange(combined.length, combined.length);
+        // Height recalculation (runs on its own via the [value] effect too;
+        // doing it here keeps the box sized before the next paint).
         ta.style.height = "auto";
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
       });

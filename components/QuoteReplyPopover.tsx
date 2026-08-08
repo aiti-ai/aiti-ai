@@ -13,6 +13,10 @@ interface Props {
   segments: ParsedSegment[];
   /** Called with the formatted quote-reply text (caller inserts it into the input). */
   onPick: (quote: string) => void;
+  /** Full paragraph text — quoted verbatim by the trailing "引用回复" button
+   *  (same summary label style as the per-segment ones), shown only when the
+   *  segment rows don't already cover the whole paragraph. */
+  fullText: string;
   /** Open a file path (from inline paths mentioned in the text). */
   onOpenFile?: (filePath: string, fileName?: string) => void;
   /** Reveal a directory in the sidebar file tree. */
@@ -29,7 +33,7 @@ interface Props {
  * single fallback "quote" button. Clicking inserts a quoted reply into the
  * input box — never sends.
  */
-export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, cwd, innerRef }: Props) {
+export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, cwd, innerRef, fullText }: Props) {
   const { t } = useI18n();
   // Show every segment: closed questions get option buttons, the rest get a
   // fallback quote button. (Any paragraph is quoteable.)
@@ -112,8 +116,24 @@ export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, c
       {questions.map((seg, i) => (
         <SegmentRow key={i} segment={seg} onPick={onPick} t={t} />
       ))}
+      {/* Trailing quote for the WHOLE paragraph, shown only when the segment
+          rows above don't already cover it: multi-segment paragraphs (each
+          row quotes just one part) and single questions with option buttons
+          (是/否 etc. — no plain quote row). A single fallback button already
+          quotes the whole paragraph, so it is skipped to avoid duplicates. */}
+      {(questions.length > 1 || questions[0].options != null) && (
+        <SegmentRow segment={{ text: fullText, options: null }} onPick={onPick} t={t} />
+      )}
     </span>
   );
+}
+
+/** Head-3 … tail-3 summary of a segment, so several fallback quote buttons
+ *  (one per segment of a multi-segment paragraph) stay tellable apart.
+ *  Short text (≤ 6 chars) is shown whole. */
+function summarizeSegment(text: string): string {
+  const t = text.trim();
+  return t.length <= 6 ? t : `${t.slice(0, 3)}…${t.slice(-3)}`;
 }
 
 function SegmentRow({
@@ -125,8 +145,10 @@ function SegmentRow({
   onPick: (quote: string) => void;
   t: (k: string) => string;
 }) {
+  // Fallback quote buttons carry the segment's text summary so a popover
+  // with multiple quotes shows which paragraph each button refers to.
   const options: QuoteOption[] =
-    segment.options ?? [{ label: t("chat.quoteReply"), value: "" }];
+    segment.options ?? [{ label: `${t("chat.quoteReply")}：${summarizeSegment(segment.text)}`, value: "" }];
   return (
     <span style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
       {options.map((opt, j) => (

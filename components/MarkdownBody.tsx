@@ -174,6 +174,7 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
   const open = openId === pid;
   const ref = useRef<HTMLElement>(null);
   const [segments, setSegments] = useState<ParsedSegment[] | null>(null);
+  const [fullText, setFullText] = useState<string>("");
   const [showTip, setShowTip] = useState(false);
   const tipRef = useRef<HTMLSpanElement>(null);
   // Detect touch capability lazily (same approach as useIsMobile but local).
@@ -206,6 +207,7 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
     const parsed = parseParagraph(text);
     if (parsed.length > 0) {
       setSegments(parsed);
+      setFullText(text);
       setOpenId(pid);
     }
   };
@@ -276,6 +278,7 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
         <QuoteReplyPopover
           innerRef={popoverRef}
           segments={segments}
+          fullText={fullText}
           onPick={(q) => { onQuoteReply(q); closePopover(); }}
           onOpenFile={onOpenFile}
           onRevealDir={onRevealDir}
