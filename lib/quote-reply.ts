@@ -78,8 +78,9 @@ export function detectOptions(seg: string): QuoteOption[] | null {
 
   // 2) Yes/no question (Chinese cues + trailing ？). But NOT open-ended
   // questions (怎么做/哪个/什么/…) — those have no yes/no answer, so fall
-  // through to the plain-quote fallback.
-  const openEnded = /怎么|如何|怎样|哪个|哪些|什么|为什么|为何|谁|多少|几(个|点|时)?|what|how|why|who|where/u.test(t);
+  // through to the plain-quote fallback. English cues need word boundaries:
+  // "show a diff summary" contains "how" and would otherwise look open-ended.
+  const openEnded = /怎么|如何|怎样|哪个|哪些|什么|为什么|为何|谁|多少|几(个|点|时)?|\b(?:what|how|why|who|where|which)\b/iu.test(t);
   const yesNo = !openEnded && (/[？?]\s*$/u.test(t) || /(?:吗|吧|呢)[？?]?\s*$/u.test(t) || /是否|要不要|能不能|可不可以|要不要我|需要我/u.test(t));
   if (yesNo) {
     // Try to surface the action ("要我X吗" → "好，X") for a more concrete button.
@@ -92,6 +93,14 @@ export function detectOptions(seg: string): QuoteOption[] | null {
       return [
         { label: `好，${truncate(action, 10)}`, value: "是的" },
         { label: "不用", value: "不用了" },
+      ];
+    }
+    // English yes/no question → English buttons (the pre-filled value should
+    // read naturally under the quoted question too).
+    if (!/\p{Script=Han}/u.test(t)) {
+      return [
+        { label: "Yes", value: "Yes" },
+        { label: "No", value: "No" },
       ];
     }
     return [
