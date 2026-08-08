@@ -4,23 +4,258 @@ import {
   buildSessionContext as piBuildSessionContext,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { closeSync, openSync, readSync } from "fs";
-import { normalize as normalizePath } from "path";
-import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types";
-import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
-import { normalizeToolCalls } from "./normalize";
-import { sessionPathKey } from "./session-path";
-import { resolveProject, type ProjectInfo } from "./worktree";
+import { existsSync, readdirSync, readFileSync, statSync, closeSync, openSync, readSync } from "fs";
+import { join, normalize as normalizePath } from "path";
+import { writePrivateFileAtomicSync } from "./atomic-file.ts";
+import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types.ts";
+import type { SessionEntry as PiSessionEntry } from "@earendil-works/pi-coding-agent";
+import { normalizeToolCalls } from "./normalize.ts";
+import { sessionPathKey } from "./session-path.ts";
+import type { ProjectInfo } from "./worktree.ts";
 
 export { getAgentDir };
 
+// ============================================================================
+// Incremental session-list scanning (§5.4 of docs/all-sessions-panel.zh-CN.md)
+//
+// SessionManager.listAll() re-parses EVERY line of EVERY session file on each
+// call (including allMessagesText, which pi-web does not use). For long-running
+// installs (thousands of sessions) that is wasteful. Instead we keep a disk
+// cache keyed by (mtimeMs, size); unchanged files reuse cached metadata and only
+// changed files are re-parsed (stat-only scans are cheap).
+// ============================================================================
+
+export interface SessionFileInfo {
+  path: string;
+  id: string;
+  cwd: string;
+  name?: string;
+  created: Date;
+  modified: Date;
+  messageCount: number;
+  firstMessage: string;
+  parentSessionPath?: string;
+}
+
+interface ListCacheEntry {
+  mtimeMs: number;
+  size: number;
+  info: SessionFileInfo;
+}
+
+interface ListCacheFile {
+  version: number;
+  updatedAt: string;
+  files: Record<string, ListCacheEntry>;
+}
+
+const LIST_CACHE_VERSION = 1;
+const LIST_CACHE_FILENAME = "session_list_cache.json";
+const MAX_CONCURRENT_PARSE = 10;
+
+function isMessageWithContent(message: AgentMessage): boolean {
+  return typeof message.role === "string" && "content" in message;
+}
+
+/** Mirrors the SDK's extractTextContent so firstMessage matches pi exactly. */
+function extractTextContent(message: AgentMessage): string {
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return (content as Array<{ type?: string; text?: string }>)
+    .filter((b) => b.type === "text")
+    .map((b) => b.text ?? "")
+    .join(" ");
+}
+
+/** Mirrors the SDK's getMessageActivityTime (entry-level timestamp semantics). */
+function getMessageActivityTime(entry: SessionEntry & { message?: AgentMessage }): number | undefined {
+  const message = entry.message;
+  if (!message || !isMessageWithContent(message)) return undefined;
+  if (message.role !== "user" && message.role !== "assistant") return undefined;
+  const msgTimestamp = message.timestamp;
+  if (typeof msgTimestamp === "number") return msgTimestamp;
+  const t = Date.parse(entry.timestamp);
+  return Number.isNaN(t) ? undefined : t;
+}
+
+/**
+ * Parse one session file into the same fields SessionManager.listAll() derives
+ * (id/cwd/name/created/modified/messageCount/firstMessage/parentSessionPath),
+ * reusing the SDK's entry parser. null when the file is not a session.
+ */
+export function deriveSessionFileInfo(filePath: string): SessionFileInfo | null {
+  const header = readSessionHeader(filePath);
+  if (!header) return null;
+  let name: string | undefined;
+  let messageCount = 0;
+  let firstMessage = "";
+  let lastActivity: number | undefined;
+  for (const e of getSessionEntries(filePath)) {
+    if (e.type === "session_info") {
+      name = e.name?.trim() || undefined;
+      continue;
+    }
+    if (e.type !== "message") continue;
+    messageCount++;
+    const ts = getMessageActivityTime(e as SessionEntry & { message?: AgentMessage });
+    if (typeof ts === "number") lastActivity = Math.max(lastActivity ?? 0, ts);
+    const msg = (e as { message?: AgentMessage }).message;
+    if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
+    const text = extractTextContent(msg);
+    if (!text) continue;
+    if (!firstMessage && msg.role === "user") firstMessage = text;
+  }
+  const headerTime = Date.parse(header.timestamp);
+  const modified = typeof lastActivity === "number" && lastActivity > 0
+    ? new Date(lastActivity)
+    : !Number.isNaN(headerTime)
+      ? new Date(headerTime)
+      : statSync(filePath).mtime;
+  return {
+    path: filePath,
+    id: header.id,
+    cwd: header.cwd ?? "",
+    name,
+    created: new Date(header.timestamp),
+    modified,
+    messageCount,
+    firstMessage: firstMessage || "(no messages)",
+    parentSessionPath: header.parentSession,
+  };
+}
+
+function readListCache(root: string): ListCacheFile | null {
+  const p = join(root, LIST_CACHE_FILENAME);
+  try {
+    if (!existsSync(p)) return null;
+    const raw = JSON.parse(readFileSync(p, "utf8")) as ListCacheFile;
+    if (raw?.version !== LIST_CACHE_VERSION) return null;
+    // JSON round-trip turns Dates into strings — restore them.
+    for (const entry of Object.values(raw.files)) {
+      entry.info.created = new Date(entry.info.created);
+      entry.info.modified = new Date(entry.info.modified);
+    }
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+function writeListCache(root: string, cache: ListCacheFile): void {
+  try {
+    writePrivateFileAtomicSync(join(root, LIST_CACHE_FILENAME), JSON.stringify(cache));
+  } catch {
+    // Non-fatal: the in-memory result is still correct; next scan rebuilds.
+  }
+}
+
+async function parseChangedFiles(files: string[]): Promise<SessionFileInfo[]> {
+  const out = new Array<SessionFileInfo | null>(files.length).fill(null);
+  let next = 0;
+  const workerCount = Math.min(MAX_CONCURRENT_PARSE, files.length) || 1;
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    for (;;) {
+      const i = next++;
+      if (i >= files.length) return;
+      out[i] = deriveSessionFileInfo(files[i]);
+    }
+  }));
+  return out.filter((x): x is SessionFileInfo => x !== null);
+}
+
+/**
+ * List session files under a sessions root (same layout the SDK scans:
+ * <root>/<encoded-cwd>/*.jsonl).
+ */
+export function listSessionFiles(root: string): string[] {
+  const files: string[] = [];
+  let dirs: string[] = [];
+  try {
+    dirs = readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() || e.isSymbolicLink())
+      .map((e) => join(root, e.name));
+  } catch {
+    return files;
+  }
+  for (const dir of dirs) {
+    try {
+      for (const f of readdirSync(dir)) {
+        if (f.endsWith(".jsonl")) files.push(join(dir, f));
+      }
+    } catch {
+      // unreadable dir — skip
+    }
+  }
+  return files;
+}
+
+/**
+ * Incremental scan: stat-compare against the disk cache, re-parse only changed
+ * files, drop entries for deleted files, persist the cache when anything
+ * changed. Sorted by modified desc (same as SessionManager.listAll).
+ */
+export async function scanSessionsFromRoot(root: string): Promise<SessionFileInfo[]> {
+  const files = listSessionFiles(root);
+  const cache = readListCache(root);
+  const knownKeys = new Set<string>();
+  const changed: string[] = [];
+  const merged: SessionFileInfo[] = [];
+
+  for (const f of files) {
+    const key = sessionPathKey(f);
+    knownKeys.add(key);
+    let st;
+    try {
+      st = statSync(f);
+    } catch {
+      continue;
+    }
+    const hit = cache?.files[key];
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+      merged.push(hit.info);
+    } else {
+      changed.push(f);
+    }
+  }
+
+  const fresh = changed.length > 0 ? await parseChangedFiles(changed) : [];
+  merged.push(...fresh);
+
+  // Rebuild cache: reused entries + freshly parsed ones; drop deleted paths.
+  const stale = cache ? Object.keys(cache.files).filter((k) => !knownKeys.has(k)).length : 0;
+  if (changed.length > 0 || stale > 0) {
+    const files2: ListCacheFile = { version: LIST_CACHE_VERSION, updatedAt: new Date().toISOString(), files: {} };
+    for (const info of merged) {
+      try {
+        const st = statSync(info.path);
+        files2.files[sessionPathKey(info.path)] = { mtimeMs: st.mtimeMs, size: st.size, info };
+      } catch {
+        // file vanished mid-scan — omit
+      }
+    }
+    writeListCache(root, files2);
+  }
+
+  return merged.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+}
+
+/** Production entry: scan ~/.pi/agent/sessions incrementally. */
+function scanSessionsIncremental(): Promise<SessionFileInfo[]> {
+  // Same location the SDK uses: ~/.pi/agent/sessions (encoded-cwd subdirs).
+  return scanSessionsFromRoot(join(getAgentDir(), "sessions"));
+}
+
 async function loadAllSessions(): Promise<SessionInfo[]> {
-  const piSessions: PiSessionInfo[] = await SessionManager.listAll();
+  const piSessions: SessionFileInfo[] = await scanSessionsIncremental();
   const pathToId = new Map<string, string>();
   for (const s of piSessions) pathToId.set(sessionPathKey(s.path), s.id);
 
   // Resolve each unique cwd to its project root (main repo shared by all
   // worktrees). resolveProject caches per-cwd, so this is cheap after warmup.
+  // Lazy import: keeps session-reader importable without the git/worktree
+  // chain in node tests — resolveProject only runs for the full list build.
+  const { resolveProject } = await import("./worktree.ts");
   const uniqueCwds = [...new Set(piSessions.map((s) => s.cwd).filter(Boolean))];
   const projectByCwd = new Map<string, ProjectInfo>();
   await Promise.all(uniqueCwds.map(async (cwd) => {
@@ -93,7 +328,7 @@ declare global {
   var __piSessionListCache: { data: SessionInfo[]; ts: number } | undefined;
 }
 
-const SESSION_LIST_CACHE_TTL_MS = 30_000;
+const SESSION_LIST_CACHE_TTL_MS = 5_000;
 
 export function invalidateSessionListCache(): void {
   globalThis.__piSessionListGeneration = (globalThis.__piSessionListGeneration ?? 0) + 1;
