@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProp
 import type { SessionInfo } from "@/lib/types";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
 import { useI18n } from "@/hooks/useI18n";
+import { ExtSlot } from "./ExtSlots";
 import { apiUrl } from "@/lib/base-path";
 
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -972,6 +973,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               )}
             </button>
           </div>
+          <ExtSlot name="sidebar" />
         </div>
 
         {/* CWD picker */}
@@ -2081,6 +2083,7 @@ function SessionItem({
           {/* Action buttons — shown on hover */}
           {hovered && (
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              <ExtSlot name="sessionRowActions" currentSession={session} />
               <button
                 onClick={startRename}
                 title={t("sidebar.rename")}

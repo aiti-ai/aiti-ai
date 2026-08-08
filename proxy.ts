@@ -54,6 +54,24 @@ export async function proxy(request: NextRequest) {
     }
   }
 
+  // Extension middleware hooks (registry lives on globalThis, created by the
+  // app server in instrumentation — the middleware bundle never imports
+  // extension code). Extensions own their host/path namespaces; unhandled
+  // requests fall through to the core gates. A throwing hook is fail-closed.
+  const extRegistry = globalThis.__piWebExt;
+  if (extRegistry) {
+    try {
+      const extRes = await extRegistry.middleware(request);
+      if (extRes.handled) return extRes.response;
+    } catch (err) {
+      console.error("[pi-web] extension middleware failed:", err);
+      return new NextResponse("extension middleware error", {
+        status: 403,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+  }
+
   // Service virtual hosts: the library's in-process decision API (parse,
   // enrollment, per-site auth backends, forward-auth probe, login redirect)
   // runs HERE — no separate proxy port, one public port. Next then forwards

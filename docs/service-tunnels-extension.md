@@ -331,3 +331,50 @@ allowlocal 状态、self-forward token、allowed ports、`stripBasePath`、
 4. middleware 安全性不降级：未 enroll 端口 403、伪造 Host 403、扩展崩溃
    fail-closed 403、自暴露无认证告警逻辑不变；
 5. 现有测试全绿，新增 registry/hot-reload/fail-closed 测试。
+
+---
+
+## 11. 待设计：通用扩展能力补充需求（来自 session-manager 扩展）
+
+> 状态：**Phase 0 已实施（2026-08-08，随 session-manager 方案的框架先行决策）**。
+> 本节的缺口 1/2/3/5 已在 core 落地（通用插槽 + currentSession 上下文 + `ExtServerContext.core` 数据契约（缺 `fileAccess`/`readSession` 待补）+ `~/.pi/web/data/<extId>/` 约定），并已用演示扩展 `demo` 全链路验证（见 `aiti-ai/docs/all-sessions-panel.zh-CN.md` §9 Phase 0）。以下条目保留为设计记录。
+
+### 11.1 插槽目录扩展（当前只有 toolbar/dialogs/banners/statusbar，偏 service-tunnels 定制）
+
+新增通用插槽（沿用 `<ExtSlot name=.../>` 机制，加挂载位置即可）：
+
+| 插槽 | 挂载位置 | 承载 |
+|---|---|---|
+| `sidebar` | 侧栏头部（New/Refresh 旁） | 面板入口按钮 + 运行中数量徽标 |
+| `sessionTopbar` | 聊天顶部栏（BranchNavigator 附近） | 当前会话 tag 区（chips + ★ + 编辑） |
+| `sessionRowActions` | 侧栏会话行 hover 操作区 | 行内 ★/tag 按钮 |
+| `pages` | AppShell tab 系统 | 全页视图（看板） |
+
+### 11.2 插槽感知当前会话（缺口 5）
+
+`sessionTopbar` / `sessionRowActions` 需要知道当前选中的会话（id/cwd/名称）。AppShell 需向插槽提供 currentSession 上下文（选中会话变化时插槽组件重新渲染）。
+
+### 11.3 ExtServerContext.core 数据契约（缺口 2，当前类型为空壳）
+
+扩展需要 core 数据能力，不能各自重新实现会话读取与安全规则：
+
+```ts
+interface ExtServerCore {
+  listSessions(): Promise<SessionInfo[]>;          // 增量缓存版（见方案 §5.4）
+  getRunningSessionIds(): Promise<string[]>;       // rpc 运行集
+  readSession(id: string): Promise<SessionContext> // 会话内容（含归档按需解包路径）
+  getHomeDir(): Promise<string>;
+  fileAccess: { allowRoot(root: string): void; isAllowed(p: string): boolean };  // 复用 lib/file-access
+}
+```
+
+### 11.4 数据目录约定（缺口 3，当前只定义了代码目录 `~/.pi/web/extensions/`）
+
+新增约定：运行时数据放 `~/.pi/web/data/<extId>/`（代码/数据分离，更新扩展不丢数据）。session-manager 将使用：`session-tags.json`、`index.sqlite`、`archive/*.pwarc`、`archive/.cache/`、`settings.json`。
+
+### 11.5 其他确认项
+
+- middleware 钩子保持可选（session-manager 不使用，service-tunnels 使用）；框架侧无强制改动。
+- 前端 client bundle 协议（importmap 单实例 React、`register(ctx)`、i18n 合并）沿用本文档 §5.4，session-manager 按其接入。
+- 信任模型：session-manager 需要读写 `~/.pi/agent/sessions/` 与 `~/.pi/web/data/`，属受信扩展。
+- 生命周期：后台任务（索引/归档定时器）由 `server.startup`/`shutdown` 承载，框架无需新增接口。

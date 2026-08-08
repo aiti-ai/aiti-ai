@@ -41,13 +41,15 @@ const nextConfig: NextConfig = {
     "@earendil-works/pi-agent-core",
     "@earendil-works/pi-ai",
     "@earendil-works/pi-tui",
+    // Extensions are transpiled at runtime with jiti — must not be bundled.
+    "jiti",
     // service-tunnels loads runtime plugin files (configDir/providers/*.js)
     // and probes http/https via computed import() — must not be bundled.
     // Safe to externalize: server-only runtime; client code uses type imports
     // only; the middleware (proxy.ts) never imports it (shared globalThis).
     "service-tunnels",
   ],
-  allowedDevOrigins: ['192.168.*.*'],
+  allowedDevOrigins: ['192.168.*.*', '127.0.0.1', 'localhost'],
   async headers() {
     return [
       {

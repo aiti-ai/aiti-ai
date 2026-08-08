@@ -14,6 +14,7 @@ import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ServicesDialog } from "./ServicesDialog";
 import { SelfExposeAlert } from "./SelfExposeAlert";
+import { ExtSlotsProvider, ExtSlot } from "./ExtSlots";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
 import { useTheme } from "@/hooks/useTheme";
@@ -756,6 +757,7 @@ export function AppShell() {
   );
 
   return (
+    <ExtSlotsProvider>
     <>
     <style>{`
       @keyframes session-info-pop {
@@ -1004,6 +1006,7 @@ export function AppShell() {
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
             </svg>
           </button>
+          <ExtSlot name="toolbar" />
           {showChat && projectTrust?.requiresTrust && !projectTrust.trusted && (
             <button
               type="button"
@@ -1265,6 +1268,7 @@ export function AppShell() {
               </button>
             </div>
           )}
+          <ExtSlot name="sessionTopbar" currentSession={selectedSession} />
           {/* Session stats — right-aligned in top bar */}
           {showChat && (sessionStats || contextUsage) && (() => {
              const tokens = sessionStats?.tokens;
@@ -1624,6 +1628,7 @@ export function AppShell() {
           sessionLoadedKey={`${sessionKey}:${selectedSession?.id ?? "new"}`}
           onOpenServices={() => { setServicesInitialTab("self"); setServicesOpen(true); }}
         />
+        <ExtSlot name="banners" />
 
         {/* Chat content */}
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
@@ -1816,6 +1821,7 @@ export function AppShell() {
         initialTab={servicesInitialTab}
       />
     )}
+    <ExtSlot name="dialogs" />
     {exportDialogOpen && selectedSession && (
       <ExportDialog
         sessionId={selectedSession.id}
@@ -1823,6 +1829,8 @@ export function AppShell() {
         onClose={() => setExportDialogOpen(false)}
       />
     )}
+    <ExtSlot name="pages" />
     </>
+    </ExtSlotsProvider>
   );
 }

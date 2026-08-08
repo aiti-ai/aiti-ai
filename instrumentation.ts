@@ -10,6 +10,14 @@ export async function register(): Promise<void> {
   const { configureHttpDispatcher } = await import("@/lib/http-dispatcher");
   configureHttpDispatcher();
 
+  // Extension framework: load + start extensions (registry on globalThis so
+  // the middleware bundle can invoke hooks without importing extension code).
+  const { ensureRegistry } = await import("@/lib/ext/registry");
+  const { makeExtCore } = await import("@/lib/ext/core");
+  const extRegistry = ensureRegistry(makeExtCore());
+  await extRegistry.loadAll();
+  await extRegistry.startAll();
+
   // Initialize the service-tunnels instance on globalThis — the middleware
   // (proxy.ts) resolves service virtual hosts through it in-process. No
   // separate proxy listener anymore (decisions are embedded in the middleware).
