@@ -1,10 +1,10 @@
 // Test / demo upstream service for the service-vhost proxy (proxy.ts):
-//   node scripts/test-server.js          → http://127.0.0.1:8903 hello-svc
+//   node scripts/test-server.mjs    → http://127.0.0.1:8903 hello-svc
 // Then enroll it from the Services dialog (Expose → proxy) and reach it at
 // <port>.example.com (or <port>-pi-web.<domain> for pi-web itself).
-// Exits on SIGINT; port overridable: PORT=9000 node scripts/test-server.js
+// Exits on SIGINT; port overridable: PORT=9000 node scripts/test-server.mjs
 
-const http = require('http');
+import http from "node:http";
 
 const server = http.createServer((req, res) => {
   const info = {

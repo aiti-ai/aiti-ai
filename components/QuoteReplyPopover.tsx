@@ -34,11 +34,11 @@ export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, c
   // Show every segment: closed questions get option buttons, the rest get a
   // fallback quote button. (Any paragraph is quoteable.)
   const questions = segments;
-  if (questions.length === 0) return null;
-
-  // Inline file/dir paths mentioned in the text (assistant often lists them as
-  // plain text, not links). Verify each against the backend before offering an
-  // action so we don't render dead buttons.
+  // Hooks 必须无条件调用——早退只能放在它们之后。调用处守卫 `segments &&
+  // segments.length > 0` 挡的是空数组，但 [] 是 truthy，旧写法 `if
+  // (questions.length === 0) return null` 在 Hook 之前会让本组件出现
+  // “0 个 Hook”渲染路径；一旦同一实例收到非空 segments 就触发
+  // “rendered more hooks”崩溃。
   const [existingPaths, setExistingPaths] = useState<ExtractedPath[]>([]);
   useEffect(() => {
     let cancelled = false;
@@ -59,6 +59,8 @@ export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, c
     });
     return () => { cancelled = true; };
   }, [questions, cwd]);
+
+  if (questions.length === 0) return null;
 
   return (
     <span

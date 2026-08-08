@@ -97,6 +97,9 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     },
     p({ children, ...props }) {
       delete props.node;
+      // react-markdown 以组件方式调用这些小写渲染函数（createElement(components.p)），
+      // Hook 顺序稳定；rules-of-hooks 只按函数名小写误报。
+      // eslint-disable-next-line react-hooks/rules-of-hooks
       const pid = useId();
       if (!onQuoteReply) return <p {...props}>{children}</p>;
       return (
@@ -107,6 +110,8 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     },
     li({ children, ...props }) {
       delete props.node;
+      // react-markdown 以组件方式调用这些小写渲染函数（createElement(components.li)）。
+      // eslint-disable-next-line react-hooks/rules-of-hooks
       const pid = useId();
       if (!onQuoteReply) return <li {...props}>{children}</li>;
       return (
@@ -124,6 +129,8 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     },
     tr({ children, ...props }) {
       delete props.node;
+      // react-markdown 以组件方式调用这些小写渲染函数（createElement(components.tr)）。
+      // eslint-disable-next-line react-hooks/rules-of-hooks
       const pid = useId();
       if (!onQuoteReply) return <tr {...props}>{children}</tr>;
       return (
@@ -263,7 +270,9 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
           {t("chat.quoteReplyHint")}
         </span>
       )}
-      {segments && (
+      {/* segments 可能是 []（truthy）——引用弹窗只在有内容时挂载，否则会走到
+          QuoteReplyPopover 的空态早退，改变 Hook 计数。 */}
+      {segments && segments.length > 0 && (
         <QuoteReplyPopover
           innerRef={popoverRef}
           segments={segments}
