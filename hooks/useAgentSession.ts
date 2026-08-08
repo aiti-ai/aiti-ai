@@ -164,14 +164,6 @@ export interface UseAgentSessionOptions {
   onSystemPromptChange?: (prompt: string | null) => void;
   onSessionStatsPanelOpen?: () => void;
   setToolPreset?: (preset: "none" | "default" | "full") => void;
-  /**
-   * Long-press on the last message flips this to true → the message list
-   * follows streaming output automatically even while the agent runs.
-   * Clicking any scroll-navigation button flips it back to false.
-   */
-  followStreamingRef?: React.RefObject<boolean | null>;
-  /** Called when follow-streaming turns on/off (re-arms auto-scroll). */
-  onFollowStreamingChange?: (v: boolean) => void;
   /** Live heights of the prompt-anchor spacer and bottom composer spacer
    *  (owned by ChatWindow). Step-follow geometry needs them to know where the
    *  last message actually ends. */
@@ -425,12 +417,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     messagesEndRef.current?.scrollIntoView({ behavior });
   }, []);
 
-  // Step-follow (long-press enabled): instead of scrolling to the bottom on
-  // every streaming event, only scroll when new output pushes the last message
+  // Step-follow (always on): instead of scrolling to the bottom on every
+  // streaming event, only scroll when new output pushes the last message
   // past a small keep-out zone — then step it back to the top 1/4 of the
   // viewport so the lower 3/4 refills with output before the next step.
   const smartFollowStep = useCallback(() => {
-    if (!opts.followStreamingRef?.current) return;
     if (Date.now() < userScrollIntentUntilRef.current) return;
     const container = scrollContainerRef.current;
     const end = messagesEndRef.current;
@@ -451,7 +442,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       ignoreProgrammaticScrollUntilRef.current = Date.now() + 1200;
       container.scrollTo({ top: target, behavior: "instant" });
     }
-  }, [opts.followStreamingRef, opts.promptAnchorSpacerHeightRef, opts.bottomComposerHeightRef, scrollContainerRef, messagesEndRef]);
+  }, [opts.promptAnchorSpacerHeightRef, opts.bottomComposerHeightRef, scrollContainerRef, messagesEndRef]);
 
   const currentModel = currentModelOverride ?? data?.context.model ?? pendingModel ?? null;
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
@@ -1198,17 +1189,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setAgentPhase(null);
         // Live-follow the streaming output only when the user is already near
         // the bottom of the message list. If they scrolled up, leave them there.
-        // Step-follow (long-press on): don't scroll to the bottom on every
-        // event — smartFollowStep only steps when output actually pushes the
-        // last message out of view.
+        // Step-follow (always on): don't scroll to the bottom on every event —
+        // smartFollowStep only steps when output actually pushes the last
+        // message out of view.
         if (!pendingScrollToUserRef.current && isNearBottomRef.current && liveFollowFrameRef.current === null) {
           // Defer the scroll so React has time to update the DOM with the new
           // streaming content; otherwise scrollIntoView may target stale layout.
           liveFollowFrameRef.current = requestAnimationFrame(() => {
             liveFollowFrameRef.current = null;
             if (isNearBottomRef.current) {
-              if (opts.followStreamingRef?.current) smartFollowStep();
-              else scrollToBottom("auto");
+              smartFollowStep();
             }
           });
         }
@@ -1313,7 +1303,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, cancelEventStreamGrace, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, scrollToBottom, settleUiStage, smartFollowStep]);
+  }, [addNotice, cancelEventStreamGrace, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage, smartFollowStep]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {

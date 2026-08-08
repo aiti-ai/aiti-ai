@@ -210,9 +210,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     chatInputRef?.current?.prependText(quote);
   }, [chatInputRef]);
 
-  // Follow-streaming toggle (long-press on the 'latest' scroll button).
-  const followStreamingRef = useRef<boolean>(false);
-
   // Spacer heights measured/derived below (bottom composer + prompt anchor).
   // Reflected up-front so they can be passed into useAgentSession for
   // step-follow geometry.
@@ -238,11 +235,10 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
-    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom, scrollUserMsgToTop,
+    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom,
   } = useAgentSession({
     session, newSessionCwd, onAgentEnd: wrappedOnAgentEnd, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSessionStatsPanelOpen,
-    followStreamingRef,
     promptAnchorSpacerHeightRef,
     bottomComposerHeightRef,
   });
@@ -491,7 +487,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
   const bottomComposerRef = useRef<HTMLDivElement | null>(null);
   const bottomComposerScrollFrameRef = useRef<number | null>(null);
-  const promptAnchorScrollPendingRef = useRef(false);
 
   useLayoutEffect(() => {
     const composer = bottomComposerRef.current;
@@ -541,7 +536,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
 
   useLayoutEffect(() => {
     if (!agentRunning || !promptAnchorActive) {
-      promptAnchorScrollPendingRef.current = false;
       if (promptAnchorSpacerHeightRef.current !== 0) {
         promptAnchorSpacerHeightRef.current = 0;
         setPromptAnchorSpacerHeight(0);
@@ -550,29 +544,25 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     }
 
     const container = scrollContainerRef.current;
-    const isStepFollow = !!followStreamingRef.current;
-    // Anchor differs by mode: prompt-anchor pins the user message near the
-    // top; step-follow pins the LAST message 120px below the top (a little
-    // history stays visible above). Same spacer machinery, different target.
-    const anchor = isStepFollow ? messagesEndRef.current : lastUserMsgRef.current;
+    // Step-follow (always on): pin the LAST message 120px below the viewport
+    // top (a little history stays visible above; the lower area refills with
+    // output before smartFollowStep steps again).
+    const anchor = messagesEndRef.current;
     if (!container || !anchor) return;
 
     const updatePromptAnchorSpacer = () => {
       const anchorTop = anchor.getBoundingClientRect().top
         - container.getBoundingClientRect().top
         + container.scrollTop;
-      // Step-follow anchors on the END sentinel, which sits BELOW the spacer
-      // (and composer). Exclude them so the measured anchor position does not
-      // chase the spacer height — otherwise every spacer change moves the
-      // sentinel, recomputes a new spacer, and loops forever. Prompt-anchoring
-      // anchors on the user message (above the spacer) and needs no exclusion.
-      const anchorExclSpacer = isStepFollow
-        ? anchorTop - promptAnchorSpacerHeightRef.current - bottomComposerHeightRef.current
-        : anchorTop;
-      // Step-follow target offset: last message 120px below the viewport top.
-      // Prompt-anchor target offset: user message 16px below the top.
-      const offset = isStepFollow ? 120 : 16;
-      const targetTop = Math.max(0, anchorExclSpacer - offset);
+      // The END sentinel sits BELOW the spacer (and composer). Exclude them so
+      // the measured anchor position does not chase the spacer height —
+      // otherwise every spacer change moves the sentinel, recomputes a new
+      // spacer, and loops forever.
+      const anchorExclSpacer = anchorTop
+        - promptAnchorSpacerHeightRef.current
+        - bottomComposerHeightRef.current;
+      // Target: last message 120px below the viewport top.
+      const targetTop = Math.max(0, anchorExclSpacer - 120);
       // Exclude the current spacer so each measurement converges instead of
       // alternating between adding it and removing it.
       const maxScrollTopWithoutAnchor = Math.max(
@@ -585,19 +575,8 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       );
 
       if (nextPromptAnchorSpacerHeight !== promptAnchorSpacerHeightRef.current) {
-        const needsInitialScroll = promptAnchorSpacerHeightRef.current === 0
-          && nextPromptAnchorSpacerHeight > 0;
         promptAnchorSpacerHeightRef.current = nextPromptAnchorSpacerHeight;
-        promptAnchorScrollPendingRef.current ||= needsInitialScroll && !isStepFollow;
         setPromptAnchorSpacerHeight(nextPromptAnchorSpacerHeight);
-        return;
-      }
-
-      // Step-follow never re-anchors to the user message; only prompt-anchoring
-      // does the initial scroll-to-user-message jump once the spacer settles.
-      if (!isStepFollow && promptAnchorScrollPendingRef.current) {
-        promptAnchorScrollPendingRef.current = false;
-        scrollUserMsgToTop();
       }
     };
 
@@ -611,14 +590,11 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   }, [
     agentRunning,
     bottomComposerHeight,
-    followStreamingRef,
-    lastUserMsgRef,
     messages.length,
     messagesEndRef,
     promptAnchorActive,
     promptAnchorSpacerHeight,
     scrollContainerRef,
-    scrollUserMsgToTop,
     streamState.streamingMessage,
   ]);
 
@@ -1069,7 +1045,6 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
           agentRunning={agentRunning}
           isMobile={isMobile}
           setVisibleCount={setVisibleCount}
-          followStreamingRef={followStreamingRef}
         />
 
         {isMobile ? null : (

@@ -17,12 +17,6 @@ export interface ScrollToolbarProps {
   agentRunning: boolean;
   isMobile: boolean;
   setVisibleCount: (updater: (current: number) => number) => void;
-  /**
-   * Long-press on the 'latest' button toggles follow-streaming. True → the
-   * list scrolls with the latest message even while the agent runs; clicking
-   * any scroll-navigation button clears it.
-   */
-  followStreamingRef: React.RefObject<boolean | null>;
 }
 
 export function ScrollToolbar({
@@ -34,7 +28,6 @@ export function ScrollToolbar({
   agentRunning,
   isMobile,
   setVisibleCount,
-  followStreamingRef,
 }: ScrollToolbarProps) {
   const { t } = useI18n();
 
@@ -93,29 +86,29 @@ export function ScrollToolbar({
     setScrollTooltip(null);
   }, []);
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Brief "step-follow on" toast after a successful long-press.
-  const [followToast, setFollowToast] = useState(false);
-  const followToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Brief "screen stays awake" toast after a successful long-press.
+  const [keepAwakeToast, setKeepAwakeToast] = useState(false);
+  const keepAwakeToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Per-page-session hint counters (a refresh resets them, i.e. the refs
   // start at 0 again on a fresh page load):
   // - tooltipShowCountRef: how many times a toolbar tooltip has actually
   //   appeared. Each button tooltip shows for the first 3 shows total, then
   //   stops obstructing the view.
-  // - followToastCountRef: how many times the 'following on' toast appeared
-  //   (max 3 per page session).
+  // - keepAwakeToastCountRef: how many times the 'screen stays awake' toast
+  //   appeared (max 3 per page session).
   const tooltipShowCountRef = useRef(0);
-  const followToastCountRef = useRef(0);
-  const [followStreaming, setFollowStreaming] = useState(false);
-  // While follow-streaming is locked, keep the device screen awake so the
-  // user can watch the agent's output without the display dimming/locking.
-  // No-ops in browsers without the Screen Wake Lock API.
-  const wakeLockSupported = useWakeLock(followStreaming);
-  const updateFollowStreaming = useCallback((v: boolean) => {
-    if (followStreamingRef) followStreamingRef.current = v;
-    setFollowStreaming(v);
-  }, [followStreamingRef]);
+  const keepAwakeToastCountRef = useRef(0);
+  // Long-press on the 'latest' button toggles keeping the screen awake while
+  // the agent runs (step-follow itself is always on). No-ops in browsers
+  // without the Screen Wake Lock API.
+  const [keepAwake, setKeepAwake] = useState(false);
+  // While keep-awake is on AND the agent is running, keep the device screen
+  // awake so the user can watch the output without the display dimming/
+  // locking. Gated on agentRunning: an idle chat tab must not pin the screen
+  // on. No-ops in browsers without the Screen Wake Lock API.
+  const wakeLockSupported = useWakeLock(keepAwake && agentRunning);
 
-  // Long-press on the 'latest' button toggles follow-streaming.
+  // Long-press on the 'latest' button toggles keep-screen-awake.
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const didLongPressRef = useRef(false);
   const clearLongPress = useCallback(() => {
@@ -217,12 +210,10 @@ export function ScrollToolbar({
   const showScrollButtons = (!scrollAnchors.atTop || !scrollAnchors.atBottom) && (scrollActive || (!isMobile && scrollBtnsHovered));
 
   const scrollToEarliest = useCallback(() => {
-    updateFollowStreaming(false);
     scrollContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
-  }, [scrollContainerRef, updateFollowStreaming]);
+  }, [scrollContainerRef]);
 
   const scrollToLatest = useCallback(() => {
-    updateFollowStreaming(false);
     const c = scrollContainerRef.current;
     if (!c) return;
     // Scroll so the LAST MESSAGE's bottom sits at the viewport bottom.
@@ -252,7 +243,7 @@ export function ScrollToolbar({
       return;
     }
     c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
-  }, [agentRunning, messagesEndRef, scrollContainerRef, updateFollowStreaming]);
+  }, [agentRunning, messagesEndRef, scrollContainerRef]);
 
   /**
    * Scroll to the previous/next user message relative to the current viewport.
@@ -262,7 +253,6 @@ export function ScrollToolbar({
   // Latest reference so the lazy-load retry can re-invoke navigation.
   const scrollToUserMessageRef = useRef<((dir: -1 | 1) => void) | null>(null);
   const scrollToUserMessage = useCallback((dir: -1 | 1) => {
-    updateFollowStreaming(false);
     const c = scrollContainerRef.current;
     if (!c) return;
     const refs = messageRefs.current;
@@ -352,7 +342,7 @@ export function ScrollToolbar({
       setVisibleCount((current) => Math.max(current, messagesLength * 2));
       setTimeout(() => scrollToUserMessageRef.current?.(dir), 250);
     }
-  }, [messageRefs, visibleMessages, messagesLength, scrollContainerRef, setVisibleCount, updateFollowStreaming]);
+  }, [messageRefs, visibleMessages, messagesLength, scrollContainerRef, setVisibleCount]);
   scrollToUserMessageRef.current = scrollToUserMessage;
 
   return (
@@ -541,39 +531,40 @@ export function ScrollToolbar({
                 WebkitUserSelect: "none",
               }}
               onPointerDown={(e) => {
-                // Long-press (>600ms) toggles follow-streaming; a quick
-                // press/click still jumps to the latest message. Bound on
-                // the hit-area wrapper so the gesture is easy to land on and
-                // small screens don't trigger text selection. NOTE: do NOT
-                // preventDefault here — on mobile that suppresses the
-                // subsequent click, so follow could never be unlocked again.
-                // stopPropagation: a long-press must not also start a toolbar
-                // drag when the finger wiggles a few px.
+                // Long-press (>600ms) toggles keeping the screen awake while
+                // the agent runs; a quick press/click still jumps to the
+                // latest message. Bound on the hit-area wrapper so the gesture
+                // is easy to land on and small screens don't trigger text
+                // selection. NOTE: do NOT preventDefault here — on mobile that
+                // suppresses the subsequent click. stopPropagation: a
+                // long-press must not also start a toolbar drag when the
+                // finger wiggles a few px.
                 e.stopPropagation();
                 clearLongPress();
                 longPressTimerRef.current = setTimeout(() => {
                   didLongPressRef.current = true;
-                  // Toggle: long-press again turns follow OFF.
-                  const nowOn = !(followStreamingRef.current ?? false);
-                  updateFollowStreaming(nowOn);
+                  // Without the Screen Wake Lock API the toggle has nothing to
+                  // control — swallow the gesture so the trailing click doesn't
+                  // jump either.
+                  if (!wakeLockSupported) return;
+                  // Toggle: long-press again turns it off.
+                  const nowOn = !keepAwake;
+                  setKeepAwake(nowOn);
                   document.getSelection()?.removeAllRanges();
                   const prev = document.body.style.userSelect;
                   document.body.style.userSelect = "none";
-                  // The "following on" toast is only useful the first few
-                  // times; after that it's noise. Show it at most 3 times per
-                  // page session (a refresh resets the counter).
+                  // The toast is only useful the first few times; after that
+                  // it's noise. Show it at most 3 times per page session (a
+                  // refresh resets the counter).
                   if (nowOn) {
-                    // The "following on" toast is only useful the first few
-                    // times; after that it's noise. Show it at most 3 times
-                    // per page session (a refresh resets the counter).
-                    if (followToastCountRef.current < 3) {
-                      followToastCountRef.current += 1;
-                      setFollowToast(true);
+                    if (keepAwakeToastCountRef.current < 3) {
+                      keepAwakeToastCountRef.current += 1;
+                      setKeepAwakeToast(true);
                     }
                   }
-                  if (followToastTimerRef.current) clearTimeout(followToastTimerRef.current);
-                  followToastTimerRef.current = setTimeout(() => {
-                    setFollowToast(false);
+                  if (keepAwakeToastTimerRef.current) clearTimeout(keepAwakeToastTimerRef.current);
+                  keepAwakeToastTimerRef.current = setTimeout(() => {
+                    setKeepAwakeToast(false);
                     document.body.style.userSelect = prev;
                   }, 2000);
                 }, 600);
@@ -585,39 +576,32 @@ export function ScrollToolbar({
             >
               <button
                 onClick={() => {
-                  // A long-press just enabled follow — the click that follows
-                  // the gesture must not unlock it (nor jump). Check this
-                  // FIRST: otherwise the click would immediately disable the
-                  // follow the long-press just turned on.
+                  // A long-press just fired — swallow the click that follows
+                  // the gesture so it doesn't also jump to latest.
                   if (didLongPressRef.current) { didLongPressRef.current = false; return; }
-                  // Locked (long-press enabled follow): a normal click now
-                  // UNLOCKS follow (does not jump — you're already at latest).
-                  if (followStreaming) {
-                    updateFollowStreaming(false);
-                    return;
-                  }
                   scrollToLatest();
                 }}
                 aria-label="scrollToLatest"
                 onMouseEnter={(e) => {
-                  // The "long-press to follow" hint shows for the first 3
-                  // toolbar show → hide cycles of this page session, then
-                  // stops obstructing the view (refresh resets it).
+                  // The "long-press to keep the screen awake" hint shows for
+                  // the first 3 toolbar show → hide cycles of this page
+                  // session, then stops obstructing the view (refresh resets
+                  // it).
                   if (tooltipShowCountRef.current < 3) {
                     tooltipShowCountRef.current += 1;
                     showScrollTooltip("latest");
                   }
-                  e.currentTarget.style.background = followStreaming
+                  e.currentTarget.style.background = keepAwake
                     ? "color-mix(in srgb, var(--accent) 26%, var(--bg-panel))"
                     : "var(--bg-hover)";
-                  e.currentTarget.style.color = followStreaming ? "var(--accent)" : "var(--text)";
+                  e.currentTarget.style.color = keepAwake ? "var(--accent)" : "var(--text)";
                 }}
                 onMouseLeave={(e) => {
                   hideScrollTooltip();
-                  e.currentTarget.style.background = followStreaming
+                  e.currentTarget.style.background = keepAwake
                     ? "color-mix(in srgb, var(--accent) 18%, var(--bg-panel))"
                     : "color-mix(in srgb, var(--bg-panel) 92%, transparent)";
-                  e.currentTarget.style.color = followStreaming ? "var(--accent)" : "var(--text-muted)";
+                  e.currentTarget.style.color = keepAwake ? "var(--accent)" : "var(--text-muted)";
                 }}
                 style={{
                   pointerEvents: "auto",
@@ -627,13 +611,13 @@ export function ScrollToolbar({
                   width: 44,
                   height: 44,
                   borderRadius: "50%",
-                  border: followStreaming
+                  border: keepAwake
                     ? "1px solid color-mix(in srgb, var(--accent) 55%, var(--border))"
                     : "1px solid var(--border)",
-                  background: followStreaming
+                  background: keepAwake
                     ? "color-mix(in srgb, var(--accent) 18%, var(--bg-panel))"
                     : "color-mix(in srgb, var(--bg-panel) 92%, transparent)",
-                  color: followStreaming ? "var(--accent)" : "var(--text-muted)",
+                  color: keepAwake ? "var(--accent)" : "var(--text-muted)",
                   cursor: "pointer",
                   boxShadow: "0 2px 8px rgba(15,23,42,0.22)",
                   transition: "color 0.12s, background 0.12s",
@@ -674,7 +658,7 @@ export function ScrollToolbar({
           )}
         </div>
       )}
-      {followToast && (
+      {keepAwakeToast && (
         <div style={{
           position: "absolute",
           bottom: 12,
@@ -692,7 +676,7 @@ export function ScrollToolbar({
           textAlign: "center",
           maxWidth: "min(80vw, 480px)",
         }}>
-          {t(wakeLockSupported ? "chat.followStreamingOnAwake" : "chat.followStreamingOn")}
+          {t("chat.screenKeepAwakeOn")}
         </div>
       )}
     </>
