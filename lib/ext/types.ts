@@ -15,6 +15,13 @@ export interface ExtCoreApi {
   listSessions(): Promise<unknown[]>;
   getRunningSessionIds(): Promise<string[]>;
   getHomeDir(): Promise<string>;
+  /** Full session context (messages + entry ids) for a session id; null when missing. */
+  readSession(id: string): Promise<unknown | null>;
+  /** File-access helpers bound to pi-web's allowed-roots security (session cwds etc.). */
+  fileAccess: {
+    allowRoot(root: string): void;
+    isAllowed(p: string): Promise<boolean>;
+  };
 }
 
 /** Server context passed to startup/shutdown/api hooks. */
