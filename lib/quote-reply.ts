@@ -48,11 +48,6 @@ export function splitQuestions(text: string): string[] {
   return parts;
 }
 
-/** Whether a segment looks like a question at all (used to decide engagement). */
-export function isQuestion(seg: string): boolean {
-  return /[？?]\s*$|吗[？?]?\s*$|是否|要不要|能不能|可不可以|还是|或者/u.test(seg);
-}
-
 /**
  * Detect concrete options in a question segment.
  * Returns null when no clear options can be extracted (caller falls back to a
@@ -64,7 +59,10 @@ export function detectOptions(seg: string): QuoteOption[] | null {
 
   // 1) Explicit choice: "A 还是 B" / "A 或者 B" / "A or B" (\bor\b so
   //    "store"/"word" don't split at their internal "or").
-  const choice = t.match(/^(.+?)\s*(?:还是|或者|或者还是|\bor\b)\s*(.+?)[？?]?\s*$/iu);
+  //    Longest alternative FIRST (或者还是 > 还是/或者): regex alternation is
+  //    left-to-right, so "或者还是" must precede the shorter ones or it is
+  //    never reached — "A 或者还是 B" would otherwise parse b as "还是 B".
+  const choice = t.match(/^(.+?)\s*(?:或者还是|还是|或者|\bor\b)\s*(.+?)[？?]?\s*$/iu);
   if (choice) {
     const a = cleanOption(choice[1]);
     const b = cleanOption(choice[2]);
@@ -89,7 +87,10 @@ export function detectOptions(seg: string): QuoteOption[] | null {
       .replace(/[吗吧呢啊呀]?[？?]+$/u, "")  // trailing 吗？/？
       .replace(/[吗吧呢啊呀]$/u, "")           // bare trailing 吗/吧/呢
       .trim();
-    if (action && action.length <= 16) {
+    if (action && action.length <= 16 && /\p{Script=Han}/u.test(t)) {
+      // 中文 action 按钮只在文本含汉字时使用——英文问句（如 "Should I
+      // proceed?"）走到这里会得到 "好，Should I p…"/"不用" 的混搭文案，
+      // 应落入下方英文 Yes/No 分支。
       return [
         { label: `好，${truncate(action, 10)}`, value: "是的" },
         { label: "不用", value: "不用了" },
@@ -126,12 +127,6 @@ export function formatQuote(seg: string, value?: string): string {
   return value ? `${quote}\n${value}` : `${quote}\n`;
 }
 
-/**
- * Extract candidate file paths from plain text (e.g. "design/foo.md" written
- * inline by the assistant, not as a markdown link). Returns de-duplicated
- * paths without trailing punctuation. The caller should verify existence via
- * the backend before offering them as "open" actions.
- */
 /**
  * Extract candidate file/directory paths from plain text (e.g.
  * "design/foo.md" or "docs/video-campaign/" written inline, not as markdown
