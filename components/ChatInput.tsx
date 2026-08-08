@@ -1116,6 +1116,21 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [value]);
 
+  const resizeTextarea = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+  }, []);
+
+  const handleFocus = useCallback(() => {
+    // Re-measure once the focus-driven layout settles. Focusing alone does not
+    // fire onChange/onInput, so a height computed at an earlier width (mobile
+    // keyboard opening, buttons wrapping onto their own row) stays stale
+    // until the next keystroke — e.g. after pasting text and tapping back in.
+    requestAnimationFrame(resizeTextarea);
+  }, [resizeTextarea]);
+
   // Collapse the steer/followUp button labels when the input row gets
   // crowded (narrow viewport or long text), so buttons stay icon-only
   // instead of squeezing the textarea or wrapping onto their own row.
@@ -1149,12 +1164,17 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       // (multi-line input), so the default layout stays one row: textarea
       // filling the space + buttons on the right.
       setButtonsWrapped(fullWidthHeight > 30);
+      // The wrap flags change the textarea's flex-basis (full width once the
+      // buttons move to their own row), which re-wraps the text at a new
+      // width. Re-sync the height after that re-render so an input box that
+      // just expanded on a small screen is not left at a stale height.
+      requestAnimationFrame(resizeTextarea);
     };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, [value, isStreaming]);
+  }, [resizeTextarea, value, isStreaming]);
 
   useEffect(() => {
     return () => {
@@ -1620,12 +1640,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     [isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value]
   );
 
-  const handleInput = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
-  }, []);
+  const handleInput = resizeTextarea;
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     const items = Array.from(e.clipboardData?.items ?? []);
@@ -2720,6 +2735,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               updateAtQuery(el.value, el.selectionStart);
             }}
             onInput={handleInput}
+            onFocus={handleFocus}
             onPaste={handlePaste}
             placeholder={
               isStreaming && (onSteer || onFollowUp)
