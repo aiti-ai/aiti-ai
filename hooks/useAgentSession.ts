@@ -174,7 +174,7 @@ export interface UseAgentSessionOptions {
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 const PROGRAMMATIC_SCROLL_IGNORE_MS = 700;
-const USER_SCROLL_INTENT_MS = 1200;
+const USER_SCROLL_INTENT_MS = 10_000;
 // Distance from the bottom of the scroll container within which live-follow
 // scrolling is active. Larger values make follow more lenient; smaller values
 // require the user to stay closer to the bottom.
@@ -395,6 +395,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
   const userScrollIntentUntilRef = useRef(0);
   const ignoreProgrammaticScrollUntilRef = useRef(0);
+  // True while the user holds a pointer/finger down (touch, mouse press,
+  // drag). Auto-following pauses for the whole hold — no scrolling until the
+  // pointer is released.
+  const userPointerDownRef = useRef(false);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
@@ -423,6 +427,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // viewport so the lower 3/4 refills with output before the next step.
   const smartFollowStep = useCallback(() => {
     if (Date.now() < userScrollIntentUntilRef.current) return;
+    // While the user holds a pointer/finger down, pause all follow processing
+    // — the view must not move under their finger. Resumes on release.
+    if (userPointerDownRef.current) return;
     const container = scrollContainerRef.current;
     const end = messagesEndRef.current;
     if (!container || !end) return;
@@ -432,7 +439,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const spacerH = (opts.promptAnchorSpacerHeightRef?.current ?? 0)
       + (opts.bottomComposerHeightRef?.current ?? 0);
     const lastMsgBottom = endTop - spacerH;
-    if (lastMsgBottom > container.clientHeight - 40) {
+    // Walked-away guard: if the last message's bottom sits at least a full
+    // viewport below the viewport bottom edge, the user scrolled up to read
+    // history — treat that as deliberately leaving and do NOT yank them back
+    // (streamState/ResizeObserver callers run without a near-bottom gate).
+    // Following resumes automatically once they return to the tail.
+    if (lastMsgBottom >= container.clientHeight * 2) return;
+    // Step when the output has filled the chat down to ~1 line (16px) from
+    // the viewport bottom. The old 40px keep-out read as "4-5 lines short of
+    // the bottom" on small screens, so the view rolled back before the
+    // output reached the bottom edge.
+    if (lastMsgBottom > container.clientHeight - 16) {
       const lastMsgAbs =
         end.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - spacerH;
       // Land the last message 120px below the top of the viewport: a little
@@ -2220,11 +2237,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [data?.tree, activeLeafId, handleLeafChange, onBranchDataChange]);
 
   useEffect(() => {
+    const setPointerDown = () => { userPointerDownRef.current = true; };
+    const setPointerUp = () => { userPointerDownRef.current = false; };
     window.addEventListener("keydown", markUserScrollIntent);
+    // Any press also opens the scroll-intent reserve window (10s); the hold
+    // flag additionally freezes auto-follow for the whole press.
     window.addEventListener("pointerdown", markUserScrollIntent, { passive: true });
+    window.addEventListener("pointerdown", setPointerDown, { passive: true });
+    window.addEventListener("pointerup", setPointerUp, { passive: true });
+    window.addEventListener("pointercancel", setPointerUp, { passive: true });
+    // Alt-tab / app switch can drop the pointerup — release the hold so
+    // following doesn't stay frozen.
+    window.addEventListener("blur", setPointerUp);
     return () => {
       window.removeEventListener("keydown", markUserScrollIntent);
       window.removeEventListener("pointerdown", markUserScrollIntent);
+      window.removeEventListener("pointerdown", setPointerDown);
+      window.removeEventListener("pointerup", setPointerUp);
+      window.removeEventListener("pointercancel", setPointerUp);
+      window.removeEventListener("blur", setPointerUp);
     };
   }, [markUserScrollIntent]);
 
@@ -2254,7 +2285,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       } else if (!initialScrollDoneRef.current) {
         initialScrollDoneRef.current = true;
         scrollToBottom("instant");
-      } else if (!agentRunningRef.current && (completionScrollAllowedRef.current || isNearBottomRef.current)) {
+      } else if (!agentRunningRef.current && !userPointerDownRef.current && (completionScrollAllowedRef.current || isNearBottomRef.current)) {
         scrollToBottom("smooth");
       }
     }
