@@ -1761,8 +1761,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (e.key === "Enter" && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         if (isStreaming && (onSteer || onFollowUp)) {
-          // Default Enter sends as steer if available, else followup
-          sendQueued(onSteer ? "steer" : "followup");
+          // Default Enter queues as a follow-up (the non-destructive action).
+          // Steering (interrupt now) is a deliberate choice: click the steer
+          // button or the steer action on a queued follow-up row instead.
+          sendQueued(onFollowUp ? "followup" : "steer");
         } else {
           handleSend();
         }
@@ -3250,12 +3252,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <button
                   onClick={() => sendQueued("followup")}
                   disabled={!canQueueStreamingMessage}
-                  title={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Queue this message after the agent finishes"}
+                  title={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Queue this message after the agent finishes (Enter)"}
                   style={{
                     display: "flex", alignItems: "center", gap: 5,
                     padding: "7px 12px",
-                    background: canQueueStreamingMessage ? "rgba(129,140,248,0.12)" : "none",
-                    border: "1px solid rgba(129,140,248,0.35)",
+                    background: canQueueStreamingMessage ? "rgba(129,140,248,0.16)" : "none",
+                    border: "1px solid rgba(129,140,248,0.45)",
                     borderRadius: 8,
                     color: canQueueStreamingMessage ? "rgba(99,102,241,1)" : "var(--text-dim)",
                     cursor: canQueueStreamingMessage ? "pointer" : "not-allowed",
@@ -3268,6 +3270,16 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     <line x1="2" y1="9" x2="8" y2="9" />
                   </svg>
                   {!queueButtonsCollapsed && t("chat.followUp")}
+                  {!queueButtonsCollapsed && canQueueStreamingMessage && (
+                    <kbd style={{
+                      marginLeft: 2, padding: "1px 5px",
+                      fontSize: 10, fontWeight: 600, lineHeight: "14px",
+                      color: "rgba(99,102,241,0.9)",
+                      background: "rgba(99,102,241,0.14)",
+                      border: "1px solid rgba(99,102,241,0.3)",
+                      borderRadius: 4,
+                    }}>Enter</kbd>
+                  )}
                 </button>
               )}
             </div>
