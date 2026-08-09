@@ -87,7 +87,11 @@ test("keeps live following cancellable when the user scrolls away from the tail"
 
   assert.match(source, /const liveFollowFrameRef = useRef<number \| null>\(null\)/);
   assert.match(streamUpdateSource, /liveFollowFrameRef\.current === null/);
-  assert.match(streamUpdateSource, /requestAnimationFrame\(\(\) => \{[\s\S]*?liveFollowFrameRef\.current = null;[\s\S]*?if \(isNearBottomRef\.current\) \{[\s\S]*?if \(opts\.followStreamingRef\?\.current\) smartFollowStep\(\);[\s\S]*?else scrollToBottom\("auto"\);/);
+  // Live-follow is allocated as a cancellable rAF: it resets the ref to null
+  // inside the frame and only steps when still pinned to the bottom. The
+  // follow action itself is smartFollowStep() (step-follow), so we assert the
+  // rAF structure rather than a since-removed followStreaming toggle.
+  assert.match(streamUpdateSource, /requestAnimationFrame\(\(\) => \{[\s\S]*?liveFollowFrameRef\.current = null;[\s\S]*?if \(isNearBottomRef\.current\) \{[\s\S]*?smartFollowStep\(\);/);
   assert.match(scrollHandlerSource, /cancelAnimationFrame\(liveFollowFrameRef\.current\)/);
 });
 
