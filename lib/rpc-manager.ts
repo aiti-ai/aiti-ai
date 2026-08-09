@@ -7,7 +7,7 @@ import { resolve } from "path";
 import { validateAgentImages } from "./image-attachments";
 import {
   createQueueEntry,
-  loadQueue,
+  loadQueueFile,
   removeQueue,
   saveQueue,
   type PendingRecoveryItem,
@@ -15,6 +15,7 @@ import {
   type QueueEntryInput,
   type QueueImage,
   type QueueKind,
+  type QueueTrashItem,
 } from "./queue-store";
 import { invalidateModelsCache } from "./models-cache";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
@@ -182,8 +183,11 @@ export class AgentSessionWrapper {
   // queueMirror mirrors pi's live steer/follow-up queue (with images).
   // queueRecovery holds sidecar entries orphaned by a previous wrapper
   // lifetime; they are surfaced to the UI and never auto-delivered.
+  // queueTrash holds soft-deleted entries (recoverable from the trash bin
+  // until the user purges them permanently).
   private queueMirror: QueueEntry[] = [];
   private queueRecovery: QueueEntry[] = [];
+  private queueTrash: QueueEntry[] = [];
   private pendingQueueHints: Record<QueueKind, QueueImage[][]> = { steer: [], followUp: [] };
   private onDestroyCallback: (() => void) | null = null;
   private shutdownPromise: Promise<void> | null = null;
@@ -247,6 +251,10 @@ export class AgentSessionWrapper {
   loadQueueRecovery(): void {
     const file = this.sessionFile;
     if (!file) return;
+    const { entries, trash } = loadQueueFile(file);
+    // Trash is independent of pi's live queue — always restore it so entries
+    // soft-deleted before a restart (or a hot reload) stay recoverable.
+    this.queueTrash = trash;
     // Defensive consistency check: pi's steering/follow-up queues live in the
     // same process as this wrapper, and a brand-new AgentSession always starts
     // with empty queues. If pi already has queued messages here, the queue
@@ -260,11 +268,10 @@ export class AgentSessionWrapper {
       this.reconcileQueue([...liveSteering], [...liveFollowUp]);
       return;
     }
-    const persisted = loadQueue(file);
-    if (persisted.length > 0) {
-      this.queueRecovery = persisted;
+    if (entries.length > 0) {
+      this.queueRecovery = entries;
       console.log(
-        `[pi-web] ${persisted.length} queued message(s) pending recovery for session ${this.sessionId}`,
+        `[pi-web] ${entries.length} queued message(s) pending recovery for session ${this.sessionId}`,
       );
     }
   }
@@ -277,11 +284,21 @@ export class AgentSessionWrapper {
     const file = this.sessionFile;
     if (!file) return;
     const entries = this.getSidecarEntries();
-    if (entries.length === 0) {
+    if (entries.length === 0 && this.queueTrash.length === 0) {
       removeQueue(file);
       return;
     }
-    saveQueue(file, entries);
+    saveQueue(file, entries, this.queueTrash);
+  }
+
+  private getQueueTrashView(): QueueTrashItem[] {
+    return this.queueTrash.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      hasImages: Boolean(entry.images?.length),
+      queuedAt: entry.queuedAt,
+    }));
   }
 
   private getPendingRecoveryView(): PendingRecoveryItem[] {
@@ -665,6 +682,7 @@ export class AgentSessionWrapper {
             followUp: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => e.text),
           },
           pendingRecovery: this.getPendingRecoveryView(),
+          queueTrash: this.getQueueTrashView(),
           contextUsage: contextUsage
             ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow, tokens: contextUsage.tokens }
             : null,
@@ -783,7 +801,13 @@ export class AgentSessionWrapper {
 
       case "clear_queue": {
         // Full clear only: pi has no single-item dequeue, and clear+requeue
-        // races against the agent loop pulling messages mid-flight.
+        // races against the agent loop pulling messages mid-flight. This is a
+        // user-initiated destructive action, so it is a SOFT delete: the
+        // cleared entries move to the trash and stay recoverable until the
+        // user purges them.
+        if (this.queueMirror.length > 0) {
+          this.queueTrash.push(...this.queueMirror);
+        }
         this.queueMirror = [];
         this.pendingQueueHints = { steer: [], followUp: [] };
         this.persistQueue();
@@ -921,7 +945,9 @@ export class AgentSessionWrapper {
       case "remove_queue_item": {
         // pi has no single-dequeue API either; drop the entry from the mirror
         // and rebuild the live queue via clear-all + re-enqueue (same strategy
-        // as move_queue).
+        // as move_queue). Deletion is SOFT by default: the entry moves to the
+        // trash so a mistake can be undone. permanent=true (used when an entry
+        // was consumed by being dispatched, e.g. steer-send) drops it for real.
         const kind = command.kind as QueueKind | undefined;
         if (kind !== "steer" && kind !== "followUp") {
           throw new Error("remove_queue_item requires kind \"steer\" or \"followUp\"");
@@ -936,7 +962,9 @@ export class AgentSessionWrapper {
         if (index < 0 || index >= entries.length) {
           throw new Error("remove_queue_item index out of range");
         }
-        entries.splice(index, 1);
+        const permanent = command.permanent === true;
+        const [removed] = entries.splice(index, 1);
+        if (!permanent) this.queueTrash.push(removed);
         const newSteering = kind === "steer" ? entries : steeringEntries;
         const newFollowUp = kind === "followUp" ? entries : followUpEntries;
         this.inner.clearQueue();
@@ -952,9 +980,80 @@ export class AgentSessionWrapper {
         this.queueMirror = [...newSteering, ...newFollowUp];
         this.persistQueue();
         return {
+          removed: {
+            id: removed.id,
+            kind: removed.kind,
+            text: removed.text,
+            hasImages: Boolean(removed.images?.length),
+            queuedAt: removed.queuedAt,
+          },
+          queueTrash: this.getQueueTrashView(),
           steering: [...this.inner.getSteeringMessages()],
           followUp: [...this.inner.getFollowUpMessages()],
         };
+      }
+
+      case "restore_trash_item": {
+        // Undo / trash-bin restore: move one soft-deleted entry back into the
+        // live queue. Same clear-all + re-enqueue strategy as move_queue.
+        // Optional index places it within its kind (used by the undo toast,
+        // where the queue hasn't changed yet); default appends to its kind.
+        const id = command.id as string | undefined;
+        if (typeof id !== "string" || !id) {
+          throw new Error("restore_trash_item requires id");
+        }
+        const trashIdx = this.queueTrash.findIndex((e) => e.id === id);
+        if (trashIdx < 0) {
+          throw new Error("restore_trash_item entry not found in trash");
+        }
+        const [entry] = this.queueTrash.splice(trashIdx, 1);
+        const rawIndex = command.index === undefined ? null : Number(command.index);
+        if (rawIndex !== null && !Number.isInteger(rawIndex)) {
+          throw new Error("restore_trash_item requires an integer index");
+        }
+        const steeringEntries = this.queueMirror.filter((e) => e.kind === "steer");
+        const followUpEntries = this.queueMirror.filter((e) => e.kind === "followUp");
+        const entries = entry.kind === "steer" ? steeringEntries : followUpEntries;
+        if (rawIndex !== null && rawIndex >= 0 && rawIndex <= entries.length) {
+          entries.splice(rawIndex, 0, entry);
+        } else {
+          // Original slot is gone (queue changed while trashed) — append.
+          entries.push(entry);
+        }
+        const newSteering = entry.kind === "steer" ? entries : steeringEntries;
+        const newFollowUp = entry.kind === "followUp" ? entries : followUpEntries;
+        this.inner.clearQueue();
+        this.pendingQueueHints = { steer: [], followUp: [] };
+        for (const e of newSteering) {
+          this.hintQueueImages("steer", e.images);
+          await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
+        }
+        for (const e of newFollowUp) {
+          this.hintQueueImages("followUp", e.images);
+          await this.inner.followUp(e.text, e.images?.length ? e.images : undefined);
+        }
+        this.queueMirror = [...newSteering, ...newFollowUp];
+        this.persistQueue();
+        return {
+          steering: [...this.inner.getSteeringMessages()],
+          followUp: [...this.inner.getFollowUpMessages()],
+          queueTrash: this.getQueueTrashView(),
+        };
+      }
+
+      case "purge_trash": {
+        // Permanent delete — no undo from here on. ids optional: omit to empty
+        // the whole trash, pass ids to purge a selection. Confirmation lives in
+        // the UI; the server just does what it's told.
+        const ids = command.ids as string[] | undefined;
+        if (Array.isArray(ids) && ids.length > 0) {
+          const idSet = new Set(ids);
+          this.queueTrash = this.queueTrash.filter((e) => !idSet.has(e.id));
+        } else {
+          this.queueTrash = [];
+        }
+        this.persistQueue();
+        return { queueTrash: this.getQueueTrashView() };
       }
 
       case "resolve_recovery": {

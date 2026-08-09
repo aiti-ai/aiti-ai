@@ -226,7 +226,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, displayModel: displayModelValue, sessionStats, modelSwitching,
     slashCommands, slashCommandsLoading, queuedMessages,
-    pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
+    pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
@@ -651,6 +651,9 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       onRecallOne={recallQueuedMessage}
       onRequeueAt={requeueAt}
       onRemoveQueueItem={removeQueuedMessage}
+      queueTrash={queueTrash}
+      onRestoreQueueItem={restoreQueueItem}
+      onPurgeQueueTrash={purgeQueueTrash}
       slashCommands={slashCommands}
       slashCommandsLoading={slashCommandsLoading}
       onLoadSlashCommands={loadSlashCommands}

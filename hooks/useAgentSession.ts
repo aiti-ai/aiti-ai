@@ -15,7 +15,7 @@ import type {
 import { normalizeToolCalls } from "@/lib/normalize";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type { ChatDraftImage } from "@/lib/draft-store";
-import type { PendingRecoveryItem, QueueEntry, QueueEntryInput } from "@/lib/queue-store";
+import type { PendingRecoveryItem, QueueEntry, QueueEntryInput, QueueTrashItem } from "@/lib/queue-store";
 import { getToolNamesForPreset, type ToolEntry } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import {
@@ -91,6 +91,7 @@ type AgentStateResponse = {
   extensionWidgets?: ExtensionWidgetItem[];
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
   pendingRecovery?: PendingRecoveryItem[] | null;
+  queueTrash?: QueueTrashItem[] | null;
 };
 
 export interface QueuedMessages {
@@ -373,6 +374,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
   const [pendingRecovery, setPendingRecovery] = useState<PendingRecoveryItem[]>([]);
+  const [queueTrash, setQueueTrash] = useState<QueueTrashItem[]>([]);
   /** True when the current pending-recovery list came from an import (not a
    *  crash recovery) — drives the dialog's copy. Resets when the list empties. */
   const [recoveryIsImport, setRecoveryIsImport] = useState(false);
@@ -568,8 +570,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
           if (liveState.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages));
           if (liveState.pendingRecovery !== undefined) setPendingRecovery(liveState.pendingRecovery ?? []);
+          if (liveState.queueTrash !== undefined) setQueueTrash(liveState.queueTrash ?? []);
         } else if (!agentState.running) {
           setQueuedMessages({ steering: [], followUp: [] });
+          setQueueTrash([]);
         }
         return agentState;
       } catch (e) {
@@ -1068,6 +1072,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setIsCompacting(state?.isCompacting ?? false);
       setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages));
       setPendingRecovery(state?.pendingRecovery ?? []);
+      setQueueTrash(state?.queueTrash ?? []);
       const busy = data.running && state
         && (state.isStreaming || state.isPromptRunning || state.isCompacting);
       if (busy || !agentRunningRef.current) return;
@@ -1142,6 +1147,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               // next turn); dead wrapper (no state) means the queue is gone.
               setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages));
               setPendingRecovery(d.state?.pendingRecovery ?? []);
+              setQueueTrash(d.state?.queueTrash ?? []);
             })
             .catch(() => {});
         }
@@ -2082,24 +2088,80 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice]);
 
-  /** Remove a single queued message (clear + re-enqueue the rest). */
+  /**
+   * Remove a single queued message (clear + re-enqueue the rest). Soft delete
+   * by default: the entry moves to the trash and the returned view lets the UI
+   * offer an undo toast. `permanent` skips the trash (used when the entry was
+   * consumed by being dispatched, e.g. steer-send).
+   */
   const removeQueuedMessage = useCallback(async (
     kind: "steer" | "followUp",
     index: number,
-  ): Promise<boolean> => {
+    opts?: { permanent?: boolean },
+  ): Promise<QueueTrashItem | null> => {
     const sid = sessionIdRef.current;
-    if (!sid) return false;
+    if (!sid) return null;
     try {
-      const result = await sendAgentCommand<{ steering?: string[]; followUp?: string[] }>(sid, {
+      const result = await sendAgentCommand<{ removed?: QueueTrashItem; steering?: string[]; followUp?: string[] }>(sid, {
         type: "remove_queue_item",
         kind,
         index,
+        ...(opts?.permanent ? { permanent: true } : {}),
       });
-      if (result) setQueuedMessages(normalizeQueuedMessages(result));
-      return true;
+      if (result && (result.steering !== undefined || result.followUp !== undefined)) {
+        setQueuedMessages(normalizeQueuedMessages(result));
+      }
+      return result?.removed ?? null;
     } catch (e) {
       console.error("Failed to remove queued message:", e);
       addNotice({ type: "error", message: e instanceof Error ? e.message : "Failed to remove queued message" });
+      return null;
+    }
+  }, [addNotice]);
+
+  /**
+   * Restore a soft-deleted entry from the trash back into the live queue.
+   * Optional `index` places it within its kind (undo toast); otherwise it
+   * appends to its kind (trash bin).
+   */
+  const restoreQueueItem = useCallback(async (id: string, index?: number): Promise<boolean> => {
+    const sid = sessionIdRef.current;
+    if (!sid) return false;
+    try {
+      const result = await sendAgentCommand<{ steering?: string[]; followUp?: string[]; queueTrash?: QueueTrashItem[] }>(sid, {
+        type: "restore_trash_item",
+        id,
+        ...(index !== undefined ? { index } : {}),
+      });
+      if (result) {
+        setQueuedMessages(normalizeQueuedMessages(result));
+        if (result.queueTrash !== undefined) setQueueTrash(result.queueTrash);
+      }
+      return true;
+    } catch (e) {
+      console.error("Failed to restore queued message:", e);
+      addNotice({ type: "error", message: e instanceof Error ? e.message : "Failed to restore message" });
+      return false;
+    }
+  }, [addNotice]);
+
+  /**
+   * Permanently delete entries from the trash (no undo from here on). Omitting
+   * ids empties the whole trash; the UI confirms before calling.
+   */
+  const purgeQueueTrash = useCallback(async (ids?: string[]): Promise<boolean> => {
+    const sid = sessionIdRef.current;
+    if (!sid) return false;
+    try {
+      const result = await sendAgentCommand<{ queueTrash?: QueueTrashItem[] }>(sid, {
+        type: "purge_trash",
+        ...(ids && ids.length > 0 ? { ids } : {}),
+      });
+      if (result?.queueTrash !== undefined) setQueueTrash(result.queueTrash);
+      return true;
+    } catch (e) {
+      console.error("Failed to purge trash:", e);
+      addNotice({ type: "error", message: e instanceof Error ? e.message : "Failed to clear trash" });
       return false;
     }
   }, [addNotice]);
@@ -2208,6 +2270,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (agentState.state.extensionWidgets !== undefined) setExtensionWidgets(agentState.state.extensionWidgets ?? []);
           if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
           if (agentState.state.pendingRecovery !== undefined) setPendingRecovery(agentState.state.pendingRecovery ?? []);
+          if (agentState.state.queueTrash !== undefined) setQueueTrash(agentState.state.queueTrash ?? []);
         }
         // After a restart there may be no wrapper yet; fetch the sidecar-based
         // recovery list directly (no AgentSession is created for this read).
@@ -2361,6 +2424,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, currentModel, displayModel, modelSwitching, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport,
+    queueTrash, restoreQueueItem, purgeQueueTrash,
     moveQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,

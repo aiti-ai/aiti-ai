@@ -49,9 +49,20 @@ export interface PendingRecoveryItem {
   origin?: "draft";
 }
 
+/** Public (non-image) view of a soft-deleted entry sitting in the trash. */
+export interface QueueTrashItem {
+  id: string;
+  kind: QueueKind;
+  text: string;
+  hasImages: boolean;
+  queuedAt: number;
+}
+
 interface QueueFile {
-  version: 1;
+  version: 2;
   entries: QueueEntry[];
+  /** Soft-deleted entries (recoverable from the trash bin). */
+  trash: QueueEntry[];
 }
 
 export function queueSidecarPath(sessionFile: string): string {
@@ -72,29 +83,46 @@ export function createQueueEntry(
   };
 }
 
-export function loadQueue(sessionFile: string): QueueEntry[] {
+function isValidEntry(e: unknown): e is QueueEntry {
+  return Boolean(e) &&
+    ((e as QueueEntry).kind === "steer" || (e as QueueEntry).kind === "followUp") &&
+    typeof (e as QueueEntry).text === "string";
+}
+
+/**
+ * Load the full sidecar: live/recovery entries plus the trash. v1 sidecars
+ * (no trash section) migrate transparently — trash starts empty and the file
+ * is rewritten as v2 on the next save.
+ */
+export function loadQueueFile(sessionFile: string): { entries: QueueEntry[]; trash: QueueEntry[] } {
   const path = queueSidecarPath(sessionFile);
-  if (!existsSync(path)) return [];
+  if (!existsSync(path)) return { entries: [], trash: [] };
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<QueueFile>;
-    if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.entries)) return [];
-    return parsed.entries.filter(
-      (e): e is QueueEntry =>
-        Boolean(e) &&
-        (e.kind === "steer" || e.kind === "followUp") &&
-        typeof e.text === "string",
-    );
+    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<QueueFile> & { version?: 1 | 2 };
+    if (!parsed || !Array.isArray(parsed.entries)) return { entries: [], trash: [] };
+    const entries = parsed.entries.filter(isValidEntry);
+    if (parsed.version !== 2) {
+      // v1 sidecar: no trash section yet.
+      return { entries, trash: [] };
+    }
+    const trash = Array.isArray(parsed.trash) ? parsed.trash.filter(isValidEntry) : [];
+    return { entries, trash };
   } catch {
     // Corrupt sidecar — treat as empty rather than blocking the session.
-    return [];
+    return { entries: [], trash: [] };
   }
 }
 
+/** Live/recovery entries only (used by the lightweight queue-recovery read). */
+export function loadQueue(sessionFile: string): QueueEntry[] {
+  return loadQueueFile(sessionFile).entries;
+}
+
 /** Atomically replace the sidecar (tmp file + rename). */
-export function saveQueue(sessionFile: string, entries: QueueEntry[]): void {
+export function saveQueue(sessionFile: string, entries: QueueEntry[], trash: QueueEntry[] = []): void {
   if (!sessionFile) return;
   const path = queueSidecarPath(sessionFile);
-  const payload: QueueFile = { version: 1, entries };
+  const payload: QueueFile = { version: 2, entries, trash };
   const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
   try {
     writeFileSync(tmp, JSON.stringify(payload), "utf8");

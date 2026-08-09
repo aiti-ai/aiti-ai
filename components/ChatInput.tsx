@@ -2,7 +2,7 @@
 
 import React, { useRef, useState, useCallback, useEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
-import type { QueueEntry, QueueEntryInput } from "@/lib/queue-store";
+import type { QueueEntry, QueueEntryInput, QueueTrashItem } from "@/lib/queue-store";
 import { downloadQueueExport, parseQueueImport } from "@/lib/queue-export";
 import type { SkillsResponse } from "@/lib/api-types";
 import type { TextContent, UserMessage } from "@/lib/types";
@@ -85,8 +85,18 @@ interface Props {
   onRecallOne?: (kind: "steer" | "followUp", index: number) => Promise<{ text: string; images?: ChatDraftImage[] } | null>;
   /** Insert an edited message back into the queue at its original position. */
   onRequeueAt?: (kind: "steer" | "followUp", index: number, text: string, images?: ChatDraftImage[]) => Promise<boolean>;
-  /** Remove a single queued message. */
-  onRemoveQueueItem?: (kind: "steer" | "followUp", index: number) => Promise<boolean>;
+  /**
+   * Remove a single queued message (soft delete — entry moves to the trash).
+   * Returns the removed entry view (null on failure) so the UI can offer an
+   * undo toast. `permanent: true` skips the trash (dispatch paths).
+   */
+  onRemoveQueueItem?: (kind: "steer" | "followUp", index: number, opts?: { permanent?: boolean }) => Promise<QueueTrashItem | null>;
+  /** Soft-deleted entries (recoverable from the trash bin). */
+  queueTrash?: QueueTrashItem[] | null;
+  /** Restore a trashed entry; optional index places it within its kind. */
+  onRestoreQueueItem?: (id: string, index?: number) => Promise<boolean>;
+  /** Permanently delete trash entries (omit ids to empty the whole trash). */
+  onPurgeQueueTrash?: (ids?: string[]) => Promise<boolean>;
   slashCommands?: SlashCommandInfo[];
   slashCommandsLoading?: boolean;
   onLoadSlashCommands?: () => Promise<SlashCommandInfo[]> | SlashCommandInfo[];
@@ -668,6 +678,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
   onExportQueue, onImportQueue, onStageImport, onMoveQueue, onRecallOne, onRequeueAt, onRemoveQueueItem,
+  queueTrash, onRestoreQueueItem, onPurgeQueueTrash,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
   onBuiltinCommand,
   soundEnabled, onSoundToggle, onAudioUnlock,
@@ -811,6 +822,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     queueNoticeTimerRef.current = setTimeout(() => setQueueNotice(null), 3000);
   }, []);
   const queueCount = (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0);
+  const trashCount = queueTrash?.length ?? 0;
   const queueCollapsed = queueCollapsedUser ?? false;
   const toggleQueueCollapsed = useCallback(() => {
     setQueueCollapsedUser((prev) => !(prev ?? false));
@@ -819,10 +831,104 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!onMoveQueue) return;
     await onMoveQueue(kind, index, index + dir);
   }, [onMoveQueue]);
-  const handleRemoveQueueItem = useCallback(async (kind: "steer" | "followUp", index: number) => {
-    if (!onRemoveQueueItem) return;
-    await onRemoveQueueItem(kind, index);
+  // Soft-deleted entry waiting for the undo toast (trash bin is the fallback
+  // when the toast window passes or a newer delete replaces it).
+  const [lastDeleted, setLastDeleted] = useState<QueueTrashItem & { kind: "steer" | "followUp"; index: number } | null>(null);
+  const undoHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [purgeConfirmId, setPurgeConfirmId] = useState<string | null>(null);
+  const [purgeAllConfirm, setPurgeAllConfirm] = useState(false);
+  const trashButtonRef = useRef<HTMLButtonElement>(null);
+  const trashPanelRef = useRef<HTMLDivElement>(null);
+  const handleRemoveQueueItem = useCallback(async (
+    kind: "steer" | "followUp",
+    index: number,
+    opts?: { permanent?: boolean },
+  ) => {
+    if (!onRemoveQueueItem) return null;
+    const removed = await onRemoveQueueItem(kind, index, opts);
+    if (removed && !opts?.permanent) {
+      setLastDeleted({ ...removed, kind, index });
+      if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
+      undoHideTimerRef.current = setTimeout(() => setLastDeleted(null), 8000);
+    }
+    return removed;
   }, [onRemoveQueueItem]);
+  const handleUndoDelete = useCallback(async () => {
+    const item = lastDeleted;
+    if (!item || !onRestoreQueueItem) return;
+    if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
+    setLastDeleted(null);
+    const ok = await onRestoreQueueItem(item.id, item.index);
+    if (!ok) {
+      // Restore failed — put the toast back so the user can retry (or fall
+      // back to the trash bin, where the entry still sits).
+      setLastDeleted(item);
+      if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
+      undoHideTimerRef.current = setTimeout(() => setLastDeleted(null), 8000);
+    } else {
+      setQueueCollapsedUser(null);
+    }
+  }, [lastDeleted, onRestoreQueueItem]);
+  const handleRestoreTrashItem = useCallback(async (item: QueueTrashItem) => {
+    if (!onRestoreQueueItem) return;
+    const ok = await onRestoreQueueItem(item.id);
+    if (ok) {
+      // The restored entry is back in the live queue — drop any pending undo
+      // toast that still points at it.
+      setLastDeleted((cur) => (cur && cur.id === item.id ? null : cur));
+      setQueueCollapsedUser(null);
+      showQueueNotice(t("chat.queueTrashRestored", { count: "1" }), true);
+    }
+  }, [onRestoreQueueItem, showQueueNotice, t]);
+  const handleRestoreAllTrash = useCallback(async () => {
+    if (!onRestoreQueueItem) return;
+    const items = queueTrash ?? [];
+    let ok = true;
+    for (const item of items) {
+      const r = await onRestoreQueueItem(item.id);
+      if (!r) ok = false;
+    }
+    if (ok && items.length > 0) {
+      setLastDeleted(null);
+      if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
+      setQueueCollapsedUser(null);
+      showQueueNotice(t("chat.queueTrashRestored", { count: String(items.length) }), true);
+    }
+  }, [onRestoreQueueItem, queueTrash, showQueueNotice, t]);
+  const handlePurgeTrashItem = useCallback(async (id: string) => {
+    if (!onPurgeQueueTrash) return;
+    const ok = await onPurgeQueueTrash([id]);
+    if (ok) {
+      setLastDeleted((cur) => (cur && cur.id === id ? null : cur));
+      showQueueNotice(t("chat.queueTrashPurged", { count: "1" }), true);
+    }
+    setPurgeConfirmId(null);
+  }, [onPurgeQueueTrash, showQueueNotice, t]);
+  const handlePurgeAllTrash = useCallback(async () => {
+    if (!onPurgeQueueTrash) return;
+    const count = trashCount;
+    const ok = await onPurgeQueueTrash();
+    if (ok) {
+      setLastDeleted(null);
+      if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
+      showQueueNotice(t("chat.queueTrashPurged", { count: String(count) }), true);
+      setTrashOpen(false);
+    }
+    setPurgeAllConfirm(false);
+  }, [onPurgeQueueTrash, trashCount, showQueueNotice, t]);
+  const resetTrashConfirms = useCallback(() => {
+    setPurgeConfirmId(null);
+    setPurgeAllConfirm(false);
+  }, []);
+  // The trash bin has no entry point once empty — auto-close the popover.
+  useEffect(() => {
+    if (trashCount === 0) {
+      setTrashOpen(false);
+      setPurgeConfirmId(null);
+      setPurgeAllConfirm(false);
+    }
+  }, [trashCount]);
   // Entry pulled out for editing; sending re-inserts it at its original spot.
   const recalledRef = useRef<{ kind: "steer" | "followUp"; index: number; text: string; images?: ChatDraftImage[] } | null>(null);
   const [recalledVisible, setRecalledVisible] = useState(false);
@@ -1473,7 +1579,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           recalledRef.current = null;
           setRecalledVisible(false);
           onQueueSteerSend(fu);
-          void handleRemoveQueueItem("followUp", 0);
+          void handleRemoveQueueItem("followUp", 0, { permanent: true });
         }
       }
       return;
@@ -1797,9 +1903,23 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (historyMenuRef.current && !historyMenuRef.current.contains(e.target as Node) && !textareaRef.current?.contains(e.target as Node)) {
         setHistoryMenuOpen(false);
       }
+      if (
+        trashOpen &&
+        trashPanelRef.current && !trashPanelRef.current.contains(e.target as Node) &&
+        trashButtonRef.current && !trashButtonRef.current.contains(e.target as Node)
+      ) {
+        setTrashOpen(false);
+        setPurgeConfirmId(null);
+        setPurgeAllConfirm(false);
+      }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
+  }, [trashOpen]);
+
+  // Clear the undo-toast timer on unmount so a late timeout cannot touch state.
+  useEffect(() => () => {
+    if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -1917,9 +2037,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             </span>
           </div>
         )}
-        {/* Queued steering / follow-up messages (delivered by pi on upcoming turns) */}
-        {bottomMode === "full" && ((queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0)) > 0 && (
+        {/* Queued steering / follow-up messages (delivered by pi on upcoming turns).
+            Also shown (slim header) when only the trash has entries, so the
+            trash bin stays reachable after the last queued message is deleted. */}
+        {bottomMode === "full" && (queueCount > 0 || trashCount > 0) && (
           <div style={{
+            position: "relative",
             marginBottom: 8,
             border: "1px solid var(--border)",
             borderRadius: 6,
@@ -1940,6 +2063,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               gap: 8,
               minHeight: 24,
             }}>
+              {queueCount > 0 && (
               <button
                 onClick={toggleQueueCollapsed}
                 title={queueCollapsed ? t("chat.queueExpand") : t("chat.queueCollapse")}
@@ -1974,6 +2098,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   {t("chat.queued", { count: String(queueCount) })}
                 </span>
               </button>
+              )}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", marginTop: isMobile ? 2 : 0 }}>
                 {onRecallQueue && (
@@ -2076,6 +2201,43 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     )}
                   </>
                 )}
+                {trashCount > 0 && onPurgeQueueTrash && (
+                  <button
+                    ref={trashButtonRef}
+                    title={t("chat.queueTrashTitle")}
+                    onClick={() => { setTrashOpen((v) => !v); setPurgeConfirmId(null); setPurgeAllConfirm(false); }}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      padding: "3px 10px",
+                      fontSize: 12,
+                      color: trashOpen ? "var(--accent)" : "var(--text)",
+                      background: trashOpen ? "var(--bg-hover)" : "transparent",
+                      border: "1px solid var(--border)",
+                      borderRadius: 7,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                    {t("chat.queueTrash")}
+                    <span style={{
+                      fontSize: 10,
+                      color: "var(--text-muted)",
+                      background: "var(--bg-hover)",
+                      border: "1px solid var(--border)",
+                      padding: "0 6px",
+                      borderRadius: 999,
+                      lineHeight: "15px",
+                    }}>
+                      {trashCount}
+                    </span>
+                  </button>
+                )}
               </div>
           </div>
           {queueCollapsed && queueCount > 0 && (
@@ -2143,7 +2305,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   onClick={(e) => {
                     e.stopPropagation();
                     onQueueSteerSend?.(queuedMessages?.followUp?.[0] ?? "");
-                    void handleRemoveQueueItem("followUp", 0);
+                    void handleRemoveQueueItem("followUp", 0, { permanent: true });
                   }}
                   style={{
                     flexShrink: 0,
@@ -2200,7 +2362,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 onMove={(dir) => void handleMoveQueue("followUp", i, dir)}
                 onRecall={() => void handleRecallOne("followUp", i)}
                 onRemove={() => void handleRemoveQueueItem("followUp", i)}
-                onSteerSend={() => { onQueueSteerSend?.(text); void handleRemoveQueueItem("followUp", i); }}
+                onSteerSend={() => { onQueueSteerSend?.(text); void handleRemoveQueueItem("followUp", i, { permanent: true }); }}
                 onDragStart={(idx) => handleDragStart("followUp", idx)}
                 onDragOver={(idx) => handleDragOver("followUp", idx)}
                 onDrop={(idx) => handleDrop("followUp", idx)}
@@ -2208,6 +2370,275 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 dragging={dragOverIndex?.kind === "followUp" && dragOverIndex.index === i}
               />
             ))}
+          {lastDeleted && !trashOpen && onRestoreQueueItem && (
+            <div style={{
+              position: "absolute",
+              bottom: "calc(100% + 6px)",
+              right: 8,
+              zIndex: 55,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              maxWidth: "calc(100% - 16px)",
+              padding: "5px 8px 5px 10px",
+              background: "var(--bg-panel)",
+              border: "1px solid color-mix(in srgb, var(--accent) 45%, var(--border))",
+              borderRadius: 7,
+              boxShadow: "0 6px 20px rgba(0,0,0,0.3)",
+              fontSize: 11.5,
+              color: "var(--text)",
+            }}>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>
+                {t("chat.queueUndoDeleted")}{lastDeleted.text ? `: ${lastDeleted.text}` : ""}
+              </span>
+              <button
+                onClick={() => void handleUndoDelete()}
+                title={t("chat.queueUndoTitle")}
+                style={{
+                  flexShrink: 0,
+                  border: "none",
+                  background: "transparent",
+                  color: "var(--accent)",
+                  cursor: "pointer",
+                  fontSize: 11.5,
+                  fontWeight: 600,
+                  padding: "2px 6px",
+                  borderRadius: 5,
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              >
+                {t("chat.queueUndo")}
+              </button>
+            </div>
+          )}
+          {trashOpen && onPurgeQueueTrash && (
+            <div ref={trashPanelRef} style={{
+              position: "absolute",
+              bottom: "calc(100% + 6px)",
+              right: 8,
+              width: "min(430px, calc(100% - 16px))",
+              zIndex: 50,
+              background: "var(--bg-panel)",
+              border: "1px solid var(--border)",
+              borderRadius: 8,
+              boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
+              padding: 8,
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 4px 6px" }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--text-dim)", flexShrink: 0 }}>
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                </svg>
+                <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text)", flex: 1 }}>
+                  {t("chat.queueTrashCount", { count: String(trashCount) })}
+                </span>
+                <button
+                  onClick={() => { setTrashOpen(false); resetTrashConfirms(); }}
+                  title={t("chat.close")}
+                  style={{ border: "none", background: "transparent", color: "var(--text-dim)", cursor: "pointer", padding: 2, display: "flex", borderRadius: 4 }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                  </svg>
+                </button>
+              </div>
+              {trashCount === 0 ? (
+                <div style={{ padding: "14px 6px", fontSize: 12, color: "var(--text-dim)", textAlign: "center" }}>
+                  {t("chat.queueTrashEmpty")}
+                </div>
+              ) : (
+                <div style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
+                  {(queueTrash ?? []).map((item) => (
+                    <div
+                      key={item.id}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8,
+                        padding: "4px 6px",
+                        borderRadius: 6,
+                        background: "transparent",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                    >
+                      <span style={{
+                        flexShrink: 0,
+                        fontSize: 9.5,
+                        textTransform: "uppercase",
+                        letterSpacing: 0.4,
+                        color: "var(--text-muted)",
+                        background: "var(--bg-hover)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 4,
+                        padding: "0 5px",
+                        lineHeight: "16px",
+                      }}>
+                        {item.kind === "steer" ? t("chat.queueRecoveryKindSteer") : t("chat.queueRecoveryKindFollowUp")}
+                      </span>
+                      <span
+                        title={item.text || t("chat.queueRecoveryNoText")}
+                        style={{
+                          flex: 1,
+                          fontSize: 11.5,
+                          color: "var(--text)",
+                          whiteSpace: "nowrap",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                        }}
+                      >
+                        {item.text || t("chat.queueRecoveryNoText")}
+                        {item.hasImages && <span style={{ color: "var(--text-dim)", marginLeft: 4 }}>🖼</span>}
+                      </span>
+                      <button
+                        title={t("chat.queueTrashRestore")}
+                        onClick={() => void handleRestoreTrashItem(item)}
+                        style={{
+                          flexShrink: 0,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 4,
+                          border: "1px solid var(--border)",
+                          background: "transparent",
+                          color: "var(--text)",
+                          borderRadius: 6,
+                          padding: "2px 8px",
+                          fontSize: 11,
+                          cursor: "pointer",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="9 14 4 9 9 4" />
+                          <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+                        </svg>
+                        {t("chat.queueTrashRestore")}
+                      </button>
+                      {purgeConfirmId === item.id ? (
+                        <button
+                          onClick={() => void handlePurgeTrashItem(item.id)}
+                          style={{
+                            flexShrink: 0,
+                            border: "1px solid #ef4444",
+                            background: "rgba(239,68,68,0.12)",
+                            color: "#ef4444",
+                            borderRadius: 6,
+                            padding: "2px 8px",
+                            fontSize: 11,
+                            cursor: "pointer",
+                            whiteSpace: "nowrap",
+                          }}
+                        >
+                          {t("chat.confirm")}
+                        </button>
+                      ) : (
+                        <button
+                          title={t("chat.queueTrashPurge")}
+                          onClick={() => {
+                            setPurgeConfirmId(item.id);
+                            setTimeout(() => setPurgeConfirmId((cur) => (cur === item.id ? null : cur)), 3000);
+                          }}
+                          style={{
+                            flexShrink: 0,
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            width: 24,
+                            height: 24,
+                            border: "none",
+                            background: "transparent",
+                            color: "var(--text-dim)",
+                            borderRadius: 5,
+                            cursor: "pointer",
+                          }}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="3 6 5 6 21 6" />
+                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                            <line x1="10" y1="11" x2="10" y2="17" />
+                            <line x1="14" y1="11" x2="14" y2="17" />
+                          </svg>
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", paddingTop: 6, borderTop: "1px solid var(--border)", marginTop: 6 }}>
+                <button
+                  onClick={() => void handleRestoreAllTrash()}
+                  disabled={trashCount === 0}
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    border: "1px solid var(--border)",
+                    background: "transparent",
+                    color: "var(--text)",
+                    borderRadius: 6,
+                    padding: "3px 10px",
+                    fontSize: 11.5,
+                    cursor: trashCount === 0 ? "default" : "pointer",
+                    opacity: trashCount === 0 ? 0.5 : 1,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="9 14 4 9 9 4" />
+                    <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+                  </svg>
+                  {t("chat.queueTrashRestoreAll")}
+                </button>
+                {purgeAllConfirm ? (
+                  <button
+                    onClick={() => void handlePurgeAllTrash()}
+                    style={{
+                      border: "1px solid #ef4444",
+                      background: "rgba(239,68,68,0.12)",
+                      color: "#ef4444",
+                      borderRadius: 6,
+                      padding: "3px 10px",
+                      fontSize: 11.5,
+                      cursor: "pointer",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {t("chat.queueTrashPurgeAllConfirm")}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setPurgeAllConfirm(true);
+                      setTimeout(() => setPurgeAllConfirm(false), 3000);
+                    }}
+                    disabled={trashCount === 0}
+                    title={t("chat.queueTrashPurgeAll")}
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      border: "1px solid var(--border)",
+                      background: "transparent",
+                      color: "var(--text-dim)",
+                      borderRadius: 6,
+                      padding: "3px 10px",
+                      fontSize: 11.5,
+                      cursor: trashCount === 0 ? "default" : "pointer",
+                      opacity: trashCount === 0 ? 0.5 : 1,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                    </svg>
+                    {t("chat.queueTrashPurgeAll")}
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           </div>
         )}
         {/* Retry banner */}
