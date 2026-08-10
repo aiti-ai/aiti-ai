@@ -672,6 +672,77 @@ export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
   );
 }
 
+/** Compact icon-only action button for the streaming input row, with a
+ *  hover/focus popover that carries the label + hint. Keeping the inline text
+ *  out of the row prevents the two queue buttons from squeezing the textarea —
+ *  the meaning lives in the popup ("\u7eaf\u5f39\u51fa\u7684\u6837\u5f0f"), the button itself stays a
+ *  fixed square that never changes width. */
+function StreamingActionButton({
+  label, hint, disabled, onClick, bg, border, fg, children,
+}: {
+  label: string;
+  hint?: string;
+  disabled?: boolean;
+  onClick: () => void;
+  bg: string;
+  border: string;
+  fg: string;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const active = !disabled;
+  return (
+    <span
+      style={{ position: "relative", display: "inline-flex" }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+    >
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={disabled}
+        aria-label={label}
+        onFocus={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
+        style={{
+          display: "inline-flex", alignItems: "center", justifyContent: "center",
+          width: 30, height: 30, padding: 0,
+          background: active ? bg : "none",
+          border: `1px solid ${active ? border : "var(--border)"}`,
+          borderRadius: 8,
+          color: active ? fg : "var(--text-dim)",
+          cursor: active ? "pointer" : "not-allowed",
+          transition: "background 0.12s",
+        }}
+      >
+        {children}
+      </button>
+      {open && (
+        <span role="tooltip" style={{
+          position: "absolute",
+          bottom: "calc(100% + 6px)",
+          right: 0,
+          zIndex: 60,
+          whiteSpace: "nowrap",
+          padding: "4px 8px",
+          fontSize: 11,
+          fontWeight: 600,
+          lineHeight: 1.4,
+          color: "var(--text)",
+          background: "var(--bg-panel)",
+          border: "1px solid var(--border)",
+          borderRadius: 6,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.18)",
+          pointerEvents: "none",
+        }}>
+          {label}
+          {hint ? <span style={{ color: "var(--text-dim)", fontWeight: 500, marginLeft: 6 }}>{hint}</span> : null}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onFollowUp, onQueueSteerSend, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
@@ -3270,9 +3341,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     transition: "background 0.12s",
                   }}
                 >
-                  <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="5" y1="1" x2="5" y2="6" /><polyline points="2.5 3.5 5 1 7.5 3.5" />
-                    <line x1="2" y1="9" x2="8" y2="9" />
+                  <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="2" y1="1.5" x2="8" y2="1.5" />
+                    <path d="M2.6 1.5 L5 5 L2.6 8.5" />
+                    <path d="M7.4 1.5 L5 5 L7.4 8.5" />
+                    <line x1="2" y1="8.5" x2="8" y2="8.5" />
                   </svg>
                   {!queueButtonsCollapsed && t("chat.followUp")}
                   {!queueButtonsCollapsed && canQueueStreamingMessage && (
