@@ -119,6 +119,15 @@ export async function proxy(request: NextRequest) {
           headers: { "cache-control": "no-store", "www-authenticate": decision.wwwAuthenticate },
         });
       case "pipe": {
+        // 注入钩子（aiti-devtools 扩展注册）：开启注入的服务端口 → 扩展代理上游 + text/html 注入 aiti-launcher.js
+        const aitiInject = (globalThis as any).__aitiInject;
+        if (aitiInject && typeof aitiInject.enabledFor === "function" && aitiInject.enabledFor(decision.port)) {
+          try {
+            return await aitiInject.proxyWithInject(request, decision);
+          } catch (err) {
+            console.error("[pi-web][aiti-inject] 注入失败，回退普通转发:", err);
+          }
+        }
         const url = new URL(`http://127.0.0.1:${decision.port}`);
         url.pathname = decision.url.split("?")[0] ?? "/";
         url.search = decision.url.includes("?") ? `?${decision.url.split("?")[1]}` : "";
