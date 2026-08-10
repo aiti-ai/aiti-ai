@@ -25,6 +25,11 @@ interface Props {
   cwd?: string;
   /** Optional ref to the popover element (caller scrolls it into view on open). */
   innerRef?: Ref<HTMLSpanElement>;
+  /** Style overrides for the root element. The caller uses this to switch the
+   *  popover to `position: fixed` when it is rendered inside a table row, so
+   *  the in-flow box does not spawn a phantom table column and squeeze the
+   *  real columns. */
+  containerStyle?: CSSProperties;
 }
 
 /**
@@ -33,7 +38,7 @@ interface Props {
  * single fallback "quote" button. Clicking inserts a quoted reply into the
  * input box — never sends.
  */
-export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, cwd, innerRef, fullText }: Props) {
+export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, cwd, innerRef, fullText, containerStyle }: Props) {
   const { t } = useI18n();
   // Show every segment: closed questions get option buttons, the rest get a
   // fallback quote button. (Any paragraph is quoteable.)
@@ -81,6 +86,7 @@ export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, c
         borderRadius: 8,
         padding: 4,
         boxShadow: "0 4px 14px rgba(0,0,0,0.14)",
+        ...containerStyle,
       }}
       onMouseDown={(e) => e.preventDefault()}
       onClick={(e) => e.stopPropagation()}

@@ -177,6 +177,11 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
   const [fullText, setFullText] = useState<string>("");
   const [showTip, setShowTip] = useState(false);
   const tipRef = useRef<HTMLSpanElement>(null);
+  // When the popover opens inside a table row it must float (position: fixed)
+  // so it does not take part in table column sizing — an in-flow box as a
+  // direct child of <tr> spawns a phantom column and squeezes the real ones.
+  // Null in <p>/<li> (the popover stays in flow there) and until first open.
+  const [floatPos, setFloatPos] = useState<{ top: number; left: number } | null>(null);
   // Detect touch capability lazily (same approach as useIsMobile but local).
   const [coarse] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches);
 
@@ -185,14 +190,33 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
     if (!open && segments) setSegments(null);
   }, [open, segments]);
 
-  // When the popover opens, ensure it's in view (the paragraph near the
-  // bottom of the viewport would otherwise push it out of sight).
+  // Ref + scroll-into-view for the popover element (works for both the in-flow
+  // and the fixed/floating variants).
   const popoverRef = useRef<HTMLElement>(null);
   useEffect(() => {
     if (segments && popoverRef.current) {
       popoverRef.current.scrollIntoView({ block: "nearest" });
     }
   }, [segments]);
+
+  // Keep the floating (table-row) popover glued to its row while the page
+  // scrolls or resizes; in-flow popovers (<p>/<li>) need no such tracking.
+  useEffect(() => {
+    if (as !== "tr" || !segments) return;
+    const el = ref.current;
+    if (!el) return;
+    const update = () => {
+      const r = el.getBoundingClientRect();
+      setFloatPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [as, segments]);
 
   const openPopover = () => {
     if (segments || open) return;
@@ -209,10 +233,15 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
       setSegments(parsed);
       setFullText(text);
       setOpenId(pid);
+      if (as === "tr" && el) {
+        const r = el.getBoundingClientRect();
+        setFloatPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) });
+      }
     }
   };
   const closePopover = () => {
     setSegments(null);
+    setFloatPos(null);
     setOpenId(null);
   };
   // Click toggles: show on first click, hide on the second.
@@ -283,6 +312,13 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
           onOpenFile={onOpenFile}
           onRevealDir={onRevealDir}
           cwd={cwd}
+          containerStyle={as === "tr" && floatPos ? {
+            position: "fixed",
+            top: floatPos.top,
+            left: floatPos.left,
+            marginTop: 0,
+            zIndex: 60,
+          } : undefined}
         />
       )}
     </Tag>
