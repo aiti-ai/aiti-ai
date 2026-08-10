@@ -61,7 +61,9 @@ const mobileMoreItemStyle: React.CSSProperties = {
   display: "flex", alignItems: "center", gap: 8,
   width: "100%", padding: "9px 14px",
   background: "none", border: "none",
-  color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 12,
+  // Slightly larger than the 12px compact controls so the dropdown stays
+  // readable on phones; the rest of the HUD scales down instead.
+  color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 13,
   borderBottom: "1px solid var(--border)",
 };
 const LANGUAGE_MENU_WIDTH = 176;
@@ -73,6 +75,9 @@ export function AppShell() {
   const { isDark, toggleTheme } = useTheme();
   const { locale, setLocale, t: translate, supportedLocales } = useI18n();
   const isMobile = useIsMobile();
+  // Top-bar (HUD) icon button size — smaller on small screens so the icon row
+  // fits the viewport; desktop keeps the roomier 36px touch target.
+  const topBarIconButtonSize = isMobile ? 28 : TOP_BAR_ICON_BUTTON_SIZE;
   useViewportHeight();
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
   // When user clicks +, we only store the cwd — no fake session id
@@ -903,7 +908,7 @@ export function AppShell() {
              aria-label={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
-              width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+              width: topBarIconButtonSize, height: topBarIconButtonSize, padding: 0,
               background: "none", border: "none", borderRight: "1px solid var(--border)",
               color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
             }}
@@ -911,11 +916,11 @@ export function AppShell() {
             onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
           >
             {sidebarOpen ? (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width={isMobile ? 13 : 16} height={isMobile ? 13 : 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
               </svg>
             ) : (
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <svg width={isMobile ? 14 : 18} height={isMobile ? 14 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
               </svg>
             )}
@@ -930,7 +935,7 @@ export function AppShell() {
             aria-pressed={isDark}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
-              width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+              width: topBarIconButtonSize, height: topBarIconButtonSize, padding: 0,
               background: "none", border: "none", borderRight: "1px solid var(--border)",
               color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
             }}
@@ -938,7 +943,7 @@ export function AppShell() {
             onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
           >
             {isDark ? (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width={isMobile ? 13 : 16} height={isMobile ? 13 : 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <circle cx="12" cy="12" r="5" />
                 <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
                 <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
@@ -946,7 +951,7 @@ export function AppShell() {
                 <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
               </svg>
             ) : (
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width={isMobile ? 13 : 16} height={isMobile ? 13 : 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
               </svg>
             )}
@@ -962,7 +967,7 @@ export function AppShell() {
              aria-pressed={activeTopPanel === "language"}
              style={{
                display: "flex", alignItems: "center", justifyContent: "center",
-               width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+               width: topBarIconButtonSize, height: topBarIconButtonSize, padding: 0,
                background: activeTopPanel === "language" ? "var(--bg-selected)" : "none",
                border: "none", borderRight: "1px solid var(--border)",
                color: activeTopPanel === "language" ? "var(--text)" : "var(--text-muted)",
@@ -974,8 +979,8 @@ export function AppShell() {
              }}
            >
              <svg
-               width="16"
-               height="16"
+               width={isMobile ? 13 : 16}
+               height={isMobile ? 13 : 16}
                viewBox="0 0 24 24"
                fill="none"
                stroke="currentColor"
@@ -1001,7 +1006,7 @@ export function AppShell() {
             aria-pressed={servicesOpen}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
-              width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+              width: topBarIconButtonSize, height: topBarIconButtonSize, padding: 0,
               background: servicesOpen ? "var(--bg-selected)" : "none",
               border: "none", borderRight: "1px solid var(--border)",
               color: servicesOpen ? "var(--text)" : "var(--text-muted)",
@@ -1010,7 +1015,7 @@ export function AppShell() {
             onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
             onMouseLeave={(e) => { e.currentTarget.style.color = servicesOpen ? "var(--text)" : "var(--text-muted)"; }}
           >
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg width={isMobile ? 12 : 13} height={isMobile ? 12 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="10" />
               <line x1="2" y1="12" x2="22" y2="12" />
               <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
@@ -1072,7 +1077,7 @@ export function AppShell() {
                   alignItems: "center",
                   gap: 6,
                   height: "100%",
-                  padding: "0 12px",
+                  padding: isMobile ? "0 8px" : "0 12px",
                   background: "none",
                   border: "none",
                   borderTop: "2px solid transparent",
@@ -1096,8 +1101,8 @@ export function AppShell() {
                 }}
               >
                 <svg
-                  width="12"
-                  height="12"
+                  width={isMobile ? 11 : 12}
+                  height={isMobile ? 11 : 12}
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
@@ -1289,7 +1294,7 @@ export function AppShell() {
                     aria-expanded={moreOpen}
                     style={{
                       display: "flex", alignItems: "center", justifyContent: "center",
-                      height: "100%", padding: "0 12px",
+                      height: "100%", padding: "0 8px",
                       background: moreOpen ? "var(--bg-selected)" : "none",
                       border: "none",
                       borderTop: moreOpen ? "2px solid var(--accent)" : "2px solid transparent",
@@ -1297,7 +1302,7 @@ export function AppShell() {
                       color: "var(--text-muted)", cursor: "pointer", flexShrink: 0,
                     }}
                   >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
                       <circle cx="12" cy="5" r="1.6" />
                       <circle cx="12" cy="12" r="1.6" />
                       <circle cx="12" cy="19" r="1.6" />
@@ -1312,7 +1317,7 @@ export function AppShell() {
                           disabled={!selectedSession}
                           style={mobileMoreItemStyle}
                         >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                             <polyline points="7 10 12 15 17 10" />
                             <line x1="12" y1="15" x2="12" y2="3" />
@@ -1325,12 +1330,12 @@ export function AppShell() {
                           style={mobileMoreItemStyle}
                         >
                           {autoNameStatus.kind === "naming" ? (
-                            <svg className="animate-spin" width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                            <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                               <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
                               <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                             </svg>
                           ) : (
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                               <path d="m15 4 5 5L7 22l-5-5Z" />
                               <path d="m14 5 5 5" />
                             </svg>
@@ -1342,7 +1347,7 @@ export function AppShell() {
                           aria-pressed={activeTopPanel === "system"}
                           style={mobileMoreItemStyle}
                         >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                             <polyline points="14 2 14 8 20 8" />
                             <line x1="8" y1="13" x2="16" y2="13" />
