@@ -1333,9 +1333,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     requestAnimationFrame(resizeTextarea);
   }, [resizeTextarea]);
 
-  // Collapse the steer/followUp button labels when the input row gets
-  // crowded (narrow viewport or long text), so buttons stay icon-only
-  // instead of squeezing the textarea or wrapping onto their own row.
+  // Collapse the Send button label when the input row gets crowded (narrow
+  // viewport or long text); the streaming steer/follow-up buttons are now
+  // fixed-size icon-only popovers, so they never squeeze the textarea.
   useEffect(() => {
     const el = inputRowRef.current;
     const ta = textareaRef.current;
@@ -3298,67 +3298,37 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           {isStreaming ? (
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end", marginLeft: "auto" }}>
               {onSteer && (
-                <button
-                  onClick={() => sendQueued("steer")}
+                <StreamingActionButton
+                  label={t("chat.steer")}
+                  hint={attachedImages.length ? t("chat.imagesCannotQueue") : t("chat.steerHint")}
                   disabled={!canQueueStreamingMessage && !canSteerFromQueue}
-                  title={attachedImages.length
-                    ? "Image attachments cannot be queued while the agent is running"
-                    : canSteerFromQueue
-                      ? "Interrupt now with the first queued follow-up"
-                      : "Interrupt the current run and inject this message now"}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 5,
-                    padding: "7px 12px",
-                    background: (canQueueStreamingMessage || canSteerFromQueue) ? "rgba(234,179,8,0.12)" : "none",
-                    border: "1px solid rgba(234,179,8,0.35)",
-                    borderRadius: 8,
-                    color: (canQueueStreamingMessage || canSteerFromQueue) ? "rgba(180,130,0,1)" : "var(--text-dim)",
-                    cursor: (canQueueStreamingMessage || canSteerFromQueue) ? "pointer" : "not-allowed",
-                    fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
-                    transition: "background 0.12s",
-                  }}
+                  onClick={() => sendQueued("steer")}
+                  bg="rgba(234,179,8,0.12)"
+                  border="rgba(234,179,8,0.35)"
+                  fg="rgba(180,130,0,1)"
                 >
-                  <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="13" height="13" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M5 1 L9 5 L5 9" /><line x1="1" y1="5" x2="9" y2="5" />
                   </svg>
-                  {!queueButtonsCollapsed && t("chat.steer")}
-                </button>
+                </StreamingActionButton>
               )}
               {onFollowUp && (
-                <button
-                  onClick={() => sendQueued("followup")}
+                <StreamingActionButton
+                  label={t("chat.followUp")}
+                  hint={attachedImages.length ? t("chat.imagesCannotQueue") : t("chat.followUpHint")}
                   disabled={!canQueueStreamingMessage}
-                  title={attachedImages.length ? "Image attachments cannot be queued while the agent is running" : "Queue this message after the agent finishes (Enter)"}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 5,
-                    padding: "7px 12px",
-                    background: canQueueStreamingMessage ? "rgba(129,140,248,0.16)" : "none",
-                    border: "1px solid rgba(129,140,248,0.45)",
-                    borderRadius: 8,
-                    color: canQueueStreamingMessage ? "rgba(99,102,241,1)" : "var(--text-dim)",
-                    cursor: canQueueStreamingMessage ? "pointer" : "not-allowed",
-                    fontSize: 13, fontWeight: 600, letterSpacing: "-0.01em",
-                    transition: "background 0.12s",
-                  }}
+                  onClick={() => sendQueued("followup")}
+                  bg="rgba(129,140,248,0.16)"
+                  border="rgba(129,140,248,0.45)"
+                  fg="rgba(99,102,241,1)"
                 >
-                  <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="2" y1="1.5" x2="8" y2="1.5" />
-                    <path d="M2.6 1.5 L5 5 L2.6 8.5" />
-                    <path d="M7.4 1.5 L5 5 L7.4 8.5" />
-                    <line x1="2" y1="8.5" x2="8" y2="8.5" />
+                  <svg width="13" height="13" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="1.8" y1="1.5" x2="8.2" y2="1.5" />
+                    <path d="M2.6 1.5 L2.6 2.7 L5 5 L2.6 7.3 L2.6 8.5" />
+                    <path d="M7.4 1.5 L7.4 2.7 L5 5 L7.4 7.3 L7.4 8.5" />
+                    <line x1="1.8" y1="8.5" x2="8.2" y2="8.5" />
                   </svg>
-                  {!queueButtonsCollapsed && t("chat.followUp")}
-                  {!queueButtonsCollapsed && canQueueStreamingMessage && (
-                    <kbd style={{
-                      marginLeft: 2, padding: "1px 5px",
-                      fontSize: 10, fontWeight: 600, lineHeight: "14px",
-                      color: "rgba(99,102,241,0.9)",
-                      background: "rgba(99,102,241,0.14)",
-                      border: "1px solid rgba(99,102,241,0.3)",
-                      borderRadius: 4,
-                    }}>Enter</kbd>
-                  )}
-                </button>
+                </StreamingActionButton>
               )}
             </div>
           ) : (
