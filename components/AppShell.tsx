@@ -27,7 +27,7 @@ import { clearAllDrafts } from "@/lib/draft-store";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import { showCompletionNotification } from "@/lib/browser-notifications";
-import { getInitialNavigation } from "@/lib/initial-navigation";
+import { getInitialNavigation, type InitialNavigation } from "@/lib/initial-navigation";
 import {
   getDefaultRightPanelWidth,
   getRightPanelMaxWidth,
@@ -71,7 +71,16 @@ const LANGUAGE_MENU_WIDTH = 176;
 export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [initialNavigation] = useState(() => getInitialNavigation(searchParams));
+  // useSearchParams returns an empty instance on the server render, and in
+  // dev without a Suspense boundary it stays empty after hydration — so the
+  // ?session=/?cwd= restore would never fire. Read the query string straight
+  // from the location on mount; a re-render after that is harmless.
+  const [initialNavigation, setInitialNavigation] = useState<InitialNavigation>(() => getInitialNavigation(searchParams));
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      setInitialNavigation(getInitialNavigation(new URLSearchParams(window.location.search)));
+    }
+  }, []);
   const { isDark, toggleTheme } = useTheme();
   const { locale, setLocale, t: translate, supportedLocales } = useI18n();
   const isMobile = useIsMobile();

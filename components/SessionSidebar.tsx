@@ -656,19 +656,24 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   useEffect(() => {
     if (allSessions.length === 0 || skipInitialProjectSelection) return;
 
-    if (selectedCwd === null) {
-      // If restoring a session, set cwd to match that session
-      if (initialSessionId && !restoredRef.current) {
-        restoredRef.current = true;
-        const target = allSessions.find((s) => s.id === initialSessionId);
-        if (target) {
-          setSelectedCwd(target.cwd);
-          onSelectSession(target, true);
-          return;
-        }
-        // Session not found — notify parent so it can show the placeholder
-        onInitialRestoreDone?.();
+    // URL restore is checked OUTSIDE the selectedCwd gate: the parent derives
+    // initialSessionId from the location in a post-hydration effect, so on the
+    // first effect run it is still null and the fallback below may already
+    // have pinned a cwd. The restore must still win once the id arrives —
+    // falling through to a project fallback would silently drop the session.
+    if (initialSessionId && !restoredRef.current) {
+      restoredRef.current = true;
+      const target = allSessions.find((s) => s.id === initialSessionId);
+      if (target) {
+        setSelectedCwd(target.cwd);
+        onSelectSession(target, true);
+        return;
       }
+      // Session not found — notify parent so it can show the placeholder
+      onInitialRestoreDone?.();
+    }
+
+    if (selectedCwd === null) {
       const projects = getRecentProjects(allSessions);
       if (projects.length > 0) setSelectedCwd(projects[0]);
     }
