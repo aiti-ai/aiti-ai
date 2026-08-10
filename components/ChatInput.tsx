@@ -1341,7 +1341,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!attachedImages.length && msg.startsWith("/") && onBuiltinCommand) {
       const result = await onBuiltinCommand(msg);
       if (result.handled) {
-        if (!result.error) clearInput();
+        // Slash commands can block for a long time (e.g. /compact takes tens
+        // of seconds) and the user may keep typing meanwhile. Only clear the
+        // command text itself when the input was left untouched — never wipe
+        // a draft typed while the command ran (and its localStorage slot).
+        const inputUntouched = valueRef.current.trim() === msg && attachedImagesRef.current.length === 0;
+        if (!result.error && inputUntouched) clearInput();
         return;
       }
     }

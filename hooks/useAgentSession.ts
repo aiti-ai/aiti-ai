@@ -1608,7 +1608,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       const result = await sendAgentCommand<CompactCommandResult>(sid, { type: "compact" });
       setCompactResult(readCompactResult(result, "manual"));
-      await loadSession(sid, true);
+      // No showLoading: flipping `loading` unmounts the whole chat (including
+      // ChatInput) and silently discards the message the user is typing.
+      // isCompacting already gives the in-flight feedback; refresh in place.
+      await loadSession(sid);
     } catch (e) {
       setCompactError(e instanceof Error ? e.message : String(e));
       setCompactResult(null);
@@ -1723,7 +1726,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             ...(args ? { customInstructions: args } : {}),
           });
           setCompactResult(readCompactResult(result, "manual"));
-          if (await loadSession(sid, true)) promoteNewSession();
+          // Same as runCompactNow: showLoading would unmount ChatInput and
+          // lose the in-progress draft. Refresh in place instead.
+          if (await loadSession(sid)) promoteNewSession();
           return complete({ handled: true, message: "Compacted context" });
         }
 
