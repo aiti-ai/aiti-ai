@@ -3323,10 +3323,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   fg="rgba(99,102,241,1)"
                 >
                   <svg width="13" height="13" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="1.8" y1="1.5" x2="8.2" y2="1.5" />
-                    <path d="M2.6 1.5 L2.6 2.7 L5 5 L2.6 7.3 L2.6 8.5" />
-                    <path d="M7.4 1.5 L7.4 2.7 L5 5 L7.4 7.3 L7.4 8.5" />
-                    <line x1="1.8" y1="8.5" x2="8.2" y2="8.5" />
+                    <line x1="2" y1="1.5" x2="8" y2="1.5" />
+                    <path d="M2 1.5 L2 2.5 L5 5 L2 7.5 L2 8.5" />
+                    <path d="M8 1.5 L8 2.5 L5 5 L8 7.5 L8 8.5" />
+                    <line x1="2" y1="8.5" x2="8" y2="8.5" />
                   </svg>
                 </StreamingActionButton>
               )}
