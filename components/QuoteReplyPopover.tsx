@@ -128,12 +128,44 @@ export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, c
   );
 }
 
-/** Head-3 … tail-3 summary of a segment, so several fallback quote buttons
- *  (one per segment of a multi-segment paragraph) stay tellable apart.
- *  Short text (≤ 6 chars) is shown whole. */
+/** Approximate rendered width in CJK units (full-width/CJK ≈ 1, ASCII/
+ *  half-width ≈ 0.55 — at 12px font a CJK glyph is ~12px, ASCII ~6.3px). */
+function unitWidth(s: string): number {
+  let w = 0;
+  for (const ch of s) {
+    w += /[\u3000-\u9FFF\uFF00-\uFFEF\u2014\u2018\u2019\u201C\u201D\u2026]/u.test(ch) ? 1 : 0.55;
+  }
+  return w;
+}
+
+/** Head…tail summary of a segment, filling the fallback quote button's text
+ *  area so several buttons (one per segment of a multi-segment paragraph)
+ *  stay tellable apart. Short text is shown whole.
+ *
+ *  宽度评估（常规小屏 360–375px）：弹窗在聊天列内（屏宽 − 2×16px ≈ 328–343px），
+ *  比按钮自身的 maxWidth:220 还宽，所以瓶颈是按钮宽度而非屏幕。
+ *  220 − 左右 padding 18px = 202px 文字区；前缀 “引用回复：”/“Quote reply: ”
+ *  约占 60px，留给摘要 ≈ 142px ≈ 12px 字号下 11~12 个全角字符。
+ *  预算取 11 单位（全角≈1、半角≈0.55），超出部分由按钮的 CSS
+ *  text-overflow: ellipsis 兜底，不会溢出。 */
 function summarizeSegment(text: string): string {
   const t = text.trim();
-  return t.length <= 6 ? t : `${t.slice(0, 3)}…${t.slice(-3)}`;
+  const BUDGET = 11;
+  if (unitWidth(t) <= BUDGET) return t;
+  let head = 3;
+  let tail = 3;
+  while (head + tail < t.length) {
+    const wHead = unitWidth(t.slice(0, head + 1)) + 1 + unitWidth(t.slice(-tail));
+    const wTail = unitWidth(t.slice(0, head)) + 1 + unitWidth(t.slice(-(tail + 1)));
+    if (wHead <= BUDGET && wTail <= BUDGET) {
+      // 两侧都能扩展时优先扩展增量更窄的一侧（并列时扩展头部）
+      if (unitWidth(t[head] ?? "") <= unitWidth(t[t.length - tail - 1] ?? "")) head++;
+      else tail++;
+    } else if (wHead <= BUDGET) head++;
+    else if (wTail <= BUDGET) tail++;
+    else break;
+  }
+  return `${t.slice(0, head)}…${t.slice(-tail)}`;
 }
 
 function SegmentRow({
