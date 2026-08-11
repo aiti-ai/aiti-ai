@@ -12,7 +12,7 @@
  */
 "use client";
 
-import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo, type ReactNode } from "react";
+import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { apiUrl } from "@/lib/base-path";
 import type { ExtSlotName } from "@/lib/ext/types";
 import {
@@ -49,13 +49,10 @@ function registerChatHooks(hook: ChatHook) {
   for (const l of chatHookListeners) l();
 }
 export function useChatHooks(): ChatHook[] {
-  const [hooks, setHooks] = useState<ChatHook[]>(chatHooks);
-  useEffect(() => {
-    const l = () => setHooks([...chatHooks]);
-    chatHookListeners.add(l);
-    return () => { chatHookListeners.delete(l); };
-  }, []);
-  return hooks;
+  return useSyncExternalStore(
+    (cb) => { chatHookListeners.add(cb); return () => { chatHookListeners.delete(cb); }; },
+    () => chatHooks,
+  );
 }
 
 interface ManifestExt {

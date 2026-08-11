@@ -8,6 +8,7 @@ import type { SkillsResponse } from "@/lib/api-types";
 import type { TextContent, UserMessage } from "@/lib/types";
 import { clearDraft, flushAllDrafts, getDraft, setDraft, type ChatDraft, type ChatDraftImage } from "@/lib/draft-store";
 import { apiUrl } from "@/lib/base-path";
+import { useChatHooks, ExtSlot } from "@/components/ExtSlots";
 
 import {
   MAX_ATTACHED_IMAGE_BYTES,
@@ -789,6 +790,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     : {};
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const chatHooksRef = useRef<ReturnType<typeof useChatHooks>>([]);
+  chatHooksRef.current = useChatHooks();
   const dropdownRef = useRef<HTMLDivElement>(null);
   const modelDropdownPanelRef = useRef<HTMLDivElement>(null);
   const toolDropdownRef = useRef<HTMLDivElement>(null);
@@ -1421,7 +1424,19 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return;
       }
     }
-    onSend(msg, attachedImages.length ? attachedImages : undefined);
+    // 扩展聊天钩子（aiti-devtools）：发送前 @选择N → 真实候选内容 + 收集元素
+    const chatHooks = chatHooksRef.current ?? [];
+    let finalMsg = msg;
+    let extElements: unknown[] | undefined;
+    for (const hk of chatHooks) {
+      if (typeof hk.preSend === "function") {
+        try {
+          const r = hk.preSend(finalMsg);
+          if (r) { if (typeof r.text === "string") finalMsg = r.text; if (Array.isArray(r.elements) && r.elements.length) extElements = r.elements; }
+        } catch { /* 钩子失败不阻塞发送 */ }
+      }
+    }
+    onSend(finalMsg, attachedImages.length ? attachedImages : undefined);
     clearInput();
   }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, onRequeueAt]);
 
@@ -3246,6 +3261,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
             } as React.CSSProperties}
           >
+          <ExtSlot name="chatInputTop" />
           <textarea
             ref={textareaRef}
             value={value}
