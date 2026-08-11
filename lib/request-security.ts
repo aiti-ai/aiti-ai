@@ -133,6 +133,18 @@ export function isApiRequestOriginAllowed(
 ): boolean {
   const origin = request.headers.get("origin");
   const fetchSite = request.headers.get("sec-fetch-site");
+
+  // 显式配置的额外允许 origin（API_ALLOW_ORIGINS，逗号分隔；支持 `*` 或 `scheme://host` 精确/前缀匹配）。
+  // 用途：aiti-devtools 注入页（service-tunnels vhost）跨域直连桥——部署时配置注入页域；
+  // 本地开发配 localhost。显式配置，非硬编码白名单；配置匹配即放行（含 cross-site）。
+  const allowOrigins = (process.env.API_ALLOW_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+  if (origin) {
+    for (const a of allowOrigins) {
+      if (a === "*") return true;
+      if (origin.startsWith(a.replace(/\/+$/, ""))) return true;
+    }
+  }
+
   if (fetchSite === "cross-site") return false;
   if (!origin) return true;
 

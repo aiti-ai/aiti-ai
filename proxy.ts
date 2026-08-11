@@ -77,12 +77,6 @@ export async function proxy(request: NextRequest) {
   // runs HERE — no separate proxy port, one public port. Next then forwards
   // the request (rewrite target) or answers 403/302/401.
   if (host && st?.proxy?.parseHost(host)) {
-    // aiti-devtools 扩展 API 穿透：vhost 页面内相对路径 /api/extensions/aiti-devtools/*
-    // （注入 script / 桥 / ai.html）重写到 pi-web 自身——否则被代理到服务端口 404/跨域
-    const rawUrl = new URL(request.url);
-    if (rawUrl.pathname.startsWith("/api/extensions/aiti-devtools/")) {
-      return NextResponse.rewrite(`http://127.0.0.1:${getPiWebPort()}${rawUrl.pathname}${rawUrl.search}`);
-    }
     let decision: Awaited<ReturnType<typeof st.proxy.resolve>>;
     try {
       // Next 的 nextUrl.pathname 在 basePath 模式下会剥除 /dev,而 request.url
