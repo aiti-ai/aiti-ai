@@ -73,6 +73,7 @@ export type ExtSlotName =
   | "dialogs"
   | "banners"
   | "pages"
+  | "chatInputTop"   // 聊天输入框上方（aiti-devtools：inspect 候选区等）
   ;
 
 export interface ExtUiDefinition {
@@ -83,6 +84,7 @@ export interface ExtUiDefinition {
   dialogs?: ExtUiItem[];
   banners?: ExtUiItem[];
   pages?: ExtUiItem[];
+  chatInputTop?: ExtUiItem[];
   /** Per-locale message table looked up via the client ctx.t(key, params). */
   i18n?: Record<string, Record<string, string>>;
 }

@@ -36,6 +36,26 @@ export interface ExtClientContext {
   t(key: string, params?: Record<string, string | number>): string;
   apiUrl(path: string): string;
   registerItems(slot: ExtSlotName, items: Array<{ id: string; render: (props: ExtRenderProps) => ReactNode; meta?: Record<string, unknown> }>): void;
+  /** 注册聊天输入钩子（aiti-devtools：发送前 @选择N 替换 + 收集候选元素） */
+  registerChatHook(hook: { preSend?: (text: string) => { text?: string; elements?: unknown[] } | null }): void;
+}
+
+/** 聊天输入钩子 store（扩展注册；ChatInput 发送时调用） */
+interface ChatHook { preSend?: (text: string) => { text?: string; elements?: unknown[] } | null }
+const chatHooks: ChatHook[] = [];
+const chatHookListeners = new Set<() => void>();
+function registerChatHooks(hook: ChatHook) {
+  chatHooks.push(hook);
+  for (const l of chatHookListeners) l();
+}
+export function useChatHooks(): ChatHook[] {
+  const [hooks, setHooks] = useState<ChatHook[]>(chatHooks);
+  useEffect(() => {
+    const l = () => setHooks([...chatHooks]);
+    chatHookListeners.add(l);
+    return () => { chatHookListeners.delete(l); };
+  }, []);
+  return hooks;
 }
 
 interface ManifestExt {
@@ -90,6 +110,8 @@ async function loadExtensions(): Promise<void> {
           registerItems: (slot, items) => {
             registerExtUiItems(slot, items.map((it) => ({ id: `${ext.id}:${it.id}`, render: it.render, meta: it.meta })));
           },
+          registerChatHook: (hook) => registerChatHooks(hook),
+          registerChatHook: (hook) => registerChatHooks(hook),
         };
         registerFn?.(ctx);
       } catch (e) {
