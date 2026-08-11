@@ -720,7 +720,11 @@ function StreamingActionButton({
   children: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
+  const isMobile = useIsMobile();
   const active = !disabled;
+  // 小屏触控目标统一调大 120%（30 → 36px），图标等比缩放。
+  const size = isMobile ? 36 : 30;
+  const iconScale = size / 30;
   return (
     <span
       style={{ position: "relative", display: "inline-flex" }}
@@ -736,16 +740,16 @@ function StreamingActionButton({
         onBlur={() => setOpen(false)}
         style={{
           display: "inline-flex", alignItems: "center", justifyContent: "center",
-          width: 30, height: 30, padding: 0,
+          width: size, height: size, padding: 0,
           background: active ? bg : "none",
           border: `1px solid ${active ? border : "var(--border)"}`,
-          borderRadius: 8,
+          borderRadius: Math.round(size * 0.27),
           color: active ? fg : "var(--text-dim)",
           cursor: active ? "pointer" : "not-allowed",
           transition: "background 0.12s",
         }}
       >
-        {children}
+        <span style={{ display: "inline-flex", transform: `scale(${iconScale})` }}>{children}</span>
       </button>
       {open && (
         <span role="tooltip" style={{
@@ -3366,7 +3370,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </svg>
                 </StreamingActionButton>
               )}
-              {onFollowUp && (
+              {onFollowUp && hasInputText && (
                 <StreamingActionButton
                   label={t("chat.followUp")}
                   hint={queueDisabledImages ? t("chat.imagesCannotQueue")
@@ -3383,6 +3387,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     <path d="M2 1.5 L2 2.5 L5 5 L2 7.5 L2 8.5" />
                     <path d="M8 1.5 L8 2.5 L5 5 L8 7.5 L8 8.5" />
                     <line x1="2" y1="8.5" x2="8" y2="8.5" />
+                  </svg>
+                </StreamingActionButton>
+              )}
+              {/* 输入框无消息时 follow-up 隐藏——小屏（底部工具栏被折叠）时换成 Stop 按钮；
+                  大屏底部工具栏恒有 Stop，无需重复。 */}
+              {!hasInputText && onAbort && isMobile && (
+                <StreamingActionButton
+                  label={t("chat.stop")}
+                  hint={t("chat.stopAgent")}
+                  onClick={onAbort}
+                  bg="rgba(239,68,68,0.1)"
+                  border="rgba(239,68,68,0.35)"
+                  fg="#ef4444"
+                >
+                  <svg width="11" height="11" viewBox="0 0 10 10" fill="none">
+                    <rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" />
                   </svg>
                 </StreamingActionButton>
               )}
@@ -3413,21 +3433,21 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 flexShrink: 0,
                 alignSelf: "flex-end",
                 marginLeft: "auto",
-                display: "flex", alignItems: "center", gap: 6,
-                padding: "7px 14px",
+                display: "flex", alignItems: "center", gap: isMobile ? 7 : 6,
+                padding: isMobile ? "8px 17px" : "7px 14px",
                 background: (value.trim() || attachedImages.length) ? "var(--accent)" : "var(--bg-panel)",
                 border: "none",
-                borderRadius: 8,
+                borderRadius: isMobile ? 10 : 8,
                 color: (value.trim() || attachedImages.length) ? "#fff" : "var(--text-dim)",
                 cursor: (value.trim() || attachedImages.length) ? "pointer" : "not-allowed",
-                fontSize: 13,
+                fontSize: isMobile ? 16 : 13,
                 fontWeight: 600,
                 letterSpacing: "-0.01em",
                 boxShadow: (value.trim() || attachedImages.length) ? "0 1px 3px rgba(37,99,235,0.25)" : "none",
                 transition: "background 0.15s, box-shadow 0.15s",
               }}
             >
-              <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width={isMobile ? 17 : 14} height={isMobile ? 17 : 14} viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <line x1="2" y1="7" x2="11" y2="7" />
                 <polyline points="7.5 3 12 7 7.5 11" />
               </svg>
