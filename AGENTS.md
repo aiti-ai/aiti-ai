@@ -178,6 +178,7 @@ pi keeps steer/follow-up queues in memory only — a server restart would lose t
 - Wrapper state: `queueMirror` (live queue w/ images), `queueRecovery` (orphans awaiting user decision), `pendingQueueHints` (FIFO image hints — pi reports queue items by text only and template expansion can rewrite text, so hints are consumed FIFO per kind).
 - Mirror sync: `queue_update` events fire on enqueue / drain (message_start) / clear — `reconcileQueue()` rebuilds the mirror from pi's text arrays.
 - Enqueue points: `send("prompt")` with `streamingBehavior` while streaming, `send("steer")`, `send("follow_up")`, `clear_queue`.
+- **Prompts during compaction become follow-ups**: pi rejects `prompt()` while compaction runs ("Cannot submit a prompt while compaction is in progress"). `case "prompt"` therefore detects `inner.isCompacting` and routes the message through `inner.followUp()` (slash extension commands still go through `prompt()` so they execute immediately, checked via `isRegisteredExtensionCommand`). The client (`handleSend` in `useAgentSession`) mirrors this check via `isCompactingRef` and skips the optimistic bubble/`agentRunning` — the message lives in the queue panel instead. Delivery: a `compaction_end` listener in the wrapper calls `runAgentContinue()`, which promotes the first queued entry to a real prompt and re-queues the rest (identical to recovery's "re-queue & continue"). When auto-compaction runs inside an active agent loop, `runAgentContinue`'s `isStreaming` guard bails and pi's own `hasQueuedMessages()` continuation delivers the queue. Race-proof both ways: a prompt sent just before compaction starts still converts server-side, and a follow-up routed when compaction already finished runs as a normal prompt.
 - After a restart (or wrapper idle-destroy), every sidecar entry becomes a `pendingRecovery` item exposed via `get_state.pendingRecovery` and `GET /api/sessions/[id]/queue-recovery` (lightweight file read — does NOT create an AgentSession; when a wrapper is alive its in-memory recovery list wins).
 - `POST /api/agent/[id]` commands: `resolve_recovery {keep, discard, continueRun}` (keep re-queues via `inner.steer()/followUp()`; `continueRun` invokes `this.inner.agent.continue()` directly — AgentSession has no public continue; events/persistence still flow via its subscriptions), `export_queue`, `import_queue`.
 - UI: `QueueRecoveryDialog` (checklist + re-queue / re-queue & continue / discard / export .md/.json / import / dismiss), export/import buttons in the ChatInput queued banner. `lib/queue-export.ts` is client-safe (blob download + `parseQueueImport` for the round-trip).
@@ -264,7 +265,16 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 
 - pi-web 依赖**本地镜像**（registry.npmjs.org / 127.0.0.1:4873）的 service-tunnels
   内部构建；升级用 **`bun install`**（勿用 `npm i` —— 会破坏 node_modules，
-  曾导致 enhanced-resolve 缺失）。
+  曾导致 enhanced-resolve / jiti 缺失）。
+- **service-tunnels 是自维护仓库**（本地工作区 `~/workspace/service-tunnels`）：
+  - 需要库能力时**直接改它的源码**（`src/` → `npm run build` → commit →
+    `npm publish --registry=https://registry.npmjs.org` 升版本）→ pi-web 再
+    `bun add service-tunnels@<新版本>` 升级；**不要 patch node_modules**。
+  - 已内置 **`transformResponse`**（0.3.34+）通用响应注入：text/html 响应
+    `</head>` 前（head）或响应开头（`{ position: "prepend" }`，不缓冲流式、
+    最早执行）。aiti-devtools 的 launcher 注入用它（prepend）。
+  - library mode：pi-web 转发在 `proxy.ts`（Next rewrite）——注入执行用
+    **同一回调**（`__aitiInject.scriptFor`），与库内自托管 proxy 语义一致。
 
 ## 代码中禁止出现内部地址
 
