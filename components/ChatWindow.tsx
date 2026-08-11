@@ -226,7 +226,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, displayModel: displayModelValue, sessionStats, modelSwitching,
     slashCommands, slashCommandsLoading, queuedMessages,
-    pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash,
+    pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection,
     agentPhase,
@@ -250,6 +250,12 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   }, [onExportQueue, exportQueueData]);
   const sessionBusy = agentRunning || bashRunning;
   const [recoveryDismissed, setRecoveryDismissed] = useState(false);
+
+  /** 「继续」按钮：AI 完全停止（无 streaming）时出现——点击快速发送“继续”消息，触发 agent 继续运行。
+   *  仅在 agent 空闲时可见（ChatInput 只在非 streaming 分支渲染）；用正常发送路径而非 follow-up 排队。 */
+  const handleContinue = useCallback(() => {
+    void handleSend(t("chat.continue"));
+  }, [handleSend, t]);
 
   /** Draft storage key for the active session (matches ChatInput's draftKey). */
   const draftKey = session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined);
@@ -617,7 +623,10 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
       onFollowUp={agentRunning ? handleFollowUp : undefined}
       onPromptWithStreamingBehavior={agentRunning ? handlePromptWithStreamingBehavior : undefined}
       onQueueSteerSend={handleSteer}
+      onConvertQueueItem={convertQueuedMessage}
       isStreaming={sessionBusy}
+      canContinue={!isEmptyNew}
+      onContinue={handleContinue}
       model={displayModelValue}
       isAutoModelSelection={isAutoModelSelection}
       modelNames={modelNames}

@@ -902,6 +902,57 @@ export class AgentSessionWrapper {
         return { steering: [...this.inner.getSteeringMessages()], followUp: [...this.inner.getFollowUpMessages()] };
       }
 
+      case "convert_queue_item": {
+        // Change one queued entry's kind (steer ↔ followUp) WITHOUT dispatching
+        // it — e.g. a steer sent by mistake becomes a plain follow-up that
+        // waits for the next turn. Same clear-all + re-enqueue strategy as
+        // move_queue, so ordering and image hints survive. Unlike the
+        // steer-send action (which consumes the entry), the converted entry
+        // stays queued under its new kind.
+        const kind = command.kind as QueueKind | undefined;
+        if (kind !== "steer" && kind !== "followUp") {
+          throw new Error("convert_queue_item requires kind \"steer\" or \"followUp\"");
+        }
+        const index = Number(command.index);
+        if (!Number.isInteger(index)) {
+          throw new Error("convert_queue_item requires integer index");
+        }
+        const targetKind = command.targetKind as QueueKind | undefined;
+        if (targetKind !== "steer" && targetKind !== "followUp") {
+          throw new Error("convert_queue_item requires targetKind \"steer\" or \"followUp\"");
+        }
+        if (targetKind === kind) {
+          throw new Error("convert_queue_item requires a targetKind different from kind");
+        }
+        const steeringEntries = this.queueMirror.filter((e) => e.kind === "steer");
+        const followUpEntries = this.queueMirror.filter((e) => e.kind === "followUp");
+        const entries = kind === "steer" ? steeringEntries : followUpEntries;
+        if (index < 0 || index >= entries.length) {
+          throw new Error("convert_queue_item index out of range");
+        }
+        const [converted] = entries.splice(index, 1);
+        converted.kind = targetKind;
+        (targetKind === "steer" ? steeringEntries : followUpEntries).push(converted);
+        const newSteering = kind === "steer" ? entries : steeringEntries;
+        const newFollowUp = kind === "followUp" ? entries : followUpEntries;
+        // Clear the live pi queue entirely, then re-enqueue both queues in the
+        // new order. Image hints are pushed per entry FIFO so reconcileQueue
+        // can reattach them after each queue_update event.
+        this.inner.clearQueue();
+        this.pendingQueueHints = { steer: [], followUp: [] };
+        for (const e of newSteering) {
+          this.hintQueueImages("steer", e.images);
+          await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
+        }
+        for (const e of newFollowUp) {
+          this.hintQueueImages("followUp", e.images);
+          await this.inner.followUp(e.text, e.images?.length ? e.images : undefined);
+        }
+        this.queueMirror = [...newSteering, ...newFollowUp];
+        this.persistQueue();
+        return { steering: [...this.inner.getSteeringMessages()], followUp: [...this.inner.getFollowUpMessages()] };
+      }
+
       case "recall_queue_item": {
         // pi has no single-item dequeue — same clear-all + re-enqueue strategy
         // as move_queue, minus the recalled entry. Allowed while running, like

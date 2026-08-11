@@ -42,6 +42,12 @@ interface Props {
   onFollowUp?: (message: string, images?: AttachedImage[]) => void;
   /** Send a queued follow-up as a steer (interrupt now). Available even when idle. */
   onQueueSteerSend?: (message: string) => void;
+  /** 显示「继续」按钮：AI 完全停止（无任何 streaming）且输入框为空时出现。 */
+  canContinue?: boolean;
+  /** 点「继续」：发送一条“继续”消息，触发 agent 继续运行。 */
+  onContinue?: () => void;
+  /** Convert a queued message's kind (steer ↔ follow-up) without dispatching it. */
+  onConvertQueueItem?: (kind: "steer" | "followUp", index: number, targetKind: "steer" | "followUp") => Promise<boolean>;
   onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => void;
   isStreaming: boolean;
   model?: { provider: string; modelId: string } | null;
@@ -296,7 +302,7 @@ function revokeImagePreview(image: AttachedImage): void {
   }
 }
 
-function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove, onSteerSend, onDragStart, onDragOver, onDrop, dragging, onTouchMoveTo }: {
+function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove, onSteerSend, onConvertToFollowUp, onDragStart, onDragOver, onDrop, dragging, onTouchMoveTo }: {
   kind: "steer" | "follow-up";
   text: string;
   index: number;
@@ -306,6 +312,8 @@ function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove
   onRemove?: () => void;
   /** Follow-up rows: dispatch this message as a steer (interrupt now). */
   onSteerSend?: () => void;
+  /** Steer rows: convert this message to a follow-up (waits for the next turn). */
+  onConvertToFollowUp?: () => void;
   onDragStart?: (index: number) => void;
   onDragOver?: (index: number) => void;
   onDrop?: (targetIndex: number) => void;
@@ -503,6 +511,27 @@ function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M5 12h14" /><polyline points="12 5 19 12 12 19" />
+          </svg>
+        </button>
+      )}
+      {onConvertToFollowUp && kind === "steer" && (
+        <button
+          title={t("chat.queueToFollowUp")}
+          aria-label="queueToFollowUp"
+          onClick={onConvertToFollowUp}
+          style={{ ...iconBtn, color: "rgba(129,140,248,1)" }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "rgba(129,140,248,0.14)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "transparent";
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="8 3 4 7 8 11" />
+            <polyline points="16 13 20 17 16 21" />
+            <line x1="4" y1="7" x2="20" y2="7" />
+            <line x1="20" y1="17" x2="4" y2="17" />
           </svg>
         </button>
       )}
@@ -745,7 +774,7 @@ function StreamingActionButton({
 }
 
 export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
-  onSend, onAbort, onSteer, onFollowUp, onQueueSteerSend, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
+  onSend, onAbort, onSteer, onFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
@@ -1475,6 +1504,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // follow-up: clicking it dispatches the FIRST queued follow-up as a steer
   // (same action as the row/collapsed-bar steer button).
   const canSteerFromQueue = !hasInputText && !attachedImages.length && (queuedMessages?.followUp?.length ?? 0) > 0;
+  // 插队/排队按钮的 hover 提示按状态区分：AI 处理中且输入框为空（无消息、无图片、
+  // 队列里也没有可插队的 follow-up）时两个按钮同时灰掉——此时提示要先输入消息，
+  // 而不是笼统的动作说明。图片不能排队是另一条独立原因。
+  const queueDisabledImages = attachedImages.length > 0;
+  const queueDisabledNoInput = !hasInputText && !queueDisabledImages;
 
   // ── @ file autocomplete ──────────────────────────────────────────────────
   // Recomputed from the text before the caret on every change/caret move.
@@ -2438,6 +2472,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 onMove={(dir) => void handleMoveQueue("steer", i, dir)}
                 onRecall={() => void handleRecallOne("steer", i)}
                 onRemove={() => void handleRemoveQueueItem("steer", i)}
+                onConvertToFollowUp={() => void onConvertQueueItem?.("steer", i, "followUp")}
                 onDragStart={(idx) => handleDragStart("steer", idx)}
                 onDragOver={(idx) => handleDragOver("steer", idx)}
                 onDrop={(idx) => handleDrop("steer", idx)}
@@ -3316,7 +3351,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {onSteer && (
                 <StreamingActionButton
                   label={t("chat.steer")}
-                  hint={attachedImages.length ? t("chat.imagesCannotQueue") : t("chat.steerHint")}
+                  hint={queueDisabledImages ? t("chat.imagesCannotQueue")
+                    : canSteerFromQueue ? t("chat.steerFromQueueHint")
+                    : queueDisabledNoInput ? t("chat.steerNoInput")
+                    : t("chat.steerHint")}
                   disabled={!canQueueStreamingMessage && !canSteerFromQueue}
                   onClick={() => sendQueued("steer")}
                   bg="rgba(234,179,8,0.12)"
@@ -3331,7 +3369,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {onFollowUp && (
                 <StreamingActionButton
                   label={t("chat.followUp")}
-                  hint={attachedImages.length ? t("chat.imagesCannotQueue") : t("chat.followUpHint")}
+                  hint={queueDisabledImages ? t("chat.imagesCannotQueue")
+                    : queueDisabledNoInput ? t("chat.followUpNoInput")
+                    : t("chat.followUpHint")}
                   disabled={!canQueueStreamingMessage}
                   onClick={() => sendQueued("followup")}
                   bg="rgba(129,140,248,0.16)"
@@ -3348,7 +3388,25 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               )}
             </div>
           ) : (
-            <button
+            <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end", marginLeft: "auto" }}>
+              {/* 继续：AI 完全停止（无任何 streaming）且输入框为空时出现——点击快速发送
+                  “继续”，触发 agent 继续运行（streaming 中无意义——agent 本来就在工作）。 */}
+              {onContinue && canContinue && !hasInputText && !attachedImages.length && (queuedMessages?.followUp?.length ?? 0) === 0 && (
+                <StreamingActionButton
+                  label={t("chat.continue")}
+                  hint={t("chat.continueHint")}
+                  onClick={onContinue}
+                  bg="rgba(16,185,129,0.14)"
+                  border="rgba(16,185,129,0.4)"
+                  fg="rgba(5,150,105,1)"
+                >
+                  <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="1.5 2.5 5.5 6 1.5 9.5" />
+                    <polyline points="6.5 2.5 10.5 6 6.5 9.5" />
+                  </svg>
+                </StreamingActionButton>
+              )}
+              <button
               onClick={handleSend}
               disabled={!value.trim() && !attachedImages.length}
               style={{
@@ -3375,6 +3433,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </svg>
               {!queueButtonsCollapsed && t("chat.send")}
             </button>
+            </div>
           )}
           </div>
           )}

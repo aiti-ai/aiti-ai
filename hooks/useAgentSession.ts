@@ -2070,6 +2070,30 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice]);
 
+  /** Change a queued message's kind (steer ↔ followUp) without dispatching it. */
+  const convertQueuedMessage = useCallback(async (
+    kind: "steer" | "followUp",
+    index: number,
+    targetKind: "steer" | "followUp",
+  ): Promise<boolean> => {
+    const sid = sessionIdRef.current;
+    if (!sid) return false;
+    try {
+      const result = await sendAgentCommand<{ steering?: string[]; followUp?: string[] }>(sid, {
+        type: "convert_queue_item",
+        kind,
+        index,
+        targetKind,
+      });
+      if (result) setQueuedMessages(normalizeQueuedMessages(result));
+      return true;
+    } catch (e) {
+      console.error("Failed to convert queued message:", e);
+      addNotice({ type: "error", message: e instanceof Error ? e.message : "Failed to convert queued message" });
+      return false;
+    }
+  }, [addNotice]);
+
   /** Pull one queued message out (clear + re-enqueue the rest); returns its text + images. */
   const recallQueuedMessage = useCallback(async (
     kind: "steer" | "followUp",
@@ -2464,7 +2488,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     slashCommands, slashCommandsLoading, queuedMessages,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport,
     queueTrash, restoreQueueItem, purgeQueueTrash,
-    moveQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
+    moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
