@@ -398,6 +398,12 @@ export function AppShell() {
   }, [router, selectedSession]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false) => {
+    // Advance the project identity to the selected session's project BEFORE the
+    // sidebar cwd-sync effect fires. Otherwise handleCwdChange sees a project
+    // change (e.g. picking a session from another project in the all-sessions
+    // panel / kanban) and tears the just-selected session down — the first click
+    // would always fail and only a second click (same project) would stick.
+    activeProjectRootRef.current = session.projectRoot ?? session.cwd ?? null;
     setNewSessionCwd(null);
     setSelectedSession(session);
     setSessionKey((k) => k + 1);
@@ -599,6 +605,18 @@ export function AppShell() {
 
   const handleOpenLinkedFile = useCallback((filePath: string) => {
     handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null });
+  }, [handleOpenFile, selectedSession?.id]);
+
+  // aiti-devtools 扩展请求打开文件（前端在线查看——文件标签页）：aiti 候选详情点"前端打开"
+  useEffect(() => {
+    const onAitiOpenFile = (e: MessageEvent) => {
+      const m = e.data;
+      if (m && m.__dbg === 1 && m.type === "aiti_open_file" && typeof m.payload?.filePath === "string") {
+        handleOpenFile(m.payload.filePath, getFileName(m.payload.filePath), { sourceSessionId: selectedSession?.id ?? null });
+      }
+    };
+    window.addEventListener("message", onAitiOpenFile);
+    return () => window.removeEventListener("message", onAitiOpenFile);
   }, [handleOpenFile, selectedSession?.id]);
 
   const handleCloseFileTab = useCallback((tabId: string) => {
