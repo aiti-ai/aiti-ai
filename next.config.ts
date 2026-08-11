@@ -32,6 +32,11 @@ const nextConfig: NextConfig = {
   // at https://host/dev/. Client code reads NEXT_PUBLIC_BASE_PATH via
   // lib/base-path.ts. Empty (default) = root deployment.
   basePath: basePath || undefined,
+  // 关闭 Next 内置的尾斜杠重定向（默认 /dev/ → 308 → /dev）：它对隧道 vhost 的
+  // basePath 根路径也生效，且发生在 middleware 之前，会把我们的 /dev → /dev/ 规范
+  // 重定向变成死循环，也会让 /dev/api/* 在 trailingSlash:true 时被加尾斜杠。
+  // 尾斜杠规范化由 proxy.ts（middleware）统一处理。
+  skipTrailingSlashRedirect: true,
   // Dev server runs against its own build directory (.next-dev) so it can
   // coexist with the production `next start` (.next) on a different port.
   distDir: process.env.PI_WEB_DIST_DIR || (process.env.PI_WEB_DEV_DIST ? ".next-dev" : ".next"),

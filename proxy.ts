@@ -73,6 +73,18 @@ async function aitiInjectHtml(port: number, url: string, snippet: string, positi
   } catch { return null; }
 }
 
+/** basePath 目录规范化 302：保持 query，补尾斜杠。Web 规范——目录 URL 必须以 / 结尾，
+ * 否则浏览器把最后一段当"文件名"，相对链接 ./x 会解析到上一级（丢前缀）。
+ * 必须 no-store：302 默认可被启发式缓存，一旦后续配置再次产生尾斜杠重定向
+ * （双向 308）会污染浏览器永久重定向缓存 → ERR_TOO_MANY_REDIRECTS。 */
+function redirectToBase(request: NextRequest, raw: URL, base: string): NextResponse {
+  const u = new URL(base + "/", request.url);
+  u.search = raw.search;
+  const res = NextResponse.redirect(u, 302);
+  res.headers.set("cache-control", "no-store");
+  return res;
+}
+
 export async function proxy(request: NextRequest) {
   // Public tunnel-domain requests for pi-web's OWN exposure are mapped to its
   // proxy virtual host: the middleware then authenticates them through the
@@ -120,11 +132,21 @@ export async function proxy(request: NextRequest) {
       // 保留原始完整路径——resolve 必须用原始路径(/dev 开头、/portal/login 等
       // provider 路径原样),否则 strip/pipe 到错误目标
       const raw = new URL(request.url);
+      const base = process.env.NEXT_PUBLIC_BASE_PATH || "";
+      const piWebSelf = st.proxy.parseHost(host)?.label === "pi-web";
       // pi-web 自身 vhost(部署域/隧道域映射)的根路径 → basePath:否则 Next
       // 根无页面 404(basic 经 gateway 转发 Host=127.0.0.1 后同样 404)
-      const base = process.env.NEXT_PUBLIC_BASE_PATH || "";
-      if (base && st.proxy.parseHost(host)?.label === "pi-web" && (raw.pathname === "/" || raw.pathname === "")) {
-        return NextResponse.redirect(new URL(base + "/", request.url), 302);
+      if (base && piWebSelf && (raw.pathname === "/" || raw.pathname === "")) {
+        return redirectToBase(request, raw, base);
+      }
+      // basePath 目录规范(隧道 vhost):公共 URL 恰好落在部署前缀(如 /dev)而无尾斜杠时,
+      // 浏览器把 /dev 当"文件名",相对链接 ./x 解析到上一级(丢前缀 → nginx location /
+      // 走错实例)。除 pi-web 自身(Next 路由用绝对链接,无需尾斜杠,且 /dev 即其页面根)
+      // 外,统一 302 到 basePath + "/"(目录带尾斜杠是 Web 规范,保证 ./target.html
+      // 解析为 /dev/target.html 而非 /target.html)。配合 next.config 的
+      // skipTrailingSlashRedirect:true(/dev/ 不再被 Next 308 回 /dev),无死循环。
+      if (!piWebSelf && base && raw.pathname === base) {
+        return redirectToBase(request, raw, base);
       }
       decision = await st.proxy.resolve({
         host,
