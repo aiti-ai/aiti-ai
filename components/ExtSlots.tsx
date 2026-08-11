@@ -108,7 +108,6 @@ async function loadExtensions(): Promise<void> {
             registerExtUiItems(slot, items.map((it) => ({ id: `${ext.id}:${it.id}`, render: it.render, meta: it.meta })));
           },
           registerChatHook: (hook) => registerChatHooks(hook),
-          registerChatHook: (hook) => registerChatHooks(hook),
         };
         registerFn?.(ctx);
       } catch (e) {

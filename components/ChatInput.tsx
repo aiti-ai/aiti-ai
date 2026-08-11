@@ -125,6 +125,8 @@ export interface ChatInputHandle {
   addImages: (files: File[]) => void;
   /** Restore an unsent draft (crash recovery) into the input box. */
   restoreDraft: (draft: ChatDraft) => void;
+  /** 跑一遍扩展聊天钩子 preSend（[选择N]/[错误N] → 真实内容）；未注册钩子时原样返回。 */
+  runChatHooks: (text: string) => string;
   /** True when the input box has text or images (used to tell a live draft from a recoverable one). */
   hasInput: () => boolean;
   /** Force the queue panel to expand (used after recovery/import resolution). */
@@ -1229,6 +1231,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     hasInput() {
       return Boolean(value.trim()) || attachedImagesRef.current.length > 0;
     },
+    runChatHooks(text: string) {
+      return applyChatHooks(text);
+    },
     expandQueue() {
       setQueueCollapsedUser(false);
     },
@@ -1420,6 +1425,22 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     };
   }, []);
 
+  // 扩展聊天钩子统一入口：Enter 发送 / 插队（steer）/ 排队（follow-up）都走这里——
+  // [选择N]/[错误N] 占位符任何发送路径都替换（aiti-devtools：候选内容 + 来源前缀）
+  const applyChatHooks = useCallback((text: string): string => {
+    const chatHooks = chatHooksRef.current ?? [];
+    let finalMsg = text;
+    for (const hk of chatHooks) {
+      if (typeof hk.preSend === "function") {
+        try {
+          const r = hk.preSend(finalMsg);
+          if (r && typeof r.text === "string") finalMsg = r.text;
+        } catch { /* 钩子失败不阻塞发送 */ }
+      }
+    }
+    return finalMsg;
+  }, []);
+
   const handleSend = useCallback(async () => {
     const msg = value.trim();
     if (!msg && !attachedImages.length) return;
@@ -1457,21 +1478,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return;
       }
     }
-    // 扩展聊天钩子（aiti-devtools）：发送前 @选择N → 真实候选内容 + 收集元素
-    const chatHooks = chatHooksRef.current ?? [];
-    let finalMsg = msg;
-    let extElements: unknown[] | undefined;
-    for (const hk of chatHooks) {
-      if (typeof hk.preSend === "function") {
-        try {
-          const r = hk.preSend(finalMsg);
-          if (r) { if (typeof r.text === "string") finalMsg = r.text; if (Array.isArray(r.elements) && r.elements.length) extElements = r.elements; }
-        } catch { /* 钩子失败不阻塞发送 */ }
-      }
-    }
+    // 扩展聊天钩子（aiti-devtools）：发送前 @选择N → 真实候选内容（Enter/steer/queue 统一走 applyChatHooks）
+    const finalMsg = applyChatHooks(msg);
     onSend(finalMsg, attachedImages.length ? attachedImages : undefined);
     clearInput();
-  }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, onRequeueAt]);
+  }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, onRequeueAt, applyChatHooks]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
@@ -1719,19 +1730,21 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // such instead of putting the recalled entry back into the queue.
     recalledRef.current = null;
     setRecalledVisible(false);
+    // 扩展聊天钩子：插队（steer）/ 排队（follow-up）发送同样转换 [选择N]/[错误N]（与 Enter 一致）
+    const finalMsg = applyChatHooks(msg);
     const streamingBehavior = mode === "steer" ? "steer" : "followUp";
-    if (msg.startsWith("/") && onPromptWithStreamingBehavior) {
-      onPromptWithStreamingBehavior(msg, streamingBehavior, attachedImages.length ? attachedImages : undefined);
+    if (finalMsg.startsWith("/") && onPromptWithStreamingBehavior) {
+      onPromptWithStreamingBehavior(finalMsg, streamingBehavior, attachedImages.length ? attachedImages : undefined);
       clearInput();
       return;
     }
     if (mode === "steer" && onSteer) {
-      onSteer(msg, attachedImages.length ? attachedImages : undefined);
+      onSteer(finalMsg, attachedImages.length ? attachedImages : undefined);
     } else if (mode === "followup" && onFollowUp) {
-      onFollowUp(msg, attachedImages.length ? attachedImages : undefined);
+      onFollowUp(finalMsg, attachedImages.length ? attachedImages : undefined);
     }
     clearInput();
-  }, [value, attachedImages, queuedMessages, onPromptWithStreamingBehavior, onSteer, onFollowUp, onQueueSteerSend, handleRemoveQueueItem, clearInput, onAudioUnlock]);
+  }, [value, attachedImages, queuedMessages, onPromptWithStreamingBehavior, onSteer, onFollowUp, onQueueSteerSend, handleRemoveQueueItem, clearInput, onAudioUnlock, applyChatHooks]);
 
   const getNextSlashIndex = useCallback((direction: "up" | "down" | "left" | "right") => {
     const lastIndex = displayedSlashCommands.length - 1;

@@ -332,7 +332,9 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
           mimeType: img.mimeType,
           previewUrl: `data:${img.mimeType};base64,${img.data}`,
         }));
-        void handleFollowUp(slot.draft.value, images.length > 0 ? images : undefined);
+        // 恢复为 follow-up 前先跑扩展聊天钩子（[选择N]/[错误N] → 真实内容，与输入框发送一致）
+        const restoredText = chatInputRef?.current?.runChatHooks?.(slot.draft.value) ?? slot.draft.value;
+        void handleFollowUp(restoredText, images.length > 0 ? images : undefined);
       });
       const consumedKeys = new Set(draftKept.map((slot) => slot.slotKey));
       draftKept.forEach((slot) => {
