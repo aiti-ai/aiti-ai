@@ -48,3 +48,6 @@ next-env.d.ts
 
 # test server runtime log (scripts/test-server.js)
 test-server.log
+
+# aiti dev build dir
+.next-aiti/
