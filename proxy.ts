@@ -37,14 +37,24 @@ function liveServiceTunnels() {
 }
 
 /** aiti 注入片段：__aitiInject.scriptFor(port, url, method)（service-tunnels transformResponse 同一回调） */
-async function aitiInjectSnippet(port: number, url: string, method: string): Promise<string | null> {
+type AitiInjection = string | { html: string; position?: "head" | "prepend" } | null;
+
+async function aitiInjectSnippet(port: number, url: string, method: string): Promise<AitiInjection> {
   const inj = (globalThis as any).__aitiInject;
   if (!inj || typeof inj.scriptFor !== "function") return null;
   try { return inj.scriptFor(port, url, method) || null; } catch { return null; }
 }
 
-/** aiti 注入执行：fetch 上游 → text/html 改写 </head> → 注入响应（pi-web library mode 转发在 proxy.ts） */
-async function aitiInjectHtml(port: number, url: string, snippet: string): Promise<Response | null> {
+/** 注入 HTML + 位置：string → head；{html, position} → 按 position */
+function resolveAitiInject(r: AitiInjection): { html: string; position: "head" | "prepend" } | null {
+  if (!r) return null;
+  if (typeof r === "string") return { html: r, position: "head" };
+  return { html: r.html, position: r.position === "prepend" ? "prepend" : "head" };
+}
+
+/** aiti 注入执行：fetch 上游 → text/html 注入（prepend=响应开头 / head=</head> 前）
+ *  pi-web library mode 转发在 proxy.ts（fetch 缓冲），注入位置仍更早（prepend） */
+async function aitiInjectHtml(port: number, url: string, snippet: string, position: "head" | "prepend"): Promise<Response | null> {
   try {
     const u = new URL(url, `http://127.0.0.1:${port}`);
     u.port = String(port);
@@ -53,7 +63,9 @@ async function aitiInjectHtml(port: number, url: string, snippet: string): Promi
     const ct = upstream.headers.get("content-type") || "";
     if (!ct.includes("text/html")) return null;
     const html = await upstream.text();
-    const injected = html.includes("</head>") ? html.replace("</head>", snippet + "</head>") : html + snippet;
+    const injected = position === "prepend"
+      ? snippet + html                       // 响应开头（解析器最先遇到 → 最早执行）
+      : (html.includes("</head>") ? html.replace("</head>", snippet + "</head>") : html + snippet);
     const headers = new Headers(upstream.headers);
     headers.delete("content-length");
     headers.delete("transfer-encoding");
@@ -146,9 +158,10 @@ export async function proxy(request: NextRequest) {
       case "pipe": {
         // 响应注入（service-tunnels transformResponse 语义——library mode 转发在 proxy.ts）：
         // 读 __aitiInject.scriptFor（扩展注册，与 createServiceTunnels 的 transformResponse 同一回调）
-        const aitiSnippet = (await aitiInjectSnippet(decision.port, request.url, request.method)) || null;
-        if (aitiSnippet) {
-          const injected = await aitiInjectHtml(decision.port, request.url, aitiSnippet);
+        const aitiSnippet = await aitiInjectSnippet(decision.port, request.url, request.method);
+        const aitiResolved = resolveAitiInject(aitiSnippet);
+        if (aitiResolved) {
+          const injected = await aitiInjectHtml(decision.port, request.url, aitiResolved.html, aitiResolved.position);
           if (injected) return injected;
         }
         const url = new URL(`http://127.0.0.1:${decision.port}`);
@@ -192,9 +205,10 @@ export async function proxy(request: NextRequest) {
         try {
           const turl = new URL(decision.target);
           const tport = turl.port ? parseInt(turl.port, 10) : 0;
-          const snippet = tport ? (await aitiInjectSnippet(tport, turl.pathname + turl.search, request.method)) || null : null;
-          if (snippet) {
-            const injected = await aitiInjectHtml(tport, turl.pathname + turl.search, snippet);
+          const snippet = tport ? await aitiInjectSnippet(tport, turl.pathname + turl.search, request.method) : null;
+          const resolved = resolveAitiInject(snippet);
+          if (resolved) {
+            const injected = await aitiInjectHtml(tport, turl.pathname + turl.search, resolved.html, resolved.position);
             if (injected) return injected;
           }
         } catch (err) {
