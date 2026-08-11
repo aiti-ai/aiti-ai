@@ -38,6 +38,13 @@ export function getServiceTunnels(): ServiceTunnels {
       configDir: join(homedir(), ".pi", "service-tunnels"),
       cacheDir: join(homedir(), ".pi", "service-tunnels-cache"),
       marker: "pi-web",
+      // 通用响应注入（service-tunnels transformResponse）：aiti-devtools 扩展注册
+      // globalThis.__aitiInject.scriptFor(port) 决定注入内容（</head> 前插 script）
+      transformResponse: ({ port, url, method }) => {
+        const inj = (globalThis as any).__aitiInject;
+        if (!inj || typeof inj.scriptFor !== "function") return null;
+        try { return inj.scriptFor(port, url, method); } catch { return null; }
+      },
       // 部署转发前缀(deployBasePath)必须传:provider 登录路径合并成 /dev/portal-xxx,
       // 登录重定向/登录页都带部署前缀,走 nginx 路径路由直达本实例。service-tunnels
       // 0.3.11 修复了 hasPath 恒真导致合并失效的问题(此前 provider 监听 /portal 但

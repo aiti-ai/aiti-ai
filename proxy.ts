@@ -36,6 +36,31 @@ function liveServiceTunnels() {
   return globalThis.__piServiceTunnels ?? null;
 }
 
+/** aiti 注入片段：__aitiInject.scriptFor(port, url, method)（service-tunnels transformResponse 同一回调） */
+async function aitiInjectSnippet(port: number, url: string, method: string): Promise<string | null> {
+  const inj = (globalThis as any).__aitiInject;
+  if (!inj || typeof inj.scriptFor !== "function") return null;
+  try { return inj.scriptFor(port, url, method) || null; } catch { return null; }
+}
+
+/** aiti 注入执行：fetch 上游 → text/html 改写 </head> → 注入响应（pi-web library mode 转发在 proxy.ts） */
+async function aitiInjectHtml(port: number, url: string, snippet: string): Promise<Response | null> {
+  try {
+    const u = new URL(url, `http://127.0.0.1:${port}`);
+    u.port = String(port);
+    u.hostname = "127.0.0.1";
+    const upstream = await fetch(u.href, { headers: { accept: "text/html,*/*" }, redirect: "manual" });
+    const ct = upstream.headers.get("content-type") || "";
+    if (!ct.includes("text/html")) return null;
+    const html = await upstream.text();
+    const injected = html.includes("</head>") ? html.replace("</head>", snippet + "</head>") : html + snippet;
+    const headers = new Headers(upstream.headers);
+    headers.delete("content-length");
+    headers.delete("transfer-encoding");
+    return new Response(injected, { status: upstream.status, headers });
+  } catch { return null; }
+}
+
 export async function proxy(request: NextRequest) {
   // Public tunnel-domain requests for pi-web's OWN exposure are mapped to its
   // proxy virtual host: the middleware then authenticates them through the
@@ -119,26 +144,14 @@ export async function proxy(request: NextRequest) {
           headers: { "cache-control": "no-store", "www-authenticate": decision.wwwAuthenticate },
         });
       case "pipe": {
-        // 注入钩子（aiti-devtools 扩展注册）：开启注入的服务端口 → 扩展代理上游 + text/html 注入 aiti-launcher.js
-        const aitiInject = (globalThis as any).__aitiInject;
-        const aitiProbeHeaders: Record<string, string> = {};
-        if (aitiInject && typeof aitiInject.enabledFor === "function") {
-          const injOn = aitiInject.enabledFor(decision.port);
-          aitiProbeHeaders["x-aiti-present"] = "1";
-          aitiProbeHeaders["x-aiti-enabled"] = String(injOn);
-          if (injOn) {
-            try {
-              const resp = await aitiInject.proxyWithInject(request, decision);
-              resp.headers.set("x-aiti-injected", "1");
-              return resp;
-            } catch (err) {
-              console.error("[pi-web][aiti-inject] 注入失败，回退普通转发:", err);
-              aitiProbeHeaders["x-aiti-error"] = "1";
-            }
-          }
+        // 响应注入（service-tunnels transformResponse 语义——library mode 转发在 proxy.ts）：
+        // 读 __aitiInject.scriptFor（扩展注册，与 createServiceTunnels 的 transformResponse 同一回调）
+        const aitiSnippet = (await aitiInjectSnippet(decision.port, request.url, request.method)) || null;
+        if (aitiSnippet) {
+          const injected = await aitiInjectHtml(decision.port, request.url, aitiSnippet);
+          if (injected) return injected;
         }
         const url = new URL(`http://127.0.0.1:${decision.port}`);
-        aitiProbeHeaders["x-aiti-present"] = aitiProbeHeaders["x-aiti-present"] ?? "0";
         url.pathname = decision.url.split("?")[0] ?? "/";
         url.search = decision.url.includes("?") ? `?${decision.url.split("?")[1]}` : "";
         console.log("[pi-web][dbg] pipe:", { host, decisionUrl: decision.url, port: decision.port, rewriteTarget: url.href, rawUrl: request.url, nextPath: request.nextUrl.pathname });
@@ -170,25 +183,22 @@ export async function proxy(request: NextRequest) {
           // Child-process dev server: keep the public host untouched.
           request.headers.set("host", host);
         }
-        return NextResponse.rewrite(url, { headers: aitiProbeHeaders });
+        return NextResponse.rewrite(url);
       }
       case "redirect":
         return NextResponse.redirect(decision.location, 302);
       case "forward": {
-        // 注入钩子（aiti-devtools）：open vhost 走 forward（非 pipe）——从 target 解析端口判断注入
-        const aitiInject = (globalThis as any).__aitiInject;
-        if (aitiInject && typeof aitiInject.enabledFor === "function") {
-          try {
-            const turl = new URL(decision.target);
-            const tport = turl.port ? parseInt(turl.port, 10) : 0;
-            if (tport && aitiInject.enabledFor(tport)) {
-              const resp = await aitiInject.proxyWithInject(request, { port: tport, url: turl.pathname + turl.search });
-              resp.headers.set("x-aiti-injected", "1");
-              return resp;
-            }
-          } catch (err) {
-            console.error("[pi-web][aiti-inject] forward 注入失败，回退普通转发:", err);
+        // 响应注入（同 pipe：service-tunnels transformResponse 语义）——forward 目标含端口
+        try {
+          const turl = new URL(decision.target);
+          const tport = turl.port ? parseInt(turl.port, 10) : 0;
+          const snippet = tport ? (await aitiInjectSnippet(tport, turl.pathname + turl.search, request.method)) || null : null;
+          if (snippet) {
+            const injected = await aitiInjectHtml(tport, turl.pathname + turl.search, snippet);
+            if (injected) return injected;
           }
+        } catch (err) {
+          console.error("[pi-web][aiti-inject] 注入失败，回退普通转发:", err);
         }
         request.headers.set("host", host);
         return NextResponse.rewrite(decision.target);
@@ -248,8 +258,13 @@ ${hint}
   // operator-protected front domains pass both gates.
   const isApiRequest = request.nextUrl.pathname === "/api"
     || request.nextUrl.pathname.startsWith("/api/");
+  // 扩展静态资源（/api/extensions/<id>/<file>.<js|html|...>）：script/img 标签 no-cors 加载
+  // 跨域无 Origin/Origin:null 时默认门禁会 403——静态资源是公共产物（无敏感数据），放行；
+  // 扩展 API（claim/sse/mcp 等，带数据语义）保持门禁（API_ALLOW_ORIGINS 配置放行 + secret 凭证）。
+  const isStaticAsset = isApiRequest
+    && /^\/api\/extensions\/[^/]+\/[^/]+\.(js|mjs|html|css|json|map)$/.test(request.nextUrl.pathname);
   const isTrustedRequest = isApiRequest
-    ? isApiRequestAllowed(request)
+    ? (isStaticAsset || isApiRequestAllowed(request))
     : isApiRequestHostAllowed(request);
 
   if (!isTrustedRequest) {
