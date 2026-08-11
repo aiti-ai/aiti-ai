@@ -118,6 +118,10 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
   const [tab, setTab] = useState<"ports" | "self" | "users">(initialTab);
   const [self, setSelf] = useState<SelfState | null>(null);
   const [infoModal, setInfoModal] = useState<"access" | "auth" | null>(null);
+  // 注入 JS（aiti-devtools 扩展 inject-ports）：null = 扩展未加载/不可用。
+  // Ports 页端口卡与 Pi-web 页共用这一份状态（对话框轮询同步）。
+  const [injectPorts, setInjectPorts] = useState<number[] | null>(null);
+  const [injectBaseUrl, setInjectBaseUrl] = useState<string | null>(null);
 
   const refresh = useCallback((force = false) => {
     if (!force) setLoading(false);
@@ -153,6 +157,18 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
         if (d.self) setSelf(d.self);
       })
       .catch(() => {});
+    // inject-ports（aiti-devtools 扩展）：注入开关状态。扩展未加载（404）→
+    // null = 不可用，UI 只显示提示不给开关。
+    fetch(apiUrl("/api/extensions/aiti-devtools/inject-ports"))
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d: { ports?: number[]; baseUrl?: string | null } | null) => {
+        setInjectPorts(d ? d.ports ?? [] : null);
+        setInjectBaseUrl(d ? d.baseUrl ?? null : null);
+      })
+      .catch(() => {
+        // 网络抖动不清空已加载状态（首次加载失败保持 null=不可用）
+        setInjectPorts((p) => p ?? null);
+      });
   }, [t, locale]);
 
   useEffect(() => {
@@ -219,6 +235,22 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
       })
       .catch(() => {});
   }, [refresh]);
+
+  /** 注入开关：把端口加/移出 aiti-devtools 的 inject-ports。baseUrl 原样回传
+   *  （扩展 PUT 未带 baseUrl 时也会保留旧值，双保险）。乐观更新，失败重拉。 */
+  const toggleInject = useCallback((port: number, on: boolean) => {
+    const cur = injectPorts ?? [];
+    const next = on ? [...cur.filter((p) => p !== port), port] : cur.filter((p) => p !== port);
+    setInjectPorts(next); // optimistic
+    fetch(apiUrl("/api/extensions/aiti-devtools/inject-ports"), {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ports: next, ...(injectBaseUrl ? { baseUrl: injectBaseUrl } : {}) }),
+    })
+      .then((r) => r.json())
+      .then((d: { ports?: number[] }) => { if (d && Array.isArray(d.ports)) setInjectPorts(d.ports); })
+      .catch(() => refresh(false));
+  }, [injectPorts, injectBaseUrl, refresh]);
 
   const toggleExpand = (port: number) => {
     setExpanded((prev) => {
@@ -457,6 +489,15 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
                         onStopExpose={stopExpose}
                         onChanged={() => refresh(false)}
                         onGoManageUsers={() => setTab("users")} />
+                      {/* 注入 JS（AITI 调试器）——proxy 模式已生效；tunnel 模式由 service-tunnels 开发中 */}
+                      <InjectJsSection
+                        port={s.port}
+                        enabled={injectPorts?.includes(s.port) ?? false}
+                        available={injectPorts !== null}
+                        variant="port"
+                        t={t}
+                        onToggle={toggleInject}
+                      />
                     </div>
                   )}
                 </div>
@@ -489,7 +530,9 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
               onGoManageUsers={() => setTab("users")}
               exposes={data?.exposes ?? []}
               onShowDetail={setDetailFor}
-              onStopExpose={stopExpose} />
+              onStopExpose={stopExpose}
+              injectPorts={injectPorts}
+              onToggleInject={toggleInject} />
           </div>
         )}
 
@@ -880,6 +923,64 @@ function UrlRow({ url, label, copied, onCopy, onOpen, isMobile }: { url: string;
       <button onClick={onCopy} title={copied ? "✓" : "⧉"} style={{ flexShrink: 0, width: 24, height: 24, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 5, color: copied ? "#16a34a" : "var(--text-dim)", cursor: "pointer", fontSize: 12 }}>
         {copied ? "✓" : "⧉"}
       </button>
+    </div>
+  );
+}
+
+/** 注入 JS（AITI 调试器）开关 —— 端口卡（variant="port"）与 Pi-web 页
+ *  （variant="self"）共用。注入按端口启用（aiti-devtools 扩展 inject-ports
+ *  API）：端口出现在列表后，经该端口访问通道返回的 HTML 自动注入
+ *  aiti-launcher.js。执行侧：proxy 模式（服务虚拟主机）已生效；tunnel 模式
+ *  的响应注入由 service-tunnels 开发中（界面已就绪）。 */
+function InjectJsSection({ port, enabled, available, variant, t, onToggle }: {
+  port: number;
+  enabled: boolean;
+  /** 扩展未加载（GET 404/失败）→ false：只显示不可用提示，不给开关。 */
+  available: boolean;
+  variant: "port" | "self";
+  t: (key: string, params?: Record<string, string>) => string;
+  onToggle: (port: number, on: boolean) => void;
+}) {
+  return (
+    <div style={{ borderTop: "1px solid var(--border)", marginTop: 10, paddingTop: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)" }}>🧰 {t("services.injectJs")}</span>
+        <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>port {port}</span>
+        <span style={{ flex: 1 }} />
+        {available ? (
+          <label
+            style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, cursor: "pointer" }}
+            title={t(enabled ? "services.injectJsDisableHint" : "services.injectJsEnableHint")}
+          >
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(e) => onToggle(port, e.target.checked)}
+              style={{ accentColor: "var(--accent)", cursor: "pointer" }}
+            />
+            <span style={{ color: enabled ? "var(--text)" : "var(--text-dim)", fontWeight: enabled ? 600 : 400 }}>
+              {enabled ? t("services.injectJsOn") : t("services.injectJsEnable")}
+            </span>
+          </label>
+        ) : (
+          <span style={{ fontSize: 10, color: "var(--text-dim)" }} title={t("services.injectJsUnavailable")}>
+            {t("services.injectJsUnavailable")}
+          </span>
+        )}
+      </div>
+      {available && (
+        <div style={{ fontSize: 10, color: "var(--text-dim)", lineHeight: 1.7, marginTop: 4 }}>
+          <div>✓ {t("services.injectJsModeProxy")}</div>
+          <div>○ {t("services.injectJsModeTunnel")}</div>
+          {variant === "self" && <div style={{ marginTop: 2 }}>{t("services.injectJsSelfHint")}</div>}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 14, marginTop: 6 }}>
+        <a href={apiUrl("/api/extensions/aiti-devtools/ai.html")} target="_blank" rel="noreferrer"
+          style={{ fontSize: 11, color: "var(--accent)", textDecoration: "none" }}>
+          🤖 {t("services.injectJsOpenUi")} ›
+        </a>
+      </div>
     </div>
   );
 }
@@ -1668,7 +1769,7 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
 }
 
 /** Pi-web tab: self-exposure control + direct-access gate (allowlocal). */
-function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManageUsers, exposes, onShowDetail, onStopExpose }: {
+function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManageUsers, exposes, onShowDetail, onStopExpose, injectPorts, onToggleInject }: {
   self: SelfState | null;
   t: (k: string, params?: Record<string, string>) => string;
   openInNewTab: (url: string) => void;
@@ -1683,6 +1784,10 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
   onShowDetail: (ex: ExposeInfo) => void;
   /** Stop ONE expose by name (proxy vhost rows — removes binding + record). */
   onStopExpose: (name: string) => void;
+  /** 注入 JS（aiti-devtools 扩展 inject-ports）—— null = 扩展未加载/不可用。 */
+  injectPorts: number[] | null;
+  /** 注入开关：加/移出 pi-web 自身端口。 */
+  onToggleInject: (port: number, on: boolean) => void;
 }) {
   // 多语:SelfTab 自身组件,单独拿 locale(与 ServicesDialog 的 stApi 一致)
   const { locale: selfLocale } = useI18n();
@@ -2162,6 +2267,21 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
         )}
         {err && <div style={{ fontSize: 12, color: "#f87171", marginTop: 8 }}>{err}</div>}
       </div>
+
+      {/* 注入 JS（AITI 调试器）—— pi-web 自身端口：proxy 模式（经自暴露虚拟主机访问）已生效；
+          tunnel 模式由 service-tunnels 开发中。开启不进 open binding（见扩展 enroll 跳过自身端口）。 */}
+      {self && (
+        <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
+          <InjectJsSection
+            port={self.port}
+            enabled={injectPorts?.includes(self.port) ?? false}
+            available={injectPorts !== null}
+            variant="self"
+            t={t}
+            onToggle={onToggleInject}
+          />
+        </div>
+      )}
 
       {/* allowlocal — 放暴露控制下方（selfExposeHint 提示“直连 127/局域网由下方 allowlocal 开关控制”） */}
       <label style={{ display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }} title={t("services.selfAllowLocalHint")}>
