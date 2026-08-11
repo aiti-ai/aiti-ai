@@ -195,12 +195,18 @@ export interface SelfExposeOptions {
 export async function exposeSelf(opts: SelfExposeOptions = {}) {
   const st = getServiceTunnels();
   const port = opts.port ?? getPiWebPort();
-  // Idempotent: an already-running self expose wins (hot reload / re-invoke).
-  const existing = st.exposes().find((e) => e.site === "pi-web" && e.port === port && e.running);
-  if (existing) return existing;
   const authNone = opts.auth === "none";
   const provider = opts.auth && opts.auth !== "auto" && !authNone ? opts.auth : "portal";
   const mode = opts.mode ?? "proxy";
+  const wantsTunnel = mode === "tunnel" || mode === "both";
+  // 幂等短路只对“已存在的同模式通道”（热重载/重复调用复用）：
+  //   - tunnel/both → 已有运行中的 expose-self 隧道（记录带 url）
+  //   - proxy      → 无隧道进程；重入 st.auth.expose(mode=proxy) 天然幂等
+  //                  （binding 覆盖写 + 记录覆盖写），不短路
+  // 关键：不同模式请求（已有 tunnel 再点 proxy / 已有 proxy 再点 tunnel）
+  // 绝不静默吞掉——否则 UI 表现为“点了没反应、无任何错误”。
+  const existingTunnel = st.exposes().find((e) => e.site === "pi-web" && e.port === port && e.running && !!e.url);
+  if (wantsTunnel && existingTunnel) return existingTunnel;
   // 所有模式都注册 labeled 绑定(label "pi-web"):pi-web 是 basePath 应用,
   // labeled vhost 走 pipe 保留完整路径(裸 open vhost 会 strip /dev → 404),
   // 且 auth=none 时 provider="" 由 resolveSite 短路开放。隧道域经 middleware
