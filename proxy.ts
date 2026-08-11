@@ -77,6 +77,12 @@ export async function proxy(request: NextRequest) {
   // runs HERE — no separate proxy port, one public port. Next then forwards
   // the request (rewrite target) or answers 403/302/401.
   if (host && st?.proxy?.parseHost(host)) {
+    // aiti-devtools 扩展 API 穿透：vhost 页面内相对路径 /api/extensions/aiti-devtools/*
+    // （注入 script / 桥 / ai.html）重写到 pi-web 自身——否则被代理到服务端口 404/跨域
+    const rawUrl = new URL(request.url);
+    if (rawUrl.pathname.startsWith("/api/extensions/aiti-devtools/")) {
+      return NextResponse.rewrite(`http://127.0.0.1:${getPiWebPort()}${rawUrl.pathname}${rawUrl.search}`);
+    }
     let decision: Awaited<ReturnType<typeof st.proxy.resolve>>;
     try {
       // Next 的 nextUrl.pathname 在 basePath 模式下会剥除 /dev,而 request.url
@@ -121,14 +127,24 @@ export async function proxy(request: NextRequest) {
       case "pipe": {
         // 注入钩子（aiti-devtools 扩展注册）：开启注入的服务端口 → 扩展代理上游 + text/html 注入 aiti-launcher.js
         const aitiInject = (globalThis as any).__aitiInject;
-        if (aitiInject && typeof aitiInject.enabledFor === "function" && aitiInject.enabledFor(decision.port)) {
-          try {
-            return await aitiInject.proxyWithInject(request, decision);
-          } catch (err) {
-            console.error("[pi-web][aiti-inject] 注入失败，回退普通转发:", err);
+        const aitiProbeHeaders: Record<string, string> = {};
+        if (aitiInject && typeof aitiInject.enabledFor === "function") {
+          const injOn = aitiInject.enabledFor(decision.port);
+          aitiProbeHeaders["x-aiti-present"] = "1";
+          aitiProbeHeaders["x-aiti-enabled"] = String(injOn);
+          if (injOn) {
+            try {
+              const resp = await aitiInject.proxyWithInject(request, decision);
+              resp.headers.set("x-aiti-injected", "1");
+              return resp;
+            } catch (err) {
+              console.error("[pi-web][aiti-inject] 注入失败，回退普通转发:", err);
+              aitiProbeHeaders["x-aiti-error"] = "1";
+            }
           }
         }
         const url = new URL(`http://127.0.0.1:${decision.port}`);
+        aitiProbeHeaders["x-aiti-present"] = aitiProbeHeaders["x-aiti-present"] ?? "0";
         url.pathname = decision.url.split("?")[0] ?? "/";
         url.search = decision.url.includes("?") ? `?${decision.url.split("?")[1]}` : "";
         console.log("[pi-web][dbg] pipe:", { host, decisionUrl: decision.url, port: decision.port, rewriteTarget: url.href, rawUrl: request.url, nextPath: request.nextUrl.pathname });
@@ -160,13 +176,29 @@ export async function proxy(request: NextRequest) {
           // Child-process dev server: keep the public host untouched.
           request.headers.set("host", host);
         }
-        return NextResponse.rewrite(url);
+        return NextResponse.rewrite(url, { headers: aitiProbeHeaders });
       }
       case "redirect":
         return NextResponse.redirect(decision.location, 302);
-      case "forward":
+      case "forward": {
+        // 注入钩子（aiti-devtools）：open vhost 走 forward（非 pipe）——从 target 解析端口判断注入
+        const aitiInject = (globalThis as any).__aitiInject;
+        if (aitiInject && typeof aitiInject.enabledFor === "function") {
+          try {
+            const turl = new URL(decision.target);
+            const tport = turl.port ? parseInt(turl.port, 10) : 0;
+            if (tport && aitiInject.enabledFor(tport)) {
+              const resp = await aitiInject.proxyWithInject(request, { port: tport, url: turl.pathname + turl.search });
+              resp.headers.set("x-aiti-injected", "1");
+              return resp;
+            }
+          } catch (err) {
+            console.error("[pi-web][aiti-inject] forward 注入失败，回退普通转发:", err);
+          }
+        }
         request.headers.set("host", host);
         return NextResponse.rewrite(decision.target);
+      }
     }
   }
 

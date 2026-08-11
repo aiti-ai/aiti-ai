@@ -34,7 +34,7 @@ const nextConfig: NextConfig = {
   basePath: basePath || undefined,
   // Dev server runs against its own build directory (.next-dev) so it can
   // coexist with the production `next start` (.next) on a different port.
-  distDir: process.env.PI_WEB_DEV_DIST ? ".next-dev" : ".next",
+  distDir: process.env.PI_WEB_DIST_DIR || (process.env.PI_WEB_DEV_DIST ? ".next-dev" : ".next"),
   serverExternalPackages: [
     "undici",
     "@earendil-works/pi-coding-agent",

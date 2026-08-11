@@ -17,11 +17,20 @@ const CONTENT_TYPES: Record<string, string> = {
   ".map": "application/json; charset=utf-8",
 };
 
+// 扩展 API 通用 CORS（aiti-devtools 注入页跨域直连桥；本地开发场景）
+const EXT_CORS: Record<string, string> = {
+  "access-control-allow-origin": "*",
+  "access-control-allow-methods": "GET,POST,PUT,DELETE,PATCH,OPTIONS",
+  "access-control-allow-headers": "Content-Type",
+};
+
 async function handle(req: NextRequest, params: Params): Promise<Response> {
-  if (!isApiRequestAllowed(req)) {
+  // aiti-devtools：注入页面（vhost/本地端口）跨域直连桥——放行 origin 门禁（桥本身有 secret 凭证认证 + 本地无鉴权语义）
+  // 其他扩展保持默认门禁
+  const { path } = await params.params;
+  if (path[0] !== "aiti-devtools" && !isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
-  const { path } = await params.params;
   if (path.length === 0) return NextResponse.json({ error: "missing extension id" }, { status: 400 });
 
   const registry = getRegistry();
@@ -52,7 +61,13 @@ async function handle(req: NextRequest, params: Params): Promise<Response> {
 
   const response = await registry.api(req, path);
   if (!response) return NextResponse.json({ error: "not found" }, { status: 404 });
+  // 统一加 CORS（aiti 跨域注入场景；同源请求无害）
+  for (const [k, v] of Object.entries(EXT_CORS)) response.headers.set(k, v);
   return response;
+}
+
+export async function OPTIONS(): Promise<Response> {
+  return new Response(null, { status: 204, headers: EXT_CORS });
 }
 
 export async function GET(req: NextRequest, ctx: Params): Promise<Response> {
