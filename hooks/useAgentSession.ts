@@ -387,6 +387,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const eventStreamGraceActiveRef = useRef(false);
   const sessionIdRef = useRef<string | null>(session?.id ?? null);
   const agentRunningRef = useRef(false);
+  const isCompactingRef = useRef(false);
   const sdkAgentActiveRef = useRef(false);
   const rpcPromptPendingRef = useRef(false);
   const notifiedPromptRunIdRef = useRef(-1);
@@ -1116,6 +1117,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunningRef.current = agentRunning;
   }, [agentRunning]);
 
+  useEffect(() => {
+    isCompactingRef.current = isCompacting;
+  }, [isCompacting]);
+
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
       case "agent_start":
@@ -1347,6 +1352,35 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const bashCmd = (isExcluded ? trimmedMessage.slice(2) : trimmedMessage.slice(1)).trim();
       if (!bashCmd) return;
       await executeBashRef.current?.(bashCmd, isExcluded);
+      return;
+    }
+
+    // Compaction is in progress: pi rejects prompts until it finishes. Queue
+    // the message as a follow-up (no optimistic chat bubble — it lives in the
+    // queue panel) and it is delivered automatically once compaction
+    // completes. Slash extension commands are still executed immediately.
+    if (isCompactingRef.current) {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      // Open SSE first so the queue_update (and the flush-run events after
+      // compaction) reach us; best-effort if the stream cannot connect.
+      try {
+        await ensureEventsConnected(sid);
+      } catch {
+        // The command below still queues the message.
+      }
+      const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
+      try {
+        await sendAgentCommand(sid, {
+          type: "prompt",
+          message: trimmedMessage,
+          streamingBehavior: "followUp",
+          ...(piImages?.length ? { images: piImages } : {}),
+        });
+      } catch (e) {
+        console.error("Failed to queue prompt during compaction:", e);
+        addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      }
       return;
     }
 

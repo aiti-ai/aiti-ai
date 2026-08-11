@@ -226,6 +226,15 @@ export class AgentSessionWrapper {
           (event as { followUp?: string[] }).followUp,
         );
       }
+      if (event.type === "compaction_end") {
+        // Prompts submitted while compaction was running were queued as
+        // follow-ups (pi rejects prompts during compaction). Compaction is
+        // over — kick off a run so they are delivered instead of sitting in
+        // the queue. When compaction ran inside an active run loop
+        // (auto-compaction), runAgentContinue's guards skip this and pi
+        // continues on its own (it already checks hasQueuedMessages()).
+        void this.runAgentContinue();
+      }
       if (IDLE_RESET_EVENT_TYPES.has(event.type)) this.resetIdleTimer();
       this.emit(event);
       if (RUNNING_STATE_EVENT_TYPES.has(event.type)) notifyRunningChange();
@@ -321,6 +330,21 @@ export class AgentSessionWrapper {
   }
 
   /**
+   * True when the text is a registered extension command (`/name ...`). Used
+   * to route slash commands during compaction: extension commands execute
+   * immediately via prompt(), everything else is queued as a follow-up.
+   */
+  private isRegisteredExtensionCommand(text: string): boolean {
+    if (!text.startsWith("/")) return false;
+    const name = text.slice(1).split(/\s/)[0];
+    try {
+      return this.inner.extensionRunner.getRegisteredCommands().some((c) => c.invocationName === name);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
    * Sync the mirror with pi's authoritative queue (text-only). Bare entries pi
    * reports that we have never mirrored consume image hints FIFO.
    */
@@ -383,6 +407,12 @@ export class AgentSessionWrapper {
 
   /**
    * Kick off processing of the live queue when the agent is idle.
+   *
+   * Used by two triggers: (1) the recovery dialog's "re-queue & continue"
+   * and (2) the compaction_end listener — prompts submitted while compaction
+   * ran were queued as follow-ups and must be delivered now that compaction
+   * finished (pi rejects prompts during compaction, so the message would
+   * otherwise sit idle forever after a manual compaction).
    *
    * Re-queuing/import only enqueues entries into pi's steer/followUp queues
    * (exactly like the steer/followUp commands do) — it never starts a run.
@@ -628,6 +658,18 @@ export class AgentSessionWrapper {
         // Fire and forget — events come via subscribe
         const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
         const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
+        const text = command.message as string;
+        const compacting = this.inner.isCompacting;
+        // pi rejects plain prompts while compaction runs. Queue the message as
+        // a follow-up so it is delivered once compaction finishes (the
+        // compaction_end listener kicks off delivery via runAgentContinue).
+        // Extension commands still go through inner.prompt() so they execute
+        // immediately, matching pi's own behavior during compaction.
+        const queueAsFollowUp = compacting && !this.isRegisteredExtensionCommand(text);
+        if (queueAsFollowUp) {
+          // Record image attachments so they survive queue mirroring.
+          this.hintQueueImages("followUp", promptImages);
+        }
         const queuesMessage = Boolean(streamingBehavior) && this.inner.isStreaming;
         if (queuesMessage) {
           // Record image attachments so they survive queue mirroring.
@@ -635,11 +677,14 @@ export class AgentSessionWrapper {
         }
         this.promptRunning = true;
         notifyRunningChange();
-        this.inner.prompt(command.message as string, {
-          ...(promptImages?.length ? { images: promptImages } : {}),
-          ...(streamingBehavior ? { streamingBehavior } : {}),
-          source: "rpc",
-        }).then(() => {
+        const deliver = queueAsFollowUp
+          ? this.inner.followUp(text, promptImages?.length ? promptImages : undefined)
+          : this.inner.prompt(text, {
+              ...(promptImages?.length ? { images: promptImages } : {}),
+              ...(streamingBehavior ? { streamingBehavior } : {}),
+              source: "rpc",
+            });
+        deliver.then(() => {
           this.promptRunning = false;
           this.resetIdleTimer();
           if (!streamingBehavior) this.emit({ type: "prompt_done" });
