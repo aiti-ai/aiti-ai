@@ -120,6 +120,15 @@ fall-through。fail-safe（落到 core 门禁），但热重载时服务降级�
   octet-stream）；
 - manifest `clientUrl` 未 URL 编码（client 路径含空格/特殊字符时坏）。
 
+> **meta 字段契约（2026-08 已落地消费者，扩展应提供）**：
+> `meta.label` / `meta.title` 是顶栏自定义面板的显示名称来源
+> （`topbar-custom-order.zh-CN.md` §4.2：`meta.label ?? meta.title ?? id`，
+> 缺省时面板回退裸 id）。所有自研扩展的 `toolbar`/`sessionTopbar` 条目已补
+> `meta.label`（常用命令/点选元素/AITI 调试器/服务端口/全部会话/看板/标签…）。
+> 新扩展注册顶栏条目时**必须**带 `meta.label`（静态字符串；若需多语言，可后续
+> 扩展为 `meta.labelI18nKey` 由宿主按当前 locale 查扩展 i18n 表）。
+> 面板行内还复用条目的真实渲染做图标预览（inert 容器），无需额外 meta.icon。
+
 ### 3.6 proxy 钩子顺序耦合
 
 扩展 middleware 钩子位于 `mapSelfTunnelToVhost`（改写 Host）**之后** ——

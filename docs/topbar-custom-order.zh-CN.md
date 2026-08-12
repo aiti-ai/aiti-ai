@@ -157,7 +157,7 @@ type TopbarEntry =
 
 - **按钮条目来源**：
   - 内建：theme / language / services / history / export / title / **branch** / system（**移除 `!isMobile` 守卫**，可见性完全交给测量与隐藏集）；
-  - 扩展：`toolbar` 与 `sessionTopbar` 两个槽的条目拍平，id 沿用 ext-ui-store 已生成的 `extId:itemId`，**去重（保留首次出现）**；label 用 `meta.label ?? meta.title ?? id`（无 meta 时回退裸 id，可接受；后续可推动扩展补 meta.label）。
+  - 扩展：`toolbar` 与 `sessionTopbar` 两个槽的条目拍平，id 沿用 ext-ui-store 已生成的 `extId:itemId`，**去重（保留首次出现）**；label 用 `meta.label ?? meta.title ?? id`（**自研扩展已全部补 `meta.label`，面板显示友好名称；面板行内复用真实渲染做图标预览**）。
 - **渲染集合**：`visible`（供 itemsRow 与"⋯"）；**面板集合**：`order`（含隐藏按钮，灰显）。
 - **间隔条目**：每个 `SEPARATOR` → `<div data-topbar-sep style={{ width:1, height:"55%", alignSelf:"center", background:"var(--border)", margin:"0 6px", flexShrink:0 }}/>`（竖线分隔，比纯留白更有"分组"语义）。
 
