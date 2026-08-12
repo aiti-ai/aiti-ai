@@ -23,8 +23,16 @@ export interface ExtUiItemRegistered {
   meta?: { label?: string; title?: string; badge?: boolean };
 }
 
+/** 扩展级元数据（manifest：name/icon），供宿主 UI 标注扩展身份。 */
+export interface ExtMeta {
+  name: string;
+  icon?: string | null;
+}
+
 export interface ExtUiStore {
   items: Partial<Record<ExtSlotName, ExtUiItemRegistered[]>>;
+  /** extId → manifest 元数据（name/icon） */
+  metas: Record<string, ExtMeta>;
   version: number;
   listeners: Set<() => void>;
 }
@@ -35,9 +43,21 @@ declare global {
 
 function getStore(): ExtUiStore {
   if (!globalThis.__piWebExtUI) {
-    globalThis.__piWebExtUI = { items: {}, version: 0, listeners: new Set() };
+    globalThis.__piWebExtUI = { items: {}, metas: {}, version: 0, listeners: new Set() };
   }
   return globalThis.__piWebExtUI;
+}
+
+/** 覆盖式写入 manifest 扩展元数据（loadExtensions 拉取 manifest 后调用）。 */
+export function registerExtMetas(metas: Record<string, ExtMeta>): void {
+  const store = getStore();
+  store.metas = metas;
+  store.version += 1;
+  for (const l of store.listeners) l();
+}
+
+export function getExtMetas(): Record<string, ExtMeta> {
+  return getStore().metas;
 }
 
 export function registerExtUiItems(slot: ExtSlotName, items: ExtUiItemRegistered[]): void {

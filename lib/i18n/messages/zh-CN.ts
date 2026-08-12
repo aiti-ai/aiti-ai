@@ -23,6 +23,7 @@ export const zhCNLocale: LocalePlugin = {
     "topbar.divider": "间隔",
     "topbar.addDivider": "添加间隔",
     "topbar.removeDivider": "移除间隔",
+    "topbar.fromExtension": "来自扩展",
     "services.exposeSection": "公网访问（认证网关）",
     "services.exposeMode": "模式",
     "services.exposeModeTunnel": "tunnel（公网隧道）",

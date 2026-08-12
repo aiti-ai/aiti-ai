@@ -149,6 +149,7 @@ export class ExtRegistryImpl {
       clientUrl: e.ext.client ? `/api/extensions/${e.id}/assets/${e.ext.client}` : null,
       ui: e.ext.ui ?? null,
       source: e.source,
+      icon: e.ext.icon ?? null,
     }));
   }
 

@@ -16,10 +16,13 @@ import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo,
 import { apiUrl } from "@/lib/base-path";
 import type { ExtSlotName, PopoverActionProvider } from "@/lib/ext/types";
 import {
+  getExtMetas,
   getExtUiItems,
+  registerExtMetas,
   registerExtUiItems,
   resetExtUiItems,
   subscribeExtUi,
+  type ExtMeta,
   type ExtRenderProps,
   type ExtUiItemRegistered,
 } from "@/lib/ext-ui-store";
@@ -77,6 +80,7 @@ interface ManifestExt {
   version: string;
   clientUrl: string | null;
   ui: { i18n?: Record<string, Record<string, string>> } | null;
+  icon?: string | null;
 }
 
 let loadStarted = false;
@@ -100,6 +104,12 @@ async function loadExtensions(): Promise<void> {
     if (!res.ok) return;
     const data = (await res.json()) as { extensions: ManifestExt[] };
     resetExtUiItems();
+    // manifest 元数据（name/icon）→ 宿主 UI 标注扩展身份（顶栏自定义面板等）
+    const metas: Record<string, ExtMeta> = {};
+    for (const ext of data.extensions) {
+      metas[ext.id] = { name: ext.name, icon: ext.icon ?? null };
+    }
+    registerExtMetas(metas);
     for (const ext of data.extensions) {
       if (!ext.clientUrl) continue;
       try {
@@ -155,6 +165,17 @@ export function useExtSlotItems(slot: ExtSlotName): ExtUiItemRegistered[] {
     return subscribeExtUi(update);
   }, [slot]);
   return items;
+}
+
+/** extId → manifest 元数据（name/icon），随 store 版本变化重渲染。 */
+export function useExtMetas(): Record<string, ExtMeta> {
+  const [metas, setMetas] = useState<Record<string, ExtMeta>>(() => getExtMetas());
+  useEffect(() => {
+    const update = () => setMetas(getExtMetas());
+    update();
+    return subscribeExtUi(update);
+  }, []);
+  return metas;
 }
 
 export function ExtSlot({

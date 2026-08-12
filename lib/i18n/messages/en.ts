@@ -23,6 +23,7 @@ export const enLocale: LocalePlugin = {
     "topbar.divider": "Divider",
     "topbar.addDivider": "Add divider",
     "topbar.removeDivider": "Remove divider",
+    "topbar.fromExtension": "From extension",
     "services.exposeSection": "Public access (auth gateway)",
     "services.exposeMode": "Mode",
     "services.exposeModeTunnel": "tunnel (public URL)",

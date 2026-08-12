@@ -14,7 +14,7 @@ import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ServicesDialog } from "./ServicesDialog";
 import { SelfExposeAlert } from "./SelfExposeAlert";
-import { ExtSlotsProvider, ExtSlot, useExtSlotItems } from "./ExtSlots";
+import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas } from "./ExtSlots";
 import type { ExtRenderProps } from "@/lib/ext-ui-store";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
@@ -744,6 +744,8 @@ export function AppShell() {
   // 扩展槽条目（拍平进顶栏条目列表，id 沿用 ext-ui-store 的 extId:itemId）
   const toolbarExtItems = useExtSlotItems("toolbar");
   const sessionTopbarExtItems = useExtSlotItems("sessionTopbar");
+  // 扩展级元数据（manifest name/icon）——面板中标注扩展身份用
+  const extMetas = useExtMetas();
 
   const topbarBuiltinIds = useMemo<TopbarItemId[]>(() => {
     const ids: TopbarItemId[] = ["theme", "language", "services"];
@@ -2146,6 +2148,10 @@ export function AppShell() {
                 ) : (
                   (() => {
                     const hidden = layout.hidden.includes(item);
+                    // 扩展条目标注：extId:itemId → 所在扩展（manifest name/icon）
+                    const colonIdx = item.indexOf(":");
+                    const extId = colonIdx > 0 ? item.slice(0, colonIdx) : null;
+                    const extMeta = extId ? extMetas[extId] : null;
                     return (
                       <div key={item} style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px 2px 4px", opacity: hidden ? 0.55 : 1 }}>
                         {panelMoveButtons(idx, layout.order.length)}
@@ -2157,6 +2163,27 @@ export function AppShell() {
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{topbarItemLabel(item)}</span>
                           {hidden && <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>{translate("topbar.hidden")}</span>}
                         </div>
+                        {extMeta && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                            {extMeta.icon && (
+                              <span
+                                title={extMeta.name}
+                                style={{ fontSize: 11, lineHeight: 1, color: "var(--text-muted)" }}
+                              >
+                                {extMeta.icon}
+                              </span>
+                            )}
+                            {/* 统一"来自扩展"标记 */}
+                            <span
+                              title={translate("topbar.fromExtension")}
+                              style={{ display: "inline-flex", alignItems: "center", color: "var(--text-dim)" }}
+                            >
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M19.439 7.85c-.049.322.059.648.289.878l1.568 1.568c.47.47.706 1.087.706 1.704s-.235 1.233-.706 1.704l-1.611 1.611a.98.98 0 0 1-.837.276c-.47-.07-.802-.48-.968-.925a2.501 2.501 0 1 0-3.214 3.214c.446.166.855.497.925.968a.979.979 0 0 1-.276.837l-1.61 1.61a2.404 2.404 0 0 1-1.705.707 2.402 2.402 0 0 1-1.704-.706l-1.568-1.568a1.026 1.026 0 0 0-.877-.29c-.493.074-.84.504-1.02.968a2.5 2.5 0 1 1-3.237-3.237c.464-.18.894-.527.967-1.02a1.026 1.026 0 0 0-.289-.877l-1.568-1.568A2.402 2.402 0 0 1 1.998 12c0-.617.236-1.234.706-1.704L4.23 8.77c.24-.24.581-.353.917-.303.515.077.877.528 1.073 1.01a2.5 2.5 0 1 0 3.259-3.259c-.482-.196-.933-.558-1.01-1.073-.05-.336.062-.676.303-.917l1.525-1.525A2.402 2.402 0 0 1 12 1.998c.617 0 1.234.236 1.704.706l1.568 1.568c.23.23.556.338.877.29.493-.074.84-.504 1.02-.968a2.5 2.5 0 1 1 3.237 3.237c-.464.18-.894.527-.967 1.02Z" />
+                              </svg>
+                            </span>
+                          </div>
+                        )}
                         <button
                           type="button"
                           onClick={() => toggleHidden(item)}
