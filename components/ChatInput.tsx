@@ -1904,9 +1904,15 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         e.preventDefault();
         if (isStreaming && (onSteer || onFollowUp)) {
           // Default Enter queues as a follow-up (the non-destructive action).
-          // Steering (interrupt now) is a deliberate choice: click the steer
-          // button or the steer action on a queued follow-up row instead.
-          sendQueued(onFollowUp ? "followup" : "steer");
+          // With an empty input, a second Enter promotes the first queued
+          // follow-up to a steer (delivered at the next turn boundary instead
+          // of waiting for the run to end) — so "Enter to queue, Enter again
+          // to insert". Steering with typed text is still the steer button.
+          if (value.trim()) {
+            sendQueued(onFollowUp ? "followup" : "steer");
+          } else {
+            sendQueued("steer");
+          }
         } else {
           handleSend();
         }
