@@ -1275,9 +1275,31 @@ export function AppShell() {
     const extProps = toolbarItem
       ? { currentSession: null }
       : { currentSession: selectedSession, newSessionCwd: effectiveNewSessionCwd };
-    return menu
-      ? <div style={{ display: "flex", alignItems: "center", width: "100%", minHeight: 36 }}><ExtComponent {...extProps} /></div>
-      : <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}><ExtComponent {...extProps} /></div>;
+    if (menu) {
+      // ⋯ 下拉里扩展按钮本身常为纯图标（30px），补一个 meta.label 文字，
+      // 与内建条目（图标+文字）对齐，避免"只有图标没文字"；
+      // 仅 toolbar 槽（图标按钮）；sessionTopbar 多为带文字 widget，不补
+      const label = toolbarItem
+        ? (toolbarItem.meta?.label ?? toolbarItem.meta?.title ?? id)
+        : null;
+      return (
+        <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minHeight: 36, padding: "0 14px" }}>
+          <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+            <ExtComponent {...extProps} />
+          </div>
+          {label && (
+            <span style={{ fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {label}
+            </span>
+          )}
+        </div>
+      );
+    }
+    return (
+      <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
+        <ExtComponent {...extProps} />
+      </div>
+    );
   };
 
   const sepNode = (idx: number): React.ReactNode => (
