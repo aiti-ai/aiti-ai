@@ -949,6 +949,7 @@ export function AppShell() {
         <button
           type="button"
           onClick={(e) => {
+            if (menu) setMoreOpen(false); // ⋯ 内点击先关 ⋯ 再执行
             const rect = e.currentTarget.getBoundingClientRect();
             toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
           }}
@@ -1296,7 +1297,11 @@ export function AppShell() {
   ));
   const overflowMenuNodes = overflowItems.map((item) =>
     item === SEPARATOR ? null : (
-      <div key={item}>{renderTopbarItem(item, false)}</div>
+      // capture 阶段先关 ⋯：内建按钮的 onClick 也会关（幂等），
+      // 关键是覆盖扩展按钮（内部 onClick 无法包装）
+      <div key={item} onClickCapture={() => setMoreOpen(false)}>
+        {renderTopbarItem(item, false)}
+      </div>
     ),
   );
 
@@ -2168,7 +2173,7 @@ export function AppShell() {
                   })()
                 ),
               )}
-              <div style={{ height: 1, background: "var(--border)", margin: "6px 0" }} />
+              <div style={{ position: "sticky", bottom: 0, background: "var(--bg)", borderTop: "1px solid var(--border)", marginTop: 6, paddingTop: 4 }}>
               <button type="button" onClick={addSeparator} style={panelFooterBtnStyle}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
                 {translate("topbar.addDivider")}
@@ -2177,6 +2182,7 @@ export function AppShell() {
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
                 {translate("topbar.reset")}
               </button>
+              </div>
             </div>
           </>
         )}

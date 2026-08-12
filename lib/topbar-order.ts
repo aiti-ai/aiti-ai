@@ -182,11 +182,11 @@ export function resolveTopbarLayout(
     }
   }
 
-  // 2. default-order tail (hidden buttons never default-appear)
+  // 2. default-order tail (hidden buttons still enter the panel list so the
+  //    customize panel can grey them out and restore them; `visible` strips)
   for (const item of defaultOrder) {
     if (item === SEPARATOR) continue;
     if (!available.has(item)) continue;
-    if (hiddenSet.has(item)) continue;
     pushButton(item);
   }
 
