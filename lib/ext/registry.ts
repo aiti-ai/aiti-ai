@@ -10,11 +10,12 @@ import type {
   ExtApiContext,
   ExtCoreApi,
   ExtMiddlewareResult,
+  ExtensionSource,
   ExtServerContext,
   LoadedExtension,
   ManifestExtension,
 } from "./types.ts";
-import { dataRoot, extensionsRoot } from "./data-dir.ts";
+import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
 import { loadExtensionFromDir, scanExtensionDirs } from "./loader.ts";
 
 declare global {
@@ -25,6 +26,12 @@ export interface RegistryOptions {
   core: ExtCoreApi;
   /** Test hook: override the extensions root. */
   extensionsRootOverride?: string;
+  /** Test hook: override the extra (middle-tier) extension roots. */
+  extraExtensionsRootsOverride?: string[];
+  /** Test hook: dev layer root; undefined = auto-detect, null = disabled. */
+  devExtensionsRootOverride?: string | null;
+  /** Test hook: override the bundled extension root. */
+  bundledExtensionsRootOverride?: string;
   /** Test hook: override the data root. */
   dataRootOverride?: string;
 }
@@ -32,6 +39,9 @@ export interface RegistryOptions {
 export class ExtRegistryImpl {
   core: ExtCoreApi;
   private readonly extensionsRootOverride?: string;
+  private readonly extraExtensionsRootsOverride?: string[];
+  private readonly devExtensionsRootOverride?: string | null;
+  private readonly bundledExtensionsRootOverride?: string;
   private readonly dataRootOverride?: string;
   private extensions = new Map<string, LoadedExtension>();
   private errors = new Map<string, string>();
@@ -40,6 +50,9 @@ export class ExtRegistryImpl {
   constructor(options: RegistryOptions) {
     this.core = options.core;
     this.extensionsRootOverride = options.extensionsRootOverride;
+    this.extraExtensionsRootsOverride = options.extraExtensionsRootsOverride;
+    this.devExtensionsRootOverride = options.devExtensionsRootOverride;
+    this.bundledExtensionsRootOverride = options.bundledExtensionsRootOverride;
     this.dataRootOverride = options.dataRootOverride;
   }
 
@@ -47,32 +60,61 @@ export class ExtRegistryImpl {
     return this.extensionsRootOverride ?? extensionsRoot();
   }
 
+  extraExtensionsRoots(): string[] {
+    return this.extraExtensionsRootsOverride ?? extraExtensionsRoots();
+  }
+
+  bundledExtensionsRoot(): string {
+    return this.bundledExtensionsRootOverride ?? bundledExtensionsRoot();
+  }
+
   dataRoot(): string {
     return this.dataRootOverride ?? dataRoot();
   }
 
-  /** Scan + load every extension directory. Individual failures never block others. */
+  /** 解析顺序即优先级：user → extra（env 列出顺序）→ dev（dev-exts）→ bundled。 */
+  private extensionRoots(): Array<{ root: string; source: ExtensionSource }> {
+    const dev = this.devExtensionsRootOverride !== undefined
+      ? this.devExtensionsRootOverride
+      : devExtensionsRoot();
+    return [
+      { root: this.extensionsRoot(), source: "user" },
+      ...this.extraExtensionsRoots().map((root) => ({ root, source: "extra" as const })),
+      ...(dev ? [{ root: dev, source: "dev" as const }] : []),
+      { root: this.bundledExtensionsRoot(), source: "bundled" },
+    ];
+  }
+
+  /**
+   * Scan + load every extension directory across all roots. Individual
+   * failures never block others. Same id in a lower-priority root is
+   * shadowed (skipped silently) once a higher-priority root loaded it.
+   */
   async loadAll(): Promise<void> {
     this.extensions.clear();
     this.errors.clear();
-    const dirs = scanExtensionDirs(this.extensionsRoot());
-    for (const dir of dirs) {
-      const id = dir.split(sep).pop() ?? dir;
-      try {
-        const ext = await loadExtensionFromDir(dir);
-        if (!ext) {
-          this.errors.set(id, "no extension entry (index.ts / single script)");
-          continue;
+    const seen = new Set<string>();
+    for (const { root, source } of this.extensionRoots()) {
+      for (const dir of scanExtensionDirs(root)) {
+        const id = dir.split(sep).pop() ?? dir;
+        if (seen.has(id)) continue; // 高优先级根已加载 → 同名遮蔽跳过
+        seen.add(id);
+        try {
+          const ext = await loadExtensionFromDir(dir);
+          if (!ext) {
+            this.errors.set(id, "no extension entry (index.ts / single script)");
+            continue;
+          }
+          if (ext.id !== id) {
+            this.errors.set(id, `entry id "${ext.id}" does not match directory name "${id}"`);
+            continue;
+          }
+          const dataDir = join(this.dataRoot(), ext.id);
+          if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
+          this.extensions.set(ext.id, { id: ext.id, name: ext.name, version: ext.version, dir, dataDir, source, ext });
+        } catch (e) {
+          this.errors.set(id, e instanceof Error ? e.message : String(e));
         }
-        if (ext.id !== id) {
-          this.errors.set(id, `entry id "${ext.id}" does not match directory name "${id}"`);
-          continue;
-        }
-        const dataDir = join(this.dataRoot(), ext.id);
-        if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
-        this.extensions.set(ext.id, { id: ext.id, name: ext.name, version: ext.version, dir, dataDir, ext });
-      } catch (e) {
-        this.errors.set(id, e instanceof Error ? e.message : String(e));
       }
     }
     this.loaded = true;
@@ -90,11 +132,11 @@ export class ExtRegistryImpl {
     return [...this.extensions.values()];
   }
 
-  status(): Record<string, { loaded: boolean; error?: string; name?: string; version?: string }> {
-    const out: Record<string, { loaded: boolean; error?: string; name?: string; version?: string }> = {};
+  status(): Record<string, { loaded: boolean; error?: string; name?: string; version?: string; source?: ExtensionSource }> {
+    const out: Record<string, { loaded: boolean; error?: string; name?: string; version?: string; source?: ExtensionSource }> = {};
     for (const [id, error] of this.errors) out[id] = { loaded: false, error };
     for (const ext of this.extensions.values()) {
-      out[ext.id] = { loaded: true, name: ext.name, version: ext.version };
+      out[ext.id] = { loaded: true, name: ext.name, version: ext.version, source: ext.source };
     }
     return out;
   }
@@ -106,6 +148,7 @@ export class ExtRegistryImpl {
       version: e.version,
       clientUrl: e.ext.client ? `/api/extensions/${e.id}/assets/${e.ext.client}` : null,
       ui: e.ext.ui ?? null,
+      source: e.source,
     }));
   }
 

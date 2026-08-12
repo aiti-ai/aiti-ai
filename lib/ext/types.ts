@@ -99,6 +99,9 @@ export interface PiWebExtension {
   client?: string;
 }
 
+/** 扩展来源根：本地(home) > 额外(env 中间层) > dev(dev-exts 开发层) > 内置(程序目录基线)。 */
+export type ExtensionSource = "user" | "extra" | "dev" | "bundled";
+
 /** A successfully-loaded extension plus its resolved directories. */
 export interface LoadedExtension {
   id: string;
@@ -106,6 +109,8 @@ export interface LoadedExtension {
   version: string;
   dir: string;
   dataDir: string;
+  /** 实际加载的根（user / extra / bundled）——同名时高优先级根遮蔽低优先级根。 */
+  source: ExtensionSource;
   ext: PiWebExtension;
 }
 
@@ -116,5 +121,6 @@ export interface ManifestExtension {
   version: string;
   clientUrl: string | null;
   ui: ExtUiDefinition | null;
+  source?: ExtensionSource;
   error?: string;
 }

@@ -11,6 +11,8 @@ export async function GET(req: NextRequest): Promise<Response> {
   return NextResponse.json({
     loaded: registry.isLoaded(),
     extensionsRoot: registry.extensionsRoot(),
+    extraExtensionsRoots: registry.extraExtensionsRoots(),
+    bundledExtensionsRoot: registry.bundledExtensionsRoot(),
     dataRoot: registry.dataRoot(),
     extensions: registry.status(),
   }, { headers: { "cache-control": "no-store" } });

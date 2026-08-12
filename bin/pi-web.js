@@ -68,7 +68,9 @@ nextArgs.push("-H", hostname);
 const child = spawn(process.execPath, [nextBin, ...nextArgs], {
   cwd: pkgDir,
   stdio: ["inherit", "pipe", "inherit"],
-  env: { ...process.env, PI_WEB_HOSTNAME: hostname },
+  // PI_WEB_PKG_DIR: 扩展内置根（<pkgDir>/extensions）解析依赖——next 进程 cwd 可能被
+  // systemd/其他启动方式改变，显式注入比依赖 cwd 语义更稳。
+  env: { ...process.env, PI_WEB_HOSTNAME: hostname, PI_WEB_PKG_DIR: pkgDir },
 });
 
 let browserOpened = false;
