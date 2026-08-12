@@ -184,6 +184,84 @@ export function AppShell() {
   }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
+  // 顶栏拖拽横向滚动：窄视口按钮放不下时，按住拖动可看到全部按钮；
+  // 拖动超过阈值视为滚动（拦截随后的 click），未拖动则正常点击。触摸端
+  // 交给浏览器原生横向滚动（overflow-x: auto）。
+  useEffect(() => {
+    const el = topBarRef.current;
+    if (!el) return;
+    let downX = 0;
+    let downScroll = 0;
+    let dragging = false;
+    let suppressClick = false;
+    let suppressTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const clearSuppress = () => {
+      suppressClick = false;
+      if (suppressTimer) {
+        clearTimeout(suppressTimer);
+        suppressTimer = null;
+      }
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse" || e.button !== 0) return;
+      dragging = false;
+      suppressClick = false;
+      downX = e.clientX;
+      downScroll = el.scrollLeft;
+      el.classList.add("topbar-dragging");
+    };
+    const onPointerMove = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse") return;
+      if (e.buttons === 0) {
+        el.classList.remove("topbar-dragging");
+        return;
+      }
+      const dx = e.clientX - downX;
+      if (!dragging && Math.abs(dx) > 4) dragging = true;
+      if (dragging) {
+        el.scrollLeft = downScroll - dx;
+        suppressClick = true;
+        if (suppressTimer) clearTimeout(suppressTimer);
+        suppressTimer = setTimeout(clearSuppress, 400);
+        e.preventDefault();
+      }
+    };
+    const onPointerUp = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse") return;
+      el.classList.remove("topbar-dragging");
+    };
+    const onClickCapture = (e: MouseEvent) => {
+      if (suppressClick) {
+        e.preventDefault();
+        e.stopPropagation();
+        clearSuppress();
+      }
+    };
+    const onWheel = (e: WheelEvent) => {
+      // 顶栏下拉面板内部滚动不拦截
+      if ((e.target as Element | null)?.closest?.("[data-topbar-dropdown]")) return;
+      if (e.deltaY === 0 || el.scrollWidth <= el.clientWidth) return;
+      e.preventDefault();
+      el.scrollLeft += e.deltaY;
+    };
+
+    el.addEventListener("pointerdown", onPointerDown);
+    window.addEventListener("pointermove", onPointerMove);
+    window.addEventListener("pointerup", onPointerUp);
+    window.addEventListener("pointercancel", onPointerUp);
+    el.addEventListener("click", onClickCapture, true);
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => {
+      el.removeEventListener("pointerdown", onPointerDown);
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerUp);
+      el.removeEventListener("click", onClickCapture, true);
+      el.removeEventListener("wheel", onWheel);
+      if (suppressTimer) clearTimeout(suppressTimer);
+    };
+  }, []);
   const languageBtnRef = useRef<HTMLButtonElement>(null);
 
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
@@ -260,9 +338,10 @@ export function AppShell() {
   }, [isMobile]);
 
   useEffect(() => {
-    if (!activeTopPanel || !topBarRef.current) return;
+    const el = topBarRef.current;
+    if (!activeTopPanel || !el) return;
     const update = () => {
-      const topBarRect = topBarRef.current!.getBoundingClientRect();
+      const topBarRect = el.getBoundingClientRect();
       if (activeTopPanel === "language" && !isMobile && languageBtnRef.current) {
         const buttonRect = languageBtnRef.current.getBoundingClientRect();
         const width = Math.min(LANGUAGE_MENU_WIDTH, topBarRect.width);
@@ -276,10 +355,15 @@ export function AppShell() {
       setTopPanelPos({ top: topBarRect.bottom, left: topBarRect.left, width: topBarRect.width });
     };
     update();
+    // 顶栏可横向滚动后，滚动会改变按钮/面板的视觉位置，需要跟着重算
+    el.addEventListener("scroll", update);
     const ro = new ResizeObserver(update);
-    ro.observe(topBarRef.current);
+    ro.observe(el);
     if (languageBtnRef.current) ro.observe(languageBtnRef.current);
-    return () => ro.disconnect();
+    return () => {
+      el.removeEventListener("scroll", update);
+      ro.disconnect();
+    };
   }, [activeTopPanel, isMobile]);
 
   // Right panel — file tabs only
@@ -861,6 +945,19 @@ export function AppShell() {
           animation: none;
         }
       }
+      /* 顶栏横向滚动：隐藏滚动条，拖动（grab/grabbing）时强制光标 */
+      .topbar-scroll {
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+        cursor: grab;
+      }
+      .topbar-scroll::-webkit-scrollbar {
+        display: none;
+      }
+      .topbar-scroll.topbar-dragging,
+      .topbar-scroll.topbar-dragging * {
+        cursor: grabbing !important;
+      }
       @media (max-width: 640px) {
         .sidebar-overlay-backdrop.sidebar-mobile-pending {
           opacity: 0 !important;
@@ -928,7 +1025,25 @@ export function AppShell() {
       {/* Center: chat */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {/* Top bar with sidebar toggle */}
-        <div ref={topBarRef} style={{ display: "flex", alignItems: "center", flexShrink: 0, borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)", background: "var(--bg-panel)" }}>
+        <div
+          ref={topBarRef}
+          className="topbar-scroll"
+          style={{
+            display: "flex", alignItems: "center", flexShrink: 0,
+            borderBottom: "1px solid var(--border)",
+            height: "calc(36px + env(safe-area-inset-top))",
+            paddingTop: "env(safe-area-inset-top)",
+            background: "var(--bg-panel)",
+            overflowX: "auto",
+            overflowY: "hidden",
+            scrollbarWidth: "none",
+            msOverflowStyle: "none",
+            // 右上角 fixed 的文件面板开关（36px + 间隙）会覆盖滚动区右端，
+            // 预留 padding 让滚动到底时最右按钮不被遮住
+            paddingRight: 44,
+            touchAction: "pan-x pan-y",
+          }}
+        >
           <button
             onClick={handleSidebarToggle}
              title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
@@ -1491,15 +1606,18 @@ export function AppShell() {
           })()}
           {/* Top panel dropdown — shared, only one active at a time */}
           {activeTopPanel && topPanelPos && (
-            <div style={{
-              position: "fixed",
-              top: topPanelPos.top,
-              left: topPanelPos.left,
-              width: topPanelPos.width,
-              maxHeight: `calc(100dvh - ${topPanelPos.top}px)`,
-              overflowY: "auto",
-              zIndex: 500,
-            }}>
+            <div
+              data-topbar-dropdown
+              style={{
+                position: "fixed",
+                top: topPanelPos.top,
+                left: topPanelPos.left,
+                width: topPanelPos.width,
+                maxHeight: `calc(100dvh - ${topPanelPos.top}px)`,
+                overflowY: "auto",
+                zIndex: 500,
+              }}
+            >
               {activeTopPanel === "language" && (
                 <div
                   role="menu"
