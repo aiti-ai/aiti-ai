@@ -826,7 +826,11 @@ export function AppShell() {
     if (!btn) return;
     const update = () => {
       const r = btn.getBoundingClientRect();
-      setMoreRect({ top: r.bottom + 4, right: Math.max(4, window.innerWidth - r.right + 4) });
+      const vw = window.innerWidth;
+      // 右锚：面板右缘贴近按钮右缘；小屏时钳制保证左缘不出屏
+      // （面板最大宽 300 + 8px 边距 → right 上限 vw-8-300）
+      const right = Math.max(4, Math.min(vw - r.right + 4, vw - 8 - 300));
+      setMoreRect({ top: r.bottom + 4, right });
     };
     update();
     const ro = new ResizeObserver(update);
