@@ -125,7 +125,7 @@ export interface ChatInputHandle {
   addImages: (files: File[]) => void;
   /** Restore an unsent draft (crash recovery) into the input box. */
   restoreDraft: (draft: ChatDraft) => void;
-  /** 跑一遍扩展聊天钩子 preSend（[选择N]/[错误N] → 真实内容）；未注册钩子时原样返回。 */
+  /** 跑一遍扩展聊天钩子 preSend（[元素N]/[回答N]/[错误N] → 真实内容）；未注册钩子时原样返回。 */
   runChatHooks: (text: string) => string;
   /** True when the input box has text or images (used to tell a live draft from a recoverable one). */
   hasInput: () => boolean;
@@ -1426,7 +1426,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
 
   // 扩展聊天钩子统一入口：Enter 发送 / 插队（steer）/ 排队（follow-up）都走这里——
-  // [选择N]/[错误N] 占位符任何发送路径都替换（aiti-devtools：候选内容 + 来源前缀）
+  // [元素N]/[回答N]/[错误N] 占位符任何发送路径都替换（aiti-devtools：候选内容 + 来源前缀）
   const applyChatHooks = useCallback((text: string): string => {
     const chatHooks = chatHooksRef.current ?? [];
     let finalMsg = text;
@@ -1478,7 +1478,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return;
       }
     }
-    // 扩展聊天钩子（aiti-devtools）：发送前 @选择N → 真实候选内容（Enter/steer/queue 统一走 applyChatHooks）
+    // 扩展聊天钩子（aiti-devtools）：发送前 [元素N]/[回答N]/[错误N] → 真实候选内容（Enter/steer/queue 统一走 applyChatHooks）
     const finalMsg = applyChatHooks(msg);
     onSend(finalMsg, attachedImages.length ? attachedImages : undefined);
     clearInput();
@@ -1730,7 +1730,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // such instead of putting the recalled entry back into the queue.
     recalledRef.current = null;
     setRecalledVisible(false);
-    // 扩展聊天钩子：插队（steer）/ 排队（follow-up）发送同样转换 [选择N]/[错误N]（与 Enter 一致）
+    // 扩展聊天钩子：插队（steer）/ 排队（follow-up）发送同样转换 [元素N]/[回答N]/[错误N]（与 Enter 一致）
     const finalMsg = applyChatHooks(msg);
     const streamingBehavior = mode === "steer" ? "steer" : "followUp";
     if (finalMsg.startsWith("/") && onPromptWithStreamingBehavior) {
@@ -3389,7 +3389,8 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </svg>
                 </StreamingActionButton>
               )}
-              {onFollowUp && hasInputText && (
+              {/* follow-up：小屏空输入时隐藏（换成 Stop）；大屏始终显示（空输入灰掉）。 */}
+              {onFollowUp && (hasInputText || !isMobile) && (
                 <StreamingActionButton
                   label={t("chat.followUp")}
                   hint={queueDisabledImages ? t("chat.imagesCannotQueue")

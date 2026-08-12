@@ -36,7 +36,7 @@ export interface ExtClientContext {
   t(key: string, params?: Record<string, string | number>): string;
   apiUrl(path: string): string;
   registerItems(slot: ExtSlotName, items: Array<{ id: string; render: (props: ExtRenderProps) => ReactNode; meta?: Record<string, unknown> }>): void;
-  /** 注册聊天输入钩子（aiti-devtools：发送前 @选择N 替换 + 收集候选元素） */
+  /** 注册聊天输入钩子（aiti-devtools：发送前 [元素N]/[回答N]/[错误N] 替换 + 收集候选元素） */
   registerChatHook(hook: { preSend?: (text: string) => { text?: string; elements?: unknown[] } | null }): void;
 }
 
