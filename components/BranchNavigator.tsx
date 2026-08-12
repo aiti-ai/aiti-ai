@@ -20,6 +20,10 @@ interface Props {
   hasSession?: boolean;
   /** When inline, render icon-only (no text label) to save horizontal space */
   compact?: boolean;
+  /** When inline, suppress the button and render only the dropdown (used when
+   *  the button lives inside an overflow menu but the dropdown must anchor to
+   *  the top bar). Requires `inline` + `open` + `containerRef`. */
+  buttonHidden?: boolean;
 }
 
 // Find the visible entry IDs on the path from root to activeLeafId.
@@ -217,7 +221,7 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
   );
 }
 
-export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession, compact }: Props) {
+export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession, compact, buttonHidden }: Props) {
   const { t } = useI18n();
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
@@ -277,8 +281,9 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
   if (inline) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "stretch" }}>
-        <button
-          ref={btnRef}
+        {!buttonHidden && (
+          <button
+            ref={btnRef}
           onClick={() => onToggle ? onToggle() : setOpenInternal((v) => !v)}
           style={{
             display: "flex",
@@ -305,6 +310,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
           {branchIcon}
            {!compact && <span>{t("i18n.branches")}</span>}
         </button>
+        )}
         {open && dropdownPos && (
           <div style={{
             position: "fixed",

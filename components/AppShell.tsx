@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiUrl, withBasePath } from "@/lib/base-path";
 
@@ -14,7 +14,8 @@ import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ServicesDialog } from "./ServicesDialog";
 import { SelfExposeAlert } from "./SelfExposeAlert";
-import { ExtSlotsProvider, ExtSlot } from "./ExtSlots";
+import { ExtSlotsProvider, ExtSlot, useExtSlotItems } from "./ExtSlots";
+import type { ExtRenderProps } from "@/lib/ext-ui-store";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
 import { useTheme } from "@/hooks/useTheme";
@@ -28,6 +29,19 @@ import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import { showCompletionNotification } from "@/lib/browser-notifications";
 import { getInitialNavigation, type InitialNavigation } from "@/lib/initial-navigation";
+import {
+  SEPARATOR,
+  TOPBAR_HIDDEN_KEY,
+  TOPBAR_ORDER_KEY,
+  normalizeTopbarOrder,
+  readTopbarHidden,
+  readTopbarOrder,
+  resolveTopbarLayout,
+  writeTopbarHidden,
+  writeTopbarOrder,
+  type TopbarItemId,
+  type TopbarOrderItem,
+} from "@/lib/topbar-order";
 import {
   getDefaultRightPanelWidth,
   getRightPanelMaxWidth,
@@ -55,17 +69,6 @@ type AutoNameStatus =
   | { kind: "error"; message: string };
 
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
-
-/** Mobile top-bar "⋯" menu item style (export / generate title / system). */
-const mobileMoreItemStyle: React.CSSProperties = {
-  display: "flex", alignItems: "center", gap: 8,
-  width: "100%", padding: "9px 14px",
-  background: "none", border: "none",
-  // Slightly larger than the 12px compact controls so the dropdown stays
-  // readable on phones; the rest of the HUD scales down instead.
-  color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 13,
-  borderBottom: "1px solid var(--border)",
-};
 const LANGUAGE_MENU_WIDTH = 176;
 
 export function AppShell() {
@@ -184,84 +187,6 @@ export function AppShell() {
   }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
-  // 顶栏拖拽横向滚动：窄视口按钮放不下时，按住拖动可看到全部按钮；
-  // 拖动超过阈值视为滚动（拦截随后的 click），未拖动则正常点击。触摸端
-  // 交给浏览器原生横向滚动（overflow-x: auto）。
-  useEffect(() => {
-    const el = topBarRef.current;
-    if (!el) return;
-    let downX = 0;
-    let downScroll = 0;
-    let dragging = false;
-    let suppressClick = false;
-    let suppressTimer: ReturnType<typeof setTimeout> | null = null;
-
-    const clearSuppress = () => {
-      suppressClick = false;
-      if (suppressTimer) {
-        clearTimeout(suppressTimer);
-        suppressTimer = null;
-      }
-    };
-    const onPointerDown = (e: PointerEvent) => {
-      if (e.pointerType !== "mouse" || e.button !== 0) return;
-      dragging = false;
-      suppressClick = false;
-      downX = e.clientX;
-      downScroll = el.scrollLeft;
-      el.classList.add("topbar-dragging");
-    };
-    const onPointerMove = (e: PointerEvent) => {
-      if (e.pointerType !== "mouse") return;
-      if (e.buttons === 0) {
-        el.classList.remove("topbar-dragging");
-        return;
-      }
-      const dx = e.clientX - downX;
-      if (!dragging && Math.abs(dx) > 4) dragging = true;
-      if (dragging) {
-        el.scrollLeft = downScroll - dx;
-        suppressClick = true;
-        if (suppressTimer) clearTimeout(suppressTimer);
-        suppressTimer = setTimeout(clearSuppress, 400);
-        e.preventDefault();
-      }
-    };
-    const onPointerUp = (e: PointerEvent) => {
-      if (e.pointerType !== "mouse") return;
-      el.classList.remove("topbar-dragging");
-    };
-    const onClickCapture = (e: MouseEvent) => {
-      if (suppressClick) {
-        e.preventDefault();
-        e.stopPropagation();
-        clearSuppress();
-      }
-    };
-    const onWheel = (e: WheelEvent) => {
-      // 顶栏下拉面板内部滚动不拦截
-      if ((e.target as Element | null)?.closest?.("[data-topbar-dropdown]")) return;
-      if (e.deltaY === 0 || el.scrollWidth <= el.clientWidth) return;
-      e.preventDefault();
-      el.scrollLeft += e.deltaY;
-    };
-
-    el.addEventListener("pointerdown", onPointerDown);
-    window.addEventListener("pointermove", onPointerMove);
-    window.addEventListener("pointerup", onPointerUp);
-    window.addEventListener("pointercancel", onPointerUp);
-    el.addEventListener("click", onClickCapture, true);
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => {
-      el.removeEventListener("pointerdown", onPointerDown);
-      window.removeEventListener("pointermove", onPointerMove);
-      window.removeEventListener("pointerup", onPointerUp);
-      window.removeEventListener("pointercancel", onPointerUp);
-      el.removeEventListener("click", onClickCapture, true);
-      el.removeEventListener("wheel", onWheel);
-      if (suppressTimer) clearTimeout(suppressTimer);
-    };
-  }, []);
   const languageBtnRef = useRef<HTMLButtonElement>(null);
 
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
@@ -280,7 +205,6 @@ export function AppShell() {
   }, []);
 
   const [systemPrompt, setSystemPrompt] = useState<string | null>(null);
-  const systemBtnRef = useRef<HTMLButtonElement>(null);
 
   const handleSystemPromptChange = useCallback((prompt: string | null) => {
     setSystemPrompt(prompt);
@@ -342,26 +266,28 @@ export function AppShell() {
     if (!activeTopPanel || !el) return;
     const update = () => {
       const topBarRect = el.getBoundingClientRect();
-      if (activeTopPanel === "language" && !isMobile && languageBtnRef.current) {
-        const buttonRect = languageBtnRef.current.getBoundingClientRect();
-        const width = Math.min(LANGUAGE_MENU_WIDTH, topBarRect.width);
-        const left = Math.min(
-          buttonRect.left - 1,
-          Math.max(topBarRect.left, topBarRect.right - width),
-        );
-        setTopPanelPos({ top: topBarRect.bottom, left, width });
-        return;
+      if (activeTopPanel === "language" && !isMobile) {
+        // 语言按钮可能被收进"⋯"（行内无副本，ref 为 null）→ 改锚"⋯"按钮
+        const anchor = languageBtnRef.current ?? moreBtnRef.current;
+        if (anchor) {
+          const buttonRect = anchor.getBoundingClientRect();
+          const width = Math.min(LANGUAGE_MENU_WIDTH, topBarRect.width);
+          const left = Math.min(
+            buttonRect.left - 1,
+            Math.max(topBarRect.left, topBarRect.right - width),
+          );
+          setTopPanelPos({ top: topBarRect.bottom, left, width });
+          return;
+        }
       }
       setTopPanelPos({ top: topBarRect.bottom, left: topBarRect.left, width: topBarRect.width });
     };
     update();
-    // 顶栏可横向滚动后，滚动会改变按钮/面板的视觉位置，需要跟着重算
-    el.addEventListener("scroll", update);
     const ro = new ResizeObserver(update);
     ro.observe(el);
     if (languageBtnRef.current) ro.observe(languageBtnRef.current);
+    if (moreBtnRef.current) ro.observe(moreBtnRef.current);
     return () => {
-      el.removeEventListener("scroll", update);
       ro.disconnect();
     };
   }, [activeTopPanel, isMobile]);
@@ -797,6 +723,643 @@ export function AppShell() {
     return () => observer.disconnect();
   }, [windowTitle]);
 
+  // -------------------------------------------------------------------------
+  // 顶栏工具按钮：自定义顺序 + 隐藏 + 间隔 + 溢出"⋯"（统一机制，无屏幕分支）
+  // 相关纯逻辑见 lib/topbar-order.ts（持久化 + merge + 间隔归一化）。
+  // -------------------------------------------------------------------------
+  const moreBtnRef = useRef<HTMLButtonElement>(null);
+  const itemsRowRef = useRef<HTMLDivElement>(null);
+  const measureStripRef = useRef<HTMLDivElement>(null);
+  const [customizeOpen, setCustomizeOpen] = useState(false);
+  const [moreRect, setMoreRect] = useState<{ top: number; right: number } | null>(null);
+  const [storedOrder, setStoredOrder] = useState<TopbarOrderItem[] | null>(null);
+  const [storedHidden, setStoredHidden] = useState<TopbarItemId[]>([]);
+
+  // hydration：localStorage 只能在挂载后读（SSR 安全），初值为默认序
+  useEffect(() => {
+    setStoredOrder(readTopbarOrder());
+    setStoredHidden(readTopbarHidden() ?? []);
+  }, []);
+
+  // 扩展槽条目（拍平进顶栏条目列表，id 沿用 ext-ui-store 的 extId:itemId）
+  const toolbarExtItems = useExtSlotItems("toolbar");
+  const sessionTopbarExtItems = useExtSlotItems("sessionTopbar");
+
+  const topbarBuiltinIds = useMemo<TopbarItemId[]>(() => {
+    const ids: TopbarItemId[] = ["theme", "language", "services"];
+    if (showChat) ids.push("history", "export", "title", "branch", "system");
+    return ids;
+  }, [showChat]);
+  const topbarToolbarExtIds = useMemo(
+    () => toolbarExtItems.map((it) => it.id),
+    [toolbarExtItems],
+  );
+  const topbarSessionExtIds = useMemo(
+    () => sessionTopbarExtItems.map((it) => it.id),
+    [sessionTopbarExtItems],
+  );
+  const topbarExtIds = useMemo<TopbarItemId[]>(() => {
+    const seen = new Set<string>();
+    const out: TopbarItemId[] = [];
+    for (const it of [...toolbarExtItems, ...sessionTopbarExtItems]) {
+      if (seen.has(it.id)) continue; // 同 id 跨槽去重（保留首次出现）
+      seen.add(it.id);
+      out.push(it.id as TopbarItemId);
+    }
+    return out;
+  }, [toolbarExtItems, sessionTopbarExtItems]);
+  const availableIds = useMemo(
+    () => [...topbarBuiltinIds, ...topbarExtIds],
+    [topbarBuiltinIds, topbarExtIds],
+  );
+  const topbarDefaultOrder = useMemo<TopbarOrderItem[]>(
+    () => [
+      "theme", "language", "services",
+      ...topbarToolbarExtIds,
+      "history", "export", "title", "branch", "system",
+      ...topbarSessionExtIds,
+    ],
+    [topbarToolbarExtIds, topbarSessionExtIds],
+  );
+
+  const layout = useMemo(
+    () => resolveTopbarLayout(storedOrder, storedHidden, availableIds, topbarDefaultOrder),
+    [storedOrder, storedHidden, availableIds, topbarDefaultOrder],
+  );
+
+  // 溢出测量：measure strip 离屏渲染全部可见条目（同布局取真实宽度），
+  // 行内只渲染 [0..cutoffIndex]。useLayoutEffect 在绘制前完成，无首帧闪烁。
+  const visibleItems = layout.visible;
+  const visibleKey = visibleItems.join("|");
+  const [cutoffIndex, setCutoffIndex] = useState<number>(
+    () => Math.max(0, visibleItems.length - 1),
+  );
+  useLayoutEffect(() => {
+    const row = itemsRowRef.current;
+    const strip = measureStripRef.current;
+    if (!row || !strip) return;
+    const measure = () => {
+      const cutoff = row.clientWidth - 4; // 4px 容差
+      const children = Array.from(strip.children) as HTMLElement[];
+      let last = -1;
+      for (let i = 0; i < children.length; i++) {
+        const el = children[i];
+        if (el.offsetLeft + el.offsetWidth <= cutoff) last = i;
+        else break;
+      }
+      setCutoffIndex((cur) => (cur === last ? cur : last)); // 防死循环
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(row);
+    return () => ro.disconnect();
+  }, [visibleKey]);
+
+  const branchIndex = visibleItems.indexOf("branch");
+  const branchOverflowed = branchIndex >= 0 && branchIndex > cutoffIndex;
+  const overflowItems = visibleItems.slice(cutoffIndex + 1);
+
+  // ⋯ 弹出层定位（以 ⋯ 按钮为锚，右下展开）
+  useEffect(() => {
+    if (!moreOpen && !customizeOpen) return;
+    const btn = moreBtnRef.current;
+    if (!btn) return;
+    const update = () => {
+      const r = btn.getBoundingClientRect();
+      setMoreRect({ top: r.bottom + 4, right: Math.max(4, window.innerWidth - r.right + 4) });
+    };
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(btn);
+    window.addEventListener("resize", update);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", update);
+    };
+  }, [moreOpen, customizeOpen]);
+
+  // Esc：下拉/面板打开时 capture 拦截关闭（不触发全局 Esc 停 agent）
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      if (moreOpen || customizeOpen || activeTopPanel) {
+        e.stopPropagation();
+        e.preventDefault();
+        setMoreOpen(false);
+        setCustomizeOpen(false);
+        setActiveTopPanel(null);
+      }
+    };
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+  }, [moreOpen, customizeOpen, activeTopPanel]);
+
+  // ---- 面板操作（即时生效 + 写回 localStorage） ----
+  const persistOrder = useCallback((order: TopbarOrderItem[]) => {
+    const normalized = normalizeTopbarOrder(order);
+    setStoredOrder(normalized);
+    writeTopbarOrder(normalized);
+  }, []);
+  const moveItem = useCallback((idx: number, dir: -1 | 1) => {
+    const next = layout.order.slice();
+    const to = idx + dir;
+    if (to < 0 || to >= next.length) return;
+    [next[idx], next[to]] = [next[to], next[idx]];
+    persistOrder(next);
+  }, [layout.order, persistOrder]);
+  const toggleHidden = useCallback((id: TopbarItemId) => {
+    const nextSet = new Set(layout.hidden);
+    if (nextSet.has(id)) nextSet.delete(id);
+    else nextSet.add(id);
+    const next = [...nextSet];
+    setStoredHidden(next);
+    writeTopbarHidden(next);
+  }, [layout.hidden]);
+  const addSeparator = useCallback(() => {
+    const order = layout.order;
+    // 插到最后一个按钮之前：追加在末尾会被尾部间隔归一化删掉，
+    // 插在按钮间才能立即显示并存活（用户随后用 ↑/↓ 移到目标位置）
+    let lastButtonIdx = -1;
+    for (let i = order.length - 1; i >= 0; i--) {
+      if (order[i] !== SEPARATOR) { lastButtonIdx = i; break; }
+    }
+    const next = [...order];
+    next.splice(lastButtonIdx >= 0 ? lastButtonIdx : order.length, 0, SEPARATOR);
+    persistOrder(next);
+  }, [layout.order, persistOrder]);
+  const removeSeparator = useCallback((idx: number) => {
+    const next = layout.order.slice();
+    next.splice(idx, 1);
+    persistOrder(next);
+  }, [layout.order, persistOrder]);
+  const resetTopbar = useCallback(() => {
+    setStoredOrder(null);
+    setStoredHidden([]);
+    if (typeof window !== "undefined") {
+      try {
+        window.localStorage.removeItem(TOPBAR_ORDER_KEY);
+        window.localStorage.removeItem(TOPBAR_HIDDEN_KEY);
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+  const closePopovers = useCallback(() => {
+    setMoreOpen(false);
+    setCustomizeOpen(false);
+    setActiveTopPanel(null);
+  }, []);
+  const openCustomize = useCallback(() => {
+    setMoreOpen(false);
+    setCustomizeOpen(true);
+  }, []);
+  const handleMoreToggle = useCallback(() => {
+    setCustomizeOpen(false);
+    setActiveTopPanel(null);
+    setMoreOpen((v) => !v);
+  }, []);
+
+  // ---- 顶栏按钮渲染（行内 / ⋯ 菜单两套外壳） ----
+  const topbarMenuRowStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", gap: 8,
+    width: "100%", padding: "9px 14px",
+    background: "none", border: "none",
+    color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 13,
+  };
+  const topbarRowBtnStyle = (): React.CSSProperties => ({
+    display: "flex", alignItems: "center", justifyContent: "center",
+    height: "100%", padding: 0,
+    background: "none", border: "none", borderRight: "1px solid var(--border)",
+    color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+  });
+  const menuEnter = (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = "var(--bg-hover)"; };
+  const menuLeave = (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = "transparent"; };
+  const rowEnter = (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.color = "var(--text)"; };
+  const rowLeave = (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.color = "var(--text-muted)"; };
+  const act = (fn: () => void) => (menu: boolean) => () => {
+    if (menu) setMoreOpen(false); // ⋯ 内点击先关 ⋯ 再执行
+    fn();
+  };
+
+  const renderTopbarItem = (id: string, inRow: boolean, forMeasure = false): React.ReactNode => {
+    const menu = !inRow;
+    const iconDim = isMobile ? 13 : 16;
+    if (id === "theme") {
+      return (
+        <button
+          type="button"
+          onClick={(e) => {
+            const rect = e.currentTarget.getBoundingClientRect();
+            toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+          }}
+          title={isDark ? translate("theme.light") : translate("theme.dark")}
+          aria-label={isDark ? translate("theme.light") : translate("theme.dark")}
+          aria-pressed={isDark}
+          style={menu
+            ? topbarMenuRowStyle
+            : { ...topbarRowBtnStyle(), width: topBarIconButtonSize, height: topBarIconButtonSize }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
+        >
+          {isDark ? (
+            <svg width={iconDim} height={iconDim} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="5" />
+              <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+              <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+            </svg>
+          ) : (
+            <svg width={iconDim} height={iconDim} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+            </svg>
+          )}
+        </button>
+      );
+    }
+    if (id === "language") {
+      const active = activeTopPanel === "language";
+      return (
+        <button
+          ref={!menu && !forMeasure ? languageBtnRef : undefined}
+          type="button"
+          onClick={act(() => toggleTopPanel("language"))(menu)}
+          title={translate("common.language")}
+          aria-label={translate("common.language")}
+          aria-haspopup="menu"
+          aria-expanded={active}
+          aria-pressed={active}
+          style={menu
+            ? { ...topbarMenuRowStyle, ...(active ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) }
+            : {
+              ...topbarRowBtnStyle(),
+              width: topBarIconButtonSize, height: topBarIconButtonSize,
+              background: active ? "var(--bg-selected)" : "none",
+              color: active ? "var(--text)" : "var(--text-muted)",
+            }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
+        >
+          <svg width={iconDim} height={iconDim} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m5 8 6 6" />
+            <path d="m4 14 6-6 2-3" />
+            <path d="M2 5h12" />
+            <path d="M7 2h1" />
+            <path d="m22 22-5-10-5 10" />
+            <path d="M14 18h6" />
+          </svg>
+        </button>
+      );
+    }
+    if (id === "services") {
+      return (
+        <button
+          type="button"
+          onClick={act(() => setServicesOpen(true))(menu)}
+          title={translate("common.services")}
+          aria-label={translate("common.services")}
+          aria-haspopup="dialog"
+          aria-expanded={servicesOpen}
+          aria-pressed={servicesOpen}
+          style={menu
+            ? { ...topbarMenuRowStyle, ...(servicesOpen ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) }
+            : {
+              ...topbarRowBtnStyle(),
+              width: topBarIconButtonSize, height: topBarIconButtonSize,
+              background: servicesOpen ? "var(--bg-selected)" : "none",
+              color: servicesOpen ? "var(--text)" : "var(--text-muted)",
+            }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
+        >
+          <svg width={isMobile ? 12 : 13} height={isMobile ? 12 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="2" y1="12" x2="22" y2="12" />
+            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+          </svg>
+        </button>
+      );
+    }
+    if (id === "history") {
+      const disabled = !selectedSession;
+      const labelBtn = menu ? { ...topbarMenuRowStyle, justifyContent: "flex-start" } : {
+        display: "flex", alignItems: "center", gap: 6,
+        height: "100%", padding: isMobile ? "0 8px" : "0 12px",
+        background: "none", border: "none",
+        borderTop: "2px solid transparent",
+        borderRight: "1px solid var(--border)",
+        color: disabled ? "var(--text-dim)" : "var(--text-muted)",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1, flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+        transition: "color 0.1s, background 0.1s, opacity 0.1s",
+      };
+      return (
+        <button
+          type="button"
+          onClick={act(() => handleViewFullHistory())(menu)}
+          disabled={disabled}
+          title={selectedSession ? translate("history.full") : translate("history.unsaved")}
+          aria-label={translate("history.full")}
+          style={labelBtn}
+          onMouseEnter={(e) => {
+            if (disabled) return;
+            e.currentTarget.style.color = "var(--text)";
+            e.currentTarget.style.background = "var(--bg-hover)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = disabled ? "var(--text-dim)" : "var(--text-muted)";
+            e.currentTarget.style.background = "none";
+          }}
+        >
+          <svg width={isMobile ? 11 : 12} height={isMobile ? 11 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: disabled ? "var(--text-dim)" : "var(--text-muted)", flexShrink: 0 }}>
+            <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+          <span>{translate("history.label")}</span>
+        </button>
+      );
+    }
+    if (id === "export") {
+      const disabled = !selectedSession;
+      return (
+        <button
+          type="button"
+          onClick={act(() => handleExportPrompts())(menu)}
+          disabled={disabled}
+          title={selectedSession ? translate("history.exportPrompts") : translate("history.unsaved")}
+          aria-label={translate("history.exportPrompts")}
+          style={menu ? { ...topbarMenuRowStyle, justifyContent: "flex-start" } : {
+            display: "flex", alignItems: "center", gap: 6,
+            height: "100%", padding: "0 12px",
+            background: "none", border: "none",
+            borderRight: "1px solid var(--border)",
+            color: disabled ? "var(--text-dim)" : "var(--text-muted)",
+            cursor: disabled ? "not-allowed" : "pointer",
+            opacity: disabled ? 0.45 : 1, flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+            transition: "color 0.1s, background 0.1s, opacity 0.1s",
+          }}
+          onMouseEnter={(e) => {
+            if (disabled) return;
+            e.currentTarget.style.color = "var(--text)";
+            e.currentTarget.style.background = "var(--bg-hover)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = disabled ? "var(--text-dim)" : "var(--text-muted)";
+            e.currentTarget.style.background = "none";
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="7 10 12 15 17 10" />
+            <line x1="12" y1="15" x2="12" y2="3" />
+          </svg>
+          <span>{translate("history.exportPrompts")}</span>
+        </button>
+      );
+    }
+    if (id === "title") {
+      const hasMessages = Boolean(
+        selectedSession
+        && ((sessionStats?.userMessages ?? 0) > 0 || selectedSession.messageCount > 0),
+      );
+      const disabled = !selectedSession || !hasMessages || autoNameStatus.kind === "naming";
+      const isSuccess = autoNameStatus.kind === "success";
+      const isError = autoNameStatus.kind === "error";
+      const label = autoNameStatus.kind === "naming"
+        ? translate("title.generating")
+        : isSuccess
+          ? translate("title.updated")
+          : isError
+            ? translate("title.failed")
+            : translate("title.generate");
+      const title = !selectedSession
+        ? translate("title.unsaved")
+        : !hasMessages
+          ? translate("title.noMessages")
+          : isError
+            ? autoNameStatus.message
+            : translate("title.generateSession");
+      return (
+        <button
+          type="button"
+          onClick={act(() => void handleAutoName())(menu)}
+          disabled={disabled}
+          title={title}
+          aria-label={label}
+          style={menu ? { ...topbarMenuRowStyle, justifyContent: "flex-start" } : {
+            display: "flex", alignItems: "center", gap: 6,
+            height: "100%", padding: "0 12px",
+            background: "none", border: "none",
+            borderTop: "2px solid transparent",
+            borderRight: "1px solid var(--border)",
+            color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
+            cursor: disabled ? "not-allowed" : "pointer",
+            opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
+            flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+            transition: "color 0.1s, background 0.1s, opacity 0.1s",
+          }}
+          onMouseEnter={(e) => {
+            if (disabled) return;
+            e.currentTarget.style.color = isError ? "#dc2626" : "var(--text)";
+            e.currentTarget.style.background = "var(--bg-hover)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.color = isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)";
+            e.currentTarget.style.background = "none";
+          }}
+        >
+          {autoNameStatus.kind === "naming" ? (
+            <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+              <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          ) : isSuccess ? (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <polyline points="20 6 9 17 4 12" />
+            </svg>
+          ) : (
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="m15 4 5 5L7 22l-5-5Z" />
+              <path d="m14 5 5 5" />
+              <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
+            </svg>
+          )}
+          <span>{label}</span>
+        </button>
+      );
+    }
+    if (id === "system") {
+      const active = activeTopPanel === "system";
+      return (
+        <button
+          type="button"
+          onClick={act(() => toggleTopPanel("system"))(menu)}
+          title={translate("system.prompt")}
+          aria-label={translate("system.prompt")}
+          aria-pressed={active}
+          style={menu ? { ...topbarMenuRowStyle, ...(active ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) } : {
+            display: "flex", alignItems: "center", gap: 6,
+            height: "100%", padding: "0 12px",
+            background: active ? "var(--bg-selected)" : "none",
+            border: "none",
+            borderTop: active ? "2px solid var(--accent)" : "2px solid transparent",
+            borderRight: "1px solid var(--border)",
+            cursor: "pointer",
+            color: active ? "var(--text)" : "var(--text-muted)",
+            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
+          }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="8" y1="13" x2="16" y2="13" />
+            <line x1="8" y1="17" x2="13" y2="17" />
+          </svg>
+          <span>{translate("system.label")}</span>
+        </button>
+      );
+    }
+    if (id === "branch") {
+      if (menu) {
+        return (
+          <button
+            type="button"
+            onClick={act(() => toggleTopPanel("branches"))(menu)}
+            aria-pressed={activeTopPanel === "branches"}
+            title={translate("i18n.branches")}
+            style={topbarMenuRowStyle}
+            onMouseEnter={menuEnter}
+            onMouseLeave={menuLeave}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+            <span>{translate("i18n.branches")}</span>
+          </button>
+        );
+      }
+      return (
+        <BranchNavigator
+          tree={branchTree}
+          activeLeafId={branchActiveLeafId}
+          onLeafChange={handleBranchLeafChange}
+          inline
+          compact={isMobile}
+          containerRef={topBarRef}
+          open={activeTopPanel === "branches"}
+          onToggle={() => toggleTopPanel("branches")}
+          hasSession
+        />
+      );
+    }
+    // 扩展条目：以 React 元素渲染（与 ExtSlot 一致），否则扩展组件内部
+    // 的 hooks（ctx.useState 等）会被注入 AppShell 的 hook 序 → 运行时错误
+    const toolbarItem = toolbarExtItems.find((it) => it.id === id);
+    const sessionItem = sessionTopbarExtItems.find((it) => it.id === id);
+    const extItem = toolbarItem ?? sessionItem;
+    if (!extItem) return null;
+    const ExtComponent = extItem.render as React.ComponentType<ExtRenderProps>;
+    const extProps = toolbarItem
+      ? { currentSession: null }
+      : { currentSession: selectedSession, newSessionCwd: effectiveNewSessionCwd };
+    return menu
+      ? <div style={{ display: "flex", alignItems: "center", width: "100%", minHeight: 36 }}><ExtComponent {...extProps} /></div>
+      : <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}><ExtComponent {...extProps} /></div>;
+  };
+
+  const sepNode = (idx: number): React.ReactNode => (
+    <div
+      key={`sep:${idx}`}
+      data-topbar-sep
+      style={{ width: 1, height: "55%", alignSelf: "center", background: "var(--border)", margin: "0 6px", flexShrink: 0 }}
+    />
+  );
+  const entryNode = (item: TopbarOrderItem, idx: number): React.ReactNode =>
+    item === SEPARATOR
+      ? sepNode(idx)
+      : (
+        <div key={item} data-topbar-id={item} style={{ display: "flex", alignItems: "stretch", flexShrink: 0, height: "100%" }}>
+          {renderTopbarItem(item, true)}
+        </div>
+      );
+  const rowEntryNodes = visibleItems.slice(0, cutoffIndex + 1).map(entryNode);
+  const stripEntryNodes = visibleItems.map((item, idx) => (
+    <div key={idx} style={{ display: "flex", alignItems: "stretch", flexShrink: 0 }}>
+      {item === SEPARATOR ? sepNode(idx) : renderTopbarItem(item, true, true)}
+    </div>
+  ));
+  const overflowMenuNodes = overflowItems.map((item) =>
+    item === SEPARATOR ? null : (
+      <div key={item}>{renderTopbarItem(item, false)}</div>
+    ),
+  );
+
+  // ---- 排序/隐藏/间隔面板 ----
+  const extLabel = (id: string): string => {
+    const toolbarItem = toolbarExtItems.find((it) => it.id === id);
+    const sessionItem = sessionTopbarExtItems.find((it) => it.id === id);
+    const it = toolbarItem ?? sessionItem;
+    return it?.meta?.label ?? it?.meta?.title ?? id;
+  };
+  const topbarItemLabel = (id: TopbarItemId): string => {
+    switch (id) {
+      case "theme": return translate("topbar.theme");
+      case "language": return translate("common.language");
+      case "services": return translate("common.services");
+      case "history": return translate("history.label");
+      case "export": return translate("history.exportPrompts");
+      case "title": return translate("title.generate");
+      case "branch": return translate("i18n.branches");
+      case "system": return translate("system.label");
+      default: return extLabel(id);
+    }
+  };
+  const panelArrowBtnStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    width: 22, height: 16, padding: 0, border: "none", background: "none",
+    color: "var(--text-muted)", cursor: "pointer", borderRadius: 4,
+  };
+  const panelSmallBtnStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    width: 26, height: 26, padding: 0, border: "none", background: "none",
+    color: "var(--text-muted)", cursor: "pointer", borderRadius: 4, flexShrink: 0,
+  };
+  const panelFooterBtnStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", gap: 8, width: "100%",
+    padding: "8px 14px", background: "none", border: "none",
+    color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 12,
+  };
+  const panelMoveButtons = (idx: number, total: number): React.ReactNode => (
+    <div style={{ display: "flex", flexDirection: "column", gap: 2, flexShrink: 0 }}>
+      <button
+        type="button"
+        onClick={() => moveItem(idx, -1)}
+        disabled={idx === 0}
+        title={translate("topbar.moveUp")}
+        aria-label={translate("topbar.moveUp")}
+        style={panelArrowBtnStyle}
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="2 6.5 5 3.5 8 6.5" /></svg>
+      </button>
+      <button
+        type="button"
+        onClick={() => moveItem(idx, 1)}
+        disabled={idx === total - 1}
+        title={translate("topbar.moveDown")}
+        aria-label={translate("topbar.moveDown")}
+        style={panelArrowBtnStyle}
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><polyline points="2 3.5 5 6.5 8 3.5" /></svg>
+      </button>
+    </div>
+  );
+
   const sidebarContent = (
     <>
       <SessionSidebar
@@ -945,19 +1508,6 @@ export function AppShell() {
           animation: none;
         }
       }
-      /* 顶栏横向滚动：隐藏滚动条，拖动（grab/grabbing）时强制光标 */
-      .topbar-scroll {
-        scrollbar-width: none;
-        -ms-overflow-style: none;
-        cursor: grab;
-      }
-      .topbar-scroll::-webkit-scrollbar {
-        display: none;
-      }
-      .topbar-scroll.topbar-dragging,
-      .topbar-scroll.topbar-dragging * {
-        cursor: grabbing !important;
-      }
       @media (max-width: 640px) {
         .sidebar-overlay-backdrop.sidebar-mobile-pending {
           opacity: 0 !important;
@@ -1027,21 +1577,17 @@ export function AppShell() {
         {/* Top bar with sidebar toggle */}
         <div
           ref={topBarRef}
-          className="topbar-scroll"
           style={{
             display: "flex", alignItems: "center", flexShrink: 0,
             borderBottom: "1px solid var(--border)",
             height: "calc(36px + env(safe-area-inset-top))",
             paddingTop: "env(safe-area-inset-top)",
             background: "var(--bg-panel)",
-            overflowX: "auto",
+            overflowX: "hidden",
             overflowY: "hidden",
-            scrollbarWidth: "none",
-            msOverflowStyle: "none",
-            // 右上角 fixed 的文件面板开关（36px + 间隙）会覆盖滚动区右端，
-            // 预留 padding 让滚动到底时最右按钮不被遮住
+            // 右上角 fixed 的文件面板开关（36px + 间隙）会覆盖右端，
+            // 预留 padding 防遮挡
             paddingRight: 44,
-            touchAction: "pan-x pan-y",
           }}
         >
           <button
@@ -1067,103 +1613,20 @@ export function AppShell() {
               </svg>
             )}
           </button>
-          <button
-            onClick={(e) => {
-              const rect = e.currentTarget.getBoundingClientRect();
-              toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
-            }}
-             title={isDark ? translate("theme.light") : translate("theme.dark")}
-             aria-label={isDark ? translate("theme.light") : translate("theme.dark")}
-            aria-pressed={isDark}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: topBarIconButtonSize, height: topBarIconButtonSize, padding: 0,
-              background: "none", border: "none", borderRight: "1px solid var(--border)",
-              color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+          {/* 可排序/隐藏/间隔的工具按钮行：行内只渲染放得下的，离屏 strip 用于测量 */}
+          <div
+            ref={itemsRowRef}
+            style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "stretch", overflowX: "hidden", position: "relative" }}
           >
-            {isDark ? (
-              <svg width={isMobile ? 13 : 16} height={isMobile ? 13 : 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="5" />
-                <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
-                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-                <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
-                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-              </svg>
-            ) : (
-              <svg width={isMobile ? 13 : 16} height={isMobile ? 13 : 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-              </svg>
-            )}
-           </button>
-           <button
-             ref={languageBtnRef}
-             type="button"
-             onClick={() => toggleTopPanel("language")}
-             title={translate("common.language")}
-             aria-label={translate("common.language")}
-             aria-haspopup="menu"
-             aria-expanded={activeTopPanel === "language"}
-             aria-pressed={activeTopPanel === "language"}
-             style={{
-               display: "flex", alignItems: "center", justifyContent: "center",
-               width: topBarIconButtonSize, height: topBarIconButtonSize, padding: 0,
-               background: activeTopPanel === "language" ? "var(--bg-selected)" : "none",
-               border: "none", borderRight: "1px solid var(--border)",
-               color: activeTopPanel === "language" ? "var(--text)" : "var(--text-muted)",
-               cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
-             }}
-             onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-             onMouseLeave={(e) => {
-               e.currentTarget.style.color = activeTopPanel === "language" ? "var(--text)" : "var(--text-muted)";
-             }}
-           >
-             <svg
-               width={isMobile ? 13 : 16}
-               height={isMobile ? 13 : 16}
-               viewBox="0 0 24 24"
-               fill="none"
-               stroke="currentColor"
-               strokeWidth="1.8"
-               strokeLinecap="round"
-               strokeLinejoin="round"
-               aria-hidden="true"
-             >
-               <path d="m5 8 6 6" />
-               <path d="m4 14 6-6 2-3" />
-               <path d="M2 5h12" />
-               <path d="M7 2h1" />
-               <path d="m22 22-5-10-5 10" />
-               <path d="M14 18h6" />
-             </svg>
-           </button>
-          <button
-            onClick={() => setServicesOpen(true)}
-            title={translate("common.services")}
-            aria-label={translate("common.services")}
-            aria-haspopup="dialog"
-            aria-expanded={servicesOpen}
-            aria-pressed={servicesOpen}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: topBarIconButtonSize, height: topBarIconButtonSize, padding: 0,
-              background: servicesOpen ? "var(--bg-selected)" : "none",
-              border: "none", borderRight: "1px solid var(--border)",
-              color: servicesOpen ? "var(--text)" : "var(--text-muted)",
-              cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = servicesOpen ? "var(--text)" : "var(--text-muted)"; }}
-          >
-            <svg width={isMobile ? 12 : 13} height={isMobile ? 12 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="12" cy="12" r="10" />
-              <line x1="2" y1="12" x2="22" y2="12" />
-              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-            </svg>
-          </button>
-          <ExtSlot name="toolbar" />
+            {rowEntryNodes}
+            <div
+              ref={measureStripRef}
+              aria-hidden="true"
+              style={{ position: "absolute", left: -100000, top: 0, display: "flex", alignItems: "stretch", pointerEvents: "none", visibility: "hidden" }}
+            >
+              {stripEntryNodes}
+            </div>
+          </div>
           {showChat && projectTrust?.requiresTrust && !projectTrust.trusted && (
             <button
               type="button"
@@ -1207,304 +1670,34 @@ export function AppShell() {
               {!isMobile && <span>{translate("trust.resourcesNotLoaded")}</span>}
             </button>
           )}
-          {showChat && (
-            <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-              <button
-                onClick={handleViewFullHistory}
-                disabled={!selectedSession}
-                 title={selectedSession ? translate("history.full") : translate("history.unsaved")}
-                 aria-label={translate("history.full")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  height: "100%",
-                  padding: isMobile ? "0 8px" : "0 12px",
-                  background: "none",
-                  border: "none",
-                  borderTop: "2px solid transparent",
-                  borderRight: "1px solid var(--border)",
-                  color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-                  cursor: selectedSession ? "pointer" : "not-allowed",
-                  opacity: selectedSession ? 1 : 0.45,
-                  flexShrink: 0,
-                  fontSize: 11,
-                  whiteSpace: "nowrap",
-                  transition: "color 0.1s, background 0.1s, opacity 0.1s",
-                }}
-                onMouseEnter={(e) => {
-                  if (!selectedSession) return;
-                  e.currentTarget.style.color = "var(--text)";
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = selectedSession ? "var(--text-muted)" : "var(--text-dim)";
-                  e.currentTarget.style.background = "none";
-                }}
-              >
-                <svg
-                  width={isMobile ? 11 : 12}
-                  height={isMobile ? 11 : 12}
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{
-                    color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-                    flexShrink: 0,
-                  }}
-                >
-                  <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
-                  <path d="M3 3v5h5" />
-                  <path d="M12 7v5l3 2" />
-                </svg>
-                 {!isMobile && <span>{translate("history.label")}</span>}
-              </button>
-              {!isMobile && (
-              <button
-                onClick={handleExportPrompts}
-                disabled={!selectedSession}
-                title={selectedSession ? translate("history.exportPrompts") : translate("history.unsaved")}
-                aria-label={translate("history.exportPrompts")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  height: "100%",
-                  padding: "0 12px",
-                  background: "none",
-                  border: "none",
-                  borderRight: "1px solid var(--border)",
-                  color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
-                  cursor: selectedSession ? "pointer" : "not-allowed",
-                  opacity: selectedSession ? 1 : 0.45,
-                  flexShrink: 0,
-                  fontSize: 11,
-                  whiteSpace: "nowrap",
-                  transition: "color 0.1s, background 0.1s, opacity 0.1s",
-                }}
-                onMouseEnter={(e) => {
-                  if (!selectedSession) return;
-                  e.currentTarget.style.color = "var(--text)";
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.color = selectedSession ? "var(--text-muted)" : "var(--text-dim)";
-                  e.currentTarget.style.background = "none";
-                }}
-              >
-                <svg
-                  width="12"
-                  height="12"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ flexShrink: 0 }}
-                >
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="7 10 12 15 17 10" />
-                  <line x1="12" y1="15" x2="12" y2="3" />
-                </svg>
-                {!isMobile && <span>{translate("history.exportPrompts")}</span>}
-              </button>
-              )}
-              {!isMobile && (() => {
-                // 上下文压缩后当前消息可能不再包含 user 消息，需同时参考会话文件的消息总数。
-                const hasMessages = Boolean(
-                  selectedSession
-                  && ((sessionStats?.userMessages ?? 0) > 0 || selectedSession.messageCount > 0),
-                );
-                const disabled = !selectedSession || !hasMessages || autoNameStatus.kind === "naming";
-                const isSuccess = autoNameStatus.kind === "success";
-                const isError = autoNameStatus.kind === "error";
-                const label = autoNameStatus.kind === "naming"
-                   ? translate("title.generating")
-                    : isSuccess
-                    ? translate("title.updated")
-                    : isError
-                      ? translate("title.failed")
-                      : translate("title.generate");
-                const title = !selectedSession
-                   ? translate("title.unsaved")
-                   : !hasMessages
-                     ? translate("title.noMessages")
-                     : isError
-                       ? autoNameStatus.message
-                       : translate("title.generateSession");
+          {/* "⋯" 更多/自定义入口（恒常渲染，任何尺寸同一入口） */}
+          <div style={{ position: "relative", display: "flex", alignItems: "center", flexShrink: 0, height: "100%" }}>
+            <button
+              ref={moreBtnRef}
+              type="button"
+              onClick={handleMoreToggle}
+              title={translate("common.more")}
+              aria-label={translate("common.more")}
+              aria-haspopup="menu"
+              aria-expanded={moreOpen || customizeOpen}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                height: "100%", padding: "0 10px",
+                background: moreOpen || customizeOpen ? "var(--bg-selected)" : "none",
+                border: "none",
+                borderTop: moreOpen || customizeOpen ? "2px solid var(--accent)" : "2px solid transparent",
+                borderRight: "1px solid var(--border)",
+                color: "var(--text-muted)", cursor: "pointer", flexShrink: 0,
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <circle cx="12" cy="5" r="1.6" />
+                <circle cx="12" cy="12" r="1.6" />
+                <circle cx="12" cy="19" r="1.6" />
+              </svg>
+            </button>
+          </div>
 
-                return (
-                  <button
-                    type="button"
-                    onClick={() => void handleAutoName()}
-                    disabled={disabled}
-                    title={title}
-                    aria-label={label}
-                    style={{
-                      display: "flex", alignItems: "center", gap: 6,
-                      height: "100%", padding: "0 12px",
-                      background: "none", border: "none",
-                      borderTop: "2px solid transparent",
-                      borderRight: "1px solid var(--border)",
-                      color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
-                      cursor: disabled ? "not-allowed" : "pointer",
-                      opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
-                      flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
-                      transition: "color 0.1s, background 0.1s, opacity 0.1s",
-                    }}
-                    onMouseEnter={(e) => {
-                      if (disabled) return;
-                      e.currentTarget.style.color = isError ? "#dc2626" : "var(--text)";
-                      e.currentTarget.style.background = "var(--bg-hover)";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.color = isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)";
-                      e.currentTarget.style.background = "none";
-                    }}
-                  >
-                    {autoNameStatus.kind === "naming" ? (
-                      <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-                        <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                      </svg>
-                    ) : isSuccess ? (
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                    ) : (
-                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="m15 4 5 5L7 22l-5-5Z" />
-                        <path d="m14 5 5 5" />
-                        <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
-                      </svg>
-                    )}
-                    {!isMobile && <span>{label}</span>}
-                  </button>
-                );
-              })()}
-              <BranchNavigator
-                tree={branchTree}
-                activeLeafId={branchActiveLeafId}
-                onLeafChange={handleBranchLeafChange}
-                inline
-                compact={isMobile}
-                containerRef={topBarRef}
-                open={activeTopPanel === "branches"}
-                onToggle={() => toggleTopPanel("branches")}
-                hasSession
-              />
-              {!isMobile && (
-              <button
-                ref={systemBtnRef}
-                onClick={() => toggleTopPanel("system")}
-                 title={translate("system.prompt")}
-                 aria-label={translate("system.prompt")}
-                aria-pressed={activeTopPanel === "system"}
-                style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  height: "100%", padding: "0 12px",
-                  background: activeTopPanel === "system" ? "var(--bg-selected)" : "none",
-                  border: "none",
-                  borderTop: activeTopPanel === "system" ? "2px solid var(--accent)" : "2px solid transparent",
-                  borderRight: "1px solid var(--border)",
-                  cursor: "pointer",
-                  color: activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)",
-                  fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)"; }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <line x1="8" y1="13" x2="16" y2="13" />
-                  <line x1="8" y1="17" x2="13" y2="17" />
-                </svg>
-                 {!isMobile && <span>{translate("system.label")}</span>}
-              </button>
-              )}
-              {isMobile && (
-                <div style={{ position: "relative", display: "flex", alignItems: "center", height: "100%" }}>
-                  <button
-                    onClick={() => setMoreOpen((v) => !v)}
-                    title={translate("common.more")}
-                    aria-label={translate("common.more")}
-                    aria-expanded={moreOpen}
-                    style={{
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      height: "100%", padding: "0 8px",
-                      background: moreOpen ? "var(--bg-selected)" : "none",
-                      border: "none",
-                      borderTop: moreOpen ? "2px solid var(--accent)" : "2px solid transparent",
-                      borderRight: "1px solid var(--border)",
-                      color: "var(--text-muted)", cursor: "pointer", flexShrink: 0,
-                    }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                      <circle cx="12" cy="5" r="1.6" />
-                      <circle cx="12" cy="12" r="1.6" />
-                      <circle cx="12" cy="19" r="1.6" />
-                    </svg>
-                  </button>
-                  {moreOpen && (
-                    <>
-                      <div style={{ position: "fixed", inset: 0, zIndex: 120 }} onClick={() => setMoreOpen(false)} />
-                      <div style={{ position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 121, minWidth: 168, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", overflow: "hidden" }}>
-                        <button
-                          onClick={() => { setMoreOpen(false); handleExportPrompts(); }}
-                          disabled={!selectedSession}
-                          style={mobileMoreItemStyle}
-                        >
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <polyline points="7 10 12 15 17 10" />
-                            <line x1="12" y1="15" x2="12" y2="3" />
-                          </svg>
-                          {translate("history.exportPrompts")}
-                        </button>
-                        <button
-                          onClick={() => { setMoreOpen(false); void handleAutoName(); }}
-                          disabled={!selectedSession || autoNameStatus.kind === "naming"}
-                          style={mobileMoreItemStyle}
-                        >
-                          {autoNameStatus.kind === "naming" ? (
-                            <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
-                              <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-                            </svg>
-                          ) : (
-                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <path d="m15 4 5 5L7 22l-5-5Z" />
-                              <path d="m14 5 5 5" />
-                            </svg>
-                          )}
-                          {autoNameStatus.kind === "naming" ? translate("title.generating") : translate("title.generate")}
-                        </button>
-                        <button
-                          onClick={() => { setMoreOpen(false); toggleTopPanel("system"); }}
-                          aria-pressed={activeTopPanel === "system"}
-                          style={mobileMoreItemStyle}
-                        >
-                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                            <polyline points="14 2 14 8 20 8" />
-                            <line x1="8" y1="13" x2="16" y2="13" />
-                            <line x1="8" y1="17" x2="13" y2="17" />
-                          </svg>
-                          {translate("system.label")}
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-          <ExtSlot name="sessionTopbar" currentSession={selectedSession} extra={{ newSessionCwd: effectiveNewSessionCwd }} />
           {/* Session stats — right-aligned in top bar */}
           {showChat && (sessionStats || contextUsage) && (() => {
              const tokens = sessionStats?.tokens;
@@ -1604,6 +1797,20 @@ export function AppShell() {
               </button>
             );
           })()}
+          {/* 分支溢出时：下拉面板独立挂在顶栏（按钮在"⋯"里，点击后开面板） */}
+          {activeTopPanel === "branches" && branchOverflowed && (
+            <BranchNavigator
+              tree={branchTree}
+              activeLeafId={branchActiveLeafId}
+              onLeafChange={handleBranchLeafChange}
+              inline
+              buttonHidden
+              containerRef={topBarRef}
+              open
+              onToggle={() => toggleTopPanel("branches")}
+              hasSession
+            />
+          )}
           {/* Top panel dropdown — shared, only one active at a time */}
           {activeTopPanel && topPanelPos && (
             <div
@@ -1860,6 +2067,119 @@ export function AppShell() {
           )}
 
         </div>
+
+        {/* "⋯" 更多下拉：溢出按钮 + 自定义入口（间隔不进下拉） */}
+        {moreOpen && moreRect && (
+          <>
+            <div style={{ position: "fixed", inset: 0, zIndex: 120 }} onClick={() => setMoreOpen(false)} />
+            <div
+              data-topbar-dropdown
+              style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, minWidth: 196, maxWidth: "min(300px, calc(100vw - 16px))", maxHeight: "calc(100dvh - 8px)", overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: 4 }}
+            >
+              {overflowMenuNodes.length > 0 && (
+                <>
+                  {overflowMenuNodes}
+                  <div style={{ height: 1, background: "var(--border)", margin: "4px 0" }} />
+                </>
+              )}
+              <button
+                type="button"
+                onClick={openCustomize}
+                style={topbarMenuRowStyle}
+                onMouseEnter={menuEnter}
+                onMouseLeave={menuLeave}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="4" y1="21" x2="4" y2="14" />
+                  <line x1="4" y1="10" x2="4" y2="3" />
+                  <line x1="12" y1="21" x2="12" y2="12" />
+                  <line x1="12" y1="8" x2="12" y2="3" />
+                  <line x1="20" y1="21" x2="20" y2="16" />
+                  <line x1="20" y1="12" x2="20" y2="3" />
+                  <line x1="1" y1="14" x2="7" y2="14" />
+                  <line x1="9" y1="8" x2="15" y2="8" />
+                  <line x1="17" y1="16" x2="23" y2="16" />
+                </svg>
+                {translate("topbar.customize")}
+              </button>
+            </div>
+          </>
+        )}
+
+        {/* 自定义顺序/隐藏/间隔面板 */}
+        {customizeOpen && moreRect && (
+          <>
+            <div style={{ position: "fixed", inset: 0, zIndex: 120 }} onClick={closePopovers} />
+            <div
+              style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, width: 300, maxWidth: "min(340px, calc(100vw - 16px))", maxHeight: "calc(100dvh - 8px)", overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: "6px 0" }}
+            >
+              <div style={{ padding: "8px 14px 6px", fontSize: 11, fontWeight: 700, color: "var(--text)", borderBottom: "1px solid var(--border)", marginBottom: 4 }}>
+                {translate("topbar.customize")}
+              </div>
+              {layout.order.map((item, idx) =>
+                item === SEPARATOR ? (
+                  <div key={`sep:${idx}`} style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px 2px 4px" }}>
+                    {panelMoveButtons(idx, layout.order.length)}
+                    <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 12, minWidth: 0 }}>
+                      <div style={{ width: 14, borderTop: "1px solid var(--border)", flexShrink: 0 }} />
+                      <span>{translate("topbar.divider")}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => removeSeparator(idx)}
+                      title={translate("topbar.removeDivider")}
+                      aria-label={translate("topbar.removeDivider")}
+                      style={panelSmallBtnStyle}
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>
+                    </button>
+                  </div>
+                ) : (
+                  (() => {
+                    const hidden = layout.hidden.includes(item);
+                    return (
+                      <div key={item} style={{ display: "flex", alignItems: "center", gap: 4, padding: "2px 8px 2px 4px", opacity: hidden ? 0.55 : 1 }}>
+                        {panelMoveButtons(idx, layout.order.length)}
+                        <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text)", minWidth: 0 }}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-dim)" }}>
+                            <circle cx="9" cy="5" r="1.5" /><circle cx="15" cy="5" r="1.5" />
+                            <circle cx="9" cy="12" r="1.5" /><circle cx="15" cy="12" r="1.5" />
+                            <circle cx="9" cy="19" r="1.5" /><circle cx="15" cy="19" r="1.5" />
+                          </svg>
+                          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{topbarItemLabel(item)}</span>
+                          {hidden && <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>{translate("topbar.hidden")}</span>}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => toggleHidden(item)}
+                          title={hidden ? translate("topbar.show") : translate("topbar.hide")}
+                          aria-label={hidden ? translate("topbar.show") : translate("topbar.hide")}
+                          aria-pressed={!hidden}
+                          style={panelSmallBtnStyle}
+                        >
+                          {hidden ? (
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" /><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" /><line x1="1" y1="1" x2="23" y2="23" /></svg>
+                          ) : (
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>
+                          )}
+                        </button>
+                      </div>
+                    );
+                  })()
+                ),
+              )}
+              <div style={{ height: 1, background: "var(--border)", margin: "6px 0" }} />
+              <button type="button" onClick={addSeparator} style={panelFooterBtnStyle}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+                {translate("topbar.addDivider")}
+              </button>
+              <button type="button" onClick={resetTopbar} disabled={layout.isDefault} style={panelFooterBtnStyle}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8" /><path d="M3 3v5h5" /></svg>
+                {translate("topbar.reset")}
+              </button>
+            </div>
+          </>
+        )}
 
         {/* 自暴露无认证（expose self 不带秘）的页面顶部红色 🔴 告警 —— 事件驱动，不轮询：
             新/老会话加载完成后延迟拉一次；回到前台/focus/online 时防抖延迟刷新。 */}
