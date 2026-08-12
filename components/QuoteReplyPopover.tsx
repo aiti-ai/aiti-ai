@@ -8,6 +8,8 @@ import type { CSSProperties, Ref } from "react";
 import { encodeFilePathForApi, getFileDirectory, joinFilePath } from "@/lib/file-paths";
 import type { ParsedSegment, QuoteOption } from "@/lib/quote-reply";
 import { extractFilePaths, formatQuote, type ExtractedPath } from "@/lib/quote-reply";
+import { usePopoverActionProviders } from "./ExtSlots";
+import type { PopoverAction } from "@/lib/ext/types";
 
 interface Props {
   segments: ParsedSegment[];
@@ -69,6 +71,28 @@ export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, c
     return () => { cancelled = true; };
   }, [questions, cwd]);
 
+  // 扩展点：消息点击识别动作 provider（每个 provider 异步识别段落 → 渲染自己的动作区；静默，不显示 loading）
+  const popoverProviders = usePopoverActionProviders();
+  const [actionsByProvider, setActionsByProvider] = useState<Record<string, PopoverAction[]>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const full = questions.map((seg) => seg.text).join("\n").slice(0, 50000);
+    if (!full.trim()) { setActionsByProvider({}); return; }
+    const run = async () => {
+      const next: Record<string, PopoverAction[]> = {};
+      for (const p of popoverProviders) {
+        try {
+          const acts = await p.recognize(full, { cwd });
+          if (cancelled) return;
+          if (Array.isArray(acts) && acts.length) next[p.id] = acts;
+        } catch { /* provider 识别失败静默跳过 */ }
+      }
+      if (!cancelled) setActionsByProvider(next);
+    };
+    void run();
+    return () => { cancelled = true; };
+  }, [questions, cwd, popoverProviders]);
+
   if (questions.length === 0) return null;
 
   return (
@@ -119,6 +143,22 @@ export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, c
           ))}
         </span>
       )}
+      {/* 扩展点动作区：每个 provider 渲染自己的识别结果（type 决定图标：command→＋ 等） */}
+      {Object.entries(actionsByProvider).map(([pid, acts]) => (
+        <span key={pid} style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center" }}>
+          {acts.map((a) => (
+            <button
+              key={a.id}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); a.onClick(fullText, cwd); }}
+              title={a.title}
+              style={{ ...actionBtnStyle, color: a.danger ? "#ef4444" : a.unavailable ? "var(--text-muted)" : "var(--accent)", borderColor: a.danger ? "#fca5a5" : a.unavailable ? "var(--border)" : undefined, opacity: a.unavailable ? 0.75 : undefined }}
+            >
+              {TYPE_ICON[a.type] ?? ""}{a.unavailable ? " ❌" : ""}{a.danger ? " ⚠" : ""} {a.label}
+            </button>
+          ))}
+        </span>
+      ))}
       {questions.map((seg, i) => (
         <SegmentRow key={i} segment={seg} onPick={onPick} t={t} />
       ))}
@@ -261,4 +301,11 @@ const actionBtnStyle: CSSProperties = {
   maxWidth: 220,
   overflow: "hidden",
   textOverflow: "ellipsis",
+};
+
+/** 动作类型 → 图标（quote=问题回复 / file=文件 / command=命令；未知类型无图标） */
+const TYPE_ICON: Record<string, string> = {
+  quote: "💬",
+  file: "📂",
+  command: "＋",
 };

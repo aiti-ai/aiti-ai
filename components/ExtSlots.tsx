@@ -14,7 +14,7 @@
 
 import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { apiUrl } from "@/lib/base-path";
-import type { ExtSlotName } from "@/lib/ext/types";
+import type { ExtSlotName, PopoverActionProvider } from "@/lib/ext/types";
 import {
   getExtUiItems,
   registerExtUiItems,
@@ -38,6 +38,8 @@ export interface ExtClientContext {
   registerItems(slot: ExtSlotName, items: Array<{ id: string; render: (props: ExtRenderProps) => ReactNode; meta?: Record<string, unknown> }>): void;
   /** 注册聊天输入钩子（aiti-devtools：发送前 [元素N]/[回答N]/[错误N] 替换 + 收集候选元素） */
   registerChatHook(hook: { preSend?: (text: string) => { text?: string; elements?: unknown[] } | null }): void;
+  /** 注册消息点击识别弹层动作 provider（QuoteReplyPopover 扩展点：异步识别段落 → 动作按钮） */
+  registerPopoverAction(provider: PopoverActionProvider): void;
 }
 
 /** 聊天输入钩子 store（扩展注册；ChatInput 发送时调用） */
@@ -52,6 +54,20 @@ export function useChatHooks(): ChatHook[] {
   return useSyncExternalStore(
     (cb) => { chatHookListeners.add(cb); return () => { chatHookListeners.delete(cb); }; },
     () => chatHooks,
+  );
+}
+
+// 消息点击识别弹层动作 provider store（扩展注册；QuoteReplyPopover 渲染）
+const popoverActions: PopoverActionProvider[] = [];
+const popoverActionListeners = new Set<() => void>();
+function registerPopoverActions(p: PopoverActionProvider) {
+  popoverActions.push(p);
+  for (const l of popoverActionListeners) l();
+}
+export function usePopoverActionProviders(): PopoverActionProvider[] {
+  return useSyncExternalStore(
+    (cb) => { popoverActionListeners.add(cb); return () => { popoverActionListeners.delete(cb); }; },
+    () => popoverActions,
   );
 }
 
@@ -108,6 +124,7 @@ async function loadExtensions(): Promise<void> {
             registerExtUiItems(slot, items.map((it) => ({ id: `${ext.id}:${it.id}`, render: it.render, meta: it.meta })));
           },
           registerChatHook: (hook) => registerChatHooks(hook),
+          registerPopoverAction: (p) => registerPopoverActions(p),
         };
         registerFn?.(ctx);
       } catch (e) {
