@@ -128,6 +128,9 @@ fall-through。fail-safe（落到 core 门禁），但热重载时服务降级�
 > 新扩展注册顶栏条目时**必须**带 `meta.label`（静态字符串；若需多语言，可后续
 > 扩展为 `meta.labelI18nKey` 由宿主按当前 locale 查扩展 i18n 表）。
 > 面板行内还复用条目的真实渲染做图标预览（inert 容器），无需额外 meta.icon。
+> **`manifest.icon`（2026-08 新增）**：扩展可声明短图标/emoji（如 `icon: "🧰"`），
+> 面板行尾显示在统一"来自扩展"标记旁，标注所在扩展身份；已下发到 ManifestExtension
+> 并由 ExtSlots 写入 ext-ui-store metas（宿主用 `useExtMetas()` 读取）。
 
 ### 3.6 proxy 钩子顺序耦合
 
