@@ -964,7 +964,7 @@ export function AppShell() {
     fn();
   };
 
-  const renderTopbarItem = (id: string, inRow: boolean, forMeasure = false): React.ReactNode => {
+  const renderTopbarItem = (id: string, inRow: boolean, forMeasure = false, forPreview = false): React.ReactNode => {
     const menu = !inRow;
     const iconDim = isMobile ? 13 : 16;
     if (id === "theme") {
@@ -1100,7 +1100,7 @@ export function AppShell() {
             <path d="M3 3v5h5" />
             <path d="M12 7v5l3 2" />
           </svg>
-          <span>{translate("history.label")}</span>
+          {!forPreview && <span>{translate("history.label")}</span>}
         </button>
       );
     }
@@ -1138,7 +1138,7 @@ export function AppShell() {
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
-          <span>{translate("history.exportPrompts")}</span>
+          {!forPreview && <span>{translate("history.exportPrompts")}</span>}
         </button>
       );
     }
@@ -1209,7 +1209,7 @@ export function AppShell() {
               <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
             </svg>
           )}
-          <span>{label}</span>
+          {!forPreview && <span>{label}</span>}
         </button>
       );
     }
@@ -1236,13 +1236,15 @@ export function AppShell() {
           onMouseEnter={menu ? menuEnter : rowEnter}
           onMouseLeave={menu ? menuLeave : rowLeave}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="8" y1="13" x2="16" y2="13" />
-            <line x1="8" y1="17" x2="13" y2="17" />
-          </svg>
-          <span>{translate("system.label")}</span>
+          <span style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <polyline points="14 2 14 8 20 8" />
+              <line x1="8" y1="13" x2="16" y2="13" />
+              <line x1="8" y1="17" x2="13" y2="17" />
+            </svg>
+          </span>
+          {!forPreview && <span>{translate("system.label")}</span>}
         </button>
       );
     }
@@ -1266,6 +1268,19 @@ export function AppShell() {
             </svg>
             <span>{translate("i18n.branches")}</span>
           </button>
+        );
+      }
+      if (forPreview) {
+        // 面板预览：只显示分支图标（BranchNavigator 是完整组件，不宜嵌入小预览）
+        return (
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", padding: "0 12px" }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--text-dim)" }} aria-hidden="true">
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+          </div>
         );
       }
       return (
@@ -2203,7 +2218,7 @@ export function AppShell() {
                         <div style={{ flex: 1, display: "flex", alignItems: "center", gap: 8, fontSize: 12, color: "var(--text)", minWidth: 0 }}>
                           {/* 条目真实图标预览（复用行内渲染，inert 防焦点/点击/屏幕阅读器） */}
                           <div inert aria-hidden="true" style={{ width: 30, height: 26, overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, pointerEvents: "none" }}>
-                            {renderTopbarItem(item, true)}
+                            {renderTopbarItem(item, true, false, true)}
                           </div>
                           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{topbarItemLabel(item)}</span>
                           {hidden && <span style={{ fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>{translate("topbar.hidden")}</span>}
