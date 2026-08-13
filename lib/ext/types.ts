@@ -103,7 +103,7 @@ export interface PopoverAction {
 export interface PopoverActionProvider {
   id: string;
   /** 可异步（校验/查环境/调服务端） */
-  recognize(text: string, ctx: { cwd?: string }): Promise<PopoverAction[]> | PopoverAction[];
+  recognize(text: string, ctx: { cwd?: string; messageRole?: string }): Promise<PopoverAction[]> | PopoverAction[];
 }
 
 export interface ExtUiDefinition {

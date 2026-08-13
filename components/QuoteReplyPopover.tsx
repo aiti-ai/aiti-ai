@@ -25,6 +25,8 @@ interface Props {
   onRevealDir?: (absPath: string) => void;
   /** Session cwd used to resolve relative paths before checking /api/files. */
   cwd?: string;
+  /** 消息角色（user/assistant）——透传给扩展 provider 的 recognize ctx */
+  messageRole?: string;
   /** Optional ref to the popover element (caller scrolls it into view on open). */
   innerRef?: Ref<HTMLSpanElement>;
   /** Style overrides for the root element. The caller uses this to switch the
@@ -40,7 +42,7 @@ interface Props {
  * single fallback "quote" button. Clicking inserts a quoted reply into the
  * input box — never sends.
  */
-export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, cwd, innerRef, fullText, containerStyle }: Props) {
+export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, cwd, innerRef, fullText, containerStyle, messageRole }: Props) {
   const { t } = useI18n();
   // Show every segment: closed questions get option buttons, the rest get a
   // fallback quote button. (Any paragraph is quoteable.)
@@ -82,7 +84,7 @@ export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, c
       const next: Record<string, PopoverAction[]> = {};
       for (const p of popoverProviders) {
         try {
-          const acts = await p.recognize(full, { cwd });
+          const acts = await p.recognize(full, { cwd, messageRole });
           if (cancelled) return;
           if (Array.isArray(acts) && acts.length) next[p.id] = acts;
         } catch { /* provider 识别失败静默跳过 */ }
@@ -91,7 +93,7 @@ export function QuoteReplyPopover({ segments, onPick, onOpenFile, onRevealDir, c
     };
     void run();
     return () => { cancelled = true; };
-  }, [questions, cwd, popoverProviders]);
+  }, [questions, cwd, popoverProviders, messageRole]);
 
   if (questions.length === 0) return null;
 

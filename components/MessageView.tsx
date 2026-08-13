@@ -386,13 +386,13 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                 )}
               </div>
               {expanded && (
-                <MarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile}>{content}</MarkdownBody>
+                <MarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile} messageRole="user">{content}</MarkdownBody>
               )}
             </div>
           ) : (
             <>
               {imageBlocksNode}
-              {content && <SafeMarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile}>{content}</SafeMarkdownBody>}
+              {content && <SafeMarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile} messageRole="user">{content}</SafeMarkdownBody>}
             </>
           )}
         </div>
@@ -802,7 +802,7 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
 }
 
 function TextBlock({ block, isStreaming, cwd, onOpenFile, onRevealDir, onQuoteReply }: { block: TextContent; isStreaming?: boolean; cwd?: string; onOpenFile?: (filePath: string) => void; onRevealDir?: (absPath: string) => void; onQuoteReply?: (quote: string) => void }) {
-  return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} onRevealDir={onRevealDir} onQuoteReply={onQuoteReply}>{block.text}</SafeMarkdownBody>;
+  return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} onRevealDir={onRevealDir} onQuoteReply={onQuoteReply} messageRole="assistant">{block.text}</SafeMarkdownBody>;
 }
 
 function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
