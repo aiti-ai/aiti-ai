@@ -731,7 +731,7 @@ export function AppShell() {
   const itemsRowRef = useRef<HTMLDivElement>(null);
   const measureStripRef = useRef<HTMLDivElement>(null);
   const [customizeOpen, setCustomizeOpen] = useState(false);
-  const [moreRect, setMoreRect] = useState<{ top: number; right: number } | null>(null);
+  const [moreRect, setMoreRect] = useState<{ top: number; right: number; topbarBottom: number } | null>(null);
   const [storedOrder, setStoredOrder] = useState<TopbarOrderItem[] | null>(null);
   const [storedHidden, setStoredHidden] = useState<TopbarItemId[]>([]);
 
@@ -832,7 +832,8 @@ export function AppShell() {
       // 右锚：面板右缘贴近按钮右缘；小屏时钳制保证左缘不出屏
       // （面板最大宽 300 + 8px 边距 → right 上限 vw-8-300）
       const right = Math.max(4, Math.min(vw - r.right + 4, vw - 8 - 300));
-      setMoreRect({ top: r.bottom + 4, right });
+      const topbarBottom = topBarRef.current?.getBoundingClientRect().bottom ?? r.bottom;
+      setMoreRect({ top: r.bottom + 4, right, topbarBottom });
     };
     update();
     const ro = new ResizeObserver(update);
@@ -842,6 +843,22 @@ export function AppShell() {
       ro.disconnect();
       window.removeEventListener("resize", update);
     };
+  }, [moreOpen, customizeOpen]);
+
+  // 顶栏点击先关弹出层（⋯ 按钮除外，它负责 toggle）：遮罩从顶栏下方开始，
+  // 顶栏按钮（含会话统计）保持可点——点击会先关 ⋯/自定义面板再执行自身动作
+  useEffect(() => {
+    const el = topBarRef.current;
+    if (!el) return;
+    const onCapture = (e: MouseEvent) => {
+      if (moreBtnRef.current?.contains(e.target as Node)) return;
+      if (moreOpen || customizeOpen) {
+        setMoreOpen(false);
+        setCustomizeOpen(false);
+      }
+    };
+    el.addEventListener("click", onCapture, true);
+    return () => el.removeEventListener("click", onCapture, true);
   }, [moreOpen, customizeOpen]);
 
   // Esc：下拉/面板打开时 capture 拦截关闭（不触发全局 Esc 停 agent）
@@ -1703,34 +1720,6 @@ export function AppShell() {
               {!isMobile && <span>{translate("trust.resourcesNotLoaded")}</span>}
             </button>
           )}
-          {/* "⋯" 更多/自定义入口（恒常渲染，任何尺寸同一入口） */}
-          <div style={{ position: "relative", display: "flex", alignItems: "center", flexShrink: 0, height: "100%" }}>
-            <button
-              ref={moreBtnRef}
-              type="button"
-              onClick={handleMoreToggle}
-              title={translate("common.more")}
-              aria-label={translate("common.more")}
-              aria-haspopup="menu"
-              aria-expanded={moreOpen || customizeOpen}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                height: "100%", padding: "0 10px",
-                background: moreOpen || customizeOpen ? "var(--bg-selected)" : "none",
-                border: "none",
-                borderTop: moreOpen || customizeOpen ? "2px solid var(--accent)" : "2px solid transparent",
-                borderRight: "1px solid var(--border)",
-                color: "var(--text-muted)", cursor: "pointer", flexShrink: 0,
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-                <circle cx="12" cy="5" r="1.6" />
-                <circle cx="12" cy="12" r="1.6" />
-                <circle cx="12" cy="19" r="1.6" />
-              </svg>
-            </button>
-          </div>
-
           {/* Session stats — right-aligned in top bar */}
           {showChat && (sessionStats || contextUsage) && (() => {
              const tokens = sessionStats?.tokens;
@@ -1772,7 +1761,8 @@ export function AppShell() {
                   marginLeft: "auto",
                   display: "flex", alignItems: "center", gap: 10,
                   paddingLeft: 12,
-                  paddingRight: rightPanelOpen ? 12 : 48,
+                  // ⋯ 按钮在其后占住右端，统计无需再为文件面板开关预留大边距
+                  paddingRight: 12,
                   height: "100%",
                   background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
                   border: "none",
@@ -1830,6 +1820,33 @@ export function AppShell() {
               </button>
             );
           })()}
+          {/* "⋯" 更多/自定义入口（恒常渲染，任何尺寸同一入口）——位于会话统计之后、最右端 */}
+          <div style={{ position: "relative", display: "flex", alignItems: "center", flexShrink: 0, height: "100%" }}>
+            <button
+              ref={moreBtnRef}
+              type="button"
+              onClick={handleMoreToggle}
+              title={translate("common.more")}
+              aria-label={translate("common.more")}
+              aria-haspopup="menu"
+              aria-expanded={moreOpen || customizeOpen}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                height: "100%", padding: "0 10px",
+                background: moreOpen || customizeOpen ? "var(--bg-selected)" : "none",
+                border: "none",
+                borderTop: moreOpen || customizeOpen ? "2px solid var(--accent)" : "2px solid transparent",
+                borderRight: "1px solid var(--border)",
+                color: "var(--text-muted)", cursor: "pointer", flexShrink: 0,
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <circle cx="12" cy="5" r="1.6" />
+                <circle cx="12" cy="12" r="1.6" />
+                <circle cx="12" cy="19" r="1.6" />
+              </svg>
+            </button>
+          </div>
           {/* 分支溢出时：下拉面板独立挂在顶栏（按钮在"⋯"里，点击后开面板） */}
           {activeTopPanel === "branches" && branchOverflowed && (
             <BranchNavigator
@@ -2104,7 +2121,7 @@ export function AppShell() {
         {/* "⋯" 更多下拉：溢出按钮 + 自定义入口（间隔不进下拉） */}
         {moreOpen && moreRect && (
           <>
-            <div style={{ position: "fixed", inset: 0, zIndex: 120 }} onClick={() => setMoreOpen(false)} />
+            <div style={{ position: "fixed", top: moreRect.topbarBottom, left: 0, right: 0, bottom: 0, zIndex: 120 }} onClick={() => setMoreOpen(false)} />
             <div
               data-topbar-dropdown
               style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, minWidth: 196, maxWidth: "min(300px, calc(100vw - 16px))", maxHeight: "calc(100dvh - 8px)", overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: 4 }}
@@ -2142,7 +2159,7 @@ export function AppShell() {
         {/* 自定义顺序/隐藏/间隔面板 */}
         {customizeOpen && moreRect && (
           <>
-            <div style={{ position: "fixed", inset: 0, zIndex: 120 }} onClick={closePopovers} />
+            <div style={{ position: "fixed", top: moreRect.topbarBottom, left: 0, right: 0, bottom: 0, zIndex: 120 }} onClick={closePopovers} />
             <div
               style={{ position: "fixed", top: moreRect.top, right: moreRect.right, zIndex: 121, width: 300, maxWidth: "min(340px, calc(100vw - 16px))", maxHeight: "calc(100dvh - 8px)", overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", padding: "6px 0" }}
             >
