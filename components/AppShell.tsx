@@ -2477,7 +2477,8 @@ export function AppShell() {
         initialTab={servicesInitialTab}
       />
     )}
-    <ExtSlot name="dialogs" extra={{ onSelectSession: handleSelectSession }} />
+    <ExtSlot name="dialogs" extra={{ onSelectSession: handleSelectSession }}
+      currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd, name: selectedSession.name } : null} />
     {exportDialogOpen && selectedSession && (
       <ExportDialog
         sessionId={selectedSession.id}
