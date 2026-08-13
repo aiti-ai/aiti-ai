@@ -74,6 +74,7 @@ export type ExtSlotName =
   | "banners"
   | "pages"
   | "chatInputTop"   // 聊天输入框上方（aiti-devtools：inspect 候选区等）
+  | "userMessageActions" // user 消息底部 hover 操作区（aiti-prompts：📌 收藏为 prompt 等）
   ;
 
 /**

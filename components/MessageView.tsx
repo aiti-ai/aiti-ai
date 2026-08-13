@@ -2,6 +2,7 @@
 
 import { memo, useState, useRef, useEffect, useMemo } from "react";
 import { MarkdownBody } from "./MarkdownBody";
+import { ExtSlot } from "./ExtSlots";
 import { copyText } from "@/lib/clipboard";
 import { apiUrl } from "@/lib/base-path";
 import { useI18n } from "@/hooks/useI18n";
@@ -440,6 +441,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               )}
                {copied ? t("i18n.copied") : t("i18n.copy")}
             </button>
+            {/* 扩展点：user 消息底部 hover 操作区（aiti-prompts：📌 收藏为 prompt 等） */}
+            <ExtSlot name="userMessageActions" extra={{ text: content, cwd, entryId }} />
           </div>
           {(canFork || canNavigate) && (
             <div style={{
