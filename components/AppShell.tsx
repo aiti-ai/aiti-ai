@@ -1342,9 +1342,15 @@ export function AppShell() {
   ));
   const overflowMenuNodes = overflowItems.map((item) =>
     item === SEPARATOR ? null : (
-      // capture 阶段先关 ⋯：内建按钮的 onClick 也会关（幂等），
-      // 关键是覆盖扩展按钮（内部 onClick 无法包装）
-      <div key={item} onClickCapture={() => setMoreOpen(false)}>
+      // 按钮条目：capture 阶段先关 ⋯（内建 onClick 也关，幂等；覆盖扩展按钮内部 onClick）；
+      // 会话级 widget（sessionTopbar 槽）是交互组件，内部弹窗依赖组件存活——
+      // 点击不关 ⋯，否则 widget 随 ⋯ 卸载、弹窗瞬间消失（"+" 加标签无效）
+      <div
+        key={item}
+        onClickCapture={sessionTopbarExtItems.some((it) => it.id === item)
+          ? undefined
+          : () => setMoreOpen(false)}
+      >
         {renderTopbarItem(item, false)}
       </div>
     ),
