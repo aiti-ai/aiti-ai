@@ -41,6 +41,8 @@ export interface ExtClientContext {
   registerItems(slot: ExtSlotName, items: Array<{ id: string; render: (props: ExtRenderProps) => ReactNode; meta?: Record<string, unknown> }>): void;
   /** 注册聊天输入钩子（aiti-devtools：发送前 [元素N]/[回答N]/[错误N] 替换 + 收集候选元素） */
   registerChatHook(hook: { preSend?: (text: string) => { text?: string; elements?: unknown[] } | null }): void;
+  /** 程序化发送一条消息（与用户输入同链路：preSend 钩子生效；空闲直发，流式按 mode 插队/排队；不清空输入框） */
+  sendChatMessage(text: string, mode: "steer" | "followUp"): void;
   /** 注册消息点击识别弹层动作 provider（QuoteReplyPopover 扩展点：异步识别段落 → 动作按钮） */
   registerPopoverAction(provider: PopoverActionProvider): void;
 }
@@ -58,6 +60,16 @@ export function useChatHooks(): ChatHook[] {
     (cb) => { chatHookListeners.add(cb); return () => { chatHookListeners.delete(cb); }; },
     () => chatHooks,
   );
+}
+
+/** 聊天发送处理器 store（扩展 ctx.sendChatMessage 的统一出口；ChatInput mount 时注册） */
+type ChatSendHandler = (text: string, mode: "steer" | "followUp") => void;
+let chatSendHandler: ChatSendHandler | null = null;
+export function registerChatSend(fn: ChatSendHandler | null): void {
+  chatSendHandler = fn;
+}
+export function dispatchChatSend(text: string, mode: "steer" | "followUp"): void {
+  chatSendHandler?.(text, mode);
 }
 
 // 消息点击识别弹层动作 provider store（扩展注册；QuoteReplyPopover 渲染）
@@ -134,6 +146,7 @@ async function loadExtensions(): Promise<void> {
             registerExtUiItems(slot, items.map((it) => ({ id: `${ext.id}:${it.id}`, render: it.render, meta: it.meta })));
           },
           registerChatHook: (hook) => registerChatHooks(hook),
+          sendChatMessage: (text, mode) => dispatchChatSend(text, mode),
           registerPopoverAction: (p) => registerPopoverActions(p),
         };
         registerFn?.(ctx);
