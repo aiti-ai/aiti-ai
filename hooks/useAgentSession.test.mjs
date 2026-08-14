@@ -48,8 +48,8 @@ test("keeps the session event stream open through the idle grace window", () => 
   assert.match(agentSettledSource, /onAgentEnd\?\.\(\)/);
   assert.match(promptDoneSource, /notifyPromptStage\(runId\)/);
   assert.match(promptDoneSource, /scheduleEventStreamClose\(sid\)/);
-  assert.match(sendSource, /if \(promptRequestStarted && sentSessionId\) \{[\s\S]*?waitForPromptSettlement/);
-  assert.match(sendSource, /if \(promptRequestStarted && sentSessionId\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?closeEvents\(\)/);
+  assert.match(sendSource, /if \(!definitivelyRejected && sentSessionId\) \{[\s\S]*?waitForPromptSettlement/);
+  assert.match(sendSource, /if \(!definitivelyRejected && sentSessionId\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?closeEvents\(\)/);
 });
 
 test("reuses an open event stream and hides an empty agent phase", () => {
@@ -58,10 +58,10 @@ test("reuses an open event stream and hides an empty agent phase", () => {
     source.indexOf("const respondToExtensionUi"),
   );
 
-  assert.match(ensureSource, /eventSourceSessionIdRef\.current === sid/);
-  assert.match(ensureSource, /current\.readyState === EventSource\.OPEN/);
-  assert.match(ensureSource, /attempt\?\.source === current && attempt\.pending/);
-  assert.match(chatWindowSource, /agentRunning && !streamState\.streamingMessage && agentPhase/);
+  // SSE reuse now lives in AgentEventConnection (lib/agent-event-connection.ts,
+  // covered by its own tests); the hook delegates via ensureEventsConnected.
+  assert.match(ensureSource, /ensureConnected\(sid\)/);
+  assert.match(chatWindowSource, /agentRunning && !hasStreamingContent && agentPhase/);
   assert.match(chatWindowSource, /return null;/);
 });
 

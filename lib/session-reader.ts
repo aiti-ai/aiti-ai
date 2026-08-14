@@ -15,7 +15,6 @@ import type { ProjectInfo } from "./worktree.ts";
 
 export { getAgentDir };
 
-// ============================================================================
 // Incremental session-list scanning (§5.4 of docs/all-sessions-panel.zh-CN.md)
 //
 // SessionManager.listAll() re-parses EVERY line of EVERY session file on each
@@ -241,13 +240,21 @@ export async function scanSessionsFromRoot(root: string): Promise<SessionFileInf
 }
 
 /** Production entry: scan ~/.pi/agent/sessions incrementally. */
-function scanSessionsIncremental(): Promise<SessionFileInfo[]> {
-  // Same location the SDK uses: ~/.pi/agent/sessions (encoded-cwd subdirs).
-  return scanSessionsFromRoot(join(getAgentDir(), "sessions"));
+type SessionScanFn = () => Promise<SessionFileInfo[]>;
+const productionSessionScan: SessionScanFn = () => scanSessionsFromRoot(join(getAgentDir(), "sessions"));
+let activeSessionScan: SessionScanFn = productionSessionScan;
+
+/** Test seam: replace the incremental disk scan; returns a restore function. */
+export function __stubSessionScanForTests(stub: SessionScanFn | null): () => void {
+  const previous = activeSessionScan;
+  activeSessionScan = stub ?? productionSessionScan;
+  return () => {
+    activeSessionScan = previous;
+  };
 }
 
 async function loadAllSessions(): Promise<SessionInfo[]> {
-  const piSessions: SessionFileInfo[] = await scanSessionsIncremental();
+  const piSessions: SessionFileInfo[] = await activeSessionScan();
   const pathToId = new Map<string, string>();
   for (const s of piSessions) pathToId.set(sessionPathKey(s.path), s.id);
 
@@ -281,7 +288,39 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
   });
 }
 
-export async function listAllSessions(): Promise<SessionInfo[]> {
+export async function attachSessionProjectInfo(sessions: SessionInfo[]): Promise<SessionInfo[]> {
+  // Lazy import: keeps session-reader importable without the git/worktree
+  // chain in node tests (same rationale as loadAllSessions above).
+  const { resolveProject } = await import("./worktree.ts");
+  const uniqueCwds = [...new Set(sessions.map((s) => s.cwd).filter(Boolean))];
+  const projectByCwd = new Map<string, ProjectInfo>();
+  await Promise.all(uniqueCwds.map(async (cwd) => {
+    projectByCwd.set(cwd, await resolveProject(cwd));
+  }));
+
+  return sessions.map((session) => {
+    const project = session.cwd ? projectByCwd.get(session.cwd) : undefined;
+    return {
+      ...session,
+      projectRoot: project?.projectRoot ?? session.cwd,
+      ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
+    };
+  });
+}
+
+export function mergeSessionLists(
+  persistedSessions: SessionInfo[],
+  supplementalSessions: SessionInfo[],
+): SessionInfo[] {
+  const byId = new Map(supplementalSessions.map((session) => [session.id, session]));
+  // A disk scan is authoritative once the JSONL exists. In particular, this
+  // replaces a transient registry snapshot without briefly rendering two rows.
+  for (const session of persistedSessions) byId.set(session.id, session);
+  return [...byId.values()].sort((a, b) => b.modified.localeCompare(a.modified));
+}
+
+export async function listAllSessions(options: { force?: boolean } = {}): Promise<SessionInfo[]> {
+  if (options.force) invalidateSessionListCache();
   const generation = globalThis.__piSessionListGeneration ?? 0;
 
   // Return cached result if still fresh (avoids re-scanning session files
@@ -297,11 +336,13 @@ export async function listAllSessions(): Promise<SessionInfo[]> {
   }
 
   const loadPromise = loadAllSessions().then((data) => {
-    // An invalidation may happen while the scan is in flight. Do not let that
-    // older result repopulate the cache after a session mutation.
-    if ((globalThis.__piSessionListGeneration ?? 0) === generation) {
-      globalThis.__piSessionListCache = { data, ts: Date.now() };
+    // If a mutation invalidated this scan, make this caller join (or start) a
+    // scan for the current generation. Returning the stale result here made a
+    // refresh race indistinguishable from a successful refresh.
+    if ((globalThis.__piSessionListGeneration ?? 0) !== generation) {
+      return listAllSessions();
     }
+    globalThis.__piSessionListCache = { data, ts: Date.now() };
     return data;
   });
   const trackedPromise = loadPromise.finally(() => {

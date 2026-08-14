@@ -50,6 +50,7 @@ export interface ExtClientContext {
 /** 聊天输入钩子 store（扩展注册；ChatInput 发送时调用） */
 interface ChatHook { preSend?: (text: string) => { text?: string; elements?: unknown[] } | null }
 const chatHooks: ChatHook[] = [];
+const EMPTY_CHAT_HOOKS: ChatHook[] = [];
 const chatHookListeners = new Set<() => void>();
 function registerChatHooks(hook: ChatHook) {
   chatHooks.push(hook);
@@ -59,6 +60,7 @@ export function useChatHooks(): ChatHook[] {
   return useSyncExternalStore(
     (cb) => { chatHookListeners.add(cb); return () => { chatHookListeners.delete(cb); }; },
     () => chatHooks,
+    () => EMPTY_CHAT_HOOKS,
   );
 }
 
@@ -74,6 +76,7 @@ export function dispatchChatSend(text: string, mode: "steer" | "followUp"): void
 
 // 消息点击识别弹层动作 provider store（扩展注册；QuoteReplyPopover 渲染）
 const popoverActions: PopoverActionProvider[] = [];
+const EMPTY_POPOVER_ACTIONS: PopoverActionProvider[] = [];
 const popoverActionListeners = new Set<() => void>();
 function registerPopoverActions(p: PopoverActionProvider) {
   popoverActions.push(p);
@@ -83,6 +86,7 @@ export function usePopoverActionProviders(): PopoverActionProvider[] {
   return useSyncExternalStore(
     (cb) => { popoverActionListeners.add(cb); return () => { popoverActionListeners.delete(cb); }; },
     () => popoverActions,
+    () => EMPTY_POPOVER_ACTIONS,
   );
 }
 

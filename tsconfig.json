@@ -40,7 +40,9 @@
     ".next-dev/dev/dev/types/**/*.ts",
     ".next/dev/dev/types/**/*.ts",
     ".next-aiti/dev/types/**/*.ts",
-    ".next-aiti/dev/dev/types/**/*.ts"
+    ".next-aiti/dev/dev/types/**/*.ts",
+    ".next-merge-test/dev/types/**/*.ts",
+    ".next-merge-test/dev/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

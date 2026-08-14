@@ -1,11 +1,13 @@
 import type { NextConfig } from "next";
 import { readFileSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
+import { fileURLToPath } from "url";
 
-const { version } = JSON.parse(readFileSync(join(__dirname, "package.json"), "utf8")) as { version: string };
+const configDir = dirname(fileURLToPath(import.meta.url));
+const { version } = JSON.parse(readFileSync(join(configDir, "package.json"), "utf8")) as { version: string };
 let piVersion = "unknown";
 try {
-  const piPkgPath = join(__dirname, "node_modules/@earendil-works/pi-coding-agent/package.json");
+  const piPkgPath = join(configDir, "node_modules/@earendil-works/pi-coding-agent/package.json");
   piVersion = (JSON.parse(readFileSync(piPkgPath, "utf8")) as { version: string }).version;
 } catch { /* package not found, use default */ }
 
@@ -40,6 +42,7 @@ const nextConfig: NextConfig = {
   // Dev server runs against its own build directory (.next-dev) so it can
   // coexist with the production `next start` (.next) on a different port.
   distDir: process.env.PI_WEB_DIST_DIR || (process.env.PI_WEB_DEV_DIST ? ".next-dev" : ".next"),
+  outputFileTracingRoot: configDir,
   serverExternalPackages: [
     "undici",
     "@earendil-works/pi-coding-agent",
@@ -54,7 +57,7 @@ const nextConfig: NextConfig = {
     // only; the middleware (proxy.ts) never imports it (shared globalThis).
     "service-tunnels",
   ],
-  allowedDevOrigins: ['192.168.*.*', '127.0.0.1', 'localhost'],
+  allowedDevOrigins: ["127.0.0.1", "192.168.*.*", "localhost"],
   async headers() {
     return [
       {
