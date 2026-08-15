@@ -29,6 +29,25 @@ const basePath =
       "")
     : envBasePath;
 
+/** 部署域名 → dev 跨域允许列表（host:port 剥离；域名加子域通配）。 */
+function deploymentDevOrigins(): string[] {
+  const raw = [
+    process.env.PI_WEB_ALLOWED_HOSTS,
+    process.env.PI_WEB_BASE_DOMAIN,
+    process.env.PI_WEB_HOSTNAME,
+  ]
+    .filter((v): v is string => Boolean(v?.trim()))
+    .flatMap((v) => v.split(","));
+  const hosts = new Set<string>();
+  for (const h of raw) {
+    const host = h.trim().split(":")[0];
+    if (!host || host === "127.0.0.1" || host === "localhost") continue;
+    hosts.add(host);
+    hosts.add(`*.${host}`); // service vhost 子域（<port>-pi-web.<domain> 等）
+  }
+  return [...hosts];
+}
+
 const nextConfig: NextConfig = {
   // 关闭 Next 内置 gzip（默认 compress:true 会压缩 middleware rewrite 转发的响应，
   // 含 SSE——gzip 缓冲攒块，首帧延迟到下个写入才 flush，隧道场景 15s+，页面连不上桥）。
@@ -67,7 +86,18 @@ const nextConfig: NextConfig = {
     // only; the middleware (proxy.ts) never imports it (shared globalThis).
     "service-tunnels",
   ],
-  allowedDevOrigins: ["127.0.0.1", "192.168.*.*", "localhost"],
+  // Next dev cross-origin guard (allowedDevOrigins): 16.3+ rejects dev
+  // resources (_next/static chunks) whose Origin is not allow-listed. Beyond
+  // loopback/LAN we also trust the operator's deployment hostnames from env
+  // (PI_WEB_ALLOWED_HOSTS / PI_WEB_BASE_DOMAIN, host:port stripped) plus their
+  // subdomains (service vhosts, e.g. <port>-pi-web.<domain>) — no hardcoded
+  // hostnames in the repo. Production `next start` ignores this setting.
+  allowedDevOrigins: [
+    "127.0.0.1",
+    "192.168.*.*",
+    "localhost",
+    ...deploymentDevOrigins(),
+  ],
   async headers() {
     return [
       {

@@ -18,6 +18,7 @@
  */
 "use client";
 
+import { apiUrl } from "../lib/base-path.ts";
 import type { PiWebBootGraph, PiWebBootEntry } from "@/lib/ext/client-modules";
 
 /** 一个扩展 client 模块的加载态。 */
@@ -70,8 +71,9 @@ export async function prefetch(id: string): Promise<void> {
   if (existing && existing.url === entry.url) return; // 同 rev 已在表
   try {
     // webpackIgnore: keep the native dynamic import (Next would otherwise
-    // rewrite it into a bundled context stub).
-    const mod = (await import(/* webpackIgnore: true */ entry.url)) as unknown;
+    // rewrite it into a bundled context stub). apiUrl 补 basePath（graph 的
+    // assetUrl 是裸 /api/...，部署在子路径下必须带 /dev 前缀）。
+    const mod = (await import(/* webpackIgnore: true */ apiUrl(entry.url))) as unknown;
     const ns = mod as { default?: unknown; register?: (ctx: unknown) => void };
     const registerFn =
       typeof ns.default === "function"
