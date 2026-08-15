@@ -22,9 +22,10 @@ import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import { cacheSessionPath, invalidateSessionListCache } from "./session-reader";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
-import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import type { SlashCommandInfo, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
 import type { ExtensionUiRequest, ExtensionUiResponse, ExtensionWidgetItem } from "./types";
+import { getRegistry as getExtRegistry } from "./ext/registry.ts";
 import { createHeadlessCustomUiTui, DEFAULT_CUSTOM_UI_COLUMNS, type HeadlessCustomUiTui } from "./custom-ui-terminal";
 
 // ============================================================================
@@ -189,6 +190,11 @@ export class AgentSessionWrapper {
   private queueRecovery: QueueEntry[] = [];
   private queueTrash: QueueEntry[] = [];
   private pendingQueueHints: Record<QueueKind, QueueImage[][]> = { steer: [], followUp: [] };
+  // 方案 M：本轮 run 是否产出过带文本的 assistant 消息。agent_settled 无条件发射
+  // （finally），而 getLastAssistantText() 会跳过「aborted 且无内容」的消息并
+  // 回退到上一轮的最终回答——不设此标记，立即 abort 的轮次会把上一轮回答当
+  // 本轮答案推给扩展。
+  private runProducedAssistantText = false;
   private onDestroyCallback: (() => void) | null = null;
   private shutdownPromise: Promise<void> | null = null;
   private _alive = true;
@@ -215,6 +221,18 @@ export class AgentSessionWrapper {
     return this._alive && (this.promptRunning || this.inner.isStreaming || this.inner.isCompacting || this.inner.isBashRunning);
   }
 
+  /** 方案 M：最后一条 assistant 消息的 stopReason（无 assistant 消息时 undefined）。
+ * AgentSessionLike 未声明 messages，这里局部窄化读取（底层 SDK 有该 getter）。 */
+  private lastAssistantStopReason(): string | undefined {
+    const messages = (this.inner as { messages?: Array<{ role?: string; stopReason?: string }> }).messages;
+    if (!messages) return undefined;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m?.role === "assistant") return m.stopReason;
+    }
+    return undefined;
+  }
+
   start(): void {
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
       if (event.type === "agent_end") {
@@ -225,6 +243,33 @@ export class AgentSessionWrapper {
           (event as { steering?: string[] }).steering,
           (event as { followUp?: string[] }).followUp,
         );
+      }
+      // 方案 M：记录本轮 run 是否产出过带文本的 assistant 消息（见字段注释）。
+      // Event-driven（非 prompt-command-driven）——扩展注入的 run 也走同一订阅。
+      if (event.type === "message_end") {
+        const m = (event as { message?: { role?: string; content?: Array<{ type?: string; text?: string }> } }).message;
+        if (m?.role === "assistant" && (m.content ?? []).some((c) => c.type === "text" && (c.text ?? "").trim().length > 0)) {
+          this.runProducedAssistantText = true;
+        }
+      }
+      // 方案 M：agent 一轮执行完 → 把最终回答分发给扩展（如 aiti-devtools 回桥显 AI 窗）。
+      // 只有本轮真的产出过 assistant 文本才分发；零产出的轮次（立即 abort、无输出
+      // 即错）不把上一轮的回答当本轮答案推出去。
+      if (event.type === "agent_settled") {
+        const produced = this.runProducedAssistantText;
+        this.runProducedAssistantText = false;
+        // A run whose last assistant message ended in "error" (API failure
+        // mid-stream, retries exhausted, …) did not produce a usable answer —
+        // its partial stream text must not be dispatched as the final one.
+        // "aborted" partial text stays dispatchable: the user chose to stop,
+        // and the text shown so far is what the agent actually said. Settled
+        // fires only after the whole loop (retries included), so a pending
+        // retry never races this check.
+        const failed = this.lastAssistantStopReason() === "error";
+        const text = produced && !failed ? this.inner.getLastAssistantText() ?? "" : "";
+        if (text) {
+          try { getExtRegistry().dispatchAgentSettled(this.sessionId, text); } catch (e) { console.error("[pi-web] agent_settled 分发失败:", e instanceof Error ? e.message : e); }
+        }
       }
       if (event.type === "compaction_end") {
         // Prompts submitted while compaction was running were queued as
@@ -428,6 +473,10 @@ export class AgentSessionWrapper {
    */
   private async runAgentContinue(): Promise<void> {
     if (this.inner.isStreaming || this.inner.isBashRunning || this.promptRunning) return;
+    // pi rejects prompt() while compaction runs. If a caller races in during
+    // compaction, leave the queue alone — the compaction_end listener calls
+    // this again once pi can accept prompts.
+    if (this.inner.isCompacting) return;
     const all = [...this.queueMirror];
     if (all.length === 0) return;
     const first = all[0];
@@ -1272,6 +1321,22 @@ export class AgentSessionWrapper {
         this.hintQueueImages("followUp", followImages);
         await this.inner.followUp(command.message as string, followImages?.length ? followImages : undefined);
         return null;
+      }
+
+      case "continue_queue": {
+        // Deliver the live queue when the agent is completely idle — the same
+        // runAgentContinue path as recovery's "re-queue & continue" and the
+        // compaction_end listener. Covers the "queue recovered after a
+        // restart but only re-queued, no continue" case, imports, etc.
+        if (this.queueMirror.length === 0) return { started: false, empty: true };
+        // During compaction pi rejects prompt(); runAgentContinue would no-op
+        // (its own isCompacting guard) and the compaction_end listener delivers
+        // the queue anyway. Report accurately instead of a phantom "started".
+        if (this.inner.isStreaming || this.inner.isBashRunning || this.promptRunning || this.inner.isCompacting) {
+          return { started: false };
+        }
+        void this.runAgentContinue();
+        return { started: true };
       }
 
       case "get_tools": {
@@ -2130,8 +2195,19 @@ export async function startRpcSession(
     sessionManager = SessionManager.open(sessionFile, undefined);
   } else {
     if (!cwd) throw new Error("cwd is required for a new session");
-    sessionManager = SessionManager.create(cwd, undefined);
+    // Pre-generate the session id instead of letting pi assign one AFTER the
+    // AgentSession exists. Extension-facing hooks (collectAgentTools →
+    // agentTools, dispatchAgentSession) need one consistent id, but for new
+    // sessions the caller passes a one-time key (`__new__<uuid>`) that pi
+    // never adopts — the id only becomes real after createAgentSessionFromServices.
+    // Pre-generating it here means every hook sees the same id before and
+    // after creation. randomUUID (v4) is fine: file names sort by their
+    // timestamp prefix; the id is only a same-timestamp tiebreaker.
+    sessionManager = SessionManager.create(cwd, undefined, { id: randomUUID() });
   }
+  // The file's header id is authoritative for every hook below (the caller's
+  // key may be a temp `__new__…` key), so read the id back from the manager.
+  const sessionManagerId = sessionManager.getSessionId();
   const sessionCwd = sessionManager.getCwd();
   const finishStartingSession = trackStartingSession(sessionCwd);
   const starting = (async () => {
@@ -2163,6 +2239,14 @@ export async function startRpcSession(
       agentDir,
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });
+    // 方案 M：收集扩展注入的 agent 工具（进程内直连，零配置）。
+    // Use the manager's real id (see above): for new sessions the caller's
+    // key is a temp `__new__…` value the extensions would otherwise snapshot
+    // into tool-closure identities (agentKey) that never match the id later
+    // used by dispatchAgentSession/onAgentSettled.
+    const extAgentTools: ToolDefinition[] = (() => {
+      try { return getExtRegistry().collectAgentTools({ sessionId: sessionManagerId, cwd: sessionCwd }); } catch (e) { console.error("[pi-web] collectAgentTools 失败:", e instanceof Error ? e.message : e); return []; }
+    })();
     const scope = await resolveVisibleModels(
       services.modelRuntime,
       services.settingsManager.getEnabledModels(),
@@ -2186,6 +2270,8 @@ export async function startRpcSession(
       ...(initial.thinkingLevel ? { thinkingLevel: initial.thinkingLevel } : {}),
       ...(initial.scopedModels.length > 0 ? { scopedModels: initial.scopedModels } : {}),
       ...(toolsOption !== undefined ? { tools: toolsOption } : {}),
+      // 方案 M：扩展注入的 agent 工具（进程内直连，零配置）
+      ...(extAgentTools.length > 0 ? { customTools: extAgentTools } : {}),
     });
 
     const persistedPreferences = await persistExplicitStartupPreferences(
@@ -2225,9 +2311,41 @@ export async function startRpcSession(
     const realSessionFile = inner.sessionFile as string | undefined;
     if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);
 
-    wrapper.onDestroy(() => registry.delete(realSessionId));
+    wrapper.onDestroy(() => {
+      registry.delete(realSessionId);
+      // 方案 M：会话销毁通知扩展
+      try { getExtRegistry().dispatchAgentSessionEnd(realSessionId); } catch (e) { console.error("[pi-web] agent 会话结束分发失败:", e instanceof Error ? e.message : e); }
+    });
     registry.set(realSessionId, wrapper);
     wrapper.beginExtensionBinding({ forceEmptySystemPrompt: toolNames?.length === 0 });
+
+    // 方案 M：会话启动通知扩展（aiti-devtools 注册 agent 身份 + 绑定推送 sink）。
+    // steer: enqueuing into pi's steering queue is picked up by the live agent
+    // loop at the next turn boundary. But if the run ends between the enqueue
+    // and that boundary (the loop's final hasQueuedMessages check already
+    // passed), nothing ever drains the queue — so re-check AFTER the steer
+    // and, if the agent is no longer running, follow up with continue_queue
+    // (the same runAgentContinue path as recovery / compaction delivery) to
+    // actually start the run. During compaction continue_queue reports
+    // started:false and the compaction_end listener delivers instead.
+    // Guard against a destroyed wrapper — the sink is unregistered in
+    // onAgentSessionEnd but an in-flight call may still land afterwards.
+    try {
+      getExtRegistry().dispatchAgentSession({
+        sessionId: realSessionId,
+        cwd: sessionCwd,
+        // 进程内事件直连：含 tool_execution_update 实时 bash 输出（agent events 的
+        // SSE 出口会过滤该类型，浏览器看不到；扩展经此拿到全量）。
+        subscribeEvent: (listener) => wrapper.onEvent((event) => listener(event)),
+        // 只中止当前 bash 命令，不 abort 整个 turn（agent 收到错误结果后继续）。
+        abortBash: () => wrapper.inner.abortBash(),
+        steer: async (t) => {
+          if (!wrapper.isAlive()) return;
+          await wrapper.send({ type: "steer", message: t });
+          if (!wrapper.isRunning()) await wrapper.send({ type: "continue_queue" });
+        },
+      });
+    } catch (e) { console.error("[pi-web] agent 会话启动分发失败:", e instanceof Error ? e.message : e); }
 
     return { session: wrapper, realSessionId };
   })().finally(() => {
