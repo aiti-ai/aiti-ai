@@ -35,6 +35,8 @@ interface ClientModule {
 }
 
 const modules = new Map<string, ClientModule>();
+/** 进行中的 materialize（防并发重复注册：启动循环与按需触发可能同时到达）。 */
+const materializing = new Map<string, Promise<boolean>>();
 let bootGraph: PiWebBootGraph = { rev: "", entries: [] };
 
 /**
@@ -100,13 +102,25 @@ export async function materialize(id: string, makeCtx: (id: string) => unknown):
   }
   if (!mod) return false;
   if (mod.materialized) return false;
+  // 互斥：并发调用共享一个 in-flight（启动批量 materialize 与 slot 按需触发
+  // 可能同时到达——避免同一 register 执行两次导致重复注册）。
+  const inFlight = materializing.get(id);
+  if (inFlight) return inFlight;
+  const run = (async () => {
+    try {
+      mod.registerFn?.(makeCtx(id));
+      mod.materialized = true;
+      return true;
+    } catch (e) {
+      console.error(`[ext] failed to materialize ${id}:`, e);
+      return false;
+    }
+  })();
+  materializing.set(id, run);
   try {
-    mod.registerFn?.(makeCtx(id));
-    mod.materialized = true;
-    return true;
-  } catch (e) {
-    console.error(`[ext] failed to materialize ${id}:`, e);
-    return false;
+    return await run;
+  } finally {
+    materializing.delete(id);
   }
 }
 
