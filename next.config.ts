@@ -28,6 +28,10 @@ const basePath =
     : envBasePath;
 
 const nextConfig: NextConfig = {
+  // 关闭 Next 内置 gzip（默认 compress:true 会压缩 middleware rewrite 转发的响应，
+  // 含 SSE——gzip 缓冲攒块，首帧延迟到下个写入才 flush，隧道场景 15s+，页面连不上桥）。
+  // 边缘压缩由 nginx 负责（见 conf.d/pi-web.conf 的「响应重压」段），Next 层压缩纯冗余。
+  compress: false,
   // Optional sub-path deployment, e.g. PI_WEB_BASE_PATH=/dev serves the app
   // at https://host/dev/. Client code reads NEXT_PUBLIC_BASE_PATH via
   // lib/base-path.ts. Empty (default) = root deployment.
