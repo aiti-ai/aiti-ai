@@ -4141,7 +4141,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   padding: 0,
                   marginLeft: 0,
                   background: "var(--bg-hover)",
-                  border: "none",
+                  borderTop: "none", borderRight: "none", borderBottom: "none",
                   borderLeft: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
                   borderRadius: "0 9px 9px 0",
                   color: "var(--text)",

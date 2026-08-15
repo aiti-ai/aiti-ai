@@ -504,7 +504,9 @@ function ImageViewer({ filePath, cwd, sourceSessionId }: Props) {
         style={{
           flex: 1,
           overflow: "auto",
-          background: "var(--bg-panel)",
+          // 用 backgroundColor longhand，避免与下方 backgroundImage/backgroundSize
+          // longhand 混用触发 React shorthand 冲突告警
+          backgroundColor: "var(--bg-panel)",
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
