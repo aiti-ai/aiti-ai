@@ -6,7 +6,7 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import { apiUrl } from "@/lib/base-path";
 
 import type { QueueEntry } from "@/lib/queue-store";
-import { queueToMarkdown, queueToJson, downloadQueueExport } from "@/lib/queue-export";
+import { downloadQueueExport } from "@/lib/queue-export";
 import {
   promptsToMarkdown,
   promptsToJson,
@@ -193,7 +193,7 @@ export function ExportDialog({ sessionId, onExportQueue, onClose }: Props) {
     }
   }, [filtered, selected, tab, format, sessionId, compactionCount, t]);
 
-  const label = (item: PromptExportEntry | QueueEntry, idx: number) => {
+  const label = (item: PromptExportEntry | QueueEntry) => {
     if (tab === "prompts") {
       const p = item as PromptExportEntry;
       const ts = p.timestamp ? new Date(p.timestamp).toLocaleString() : "";
@@ -281,7 +281,7 @@ export function ExportDialog({ sessionId, onExportQueue, onClose }: Props) {
             <div style={{ padding: 20, textAlign: "center", color: "var(--text-muted)", fontSize: 12 }}>{t("export.empty")}</div>
           )}
           {pageItems.map((item, i) => {
-            const { ts, text } = label(item, currentPage * pageSize + i);
+            const { ts, text } = label(item);
             const globalIdx = currentPage * pageSize + i;
             return (
               <div

@@ -24,7 +24,6 @@ import type { AppUpdateResponse } from "@/lib/api-types";
 import {
   captureScrollDistance,
   getNextVisibleCount,
-  getPromptAnchorSpacerHeight,
   getVisibleRenderWindow,
   restoreScrollTop,
   VISIBLE_PAGE_SIZE,
@@ -312,7 +311,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleBuiltinSlashCommand,
-    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom, scrollUserMsgToTop,
+    handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,

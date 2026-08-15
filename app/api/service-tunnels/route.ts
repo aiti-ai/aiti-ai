@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isApiRequestAllowed } from "@/lib/request-security";
-import { setAllowLocal, setAllowLocalHosts, setAllowLocalTemporary, confirmAllowLocal, getAllowLocalPending, getBaseDomains } from "@/lib/service-proxy-shared";
+import { setAllowLocalHosts, setAllowLocalTemporary, confirmAllowLocal, getAllowLocalPending, getBaseDomains } from "@/lib/service-proxy-shared";
 import {
   getServiceTunnels,
   listPiServices,

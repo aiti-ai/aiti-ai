@@ -417,11 +417,11 @@ export function ScrollToolbar({
                 if (tapNavigatedRef.current) { tapNavigatedRef.current = false; return; }
                 scrollToUserMessage(-1);
               }}
-              onPointerUp={(e) => {
+              onPointerUp={() => {
                 // Touch fallback: some touch environments swallow the click
                 // after our container's pointer handlers. If this was a tap
                 // (no drag movement) and click hasn't fired yet, navigate
-                // directly. alert proves the handler runs on your phone.
+                // directly.
                 const drag = dragRef.current;
                 if (drag && !drag.moved) {
                   tapNavigatedRef.current = true;
@@ -471,7 +471,7 @@ export function ScrollToolbar({
                 if (tapNavigatedRef.current) { tapNavigatedRef.current = false; return; }
                 scrollToUserMessage(1);
               }}
-              onPointerUp={(e) => {
+              onPointerUp={() => {
                 const drag = dragRef.current;
                 if (drag && !drag.moved) {
                   tapNavigatedRef.current = true;

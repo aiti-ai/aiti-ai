@@ -40,7 +40,7 @@ function liveServiceTunnels() {
 type AitiInjection = string | { html: string; position?: "head" | "prepend" } | null;
 
 async function aitiInjectSnippet(port: number, url: string, method: string): Promise<AitiInjection> {
-  const inj = (globalThis as any).__aitiInject;
+  const inj = globalThis.__aitiInject;
   if (!inj || typeof inj.scriptFor !== "function") return null;
   try { return inj.scriptFor(port, url, method) || null; } catch { return null; }
 }

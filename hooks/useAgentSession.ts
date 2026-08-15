@@ -1989,7 +1989,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       addNotice({ type: "error", message: "Failed to resolve queued message recovery" });
       return pendingRecovery;
     }
-  }, [pendingRecovery, addNotice, ensureEventsConnected, waitForPromptSettlement, loadSession, normalizeQueuedMessages, opts.chatInputRef]);
+  }, [pendingRecovery, addNotice, ensureEventsConnected, waitForPromptSettlement, loadSession, opts.chatInputRef]);
 
   /** Fetch the full live queue + recovery entries (with images) for export. */
   const exportQueueData = useCallback(async (): Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null> => {

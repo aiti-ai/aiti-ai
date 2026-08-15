@@ -4,6 +4,19 @@ import { createServiceTunnels, tunnelParamSchemas, AUTH_PARAM_SCHEMAS, type Serv
 import { getBaseDomains, getPiWebPort, getAllowLocal, getAllowLocalHosts, getAllowLocalPending } from "./service-proxy-shared.ts";
 
 /**
+ * aiti-devtools injection registry — the extension registers
+ * globalThis.__aitiInject.scriptFor(port, url, method) to decide what to
+ * inject into proxied responses (transformResponse hook).
+ */
+export interface AitiInjectRegistry {
+  scriptFor: (port: number, url: string, method: string) => string | { html: string; position?: "head" | "prepend" } | null;
+}
+
+declare global {
+  var __aitiInject: AitiInjectRegistry | undefined;
+}
+
+/**
  * service-tunnels integration — library mode inside pi-web.
  *
  * The manager runs in pi-web's process (no daemon): helpers it spawns become
@@ -41,7 +54,7 @@ export function getServiceTunnels(): ServiceTunnels {
       // 通用响应注入（service-tunnels transformResponse）：aiti-devtools 扩展注册
       // globalThis.__aitiInject.scriptFor(port) 决定注入内容（</head> 前插 script）
       transformResponse: ({ port, url, method }) => {
-        const inj = (globalThis as any).__aitiInject;
+        const inj = globalThis.__aitiInject;
         if (!inj || typeof inj.scriptFor !== "function") return null;
         try { return inj.scriptFor(port, url, method); } catch { return null; }
       },

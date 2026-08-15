@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -183,9 +183,6 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
     : "";
   const hostname = typeof window !== "undefined" ? window.location.hostname.toLowerCase() : "";
 
-  // Suffixes in display priority: current page domain first (so a deployment at
-  // example.com proposes <port>.example.com:<page-port>), then the configured ones.
-  const suffixes = data?.serviceHostSuffixes ?? [".pi.localhost"];
   const currentDomainSuffix = hostname && !isLikelyIp(hostname) && hostname !== "localhost"
       ? `.${hostname}`
       : null;
@@ -208,18 +205,6 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
       setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1500);
     }).catch(() => {});
   };
-
-  const revealPort = useCallback((port: number) => {
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      next.add(port);
-      return next;
-    });
-    // Wait for the expanded drawer to render, then scroll the card into view.
-    setTimeout(() => {
-      document.getElementById(`port-card-${port}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 80);
-  }, []);
 
   const stopExpose = useCallback((name: string) => {
     fetch(apiUrl("/api/service-tunnels"), {
@@ -484,7 +469,7 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
                         </button>
                         <span style={{ fontSize: 11, color: "var(--text-dim)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{primaryUrl}</span>
                       </div>
-                      <AuthExposeSection port={s.port} t={t} isMobile={isMobile} openInNewTab={openInNewTab}
+                      <AuthExposeSection port={s.port} t={t} openInNewTab={openInNewTab}
                         exposes={(data?.exposes ?? []).filter((e) => e.port === s.port)}
                         onStopExpose={stopExpose}
                         onChanged={() => refresh(false)}
@@ -656,26 +641,6 @@ function SchemaForm({ specs, values, onChange, t }: {
 }
 
 
-function SummarySection({ title, children }: { title: string; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <div style={{ borderBottom: "1px solid var(--border)", padding: "6px 0" }}>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        style={{ display: "flex", alignItems: "center", gap: 6, width: "100%", background: "none", border: "none", padding: "3px 0", cursor: "pointer", color: "var(--text-muted)", fontSize: 11, fontWeight: 600, textAlign: "left" }}
-      >
-        <span style={{ flex: 1 }}>{title}</span>
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-          style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }}>
-          <polyline points="6 9 12 15 18 9" />
-        </svg>
-      </button>
-      {open && <div style={{ marginTop: 4 }}>{children}</div>}
-    </div>
-  );
-}
-
 /** 暴露详情弹窗 —— 活动暴露的链接点击后先看来源详情(mode / auth / 隧道 /
  *  参数 / 链接 / 开启时间),确认后再点链接才新窗口打开;停止按钮只停该条
  *  通道(同端口其他暴露不受影响)。 */
@@ -690,7 +655,6 @@ function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, onStop, 
   onOpenFile?: (filePath: string, fileName: string) => void;
 }) {
   const isMobile = useIsMobile();
-  const [logFiles, setLogFiles] = useState<Array<{ name: string; path: string; size: number; mtime: number }> | null>(null);
   const links = [ex.url, ex.localUrl, ex.baseUrl, ex.domainUrl, ex.loginUrl].filter((u): u is string => Boolean(u));
   const mode: string = (ex.name ?? "").startsWith("proxy:")
     ? "proxy"
@@ -989,10 +953,9 @@ function InjectJsSection({ port, enabled, available, variant, t, onToggle }: {
  * Public access with auth — pick a provider, optionally require sign-in,
  * and open the tunnel through the service-tunnels nginx gateway.
  */
-function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExpose, onChanged, onGoManageUsers }: {
+function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onChanged, onGoManageUsers }: {
   port: number;
   t: (key: string, params?: Record<string, string>) => string;
-  isMobile: boolean;
   openInNewTab: (url: string) => void;
   /** This port's exposes (running or not) — decides the button state. */
   exposes: ExposeInfo[];
@@ -1039,6 +1002,8 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
   // Tunnel types + provider params come from service-tunnels schemas
   // (data-driven — adding a tunnel type / auth provider needs NO dialog
   // changes). Provider order/default come from the library too.
+  // Mount-once fetch: secLocale only selects the server-side response language;
+  // re-fetching on language switch would reset the dialog mid-interaction.
   useEffect(() => {
     fetch(`${apiUrl("/api/service-tunnels")}?lang=${encodeURIComponent(secLocale)}`)
       .then((r) => r.json())
@@ -1063,6 +1028,8 @@ function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExp
         setUserManagersReady(true);
       })
       .catch(() => {});
+  // Mount-once: secLocale only selects the server-side response language.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Auto-detect the port's protocol (http/https/tcp) so the user sees it up
@@ -1426,6 +1393,10 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
   }, [t]);
 
   // 所选组合的用户列表 + TOTP 状态
+  // post/t are per-render helpers; listing them would re-create loadUsers on
+  // every render and re-trigger the [selected] effect. Their values are read
+  // through the closure, and loadUsers is only re-created when the selection
+  // changes (selected/totpProviders).
   const loadUsers = useCallback(() => {
     if (!selected) return;
     post("user-list", { provider: selected.provider })
@@ -1442,8 +1413,12 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
         }
       })
       .catch(() => setError(String(t("services.error"))));
+  // post/t are per-render helpers; loadUsers is re-created only when the
+  // selection changes (its deps), so the [selected] effect below stays stable.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, totpProviders]);
 
+  // usersLocale is mount-once (same rationale as the schemas fetch above).
   useEffect(() => {
     fetch(`${apiUrl("/api/service-tunnels")}?lang=${encodeURIComponent(usersLocale)}`)
       .then((r) => r.json())
@@ -1452,9 +1427,14 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
       })
       .catch(() => {});
     loadSummary();
+  // usersLocale is mount-once; loadSummary identity is stable via its deps.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadSummary]);
 
-  // 点选/返回时加载或清空用户
+  // 点选/返回时加载或清空用户 — loadUsers identity follows selected via its
+  // own useCallback deps, so [selected] alone re-runs it on selection change.
+  // loadUsers identity follows selected via its own useCallback deps.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (selected) loadUsers(); }, [selected]);
 
   const selectCombo = (r: { site: string; provider: string }) => {
@@ -1678,6 +1658,9 @@ function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Record<st
             <div style={{ fontSize: 10, color: "#8a6d1a" }}>{t("services.totpSecret")} ({totpEnrolled.label})</div>
             <div style={{ display: "flex", gap: 12, alignItems: "flex-start", marginTop: 6, flexWrap: "wrap" }}>
               {qrUrl && (
+                // TOTP QR is a server-provided data URL — next/image cannot
+                // optimize it (no loader, dynamic base64).
+                // eslint-disable-next-line @next/next/no-img-element
                 <img src={qrUrl} alt="TOTP QR" width={176} height={176}
                   style={{ border: "1px solid var(--border)", borderRadius: 6, flexShrink: 0, background: "#fff" }} />
               )}
@@ -1881,6 +1864,8 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
 
   // 隧道类型 schema 来自库(与 Ports 页同一数据源),默认 cloudflared;
   // 不可用时回退到第一个非危险类型
+  // Mount-once (same rationale as the schemas fetch above); self.auth is read
+  // through the closure and only used to prefill the provider select.
   useEffect(() => {
     fetch(`${apiUrl("/api/service-tunnels")}?lang=${encodeURIComponent(selfLocale)}`)
       .then((r) => r.json())
@@ -1905,6 +1890,9 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
         }
       })
       .catch(() => {});
+  // Mount-once (same rationale as the schemas fetch); self.auth is read
+  // through the closure only to prefill the provider select.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleAllowLocal = (v: boolean) => {
