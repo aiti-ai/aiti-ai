@@ -3554,7 +3554,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <polyline points="21 15 16 10 5 21" />
               </svg>
             </button>
-            {/* Model selector — visible always, disabled while the session or switch is busy */}
+            {/* Model selector — visible always; only locked while a switch request is in flight. Streaming stays clickable: switching mid-run applies next turn (modelSwitchPending badge). */}
             {(modelOptions.length > 0 || currentName || modelError) && onModelChange && (
                 <div ref={dropdownRef} style={{ position: "relative", flex: isMobile ? "1 1 auto" : undefined, minWidth: 0 }}>
                   <button
@@ -3566,7 +3566,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                         return !open;
                       });
                     }}
-                    disabled={isStreaming || modelSwitching}
+                    disabled={modelSwitching}
                     aria-busy={modelSwitching || undefined}
                     style={{
                       display: "flex", alignItems: "center", gap: 6,
@@ -3580,13 +3580,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       border: "none",
                       borderRadius: 9,
                       color: "var(--text-muted)",
-                      cursor: isStreaming || modelSwitching ? "not-allowed" : "pointer",
+                      cursor: modelSwitching ? "not-allowed" : "pointer",
                       fontSize: 12,
                       opacity: 1,
                       transition: "background 0.12s, color 0.12s",
                     }}
                     onMouseEnter={(e) => {
-                      if (isStreaming || modelSwitching) return;
+                      if (modelSwitching) return;
                       e.currentTarget.style.background = "var(--bg-hover)";
                       e.currentTarget.style.color = "var(--text)";
                     }}
@@ -3594,7 +3594,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       e.currentTarget.style.background = modelDropdownOpen ? "var(--bg-hover)" : "none";
                       e.currentTarget.style.color = "var(--text-muted)";
                     }}
-                    title={modelSwitching ? t("chat.modelSwitchStreaming") : modelOptions.length > 0 ? t("chat.changeModel") : t("chat.noModels")}
+                    title={modelSwitching || isStreaming ? t("chat.modelSwitchStreaming") : modelOptions.length > 0 ? t("chat.changeModel") : t("chat.noModels")}
                   >
                     {modelSwitching ? (
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }} aria-hidden="true">
