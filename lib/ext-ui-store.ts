@@ -86,9 +86,29 @@ export function registerExtUiItems(
 ): () => void {
   const store = getStore();
   const stamped = items.map((it) => ({ ...it, ...(extId ? { extId } : {}) }));
+  // 幂等注册：同 (extId, id) 覆盖旧项（保位）而非追加。Fast Refresh 会重建
+  // ExtSlots/ext-client-loader 模块（loadStarted/modules 归零）但本 store 挂在
+  // globalThis 上跨 HMR 存活——provider remount 会再次 materialize 全部扩展，
+  // 纯 append 会累积同 key 项（React "two children with the same key"；扩展
+  // 逐一自带幂等标记不是合理要求）。覆盖语义让重复注册天然收敛，且刷新后
+  // 拿到新 render 闭包；内容完全一致时跳过 bump，避免无谓重渲染。
   const existing = store.items[slot] ?? [];
-  store.items[slot] = [...existing, ...stamped];
-  bump();
+  const keyed = new Map(existing.map((it) => [`${it.extId ?? ""}\u0000${it.id}`, it]));
+  for (const it of stamped) keyed.set(`${it.extId ?? ""}\u0000${it.id}`, it);
+  const next = [...keyed.values()];
+  const unchanged =
+    next.length === existing.length &&
+    next.every(
+      (it, i) =>
+        it.id === existing[i].id &&
+        it.extId === existing[i].extId &&
+        it.render === existing[i].render &&
+        it.meta === existing[i].meta,
+    );
+  if (!unchanged) {
+    store.items[slot] = next;
+    bump();
+  }
   return () => {
     const cur = store.items[slot] ?? [];
     const stampedIds = new Set(stamped.map((s) => s.id));
