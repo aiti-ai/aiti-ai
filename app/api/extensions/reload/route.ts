@@ -5,11 +5,13 @@ import { getRegistry } from "@/lib/ext/registry";
 export const dynamic = "force-dynamic";
 
 // POST /api/extensions/reload — hot reload: shutdown → reload entries → startup.
+// Returns the NEW boot graph so the client loader can diff revs and invalidate
+// only the changed bundles (precise HMR rollback) instead of a full reset.
 export async function POST(req: NextRequest): Promise<Response> {
   if (!isApiRequestAllowed(req)) return NextResponse.json({ error: "forbidden" }, { status: 403 });
   try {
     await getRegistry().reload();
-    return NextResponse.json({ ok: true });
+    return NextResponse.json({ ok: true, graph: getRegistry().bootGraph() });
   } catch (e) {
     return NextResponse.json({ ok: false, error: String(e) }, { status: 500 });
   }

@@ -4,6 +4,11 @@
  * The extension client bundles call ctx.registerItems(slot, items) during
  * module registration; core components render them via <ExtSlot name=.../>.
  * A version counter lets React hooks re-render when items are registered.
+ *
+ * DSH 反哺（docs/dsh-adapter-assessment.md §5.2）：
+ *  - 注册按扩展隔离（extId 标记），reload/HMR 可逐扩展反卷（disposer 语义），
+ *    替代全量 reset + 重新 import。
+ *  - registerExtUiItems 返回 disposer：effect 语义，调用即精确移除该次注册。
  */
 "use client";
 
@@ -18,6 +23,8 @@ export interface ExtRenderProps {
 
 export interface ExtUiItemRegistered {
   id: string;
+  /** 注册来源扩展 id（反卷/HMR 精确移除用）。 */
+  extId?: string;
   /** Component receiving ExtRenderProps (currentSession etc.). */
   render: (props: ExtRenderProps) => ReactNode;
   meta?: { label?: string; title?: string; badge?: boolean };
@@ -51,32 +58,77 @@ function getStore(): ExtUiStore {
   return globalThis.__piWebExtUI;
 }
 
+function bump(): void {
+  const store = getStore();
+  store.version += 1;
+  for (const l of store.listeners) l();
+}
+
 /** 覆盖式写入 manifest 扩展元数据（loadExtensions 拉取 manifest 后调用）。 */
 export function registerExtMetas(metas: Record<string, ExtMeta>): void {
   const store = getStore();
   store.metas = metas;
-  store.version += 1;
-  for (const l of store.listeners) l();
+  bump();
 }
 
 export function getExtMetas(): Record<string, ExtMeta> {
   return getStore().metas;
 }
 
-export function registerExtUiItems(slot: ExtSlotName, items: ExtUiItemRegistered[]): void {
+/**
+ * 注册一组 slot items（归入给定 extId）。返回 disposer：调用即从 store 精确
+ * 移除本次注册的 items（DSH effect 语义——注册与反卷成对，reload 逐扩展反卷）。
+ */
+export function registerExtUiItems(
+  slot: ExtSlotName,
+  items: ExtUiItemRegistered[],
+  extId?: string,
+): () => void {
   const store = getStore();
+  const stamped = items.map((it) => ({ ...it, ...(extId ? { extId } : {}) }));
   const existing = store.items[slot] ?? [];
-  store.items[slot] = [...existing, ...items];
-  store.version += 1;
-  for (const l of store.listeners) l();
+  store.items[slot] = [...existing, ...stamped];
+  bump();
+  return () => {
+    const cur = store.items[slot] ?? [];
+    const stampedIds = new Set(stamped.map((s) => s.id));
+    store.items[slot] = cur.filter((it) => !(stampedIds.has(it.id) && it.extId === extId));
+    bump();
+  };
+}
+
+/** 清除某扩展在指定 slot 注册的指定 items（disposer 语义，精确反卷）。 */
+export function disposeExtUiItems(slot: ExtSlotName, extId: string, ids: string[]): void {
+  const store = getStore();
+  const idSet = new Set(ids);
+  const cur = store.items[slot] ?? [];
+  const next = cur.filter((it) => !(it.extId === extId && idSet.has(it.id)));
+  if (next.length !== cur.length) {
+    store.items[slot] = next;
+    bump();
+  }
+}
+
+/** 清除某扩展在全部 slot 注册的 items（HMR 反卷 / 扩展失效）。 */
+export function removeExtUiItems(extId: string): void {
+  const store = getStore();
+  let changed = false;
+  for (const slot of Object.keys(store.items) as ExtSlotName[]) {
+    const cur = store.items[slot] ?? [];
+    const next = cur.filter((it) => it.extId !== extId);
+    if (next.length !== cur.length) {
+      store.items[slot] = next;
+      changed = true;
+    }
+  }
+  if (changed) bump();
 }
 
 /** Clear all items for every slot (used when re-importing bundles on reload). */
 export function resetExtUiItems(): void {
   const store = getStore();
   store.items = {};
-  store.version += 1;
-  for (const l of store.listeners) l();
+  bump();
 }
 
 export function getExtUiItems(slot: ExtSlotName): ExtUiItemRegistered[] {

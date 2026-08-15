@@ -118,6 +118,50 @@ export type ExtSlotName =
   ;
 
 /**
+ * UI 插槽类型契约（DSH SlotMap 反哺，docs/dsh-adapter-assessment.md §5.2）。
+ *
+ * 扩展（TS 编写 client bundle）通过 module augmentation 声明自己用到/提供的
+ * 插槽额外 props 类型：
+ *
+ *   // 扩展端（client bundle 里的 .ts 文件）
+ *   declare module "pi-web-ext/ext" {
+ *     interface ExtSlotContractMap {
+ *       chatInputTop: { props: { inputValue: string } }
+ *     }
+ *   }
+ *
+ * 宿主端 ExtSlot 的 props 类型随插槽名从契约取；未声明的插槽退化为宽松
+ * Record<string, unknown>（向后兼容）。契约是「类型级文档」：运行时无影响，
+ * 加载正确性仍由 loader 保证。
+ */
+// 空接口是 module augmentation（declare module "pi-web-ext/ext"）的合并锚点——
+// DSH SlotMap 同款设计，必须有可合并的空类型。
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface ExtSlotContractMap {}
+
+/** 从契约取插槽 props 类型（未声明 → 宽松对象）。 */
+export type ExtSlotProps<S extends ExtSlotName> =
+  S extends keyof ExtSlotContractMap
+    ? ExtSlotContractMap[S] extends { props: infer P } ? P : Record<string, never>
+    : Record<string, unknown>;
+
+/** 扩展现有插槽 props（宿主内置 + 扩展声明合并）。 */
+export type ExtSlotPropsWithBuiltIn<S extends ExtSlotName> =
+  { currentSession?: { id: string; cwd: string; name?: string } | null } & ExtSlotProps<S>;
+
+/**
+ * i18n 类型契约（DSH LocaleNamespaceMap 反哺）：扩展声明自己的 key 表后，
+ * ctx.t(key) 的 key 参数可被类型检查。
+ *
+ *   declare module "pi-web-ext/ext" {
+ *     interface LocaleNamespaceMap { "aiti-devtools": { "inspect.start": string } }
+ *   }
+ */
+// 空接口是 module augmentation 合并锚点（DSH LocaleNamespaceMap 同款）。
+// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+export interface LocaleNamespaceMap {}
+
+/**
  * 消息点击识别弹层（QuoteReplyPopover）动作扩展点。
  * 扩展注册 provider；点击段落 → core 把段落全文交给每个 provider 的 recognize（可异步校验）
  * → 返回动作按钮 → 点击调用 onClick（识别/校验/执行全在扩展侧，core 只渲染 + 调起）。
@@ -168,6 +212,9 @@ export interface ExtUiDefinition {
   chatInputTop?: ExtUiItem[];
   /** 接管内置能力（见 EXT_PROVIDES）：如 ["session-delete"] 让 core 隐藏侧栏内置删除按钮。 */
   provides?: string[];
+  /** client bundle 依赖的其他扩展 id（启动图 inject 边：并行预取/加载顺序提示，
+   *  informational——加载正确性不依赖它，仅影响预取调度与 HMR 差集展示）。 */
+  clientDependsOn?: string[];
   /** Per-locale message table looked up via the client ctx.t(key, params). */
   i18n?: Record<string, Record<string, string>>;
 }

@@ -22,6 +22,7 @@ import type {
 } from "./types.ts";
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
 import { loadExtensionFromDir, scanExtensionDirs } from "./loader.ts";
+import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 declare global {
@@ -97,6 +98,7 @@ export class ExtRegistryImpl {
    * shadowed (skipped silently) once a higher-priority root loaded it.
    */
   async loadAll(): Promise<void> {
+    this.invalidateBootGraph();
     this.extensions.clear();
     this.errors.clear();
     const seen = new Set<string>();
@@ -158,6 +160,32 @@ export class ExtRegistryImpl {
       source: e.source,
       icon: e.ext.icon ?? null,
     }));
+  }
+
+  /**
+   * 启动图（client-modules）：前端 loader 的输入。内容不变则返回稳定对象
+   * （与 clientHash 的 mtime 缓存同源，扩展 reload 后自动重算）。
+   */
+  private _bootGraph: PiWebBootGraph | null = null;
+  bootGraph(): PiWebBootGraph {
+    if (this._bootGraph) return this._bootGraph;
+    this._bootGraph = buildBootGraph(
+      [...this.extensions.values()]
+        .filter((e) => e.ext.client)
+        .map((e) => ({
+          id: e.id,
+          assetUrl: `/api/extensions/${e.id}/assets/${e.ext.client}`,
+          hash: this.clientHash(e),
+          // inject 边预留：扩展可在 ui 里声明 clientDependsOn（DSH inject 边）。
+          inject: e.ext.ui?.clientDependsOn,
+        })),
+    );
+    return this._bootGraph;
+  }
+
+  /** 使启动图失效（reload/loadAll 后调用），下次访问重算。 */
+  private invalidateBootGraph(): void {
+    this._bootGraph = null;
   }
 
   /** 扩展 client 文件内容哈希（按 mtime 缓存：文件变化才重算）——clientUrl?v=<hash> 强制浏览器重新拉取 */

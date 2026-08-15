@@ -14,18 +14,27 @@
 
 import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { apiUrl } from "@/lib/base-path";
-import type { ExtSlotName, PopoverActionProvider } from "@/lib/ext/types";
+import type { ExtSlotName, ExtSlotProps, PopoverActionProvider } from "@/lib/ext/types";
 import {
   getExtMetas,
   getExtUiItems,
   registerExtMetas,
+  disposeExtUiItems,
   registerExtUiItems,
-  resetExtUiItems,
+  removeExtUiItems,
   subscribeExtUi,
   type ExtMeta,
   type ExtRenderProps,
   type ExtUiItemRegistered,
 } from "@/lib/ext-ui-store";
+import {
+  entryOf,
+  materialize,
+  prefetch,
+  reconcileGraph,
+  setBootGraph,
+} from "./ext-client-loader";
+import type { PiWebBootGraph } from "@/lib/ext/client-modules";
 
 /** The register(ctx) surface handed to a client bundle. */
 export interface ExtClientContext {
@@ -35,10 +44,16 @@ export interface ExtClientContext {
   useRef: typeof useRef;
   useCallback: typeof useCallback;
   useMemo: typeof useMemo;
-  /** Translate using the extension's own i18n table (from the manifest). */
+  /**
+   * Translate using the extension's own i18n table (from the manifest).
+   * 类型契约：扩展在 LocaleNamespaceMap 声明 key 表后可获得 key 检查；未声明
+   * 时退化为 string（向后兼容）。
+   */
   t(key: string, params?: Record<string, string | number>): string;
   apiUrl(path: string): string;
   registerItems(slot: ExtSlotName, items: Array<{ id: string; render: (props: ExtRenderProps) => ReactNode; meta?: Record<string, unknown> }>): void;
+  /** 注册时返回 disposer：调用即精确移除本次注册（DSH effect 语义，HMR 反卷用）。 */
+  disposeItems(slot: ExtSlotName, ids: string[]): void;
   /** 注册聊天输入钩子（aiti-devtools：发送前 [元素N]/[回答N]/[错误N] 替换 + 收集候选元素） */
   registerChatHook(hook: { preSend?: (text: string) => { text?: string; elements?: unknown[] } | null }): void;
   /** 程序化发送一条消息（与用户输入同链路：preSend 钩子生效；空闲直发，流式按 mode 插队/排队；不清空输入框） */
@@ -100,6 +115,7 @@ interface ManifestExt {
 }
 
 let loadStarted = false;
+let reloadInFlight: Promise<{ invalidated: string[] }> | null = null;
 
 function interpolate(message: string, params: Record<string, string | number> = {}): string {
   return message.replace(/\{([\w.-]+)\}/g, (token, name: string) => {
@@ -112,57 +128,98 @@ declare global {
   interface Window { __extDebug?: string[]; }
 }
 
+/** 为某扩展构造 register ctx（i18n 表 + 宿主 hooks + 注册 API）。 */
+function makeClientContext(ext: ManifestExt): ExtClientContext {
+  const table = ext.ui?.i18n?.["zh-CN"] ?? ext.ui?.i18n?.en ?? {};
+  return {
+    h: createElement,
+    useState,
+    useEffect,
+    useRef,
+    useCallback,
+    useMemo,
+    t: (key, params) => interpolate(table[key] ?? key, params),
+    apiUrl,
+    registerItems: (slot, items) => {
+      registerExtUiItems(
+        slot,
+        items.map((it) => ({ id: `${ext.id}:${it.id}`, render: it.render, meta: it.meta })),
+        ext.id,
+      );
+    },
+    disposeItems: (slot, ids) => {
+      disposeExtUiItems(slot, ext.id, ids.map((raw) => `${ext.id}:${raw}`));
+    },
+    registerChatHook: (hook) => registerChatHooks(hook),
+    sendChatMessage: (text, mode) => dispatchChatSend(text, mode),
+    registerPopoverAction: (p) => registerPopoverActions(p),
+  };
+}
+
+/** 首次加载：拉 manifest → 写元数据 + 启动图 → 按图 prefetch + materialize。 */
 async function loadExtensions(): Promise<void> {
   if (loadStarted) return;
   loadStarted = true;
   try {
     const res = await fetch(apiUrl("/api/extensions/manifest"), { cache: "no-store" });
     if (!res.ok) return;
-    const data = (await res.json()) as { extensions: ManifestExt[] };
-    resetExtUiItems();
+    const data = (await res.json()) as { extensions: ManifestExt[]; graph: PiWebBootGraph };
     // manifest 元数据（name/icon/provides）→ 宿主 UI 标注扩展身份（顶栏自定义面板等）、
     // 并驱动内置 UI 的能力接管开关（useExtProvides）
     const metas: Record<string, ExtMeta> = {};
     for (const ext of data.extensions) {
+      manifestCache.set(ext.id, ext);
       metas[ext.id] = { name: ext.name, icon: ext.icon ?? null, provides: ext.ui?.provides };
     }
     registerExtMetas(metas);
+    setBootGraph(data.graph ?? { rev: "", entries: [] });
+    // 两阶段加载：prefetch 全部（注册入口就绪，副作用未发生）→ materialize 逐个
+    // （register(ctx) 调用，副作用发生）。失败隔离：单扩展失败不影响其他。
+    await Promise.allSettled(data.graph?.entries.map((e) => prefetch(e.id)) ?? []);
     for (const ext of data.extensions) {
-      if (!ext.clientUrl) continue;
-      try {
-        // webpackIgnore: keep the native dynamic import (Next would otherwise
-        // rewrite it into a bundled context stub).
-        const mod = (await import(/* webpackIgnore: true */ apiUrl(ext.clientUrl))) as unknown;
-        // Bundle exports either `export default function register(ctx)` or
-        // `export function register(ctx)` — support both.
-        const ns = mod as { default?: unknown; register?: (ctx: ExtClientContext) => void };
-        const registerFn = typeof ns.default === "function" ? ns.default as (ctx: ExtClientContext) => void : ns.register;
-        const table = ext.ui?.i18n?.["zh-CN"] ?? ext.ui?.i18n?.en ?? {};
-        const ctx: ExtClientContext = {
-          h: createElement,
-          useState,
-          useEffect,
-          useRef,
-          useCallback,
-          useMemo,
-          t: (key, params) => interpolate(table[key] ?? key, params),
-          apiUrl,
-          registerItems: (slot, items) => {
-            registerExtUiItems(slot, items.map((it) => ({ id: `${ext.id}:${it.id}`, render: it.render, meta: it.meta })));
-          },
-          registerChatHook: (hook) => registerChatHooks(hook),
-          sendChatMessage: (text, mode) => dispatchChatSend(text, mode),
-          registerPopoverAction: (p) => registerPopoverActions(p),
-        };
-        registerFn?.(ctx);
-      } catch (e) {
-        console.error(`[ext] failed to load client bundle for ${ext.id}:`, e);
-      }
+      if (!entryOf(ext.id)) continue; // 无 client bundle 或未进图
+      await materialize(ext.id, () => makeClientContext(ext));
     }
   } catch (e) {
     console.error("[ext] failed to fetch extension manifest:", e);
   }
 }
+
+/** HMR 精确反卷：POST reload → 服务端返回新图 → 比 rev 只反卷变更扩展。 */
+export async function reloadExtensions(): Promise<{ invalidated: string[] }> {
+  if (reloadInFlight) return reloadInFlight;
+  reloadInFlight = (async () => {
+    try {
+      const res = await fetch(apiUrl("/api/extensions/reload"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({}),
+      });
+      if (!res.ok) throw new Error(`reload failed: ${res.status}`);
+      const data = (await res.json()) as { ok: boolean; graph?: PiWebBootGraph };
+      if (!data.ok || !data.graph) return { invalidated: [] };
+      const invalidated = reconcileGraph(data.graph, (extId) => removeExtUiItems(extId));
+      // 反卷的扩展重新 prefetch + materialize（新 rev 的 bundle）。
+      for (const id of invalidated) {
+        const ext = manifestCache.get(id);
+        if (ext && entryOf(id)) {
+          await prefetch(id);
+          await materialize(id, () => makeClientContext(ext));
+        }
+      }
+      return { invalidated };
+    } catch (e) {
+      console.error("[ext] reload failed:", e);
+      return { invalidated: [] };
+    } finally {
+      reloadInFlight = null;
+    }
+  })();
+  return reloadInFlight;
+}
+
+/** manifest 缓存（reload 反卷后重新 materialize 需要原 ext 元数据/i18n 表）。 */
+const manifestCache = new Map<string, ManifestExt>();
 
 export function ExtSlotsProvider({ children }: { children: ReactNode }) {
   const [, force] = useState(0);
@@ -209,20 +266,21 @@ export function useExtProvides(): Set<string> {
   }, [metas]);
 }
 
-export function ExtSlot({
+export function ExtSlot<S extends ExtSlotName>({
   name,
   currentSession = null,
   extra,
 }: {
-  name: ExtSlotName;
+  name: S;
   currentSession?: { id: string; cwd: string; name?: string } | null;
-  extra?: Record<string, unknown>;
+  /** 插槽额外 props——类型从 ExtSlotContractMap 契约取（未声明 → 宽松对象）。 */
+  extra?: ExtSlotProps<S>;
 }) {
   const items = useExtSlotItems(name);
   return (
     <>
       {items.map((it) => (
-        <it.render key={it.id} currentSession={currentSession} {...extra} />
+        <it.render key={it.id} currentSession={currentSession} {...(extra as Record<string, unknown>)} />
       ))}
     </>
   );
