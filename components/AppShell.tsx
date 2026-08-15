@@ -548,7 +548,7 @@ export function AppShell() {
     // change (e.g. picking a session from another project in the all-sessions
     // panel / kanban) and tears the just-selected session down — the first click
     // would always fail and only a second click (same project) would stick.
-    activeProjectRootRef.current = session.projectRoot ?? session.cwd ?? null;
+    activeProjectKeyRef.current = workspaceKeyOf(session);
     invalidateWorkspaceRestore();
     activeNewSessionDraftKeyRef.current = null;
     // Re-clicking the already-open session must not remount the chat and

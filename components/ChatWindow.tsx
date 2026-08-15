@@ -77,6 +77,7 @@ function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, 
 
 const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
+const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 
 function NewSessionUpdateLink({
   label,
@@ -1173,7 +1174,16 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
           </div>
         </div>
         {chatInputElement}
-        <ExtensionWidgets widgets={belowEditorWidgets} />
+        <div
+          style={{
+            padding: `0 ${CHAT_COLUMN_PADDING}px`,
+            paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
+          }}
+        >
+          <div style={{ maxWidth: 820, margin: "0 auto" }}>
+            <ExtensionWidgets widgets={belowEditorWidgets} />
+          </div>
+        </div>
         <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
       </div>
       </>
@@ -1182,14 +1192,14 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   );
 }
 
-function NoticeShelf({ notices, floating = false }: { notices: NoticeItem[]; floating?: boolean }) {
+function NoticeShelf({ notices, floating = false, align = "left" }: { notices: NoticeItem[]; floating?: boolean; align?: "left" | "right" }) {
   if (notices.length === 0) return null;
   return (
     <div
       style={{
         display: "flex",
         flexDirection: "column",
-        alignItems: "center",
+        alignItems: align === "right" ? "flex-end" : "stretch",
         marginBottom: floating ? 0 : 10,
       }}
     >

@@ -8,9 +8,9 @@ import { existsSync, readdirSync, readFileSync, statSync, closeSync, openSync, r
 import { join, normalize as normalizePath } from "path";
 import { writePrivateFileAtomicSync } from "./atomic-file.ts";
 import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types.ts";
-import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
+import type { SessionEntry as PiSessionEntry } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize.ts";
-import { projectIdentityKey } from "./project-identity";
+import { projectIdentityKey } from "./project-identity.ts";
 import { sessionPathKey } from "./session-path.ts";
 import type { ProjectInfo } from "./worktree.ts";
 
