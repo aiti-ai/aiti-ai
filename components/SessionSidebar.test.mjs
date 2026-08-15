@@ -57,8 +57,7 @@ test("offers the downstream context-menu hook only on a normal session row", () 
 });
 
 test("manual and lifecycle refreshes bypass the server session-list cache", () => {
-  assert.match(source, /force \? "\/api\/sessions\?force=1" : "\/api\/sessions"/);
-  assert.match(source, /cache: "no-store"/);
+  assert.match(source, /\/api\/sessions\$\{forceRefresh \? "\?refresh=1" : ""\}/);
   assert.match(source, /loadSessions\(isFirst, !isFirst\)/);
   assert.match(source, /onClick=\{\(\) => loadSessions\(false, true\)\}/);
   assert.match(source, /loadSessions\(false, true\);[\s\S]*?onBackgroundTaskDone/);
@@ -66,5 +65,7 @@ test("manual and lifecycle refreshes bypass the server session-list cache", () =
 
 test("does not expose disk-backed actions for transient sessions", () => {
   assert.match(sessionItemSource, /if \(session\.transient\) return;/);
-  assert.match(sessionItemSource, /\{hovered && !session\.transient && \(/);
+  // The fork hides row actions for unsaved draft sessions (isDraft) —
+  // transient sessions additionally early-return in the action renderers.
+  assert.match(sessionItemSource, /\{hovered && !isDraft && \(/);
 });

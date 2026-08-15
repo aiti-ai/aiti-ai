@@ -1002,7 +1002,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   const draftSession = (!loading
     && selectedSession?.id
     && selectedSession.cwd
-    && projectRootFor(selectedSession.cwd) === selectedProject
+    && projectFor(selectedSession.cwd)?.key === selectedProject?.key
     && !allSessions.some((s) => s.id === selectedSession.id))
     ? selectedSession
     : null;

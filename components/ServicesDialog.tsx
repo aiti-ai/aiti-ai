@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -205,6 +205,7 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
     : "";
   const hostname = typeof window !== "undefined" ? window.location.hostname.toLowerCase() : "";
 
+  const suffixes = data?.serviceHostSuffixes ?? [".pi.localhost"];
   const currentDomainSuffix = hostname && !isLikelyIp(hostname) && hostname !== "localhost"
       ? `.${hostname}`
       : null;
@@ -1044,7 +1045,7 @@ function InjectJsSection({ port, enabled, available, variant, t, onToggle }: {
  * Public access with auth — pick a provider, optionally require sign-in,
  * and open the tunnel through the service-tunnels nginx gateway.
  */
-function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExpose, onChanged, onGoManageUsers, serviceBasePath, onSetBasePath }: {
+function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onChanged, onGoManageUsers, serviceBasePath, onSetBasePath }: {
   port: number;
   t: (key: string, params?: Record<string, string>) => string;
   openInNewTab: (url: string) => void;

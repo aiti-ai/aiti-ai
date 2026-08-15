@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { request as httpRequest, type IncomingMessage } from "node:http";
+import { Readable } from "node:stream";
 import {
   isApiRequestAllowed,
   isApiRequestHostAllowed,
@@ -254,22 +256,20 @@ export async function proxy(request: NextRequest) {
           return NextResponse.rewrite(decision.target);
         }
         try {
-          const { request: httpRequest } = require("node:http");
-          const { Readable } = require("node:stream");
           const fwdHeaders: Record<string, string> = {};
           for (const [k, v] of request.headers.entries()) fwdHeaders[k] = v;
           fwdHeaders["host"] = host;
           delete fwdHeaders["content-length"];
           delete fwdHeaders["transfer-encoding"];
           delete fwdHeaders["connection"];
-          const upstreamRes = await new Promise<any>((resolve, reject) => {
+          const upstreamRes = await new Promise<IncomingMessage>((resolve, reject) => {
             const upstreamReq = httpRequest(
               decision.target,
               { method: request.method, headers: fwdHeaders },
-              (res: any) => resolve(res),
+              (res: IncomingMessage) => resolve(res),
             );
             upstreamReq.on("error", reject);
-            if (request.body) Readable.fromWeb(request.body as any).pipe(upstreamReq);
+            if (request.body) Readable.fromWeb(request.body as unknown as import("node:stream/web").ReadableStream).pipe(upstreamReq);
             else upstreamReq.end();
           });
           const outHeaders = new Headers();
@@ -281,10 +281,10 @@ export async function proxy(request: NextRequest) {
           // 204/304 等 null-body 状态码：Response 构造器禁止非空 body，且这些
           // 状态码响应本来就没有 body —— 传 null，原样传透状态与头（协商缓存
           // If-None-Match 命中 304 必须透传，否则浏览器丢缓存重新拉全量）。
-          const nullBody = [204, 205, 304].includes(upstreamRes.statusCode);
+          const nullBody = [204, 205, 304].includes(upstreamRes.statusCode ?? 200);
           if (nullBody) upstreamRes.resume(); // 丢弃可能的空流，防句柄悬挂
-          return new Response(nullBody ? null : (Readable.toWeb(upstreamRes) as any), {
-            status: upstreamRes.statusCode,
+          return new Response(nullBody ? null : (Readable.toWeb(upstreamRes) as unknown as BodyInit), {
+            status: upstreamRes.statusCode ?? 200,
             headers: outHeaders,
           });
         } catch (err) {

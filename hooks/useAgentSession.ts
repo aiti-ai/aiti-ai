@@ -26,11 +26,6 @@ import { userMessageKey } from "@/lib/prompt-recovery";
 import { AgentEventConnection } from "@/lib/agent-event-connection";
 import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
 import {
-  CHAT_SCROLL_REATTACH_TOLERANCE,
-  CHAT_SCROLL_TAIL_TOLERANCE,
-  getLiveFollowAttached,
-} from "@/lib/chat-lazy-load";
-import {
   INITIAL_STREAMING_STATE,
   streamReducer,
   type ClientAssistantMessageEvent,
@@ -1960,13 +1955,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setAgentRunning(true);
           setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
           dispatch({ type: "start" });
-          // Only (re)connect when there is no live SSE for this session:
-          // reconnecting an already-open stream would drop the events
-          // emitted while the restored queue is being processed, which
-          // delayed the restored messages appearing in the chat.
-          if (!eventSourceRef.current || eventSourceSessionIdRef.current !== sid) {
-            void connectEvents(sid);
-          }
+          // ensureConnected is a no-op when a live SSE stream for this
+          // session is already open, so restored-queue events are not lost.
+          void ensureEventsConnected(sid);
           if (!st.isStreaming && st.isPromptRunning) {
             void waitForPromptSettlement(sid);
           }
@@ -1980,7 +1971,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       await new Promise((r) => setTimeout(r, 800));
       if (sessionIdRef.current === sid) await loadSession(sid);
     } catch { /* non-critical */ }
-  }, [connectEvents, waitForPromptSettlement, loadSession]);
+  }, [ensureEventsConnected, waitForPromptSettlement, loadSession]);
 
   /**
    * Decide what to do with pending recovery items: keep (re-queue, optionally
@@ -2028,7 +2019,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // connected (e.g. right after a restart) — pick it up so streaming,
         // agent_end refresh, and settlement all work as usual.
         void adoptRemoteRun(sid);
-      }
       }
       return remaining;
     } catch (e) {
@@ -2394,7 +2384,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         liveFollowFrameRef.current = null;
       }
     }
-  }, [scrollToBottom]);
+  }, []);
 
   // Load session on mount
   useEffect(() => {
