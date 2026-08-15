@@ -1912,6 +1912,44 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [opts.chatInputRef, addNotice]);
 
+  /** Pick up a run that was started server-side (queue delivery, recovery
+   * continue) — possibly before any SSE was connected (e.g. right after a
+   * restart) — so streaming, agent_end refresh, and settlement all work. */
+  const adoptRemoteRun = useCallback(async (sid: string) => {
+    try {
+      const stateRes = await fetch(apiUrl(`/api/agent/${encodeURIComponent(sid)}`));
+      if (stateRes.ok) {
+        const agentState = await stateRes.json() as { running?: boolean; state?: AgentStateResponse };
+        const st = agentState.state;
+        if (agentState.running && st && (st.isStreaming || st.isPromptRunning)) {
+          sdkAgentActiveRef.current = Boolean(st.isStreaming);
+          rpcPromptPendingRef.current = Boolean(st.isPromptRunning);
+          agentRunningRef.current = true;
+          setAgentRunning(true);
+          setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
+          dispatch({ type: "start" });
+          // Only (re)connect when there is no live SSE for this session:
+          // reconnecting an already-open stream would drop the events
+          // emitted while the restored queue is being processed, which
+          // delayed the restored messages appearing in the chat.
+          if (!eventSourceRef.current || eventSourceSessionIdRef.current !== sid) {
+            void connectEvents(sid);
+          }
+          if (!st.isStreaming && st.isPromptRunning) {
+            void waitForPromptSettlement(sid);
+          }
+        }
+      }
+    } catch { /* non-critical */ }
+    // Refresh the message list shortly after the run starts so the restored
+    // messages show up in the chat even if the SSE stream was not delivering
+    // events reliably.
+    try {
+      await new Promise((r) => setTimeout(r, 800));
+      if (sessionIdRef.current === sid) await loadSession(sid);
+    } catch { /* non-critical */ }
+  }, [connectEvents, waitForPromptSettlement, loadSession]);
+
   /**
    * Decide what to do with pending recovery items: keep (re-queue, optionally
    * continuing the transcript) and/or discard. Returns the remaining items.
@@ -1954,42 +1992,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       })();
       opts.chatInputRef?.current?.expandQueue?.();
       if (continueRun && keep.length > 0) {
-        // The run was started server-side, possibly before any SSE was
-        // connected (e.g. right after a restart) — pick it up so streaming,
-        // agent_end refresh, and settlement all work as usual.
-        void (async () => {
-          try {
-            const stateRes = await fetch(apiUrl(`/api/agent/${encodeURIComponent(sid)}`));
-            if (!stateRes.ok) return;
-            const agentState = await stateRes.json() as { running?: boolean; state?: AgentStateResponse };
-            const st = agentState.state;
-            if (agentState.running && st && (st.isStreaming || st.isPromptRunning)) {
-              sdkAgentActiveRef.current = Boolean(st.isStreaming);
-              rpcPromptPendingRef.current = Boolean(st.isPromptRunning);
-              agentRunningRef.current = true;
-              setAgentRunning(true);
-              setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
-              dispatch({ type: "start" });
-              // Only (re)connect when there is no live SSE for this session:
-              // reconnecting an already-open stream would drop the events
-              // emitted while the restored queue is being processed, which
-              // delayed the restored messages appearing in the chat.
-              if (!eventSourceRef.current || eventSourceSessionIdRef.current !== sid) {
-                void connectEvents(sid);
-              }
-              if (!st.isStreaming && st.isPromptRunning) {
-                void waitForPromptSettlement(sid);
-              }
-            }
-          } catch { /* non-critical */ }
-          // Refresh the message list shortly after the run starts so the
-          // restored messages show up in the chat even if the SSE stream was
-          // not delivering events reliably.
-          try {
-            await new Promise((r) => setTimeout(r, 800));
-            if (sessionIdRef.current === sid) await loadSession(sid);
-          } catch { /* non-critical */ }
-        })();
+        void adoptRemoteRun(sid);
       }
       return remaining;
     } catch (e) {
@@ -1997,7 +2000,28 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       addNotice({ type: "error", message: "Failed to resolve queued message recovery" });
       return pendingRecovery;
     }
-  }, [pendingRecovery, addNotice, connectEvents, waitForPromptSettlement, loadSession, normalizeQueuedMessages, opts.chatInputRef]);
+  }, [pendingRecovery, addNotice, adoptRemoteRun, opts.chatInputRef]);
+
+  /** Deliver the queued messages now — the 「继续」 button on an idle queue
+   * (e.g. queue recovered after a restart but only re-queued, never
+   * continued). Server-side this is the same runAgentContinue path as
+   * recovery's "re-queue & continue". Returns true when a run was started. */
+  const handleContinueQueue = useCallback(async (): Promise<boolean> => {
+    const sid = sessionIdRef.current;
+    if (!sid) return false;
+    try {
+      const result = await sendAgentCommand<{ started?: boolean; empty?: boolean }>(sid, {
+        type: "continue_queue",
+      });
+      if (!result?.started) return false;
+      await adoptRemoteRun(sid);
+      return true;
+    } catch (e) {
+      console.error("Failed to continue queue:", e);
+      addNotice({ type: "error", message: "Failed to continue queue" });
+      return false;
+    }
+  }, [adoptRemoteRun, addNotice]);
 
   /** Fetch the full live queue + recovery entries (with images) for export. */
   const exportQueueData = useCallback(async (): Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null> => {
@@ -2545,6 +2569,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
+    handleContinueQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
     scrollToBottom, scrollUserMsgToTop,

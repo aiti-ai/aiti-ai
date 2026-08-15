@@ -3455,11 +3455,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           ) : (
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end", marginLeft: "auto" }}>
               {/* 继续：AI 完全停止（无任何 streaming）且输入框为空时出现——点击快速发送
-                  “继续”，触发 agent 继续运行（streaming 中无意义——agent 本来就在工作）。 */}
-              {onContinue && canContinue && !hasInputText && !attachedImages.length && (queuedMessages?.followUp?.length ?? 0) === 0 && (
+                  “继续”，触发 agent 继续运行（streaming 中无意义——agent 本来就在工作）。
+                  队列非空（如重启后恢复了队列但未继续）时同样显示：点击投递整个队列。 */}
+              {onContinue && canContinue && !hasInputText && !attachedImages.length && (
                 <StreamingActionButton
                   label={t("chat.continue")}
-                  hint={t("chat.continueHint")}
+                  hint={t(queueCount > 0 ? "chat.continueQueueHint" : "chat.continueHint")}
                   onClick={onContinue}
                   bg="rgba(16,185,129,0.14)"
                   border="rgba(16,185,129,0.4)"

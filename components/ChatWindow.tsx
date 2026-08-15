@@ -235,7 +235,7 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
     lastUserMsgRef, promptAnchorActive,
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
-    handleRecallQueue,
+    handleRecallQueue, handleContinueQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom,
   } = useAgentSession({
@@ -252,10 +252,17 @@ export function ChatWindow({ session, newSessionCwd, onAgentEnd, onSessionCreate
   const [recoveryDismissed, setRecoveryDismissed] = useState(false);
 
   /** 「继续」按钮：AI 完全停止（无 streaming）时出现——点击快速发送“继续”消息，触发 agent 继续运行。
-   *  仅在 agent 空闲时可见（ChatInput 只在非 streaming 分支渲染）；用正常发送路径而非 follow-up 排队。 */
+   *  仅在 agent 空闲时可见（ChatInput 只在非 streaming 分支渲染）。
+   *  队列里有未投递消息（如重启后恢复了队列但没继续）时改为投递队列（runAgentContinue 路径），
+   *  队列为空才发送普通的“继续”。 */
   const handleContinue = useCallback(() => {
+    const queued = (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0);
+    if (queued > 0) {
+      void handleContinueQueue();
+      return;
+    }
     void handleSend(t("chat.continue"));
-  }, [handleSend, t]);
+  }, [handleSend, handleContinueQueue, queuedMessages, t]);
 
   /** Draft storage key for the active session (matches ChatInput's draftKey). */
   const draftKey = session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined);
