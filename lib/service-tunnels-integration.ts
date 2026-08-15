@@ -299,6 +299,12 @@ const SENSITIVE_PARAM_KEYS: ReadonlySet<string> = (() => {
  *  （server/domain/port/allowToolDownload 等）。 */
 const SENSITIVE_LEAF_RE = /token|secret|password|passwd|authtoken|apikey|api[_-]?key|credential|private[_-]?key/i;
 
+/** 参数键是否敏感（库 ParamSpec password 标记 + 叶键名启发式）——公开方案
+ *  持久化（lib/expose-presets.ts）用它决定哪些值需要加密存储。 */
+export function isSensitiveExposeParam(key: string): boolean {
+  return SENSITIVE_PARAM_KEYS.has(key) || SENSITIVE_LEAF_RE.test(key);
+}
+
 function maskSecret(v: string): string {
   return v.length <= 4 ? "••••" : `••••${v.slice(-4)}`;
 }
