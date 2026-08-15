@@ -432,10 +432,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
 
-  const loadSessions = useCallback(async (showLoading = false) => {
+  const loadSessions = useCallback(async (showLoading = false, forceRefresh = false): Promise<SessionInfo[] | undefined> => {
     try {
       if (showLoading) setLoading(true);
-      const res = await fetch(apiUrl("/api/sessions"));
+      const res = await fetch(apiUrl(`/api/sessions${forceRefresh ? "?refresh=1" : ""}`));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[] };
       setAllSessions(data.sessions);
@@ -457,8 +457,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
         sessionRefreshTimerRef.current = setTimeout(() => setSessionRefreshDone(false), 2000);
       }
+      return data.sessions;
     } catch (e) {
       setError(String(e));
+      return undefined;
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -470,6 +472,31 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     initialLoadDone.current = true;
     loadSessions(isFirst);
   }, [loadSessions, refreshKey]);
+
+  // Extension-triggered session mutations (session-manager archive / archive
+  // delete) change the list outside pi-web's own flows. The extension client
+  // dispatches "sm:sessions-changed" after its API calls; force a refresh=1
+  // fetch so the sidebar reflects archived sessions immediately. Sessions
+  // that vanished from the refreshed list (archived or deleted by the
+  // extension) flow through onSessionDeleted — the same cleanup the built-in
+  // sidebar delete button does (clear drafts, close the open tab).
+  const allSessionsRef = useRef<SessionInfo[]>([]);
+  useEffect(() => { allSessionsRef.current = allSessions; }, [allSessions]);
+  useEffect(() => {
+    const onChange = () => {
+      const prevIds = new Set(allSessionsRef.current.map((s) => s.id));
+      void (async () => {
+        const fresh = await loadSessions(false, true);
+        if (!fresh) return;
+        const nextIds = new Set(fresh.map((s) => s.id));
+        for (const id of prevIds) {
+          if (!nextIds.has(id)) onSessionDeleted?.(id);
+        }
+      })();
+    };
+    window.addEventListener("sm:sessions-changed", onChange);
+    return () => window.removeEventListener("sm:sessions-changed", onChange);
+  }, [loadSessions, onSessionDeleted]);
 
   // Browser storage is unavailable during server rendering. Restore the panel
   // preference after hydration so a collapsed explorer stays collapsed on reload.
