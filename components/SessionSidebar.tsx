@@ -4,7 +4,8 @@ import { useEffect, useLayoutEffect, useState, useCallback, useRef, type CSSProp
 import type { SessionInfo } from "@/lib/types";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
 import { useI18n } from "@/hooks/useI18n";
-import { ExtSlot } from "./ExtSlots";
+import { ExtSlot, useExtProvides } from "./ExtSlots";
+import { EXT_PROVIDES } from "@/lib/ext/types";
 import { apiUrl } from "@/lib/base-path";
 
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -1872,6 +1873,9 @@ function SessionItem({
   onToggleCollapse?: () => void;
 }) {
   const { t } = useI18n();
+  // 能力接管：有扩展声明 session-delete 时隐藏内置删除入口（删除流由扩展接管，
+  // 如 session-manager 的先归档再删）；没人接管则内置按钮照常显示。
+  const extOwnsDelete = useExtProvides().has(EXT_PROVIDES.sessionDelete);
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -1914,6 +1918,11 @@ function SessionItem({
     }
   }, [renameValue, session.id, session.name, onRenamed, title]);
 
+  // Live-file deletion from the sidebar. Hidden when an extension has taken
+  // over the session-delete capability (ui.provides: ["session-delete"]) —
+  // that extension owns the deletion flow (e.g. archive first, delete only
+  // on the archived record); archived sessions vanish from the list via the
+  // "sm:sessions-changed" listener → onSessionDeleted.
   const performDelete = useCallback(async () => {
     setConfirmDelete(false);
     setDeleting(true);
@@ -2142,35 +2151,37 @@ function SessionItem({
                   <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                 </svg>
               </button>
-              <button
-                onClick={handleDeleteClick}
-                title={t("sidebar.deleteWithShiftClick")}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 32, height: 32, padding: 0,
-                  background: "var(--bg-hover)", border: "1px solid var(--border)",
-                  borderRadius: 7, color: "var(--text-muted)",
-                  cursor: "pointer", flexShrink: 0,
-                  transition: "background 0.12s, color 0.12s, border-color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(239,68,68,0.08)";
-                  e.currentTarget.style.color = "#ef4444";
-                  e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.borderColor = "var(--border)";
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                  <path d="M10 11v6M14 11v6" />
-                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                </svg>
-              </button>
+              {!extOwnsDelete && (
+                <button
+                  onClick={handleDeleteClick}
+                  title={t("sidebar.deleteWithShiftClick")}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    width: 32, height: 32, padding: 0,
+                    background: "var(--bg-hover)", border: "1px solid var(--border)",
+                    borderRadius: 7, color: "var(--text-muted)",
+                    cursor: "pointer", flexShrink: 0,
+                    transition: "background 0.12s, color 0.12s, border-color 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(239,68,68,0.08)";
+                    e.currentTarget.style.color = "#ef4444";
+                    e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                    e.currentTarget.style.color = "var(--text-muted)";
+                    e.currentTarget.style.borderColor = "var(--border)";
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6M14 11v6" />
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  </svg>
+                </button>
+              )}
             </div>
           )}
         </>

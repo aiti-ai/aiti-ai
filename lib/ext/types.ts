@@ -147,6 +147,16 @@ export interface PopoverActionProvider {
   recognize(text: string, ctx: { cwd?: string; messageRole?: string }): Promise<PopoverAction[]> | PopoverAction[];
 }
 
+/** 能力接管声明：扩展声明后 core 隐藏对应的内置 UI/行为，由扩展全权接管。
+ *  能力名是 core 与扩展之间的稳定契约（不是扩展 id）——新增能力时在
+ *  EXT_PROVIDES 里登记并同步文档（AGENTS.md）。 */
+export const EXT_PROVIDES = {
+  /** 会话删除：声明后侧栏隐藏内置删除按钮（删除流由扩展接管，如先归档再在归档记录上删除）。 */
+  sessionDelete: "session-delete",
+} as const;
+
+export type ExtProvidesName = (typeof EXT_PROVIDES)[keyof typeof EXT_PROVIDES];
+
 export interface ExtUiDefinition {
   toolbar?: ExtUiItem[];
   sidebar?: ExtUiItem[];
@@ -156,6 +166,8 @@ export interface ExtUiDefinition {
   banners?: ExtUiItem[];
   pages?: ExtUiItem[];
   chatInputTop?: ExtUiItem[];
+  /** 接管内置能力（见 EXT_PROVIDES）：如 ["session-delete"] 让 core 隐藏侧栏内置删除按钮。 */
+  provides?: string[];
   /** Per-locale message table looked up via the client ctx.t(key, params). */
   i18n?: Record<string, Record<string, string>>;
 }

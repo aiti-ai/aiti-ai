@@ -27,6 +27,9 @@ export interface ExtUiItemRegistered {
 export interface ExtMeta {
   name: string;
   icon?: string | null;
+  /** 能力接管声明（manifest ui.provides，如 ["session-delete"]）——
+   *  宿主据此隐藏对应内置 UI。 */
+  provides?: string[];
 }
 
 export interface ExtUiStore {
