@@ -77,13 +77,21 @@ export interface AgentSessionInfo {
   abortBash?(): void;
 }
 
+/** 扩展看到的 wrapper 销毁原因（与 AgentWrapperEndReason 一致）：
+ *  "shutdown" = 会话真正结束（删除路由/全局清理）；"fork" = fork 后换 wrapper
+ *  （原会话文件还在）；"idle" = 10 分钟闲置 GC（文件还在，下次访问重建 wrapper）。
+ *  扩展应据此区分「会话没了」与「wrapper 回收」，回调本身需幂等（同一 id 可能
+ *  在 idle GC → 重建后再次收到 onAgentSession）。 */
+export type ExtAgentEndReason = "shutdown" | "fork" | "idle";
+
 export interface ExtAgentHooks {
   /** 注入每个 agent 会话的自定义工具（SDK ToolDefinition[]；工具 execute 闭包内直调本进程资源）。 */
   agentTools?(info: Pick<AgentSessionInfo, "sessionId" | "cwd">): ToolDefinition[];
   /** 会话启动（wrapper 创建后；扩展在此注册 agent 身份/绑定推送 sink）。 */
   onAgentSession?(info: AgentSessionInfo): void;
-  /** 会话销毁。 */
-  onAgentSessionEnd?(info: { sessionId: string }): void;
+  /** 会话 wrapper 销毁。注意：不等于「会话文件被删」——fork 换 wrapper、闲置 GC
+   *  回收也会触发；用 reason 区分。回调需幂等。 */
+  onAgentSessionEnd?(info: { sessionId: string; reason?: ExtAgentEndReason }): void;
   /** agent 一轮执行完（agent_settled）——如把最终回答回桥/回显 UI。 */
   onAgentSettled?(info: { sessionId: string; text: string }): void;
 }

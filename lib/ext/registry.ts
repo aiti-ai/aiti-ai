@@ -7,16 +7,21 @@
 import { existsSync, mkdirSync } from "fs";
 import { join, sep } from "path";
 import type {
+  AgentSessionInfo,
+  ExtAgentEndReason,
+  ExtAgentHooks,
   ExtApiContext,
   ExtCoreApi,
   ExtMiddlewareResult,
-  ExtensionSource,
   ExtServerContext,
+  ExtServerHooks,
+  ExtensionSource,
   LoadedExtension,
   ManifestExtension,
 } from "./types.ts";
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
 import { loadExtensionFromDir, scanExtensionDirs } from "./loader.ts";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 declare global {
   var __piWebExt: ExtRegistryImpl | undefined;
@@ -161,6 +166,46 @@ export class ExtRegistryImpl {
       } catch (e) {
         this.errors.set(ext.id, `startup: ${e instanceof Error ? e.message : String(e)}`);
       }
+    }
+  }
+
+  // ---- 方案 M：agent 会话级扩展点 ----
+  private agentHooks(ext: LoadedExtension): ExtAgentHooks | undefined {
+    return (ext.ext.server as (ExtServerHooks & { agent?: ExtAgentHooks }) | undefined)?.agent;
+  }
+
+  /** 收集所有扩展注入 agent 会话的 customTools（建会话时调用一次；单扩展异常不阻断整体）。 */
+  collectAgentTools(info: Pick<AgentSessionInfo, "sessionId" | "cwd">): ToolDefinition[] {
+    const tools: ToolDefinition[] = [];
+    for (const ext of this.extensions.values()) {
+      try {
+        const t = this.agentHooks(ext)?.agentTools?.(info);
+        if (t) tools.push(...t);
+      } catch (e) {
+        console.error(`[ext] ${ext.id}.agent.agentTools 失败:`, e instanceof Error ? e.message : e);
+      }
+    }
+    return tools;
+  }
+
+  /** 会话启动回调（wrapper 创建后）。 */
+  dispatchAgentSession(info: AgentSessionInfo): void {
+    for (const ext of this.extensions.values()) {
+      try { this.agentHooks(ext)?.onAgentSession?.(info); } catch (e) { console.error(`[ext] ${ext.id}.agent.onAgentSession 失败:`, e instanceof Error ? e.message : e); }
+    }
+  }
+
+  /** 会话销毁回调（wrapper destroy，含 fork/idle-GC 回收场景，reason 区分）。 */
+  dispatchAgentSessionEnd(sessionId: string, reason?: ExtAgentEndReason): void {
+    for (const ext of this.extensions.values()) {
+      try { this.agentHooks(ext)?.onAgentSessionEnd?.({ sessionId, reason }); } catch (e) { console.error(`[ext] ${ext.id}.agent.onAgentSessionEnd 失败:`, e instanceof Error ? e.message : e); }
+    }
+  }
+
+  /** agent_settled 回调（最终回答文本）。 */
+  dispatchAgentSettled(sessionId: string, text: string): void {
+    for (const ext of this.extensions.values()) {
+      try { this.agentHooks(ext)?.onAgentSettled?.({ sessionId, text }); } catch (e) { console.error(`[ext] ${ext.id}.agent.onAgentSettled 失败:`, e instanceof Error ? e.message : e); }
     }
   }
 

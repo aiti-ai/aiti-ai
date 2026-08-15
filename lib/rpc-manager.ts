@@ -163,6 +163,14 @@ function withExtensionTools(session: AgentSessionLike, toolNames: string[]): str
 // Wraps AgentSession with the same interface the rest of the app expects
 // ============================================================================
 
+/** Why a wrapper is being torn down. "shutdown" = the session is truly over
+ *  (DELETE route, global teardown); "fork" = the wrapper is discarded because
+ *  the session was forked (the old file survives); "idle" = 10-min idle GC
+ *  (the file survives, a fresh wrapper is created on next access). Extension
+ *  end-hooks receive this so they can tell "session gone" from "wrapper
+ *  recycled". */
+export type AgentWrapperEndReason = "shutdown" | "fork" | "idle";
+
 export class AgentSessionWrapper {
   private listeners: EventListener[] = [];
   private pendingUiResponses = new Map<string, PendingUiResponse>();
@@ -195,7 +203,7 @@ export class AgentSessionWrapper {
   // 回退到上一轮的最终回答——不设此标记，立即 abort 的轮次会把上一轮回答当
   // 本轮答案推给扩展。
   private runProducedAssistantText = false;
-  private onDestroyCallback: (() => void) | null = null;
+  private onDestroyCallback: ((reason: AgentWrapperEndReason) => void) | null = null;
   private shutdownPromise: Promise<void> | null = null;
   private _alive = true;
 
@@ -650,7 +658,7 @@ export class AgentSessionWrapper {
         this.resetIdleTimer();
         return;
       }
-      void this.shutdown().catch((error) => {
+      void this.shutdown("idle").catch((error) => {
         console.error("[pi-web] failed to shut down idle session:", error instanceof Error ? error.message : error);
       });
     }, 10 * 60 * 1000);
@@ -685,7 +693,7 @@ export class AgentSessionWrapper {
     };
   }
 
-  onDestroy(cb: () => void): void {
+  onDestroy(cb: (reason: AgentWrapperEndReason) => void): void {
     this.onDestroyCallback = cb;
   }
 
@@ -834,7 +842,7 @@ export class AgentSessionWrapper {
         const newSessionId = SessionManager.open(newSessionFile, sessionDir).getSessionId();
         cacheSessionPath(newSessionId, newSessionFile);
         invalidateSessionListCache();
-        await this.shutdown();
+        await this.shutdown("fork");
         return { cancelled: false, newSessionId };
       }
 
@@ -1451,7 +1459,7 @@ export class AgentSessionWrapper {
     }
   }
 
-  destroy(): void {
+  destroy(reason: AgentWrapperEndReason = "shutdown"): void {
     if (!this._alive) return;
     this._alive = false;
     if (this.idleTimer) clearTimeout(this.idleTimer);
@@ -1466,14 +1474,14 @@ export class AgentSessionWrapper {
       this.inner.dispose();
     } finally {
       try {
-        this.onDestroyCallback?.();
+        this.onDestroyCallback?.(reason);
       } finally {
         notifyRunningChange();
       }
     }
   }
 
-  async shutdown(): Promise<void> {
+  async shutdown(reason: AgentWrapperEndReason = "shutdown"): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
     if (!this._alive) return;
 
@@ -1489,7 +1497,7 @@ export class AgentSessionWrapper {
         }
         await this.inner.extensionRunner.emit?.({ type: "session_shutdown", reason: "quit" });
       } finally {
-        this.destroy();
+        this.destroy(reason);
       }
     })();
     return this.shutdownPromise;
@@ -2311,10 +2319,12 @@ export async function startRpcSession(
     const realSessionFile = inner.sessionFile as string | undefined;
     if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);
 
-    wrapper.onDestroy(() => {
+    wrapper.onDestroy((reason) => {
       registry.delete(realSessionId);
-      // 方案 M：会话销毁通知扩展
-      try { getExtRegistry().dispatchAgentSessionEnd(realSessionId); } catch (e) { console.error("[pi-web] agent 会话结束分发失败:", e instanceof Error ? e.message : e); }
+      // 方案 M：会话销毁通知扩展。destroy ≠ 会话真正结束——fork 换 wrapper、
+      // idle GC 回收都会走到这里，把 reason 原样传给扩展，让它能区分
+      // 「会话没了」和「wrapper 被回收（文件还在，下次访问会重建）」。
+      try { getExtRegistry().dispatchAgentSessionEnd(realSessionId, reason); } catch (e) { console.error("[pi-web] agent 会话结束分发失败:", e instanceof Error ? e.message : e); }
     });
     registry.set(realSessionId, wrapper);
     wrapper.beginExtensionBinding({ forceEmptySystemPrompt: toolNames?.length === 0 });
