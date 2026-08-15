@@ -69,6 +69,10 @@ async function aitiInjectHtml(port: number, url: string, snippet: string, positi
     const headers = new Headers(upstream.headers);
     headers.delete("content-length");
     headers.delete("transfer-encoding");
+    // undici fetch 自带 accept-encoding: gzip → 上游可能回压缩响应；.text()
+    // 已自动解压，body 是明文——content-encoding 必须剥掉，否则明文配 gzip 头
+    // → 浏览器 ERR_CONTENT_DECODING_FAILED。
+    headers.delete("content-encoding");
     return new Response(injected, { status: upstream.status, headers });
   } catch { return null; }
 }
@@ -186,10 +190,10 @@ export async function proxy(request: NextRequest) {
           const injected = await aitiInjectHtml(decision.port, request.url, aitiResolved.html, aitiResolved.position);
           if (injected) return injected;
         }
-        const url = new URL(`http://127.0.0.1:${decision.port}`);
-        url.pathname = decision.url.split("?")[0] ?? "/";
-        url.search = decision.url.includes("?") ? `?${decision.url.split("?")[1]}` : "";
-        console.log("[pi-web][dbg] pipe:", { host, decisionUrl: decision.url, port: decision.port, rewriteTarget: url.href, rawUrl: request.url, nextPath: request.nextUrl.pathname });
+        // URL.search setter 会把无值 query 参数（?vue&lang.scss）规范成 ?vue=&lang.scss=——
+        // 中间层应保持客户端原始 URL。用 URL 构造直接解析 decision.url
+        // （raw.pathname + raw.search），query 原样保留（构造解析不规范化无值参数）。
+        const url = new URL(decision.url, `http://127.0.0.1:${decision.port}`);
         if (decision.port === getPiWebPort()) {
           // 根路径重定向到 basePath:pi-web 无根页面(登录后 next=/ 会 404),
           // 裸 / 应落到部署前缀下
@@ -237,7 +241,56 @@ export async function proxy(request: NextRequest) {
           console.error("[pi-web][aiti-inject] 注入失败，回退普通转发:", err);
         }
         request.headers.set("host", host);
-        return NextResponse.rewrite(decision.target);
+        // HTML 页面走 rewrite（页面请求 query 无无值参数，序列化无影响；且 Next 对
+        // 手动 Response 的 text/html 会做页面渲染处理）。非 HTML（JS/CSS 模块等）用
+        // node:http 原样转发：NextResponse.rewrite 内部序列化会把无值 query 参数
+        // （?vue&lang.scss）规范成 ?vue=&lang.scss=——vite 对带 = 的空值参数返回
+        // 纯 CSS，浏览器把 CSS 当 JS 解析（Unexpected token '.'）。decision.target
+        // 是纯字符串拼接（query 未经任何 URL 库），原样转发保持客户端原始 URL。
+        // ws/upgrade 保持 rewrite（middleware 不支持 ws 代理）。
+        const isUpgrade = (request.headers.get("upgrade") ?? "").toLowerCase() === "websocket";
+        const isHtml = (request.headers.get("accept") ?? "").includes("text/html");
+        if (isUpgrade || isHtml) {
+          return NextResponse.rewrite(decision.target);
+        }
+        try {
+          const { request: httpRequest } = require("node:http");
+          const { Readable } = require("node:stream");
+          const fwdHeaders: Record<string, string> = {};
+          for (const [k, v] of request.headers.entries()) fwdHeaders[k] = v;
+          fwdHeaders["host"] = host;
+          delete fwdHeaders["content-length"];
+          delete fwdHeaders["transfer-encoding"];
+          delete fwdHeaders["connection"];
+          const upstreamRes = await new Promise<any>((resolve, reject) => {
+            const upstreamReq = httpRequest(
+              decision.target,
+              { method: request.method, headers: fwdHeaders },
+              (res: any) => resolve(res),
+            );
+            upstreamReq.on("error", reject);
+            if (request.body) Readable.fromWeb(request.body as any).pipe(upstreamReq);
+            else upstreamReq.end();
+          });
+          const outHeaders = new Headers();
+          for (const [k, v] of Object.entries(upstreamRes.headers)) {
+            if (["transfer-encoding", "connection", "content-length"].includes(k)) continue;
+            if (Array.isArray(v)) for (const x of v) outHeaders.append(k, x);
+            else outHeaders.set(k, v as string);
+          }
+          // 204/304 等 null-body 状态码：Response 构造器禁止非空 body，且这些
+          // 状态码响应本来就没有 body —— 传 null，原样传透状态与头（协商缓存
+          // If-None-Match 命中 304 必须透传，否则浏览器丢缓存重新拉全量）。
+          const nullBody = [204, 205, 304].includes(upstreamRes.statusCode);
+          if (nullBody) upstreamRes.resume(); // 丢弃可能的空流，防句柄悬挂
+          return new Response(nullBody ? null : (Readable.toWeb(upstreamRes) as any), {
+            status: upstreamRes.statusCode,
+            headers: outHeaders,
+          });
+        } catch (err) {
+          console.error("[pi-web] forward node:http failed:", err);
+          return new NextResponse("service-tunnels: upstream error", { status: 502 });
+        }
       }
     }
   }

@@ -37,6 +37,12 @@ const nextConfig: NextConfig = {
   // 重定向变成死循环，也会让 /dev/api/* 在 trailingSlash:true 时被加尾斜杠。
   // 尾斜杠规范化由 proxy.ts（middleware）统一处理。
   skipTrailingSlashRedirect: true,
+  // middleware (proxy.ts) 的 request.url 直接用客户端原始 URL（initURL），跳过 Next 的
+  // 手工组装（initProtocol://fetchHostname:port + urlQueryToSearchParams 规范化）。
+  // 组装分支在 vhost 请求下可能拼出畸形 URL（Invalid URL 500），且会把无值 query
+  // 参数（?vue&lang.scss）规范化成 ?vue=&lang.scss=——vite 对带 = 的空值参数返回
+  // 纯 CSS。中间层必须保持客户端原始 URL。
+  skipProxyUrlNormalize: true,
   // Dev server runs against its own build directory (.next-dev) so it can
   // coexist with the production `next start` (.next) on a different port.
   distDir: process.env.PI_WEB_DIST_DIR || (process.env.PI_WEB_DEV_DIST ? ".next-dev" : ".next"),

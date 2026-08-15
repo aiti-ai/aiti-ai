@@ -93,6 +93,26 @@ function NoAuthBadge({ t }: { t: (key: string) => string }) {
   );
 }
 
+/** 注入端口条目归一化：纯数字（老格式）或 { port, basePath } → 统一对象。 */
+function normInjectEntries(ports: unknown): Array<{ port: number; basePath?: string }> {
+  if (!Array.isArray(ports)) return [];
+  return ports
+    .map((e) => {
+      if (typeof e === "number" && Number.isFinite(e) && e > 0) return { port: e };
+      if (e && typeof e === "object" && Number.isFinite(Number((e as { port?: unknown }).port))) {
+        const port = Number((e as { port: unknown }).port);
+        if (port <= 0 || port > 65535) return null;
+        const bp = typeof (e as { basePath?: unknown }).basePath === "string" ? (e as { basePath: string }).basePath.replace(/^\/+/, "").replace(/\/+$/, "") : "";
+        return { port, ...(bp ? { basePath: "/" + bp } : {}) };
+      }
+      return null;
+    })
+    .filter((e): e is { port: number; basePath?: string } => e !== null);
+}
+
+/** vhost 登记开关：端口转发属性（与注入解耦），所有端口通用。
+ *  开 = enroll open binding（<port>.域名 可访问）；basePath = 服务真实前缀。 */
+
 export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
   onClose: () => void;
   onOpenFile?: (filePath: string, fileName: string) => void;
@@ -120,7 +140,9 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
   const [infoModal, setInfoModal] = useState<"access" | "auth" | null>(null);
   // 注入 JS（aiti-devtools 扩展 inject-ports）：null = 扩展未加载/不可用。
   // Ports 页端口卡与 Pi-web 页共用这一份状态（对话框轮询同步）。
-  const [injectPorts, setInjectPorts] = useState<number[] | null>(null);
+  // 条目兼容两种格式：纯数字（老格式）或 { port, basePath }（basePath：
+  // 该端口真实服务的前缀，open vhost forward 映射剥 deploy 前缀后接回）。
+  const [injectEntries, setInjectEntries] = useState<Array<{ port: number; basePath?: string }> | null>(null);
   const [injectBaseUrl, setInjectBaseUrl] = useState<string | null>(null);
 
   const refresh = useCallback((force = false) => {
@@ -158,16 +180,16 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
       })
       .catch(() => {});
     // inject-ports（aiti-devtools 扩展）：注入开关状态。扩展未加载（404）→
-    // null = 不可用，UI 只显示提示不给开关。
+    // null = 不可用，UI 只显示提示不给开关。条目纯数字或 { port, basePath }。
     fetch(apiUrl("/api/extensions/aiti-devtools/inject-ports"))
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: { ports?: number[]; baseUrl?: string | null } | null) => {
-        setInjectPorts(d ? d.ports ?? [] : null);
+      .then((d: { ports?: Array<number | { port: number; basePath?: string }>; baseUrl?: string | null } | null) => {
+        setInjectEntries(d ? normInjectEntries(d.ports) : null);
         setInjectBaseUrl(d ? d.baseUrl ?? null : null);
       })
       .catch(() => {
         // 网络抖动不清空已加载状态（首次加载失败保持 null=不可用）
-        setInjectPorts((p) => p ?? null);
+        setInjectEntries((p) => p ?? null);
       });
   }, [t, locale]);
 
@@ -237,20 +259,24 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
   }, [refresh]);
 
   /** 注入开关：把端口加/移出 aiti-devtools 的 inject-ports。baseUrl 原样回传
-   *  （扩展 PUT 未带 baseUrl 时也会保留旧值，双保险）。乐观更新，失败重拉。 */
-  const toggleInject = useCallback((port: number, on: boolean) => {
-    const cur = injectPorts ?? [];
-    const next = on ? [...cur.filter((p) => p !== port), port] : cur.filter((p) => p !== port);
-    setInjectPorts(next); // optimistic
+   *  （扩展 PUT 未带 baseUrl 时也会保留旧值，双保险）。开关时保留既有
+   *  basePath（外部端口的路径映射）。setBasePath 单独改 basePath（不改开关）。
+   *  乐观更新，失败重拉。 */
+  const toggleInject = useCallback((port: number, on: boolean, basePath?: string) => {
+    const cur = injectEntries ?? [];
+    const existing = cur.find((e) => e.port === port);
+    const entry = { port, ...(basePath !== undefined ? (basePath ? { basePath } : {}) : existing?.basePath ? { basePath: existing.basePath } : {}) };
+    const next = on ? [...cur.filter((e) => e.port !== port), entry] : cur.filter((e) => e.port !== port);
+    setInjectEntries(next); // optimistic
     fetch(apiUrl("/api/extensions/aiti-devtools/inject-ports"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ports: next, ...(injectBaseUrl ? { baseUrl: injectBaseUrl } : {}) }),
     })
       .then((r) => r.json())
-      .then((d: { ports?: number[] }) => { if (d && Array.isArray(d.ports)) setInjectPorts(d.ports); })
+      .then((d: { ports?: Array<number | { port: number; basePath?: string }> }) => { if (d && Array.isArray(d.ports)) setInjectEntries(normInjectEntries(d.ports)); })
       .catch(() => refresh(false));
-  }, [injectPorts, injectBaseUrl, refresh]);
+  }, [injectEntries, injectBaseUrl, refresh]);
 
   const toggleExpand = (port: number) => {
     setExpanded((prev) => {
@@ -304,7 +330,7 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
               style={{
                 padding: "6px 14px",
                 background: "none",
-                border: "none",
+                borderLeft: "none", borderRight: "none", borderTop: "none",
                 borderBottom: tab === k ? "2px solid var(--accent)" : "2px solid transparent",
                 color: tab === k ? "var(--text)" : "var(--text-muted)",
                 cursor: "pointer",
@@ -486,14 +512,18 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
                       </div>
                       <AuthExposeSection port={s.port} t={t} isMobile={isMobile} openInNewTab={openInNewTab}
                         exposes={(data?.exposes ?? []).filter((e) => e.port === s.port)}
+                        serviceBasePath={injectEntries?.find((e) => e.port === s.port)?.basePath}
+                        onSetBasePath={(p, bp) => toggleInject(p, true, bp)}
                         onStopExpose={stopExpose}
                         onChanged={() => refresh(false)}
                         onGoManageUsers={() => setTab("users")} />
+                      {/* BasePath：公开的端口转发属性（与注入无关） */}
+                      <BasePathSection port={s.port} t={t} entry={injectEntries?.find((e) => e.port === s.port)} onSave={toggleInject} />
                       {/* 注入 JS（AITI 调试器）——proxy 模式已生效；tunnel 模式由 service-tunnels 开发中 */}
                       <InjectJsSection
                         port={s.port}
-                        enabled={injectPorts?.includes(s.port) ?? false}
-                        available={injectPorts !== null}
+                        enabled={injectEntries?.some((e) => e.port === s.port) ?? false}
+                        available={injectEntries !== null}
                         variant="port"
                         t={t}
                         onToggle={toggleInject}
@@ -504,6 +534,34 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
               );
             })
           )}
+          {/* 已登记的外部端口以普通卡片形式混入列表（进程扫描看不到，但 vhost
+              代理确实在暴露），加 icon 标记外部 + 取消登记入口。 */}
+          {(injectEntries ?? []).filter((e) => !(data?.services ?? []).some((s) => s.port === e.port) && e.port !== self?.port).map((e) => {
+            const vhostUrl = currentDomainSuffix
+              ? `${scheme}//${e.port}${currentDomainSuffix}${pagePort}${e.basePath ?? BASE_PATH}`
+              : `http://${e.port}${suffixes[0] ?? ".pi.localhost"}${e.basePath ?? ""}`;
+            return (
+              <div key={`ext-${e.port}`} style={{ marginBottom: 6, border: "1px dashed var(--border)", borderRadius: 8, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px" }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 600, color: "var(--accent)", minWidth: 52, flexShrink: 0 }}>{e.port}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, color: "var(--text)", display: "flex", alignItems: "center", gap: 6 }}>
+                      <span title={t("services.enrolledExtHint")} style={{ padding: "0 5px", background: "var(--bg-hover)", borderRadius: 4, fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>🔌 {t("services.enrolledExtNotTree")}</span>
+                      {e.basePath && <span title={t("services.enrolledBasePathHint")} style={{ padding: "0 5px", background: "var(--bg-hover)", borderRadius: 4, fontSize: 10, color: "var(--text-muted)", fontFamily: "var(--font-mono)", flexShrink: 0 }}>base {e.basePath}</span>}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {vhostUrl}
+                    </div>
+                  </div>
+                  <button onClick={() => openInNewTab(vhostUrl)} title={vhostUrl} style={{ flexShrink: 0, padding: "4px 12px", background: "var(--accent)", border: "none", borderRadius: 6, color: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>{t("services.open")}</button>
+                  <button onClick={() => toggleInject(e.port, false)} title={t("services.enrolledUnenrollHint")}
+                    style={{ flexShrink: 0, padding: "4px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "#f87171", cursor: "pointer", fontSize: 11 }}>
+                    {t("services.enrolledUnenroll")}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* Bottom: configured tunnels + info entries (open modals) */}
@@ -531,7 +589,7 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
               exposes={data?.exposes ?? []}
               onShowDetail={setDetailFor}
               onStopExpose={stopExpose}
-              injectPorts={injectPorts}
+              injectPorts={injectEntries}
               onToggleInject={toggleInject} />
           </div>
         )}
@@ -932,6 +990,39 @@ function UrlRow({ url, label, copied, onCopy, onOpen, isMobile }: { url: string;
  *  API）：端口出现在列表后，经该端口访问通道返回的 HTML 自动注入
  *  aiti-launcher.js。执行侧：proxy 模式（服务虚拟主机）已生效；tunnel 模式
  *  的响应注入由 service-tunnels 开发中（界面已就绪）。 */
+/** BasePath（公开、与注入无关）：端口真实部署前缀。vhost 转发剥部署前缀后接回
+ *  它（如 vite base=/dev/ 填 dev）——base 应用不接回会 302 死循环。独立行展示，
+ *  与注入开关状态无关。保存 = 重新 enroll binding（即时生效）。 */
+function BasePathSection({ port, entry, t, onSave }: {
+  port: number;
+  entry: { port: number; basePath?: string } | undefined;
+  t: (key: string, params?: Record<string, string>) => string;
+  onSave: (port: number, on: boolean, basePath?: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const cur = entry?.basePath ?? "";
+  const value = draft ?? cur;
+  const dirty = draft !== null && draft.replace(/^\/+/, "").replace(/\/+$/, "") !== cur;
+  return (
+    <div style={{ borderTop: "1px solid var(--border)", marginTop: 10, paddingTop: 10, display: "flex", alignItems: "center", gap: 6 }} title={t("services.injectJsBasePathHint")}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", flexShrink: 0 }}>Base Path</span>
+      <input
+        type="text"
+        value={value}
+        placeholder={t("services.injectJsBasePathPlaceholder")}
+        onChange={(e) => setDraft(e.target.value)}
+        style={{ flex: 1, minWidth: 0, padding: "2px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 11, fontFamily: "var(--font-mono)" }}
+      />
+      {dirty && (
+        <button onClick={() => { onSave(port, true, value); setDraft(null); }}
+          style={{ flexShrink: 0, padding: "2px 10px", background: "var(--accent)", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", fontSize: 10 }}>
+          ✓
+        </button>
+      )}
+    </div>
+  );
+}
+
 function InjectJsSection({ port, enabled, available, variant, t, onToggle }: {
   port: number;
   enabled: boolean;
@@ -1966,7 +2057,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
   /** Stop ONE expose by name (proxy vhost rows — removes binding + record). */
   onStopExpose: (name: string) => void;
   /** 注入 JS（aiti-devtools 扩展 inject-ports）—— null = 扩展未加载/不可用。 */
-  injectPorts: number[] | null;
+  injectPorts: Array<{ port: number; basePath?: string }> | null;
   /** 注入开关：加/移出 pi-web 自身端口。 */
   onToggleInject: (port: number, on: boolean) => void;
 }) {
@@ -2455,7 +2546,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
         <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
           <InjectJsSection
             port={self.port}
-            enabled={injectPorts?.includes(self.port) ?? false}
+            enabled={injectPorts?.some((e) => e.port === self.port) ?? false}
             available={injectPorts !== null}
             variant="self"
             t={t}
