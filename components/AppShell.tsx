@@ -13,6 +13,7 @@ import { openFileTab, saveFileViewerState } from "./file-tab-state";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
+import { ExtensionsConfig } from "./ExtensionsConfig";
 import { ServicesDialog } from "./ServicesDialog";
 import { SelfExposeAlert } from "./SelfExposeAlert";
 import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas } from "./ExtSlots";
@@ -138,6 +139,7 @@ export function AppShell() {
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
   const [pluginsConfigOpen, setPluginsConfigOpen] = useState(false);
+  const [extensionsConfigOpen, setExtensionsConfigOpen] = useState(false);
   const [servicesOpen, setServicesOpen] = useState(false);
   // 从顶栏告警进入时先停在 Self 页；普通打开默认 Ports 页，关闭时复位。
   const [servicesInitialTab, setServicesInitialTab] = useState<"ports" | "self" | "users">("ports");
@@ -1702,6 +1704,17 @@ export function AppShell() {
               </svg>
             ),
           },
+          {
+            label: translate("common.extensions"),
+            onClick: () => setExtensionsConfigOpen(true),
+            disabled: false,
+            icon: (
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
+                <circle cx="12" cy="12" r="4" />
+              </svg>
+            ),
+          },
         ] as { label: string; onClick: () => void; disabled: boolean; icon: React.ReactNode }[]).map(({ label, onClick, disabled, icon }) => (
           <button
             key={label}
@@ -2738,6 +2751,9 @@ export function AppShell() {
         onClose={() => setPluginsConfigOpen(false)}
         onReloaded={() => setSessionKey((k) => k + 1)}
       />
+    )}
+    {extensionsConfigOpen && (
+      <ExtensionsConfig onClose={() => setExtensionsConfigOpen(false)} />
     )}
     {servicesOpen && (
       <ServicesDialog

@@ -4,7 +4,7 @@
  * globalThis.__piWebExt so the middleware bundle (proxy.ts, separate Next
  * bundle) can invoke hooks without importing extension code.
  */
-import { existsSync, mkdirSync, readFileSync, statSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 import { join, sep } from "path";
 import type {
@@ -22,6 +22,7 @@ import type {
 } from "./types.ts";
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
 import { loadExtensionFromDir, scanExtensionDirs } from "./loader.ts";
+import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 declare global {
@@ -41,6 +42,8 @@ export interface RegistryOptions {
   /** Test hook: override the data root. */
   dataRootOverride?: string;
 }
+
+const DISABLED_FILE = "disabled-extensions.json";
 
 export class ExtRegistryImpl {
   core: ExtCoreApi;
@@ -64,6 +67,42 @@ export class ExtRegistryImpl {
 
   extensionsRoot(): string {
     return this.extensionsRootOverride ?? extensionsRoot();
+  }
+
+  // ── enabled/disabled ───────────────────────────────────────────────────────
+  // 持久化到 <dataRoot>/disabled-extensions.json（数组）；disable 的扩展在
+  // loadAll 时跳过（status 标记 disabled:true），enable 后 reload 恢复。
+
+  private disabledExtensions(): Set<string> {
+    try {
+      const raw = readFileSync(join(this.dataRoot(), DISABLED_FILE), "utf8");
+      return new Set(JSON.parse(raw) as string[]);
+    } catch {
+      return new Set();
+    }
+  }
+
+  private persistDisabled(set: Set<string>): void {
+    try {
+      writeFileSync(join(this.dataRoot(), DISABLED_FILE), JSON.stringify([...set].sort(), null, 2));
+    } catch (e) {
+      console.error("[ext] failed to persist disabled extensions:", e);
+    }
+  }
+
+  isEnabled(id: string): boolean {
+    return !this.disabledExtensions().has(id);
+  }
+
+  /**
+   * 启用/禁用扩展（持久化）。返回新的 disabled 集合。调用方随后应
+   * reload()（或 loadAll+startAll）让变更生效。
+   */
+  setEnabled(id: string, enabled: boolean): void {
+    const set = this.disabledExtensions();
+    if (enabled) set.delete(id);
+    else set.add(id);
+    this.persistDisabled(set);
   }
 
   extraExtensionsRoots(): string[] {
@@ -97,6 +136,7 @@ export class ExtRegistryImpl {
    * shadowed (skipped silently) once a higher-priority root loaded it.
    */
   async loadAll(): Promise<void> {
+    this.invalidateBootGraph();
     this.extensions.clear();
     this.errors.clear();
     const seen = new Set<string>();
@@ -105,6 +145,7 @@ export class ExtRegistryImpl {
         const id = dir.split(sep).pop() ?? dir;
         if (seen.has(id)) continue; // 高优先级根已加载 → 同名遮蔽跳过
         seen.add(id);
+        if (this.disabledExtensions().has(id)) continue; // 用户禁用 → 不加载（status 里不出现，界面用 isEnabled 展示）
         try {
           const ext = await loadExtensionFromDir(dir);
           if (!ext) {
@@ -158,6 +199,32 @@ export class ExtRegistryImpl {
       source: e.source,
       icon: e.ext.icon ?? null,
     }));
+  }
+
+  /**
+   * 启动图（client-modules）：前端 loader 的输入。内容不变则返回稳定对象
+   * （与 clientHash 的 mtime 缓存同源，扩展 reload 后自动重算）。
+   */
+  private _bootGraph: PiWebBootGraph | null = null;
+  bootGraph(): PiWebBootGraph {
+    if (this._bootGraph) return this._bootGraph;
+    this._bootGraph = buildBootGraph(
+      [...this.extensions.values()]
+        .filter((e) => e.ext.client)
+        .map((e) => ({
+          id: e.id,
+          assetUrl: `/api/extensions/${e.id}/assets/${e.ext.client}`,
+          hash: this.clientHash(e),
+          // inject 边预留：扩展可在 ui 里声明 clientDependsOn（DSH inject 边）。
+          inject: e.ext.ui?.clientDependsOn,
+        })),
+    );
+    return this._bootGraph;
+  }
+
+  /** 使启动图失效（reload/loadAll 后调用），下次访问重算。 */
+  private invalidateBootGraph(): void {
+    this._bootGraph = null;
   }
 
   /** 扩展 client 文件内容哈希（按 mtime 缓存：文件变化才重算）——clientUrl?v=<hash> 强制浏览器重新拉取 */

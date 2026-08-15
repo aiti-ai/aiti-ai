@@ -7,6 +7,11 @@
  *        + bundled baseline            (<pkgDir>/extensions, PI_WEB_BUNDLED_EXTENSIONS_DIR overrides)
  * Data:  ~/.pi/web/data/<id>/         (PI_WEB_DATA_DIR overrides)
  *
+ * Dev/prod isolation: when PI_WEB_DEV_DIST=1 (dev server / systemd dev service),
+ * the default roots move to ~/.pi/web-dev/{extensions,data} so the dev instance
+ * never loads the production extension set nor shares its runtime state.
+ * Explicit PI_WEB_EXTENSIONS_DIR / PI_WEB_DATA_DIR always win.
+ *
  * Priority when an id exists in several roots: user > extra (listed order) > dev > bundled.
  * Code/data separation keeps updates from clobbering runtime state.
  */
@@ -14,8 +19,15 @@ import { existsSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
 
+/** dev 实例根（PI_WEB_DEV_DIST=1）——与生产扩展隔离，避免共享加载/运行时状态。 */
+function webRoot(): string {
+  return process.env.PI_WEB_DEV_DIST === "1"
+    ? join(homedir(), ".pi", "web-dev")
+    : join(homedir(), ".pi", "web");
+}
+
 export function extensionsRoot(): string {
-  return process.env.PI_WEB_EXTENSIONS_DIR || join(homedir(), ".pi", "web", "extensions");
+  return process.env.PI_WEB_EXTENSIONS_DIR || join(webRoot(), "extensions");
 }
 
 /** pi-web 程序目录（bin/pi-web.js spawn 时显式注入；dev 模式回退 process.cwd()）。 */
@@ -58,7 +70,7 @@ export function extraExtensionsRoots(): string[] {
 }
 
 export function dataRoot(): string {
-  return process.env.PI_WEB_DATA_DIR || join(homedir(), ".pi", "web", "data");
+  return process.env.PI_WEB_DATA_DIR || join(webRoot(), "data");
 }
 
 /** Resolve (and create) the data directory for one extension. */
