@@ -95,18 +95,19 @@ export async function prefetch(id: string): Promise<void> {
  * @returns true 当本次真正执行了注册（用于调用方决定是否需要反卷）。
  */
 export async function materialize(id: string, makeCtx: (id: string) => unknown): Promise<boolean> {
-  let mod = modules.get(id);
-  if (!mod) {
-    await prefetch(id);
-    mod = modules.get(id);
-  }
-  if (!mod) return false;
-  if (mod.materialized) return false;
-  // 互斥：并发调用共享一个 in-flight（启动批量 materialize 与 slot 按需触发
-  // 可能同时到达——避免同一 register 执行两次导致重复注册）。
+  // 互斥必须在函数入口同步建立（prefetch 的 await 之前）——并发调用
+  // （StrictMode 双 effect / 启动批量 + slot 按需触发）若都经过 await prefetch
+  // 再检查 in-flight，会交错到各自执行 register → 重复注册。
   const inFlight = materializing.get(id);
   if (inFlight) return inFlight;
   const run = (async () => {
+    let mod = modules.get(id);
+    if (!mod) {
+      await prefetch(id);
+      mod = modules.get(id);
+    }
+    if (!mod) return false;
+    if (mod.materialized) return false;
     try {
       mod.registerFn?.(makeCtx(id));
       mod.materialized = true;
