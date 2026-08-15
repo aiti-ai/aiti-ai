@@ -361,6 +361,8 @@ export const zhCNLocale: LocalePlugin = {
     "sidebar.changedFiles": "{count} 个变更文件",
     "sidebar.loading": "加载中...",
     "sidebar.noSessions": "未找到会话",
+    "sidebar.draft": "草稿",
+    "sidebar.draftTitle": "尚未保存——agent 回复后正式写入",
     "sidebar.agentRunning": "Agent 运行中…",
     "sidebar.newActivity": "有新活动",
     "sidebar.newSessionActivity": "会话有新活动",

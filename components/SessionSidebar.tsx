@@ -80,6 +80,11 @@ function ToolbarIconButton({
 
 interface Props {
   selectedSessionId: string | null;
+  /** Full selected session object — used to render a client-side draft row when
+   *  its id isn't on disk yet. pi only persists the .jsonl on the first assistant
+   *  reply (SessionManager._persist returns early without an assistant message),
+   *  so /api/sessions can't list it during that window. */
+  selectedSession?: SessionInfo | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean) => void;
   onNewSession?: (sessionId: string, cwd: string) => void;
   initialSessionId?: string | null;
@@ -390,7 +395,7 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, fileExplorerRef: fileExplorerRefProp }: Props) {
+export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, fileExplorerRef: fileExplorerRefProp }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -901,8 +906,23 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         }
       : null);
 
+  // Client-side draft row: the active session whose id isn't persisted yet.
+  // pi writes the .jsonl only on the first assistant reply (SessionManager._persist
+  // returns early while there's no assistant message), so /api/sessions cannot
+  // list it during that window. Surface a draft row keyed by the in-memory session
+  // so the sidebar reflects it immediately; it is dropped automatically once the
+  // file lands and the next list refresh includes the real entry.
+  const draftSession = (!loading
+    && selectedSession?.id
+    && selectedSession.cwd
+    && projectRootFor(selectedSession.cwd) === selectedProject
+    && !allSessions.some((s) => s.id === selectedSession.id))
+    ? selectedSession
+    : null;
+  const sessionsForTree = draftSession ? [draftSession, ...filteredSessions] : filteredSessions;
+
   // Build parent-child tree within the filtered set
-  const sessionTree = buildSessionTree(filteredSessions);
+  const sessionTree = buildSessionTree(sessionsForTree);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1568,7 +1588,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             {error}
           </div>
         )}
-        {!loading && !error && filteredSessions.length === 0 && (
+        {!loading && !error && filteredSessions.length === 0 && !draftSession && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("sidebar.noSessions")}
           </div>
@@ -1577,6 +1597,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           <SessionTreeItem
             key={node.session.id}
             node={node}
+            isDraft={node.session.id === draftSession?.id}
             selectedSessionId={selectedSessionId}
             runningSessionIds={runningSessionIds}
             unreadSessionIds={unreadSessionIds}
@@ -1721,6 +1742,7 @@ function SessionTreeItem({
   onRenamed,
   onSessionDeleted,
   depth,
+  isDraft,
 }: {
   node: SessionTreeNode;
   selectedSessionId: string | null;
@@ -1730,6 +1752,7 @@ function SessionTreeItem({
   onRenamed?: () => void;
   onSessionDeleted?: (id: string) => void;
   depth: number;
+  isDraft?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const hasChildren = node.children.length > 0;
@@ -1757,6 +1780,7 @@ function SessionTreeItem({
           onRenamed={onRenamed}
           onDeleted={(id) => onSessionDeleted?.(id)}
           depth={depth}
+          isDraft={isDraft}
           hasChildren={hasChildren}
           collapsed={collapsed}
           onToggleCollapse={() => setCollapsed((v) => !v)}
@@ -1860,6 +1884,7 @@ function SessionItem({
   hasChildren = false,
   collapsed = false,
   onToggleCollapse,
+  isDraft,
 }: {
   session: SessionInfo;
   isSelected: boolean;
@@ -1872,6 +1897,7 @@ function SessionItem({
   hasChildren?: boolean;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  isDraft?: boolean;
 }) {
   const { t } = useI18n();
   // 能力接管：有扩展声明 session-delete 时隐藏内置删除入口（删除流由扩展接管，
@@ -2075,6 +2101,24 @@ function SessionItem({
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                 {title}
               </span>
+              {isDraft && (
+                <span
+                  title={t("sidebar.draftTitle")}
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 9,
+                    fontWeight: 600,
+                    fontStyle: "italic",
+                    color: "var(--text-dim)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 4,
+                    padding: "0 4px",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {t("sidebar.draft")}
+                </span>
+              )}
             </div>
             <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 11, minWidth: 0 }}>
               {isRunning ? (
@@ -2122,8 +2166,8 @@ function SessionItem({
             </button>
           )}
 
-          {/* Action buttons — shown on hover */}
-          {hovered && (
+          {/* Action buttons — shown on hover (hidden for unsaved drafts) */}
+          {hovered && !isDraft && (
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
               <ExtSlot name="sessionRowActions" currentSession={session} />
               <button

@@ -361,6 +361,8 @@ export const enLocale: LocalePlugin = {
     "sidebar.changedFiles": "{count} changed files",
     "sidebar.loading": "Loading...",
     "sidebar.noSessions": "No sessions found",
+    "sidebar.draft": "Draft",
+    "sidebar.draftTitle": "Not saved yet — appears once the agent replies",
     "sidebar.agentRunning": "Agent running…",
     "sidebar.newActivity": "New activity",
     "sidebar.newSessionActivity": "New session activity",
