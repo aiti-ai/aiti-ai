@@ -151,6 +151,23 @@ export async function exposeService(
   } = {},
 ) {
   const st = getServiceTunnels();
+  // basePath 继承：调用方（服务端口“公开”表单）没传 serviceBasePath 时，
+  // 从已登记的注入端口配置（inject-ports.json）继承——open binding 会被
+  // expose 覆盖写，不带 basePath 会把 aiti 扩展 enroll 的前缀冲掉 →
+  // base 应用（vite --base）302 死循环。basePath 是端口属性，跟端口走。
+  let serviceBasePath = opts.serviceBasePath;
+  if (serviceBasePath === undefined) {
+    try {
+      const { readFileSync } = await import("node:fs");
+      const dataDir = process.env.PI_WEB_DATA_DIR ?? `${process.env.HOME}/.pi/web/data`;
+      const inj = JSON.parse(readFileSync(`${dataDir}/aiti-devtools/inject-ports.json`, "utf8"));
+      const ent = (inj?.ports ?? []).find(
+        (e: number | { port: number }) => (typeof e === "number" ? e === port : e.port === port),
+      );
+      const bp = typeof ent === "object" ? ent.basePath : undefined;
+      if (bp) serviceBasePath = bp;
+    } catch { /* 配置不存在/解析失败 → 保持缺省 */ }
+  }
   const res = await st.auth.expose(port, {
     auth: opts.auth ?? false,
     mode: opts.mode,
@@ -163,6 +180,7 @@ export async function exposeService(
     allowToolDownload: opts.allowToolDownload,
     tunnelParams: opts.tunnelParams,
     providerParams: opts.providerParams,
+    serviceBasePath,
     // Caller-side naming: the SAME port can be exposed several ways at once
     // (redundant channels — a dead tunnel/provider never takes the others
     // down). tunnelName carries provider + site + tunnel type (+ mode for
@@ -311,6 +329,12 @@ const SENSITIVE_PARAM_KEYS: ReadonlySet<string> = (() => {
  *  PI_WEB_EXPOSE 顶层 ngrokAuthtoken 与 user.password。不匹配非秘密键
  *  （server/domain/port/allowToolDownload 等）。 */
 const SENSITIVE_LEAF_RE = /token|secret|password|passwd|authtoken|apikey|api[_-]?key|credential|private[_-]?key/i;
+
+/** 参数键是否敏感（库 ParamSpec password 标记 + 叶键名启发式）——公开方案
+ *  持久化（lib/expose-presets.ts）用它决定哪些值需要加密存储。 */
+export function isSensitiveExposeParam(key: string): boolean {
+  return SENSITIVE_PARAM_KEYS.has(key) || SENSITIVE_LEAF_RE.test(key);
+}
 
 function maskSecret(v: string): string {
   return v.length <= 4 ? "••••" : `••••${v.slice(-4)}`;

@@ -270,7 +270,7 @@ function SegmentedScope({
             title={disabled ? t("trust.projectScopeUnavailable") : undefined}
             style={{
               width: 76,
-              border: "none",
+              borderLeft: "none", borderTop: "none", borderBottom: "none",
               borderRight: scope === "global" ? "1px solid var(--border)" : "none",
               background: active ? "var(--bg-selected)" : "none",
               color: active ? "var(--text)" : "var(--text-muted)",

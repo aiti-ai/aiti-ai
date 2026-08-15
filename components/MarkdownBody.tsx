@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { encodeFilePathForApi } from "@/lib/file-paths";
@@ -253,6 +254,11 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
   };
 
   const Tag = as as React.ElementType;
+  // The tooltip and popover are overlays (position: fixed) — inside a <tr>
+  // they would be invalid <tr> children (hydration error), so render them
+  // through a portal to document.body instead.
+  const renderOverlay = (node: ReactNode) =>
+    as === "tr" && typeof document !== "undefined" ? createPortal(node, document.body) : node;
   // Follow-the-mouse tooltip: position updated imperatively on mousemove (no
   // re-render per move); mouseenter sets it via rAF so it shows even if the
   // pointer doesn't move afterwards.
@@ -281,7 +287,7 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
       style={{ position: "relative", cursor: "pointer" }}
     >
       {children}
-      {showTip && !segments && (
+      {renderOverlay(showTip && !segments && (
         <span
           ref={tipRef}
           data-quote-tip
@@ -302,10 +308,10 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
         >
           {t("chat.quoteReplyHint")}
         </span>
-      )}
+      ))}
       {/* segments 可能是 []（truthy）——引用弹窗只在有内容时挂载，否则会走到
           QuoteReplyPopover 的空态早退，改变 Hook 计数。 */}
-      {segments && segments.length > 0 && (
+      {renderOverlay(segments && segments.length > 0 && (
         <QuoteReplyPopover
           innerRef={popoverRef}
           segments={segments}
@@ -323,7 +329,7 @@ function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, c
             zIndex: 60,
           } : undefined}
         />
-      )}
+      ))}
     </Tag>
   );
 }

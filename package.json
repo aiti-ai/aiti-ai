@@ -49,8 +49,9 @@
     "qrcode": "^1.5.4",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
+    "react-dom": "^19.2.4",
     "remark-frontmatter": "^5.0.0",
-    "service-tunnels": "0.3.36",
+    "service-tunnels": "^0.3.38",
     "undici": "8.10.0"
   },
   "devDependencies": {

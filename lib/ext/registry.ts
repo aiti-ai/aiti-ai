@@ -4,19 +4,25 @@
  * globalThis.__piWebExt so the middleware bundle (proxy.ts, separate Next
  * bundle) can invoke hooks without importing extension code.
  */
-import { existsSync, mkdirSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, statSync } from "fs";
+import { createHash } from "crypto";
 import { join, sep } from "path";
 import type {
+  AgentSessionInfo,
+  ExtAgentEndReason,
+  ExtAgentHooks,
   ExtApiContext,
   ExtCoreApi,
   ExtMiddlewareResult,
-  ExtensionSource,
   ExtServerContext,
+  ExtServerHooks,
+  ExtensionSource,
   LoadedExtension,
   ManifestExtension,
 } from "./types.ts";
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
 import { loadExtensionFromDir, scanExtensionDirs } from "./loader.ts";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 declare global {
   var __piWebExt: ExtRegistryImpl | undefined;
@@ -146,11 +152,29 @@ export class ExtRegistryImpl {
       id: e.id,
       name: e.name,
       version: e.version,
-      clientUrl: e.ext.client ? `/api/extensions/${e.id}/assets/${e.ext.client}` : null,
+      // clientUrl 带文件内容哈希（?v=<sha256 前 12 位>）：扩展 client 更新 → URL 变 → 浏览器强制重新拉取（无需硬刷/清缓存）
+      clientUrl: e.ext.client ? `/api/extensions/${e.id}/assets/${e.ext.client}?v=${this.clientHash(e)}` : null,
       ui: e.ext.ui ?? null,
       source: e.source,
       icon: e.ext.icon ?? null,
     }));
+  }
+
+  /** 扩展 client 文件内容哈希（按 mtime 缓存：文件变化才重算）——clientUrl?v=<hash> 强制浏览器重新拉取 */
+  private _clientHashCache = new Map<string, { mtime: number; hash: string }>();
+  private clientHash(e: LoadedExtension): string {
+    try {
+      if (!e.ext.client) return "";
+      const p = join(e.dir, e.ext.client);
+      const st = statSync(p);
+      const c = this._clientHashCache.get(e.id);
+      if (c && c.mtime === st.mtimeMs) return c.hash;
+      const hash = createHash("sha256").update(readFileSync(p)).digest("hex").slice(0, 12);
+      this._clientHashCache.set(e.id, { mtime: st.mtimeMs, hash });
+      return hash;
+    } catch {
+      return "";
+    }
   }
 
   /** Invoke all server.startup hooks (best-effort per extension). */
@@ -161,6 +185,46 @@ export class ExtRegistryImpl {
       } catch (e) {
         this.errors.set(ext.id, `startup: ${e instanceof Error ? e.message : String(e)}`);
       }
+    }
+  }
+
+  // ---- 方案 M：agent 会话级扩展点 ----
+  private agentHooks(ext: LoadedExtension): ExtAgentHooks | undefined {
+    return (ext.ext.server as (ExtServerHooks & { agent?: ExtAgentHooks }) | undefined)?.agent;
+  }
+
+  /** 收集所有扩展注入 agent 会话的 customTools（建会话时调用一次；单扩展异常不阻断整体）。 */
+  collectAgentTools(info: Pick<AgentSessionInfo, "sessionId" | "cwd">): ToolDefinition[] {
+    const tools: ToolDefinition[] = [];
+    for (const ext of this.extensions.values()) {
+      try {
+        const t = this.agentHooks(ext)?.agentTools?.(info);
+        if (t) tools.push(...t);
+      } catch (e) {
+        console.error(`[ext] ${ext.id}.agent.agentTools 失败:`, e instanceof Error ? e.message : e);
+      }
+    }
+    return tools;
+  }
+
+  /** 会话启动回调（wrapper 创建后）。 */
+  dispatchAgentSession(info: AgentSessionInfo): void {
+    for (const ext of this.extensions.values()) {
+      try { this.agentHooks(ext)?.onAgentSession?.(info); } catch (e) { console.error(`[ext] ${ext.id}.agent.onAgentSession 失败:`, e instanceof Error ? e.message : e); }
+    }
+  }
+
+  /** 会话销毁回调（wrapper destroy，含 fork/idle-GC 回收场景，reason 区分）。 */
+  dispatchAgentSessionEnd(sessionId: string, reason?: ExtAgentEndReason): void {
+    for (const ext of this.extensions.values()) {
+      try { this.agentHooks(ext)?.onAgentSessionEnd?.({ sessionId, reason }); } catch (e) { console.error(`[ext] ${ext.id}.agent.onAgentSessionEnd 失败:`, e instanceof Error ? e.message : e); }
+    }
+  }
+
+  /** agent_settled 回调（最终回答文本）。 */
+  dispatchAgentSettled(sessionId: string, text: string): void {
+    for (const ext of this.extensions.values()) {
+      try { this.agentHooks(ext)?.onAgentSettled?.({ sessionId, text }); } catch (e) { console.error(`[ext] ${ext.id}.agent.onAgentSettled 失败:`, e instanceof Error ? e.message : e); }
     }
   }
 

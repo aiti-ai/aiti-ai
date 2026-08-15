@@ -5,7 +5,11 @@ export async function register(): Promise<void> {
   // discovery can still identify our children after they are re-parented by
   // daemonization (nohup / setsid / double-fork). Children inherit env at spawn
   // time, so the marker survives even when the process tree link does not.
-  process.env.PI_WEB_CHILD_MARKER ??= `pi-web-${process.pid}-${Date.now().toString(36)}`;
+  // NOTE: process.pid usage must stay in a dynamically imported module
+  // (lib/child-marker.ts) — turbopack's Edge static analysis of this file flags
+  // it as a hard compile error, recompiling (and HMR-pushing) on every request.
+  const { stampChildMarker } = await import("@/lib/child-marker");
+  stampChildMarker();
 
   const { configureHttpDispatcher } = await import("@/lib/http-dispatcher");
   configureHttpDispatcher();

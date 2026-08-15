@@ -9,6 +9,7 @@
  * Design aligns with docs/service-tunnels-extension.md §3/§11 (pending-design
  * items for generic slots, core data contract, data dir convention).
  */
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 /** Core data capabilities handed to extensions — no reimplementation of session access. */
 export interface ExtCoreApi {
@@ -54,6 +55,45 @@ export interface ExtServerHooks {
   api?(req: Request, ctx: ExtApiContext): Promise<Response | null | undefined> | Response | null | undefined;
   /** Optional; runs for every request in the middleware, before core DNS-rebinding gate. */
   middleware?(req: Request): Promise<ExtMiddlewareResult> | ExtMiddlewareResult;
+}
+
+/**
+ * agent 会话级扩展点（方案 M）：扩展把工具/回调进程内注入每个 agent 会话，零配置。
+ * 工具经 SDK `createAgentSessionFromServices` 的 `customTools` 注入；会话生命周期
+ * （启动/结束/settle）由 rpc-manager 回调。适合「桥与 agent 同进程」的场景（如 aiti-devtools）。
+ */
+export interface AgentSessionInfo {
+  sessionId: string;
+  cwd: string;
+  /** 向会话注入一条用户消息（steer：当前 turn 完成后生效，等同用户发话）。 */
+  steer(text: string): Promise<void>;
+  /**
+   * 订阅该会话的全量 agent 事件（进程内直连，不经 SSE 出口过滤——
+   * agent events route 会丢弃 tool_execution_update，而它携带 bash 的实时滚动输出；
+   * 扩展经此原样拿到）。返回取消订阅函数。
+   */
+  subscribeEvent?(listener: (event: { type: string } & Record<string, unknown>) => void): () => void;
+  /** 中止该会话当前运行的 bash 命令（不 abort 整个 turn——agent 收到错误结果后继续）。 */
+  abortBash?(): void;
+}
+
+/** 扩展看到的 wrapper 销毁原因（与 AgentWrapperEndReason 一致）：
+ *  "shutdown" = 会话真正结束（删除路由/全局清理）；"fork" = fork 后换 wrapper
+ *  （原会话文件还在）；"idle" = 10 分钟闲置 GC（文件还在，下次访问重建 wrapper）。
+ *  扩展应据此区分「会话没了」与「wrapper 回收」，回调本身需幂等（同一 id 可能
+ *  在 idle GC → 重建后再次收到 onAgentSession）。 */
+export type ExtAgentEndReason = "shutdown" | "fork" | "idle";
+
+export interface ExtAgentHooks {
+  /** 注入每个 agent 会话的自定义工具（SDK ToolDefinition[]；工具 execute 闭包内直调本进程资源）。 */
+  agentTools?(info: Pick<AgentSessionInfo, "sessionId" | "cwd">): ToolDefinition[];
+  /** 会话启动（wrapper 创建后；扩展在此注册 agent 身份/绑定推送 sink）。 */
+  onAgentSession?(info: AgentSessionInfo): void;
+  /** 会话 wrapper 销毁。注意：不等于「会话文件被删」——fork 换 wrapper、闲置 GC
+   *  回收也会触发；用 reason 区分。回调需幂等。 */
+  onAgentSessionEnd?(info: { sessionId: string; reason?: ExtAgentEndReason }): void;
+  /** agent 一轮执行完（agent_settled）——如把最终回答回桥/回显 UI。 */
+  onAgentSettled?(info: { sessionId: string; text: string }): void;
 }
 
 /** Static metadata for UI items; the actual React components come from the client bundle. */
@@ -107,6 +147,16 @@ export interface PopoverActionProvider {
   recognize(text: string, ctx: { cwd?: string; messageRole?: string }): Promise<PopoverAction[]> | PopoverAction[];
 }
 
+/** 能力接管声明：扩展声明后 core 隐藏对应的内置 UI/行为，由扩展全权接管。
+ *  能力名是 core 与扩展之间的稳定契约（不是扩展 id）——新增能力时在
+ *  EXT_PROVIDES 里登记并同步文档（AGENTS.md）。 */
+export const EXT_PROVIDES = {
+  /** 会话删除：声明后侧栏隐藏内置删除按钮（删除流由扩展接管，如先归档再在归档记录上删除）。 */
+  sessionDelete: "session-delete",
+} as const;
+
+export type ExtProvidesName = (typeof EXT_PROVIDES)[keyof typeof EXT_PROVIDES];
+
 export interface ExtUiDefinition {
   toolbar?: ExtUiItem[];
   sidebar?: ExtUiItem[];
@@ -116,6 +166,8 @@ export interface ExtUiDefinition {
   banners?: ExtUiItem[];
   pages?: ExtUiItem[];
   chatInputTop?: ExtUiItem[];
+  /** 接管内置能力（见 EXT_PROVIDES）：如 ["session-delete"] 让 core 隐藏侧栏内置删除按钮。 */
+  provides?: string[];
   /** Per-locale message table looked up via the client ctx.t(key, params). */
   i18n?: Record<string, Record<string, string>>;
 }
@@ -124,7 +176,7 @@ export interface PiWebExtension {
   id: string;
   name: string;
   version: string;
-  server?: ExtServerHooks;
+  server?: ExtServerHooks & { agent?: ExtAgentHooks };
   ui?: ExtUiDefinition;
   /** Relative path (from the extension dir) to a prebuilt ESM client bundle. */
   client?: string;

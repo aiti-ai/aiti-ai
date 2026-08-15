@@ -1142,13 +1142,17 @@ export function AppShell() {
   const topbarMenuRowStyle: React.CSSProperties = {
     display: "flex", alignItems: "center", gap: 8,
     width: "100%", padding: "9px 14px",
-    background: "none", border: "none",
+    background: "none",
+    // 全部用 longhand，避免与行内按钮的 borderRight/borderTop longhand 混用
+    // 触发 React “removing shorthand (border) when conflicting (borderRight)” 告警
+    borderLeft: "none", borderRight: "none", borderTop: "none", borderBottom: "none",
     color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 13,
   };
   const topbarRowBtnStyle = (): React.CSSProperties => ({
     display: "flex", alignItems: "center", justifyContent: "center",
     height: "100%", padding: 0,
-    background: "none", border: "none", borderRight: "1px solid var(--border)",
+    background: "none", borderLeft: "none", borderTop: "none", borderBottom: "none",
+    borderRight: "1px solid var(--border)",
     color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
   });
   const menuEnter = (e: React.MouseEvent<HTMLElement>) => { e.currentTarget.style.background = "var(--bg-hover)"; };
@@ -1271,7 +1275,7 @@ export function AppShell() {
       const labelBtn = menu ? { ...topbarMenuRowStyle, justifyContent: "flex-start" } : {
         display: "flex", alignItems: "center", gap: 6,
         height: "100%", padding: isMobile ? "0 8px" : "0 12px",
-        background: "none", border: "none",
+        background: "none", borderLeft: "none", borderBottom: "none",
         borderTop: "2px solid transparent",
         borderRight: "1px solid var(--border)",
         color: disabled ? "var(--text-dim)" : "var(--text-muted)",
@@ -1318,7 +1322,7 @@ export function AppShell() {
           style={menu ? { ...topbarMenuRowStyle, justifyContent: "flex-start" } : {
             display: "flex", alignItems: "center", gap: 6,
             height: "100%", padding: "0 12px",
-            background: "none", border: "none",
+            background: "none", borderLeft: "none", borderTop: "none", borderBottom: "none",
             borderRight: "1px solid var(--border)",
             color: disabled ? "var(--text-dim)" : "var(--text-muted)",
             cursor: disabled ? "not-allowed" : "pointer",
@@ -1376,7 +1380,7 @@ export function AppShell() {
           style={menu ? { ...topbarMenuRowStyle, justifyContent: "flex-start" } : {
             display: "flex", alignItems: "center", gap: 6,
             height: "100%", padding: "0 12px",
-            background: "none", border: "none",
+            background: "none", borderLeft: "none", borderBottom: "none",
             borderTop: "2px solid transparent",
             borderRight: "1px solid var(--border)",
             color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
@@ -1428,7 +1432,8 @@ export function AppShell() {
             display: "flex", alignItems: "center", gap: 6,
             height: "100%", padding: "0 12px",
             background: active ? "var(--bg-selected)" : "none",
-            border: "none",
+            borderLeft: "none",
+            borderBottom: "none",
             borderTop: active ? "2px solid var(--accent)" : "2px solid transparent",
             borderRight: "1px solid var(--border)",
             cursor: "pointer",
@@ -1637,6 +1642,7 @@ export function AppShell() {
     <>
       <SessionSidebar
         selectedSessionId={selectedSession?.id ?? null}
+        selectedSession={selectedSession}
         onSelectSession={handleSelectSession}
         onNewSession={handleNewSession}
         initialSessionId={initialSessionId}
@@ -1891,7 +1897,8 @@ export function AppShell() {
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               width: topBarIconButtonSize, height: topBarIconButtonSize, padding: 0,
-              background: "none", border: "none", borderRight: "1px solid var(--border)",
+              background: "none", borderLeft: "none", borderTop: "none", borderBottom: "none",
+              borderRight: "1px solid var(--border)",
               color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
             }}
             onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
@@ -1937,7 +1944,7 @@ export function AppShell() {
                 height: "100%",
                 padding: isMobile ? "0 10px" : "0 12px",
                 background: "none",
-                border: "none",
+                borderLeft: "none", borderTop: "none", borderBottom: "none",
                 borderRight: "1px solid var(--border)",
                 color: "#d97706",
                 cursor: "pointer",
@@ -2009,7 +2016,7 @@ export function AppShell() {
                   paddingRight: 12,
                   height: "100%",
                   background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
-                  border: "none",
+                  borderLeft: "none", borderRight: "none", borderBottom: "none",
                   borderTop: activeTopPanel === "session" ? "2px solid var(--accent)" : "2px solid transparent",
                   fontSize: 11, color: "var(--text-muted)",
                   whiteSpace: "nowrap", cursor: "pointer",
@@ -2078,7 +2085,7 @@ export function AppShell() {
                 display: "flex", alignItems: "center", justifyContent: "center",
                 height: "100%", padding: "0 10px",
                 background: moreOpen || customizeOpen ? "var(--bg-selected)" : "none",
-                border: "none",
+                borderLeft: "none", borderBottom: "none",
                 borderTop: moreOpen || customizeOpen ? "2px solid var(--accent)" : "2px solid transparent",
                 borderRight: "1px solid var(--border)",
                 color: "var(--text-muted)", cursor: "pointer", flexShrink: 0,
@@ -2686,6 +2693,29 @@ export function AppShell() {
         </div>
       </div>
     </div>
+    {/* File panel toggle — always visible at top-right */}
+    <button
+      onClick={() => setRightPanelOpen((v) => !v)}
+       aria-controls="file-panel"
+       aria-expanded={rightPanelOpen}
+       title={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
+       aria-label={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
+      style={{
+        position: "fixed", top: "env(safe-area-inset-top)", right: "env(safe-area-inset-right)", zIndex: 300,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        width: 36, height: 36, padding: 0,
+        background: "var(--bg-panel)", borderTop: "none", borderRight: "none",
+        borderLeft: "1px solid var(--border)", borderBottom: "1px solid var(--border)",
+        color: rightPanelOpen ? "var(--text)" : "var(--text-muted)",
+        cursor: "pointer", transition: "color 0.12s",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.color = rightPanelOpen ? "var(--text)" : "var(--text-muted)"; }}
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
+      </svg>
+    </button>
     {modelsConfigOpen && <ModelsConfig onClose={() => { setModelsConfigOpen(false); setModelsRefreshKey((k) => k + 1); }} />}
     {projectTrustDialogOpen && projectTrustCwd && (
       <ProjectTrustDialog

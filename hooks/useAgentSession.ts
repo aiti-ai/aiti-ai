@@ -176,6 +176,9 @@ const SCROLL_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home
 // scrolling is active. Larger values make follow more lenient; smaller values
 // require the user to stay closer to the bottom.
 const SCROLL_BOTTOM_THRESHOLD = 150;
+// Keys that scroll the list UP — a definitive "user is leaving the tail"
+// signal (same filtering rules as SCROLL_KEYS).
+const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
@@ -374,6 +377,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
   const userScrollIntentUntilRef = useRef(0);
   const ignoreProgrammaticScrollUntilRef = useRef(0);
+  // True once the user ACTUALLY scrolled up during this run (wheel/touch/keys)
+  // — the only thing that should stop step-follow. Content growing below the
+  // fold (tool results, images, code blocks) never moves scrollTop, so it can
+  // never set this; a purely positional heuristic cannot tell the two apart.
+  // Cleared when the user returns to the tail (near-bottom) or on a new run.
+  const userScrolledAwayRef = useRef(false);
+  // Last observed scrollTop — lets the scroll handler see direction (a real
+  // decrease outside the programmatic window = user scrolling up).
+  const lastScrollTopRef = useRef(0);
   // True while the user holds a pointer/finger down (touch, mouse press,
   // drag). Auto-following pauses for the whole hold — no scrolling until the
   // pointer is released.
@@ -427,6 +439,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [isNew, setToolPresetState]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+    ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
+    // Landing at the tail re-arms auto-follow for subsequent output.
+    userScrolledAwayRef.current = false;
     const container = scrollContainerRef.current;
     messagesEndRef.current?.scrollIntoView({ behavior });
     if (container) previousScrollTopRef.current = container.scrollTop;
@@ -450,13 +465,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const spacerH = (opts.promptAnchorSpacerHeightRef?.current ?? 0)
       + (opts.bottomComposerHeightRef?.current ?? 0);
     const lastMsgBottom = endTop - spacerH;
-    // Walked-away guard: if the last message's bottom sits at least half a
-    // viewport below the viewport bottom edge (1.5× viewport from the top),
-    // the user scrolled up to read history — treat that as deliberately
-    // leaving and do NOT yank them back (streamState/ResizeObserver callers
-    // run without a near-bottom gate). Following resumes automatically once
-    // they return to the tail.
-    if (lastMsgBottom >= container.clientHeight * 1.5) return;
+    // Walked-away guard: only an actual UPWARD user scroll stops following.
+    // Streaming can push the tail far below the fold between evaluations (a
+    // tall tool result, an image loading) — that is NOT the user leaving, but
+    // the old position heuristic read it as such and froze follow mid-stream.
+    // We instead track real user scrolls (wheel/key events plus non-
+    // programmatic scrollTop decreases — content growth never fires scroll
+    // events). Returning to the tail re-arms follow automatically.
+    if (userScrolledAwayRef.current) return;
     // Step when the output has filled the chat down to ~1 line (16px) from
     // the viewport bottom. The old 40px keep-out read as "4-5 lines short of
     // the bottom" on small screens, so the view rolled back before the
@@ -1928,6 +1944,44 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [opts.chatInputRef, addNotice]);
 
+  /** Pick up a run that was started server-side (queue delivery, recovery
+   * continue) — possibly before any SSE was connected (e.g. right after a
+   * restart) — so streaming, agent_end refresh, and settlement all work. */
+  const adoptRemoteRun = useCallback(async (sid: string) => {
+    try {
+      const stateRes = await fetch(apiUrl(`/api/agent/${encodeURIComponent(sid)}`));
+      if (stateRes.ok) {
+        const agentState = await stateRes.json() as { running?: boolean; state?: AgentStateResponse };
+        const st = agentState.state;
+        if (agentState.running && st && (st.isStreaming || st.isPromptRunning)) {
+          sdkAgentActiveRef.current = Boolean(st.isStreaming);
+          rpcPromptPendingRef.current = Boolean(st.isPromptRunning);
+          agentRunningRef.current = true;
+          setAgentRunning(true);
+          setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
+          dispatch({ type: "start" });
+          // Only (re)connect when there is no live SSE for this session:
+          // reconnecting an already-open stream would drop the events
+          // emitted while the restored queue is being processed, which
+          // delayed the restored messages appearing in the chat.
+          if (!eventSourceRef.current || eventSourceSessionIdRef.current !== sid) {
+            void connectEvents(sid);
+          }
+          if (!st.isStreaming && st.isPromptRunning) {
+            void waitForPromptSettlement(sid);
+          }
+        }
+      }
+    } catch { /* non-critical */ }
+    // Refresh the message list shortly after the run starts so the restored
+    // messages show up in the chat even if the SSE stream was not delivering
+    // events reliably.
+    try {
+      await new Promise((r) => setTimeout(r, 800));
+      if (sessionIdRef.current === sid) await loadSession(sid);
+    } catch { /* non-critical */ }
+  }, [connectEvents, waitForPromptSettlement, loadSession]);
+
   /**
    * Decide what to do with pending recovery items: keep (re-queue, optionally
    * continuing the transcript) and/or discard. Returns the remaining items.
@@ -1973,35 +2027,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // The run was started server-side, possibly before any SSE was
         // connected (e.g. right after a restart) — pick it up so streaming,
         // agent_end refresh, and settlement all work as usual.
-        void (async () => {
-          try {
-            const stateRes = await fetch(apiUrl(`/api/agent/${encodeURIComponent(sid)}`));
-            if (!stateRes.ok) return;
-            const agentState = await stateRes.json() as { running?: boolean; state?: AgentStateResponse };
-            const st = agentState.state;
-            if (agentState.running && st && (st.isStreaming || st.isPromptRunning)) {
-              sdkAgentActiveRef.current = Boolean(st.isStreaming);
-              rpcPromptPendingRef.current = Boolean(st.isPromptRunning);
-              agentRunningRef.current = true;
-              setAgentRunning(true);
-              setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
-              dispatch({ type: "start" });
-              // ensureConnected is a no-op when a live SSE stream for this
-              // session is already open, so restored-queue events are not lost.
-              void ensureEventsConnected(sid);
-              if (!st.isStreaming && st.isPromptRunning) {
-                void waitForPromptSettlement(sid);
-              }
-            }
-          } catch { /* non-critical */ }
-          // Refresh the message list shortly after the run starts so the
-          // restored messages show up in the chat even if the SSE stream was
-          // not delivering events reliably.
-          try {
-            await new Promise((r) => setTimeout(r, 800));
-            if (sessionIdRef.current === sid) await loadSession(sid);
-          } catch { /* non-critical */ }
-        })();
+        void adoptRemoteRun(sid);
+      }
       }
       return remaining;
     } catch (e) {
@@ -2009,7 +2036,28 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       addNotice({ type: "error", message: "Failed to resolve queued message recovery" });
       return pendingRecovery;
     }
-  }, [pendingRecovery, addNotice, ensureEventsConnected, waitForPromptSettlement, loadSession, opts.chatInputRef]);
+  }, [pendingRecovery, addNotice, adoptRemoteRun, opts.chatInputRef]);
+
+  /** Deliver the queued messages now — the 「继续」 button on an idle queue
+   * (e.g. queue recovered after a restart but only re-queued, never
+   * continued). Server-side this is the same runAgentContinue path as
+   * recovery's "re-queue & continue". Returns true when a run was started. */
+  const handleContinueQueue = useCallback(async (): Promise<boolean> => {
+    const sid = sessionIdRef.current;
+    if (!sid) return false;
+    try {
+      const result = await sendAgentCommand<{ started?: boolean; empty?: boolean }>(sid, {
+        type: "continue_queue",
+      });
+      if (!result?.started) return false;
+      await adoptRemoteRun(sid);
+      return true;
+    } catch (e) {
+      console.error("Failed to continue queue:", e);
+      addNotice({ type: "error", message: "Failed to continue queue" });
+      return false;
+    }
+  }, [adoptRemoteRun, addNotice]);
 
   /** Fetch the full live queue + recovery entries (with images) for export. */
   const exportQueueData = useCallback(async (): Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null> => {
@@ -2299,6 +2347,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // A smooth scroll reports its position after the first streaming event can
     // arrive, so update the tail state before the browser emits that event.
     isNearBottomRef.current = targetTop >= maxScrollTop - SCROLL_BOTTOM_THRESHOLD;
+    // Landing near the tail re-arms follow; scrolling to a user message high
+    // up keeps the walked-away state (the user just jumped away from the tail).
+    if (isNearBottomRef.current) userScrolledAwayRef.current = false;
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
     container.scrollTo({ top: targetTop, behavior: "smooth" });
   }, []);
@@ -2307,6 +2358,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (event instanceof KeyboardEvent) {
       if (!SCROLL_KEYS.has(event.key)) return;
       if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable='true']")) return;
+      // Up-direction keys are a definitive "user is leaving the tail" signal.
+      if (SCROLL_UP_KEYS.has(event.key)) userScrolledAwayRef.current = true;
+    } else if (event instanceof WheelEvent && event.deltaY < 0) {
+      // Wheel-up likewise: no programmatic scroll ever emits wheel events, so
+      // this can't be content growth or our own step scrolling.
+      userScrolledAwayRef.current = true;
     }
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
   }, []);
@@ -2315,23 +2372,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const container = scrollContainerRef.current;
     if (container) {
       const { scrollTop, clientHeight, scrollHeight } = container;
-      const isAgentRunning = agentRunningRef.current;
-      const wasAttached = isNearBottomRef.current;
-      const isAttached = getLiveFollowAttached(
-        wasAttached,
-        previousScrollTopRef.current,
-        scrollTop,
-        clientHeight,
-        scrollHeight,
-        isAgentRunning
-          ? CHAT_SCROLL_REATTACH_TOLERANCE
-          : CHAT_SCROLL_TAIL_TOLERANCE,
-      );
-      isNearBottomRef.current = isAttached;
-      previousScrollTopRef.current = scrollTop;
-      if (!wasAttached && isAttached && isAgentRunning) {
-        scrollToBottom("auto");
-      } else if (!isAttached && liveFollowFrameRef.current !== null) {
+      const prevScrollTop = lastScrollTopRef.current;
+      lastScrollTopRef.current = scrollTop;
+      isNearBottomRef.current = scrollTop + clientHeight >= scrollHeight - SCROLL_BOTTOM_THRESHOLD;
+      if (isNearBottomRef.current) {
+        // Back at the tail: re-arm auto-follow for the rest of this run.
+        userScrolledAwayRef.current = false;
+      } else if (
+        agentRunningRef.current &&
+        scrollTop < prevScrollTop - 1 &&
+        Date.now() >= ignoreProgrammaticScrollUntilRef.current
+      ) {
+        // scrollTop decreased by user agency (touch drag, momentum tail,
+        // missed wheel edge): content growing BELOW the fold never moves
+        // scrollTop, and programmatic scrolls are filtered by the ignore
+        // window, so this is the user reading history.
+        userScrolledAwayRef.current = true;
+      }
+      if (!isNearBottomRef.current && liveFollowFrameRef.current !== null) {
         cancelAnimationFrame(liveFollowFrameRef.current);
         liveFollowFrameRef.current = null;
       }
@@ -2457,6 +2515,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   useEffect(() => {
     if (!agentRunning) setPromptAnchorActive(false);
+    // A new run re-arms auto-follow: whatever the user did while reading the
+    // previous answer, a fresh prompt starts following from the current
+    // position (send paths also scroll to the tail / user message).
+    else userScrolledAwayRef.current = false;
   }, [agentRunning]);
 
   useLayoutEffect(() => {
@@ -2552,6 +2614,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
+    handleContinueQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
     scrollToBottom, scrollUserMsgToTop,

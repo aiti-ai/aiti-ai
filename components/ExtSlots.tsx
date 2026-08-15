@@ -95,7 +95,7 @@ interface ManifestExt {
   name: string;
   version: string;
   clientUrl: string | null;
-  ui: { i18n?: Record<string, Record<string, string>> } | null;
+  ui: { i18n?: Record<string, Record<string, string>>; provides?: string[] } | null;
   icon?: string | null;
 }
 
@@ -120,10 +120,11 @@ async function loadExtensions(): Promise<void> {
     if (!res.ok) return;
     const data = (await res.json()) as { extensions: ManifestExt[] };
     resetExtUiItems();
-    // manifest 元数据（name/icon）→ 宿主 UI 标注扩展身份（顶栏自定义面板等）
+    // manifest 元数据（name/icon/provides）→ 宿主 UI 标注扩展身份（顶栏自定义面板等）、
+    // 并驱动内置 UI 的能力接管开关（useExtProvides）
     const metas: Record<string, ExtMeta> = {};
     for (const ext of data.extensions) {
-      metas[ext.id] = { name: ext.name, icon: ext.icon ?? null };
+      metas[ext.id] = { name: ext.name, icon: ext.icon ?? null, provides: ext.ui?.provides };
     }
     registerExtMetas(metas);
     for (const ext of data.extensions) {
@@ -193,6 +194,19 @@ export function useExtMetas(): Record<string, ExtMeta> {
     return subscribeExtUi(update);
   }, []);
   return metas;
+}
+
+/** 所有已加载扩展声明接管的能力名集合（manifest ui.provides 的并集）。
+ *  内置 UI 用它决定是否让位：如侧栏删除按钮在有人声明 session-delete 时隐藏。 */
+export function useExtProvides(): Set<string> {
+  const metas = useExtMetas();
+  return useMemo(() => {
+    const provides = new Set<string>();
+    for (const meta of Object.values(metas)) {
+      for (const p of meta.provides ?? []) provides.add(p);
+    }
+    return provides;
+  }, [metas]);
 }
 
 export function ExtSlot({

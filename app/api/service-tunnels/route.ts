@@ -13,6 +13,14 @@ import {
   removeExposeStartedAt,
   type SelfExposeOptions,
 } from "@/lib/service-tunnels-integration";
+import {
+  listExposePresets,
+  loadExposePreset,
+  saveExposePreset,
+  deleteExposePreset,
+  saveLastUsedExpose,
+  type ExposePresetConfig,
+} from "@/lib/expose-presets";
 
 import type { TunnelConfig, ParamSpec } from "service-tunnels";
 
@@ -196,6 +204,9 @@ export async function GET(request: NextRequest) {
       sites: st.sites.list(),
       proxy: st.proxy.status ? st.proxy.status() : null,
       self: getSelfExposeState(),
+      // 公开方案下拉（只含名称等元数据，参数值——含密文——一律不下发；
+      // 选中方案时另发 preset-load 解密回填）
+      exposePresets: listExposePresets(),
     });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
@@ -255,6 +266,18 @@ export async function POST(request: NextRequest) {
         providerParams: body.providerParams,
         serviceBasePath: body.serviceBasePath,
       });
+      // 公开成功 → 自动记为「上次使用」（best-effort，敏感值加密落盘），
+      // 下次打开表单自动回填，省去重复选择。
+      saveLastUsedExpose({
+        provider: body.provider ?? null,
+        tunnel: body.tunnel ?? "cloudflared",
+        protocol: protocol ?? "http",
+        mode: body.mode ?? "tunnel",
+        site: body.site ?? "",
+        serviceBasePath: typeof body.serviceBasePath === "string" ? body.serviceBasePath : "",
+        tunnelParams: (body.tunnelParams ?? {}) as Record<string, string>,
+        providerParams: (body.providerParams ?? {}) as Record<string, string>,
+      } as ExposePresetConfig);
       return NextResponse.json(res);
     }
     const st = getServiceTunnels();
@@ -427,6 +450,34 @@ export async function POST(request: NextRequest) {
         }
         setAllowLocalHosts(hosts);
         return NextResponse.json({ allowHosts: getSelfExposeState().allowHosts });
+      }
+      // ---- 公开方案（preset）：另存 / 加载（解密回填）/ 删除 ----
+      case "preset-save": {
+        const p = body as { name?: string; presetConfig?: ExposePresetConfig };
+        if (!p.name || !p.name.trim()) {
+          return NextResponse.json({ error: "name required" }, { status: 400 });
+        }
+        if (!p.presetConfig) {
+          return NextResponse.json({ error: "presetConfig required" }, { status: 400 });
+        }
+        try {
+          const saved = await saveExposePreset(p.name, p.presetConfig);
+          return NextResponse.json({ saved, presets: listExposePresets() });
+        } catch (e) {
+          return NextResponse.json({ error: String(e) }, { status: 400 });
+        }
+      }
+      case "preset-load": {
+        const id = (body as { id?: string }).id ?? "";
+        if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+        const config = loadExposePreset(id);
+        if (!config) return NextResponse.json({ error: "preset not found" }, { status: 404 });
+        return NextResponse.json({ config });
+      }
+      case "preset-delete": {
+        const id = (body as { id?: string }).id ?? "";
+        if (!id) return NextResponse.json({ error: "id required" }, { status: 400 });
+        return NextResponse.json({ deleted: deleteExposePreset(id), presets: listExposePresets() });
       }
       default:
         return NextResponse.json({ error: `unknown action: ${body.action}` }, { status: 400 });

@@ -611,7 +611,7 @@ function ThinkingLevelMapEditor({
         const btnBase: React.CSSProperties = {
           padding: "4px 10px",
           fontSize: 10,
-          border: "none",
+          borderLeft: "none", borderRight: "none", borderTop: "none", borderBottom: "none",
           cursor: "pointer",
           fontWeight: 400,
           transition: "background 0.1s, color 0.1s",

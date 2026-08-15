@@ -8,7 +8,8 @@ import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getProjectActivity, getRecentProjects, sessionsForProject } from "@/lib/project-groups";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
 import { useI18n } from "@/hooks/useI18n";
-import { ExtSlot } from "./ExtSlots";
+import { ExtSlot, useExtProvides } from "./ExtSlots";
+import { EXT_PROVIDES } from "@/lib/ext/types";
 import { apiUrl } from "@/lib/base-path";
 
 import { DirectoryPicker } from "./DirectoryPicker";
@@ -83,6 +84,11 @@ function ToolbarIconButton({
 
 interface Props {
   selectedSessionId: string | null;
+  /** Full selected session object — used to render a client-side draft row when
+   *  its id isn't on disk yet. pi only persists the .jsonl on the first assistant
+   *  reply (SessionManager._persist returns early without an assistant message),
+   *  so /api/sessions can't list it during that window. */
+  selectedSession?: SessionInfo | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean) => void;
   onNewSession?: (sessionId: string, cwd: string) => void;
   initialSessionId?: string | null;
@@ -397,7 +403,7 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, fileExplorerRef: fileExplorerRefProp, onBackgroundTaskDone, onRunningSessionIdsChange }: Props) {
+export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, fileExplorerRef: fileExplorerRefProp, onBackgroundTaskDone, onRunningSessionIdsChange }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -441,12 +447,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const explorerRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
 
-  const loadSessions = useCallback(async (showLoading = false, force = false) => {
+  const loadSessions = useCallback(async (showLoading = false, forceRefresh = false): Promise<SessionInfo[] | undefined> => {
     try {
       if (showLoading) setLoading(true);
-      const res = await fetch(apiUrl(force ? "/api/sessions?force=1" : "/api/sessions"), {
-        cache: "no-store",
-      });
+      const res = await fetch(apiUrl(`/api/sessions${forceRefresh ? "?refresh=1" : ""}`));
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json() as { sessions: SessionInfo[]; runningSessionIds?: string[] };
       setAllSessions(data.sessions);
@@ -468,8 +472,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
         sessionRefreshTimerRef.current = setTimeout(() => setSessionRefreshDone(false), 2000);
       }
+      return data.sessions;
     } catch (e) {
       setError(String(e));
+      return undefined;
     } finally {
       if (showLoading) setLoading(false);
     }
@@ -481,6 +487,31 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     initialLoadDone.current = true;
     loadSessions(isFirst, !isFirst);
   }, [loadSessions, refreshKey]);
+
+  // Extension-triggered session mutations (session-manager archive / archive
+  // delete) change the list outside pi-web's own flows. The extension client
+  // dispatches "sm:sessions-changed" after its API calls; force a refresh=1
+  // fetch so the sidebar reflects archived sessions immediately. Sessions
+  // that vanished from the refreshed list (archived or deleted by the
+  // extension) flow through onSessionDeleted — the same cleanup the built-in
+  // sidebar delete button does (clear drafts, close the open tab).
+  const allSessionsRef = useRef<SessionInfo[]>([]);
+  useEffect(() => { allSessionsRef.current = allSessions; }, [allSessions]);
+  useEffect(() => {
+    const onChange = () => {
+      const prevIds = new Set(allSessionsRef.current.map((s) => s.id));
+      void (async () => {
+        const fresh = await loadSessions(false, true);
+        if (!fresh) return;
+        const nextIds = new Set(fresh.map((s) => s.id));
+        for (const id of prevIds) {
+          if (!nextIds.has(id)) onSessionDeleted?.(id);
+        }
+      })();
+    };
+    window.addEventListener("sm:sessions-changed", onChange);
+    return () => window.removeEventListener("sm:sessions-changed", onChange);
+  }, [loadSessions, onSessionDeleted]);
 
   // Browser storage is unavailable during server rendering. Restore the panel
   // preference after hydration so a collapsed explorer stays collapsed on reload.
@@ -962,8 +993,23 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         }
       : null);
 
+  // Client-side draft row: the active session whose id isn't persisted yet.
+  // pi writes the .jsonl only on the first assistant reply (SessionManager._persist
+  // returns early while there's no assistant message), so /api/sessions cannot
+  // list it during that window. Surface a draft row keyed by the in-memory session
+  // so the sidebar reflects it immediately; it is dropped automatically once the
+  // file lands and the next list refresh includes the real entry.
+  const draftSession = (!loading
+    && selectedSession?.id
+    && selectedSession.cwd
+    && projectRootFor(selectedSession.cwd) === selectedProject
+    && !allSessions.some((s) => s.id === selectedSession.id))
+    ? selectedSession
+    : null;
+  const sessionsForTree = draftSession ? [draftSession, ...filteredSessions] : filteredSessions;
+
   // Build parent-child tree within the filtered set
-  const sessionTree = buildSessionTree(filteredSessions);
+  const sessionTree = buildSessionTree(sessionsForTree);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1193,7 +1239,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                       width: "100%",
                       padding: "8px 10px",
                       background: "var(--bg)",
-                      border: "none",
+                      borderLeft: "none", borderRight: "none", borderTop: "none",
                       borderBottom: "1px solid var(--border)",
                       color: project.key === selectedProject?.key ? "var(--text)" : "var(--text-muted)",
                       cursor: "pointer",
@@ -1232,7 +1278,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                     width: "100%",
                     padding: "8px 10px",
                     background: "none",
-                    border: "none",
+                    borderLeft: "none",
+                    borderBottom: "none",
                     borderTop: visibleProjects.length > 0 ? "1px solid var(--border)" : "none",
                     color: "var(--text-muted)",
                     cursor: "pointer",
@@ -1641,7 +1688,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             {error}
           </div>
         )}
-        {!loading && !error && filteredSessions.length === 0 && (
+        {!loading && !error && filteredSessions.length === 0 && !draftSession && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("sidebar.noSessions")}
           </div>
@@ -1650,6 +1697,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           <SessionTreeItem
             key={node.session.id}
             node={node}
+            isDraft={node.session.id === draftSession?.id}
             selectedSessionId={selectedSessionId}
             runningSessionIds={runningSessionIds}
             unreadSessionIds={unreadSessionIds}
@@ -1794,6 +1842,7 @@ function SessionTreeItem({
   onRenamed,
   onSessionDeleted,
   depth,
+  isDraft,
 }: {
   node: SessionTreeNode;
   selectedSessionId: string | null;
@@ -1803,6 +1852,7 @@ function SessionTreeItem({
   onRenamed?: () => void;
   onSessionDeleted?: (id: string) => void;
   depth: number;
+  isDraft?: boolean;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const hasChildren = node.children.length > 0;
@@ -1830,6 +1880,7 @@ function SessionTreeItem({
           onRenamed={onRenamed}
           onDeleted={(id) => onSessionDeleted?.(id)}
           depth={depth}
+          isDraft={isDraft}
           hasChildren={hasChildren}
           collapsed={collapsed}
           onToggleCollapse={() => setCollapsed((v) => !v)}
@@ -1975,6 +2026,7 @@ function SessionItem({
   hasChildren = false,
   collapsed = false,
   onToggleCollapse,
+  isDraft,
 }: {
   session: SessionInfo;
   isSelected: boolean;
@@ -1987,8 +2039,12 @@ function SessionItem({
   hasChildren?: boolean;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  isDraft?: boolean;
 }) {
   const { t } = useI18n();
+  // 能力接管：有扩展声明 session-delete 时隐藏内置删除入口（删除流由扩展接管，
+  // 如 session-manager 的先归档再删）；没人接管则内置按钮照常显示。
+  const extOwnsDelete = useExtProvides().has(EXT_PROVIDES.sessionDelete);
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -2038,6 +2094,11 @@ function SessionItem({
     }
   }, [renameValue, session.id, session.name, onRenamed, title]);
 
+  // Live-file deletion from the sidebar. Hidden when an extension has taken
+  // over the session-delete capability (ui.provides: ["session-delete"]) —
+  // that extension owns the deletion flow (e.g. archive first, delete only
+  // on the archived record); archived sessions vanish from the list via the
+  // "sm:sessions-changed" listener → onSessionDeleted.
   const performDelete = useCallback(async () => {
     if (session.transient) return;
     setConfirmDelete(false);
@@ -2206,6 +2267,24 @@ function SessionItem({
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                 {title}
               </span>
+              {isDraft && (
+                <span
+                  title={t("sidebar.draftTitle")}
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 9,
+                    fontWeight: 600,
+                    fontStyle: "italic",
+                    color: "var(--text-dim)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 4,
+                    padding: "0 4px",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {t("sidebar.draft")}
+                </span>
+              )}
             </div>
             <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 11, minWidth: 0 }}>
               {isRunning ? (
@@ -2253,8 +2332,8 @@ function SessionItem({
             </button>
           )}
 
-          {/* Action buttons — shown on hover */}
-          {hovered && !session.transient && (
+          {/* Action buttons — shown on hover (hidden for unsaved drafts) */}
+          {hovered && !isDraft && (
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
               <ExtSlot name="sessionRowActions" currentSession={session} />
               <button
@@ -2283,35 +2362,37 @@ function SessionItem({
                   <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                 </svg>
               </button>
-              <button
-                onClick={handleDeleteClick}
-                title={t("sidebar.deleteWithShiftClick")}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 32, height: 32, padding: 0,
-                  background: "var(--bg-hover)", border: "1px solid var(--border)",
-                  borderRadius: 7, color: "var(--text-muted)",
-                  cursor: "pointer", flexShrink: 0,
-                  transition: "background 0.12s, color 0.12s, border-color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(239,68,68,0.08)";
-                  e.currentTarget.style.color = "#ef4444";
-                  e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.borderColor = "var(--border)";
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                  <path d="M10 11v6M14 11v6" />
-                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                </svg>
-              </button>
+              {!extOwnsDelete && (
+                <button
+                  onClick={handleDeleteClick}
+                  title={t("sidebar.deleteWithShiftClick")}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    width: 32, height: 32, padding: 0,
+                    background: "var(--bg-hover)", border: "1px solid var(--border)",
+                    borderRadius: 7, color: "var(--text-muted)",
+                    cursor: "pointer", flexShrink: 0,
+                    transition: "background 0.12s, color 0.12s, border-color 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(239,68,68,0.08)";
+                    e.currentTarget.style.color = "#ef4444";
+                    e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                    e.currentTarget.style.color = "var(--text-muted)";
+                    e.currentTarget.style.borderColor = "var(--border)";
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6M14 11v6" />
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  </svg>
+                </button>
+              )}
             </div>
           )}
         </>

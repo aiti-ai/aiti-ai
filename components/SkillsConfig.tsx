@@ -531,7 +531,7 @@ function AddSkillPanel({
                 title={s === "project" && !projectResourcesLoaded ? t("trust.projectScopeUnavailable") : undefined}
                 style={{
                   padding: "3px 10px",
-                  border: "none",
+                  borderLeft: "none", borderTop: "none", borderBottom: "none",
                   cursor: s === "project" && !projectResourcesLoaded ? "not-allowed" : "pointer",
                   background: scope === s ? "var(--bg-selected)" : "none",
                   color: scope === s ? "var(--text)" : "var(--text-dim)",

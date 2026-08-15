@@ -296,7 +296,11 @@ const actionBtnStyle: CSSProperties = {
   fontSize: 12,
   color: "var(--accent)",
   background: "color-mix(in srgb, var(--accent) 10%, transparent)",
-  border: "1px solid var(--border)",
+  // 不用 border 简写：动作按钮按危险/不可用态覆盖 borderColor，
+  // 简写 + 长写混用会在 rerender 时触发 React 冲突告警
+  borderWidth: 1,
+  borderStyle: "solid",
+  borderColor: "var(--border)",
   borderRadius: 6,
   cursor: "pointer",
   whiteSpace: "nowrap",

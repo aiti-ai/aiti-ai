@@ -93,6 +93,26 @@ function NoAuthBadge({ t }: { t: (key: string) => string }) {
   );
 }
 
+/** 注入端口条目归一化：纯数字（老格式）或 { port, basePath } → 统一对象。 */
+function normInjectEntries(ports: unknown): Array<{ port: number; basePath?: string }> {
+  if (!Array.isArray(ports)) return [];
+  return ports
+    .map((e) => {
+      if (typeof e === "number" && Number.isFinite(e) && e > 0) return { port: e };
+      if (e && typeof e === "object" && Number.isFinite(Number((e as { port?: unknown }).port))) {
+        const port = Number((e as { port: unknown }).port);
+        if (port <= 0 || port > 65535) return null;
+        const bp = typeof (e as { basePath?: unknown }).basePath === "string" ? (e as { basePath: string }).basePath.replace(/^\/+/, "").replace(/\/+$/, "") : "";
+        return { port, ...(bp ? { basePath: "/" + bp } : {}) };
+      }
+      return null;
+    })
+    .filter((e): e is { port: number; basePath?: string } => e !== null);
+}
+
+/** vhost 登记开关：端口转发属性（与注入解耦），所有端口通用。
+ *  开 = enroll open binding（<port>.域名 可访问）；basePath = 服务真实前缀。 */
+
 export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
   onClose: () => void;
   onOpenFile?: (filePath: string, fileName: string) => void;
@@ -120,7 +140,9 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
   const [infoModal, setInfoModal] = useState<"access" | "auth" | null>(null);
   // 注入 JS（aiti-devtools 扩展 inject-ports）：null = 扩展未加载/不可用。
   // Ports 页端口卡与 Pi-web 页共用这一份状态（对话框轮询同步）。
-  const [injectPorts, setInjectPorts] = useState<number[] | null>(null);
+  // 条目兼容两种格式：纯数字（老格式）或 { port, basePath }（basePath：
+  // 该端口真实服务的前缀，open vhost forward 映射剥 deploy 前缀后接回）。
+  const [injectEntries, setInjectEntries] = useState<Array<{ port: number; basePath?: string }> | null>(null);
   const [injectBaseUrl, setInjectBaseUrl] = useState<string | null>(null);
 
   const refresh = useCallback((force = false) => {
@@ -158,16 +180,16 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
       })
       .catch(() => {});
     // inject-ports（aiti-devtools 扩展）：注入开关状态。扩展未加载（404）→
-    // null = 不可用，UI 只显示提示不给开关。
+    // null = 不可用，UI 只显示提示不给开关。条目纯数字或 { port, basePath }。
     fetch(apiUrl("/api/extensions/aiti-devtools/inject-ports"))
       .then((r) => (r.ok ? r.json() : null))
-      .then((d: { ports?: number[]; baseUrl?: string | null } | null) => {
-        setInjectPorts(d ? d.ports ?? [] : null);
+      .then((d: { ports?: Array<number | { port: number; basePath?: string }>; baseUrl?: string | null } | null) => {
+        setInjectEntries(d ? normInjectEntries(d.ports) : null);
         setInjectBaseUrl(d ? d.baseUrl ?? null : null);
       })
       .catch(() => {
         // 网络抖动不清空已加载状态（首次加载失败保持 null=不可用）
-        setInjectPorts((p) => p ?? null);
+        setInjectEntries((p) => p ?? null);
       });
   }, [t, locale]);
 
@@ -222,20 +244,24 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
   }, [refresh]);
 
   /** 注入开关：把端口加/移出 aiti-devtools 的 inject-ports。baseUrl 原样回传
-   *  （扩展 PUT 未带 baseUrl 时也会保留旧值，双保险）。乐观更新，失败重拉。 */
-  const toggleInject = useCallback((port: number, on: boolean) => {
-    const cur = injectPorts ?? [];
-    const next = on ? [...cur.filter((p) => p !== port), port] : cur.filter((p) => p !== port);
-    setInjectPorts(next); // optimistic
+   *  （扩展 PUT 未带 baseUrl 时也会保留旧值，双保险）。开关时保留既有
+   *  basePath（外部端口的路径映射）。setBasePath 单独改 basePath（不改开关）。
+   *  乐观更新，失败重拉。 */
+  const toggleInject = useCallback((port: number, on: boolean, basePath?: string) => {
+    const cur = injectEntries ?? [];
+    const existing = cur.find((e) => e.port === port);
+    const entry = { port, ...(basePath !== undefined ? (basePath ? { basePath } : {}) : existing?.basePath ? { basePath: existing.basePath } : {}) };
+    const next = on ? [...cur.filter((e) => e.port !== port), entry] : cur.filter((e) => e.port !== port);
+    setInjectEntries(next); // optimistic
     fetch(apiUrl("/api/extensions/aiti-devtools/inject-ports"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ports: next, ...(injectBaseUrl ? { baseUrl: injectBaseUrl } : {}) }),
     })
       .then((r) => r.json())
-      .then((d: { ports?: number[] }) => { if (d && Array.isArray(d.ports)) setInjectPorts(d.ports); })
+      .then((d: { ports?: Array<number | { port: number; basePath?: string }> }) => { if (d && Array.isArray(d.ports)) setInjectEntries(normInjectEntries(d.ports)); })
       .catch(() => refresh(false));
-  }, [injectPorts, injectBaseUrl, refresh]);
+  }, [injectEntries, injectBaseUrl, refresh]);
 
   const toggleExpand = (port: number) => {
     setExpanded((prev) => {
@@ -289,7 +315,7 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
               style={{
                 padding: "6px 14px",
                 background: "none",
-                border: "none",
+                borderLeft: "none", borderRight: "none", borderTop: "none",
                 borderBottom: tab === k ? "2px solid var(--accent)" : "2px solid transparent",
                 color: tab === k ? "var(--text)" : "var(--text-muted)",
                 cursor: "pointer",
@@ -471,14 +497,18 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
                       </div>
                       <AuthExposeSection port={s.port} t={t} openInNewTab={openInNewTab}
                         exposes={(data?.exposes ?? []).filter((e) => e.port === s.port)}
+                        serviceBasePath={injectEntries?.find((e) => e.port === s.port)?.basePath}
+                        onSetBasePath={(p, bp) => toggleInject(p, true, bp)}
                         onStopExpose={stopExpose}
                         onChanged={() => refresh(false)}
                         onGoManageUsers={() => setTab("users")} />
+                      {/* BasePath：公开的端口转发属性（与注入无关） */}
+                      <BasePathSection port={s.port} t={t} entry={injectEntries?.find((e) => e.port === s.port)} onSave={toggleInject} />
                       {/* 注入 JS（AITI 调试器）——proxy 模式已生效；tunnel 模式由 service-tunnels 开发中 */}
                       <InjectJsSection
                         port={s.port}
-                        enabled={injectPorts?.includes(s.port) ?? false}
-                        available={injectPorts !== null}
+                        enabled={injectEntries?.some((e) => e.port === s.port) ?? false}
+                        available={injectEntries !== null}
                         variant="port"
                         t={t}
                         onToggle={toggleInject}
@@ -489,6 +519,34 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
               );
             })
           )}
+          {/* 已登记的外部端口以普通卡片形式混入列表（进程扫描看不到，但 vhost
+              代理确实在暴露），加 icon 标记外部 + 取消登记入口。 */}
+          {(injectEntries ?? []).filter((e) => !(data?.services ?? []).some((s) => s.port === e.port) && e.port !== self?.port).map((e) => {
+            const vhostUrl = currentDomainSuffix
+              ? `${scheme}//${e.port}${currentDomainSuffix}${pagePort}${e.basePath ?? BASE_PATH}`
+              : `http://${e.port}${suffixes[0] ?? ".pi.localhost"}${e.basePath ?? ""}`;
+            return (
+              <div key={`ext-${e.port}`} style={{ marginBottom: 6, border: "1px dashed var(--border)", borderRadius: 8, overflow: "hidden" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "8px 10px" }}>
+                  <span style={{ fontFamily: "var(--font-mono)", fontSize: 14, fontWeight: 600, color: "var(--accent)", minWidth: 52, flexShrink: 0 }}>{e.port}</span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, color: "var(--text)", display: "flex", alignItems: "center", gap: 6 }}>
+                      <span title={t("services.enrolledExtHint")} style={{ padding: "0 5px", background: "var(--bg-hover)", borderRadius: 4, fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>🔌 {t("services.enrolledExtNotTree")}</span>
+                      {e.basePath && <span title={t("services.enrolledBasePathHint")} style={{ padding: "0 5px", background: "var(--bg-hover)", borderRadius: 4, fontSize: 10, color: "var(--text-muted)", fontFamily: "var(--font-mono)", flexShrink: 0 }}>base {e.basePath}</span>}
+                    </div>
+                    <div style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {vhostUrl}
+                    </div>
+                  </div>
+                  <button onClick={() => openInNewTab(vhostUrl)} title={vhostUrl} style={{ flexShrink: 0, padding: "4px 12px", background: "var(--accent)", border: "none", borderRadius: 6, color: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>{t("services.open")}</button>
+                  <button onClick={() => toggleInject(e.port, false)} title={t("services.enrolledUnenrollHint")}
+                    style={{ flexShrink: 0, padding: "4px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "#f87171", cursor: "pointer", fontSize: 11 }}>
+                    {t("services.enrolledUnenroll")}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
         </div>
 
         {/* Bottom: configured tunnels + info entries (open modals) */}
@@ -516,7 +574,7 @@ export function ServicesDialog({ onClose, onOpenFile, initialTab = "ports" }: {
               exposes={data?.exposes ?? []}
               onShowDetail={setDetailFor}
               onStopExpose={stopExpose}
-              injectPorts={injectPorts}
+              injectPorts={injectEntries}
               onToggleInject={toggleInject} />
           </div>
         )}
@@ -896,6 +954,39 @@ function UrlRow({ url, label, copied, onCopy, onOpen, isMobile }: { url: string;
  *  API）：端口出现在列表后，经该端口访问通道返回的 HTML 自动注入
  *  aiti-launcher.js。执行侧：proxy 模式（服务虚拟主机）已生效；tunnel 模式
  *  的响应注入由 service-tunnels 开发中（界面已就绪）。 */
+/** BasePath（公开、与注入无关）：端口真实部署前缀。vhost 转发剥部署前缀后接回
+ *  它（如 vite base=/dev/ 填 dev）——base 应用不接回会 302 死循环。独立行展示，
+ *  与注入开关状态无关。保存 = 重新 enroll binding（即时生效）。 */
+function BasePathSection({ port, entry, t, onSave }: {
+  port: number;
+  entry: { port: number; basePath?: string } | undefined;
+  t: (key: string, params?: Record<string, string>) => string;
+  onSave: (port: number, on: boolean, basePath?: string) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const cur = entry?.basePath ?? "";
+  const value = draft ?? cur;
+  const dirty = draft !== null && draft.replace(/^\/+/, "").replace(/\/+$/, "") !== cur;
+  return (
+    <div style={{ borderTop: "1px solid var(--border)", marginTop: 10, paddingTop: 10, display: "flex", alignItems: "center", gap: 6 }} title={t("services.injectJsBasePathHint")}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", flexShrink: 0 }}>Base Path</span>
+      <input
+        type="text"
+        value={value}
+        placeholder={t("services.injectJsBasePathPlaceholder")}
+        onChange={(e) => setDraft(e.target.value)}
+        style={{ flex: 1, minWidth: 0, padding: "2px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 11, fontFamily: "var(--font-mono)" }}
+      />
+      {dirty && (
+        <button onClick={() => { onSave(port, true, value); setDraft(null); }}
+          style={{ flexShrink: 0, padding: "2px 10px", background: "var(--accent)", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", fontSize: 10 }}>
+          ✓
+        </button>
+      )}
+    </div>
+  );
+}
+
 function InjectJsSection({ port, enabled, available, variant, t, onToggle }: {
   port: number;
   enabled: boolean;
@@ -953,7 +1044,7 @@ function InjectJsSection({ port, enabled, available, variant, t, onToggle }: {
  * Public access with auth — pick a provider, optionally require sign-in,
  * and open the tunnel through the service-tunnels nginx gateway.
  */
-function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onChanged, onGoManageUsers }: {
+function AuthExposeSection({ port, t, isMobile, openInNewTab, exposes, onStopExpose, onChanged, onGoManageUsers, serviceBasePath, onSetBasePath }: {
   port: number;
   t: (key: string, params?: Record<string, string>) => string;
   openInNewTab: (url: string) => void;
@@ -961,6 +1052,10 @@ function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onCha
   exposes: ExposeInfo[];
   /** Stop ONE expose by name (the currently-selected combo's channel). */
   onStopExpose: (name: string) => void;
+  /** 端口通用属性 serviceBasePath：expose 时写入 open binding（跟端口走） */
+  serviceBasePath?: string;
+  /** 方案回填时同步端口的 Base Path（写入 inject-ports 登记，与手改 Base Path 行等效）。 */
+  onSetBasePath?: (port: number, basePath: string) => void;
   /** Re-fetch exposes after a successful expose (so the button flips to stop). */
   onChanged: () => void;
   /** Switch to the Users tab (no users for the selected auth combo). */
@@ -999,6 +1094,63 @@ function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onCha
   // 有用户 → 列出用户名,让用户确认自己可登录
   const [userConfirm, setUserConfirm] = useState<{ provider: string; site: string; users: string[] } | null>(null);
 
+  // ---- 公开方案（preset）+「上次使用」自动回填 ----
+  const [presets, setPresets] = useState<Array<{ id: string; name: string; updatedAt: number }>>([]);
+  const [lastUsedAt, setLastUsedAt] = useState<number | null>(null);
+  const [presetId, setPresetId] = useState("__last__");
+  const [presetName, setPresetName] = useState("");
+  const [saveOpen, setSaveOpen] = useState(false);
+  const [presetBusy, setPresetBusy] = useState(false);
+  // 预填（上次使用/方案）后，端口协议探测不再覆盖表单——用户保存的选优先生效
+  const prefilledRef = useRef(false);
+
+  /** 把一份方案配置回填进表单。 */
+  const applyPresetConfig = (cfg: {
+    provider: string | null;
+    tunnel: string;
+    protocol: "http" | "https" | "tcp";
+    mode: "tunnel" | "proxy" | "both";
+    site: string;
+    serviceBasePath?: string;
+    tunnelParams: Record<string, string>;
+    providerParams: Record<string, string>;
+  }) => {
+    prefilledRef.current = true;
+    setProvider(cfg.provider ?? "none");
+    setTunnel(cfg.tunnel || "cloudflared");
+    setProtocol(cfg.protocol ?? "http");
+    setMode(cfg.protocol === "tcp" ? "tunnel" : (cfg.mode ?? "tunnel"));
+    setSite(cfg.site ?? "");
+    setTunnelParams({ ...(cfg.tunnelParams ?? {}) });
+    setProviderParams({ ...(cfg.providerParams ?? {}) });
+    // Base Path 是端口属性（存 aiti 扩展 inject-ports 登记，不在本组件 state）——与当前值
+    // 不同才写，避免每次回填都发一次 PUT。方案未存该字段（旧方案）则不动。
+    if (cfg.serviceBasePath !== undefined && cfg.serviceBasePath !== (serviceBasePath ?? "")) {
+      onSetBasePath?.(port, cfg.serviceBasePath);
+    }
+  };
+
+  /** 拉取一份方案（id 或 "__last__"）解密回填；失败提示不阻断手填。 */
+  const loadPresetIntoForm = (id: string) => {
+    setPresetBusy(true);
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "preset-load", id }),
+    })
+      .then((r) => r.json())
+      .then((d: { config?: Parameters<typeof applyPresetConfig>[0]; error?: string }) => {
+        if (d.error || !d.config) {
+          if (id !== "__last__") setError(d.error ?? t("services.presetLoadFailed"));
+          return;
+        }
+        setError(null);
+        applyPresetConfig(d.config);
+      })
+      .catch(() => { if (id !== "__last__") setError(t("services.presetLoadFailed")); })
+      .finally(() => setPresetBusy(false));
+  };
+
   // Tunnel types + provider params come from service-tunnels schemas
   // (data-driven — adding a tunnel type / auth provider needs NO dialog
   // changes). Provider order/default come from the library too.
@@ -1007,7 +1159,7 @@ function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onCha
   useEffect(() => {
     fetch(`${apiUrl("/api/service-tunnels")}?lang=${encodeURIComponent(secLocale)}`)
       .then((r) => r.json())
-      .then((d: { providerOrder?: string[]; defaultProvider?: string; tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; authMetas?: Record<string, { label?: string }>; tunnelTcpSupport?: string[]; sites?: { name: string }[]; userManagers?: string[] }) => {
+      .then((d: { providerOrder?: string[]; defaultProvider?: string; tunnelSchemas?: Record<string, ParamSpec[]>; tunnelMetas?: Record<string, { favorite?: boolean; dangerous?: boolean }>; authProviderSchemas?: Record<string, ParamSpec[]>; authMetas?: Record<string, { label?: string }>; tunnelTcpSupport?: string[]; sites?: { name: string }[]; userManagers?: string[]; exposePresets?: { presets?: Array<{ id: string; name: string; updatedAt: number }>; lastUsedAt?: number | null } }) => {
         // providerOrder/defaultProvider come from the library — no provider
         // names hardcoded here (authelia availability, Windows fallback etc.
         // are decided in service-tunnels).
@@ -1026,6 +1178,12 @@ function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onCha
         if (d.sites) setSites(d.sites.filter((s) => s.name !== "default").map((s) => s.name));
         if (d.userManagers) setUserManagers(d.userManagers);
         setUserManagersReady(true);
+        // 方案清单 + 「上次使用」自动回填（省去每次重复选择；没有记录则保持默认）
+        if (d.exposePresets) {
+          setPresets(d.exposePresets.presets ?? []);
+          setLastUsedAt(d.exposePresets.lastUsedAt ?? null);
+          if (d.exposePresets.lastUsedAt) loadPresetIntoForm("__last__");
+        }
       })
       .catch(() => {});
   // Mount-once: secLocale only selects the server-side response language.
@@ -1040,7 +1198,8 @@ function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onCha
     fetch(apiUrl(`/api/service-tunnels?detect=${port}`))
       .then((r) => r.json())
       .then((d: { protocol?: "http" | "https" | "tcp" }) => {
-        if (!cancelled && d.protocol) setProtocol(d.protocol);
+        // 预填过方案/上次使用 → 用户保存的选择优先，探测不覆盖
+        if (!cancelled && d.protocol && !prefilledRef.current) setProtocol(d.protocol);
       })
       .catch(() => {});
     return () => { cancelled = true; };
@@ -1065,6 +1224,7 @@ function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onCha
         site: site || undefined,
         tunnelParams,
         providerParams,
+        ...(serviceBasePath ? { serviceBasePath } : {}),
       }),
     })
       .then((r) => r.json())
@@ -1074,6 +1234,9 @@ function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onCha
           setResult(null);
         } else {
           setResult({ url: d.url ?? null, loginUrl: d.loginUrl, localUrl: d.localUrl, baseUrl: d.baseUrl, domainUrl: d.domainUrl });
+          // 服务端已把本次选项记为「上次使用」——本地时间同步（下拉显示用）
+          setLastUsedAt(Date.now());
+          setPresetId("__last__");
           onChanged();
         }
       })
@@ -1157,10 +1320,119 @@ function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onCha
 
   const select = { padding: "4px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 11, flexShrink: 0 };
 
+  /** 当前表单选项 → 方案配置（保存/另存共用一份果照）。Base Path 跟端口走
+   *  （inject-ports 登记），一并入方案，加载时同步回写。 */
+  const currentConfig = () => ({
+    provider: protocol === "tcp" ? null : (provider ?? null),
+    tunnel: tunnel || "cloudflared",
+    protocol,
+    mode: protocol === "tcp" ? "tunnel" : mode,
+    site: site || "",
+    serviceBasePath: serviceBasePath ?? "",
+    tunnelParams: { ...tunnelParams },
+    providerParams: { ...providerParams },
+  });
+
+  /** 方案名自动生成：【模式】+【auth】@站点（tcp 无 auth 段；站点空不挂）。 */
+  const suggestPresetName = () => {
+    const modePart = protocol === "tcp" ? "tunnel" : mode;
+    const authPart = protocol === "tcp" || !provider || provider === "none" ? "none" : provider;
+    const sitePart = site || "default";
+    return `${modePart}+${authPart}@${sitePart}`;
+  };
+
+  const savePreset = () => {
+    const name = presetName.trim();
+    if (!name) return;
+    setPresetBusy(true);
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "preset-save", name, presetConfig: currentConfig() }),
+    })
+      .then((r) => r.json())
+      .then((d: { saved?: { id: string }; presets?: { presets: Array<{ id: string; name: string; updatedAt: number }> }; error?: string }) => {
+        if (d.error) { setError(d.error); return; }
+        if (d.presets) setPresets(d.presets.presets ?? []);
+        if (d.saved?.id) setPresetId(d.saved.id);
+        setSaveOpen(false);
+        setPresetName("");
+      })
+      .catch(() => setError(t("services.error")))
+      .finally(() => setPresetBusy(false));
+  };
+
+  const deletePreset = () => {
+    if (presetId === "__last__") return;
+    setPresetBusy(true);
+    fetch(apiUrl("/api/service-tunnels"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "preset-delete", id: presetId }),
+    })
+      .then((r) => r.json())
+      .then((d: { presets?: { presets: Array<{ id: string; name: string; updatedAt: number }> }; error?: string }) => {
+        if (d.error) { setError(d.error); return; }
+        if (d.presets) setPresets(d.presets.presets ?? []);
+        setPresetId("__last__");
+      })
+      .catch(() => setError(t("services.error")))
+      .finally(() => setPresetBusy(false));
+  };
+
+
   return (
     <div style={{ borderTop: "1px solid var(--border)", padding: "10px 0 0", marginTop: 10, background: "var(--bg-panel)" }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)", margin: "4px 0 6px" }}>
         {t("services.exposeSection")}
+      </div>
+      {/* 方案：下拉选已存方案/上次使用；另存当前选项为方案 */}
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 6 }}>
+        <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.preset")}</span>
+        <select
+          value={presetId}
+          onChange={(e) => { setPresetId(e.target.value); loadPresetIntoForm(e.target.value); }}
+          disabled={presetBusy}
+          style={select}
+          title={t("services.presetHint")}
+        >
+          <option value="__last__">
+            {lastUsedAt ? `${t("services.presetLastUsed")}（${new Date(lastUsedAt).toLocaleString()}）` : t("services.presetLastUsedNone")}
+          </option>
+          {presets.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {presetId !== "__last__" && (
+          <button onClick={deletePreset} disabled={presetBusy} title={t("services.presetDeleteHint")}
+            style={{ flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "#f87171", cursor: "pointer", fontSize: 11 }}>
+            {t("services.presetDelete")}
+          </button>
+        )}
+        {!saveOpen ? (
+          <button onClick={() => { setSaveOpen(true); setPresetName(suggestPresetName()); }}
+            title={t("services.presetSaveAsHint")}
+            style={{ flexShrink: 0, padding: "3px 10px", background: "var(--bg-hover)", border: "1px solid var(--accent)", borderRadius: 5, color: "var(--text)", cursor: "pointer", fontSize: 11 }}>
+            ＋ {t("services.presetSaveAs")}
+          </button>
+        ) : (
+          <>
+            <input
+              value={presetName}
+              onChange={(e) => setPresetName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") savePreset(); if (e.key === "Escape") { setSaveOpen(false); setPresetName(""); } }}
+              placeholder={t("services.presetNamePlaceholder")}
+              autoFocus
+              style={{ padding: "3px 6px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 11, width: 120 }}
+            />
+            <button onClick={savePreset} disabled={presetBusy || !presetName.trim()}
+              style={{ flexShrink: 0, padding: "3px 10px", background: "var(--accent)", border: "none", borderRadius: 5, color: "#fff", cursor: presetBusy || !presetName.trim() ? "default" : "pointer", fontSize: 11 }}>
+              {t("services.presetSave")}
+            </button>
+            <button onClick={() => { setSaveOpen(false); setPresetName(""); }}
+              style={{ flexShrink: 0, padding: "3px 10px", background: "var(--bg-hover)", border: "1px solid var(--border)", borderRadius: 5, color: "var(--text-muted)", cursor: "pointer", fontSize: 11 }}>
+              {t("services.exposeAbort")}
+            </button>
+          </>
+        )}
       </div>
       {/* 模式 + 站点（tcp 仅 tunnel） */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
@@ -1768,7 +2040,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
   /** Stop ONE expose by name (proxy vhost rows — removes binding + record). */
   onStopExpose: (name: string) => void;
   /** 注入 JS（aiti-devtools 扩展 inject-ports）—— null = 扩展未加载/不可用。 */
-  injectPorts: number[] | null;
+  injectPorts: Array<{ port: number; basePath?: string }> | null;
   /** 注入开关：加/移出 pi-web 自身端口。 */
   onToggleInject: (port: number, on: boolean) => void;
 }) {
@@ -2262,7 +2534,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
         <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
           <InjectJsSection
             port={self.port}
-            enabled={injectPorts?.includes(self.port) ?? false}
+            enabled={injectPorts?.some((e) => e.port === self.port) ?? false}
             available={injectPorts !== null}
             variant="self"
             t={t}
