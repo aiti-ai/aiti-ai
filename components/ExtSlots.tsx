@@ -30,8 +30,10 @@ import {
 import {
   entryOf,
   materialize,
+  pendingForSlot,
   prefetch,
   reconcileGraph,
+  registerDeclaredSlots,
   setBootGraph,
 } from "./ext-client-loader";
 import type { PiWebBootGraph } from "@/lib/ext/client-modules";
@@ -170,6 +172,8 @@ async function loadExtensions(): Promise<void> {
     for (const ext of data.extensions) {
       manifestCache.set(ext.id, ext);
       metas[ext.id] = { name: ext.name, icon: ext.icon ?? null, provides: ext.ui?.provides };
+      // 按需加载登记：声明了哪些 UI 插槽（ui 定义里非空数组的 slot 键）。
+      registerDeclaredSlots(ext.id, ext.ui ? Object.keys(ext.ui).filter((k) => k !== "i18n" && k !== "provides" && k !== "clientDependsOn") : []);
     }
     registerExtMetas(metas);
     setBootGraph(data.graph ?? { rev: "", entries: [] });
@@ -239,6 +243,24 @@ export function useExtSlotItems(slot: ExtSlotName): ExtUiItemRegistered[] {
     update(); // pick up items registered before this hook mounted
     return subscribeExtUi(update);
   }, [slot]);
+
+  // 按需加载：声明了该 slot 但尚未 materialize 的扩展 → 首次渲染时触发
+  // materialize（副作用 = register(ctx)），完成后 store bump → 重渲染。
+  useEffect(() => {
+    const pending = pendingForSlot(slot);
+    if (pending.length === 0) return;
+    let alive = true;
+    void (async () => {
+      for (const id of pending) {
+        const ext = manifestCache.get(id);
+        if (!ext) continue;
+        await materialize(id, () => makeClientContext(ext));
+      }
+      if (alive) setItems(getExtUiItems(slot)); // materialize → store bump → 拉最新
+    })();
+    return () => { alive = false; };
+  }, [slot]);
+
   return items;
 }
 

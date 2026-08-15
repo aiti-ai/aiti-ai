@@ -13,6 +13,7 @@ const ENTRY_NAMES = ["index.ts", "index.mjs", "index.js", "index.cjs"];
 export function scanExtensionDirs(root: string): string[] {
   if (!existsSync(root)) return [];
   return readdirSync(root)
+    .filter((name) => !name.startsWith(".")) // skip hidden dirs (.git etc.)
     .map((name) => join(root, name))
     .filter((p) => {
       try {

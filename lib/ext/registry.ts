@@ -4,7 +4,7 @@
  * globalThis.__piWebExt so the middleware bundle (proxy.ts, separate Next
  * bundle) can invoke hooks without importing extension code.
  */
-import { existsSync, mkdirSync, readFileSync, statSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 import { join, sep } from "path";
 import type {
@@ -43,6 +43,8 @@ export interface RegistryOptions {
   dataRootOverride?: string;
 }
 
+const DISABLED_FILE = "disabled-extensions.json";
+
 export class ExtRegistryImpl {
   core: ExtCoreApi;
   private readonly extensionsRootOverride?: string;
@@ -65,6 +67,42 @@ export class ExtRegistryImpl {
 
   extensionsRoot(): string {
     return this.extensionsRootOverride ?? extensionsRoot();
+  }
+
+  // ── enabled/disabled ───────────────────────────────────────────────────────
+  // 持久化到 <dataRoot>/disabled-extensions.json（数组）；disable 的扩展在
+  // loadAll 时跳过（status 标记 disabled:true），enable 后 reload 恢复。
+
+  private disabledExtensions(): Set<string> {
+    try {
+      const raw = readFileSync(join(this.dataRoot(), DISABLED_FILE), "utf8");
+      return new Set(JSON.parse(raw) as string[]);
+    } catch {
+      return new Set();
+    }
+  }
+
+  private persistDisabled(set: Set<string>): void {
+    try {
+      writeFileSync(join(this.dataRoot(), DISABLED_FILE), JSON.stringify([...set].sort(), null, 2));
+    } catch (e) {
+      console.error("[ext] failed to persist disabled extensions:", e);
+    }
+  }
+
+  isEnabled(id: string): boolean {
+    return !this.disabledExtensions().has(id);
+  }
+
+  /**
+   * 启用/禁用扩展（持久化）。返回新的 disabled 集合。调用方随后应
+   * reload()（或 loadAll+startAll）让变更生效。
+   */
+  setEnabled(id: string, enabled: boolean): void {
+    const set = this.disabledExtensions();
+    if (enabled) set.delete(id);
+    else set.add(id);
+    this.persistDisabled(set);
   }
 
   extraExtensionsRoots(): string[] {
@@ -107,6 +145,7 @@ export class ExtRegistryImpl {
         const id = dir.split(sep).pop() ?? dir;
         if (seen.has(id)) continue; // 高优先级根已加载 → 同名遮蔽跳过
         seen.add(id);
+        if (this.disabledExtensions().has(id)) continue; // 用户禁用 → 不加载（status 里不出现，界面用 isEnabled 展示）
         try {
           const ext = await loadExtensionFromDir(dir);
           if (!ext) {

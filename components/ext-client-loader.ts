@@ -36,6 +36,18 @@ interface ClientModule {
 const modules = new Map<string, ClientModule>();
 let bootGraph: PiWebBootGraph = { rev: "", entries: [] };
 
+/**
+ * 每个扩展声明的 UI 插槽（来自 manifest ui 定义）——按需加载的依据：
+ * ExtSlot 渲染某 slot 时，若有「声明了该 slot 但未 materialize」的扩展，
+ * 触发其 materialize（首次用到才拉 bundle + 执行注册副作用）。
+ */
+const declaredSlots = new Map<string, string[]>();
+
+/** manifest 拉取后登记扩展声明的插槽（ui 定义的 slot 键）。 */
+export function registerDeclaredSlots(extId: string, slots: string[]): void {
+  if (slots.length > 0) declaredSlots.set(extId, slots);
+}
+
 export function getBootGraph(): PiWebBootGraph {
   return bootGraph;
 }
@@ -94,6 +106,31 @@ export async function materialize(id: string, makeCtx: (id: string) => unknown):
     console.error(`[ext] failed to materialize ${id}:`, e);
     return false;
   }
+}
+
+/** 已 materialize 的扩展 id 集合（扩展管理界面展示加载状态用）。 */
+export function materializedIds(): string[] {
+  return [...modules.values()].filter((m) => m.materialized).map((m) => m.id);
+}
+
+/** 已 prefetch（bundle 已拉取，未 materialize）的扩展 id 集合。 */
+export function prefetchedIds(): string[] {
+  return [...modules.values()].filter((m) => !m.materialized).map((m) => m.id);
+}
+
+/**
+ * 某 slot 尚未 materialize 的声明扩展（按需加载队列）。
+ * immediately 标记（图行）只影响「启动阶段一是否预取」；无论是否预取，
+ * 声明了该 slot 的扩展在此返回，由 ExtSlot 渲染时触发 materialize。
+ */
+export function pendingForSlot(slot: string): string[] {
+  return [...declaredSlots.entries()]
+    .filter(([, slots]) => slots.includes(slot))
+    .map(([id]) => id)
+    .filter((id) => {
+      const m = modules.get(id);
+      return !m || !m.materialized; // 未拉取或已拉取未注册
+    });
 }
 
 /**
