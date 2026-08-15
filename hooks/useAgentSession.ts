@@ -184,6 +184,9 @@ const USER_SCROLL_INTENT_MS = 2_000;
 // scrolling is active. Larger values make follow more lenient; smaller values
 // require the user to stay closer to the bottom.
 const SCROLL_BOTTOM_THRESHOLD = 150;
+// Keys that scroll the list UP — a definitive "user is leaving the tail"
+// signal (same filtering rules as SCROLL_KEYS).
+const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
@@ -403,6 +406,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const executeBashRef = useRef<(command: string, excludeFromContext: boolean) => Promise<void> | undefined>(undefined);
   const userScrollIntentUntilRef = useRef(0);
   const ignoreProgrammaticScrollUntilRef = useRef(0);
+  // True once the user ACTUALLY scrolled up during this run (wheel/touch/keys)
+  // — the only thing that should stop step-follow. Content growing below the
+  // fold (tool results, images, code blocks) never moves scrollTop, so it can
+  // never set this; a purely positional heuristic cannot tell the two apart.
+  // Cleared when the user returns to the tail (near-bottom) or on a new run.
+  const userScrolledAwayRef = useRef(false);
+  // Last observed scrollTop — lets the scroll handler see direction (a real
+  // decrease outside the programmatic window = user scrolling up).
+  const lastScrollTopRef = useRef(0);
   // True while the user holds a pointer/finger down (touch, mouse press,
   // drag). Auto-following pauses for the whole hold — no scrolling until the
   // pointer is released.
@@ -426,6 +438,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [messages]);
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
+    // Landing at the tail re-arms auto-follow for subsequent output.
+    userScrolledAwayRef.current = false;
     messagesEndRef.current?.scrollIntoView({ behavior });
   }, []);
 
@@ -447,13 +461,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const spacerH = (opts.promptAnchorSpacerHeightRef?.current ?? 0)
       + (opts.bottomComposerHeightRef?.current ?? 0);
     const lastMsgBottom = endTop - spacerH;
-    // Walked-away guard: if the last message's bottom sits at least half a
-    // viewport below the viewport bottom edge (1.5× viewport from the top),
-    // the user scrolled up to read history — treat that as deliberately
-    // leaving and do NOT yank them back (streamState/ResizeObserver callers
-    // run without a near-bottom gate). Following resumes automatically once
-    // they return to the tail.
-    if (lastMsgBottom >= container.clientHeight * 1.5) return;
+    // Walked-away guard: only an actual UPWARD user scroll stops following.
+    // Streaming can push the tail far below the fold between evaluations (a
+    // tall tool result, an image loading) — that is NOT the user leaving, but
+    // the old position heuristic read it as such and froze follow mid-stream.
+    // We instead track real user scrolls (wheel/key events plus non-
+    // programmatic scrollTop decreases — content growth never fires scroll
+    // events). Returning to the tail re-arms follow automatically.
+    if (userScrolledAwayRef.current) return;
     // Step when the output has filled the chat down to ~1 line (16px) from
     // the viewport bottom. The old 40px keep-out read as "4-5 lines short of
     // the bottom" on small screens, so the view rolled back before the
@@ -2271,6 +2286,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // A smooth scroll reports its position after the first streaming event can
     // arrive, so update the tail state before the browser emits that event.
     isNearBottomRef.current = targetTop >= maxScrollTop - SCROLL_BOTTOM_THRESHOLD;
+    // Landing near the tail re-arms follow; scrolling to a user message high
+    // up keeps the walked-away state (the user just jumped away from the tail).
+    if (isNearBottomRef.current) userScrolledAwayRef.current = false;
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
     container.scrollTo({ top: targetTop, behavior: "smooth" });
   }, []);
@@ -2279,6 +2297,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (event instanceof KeyboardEvent) {
       if (!SCROLL_KEYS.has(event.key)) return;
       if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable='true']")) return;
+      // Up-direction keys are a definitive "user is leaving the tail" signal.
+      if (SCROLL_UP_KEYS.has(event.key)) userScrolledAwayRef.current = true;
+    } else if (event instanceof WheelEvent && event.deltaY < 0) {
+      // Wheel-up likewise: no programmatic scroll ever emits wheel events, so
+      // this can't be content growth or our own step scrolling.
+      userScrolledAwayRef.current = true;
     }
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
   }, []);
@@ -2287,7 +2311,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const container = scrollContainerRef.current;
     if (container) {
       const { scrollTop, clientHeight, scrollHeight } = container;
+      const prevScrollTop = lastScrollTopRef.current;
+      lastScrollTopRef.current = scrollTop;
       isNearBottomRef.current = scrollTop + clientHeight >= scrollHeight - SCROLL_BOTTOM_THRESHOLD;
+      if (isNearBottomRef.current) {
+        // Back at the tail: re-arm auto-follow for the rest of this run.
+        userScrolledAwayRef.current = false;
+      } else if (
+        agentRunningRef.current &&
+        scrollTop < prevScrollTop - 1 &&
+        Date.now() >= ignoreProgrammaticScrollUntilRef.current
+      ) {
+        // scrollTop decreased by user agency (touch drag, momentum tail,
+        // missed wheel edge): content growing BELOW the fold never moves
+        // scrollTop, and programmatic scrolls are filtered by the ignore
+        // window, so this is the user reading history.
+        userScrolledAwayRef.current = true;
+      }
       if (!isNearBottomRef.current && liveFollowFrameRef.current !== null) {
         cancelAnimationFrame(liveFollowFrameRef.current);
         liveFollowFrameRef.current = null;
@@ -2406,6 +2446,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   useEffect(() => {
     if (!agentRunning) setPromptAnchorActive(false);
+    // A new run re-arms auto-follow: whatever the user did while reading the
+    // previous answer, a fresh prompt starts following from the current
+    // position (send paths also scroll to the tail / user message).
+    else userScrolledAwayRef.current = false;
   }, [agentRunning]);
 
   useLayoutEffect(() => {
