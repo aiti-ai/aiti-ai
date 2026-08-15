@@ -65,6 +65,67 @@ test("reuses an open event stream and hides an empty agent phase", () => {
   assert.match(chatWindowSource, /return null;/);
 });
 
+test("uses one absolute agent-readiness deadline instead of a five-second transport deadline", () => {
+  assert.match(source, /EVENT_STREAM_READY_TIMEOUT_MS = 60_000/);
+  assert.doesNotMatch(source, /EVENT_STREAM_OPEN_TIMEOUT_MS/);
+});
+
+test("connects a selected session when another browser reports it running", () => {
+  assert.match(source, /sessionRunning\?: boolean/);
+  assert.match(
+    source,
+    /if \(!session\?\.id \|\| !sessionRunning\) return;[\s\S]*?maintainEventsConnected\(session\.id\)/,
+  );
+  assert.match(source, /maintainEventsConnected\(session\.id\)/);
+  assert.doesNotMatch(source, /void connectEvents\(/);
+  assert.match(chatWindowSource, /sessionRunning\?: boolean/);
+  assert.match(chatWindowSource, /session, sessionRunning, newSessionCwd/);
+  assert.match(appShellSource, /runningSessionIds\.has\(selectedSession\.id\)/);
+  assert.match(appShellSource, /onRunningSessionIdsChange=\{handleRunningSessionIdsChange\}/);
+});
+
+test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", () => {
+  const connectedSource = source.slice(
+    source.indexOf('case "connected"'),
+    source.indexOf('case "agent_start"'),
+  );
+  const streamSource = source.slice(
+    source.indexOf('case "message_start"'),
+    source.indexOf('case "message_end"'),
+  );
+  const messageEndSource = source.slice(
+    source.indexOf('case "message_end"'),
+    source.indexOf('case "tool_execution_start"'),
+  );
+
+  assert.match(source, /streamReducer,[\s\S]*type ClientAssistantMessageEvent/);
+  assert.doesNotMatch(source, /streamingMessageRef/);
+  assert.match(connectedSource, /dispatch\(\{ type: "end" \}\)/);
+  assert.match(connectedSource, /event\.isStreaming === true/);
+  assert.match(connectedSource, /agentRunningRef\.current = true/);
+  assert.match(streamSource, /msg\?\.role === "assistant"[\s\S]*dispatch\(\{ type: "snapshot", message: msg \}\)/);
+  assert.match(streamSource, /event\.assistantMessageEvent as ClientAssistantMessageEvent/);
+  assert.match(streamSource, /dispatch\(\{ type: "delta", event: delta \}\)/);
+  assert.match(streamSource, /delta\.type !== "toolcall_start" && delta\.type !== "toolcall_delta"/);
+  assert.doesNotMatch(streamSource, /case "message_delta"/);
+  assert.match(messageEndSource, /const completed = event\.message as AgentMessage/);
+  assert.match(messageEndSource, /normalizeToolCalls\(completed\)/);
+  assert.match(messageEndSource, /dispatch\(\{ type: "end" \}\)/);
+  assert.doesNotMatch(messageEndSource, /streamState\.streamingMessage/);
+});
+
+test("shows the latest streamed tool execution progress in the running phase", () => {
+  const updateSource = source.slice(
+    source.indexOf('case "tool_execution_update"'),
+    source.indexOf('case "tool_execution_end"'),
+  );
+
+  assert.match(updateSource, /getToolExecutionProgress\(event\.partialResult\)/);
+  assert.match(updateSource, /tools: \[\.\.\.tools\.filter\([\s\S]*?, updated\]/);
+  assert.match(chatWindowSource, /if \(latest\?\.progress\)/);
+  assert.match(chatWindowSource, /chat\.runningNamedTool[\s\S]*latest\.progress/);
+});
+
 test("plays the enabled sound once for each extension dialog", () => {
   assert.match(chatWindowSource, /soundedExtensionDialogIdRef = useRef<string \| null>\(null\)/);
   assert.match(
