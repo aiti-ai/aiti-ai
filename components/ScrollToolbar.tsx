@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AgentMessage } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
 import { useWakeLock } from "@/hooks/useWakeLock";
@@ -86,6 +86,40 @@ export function ScrollToolbar({
     setScrollTooltip(null);
   }, []);
   const scrollIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // --- Hover persistence across the hide cycle ---
+  // The buttons unmount ~2s after scrolling stops, so once hidden there is no
+  // element left to hover — moving the cursor over the empty spot does nothing
+  // and the buttons can never come back without a new scroll. A transparent
+  // sensing layer stays mounted (pointerEvents: none, so it never blocks
+  // clicks/text selection) matching the button column's position and size. A
+  // global mousemove listener tests the cursor against that layer's rect, so
+  // hovering works whether or not the buttons are currently rendered.
+  const mousePosRef = useRef({ x: -9999, y: -9999 });
+  const toolbarRectRef = useRef<{ left: number; right: number; top: number; bottom: number } | null>(null);
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      mousePosRef.current = { x: e.clientX, y: e.clientY };
+      const r = toolbarRectRef.current;
+      if (!r) return;
+      const inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      setScrollBtnsHovered(inside);
+    };
+    window.addEventListener("mousemove", onMouseMove);
+    return () => window.removeEventListener("mousemove", onMouseMove);
+  }, []);
+  useLayoutEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    toolbarRectRef.current = { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+    // The cursor may already rest on the spot when the buttons appear under
+    // it (a stationary cursor fires no mousemove) — sync the hover state from
+    // the last known cursor position.
+    const m = mousePosRef.current;
+    if (m.x >= r.left && m.x <= r.right && m.y >= r.top && m.y <= r.bottom) {
+      setScrollBtnsHovered(true);
+    }
+  });
   // Brief "screen stays awake" toast after a successful long-press.
   const [keepAwakeToast, setKeepAwakeToast] = useState(false);
   const keepAwakeToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -347,11 +381,9 @@ export function ScrollToolbar({
 
   return (
     <>
-      {showScrollButtons && (
-        <div
-          ref={toolbarRef}
-          onPointerDown={onToolbarPointerDown}
-          style={{
+      <div
+        ref={toolbarRef}
+        style={{
           position: "absolute",
           // Horizontal snaps to the left or right edge (dragged choice);
           // vertical uses the saved offset. Right edge aligns to the message
@@ -362,17 +394,37 @@ export function ScrollToolbar({
             : `max(${CHAT_MINIMAP_WIDTH + 12}px, calc((100% - 820px) / 2 - 12px))`)
             : undefined,
           top: pos.y,
-          display: "flex",
-          flexDirection: "column",
-          gap: 10,
+          width: 44,
+          // Hover-sensing layer: always mounted so the mousemove listener can
+          // keep tracking the button column's rect even while the buttons are
+          // hidden — hovering the spot re-shows them. pointerEvents: none
+          // makes this a pure sensor: it never blocks clicks or text
+          // selection. minHeight keeps the sensor at the button column's size
+          // while hidden.
+          minHeight: 206,
+          // Explicitly above the message column (matches the old toolbar's
+          // zIndex) so stacking does not rely on DOM order.
           zIndex: 30,
-          pointerEvents: "auto",
-          cursor: dragModeRef.current ? "grabbing" : "grab",
+          pointerEvents: "none",
           touchAction: "none",
         }}
-          onMouseEnter={() => setScrollBtnsHovered(true)}
-          onMouseLeave={() => setScrollBtnsHovered(false)}
-        >
+      >
+        {showScrollButtons && (
+          <div
+            onPointerDown={onToolbarPointerDown}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+              // position: relative activates zIndex (static elements ignore
+              // it); keeps the buttons above the message column.
+              position: "relative",
+              zIndex: 30,
+              pointerEvents: "auto",
+              cursor: dragModeRef.current ? "grabbing" : "grab",
+              touchAction: "none",
+            }}
+          >
           {(
             <button
               onClick={scrollToEarliest}
@@ -629,7 +681,9 @@ export function ScrollToolbar({
               </button>
             </div>
           )}
-          {scrollTooltip && (
+          </div>
+        )}
+        {scrollTooltip && (
             <div style={{
               position: "absolute",
               // Show on the left side of the buttons, toward the message
@@ -656,8 +710,7 @@ export function ScrollToolbar({
                 : t("chat.scrollToLatestFollowHint")}
             </div>
           )}
-        </div>
-      )}
+      </div>
       {keepAwakeToast && (
         <div style={{
           position: "absolute",
