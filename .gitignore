@@ -51,3 +51,7 @@ test-server.log
 
 # aiti dev build dir
 .next-aiti/
+
+# dev server console log
+.next-dev-console.log
+
