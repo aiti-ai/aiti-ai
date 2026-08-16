@@ -6,6 +6,98 @@ import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 
+/**
+ * Escape raw HTML tags that would otherwise be parsed by rehype-raw into
+ * invalid DOM nesting inside markdown paragraphs (e.g. a `<button>` at line
+ * start is *inline* raw HTML per CommonMark, so rehype-raw nests block or
+ * interactive elements — even a second `<p>` — inside the wrapping `<p>`,
+ * which React flags as a hydration error).
+ *
+ * Chat user text can contain such tags as paste artifacts (aiti-devtools
+ * pick-element payloads like `<div> …` / `<button> …`). Escaping keeps the
+ * text readable (`&lt;` renders as `<`) while making rehype-raw a no-op.
+ * Fenced code blocks and inline code spans are preserved verbatim, and
+ * GFM autolinks (`<https://…>` / `<user@host>`) stay untouched.
+ */
+export function escapeRawHtmlTags(markdown: string): string {
+  const lineBreak = markdown.includes("\r\n") ? "\r\n" : "\n";
+  const lines = markdown.split(/\r?\n/);
+  const out: string[] = [];
+  let fence: { marker: string; size: number } | null = null;
+  let inlineCodeMarkerSize = 0;
+
+  for (const line of lines) {
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      if (fenceMatch && fenceMatch[1][0] === fence.marker && fenceMatch[1].length >= fence.size) {
+        fence = null;
+      }
+      out.push(line);
+      continue;
+    }
+    if (fenceMatch) {
+      fence = { marker: fenceMatch[1][0], size: fenceMatch[1].length };
+      out.push(line);
+      continue;
+    }
+
+    // Indented code blocks and blank lines contain no raw HTML; blank lines
+    // also reset an unterminated inline-code run (mirrors normalizeDisplayMath).
+    if (/^(?: {4}|\t)/.test(line) || line.trim() === "") {
+      inlineCodeMarkerSize = 0;
+      out.push(line);
+      continue;
+    }
+
+    if (inlineCodeMarkerSize || line.includes("`")) {
+      const escaped = escapeLineOutsideCodeSpans(line, inlineCodeMarkerSize);
+      inlineCodeMarkerSize = escaped.markerSize;
+      out.push(escaped.line);
+      continue;
+    }
+    out.push(escapeRawHtmlInText(line));
+  }
+  return out.join(lineBreak);
+}
+
+/**
+ * Replace `<tag`/`</tag` with `&lt;tag`/`&lt;/tag`. The tag name must be
+ * followed by `>` / whitespace / `/` / EOL so GFM autolinks (`<https://…>`,
+ * `<mailto:…>`, `<user@host>`) and comparisons (`a < b`, `<3`) stay intact.
+ */
+function escapeRawHtmlInText(text: string): string {
+  return text.replace(/<(\/?[a-zA-Z][a-zA-Z0-9-]*)(?=>|\s|\/|$)/g, "&lt;$1");
+}
+
+/** Escape raw HTML outside inline-code backtick spans (marker state carried across lines). */
+function escapeLineOutsideCodeSpans(line: string, initialMarkerSize: number): { line: string; markerSize: number } {
+  let markerSize = initialMarkerSize;
+  let inCode = markerSize !== 0;
+  let result = "";
+  let cursor = 0;
+  while (cursor < line.length) {
+    const backtick = line.indexOf("`", cursor);
+    if (backtick === -1) {
+      result += inCode ? line.slice(cursor) : escapeRawHtmlInText(line.slice(cursor));
+      break;
+    }
+    result += inCode ? line.slice(cursor, backtick) : escapeRawHtmlInText(line.slice(cursor, backtick));
+    let end = backtick + 1;
+    while (end < line.length && line[end] === "`") end++;
+    const runSize = end - backtick;
+    result += "`".repeat(runSize);
+    if (markerSize === 0) {
+      markerSize = runSize;
+      inCode = true;
+    } else if (runSize === markerSize) {
+      markerSize = 0;
+      inCode = false;
+    }
+    cursor = end;
+  }
+  return { line: result, markerSize };
+}
+
 const markdownSanitizeSchema = {
   ...defaultSchema,
   attributes: {

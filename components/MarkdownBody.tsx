@@ -6,7 +6,7 @@ import ReactMarkdown, { type Components } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { encodeFilePathForApi } from "@/lib/file-paths";
 import { apiUrl } from "@/lib/base-path";
-import { markdownRehypePlugins, markdownRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
+import { markdownRehypePlugins, markdownRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
 import { QuoteReplyPopover } from "./QuoteReplyPopover";
 import { useI18n } from "@/hooks/useI18n";
@@ -34,7 +34,15 @@ const QuoteOpenContext = createContext<{ openId: string | null; setOpenId: (id: 
 });
 
 export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, onRevealDir, onQuoteReply, messageRole }: MarkdownBodyProps) {
-  const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
+  const normalizedMarkdown = useMemo(() => {
+    const normalized = normalizeDisplayMath(children);
+    // User chat text can start with / embed raw HTML tags as paste artifacts
+    // (e.g. aiti-devtools pick-element payloads like `<div> …` / `<button> …`).
+    // rehype-raw would nest block/interactive elements inside the paragraph
+    // (p > p / p > div) — invalid HTML that React flags as a hydration error.
+    // Escape them so rehype-raw becomes a no-op; `&lt;` still renders as `<`.
+    return messageRole === "user" ? escapeRawHtmlTags(normalized) : normalized;
+  }, [children, messageRole]);
   const [openId, setOpenId] = useState<string | null>(null);
   // Stable renderer identities keep stateful blocks mounted across message hover updates.
   const components = useMemo<Components>(() => ({
