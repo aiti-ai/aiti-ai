@@ -11,6 +11,35 @@
  */
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
+/**
+ * 扩展功能声明（功能管理）：扩展可把自己开放的「功能点」（如注入 agent 会话的
+ * 工具、可选行为开关）声明为可管理的 feature。用户经扩展管理器逐个启用/禁用，
+ * 状态持久化在 <dataRoot>/features.json（core registry 统一读写）。
+ *
+ * 工具级功能约定：feature.id = "tool.<注入后的工具名>"（如 aiti-devtools 的
+ * aiti_page_exec → "tool.aiti_page_exec"）时，core 在 collectAgentTools 注入时
+ * 自动过滤被禁用的工具，并在 execute 时校验（禁用后即时拒绝，已有会话同样生效）。
+ * 其他前缀（如 "behavior.xxx"）由扩展自行在代码里查询 featureEnabled 决定行为。
+ */
+export interface ExtFeature {
+  /** 功能唯一 id（扩展内唯一）。工具级 = "tool.<工具名>"。 */
+  id: string;
+  /** 显示名（扩展管理界面展示）。 */
+  label: string;
+  /** 说明（可选）。 */
+  description?: string;
+  /** 分组（可选，如 "页面操作" / "用户交互"；扩展管理界面按组分）。 */
+  group?: string;
+  /** 默认启用（缺省 true；false = 默认关闭，用户可手动打开）。 */
+  default?: boolean;
+}
+
+/** status 接口里的功能条目 = 声明 + 当前生效状态。 */
+export interface ExtStatusFeature extends ExtFeature {
+  /** 当前生效（用户显式设置优先，否则取 default）。 */
+  enabled: boolean;
+}
+
 /** Core data capabilities handed to extensions — no reimplementation of session access. */
 export interface ExtCoreApi {
   listSessions(): Promise<unknown[]>;
@@ -108,6 +137,7 @@ export interface ExtUiItem {
 export type ExtSlotName =
   | "toolbar"
   | "sidebar"
+  | "sidebarFooter"  // 侧栏底部快捷操作行（模型/技能/插件同一行；aiti-extman：扩展管理入口）
   | "sessionTopbar"
   | "sessionRowActions"
   | "dialogs"
@@ -204,6 +234,8 @@ export type ExtProvidesName = (typeof EXT_PROVIDES)[keyof typeof EXT_PROVIDES];
 export interface ExtUiDefinition {
   toolbar?: ExtUiItem[];
   sidebar?: ExtUiItem[];
+  /** 侧栏底部快捷操作行（与内置 模型/技能/插件 同一排）。 */
+  sidebarFooter?: ExtUiItem[];
   sessionTopbar?: ExtUiItem[];
   sessionRowActions?: ExtUiItem[];
   dialogs?: ExtUiItem[];
@@ -215,6 +247,9 @@ export interface ExtUiDefinition {
   /** client bundle 依赖的其他扩展 id（启动图 inject 边：并行预取/加载顺序提示，
    *  informational——加载正确性不依赖它，仅影响预取调度与 HMR 差集展示）。 */
   clientDependsOn?: string[];
+  /** 懒加载声明：false 时该扩展的 client bundle 不在启动阶段 materialize——
+   *  首次渲染到它声明的 UI 插槽时才拉取并注册（按需加载，DSH immediately 反哺）。 */
+  clientImmediately?: boolean;
   /** Per-locale message table looked up via the client ctx.t(key, params). */
   i18n?: Record<string, Record<string, string>>;
 }
@@ -229,6 +264,8 @@ export interface PiWebExtension {
   client?: string;
   /** 短图标/emoji（如 "🧰"）——顶栏自定义面板等 UI 中标注扩展身份用，可选。 */
   icon?: string;
+  /** 功能管理声明：扩展开放的、可被用户启用/禁用的功能清单（见 ExtFeature）。 */
+  features?: ExtFeature[];
 }
 
 /** 扩展来源根：本地(home) > 额外(env 中间层) > dev(dev-exts 开发层) > 内置(程序目录基线)。 */

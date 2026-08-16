@@ -16,6 +16,8 @@ import type {
   ExtMiddlewareResult,
   ExtServerContext,
   ExtServerHooks,
+  ExtStatusFeature,
+  ExtUiDefinition,
   ExtensionSource,
   LoadedExtension,
   ManifestExtension,
@@ -44,6 +46,103 @@ export interface RegistryOptions {
 }
 
 const DISABLED_FILE = "disabled-extensions.json";
+/** 功能管理持久化：<dataRoot>/features.json → { [extId]: { [featureId]: boolean } }（只存显式设置，默认不落盘）。 */
+const FEATURES_FILE = "features.json";
+
+/** ExtUiDefinition 里带条目数组的插槽（扩展管理界面按此统计插入点）。 */
+const UI_SLOT_KEYS = [
+  "toolbar",
+  "sidebar",
+  "sidebarFooter",
+  "sessionTopbar",
+  "sessionRowActions",
+  "dialogs",
+  "banners",
+  "pages",
+  "chatInputTop",
+] as const;
+
+const SERVER_HOOK_KEYS = ["startup", "shutdown", "api", "middleware"] as const;
+const AGENT_HOOK_KEYS = ["agentTools", "onAgentSession", "onAgentSessionEnd", "onAgentSettled"] as const;
+
+/** status 接口的一行（扩展管理界面消费）。 */
+export interface ExtStatusEntry {
+  loaded: boolean;
+  /** false = 在 disabled-extensions.json 里（loadAll 跳过，不执行代码）。 */
+  enabled?: boolean;
+  error?: string;
+  name?: string;
+  version?: string;
+  source?: ExtensionSource;
+  icon?: string | null;
+  /** 代码目录（disabled/失败条目也有）。 */
+  dir?: string;
+  dataDir?: string;
+  /** client bundle 文件 + 内容哈希（有 client 才有）。 */
+  client?: { file: string; hash: string } | null;
+  /** 插入点：slot 名 → 条目 id 列表（声明了 ui 才有）。 */
+  slots?: Record<string, string[]>;
+  /** 接管的内置能力（EXT_PROVIDES）。 */
+  provides?: string[];
+  /** client 依赖的其他扩展 id（启动图 inject 边）。 */
+  clientDependsOn?: string[];
+  /** i18n 语言表。 */
+  i18nLocales?: string[];
+  /** 服务端钩子（存在即列出）。 */
+  serverHooks?: string[];
+  /** agent 会话钩子（方案 M 扩展点）。 */
+  agentHooks?: string[];
+  /** 功能管理：声明 + 当前启停状态（扩展声明了 features 才有）。 */
+  features?: ExtStatusFeature[];
+  /** 目录里 package.json 的静态信息（不执行代码）。homepage = 来源/文档地址（安装时写入或作者声明）。 */
+  packageInfo?: { name?: string; version?: string; dependencies?: string[]; homepage?: string };
+}
+
+/** 不执行代码读取扩展目录的 package.json（disabled 条目也能有名字/版本/依赖/来源地址）。 */
+function readPackageInfo(dir?: string): { name?: string; version?: string; dependencies?: string[]; homepage?: string } {
+  if (!dir) return {};
+  try {
+    const p = join(dir, "package.json");
+    if (!existsSync(p)) return {};
+    const parsed = JSON.parse(readFileSync(p, "utf8")) as {
+      name?: unknown;
+      version?: unknown;
+      dependencies?: unknown;
+      homepage?: unknown;
+      url?: unknown;
+      repository?: unknown;
+    };
+    // homepage → url → repository（string 或 {url}），优先级递减。
+    const repoUrl = typeof parsed.repository === "string"
+      ? parsed.repository
+      : parsed.repository && typeof parsed.repository === "object" && typeof (parsed.repository as { url?: unknown }).url === "string"
+        ? (parsed.repository as { url: string }).url
+        : undefined;
+    return {
+      name: typeof parsed.name === "string" ? parsed.name : undefined,
+      version: typeof parsed.version === "string" ? parsed.version : undefined,
+      dependencies:
+        parsed.dependencies && typeof parsed.dependencies === "object"
+          ? Object.keys(parsed.dependencies as Record<string, unknown>)
+          : undefined,
+      homepage: typeof parsed.homepage === "string" ? parsed.homepage
+        : typeof parsed.url === "string" ? parsed.url
+        : repoUrl,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function collectSlots(ui?: ExtUiDefinition): Record<string, string[]> | undefined {
+  if (!ui) return undefined;
+  const slots: Record<string, string[]> = {};
+  for (const key of UI_SLOT_KEYS) {
+    const items = ui[key];
+    if (Array.isArray(items) && items.length > 0) slots[key] = items.map((it) => it.id);
+  }
+  return Object.keys(slots).length > 0 ? slots : undefined;
+}
 
 export class ExtRegistryImpl {
   core: ExtCoreApi;
@@ -73,10 +172,16 @@ export class ExtRegistryImpl {
   // 持久化到 <dataRoot>/disabled-extensions.json（数组）；disable 的扩展在
   // loadAll 时跳过（status 标记 disabled:true），enable 后 reload 恢复。
 
+  private disabledCache: { mtimeMs: number; set: Set<string> } | null = null;
   private disabledExtensions(): Set<string> {
+    const file = join(this.dataRoot(), DISABLED_FILE);
     try {
-      const raw = readFileSync(join(this.dataRoot(), DISABLED_FILE), "utf8");
-      return new Set(JSON.parse(raw) as string[]);
+      const st = statSync(file);
+      if (this.disabledCache && this.disabledCache.mtimeMs === st.mtimeMs) return this.disabledCache.set;
+      const raw = readFileSync(file, "utf8");
+      const set = new Set(JSON.parse(raw) as string[]);
+      this.disabledCache = { mtimeMs: st.mtimeMs, set };
+      return set;
     } catch {
       return new Set();
     }
@@ -99,10 +204,110 @@ export class ExtRegistryImpl {
    * reload()（或 loadAll+startAll）让变更生效。
    */
   setEnabled(id: string, enabled: boolean): void {
-    const set = this.disabledExtensions();
+    const set = new Set(this.disabledExtensions());
     if (enabled) set.delete(id);
     else set.add(id);
     this.persistDisabled(set);
+    this.disabledCache = null; // 使缓存失效（下次读盘）
+  }
+
+  // ── 功能管理（features）───────────────────────────────────────────────────
+  // 扩展在 entry 里声明 features（能力清单），用户经扩展管理器逐项启用/禁用；
+  // 显式设置持久化到 <dataRoot>/features.json，读时合并声明的 default。
+
+  private featureCache: { mtimeMs: number; flags: Record<string, Record<string, boolean>> } | null = null;
+  private featureFlags(): Record<string, Record<string, boolean>> {
+    const file = join(this.dataRoot(), FEATURES_FILE);
+    try {
+      const st = statSync(file);
+      if (this.featureCache && this.featureCache.mtimeMs === st.mtimeMs) return this.featureCache.flags;
+      const raw = readFileSync(file, "utf8");
+      const parsed = JSON.parse(raw) as Record<string, Record<string, boolean>>;
+      this.featureCache = { mtimeMs: st.mtimeMs, flags: parsed ?? {} };
+      return this.featureCache.flags;
+    } catch {
+      return {};
+    }
+  }
+
+  private persistFeatureFlags(flags: Record<string, Record<string, boolean>>): void {
+    try {
+      writeFileSync(join(this.dataRoot(), FEATURES_FILE), JSON.stringify(flags, null, 2));
+    } catch (e) {
+      console.error("[ext] failed to persist feature flags:", e);
+    }
+    this.featureCache = null; // 缓存失效（下次读盘）
+  }
+
+  /** 扩展声明里的 feature（按 id）。 */
+  private declaredFeature(extId: string, featureId: string): { default?: boolean } | undefined {
+    const ext = this.extensions.get(extId);
+    return ext?.ext.features?.find((f) => f.id === featureId);
+  }
+
+  /**
+   * 功能当前是否启用：用户显式设置优先，否则取声明 default（缺省 true）。
+   * 供扩展/collectAgentTools 查询；未声明或未知 feature 一律视为启用（不拦截）。
+   */
+  featureEnabled(extId: string, featureId: string): boolean {
+    const declared = this.declaredFeature(extId, featureId);
+    const explicit = this.featureFlags()[extId]?.[featureId];
+    if (typeof explicit === "boolean") return explicit;
+    return declared?.default !== false;
+  }
+
+  /**
+   * 设置功能启停（持久化）。显式设置与声明 default 一致时移除条目（保持文件干净）。
+   * 返回该 feature 新的生效状态。
+   */
+  setFeatureFlag(extId: string, featureId: string, enabled: boolean): boolean {
+    const flags = this.featureFlags();
+    const per = { ...(flags[extId] ?? {}) };
+    const declared = this.declaredFeature(extId, featureId);
+    if (declared && enabled === (declared.default !== false)) {
+      delete per[featureId]; // 与默认一致 → 不落盘
+    } else {
+      per[featureId] = enabled;
+    }
+    const next = { ...flags };
+    if (Object.keys(per).length > 0) next[extId] = per;
+    else delete next[extId];
+    this.persistFeatureFlags(next);
+    return this.featureEnabled(extId, featureId);
+  }
+
+  /**
+   * 收集某扩展注入 agent 会话的全部工具（含 feature 过滤）。
+   * 工具级约定：feature.id = "tool.<注入后的工具名>"。
+   * 禁用 → 注入时过滤 + execute 时校验（已有会话的已注入工具也会即时拒绝）。
+   */
+  private collectExtAgentTools(ext: LoadedExtension, info: Pick<AgentSessionInfo, "sessionId" | "cwd">): ToolDefinition[] {
+    const t = this.agentHooks(ext)?.agentTools?.(info);
+    if (!t) return [];
+    const declared = new Set(ext.ext.features?.map((f) => f.id) ?? []);
+    const out: ToolDefinition[] = [];
+    for (const tool of t) {
+      const fid = "tool." + tool.name;
+      const managed = declared.has(fid);
+      const enabled = managed ? this.featureEnabled(ext.id, fid) : true;
+      if (!enabled) continue; // 注入时过滤
+      if (!managed) { out.push(tool); continue; }
+      // execute 包装：禁用即时生效（读内存缓存，开销可忽略）——已有会话的已注入工具也会被拒。
+      const orig = tool.execute;
+      tool.execute = async (toolCallId, params, signal, onUpdate, extCtx) => {
+        if (!this.featureEnabled(ext.id, fid)) {
+          return {
+            content: [{ type: "text", text: `[功能管理] 工具 ${tool.name} 已被禁用（扩展 ${ext.id} 的功能管理设置）——请在扩展管理器中重新启用后重试。` }],
+            isError: true,
+          } as never;
+        }
+        return orig
+          ? orig(toolCallId, params, signal, onUpdate, extCtx)
+          : ({ content: [{ type: "text", text: "" }] } as never);
+      };
+      out.push(tool);
+    }
+    return out;
   }
 
   extraExtensionsRoots(): string[] {
@@ -171,6 +376,12 @@ export class ExtRegistryImpl {
     return this.loaded;
   }
 
+  devExtensionsRoot(): string | null {
+    return this.devExtensionsRootOverride !== undefined
+      ? this.devExtensionsRootOverride
+      : devExtensionsRoot();
+  }
+
   byId(id: string): LoadedExtension | undefined {
     return this.extensions.get(id);
   }
@@ -179,13 +390,91 @@ export class ExtRegistryImpl {
     return [...this.extensions.values()];
   }
 
-  status(): Record<string, { loaded: boolean; error?: string; name?: string; version?: string; source?: ExtensionSource }> {
-    const out: Record<string, { loaded: boolean; error?: string; name?: string; version?: string; source?: ExtensionSource }> = {};
-    for (const [id, error] of this.errors) out[id] = { loaded: false, error };
+  /**
+   * 全量状态（含被禁用与加载失败的扩展）：
+   *  - 加载失败 → loaded:false + error
+   *  - 被禁用 → enabled:false（从各根重新枚举目录，读 package.json 静态信息，不执行代码）
+   *  - 正常 → loaded:true + 插入点/钩子/client 等全部细节
+   * 同名遮蔽规则与 loadAll 一致（高优先级根先看到即占用）。
+   */
+  status(): Record<string, ExtStatusEntry> {
+    const disabled = this.disabledExtensions();
+    const out: Record<string, ExtStatusEntry> = {};
+    const seen = new Set<string>();
+
+    for (const [id, error] of this.errors) {
+      seen.add(id);
+      out[id] = { loaded: false, enabled: true, error };
+    }
+
+    if (disabled.size > 0) {
+      for (const { root, source } of this.extensionRoots()) {
+        for (const dir of scanExtensionDirs(root)) {
+          const id = dir.split(sep).pop() ?? dir;
+          if (seen.has(id) || !disabled.has(id)) continue;
+          seen.add(id);
+          const packageInfo = readPackageInfo(dir);
+          out[id] = {
+            loaded: false,
+            enabled: false,
+            source,
+            dir,
+            name: packageInfo.name ?? id,
+            version: packageInfo.version,
+            packageInfo,
+          };
+        }
+      }
+    }
+
     for (const ext of this.extensions.values()) {
-      out[ext.id] = { loaded: true, name: ext.name, version: ext.version, source: ext.source };
+      const server = ext.ext.server as (ExtServerHooks & { agent?: ExtAgentHooks }) | undefined;
+      out[ext.id] = {
+        loaded: true,
+        enabled: !disabled.has(ext.id),
+        name: ext.name,
+        version: ext.version,
+        source: ext.source,
+        icon: ext.ext.icon ?? null,
+        dir: ext.dir,
+        dataDir: ext.dataDir,
+        client: ext.ext.client
+          ? { file: ext.ext.client, hash: this.clientHash(ext) }
+          : null,
+        slots: collectSlots(ext.ext.ui),
+        provides: ext.ext.ui?.provides?.length ? [...ext.ext.ui.provides] : undefined,
+        clientDependsOn: ext.ext.ui?.clientDependsOn?.length ? [...ext.ext.ui.clientDependsOn] : undefined,
+        i18nLocales: ext.ext.ui?.i18n ? Object.keys(ext.ext.ui.i18n) : undefined,
+        serverHooks: server ? SERVER_HOOK_KEYS.filter((k) => typeof server[k] === "function") : [],
+        agentHooks: server?.agent ? AGENT_HOOK_KEYS.filter((k) => typeof server.agent![k] === "function") : [],
+        features: ext.ext.features?.length
+          ? ext.ext.features.map((f) => ({ ...f, enabled: this.featureEnabled(ext.id, f.id) }))
+          : undefined,
+        packageInfo: readPackageInfo(ext.dir),
+      };
     }
     return out;
+  }
+
+  /** /api/extensions/status 的完整响应体（GET / install / remove 共用）。 */
+  statusPayload(): {
+    loaded: boolean;
+    extensionsRoot: string;
+    extraExtensionsRoots: string[];
+    devExtensionsRoot: string | null;
+    bundledExtensionsRoot: string;
+    dataRoot: string;
+    extensions: Record<string, ExtStatusEntry>;
+  } {
+    return {
+      loaded: this.isLoaded(),
+      extensionsRoot: this.extensionsRoot(),
+      extraExtensionsRoots: this.extraExtensionsRoots(),
+      devExtensionsRoot: this.devExtensionsRoot(),
+      bundledExtensionsRoot: this.bundledExtensionsRoot(),
+      dataRoot: this.dataRoot(),
+      extensions: this.status(),
+    };
   }
 
   manifest(): ManifestExtension[] {
@@ -217,6 +506,9 @@ export class ExtRegistryImpl {
           hash: this.clientHash(e),
           // inject 边预留：扩展可在 ui 里声明 clientDependsOn（DSH inject 边）。
           inject: e.ext.ui?.clientDependsOn,
+          // 懒加载：ui.clientImmediately === false → 图行标 immediately:false，
+          // 启动阶段不 materialize，首次渲染到声明插槽时才加载。
+          immediately: e.ext.ui?.clientImmediately === false ? false : undefined,
         })),
     );
     return this._bootGraph;
@@ -265,8 +557,7 @@ export class ExtRegistryImpl {
     const tools: ToolDefinition[] = [];
     for (const ext of this.extensions.values()) {
       try {
-        const t = this.agentHooks(ext)?.agentTools?.(info);
-        if (t) tools.push(...t);
+        tools.push(...this.collectExtAgentTools(ext, info));
       } catch (e) {
         console.error(`[ext] ${ext.id}.agent.agentTools 失败:`, e instanceof Error ? e.message : e);
       }
@@ -306,10 +597,21 @@ export class ExtRegistryImpl {
   }
 
   /** Hot reload: shutdown → reload entries → startup. */
+  private reloadInFlight: Promise<void> | null = null;
+
+  /** 热重载：shutdown → loadAll → startAll。并发调用共享同一轮（避免交错丢扩展）。 */
   async reload(): Promise<void> {
-    await this.shutdown();
-    await this.loadAll();
-    await this.startAll();
+    if (this.reloadInFlight) return this.reloadInFlight;
+    this.reloadInFlight = (async () => {
+      await this.shutdown();
+      await this.loadAll();
+      await this.startAll();
+    })();
+    try {
+      await this.reloadInFlight;
+    } finally {
+      this.reloadInFlight = null;
+    }
   }
 
   private serverContext(ext: LoadedExtension): ExtServerContext {
