@@ -29,6 +29,7 @@ import {
   INITIAL_STREAMING_STATE,
   streamReducer,
   type ClientAssistantMessageEvent,
+  type StreamAction,
 } from "@/lib/streaming-message";
 
 export interface SessionData {
@@ -299,6 +300,45 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [entryIds, setEntryIds] = useState<string[]>([]);
   const [streamState, dispatch] = useReducer(streamReducer, INITIAL_STREAMING_STATE);
+  // 流式 delta 微批次：SSE 每个 token/块到达即 dispatch 会让 React 同帧重渲染 N 次
+  // （跨事件批处理不合并），每帧全树 render + commit 是流式期间布局风暴的源头之一。
+  // 入队后每帧 flush 一次（delta-batch），后台标签 rAF 暂停时队列保序等待。
+  const pendingDeltasRef = useRef<ClientAssistantMessageEvent[]>([]);
+  const pendingDeltasFrameRef = useRef<number | null>(null);
+  const flushPendingDeltas = useCallback(() => {
+    if (pendingDeltasFrameRef.current !== null) {
+      cancelAnimationFrame(pendingDeltasFrameRef.current);
+      pendingDeltasFrameRef.current = null;
+    }
+    const batch = pendingDeltasRef.current;
+    if (batch.length === 0) return;
+    pendingDeltasRef.current = [];
+    if (batch.length === 1) dispatch({ type: "delta", event: batch[0] });
+    else dispatch({ type: "delta-batch", events: batch });
+  }, []);
+  const enqueueDelta = useCallback((delta: ClientAssistantMessageEvent) => {
+    pendingDeltasRef.current.push(delta);
+    if (pendingDeltasFrameRef.current === null) {
+      pendingDeltasFrameRef.current = requestAnimationFrame(() => {
+        pendingDeltasFrameRef.current = null;
+        flushPendingDeltas();
+      });
+    }
+  }, [flushPendingDeltas]);
+  // 保序：snapshot/start/end 会重置或替换 streamingMessage，先同步 flush 队列
+  // 再进 reducer（同一调度周期内保持 delta → 边界事件的顺序）。
+  const dispatchStream = useCallback((action: StreamAction) => {
+    if (action.type === "start" || action.type === "snapshot" || action.type === "end") flushPendingDeltas();
+    dispatch(action);
+  }, [flushPendingDeltas]);
+  useEffect(() => () => {
+    // 卸载时丢弃未 flush 的 delta（rAF 已取消，避免卸载后 dispatch）
+    if (pendingDeltasFrameRef.current !== null) {
+      cancelAnimationFrame(pendingDeltasFrameRef.current);
+      pendingDeltasFrameRef.current = null;
+    }
+    pendingDeltasRef.current = [];
+  }, []);
   const [agentRunning, setAgentRunning] = useState(false);
   const [bashRunning, setBashRunning] = useState(false);
   const [pendingBash, setPendingBash] = useState<{ command: string; excludeFromContext: boolean } | null>(null);
@@ -912,7 +952,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setAgentRunning(false);
     setAgentPhase(null);
     setRetryInfo(null);
-    dispatch({ type: "end" });
+    dispatchStream({ type: "end" });
     return wasRunning;
   }, []);
 
@@ -1134,7 +1174,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     switch (event.type) {
       case "connected": {
-        dispatch({ type: "end" });
+        dispatchStream({ type: "end" });
         if (event.isStreaming === true) {
           cancelEventStreamGrace();
           sdkAgentActiveRef.current = true;
@@ -1150,7 +1190,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         agentRunningRef.current = true;
         setAgentRunning(true);
         setAgentPhase({ kind: "waiting_model" });
-        dispatch({ type: "start" });
+        dispatchStream({ type: "start" });
         break;
       case "agent_end":
         // One logical prompt can emit multiple agent_end events before retrying,
@@ -1159,7 +1199,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (!agentRunningRef.current) break;
         setAgentPhase(null);
         setRetryInfo(null);
-        dispatch({ type: "end" });
+        dispatchStream({ type: "end" });
         if (sessionIdRef.current) {
           loadSession(sessionIdRef.current);
           fetch(apiUrl(`/api/agent/${encodeURIComponent(sessionIdRef.current)}`))
@@ -1232,7 +1272,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const msg = event.message as AgentMessage | undefined;
           if (msg?.role === "user") break;
           if (msg?.role === "assistant") {
-            dispatch({ type: "snapshot", message: msg });
+            dispatchStream({ type: "snapshot", message: msg });
             if (msg.content.length > 0) setAgentPhase(null);
           } else if (msg) {
             setAgentPhase(null);
@@ -1240,7 +1280,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         } else {
           const delta = event.assistantMessageEvent as ClientAssistantMessageEvent | undefined;
           if (delta) {
-            dispatch({ type: "delta", event: delta });
+            enqueueDelta(delta);
             if (delta.type !== "toolcall_start" && delta.type !== "toolcall_delta") {
               setAgentPhase(null);
             }
@@ -1305,7 +1345,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           }
           setMessages((prev) => [...prev, normalizeToolCalls(completed)]);
         }
-        dispatch({ type: "end" });
+        dispatchStream({ type: "end" });
         setAgentPhase({ kind: "waiting_model" });
         break;
       }
@@ -1452,7 +1492,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     agentRunningRef.current = true;
     setAgentRunning(true);
     setAgentPhase(isSlashCommandPrompt ? { kind: "running_command" } : { kind: "waiting_model" });
-    dispatch({ type: "start" });
+    dispatchStream({ type: "start" });
     pendingScrollToUserRef.current = true;
     setPromptAnchorActive(true);
 
@@ -1528,7 +1568,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       closeEvents();
       setAgentRunning(false);
       setAgentPhase(null);
-      dispatch({ type: "end" });
+      dispatchStream({ type: "end" });
     }
   }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, composerDraftKey, reconcileAgentState, restoreSubmission]);
 
@@ -1954,7 +1994,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           agentRunningRef.current = true;
           setAgentRunning(true);
           setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
-          dispatch({ type: "start" });
+          dispatchStream({ type: "start" });
           // ensureConnected is a no-op when a live SSE stream for this
           // session is already open, so restored-queue events are not lost.
           void ensureEventsConnected(sid);
@@ -2400,7 +2440,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             agentRunningRef.current = true;
             setAgentRunning(true);
             setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
-            dispatch({ type: "start" });
+            dispatchStream({ type: "start" });
             void maintainEventsConnected(session.id);
             if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
               void waitForPromptSettlement(session.id);
@@ -2526,12 +2566,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
 
-  // Streaming chunks grow the visible message without changing messages.length;
-  // re-run the step-follow check on every chunk so the growing message is
-  // stepped into view once it exceeds the viewport (step-follow mode only).
-  useEffect(() => {
-    if (streamState.isStreaming) smartFollowStep();
-  }, [streamState, smartFollowStep]);
+  // （流式 chunk 的 step-follow 判定不走这里：每 chunk 同步跑 smartFollowStep 会在
+  // React commit（DOM 写）之后立即读 rect —— 强制同步布局，是流式期间 120 次/秒
+  // 布局风暴的源头之一。判定由 message_update 分支的 rAF 合并路径 + 下方 container
+  // ResizeObserver（layout 后触发、读免费）覆盖。）
 
   // The queue banner / input area sits BELOW the scroll container in a flex
   // column. When the queue grows (or shrinks), the container's clientHeight

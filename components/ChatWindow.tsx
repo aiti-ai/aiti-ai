@@ -609,8 +609,9 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       return;
     }
 
-    const updateBottomComposerHeight = () => {
-      const nextHeight = Math.ceil(composer.getBoundingClientRect().height);
+    const updateBottomComposerHeight = (height?: number) => {
+      // RO 回调传入 borderBoxSize（layout 后触发，读取免费）；仅在初始/无参时读 rect
+      const nextHeight = Math.ceil(height ?? composer.getBoundingClientRect().height);
       if (bottomComposerHeightRef.current === nextHeight) return;
 
       const previousHeight = bottomComposerHeightRef.current;
@@ -636,7 +637,10 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
     const observer = typeof ResizeObserver === "undefined"
       ? null
-      : new ResizeObserver(updateBottomComposerHeight);
+      : new ResizeObserver((entries) => {
+        const entry = entries[entries.length - 1];
+        updateBottomComposerHeight(entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height);
+      });
     observer?.observe(composer);
     return () => {
       observer?.disconnect();

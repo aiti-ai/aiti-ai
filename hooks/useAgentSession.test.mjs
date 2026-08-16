@@ -101,17 +101,18 @@ test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", ()
 
   assert.match(source, /streamReducer,[\s\S]*type ClientAssistantMessageEvent/);
   assert.doesNotMatch(source, /streamingMessageRef/);
-  assert.match(connectedSource, /dispatch\(\{ type: "end" \}\)/);
+  assert.match(connectedSource, /dispatchStream\(\{ type: "end" \}\)/);
   assert.match(connectedSource, /event\.isStreaming === true/);
   assert.match(connectedSource, /agentRunningRef\.current = true/);
-  assert.match(streamSource, /msg\?\.role === "assistant"[\s\S]*dispatch\(\{ type: "snapshot", message: msg \}\)/);
+  assert.match(streamSource, /msg\?\.role === "assistant"[\s\S]*dispatchStream\(\{ type: "snapshot", message: msg \}\)/);
   assert.match(streamSource, /event\.assistantMessageEvent as ClientAssistantMessageEvent/);
-  assert.match(streamSource, /dispatch\(\{ type: "delta", event: delta \}\)/);
+  assert.match(streamSource, /enqueueDelta\(delta\)/);
+  assert.match(source, /dispatch\(\{ type: "delta-batch", events: batch \}\)/);
   assert.match(streamSource, /delta\.type !== "toolcall_start" && delta\.type !== "toolcall_delta"/);
   assert.doesNotMatch(streamSource, /case "message_delta"/);
   assert.match(messageEndSource, /const completed = event\.message as AgentMessage/);
   assert.match(messageEndSource, /normalizeToolCalls\(completed\)/);
-  assert.match(messageEndSource, /dispatch\(\{ type: "end" \}\)/);
+  assert.match(messageEndSource, /dispatchStream\(\{ type: "end" \}\)/);
   assert.doesNotMatch(messageEndSource, /streamState\.streamingMessage/);
 });
 
@@ -187,7 +188,7 @@ test("keeps a newly sent user message at the top while its response starts", () 
 test("sizes the message tail from the rendered bottom composer", () => {
   assert.match(chatWindowSource, /const bottomComposerRef = useRef<HTMLDivElement \| null>\(null\)/);
   assert.match(chatWindowSource, /useLayoutEffect\(\(\) => \{/);
-  assert.match(chatWindowSource, /new ResizeObserver\(updateBottomComposerHeight\)/);
+  assert.match(chatWindowSource, /updateBottomComposerHeight\(entry\.borderBoxSize\?\.\[0\]\?\.blockSize \?\? entry\.contentRect\.height\)/);
   assert.match(chatWindowSource, /bottomComposerScrollFrameRef = useRef<number \| null>\(null\)/);
   assert.match(chatWindowSource, /distanceFromBottom <= Math\.abs\(nextHeight - previousHeight\) \+ 1/);
   assert.match(chatWindowSource, /scrollToBottom\("auto"\)/);

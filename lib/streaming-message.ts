@@ -17,6 +17,7 @@ export type StreamAction =
   | { type: "start" }
   | { type: "snapshot"; message: AgentMessage }
   | { type: "delta"; event: ClientAssistantMessageEvent }
+  | { type: "delta-batch"; events: ClientAssistantMessageEvent[] }
   | { type: "end" };
 
 export const INITIAL_STREAMING_STATE: StreamingState = {
@@ -136,6 +137,12 @@ export function streamReducer(
     }
     case "delta":
       return applyDelta(state, action.event);
+    case "delta-batch": {
+      // 同帧合并的流式事件一批应用（每 chunk 一次 dispatch → 每帧一次渲染）。
+      let next = state;
+      for (const event of action.events) next = applyDelta(next, event);
+      return next;
+    }
     case "end":
       return INITIAL_STREAMING_STATE;
     default:
