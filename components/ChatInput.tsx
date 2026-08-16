@@ -30,7 +30,7 @@ import {
   type AtQueryMatch, type FileIndexEntry,
 } from "@/lib/file-fuzzy";
 import { FolderIcon, getFileIcon } from "./FileIcons";
-import { useIsMobile } from "@/hooks/useIsMobile";
+import { useIsMobile, useIsCompact } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import type { ToolPreset } from "@/lib/tool-presets";
 
@@ -625,7 +625,11 @@ function BottomModeBar({ mode, onClick, height = 32, tapWidth = 32, count, label
   label?: string;
 }) {
   const { t } = useI18n();
-  const defaultLabel = mode === "full" ? t("chat.minimizeQueue") : mode === "queueHidden" ? t("chat.minimizeInput") : t("chat.restoreBottom");
+  // Label describes what the NEXT cycle step does (full → queueHidden →
+  // minimal → full; the queueHidden level is skipped when the queue is
+  // empty, so "full" jumps straight to "minimal" = collapse input).
+  const nextLevel = mode === "full" ? (count ? "queueHidden" : "minimal") : mode === "queueHidden" ? "minimal" : "full";
+  const defaultLabel = nextLevel === "queueHidden" ? t("chat.minimizeQueue") : nextLevel === "minimal" ? t("chat.minimizeInput") : t("chat.restoreBottom");
   const effectiveLabel = label ?? defaultLabel;
   return (
     <button
@@ -832,6 +836,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
 }: Props, ref) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
+  const isCompact = useIsCompact();
   const [value, setValue] = useState("");
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -873,9 +878,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const historyMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queueImportFileRef = useRef<HTMLInputElement>(null);
-  // Mobile-only: cycle the bottom panels (queue banner + input + toolbar) to
-  // leave more room for the conversation during long runs. Persisted so the
-  // choice survives reloads.
+  // Cycle the bottom panels (queue banner + input + toolbar) to leave more
+  // room for the conversation during long runs. Persisted so the choice
+  // survives reloads. Clicking the thin BottomModeBar cycles on every screen
+  // size; the swipe gestures below are touch-only.
   //   full        → everything visible
   //   queueHidden → queue banner hidden, input + toolbar visible
   //   minimal     → only a slim capsule bar (with the cycle button) remains
@@ -898,7 +904,12 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const order: BottomMode[] = queueCountRef.current === 0
       ? ["full", "minimal"]
       : ["full", "queueHidden", "minimal"];
-    const idx = order.indexOf(prev);
+    let idx = order.indexOf(prev);
+    if (idx === -1) {
+      // 持久化的 queueHidden 在队列清空后不在 order 里（indexOf=-1）——按它的上一级
+      // （full）归一化：+1 方向 → minimal（与 BottomModeBar 标签一致），-1 方向 → 保持展开。
+      idx = order.indexOf("full");
+    }
     // Swipe gestures must NOT wrap: swiping up from "full" (already fully
     // expanded) must stay at "full" instead of cycling to "minimal" (which
     // collapses the input area); same for swiping down from "minimal".
@@ -2302,7 +2313,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         flexShrink: 0,
         background: "transparent",
         padding: "0 16px 8px",
-        paddingRight: isMobile ? 16 : 52, // desktop: 16px base + 36px for ChatMinimap alignment
+        paddingRight: isMobile || isCompact ? 16 : 52, // desktop: 16px base + 36px for ChatMinimap alignment
       }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
@@ -4367,10 +4378,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </button>
             )}
             </div>
+            {/* Desktop and mobile cycle identically: click walks the bottom
+                modes (full → queueHidden → minimal → full, queueHidden skipped
+                when the queue is empty). Collapsing the queue rows themselves
+                stays on the queue header chevron button. */}
             <BottomModeBar
               mode={bottomMode}
-              onClick={isMobile ? () => cycleBottomMode() : toggleQueueCollapsed}
-              label={isMobile ? undefined : (queueCollapsed ? t("chat.queueExpand") : t("chat.queueCollapse"))}
+              onClick={() => cycleBottomMode()}
               count={queueCount}
             />
           </div>

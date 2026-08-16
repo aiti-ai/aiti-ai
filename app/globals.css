@@ -720,7 +720,9 @@ pre, code {
 .image-preview-close {
   position: absolute;
   top: max(12px, env(safe-area-inset-top));
-  right: max(12px, env(safe-area-inset-right));
+  /* 安全区偏移内化到 padding（背景贴预览边、图标避让手势区）——同文件面板开关按钮的修法
+     （直接 right:env 会悬在离边 38px 处，pad 实测“没靠边”） */
+  right: 12px;
   z-index: 1;
   display: inline-flex;
   align-items: center;
@@ -1325,7 +1327,9 @@ span.token.table {
   .right-panel-container {
     position: fixed;
     top: 0;
-    right: env(safe-area-inset-right);
+    /* right:0 面板背景贴到屏右缘（不再露出 env() 宽的缝隙——pad 实测 38px“没贴边”）；
+       内容避让手势区改在 > * 内层 padding（视觉贴边 + 内容不进手势区） */
+    right: 0;
     bottom: 0;
     z-index: 250;
     width: min(560px, calc(100vw - 48px));
@@ -1338,12 +1342,20 @@ span.token.table {
     transform: translateX(0);
   }
   .right-panel-container.right-panel-closed {
-    transform: translateX(100%);
+    /* 完全出屏（right:0 锚屏右缘 + env() 偏移兑底）；且关闭态关闭过渡动画——
+       关闭过程 0.2s 滑出途中被看到一半（“闪一半”实测），直接跳终态 */
+    transform: translateX(calc(100% + env(safe-area-inset-right)));
     pointer-events: none;
+    transition: none;
+  }
+  .right-panel-container.right-panel-open {
+    transition: transform 0.2s ease; /* 只开启动画 */
   }
   .right-panel-container > * {
     width: 100%;
     min-width: 0;
+    padding-right: env(safe-area-inset-right); /* 内容避让手势区（面板背景已贴边） */
+    box-sizing: border-box;
   }
 }
 
@@ -1413,5 +1425,21 @@ span.token.table {
   input,
   select {
     font-size: 16px !important;
+  }
+}
+
+/* App 主行（AppShell 三栏容器）：安全区垫层。
+   <641 移动单栏：保留左右 env(safe-area-inset-*)（全面屏手机刘海/圆角避让，原 inline style 语义）。
+   ≥641 桌面/平板多栏：归零——pad 系统上报右侧手势区 ~38px 会把整个三栏容器垫掉，
+   右侧露出背景空白带（主列被挤窄、看起来"缺一块"）；多栏下内容自有边距
+   （聊天列 max-w 居中留白 + 右侧面板 fixed 自带 right:env()），不需要容器级垫层。 */
+.app-shell-row {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+@media (min-width: 641px) {
+  .app-shell-row {
+    padding-left: 0;
+    padding-right: 0;
   }
 }

@@ -830,13 +830,5 @@ export const enLocale: LocalePlugin = {
     "i18n.taskFinished": "Task finished.",
     "i18n.attentionNeeded": "Pi needs your attention",
     "i18n.extensionInputNeeded": "An extension is waiting for your input.",
-
-    'extensions.title': 'Extensions',
-    'extensions.reload': 'Reload all',
-    'extensions.close': 'Close',
-    'extensions.none': 'No extensions',
-    'extensions.enable': 'Enable',
-    'extensions.disable': 'Disable',
-    'extensions.disabled': 'disabled',
-    'extensions.clientLoaded': 'client loaded',  },
+  },
 };

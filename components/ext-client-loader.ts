@@ -37,6 +37,8 @@ interface ClientModule {
 const modules = new Map<string, ClientModule>();
 /** 进行中的 materialize（防并发重复注册：启动循环与按需触发可能同时到达）。 */
 const materializing = new Map<string, Promise<boolean>>();
+/** 已 warn 过「无 register 导出」的扩展（防重复刷屏）。 */
+const warnedNullRegister = new Set<string>();
 let bootGraph: PiWebBootGraph = { rev: "", entries: [] };
 
 /**
@@ -46,9 +48,30 @@ let bootGraph: PiWebBootGraph = { rev: "", entries: [] };
  */
 const declaredSlots = new Map<string, string[]>();
 
-/** manifest 拉取后登记扩展声明的插槽（ui 定义的 slot 键）。 */
+/** manifest 拉取后登记扩展声明的插槽（ui 定义的 slot 键）。空声明清除旧值（reload 后
+ *  扩展不再声明某 slot 时，不能残留上次的声明——否则按需加载会错误触发）。 */
 export function registerDeclaredSlots(extId: string, slots: string[]): void {
   if (slots.length > 0) declaredSlots.set(extId, slots);
+  else declaredSlots.delete(extId);
+}
+
+/** 图行是否为「立即加载」项（immediately:false = 懒加载，留给按需触发）。 */
+export function isImmediateEntry(entry: PiWebBootEntry): boolean {
+  return entry.immediately !== false;
+}
+
+/** 启动批量的目标行：只取立即项——懒加载扩展既不预取也不 materialize。 */
+export function immediateEntries(graph: PiWebBootGraph): PiWebBootEntry[] {
+  return graph.entries.filter(isImmediateEntry);
+}
+
+/** 清除不在 activeIds 里的 slot 声明（manifest 重拉后调用——已卸载/禁用的扩展
+ *  不再出现在 manifest，其旧声明残留会让 pendingForSlot 每次渲染都徒劳触发）。 */
+export function pruneDeclaredSlots(activeIds: Iterable<string>): void {
+  const active = new Set(activeIds);
+  for (const id of [...declaredSlots.keys()]) {
+    if (!active.has(id)) declaredSlots.delete(id);
+  }
 }
 
 export function getBootGraph(): PiWebBootGraph {
@@ -108,8 +131,17 @@ export async function materialize(id: string, makeCtx: (id: string) => unknown):
     }
     if (!mod) return false;
     if (mod.materialized) return false;
+    if (!mod.registerFn) {
+      // bundle 契约违反（无 default/register 导出）——warn 一次，不标
+      // materialized（按需触发会重试，但不再刷屏）。
+      if (!warnedNullRegister.has(id)) {
+        warnedNullRegister.add(id);
+        console.warn(`[ext] ${id}: client bundle exports no register function (expected export default register(ctx))`);
+      }
+      return false;
+    }
     try {
-      mod.registerFn?.(makeCtx(id));
+      mod.registerFn(makeCtx(id));
       mod.materialized = true;
       return true;
     } catch (e) {

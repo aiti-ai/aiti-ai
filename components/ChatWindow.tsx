@@ -19,7 +19,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
 import { ExtensionWidgets } from "./ExtensionWidgets";
 import { useDragDrop } from "@/hooks/useDragDrop";
-import { useIsMobile } from "@/hooks/useIsMobile";
+import { useIsMobile, useIsCompact } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { AppUpdateResponse } from "@/lib/api-types";
 import {
@@ -262,6 +262,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
 export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onRevealDir, onExportQueue, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
+  const isCompact = useIsCompact();
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
   // wrapping handleAgentEventRef because useAgentSession overwrites that ref
@@ -867,7 +868,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
           position: "absolute",
           top: 12,
           left: 0,
-          right: isMobile ? 0 : CHAT_MINIMAP_WIDTH,
+          right: isMobile || isCompact ? 0 : CHAT_MINIMAP_WIDTH,
           zIndex: 40,
           display: "flex",
           justifyContent: "center",
@@ -889,7 +890,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                 justifyContent: "space-between",
                 gap: 12,
                 marginLeft: 16,
-                marginRight: isMobile ? 16 : 52,
+                marginRight: isMobile || isCompact ? 16 : 52,
                 fontFamily: "var(--font-mono)",
               }}
             >
@@ -1159,7 +1160,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
           setVisibleCount={setVisibleCount}
         />
 
-        {isMobile ? null : (
+        {isMobile || isCompact ? null : (
           <ChatMinimap
             messages={messages}
             streamingMessage={streamState.streamingMessage}
@@ -1174,7 +1175,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
         <div
           style={{
             padding: `0 ${CHAT_COLUMN_PADDING}px`,
-            paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
+            paddingRight: isMobile || isCompact ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
           }}
         >
           <div style={{ maxWidth: 820, margin: "0 auto" }}>
@@ -1185,7 +1186,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
         <div
           style={{
             padding: `0 ${CHAT_COLUMN_PADDING}px`,
-            paddingRight: isMobile ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
+            paddingRight: isMobile || isCompact ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
           }}
         >
           <div style={{ maxWidth: 820, margin: "0 auto" }}>

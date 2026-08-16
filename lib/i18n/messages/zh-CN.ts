@@ -829,13 +829,5 @@ export const zhCNLocale: LocalePlugin = {
     "i18n.taskFinished": "任务已完成。",
     "i18n.attentionNeeded": "Pi 需要你的操作",
     "i18n.extensionInputNeeded": "扩展正在等待你的输入。",
-
-    'extensions.title': '扩展管理',
-    'extensions.reload': '全部重载',
-    'extensions.close': '关闭',
-    'extensions.none': '暂无扩展',
-    'extensions.enable': '启用',
-    'extensions.disable': '禁用',
-    'extensions.disabled': '已禁用',
-    'extensions.clientLoaded': 'client 已加载',  },
+  },
 };

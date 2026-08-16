@@ -13,7 +13,6 @@ import { openFileTab, saveFileViewerState } from "./file-tab-state";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
-import { ExtensionsConfig } from "./ExtensionsConfig";
 import { ServicesDialog } from "./ServicesDialog";
 import { SelfExposeAlert } from "./SelfExposeAlert";
 import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas } from "./ExtSlots";
@@ -139,7 +138,6 @@ export function AppShell() {
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
   const [pluginsConfigOpen, setPluginsConfigOpen] = useState(false);
-  const [extensionsConfigOpen, setExtensionsConfigOpen] = useState(false);
   const [servicesOpen, setServicesOpen] = useState(false);
   // 从顶栏告警进入时先停在 Self 页；普通打开默认 Ports 页，关闭时复位。
   const [servicesInitialTab, setServicesInitialTab] = useState<"ports" | "self" | "users">("ports");
@@ -1704,17 +1702,6 @@ export function AppShell() {
               </svg>
             ),
           },
-          {
-            label: translate("common.extensions"),
-            onClick: () => setExtensionsConfigOpen(true),
-            disabled: false,
-            icon: (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2v4M12 18v4M2 12h4M18 12h4" />
-                <circle cx="12" cy="12" r="4" />
-              </svg>
-            ),
-          },
         ] as { label: string; onClick: () => void; disabled: boolean; icon: React.ReactNode }[]).map(({ label, onClick, disabled, icon }) => (
           <button
             key={label}
@@ -1735,6 +1722,8 @@ export function AppShell() {
             {label}
           </button>
         ))}
+        {/* 扩展点：侧栏底部快捷操作行（与内置 模型/技能/插件 同一排；aiti-extman：扩展管理入口） */}
+        <ExtSlot name="sidebarFooter" />
       </div>
     </>
   );
@@ -1832,12 +1821,16 @@ export function AppShell() {
         }
       }
     `}</style>
-    <div style={{
+    <div
+      className="app-shell-row"
+      style={{
       display: "flex",
       width: "100%",
       height: "var(--app-viewport-height, 100dvh)",
-      paddingLeft: "env(safe-area-inset-left)",
-      paddingRight: "env(safe-area-inset-right)",
+      /* 安全区垫层改由 .app-shell-row（globals.css）管理：<641 移动单栏保留 env(safe-area-inset-*)，
+         ≥641 多栏布局归零——pad 上系统上报右侧手势区 38px 会把整个三栏垫掉，右侧露出背景空白带
+         （实测 pad 竖屏 777px：parPad=[0,38]，主列被挤宧 38px，“缺一块”；横竖切换 inset 变化时大小区不同）。
+         多栏下内容自有边距（聊天列 max-w 居中 + 右侧面板自身 right:env()），无需容器级垫层 */
       overflow: "hidden",
       background: "var(--bg)",
     }}>
@@ -1898,9 +1891,10 @@ export function AppShell() {
             background: "var(--bg-panel)",
             overflowX: "hidden",
             overflowY: "hidden",
-            // 右上角 fixed 的文件面板开关（36px + 间隙）会覆盖右端，
-            // 预留 padding 防遮挡
-            paddingRight: 44,
+            // 右上角 fixed 的文件面板开关（36px + 间隙）会覆盖右端，预留 padding 防遮挡；
+            // 叠加安全区（pad 实测 38px）：按钮 margin-right 避让手势区后实际占 safe-area+36+间隙，
+            // padding 只计 36+8——避免 pad 上聊天列右侧再被裁 38px（“右边空一大片”的最后一个来源）
+            paddingRight: "calc(44px + min(env(safe-area-inset-right), 8px))",
           }}
         >
           <button
@@ -2714,7 +2708,9 @@ export function AppShell() {
        title={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
        aria-label={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
       style={{
-        position: "fixed", top: "env(safe-area-inset-top)", right: "env(safe-area-inset-right)", zIndex: 300,
+        /* right:0 按钮完全贴屏右缘（用户要求“靠到右边”；36px 小按钮无需安全区避让——
+           margin/padding env 都会把它推离边缘 38px，实测反复“没贴边”就是这两种写法造成的） */
+        position: "fixed", top: "env(safe-area-inset-top)", right: 0, zIndex: 300,
         display: "flex", alignItems: "center", justifyContent: "center",
         width: 36, height: 36, padding: 0,
         background: "var(--bg-panel)", borderTop: "none", borderRight: "none",
@@ -2751,9 +2747,6 @@ export function AppShell() {
         onClose={() => setPluginsConfigOpen(false)}
         onReloaded={() => setSessionKey((k) => k + 1)}
       />
-    )}
-    {extensionsConfigOpen && (
-      <ExtensionsConfig onClose={() => setExtensionsConfigOpen(false)} />
     )}
     {servicesOpen && (
       <ServicesDialog

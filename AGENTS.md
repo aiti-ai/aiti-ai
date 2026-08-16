@@ -67,8 +67,10 @@ app/api/
   plugins/route.ts                GET/POST package plugin management
   extensions/[...path]/route.ts   GET/POST/PUT/DELETE/PATCH extension api dispatch + assets（门禁后分发，asset 防穿越）
   extensions/manifest/route.ts    GET client manifest（ui 元数据 + clientUrl + i18n）
-  extensions/status/route.ts      GET extension load status
+  extensions/status/route.ts      GET 全量状态（含禁用/失败条目 + 插入点/钩子/依赖）；管理操作在 aiti-extman 扩展
   extensions/reload/route.ts      POST hot reload（shutdown→loadAll→startAll）
+  （扩展管理 UI/安装/在线注册表已迁出 core → aiti-ai pi-web-ext/aiti-extman 扩展：
+    /api/extensions/aiti-extman/{status,registry,ops}）
   skills/route.ts                 GET/PATCH loaded skills and disable-model-invocation
   skills/install/route.ts         POST install skills through npx skills add
   skills/search/route.ts          GET/POST skills.sh search

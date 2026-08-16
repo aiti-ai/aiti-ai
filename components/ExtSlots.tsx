@@ -29,9 +29,15 @@ import {
 } from "@/lib/ext-ui-store";
 import {
   entryOf,
+  getBootGraph,
+  immediateEntries,
+  isImmediateEntry,
   materialize,
+  materializedIds,
   pendingForSlot,
   prefetch,
+  prefetchedIds,
+  pruneDeclaredSlots,
   reconcileGraph,
   registerDeclaredSlots,
   setBootGraph,
@@ -62,6 +68,11 @@ export interface ExtClientContext {
   sendChatMessage(text: string, mode: "steer" | "followUp"): void;
   /** 注册消息点击识别弹层动作 provider（QuoteReplyPopover 扩展点：异步识别段落 → 动作按钮） */
   registerPopoverAction(provider: PopoverActionProvider): void;
+  /** 触发宿主侧扩展重载（拉新 manifest + 图对账 + 反卷 materialize）——扩展管理器场景
+   *  （服务端热重载后刷新已安装/启停变更；optional 兼容旧宿主）。 */
+  reloadExtensions?(): Promise<{ invalidated: string[] }>;
+  /** client loader 当前状态（materialized / prefetched 的扩展 id）——扩展管理界面展示用。 */
+  extLoaderState?(): { materialized: string[]; prefetched: string[] };
 }
 
 /** 聊天输入钩子 store（扩展注册；ChatInput 发送时调用） */
@@ -155,16 +166,18 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     registerChatHook: (hook) => registerChatHooks(hook),
     sendChatMessage: (text, mode) => dispatchChatSend(text, mode),
     registerPopoverAction: (p) => registerPopoverActions(p),
+    reloadExtensions: () => reloadExtensions(),
+    extLoaderState: () => ({ materialized: materializedIds(), prefetched: prefetchedIds() }),
   };
 }
 
-/** 首次加载：拉 manifest → 写元数据 + 启动图 → 按图 prefetch + materialize。 */
-async function loadExtensions(): Promise<void> {
-  if (loadStarted) return;
-  loadStarted = true;
+/** 拉取 manifest 并刷新 client 侧缓存（manifestCache / declaredSlots / metas）。
+ *  返回 { extensions, graph }；失败返回 null（不抛）。reload 后必须重拉——
+ *  否则新安装扩展的元数据/i18n/声明的插槽停留在旧值，client bundle 加载不到。 */
+async function fetchManifestData(): Promise<{ extensions: ManifestExt[]; graph: PiWebBootGraph } | null> {
   try {
     const res = await fetch(apiUrl("/api/extensions/manifest"), { cache: "no-store" });
-    if (!res.ok) return;
+    if (!res.ok) return null;
     const data = (await res.json()) as { extensions: ManifestExt[]; graph: PiWebBootGraph };
     // manifest 元数据（name/icon/provides）→ 宿主 UI 标注扩展身份（顶栏自定义面板等）、
     // 并驱动内置 UI 的能力接管开关（useExtProvides）
@@ -176,20 +189,38 @@ async function loadExtensions(): Promise<void> {
       registerDeclaredSlots(ext.id, ext.ui ? Object.keys(ext.ui).filter((k) => k !== "i18n" && k !== "provides" && k !== "clientDependsOn") : []);
     }
     registerExtMetas(metas);
-    setBootGraph(data.graph ?? { rev: "", entries: [] });
-    // 两阶段加载：prefetch 全部（注册入口就绪，副作用未发生）→ materialize 逐个
-    // （register(ctx) 调用，副作用发生）。失败隔离：单扩展失败不影响其他。
-    await Promise.allSettled(data.graph?.entries.map((e) => prefetch(e.id)) ?? []);
-    for (const ext of data.extensions) {
-      if (!entryOf(ext.id)) continue; // 无 client bundle 或未进图
-      await materialize(ext.id, () => makeClientContext(ext));
-    }
+    // 已卸载/禁用的扩展不再出现在 manifest——清除其残留的 slot 声明，
+    // 防止 pendingForSlot 把不存在的扩展列为按需加载候选。
+    pruneDeclaredSlots(data.extensions.map((e) => e.id));
+    return data;
   } catch (e) {
     console.error("[ext] failed to fetch extension manifest:", e);
+    return null;
   }
 }
 
-/** HMR 精确反卷：POST reload → 服务端返回新图 → 比 rev 只反卷变更扩展。 */
+/** 首次加载：拉 manifest → 写元数据 + 启动图 → 按图 prefetch + materialize。 */
+async function loadExtensions(): Promise<void> {
+  if (loadStarted) return;
+  loadStarted = true;
+  const data = await fetchManifestData();
+  if (!data) return;
+  setBootGraph(data.graph ?? { rev: "", entries: [] });
+  // 两阶段加载：prefetch 立即项（注册入口就绪，副作用未发生）→ materialize 立即项
+  // （register(ctx) 调用，副作用发生）。immediately:false 的懒加载扩展既不预取也不
+  // materialize——首次渲染到它声明的插槽时由 useExtSlotItems 按需触发（下载+注册）。
+  // 失败隔离：单扩展失败不影响其他。
+  const immediate = immediateEntries(data.graph ?? { rev: "", entries: [] });
+  await Promise.allSettled(immediate.map((e) => prefetch(e.id)));
+  for (const entry of immediate) {
+    const ext = manifestCache.get(entry.id) ?? data.extensions.find((e) => e.id === entry.id);
+    if (!ext) continue; // 图里有条目但 manifest 无对应扩展——跳过，不构造 ctx
+    await materialize(entry.id, () => makeClientContext(ext));
+  }
+}
+
+/** HMR 精确反卷：POST reload（服务端 shutdown→loadAll→startAll）→ 补拉 manifest 刷新
+ *  client 缓存（新安装扩展的元数据/i18n/声明的插槽）→ 以最新图比 rev 只反卷变更扩展。 */
 export async function reloadExtensions(): Promise<{ invalidated: string[] }> {
   if (reloadInFlight) return reloadInFlight;
   reloadInFlight = (async () => {
@@ -200,16 +231,25 @@ export async function reloadExtensions(): Promise<{ invalidated: string[] }> {
         body: JSON.stringify({}),
       });
       if (!res.ok) throw new Error(`reload failed: ${res.status}`);
-      const data = (await res.json()) as { ok: boolean; graph?: PiWebBootGraph };
-      if (!data.ok || !data.graph) return { invalidated: [] };
-      const invalidated = reconcileGraph(data.graph, (extId) => removeExtUiItems(extId));
-      // 反卷的扩展重新 prefetch + materialize（新 rev 的 bundle）。
-      for (const id of invalidated) {
+      // 服务端热重载成功后重拉 manifest——manifestCache/declaredSlots/metas 是首次加载
+      // 时的快照，不刷新的话新安装扩展找不到元数据，client bundle 不会加载（B）。
+      const data = await fetchManifestData();
+      if (!data) return { invalidated: [] };
+      const graph = data.graph ?? { rev: "", entries: [] };
+      const oldGraph = getBootGraph();
+      const invalidated = reconcileGraph(graph, (extId) => removeExtUiItems(extId));
+      // 新增 entry（enable/install 后回到图里）也要加载——reconcileGraph 只反卷变更/移除项。
+      const added = graph.entries
+        .filter((e) => !oldGraph.entries.some((o) => o.id === e.id))
+        .map((e) => e.id);
+      // 反卷 + 新增的扩展重新 prefetch + materialize。懒加载（immediately:false）项保持
+      // 懒——仅反卷清掉旧注册，新 bundle 留给插槽按需触发（与启动批量一致）。
+      for (const id of [...invalidated, ...added]) {
         const ext = manifestCache.get(id);
-        if (ext && entryOf(id)) {
-          await prefetch(id);
-          await materialize(id, () => makeClientContext(ext));
-        }
+        const entry = entryOf(id);
+        if (!ext || !entry || !isImmediateEntry(entry)) continue;
+        await prefetch(id);
+        await materialize(id, () => makeClientContext(ext));
       }
       return { invalidated };
     } catch (e) {

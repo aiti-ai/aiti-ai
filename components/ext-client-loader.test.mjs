@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { reconcileGraph } from "../components/ext-client-loader.ts";
+import { reconcileGraph, immediateEntries, isImmediateEntry } from "../components/ext-client-loader.ts";
 
 function graph(entries) {
   return {
@@ -58,6 +58,22 @@ test("new extension → not invalidated (prefetch/materialize picks it up)", () 
   assert.deepEqual(removed, []);
 });
 
+test("lazy entries are skipped by the startup batch (immediately:false)", () => {
+  const g = graph([{ id: "a", rev: "aaa" }, { id: "b", rev: "bbb" }]);
+  g.entries[1].immediately = false;
+  // 启动批量（loadExtensions / reloadExtensions）用 immediateEntries 取目标行：
+  // 懒加载项既不预取也不 materialize，留给插槽按需触发。
+  const startup = immediateEntries(g).map((e) => e.id);
+  assert.deepEqual(startup, ["a"]);
+  assert.equal(isImmediateEntry(g.entries[0]), true);
+  assert.equal(isImmediateEntry(g.entries[1]), false);
+  // 未标 immediately 的行默认立即加载（向后兼容：旧 manifest 无此字段）。
+  const plain = graph([{ id: "c", rev: "ccc" }]);
+  assert.deepEqual(immediateEntries(plain).map((e) => e.id), ["c"]);
+  // 空图 → 空批量。
+  assert.deepEqual(immediateEntries(graph([])).map((e) => e.id), []);
+});
+
 test("concurrent materialize runs register exactly once", async () => {
   // 直接验证 materialize 的互斥语义（不依赖浏览器 import——用 stub 模块表）。
   // prefetch 会走真实 dynamic import，这里只验证并发调度不重复执行 register：
@@ -69,6 +85,23 @@ test("concurrent materialize runs register exactly once", async () => {
     materialize("no-such-ext-xyz", () => null),
   ]);
   assert.deepEqual(results, [false, false]);
+});
+
+test("pruneDeclaredSlots removes declarations for removed extensions", async () => {
+  // manifest 重拉后，已卸载扩展的 slot 声明必须被清除（否则 pendingForSlot 残留候选）。
+  const { registerDeclaredSlots, pruneDeclaredSlots, pendingForSlot } =
+    await import("../components/ext-client-loader.ts");
+  // 独特前缀，避免与其他用例/真实声明的模块级状态冲突。
+  const SLOT = "test-slot-prune-unique";
+  registerDeclaredSlots("ext-prune-a", [SLOT]);
+  registerDeclaredSlots("ext-prune-b", [SLOT]);
+  assert.deepEqual(pendingForSlot(SLOT), ["ext-prune-a", "ext-prune-b"]);
+  // 只保留仍在 manifest 里的 a。
+  pruneDeclaredSlots(["ext-prune-a"]);
+  assert.deepEqual(pendingForSlot(SLOT), ["ext-prune-a"]);
+  // 空声明 = 清除该扩展自己的声明。
+  registerDeclaredSlots("ext-prune-a", []);
+  assert.deepEqual(pendingForSlot(SLOT), []);
 });
 
 test("graph swaps to the new one after reconcile", () => {
