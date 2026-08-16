@@ -1,5 +1,14 @@
 import { isIP } from "node:net";
 
+// service-tunnels 扩展（self-expose 配置）写入的 globalThis 状态：
+// __piWebExposeConfig = PI_WEB_EXPOSE 解析结果（allowHost 等）、
+// __piWebAllowHostsOverride = 运行时 allowHost 覆盖（扩展 API 写入）。
+// 本模块（core 门禁）只读，不随扩展加载状态漂移（未设置 = 无例外）。
+declare global {
+  var __piWebAllowHostsOverride: string[] | undefined;
+  var __piWebExposeConfig: Record<string, unknown> | undefined;
+}
+
 function normalizeHostname(value: string): string {
   const unbracketed = value.startsWith("[") && value.endsWith("]")
     ? value.slice(1, -1)

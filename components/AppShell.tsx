@@ -13,8 +13,6 @@ import { openFileTab, saveFileViewerState } from "./file-tab-state";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
-import { ServicesDialog } from "./ServicesDialog";
-import { SelfExposeAlert } from "./SelfExposeAlert";
 import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas } from "./ExtSlots";
 import type { ExtRenderProps } from "@/lib/ext-ui-store";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
@@ -138,9 +136,6 @@ export function AppShell() {
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
   const [pluginsConfigOpen, setPluginsConfigOpen] = useState(false);
-  const [servicesOpen, setServicesOpen] = useState(false);
-  // 从顶栏告警进入时先停在 Self 页；普通打开默认 Ports 页，关闭时复位。
-  const [servicesInitialTab, setServicesInitialTab] = useState<"ports" | "self" | "users">("ports");
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
@@ -944,7 +939,8 @@ export function AppShell() {
   const extMetas = useExtMetas();
 
   const topbarBuiltinIds = useMemo<TopbarItemId[]>(() => {
-    const ids: TopbarItemId[] = ["theme", "language", "services"];
+    // "services" 已随 service-tunnels 抽离为扩展（扩展条目经 toolbarExtItems 进顶栏）
+    const ids: TopbarItemId[] = ["theme", "language"];
     if (showChat) ids.push("history", "export", "title", "branch", "system");
     return ids;
   }, [showChat]);
@@ -972,7 +968,7 @@ export function AppShell() {
   );
   const topbarDefaultOrder = useMemo<TopbarOrderItem[]>(
     () => [
-      "theme", "language", "services",
+      "theme", "language",
       ...topbarToolbarExtIds,
       "history", "export", "title", "branch", "system",
       ...topbarSessionExtIds,
@@ -1043,14 +1039,19 @@ export function AppShell() {
 
   // 顶栏点击先关弹出层（⋯ 按钮除外，它负责 toggle）：遮罩从顶栏下方开始，
   // 顶栏按钮（含会话统计）保持可点——点击会先关 ⋯/自定义面板再执行自身动作
+  // ⚠ React 19：离散事件 capture 阶段的 setState 会【同步 flush】——直接关菜单会在
+  // click 的 target/bubble 派发前卸载菜单 DOM，按钮 onClick 随之失效（点击无反应）。
+  // 推迟到当前 click 事件处理完（setTimeout 0）后再关，保证按钮自身 onClick 先跑。
   useEffect(() => {
     const el = topBarRef.current;
     if (!el) return;
     const onCapture = (e: MouseEvent) => {
       if (moreBtnRef.current?.contains(e.target as Node)) return;
       if (moreOpen || customizeOpen) {
-        setMoreOpen(false);
-        setCustomizeOpen(false);
+        setTimeout(() => {
+          setMoreOpen(false);
+          setCustomizeOpen(false);
+        }, 0);
       }
     };
     el.addEventListener("click", onCapture, true);
@@ -1242,33 +1243,7 @@ export function AppShell() {
       );
     }
     if (id === "services") {
-      return (
-        <button
-          type="button"
-          onClick={act(() => setServicesOpen(true))(menu)}
-          title={translate("common.services")}
-          aria-label={translate("common.services")}
-          aria-haspopup="dialog"
-          aria-expanded={servicesOpen}
-          aria-pressed={servicesOpen}
-          style={menu
-            ? { ...topbarMenuRowStyle, ...(servicesOpen ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) }
-            : {
-              ...topbarRowBtnStyle(),
-              width: topBarIconButtonSize, height: topBarIconButtonSize,
-              background: servicesOpen ? "var(--bg-selected)" : "none",
-              color: servicesOpen ? "var(--text)" : "var(--text-muted)",
-            }}
-          onMouseEnter={menu ? menuEnter : rowEnter}
-          onMouseLeave={menu ? menuLeave : rowLeave}
-        >
-          <svg width={isMobile ? 12 : 13} height={isMobile ? 12 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="2" y1="12" x2="22" y2="12" />
-            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
-          </svg>
-        </button>
-      );
+      return null; // services 按钮已随 service-tunnels 抽离为扩展（toolbarExtItems 渲染）
     }
     if (id === "history") {
       const disabled = !selectedSession;
@@ -1566,12 +1541,14 @@ export function AppShell() {
     item === SEPARATOR ? null : (
       // 按钮条目：capture 阶段先关 ⋯（内建 onClick 也关，幂等；覆盖扩展按钮内部 onClick）；
       // 会话级 widget（sessionTopbar 槽）是交互组件，内部弹窗依赖组件存活——
-      // 点击不关 ⋯，否则 widget 随 ⋯ 卸载、弹窗瞬间消失（"+" 加标签无效）
+      // 点击不关 ⋯，否则 widget 随 ⋯ 卸载、弹窗瞬间消失（"+" 加标签无效）。
+      // ⚠ React 19 同步 flush 修复：capture 阶段直接 setMoreOpen 会在 click 的 target 派发前
+      // 卸载菜单（按钮 onClick 丢失 → 点击无反应）——defer 到事件处理后关闭。
       <div
         key={item}
         onClickCapture={sessionTopbarExtItems.some((it) => it.id === item)
           ? undefined
-          : () => setMoreOpen(false)}
+          : () => { setTimeout(() => setMoreOpen(false), 0); }}
       >
         {renderTopbarItem(item, false)}
       </div>
@@ -1589,7 +1566,6 @@ export function AppShell() {
     switch (id) {
       case "theme": return translate("topbar.theme");
       case "language": return translate("common.language");
-      case "services": return translate("common.services");
       case "history": return translate("history.label");
       case "export": return translate("history.exportPrompts");
       case "title": return translate("title.generate");
@@ -2517,12 +2493,7 @@ export function AppShell() {
           </>
         )}
 
-        {/* 自暴露无认证（expose self 不带秘）的页面顶部红色 🔴 告警 —— 事件驱动，不轮询：
-            新/老会话加载完成后延迟拉一次；回到前台/focus/online 时防抖延迟刷新。 */}
-        <SelfExposeAlert
-          sessionLoadedKey={`${sessionKey}:${selectedSession?.id ?? "new"}`}
-          onOpenServices={() => { setServicesInitialTab("self"); setServicesOpen(true); }}
-        />
+        {/* 自暴露无认证告警已随 service-tunnels 抽离为扩展（<ExtSlot name="banners" /> 渲染） */}
         <ExtSlot name="banners" />
 
         {/* Chat content */}
@@ -2748,13 +2719,7 @@ export function AppShell() {
         onReloaded={() => setSessionKey((k) => k + 1)}
       />
     )}
-    {servicesOpen && (
-      <ServicesDialog
-        onClose={() => { setServicesOpen(false); setServicesInitialTab("ports"); }}
-        onOpenFile={handleOpenFile}
-        initialTab={servicesInitialTab}
-      />
-    )}
+    {/* 服务端口弹窗已随 service-tunnels 抽离为扩展（<ExtSlot name="dialogs" /> 渲染） */}
     <ExtSlot name="dialogs" extra={{ onSelectSession: handleSelectSession }}
       currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd, name: selectedSession.name } : null} />
     {exportDialogOpen && selectedSession && (

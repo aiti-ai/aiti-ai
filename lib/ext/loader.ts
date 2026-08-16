@@ -40,8 +40,10 @@ export function resolveExtensionEntry(dir: string): string | null {
 export async function loadExtensionFromDir(dir: string): Promise<PiWebExtension | null> {
   const entry = resolveExtensionEntry(dir);
   if (!entry) return null;
+  // jiti id = 扩展入口文件（而非加载器自身）：裸说明符从扩展目录解析——扩展可带
+  // 标准 node_modules 依赖（npm 安装），不依赖宿主 node_modules。
   // moduleCache: false so POST /api/extensions/reload picks up code changes.
-  const jiti = createJiti(import.meta.url, { interopDefault: true, moduleCache: false });
+  const jiti = createJiti(pathToFileURL(entry).href, { interopDefault: true, moduleCache: false });
   const mod = (await jiti.import(pathToFileURL(entry).href)) as unknown;
   const ext = (mod as { default?: unknown } | undefined)?.default ?? mod;
   if (!ext || typeof ext !== "object") return null;

@@ -17,7 +17,6 @@
         "react-dom": "^19.2.4",
         "react-dom": "^19.2.4",
         "remark-frontmatter": "^5.0.0",
-        "service-tunnels": "^0.3.38",
         "undici": "8.10.0",
       },
       "devDependencies": {
@@ -1472,7 +1471,6 @@
 
     "jszip": ["jszip@3.10.1", "https://registry.npmjs.org/jszip/-/jszip-3.10.1.tgz", { "dependencies": { "lie": "~3.3.0", "pako": "~1.0.2", "readable-stream": "~2.3.6", "setimmediate": "^1.0.5" } }, "sha512-xXDvecyTpGLrqFrvkrUSoxxfJI5AH7U8zxxtVclpsUtMCq4JQ290LY8AW5c7Ggnr/Y/oK+bQMbqK2qmtk3pN4g=="],
 
-    "justget": ["justget@0.1.7", "https://registry.npmjs.org/justget/-/justget-0.1.7.tgz", { "dependencies": { "commander": "^11.1.0", "node-fetch": "^3.3.2", "progress": "^2.0.3" }, "bin": { "justget": "dist/cli.js" } }, "sha512-jXUsjjdXPIeRlfAEDB1A5U85rVTFtU1POyRLyFs5GkM9BN1ZZrIa1FORZ2ObYXgVv7/CtV1Eh59MOdZPsVB9Ag=="],
 
     "jwa": ["jwa@2.0.1", "https://registry.npmjs.org/jwa/-/jwa-2.0.1.tgz", { "dependencies": { "buffer-equal-constant-time": "^1.0.1", "ecdsa-sig-formatter": "1.0.11", "safe-buffer": "^5.0.1" } }, "sha512-hRF04fqJIP8Abbkq5NKGN0Bbr3JxlQ+qhZufXVr0DvujKy93ZCbXZMHDL4EOtodSbCWxOqR8MS1tXA5hwqCXDg=="],
 
@@ -1986,7 +1984,6 @@
 
     "semver-compare": ["semver-compare@1.0.0", "https://registry.npmjs.org/semver-compare/-/semver-compare-1.0.0.tgz", {}, "sha512-YM3/ITh2MJ5MtzaM429anh+x2jiLVjqILF4m4oyQB18W7Ggea7BfqdH/wGMK7dDiMghv/6WG7znWMwUDzJiXow=="],
 
-    "service-tunnels": ["service-tunnels@0.3.38", "https://registry.npmjs.org/service-tunnels/-/service-tunnels-0.3.38.tgz", { "dependencies": { "justget": "^0.1.6" }, "bin": { "service-tunnels": "dist/cli.js", "sts": "dist/cli.js" } }, "sha512-RTvk+H6mirg96E79lAzdYqY8uKQS7m7ye0/cs5ieMaWjfAy9+qoLZUhMeeQpQSGSoNl5mmySxmd82oNJmF5bbw=="],
 
     "set-blocking": ["set-blocking@2.0.0", "https://registry.npmjs.org/set-blocking/-/set-blocking-2.0.0.tgz", {}, "sha512-KiKBS8AnWGEyLzofFfmvKwpdPzqiy16LvQfK3yv/fVH7Bj13/wl3JSR1J+rfgRE9q7xUJK4qvgS8raSOeLUehw=="],
 
@@ -2428,7 +2425,6 @@
 
     "js-yaml/argparse": ["argparse@2.0.1", "https://registry.npmjs.org/argparse/-/argparse-2.0.1.tgz", {}, "sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q=="],
 
-    "justget/commander": ["commander@11.1.0", "https://registry.npmjs.org/commander/-/commander-11.1.0.tgz", {}, "sha512-yPVavfyCcRhmorC7rWlkHn15b4wDVgVmBA7kV4QVBsF7kv/9TKJAbAXVTxvTnwP8HHKjRCJDClKbciiYS7p0DQ=="],
 
     "jwa/safe-buffer": ["safe-buffer@5.2.1", "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz", {}, "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ=="],
 

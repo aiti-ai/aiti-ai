@@ -16,17 +16,11 @@ export async function register(): Promise<void> {
 
   // Extension framework: load + start extensions (registry on globalThis so
   // the middleware bundle can invoke hooks without importing extension code).
+  // service-tunnels（发现/代理/隧道/自暴露）已抽离为扩展：其 server.startup
+  // 负责创建库单例 + PI_WEB_EXPOSE 自暴露。
   const { ensureRegistry } = await import("@/lib/ext/registry");
   const { makeExtCore } = await import("@/lib/ext/core");
   const extRegistry = ensureRegistry(makeExtCore());
   await extRegistry.loadAll();
   await extRegistry.startAll();
-
-  // Initialize the service-tunnels instance on globalThis — the middleware
-  // (proxy.ts) resolves service virtual hosts through it in-process. No
-  // separate proxy listener anymore (decisions are embedded in the middleware).
-  const { getServiceTunnels, maybeExposeSelf } = await import("@/lib/service-tunnels-integration");
-  getServiceTunnels();
-  // Optional self-exposure from PI_WEB_EXPOSE (best-effort, non-blocking).
-  void maybeExposeSelf();
 }

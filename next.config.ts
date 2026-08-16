@@ -80,11 +80,6 @@ const nextConfig: NextConfig = {
     "@earendil-works/pi-tui",
     // Extensions are transpiled at runtime with jiti — must not be bundled.
     "jiti",
-    // service-tunnels loads runtime plugin files (configDir/providers/*.js)
-    // and probes http/https via computed import() — must not be bundled.
-    // Safe to externalize: server-only runtime; client code uses type imports
-    // only; the middleware (proxy.ts) never imports it (shared globalThis).
-    "service-tunnels",
   ],
   // Next dev cross-origin guard (allowedDevOrigins): 16.3+ rejects dev
   // resources (_next/static chunks) whose Origin is not allow-listed. Beyond
