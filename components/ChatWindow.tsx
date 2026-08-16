@@ -951,10 +951,16 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
               const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[] } = {}): ReactNode => {
                 const msg = options.messageOverride ?? messages[idx];
-                const prevAssistantEntryId =
-                  msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
-                    ? entryIds[idx - 1]
-                    : undefined;
+                let prevAssistantEntryId: string | undefined;
+                // 连续用户消息也支持「从此处编辑」：回溯到最近一条 assistant 回复作为分支点
+                if (msg.role === "user" && idx > 0) {
+                  for (let j = idx - 1; j >= 0; j--) {
+                    if (messages[j].role === "assistant") {
+                      prevAssistantEntryId = entryIds[j];
+                      break;
+                    }
+                  }
+                }
                 const isVisible = msg.role === "user" || msg.role === "assistant";
                 const currentRefIdx = visibleRefIndexByMessage.get(idx);
                 const keyPrefix = options.keyPrefix ?? "message";
@@ -982,10 +988,10 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                     onOpenFile={onOpenFile}
                     onRevealDir={onRevealDir}
                     entryId={entryIds[idx]}
-                    onFork={sessionBusy || isNew || (idx === 0 && msg.role === "user") ? undefined : handleFork}
+                    onFork={isNew || bashRunning ? undefined : handleFork}
                     forking={forkingEntryId === entryIds[idx]}
-                    onNavigate={sessionBusy ? undefined : handleNavigate}
-                    prevAssistantEntryId={sessionBusy ? undefined : prevAssistantEntryId}
+                    onNavigate={isNew || bashRunning ? undefined : handleNavigate}
+                    prevAssistantEntryId={isNew || bashRunning ? undefined : prevAssistantEntryId}
                     onEditContent={handleEditContent}
                     onQuoteReply={handleQuoteReply}
                     showTimestamp={showTimestamp}
