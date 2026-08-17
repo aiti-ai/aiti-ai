@@ -1568,9 +1568,21 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       requestAnimationFrame(resizeTextarea);
     };
     measure();
-    const ro = new ResizeObserver(measure);
+    // Batch resize notifications into the next frame: the measure() clones the
+    // textarea, appends it to the document, and reads its metrics — running it
+    // on every ResizeObserver callback (fired multiple times per streaming
+    // turn as buttons wrap/unwrap) forces repeated synchronous layouts. A
+    // trailing rAF coalesces all changes in one frame into a single measure.
+    let raf = 0;
+    const ro = new ResizeObserver(() => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        measure();
+      });
+    });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => { ro.disconnect(); if (raf) cancelAnimationFrame(raf); };
   }, [resizeTextarea, value, isStreaming]);
 
   useEffect(() => {

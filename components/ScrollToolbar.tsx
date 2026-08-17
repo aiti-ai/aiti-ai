@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentMessage } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
 import { useWakeLock } from "@/hooks/useWakeLock";
@@ -106,19 +106,6 @@ export function ScrollToolbar({
     window.addEventListener("mousemove", onMouseMove);
     return () => window.removeEventListener("mousemove", onMouseMove);
   }, []);
-  useLayoutEffect(() => {
-    const el = toolbarRef.current;
-    if (!el) return;
-    const r = el.getBoundingClientRect();
-    toolbarRectRef.current = { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
-    // The cursor may already rest on the spot when the buttons appear under
-    // it (a stationary cursor fires no mousemove) — sync the hover state from
-    // the last known cursor position.
-    const m = mousePosRef.current;
-    if (m.x >= r.left && m.x <= r.right && m.y >= r.top && m.y <= r.bottom) {
-      setScrollBtnsHovered(true);
-    }
-  });
   // Brief "screen stays awake" toast after a successful long-press.
   const [keepAwakeToast, setKeepAwakeToast] = useState(false);
   const keepAwakeToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -241,6 +228,37 @@ export function ScrollToolbar({
   // mouseleave never arrives, so scrollBtnsHovered would stay true forever and
   // the buttons would never auto-hide. On mobile ignore hover entirely.
   const showScrollButtons = (!scrollAnchors.atTop || !scrollAnchors.atBottom) && (scrollActive || (!isMobile && scrollBtnsHovered));
+
+  // Track the toolbar's viewport rect for the hover-sensing mousemove
+  // listener. Only needs to re-read when the toolbar's geometry can actually
+  // change: dragged position, mobile layout switch, or buttons appearing/
+  // hiding. Dependency-gated instead of running on every render — the old
+  // dependency-free useLayoutEffect triggered a forced synchronous layout on
+  // EVERY render, which during agent streaming (one setState per chunk) burned
+  // ~295ms of main-thread time reflowing the whole message list.
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    toolbarRectRef.current = { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
+    // The cursor may already rest on the spot when the buttons appear under
+    // it (a stationary cursor fires no mousemove) — sync the hover state from
+    // the last known cursor position.
+    const m = mousePosRef.current;
+    if (m.x >= r.left && m.x <= r.right && m.y >= r.top && m.y <= r.bottom) {
+      setScrollBtnsHovered(true);
+    }
+    // Window resize / zoom changes the right-edge offset (calc based on
+    // viewport width); refresh the cached rect so hover sensing stays correct.
+    const onResize = () => {
+      const el2 = toolbarRef.current;
+      if (!el2) return;
+      const rr = el2.getBoundingClientRect();
+      toolbarRectRef.current = { left: rr.left, right: rr.right, top: rr.top, bottom: rr.bottom };
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [pos.align, pos.y, isMobile, showScrollButtons]);
 
   const scrollToEarliest = useCallback(() => {
     scrollContainerRef.current?.scrollTo({ top: 0, behavior: "smooth" });
