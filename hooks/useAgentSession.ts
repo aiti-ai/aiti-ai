@@ -305,16 +305,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // 入队后每帧 flush 一次（delta-batch），后台标签 rAF 暂停时队列保序等待。
   const pendingDeltasRef = useRef<ClientAssistantMessageEvent[]>([]);
   const pendingDeltasFrameRef = useRef<number | null>(null);
+  const DELTA_BATCH_MAX = 50; // 单批上限：后台长流式累积的队列一次 flush 太多会单帧长任务
   const flushPendingDeltas = useCallback(() => {
     if (pendingDeltasFrameRef.current !== null) {
       cancelAnimationFrame(pendingDeltasFrameRef.current);
       pendingDeltasFrameRef.current = null;
     }
-    const batch = pendingDeltasRef.current;
-    if (batch.length === 0) return;
+    const all = pendingDeltasRef.current;
+    if (all.length === 0) return;
     pendingDeltasRef.current = [];
-    if (batch.length === 1) dispatch({ type: "delta", event: batch[0] });
-    else dispatch({ type: "delta-batch", events: batch });
+    // 有内容事件（非纯 toolcall 元数据）→ 清等待模型态（每帧一次，替代每事件调用）
+    if (all.some((d) => d.type !== "toolcall_start" && d.type !== "toolcall_delta")) {
+      setAgentPhase(null);
+    }
+    // 分批：单批 ≤50（reducer 循环应用成本受控），多批仍同帧（React 自动批处理）
+    for (let i = 0; i < all.length; i += DELTA_BATCH_MAX) {
+      const batch = all.slice(i, i + DELTA_BATCH_MAX);
+      if (batch.length === 1) dispatch({ type: "delta", event: batch[0] });
+      else dispatch({ type: "delta-batch", events: batch });
+    }
   }, []);
   const enqueueDelta = useCallback((delta: ClientAssistantMessageEvent) => {
     pendingDeltasRef.current.push(delta);
@@ -1281,9 +1290,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const delta = event.assistantMessageEvent as ClientAssistantMessageEvent | undefined;
           if (delta) {
             enqueueDelta(delta);
-            if (delta.type !== "toolcall_start" && delta.type !== "toolcall_delta") {
-              setAgentPhase(null);
-            }
           }
         }
         // Step-follow 触发统一由下方 useEffect [streamState] → smartFollowStep 承担

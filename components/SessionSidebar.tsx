@@ -553,10 +553,13 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
         } catch { /* malformed frame — keep last state */ }
       };
       source.onerror = () => {
-        // EventSource 断线：关闭并由慢轮询兜底；visibility 恢复时再重连。
-        source.close();
-        if (es === source) es = null;
+        // 不主动 close：EventSource 原生会自动重连（~3s 间隔，浏览器默认）。
+        // 若 close 会把 es 置 null 且不重建，断线后只能靠 15s 慢轮询兜底——
+        // running 状态延迟太久。保持引用，visibility 变化时仍可显式重建。
+        // 原生重连是保底；15s 慢轮询作为最后兜底（SSE 一直失败时）。
       };
+      // 服务端 401 等 HTTP 错误：EventSource 也会自动重连（可能高频）——
+      // 页面已加载说明认证通过，此场景罕见，接受原生行为。
     };
 
     const schedule = () => {

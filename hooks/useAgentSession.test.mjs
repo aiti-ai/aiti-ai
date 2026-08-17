@@ -108,7 +108,8 @@ test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", ()
   assert.match(streamSource, /event\.assistantMessageEvent as ClientAssistantMessageEvent/);
   assert.match(streamSource, /enqueueDelta\(delta\)/);
   assert.match(source, /dispatch\(\{ type: "delta-batch", events: batch \}\)/);
-  assert.match(streamSource, /delta\.type !== "toolcall_start" && delta\.type !== "toolcall_delta"/);
+  // setAgentPhase 已移入 flushPendingDeltas（每帧一次）：有内容事件（非纯 toolcall 元数据）时清等待模型态
+  assert.match(source, /all\.some\(\(d\) => d\.type !== "toolcall_start" && d\.type !== "toolcall_delta"\)[\s\S]*?setAgentPhase\(null\)/);
   assert.doesNotMatch(streamSource, /case "message_delta"/);
   assert.match(messageEndSource, /const completed = event\.message as AgentMessage/);
   assert.match(messageEndSource, /normalizeToolCalls\(completed\)/);
