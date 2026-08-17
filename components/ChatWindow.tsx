@@ -298,6 +298,8 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const [bottomComposerHeight, setBottomComposerHeight] = useState(0);
   const bottomComposerHeightRef = useRef(0);
   const promptAnchorSpacerHeightRef = useRef(0); // 恒 0：step-follow 由 smartFollowStep 全权负责
+  // 底部「step 余地」state：agent 运行时撑 padding，见下方 useEffect（在 useAgentSession 之后）
+  const [bottomEyeRoom, setBottomEyeRoom] = useState(0);
 
   const {
     loading, error, messages, entryIds, streamState,
@@ -345,6 +347,37 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     }
     void handleSend(t("chat.continue"));
   }, [handleSend, handleContinueQueue, queuedMessages, t]);
+
+  // 底部「step 余地」：agent 运行时撑 padding（ch-120-composerH），让 smartFollowStep 的
+  // 「最后消息底钉 120px」不超过 maxScrollTop（19031a2 删 spacer 后丢失 → step 被 clamp 贴底）。
+  // ch 随 AI 窗/窗口变化 ⇒ ResizeObserver 跟踪；容器可能延迟挂载（空会话首屏无容器）⇒
+  // callback ref 转发 scrollContainerRef 并触发 scReady，保证容器出现后 RO 重新挂载。
+  const [scReady, setScReady] = useState(0);
+  const handleScrollBoxRef = useCallback((node: HTMLDivElement | null) => {
+    scrollContainerRef.current = node;
+    setScReady((n) => n + 1);
+  }, [scrollContainerRef]);
+  const [scrollViewportH, setScrollViewportH] = useState(0);
+  useLayoutEffect(() => {
+    const sc = scrollContainerRef.current;
+    if (!sc) return;
+    const update = () => setScrollViewportH(sc.clientHeight);
+    update();
+    const ro = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(update);
+    ro?.observe(sc);
+    return () => ro?.disconnect();
+  }, [scReady, scrollContainerRef]);
+  useEffect(() => {
+    if (!agentRunning) {
+      if (bottomEyeRoom !== 0) setBottomEyeRoom(0);
+      return;
+    }
+    const room = Math.max(0, scrollViewportH - 120 - (bottomComposerHeightRef.current || 0));
+    if (room !== bottomEyeRoom) setBottomEyeRoom(room);
+    // 依赖省略 bottomEyeRoom（读它仅用于“值不变则跳过 set”，避免 padding→RO→重算循环）；
+    // 用 sc.clientHeight（含 padding、稳定）而非 contentRect 也是防循环的关键。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentRunning, scrollViewportH, scReady, bottomComposerHeight, loading, error]);
 
   /** Draft storage key for the active session (matches ChatInput's draftKey). */
   const draftKey = session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined);
@@ -863,7 +896,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       ) : (
       <>
       <div className="relative flex min-w-0 flex-1 overflow-hidden">
-        <div ref={scrollContainerRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]">
+        <div ref={handleScrollBoxRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]" style={{ paddingBottom: bottomEyeRoom }}>
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
             {(() => {
@@ -1098,7 +1131,6 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
         <ScrollToolbar
           scrollContainerRef={scrollContainerRef}
-          messagesEndRef={messagesEndRef}
           messageRefs={messageRefs}
           visibleMessages={visibleMessages}
           messagesLength={messages.length}

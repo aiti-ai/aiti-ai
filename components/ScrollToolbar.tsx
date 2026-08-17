@@ -8,12 +8,12 @@ const CHAT_MINIMAP_WIDTH = 4;
 
 export interface ScrollToolbarProps {
   scrollContainerRef: React.RefObject<HTMLDivElement | null>;
-  messagesEndRef: React.RefObject<HTMLDivElement | null>;
   messageRefs: React.MutableRefObject<(HTMLDivElement | null)[]>;
   /** user/assistant-filtered messages, index-aligned with messageRefs */
   visibleMessages: AgentMessage[];
   /** total messages (lazy pagination check) */
   messagesLength: number;
+  /** wakes-lock gate: only keep the screen awake while the agent runs */
   agentRunning: boolean;
   isMobile: boolean;
   setVisibleCount: (updater: (current: number) => number) => void;
@@ -21,7 +21,6 @@ export interface ScrollToolbarProps {
 
 export function ScrollToolbar({
   scrollContainerRef,
-  messagesEndRef,
   messageRefs,
   visibleMessages,
   messagesLength,
@@ -250,34 +249,13 @@ export function ScrollToolbar({
   const scrollToLatest = useCallback(() => {
     const c = scrollContainerRef.current;
     if (!c) return;
-    // Scroll so the LAST MESSAGE's bottom sits at the viewport bottom.
-    //
-    // Layout (top → bottom):
-    //   [...messages]
-    //   [agent-running spacer, height = clientHeight]  ← only when agentRunning
-    //   <div ref={messagesEndRef}/>
-    //
-    // messagesEndRef.offsetTop already includes the spacer, but offsetTop is
-    // relative to the nearest positioned ancestor (not necessarily the scroll
-    // container). Compute the end sentinel's position inside the container
-    // via getBoundingClientRect, then back off by the spacer height AND the
-    // viewport height so the last message lands at the bottom and the spacer
-    // stays below the fold (no blank screen). ≈40px visual keep-out below the
-    // last message (sentinel 28px + the last message's own ~16px bottom
-    // margin → extra 40-28-16 = -4).
-    const end = messagesEndRef.current;
-    if (end) {
-      const endInContainer =
-        end.getBoundingClientRect().top - c.getBoundingClientRect().top + c.scrollTop;
-      const spacerH = agentRunning ? c.clientHeight * 0.75 : 0;
-      // ≈40px visual keep-out below the last message (sentinel 28px + the
-      // last message's own ~16px bottom margin → extra 40-28-16 = -4).
-      const target = Math.max(0, endInContainer - spacerH - c.clientHeight - 4);
-      c.scrollTo({ top: target, behavior: "smooth" });
-      return;
-    }
+    // 滚动到消息尾部。当前布局没有 agent-running spacer（19031a2 移除）：
+    // 最后消息之上只有 bottomComposer spacer（高度 = 输入框实时高度），
+    // 滚到 scrollHeight（clamp 到 maxScrollTop）即把最后消息钉在输入框上方。
+    // （旧实现按已删除的 0.75 视口 spacer 回退，agent 运行时滚过头 ~0.75 视口，
+    // 最后消息被推出视口下方——见 feat/devtools-scroll-e2e 52172e0）
     c.scrollTo({ top: c.scrollHeight, behavior: "smooth" });
-  }, [agentRunning, messagesEndRef, scrollContainerRef]);
+  }, [scrollContainerRef]);
 
   /**
    * Scroll to the previous/next user message relative to the current viewport.

@@ -2561,18 +2561,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
 
-  // Streaming chunks grow the visible message without changing messages.length;
-  // re-run the step-follow check on every chunk so the growing message is
-  // stepped into view once it exceeds the viewport (step-follow mode only).
+  // Step-follow 检查信号：流式 delta（streamState 每帧引用变）+ 完整消息渲染
+  // （messages 引用变：message_end 提交 / reconcile 加载 tool result / 上下文加载）。
+  // 之前只依赖 streamState 且带 `!isStreaming` 门控：tool result、完整消息等非流式
+  // 渲染推高最后消息时无人检查 → 视口不动，直到下一轮流式才补跟（瞬时大跳）。
   // 注意：此处用 useEffect（passive，paint 后执行）而非 useLayoutEffect——passive
   // 阶段读布局免费（无 pending DOM 写），不会强制同步布局；delta-batch 已把
   // streamingMessage 更新合并到每帧一次，effect 每帧最多跑一次，无布局风暴。
+  // messages 引用只在消息级变化（非每 chunk），额外触发频次低，无布局压力。
   useEffect(() => {
-    if (!streamState.isStreaming) return;
     // 发送/跳转滚动期间不 follow（原 message_update live-follow 同款抑制）
     if (pendingScrollToUserRef.current) return;
+    // agent 空闲时收尾滚动由 messages/length 的 useLayoutEffect → scrollToBottom
+    // 负责（平滑滚到底）；这里不 step，避免与滚底竞争（也避免打开旧会话时
+    // 初始加载被误 step 到 120px 处）。
+    if (!agentRunningRef.current) return;
     smartFollowStep();
-  }, [streamState, smartFollowStep]);
+  }, [streamState, messages, smartFollowStep]);
 
   // The queue banner / input area sits BELOW the scroll container in a flex
   // column. When the queue grows (or shrinks), the container's clientHeight
