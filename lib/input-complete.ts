@@ -8,28 +8,30 @@
  *   - **与会话完全解耦**：不走运行中的 ai session、不读会话上下文——
  *     独立 ModelRuntime 实例（只读 ~/.pi/agent/models.json，refreshOnCreate:false，
  *     零网络刷新、不落盘），messages 仅 system 规则 + 历史输入截尾 + 当前输入截尾。
- *   - **模型 = 当前 provider 内的低配模型**（不换 provider）：
- *       1) 优先该 provider 内 reasoning=false 且输入价最低的模型；
- *       2) 全为推理模型 → 取最便宜并显式 reasoning:"off"（thinkingLevelMap 有 off 的
- *          provider，如 deepseek 官方）；实在不支持 off 就接受默认（预算已按推理档放大）。
- *       3) provider 缺省 = 请求带 provider → ~/.pi/agent/settings.json defaultProvider。
- *   - **速度优先**：非推理模型 maxTokens 小档（60/96/144）；推理模型 160/256/384。
- *   - 输出后处理：裁到首个句读符、去与输入尾部的重复前缀；无句子结果丢弃。
+ *   - **模型 = 补全专用档**（默认 `AITI_COMPLETE_MODEL`，缺省 opencode-go-2/deepseek-v4-pro，
+ *     实测质量/速度可用）；传 provider 时在该 provider 内选非推理最便宜→推理最便宜；
+ *     DEFAULT 缺失 → 回退全局非推理最便宜。
+ *   - **速度优先**：非推理 maxTokens 小档（60/96/144）；推理 160/256/384，且尽力 reasoning:"off"。
+ *   - 输出后处理：剥围栏→裁到首个句读符、去与输入尾部的重复前缀；无句子结果丢弃。
  *   - 60s TTL LRU 缓存：同一 provider/model+输入串停顿重触发不重复呼出模型。
  */
 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { getRpcSession, getRpcSessionInfos } from "./rpc-manager";
 
 export type CompleteContextSize = "small" | "medium" | "large";
+export type CompleteMode = "complete" | "voice-fix";
 
 export interface CompleteInputRequest {
-  /** 缺省 provider（可选；缺省取 settings defaultProvider）——补全只用该 provider 内的低配模型 */
+  /** 缺省取 DEFAULT_COMPLETE_MODEL（补全专用档）；传则限定该 provider 内按非推理→推理最便宜选 */
   provider?: string;
+  /** complete=逐句续写（默认）；voice-fix=语音歧义判定/修复（无歧义 → 返回空 text） */
+  mode?: CompleteMode;
   /** 当前输入全文（服务端按档位截尾） */
   input: string;
-  /** 本会话历史 user 消息文本（可选；缺省不带历史，纯当前输入续写） */
+  /** 本会话历史 user 消息文本（可选） */
   history?: string[];
   /** 上下文档位（缺省 medium） */
   ctx?: CompleteContextSize;
@@ -69,6 +71,27 @@ const SYSTEM_PROMPT = [
   "输出：并列出明天要做的三件事。",
 ].join("\n");
 
+// ---------- voice-fix 判定 prompt：语音转写歧义修复（主动；无歧义必须回空，严格） ----------
+const VOICE_FIX_PROMPT = [
+  "你是语音转写校对器。下面这条 user 消息是用户语音输入转写成的文字（可能有同音/近音/漏字错误）。",
+  "任务：判断其中是否存在需要修复的歧义或转写错误（结合下方历史上下文判断，如有历史也一并给出）。",
+  "输出规则：",
+  "  · 无歧义/无需修改 → 只输出：无；",
+  "  · 有歧义或明显转写错误、且能给出与原文不同的更合理文本 → 只输出修复后的完整句（保持原意与语气，不解释、不加引号、不用 markdown）；",
+  "  · 若你给出的修复与原句相同，说明无歧义，一律输出：无。",
+  "绝不编造歧义；宁可漏报，不要只为了提供一个修复而强行改动无错文本。",
+  "",
+  "典型同音/音译示例（务必识别这类）：",
+  "语音：帮我把这断代码改成太空脚本 → 修复：帮我把这段代码改成 TypeScript",
+  "语音：我用的是有效果钩子来管理状态 → 修复：我用的是 useEffect 钩子来管理状态",
+  "语音：多克容器一直重启 → 修复：docker 容器一直重启",
+  "语音：这个组件在卸载时清理监听器 → 修复：无（无歧义）",
+].join("\n");
+
+function systemFor(mode: CompleteMode | undefined): string {
+  return mode === "voice-fix" ? VOICE_FIX_PROMPT : SYSTEM_PROMPT;
+}
+
 // ---------- 模型路径 / settings 缓存 ----------
 const AGENT_DIR = join(homedir(), ".pi", "agent");
 const MODELS_PATH = process.env.PI_MODELS_JSON || join(AGENT_DIR, "models.json");
@@ -97,8 +120,7 @@ interface PickResult { model: ModelLike; reasoning: boolean }
 
 /**
  * 模型选择（2026-08 实测定档）：
- *   - 默认 `opencode-go-2/deepseek-v4-pro`（当前供应商生态、实测质量/速度可用；约 2.2s、成本≈0.0007$/次）。
- *   - 低配免费档（deepseek 官方 flash / opencode flash）实测中文续写质量不可用，故不默认。
+ *   - 默认 `opencode-go-2/deepseek-v4-pro`（实测质量/速度可用；约 2.2s、成本≈0.0007$/次）。
  *   - 环境变量 AITI_COMPLETE_MODEL="provider/model" 可覆盖；找不到时回退全局非推理最便宜。
  */
 const DEFAULT_COMPLETE_MODEL = process.env.AITI_COMPLETE_MODEL || "opencode-go-2/deepseek-v4-pro";
@@ -155,6 +177,35 @@ interface ModelLike {
   cost?: unknown;
 }
 
+// ---------- 上下文（若调用方未传 history，则取当前会话最近 user 消息文本——只读不写、不碰会话模型） ----------
+function contextHistory(): string[] {
+  const extract = (w: unknown): string[] | null => {
+    const inner = (w as { inner?: unknown } | null)?.inner;
+    const msgs = inner && (inner as { messages?: unknown }).messages;
+    if (!Array.isArray(msgs)) return null;
+    const texts: string[] = [];
+    for (const m of msgs as Array<{ role?: string; content?: unknown }>) {
+      if (m.role !== "user") continue;
+      const c = m.content;
+      let t = "";
+      if (typeof c === "string") t = c;
+      else if (Array.isArray(c)) t = c.filter((b) => (b as { type?: string; text?: string }).type === "text")
+        .map((b) => (b as { text: string }).text).join("");
+      if (t && t.trim()) texts.push(t);
+    }
+    return texts.length ? texts.slice(-6) : null;
+  };
+  try {
+    // 先看运行中会话，再回退内存中空闲会话（idle wrapper 也载有该会话历史）
+    for (const id of getRpcSessionInfos()) {
+      const w = getRpcSession(id.id);
+      const hit = w && extract(w);
+      if (hit) return hit;
+    }
+  } catch (e) { /* 拿不到就无上下文 */ }
+  return [];
+}
+
 // ---------- 输出后处理（§5.4）：剥 markdown 围栏 → 裁到首个断句符 → 去重复前缀 ----------
 function trimToSentence(raw: string): string {
   let s = raw.trim();
@@ -177,11 +228,12 @@ const CACHE_TTL_MS = 60_000;
 const CACHE_CAP = 200;
 const cache = new Map<string, { ts: number; result: CompleteResult }>();
 
-function cacheKey(req: CompleteInputRequest, pick: PickResult): string {
+function cacheKey(req: CompleteInputRequest, pick: PickResult, history?: string[]): string {
   const budget = CTX_BUDGET[req.ctx ?? "medium"];
+  const mode = req.mode === "voice-fix" ? "v" : "c";
   const inputTail = (req.input ?? "").slice(-budget.inputChars);
-  const historyTail = (req.history ?? []).slice(-3).map((h) => h.slice(-Math.min(budget.historyChars, 2000))).join("\u0001");
-  return `${pick.model.provider}|${pick.model.id}|${pick.reasoning}|${req.ctx ?? "medium"}|${inputTail}|${historyTail}`;
+  const historyTail = (history ?? req.history ?? []).slice(-3).map((h) => h.slice(-Math.min(budget.historyChars, 2000))).join("\u0001");
+  return `${pick.model.provider}|${pick.model.id}|${pick.reasoning}|${mode}|${req.ctx ?? "medium"}|${inputTail}|${historyTail}`;
 }
 
 function cacheGet(key: string): CompleteResult | undefined {
@@ -202,8 +254,11 @@ function cacheSet(key: string, result: CompleteResult) {
 // ---------- 主入口 ----------
 export async function completeInput(req: CompleteInputRequest): Promise<CompleteResult> {
   const budget = CTX_BUDGET[req.ctx ?? "medium"];
+  const mode = req.mode === "voice-fix" ? "voice-fix" : "complete";
+  // 历史：调用方未传时自动带当前会话上下文（对续写与语音判定都有帮助）
+  const history = req.history && req.history.length ? req.history : contextHistory();
   const pick = await pickModel(req.provider);
-  const key = cacheKey(req, pick);
+  const key = cacheKey(req, pick, history);
 
   const cached = cacheGet(key);
   if (cached) return { ...cached, cached: true };
@@ -218,7 +273,7 @@ export async function completeInput(req: CompleteInputRequest): Promise<Complete
   // 组装消息（§6 + 前缀缓存设计）：历史上下文在前（稳定前缀）+ 当前输入在尾（仅尾部变化）
   // 单条 user 拼接 → provider 自动前缀缓存（deepseek cacheRead 计费）命中：用户在末尾继续打字时
   // 只追加几个字符，前缀（system+历史+输入前段）完全不变 → 每次都命中缓存、成本≈0。
-  const historyTexts = (req.history ?? [])
+  const historyTexts = history
     .filter((h) => typeof h === "string" && h.trim())
     .map((h) => h.trim());
   // 取最近的至多 6 条（保最近意图），各自截尾到预算内
@@ -234,7 +289,7 @@ export async function completeInput(req: CompleteInputRequest): Promise<Complete
   const inputTail = input.slice(-budget.inputChars);
   const inputText = inputTail.length < input.length ? `…${inputTail}` : inputTail;
   const userText = recent.length
-    ? `【历史上下文】\n${recent.join("\n\n")}\n\n【当前正在输入】\n${inputText}`
+    ? `【历史上下文】\n${recent.join("\n\n")}\n\n【语音转写】\n${inputText}`
     : inputText;
 
   const options: Record<string, unknown> = {
@@ -247,7 +302,7 @@ export async function completeInput(req: CompleteInputRequest): Promise<Complete
   }
 
   const assistant = await registry.complete(model, {
-    systemPrompt: SYSTEM_PROMPT,
+    systemPrompt: systemFor(mode),
     messages: [{ role: "user", content: userText, timestamp: Date.now() }],
   }, options as never);
 
@@ -256,6 +311,25 @@ export async function completeInput(req: CompleteInputRequest): Promise<Complete
     .filter((b): b is { type: "text"; text: string } => b.type === "text")
     .map((b) => b.text)
     .join("");
+
+  // voice-fix：只剥包裹/空格取整句；"无" 视为无歧义 → text 空（合法，前端不显示）
+  if (mode === "voice-fix") {
+    let t = (raw || "").replace(/^```[a-zA-Z0-9]*\s*/g, "").replace(/```\s*$/g, "").trim();
+    if (/^(无|无歧义|不需要修复|不需要|没有|没歧义|无需|N\/A|none|no)$/i.test(t)) t = "";
+    if (t && (t === inputText || t === input)) t = ""; // 修复=原文 → 视为无歧义，不提示
+    const result: CompleteResult = {
+      text: t,
+      provider: pick.model.provider,
+      model: pick.model.id,
+      reasoning: pick.reasoning,
+      usage: assistant.usage
+        ? { input: assistant.usage.input ?? 0, output: assistant.usage.output ?? 0 }
+        : undefined,
+      cached: false,
+    };
+    cacheSet(key, result);
+    return result;
+  }
 
   // 后处理后：把结果裁成一句
   let text = stripRepeatedPrefix(trimToSentence(raw || ""), inputText);
