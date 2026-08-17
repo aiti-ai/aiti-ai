@@ -49,3 +49,30 @@ export function useIsCompact(): boolean {
     () => false,
   );
 }
+
+/**
+ * True when the PRIMARY pointer is touch (phones/tablets).
+ *
+ * Currently used to disable HTML5 drag-and-drop on coarse-pointer devices
+ * (they get the dedicated touch-drag implementation instead). Uses
+ * `pointer: coarse` rather than `any-pointer`: the latter also matches
+ * touchscreen laptops whose primary pointer is still a mouse, so primary
+ * pointer type is the correct signal.
+ *
+ * SSR-safe: renders as desktop (false) on the server and first client paint,
+ * then syncs to the real pointer type after hydration.
+ */
+const COARSE_QUERY = "(pointer: coarse)";
+
+export function useIsCoarsePointer(): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      if (typeof window === "undefined" || !window.matchMedia) return () => {};
+      const mql = window.matchMedia(COARSE_QUERY);
+      mql.addEventListener("change", cb);
+      return () => mql.removeEventListener("change", cb);
+    },
+    () => (typeof window === "undefined" || !window.matchMedia ? false : window.matchMedia(COARSE_QUERY).matches),
+    () => false,
+  );
+}

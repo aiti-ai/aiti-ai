@@ -30,7 +30,7 @@ import {
   type AtQueryMatch, type FileIndexEntry,
 } from "@/lib/file-fuzzy";
 import { FolderIcon, getFileIcon } from "./FileIcons";
-import { useIsMobile, useIsCompact } from "@/hooks/useIsMobile";
+import { useIsMobile, useIsCompact, useIsCoarsePointer } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import type { ToolPreset } from "@/lib/tool-presets";
 
@@ -365,10 +365,7 @@ function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove
   const canDown = onMove && index < total - 1;
   // Disable the HTML5 drag source on coarse-pointer (touch) devices: they get
   // the dedicated touch-drag implementation below instead.
-  const [isCoarsePointer, setIsCoarsePointer] = useState(false);
-  useEffect(() => {
-    setIsCoarsePointer(typeof window !== "undefined" && window.matchMedia("(pointer: coarse)").matches);
-  }, []);
+  const isCoarsePointer = useIsCoarsePointer();
   const iconBtn: React.CSSProperties = {
     display: "inline-flex",
     alignItems: "center",
@@ -1975,7 +1972,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       const nativeEvent = e.nativeEvent;
-      const sendShortcut = e.key === "Enter" && !e.shiftKey && (!isMobile || e.ctrlKey || e.metaKey);
+      const sendShortcut = e.key === "Enter" && !e.shiftKey && !e.repeat;
       const recentlyComposed = Date.now() - lastCompositionEndAtRef.current < COMPOSITION_END_ENTER_GRACE_MS;
       const isComposing =
         isComposingRef.current ||
@@ -2102,7 +2099,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
     },
-    [isMobile, isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value]
+    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value]
   );
 
   const handleInput = resizeTextarea;
@@ -3556,6 +3553,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
           <ExtSlot name="chatInputTop" extra={{ inputValue: value }} />
           <textarea
             ref={textareaRef}
+            enterKeyHint="send"
             value={value}
             onChange={(e) => {
               valueRef.current = e.target.value;
