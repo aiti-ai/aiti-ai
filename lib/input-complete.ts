@@ -193,7 +193,7 @@ function contextHistory(): string[] {
         .map((b) => (b as { text: string }).text).join("");
       if (t && t.trim()) texts.push(t);
     }
-    return texts.length ? texts.slice(-6) : null;
+    return texts.length ? texts : null; // 全量 user 消息——不做滚动切片，保持同 session 前缀稳定以命中缓存
   };
   try {
     // 先看运行中会话，再回退内存中空闲会话（idle wrapper 也载有该会话历史）
