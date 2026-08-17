@@ -148,7 +148,7 @@ interface ValidatedProject {
 }
 
 const UNREAD_SESSIONS_STORAGE_KEY = "pi-web:unread-session-ids";
-const RUNNING_SESSIONS_POLL_MS = 2500;
+const RUNNING_SESSIONS_POLL_MS = 15000; // SSE 主通道的兜底慢轮询（SSE 断线/心跳静默时保险）
 
 function loadUnreadSessionIds(): Set<string> {
   if (typeof window === "undefined") return new Set();
@@ -529,10 +529,34 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let controller: AbortController | null = null;
+    let es: EventSource | null = null;
 
     const clearTimer = () => {
       if (timer) clearTimeout(timer);
       timer = null;
+    };
+
+    // SSE 主通道：running/events 推送运行状态变化（服务端有变化才广播，
+    // 不再每 2.5s 轮询）。收到事件即视为权威快照。
+    const connectSSE = () => {
+      if (stopped || es) return;
+      const source = new EventSource(apiUrl("/api/agent/running/events"));
+      es = source;
+      source.onmessage = (e) => {
+        if (stopped || source !== es) return;
+        try {
+          const data = JSON.parse(e.data as string) as { type?: string; runningSessionIds?: string[] };
+          if (data.type === "running" && Array.isArray(data.runningSessionIds)) {
+            runningPollAuthoritativeRef.current = true;
+            setRunningSessionIds(new Set(data.runningSessionIds));
+          }
+        } catch { /* malformed frame — keep last state */ }
+      };
+      source.onerror = () => {
+        // EventSource 断线：关闭并由慢轮询兜底；visibility 恢复时再重连。
+        source.close();
+        if (es === source) es = null;
+      };
     };
 
     const schedule = () => {
@@ -541,6 +565,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       timer = setTimeout(() => void poll(), RUNNING_SESSIONS_POLL_MS);
     };
 
+    // 兜底快照：SSE 断线或回前台时拉一次当前状态（不做周期性轮询）。
     const poll = async () => {
       if (stopped || document.visibilityState !== "visible") return;
       const current = new AbortController();
@@ -566,20 +591,24 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
 
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        void poll();
+        connectSSE();
+        void poll(); // 回前台立即对齐一次（SSE 事件可能在后台丢帧）
         return;
       }
+      // 后台：断开 SSE（省连接），保留慢轮询由 visibility 门控暂停
+      if (es) { es.close(); es = null; }
       clearTimer();
       controller?.abort();
       controller = null;
     };
 
-    void poll();
+    connectSSE();
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       stopped = true;
       clearTimer();
       controller?.abort();
+      if (es) { es.close(); es = null; }
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, []);
