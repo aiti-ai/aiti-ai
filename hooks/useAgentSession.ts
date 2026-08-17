@@ -1286,21 +1286,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             }
           }
         }
-        // Live-follow the streaming output only when the user is already near
-        // the bottom of the message list. If they scrolled up, leave them there.
-        // Step-follow (always on): don't scroll to the bottom on every event —
-        // smartFollowStep only steps when output actually pushes the last
-        // message out of view.
-        if (!pendingScrollToUserRef.current && isNearBottomRef.current && liveFollowFrameRef.current === null) {
-          // Defer the scroll so React has time to update the DOM with the new
-          // streaming content; otherwise scrollIntoView may target stale layout.
-          liveFollowFrameRef.current = requestAnimationFrame(() => {
-            liveFollowFrameRef.current = null;
-            if (isNearBottomRef.current) {
-              smartFollowStep();
-            }
-          });
-        }
+        // Step-follow 触发统一由下方 useEffect [streamState] → smartFollowStep 承担
+        // （passive effect，paint 后读布局免费；delta-batch 合并后每帧最多一次）。
+        // 此处不再 rAF 读 rect：rAF 在渲染管线前执行，React 的 delta-batch commit
+        // 可能尚未落到 DOM，读到旧布局 → step 到过期位置 → 原地抖动（实测）。
         break;
       }
       case "message_end": {
@@ -2566,10 +2555,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [messages.length, agentRunning, scrollToBottom, scrollUserMsgToTop]);
 
-  // （流式 chunk 的 step-follow 判定不走这里：每 chunk 同步跑 smartFollowStep 会在
-  // React commit（DOM 写）之后立即读 rect —— 强制同步布局，是流式期间 120 次/秒
-  // 布局风暴的源头之一。判定由 message_update 分支的 rAF 合并路径 + 下方 container
-  // ResizeObserver（layout 后触发、读免费）覆盖。）
+  // Streaming chunks grow the visible message without changing messages.length;
+  // re-run the step-follow check on every chunk so the growing message is
+  // stepped into view once it exceeds the viewport (step-follow mode only).
+  // 注意：此处用 useEffect（passive，paint 后执行）而非 useLayoutEffect——passive
+  // 阶段读布局免费（无 pending DOM 写），不会强制同步布局；delta-batch 已把
+  // streamingMessage 更新合并到每帧一次，effect 每帧最多跑一次，无布局风暴。
+  useEffect(() => {
+    if (!streamState.isStreaming) return;
+    // 发送/跳转滚动期间不 follow（原 message_update live-follow 同款抑制）
+    if (pendingScrollToUserRef.current) return;
+    smartFollowStep();
+  }, [streamState, smartFollowStep]);
 
   // The queue banner / input area sits BELOW the scroll container in a flex
   // column. When the queue grows (or shrinks), the container's clientHeight

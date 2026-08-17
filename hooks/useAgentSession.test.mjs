@@ -149,12 +149,11 @@ test("keeps live following cancellable when the user scrolls away from the tail"
   );
 
   assert.match(source, /const liveFollowFrameRef = useRef<number \| null>\(null\)/);
-  assert.match(streamUpdateSource, /liveFollowFrameRef\.current === null/);
-  // Live-follow is allocated as a cancellable rAF: it resets the ref to null
-  // inside the frame and only steps when still pinned to the bottom. The
-  // follow action itself is smartFollowStep() (step-follow), so we assert the
-  // rAF structure rather than a since-removed followStreaming toggle.
-  assert.match(streamUpdateSource, /requestAnimationFrame\(\(\) => \{[\s\S]*?liveFollowFrameRef\.current = null;[\s\S]*?if \(isNearBottomRef\.current\) \{[\s\S]*?smartFollowStep\(\);/);
+  // Step-follow 由 useEffect [streamState] → smartFollowStep 承担（passive effect，
+  // message_update 不再 rAF 读 rect（React commit 未落 DOM → 旧布局 → step 抖动），
+  // RO 回调只在发送/用户滚动被抑制（pendingScrollToUserRef）时跳过 smartFollowStep。
+  assert.doesNotMatch(streamUpdateSource, /liveFollowFrameRef\.current === null/);
+  assert.match(source, /useEffect\(\(\) => \{[\s\S]*?if \(!streamState\.isStreaming\) return;[\s\S]*?if \(pendingScrollToUserRef\.current\) return;[\s\S]*?smartFollowStep\(\);/)
   assert.match(scrollHandlerSource, /cancelAnimationFrame\(liveFollowFrameRef\.current\)/);
 });
 
@@ -172,7 +171,7 @@ test("keeps a newly sent user message at the top while its response starts", () 
     source.indexOf("// Load model list"),
   );
 
-  assert.match(streamUpdateSource, /!pendingScrollToUserRef\.current && isNearBottomRef\.current/);
+  assert.doesNotMatch(streamUpdateSource, /!pendingScrollToUserRef\.current && isNearBottomRef\.current/);
   assert.match(source, /const \[promptAnchorActive, setPromptAnchorActive\] = useState\(false\)/);
   assert.match(source, /pendingScrollToUserRef\.current = true;\s*setPromptAnchorActive\(true\)/);
   assert.match(userScrollSource, /const targetTop = Math\.min\(Math\.max\(0, elAbsTop - 16\), maxScrollTop\)/);
