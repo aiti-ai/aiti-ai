@@ -553,13 +553,19 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
         } catch { /* malformed frame — keep last state */ }
       };
       source.onerror = () => {
-        // 不主动 close：EventSource 原生会自动重连（~3s 间隔，浏览器默认）。
-        // 若 close 会把 es 置 null 且不重建，断线后只能靠 15s 慢轮询兜底——
-        // running 状态延迟太久。保持引用，visibility 变化时仍可显式重建。
-        // 原生重连是保底；15s 慢轮询作为最后兜底（SSE 一直失败时）。
+        // 网络错误：EventSource 原生自动重连（~3s，浏览器默认）。不主动 close
+        //（close 会阻断自动重连，断线后只能靠 15s 慢轮询——状态延迟太久）。
+        // HTTP 非 2xx（4xx/5xx，如桥重启瞬间 502）：EventSource 进入 CLOSED
+        // 且不再自动重试——此时 es 仍非 null 会挡住 connectSSE，需显式重建。
+        if (source.readyState === EventSource.CLOSED && es === source) {
+          // 等一小段再重建（避免 4xx 高频循环），重建前先释放引用
+          setTimeout(() => {
+            if (stopped || es !== source) return;
+            es = null;
+            connectSSE();
+          }, 3000);
+        }
       };
-      // 服务端 401 等 HTTP 错误：EventSource 也会自动重连（可能高频）——
-      // 页面已加载说明认证通过，此场景罕见，接受原生行为。
     };
 
     const schedule = () => {
