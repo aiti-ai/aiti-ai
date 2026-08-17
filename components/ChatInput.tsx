@@ -1156,6 +1156,13 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   attachedImagesRef.current = attachedImages;
   queueCountRef.current = (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0);
 
+  // 受控写入（扩展用：自动补全落字等）：同步 valueRef + 触发 React 状态更新。
+  // 与 onSend/appendText 等现有写入路径一致（valueRef 先行，setValue 随后）。
+  const setInputValue = useCallback((text: string) => {
+    valueRef.current = text;
+    setValue(text);
+  }, []);
+
   useImperativeHandle(ref, () => ({
     insertIfEmpty(text: string) {
       const ta = textareaRef.current;
@@ -3562,9 +3569,10 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
             } as React.CSSProperties}
           >
-          <ExtSlot name="chatInputTop" extra={{ inputValue: value }} />
+          <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, textareaRef, setInputValue, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen }} />
           <textarea
             ref={textareaRef}
+            data-chat-input="1"
             enterKeyHint="send"
             value={value}
             onChange={(e) => {
