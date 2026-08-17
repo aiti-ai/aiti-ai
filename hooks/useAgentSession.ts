@@ -533,6 +533,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [opts.promptAnchorSpacerHeightRef, opts.bottomComposerHeightRef, scrollContainerRef, messagesEndRef]);
 
+  // T-5: rAF-coalesced step-follow. Streaming drives the follow effect via
+  // streamState, whose reference changes on EVERY delta — without coalescing,
+  // each delta runs smartFollowStep() synchronously, which reads two
+  // getBoundingClientRect() and scrolls → a forced layout per delta. Trace
+  // (2026-08-17 multi-op) showed scrollToBottom/smartFollowStep burning ~600ms
+  // in forced reflow during streaming. Batching to one check per animation
+  // frame caps the work while keeping the step latency well under a frame.
+  const scheduleFollowStep = useCallback(() => {
+    if (liveFollowFrameRef.current !== null) return;
+    liveFollowFrameRef.current = requestAnimationFrame(() => {
+      liveFollowFrameRef.current = null;
+      smartFollowStep();
+    });
+  }, [smartFollowStep]);
+
   const currentModel = currentModelOverride ?? data?.context.model ?? pendingModel ?? null;
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
   const composerDraftKey = session?.id ?? newSessionDraftKey ?? undefined;
@@ -2576,8 +2591,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // 负责（平滑滚到底）；这里不 step，避免与滚底竞争（也避免打开旧会话时
     // 初始加载被误 step 到 120px 处）。
     if (!agentRunningRef.current) return;
-    smartFollowStep();
-  }, [streamState, messages, smartFollowStep]);
+    scheduleFollowStep();
+  }, [streamState, messages, scheduleFollowStep]);
 
   // The queue banner / input area sits BELOW the scroll container in a flex
   // column. When the queue grows (or shrinks), the container's clientHeight
@@ -2587,10 +2602,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    const ro = new ResizeObserver(() => smartFollowStep());
+    const ro = new ResizeObserver(() => scheduleFollowStep());
     ro.observe(container);
     return () => ro.disconnect();
-  }, [smartFollowStep, scrollContainerRef]);
+  }, [scheduleFollowStep, scrollContainerRef]);
 
   // Load model list
   useEffect(() => {
