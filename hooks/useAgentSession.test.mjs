@@ -179,9 +179,11 @@ test("keeps a newly sent user message at the top while its response starts", () 
   assert.match(userScrollSource, /isNearBottomRef\.current = targetTop >= maxScrollTop - SCROLL_BOTTOM_THRESHOLD/);
   assert.match(userScrollSource, /container\.scrollTo\(\{ top: targetTop, behavior: "smooth" \}\)/);
   assert.match(scrollEffectSource, /pendingScrollToUserRef\.current = false;[\s\S]*?scrollUserMsgToTop\(\)/);
-  assert.match(chatWindowSource, /const maxScrollTopWithoutAnchor = Math\.max\([\s\S]*?container\.scrollHeight - promptAnchorSpacerHeightRef\.current - container\.clientHeight/);
-  assert.match(chatWindowSource, /const nextPromptAnchorSpacerHeight = Math\.max\([\s\S]*?Math\.ceil\(targetTop - maxScrollTopWithoutAnchor\)/);
-  assert.match(chatWindowSource, /<div aria-hidden="true" style=\{\{ height: promptAnchorSpacerHeight \}\} \/>/);
+  // Step-follow spacer 已移除：不再撑 promptAnchorSpacerHeight（与 smartFollowStep 冲突），
+  // 滚动跟随由 useAgentSession 的 smartFollowStep 全权负责。
+  assert.doesNotMatch(chatWindowSource, /maxScrollTopWithoutAnchor/);
+  assert.doesNotMatch(chatWindowSource, /nextPromptAnchorSpacerHeight/);
+  assert.match(chatWindowSource, /step-follow 由 smartFollowStep 全权负责/);
 });
 
 test("sizes the message tail from the rendered bottom composer", () => {

@@ -297,8 +297,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   // step-follow geometry.
   const [bottomComposerHeight, setBottomComposerHeight] = useState(0);
   const bottomComposerHeightRef = useRef(0);
-  const [promptAnchorSpacerHeight, setPromptAnchorSpacerHeight] = useState(0);
-  const promptAnchorSpacerHeightRef = useRef(0);
+  const promptAnchorSpacerHeightRef = useRef(0); // 恒 0：step-follow 由 smartFollowStep 全权负责
 
   const {
     loading, error, messages, entryIds, streamState,
@@ -651,69 +650,11 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     };
   }, [error, isEmptyNew, loading, scrollContainerRef, scrollToBottom]);
 
-  useLayoutEffect(() => {
-    if (!agentRunning || !promptAnchorActive) {
-      if (promptAnchorSpacerHeightRef.current !== 0) {
-        promptAnchorSpacerHeightRef.current = 0;
-        setPromptAnchorSpacerHeight(0);
-      }
-      return;
-    }
-
-    const container = scrollContainerRef.current;
-    // Step-follow (always on): pin the LAST message 120px below the viewport
-    // top (a little history stays visible above; the lower area refills with
-    // output before smartFollowStep steps again).
-    const anchor = messagesEndRef.current;
-    if (!container || !anchor) return;
-
-    const updatePromptAnchorSpacer = () => {
-      const anchorTop = anchor.getBoundingClientRect().top
-        - container.getBoundingClientRect().top
-        + container.scrollTop;
-      // The END sentinel sits BELOW the spacer (and composer). Exclude them so
-      // the measured anchor position does not chase the spacer height —
-      // otherwise every spacer change moves the sentinel, recomputes a new
-      // spacer, and loops forever.
-      const anchorExclSpacer = anchorTop
-        - promptAnchorSpacerHeightRef.current
-        - bottomComposerHeightRef.current;
-      // Target: last message 120px below the viewport top.
-      const targetTop = Math.max(0, anchorExclSpacer - 120);
-      // Exclude the current spacer so each measurement converges instead of
-      // alternating between adding it and removing it.
-      const maxScrollTopWithoutAnchor = Math.max(
-        0,
-        container.scrollHeight - promptAnchorSpacerHeightRef.current - container.clientHeight,
-      );
-      const nextPromptAnchorSpacerHeight = Math.max(
-        0,
-        Math.ceil(targetTop - maxScrollTopWithoutAnchor),
-      );
-
-      if (nextPromptAnchorSpacerHeight !== promptAnchorSpacerHeightRef.current) {
-        promptAnchorSpacerHeightRef.current = nextPromptAnchorSpacerHeight;
-        setPromptAnchorSpacerHeight(nextPromptAnchorSpacerHeight);
-      }
-    };
-
-    updatePromptAnchorSpacer();
-    const observer = typeof ResizeObserver === "undefined"
-      ? null
-      : new ResizeObserver(updatePromptAnchorSpacer);
-    observer?.observe(container);
-    observer?.observe(anchor);
-    return () => observer?.disconnect();
-  }, [
-    agentRunning,
-    bottomComposerHeight,
-    messages.length,
-    messagesEndRef,
-    promptAnchorActive,
-    promptAnchorSpacerHeight,
-    scrollContainerRef,
-    streamState.streamingMessage,
-  ]);
+  // Step-follow 由 useAgentSession 的 smartFollowStep 全权负责（useEffect [streamState]
+  // → 内容增长超出视口时 scrollTo 回 120px 处）。此处不再撑 promptAnchorSpacer：
+  // 该 spacer 算法与内容位置无关（差值恒定），流式期间恒定撑高视口下方 3/4 为空白，
+  // 且与 smartFollowStep 的 target 计算冲突（实测 spacer 457px 恒定 + step 稀疏 + 结束骤变）。
+  // spacer 恒 0 → smartFollowStep 每屏正常 step，最后消息持续钉在视口顶部 1/4。
 
   const availableThinkingLevels = displayModelValue
     ? (modelThinkingLevels[`${displayModelValue.provider}:${displayModelValue.modelId}`] ?? null)
@@ -1147,11 +1088,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
               />
             )}
 
-            {promptAnchorSpacerHeight > 0 && (
-              <div aria-hidden="true" style={{ height: promptAnchorSpacerHeight }} />
-            )}
-
-            {/* Match the trailing space to the live bottom composer height. */}
+            {/* 底部输入区高度占位（保持尾钉）；step-follow spacer 已移除（恒 0） */}
             <div aria-hidden="true" style={{ height: bottomComposerHeight }} />
 
             <div ref={messagesEndRef} />
