@@ -25,6 +25,7 @@ import type {
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
 import { loadExtensionFromDir, scanExtensionDirs } from "./loader.ts";
 import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
+import { invokeAI as aiInvokeImpl } from "../ai-invoke.ts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 declare global {
@@ -615,7 +616,11 @@ export class ExtRegistryImpl {
   }
 
   private serverContext(ext: LoadedExtension): ExtServerContext {
-    return { id: ext.id, dir: ext.dir, dataDir: ext.dataDir, core: this.core };
+    return {
+      id: ext.id, dir: ext.dir, dataDir: ext.dataDir, core: this.core,
+      // 通用 AI 调用（core 最底层能力，零业务）；按调用扩展 id 记账（token 统计在 core）
+      invokeAI: (p) => aiInvokeImpl({ ...p, caller: ext.id }),
+    };
   }
 
   /** Dispatch one API call to an extension; null when no extension/handler matches. */

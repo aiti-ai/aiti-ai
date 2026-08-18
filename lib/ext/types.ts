@@ -9,6 +9,7 @@
  * Design aligns with docs/service-tunnels-extension.md §3/§11 (pending-design
  * items for generic slots, core data contract, data dir convention).
  */
+import type { ReactNode } from "react";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 /**
@@ -62,6 +63,13 @@ export interface ExtServerContext {
   /** Absolute path of the extension data directory (~/.pi/web/data/<id>/). */
   dataDir: string;
   core: ExtCoreApi;
+  /** 通用 AI 调用（core 最底层模型能力）：任意 system+messages → { text, usage }；core 零业务、零统计。
+   *  所有 prompt 组装 / 上下文 / 项目现场 / token 统计由调用方扩展负责。 */
+  invokeAI?: (params: {
+    provider?: string; modelId?: string; system?: string;
+    messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
+    maxTokens?: number; temperature?: number; reasoning?: string;
+  }) => Promise<{ text: string; provider: string; model: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number } }>;
 }
 
 /** Context for a single API dispatch (path segments after the extension id). */
@@ -192,34 +200,37 @@ export type ExtSlotPropsWithBuiltIn<S extends ExtSlotName> =
 export interface LocaleNamespaceMap {}
 
 /**
- * 消息点击识别弹层（QuoteReplyPopover）动作扩展点。
- * 扩展注册 provider；点击段落 → core 把段落全文交给每个 provider 的 recognize（可异步校验）
- * → 返回动作按钮 → 点击调用 onClick（识别/校验/执行全在扩展侧，core 只渲染 + 调起）。
+ * 段落点击接管扩展点（消息点击识别薄宿主）。
+ *
+ * 扩展（aiti-msg-smart）注册 handler；用户点击消息段落时 core 把段落纯文本 +
+ * 上下文 + 锚点 rect 交给每个 handler（可多个，aiti-msg-smart 为主接管者）。
+ * 识别/弹层渲染/动作/关闭全在扩展侧；core 只提供：段落可点击 + 点击事件广播 +
+ * setInline 挂载点（段落后 in-flow 渲染扩展节点，tr 自动 portal 到 body）。
  */
-export interface PopoverAction {
-  /**
-   * 动作类型（语义分类，UI 按 type 加图标/分组）：
-   * 内置约定 "quote"（问题回复）· "file"（文件）· "command"（命令），扩展可自定义任意字符串。
-   */
-  type: string;
-  /** 动作唯一 id（同段同 provider 内去重用） */
-  id: string;
-  /** 按钮文案（纯文本，不带图标/⚠——core 按 type/danger 统一加） */
-  label: string;
-  /** 危险标记 → 红边 + ⚠ */
-  danger?: boolean;
-  /** 不可用标记（如 command not found）→ 灰显 + ❌，title 提示 */
-  unavailable?: boolean;
-  /** tooltip */
-  title?: string;
-  /** 点击回调：参数为 provider 识别时的段落全文 + 会话 cwd */
-  onClick: (text: string, cwd?: string) => void;
+export interface ParagraphClickInfo {
+  /** 段落纯文本（渲染后 textContent；表格行 = 单元格 " | " 连接） */
+  text: string;
+  /** 会话 cwd（相对路径解析用） */
+  cwd?: string;
+  /** 消息角色（"user" / "assistant" / undefined） */
+  messageRole?: string;
+  /** 段落锚点（扩展定位用；view 坐标，扩展可监听 scroll/resize 跟随） */
+  rect: { top: number; left: number; bottom: number; width: number };
+  /** 段落 DOM 元素（扩展需要更精细定位/选区/滚动跟随时用） */
+  element?: HTMLElement;
+  /** 段落稳定标识（useId 生成）——扩展 toggle 判断/「同一时刻只开一个」去重用 */
+  paragraphId: string;
+  /** 段落所在会话/消息（预留；扩展需要时经消息组件透传，core 不保证） */
+  sessionId?: string;
+  messageId?: string;
+  /** 段落内联展开（in-flow 渲染在段落后；tr 自动 portal 到 body + 由扩展给定位）。
+   *  注：core 只提供挂载点，不做定位/滚动/关闭管理——都是扩展职责。 */
+  setInline(node: ReactNode | null): void;
+  /** 关闭本段落的 inline 展开（扩展切段时先调旧段 close） */
+  close(): void;
 }
-export interface PopoverActionProvider {
-  id: string;
-  /** 可异步（校验/查环境/调服务端） */
-  recognize(text: string, ctx: { cwd?: string; messageRole?: string }): Promise<PopoverAction[]> | PopoverAction[];
-}
+
+export type ParagraphClickHandler = (info: ParagraphClickInfo) => void;
 
 /** 能力接管声明：扩展声明后 core 隐藏对应的内置 UI/行为，由扩展全权接管。
  *  能力名是 core 与扩展之间的稳定契约（不是扩展 id）——新增能力时在

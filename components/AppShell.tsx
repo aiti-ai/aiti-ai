@@ -15,6 +15,7 @@ import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas } from "./ExtSlots";
 import type { ExtRenderProps } from "@/lib/ext-ui-store";
+import { registerHostApi } from "@/lib/ext/host-api";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
 import { useTheme } from "@/hooks/useTheme";
@@ -277,6 +278,19 @@ export function AppShell() {
   const [contextUsage, setContextUsage] = useState<{ percent: number | null; contextWindow: number; tokens: number | null } | null>(null);
   const handleContextUsageChange = useCallback((usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => {
     setContextUsage(usage);
+  }, []);
+
+  // AI 用量（core invokeAI 集中记账；作为统计的一个子类并入顶部）——GET /api/chat/ai-usage
+  const [aiUsage, setAiUsage] = useState<{ totals?: { in: number; out: number; cacheRead: number; cacheWrite: number; calls: number }; byCaller?: Record<string, number> } | null>(null);
+  useEffect(() => {
+    let alive = true;
+    const load = () => fetch(apiUrl("/api/chat/ai-usage"), { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (alive && d) setAiUsage({ totals: d.totals, byCaller: d.byCaller }); })
+      .catch(() => {});
+    load();
+    const t = setInterval(load, 15000); // 轻量轮询
+    return () => { alive = false; clearInterval(t); };
   }, []);
 
   // Single active panel — only one dropdown open at a time
@@ -801,6 +815,13 @@ export function AppShell() {
   const handleOpenLinkedFile = useCallback((filePath: string) => {
     handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null });
   }, [handleOpenFile, selectedSession?.id]);
+
+  // 扩展宿主公共接口注册（原样能力，不理解为扩展适配；AppShell 零消息/零罗列）
+  registerHostApi({
+    openFile: handleOpenFile,
+    revealDir: handleRevealDir,
+    appendText: (text) => chatInputRef.current?.appendText(text),
+  });
 
   // aiti-devtools 扩展请求打开文件（前端在线查看——文件标签页）：aiti 候选详情点"前端打开"
   useEffect(() => {
@@ -1955,6 +1976,36 @@ export function AppShell() {
             </button>
           )}
           {/* Session stats — right-aligned in top bar */}
+          {/* AI 用量子类（core invokeAI 记账汇总：AI 补全等） */}
+          {showChat && aiUsage?.totals && aiUsage.totals.calls > 0 && (() => {
+            const t = aiUsage.totals!;
+            const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
+            const caller = Object.entries(aiUsage.byCaller || {}).map(([k, v]) => `${k}: ${v.toLocaleString()}`).join("  ·  ");
+            const tip = [`AI 用量 · in: ${t.in.toLocaleString()}`];
+            if (t.cacheRead) tip.push(`cache: ${t.cacheRead.toLocaleString()}`);
+            if (t.out) tip.push(`out: ${t.out.toLocaleString()}`);
+            tip.push(`calls: ${t.calls}`);
+            if (caller) tip.push(`by caller: ${caller}`);
+            return (
+              <button
+                type="button"
+                title={tip.join("  |  ")}
+                aria-label="AI usage"
+                onClick={() => toggleTopPanel("session")}
+                style={{
+                  display: "inline-flex", alignItems: "center", gap: 4, marginRight: 8,
+                  border: "1px solid var(--border)", borderRadius: 999, padding: "1px 8px",
+                  fontSize: 11, color: "var(--accent)", background: "var(--bg-panel)", cursor: "pointer", flexShrink: 0,
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
+                  <circle cx="12" cy="12" r="9" /><path d="M2 12h20" /><path d="M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20Z" />
+                </svg>
+                <span>AI</span>
+                <span>{fmt(t.in)}/{fmt(t.out)}</span>
+              </button>
+            );
+          })()}
           {showChat && (sessionStats || contextUsage) && (() => {
              const tokens = sessionStats?.tokens;
             const c = sessionStats?.cost ?? 0;
@@ -2520,7 +2571,6 @@ export function AppShell() {
               onContextUsageChange={handleContextUsageChange}
               onExportQueue={(resolver) => { exportQueueDataRef.current = resolver; }}
               onOpenFile={handleOpenLinkedFile}
-              onRevealDir={handleRevealDir}
               soundEnabled={soundEnabled}
               onSoundToggle={onSoundToggle}
               playDoneSound={playDoneSound}
