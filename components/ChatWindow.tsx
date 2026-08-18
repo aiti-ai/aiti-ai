@@ -343,9 +343,12 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const editFromHerePendingRef = useRef(editFromHerePending);
   editFromHerePendingRef.current = editFromHerePending;
 
-  // 标记（点击「编辑从此处」）：输入框非空时不覆盖（与 replaceMessage 的 canRestore 约定一致）
+  // 标记（点击「编辑从此处」）：输入框非空且无标记时不覆盖（与 replaceMessage 的 canRestore 约定一致）；
+  // 已有标记时先清旧预填再标记新的（避免 composer 残留上一目标文本导致 replaceMessage 静默失效）
   const handleEditFromHereMark = useCallback((entryId: string, message: UserMessage, branchPointId: string | null) => {
-    if (chatInputRef?.current?.hasInput?.()) return;
+    const hasPending = editFromHerePendingRef.current != null;
+    if (!hasPending && chatInputRef?.current?.hasInput?.()) return;
+    if (hasPending) chatInputRef?.current?.clearInput?.();
     setEditFromHerePending({
       entryId,
       targetId: branchPointId ?? entryId,
@@ -360,10 +363,15 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     chatInputRef?.current?.clearInput?.();
   }, [chatInputRef]);
 
-  // 发送：pending 时先回退会话（真正生效点），再发送编辑后的消息
+  // 发送：pending 时先回退会话（真正生效点），再发送编辑后的消息。
+  // bash 命令（! 前缀）不触发回退——用户此时只是想跑 shell，标记保留待下次发送。
   const handleSendWrapped = useCallback(async (message: string, images?: AttachedImage[]) => {
     const pending = editFromHerePendingRef.current;
     if (pending) {
+      if (message.trim().startsWith("!")) {
+        await handleSend(message, images);
+        return;
+      }
       setEditFromHerePending(null);
       await handleEditFromStartSend(pending.targetId, pending.leafId, message, images);
       return;

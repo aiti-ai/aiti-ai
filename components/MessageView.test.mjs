@@ -123,6 +123,54 @@ test("keeps attached images when restoring a compact command for editing", () =>
   ]);
 });
 
+const USER_MSG = {
+  role: "user",
+  content: "普通用户消息",
+  timestamp: 1787000000000,
+};
+
+// 「编辑从此处」待发送标记：常规消息（有上一条 assistant）→ 标记按钮
+// 首条消息（无分支点）→ 同一按钮；待发送时按钮变「取消」并高亮。
+test("renders the edit-from-here mark button on a user message", () => {
+  const html = renderMessage(USER_MSG, {
+    entryId: "entry-1",
+    prevAssistantEntryId: "assistant-0",
+    onEditFromHere: () => {},
+  });
+  assert.match(html, /Edit from here/);
+  assert.doesNotMatch(html, /Cancel edit from here/);
+});
+
+test("renders edit-from-here on the first user message without a branch point", () => {
+  const html = renderMessage(USER_MSG, {
+    entryId: "entry-1",
+    onEditFromHere: () => {},
+  });
+  assert.match(html, /Edit from here/);
+  // 首条消息的 tooltip 说明根重建语义
+  assert.match(html, /rebuild this session/);
+});
+
+test("turns the button into cancel when the message is the pending edit target", () => {
+  const html = renderMessage(USER_MSG, {
+    entryId: "entry-1",
+    prevAssistantEntryId: "assistant-0",
+    onEditFromHere: () => {},
+    editingFromStart: true,
+    onCancelEditFromStart: () => {},
+  });
+  assert.match(html, /Cancel edit from here/);
+  assert.doesNotMatch(html, /Edit from here/);
+  // 待发送标记：气泡高亮（box-shadow）
+  assert.match(html, /box-shadow/);
+});
+
+test("hides the edit-from-here button when no handler is provided", () => {
+  const html = renderMessage(USER_MSG, { entryId: "entry-1" });
+  assert.doesNotMatch(html, /Edit from here/);
+  assert.doesNotMatch(html, /Cancel edit from here/);
+});
+
 test("renders user-message images as buttons that open a larger preview", () => {
   const html = renderMessage({
     role: "user",
