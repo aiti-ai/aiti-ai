@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState, type JSX, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
@@ -26,6 +26,10 @@ interface MarkdownBodyProps {
   sessionId?: string;
   messageId?: string;
 }
+
+/** 语义块点击候选（core 只提供渲染壳；哪些标签可点由扩展 handler.tags 声明过滤） */
+const CLICKABLE_TAGS = ["p", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"] as const;
+type ClickableTag = (typeof CLICKABLE_TAGS)[number];
 
 export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, messageRole, sessionId, messageId }: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => {
@@ -61,8 +65,16 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       return () => clearTimeout(t);
     }
   }, [normalizedMarkdown, isStreaming]);
-  // 段落点击薄扩展点：有 handler 注册（扩展加载）时段落可点击；无扩展时段落渲染普通元素。
-  const hasClickHandlers = useParagraphClickHandlers().length > 0;
+  // 段落点击薄扩展点：有 handler 注册（扩展加载）时语义块可点击；无扩展时段落渲染普通元素。
+  const handlers = useParagraphClickHandlers();
+  const hasClickHandlers = handlers.length > 0;
+  // 可点击标签 = 扩展声明的并集（handler.tags；未声明默认 p/li/tr）。core 不硬编码业务——
+  // 标题/引用块等新场景由扩展声明即生效，无需改 core。
+  const clickTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const h of handlers) for (const t of h.tags ?? ["p", "li", "tr"]) set.add(t);
+    return set;
+  }, [handlers]);
   // Stable renderer identities keep stateful blocks mounted across message hover updates.
   const components = useMemo<Components>(() => ({
     code({ className, children, ...props }) {
@@ -126,20 +138,21 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       return <img src={imageSrc} alt={alt ?? ""} loading="lazy" {...props} />;
     },
     // react-markdown 以组件方式调用这些小写渲染函数（createElement(components.p)），
-    // Hook 顺序稳定；rules-of-hooks 只按函数名小写误报。
+    // Hook 顺序稳定；rules-of-hooks 只按函数名小写误报。候选标签统一生成渲染壳：
+    // 是否包 ClickableParagraph 由「扩展声明 clickTags」决定（core 不持有业务判断）。
     // eslint-disable-next-line react-hooks/rules-of-hooks
-    p({ children, ...props }) {
-      delete props.node;
-      // user 消息段落不做点击识别（只保留固定引用按钮）——有 handler 且非 user 才包 ClickableParagraph
-      if (!hasClickHandlers || messageRole === "user") return <p {...props}>{children}</p>;
-      return <ClickableParagraph as="p" messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
-    },
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    li({ children, ...props }) {
-      delete props.node;
-      if (!hasClickHandlers || messageRole === "user") return <li {...props}>{children}</li>;
-      return <ClickableParagraph as="li" messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
-    },
+    ...CLICKABLE_TAGS.reduce((acc, tag) => {
+      acc[tag] = ({ children, ...props }) => {
+        delete props.node;
+        const enabled = hasClickHandlers && clickTags.has(tag) && messageRole !== "user";
+        if (!enabled) {
+          const Tag = tag as keyof JSX.IntrinsicElements;
+          return <Tag {...props}>{children}</Tag>;
+        }
+        return <ClickableParagraph as={tag} messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
+      };
+      return acc;
+    }, {} as Record<string, (p: any) => ReactNode>),
     table({ children }) {
       return (
         <div className="markdown-table-wrap">
@@ -147,13 +160,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         </div>
       );
     },
-    // eslint-disable-next-line react-hooks/rules-of-hooks
-    tr({ children, ...props }) {
-      delete props.node;
-      if (!hasClickHandlers || messageRole === "user") return <tr {...props}>{children}</tr>;
-      return <ClickableParagraph as="tr" messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
-    },
-  }), [cwd, isStreaming, onOpenFile, messageRole, hasClickHandlers]);
+  }), [cwd, isStreaming, onOpenFile, messageRole, handlers, clickTags]);
 
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>
@@ -180,7 +187,7 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({ children, ...props }: 
  * 识别/弹层渲染/动作/关闭全在扩展侧；core 只提供：段落可点击、把完整上下文交给
  * handler、段落内联挂载（in-flow / tr 自动 portal 到 body）。定位/滚动跟随归扩展。
  */
-function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, messageId }: { children: ReactNode; as?: "p" | "li" | "tr"; messageRole?: string; cwd?: string; sessionId?: string; messageId?: string }) {
+function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, messageId }: { children: ReactNode; as?: ClickableTag; messageRole?: string; cwd?: string; sessionId?: string; messageId?: string }) {
   const handlers = useParagraphClickHandlers();
   const pid = useId(); // 段落稳定标识：React 树结构不变时跨渲染稳定（扩展 toggle/去重用）
   const ref = useRef<HTMLElement>(null);

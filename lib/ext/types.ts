@@ -232,9 +232,14 @@ export interface ParagraphClickInfo {
   close(): void;
 }
 
+/** 段落点击候选标签（core 渲染壳支持的语义块；默认 p/li/tr） */
+export type ClickableTag = "p" | "li" | "tr" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6";
+
 /** 段落点击处理器。可附 hint：段落 hover 提示文案（core 渲染 tip 的视觉契约，
- *  文案由扩展提供——如 aiti-msg-smart 的「点击引用回复」；无 hint 则不显示提示）。 */
-export type ParagraphClickHandler = ((info: ParagraphClickInfo) => void) & { hint?: string };
+ *  文案由扩展提供——如 aiti-msg-smart 的「点击引用回复」；无 hint 则不显示提示）。
+ *  tags：声明需要点击的语义块标签（未声明默认 ["p","li","tr"]）——新增场景
+ *  （如标题 h1-h6）由扩展声明即生效，无需改 core。 */
+export type ParagraphClickHandler = ((info: ParagraphClickInfo) => void) & { hint?: string; tags?: ClickableTag[] };
 
 /** 能力接管声明：扩展声明后 core 隐藏对应的内置 UI/行为，由扩展全权接管。
  *  能力名是 core 与扩展之间的稳定契约（不是扩展 id）——新增能力时在
