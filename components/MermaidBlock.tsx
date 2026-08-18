@@ -1,14 +1,13 @@
 "use client";
 
-import { memo, useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { copyText } from "@/lib/clipboard";
-import { useParagraphClickHandlers } from "./ExtSlots";
+import { useCodeLineClick } from "@/lib/code-line-click";
 
 interface MermaidBlockProps {
   code: string;
@@ -248,40 +247,8 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
   const { isDark } = useTheme();
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
-  // 代码行点击薄扩展点：点击某行 → 广播该行文本（ParagraphClick 同款；user 消息不启用）
-  const handlers = useParagraphClickHandlers();
-  const clickable = handlers.length > 0 && messageRole !== "user";
-  const [inlineNode, setInlineNode] = useState<ReactNode | null>(null);
-  const pid = useId();
-  // 行高 = fontSize 12.5 × lineHeight 1.62（流式/高亮器同规格）；padding-top 11px 偏移
-  const LINE_H = 12.5 * 1.62;
-  const PAD_TOP = 11;
-  const handlePreClick = (e: MouseEvent<HTMLPreElement>) => {
-    if (!clickable) return;
-    const el = e.currentTarget;
-    const rect = el.getBoundingClientRect();
-    const row = Math.floor((e.clientY - rect.top - PAD_TOP) / LINE_H);
-    const lines = code.split("\n");
-    if (row < 0 || row >= lines.length) return;
-    const lineText = lines[row].trim();
-    if (!lineText) return;
-    const info = {
-      text: lineText,
-      cwd,
-      messageRole,
-      rect: { top: rect.top, left: rect.left, bottom: rect.bottom, width: rect.width },
-      element: el,
-      rowIndex: row,
-      paragraphId: `code:${pid}:${row}`,
-      sessionId,
-      messageId,
-      setInline: setInlineNode,
-      close: () => setInlineNode(null),
-    };
-    for (const h of handlers) { try { h(info); } catch { /* 单 handler 异常不影响其他 */ } }
-  };
-  // 行弹层 portal 到 body（pre 内不能插块级；定位由扩展自管——与 tr 浮层同机制）
-  const inline = typeof document !== "undefined" ? createPortal(inlineNode, document.body) : inlineNode;
+  // 代码行点击薄扩展点（hook 复用：计算样式取行高，markdown 代码块/工具调用 pre 通用）
+  const { clickable, handlePreClick, inline } = useCodeLineClick({ code, messageRole, cwd, sessionId, messageId });
 
   const copy = () => {
     copyText(code).then(() => {

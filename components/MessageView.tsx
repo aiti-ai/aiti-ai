@@ -8,6 +8,7 @@ import { copyText } from "@/lib/clipboard";
 import { apiUrl } from "@/lib/base-path";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
+import { useCodeLineClick } from "@/lib/code-line-click";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { isEditToolName } from "@/lib/tool-names";
@@ -882,7 +883,7 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
     const tc = block as ToolCallContent;
     const result = toolResults?.get(tc.toolCallId);
     const duration = toolCallDurations?.get(tc.toolCallId);
-    return <ToolCallBlock block={tc} result={result} duration={duration} />;
+    return <ToolCallBlock block={tc} result={result} duration={duration} cwd={cwd} sessionId={sessionId} messageId={entryId} />;
   }
   return null;
 }
@@ -974,10 +975,11 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
 }
 
 
-function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number }) {
+function ToolCallBlock({ block, result, duration, cwd, sessionId, messageId }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number; cwd?: string; sessionId?: string; messageId?: string }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const inputStr = getToolCallInputText(block);
+  const { clickable, handlePreClick, inline } = useCodeLineClick({ code: inputStr, cwd, sessionId, messageId, enabled: !isEditToolName(block.toolName) });
   const isStreamingInput = block.rawInput !== undefined;
   const isEditTool = isEditToolName(block.toolName);
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
@@ -1034,6 +1036,7 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
       {/* ── Expanded: input args ── */}
       {expanded && (isStreamingInput || !isEditTool) && (
         <pre
+          onClick={handlePreClick}
           style={{
             margin: 0,
             padding: "8px 10px",
@@ -1045,11 +1048,13 @@ function ToolCallBlock({ block, result, duration }: { block: ToolCallContent; re
             borderTop: isError ? "1px solid rgba(248,113,113,0.25)" : "1px solid rgba(34,197,94,0.2)",
             whiteSpace: "pre-wrap",
             wordBreak: "break-all",
+            cursor: clickable ? "pointer" : undefined,
           }}
         >
           {inputStr}
         </pre>
       )}
+      {inline}
 
       {/* ── Paired result — only shown when expanded ── */}
       {expanded && result && (
@@ -1305,12 +1310,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function PairedResult({ text, isEmpty, isError }: {
+function PairedResult({ text, isEmpty, isError, cwd, sessionId, messageId }: {
   text: string;
   isEmpty: boolean;
   isError: boolean;
+  cwd?: string;
+  sessionId?: string;
+  messageId?: string;
 }) {
   const { t } = useI18n();
+  const { clickable, handlePreClick, inline } = useCodeLineClick({ code: text, cwd, sessionId, messageId });
   return (
     <div
       style={{
@@ -1319,6 +1328,7 @@ function PairedResult({ text, isEmpty, isError }: {
       }}
     >
       <pre
+        onClick={handlePreClick}
         style={{
           margin: 0,
           padding: "8px 10px",
@@ -1332,10 +1342,12 @@ function PairedResult({ text, isEmpty, isError }: {
           wordBreak: "break-all",
           fontStyle: isEmpty ? "italic" : "normal",
           opacity: isEmpty ? 0.6 : 1,
+          cursor: clickable ? "pointer" : undefined,
         }}
       >
          {isEmpty ? t("i18n.noOutput") : text}
       </pre>
+      {inline}
     </div>
   );
 }
@@ -1433,6 +1445,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
   const images = getMessageImages(message.content);
   const hasDetails = message.details !== undefined;
   const detailsText = hasDetails ? safeJson(message.details) : "";
+  const { clickable, handlePreClick, inline } = useCodeLineClick({ code: detailsText, cwd });
   const title = formatCustomType(message.customType);
   const time = formatTime(message.timestamp);
 
@@ -1562,8 +1575,9 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
           )}
         </div>
 
-        {hasDetails && ((isHiddenDisplay && contentExpanded) || (!isHiddenDisplay && detailsExpanded)) && (
+        {hasDetails && ((isHiddenDisplay && contentExpanded) || (!isHiddenDisplay && detailsExpanded)) && (<>
           <pre
+            onClick={handlePreClick}
             style={{
               margin: 0,
               padding: "9px 10px",
@@ -1577,10 +1591,13 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
               maxHeight: 360,
               overflow: "auto",
               fontFamily: "var(--font-mono)",
+              cursor: clickable ? "pointer" : undefined,
             }}
           >
             {detailsText}
           </pre>
+          {inline}
+          </>
         )}
       </div>
     </div>
@@ -1721,7 +1738,7 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
 
   return (
     <div style={{ margin: "6px 0" }}>
-      <ToolCallBlock block={block} result={result} />
+      <ToolCallBlock block={block} result={result} sessionId={sessionId} messageId={block.toolCallId} />
       {message.truncated && fullOutputUrl && (
         <div style={{ padding: "4px 10px", fontSize: 11, marginTop: -1 }}>
           {showFullButton && (
