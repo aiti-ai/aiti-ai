@@ -817,7 +817,7 @@ function StreamingActionButton({
   );
 }
 
-export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
+const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, onSteer, onFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
@@ -1516,6 +1516,11 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
   useEffect(() => {
     const ta = textareaRef.current;
     if (!ta) return;
+    // 非受控同步：React state 变化（草稿恢复/扩展注入/发送清空/召回等）写回 DOM。
+    // 语音/IME 组合输入期间跳过——组合文本由输入法独占，React 不覆写（防语音输入被打断）。
+    if (!isComposingRef.current && ta.value !== value) {
+      ta.value = value;
+    }
     ta.style.height = "auto";
     if (value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [value]);
@@ -3574,7 +3579,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
             ref={textareaRef}
             data-chat-input="1"
             enterKeyHint="send"
-            value={value}
+            defaultValue={value}
             onChange={(e) => {
               valueRef.current = e.target.value;
               setValue(e.target.value);
@@ -3593,6 +3598,9 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               isComposingRef.current = false;
               lastCompositionEndAtRef.current = Date.now();
               const el = e.currentTarget;
+              // 组合结束：把输入法最终写入 DOM 的值收进 state（防 state 落后 DOM 导致草稿/后续写入丢字）
+              valueRef.current = el.value;
+              setValue(el.value);
               updateAtQuery(el.value, el.selectionStart);
             }}
             onInput={handleInput}
@@ -4413,3 +4421,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
       </div>
   );
 });
+// memo：AI 流式期间 ChatWindow 每 token 重渲染（streamState 引用变），但传给本组件的
+// props 全部是稳定引用（hook 内 useCallback/useState/useMemo）——memo 后流式期间
+// 输入框不再被波及重渲染（性能 + 避免受控覆写打断语音组合输入）。
+export const ChatInput = React.memo(ChatInputInner);

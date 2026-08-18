@@ -1,16 +1,18 @@
 "use client";
 
-import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { memo, useEffect, useId, useMemo, useRef, useState, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import ReactMarkdown, { type Components } from "react-markdown";
+import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { encodeFilePathForApi } from "@/lib/file-paths";
 import { apiUrl } from "@/lib/base-path";
 import { markdownRehypePlugins, markdownRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
-import { QuoteReplyPopover } from "./QuoteReplyPopover";
 import { useI18n } from "@/hooks/useI18n";
-import { parseParagraph, type ParsedSegment } from "@/lib/quote-reply";
+import { useParagraphClickHandlers } from "./ExtSlots";
+
+// 流式期间两次全量 Markdown 解析的最小间隔：200ms 内文本增量不重解析（约 5 次/s）。
+const STREAM_PARSE_INTERVAL_MS = 200;
 
 interface MarkdownBodyProps {
   children: string;
@@ -18,22 +20,14 @@ interface MarkdownBodyProps {
   isStreaming?: boolean;
   cwd?: string;
   onOpenFile?: (filePath: string, fileName?: string) => void;
-  /** Reveal a directory in the sidebar file tree (from the popover). */
-  onRevealDir?: (absPath: string) => void;
-  /** 消息角色（"user" / "assistant" / undefined）——供消息点击识别 provider 判断（如只对用户输入显示收藏按钮） */
+  /** 消息角色（"user" / "assistant" / undefined）——供段落点击识别器判断（如只对用户输入显示动作） */
   messageRole?: string;
-  /** When set (assistant messages), each paragraph becomes hoverable/clickable
-   *  to pop a quote-reply popover. */
-  onQuoteReply?: (quote: string) => void;
+  /** 段落所在会话/消息（可选透传，扩展需要时填写进 ParagraphClickInfo） */
+  sessionId?: string;
+  messageId?: string;
 }
 
-/** Exactly one quote-reply popover can be open at a time (per message body). */
-const QuoteOpenContext = createContext<{ openId: string | null; setOpenId: (id: string | null) => void }>({
-  openId: null,
-  setOpenId: () => {},
-});
-
-export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, onRevealDir, onQuoteReply, messageRole }: MarkdownBodyProps) {
+export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, messageRole, sessionId, messageId }: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => {
     const normalized = normalizeDisplayMath(children);
     // User chat text can start with / embed raw HTML tags as paste artifacts
@@ -43,7 +37,32 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     // Escape them so rehype-raw becomes a no-op; `&lt;` still renders as `<`.
     return messageRole === "user" ? escapeRawHtmlTags(normalized) : normalized;
   }, [children, messageRole]);
-  const [openId, setOpenId] = useState<string | null>(null);
+  // 流式节流解析：流式期间 children 每帧增长（rAF 合并的 delta），直接交给 ReactMarkdown
+  // 会每帧全量重解析累计文本（O(n²)，长流式=主线程尖峰）。这里至少间隔 200ms 才把最新文本
+  // 交给 ReactMarkdown（其内部按 children 缓存解析结果）——中间帧解析直接跳过，尾部文本稍后补上。
+  // 非流式（历史消息/流式结束）始终立即解析最终文本。
+  const [renderText, setRenderText] = useState(normalizedMarkdown);
+  const lastParseTs = useRef(0);
+  useEffect(() => {
+    if (!isStreaming) {
+      setRenderText(normalizedMarkdown);
+      return;
+    }
+    const now = performance.now();
+    if (now - lastParseTs.current >= STREAM_PARSE_INTERVAL_MS) {
+      lastParseTs.current = now;
+      setRenderText(normalizedMarkdown);
+    } else {
+      // 未到节流窗口：定时复查一次，确保跟上最新文本（delta 停止后也会补解析）。
+      const t = setTimeout(() => {
+        lastParseTs.current = performance.now();
+        setRenderText(normalizedMarkdown);
+      }, STREAM_PARSE_INTERVAL_MS - (now - lastParseTs.current));
+      return () => clearTimeout(t);
+    }
+  }, [normalizedMarkdown, isStreaming]);
+  // 段落点击薄扩展点：有 handler 注册（扩展加载）时段落可点击；无扩展时段落渲染普通元素。
+  const hasClickHandlers = useParagraphClickHandlers().length > 0;
   // Stable renderer identities keep stateful blocks mounted across message hover updates.
   const components = useMemo<Components>(() => ({
     code({ className, children, ...props }) {
@@ -106,30 +125,19 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       // eslint-disable-next-line @next/next/no-img-element
       return <img src={imageSrc} alt={alt ?? ""} loading="lazy" {...props} />;
     },
+    // react-markdown 以组件方式调用这些小写渲染函数（createElement(components.p)），
+    // Hook 顺序稳定；rules-of-hooks 只按函数名小写误报。
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     p({ children, ...props }) {
       delete props.node;
-      // react-markdown 以组件方式调用这些小写渲染函数（createElement(components.p)），
-      // Hook 顺序稳定；rules-of-hooks 只按函数名小写误报。
-      // eslint-disable-next-line react-hooks/rules-of-hooks
-      const pid = useId();
-      if (!onQuoteReply) return <p {...props}>{children}</p>;
-      return (
-        <QuoteableParagraph pid={pid} onQuoteReply={onQuoteReply} onOpenFile={onOpenFile} onRevealDir={onRevealDir} cwd={cwd} messageRole={messageRole}>
-          {children}
-        </QuoteableParagraph>
-      );
+      if (!hasClickHandlers) return <p {...props}>{children}</p>;
+      return <ClickableParagraph as="p" messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
     },
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     li({ children, ...props }) {
       delete props.node;
-      // react-markdown 以组件方式调用这些小写渲染函数（createElement(components.li)）。
-      // eslint-disable-next-line react-hooks/rules-of-hooks
-      const pid = useId();
-      if (!onQuoteReply) return <li {...props}>{children}</li>;
-      return (
-        <QuoteableParagraph as="li" pid={pid} onQuoteReply={onQuoteReply} onOpenFile={onOpenFile} onRevealDir={onRevealDir} cwd={cwd} messageRole={messageRole}>
-          {children}
-        </QuoteableParagraph>
-      );
+      if (!hasClickHandlers) return <li {...props}>{children}</li>;
+      return <ClickableParagraph as="li" messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
     },
     table({ children }) {
       return (
@@ -138,206 +146,131 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         </div>
       );
     },
+    // eslint-disable-next-line react-hooks/rules-of-hooks
     tr({ children, ...props }) {
       delete props.node;
-      // react-markdown 以组件方式调用这些小写渲染函数（createElement(components.tr)）。
-      // eslint-disable-next-line react-hooks/rules-of-hooks
-      const pid = useId();
-      if (!onQuoteReply) return <tr {...props}>{children}</tr>;
-      return (
-        <QuoteableParagraph as="tr" pid={pid} onQuoteReply={onQuoteReply} onOpenFile={onOpenFile} onRevealDir={onRevealDir} cwd={cwd} messageRole={messageRole}>
-          {children}
-        </QuoteableParagraph>
-      );
+      if (!hasClickHandlers) return <tr {...props}>{children}</tr>;
+      return <ClickableParagraph as="tr" messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
     },
-  }), [cwd, isStreaming, onOpenFile, onRevealDir, onQuoteReply, messageRole]);
+  }), [cwd, isStreaming, onOpenFile, messageRole, hasClickHandlers]);
 
   return (
-    <QuoteOpenContext.Provider value={{ openId, setOpenId }}>
-      <div className={["markdown-body", className].filter(Boolean).join(" ")}>
-        <ReactMarkdown
-          remarkPlugins={markdownRemarkPlugins}
-          rehypePlugins={markdownRehypePlugins}
-          components={components}
-        >
-          {normalizedMarkdown}
-        </ReactMarkdown>
-      </div>
-    </QuoteOpenContext.Provider>
+    <div className={["markdown-body", className].filter(Boolean).join(" ")}>
+      <MemoizedMarkdown
+        remarkPlugins={markdownRemarkPlugins}
+        rehypePlugins={markdownRehypePlugins}
+        components={components}
+      >
+        {renderText}
+      </MemoizedMarkdown>
+    </div>
   );
 }
 
-/** A <p>/<li> whose plain text is parsed on hover (desktop) / click (mobile)
- *  to pop a quote-reply popover. The parse result is locked once shown so a
- *  streaming tail doesn't make the popover flicker; re-engaging re-parses. */
-/** Plain text of a quoteable element, excluding transient UI children (the
- *  follow-mouse tooltip) so the quoted reply isn't polluted. */
-function getQuoteText(el: HTMLElement | null): string {
-  if (!el) return "";
-  const clone = el.cloneNode(true) as HTMLElement;
-  clone.querySelectorAll("[data-quote-tip]").forEach((n) => n.remove());
-  return clone.textContent ?? "";
-}
+// react-markdown v9 的 Markdown 组件每次渲染都重跑 parse+runSync（无内部缓存）——
+// 流式期间 MarkdownBody 每帧 re-render（即使 renderText 未变）也会全量重解析。
+// 包一层 memo：children（renderText）与 plugins/components 引用稳定时直接跳过解析。
+const MemoizedMarkdown = memo(function MemoizedMarkdown({ children, ...props }: Options & { children: string }) {
+  return <ReactMarkdown {...props}>{children}</ReactMarkdown>;
+});
 
-function QuoteableParagraph({ children, onQuoteReply, onOpenFile, onRevealDir, cwd, as = "p", pid, messageRole }: { children: ReactNode; onQuoteReply: (quote: string) => void; onOpenFile?: (filePath: string, fileName?: string) => void; onRevealDir?: (absPath: string) => void; cwd?: string; as?: "p" | "li" | "tr"; pid: string; messageRole?: string }) {
-  const { openId, setOpenId } = useContext(QuoteOpenContext);
-  const { t } = useI18n();
-  const open = openId === pid;
+/**
+ * 段落点击薄扩展点（p/li/tr 可点击 + 点击事件广播 + setInline 挂载点 + hover 提示）。
+ * 识别/弹层渲染/动作/关闭全在扩展侧；core 只提供：段落可点击、把完整上下文交给
+ * handler、段落内联挂载（in-flow / tr 自动 portal 到 body）。定位/滚动跟随归扩展。
+ */
+function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, messageId }: { children: ReactNode; as?: "p" | "li" | "tr"; messageRole?: string; cwd?: string; sessionId?: string; messageId?: string }) {
+  const handlers = useParagraphClickHandlers();
+  const pid = useId(); // 段落稳定标识：React 树结构不变时跨渲染稳定（扩展 toggle/去重用）
   const ref = useRef<HTMLElement>(null);
-  const [segments, setSegments] = useState<ParsedSegment[] | null>(null);
-  const [fullText, setFullText] = useState<string>("");
+  // 扩展经 info.setInline 注入的段落内联展开节点（识别结果/动作条；null = 未展开）。
+  const [inlineNode, setInlineNode] = useState<ReactNode | null>(null);
   const [showTip, setShowTip] = useState(false);
   const tipRef = useRef<HTMLSpanElement>(null);
-  // When the popover opens inside a table row it must float (position: fixed)
-  // so it does not take part in table column sizing — an in-flow box as a
-  // direct child of <tr> spawns a phantom column and squeezes the real ones.
-  // Null in <p>/<li> (the popover stays in flow there) and until first open.
-  const [floatPos, setFloatPos] = useState<{ top: number; left: number } | null>(null);
+  const { t } = useI18n();
   // Detect touch capability lazily (same approach as useIsMobile but local).
   const [coarse] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches);
 
-  // Another paragraph opened its popover → close ours (only one popover at a time).
-  useEffect(() => {
-    if (!open && segments) setSegments(null);
-  }, [open, segments]);
-
-  // Ref + scroll-into-view for the popover element (works for both the in-flow
-  // and the fixed/floating variants).
-  const popoverRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    if (segments && popoverRef.current) {
-      popoverRef.current.scrollIntoView({ block: "nearest" });
-    }
-  }, [segments]);
-
-  // Keep the floating (table-row) popover glued to its row while the page
-  // scrolls or resizes; in-flow popovers (<p>/<li>) need no such tracking.
-  useEffect(() => {
-    if (as !== "tr" || !segments) return;
-    const el = ref.current;
-    if (!el) return;
-    const update = () => {
-      const r = el.getBoundingClientRect();
-      setFloatPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) });
-    };
-    update();
-    window.addEventListener("scroll", update, true);
-    window.addEventListener("resize", update);
-    return () => {
-      window.removeEventListener("scroll", update, true);
-      window.removeEventListener("resize", update);
-    };
-  }, [as, segments]);
-
-  const openPopover = () => {
-    if (segments || open) return;
-    // For table rows, join cell text with " | " so the quoted line reads like
-    // a markdown row instead of all cells mashed together.
+  const handleClick = () => {
+    // 段落纯文本（表格行 = 单元格 " | " 连接）；克隆排除瞬态 UI 子元素（提示）。
     const el = ref.current;
     const text = as === "tr" && el
       ? Array.from(el.querySelectorAll("td, th")).map((c) => (c.textContent ?? "").trim()).join(" | ")
-      : getQuoteText(el);
-    // Any paragraph is quoteable (not just questions): closed questions get
-    // option buttons, everything else gets a fallback quote button.
-    const parsed = parseParagraph(text);
-    if (parsed.length > 0) {
-      setSegments(parsed);
-      setFullText(text);
-      setOpenId(pid);
-      if (as === "tr" && el) {
-        const r = el.getBoundingClientRect();
-        setFloatPos({ top: r.bottom + 4, left: Math.max(8, Math.min(r.left, window.innerWidth - 240)) });
-      }
+      : (() => {
+        if (!el) return "";
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.querySelectorAll("[data-quote-tip]").forEach((n) => n.remove());
+        return clone.textContent ?? "";
+      })();
+    if (!text.trim()) return;
+    const r = el?.getBoundingClientRect();
+    const info = {
+      text,
+      cwd,
+      messageRole,
+      rect: r ? { top: r.top, left: r.left, bottom: r.bottom, width: r.width } : { top: 0, left: 0, bottom: 0, width: 0 },
+      element: el ?? undefined,
+      paragraphId: pid,
+      sessionId,
+      messageId,
+      setInline: setInlineNode,
+      close: () => setInlineNode(null),
+    };
+    for (const h of handlers) {
+      try { h(info); } catch { /* 单 handler 异常不影响其他扩展 */ }
     }
-  };
-  const closePopover = () => {
-    setSegments(null);
-    setFloatPos(null);
-    setOpenId(null);
-  };
-  // Click toggles: show on first click, hide on the second.
-  const toggle = () => {
-    if (segments) closePopover();
-    else openPopover();
   };
 
-  const Tag = as as React.ElementType;
-  // The tooltip and popover are overlays (position: fixed) — inside a <tr>
-  // they would be invalid <tr> children (hydration error), so render them
-  // through a portal to document.body instead.
-  const renderOverlay = (node: ReactNode) =>
-    as === "tr" && typeof document !== "undefined" ? createPortal(node, document.body) : node;
-  // Follow-the-mouse tooltip: position updated imperatively on mousemove (no
-  // re-render per move); mouseenter sets it via rAF so it shows even if the
-  // pointer doesn't move afterwards.
+  // 鼠标跟随提示（段落可点击的视觉契约）；coarse 指针（触屏）不显示。
   const moveTip = (x: number, y: number) => {
-    if (tipRef.current) {
-      tipRef.current.style.left = `${x + 12}px`;
-      tipRef.current.style.top = `${y + 14}px`;
-    }
+    if (tipRef.current) { tipRef.current.style.left = `${x + 12}px`; tipRef.current.style.top = `${y + 14}px`; }
   };
   const showTooltip = (e: MouseEvent<HTMLElement>) => {
     if (coarse) return;
     setShowTip(true);
-    const { clientX, clientY } = e;
-    requestAnimationFrame(() => moveTip(clientX, clientY));
+    requestAnimationFrame(() => moveTip(e.clientX, e.clientY));
   };
-  const hideTooltip = () => {
-    setShowTip(false);
-  };
-  return (
-    <Tag
-      ref={ref}
-      onMouseEnter={showTooltip}
-      onMouseMove={coarse ? undefined : (e: MouseEvent<HTMLElement>) => moveTip(e.clientX, e.clientY)}
-      onMouseLeave={hideTooltip}
-      onClick={toggle}
-      style={{ position: "relative", cursor: "pointer" }}
+
+  const Tag = as as React.ElementType;
+  const tip = showTip && !inlineNode && (
+    <span
+      ref={tipRef}
+      data-quote-tip
+      style={{
+        position: "fixed", left: -9999, top: -9999,
+        fontSize: 11, color: "var(--text-dim)", background: "var(--bg-panel)",
+        border: "1px solid var(--border)", borderRadius: 4, padding: "2px 6px",
+        pointerEvents: "none", zIndex: 50, whiteSpace: "nowrap",
+      }}
     >
-      {children}
-      {renderOverlay(showTip && !segments && (
-        <span
-          ref={tipRef}
-          data-quote-tip
-          style={{
-            position: "fixed",
-            left: -9999,
-            top: -9999,
-            fontSize: 11,
-            color: "var(--text-dim)",
-            background: "var(--bg-panel)",
-            border: "1px solid var(--border)",
-            borderRadius: 4,
-            padding: "2px 6px",
-            pointerEvents: "none",
-            zIndex: 50,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {t("chat.quoteReplyHint")}
-        </span>
-      ))}
-      {/* segments 可能是 []（truthy）——引用弹窗只在有内容时挂载，否则会走到
-          QuoteReplyPopover 的空态早退，改变 Hook 计数。 */}
-      {renderOverlay(segments && segments.length > 0 && (
-        <QuoteReplyPopover
-          innerRef={popoverRef}
-          segments={segments}
-          fullText={fullText}
-          onPick={(q) => { onQuoteReply(q); closePopover(); }}
-          onOpenFile={onOpenFile}
-          onRevealDir={onRevealDir}
-          cwd={cwd}
-          messageRole={messageRole}
-          containerStyle={as === "tr" && floatPos ? {
-            position: "fixed",
-            top: floatPos.top,
-            left: floatPos.left,
-            marginTop: 0,
-            zIndex: 60,
-          } : undefined}
-        />
-      ))}
-    </Tag>
+      {t("chat.quoteReplyHint")}
+    </span>
+  );
+  // p/li 的 inline 展开渲染在段落之后（sibling，避免 <p><div> 无效 HTML/hydration 错）；
+  // tr 内 in-flow 渲染 div 会破坏表格结构 → portal 到 body（定位由扩展自管）。
+  const inline = as === "tr" && typeof document !== "undefined"
+    ? createPortal(inlineNode, document.body)
+    : inlineNode;
+  // tip 同理：<span> 不能是 <tr> 的子元素（否则 hydration 报错）→ tr 时 portal 到 body。
+  const tipOut = as === "tr" && tip && typeof document !== "undefined"
+    ? createPortal(tip, document.body)
+    : tip;
+
+  return (
+    <>
+      <Tag
+        ref={ref}
+        onMouseEnter={showTooltip}
+        onMouseMove={coarse ? undefined : (e: MouseEvent<HTMLElement>) => moveTip(e.clientX, e.clientY)}
+        onMouseLeave={() => setShowTip(false)}
+        onMouseDown={() => setShowTip(false)}
+        onClick={handleClick}
+        style={{ position: "relative", cursor: "pointer" }}
+      >
+        {children}
+      </Tag>
+      {tipOut}
+      {inline}
+    </>
   );
 }

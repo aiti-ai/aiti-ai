@@ -14,7 +14,8 @@
 
 import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { apiUrl } from "@/lib/base-path";
-import type { ExtSlotName, ExtSlotProps, PopoverActionProvider } from "@/lib/ext/types";
+import { getHostApi } from "@/lib/ext/host-api";
+import type { ExtSlotName, ExtSlotProps, ParagraphClickHandler } from "@/lib/ext/types";
 import {
   getExtMetas,
   getExtUiItems,
@@ -66,8 +67,14 @@ export interface ExtClientContext {
   registerChatHook(hook: { preSend?: (text: string) => { text?: string; elements?: unknown[] } | null }): void;
   /** 程序化发送一条消息（与用户输入同链路：preSend 钩子生效；空闲直发，流式按 mode 插队/排队；不清空输入框） */
   sendChatMessage(text: string, mode: "steer" | "followUp"): void;
-  /** 注册消息点击识别弹层动作 provider（QuoteReplyPopover 扩展点：异步识别段落 → 动作按钮） */
-  registerPopoverAction(provider: PopoverActionProvider): void;
+  /** 注册消息段落点击接管 handler（消息点击识别薄宿主：core 广播段落点击事件，弹层 UI 全在扩展侧） */
+  registerParagraphClick(handler: ParagraphClickHandler): void;
+  /** 打开文件标签页（宿主公共接口，同步调用；返回 void/Promise） */
+  openFile?(path: string, fileName?: string): void | Promise<void>;
+  /** 侧栏文件树定位目录 */
+  revealDir?(absPath: string): void | Promise<void>;
+  /** 输入框追加文本不发送（引用回复预填用） */
+  appendText?(text: string): void | Promise<void>;
   /** 触发宿主侧扩展重载（拉新 manifest + 图对账 + 反卷 materialize）——扩展管理器场景
    *  （服务端热重载后刷新已安装/启停变更；optional 兼容旧宿主）。 */
   reloadExtensions?(): Promise<{ invalidated: string[] }>;
@@ -102,19 +109,19 @@ export function dispatchChatSend(text: string, mode: "steer" | "followUp"): void
   chatSendHandler?.(text, mode);
 }
 
-// 消息点击识别弹层动作 provider store（扩展注册；QuoteReplyPopover 渲染）
-const popoverActions: PopoverActionProvider[] = [];
-const EMPTY_POPOVER_ACTIONS: PopoverActionProvider[] = [];
-const popoverActionListeners = new Set<() => void>();
-function registerPopoverActions(p: PopoverActionProvider) {
-  popoverActions.push(p);
-  for (const l of popoverActionListeners) l();
+// 段落点击接管 handler store（扩展注册；MarkdownBody 点击段落时广播）
+const paragraphClickHandlers: ParagraphClickHandler[] = [];
+const EMPTY_PCLICK: ParagraphClickHandler[] = [];
+const paragraphClickListeners = new Set<() => void>();
+function registerParagraphClick(h: ParagraphClickHandler) {
+  paragraphClickHandlers.push(h);
+  for (const l of paragraphClickListeners) l();
 }
-export function usePopoverActionProviders(): PopoverActionProvider[] {
+export function useParagraphClickHandlers(): ParagraphClickHandler[] {
   return useSyncExternalStore(
-    (cb) => { popoverActionListeners.add(cb); return () => { popoverActionListeners.delete(cb); }; },
-    () => popoverActions,
-    () => EMPTY_POPOVER_ACTIONS,
+    (cb) => { paragraphClickListeners.add(cb); return () => { paragraphClickListeners.delete(cb); }; },
+    () => paragraphClickHandlers,
+    () => EMPTY_PCLICK,
   );
 }
 
@@ -144,7 +151,7 @@ declare global {
 /** 为某扩展构造 register ctx（i18n 表 + 宿主 hooks + 注册 API）。 */
 function makeClientContext(ext: ManifestExt): ExtClientContext {
   const table = ext.ui?.i18n?.["zh-CN"] ?? ext.ui?.i18n?.en ?? {};
-  return {
+  const ctx: ExtClientContext = {
     h: createElement,
     useState,
     useEffect,
@@ -165,10 +172,26 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     },
     registerChatHook: (hook) => registerChatHooks(hook),
     sendChatMessage: (text, mode) => dispatchChatSend(text, mode),
-    registerPopoverAction: (p) => registerPopoverActions(p),
+    registerParagraphClick: (h) => registerParagraphClick(h),
+    // 宿主公共接口（AppShell 经 registerHostApi 注册原样能力；fileName 兜底适配在框架层）
+    openFile: (path, fileName) => getHostApi().openFile?.(path, fileName ?? path.split("/").pop() ?? path),
+    revealDir: (absPath) => getHostApi().revealDir?.(absPath),
+    appendText: (text) => getHostApi().appendText?.(text),
     reloadExtensions: () => reloadExtensions(),
     extLoaderState: () => ({ materialized: materializedIds(), prefetched: prefetchedIds() }),
   };
+  return ctx;
+}
+
+/** AppShell 注入的宿主能力（经 ExtSlotsProvider props；makeClientContext 包装下发）。 */
+export function ExtSlotsProvider({ children }: { children: ReactNode }) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    void loadExtensions();
+    const unsub = subscribeExtUi(() => force((v) => v + 1));
+    return unsub;
+  }, []);
+  return <>{children}</>;
 }
 
 /** 拉取 manifest 并刷新 client 侧缓存（manifestCache / declaredSlots / metas）。
@@ -264,16 +287,6 @@ export async function reloadExtensions(): Promise<{ invalidated: string[] }> {
 
 /** manifest 缓存（reload 反卷后重新 materialize 需要原 ext 元数据/i18n 表）。 */
 const manifestCache = new Map<string, ManifestExt>();
-
-export function ExtSlotsProvider({ children }: { children: ReactNode }) {
-  const [, force] = useState(0);
-  useEffect(() => {
-    void loadExtensions();
-    const unsub = subscribeExtUi(() => force((v) => v + 1));
-    return unsub;
-  }, []);
-  return <>{children}</>;
-}
 
 /** Read registered items for a slot, re-rendering when the store changes. */
 export function useExtSlotItems(slot: ExtSlotName): ExtUiItemRegistered[] {

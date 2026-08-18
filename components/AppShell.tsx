@@ -11,6 +11,7 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, saveFileViewerState } from "./file-tab-state";
 import { ModelsConfig } from "./ModelsConfig";
+import { AiUsageRows } from "./AiUsageRows";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas } from "./ExtSlots";
@@ -278,19 +279,6 @@ export function AppShell() {
   const [contextUsage, setContextUsage] = useState<{ percent: number | null; contextWindow: number; tokens: number | null } | null>(null);
   const handleContextUsageChange = useCallback((usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => {
     setContextUsage(usage);
-  }, []);
-
-  // AI 用量（core invokeAI 集中记账；作为统计的一个子类并入顶部）——GET /api/chat/ai-usage
-  const [aiUsage, setAiUsage] = useState<{ totals?: { in: number; out: number; cacheRead: number; cacheWrite: number; calls: number }; byCaller?: Record<string, number> } | null>(null);
-  useEffect(() => {
-    let alive = true;
-    const load = () => fetch(apiUrl("/api/chat/ai-usage"), { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (alive && d) setAiUsage({ totals: d.totals, byCaller: d.byCaller }); })
-      .catch(() => {});
-    load();
-    const t = setInterval(load, 15000); // 轻量轮询
-    return () => { alive = false; clearInterval(t); };
   }, []);
 
   // Single active panel — only one dropdown open at a time
@@ -2252,18 +2240,7 @@ export function AppShell() {
                          ? [[translate("session.cacheHitRate"), `${(sessionStats.tokens.cacheRead / (sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input) * 100).toFixed(1)}%`]]
                          : []),
                     ];
-                    // AI 用量（core invokeAI 集中记账；按场景分：续写 / 语音修正）——不单独做徽标，并入本面板
-                    const aiSceneRows: string[][] = [];
-                    const bc = aiUsage?.byCaller || {};
-                    const sceneLabel = (k: string) => k.includes("/voice-fix") ? "AI 语音修正" : k.includes("/complete") ? "AI 续写" : k;
-                    for (const [k, v] of Object.entries(bc)) {
-                      if (!k.startsWith("aiti-ai-input")) continue; // 只展示本扩展（补全/语音）场景
-                      aiSceneRows.push([sceneLabel(k), `${v.toLocaleString(locale)} in`]);
-                    }
-                    if (aiUsage?.totals?.calls) {
-                      const t = aiUsage.totals;
-                      aiSceneRows.push(["AI 合计", `${t.in.toLocaleString(locale)} in / ${t.out.toLocaleString(locale)} out · ${t.calls} 次`]);
-                    }
+                    // AI 用量（core invokeAI 集中记账；按场景分：续写 / 语音修正）——独立组件自持轮询，避免 AppShell 每 15s 全树重渲染
                     const section = (
                       title: string,
                       sectionRows: string[][],
@@ -2376,7 +2353,7 @@ export function AppShell() {
                         {sessionInfoSection}
                          {section(translate("session.messages"), messageRows)}
                          {section(translate("session.tokens"), [...tokenRows, ...extraTokenRows], "right", true)}
-                         {aiSceneRows.length > 0 ? section("AI 用量", aiSceneRows, "right", true) : null}
+                         {<AiUsageRows locale={locale} />}
                       </div>
                     );
                   })() : (
