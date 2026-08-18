@@ -956,7 +956,16 @@ export class AgentSessionWrapper {
           newSessionFile = forkedPath;
         }
 
-        const newSessionId = SessionManager.open(newSessionFile, sessionDir).getSessionId();
+        const forkedManager = SessionManager.open(newSessionFile, sessionDir);
+        // 分支文件在「无 assistant 消息」时不会被写盘（_persist 的 no-assistant guard）：
+        // 不写则新会话无法被 resolveSessionPath 找到 → 发送时报 “Session not found”。
+        // 这里强制写出 header-only 文件；新进程打开该文件时 _setSessionFile 会置
+        // flushed=true，后续消息正常 append，不会触发 “wx” 独占创建冲突。
+        const forkedEntries = forkedManager.getEntries() as { type?: string; message?: { role?: string } }[];
+        if (!forkedEntries.some((e) => e.type === "message" && e.message?.role === "assistant")) {
+          (forkedManager as unknown as { _rewriteFile(): void })._rewriteFile();
+        }
+        const newSessionId = forkedManager.getSessionId();
         cacheSessionPath(newSessionId, newSessionFile);
         invalidateSessionListCache();
         await this.shutdown("fork");

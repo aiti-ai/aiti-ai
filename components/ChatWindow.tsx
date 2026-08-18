@@ -8,7 +8,7 @@ import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { MessageView } from "./MessageView";
-import { ChatInput, type ChatInputHandle } from "./ChatInput";
+import { ChatInput, type AttachedImage, type ChatInputHandle } from "./ChatInput";
 import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ScrollToolbar } from "./ScrollToolbar";
@@ -309,7 +309,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     isNew,
     sessionIdRef, messagesEndRef, scrollContainerRef,
     lastUserMsgRef, promptAnchorActive,
-    handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
+    handleSend, handleAbort, handleFork, handleNavigate, handleEditFromStartSend, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue, handleContinueQueue,
     handleBuiltinSlashCommand,
@@ -328,6 +328,48 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     onExportQueue?.(exportQueueData);
   }, [onExportQueue, exportQueueData]);
   const sessionBusy = agentRunning || bashRunning;
+
+  // ──「编辑从此处」待发送标记（纯前端，发送才生效）──────────────────────────
+  // 点击：预填输入框 + 高亮消息 + 按钮变「取消」；原位不动、无任何后端操作。
+  // 取消 / 切走 / 刷新：自动还原（state 随组件卸载消失；suppressDraft 保证不落草稿）。
+  // 发送：handleSendWrapped 里先 navigate_tree 回退（首条消息 → 根重建），再正常发送。
+  const [editFromHerePending, setEditFromHerePending] = useState<{
+    entryId: string;
+    /** 回退目标：常规 = 上一条 assistant entryId；首条消息 = 消息自身 entryId */
+    targetId: string;
+    /** 回退后加载的 leaf（首条消息 = null） */
+    leafId: string | null;
+  } | null>(null);
+  const editFromHerePendingRef = useRef(editFromHerePending);
+  editFromHerePendingRef.current = editFromHerePending;
+
+  // 标记（点击「编辑从此处」）：输入框非空时不覆盖（与 replaceMessage 的 canRestore 约定一致）
+  const handleEditFromHereMark = useCallback((entryId: string, message: UserMessage, branchPointId: string | null) => {
+    if (chatInputRef?.current?.hasInput?.()) return;
+    setEditFromHerePending({
+      entryId,
+      targetId: branchPointId ?? entryId,
+      leafId: branchPointId,
+    });
+    handleEditContent(message);
+  }, [chatInputRef, handleEditContent]);
+
+  // 取消：还原高亮 + 清空预填输入框（clearInput 同时清掉草稿）
+  const handleCancelEditFromHere = useCallback(() => {
+    setEditFromHerePending(null);
+    chatInputRef?.current?.clearInput?.();
+  }, [chatInputRef]);
+
+  // 发送：pending 时先回退会话（真正生效点），再发送编辑后的消息
+  const handleSendWrapped = useCallback(async (message: string, images?: AttachedImage[]) => {
+    const pending = editFromHerePendingRef.current;
+    if (pending) {
+      setEditFromHerePending(null);
+      await handleEditFromStartSend(pending.targetId, pending.leafId, message, images);
+      return;
+    }
+    await handleSend(message, images);
+  }, [handleEditFromStartSend, handleSend]);
   const [recoveryDismissed, setRecoveryDismissed] = useState(false);
 
   /** 「继续」按钮：AI 完全停止（无 streaming）时出现——点击快速发送“继续”消息，触发 agent 继续运行。
@@ -695,7 +737,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const chatInputElement = (
     <ChatInput
       ref={chatInputRef}
-      onSend={handleSend}
+      onSend={handleSendWrapped}
       onAbort={handleAbort}
       onSteer={agentRunning ? handleSteer : undefined}
       onFollowUp={agentRunning ? handleFollowUp : undefined}
@@ -750,6 +792,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       onAudioUnlock={unlockAudio}
       draftKey={draftKey}
       cwd={session?.cwd ?? newSessionCwd}
+      suppressDraft={editFromHerePending != null}
     />
   );
 
@@ -823,7 +866,9 @@ const messageListEl = useMemo(() => {
   forking={forkingEntryId === entryIds[idx]}
   onNavigate={isNew || bashRunning ? undefined : handleNavigate}
   prevAssistantEntryId={isNew || bashRunning ? undefined : prevAssistantEntryId}
-  onEditContent={handleEditContent}
+  onEditFromHere={isNew || bashRunning ? undefined : handleEditFromHereMark}
+  editingFromStart={editFromHerePending?.entryId === entryIds[idx]}
+  onCancelEditFromStart={handleCancelEditFromHere}
   showTimestamp={showTimestamp}
   prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
   sessionId={session?.id ?? sessionIdRef.current ?? undefined}
@@ -944,7 +989,7 @@ const messageListEl = useMemo(() => {
   {rendered.slice(startIndex)}
   </>
   );
-  }, [messages, visibleCount, toolResultsMap, modelNames, messageCwd, onOpenFile, handleFork, handleNavigate, handleEditContent, entryIds, streamState.isStreaming, sessionBusy, isNew, bashRunning, t]);
+  }, [messages, visibleCount, toolResultsMap, modelNames, messageCwd, onOpenFile, handleFork, handleNavigate, handleEditContent, handleEditFromHereMark, editFromHerePending, handleCancelEditFromHere, entryIds, streamState.isStreaming, sessionBusy, isNew, bashRunning, t]);
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-text-muted">

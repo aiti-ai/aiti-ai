@@ -125,6 +125,8 @@ interface Props {
   draftKey?: string;
   /** Session working directory — enables the @ file autocomplete menu */
   cwd?: string | null;
+  /** 「编辑从此处」待发送标记期间为 true：禁止把预填内容写入草稿（切走/刷新即自动还原） */
+  suppressDraft?: boolean;
 }
 
 export interface ChatInputHandle {
@@ -140,6 +142,8 @@ export interface ChatInputHandle {
   runChatHooks: (text: string) => string;
   /** True when the input box has text or images (used to tell a live draft from a recoverable one). */
   hasInput: () => boolean;
+  /** 清空输入框（含预填/草稿/图片预览）——「取消 编辑从此处」用 */
+  clearInput: () => void;
   /** Force the queue panel to expand (used after recovery/import resolution). */
   expandQueue: () => void;
   rekeyDraft: (previousKey: string, nextKey: string) => void;
@@ -830,6 +834,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onPromptWithStreamingBehavior,
   draftKey,
   cwd,
+  suppressDraft,
 }: Props, ref) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
@@ -1388,6 +1393,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     hasInput() {
       return Boolean(value.trim()) || attachedImagesRef.current.length > 0;
     },
+    clearInput: () => clearInput(),
     runChatHooks(text: string) {
       return applyChatHooks(text);
     },
@@ -1468,6 +1474,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   useEffect(() => {
     if (!draftKey || draftKeyRef.current !== draftKey) return;
+    // 「编辑从此处」待发送期间不落草稿：预填内容只是临时标记，切走/刷新自动还原
+    if (suppressDraft) return;
     if (!value.trim() && attachedImages.length === 0) {
       // Empty box: never wipe a stored draft on open — it may be awaiting
       // recovery. But a deliberate clear AFTER typing this mount removes it.
@@ -1479,7 +1487,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       value,
       images: attachedImages.map(imageToDraftImage),
     });
-  }, [attachedImages, draftKey, value]);
+  }, [attachedImages, draftKey, value, suppressDraft]);
 
   useEffect(() => {
     const previousDraftKey = draftKeyRef.current;

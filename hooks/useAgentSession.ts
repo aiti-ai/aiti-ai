@@ -1672,6 +1672,29 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     await loadContext(sid, entryId);
   }, [loadContext]);
 
+  /** 「编辑从此处」发送时执行：先把会话回退到分支点（首条消息 → 根重建），再发送编辑后的消息。
+   *  点击标记阶段纯前端（预填+高亮），这里才是真正生效的点（原位不动直到发送）。
+   *  @param targetId 回退目标：常规 = 上一条 assistant 的 entryId；首条消息 = 消息自身 entryId（parentId → 根）
+   *  @param leafId  回退后加载的 leaf（首条消息 = null → 空历史） */
+  const handleEditFromStartSend = useCallback(async (
+    targetId: string,
+    leafId: string | null,
+    message: string,
+    images?: AttachedImage[],
+  ) => {
+    const sid = sessionIdRef.current;
+    if (sid) {
+      try {
+        await sendAgentCommand(sid, { type: "navigate_tree", targetId });
+      } catch (e) {
+        console.error("Edit-from-here: navigate failed:", e);
+      }
+      setActiveLeafId(leafId);
+      await loadContext(sid, leafId);
+    }
+    await handleSend(message, images);
+  }, [handleSend, loadContext]);
+
   const handleLeafChange = useCallback(async (leafId: string | null) => {
     if (bashRunningRef.current) return;
     setActiveLeafId(leafId);
@@ -2676,7 +2699,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     sessionIdRef, messagesEndRef, scrollContainerRef,
     lastUserMsgRef, pendingScrollToUserRef, initialScrollDoneRef,
     // Actions
-    handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
+    handleSend, handleAbort, handleFork, handleNavigate, handleEditFromStartSend, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleContinueQueue,
