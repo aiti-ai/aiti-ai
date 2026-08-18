@@ -1661,8 +1661,20 @@ function StreamingMessageView({ message }: {
   // 流式期间走轻量文本渲染（不解析 markdown）：react-markdown 对几千行增量文本每次解析
   // 成本 100ms+，纯文本 pre-wrap 一次文本节点更新 ~1ms。结束（streamingMessage 置空）后
   // 该消息以完整 MessageView 渲染富文本，流式期成本可忽略。
-  const content = "content" in renderMsg && typeof renderMsg.content === "string" ? renderMsg.content : "";
-  return <StreamingText content={content} />;
+  return <StreamingText content={streamingTextOf(renderMsg)} />;
+}
+
+/** 流式轻量文本提取：AssistantMessage.content 是块数组（text/thinking/toolCall），
+ *  轻量模式只拼 text 块——thinking/工具调用过程不实时展示（保持零解析），
+ *  消息完成后进入历史列表走完整 MessageView，所有块完整可见。 */
+function streamingTextOf(msg: AgentMessage): string {
+  if (!("content" in msg)) return "";
+  if (typeof msg.content === "string") return msg.content;
+  let out = "";
+  for (const b of msg.content) {
+    if (b.type === "text") out += b.text;
+  }
+  return out;
 }
 
 /** 流式期间轻量文本渲染：pre-wrap 单节点，零 markdown 解析，随增量只 diff 文本。 */

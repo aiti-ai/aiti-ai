@@ -328,26 +328,27 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       else dispatch({ type: "delta-batch", events: batch });
     }
   }, []);
+  // 每帧检查最小间隔：满足 50ms（或积压超量）才 flush，否则推迟下一帧再查（保序）。
+  // 注意“延迟帧”也必须再查间隔而不能无条件 flush——否则节流退化为“仅推迟一帧”，
+  // 60fps 下实际 ~30fps（33ms），达不到 20fps（50ms）目标，主线程压力仍然偏高。
+  // 推迟链不会 starve：时间流逝后间隔必然满足；积压阈值（DELTA_BATCH_MAX*2）兜底。
+  const scheduleDeltaFlush = useCallback(() => {
+    if (pendingDeltasFrameRef.current !== null) return;
+    pendingDeltasFrameRef.current = requestAnimationFrame(() => {
+      pendingDeltasFrameRef.current = null;
+      const now = performance.now();
+      if (now - lastFlushTsRef.current >= DELTA_FLUSH_INTERVAL_MS || pendingDeltasRef.current.length >= DELTA_BATCH_MAX * 2) {
+        lastFlushTsRef.current = now;
+        flushPendingDeltas();
+      } else {
+        scheduleDeltaFlush();
+      }
+    });
+  }, [flushPendingDeltas]);
   const enqueueDelta = useCallback((delta: ClientAssistantMessageEvent) => {
     pendingDeltasRef.current.push(delta);
-    if (pendingDeltasFrameRef.current === null) {
-      pendingDeltasFrameRef.current = requestAnimationFrame(() => {
-        pendingDeltasFrameRef.current = null;
-        const now = performance.now();
-        if (now - lastFlushTsRef.current >= DELTA_FLUSH_INTERVAL_MS || pendingDeltasRef.current.length >= DELTA_BATCH_MAX * 2) {
-          // 间隔已到（或队列积压超量）→ flush；否则延迟到下一帧再试（保序）
-          lastFlushTsRef.current = now;
-          flushPendingDeltas();
-        } else {
-          pendingDeltasFrameRef.current = requestAnimationFrame(() => {
-            pendingDeltasFrameRef.current = null;
-            lastFlushTsRef.current = performance.now();
-            flushPendingDeltas();
-          });
-        }
-      });
-    }
-  }, [flushPendingDeltas]);
+    scheduleDeltaFlush();
+  }, [scheduleDeltaFlush]);
   // 保序：snapshot/start/end 会重置或替换 streamingMessage，先同步 flush 队列
   // 再进 reducer（同一调度周期内保持 delta → 边界事件的顺序）。
   const dispatchStream = useCallback((action: StreamAction) => {
@@ -1687,13 +1688,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       try {
         await sendAgentCommand(sid, { type: "navigate_tree", targetId });
       } catch (e) {
+        // 回退失败继续发送会把消息发到错误分支（用户以为已回退）——
+        // 中止本次发送并提示，pending 标记与输入内容保留，用户可重试。
         console.error("Edit-from-here: navigate failed:", e);
+        addNotice({ type: "error", message: "编辑从此处：会话回退失败，请重试" });
+        return;
       }
       setActiveLeafId(leafId);
       await loadContext(sid, leafId);
     }
     await handleSend(message, images);
-  }, [handleSend, loadContext]);
+  }, [handleSend, loadContext, addNotice]);
 
   const handleLeafChange = useCallback(async (leafId: string | null) => {
     if (bashRunningRef.current) return;

@@ -160,7 +160,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         </div>
       );
     },
-  }), [cwd, isStreaming, onOpenFile, messageRole, handlers, clickTags]);
+  }), [cwd, isStreaming, onOpenFile, messageRole, handlers, clickTags, messageId, sessionId]);
 
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>

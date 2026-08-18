@@ -964,6 +964,10 @@ export class AgentSessionWrapper {
         const forkedEntries = forkedManager.getEntries() as { type?: string; message?: { role?: string } }[];
         if (!forkedEntries.some((e) => e.type === "message" && e.message?.role === "assistant")) {
           (forkedManager as unknown as { _rewriteFile(): void })._rewriteFile();
+          // 与 _setSessionFile（文件已存在路径）的行为对齐：写盘后置 flushed=true——
+          // 否则本进程内若继续向 forkedManager 写 assistant 消息会走 “wx” 独占创建
+          // （文件已存在）→ EEXIST 崩溃；置 flushed 后走 appendFileSync 安全追加。
+          (forkedManager as unknown as { flushed: boolean }).flushed = true;
         }
         const newSessionId = forkedManager.getSessionId();
         cacheSessionPath(newSessionId, newSessionFile);
