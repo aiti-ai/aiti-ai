@@ -7,7 +7,6 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { copyText } from "@/lib/clipboard";
-import { useCodeLineClick } from "@/lib/code-line-click";
 
 interface MermaidBlockProps {
   code: string;
@@ -247,8 +246,6 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
   const { isDark } = useTheme();
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
-  // 代码行点击薄扩展点（hook 复用：计算样式取行高，markdown 代码块/工具调用 pre 通用）
-  const { clickable, handlePreClick, inline } = useCodeLineClick({ code, messageRole, cwd, sessionId, messageId });
 
   const copy = () => {
     copyText(code).then(() => {
@@ -273,7 +270,6 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
       </div>
       {isStreaming ? (
         <pre
-          onClick={handlePreClick}
           style={{
             margin: 0,
             padding: "11px 13px",
@@ -281,7 +277,6 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
             lineHeight: 1.62,
             overflowX: "auto",
             background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
-            cursor: clickable ? "pointer" : undefined,
           }}
         >
           <code style={{ fontFamily: "var(--font-mono)" }}>{code}</code>
@@ -299,15 +294,12 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
             lineHeight: 1.62,
             borderRadius: 0,
             background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
-            cursor: clickable ? "pointer" : undefined,
           }}
-          onClick={handlePreClick}
           codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
         >
           {code}
         </SyntaxHighlighter>
       )}
-      {inline}
     </div>
   );
 });

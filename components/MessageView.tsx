@@ -7,8 +7,8 @@ import { ImagePreview } from "./ImagePreview";
 import { copyText } from "@/lib/clipboard";
 import { apiUrl } from "@/lib/base-path";
 import { useI18n } from "@/hooks/useI18n";
+import { useIsCoarsePointer } from "@/hooks/useIsMobile";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
-import { useCodeLineClick } from "@/lib/code-line-click";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { isEditToolName } from "@/lib/tool-names";
@@ -309,7 +309,10 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   onCancelEditFromStart?: () => void;
 }) {
   const { t } = useI18n();
+  const isCoarse = useIsCoarsePointer();
   const [hovered, setHovered] = useState(false);
+  // touch（coarse）下无 hover——操作区常显（Copy/💬 引用/📌 收藏 可达），对齐 useIsMobile 惯例
+  const hoverShown = hovered || isCoarse;
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
@@ -479,8 +482,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
         }}>
           <div style={{
             display: "flex", gap: 3,
-            opacity: hovered ? 1 : 0,
-            pointerEvents: hovered ? "auto" : "none",
+            opacity: hoverShown ? 1 : 0,
+            pointerEvents: hoverShown ? "auto" : "none",
             transition: "opacity 0.12s",
           }}>
             <button
@@ -518,8 +521,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
           {(canFork || canNavigate || canEditFromHere) && (
             <div style={{
               display: "flex", gap: 3,
-              opacity: (hovered || forking) ? 1 : 0,
-              pointerEvents: (hovered || forking) ? "auto" : "none",
+              opacity: (hoverShown || forking) ? 1 : 0,
+              pointerEvents: (hoverShown || forking) ? "auto" : "none",
               transition: "opacity 0.12s",
             }}>
               {canEditFromHere && (
@@ -625,7 +628,10 @@ function AssistantMessageView({
     .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming })), [message.content, isStreaming]);
   const blocks = useMemo(() => blockItems.map(({ block }) => block), [blockItems]);
   const providerError = getAssistantErrorMessage(message, { isStreaming });
+  const isCoarse = useIsCoarsePointer();
   const [hovered, setHovered] = useState(false);
+  // touch（coarse）下无 hover——操作区常显（Copy/💬 引用/📌 收藏 可达），对齐 useIsMobile 惯例
+  const hoverShown = hovered || isCoarse;
   const [copied, setCopied] = useState(false);
   const streamStartRef = useRef<number | null>(null);
   const [tps, setTps] = useState<number | null>(null);
@@ -844,8 +850,8 @@ function AssistantMessageView({
               cursor: "pointer",
               fontSize: 11, fontWeight: 400,
               whiteSpace: "nowrap",
-              opacity: hovered ? 1 : 0,
-              pointerEvents: hovered ? "auto" : "none",
+              opacity: hoverShown ? 1 : 0,
+              pointerEvents: hoverShown ? "auto" : "none",
               transition: "opacity 0.12s, color 0.12s",
             }}
             onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
@@ -979,7 +985,6 @@ function ToolCallBlock({ block, result, duration, cwd, sessionId, messageId }: {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const inputStr = getToolCallInputText(block);
-  const { clickable, handlePreClick, inline } = useCodeLineClick({ code: inputStr, cwd, sessionId, messageId, enabled: !isEditToolName(block.toolName) });
   const isStreamingInput = block.rawInput !== undefined;
   const isEditTool = isEditToolName(block.toolName);
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
@@ -1036,7 +1041,6 @@ function ToolCallBlock({ block, result, duration, cwd, sessionId, messageId }: {
       {/* ── Expanded: input args ── */}
       {expanded && (isStreamingInput || !isEditTool) && (
         <pre
-          onClick={handlePreClick}
           style={{
             margin: 0,
             padding: "8px 10px",
@@ -1048,13 +1052,11 @@ function ToolCallBlock({ block, result, duration, cwd, sessionId, messageId }: {
             borderTop: isError ? "1px solid rgba(248,113,113,0.25)" : "1px solid rgba(34,197,94,0.2)",
             whiteSpace: "pre-wrap",
             wordBreak: "break-all",
-            cursor: clickable ? "pointer" : undefined,
           }}
         >
           {inputStr}
         </pre>
       )}
-      {inline}
 
       {/* ── Paired result — only shown when expanded ── */}
       {expanded && result && (
@@ -1319,7 +1321,6 @@ function PairedResult({ text, isEmpty, isError, cwd, sessionId, messageId }: {
   messageId?: string;
 }) {
   const { t } = useI18n();
-  const { clickable, handlePreClick, inline } = useCodeLineClick({ code: text, cwd, sessionId, messageId });
   return (
     <div
       style={{
@@ -1328,7 +1329,6 @@ function PairedResult({ text, isEmpty, isError, cwd, sessionId, messageId }: {
       }}
     >
       <pre
-        onClick={handlePreClick}
         style={{
           margin: 0,
           padding: "8px 10px",
@@ -1342,12 +1342,10 @@ function PairedResult({ text, isEmpty, isError, cwd, sessionId, messageId }: {
           wordBreak: "break-all",
           fontStyle: isEmpty ? "italic" : "normal",
           opacity: isEmpty ? 0.6 : 1,
-          cursor: clickable ? "pointer" : undefined,
         }}
       >
          {isEmpty ? t("i18n.noOutput") : text}
       </pre>
-      {inline}
     </div>
   );
 }
@@ -1445,7 +1443,6 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
   const images = getMessageImages(message.content);
   const hasDetails = message.details !== undefined;
   const detailsText = hasDetails ? safeJson(message.details) : "";
-  const { clickable, handlePreClick, inline } = useCodeLineClick({ code: detailsText, cwd });
   const title = formatCustomType(message.customType);
   const time = formatTime(message.timestamp);
 
@@ -1577,7 +1574,6 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
 
         {hasDetails && ((isHiddenDisplay && contentExpanded) || (!isHiddenDisplay && detailsExpanded)) && (<>
           <pre
-            onClick={handlePreClick}
             style={{
               margin: 0,
               padding: "9px 10px",
@@ -1591,12 +1587,10 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
               maxHeight: 360,
               overflow: "auto",
               fontFamily: "var(--font-mono)",
-              cursor: clickable ? "pointer" : undefined,
             }}
           >
             {detailsText}
           </pre>
-          {inline}
           </>
         )}
       </div>
