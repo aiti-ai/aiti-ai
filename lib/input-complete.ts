@@ -99,34 +99,70 @@ function systemFor(mode: CompleteMode | undefined): string {
   return mode === "voice-fix" ? VOICE_FIX_PROMPT : SYSTEM_PROMPT;
 }
 
-// ---------- 项目现场（精简一行：cwd + 语言/框架 + 主要模块；缓存 10s；失败返回空不注入） ----------
+// ---------- 项目现场（精简一行：cwd + 主语言/框架 + 主要模块） ----------
+// 语言按项目内文件分布识别（似 GitHub Linguist，简化版）；扫描限量防费资源；结果长缓存(5min)。
+const LANG_BY_EXT: Record<string, string> = {
+  ".java": "Java", ".kt": "Kotlin", ".py": "Python", ".go": "Go", ".rs": "Rust",
+  ".ts": "TypeScript", ".tsx": "TypeScript/React", ".js": "JavaScript", ".jsx": "React", ".vue": "Vue", ".svelte": "Svelte",
+  ".c": "C", ".h": "C", ".cpp": "C++", ".cc": "C++", ".hpp": "C++", ".cs": "C#",
+  ".rb": "Ruby", ".php": "PHP", ".swift": "Swift", ".sh": "Shell", ".sql": "SQL",
+};
+const SCAN_EXT = Object.keys(LANG_BY_EXT);
 let projCache = { cwd: "", ts: 0, sig: "" };
+function detectLang(cwd: string): string {
+  let counts: Record<string, number> = {};
+  let scanned = 0;
+  const scan = (dir: string, depth: number) => {
+    if (scanned > 800 || depth > 1) return;
+    let ents; try { ents = readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+    for (const e of ents) {
+      const n = e.name;
+      if (n.startsWith(".") || /node_modules|dist|build|out|\.git|vendor|target|coverage/.test(n)) continue;
+      if (e.isDirectory()) { if (depth < 1) scan(join(dir, n), depth + 1); }
+      else if (e.isFile()) {
+        scanned++;
+        const m = /\.[A-Za-z0-9]+$/.exec(n);
+        if (m && SCAN_EXT.includes(m[0])) counts[m[0]] = (counts[m[0]] || 0) + 1;
+      }
+    }
+  };
+  try { scan(cwd, 0); } catch (e) {}
+  let best = "", bestN = 0;
+  for (const [ext, n] of Object.entries(counts)) {
+    if (n > bestN) { bestN = n; best = LANG_BY_EXT[ext]; }
+  }
+  return best;
+}
+function frameworkFromPkg(cwd: string, pkg: { name?: string; dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> } | null): { name: string; lang: string } {
+  if (!pkg) return { name: "", lang: "" };
+  const deps = Object.keys(pkg.dependencies || {}).concat(Object.keys(pkg.devDependencies || {}));
+  let lang = "";
+  if (deps.some((d) => /^(react|vue|svelte|angular|next(js)?|nuxt)$/.test(d))) lang = "Web前端";
+  else if (deps.some((d) => /^(@?nest(js)?|express|koa|fastify|hono|graphql|prisma|typeorm|thymeleaf)$/.test(d))) lang = "Node/服务端";
+  return { name: typeof pkg.name === "string" ? pkg.name : "", lang };
+}
 function projectSignals(cwd: string | undefined): string {
   if (!cwd) return "";
   const now = Date.now();
-  if (projCache.cwd === cwd && now - projCache.ts < 10_000) return projCache.sig;
+  if (projCache.cwd === cwd && now - projCache.ts < 300_000) return projCache.sig; // 5min 缓存省资源
   let sig = "";
   try {
     const base = cwd.split(/[\\/]+/).filter(Boolean).pop() || "";
-    let pkgName = "", langGuess = "";
-    try {
-      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"));
-      pkgName = typeof pkg.name === "string" ? pkg.name : "";
-      const deps: string[] = Object.keys(pkg.dependencies || {}).concat(Object.keys(pkg.devDependencies || {}));
-      if (deps.some((d) => /^(react|vue|svelte|angular|next(js)?|nuxt)$/.test(d))) langGuess = "Web前端";
-      else if (deps.some((d) => /^(@?nest(js)?|express|koa|fastify|hono|graphql|prisma|typeorm)$/.test(d))) langGuess = "Node服务端";
-      else if (deps.length) langGuess = "Node";
-    } catch (e) {}
+    let pkg: { name?: string; dependencies?: Record<string, unknown>; devDependencies?: Record<string, unknown> } | null = null;
+    try { pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8")); } catch (e) {}
+    const { name, lang: fw } = frameworkFromPkg(cwd, pkg);
+    const dl = detectLang(cwd);
+    const lang = (fw && dl) ? `${dl}${fw === "Web前端" ? "/前端" : ""}` : (fw || dl || "");
     let mods: string[] = [];
     try {
       mods = readdirSync(cwd, { withFileTypes: true })
         .filter((e) => e.isDirectory())
         .map((e) => e.name)
-        .filter((n) => !n.startsWith(".") && !/node_modules|dist|build|out|coverage|\.git/.test(n))
+        .filter((n) => !n.startsWith(".") && !/node_modules|dist|build|out|coverage|\.git|target|vendor/.test(n))
         .slice(0, 3);
     } catch (e) {}
-    const parts = [pkgName || base];
-    if (langGuess) parts.push(langGuess);
+    const parts = [name || base];
+    if (lang) parts.push(lang);
     if (mods.length) parts.push("模块:" + mods.join("/"));
     sig = parts.join(" · ");
   } catch (e) { sig = ""; }
