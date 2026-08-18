@@ -73,7 +73,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         if (lang === "mermaid") {
           return <MermaidBlock code={raw.replace(/\n$/, "")} isStreaming={isStreaming} />;
         }
-        return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} />;
+        return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId} />;
       }
       return (
         <code
@@ -130,13 +130,14 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     // eslint-disable-next-line react-hooks/rules-of-hooks
     p({ children, ...props }) {
       delete props.node;
-      if (!hasClickHandlers) return <p {...props}>{children}</p>;
+      // user 消息段落不做点击识别（只保留固定引用按钮）——有 handler 且非 user 才包 ClickableParagraph
+      if (!hasClickHandlers || messageRole === "user") return <p {...props}>{children}</p>;
       return <ClickableParagraph as="p" messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
     },
     // eslint-disable-next-line react-hooks/rules-of-hooks
     li({ children, ...props }) {
       delete props.node;
-      if (!hasClickHandlers) return <li {...props}>{children}</li>;
+      if (!hasClickHandlers || messageRole === "user") return <li {...props}>{children}</li>;
       return <ClickableParagraph as="li" messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
     },
     table({ children }) {
@@ -149,7 +150,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     // eslint-disable-next-line react-hooks/rules-of-hooks
     tr({ children, ...props }) {
       delete props.node;
-      if (!hasClickHandlers) return <tr {...props}>{children}</tr>;
+      if (!hasClickHandlers || messageRole === "user") return <tr {...props}>{children}</tr>;
       return <ClickableParagraph as="tr" messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
     },
   }), [cwd, isStreaming, onOpenFile, messageRole, hasClickHandlers]);
