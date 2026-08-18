@@ -813,6 +813,10 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   );
 
 const messageListEl = useMemo(() => {
+  // 最近一次压缩摘要在 rendered 数组中的位置（-1 = 本会话没有压缩）。
+  // 全父链上下文里摘要可能埋在历史深处，分页窗口只渲染最近 30 条时
+  // 打开会话看不到「对话已压缩」卡片——窗口起点前移到摘要处保证可见。
+  let lastCompactionRenderIdx = -1;
   let lastUserIdx = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
   if (messages[i].role === "user") { lastUserIdx = i; break; }
@@ -900,6 +904,16 @@ const messageListEl = useMemo(() => {
   };
 
   const rendered: ReactNode[] = [];
+  // 压缩摘要本体暂存：不渲染在原位（会被压缩前后的几十条工具过程消息淹没），
+  // 推迟到下一个 user 回合开头再放出来——仍在消息流里，但紧跟对话回合开头、
+  // 不会被折叠组包围（「暂缓一个节点放出来」）。
+  let pendingCompaction: ReactNode | null = null;
+  const flushPendingCompaction = () => {
+  if (pendingCompaction === null) return;
+  lastCompactionRenderIdx = rendered.length;
+  rendered.push(pendingCompaction);
+  pendingCompaction = null;
+  };
   for (let idx = 0; idx < messages.length;) {
   const msg = messages[idx];
   if (!isGroupAnchor(msg)) {
@@ -909,13 +923,21 @@ const messageListEl = useMemo(() => {
   }
 
   const userIdx = idx;
+  const isCompactionAnchor = msg.role === "custom" && (msg as CustomMessage).customType === "compaction";
+  if (isCompactionAnchor) {
+  // 摘要本体不在此渲染：暂存，等下一个 user 回合开头再放出来
+  pendingCompaction = renderMessage(userIdx);
+  } else {
+  // user 回合开头：先把推迟的摘要放出来，再渲染用户消息
+  flushPendingCompaction();
+  }
   let endIdx = userIdx + 1;
   while (endIdx < messages.length && !isGroupAnchor(messages[endIdx])) endIdx += 1;
 
   const finalAssistantIdx = findFinalAssistantIndex(messages, userIdx, endIdx);
 
   if (finalAssistantIdx === -1) {
-  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
+  for (let renderIdx = userIdx + (isCompactionAnchor ? 1 : 0); renderIdx < endIdx; renderIdx++) {
   rendered.push(renderMessage(renderIdx));
   }
   idx = endIdx;
@@ -924,14 +946,14 @@ const messageListEl = useMemo(() => {
 
   const isLiveTail = (sessionBusy || streamState.isStreaming) && endIdx === messages.length && userIdx === lastAnchorIdx;
   if (isLiveTail) {
-  for (let renderIdx = userIdx; renderIdx < endIdx; renderIdx++) {
+  for (let renderIdx = userIdx + (isCompactionAnchor ? 1 : 0); renderIdx < endIdx; renderIdx++) {
   rendered.push(renderMessage(renderIdx));
   }
   idx = endIdx;
   continue;
   }
 
-  rendered.push(renderMessage(userIdx));
+  if (!isCompactionAnchor) rendered.push(renderMessage(userIdx));
 
   const processIndices: number[] = [];
   for (let processIdx = userIdx + 1; processIdx < finalAssistantIdx; processIdx++) {
@@ -994,15 +1016,24 @@ const messageListEl = useMemo(() => {
   }
   idx = endIdx;
   }
-  const { startIndex, hasMore } = getVisibleRenderWindow(rendered.length, visibleCount);
+  // 摘要之后没有下一个 user 回合（如压缩刚发生、agent 仍在工作中）：放列表末尾
+  flushPendingCompaction();
+  const { startIndex: baseStartIndex } = getVisibleRenderWindow(rendered.length, visibleCount);
+  // 保证最近一次压缩摘要进入首屏渲染窗口：摘要已推迟到下一个 user 回合开头渲染，
+  // 窗口起点前移到该摘要实际渲染位置（摘要之后的渲染量通常就是 kept 段 + 新消息，
+  // 分页优化前本来就是全量渲染，无新增压力）；摘要之前的翻页行为不变。
+  const effectiveStartIndex = lastCompactionRenderIdx !== -1 && lastCompactionRenderIdx < baseStartIndex
+  ? lastCompactionRenderIdx
+  : baseStartIndex;
+  const hasMore = effectiveStartIndex > 0;
   return (
   <>
   {hasMore && (
   <div ref={sentinelRef} className="py-3 text-center text-xs text-text-muted">
-  {t("chat.loadEarlier", { count: startIndex })}
+  {t("chat.loadEarlier", { count: effectiveStartIndex })}
   </div>
   )}
-  {rendered.slice(startIndex)}
+  {rendered.slice(effectiveStartIndex)}
   </>
   );
   }, [messages, visibleCount, toolResultsMap, modelNames, messageCwd, onOpenFile, handleFork, handleNavigate, handleEditFromHereMark, editFromHerePending, handleCancelEditFromHere, entryIds, streamState.isStreaming, sessionBusy, isNew, bashRunning, t, forkingEntryId, lastUserMsgRef, messageRefs, session?.id, sessionIdRef]);

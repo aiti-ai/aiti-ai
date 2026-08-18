@@ -1,14 +1,11 @@
 import {
   SessionManager,
-  buildContextEntries as piBuildContextEntries,
-  buildSessionContext as piBuildSessionContext,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { existsSync, readdirSync, readFileSync, statSync, closeSync, openSync, readSync } from "fs";
 import { join, normalize as normalizePath } from "path";
 import { writePrivateFileAtomicSync } from "./atomic-file.ts";
 import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types.ts";
-import type { SessionEntry as PiSessionEntry } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize.ts";
 import { projectIdentityKey } from "./project-identity.ts";
 import { sessionPathKey } from "./session-path.ts";
@@ -488,34 +485,67 @@ export function buildSessionContext(
   const byId = new Map<string, SessionEntry>();
   for (const e of entries) byId.set(e.id, e);
 
-  const piEntries = entries as unknown as PiSessionEntry[];
-  const piCtx = piBuildSessionContext(piEntries, leafId, byId as unknown as Map<string, PiSessionEntry>);
+  // 不走 SDK 的 buildContextEntries（会过滤掉压缩前的原始消息）
+  // 改为走全父链，所有消息原样返回，保留压缩前的内容
+  const pathEntries = buildFullPath(entries, leafId, byId);
+  const { thinkingLevel, model } = getSessionContextSettings(pathEntries);
 
-  const contextEntries = piBuildContextEntries(
-    piEntries,
-    leafId,
-    byId as unknown as Map<string, PiSessionEntry>,
-  );
-
-  // Convert the SDK-selected context entries and their IDs together. This keeps
-  // fork/navigation targets aligned while preserving pi's compaction ordering.
   const messages: AgentMessage[] = [];
   const entryIds: string[] = [];
-  for (const entry of contextEntries) {
-    const localEntry = entry as unknown as SessionEntry;
-    const m = entryToUiMessage(localEntry, options);
+  for (const entry of pathEntries) {
+    const m = entryToUiMessage(entry, options);
     if (m) {
       messages.push(m);
-      entryIds.push(localEntry.id);
+      entryIds.push(entry.id);
     }
   }
 
   return {
     messages,
     entryIds,
-    thinkingLevel: piCtx.thinkingLevel,
-    model: piCtx.model,
+    thinkingLevel,
+    model,
   };
+}
+
+/** 从 leaf 到 root 走全父链（不丢弃压缩前的消息）。
+ *  leafId === null 时返回空，与 SDK buildSessionPath 语义一致（null = 明确无 leaf）。 */
+function buildFullPath(
+  entries: SessionEntry[],
+  leafId: string | null | undefined,
+  byId: Map<string, SessionEntry>,
+): SessionEntry[] {
+  if (leafId === null) return [];
+
+  let leaf: SessionEntry | undefined;
+  if (leafId) leaf = byId.get(leafId);
+  leaf ??= entries[entries.length - 1];
+  if (!leaf) return [];
+
+  const path: SessionEntry[] = [];
+  let current: SessionEntry | undefined = leaf;
+  while (current) {
+    path.push(current);
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+  path.reverse();
+  return path;
+}
+
+/** 沿路径收集 thinkingLevel 与 model（等价于 SDK 的 getSessionContextSettings，基于本地全路径计算）。 */
+function getSessionContextSettings(path: SessionEntry[]): { thinkingLevel: string; model: { provider: string; modelId: string } | null } {
+  let thinkingLevel = "off";
+  let model: { provider: string; modelId: string } | null = null;
+  for (const entry of path) {
+    if (entry.type === "thinking_level_change") {
+      thinkingLevel = entry.thinkingLevel;
+    } else if (entry.type === "model_change") {
+      model = { provider: entry.provider, modelId: entry.modelId };
+    } else if (entry.type === "message" && entry.message.role === "assistant") {
+      model = { provider: entry.message.provider, modelId: entry.message.model };
+    }
+  }
+  return { thinkingLevel, model };
 }
 
 function parseEntryTimestamp(timestamp: string): number | undefined {
@@ -582,9 +612,17 @@ function entryToUiMessage(
   // normalizeToolCalls is a secondary guard (returns non-assistant messages as-is).
   switch (entry.type) {
     case "message": {
+      // Session files are parsed without validation; old versions, forks, or
+      // hand-edited files can contain messages with null/missing content.
+      // Mirror the SDK's sessionEntryToContextMessages guard so the
+      // deferThinking content.map() below cannot throw on null.
+      const raw = entry.message;
+      const safe = (raw as { content?: unknown }).content == null
+        ? { ...raw, content: [] }
+        : raw;
       const message = options.deferToolResultImages
-        ? omitToolResultBase64Images(normalizeToolCalls(entry.message))
-        : normalizeToolCalls(entry.message);
+        ? omitToolResultBase64Images(normalizeToolCalls(safe))
+        : normalizeToolCalls(safe);
       if (!options.deferThinking || message.role !== "assistant") return message;
       return {
         ...message,
@@ -618,7 +656,7 @@ function entryToUiMessage(
       return {
         role: "custom",
         customType: entry.customType,
-        content: entry.content,
+        content: entry.content ?? [],
         display: entry.display,
         details: entry.details,
         timestamp: parseEntryTimestamp(entry.timestamp),
