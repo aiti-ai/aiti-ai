@@ -30,6 +30,9 @@ import {
   VISIBLE_PAGE_SIZE,
 } from "@/lib/chat-lazy-load";
 
+// 首屏渲染量：一次挂载满页。主流做法是虚拟化 + overscan（视口可见 ×2-3）；
+// 窄屏视口约 6-10 条，30 条 ≈ 3-4 屏含缓冲（原 50 条偏高，已降）。
+
 interface Props {
   session: SessionInfo | null;
   sessionRunning?: boolean;
@@ -809,7 +812,7 @@ const messageListEl = useMemo(() => {
   if (options.showTimestamp !== undefined) showTimestamp = options.showTimestamp;
   const view = (
   <MessageView
-  key={`${keyPrefix}-view-${idx}`}
+  key={`${keyPrefix}-view-${entryIds[idx] ?? idx}`}
   message={msg}
   toolResults={toolResultsMap}
   modelNames={modelNames}
@@ -829,7 +832,7 @@ const messageListEl = useMemo(() => {
   );
   if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
   return (
-  <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
+  <div key={`${keyPrefix}-${entryIds[idx] ?? idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
   {view}
   </div>
   );
@@ -1086,7 +1089,7 @@ const messageListEl = useMemo(() => {
 
             {messageListEl}
             {streamState.isStreaming && hasStreamingContent && streamState.streamingMessage && (
-              <StreamingMessageView message={streamState.streamingMessage as AgentMessage} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} />
+              <StreamingMessageView message={streamState.streamingMessage as AgentMessage} isStreaming />
             )}
 
             {agentRunning && !hasStreamingContent && agentPhase && (
@@ -1575,8 +1578,8 @@ function ExtensionCustomPanel({
  * 与 MarkdownBody 的节流解析（200ms）对齐——文本尾部最多滞后一个节流窗口，视觉无感。
  * 流式结束（isStreaming=false）时组件卸载，消息移入历史列表走完整渲染。
  */
-function StreamingMessageView({ message, isStreaming, modelNames, cwd, onOpenFile }: {
-  message: AgentMessage; isStreaming: boolean; modelNames?: Record<string, string>; cwd?: string; onOpenFile?: (filePath: string) => void;
+function StreamingMessageView({ message, isStreaming }: {
+  message: AgentMessage; isStreaming: boolean;
 }) {
   const [renderMsg, setRenderMsg] = useState<AgentMessage | null>(message);
   const lastTs = useRef(0);
@@ -1594,5 +1597,18 @@ function StreamingMessageView({ message, isStreaming, modelNames, cwd, onOpenFil
     }
   }, [message]);
   if (!renderMsg) return null;
-  return <MessageView message={renderMsg} isStreaming modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} />;
+  // 流式期间走轻量文本渲染（不解析 markdown）：react-markdown 对几千行增量文本每次解析
+  // 成本 100ms+，纯文本 pre-wrap 一次文本节点更新 ~1ms。结束（streamingMessage 置空）后
+  // 该消息以完整 MessageView 渲染富文本，流式期成本可忽略。
+  const content = "content" in renderMsg && typeof renderMsg.content === "string" ? renderMsg.content : "";
+  return <StreamingText content={content} />;
+}
+
+/** 流式期间轻量文本渲染：pre-wrap 单节点，零 markdown 解析，随增量只 diff 文本。 */
+function StreamingText({ content }: { content: string }) {
+  return (
+    <div className="streaming-plain" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+      {content}
+    </div>
+  );
 }

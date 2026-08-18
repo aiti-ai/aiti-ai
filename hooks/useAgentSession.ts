@@ -305,7 +305,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // 入队后每帧 flush 一次（delta-batch），后台标签 rAF 暂停时队列保序等待。
   const pendingDeltasRef = useRef<ClientAssistantMessageEvent[]>([]);
   const pendingDeltasFrameRef = useRef<number | null>(null);
+  const lastFlushTsRef = useRef(0);
   const DELTA_BATCH_MAX = 50; // 单批上限：后台长流式累积的队列一次 flush 太多会单帧长任务
+  const DELTA_FLUSH_INTERVAL_MS = 50; // flush 最小间隔：rAF 每帧触发但间隔 <50ms 不 flush——
+  // 文本流 20fps 已足够平滑，React 渲染次数 60fps→20fps（-2/3），流式期主线程压力大降。
   const flushPendingDeltas = useCallback(() => {
     if (pendingDeltasFrameRef.current !== null) {
       cancelAnimationFrame(pendingDeltasFrameRef.current);
@@ -330,7 +333,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (pendingDeltasFrameRef.current === null) {
       pendingDeltasFrameRef.current = requestAnimationFrame(() => {
         pendingDeltasFrameRef.current = null;
-        flushPendingDeltas();
+        const now = performance.now();
+        if (now - lastFlushTsRef.current >= DELTA_FLUSH_INTERVAL_MS || pendingDeltasRef.current.length >= DELTA_BATCH_MAX * 2) {
+          // 间隔已到（或队列积压超量）→ flush；否则延迟到下一帧再试（保序）
+          lastFlushTsRef.current = now;
+          flushPendingDeltas();
+        } else {
+          pendingDeltasFrameRef.current = requestAnimationFrame(() => {
+            pendingDeltasFrameRef.current = null;
+            lastFlushTsRef.current = performance.now();
+            flushPendingDeltas();
+          });
+        }
       });
     }
   }, [flushPendingDeltas]);

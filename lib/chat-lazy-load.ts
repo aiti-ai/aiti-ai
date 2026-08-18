@@ -1,4 +1,6 @@
-export const VISIBLE_PAGE_SIZE = 50;
+// 每页渲染量：主流做法是虚拟化（DOM 常驻 = 视口可见 ×2-3）。窄屏视口约 6-10 条消息，
+// 30 条 ≈ 3-4 屏（含 overscan 缓冲）；50 条会多渲染 1 倍 DOM（历史消息分页加载场景成本大）。
+export const VISIBLE_PAGE_SIZE = 30;
 export const CHAT_SCROLL_TAIL_TOLERANCE = 8;
 export const CHAT_SCROLL_REATTACH_TOLERANCE = 96;
 
