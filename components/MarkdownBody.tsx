@@ -188,7 +188,8 @@ function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, m
   const [inlineNode, setInlineNode] = useState<ReactNode | null>(null);
   const [showTip, setShowTip] = useState(false);
   const tipRef = useRef<HTMLSpanElement>(null);
-  const { t } = useI18n();
+  // tip 文案由扩展注册 handler 的 hint 提供（core 不持有 quote-reply 语义文案）
+  const tipText = handlers.map((h) => h.hint).find(Boolean) ?? "";
   // Detect touch capability lazily (same approach as useIsMobile but local).
   const [coarse] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches);
 
@@ -233,7 +234,7 @@ function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, m
   };
 
   const Tag = as as React.ElementType;
-  const tip = showTip && !inlineNode && (
+  const tip = showTip && !inlineNode && tipText && (
     <span
       ref={tipRef}
       data-quote-tip
@@ -244,7 +245,7 @@ function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, m
         pointerEvents: "none", zIndex: 50, whiteSpace: "nowrap",
       }}
     >
-      {t("chat.quoteReplyHint")}
+      {tipText}
     </span>
   );
   // p/li 的 inline 展开渲染在段落之后（sibling，避免 <p><div> 无效 HTML/hydration 错）；

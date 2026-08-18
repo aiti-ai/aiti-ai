@@ -323,8 +323,6 @@ export const enLocale: LocalePlugin = {
     "chat.modelSwitchStreaming": "Change model (applies next turn)",
     "chat.modelSwitchPendingBadge": "next turn",
     "chat.noModels": "No available models",
-    "chat.quoteReply": "Quote reply",
-    "chat.quoteReplyHint": "Click to quote reply",
     "i18n.openFile": "Open",
     "export.title": "Export",
     "export.promptsTab": "Prompts",

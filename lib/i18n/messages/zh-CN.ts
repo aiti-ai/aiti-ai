@@ -322,8 +322,6 @@ export const zhCNLocale: LocalePlugin = {
     "chat.modelSwitchStreaming": "切换模型（下轮生效）",
     "chat.modelSwitchPendingBadge": "下轮生效",
     "chat.noModels": "无可用模型",
-    "chat.quoteReply": "引用回复",
-    "chat.quoteReplyHint": "点击引用回复",
     "i18n.openFile": "打开",
     "export.title": "导出",
     "export.promptsTab": "提示词",
