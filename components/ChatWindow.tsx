@@ -314,6 +314,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     handleRecallQueue, handleContinueQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom,
+    activeLeafId,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
@@ -342,6 +343,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   } | null>(null);
   const editFromHerePendingRef = useRef(editFromHerePending);
   editFromHerePendingRef.current = editFromHerePending;
+
+  // 分支导航（BranchNavigator/上下文链接）改变视图位置 → 待发送的「编辑从此处」标记失效，
+  // 自动取消（否则发送时会强行回退到标记位置、覆盖用户刚导航到的分支）。
+  // 发送路径不受影响：handleSendWrapped 在回退前已清 pending，这里 setState(null) 幂等。
+  useEffect(() => {
+    setEditFromHerePending(null);
+  }, [activeLeafId]);
 
   // 标记（点击「编辑从此处」）：输入框非空且无标记时不覆盖（与 replaceMessage 的 canRestore 约定一致）；
   // 已有标记时先清旧预填再标记新的（避免 composer 残留上一目标文本导致 replaceMessage 静默失效）
