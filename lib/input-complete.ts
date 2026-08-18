@@ -17,6 +17,7 @@
  */
 
 import { homedir } from "node:os";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { ModelRegistry, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { getRpcSession, getRpcSessionInfos } from "./rpc-manager";
@@ -27,6 +28,8 @@ export type CompleteMode = "complete" | "voice-fix";
 export interface CompleteInputRequest {
   /** 缺省取 DEFAULT_COMPLETE_MODEL（补全专用档）；传则限定该 provider 内按非推理→推理最便宜选 */
   provider?: string;
+  /** 当前工作目录：服务端据此生成一行精简「项目现场」（cwd+语言/框架+主要模块），不传则不注入 */
+  cwd?: string;
   /** complete=逐句续写（默认）；voice-fix=语音歧义判定/修复（无歧义 → 返回空 text） */
   mode?: CompleteMode;
   /** 当前输入全文（服务端按档位截尾） */
@@ -58,18 +61,21 @@ const CTX_BUDGET: Record<CompleteContextSize, { historyChars: number; inputChars
 const SYSTEM_PROMPT = [
   "你是编程开发场景的 AI 助手（coding agent），用户在编写与代码、工程、调试、架构、性能、技术判断相关的输入。",
   "你是聊天输入框的逐句补全器。下面这条 user 消息是一整段内容：前部是本会话历史上下文，最后是用户当前正在输入的文字（或想继续写下去的句尾）。",
-  "任务：直接续写最后一段文字——输出紧接着它的下一句话，让整段读起来连贯自然，且严格保持在编程/工程场景内。",
-  "铁律：绝不偏移到小说、故事、日常办公、闲聊等与本会话编程主题无关的内容；绝不输出元话语（如「我们需要…」「您能提供…」这类提问或转述）；",
-  "不解释、不评价、不换行、不加编号、不用 markdown；保持用户语言与文风（中文用中文、英文用英文）；一句话 ≤ 60 字；",
+  "任务：直接续写最后一段文字——像 IDE 代码补全一样短小精悍，只输出紧接着它的**极短下句**（一般 8–20 字简短短语，必要时可省略主语），让整段读起来连贯自然，且严格保持在编程/工程场景内。",
+  "铁律：绝不发散成完整长句或整段说明；绝不偏移到小说、故事、日常办公、闲聊等无关内容；绝不输出元话语（如「我们需要…」「您能提供…」）；",
+  "术语措辞：根据上下文推断当前代码语言/框架，用该语言惯用术语续写——",
+  "托管内存语言（JS/TS、Python、Java 等）把 null/undefined 风险表述为「空值/未定义访问」，不用 C/C++ 的「指针」措辞；",
+  "不解释、不评价、不换行、不加编号、不用 markdown；保持用户语言与文风；一句话一般不超过 20 字；",
   "不重复或改写已有文本；若结尾已是完整断句（。！？!?…），则写下一句的开头。宁可短，不可编造无关内容。",
+  "置信度（宁缺毋滥）：优先从本会话历史沟通与用户输入中找真实线索来续写；只有当你确能给出自然、高质量、与上下文真实相关的接续时才输出，否则只输出：无（不要硬凑、不要重复、不要说元话语）。",
   "",
-  "示例（编程场景）：",
+  "示例（编程场景，短小精悍）：",
   "历史：无 ｜ 当前输入：请帮我分析一下这个页面的性能问题",
-  "输出：重点关注网络请求、图片体积和 DOM 渲染开销。",
+  "输出：重点看网络请求和图渲染开销。",
   "历史：无 ｜ 当前输入：把这段代码改成 TypeScript",
-  "输出：同时补上函数返回类型的定义。",
-  "历史：无 ｜ 当前输入：总结一下今天的改动",
-  "输出：并列出影响面最大的几处重构。",
+  "输出：补上函数返回类型。",
+  "历史：无 ｜ 当前输入：帮我审核这段 Node.js 接口代码",
+  "输出：列出空值和并发写风险。",
 ].join("\n");
 
 // ---------- voice-fix 判定 prompt：语音转写歧义修复（主动；无歧义必须回空，严格） ----------
@@ -91,6 +97,41 @@ const VOICE_FIX_PROMPT = [
 
 function systemFor(mode: CompleteMode | undefined): string {
   return mode === "voice-fix" ? VOICE_FIX_PROMPT : SYSTEM_PROMPT;
+}
+
+// ---------- 项目现场（精简一行：cwd + 语言/框架 + 主要模块；缓存 10s；失败返回空不注入） ----------
+let projCache = { cwd: "", ts: 0, sig: "" };
+function projectSignals(cwd: string | undefined): string {
+  if (!cwd) return "";
+  const now = Date.now();
+  if (projCache.cwd === cwd && now - projCache.ts < 10_000) return projCache.sig;
+  let sig = "";
+  try {
+    const base = cwd.split(/[\\/]+/).filter(Boolean).pop() || "";
+    let pkgName = "", langGuess = "";
+    try {
+      const pkg = JSON.parse(readFileSync(join(cwd, "package.json"), "utf8"));
+      pkgName = typeof pkg.name === "string" ? pkg.name : "";
+      const deps: string[] = Object.keys(pkg.dependencies || {}).concat(Object.keys(pkg.devDependencies || {}));
+      if (deps.some((d) => /^(react|vue|svelte|angular|next(js)?|nuxt)$/.test(d))) langGuess = "Web前端";
+      else if (deps.some((d) => /^(@?nest(js)?|express|koa|fastify|hono|graphql|prisma|typeorm)$/.test(d))) langGuess = "Node服务端";
+      else if (deps.length) langGuess = "Node";
+    } catch (e) {}
+    let mods: string[] = [];
+    try {
+      mods = readdirSync(cwd, { withFileTypes: true })
+        .filter((e) => e.isDirectory())
+        .map((e) => e.name)
+        .filter((n) => !n.startsWith(".") && !/node_modules|dist|build|out|coverage|\.git/.test(n))
+        .slice(0, 3);
+    } catch (e) {}
+    const parts = [pkgName || base];
+    if (langGuess) parts.push(langGuess);
+    if (mods.length) parts.push("模块:" + mods.join("/"));
+    sig = parts.join(" · ");
+  } catch (e) { sig = ""; }
+  projCache = { cwd, ts: now, sig };
+  return sig;
 }
 
 // ---------- 模型路径 / settings 缓存 ----------
@@ -178,23 +219,28 @@ interface ModelLike {
   cost?: unknown;
 }
 
-// ---------- 上下文（若调用方未传 history，则取当前会话最近 user 消息文本——只读不写、不碰会话模型） ----------
-function contextHistory(): string[] {
-  const extract = (w: unknown): string[] | null => {
+// ---------- 上下文（若调用方未传 history，则取当前会话最近 user 消息 + 最近一条 assistant 输出作线索——只读不写、不碰会话模型） ----------
+interface CtxHist { user: string[]; lastAssistant?: string }
+function contextHistory(): CtxHist {
+  const extract = (w: unknown): CtxHist | null => {
     const inner = (w as { inner?: unknown } | null)?.inner;
     const msgs = inner && (inner as { messages?: unknown }).messages;
     if (!Array.isArray(msgs)) return null;
-    const texts: string[] = [];
+    const user: string[] = [];
+    let lastAssistant = "";
     for (const m of msgs as Array<{ role?: string; content?: unknown }>) {
-      if (m.role !== "user") continue;
-      const c = m.content;
-      let t = "";
-      if (typeof c === "string") t = c;
-      else if (Array.isArray(c)) t = c.filter((b) => (b as { type?: string; text?: string }).type === "text")
-        .map((b) => (b as { text: string }).text).join("");
-      if (t && t.trim()) texts.push(t);
+      const text = (() => {
+        const c = m.content;
+        if (typeof c === "string") return c;
+        if (Array.isArray(c)) return c.filter((b) => (b as { type?: string; text?: string }).type === "text")
+          .map((b) => (b as { text: string }).text).join("");
+        return "";
+      })();
+      if (!text || !text.trim()) continue;
+      if (m.role === "user") user.push(text);
+      else if (m.role === "assistant") lastAssistant = text; // 保留最近一条 AI 输出
     }
-    return texts.length ? texts : null; // 全量 user 消息——不做滚动切片，保持同 session 前缀稳定以命中缓存
+    return user.length || lastAssistant ? { user, lastAssistant: lastAssistant || undefined } : null;
   };
   try {
     // 先看运行中会话，再回退内存中空闲会话（idle wrapper 也载有该会话历史）
@@ -204,7 +250,7 @@ function contextHistory(): string[] {
       if (hit) return hit;
     }
   } catch (e) { /* 拿不到就无上下文 */ }
-  return [];
+  return { user: [] };
 }
 
 // ---------- 输出后处理（§5.4）：剥 markdown 围栏 → 裁到首个断句符 → 去重复前缀 ----------
@@ -229,12 +275,12 @@ const CACHE_TTL_MS = 60_000;
 const CACHE_CAP = 200;
 const cache = new Map<string, { ts: number; result: CompleteResult }>();
 
-function cacheKey(req: CompleteInputRequest, pick: PickResult, history?: string[]): string {
+function cacheKey(req: CompleteInputRequest, pick: PickResult, histStr?: string): string {
   const budget = CTX_BUDGET[req.ctx ?? "medium"];
   const mode = req.mode === "voice-fix" ? "v" : "c";
   const inputTail = (req.input ?? "").slice(-budget.inputChars);
-  const historyTail = (history ?? req.history ?? []).slice(-3).map((h) => h.slice(-Math.min(budget.historyChars, 2000))).join("\u0001");
-  return `${pick.model.provider}|${pick.model.id}|${pick.reasoning}|${mode}|${req.ctx ?? "medium"}|${inputTail}|${historyTail}`;
+  const historyKey = (histStr || "").slice(0, budget.historyChars);
+  return `${pick.model.provider}|${pick.model.id}|${pick.reasoning}|${mode}|${projectSignals(req.cwd)}|${req.ctx ?? "medium"}|${historyKey}|${inputTail}`;
 }
 
 function cacheGet(key: string): CompleteResult | undefined {
@@ -258,8 +304,17 @@ export async function completeInput(req: CompleteInputRequest): Promise<Complete
   const mode = req.mode === "voice-fix" ? "voice-fix" : "complete";
   // 历史：调用方未传时自动带当前会话上下文（对续写与语音判定都有帮助）
   const history = req.history && req.history.length ? req.history : contextHistory();
+  // 归一：user 全量 + 最近一条 AI 输出作线索，合并为单一稳定串（不滚动切片；超预算自起点固定截断）
+  const uhist = Array.isArray(history) ? history : history.user;
+  const historyTexts = uhist
+    .filter((h) => typeof h === "string" && h.trim())
+    .map((h) => h.trim());
+  let histStr = historyTexts.join("\n\n");
+  const lastAsst = !Array.isArray(history) ? history.lastAssistant : undefined;
+  if (lastAsst) histStr += (histStr ? "\n\n" : "") + `【最近回答】\n${lastAsst}`;
+  if (histStr.length > budget.historyChars) histStr = histStr.slice(0, budget.historyChars);
   const pick = await pickModel(req.provider);
-  const key = cacheKey(req, pick, history);
+  const key = cacheKey(req, pick, histStr);
 
   const cached = cacheGet(key);
   if (cached) return { ...cached, cached: true };
@@ -274,24 +329,18 @@ export async function completeInput(req: CompleteInputRequest): Promise<Complete
   // 组装消息（§6 + 前缀缓存设计）：历史上下文在前（稳定前缀）+ 当前输入在尾（仅尾部变化）
   // 单条 user 拼接 → provider 自动前缀缓存（deepseek cacheRead 计费）命中：用户在末尾继续打字时
   // 只追加几个字符，前缀（system+历史+输入前段）完全不变 → 每次都命中缓存、成本≈0。
-  const historyTexts = history
-    .filter((h) => typeof h === "string" && h.trim())
-    .map((h) => h.trim());
-  // 取最近的至多 6 条（保最近意图），各自截尾到预算内
-  let historyBudget = budget.historyChars;
-  const recent: string[] = [];
-  for (let i = historyTexts.length - 1; i >= 0 && historyBudget > 0; i--) {
-    const h = historyTexts[i];
-    const part = h.slice(-historyBudget);
-    recent.unshift(part.length < h.length ? `…${part}` : part);
-    historyBudget -= part.length;
-  }
   const input = (req.input ?? "").trim();
   const inputTail = input.slice(-budget.inputChars);
   const inputText = inputTail.length < input.length ? `…${inputTail}` : inputTail;
-  const userText = recent.length
-    ? `【历史上下文】\n${recent.join("\n\n")}\n\n【语音转写】\n${inputText}`
-    : inputText;
+  // 【项目现场】精简一行 + 【历史上下文】稳定前缀 + 【尾标签】mode 固定；仅当前输入在尾变化 → 命中索引
+  const tailLabel = mode === "voice-fix" ? "【语音转写】" : "【当前正在输入】";
+  const projLine = projectSignals(req.cwd);
+  const block = [
+    projLine ? `【项目现场】${projLine}` : "",
+    histStr ? `【历史上下文】\n${histStr}` : "",
+    `${tailLabel}\n${inputText}`,
+  ].filter(Boolean).join("\n\n");
+  const userText = block || inputText;
 
   const options: Record<string, unknown> = {
     maxTokens,
@@ -341,7 +390,10 @@ export async function completeInput(req: CompleteInputRequest): Promise<Complete
       .pop() || "";
     text = stripRepeatedPrefix(trimToSentence(think), inputText);
   }
-  if (!text) throw new Error("empty-completion");
+  // 宁缺毋滥：「无」/回答式/元话语/过短 → 视为无高质量联想，返回空（前端据此不显示）
+  if (!text || /^(无|没|N\/A|none)$/i.test(text)) text = "";
+  if (text && /^(我需要|请提供|请您|请把|我们没有|无法判断|不确定|我不知道|没有上下文|抱歉|抱歉，|sorry|我不能)/i.test(text)) text = "";
+  if (text && text.length < 2) text = "";
 
   const result: CompleteResult = {
     text,

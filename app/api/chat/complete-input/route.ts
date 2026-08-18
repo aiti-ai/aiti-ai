@@ -16,6 +16,7 @@ export async function POST(req: Request) {
     }
     const request: CompleteInputRequest = {
       provider: typeof body.provider === "string" && body.provider ? body.provider : undefined,
+      cwd: typeof body.cwd === "string" && body.cwd ? body.cwd : undefined,
       mode: body.mode === "voice-fix" ? "voice-fix" : undefined,
       input,
       history: Array.isArray(body.history) ? body.history.filter((h): h is string => typeof h === "string") : undefined,
