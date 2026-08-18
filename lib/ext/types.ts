@@ -69,6 +69,8 @@ export interface ExtServerContext {
     provider?: string; modelId?: string; system?: string;
     messages: Array<{ role: "system" | "user" | "assistant"; content: string }>;
     maxTokens?: number; temperature?: number; reasoning?: string;
+    /** 记账维度：扩展可细分场景（如 aiti-ai-input/complete），缺省记 ext.id */
+    caller?: string;
   }) => Promise<{ text: string; provider: string; model: string; usage?: { input: number; output: number; cacheRead: number; cacheWrite: number } }>;
 }
 

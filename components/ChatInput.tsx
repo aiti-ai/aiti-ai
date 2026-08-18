@@ -3569,7 +3569,7 @@ export const ChatInput = forwardRef<ChatInputHandle, Props>(function ChatInput({
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
             } as React.CSSProperties}
           >
-          <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, textareaRef, setInputValue, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen }} />
+          <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, textareaRef, setInputValue, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen, model }} />
           <textarea
             ref={textareaRef}
             data-chat-input="1"

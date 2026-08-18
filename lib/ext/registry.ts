@@ -618,8 +618,9 @@ export class ExtRegistryImpl {
   private serverContext(ext: LoadedExtension): ExtServerContext {
     return {
       id: ext.id, dir: ext.dir, dataDir: ext.dataDir, core: this.core,
-      // 通用 AI 调用（core 最底层能力，零业务）；按调用扩展 id 记账（token 统计在 core）
-      invokeAI: (p) => aiInvokeImpl({ ...p, caller: ext.id }),
+      // 通用 AI 调用（core 最底层能力，零业务）；按调用扩展 id 记账（token 统计在 core）。
+      // caller 允许扩展细分场景（如 aiti-ai-input/complete、aiti-ai-input/voice-fix），缺省用 ext.id
+      invokeAI: (p) => aiInvokeImpl({ ...p, caller: (p && p.caller) || ext.id }),
     };
   }
 

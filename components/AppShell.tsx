@@ -1976,36 +1976,7 @@ export function AppShell() {
             </button>
           )}
           {/* Session stats — right-aligned in top bar */}
-          {/* AI 用量子类（core invokeAI 记账汇总：AI 补全等） */}
-          {showChat && aiUsage?.totals && aiUsage.totals.calls > 0 && (() => {
-            const t = aiUsage.totals!;
-            const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
-            const caller = Object.entries(aiUsage.byCaller || {}).map(([k, v]) => `${k}: ${v.toLocaleString()}`).join("  ·  ");
-            const tip = [`AI 用量 · in: ${t.in.toLocaleString()}`];
-            if (t.cacheRead) tip.push(`cache: ${t.cacheRead.toLocaleString()}`);
-            if (t.out) tip.push(`out: ${t.out.toLocaleString()}`);
-            tip.push(`calls: ${t.calls}`);
-            if (caller) tip.push(`by caller: ${caller}`);
-            return (
-              <button
-                type="button"
-                title={tip.join("  |  ")}
-                aria-label="AI usage"
-                onClick={() => toggleTopPanel("session")}
-                style={{
-                  display: "inline-flex", alignItems: "center", gap: 4, marginRight: 8,
-                  border: "1px solid var(--border)", borderRadius: 999, padding: "1px 8px",
-                  fontSize: 11, color: "var(--accent)", background: "var(--bg-panel)", cursor: "pointer", flexShrink: 0,
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0 }}>
-                  <circle cx="12" cy="12" r="9" /><path d="M2 12h20" /><path d="M12 2a15 15 0 0 1 0 20 15 15 0 0 1 0-20Z" />
-                </svg>
-                <span>AI</span>
-                <span>{fmt(t.in)}/{fmt(t.out)}</span>
-              </button>
-            );
-          })()}
+          {/* Session stats — right-aligned in top bar */}
           {showChat && (sessionStats || contextUsage) && (() => {
              const tokens = sessionStats?.tokens;
             const c = sessionStats?.cost ?? 0;
@@ -2281,6 +2252,18 @@ export function AppShell() {
                          ? [[translate("session.cacheHitRate"), `${(sessionStats.tokens.cacheRead / (sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input) * 100).toFixed(1)}%`]]
                          : []),
                     ];
+                    // AI 用量（core invokeAI 集中记账；按场景分：续写 / 语音修正）——不单独做徽标，并入本面板
+                    const aiSceneRows: string[][] = [];
+                    const bc = aiUsage?.byCaller || {};
+                    const sceneLabel = (k: string) => k.includes("/voice-fix") ? "AI 语音修正" : k.includes("/complete") ? "AI 续写" : k;
+                    for (const [k, v] of Object.entries(bc)) {
+                      if (!k.startsWith("aiti-ai-input")) continue; // 只展示本扩展（补全/语音）场景
+                      aiSceneRows.push([sceneLabel(k), `${v.toLocaleString(locale)} in`]);
+                    }
+                    if (aiUsage?.totals?.calls) {
+                      const t = aiUsage.totals;
+                      aiSceneRows.push(["AI 合计", `${t.in.toLocaleString(locale)} in / ${t.out.toLocaleString(locale)} out · ${t.calls} 次`]);
+                    }
                     const section = (
                       title: string,
                       sectionRows: string[][],
@@ -2393,6 +2376,7 @@ export function AppShell() {
                         {sessionInfoSection}
                          {section(translate("session.messages"), messageRows)}
                          {section(translate("session.tokens"), [...tokenRows, ...extraTokenRows], "right", true)}
+                         {aiSceneRows.length > 0 ? section("AI 用量", aiSceneRows, "right", true) : null}
                       </div>
                     );
                   })() : (

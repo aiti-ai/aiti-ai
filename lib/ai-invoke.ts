@@ -79,7 +79,9 @@ function toUsage(u: { input?: number; output?: number; cacheRead?: number; cache
 
 // ---------- token 统计（core 基础设施，非业务；集中记账） ----------
 export interface AiUsageRow { at: number; caller: string; provider: string; model: string; in: number; out: number; cacheRead: number; cacheWrite: number }
-const usages: AiUsageRow[] = [];
+// usages 挂 globalThis：next dev turbopack 会把本模块复制成多副本（各 route 各自持有），
+// 模块级数组会各记各的——globalThis 共享保证 invokeAI 记账与 ai-usage 查询看到同一份。
+const usages: AiUsageRow[] = (globalThis as unknown as { __aiInvokeUsage?: AiUsageRow[] }).__aiInvokeUsage ??= [];
 function recordUsage(r: Omit<AiUsageRow, "at">) {
   usages.push({ at: Date.now(), ...r });
   if (usages.length > 2000) usages.splice(0, usages.length - 2000);
