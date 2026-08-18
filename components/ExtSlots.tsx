@@ -69,6 +69,11 @@ export interface ExtClientContext {
   sendChatMessage(text: string, mode: "steer" | "followUp"): void;
   /** 注册消息段落点击接管 handler（消息点击识别薄宿主：core 广播段落点击事件，弹层 UI 全在扩展侧） */
   registerParagraphClick(handler: ParagraphClickHandler): void;
+  /** 主题条目注册（扩展间间接耦合）：发布条目到抽象主题（如 "msg-popover-action"），
+   *  返回 disposer。主题 id + 载荷结构由消费方定义（core 不解释内容）。 */
+  registerTopicItem<T>(topic: string, item: T): () => void;
+  /** 同步读取主题全部条目（消费方在交互时刻调用）。 */
+  getTopicItems<T>(topic: string): T[];
   /** 打开文件标签页（宿主公共接口，同步调用；返回 void/Promise） */
   openFile?(path: string, fileName?: string): void | Promise<void>;
   /** 侧栏文件树定位目录 */
@@ -97,6 +102,24 @@ export function useChatHooks(): ChatHook[] {
     () => chatHooks,
     () => EMPTY_CHAT_HOOKS,
   );
+}
+
+// ── 主题条目注册表（扩展间间接耦合：提供方 registerTopicItem 发布条目，消费方
+//    getTopicItems 同步读取。core 只做中转（Map<topic, Set<item>>），不解释内容——
+//    主题 id + 载荷结构是扩展间契约，由消费方（如 aiti-msg-smart 的
+//    "msg-popover-action"）定义并文档化。加载时序无虞：条目持久，消费方在交互
+//    时刻读（彼时各扩展均已注册）。）──
+const topicItems = new Map<string, Set<unknown>>();
+/** 注册主题条目；返回 disposer（精确移除本次注册）。 */
+export function registerTopicItem<T>(topic: string, item: T): () => void {
+  let set = topicItems.get(topic);
+  if (!set) { set = new Set(); topicItems.set(topic, set); }
+  set.add(item);
+  return () => { set.delete(item); if (set.size === 0) topicItems.delete(topic); };
+}
+/** 同步读取主题全部条目（消费方在交互时刻调用；非响应式，无需订阅）。 */
+export function getTopicItems<T>(topic: string): T[] {
+  return Array.from(topicItems.get(topic) ?? []) as T[];
 }
 
 /** 聊天发送处理器 store（扩展 ctx.sendChatMessage 的统一出口；ChatInput mount 时注册） */
@@ -173,6 +196,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     registerChatHook: (hook) => registerChatHooks(hook),
     sendChatMessage: (text, mode) => dispatchChatSend(text, mode),
     registerParagraphClick: (h) => registerParagraphClick(h),
+    registerTopicItem: (topic, item) => registerTopicItem(topic, item),
+    getTopicItems: (topic) => getTopicItems(topic),
     // 宿主公共接口（AppShell 经 registerHostApi 注册原样能力；fileName 兜底适配在框架层）
     openFile: (path, fileName) => getHostApi().openFile?.(path, fileName ?? path.split("/").pop() ?? path),
     revealDir: (absPath) => getHostApi().revealDir?.(absPath),
