@@ -308,7 +308,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     agentPhase,
     isNew,
     sessionIdRef, messagesEndRef, scrollContainerRef,
-    lastUserMsgRef, promptAnchorActive,
+    lastUserMsgRef,
     handleSend, handleAbort, handleFork, handleNavigate, handleEditFromStartSend, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue, handleContinueQueue,
@@ -997,7 +997,7 @@ const messageListEl = useMemo(() => {
   {rendered.slice(startIndex)}
   </>
   );
-  }, [messages, visibleCount, toolResultsMap, modelNames, messageCwd, onOpenFile, handleFork, handleNavigate, handleEditContent, handleEditFromHereMark, editFromHerePending, handleCancelEditFromHere, entryIds, streamState.isStreaming, sessionBusy, isNew, bashRunning, t]);
+  }, [messages, visibleCount, toolResultsMap, modelNames, messageCwd, onOpenFile, handleFork, handleNavigate, handleEditFromHereMark, editFromHerePending, handleCancelEditFromHere, entryIds, streamState.isStreaming, sessionBusy, isNew, bashRunning, t, forkingEntryId, lastUserMsgRef, messageRefs, session?.id, sessionIdRef]);
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-text-muted">
@@ -1142,7 +1142,7 @@ const messageListEl = useMemo(() => {
 
             {messageListEl}
             {streamState.isStreaming && hasStreamingContent && streamState.streamingMessage && (
-              <StreamingMessageView message={streamState.streamingMessage as AgentMessage} isStreaming />
+              <StreamingMessageView message={streamState.streamingMessage as AgentMessage} />
             )}
 
             {agentRunning && !hasStreamingContent && agentPhase && (
@@ -1631,8 +1631,8 @@ function ExtensionCustomPanel({
  * 与 MarkdownBody 的节流解析（200ms）对齐——文本尾部最多滞后一个节流窗口，视觉无感。
  * 流式结束（isStreaming=false）时组件卸载，消息移入历史列表走完整渲染。
  */
-function StreamingMessageView({ message, isStreaming }: {
-  message: AgentMessage; isStreaming: boolean;
+function StreamingMessageView({ message }: {
+  message: AgentMessage;
 }) {
   const [renderMsg, setRenderMsg] = useState<AgentMessage | null>(message);
   const lastTs = useRef(0);

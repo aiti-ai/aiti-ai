@@ -150,11 +150,11 @@ test("keeps live following cancellable when the user scrolls away from the tail"
   );
 
   assert.match(source, /const liveFollowFrameRef = useRef<number \| null>\(null\)/);
-  // Step-follow 由 useEffect [streamState] → smartFollowStep 承担（passive effect，
+  // Step-follow 由 useEffect [streamState] → scheduleFollowStep 承担（passive effect，
   // message_update 不再 rAF 读 rect（React commit 未落 DOM → 旧布局 → step 抖动），
-  // RO 回调只在发送/用户滚动被抑制（pendingScrollToUserRef）时跳过 smartFollowStep。
+  // RO 回调只在发送/用户滚动被抑制（pendingScrollToUserRef）时跳过 scheduleFollowStep。
   assert.doesNotMatch(streamUpdateSource, /liveFollowFrameRef\.current === null/);
-  assert.match(source, /useEffect\(\(\) => \{[\s\S]*?if \(pendingScrollToUserRef\.current\) return;[\s\S]*?if \(!agentRunningRef\.current\) return;[\s\S]*?smartFollowStep\(\);[\s\S]*?\}, \[streamState, messages, smartFollowStep\]\);/)
+  assert.match(source, /useEffect\(\(\) => \{[\s\S]*?if \(pendingScrollToUserRef\.current\) return;[\s\S]*?if \(!agentRunningRef\.current\) return;[\s\S]*?scheduleFollowStep\(\);[\s\S]*?\}, \[streamState, messages, scheduleFollowStep\]\);/)
   assert.match(scrollHandlerSource, /cancelAnimationFrame\(liveFollowFrameRef\.current\)/);
 });
 

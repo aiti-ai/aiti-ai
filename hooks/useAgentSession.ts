@@ -992,7 +992,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setRetryInfo(null);
     dispatchStream({ type: "end" });
     return wasRunning;
-  }, []);
+  }, [dispatchStream]);
 
   const notifyPromptStage = useCallback((runId: number) => {
     if (notifiedPromptRunIdRef.current === runId) return false;
@@ -1321,7 +1321,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             enqueueDelta(delta);
           }
         }
-        // Step-follow 触发统一由下方 useEffect [streamState] → smartFollowStep 承担
+        // Step-follow 触发统一由下方 useEffect [streamState] → scheduleFollowStep 承担
         // （passive effect，paint 后读布局免费；delta-batch 合并后每帧最多一次）。
         // 此处不再 rAF 读 rect：rAF 在渲染管线前执行，React 的 delta-batch commit
         // 可能尚未落到 DOM，读到旧布局 → step 到过期位置 → 原地抖动（实测）。
@@ -1445,7 +1445,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
     }
-  }, [addNotice, cancelEventStreamGrace, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage, smartFollowStep]);
+  }, [addNotice, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
@@ -1594,7 +1594,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setAgentPhase(null);
       dispatchStream({ type: "end" });
     }
-  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, composerDraftKey, reconcileAgentState, restoreSubmission]);
+  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, composerDraftKey, reconcileAgentState, restoreSubmission, dispatchStream]);
 
   const executeBash = useCallback(async (command: string, excludeFromContext: boolean) => {
     if (agentRunningRef.current || bashRunningRef.current) return;
@@ -2058,7 +2058,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       await new Promise((r) => setTimeout(r, 800));
       if (sessionIdRef.current === sid) await loadSession(sid);
     } catch { /* non-critical */ }
-  }, [ensureEventsConnected, waitForPromptSettlement, loadSession]);
+  }, [ensureEventsConnected, waitForPromptSettlement, loadSession, dispatchStream]);
 
   /**
    * Decide what to do with pending recovery items: keep (re-queue, optionally
