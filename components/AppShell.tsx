@@ -21,7 +21,7 @@ import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
-import { useIsMobile } from "@/hooks/useIsMobile";
+import { useIsCompact, useIsMobile } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
@@ -102,6 +102,7 @@ export function AppShell() {
     preference === "light" ? "theme.light" : preference === "dark" ? "theme.dark" : "theme.auto";
   const { locale, setLocale, t: translate, supportedLocales } = useI18n();
   const isMobile = useIsMobile();
+  const isCompact = useIsCompact();
   // 图标按钮宽度统一 36px（与扩展按钮一致）；图标大小也固定 16px（renderTopbarItem 内 iconDim）
   useViewportHeight();
   // Audio ownership lives here (not in ChatWindow) so the completion tone can
@@ -976,9 +977,11 @@ export function AppShell() {
   const topbarDefaultOrder = useMemo<TopbarOrderItem[]>(
     () => [
       "theme", "language",
+      // 会话级 widget（sessionTopbar：标签 ★/chips/+）优先留在顶栏行——设计「聊天顶部栏 tag 区保持可见」；
+      // 窄屏时先溢出的改成扩展图标按钮（仍可从 ⋯ 进入）
+      ...topbarSessionExtIds,
       ...topbarToolbarExtIds,
       "history", "export", "title", "branch", "system",
-      ...topbarSessionExtIds,
     ],
     [topbarToolbarExtIds, topbarSessionExtIds],
   );
@@ -2054,12 +2057,13 @@ export function AppShell() {
                 onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "session" ? "var(--text)" : "var(--text-muted)"; }}
               >
-                {isMobile && (
+                {(isMobile || (isCompact && !ctxStr)) && (
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
                   </svg>
                 )}
-                 {!isMobile && tokens && tokens.input > 0 && (
+                {/* 紧凑档（pad 竖屏 641–959px）：只保留上下文占用（最有用的一眼信息），把行宽让给 tag 区等 */}
+                {!isMobile && !isCompact && tokens && tokens.input > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
@@ -2067,7 +2071,7 @@ export function AppShell() {
                      {fmt(tokens.input)}
                   </span>
                 )}
-                 {!isMobile && tokens && tokens.output > 0 && (
+                 {!isMobile && !isCompact && tokens && tokens.output > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
@@ -2075,7 +2079,7 @@ export function AppShell() {
                      {fmt(tokens.output)}
                   </span>
                 )}
-                 {!isMobile && tokens && tokens.cacheRead > 0 && (
+                 {!isMobile && !isCompact && tokens && tokens.cacheRead > 0 && (
                   <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M8.5 5a3.5 3.5 0 1 1-1-2.45" /><polyline points="6.5 1.5 8.5 2.5 7.5 4.5" />
@@ -2083,7 +2087,7 @@ export function AppShell() {
                      {fmt(tokens.cacheRead)}
                   </span>
                 )}
-                {!isMobile && costStr && (
+                {!isMobile && !isCompact && costStr && (
                   <span style={{ display: "flex", alignItems: "center", color: "var(--text)", fontWeight: 500 }}>
                     {costStr}
                   </span>
