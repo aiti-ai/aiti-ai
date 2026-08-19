@@ -15,6 +15,7 @@ const CONTENT_TYPES: Record<string, string> = {
   ".css": "text/css; charset=utf-8",
   ".html": "text/html; charset=utf-8",
   ".map": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml; charset=utf-8",
 };
 
 // 扩展 API 通用 CORS（aiti-devtools 注入页跨域直连桥；本地开发场景）

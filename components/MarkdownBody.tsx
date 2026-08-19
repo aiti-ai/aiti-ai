@@ -260,8 +260,11 @@ function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, m
   const inline = as === "tr" && typeof document !== "undefined"
     ? createPortal(inlineNode, document.body)
     : inlineNode;
-  // tip 同理：<span> 不能是 <tr> 的子元素（否则 hydration 报错）→ tr 时 portal 到 body。
-  const tipOut = as === "tr" && tip && typeof document !== "undefined"
+  // tip 一律 portal 到 body（position: fixed 本来就脱离文档流）：若作为 p/li 的 DOM 兄弟插入
+  // markdown-body/blockquote 内部，会让原 :last-child 失效——`.markdown-body p:last-child
+  // { margin-bottom: 0 }` 停止匹配，段落 8px 底边距恢复 → hover 时内容被撑开 8px（实测复现）。
+  // 挂到 body 后 markdown DOM 树保持原样，:last-child 规则不受影响；fixed 定位视觉不变。
+  const tipOut = tip && typeof document !== "undefined"
     ? createPortal(tip, document.body)
     : tip;
 

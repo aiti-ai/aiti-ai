@@ -282,7 +282,7 @@ export interface PiWebExtension {
   ui?: ExtUiDefinition;
   /** Relative path (from the extension dir) to a prebuilt ESM client bundle. */
   client?: string;
-  /** 短图标/emoji（如 "🧰"）——顶栏自定义面板等 UI 中标注扩展身份用，可选。 */
+  /** 短图标/emoji（如 "🧰"）或相对扩展目录的图标文件路径（如 "icon.svg"，lucide 线条风格），可选。 */
   icon?: string;
   /** 功能管理声明：扩展开放的、可被用户启用/禁用的功能清单（见 ExtFeature）。 */
   features?: ExtFeature[];

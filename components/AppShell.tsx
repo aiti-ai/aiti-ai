@@ -2453,7 +2453,8 @@ export function AppShell() {
                         </div>
                         {extMeta && (
                           <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                            {extMeta.icon && (
+                            {/* 扩展图标由扩展管理（aiti-extman）面板完整展示；宿主仅渲染 emoji/文本标记，不解析扩展资产（icon.svg 等路径不在宿主显示） */}
+                            {extMeta.icon && typeof extMeta.icon === "string" && !extMeta.icon.endsWith(".svg") && (
                               <span
                                 title={extMeta.name}
                                 style={{ fontSize: 11, lineHeight: 1, color: "var(--text-muted)" }}
@@ -2510,7 +2511,7 @@ export function AppShell() {
 
         {/* Chat content */}
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
-          <ExtSlot name="pages" extra={{ activeCwd, onSelectSession: handleSelectSession }} />
+          <ExtSlot name="pages" extra={{ activeCwd, onSelectSession: handleSelectSession, sessionId: selectedSession?.id ?? null, sessionName: selectedSession?.name ?? null, sessionCwd: selectedSession?.cwd ?? null }} />
           {showChat ? (
             <ChatWindow
               key={sessionKey}
