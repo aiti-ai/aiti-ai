@@ -142,6 +142,8 @@ export interface ExtUiItem {
   title?: string;
   /** slot-specific placement hints (e.g. sidebar badge) */
   badge?: boolean;
+  /** 菜单内已自带完整内容（如搜索输入框），宿主不再补文字 label */
+  noMenuLabel?: boolean;
 }
 
 export type ExtSlotName =

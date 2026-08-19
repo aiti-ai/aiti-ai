@@ -27,7 +27,7 @@ export interface ExtUiItemRegistered {
   extId?: string;
   /** Component receiving ExtRenderProps (currentSession etc.). */
   render: (props: ExtRenderProps) => ReactNode;
-  meta?: { label?: string; title?: string; badge?: boolean };
+  meta?: { label?: string; title?: string; badge?: boolean; noMenuLabel?: boolean };
 }
 
 /** 扩展级元数据（manifest：name/icon），供宿主 UI 标注扩展身份。 */

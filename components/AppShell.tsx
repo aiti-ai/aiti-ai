@@ -1520,7 +1520,8 @@ export function AppShell() {
       // 与内建条目（图标+文字）对齐，避免"只有图标没文字"；
       // 两槽都补 label（toolbar 图标按钮 / sessionTopbar widget 统一为图标+文字菜单项）
       const extItem2 = toolbarItem ?? sessionItem;
-      const label = extItem2
+      // noMenuLabel：扩展在 ⋯ 菜单里已自带完整内容（如搜索输入框+按钮），宿主不再补文字 label
+      const label = extItem2 && !extItem2.meta?.noMenuLabel
         ? (extItem2.meta?.label ?? extItem2.meta?.title ?? id)
         : null;
       // 整行可点：扩展内部按钮承载动作，点击文字/空白区域委托给它触发（与内建条目整行 button 一致）；
