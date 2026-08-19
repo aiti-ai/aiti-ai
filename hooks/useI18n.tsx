@@ -51,32 +51,31 @@ export function I18nProvider({
   /** 服务端探测的初始语言（来自 cookie / Accept-Language）；客户端优先用内联脚本预设值。 */
   initialLocale?: Locale;
 }) {
-  // 懒初始化：客户端优先读取 <head> 内联脚本预设的 window.__PI_LOCALE__（在 React
-  // hydrate 前已就绪），保证首次渲染即为正确语言，避免「先英文再切中文」的二次渲染。
-  const [locale, setLocaleState] = useState<Locale>(() => {
-    if (typeof window !== "undefined") {
-      const preset = globalWithLocale.__PI_LOCALE__;
-      if (preset === "en" || preset === "zh-CN") return preset;
-      // 内联脚本未跑（极端情况），退回 localStorage / 浏览器语言同步探测。
-      return readInitialLocale();
-    }
-    return initialLocale;
-  });
+  // 首次渲染始终用服务端传入的 initialLocale——保证 SSR 与 hydration 一致，
+  // 避免 React hydration mismatch。客户端探测的偏好在 useEffect 里校正。
+  const [locale, setLocaleState] = useState<Locale>(initialLocale);
   const supportedLocales = useMemo(
     () => getSupportedLocales().map((id) => getLocalePlugin(id)).filter((plugin): plugin is LocalePlugin => Boolean(plugin)),
     [],
   );
   const messages = useMemo(() => getMessages(), []);
 
-  // hydrate 后同步 <html lang> 与 localStorage（内联脚本已设过，这里确保一致性）。
+  // hydrate 后：校正为客户端实际探测的语言（内联脚本预设值），同时同步 <html lang> 与 localStorage。
+  // 仅在内联脚本探测结果与服务端 initialLocale 不同时才 setLocaleState（罕见），
+  // 常见情况（cookie/localStorage 一致）不会触发二次渲染。
   useEffect(() => {
-    document.documentElement.lang = locale;
+    const clientLocale = globalWithLocale.__PI_LOCALE__;
+    const next = (clientLocale === "en" || clientLocale === "zh-CN")
+      ? clientLocale
+      : readInitialLocale();
+    if (next !== initialLocale) setLocaleState(next);
+    document.documentElement.lang = next;
     try {
-      window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+      window.localStorage.setItem(LOCALE_STORAGE_KEY, next);
     } catch {
       // 存储失败不影响当前页面内的语言切换。
     }
-  }, [locale]);
+  }, [initialLocale]);
 
   const setLocale = useCallback((next: Locale) => {
     if (!getLocalePlugin(next)) return;
