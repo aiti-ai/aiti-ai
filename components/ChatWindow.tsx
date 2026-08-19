@@ -882,11 +882,11 @@ const messageListEl = useMemo(() => {
   cwd={messageCwd}
   onOpenFile={onOpenFile}
   entryId={entryIds[idx]}
-  onFork={isNew || bashRunning ? undefined : handleFork}
+  onFork={isNew ? undefined : handleFork}
   forking={forkingEntryId === entryIds[idx]}
-  onNavigate={isNew || bashRunning ? undefined : handleNavigate}
-  prevAssistantEntryId={isNew || bashRunning ? undefined : prevAssistantEntryId}
-  onEditFromHere={isNew || bashRunning ? undefined : handleEditFromHereMark}
+  onNavigate={isNew ? undefined : handleNavigate}
+  prevAssistantEntryId={isNew ? undefined : prevAssistantEntryId}
+  onEditFromHere={isNew ? undefined : handleEditFromHereMark}
   editingFromStart={editFromHerePending?.entryId === entryIds[idx]}
   onCancelEditFromStart={handleCancelEditFromHere}
   showTimestamp={showTimestamp}

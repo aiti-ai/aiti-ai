@@ -927,9 +927,9 @@ export class AgentSessionWrapper {
       }
 
       case "fork": {
-        if (this.inner.isBashRunning) {
-          throw new Error("Cannot fork while a shell command is running");
-        }
+        // 不阻止运行中 fork：fork 只是把会话历史复制到新文件，
+        // 不应中断正在运行的 agent。旧 wrapper 若仍在运行则保留，
+        // 由 idle timer（10 min）自然清理。
         const entryId = command.entryId as string;
         const sessionManager = this.inner.sessionManager;
         const currentSessionFile = this.inner.sessionFile;
@@ -972,14 +972,15 @@ export class AgentSessionWrapper {
         const newSessionId = forkedManager.getSessionId();
         cacheSessionPath(newSessionId, newSessionFile);
         invalidateSessionListCache();
-        await this.shutdown("fork");
+        // 仅在 agent 空闲时销毁旧 wrapper；运行中则保留，让 idle timer 清理。
+        if (!this.isRunning()) {
+          await this.shutdown("fork");
+        }
         return { cancelled: false, newSessionId };
       }
 
       case "navigate_tree": {
-        if (this.inner.isBashRunning) {
-          throw new Error("Cannot navigate while a shell command is running");
-        }
+        // 允许运行中 navigate：与 fork 一样不中断 agent。
         const result = await this.inner.navigateTree(command.targetId as string, {});
         return { cancelled: result.cancelled };
       }
