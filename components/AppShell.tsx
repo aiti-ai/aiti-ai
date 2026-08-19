@@ -1907,9 +1907,12 @@ export function AppShell() {
           ref={topBarRef}
           style={{
             display: "flex", alignItems: "center", flexShrink: 0,
-            borderBottom: "1px solid var(--border)",
-            // 全局 box-sizing: border-box：36px 目标内容区 + 1px border-bottom
-            height: "calc(37px + env(safe-area-inset-top))",
+            // 分割线用 inset box-shadow 画（不占布局空间）：
+            // 全局 box-sizing: border-box + 1px border 会吃掉内容区 1px → 容器要写 37px；
+            // 改 inset shadow 后容器高度回归基准 36px，内容区即 36px，与按钮/图标槽/扩展完全同构
+            borderBottom: "none",
+            boxShadow: "inset 0 -1px 0 var(--border)",
+            height: "calc(36px + env(safe-area-inset-top))",
             paddingTop: "env(safe-area-inset-top)",
             background: "var(--bg-panel)",
             overflowX: "hidden",
@@ -2651,7 +2654,7 @@ export function AppShell() {
           background: "var(--bg)",
         } as React.CSSProperties}
       >
-        {/* Right panel tab bar */}
+        {/* Right panel tab bar — 与主顶栏同构：容器 36px（分割线用 inset box-shadow，不占内容区） */}
         <div style={{
           display: "flex",
           alignItems: "center",
@@ -2659,7 +2662,8 @@ export function AppShell() {
           height: "calc(36px + env(safe-area-inset-top))",
           paddingTop: "env(safe-area-inset-top)",
           background: "var(--bg-panel)",
-          borderBottom: "1px solid var(--border)",
+          borderBottom: "none",
+          boxShadow: "inset 0 -1px 0 var(--border)",
         }}>
           <div style={{ flex: 1, overflow: "hidden" }}>
             <TabBar
