@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, useSyncExternalStore, type CSSProperties, type MouseEvent } from "react";
 import { apiUrl } from "@/lib/base-path";
 
 import {
@@ -21,6 +21,7 @@ import {
 } from "@/lib/file-types";
 import { encodeFilePathForApi, getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { resolveLocalFileHref } from "@/lib/file-links";
+import { getExtUiItems, subscribeExtUi, type ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { parseFrontmatter } from "@/lib/frontmatter";
 import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
 import { CodeBlock, MermaidBlock } from "./MermaidBlock";
@@ -62,6 +63,9 @@ const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
   preview: "Preview",
   diff: "Diff",
 };
+
+/** fileViewer 接管槽稳定空快照（SSR/未注册时不接管，避免 useSyncExternalStore 重渲染循环）。 */
+const FILE_VIEWER_NO_ITEMS: ExtUiItemRegistered[] = [];
 
 const FILE_CODE_STYLE: CSSProperties = {
   fontFamily: "var(--font-mono)",
@@ -936,6 +940,31 @@ export function FileViewer({
   onStateChange,
   watchEnabled = true,
 }: Props) {
+  // —— 扩展接管跳板（aiti-editor）：fileViewer slot 项的 meta.match(filePath) 命中 →
+  //    交给扩展接管组件渲染；无命中（未注册 / 不接管）→ 走下方原有各查看器逻辑，
+  //    行为零回归。接管项自带 match 判定契约（同构 ExtSlots 跳板模式，ext-ui-store 响应式）。
+  const takeoverItems = useSyncExternalStore(
+    subscribeExtUi,
+    () => getExtUiItems("fileViewer"),
+    () => FILE_VIEWER_NO_ITEMS, // 服务端稳定空快照（SSR 不接管；hydration 后接管项生效）
+  );
+  const takeover = takeoverItems.find((item) => {
+    const match = item.meta?.match;
+    return typeof match === "function" && match(filePath, { cwd });
+  });
+  if (takeover) {
+    return takeover.render({
+      currentSession: sourceSessionId ? { id: sourceSessionId, cwd: cwd ?? "" } : null,
+      filePath,
+      cwd,
+      sourceSessionId,
+      gitRefreshKey,
+      watchEnabled,
+      onOpenFile,
+      onMentionLines,
+      onAtMention,
+    });
+  }
   if (isImagePath(filePath)) {
     return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} watchEnabled={watchEnabled} />;
   }

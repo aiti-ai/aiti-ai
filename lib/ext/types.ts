@@ -157,6 +157,7 @@ export type ExtSlotName =
   | "pages"
   | "chatInputTop"   // 聊天输入框上方（aiti-devtools：inspect 候选区等）
   | "userMessageActions" // user 消息底部 hover 操作区（aiti-prompts：📌 收藏为 prompt 等）
+  | "fileViewer"     // 文件查看/编辑接管（aiti-editor：文本文件编辑；未接管时核心 FileViewer 原逻辑）
   ;
 
 /**
@@ -263,6 +264,7 @@ export interface ExtUiDefinition {
   dialogs?: ExtUiItem[];
   banners?: ExtUiItem[];
   pages?: ExtUiItem[];
+  fileViewer?: ExtUiItem[];   // 文件查看/编辑接管项（核心 FileViewer 跳板渲染；项需带 match 判定才生效）
   chatInputTop?: ExtUiItem[];
   /** 接管内置能力（见 EXT_PROVIDES）：如 ["session-delete"] 让 core 隐藏侧栏内置删除按钮。 */
   provides?: string[];

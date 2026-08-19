@@ -27,7 +27,15 @@ export interface ExtUiItemRegistered {
   extId?: string;
   /** Component receiving ExtRenderProps (currentSession etc.). */
   render: (props: ExtRenderProps) => ReactNode;
-  meta?: { label?: string; title?: string; badge?: boolean; noMenuLabel?: boolean };
+  meta?: {
+    label?: string;
+    title?: string;
+    badge?: boolean;
+    noMenuLabel?: boolean;
+    /** fileViewer 接管判定（aiti-editor）：核心 FileViewer 跳板调用——
+     *  文件是否交给该扩展渲染（缺省视为不接管 → 核心原查看器兜底，零回归）。 */
+    match?: (filePath: string, opts: { cwd?: string }) => boolean;
+  };
 }
 
 /** 扩展级元数据（manifest：name/icon），供宿主 UI 标注扩展身份。 */
@@ -151,8 +159,11 @@ export function resetExtUiItems(): void {
   bump();
 }
 
+const NO_UI_ITEMS: ExtUiItemRegistered[] = [];
+
 export function getExtUiItems(slot: ExtSlotName): ExtUiItemRegistered[] {
-  return getStore().items[slot] ?? [];
+  // 空时返回稳定引用（useSyncExternalStore 快照稳定性要求：每次新数组会触发无限循环）
+  return getStore().items[slot] ?? NO_UI_ITEMS;
 }
 
 export function subscribeExtUi(cb: () => void): () => void {
