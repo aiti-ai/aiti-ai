@@ -6,7 +6,11 @@ import { translateMessage } from "@/lib/i18n/format";
 import type { Locale, LocalePlugin, TranslationParams } from "@/lib/i18n/types";
 
 const LOCALE_STORAGE_KEY = "pi-locale";
+const LOCALE_COOKIE_KEY = "pi-locale";
 const defaultLocale: Locale = "en";
+
+/** 服务端可传入的初始语言（来自 cookie / Accept-Language 探测）。 */
+const globalWithLocale = globalThis as typeof globalThis & { __PI_LOCALE__?: Locale };
 
 interface I18nContextValue {
   locale: Locale;
@@ -39,21 +43,40 @@ function readInitialLocale(): Locale {
  * @param props React 子节点
  * @returns 包含语言上下文的 React 节点
  */
-export function I18nProvider({ children }: { children: React.ReactNode }) {
-  const [locale, setLocaleState] = useState<Locale>(defaultLocale);
-  const [hydrated, setHydrated] = useState(false);
+export function I18nProvider({
+  children,
+  initialLocale = defaultLocale,
+}: {
+  children: React.ReactNode;
+  /** 服务端探测的初始语言（来自 cookie / Accept-Language）；客户端优先用内联脚本预设值。 */
+  initialLocale?: Locale;
+}) {
+  // 懒初始化：客户端优先读取 <head> 内联脚本预设的 window.__PI_LOCALE__（在 React
+  // hydrate 前已就绪），保证首次渲染即为正确语言，避免「先英文再切中文」的二次渲染。
+  const [locale, setLocaleState] = useState<Locale>(() => {
+    if (typeof window !== "undefined") {
+      const preset = globalWithLocale.__PI_LOCALE__;
+      if (preset === "en" || preset === "zh-CN") return preset;
+      // 内联脚本未跑（极端情况），退回 localStorage / 浏览器语言同步探测。
+      return readInitialLocale();
+    }
+    return initialLocale;
+  });
   const supportedLocales = useMemo(
     () => getSupportedLocales().map((id) => getLocalePlugin(id)).filter((plugin): plugin is LocalePlugin => Boolean(plugin)),
     [],
   );
   const messages = useMemo(() => getMessages(), []);
 
+  // hydrate 后同步 <html lang> 与 localStorage（内联脚本已设过，这里确保一致性）。
   useEffect(() => {
-    const next = readInitialLocale();
-    setLocaleState(next);
-    document.documentElement.lang = next;
-    setHydrated(true);
-  }, []);
+    document.documentElement.lang = locale;
+    try {
+      window.localStorage.setItem(LOCALE_STORAGE_KEY, locale);
+    } catch {
+      // 存储失败不影响当前页面内的语言切换。
+    }
+  }, [locale]);
 
   const setLocale = useCallback((next: Locale) => {
     if (!getLocalePlugin(next)) return;
@@ -64,10 +87,16 @@ export function I18nProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // 存储失败不影响当前页面内的语言切换。
     }
+    // 同步 cookie，让下次 SSR 直接命中正确语言。
+    try {
+      document.cookie = `${LOCALE_COOKIE_KEY}=${next};path=/;max-age=31536000;SameSite=Lax`;
+    } catch {
+      // cookie 写入失败不影响当前页面。
+    }
   }, []);
 
   const t = useCallback((key: string, params?: TranslationParams) => translateMessage(locale, key, messages, params), [locale, messages]);
-  const value = useMemo(() => ({ locale: hydrated ? locale : defaultLocale, setLocale, t, supportedLocales }), [hydrated, locale, setLocale, t, supportedLocales]);
+  const value = useMemo(() => ({ locale, setLocale, t, supportedLocales }), [locale, setLocale, t, supportedLocales]);
 
   return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
