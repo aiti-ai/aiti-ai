@@ -102,9 +102,7 @@ export function AppShell() {
     preference === "light" ? "theme.light" : preference === "dark" ? "theme.dark" : "theme.auto";
   const { locale, setLocale, t: translate, supportedLocales } = useI18n();
   const isMobile = useIsMobile();
-  // Top-bar (HUD) icon button size — smaller on small screens so the icon row
-  // fits the viewport; desktop keeps the roomier 36px touch target.
-  const topBarIconButtonSize = isMobile ? 28 : TOP_BAR_ICON_BUTTON_SIZE;
+  // 图标按钮宽度统一 36px（与扩展按钮一致）；图标大小也固定 16px（renderTopbarItem 内 iconDim）
   useViewportHeight();
   // Audio ownership lives here (not in ChatWindow) so the completion tone can
   // also fire for tasks finishing in a non-active workspace whose ChatWindow
@@ -1151,12 +1149,18 @@ export function AppShell() {
   // ---- 顶栏按钮渲染（行内 / ⋯ 菜单两套外壳） ----
   const topbarMenuRowStyle: React.CSSProperties = {
     display: "flex", alignItems: "center", gap: 8,
-    width: "100%", padding: "9px 14px",
+    width: "100%", height: 36, padding: "0 14px",
     background: "none",
     // 全部用 longhand，避免与行内按钮的 borderRight/borderTop longhand 混用
     // 触发 React “removing shorthand (border) when conflicting (borderRight)” 告警
     borderLeft: "none", borderRight: "none", borderTop: "none", borderBottom: "none",
     color: "var(--text)", cursor: "pointer", textAlign: "left", fontSize: 13,
+  };
+  // ⋯ 菜单图标槽：内建项 icon 包进 36px 槽（右竖线），与扩展按钮（ExtComponent 36px + borderRight）布局完全一致
+  const topbarMenuIconSlotStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    width: 36, height: "100%", flexShrink: 0,
+    borderRight: "1px solid var(--border)",
   };
   const topbarRowBtnStyle = (): React.CSSProperties => ({
     display: "flex", alignItems: "center", justifyContent: "center",
@@ -1176,7 +1180,8 @@ export function AppShell() {
 
   const renderTopbarItem = (id: string, inRow: boolean, forMeasure = false, forPreview = false): React.ReactNode => {
     const menu = !inRow;
-    const iconDim = isMobile ? 13 : 16;
+    // 图标统一 16px：与扩展按钮（topbarBtnStyle 固定 16px）一致，不再随 isMobile 缩小
+    const iconDim = 16;
     if (id === "theme") {
       return (
         <button
@@ -1191,10 +1196,11 @@ export function AppShell() {
           aria-pressed={preference !== "auto"}
           style={menu
             ? topbarMenuRowStyle
-            : { ...topbarRowBtnStyle(), width: topBarIconButtonSize, height: topBarIconButtonSize }}
+            : { ...topbarRowBtnStyle(), width: TOP_BAR_ICON_BUTTON_SIZE }}
           onMouseEnter={menu ? menuEnter : rowEnter}
           onMouseLeave={menu ? menuLeave : rowLeave}
         >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
           {preference === "dark" ? (
             <svg width={iconDim} height={iconDim} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
@@ -1214,6 +1220,7 @@ export function AppShell() {
               <line x1="12" y1="17" x2="12" y2="21" />
             </svg>
           )}
+          </span>
         </button>
       );
     }
@@ -1233,13 +1240,14 @@ export function AppShell() {
             ? { ...topbarMenuRowStyle, ...(active ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) }
             : {
               ...topbarRowBtnStyle(),
-              width: topBarIconButtonSize, height: topBarIconButtonSize,
+              width: TOP_BAR_ICON_BUTTON_SIZE,
               background: active ? "var(--bg-selected)" : "none",
               color: active ? "var(--text)" : "var(--text-muted)",
             }}
           onMouseEnter={menu ? menuEnter : rowEnter}
           onMouseLeave={menu ? menuLeave : rowLeave}
         >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
           <svg width={iconDim} height={iconDim} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
             <path d="m5 8 6 6" />
             <path d="m4 14 6-6 2-3" />
@@ -1248,6 +1256,7 @@ export function AppShell() {
             <path d="m22 22-5-10-5 10" />
             <path d="M14 18h6" />
           </svg>
+          </span>
         </button>
       );
     }
@@ -1259,8 +1268,7 @@ export function AppShell() {
       const labelBtn = menu ? { ...topbarMenuRowStyle, justifyContent: "flex-start" } : {
         display: "flex", alignItems: "center", gap: 6,
         height: "100%", padding: isMobile ? "0 8px" : "0 12px",
-        background: "none", borderLeft: "none", borderBottom: "none",
-        borderTop: "2px solid transparent",
+        background: "none", borderLeft: "none", borderTop: "none", borderBottom: "none",
         borderRight: "1px solid var(--border)",
         color: disabled ? "var(--text-dim)" : "var(--text-muted)",
         cursor: disabled ? "not-allowed" : "pointer",
@@ -1285,11 +1293,13 @@ export function AppShell() {
             e.currentTarget.style.background = "none";
           }}
         >
-          <svg width={isMobile ? 11 : 12} height={isMobile ? 11 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: disabled ? "var(--text-dim)" : "var(--text-muted)", flexShrink: 0 }}>
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: disabled ? "var(--text-dim)" : "var(--text-muted)", flexShrink: 0 }}>
             <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
             <path d="M3 3v5h5" />
             <path d="M12 7v5l3 2" />
           </svg>
+          </span>
           {!forPreview && <span>{translate("history.label")}</span>}
         </button>
       );
@@ -1323,11 +1333,13 @@ export function AppShell() {
             e.currentTarget.style.background = "none";
           }}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
             <polyline points="7 10 12 15 17 10" />
             <line x1="12" y1="15" x2="12" y2="3" />
           </svg>
+          </span>
           {!forPreview && <span>{translate("history.exportPrompts")}</span>}
         </button>
       );
@@ -1364,8 +1376,7 @@ export function AppShell() {
           style={menu ? { ...topbarMenuRowStyle, justifyContent: "flex-start" } : {
             display: "flex", alignItems: "center", gap: 6,
             height: "100%", padding: "0 12px",
-            background: "none", borderLeft: "none", borderBottom: "none",
-            borderTop: "2px solid transparent",
+            background: "none", borderLeft: "none", borderTop: "none", borderBottom: "none",
             borderRight: "1px solid var(--border)",
             color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
             cursor: disabled ? "not-allowed" : "pointer",
@@ -1383,22 +1394,24 @@ export function AppShell() {
             e.currentTarget.style.background = "none";
           }}
         >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
           {autoNameStatus.kind === "naming" ? (
-            <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <svg className="animate-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
               <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
               <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
             </svg>
           ) : isSuccess ? (
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <polyline points="20 6 9 17 4 12" />
             </svg>
           ) : (
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="m15 4 5 5L7 22l-5-5Z" />
               <path d="m14 5 5 5" />
               <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
             </svg>
           )}
+          </span>
           {!forPreview && <span>{label}</span>}
         </button>
       );
@@ -1418,7 +1431,7 @@ export function AppShell() {
             background: active ? "var(--bg-selected)" : "none",
             borderLeft: "none",
             borderBottom: "none",
-            borderTop: active ? "2px solid var(--accent)" : "2px solid transparent",
+            borderTop: "none",
             borderRight: "1px solid var(--border)",
             cursor: "pointer",
             color: active ? "var(--text)" : "var(--text-muted)",
@@ -1427,13 +1440,15 @@ export function AppShell() {
           onMouseEnter={menu ? menuEnter : rowEnter}
           onMouseLeave={menu ? menuLeave : rowLeave}
         >
-          <span style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-              <line x1="8" y1="13" x2="16" y2="13" />
-              <line x1="8" y1="17" x2="13" y2="17" />
-            </svg>
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+            <span style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="8" y1="13" x2="16" y2="13" />
+                <line x1="8" y1="17" x2="13" y2="17" />
+              </svg>
+            </span>
           </span>
           {!forPreview && <span>{translate("system.label")}</span>}
         </button>
@@ -1451,12 +1466,14 @@ export function AppShell() {
             onMouseEnter={menuEnter}
             onMouseLeave={menuLeave}
           >
+            <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <line x1="6" y1="3" x2="6" y2="15" />
               <circle cx="18" cy="6" r="3" />
               <circle cx="6" cy="18" r="3" />
               <path d="M18 9a9 9 0 0 1-9 9" />
             </svg>
+            </span>
             <span>{translate("i18n.branches")}</span>
           </button>
         );
@@ -1501,14 +1518,30 @@ export function AppShell() {
     if (menu) {
       // ⋯ 下拉里扩展按钮本身常为纯图标（30px），补一个 meta.label 文字，
       // 与内建条目（图标+文字）对齐，避免"只有图标没文字"；
-      // 仅 toolbar 槽（图标按钮）；sessionTopbar 多为带文字 widget，不补
-      const label = toolbarItem
-        ? (toolbarItem.meta?.label ?? toolbarItem.meta?.title ?? id)
+      // 两槽都补 label（toolbar 图标按钮 / sessionTopbar widget 统一为图标+文字菜单项）
+      const extItem2 = toolbarItem ?? sessionItem;
+      const label = extItem2
+        ? (extItem2.meta?.label ?? extItem2.meta?.title ?? id)
         : null;
+      // 整行可点：扩展内部按钮承载动作，点击文字/空白区域委托给它触发（与内建条目整行 button 一致）；
+      // 布局与内建条目统一：topbarMenuRowStyle（height 36 + padding 0 14px + gap 8），无中间分割线
+      const delegateClick = (e: React.MouseEvent<HTMLDivElement>) => {
+        // input/textarea（如 ⋯ 里的搜索输入框）自身承接点击：不委托、不关菜单
+        if ((e.target as HTMLElement).closest("button, [role='button'], input, textarea")) return;
+        const inner = e.currentTarget.querySelector<HTMLElement>("button, [role='button']");
+        if (inner) inner.click();
+      };
       return (
-        <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minHeight: 36, padding: "0 14px" }}>
+        <div
+          role="menuitem"
+          onClick={delegateClick}
+          onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+          style={{ ...topbarMenuRowStyle, justifyContent: "flex-start" }}
+        >
           <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-            <ExtComponent {...extProps} />
+            {/* menu 标志：扩展可在菜单场景切换渲染（如 session-manager 搜索框 → 菜单里只显图标+文字） */}
+            <ExtComponent {...extProps} menu />
           </div>
           {label && (
             <span style={{ fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -1520,7 +1553,7 @@ export function AppShell() {
     }
     return (
       <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-        <ExtComponent {...extProps} />
+        <ExtComponent {...extProps} menu={false} />
       </div>
     );
   };
@@ -1557,7 +1590,7 @@ export function AppShell() {
         key={item}
         onClickCapture={sessionTopbarExtItems.some((it) => it.id === item)
           ? undefined
-          : () => { setTimeout(() => setMoreOpen(false), 0); }}
+          : (e) => { if ((e.target as HTMLElement).closest("input, textarea")) return; setTimeout(() => setMoreOpen(false), 0); }}
       >
         {renderTopbarItem(item, false)}
       </div>
@@ -1871,7 +1904,8 @@ export function AppShell() {
           style={{
             display: "flex", alignItems: "center", flexShrink: 0,
             borderBottom: "1px solid var(--border)",
-            height: "calc(36px + env(safe-area-inset-top))",
+            // 全局 box-sizing: border-box：36px 目标内容区 + 1px border-bottom
+            height: "calc(37px + env(safe-area-inset-top))",
             paddingTop: "env(safe-area-inset-top)",
             background: "var(--bg-panel)",
             overflowX: "hidden",
@@ -1888,7 +1922,7 @@ export function AppShell() {
              aria-label={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
-              width: topBarIconButtonSize, height: topBarIconButtonSize, padding: 0,
+              width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
               background: "none", borderLeft: "none", borderTop: "none", borderBottom: "none",
               borderRight: "1px solid var(--border)",
               color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
@@ -1897,11 +1931,11 @@ export function AppShell() {
             onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
           >
             {sidebarOpen ? (
-              <svg width={isMobile ? 13 : 16} height={isMobile ? 13 : 16} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="9" y1="3" x2="9" y2="21" />
               </svg>
             ) : (
-              <svg width={isMobile ? 14 : 18} height={isMobile ? 14 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                 <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
               </svg>
             )}
@@ -1909,7 +1943,7 @@ export function AppShell() {
           {/* 可排序/隐藏/间隔的工具按钮行：行内只渲染放得下的，离屏 strip 用于测量 */}
           <div
             ref={itemsRowRef}
-            style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "stretch", overflowX: "hidden", position: "relative" }}
+            style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "stretch", height: "100%", overflowX: "hidden", position: "relative" }}
           >
             {rowEntryNodes}
             <div
@@ -2010,7 +2044,7 @@ export function AppShell() {
                   height: "100%",
                   background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
                   borderLeft: "none", borderRight: "none", borderBottom: "none",
-                  borderTop: activeTopPanel === "session" ? "2px solid var(--accent)" : "2px solid transparent",
+                  borderTop: "none",
                   fontSize: 11, color: "var(--text-muted)",
                   whiteSpace: "nowrap", cursor: "pointer",
                   fontVariantNumeric: "tabular-nums",
@@ -2079,12 +2113,12 @@ export function AppShell() {
                 height: "100%", padding: "0 10px",
                 background: moreOpen || customizeOpen ? "var(--bg-selected)" : "none",
                 borderLeft: "none", borderBottom: "none",
-                borderTop: moreOpen || customizeOpen ? "2px solid var(--accent)" : "2px solid transparent",
+                borderTop: "none",
                 borderRight: "1px solid var(--border)",
                 color: "var(--text-muted)", cursor: "pointer", flexShrink: 0,
               }}
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
                 <circle cx="12" cy="5" r="1.6" />
                 <circle cx="12" cy="12" r="1.6" />
                 <circle cx="12" cy="19" r="1.6" />
@@ -2388,6 +2422,7 @@ export function AppShell() {
                 onMouseEnter={menuEnter}
                 onMouseLeave={menuLeave}
               >
+                <span style={topbarMenuIconSlotStyle}>
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <line x1="4" y1="21" x2="4" y2="14" />
                   <line x1="4" y1="10" x2="4" y2="3" />
@@ -2399,6 +2434,7 @@ export function AppShell() {
                   <line x1="9" y1="8" x2="15" y2="8" />
                   <line x1="17" y1="16" x2="23" y2="16" />
                 </svg>
+                </span>
                 {translate("topbar.customize")}
               </button>
             </div>
