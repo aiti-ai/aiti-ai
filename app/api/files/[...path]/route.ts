@@ -74,6 +74,11 @@ function filePathFromSegments(segments: string[]): string {
   const joined = segments.join("/");
   const slashJoined = normalizeSlashes(joined);
   if (isWindowsAbsolutePath(slashJoined)) return slashJoined;
+  // ~ 开头 → 展开为 home 目录（~/x → $HOME/x）——aiti-msg-smart 文件识别等场景浏览器无 homedir
+  if (segments[0] === "~") {
+    const home = process.env.HOME || process.env.USERPROFILE;
+    if (home && segments.length > 1) return normalizeSlashes(path.join(home, ...segments.slice(1)));
+  }
   return "/" + joined.replace(/^\/+/, "");
 }
 
