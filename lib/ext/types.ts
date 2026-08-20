@@ -118,6 +118,8 @@ export interface AgentSessionInfo {
   subscribeEvent?(listener: (event: { type: string } & Record<string, unknown>) => void): () => void;
   /** 中止该会话当前运行的 bash 命令（不 abort 整个 turn——agent 收到错误结果后继续）。 */
   abortBash?(): void;
+  /** 该会话当前正在使用的模型（随模型切换实时返回；运行时监测/归因用）。 */
+  getModel?(): { provider: string; modelId: string } | null;
 }
 
 /** 扩展看到的 wrapper 销毁原因（与 AgentWrapperEndReason 一致）：

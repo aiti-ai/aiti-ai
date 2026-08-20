@@ -2562,6 +2562,11 @@ export async function startRpcSession(
         subscribeEvent: (listener) => wrapper.onEvent((event) => listener(event)),
         // 只中止当前 bash 命令，不 abort 整个 turn（agent 收到错误结果后继续）。
         abortBash: () => wrapper.inner.abortBash(),
+        // 当前会话正在使用的模型（实时读取；运行时监测（如 aiti-model-check 大量 429 阻断标记）用它归属模型）。
+        getModel: () => {
+          const m = wrapper.inner.model;
+          return m && m.provider && m.id ? { provider: m.provider, modelId: m.id } : null;
+        },
         steer: async (t) => {
           if (!wrapper.isAlive()) return;
           await wrapper.send({ type: "steer", message: t });
