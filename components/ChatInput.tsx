@@ -843,6 +843,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const [modelFilter, setModelFilter] = useState("");
+  // Per-provider collapse state in the model dropdown. Providers are collapsed
+  // by default when there are many (>2 providers & >6 models total); the
+  // provider that holds the currently-selected model is always expanded so the
+  // active selection stays visible. Users can toggle each group afterwards.
+  const [collapsedProviders, setCollapsedProviders] = useState<Record<string, boolean>>({});
+  const collapsedProvidersInitializedRef = useRef(false);
   const [toolDropdownOpen, setToolDropdownOpen] = useState(false);
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
   const [controlsMenuOpen, setControlsMenuOpen] = useState(false);
@@ -2269,6 +2275,39 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (group) group.options.push(opt);
     else modelsByProvider.push({ provider: opt.provider, options: [opt] });
   }
+
+  // Decide whether providers should be auto-collapsed: when there are more
+  // than 2 providers and the (unfiltered) model list has more than 6 entries.
+  // The provider holding the active model stays expanded so the user can see
+  // what is currently selected. Computed from the full option list so that
+  // typing a filter doesn't flip the trigger mid-session.
+  const fullProviderCount = (() => {
+    const seen = new Set<string>();
+    for (const opt of modelOptions) seen.add(opt.provider);
+    return seen.size;
+  })();
+  const autoCollapseProviders = fullProviderCount > 2 && modelOptions.length > 6;
+
+  // (Re)initialize the per-provider collapse state when the dropdown opens
+  // (or when it was never initialized). Reset to defaults so the toggle is
+  // deterministic each time the panel is opened.
+  useEffect(() => {
+    if (!modelDropdownOpen) {
+      collapsedProvidersInitializedRef.current = false;
+      return;
+    }
+    if (collapsedProvidersInitializedRef.current) return;
+    if (autoCollapseProviders) {
+      const activeProvider = model?.provider ?? null;
+      const next: Record<string, boolean> = {};
+      for (const g of modelsByProvider) next[g.provider] = g.provider !== activeProvider;
+      setCollapsedProviders(next);
+    } else {
+      setCollapsedProviders({});
+    }
+    collapsedProvidersInitializedRef.current = true;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelDropdownOpen, autoCollapseProviders]);
 
   const displayModelName = model
     ? (modelOptions.find((o) => o.modelId === model.modelId && o.provider === model.provider)?.name ?? model.modelId)
@@ -3917,19 +3956,59 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                           <div style={{ padding: "8px 12px", color: "var(--text-dim)", fontSize: 12, whiteSpace: "nowrap" }}>
                             {modelFilter.trim() ? t("chat.noMatchingModels") : "No available models"}
                           </div>
-                        ) : modelsByProvider.map((group, gi) => (
+                        ) : modelsByProvider.map((group, gi) => {
+                          const showHeader = modelsByProvider.length > 1;
+                          const groupCollapsed = showHeader && !!collapsedProviders[group.provider];
+                          return (
                           <div key={group.provider}>
-                            {(modelsByProvider.length > 1) && (
-                              <div style={{
-                                padding: "6px 12px 4px",
-                                fontSize: 10, fontWeight: 600, color: "var(--text-dim)",
-                                textTransform: "uppercase", letterSpacing: "0.07em",
-                                borderTop: gi > 0 ? "1px solid var(--border)" : "none",
-                              }}>
-                                {group.provider}
-                              </div>
+                            {showHeader && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setCollapsedProviders((prev) => ({ ...prev, [group.provider]: !prev[group.provider] }))
+                                }
+                                aria-label={
+                                  groupCollapsed
+                                    ? t("chat.expandProviders")
+                                    : t("chat.collapseProviders")
+                                }
+                                aria-expanded={!groupCollapsed}
+                                style={{
+                                  display: "flex", alignItems: "center", gap: 4,
+                                  width: "100%",
+                                  padding: "6px 12px 4px",
+                                  fontSize: 10, fontWeight: 600, color: "var(--text-dim)",
+                                  textTransform: "uppercase", letterSpacing: "0.07em",
+                                  borderTop: gi > 0 ? "1px solid var(--border)" : "none",
+                                  background: "none",
+                                  border: "none",
+                                  cursor: "pointer",
+                                  textAlign: "left",
+                                  transition: "color 0.12s",
+                                }}
+                                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+                              >
+                                <svg
+                                  width={9} height={9} viewBox="0 0 12 12" fill="none"
+                                  stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"
+                                  style={{
+                                    flexShrink: 0,
+                                    transition: "transform 0.15s ease",
+                                    transform: groupCollapsed ? "rotate(-90deg)" : "rotate(0deg)",
+                                  }}
+                                >
+                                  <polyline points="3 4.5 6 7.5 9 4.5" />
+                                </svg>
+                                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                  {group.provider}
+                                </span>
+                                <span style={{ fontSize: 9, fontWeight: 500, letterSpacing: 0, textTransform: "none", opacity: 0.6, flexShrink: 0 }}>
+                                  {group.options.length}
+                                </span>
+                              </button>
                             )}
-                            {group.options.map((opt) => {
+                            {!groupCollapsed && group.options.map((opt) => {
                               const isActive = opt.modelId === model?.modelId && opt.provider === model?.provider;
                               return (
                                 <button
@@ -3960,7 +4039,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                               );
                             })}
                           </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                     );
