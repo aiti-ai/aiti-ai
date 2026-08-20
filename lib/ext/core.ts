@@ -10,6 +10,7 @@ import { homedir } from "os";
 import { listAllSessions, resolveSessionPath, getSessionEntries, buildSessionContext } from "@/lib/session-reader.ts";
 import { getRunningRpcSessionIds } from "@/lib/rpc-manager.ts";
 import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed } from "@/lib/file-access.ts";
+import { readModelsConfig, writeModelsConfig } from "@/lib/models-config-store.ts";
 import type { ExtCoreApi } from "./types.ts";
 
 export function makeExtCore(): ExtCoreApi {
@@ -32,6 +33,12 @@ export function makeExtCore(): ExtCoreApi {
       } catch {
         return null;
       }
+    },
+    async readModelsConfig() {
+      return readModelsConfig();
+    },
+    async writeModelsConfig(data) {
+      writeModelsConfig(data);
     },
     fileAccess: {
       allowRoot(root) {

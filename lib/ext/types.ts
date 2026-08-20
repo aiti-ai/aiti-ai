@@ -48,6 +48,10 @@ export interface ExtCoreApi {
   getHomeDir(): Promise<string>;
   /** Full session context (messages + entry ids) for a session id; null when missing. */
   readSession(id: string): Promise<unknown | null>;
+  /** 读当前 models.json（{providers:{...}}）。扩展不直接手写文件——统一走此接口（含缓存失效）。 */
+  readModelsConfig(): Promise<Record<string, unknown>>;
+  /** 写 models.json（规范化 + invalidateModelsCache 缓存失效，改动立即生效）。 */
+  writeModelsConfig(data: Record<string, unknown>): Promise<void>;
   /** File-access helpers bound to pi-web's allowed-roots security (session cwds etc.). */
   fileAccess: {
     allowRoot(root: string): void;
