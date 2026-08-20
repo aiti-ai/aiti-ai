@@ -825,7 +825,22 @@ export function AppShell() {
     return () => window.removeEventListener("message", onAitiOpenFile);
   }, [handleOpenFile, selectedSession?.id]);
 
+  // aiti-editor 切换守卫：原 tab dirty 时确认（防止编辑内容因 viewer 卸载丢失）
+  const guardedSelectFileTab = useCallback((tabId: string) => {
+    if (tabId === activeFileTabId) return;
+    const cur = fileTabs.find((t) => t.id === activeFileTabId);
+    if (cur?.filePath && (window as unknown as { __aitiEditor?: { isFileDirty?: (p: string) => boolean } }).__aitiEditor?.isFileDirty?.(cur.filePath)) {
+      if (!window.confirm(locale === "zh-CN" ? "当前文件有未保存的修改，切换后改动将丢失。确定切换？" : "Unsaved changes will be lost on switch. Continue?")) return;
+    }
+    setActiveFileTabId(tabId);
+  }, [activeFileTabId, fileTabs, locale]);
+
   const handleCloseFileTab = useCallback((tabId: string) => {
+    // aiti-editor 关闭守卫：文件有未保存修改时确认（fileViewer 接管能力，可选存在）
+    const closing = fileTabs.find((t) => t.id === tabId);
+    if (closing?.filePath && (window as unknown as { __aitiEditor?: { isFileDirty?: (p: string) => boolean } }).__aitiEditor?.isFileDirty?.(closing.filePath)) {
+      if (!window.confirm(locale === "zh-CN" ? "文件有未保存的修改，关闭后改动将丢失。确定关闭？" : "Unsaved changes will be lost. Close anyway?")) return;
+    }
     setFileTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
       if (next.length === 0) setRightPanelOpen(false);
@@ -836,7 +851,7 @@ export function AppShell() {
       const remaining = fileTabs.filter((t) => t.id !== tabId);
       return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
     });
-  }, [fileTabs]);
+  }, [fileTabs, locale]);
 
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
@@ -2672,7 +2687,7 @@ export function AppShell() {
             <TabBar
               tabs={fileTabs}
               activeTabId={activeFileTabId ?? ""}
-              onSelectTab={setActiveFileTabId}
+              onSelectTab={guardedSelectFileTab}
               onCloseTab={handleCloseFileTab}
             />
           </div>
