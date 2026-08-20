@@ -630,6 +630,13 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     const previous = previousRunningSessionIdsRef.current;
     const completedInBackground = [...previous].filter((id) => !runningSessionIds.has(id) && id !== selectedSessionId);
     const newlyRunning = [...runningSessionIds].filter((id) => !previous.has(id));
+    // The selected session completing also needs a list refresh — the .jsonl
+    // is now persisted, so /api/sessions?refresh=1 will include it as a real
+    // (non-transient) row, replacing the client-side draft row. This is
+    // independent of handleAgentEnd→setRefreshKey so it works even when the
+    // agent_end / prompt_done event chain has timing gaps.
+    const selectedSessionCompleted =
+      selectedSessionId !== null && previous.has(selectedSessionId) && !runningSessionIds.has(selectedSessionId);
 
     if (completedInBackground.length > 0 || newlyRunning.length > 0) {
       setUnreadSessionIds((prev) => {
@@ -642,7 +649,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     const hasUnlistedRunningSession = newlyRunning.some(
       (id) => !allSessions.some((session) => session.id === id),
     );
-    if (completedInBackground.length > 0 || hasUnlistedRunningSession) {
+    if (completedInBackground.length > 0 || hasUnlistedRunningSession || selectedSessionCompleted) {
       loadSessions(false, true);
     }
     if (completedInBackground.length > 0) {

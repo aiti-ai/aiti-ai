@@ -607,7 +607,10 @@ export function AppShell() {
   // handleCwdChange relies on. Hydrate it from the session list so switching
   // worktrees right after creating a session doesn't close the chat.
   const hydrateSelectedSession = useCallback((sessionId: string) => {
-    void fetch(apiUrl("/api/sessions"), { cache: "no-store" })
+    // Use ?refresh=1 to bypass the 5s TTL cache: a new session's .jsonl may
+    // have just been persisted, and a stale cache hit would leave
+    // selectedSession as a transient draft (no name, transient=true).
+    void fetch(apiUrl("/api/sessions?refresh=1"), { cache: "no-store" })
       .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
       .then((d) => {
         const full = d?.sessions.find((s) => s.id === sessionId);
