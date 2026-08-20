@@ -24,6 +24,10 @@ import {
   registerExtUiItems,
   removeExtUiItems,
   subscribeExtUi,
+  setExtFeatures,
+  patchExtFeature,
+  getExtFeaturesOf,
+  subscribeExtFeatures,
   type ExtMeta,
   type ExtRenderProps,
   type ExtUiItemRegistered,
@@ -69,6 +73,10 @@ export interface ExtClientContext {
   sendChatMessage(text: string, mode: "steer" | "followUp"): void;
   /** 注册消息段落点击接管 handler（消息点击识别薄宿主：core 广播段落点击事件，弹层 UI 全在扩展侧） */
   registerParagraphClick(handler: ParagraphClickHandler): void;
+  /** 同步读本扩展全部功能状态（extman 管理；host 已统一拉取，扩展零独立请求） */
+  getFeatures?(): Record<string, boolean>;
+  /** 订阅本扩展功能状态变更（extman 改 feature 后触发；返回退订函数） */
+  onFeatureChange?(cb: () => void): () => void;
   /** 主题条目注册（扩展间间接耦合）：发布条目到抽象主题（如 "msg-popover-action"），
    *  返回 disposer。主题 id + 载荷结构由消费方定义（core 不解释内容）。 */
   registerTopicItem<T>(topic: string, item: T): () => void;
@@ -155,6 +163,7 @@ interface ManifestExt {
   clientUrl: string | null;
   ui: { i18n?: Record<string, Record<string, string>>; provides?: string[] } | null;
   icon?: string | null;
+  features?: { id: string; enabled: boolean }[] | null;
 }
 
 let loadStarted = false;
@@ -169,6 +178,16 @@ function interpolate(message: string, params: Record<string, string | number> = 
 
 declare global {
   interface Window { __extDebug?: string[]; }
+}
+
+// 统一通知管道：extman set-feature 成功后广播 → host 原地 patch 共享 feature store →
+// subscribeExtFeatures 订阅者（扩展）收到通知（不重新拉取、不轮询）。
+const FEATURES_CHANGED_EVENT = "pi-web:ext-features-changed";
+if (typeof window !== "undefined") {
+  window.addEventListener(FEATURES_CHANGED_EVENT, (e) => {
+    const d = (e as CustomEvent)?.detail;
+    if (d && d.extId && d.featureId) patchExtFeature(String(d.extId), String(d.featureId), d.enabled !== false);
+  });
 }
 
 /** 为某扩展构造 register ctx（i18n 表 + 宿主 hooks + 注册 API）。 */
@@ -198,6 +217,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     registerParagraphClick: (h) => registerParagraphClick(h),
     registerTopicItem: (topic, item) => registerTopicItem(topic, item),
     getTopicItems: (topic) => getTopicItems(topic),
+    getFeatures: () => getExtFeaturesOf(ext.id),
+    onFeatureChange: (cb) => subscribeExtFeatures(cb),
     // 宿主公共接口（AppShell 经 registerHostApi 注册原样能力；fileName 兜底适配在框架层）
     openFile: (path, fileName) => getHostApi().openFile?.(path, fileName ?? path.split("/").pop() ?? path),
     revealDir: (absPath) => getHostApi().revealDir?.(absPath),
@@ -233,6 +254,8 @@ async function fetchManifestData(): Promise<{ extensions: ManifestExt[]; graph: 
     for (const ext of data.extensions) {
       manifestCache.set(ext.id, ext);
       metas[ext.id] = { name: ext.name, icon: ext.icon ?? null, provides: ext.ui?.provides };
+      // 功能状态统一写入共享 store（extman 管理；扩展经 ctx.getFeatures 读，零独立请求）
+      setExtFeatures(ext.id, ext.features ? Object.fromEntries(ext.features.map((f) => [f.id, f.enabled !== false])) : null);
       // 按需加载登记：声明了哪些 UI 插槽（ui 定义里非空数组的 slot 键）。
       registerDeclaredSlots(ext.id, ext.ui ? Object.keys(ext.ui).filter((k) => k !== "i18n" && k !== "provides" && k !== "clientDependsOn") : []);
     }

@@ -488,6 +488,8 @@ export class ExtRegistryImpl {
       ui: e.ext.ui ?? null,
       source: e.source,
       icon: e.ext.icon ?? null,
+      // 功能状态（extman 管理）：host 客户端加载时一并取，扩展只读共享 store，无独立请求
+      features: e.ext.features?.length ? e.ext.features.map((f) => ({ id: f.id, enabled: this.featureEnabled(e.id, f.id) })) : null,
     }));
   }
 
