@@ -35,6 +35,7 @@ interface FileNode {
 interface Props {
   cwd: string;
   onOpenFile: (filePath: string, fileName: string, options?: OpenFileOptions) => void;
+  onOpenFolder?: (folderPath: string, folderName: string) => void;
   refreshKey?: number;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onAtMentions?: (relativePaths: string[]) => void;
@@ -218,6 +219,7 @@ function TreeNode({
   depth,
   cwd,
   onOpenFile,
+  onOpenFolder,
   onAtMention,
   expandedPaths,
   onToggleExpanded,
@@ -231,6 +233,7 @@ function TreeNode({
   depth: number;
   cwd: string;
   onOpenFile: (filePath: string, fileName: string, options?: OpenFileOptions) => void;
+  onOpenFolder?: (folderPath: string, folderName: string) => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   expandedPaths: Set<string>;
   onToggleExpanded: (fullPath: string, open: boolean) => void;
@@ -372,6 +375,34 @@ function TreeNode({
             <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
           </svg>
         )}
+        {node.isDir && onOpenFolder && hovered && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenFolder(node.fullPath, node.name); }}
+            title={t("files.openInPanel")}
+            style={{
+              position: "absolute",
+              right: 4,
+              top: "50%",
+              transform: "translateY(-50%)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 4,
+              padding: "0 8px",
+              height: 20,
+              background: "var(--bg-panel)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              color: "var(--accent)",
+              cursor: "pointer",
+              fontSize: 11,
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {t("files.open")}
+          </button>
+        )}
         {onAtMention && hovered && (
           <button
             onClick={(e) => {
@@ -381,7 +412,7 @@ function TreeNode({
             title={t("files.insertPath")}
             style={{
               position: "absolute",
-              right: !node.isDir ? 28 : 4,
+              right: !node.isDir ? 28 : 34,
               top: "50%",
               transform: "translateY(-50%)",
               display: "flex",
@@ -449,6 +480,7 @@ function TreeNode({
               depth={depth + 1}
               cwd={cwd}
               onOpenFile={onOpenFile}
+              onOpenFolder={onOpenFolder}
               onAtMention={onAtMention}
               expandedPaths={expandedPaths}
               onToggleExpanded={onToggleExpanded}
@@ -530,6 +562,7 @@ function ChangeRow({
 export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileExplorer({
   cwd,
   onOpenFile,
+  onOpenFolder,
   refreshKey,
   onAtMention,
   onAtMentions,
@@ -923,6 +956,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 depth={0}
                 cwd={cwd}
                 onOpenFile={onOpenFile}
+                onOpenFolder={onOpenFolder}
                 onAtMention={onAtMention}
                 expandedPaths={expandedPaths}
                 onToggleExpanded={handleToggleExpanded}

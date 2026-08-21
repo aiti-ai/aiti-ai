@@ -8,8 +8,10 @@ import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
+import { FolderViewer } from "./FolderViewer";
+import { PathPicker } from "./PathPicker";
 import { TabBar, type Tab } from "./TabBar";
-import { openFileTab, saveFileViewerState } from "./file-tab-state";
+import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
 import { ModelsConfig } from "./ModelsConfig";
 import { AiUsageRows } from "./AiUsageRows";
 import { SkillsConfig } from "./SkillsConfig";
@@ -351,6 +353,7 @@ export function AppShell() {
   // Right panel — file tabs only
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
 
   const handleFileViewerStateChange = useCallback((
     tabId: string,
@@ -823,9 +826,46 @@ export function AppShell() {
     handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null });
   }, [handleOpenFile, selectedSession?.id]);
 
+  // aiti-editor session-files endpoint (folder tabs reuse the same tombstone
+  // record/restore pipeline as files — kind distinguishes them). Centralized
+  // here so only a real tab close removes (switch/refresh keep the tombstone).
+  const recordFolder = useCallback((
+    folderPath: string,
+    action: "add" | "remove",
+  ) => {
+    const sid = (window as unknown as { __aitiEditor?: { _sessionId?: string } }).__aitiEditor?._sessionId;
+    if (!sid || !folderPath) return;
+    void fetch(apiUrl("/api/extensions/aiti-editor/session-files"), {
+      method: "POST", cache: "no-store",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: sid, filePath: folderPath, kind: "folder", action }),
+    }).catch(() => {});
+  }, []);
+
+  const handleOpenFolder = useCallback((
+    folderPath: string,
+    folderName: string,
+    options?: { select?: boolean },
+  ) => {
+    const select = options?.select !== false; // default true
+    const tabId = `folder:${folderPath}`;
+    setFileTabs((prev) => openFolderTab(prev, { folderName, folderPath, tabId }));
+    if (select) {
+      setActiveFileTabId(tabId);
+      setRightPanelOpen(true);
+      // Opening the right panel triggers session restore (tombstone reopen).
+      if (typeof (window as unknown as { __aitiEditor?: { _restoreSession?: unknown } }).__aitiEditor?._restoreSession === "function") {
+        setTimeout(() => (window as unknown as { __aitiEditor: { _restoreSession: () => void } }).__aitiEditor._restoreSession(), 0);
+      }
+      if (isMobile) setSidebarOpen(false);
+    }
+    recordFolder(folderPath, "add");
+  }, [isMobile, recordFolder]);
+
   // 扩展宿主公共接口注册（原样能力，不理解为扩展适配；AppShell 零消息/零罗列）
   registerHostApi({
     openFile: handleOpenFile,
+    openFolder: handleOpenFolder,
     revealDir: handleRevealDir,
     appendText: (text) => chatInputRef.current?.appendText(text),
   });
@@ -857,22 +897,26 @@ export function AppShell() {
     }
   }, []);
 
-  const guardedSelectFileTab = useCallback((tabId: string) => {
+  const guardedSelectFileTab = useCallback(async (tabId: string) => {
     if (tabId === activeFileTabId) return;
-    const cur = fileTabs.find((t) => t.id === activeFileTabId);
-    setActiveFileTabId(tabId);
-    // 切换后原 viewer 即将卸载——先异步问询 editor（isSwitch=true：编辑内容由 editor 缓存保留，
-    // 一般直接放行；其他 blocker（运行中任务等）仍可拦截，不放行则切回原 tab）
-    if (cur?.filePath) {
-      const prevId = cur.id;
-      void askEditorClose(cur.filePath, true).then((ok) => {
-        // 只在实际仍停留在刚切到的 tab 时才回退——期间用户又切走了就不抢
-        if (!ok) setActiveFileTabId((active) => (active === tabId ? prevId : active));
-      });
+    const prevId = activeFileTabId;
+    const cur = fileTabs.find((t) => t.id === prevId);
+    // 先问后切：editor 放行才真正切换；拦截则留在原 tab（避免乐观切换先卸载
+    // viewer、后拒绝时内容已丢）。无问询能力（未接管）时直接放行；文件夹 tab
+    // 无编辑状态（FolderViewer 不归 aiti-editor 管），直接切。
+    if (cur?.filePath && cur.kind !== "folder") {
+      const ok = await askEditorClose(cur.filePath, true);
+      if (!ok) return;
     }
+    // await 期间 active 可能已被其他交互改掉——只在仍停留原 tab 时才执行切换
+    setActiveFileTabId((active) => (active === prevId ? tabId : active));
   }, [activeFileTabId, fileTabs, askEditorClose]);
 
   const performCloseFileTab = useCallback((tabId: string) => {
+    const closing = fileTabs.find((t) => t.id === tabId);
+    if (closing?.kind === "folder" && closing.filePath) {
+      recordFolder(closing.filePath, "remove");
+    }
     setFileTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
       if (next.length === 0) setRightPanelOpen(false);
@@ -883,12 +927,12 @@ export function AppShell() {
       const remaining = fileTabs.filter((t) => t.id !== tabId);
       return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
     });
-  }, [fileTabs]);
+  }, [fileTabs, recordFolder]);
 
   const handleCloseFileTab = useCallback((tabId: string) => {
-    // aiti-editor 关闭守卫：异步问询文件查看器是否放行关闭
+    // aiti-editor 关闭守卫：异步问询文件查看器是否放行关闭（文件夹 tab 无编辑状态，直接关）
     const closing = fileTabs.find((t) => t.id === tabId);
-    if (closing?.filePath) {
+    if (closing?.kind !== "folder" && closing?.filePath) {
       void askEditorClose(closing.filePath).then((ok) => { if (ok) performCloseFileTab(tabId); });
       return;
     }
@@ -1735,6 +1779,7 @@ export function AppShell() {
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
         onCwdChange={handleCwdChange}
         onOpenFile={handleOpenFile}
+        onOpenFolder={handleOpenFolder}
         explorerRefreshKey={explorerRefreshKey}
         onExplorerRefresh={handleExplorerRefresh}
         onAtMention={handleAtMention}
@@ -2735,6 +2780,26 @@ export function AppShell() {
           </div>
           <button
             type="button"
+            onClick={() => setFolderPickerOpen(true)}
+            title={translate("files.openFolder")}
+            aria-label={translate("files.openFolder")}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+              background: "var(--bg-selected)", border: "none", borderLeft: "1px solid var(--border)",
+              color: "var(--text)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+            }}
+            onMouseEnter={(event) => { event.currentTarget.style.color = "var(--accent)"; }}
+            onMouseLeave={(event) => { event.currentTarget.style.color = "var(--text)"; }}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+              <line x1="12" y1="11" x2="12" y2="17" />
+              <line x1="9" y1="14" x2="15" y2="14" />
+            </svg>
+          </button>
+          <button
+            type="button"
             onClick={() => setRightPanelOpen(false)}
             aria-controls="file-panel"
             aria-expanded={rightPanelOpen}
@@ -2757,7 +2822,20 @@ export function AppShell() {
 
         {/* Only the active viewer is mounted. Lightweight per-tab state is restored on activation. */}
         <div style={{ flex: 1, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
-          {activeFileTab?.filePath ? (
+          {activeFileTab?.kind === "folder" ? (
+            <FolderViewer
+              key={activeFileTab.id}
+              folderPath={activeFileTab.filePath}
+              cwd={activeCwd ?? undefined}
+              onOpenFile={(filePath) => handleOpenFile(
+                filePath,
+                getFileName(filePath),
+                { sourceSessionId: selectedSession?.id ?? null },
+              )}
+              onOpenFolder={(folderPath) => handleOpenFolder(folderPath, getFileName(folderPath))}
+              onAtMention={handleAtMention}
+            />
+          ) : activeFileTab?.filePath ? (
             <FileViewer
               key={`${activeFileTab.id}:${activeFileTab.viewerRevision ?? 0}`}
               filePath={activeFileTab.filePath}
@@ -2788,6 +2866,17 @@ export function AppShell() {
             </div>
           )}
         </div>
+        {folderPickerOpen && (
+          <PathPicker
+            initialPath={activeCwd ?? undefined}
+            title={translate("files.openFolder")}
+            onPick={(p) => {
+              setFolderPickerOpen(false);
+              handleOpenFolder(p, getFileName(p));
+            }}
+            onCancel={() => setFolderPickerOpen(false)}
+          />
+        )}
       </div>
     </div>
     {/* File panel toggle — always visible at top-right */}
