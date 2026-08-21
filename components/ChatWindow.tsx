@@ -81,6 +81,8 @@ function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, 
 const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
+/** 草稿静默恢复等待输入框就绪的最大帧数（≈5s @60fps）；超时放行对话框手动处理，避免草稿被永久隐藏。 */
+const MAX_DRAFT_RESTORE_READY_FRAMES = 300;
 
 function NewSessionUpdateLink({
   label,
@@ -547,17 +549,39 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   }, [draftKey, pendingDrafts, pendingRecovery, resolveRecovery, chatInputRef, handleFollowUp]);
 
   // 草稿静默恢复：条件满足时不弹恢复对话框，直接把草稿全部恢复到输入框/队列（keep-all）。
+  // 注意：恢复依赖 chatInputRef.current（ChatInput 挂载后才就绪）——若尚未就绪则逐帧重试，
+  // 草稿绝不先于恢复成功被消费，避免「输入框没拿到文字、草稿却没了」的丢稿。
   useEffect(() => {
     if (!autoRestoreDrafts) return;
     const keys = pendingDrafts.map((slot) => `draft:${slot.slotKey}`);
     if (keys.every((k) => autoRestoredDraftRef.current.has(k))) return;
-    autoRestoredDraftRef.current = new Set(keys);
-    setSilentDraftRestore(true);
-    handleResolveRecovery(keys, [], false).catch(() => {
-      // 自动恢复失败：放行对话框由用户手动处理（本批草稿不再自动重试）。
-      setSilentDraftRestore(false);
-    });
-  }, [autoRestoreDrafts, pendingDrafts, handleResolveRecovery]);
+    setSilentDraftRestore(true); // 先隐藏对话框，避免恢复完成前闪烁
+    let cancelled = false;
+    let readyFrames = 0;
+    const attemptRestore = () => {
+      if (cancelled) return;
+      const input = chatInputRef?.current;
+      if (!input?.restoreDraft) {
+        // 输入框还没就绪：下一帧再试（不消费草稿）。迟迟不就绪（如会话加载失败、
+        // 无输入框）则放行对话框手动处理，避免草稿被永久隐藏。
+        if (++readyFrames > MAX_DRAFT_RESTORE_READY_FRAMES) {
+          setSilentDraftRestore(false);
+          return;
+        }
+        requestAnimationFrame(attemptRestore);
+        return;
+      }
+      autoRestoredDraftRef.current = new Set(keys);
+      handleResolveRecovery(keys, [], false).catch(() => {
+        // 自动恢复失败：放行对话框由用户手动处理（本批草稿不再自动重试）。
+        setSilentDraftRestore(false);
+      });
+    };
+    attemptRestore();
+    return () => {
+      cancelled = true;
+    };
+  }, [autoRestoreDrafts, pendingDrafts, chatInputRef, handleResolveRecovery]);
 
   // Reset dismissal whenever the session or its pending list changes identity.
   useEffect(() => {
