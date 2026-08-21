@@ -81,6 +81,20 @@ type AutoNameStatus =
   | { kind: "success" }
   | { kind: "error"; message: string };
 
+declare global {
+  interface Window {
+    /**
+     * aiti-editor（fileViewer 接管扩展）注入的关闭/切换问询接口。可选——未接管/未加载
+     * 时不存在，core 一律放行。core 只消费 confirmClose；_restoreSession 是扩展私有
+     * 方法（面板重新打开时恢复编辑会话），耦合脆弱，扩展侧应尽早改为公开方法。
+     */
+    __aitiEditor?: {
+      confirmClose?: (p: string, opts?: { isSwitch?: boolean }) => boolean | Promise<boolean>;
+      _restoreSession?: () => void;
+    };
+  }
+}
+
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
 const LANGUAGE_MENU_WIDTH = 176;
 
@@ -784,10 +798,11 @@ export function AppShell() {
   const handleOpenFile = useCallback((
     filePath: string,
     fileName: string,
-    options?: { sourceSessionId?: string | null; modeHint?: "diff" },
+    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean },
   ) => {
     const sourceSessionId = options?.sourceSessionId;
     const modeHint = options?.modeHint;
+    const select = options?.select !== false; // default true
     const tabId = `file:${filePath}`;
     setFileTabs((prev) => openFileTab(prev, {
       fileName,
@@ -796,10 +811,12 @@ export function AppShell() {
       sourceSessionId,
       tabId,
     }));
-    setActiveFileTabId(tabId);
-    setRightPanelOpen(true);
-    // On mobile the file panel is full-screen; close the drawer so it shows.
-    if (isMobile) setSidebarOpen(false);
+    if (select) {
+      setActiveFileTabId(tabId);
+      setRightPanelOpen(true);
+      // On mobile the file panel is full-screen; close the drawer so it shows.
+      if (isMobile) setSidebarOpen(false);
+    }
   }, [isMobile]);
 
   const handleOpenLinkedFile = useCallback((filePath: string) => {
@@ -825,22 +842,37 @@ export function AppShell() {
     return () => window.removeEventListener("message", onAitiOpenFile);
   }, [handleOpenFile, selectedSession?.id]);
 
-  // aiti-editor 切换守卫：原 tab dirty 时确认（防止编辑内容因 viewer 卸载丢失）
+  /**
+   * 关闭/切换文件前的异步问询：把决定权交给当前查看器（aiti-editor 等接管方）。
+   * core 不感知 dirty 等细节——只调用 editor 的 confirmClose(path) → Promise<boolean>，
+   * true=放行，false=拦截。无问询能力（未接管）时直接放行。
+   */
+  const askEditorClose = useCallback(async (filePath: string, isSwitch = false): Promise<boolean> => {
+    try {
+      const q = window.__aitiEditor?.confirmClose;
+      if (typeof q !== "function") return true;
+      return (await q(filePath, { isSwitch })) !== false;
+    } catch {
+      return true; // 问询异常不阻塞关闭
+    }
+  }, []);
+
   const guardedSelectFileTab = useCallback((tabId: string) => {
     if (tabId === activeFileTabId) return;
     const cur = fileTabs.find((t) => t.id === activeFileTabId);
-    if (cur?.filePath && (window as unknown as { __aitiEditor?: { isFileDirty?: (p: string) => boolean } }).__aitiEditor?.isFileDirty?.(cur.filePath)) {
-      if (!window.confirm(locale === "zh-CN" ? "当前文件有未保存的修改，切换后改动将丢失。确定切换？" : "Unsaved changes will be lost on switch. Continue?")) return;
-    }
     setActiveFileTabId(tabId);
-  }, [activeFileTabId, fileTabs, locale]);
-
-  const handleCloseFileTab = useCallback((tabId: string) => {
-    // aiti-editor 关闭守卫：文件有未保存修改时确认（fileViewer 接管能力，可选存在）
-    const closing = fileTabs.find((t) => t.id === tabId);
-    if (closing?.filePath && (window as unknown as { __aitiEditor?: { isFileDirty?: (p: string) => boolean } }).__aitiEditor?.isFileDirty?.(closing.filePath)) {
-      if (!window.confirm(locale === "zh-CN" ? "文件有未保存的修改，关闭后改动将丢失。确定关闭？" : "Unsaved changes will be lost. Close anyway?")) return;
+    // 切换后原 viewer 即将卸载——先异步问询 editor（isSwitch=true：编辑内容由 editor 缓存保留，
+    // 一般直接放行；其他 blocker（运行中任务等）仍可拦截，不放行则切回原 tab）
+    if (cur?.filePath) {
+      const prevId = cur.id;
+      void askEditorClose(cur.filePath, true).then((ok) => {
+        // 只在实际仍停留在刚切到的 tab 时才回退——期间用户又切走了就不抢
+        if (!ok) setActiveFileTabId((active) => (active === tabId ? prevId : active));
+      });
     }
+  }, [activeFileTabId, fileTabs, askEditorClose]);
+
+  const performCloseFileTab = useCallback((tabId: string) => {
     setFileTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
       if (next.length === 0) setRightPanelOpen(false);
@@ -851,7 +883,17 @@ export function AppShell() {
       const remaining = fileTabs.filter((t) => t.id !== tabId);
       return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
     });
-  }, [fileTabs, locale]);
+  }, [fileTabs]);
+
+  const handleCloseFileTab = useCallback((tabId: string) => {
+    // aiti-editor 关闭守卫：异步问询文件查看器是否放行关闭
+    const closing = fileTabs.find((t) => t.id === tabId);
+    if (closing?.filePath) {
+      void askEditorClose(closing.filePath).then((ok) => { if (ok) performCloseFileTab(tabId); });
+      return;
+    }
+    performCloseFileTab(tabId);
+  }, [fileTabs, askEditorClose, performCloseFileTab]);
 
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
@@ -2739,8 +2781,10 @@ export function AppShell() {
               )}
             />
           ) : (
-            <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
-               {translate("files.noneOpen")}
+            <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12 }}>
+               {fileTabs.length > 0
+                 ? translate("files.clickTabToOpen")
+                 : translate("files.noneOpen")}
             </div>
           )}
         </div>
@@ -2748,7 +2792,16 @@ export function AppShell() {
     </div>
     {/* File panel toggle — always visible at top-right */}
     <button
-      onClick={() => setRightPanelOpen((v) => !v)}
+      onClick={() => {
+        const next = !rightPanelOpen;
+        setRightPanelOpen(next);
+        if (next) {
+          const restore = window.__aitiEditor?._restoreSession;
+          if (typeof restore === "function") {
+            setTimeout(() => restore(), 0);
+          }
+        }
+      }}
        aria-controls="file-panel"
        aria-expanded={rightPanelOpen}
        title={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}

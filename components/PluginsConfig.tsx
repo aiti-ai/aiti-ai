@@ -403,7 +403,7 @@ function AddPluginPanel({
             ...buttonStyle(busy || !source.trim()),
             background: "var(--accent)",
             color: "white",
-            borderColor: "var(--accent)",
+            border: "1px solid var(--accent)",
           }}
         >
           {busy ? t("i18n.installing") : t("i18n.install")}

@@ -85,6 +85,7 @@ export const enLocale: LocalePlugin = {
     "files.hidePanel": "Hide file panel",
     "files.showPanel": "Show file panel",
     "files.noneOpen": "No file open",
+    "files.clickTabToOpen": "Click a file tab above to open",
     "layout.resizeSidebar": "Resize sidebar",
     "layout.resizeFilePanel": "Resize file panel",
     "layout.resizeHint": "Drag to resize. Double-click or press Enter to reset.",

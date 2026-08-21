@@ -85,6 +85,7 @@ export const zhCNLocale: LocalePlugin = {
     "files.hidePanel": "隐藏文件面板",
     "files.showPanel": "显示文件面板",
     "files.noneOpen": "没有打开的文件",
+    "files.clickTabToOpen": "点击上方的文件标签打开",
     "layout.resizeSidebar": "调整侧边栏宽度",
     "layout.resizeFilePanel": "调整文件面板宽度",
     "layout.resizeHint": "拖动调整宽度。双击或按 Enter 恢复默认值。",

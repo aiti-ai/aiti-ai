@@ -14,7 +14,7 @@
 
 import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { apiUrl } from "@/lib/base-path";
-import { getHostApi } from "@/lib/ext/host-api";
+import { getHostApi, type OpenFileOptions } from "@/lib/ext/host-api";
 import type { ExtSlotName, ExtSlotProps, ParagraphClickHandler } from "@/lib/ext/types";
 import {
   getExtMetas,
@@ -83,7 +83,7 @@ export interface ExtClientContext {
   /** 同步读取主题全部条目（消费方在交互时刻调用）。 */
   getTopicItems<T>(topic: string): T[];
   /** 打开文件标签页（宿主公共接口，同步调用；返回 void/Promise） */
-  openFile?(path: string, fileName?: string): void | Promise<void>;
+  openFile?(path: string, fileName?: string, options?: OpenFileOptions): void | Promise<void>;
   /** 侧栏文件树定位目录 */
   revealDir?(absPath: string): void | Promise<void>;
   /** 输入框追加文本不发送（引用回复预填用） */
@@ -224,7 +224,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     getFeatures: () => getExtFeaturesOf(ext.id),
     onFeatureChange: (cb) => subscribeExtFeatures(cb),
     // 宿主公共接口（AppShell 经 registerHostApi 注册原样能力；fileName 兜底适配在框架层）
-    openFile: (path, fileName) => getHostApi().openFile?.(path, fileName ?? path.split("/").pop() ?? path),
+    openFile: (path: string, fileName?: string, options?: OpenFileOptions) =>
+      getHostApi().openFile?.(path, fileName ?? path.split("/").pop() ?? path, options),
     revealDir: (absPath) => getHostApi().revealDir?.(absPath),
     appendText: (text) => getHostApi().appendText?.(text),
     reloadExtensions: () => reloadExtensions(),
@@ -404,10 +405,34 @@ export function ExtSlot<S extends ExtSlotName>({
   extra?: ExtSlotProps<S>;
 }) {
   const items = useExtSlotItems(name);
+  // 框架级标注扩展身份：只在「弹窗类」插槽（dialogs/pages，都是 position:fixed 覆盖层）
+  // 给每个 item 包一层 display:contents 的 div，盖上 data-ext-id/data-ext-slot/data-ext-item——
+  // 不产生盒子、不影响布局（fixed 定位子元素照常脱离），但 DOM 上可被外部脚本（aiti-helper
+  // 全局弹窗 AI 按钮）用 closest('[data-ext-id]') 反查到 owning 扩展。
+  // 只限 dialogs/pages：sidebar/sidebarFooter/chatInputTop/userMessageActions 等内联布局插槽
+  // 不包（display:contents 仍会破坏它们的 `>` 直系子代 CSS 与 flex 子项语义）。
+  const stamp = name === "dialogs" || name === "pages";
+  if (!stamp) {
+    return (
+      <>
+        {items.map((it) => (
+          <it.render key={it.id} currentSession={currentSession} {...(extra as Record<string, unknown>)} />
+        ))}
+      </>
+    );
+  }
   return (
     <>
       {items.map((it) => (
-        <it.render key={it.id} currentSession={currentSession} {...(extra as Record<string, unknown>)} />
+        <div
+          key={it.id}
+          data-ext-id={it.extId ?? undefined}
+          data-ext-slot={name}
+          data-ext-item={it.id}
+          style={{ display: "contents" }}
+        >
+          <it.render currentSession={currentSession} {...(extra as Record<string, unknown>)} />
+        </div>
       ))}
     </>
   );
