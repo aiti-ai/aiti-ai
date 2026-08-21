@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { openFileTab, saveFileViewerState } from "./file-tab-state.ts";
+import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state.ts";
 
 const tabA = {
   id: "file:/repo/a.ts",
@@ -95,4 +95,25 @@ test("a remounted viewer ignores the previous revision's late cleanup", () => {
   const stale = saveFileViewerState(reopened, tabA.id, 0, tabA.viewerState);
   assert.strictEqual(stale, reopened);
   assert.equal(stale[0].viewerState.displayMode, "diff");
+});
+
+const openFolderA = {
+  folderName: "src",
+  folderPath: "/repo/src",
+  tabId: "folder:/repo/src",
+};
+
+test("opening a folder tab adds a folder-kind tab", () => {
+  const tabs = openFolderTab([tabA], openFolderA);
+  assert.equal(tabs.length, 2);
+  assert.equal(tabs[1].id, "folder:/repo/src");
+  assert.equal(tabs[1].kind, "folder");
+  assert.equal(tabs[1].label, "src");
+  assert.equal(tabs[1].filePath, "/repo/src");
+});
+
+test("reopening an already-open folder is a no-op (caller reselects)", () => {
+  const first = openFolderTab([tabA], openFolderA);
+  const second = openFolderTab(first, openFolderA);
+  assert.strictEqual(second, first);
 });
