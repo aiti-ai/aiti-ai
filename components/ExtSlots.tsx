@@ -84,6 +84,8 @@ export interface ExtClientContext {
   getTopicItems<T>(topic: string): T[];
   /** 打开文件标签页（宿主公共接口，同步调用；返回 void/Promise） */
   openFile?(path: string, fileName?: string, options?: OpenFileOptions): void | Promise<void>;
+  /** 打开文件夹标签页（右侧面板 FolderViewer；display-only，不影响 cwd） */
+  openFolder?(path: string, folderName?: string): void | Promise<void>;
   /** 侧栏文件树定位目录 */
   revealDir?(absPath: string): void | Promise<void>;
   /** 输入框追加文本不发送（引用回复预填用） */
@@ -226,6 +228,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     // 宿主公共接口（AppShell 经 registerHostApi 注册原样能力；fileName 兜底适配在框架层）
     openFile: (path: string, fileName?: string, options?: OpenFileOptions) =>
       getHostApi().openFile?.(path, fileName ?? path.split("/").pop() ?? path, options),
+    openFolder: (path: string, folderName?: string) =>
+      getHostApi().openFolder?.(path, folderName ?? path.split("/").pop() ?? path),
     revealDir: (absPath) => getHostApi().revealDir?.(absPath),
     appendText: (text) => getHostApi().appendText?.(text),
     reloadExtensions: () => reloadExtensions(),

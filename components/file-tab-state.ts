@@ -9,6 +9,12 @@ interface OpenFileTabInput {
   tabId: string;
 }
 
+interface OpenFolderTabInput {
+  folderName: string;
+  folderPath: string;
+  tabId: string;
+}
+
 export function openFileTab(tabs: Tab[], input: OpenFileTabInput): Tab[] {
   const existing = tabs.find((tab) => tab.id === input.tabId);
   if (!existing) {
@@ -66,4 +72,21 @@ export function saveFileViewerState(
   const next = [...tabs];
   next[index] = { ...next[index], viewerState };
   return next;
+}
+
+/**
+ * Open (or reselect) a folder tab. Folder tabs are first-class: clicking an
+ * already-open folder just reselects it (no state change needed). The root
+ * path is mutable from inside the FolderViewer ("switch folder"), so a reopen
+ * of the same path is a no-op.
+ */
+export function openFolderTab(tabs: Tab[], input: OpenFolderTabInput): Tab[] {
+  const existing = tabs.find((tab) => tab.id === input.tabId);
+  if (existing) return tabs; // already open — caller just selects it
+  return [...tabs, {
+    id: input.tabId,
+    label: input.folderName,
+    filePath: input.folderPath,
+    kind: "folder",
+  }];
 }

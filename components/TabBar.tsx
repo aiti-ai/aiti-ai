@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { getFileIcon } from "./FileIcons";
+import { getFileIcon, FolderIcon } from "./FileIcons";
 import { useI18n } from "@/hooks/useI18n";
 import type { FileViewerDisplayMode, FileViewerState } from "@/lib/file-viewer-state";
 
@@ -9,6 +9,8 @@ export interface Tab {
   id: string;
   label: string;
   filePath: string;
+  /** "file" (default) or "folder" — folder tabs render a FolderViewer. */
+  kind?: "file" | "folder";
   sourceSessionId?: string | null;
   initialDisplayMode?: FileViewerDisplayMode;
   viewerState?: FileViewerState;
@@ -73,7 +75,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
             }}
           >
             <span style={{ flexShrink: 0, opacity: isActive ? 1 : 0.7, display: "flex", alignItems: "center" }}>
-              {getFileIcon(tab.label, 13)}
+              {tab.kind === "folder" ? <FolderIcon size={13} open={isActive} /> : getFileIcon(tab.label, 13)}
             </span>
             <span
               style={{
