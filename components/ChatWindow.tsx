@@ -387,6 +387,10 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     await handleSend(message, images);
   }, [handleEditFromStartSend, handleSend]);
   const [recoveryDismissed, setRecoveryDismissed] = useState(false);
+  // 草稿静默恢复状态：true 时不弹恢复对话框；自动恢复失败会回退 false 放行对话框手动处理。
+  const [silentDraftRestore, setSilentDraftRestore] = useState(false);
+  // 已尝试自动恢复的草稿 slot 集合（去重；恢复后即被消费，失败后也不无限重试）。
+  const autoRestoredDraftRef = useRef<Set<string>>(new Set());
 
   /** 「继续」按钮：AI 完全停止（无 streaming）时出现——点击快速发送“继续”消息，触发 agent 继续运行。
    *  仅在 agent 空闲时可见（ChatInput 只在非 streaming 分支渲染）。
@@ -479,6 +483,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     ? [...pendingRecovery, ...draftRecoveryItems]
     : pendingRecovery;
 
+  // 草稿静默恢复条件：只有客户端草稿待恢复（无服务端队列需要用户决策）、且输入框为空时，
+  // 不弹恢复对话框，直接把草稿恢复到输入框（等价于在对话框里点「保留/重新入队」）。
+  // 服务端队列消息（重启后存活）仍需用户决定，保留弹窗。
+  const hasServerRecovery = pendingRecovery.length > 0;
+  const onlyDraftRecovery = draftRecoveryItems.length > 0 && !hasServerRecovery;
+  const autoRestoreDrafts = onlyDraftRecovery && !(chatInputRef?.current?.hasInput?.());
+
   // Queue-recovery resolution with draft items handled client-side (the server
   // knows nothing about drafts): keep = restore into the input box (foreign
   // slots are consumed; the own slot becomes the live input), discard = wipe
@@ -535,9 +546,23 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     return resolveRecovery(serverKeep, serverDiscard, continueRun && serverKeep.length > 0);
   }, [draftKey, pendingDrafts, pendingRecovery, resolveRecovery, chatInputRef, handleFollowUp]);
 
+  // 草稿静默恢复：条件满足时不弹恢复对话框，直接把草稿全部恢复到输入框/队列（keep-all）。
+  useEffect(() => {
+    if (!autoRestoreDrafts) return;
+    const keys = pendingDrafts.map((slot) => `draft:${slot.slotKey}`);
+    if (keys.every((k) => autoRestoredDraftRef.current.has(k))) return;
+    autoRestoredDraftRef.current = new Set(keys);
+    setSilentDraftRestore(true);
+    handleResolveRecovery(keys, [], false).catch(() => {
+      // 自动恢复失败：放行对话框由用户手动处理（本批草稿不再自动重试）。
+      setSilentDraftRestore(false);
+    });
+  }, [autoRestoreDrafts, pendingDrafts, handleResolveRecovery]);
+
   // Reset dismissal whenever the session or its pending list changes identity.
   useEffect(() => {
     setRecoveryDismissed(false);
+    setSilentDraftRestore(false);
   }, [session?.id]);
 
   // After recovery/import resolution (pendingRecovery drops to zero), expand
@@ -1108,7 +1133,7 @@ const messageListEl = useMemo(() => {
         />
       )}
 
-      {recoveryItems.length > 0 && !recoveryDismissed && (
+      {recoveryItems.length > 0 && !recoveryDismissed && !(silentDraftRestore && recoveryItems.every((i) => i.origin === "draft")) && (
         <QueueRecoveryDialog
           items={recoveryItems}
           sessionId={session?.id ?? sessionIdRef.current ?? undefined}
