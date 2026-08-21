@@ -73,8 +73,8 @@ export interface ExtClientContext {
   sendChatMessage(text: string, mode: "steer" | "followUp"): void;
   /** 注册消息段落点击接管 handler（消息点击识别薄宿主：core 广播段落点击事件，弹层 UI 全在扩展侧） */
   registerParagraphClick(handler: ParagraphClickHandler): void;
-  /** 同步读本扩展全部功能状态（extman 管理；host 已统一拉取，扩展零独立请求） */
-  getFeatures?(): Record<string, boolean>;
+  /** 同步读本扩展全部功能状态（extman 管理；host 已统一拉取，扩展零独立请求）。boolean feature 为布尔，string feature 为字符串值。 */
+  getFeatures?(): Record<string, boolean | string>;
   /** 订阅本扩展功能状态变更（extman 改 feature 后触发；返回退订函数） */
   onFeatureChange?(cb: () => void): () => void;
   /** 主题条目注册（扩展间间接耦合）：发布条目到抽象主题（如 "msg-popover-action"），
@@ -163,7 +163,7 @@ interface ManifestExt {
   clientUrl: string | null;
   ui: { i18n?: Record<string, Record<string, string>>; provides?: string[] } | null;
   icon?: string | null;
-  features?: { id: string; enabled: boolean }[] | null;
+  features?: { id: string; type?: "boolean" | "string"; label?: string; placeholder?: string; enabled: boolean; value?: string }[] | null;
 }
 
 let loadStarted = false;
@@ -186,7 +186,11 @@ const FEATURES_CHANGED_EVENT = "pi-web:ext-features-changed";
 if (typeof window !== "undefined") {
   window.addEventListener(FEATURES_CHANGED_EVENT, (e) => {
     const d = (e as CustomEvent)?.detail;
-    if (d && d.extId && d.featureId) patchExtFeature(String(d.extId), String(d.featureId), d.enabled !== false);
+    if (d && d.extId && d.featureId) {
+      // string feature 带 value（字符串）；boolean feature 带 enabled（布尔）
+      const v = (d.value !== undefined) ? d.value : (d.enabled !== false);
+      patchExtFeature(String(d.extId), String(d.featureId), v as boolean | string);
+    }
   });
 }
 
@@ -255,7 +259,7 @@ async function fetchManifestData(): Promise<{ extensions: ManifestExt[]; graph: 
       manifestCache.set(ext.id, ext);
       metas[ext.id] = { name: ext.name, icon: ext.icon ?? null, provides: ext.ui?.provides };
       // 功能状态统一写入共享 store（extman 管理；扩展经 ctx.getFeatures 读，零独立请求）
-      setExtFeatures(ext.id, ext.features ? Object.fromEntries(ext.features.map((f) => [f.id, f.enabled !== false])) : null);
+      setExtFeatures(ext.id, ext.features ? Object.fromEntries(ext.features.map((f) => [f.id, f.type === "string" ? (f.value ?? "") : (f.enabled !== false)])) : null);
       // 按需加载登记：声明了哪些 UI 插槽（ui 定义里非空数组的 slot 键）。
       registerDeclaredSlots(ext.id, ext.ui ? Object.keys(ext.ui).filter((k) => k !== "i18n" && k !== "provides" && k !== "clientDependsOn") : []);
     }

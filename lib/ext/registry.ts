@@ -13,6 +13,7 @@ import type {
   ExtAgentHooks,
   ExtApiContext,
   ExtCoreApi,
+  ExtFeature,
   ExtMiddlewareResult,
   ExtServerContext,
   ExtServerHooks,
@@ -47,7 +48,7 @@ export interface RegistryOptions {
 }
 
 const DISABLED_FILE = "disabled-extensions.json";
-/** 功能管理持久化：<dataRoot>/features.json → { [extId]: { [featureId]: boolean } }（只存显式设置，默认不落盘）。 */
+/** 功能管理持久化：<dataRoot>/features.json → { [extId]: { [featureId]: boolean | string } }（只存显式设置，默认不落盘）。 */
 const FEATURES_FILE = "features.json";
 
 /** ExtUiDefinition 里带条目数组的插槽（扩展管理界面按此统计插入点）。 */
@@ -216,14 +217,14 @@ export class ExtRegistryImpl {
   // 扩展在 entry 里声明 features（能力清单），用户经扩展管理器逐项启用/禁用；
   // 显式设置持久化到 <dataRoot>/features.json，读时合并声明的 default。
 
-  private featureCache: { mtimeMs: number; flags: Record<string, Record<string, boolean>> } | null = null;
-  private featureFlags(): Record<string, Record<string, boolean>> {
+  private featureCache: { mtimeMs: number; flags: Record<string, Record<string, boolean | string>> } | null = null;
+  private featureFlags(): Record<string, Record<string, boolean | string>> {
     const file = join(this.dataRoot(), FEATURES_FILE);
     try {
       const st = statSync(file);
       if (this.featureCache && this.featureCache.mtimeMs === st.mtimeMs) return this.featureCache.flags;
       const raw = readFileSync(file, "utf8");
-      const parsed = JSON.parse(raw) as Record<string, Record<string, boolean>>;
+      const parsed = JSON.parse(raw) as Record<string, Record<string, boolean | string>>;
       this.featureCache = { mtimeMs: st.mtimeMs, flags: parsed ?? {} };
       return this.featureCache.flags;
     } catch {
@@ -231,7 +232,7 @@ export class ExtRegistryImpl {
     }
   }
 
-  private persistFeatureFlags(flags: Record<string, Record<string, boolean>>): void {
+  private persistFeatureFlags(flags: Record<string, Record<string, boolean | string>>): void {
     try {
       writeFileSync(join(this.dataRoot(), FEATURES_FILE), JSON.stringify(flags, null, 2));
     } catch (e) {
@@ -241,40 +242,69 @@ export class ExtRegistryImpl {
   }
 
   /** 扩展声明里的 feature（按 id）。 */
-  private declaredFeature(extId: string, featureId: string): { default?: boolean } | undefined {
+  private declaredFeature(extId: string, featureId: string): ExtFeature | undefined {
     const ext = this.extensions.get(extId);
     return ext?.ext.features?.find((f) => f.id === featureId);
   }
 
   /**
-   * 功能当前是否启用：用户显式设置优先，否则取声明 default（缺省 true）。
+   * 功能当前是否启用（boolean 类型）：用户显式设置优先，否则取声明 default（缺省 true）。
    * 供扩展/collectAgentTools 查询；未声明或未知 feature 一律视为启用（不拦截）。
+   * string 类型功能无开关语义，恒返回 true（值用 featureValue 查）。
    */
   featureEnabled(extId: string, featureId: string): boolean {
     const declared = this.declaredFeature(extId, featureId);
+    if (declared && declared.type === "string") return true;
     const explicit = this.featureFlags()[extId]?.[featureId];
     if (typeof explicit === "boolean") return explicit;
     return declared?.default !== false;
   }
 
   /**
-   * 设置功能启停（持久化）。显式设置与声明 default 一致时移除条目（保持文件干净）。
+   * 功能当前值（string 类型）：用户显式设置优先，否则取声明 value（缺省 ""）。
+   * boolean 类型返回 featureEnabled 的结果（真值）。
+   */
+  featureValue(extId: string, featureId: string): boolean | string {
+    const declared = this.declaredFeature(extId, featureId);
+    if (declared && declared.type === "string") {
+      const explicit = this.featureFlags()[extId]?.[featureId];
+      if (typeof explicit === "string") return explicit;
+      return declared.value ?? "";
+    }
+    return this.featureEnabled(extId, featureId);
+  }
+
+  /**
+   * 设置功能启停（boolean 类型，持久化）。显式设置与声明 default 一致时移除条目（保持文件干净）。
    * 返回该 feature 新的生效状态。
    */
   setFeatureFlag(extId: string, featureId: string, enabled: boolean): boolean {
+    this.setFeatureValue(extId, featureId, enabled);
+    return this.featureEnabled(extId, featureId);
+  }
+
+  /**
+   * 设置功能值（boolean | string 类型，持久化）。与默认一致则移除条目（保持文件干净）。
+   * string 类型：空串与声明默认一致时移除。返回该 feature 新的值。
+   */
+  setFeatureValue(extId: string, featureId: string, value: boolean | string): boolean | string {
     const flags = this.featureFlags();
     const per = { ...(flags[extId] ?? {}) };
     const declared = this.declaredFeature(extId, featureId);
-    if (declared && enabled === (declared.default !== false)) {
+    const isString = declared && declared.type === "string";
+    const isDefault = isString
+      ? String(value) === (declared.value ?? "")
+      : value === (declared ? declared.default !== false : true);
+    if (declared && isDefault) {
       delete per[featureId]; // 与默认一致 → 不落盘
     } else {
-      per[featureId] = enabled;
+      per[featureId] = value;
     }
     const next = { ...flags };
     if (Object.keys(per).length > 0) next[extId] = per;
     else delete next[extId];
     this.persistFeatureFlags(next);
-    return this.featureEnabled(extId, featureId);
+    return this.featureValue(extId, featureId);
   }
 
   /**
@@ -449,7 +479,7 @@ export class ExtRegistryImpl {
         serverHooks: server ? SERVER_HOOK_KEYS.filter((k) => typeof server[k] === "function") : [],
         agentHooks: server?.agent ? AGENT_HOOK_KEYS.filter((k) => typeof server.agent![k] === "function") : [],
         features: ext.ext.features?.length
-          ? ext.ext.features.map((f) => ({ ...f, enabled: this.featureEnabled(ext.id, f.id) }))
+          ? ext.ext.features.map((f) => ({ ...f, enabled: this.featureEnabled(ext.id, f.id), ...(f.type === "string" ? { value: String(this.featureValue(ext.id, f.id)) } : {}) }))
           : undefined,
         packageInfo: readPackageInfo(ext.dir),
       };
@@ -489,7 +519,7 @@ export class ExtRegistryImpl {
       source: e.source,
       icon: e.ext.icon ?? null,
       // 功能状态（extman 管理）：host 客户端加载时一并取，扩展只读共享 store，无独立请求
-      features: e.ext.features?.length ? e.ext.features.map((f) => ({ id: f.id, enabled: this.featureEnabled(e.id, f.id) })) : null,
+      features: e.ext.features?.length ? e.ext.features.map((f) => ({ id: f.id, type: f.type, label: f.label, placeholder: f.placeholder, enabled: this.featureEnabled(e.id, f.id), ...(f.type === "string" ? { value: String(this.featureValue(e.id, f.id)) } : {}) })) : null,
     }));
   }
 

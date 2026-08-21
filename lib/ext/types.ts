@@ -31,14 +31,22 @@ export interface ExtFeature {
   description?: string;
   /** 分组（可选，如 "页面操作" / "用户交互"；扩展管理界面按组分）。 */
   group?: string;
-  /** 默认启用（缺省 true；false = 默认关闭，用户可手动打开）。 */
+  /** 值类型（缺省 "boolean" = 开关；"string" = 文本配置项，扩展管理界面画输入框）。 */
+  type?: "boolean" | "string";
+  /** 默认启用（boolean 类型用；缺省 true；false = 默认关闭，用户可手动打开）。 */
   default?: boolean;
+  /** 默认值（string 类型用；缺省 ""）。 */
+  value?: string;
+  /** 输入框占位提示（string 类型用，可选）。 */
+  placeholder?: string;
 }
 
 /** status 接口里的功能条目 = 声明 + 当前生效状态。 */
 export interface ExtStatusFeature extends ExtFeature {
-  /** 当前生效（用户显式设置优先，否则取 default）。 */
+  /** 当前生效（boolean 类型：用户显式设置优先，否则取 default；string 类型恒 true）。 */
   enabled: boolean;
+  /** 当前值（string 类型：用户显式设置优先，否则取声明 value；boolean 类型无此字段）。 */
+  value?: string;
 }
 
 /** Core data capabilities handed to extensions — no reimplementation of session access. */
@@ -323,4 +331,6 @@ export interface ManifestExtension {
   source?: ExtensionSource;
   error?: string;
   icon?: string | null;
+  /** 功能状态（extman 管理）：host 客户端加载时一并取，扩展只读共享 store，无独立请求。 */
+  features?: { id: string; type?: "boolean" | "string"; label?: string; placeholder?: string; enabled: boolean; value?: string }[] | null;
 }

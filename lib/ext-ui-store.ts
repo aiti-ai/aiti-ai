@@ -179,11 +179,11 @@ export function extUiVersion(): number {
 // ── 扩展功能状态（extman 管理）：host 统一拉取一次填满（manifest），扩展只读 + 订阅变更——
 //    无独立请求/轮询。变更：extman set-feature → 广播 pi-web:ext-features-changed →
 //    host 监听后 patchExtFeature 原地更新 → subscribeExtFeatures 订阅者收到通知。 ──
-let featureState: Record<string, Record<string, boolean>> = {};
+let featureState: Record<string, Record<string, boolean | string>> = {};
 const featureListeners = new Set<() => void>();
 
 /** 全量写入某扩展的功能状态（manifest 拉取时 host 调用；空/无声明则移除）。 */
-export function setExtFeatures(extId: string, features: Record<string, boolean> | null): void {
+export function setExtFeatures(extId: string, features: Record<string, boolean | string> | null): void {
   const next = { ...featureState };
   if (features && Object.keys(features).length > 0) next[extId] = features;
   else delete next[extId];
@@ -191,22 +191,24 @@ export function setExtFeatures(extId: string, features: Record<string, boolean> 
   for (const l of featureListeners) l();
 }
 
-/** 就地更新单个功能项（extman 变更事件 → host patch，不重新拉取）。 */
-export function patchExtFeature(extId: string, featureId: string, enabled: boolean): void {
+/** 就地更新单个功能项（extman 变更事件 → host patch，不重新拉取）。boolean 传布尔，string 传字符串。 */
+export function patchExtFeature(extId: string, featureId: string, value: boolean | string): void {
   const per = { ...(featureState[extId] ?? {}) };
-  per[featureId] = enabled;
+  per[featureId] = value;
   featureState = { ...featureState, [extId]: per };
   for (const l of featureListeners) l();
 }
 
 /** 同步读某扩展的功能状态（未声明/未知 → undefined !== false → 视为启用）。 */
-export function getExtFeaturesOf(extId: string): Record<string, boolean> {
+export function getExtFeaturesOf(extId: string): Record<string, boolean | string> {
   return featureState[extId] ?? {};
 }
 
-/** 同步读单个功能项是否启用。 */
+/** 同步读单个功能项是否启用（boolean）。string 类型恒 true。 */
 export function getExtFeature(extId: string, featureId: string): boolean {
-  return featureState[extId]?.[featureId] !== false;
+  const v = featureState[extId]?.[featureId];
+  if (typeof v === "string") return v !== "";
+  return v !== false;
 }
 
 /** 订阅功能状态变更（返回退订函数）。 */
