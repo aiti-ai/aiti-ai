@@ -170,6 +170,8 @@ export type ExtSlotName =
   | "banners"
   | "pages"
   | "chatInputTop"   // 聊天输入框上方（aiti-devtools：inspect 候选区等）
+  | "chatOverlay"    // 消息区覆盖层（消息滚动导航条等；aiti-msg-nav
+                     //   在消息列右侧渲染 absolute 悬浮工具栏）
   | "userMessageActions" // user 消息底部 hover 操作区（aiti-prompts：📌 收藏为 prompt 等）
   | "fileViewer"     // 文件查看/编辑接管（aiti-editor：文本文件编辑；aiti-folder：文件夹浏览器；未接管时核心原查看器兑底）
   | "pathPicker"    // 目录选择器能力（aiti-folder：FolderSwitcher 同款；顶栏「打开文件夹」等消费）

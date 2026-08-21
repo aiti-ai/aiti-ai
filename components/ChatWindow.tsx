@@ -11,7 +11,7 @@ import { MessageView } from "./MessageView";
 import { ChatInput, type AttachedImage, type ChatInputHandle } from "./ChatInput";
 import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
-import { ScrollToolbar } from "./ScrollToolbar";
+import { ExtSlot } from "./ExtSlots";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
 import { clearDraft, DRAFT_KEY_PREFIX, listDraftSlots, removeDraftSlot, type DraftSlotInfo } from "@/lib/draft-store";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
@@ -946,7 +946,7 @@ const messageListEl = useMemo(() => {
   );
   if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
   return (
-  <div key={`${keyPrefix}-${entryIds[idx] ?? idx}`} ref={attachVisibleRef(idx, currentRefIdx)}>
+  <div key={`${keyPrefix}-${entryIds[idx] ?? idx}`} ref={attachVisibleRef(idx, currentRefIdx)} data-chat-msg-role={msg.role}>
   {view}
   </div>
   );
@@ -1224,7 +1224,7 @@ const messageListEl = useMemo(() => {
       ) : (
       <>
       <div className="relative flex min-w-0 flex-1 overflow-hidden">
-        <div ref={handleScrollBoxRef} className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]" style={{ paddingBottom: bottomEyeRoom }}>
+        <div ref={handleScrollBoxRef} data-chat-scroll className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]" style={{ paddingBottom: bottomEyeRoom }}>
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
 
@@ -1265,15 +1265,8 @@ const messageListEl = useMemo(() => {
           </div>
         </div>
 
-        <ScrollToolbar
-          scrollContainerRef={scrollContainerRef}
-          messageRefs={messageRefs}
-          visibleMessages={visibleMessages}
-          messagesLength={messages.length}
-          agentRunning={agentRunning}
-          isMobile={isMobile}
-          setVisibleCount={setVisibleCount}
-        />
+        {/* 消息滚动导航条已抽离为扩展（aiti-msg-nav 注册到 chatOverlay 插槽） */}
+        <ExtSlot name="chatOverlay" extra={{ agentRunning, isMobile }} />
 
         {isMobile || isCompact ? null : (
           <ChatMinimap
