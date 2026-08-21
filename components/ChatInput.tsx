@@ -1245,16 +1245,24 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       const hasContent = current.trim().length > 0;
       const sep = hasContent && !current.endsWith("\n") ? "\n" : "";
       const combined = (hasContent ? current : "") + sep + text;
+      // 同步把新值写进 DOM：React 18 的受控提交是异步调度的，若只 setValue 就排队
+      // rAF 定位光标，rAF 可能抢在 React commit 之前跑——此时 ta.value 还是旧（空）值，
+      // setSelectionRange(combined.length) 会被钳到 0，随后 commit 虽把光标移到末尾
+      // 却不会滚动——长引用时就停在第一行。同步写后 React 受控提交发现 node.value
+      // 已等于新值会跳过覆写（不打断我们刚设的光标）。
+      if (ta) ta.value = combined;
+      valueRef.current = combined;
       setValue(combined);
       setAtQuery(null);
       requestAnimationFrame(() => {
         if (!ta) return;
         ta.focus();
         ta.setSelectionRange(combined.length, combined.length);
-        // Height recalculation (runs on its own via the [value] effect too;
-        // doing it here keeps the box sized before the next paint).
+        // 光标落点（末尾）可能超出可视区：值刚写入的那一帧浏览器不保证 setSelectionRange
+        // 自动滚动到光标，显式滚到底部保证用户看到回复落点（长引用时输入框停在最后一行）。
         ta.style.height = "auto";
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+        ta.scrollTop = ta.scrollHeight;
       });
     },
     rekeyDraft(previousKey: string, nextKey: string) {
