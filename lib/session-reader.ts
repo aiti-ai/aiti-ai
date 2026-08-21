@@ -532,17 +532,28 @@ function buildFullPath(
   return path;
 }
 
-/** 沿路径收集 thinkingLevel 与 model（等价于 SDK 的 getSessionContextSettings，基于本地全路径计算）。 */
+/** 沿路径收集 thinkingLevel 与 model（基于本地全路径计算；model 语义见下）。
+ *
+ * model 的权威来源是 `model_change` 条目（会话当前模型 = 下一次 run 实际使用的模型）：
+ * 运行中切换模型时，`model_change` 被追加后，in-flight 这一轮的输出仍盖着旧模型戳
+ * （assistant 消息 model=旧模型）排在它后面成为叶子。若按「最后一条消息」取 model，
+ * 停掉/结束该轮后显示会回退到旧模型——而服务端会话模型（agent.state.model）已是新模型。
+ * 因此 `model_change` 优先于后续 assistant 消息戳；仅当路径上没有 model_change 时
+ * 才回退到最后一条 assistant 消息的模型。 */
 function getSessionContextSettings(path: SessionEntry[]): { thinkingLevel: string; model: { provider: string; modelId: string } | null } {
   let thinkingLevel = "off";
   let model: { provider: string; modelId: string } | null = null;
+  let sawModelChange = false;
   for (const entry of path) {
     if (entry.type === "thinking_level_change") {
       thinkingLevel = entry.thinkingLevel;
     } else if (entry.type === "model_change") {
       model = { provider: entry.provider, modelId: entry.modelId };
+      sawModelChange = true;
     } else if (entry.type === "message" && entry.message.role === "assistant") {
-      model = { provider: entry.message.provider, modelId: entry.message.model };
+      if (!sawModelChange) {
+        model = { provider: entry.message.provider, modelId: entry.message.model };
+      }
     }
   }
   return { thinkingLevel, model };
