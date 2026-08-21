@@ -1167,28 +1167,6 @@ export function AppShell() {
     setMoreOpen((v) => !v);
   }, []);
 
-  // 扩展（如 aiti-extman）请求临时显/隐某顶栏条目：customize 面板外的程序化入口。
-  // extman 打开被隐藏的 toolbar 扩展点时，先发 hidden:false 让条目渲染出来点开，再发 hidden:true 恢复原状。
-  useEffect(() => {
-    const onHide = (e: Event) => {
-      const d = (e as CustomEvent)?.detail as { id?: string; hidden?: boolean } | undefined;
-      if (!d) return;
-      const id = d.id;
-      const hidden = d.hidden;
-      if (typeof id !== "string" || typeof hidden !== "boolean") return;
-      setStoredHidden((prev) => {
-        const set = new Set(prev);
-        if (hidden) set.add(id);
-        else set.delete(id);
-        const next = [...set];
-        writeTopbarHidden(next);
-        return next;
-      });
-    };
-    window.addEventListener("pi-web:topbar-hidden", onHide as EventListener);
-    return () => window.removeEventListener("pi-web:topbar-hidden", onHide as EventListener);
-  }, []);
-
   // ---- 顶栏按钮渲染（行内 / ⋯ 菜单两套外壳） ----
   const topbarMenuRowStyle: React.CSSProperties = {
     display: "flex", alignItems: "center", gap: 8,
