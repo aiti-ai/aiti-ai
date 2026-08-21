@@ -92,6 +92,8 @@ export const zhCNLocale: LocalePlugin = {
     "files.parentDir": "上级目录",
     "files.noSubdirs": "无子目录",
     "files.noneOpen": "没有打开的文件",
+    "files.openCwdFolder": "打开当前文件夹",
+    "files.noRecentDirs": "没有最近目录",
     "files.clickTabToOpen": "点击上方的文件标签打开",
     "layout.resizeSidebar": "调整侧边栏宽度",
     "layout.resizeFilePanel": "调整文件面板宽度",

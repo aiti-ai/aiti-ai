@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiUrl, withBasePath } from "@/lib/base-path";
 
@@ -8,8 +8,6 @@ import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
-import { FolderViewer } from "./FolderViewer";
-import { PathPicker } from "./PathPicker";
 import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
 import { ModelsConfig } from "./ModelsConfig";
@@ -17,7 +15,11 @@ import { AiUsageRows } from "./AiUsageRows";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas } from "./ExtSlots";
-import type { ExtRenderProps } from "@/lib/ext-ui-store";
+import type { ExtRenderProps, ExtUiItemRegistered } from "@/lib/ext-ui-store";
+import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
+
+/** pathPicker 槽 SSR 稳定空快照（getServerSnapshot 必须返回缓存引用，否则无限循环）。 */
+const NO_PATH_PICKER_ITEMS: ExtUiItemRegistered[] = [];
 import { registerHostApi } from "@/lib/ext/host-api";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { BranchNavigator } from "./BranchNavigator";
@@ -353,7 +355,12 @@ export function AppShell() {
   // Right panel — file tabs only
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  // pathPicker 能力（aiti-folder FolderSwitcher）：顶栏「打开文件夹」消费。SSR 稳定空快照。
+  const pathPickerItems = useSyncExternalStore(
+    subscribeExtUi,
+    () => getExtUiItems("pathPicker"),
+    () => NO_PATH_PICKER_ITEMS,
+  );
 
   const handleFileViewerStateChange = useCallback((
     tabId: string,
@@ -2778,26 +2785,39 @@ export function AppShell() {
               onCloseTab={handleCloseFileTab}
             />
           </div>
-          <button
-            type="button"
-            onClick={() => setFolderPickerOpen(true)}
-            title={translate("files.openFolder")}
-            aria-label={translate("files.openFolder")}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
-              background: "var(--bg-selected)", border: "none", borderLeft: "1px solid var(--border)",
-              color: "var(--text)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
-            }}
-            onMouseEnter={(event) => { event.currentTarget.style.color = "var(--accent)"; }}
-            onMouseLeave={(event) => { event.currentTarget.style.color = "var(--text)"; }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-              <line x1="12" y1="11" x2="12" y2="17" />
-              <line x1="9" y1="14" x2="15" y2="14" />
-            </svg>
-          </button>
+          {(() => {
+            // pathPicker 能力（aiti-folder 扩展的 FolderSwitcher）；无接管则兜底按钮开 CWD。
+            const picker = pathPickerItems[0];
+            if (picker) {
+              return picker.render({
+                path: activeCwd ?? "",
+                compact: true,
+                onSelect: (p: string) => handleOpenFolder(p, getFileName(p)),
+              });
+            }
+            return (
+              <button
+                type="button"
+                onClick={() => activeCwd && handleOpenFolder(activeCwd, getFileName(activeCwd))}
+                title={translate("files.openFolder")}
+                aria-label={translate("files.openFolder")}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+                  background: "var(--bg-selected)", border: "none", borderLeft: "1px solid var(--border)",
+                  color: "var(--text)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                  <line x1="12" y1="11" x2="12" y2="17" />
+                  <line x1="9" y1="14" x2="15" y2="14" />
+                </svg>
+              </button>
+            );
+          })()}
           <button
             type="button"
             onClick={() => setRightPanelOpen(false)}
@@ -2823,10 +2843,14 @@ export function AppShell() {
         {/* Only the active viewer is mounted. Lightweight per-tab state is restored on activation. */}
         <div style={{ flex: 1, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
           {activeFileTab?.kind === "folder" ? (
-            <FolderViewer
+            <FileViewer
               key={activeFileTab.id}
-              folderPath={activeFileTab.filePath}
+              kind="folder"
+              filePath={activeFileTab.filePath}
               cwd={activeCwd ?? undefined}
+              sourceSessionId={selectedSession?.id ?? null}
+              gitRefreshKey={explorerRefreshKey}
+              watchEnabled={rightPanelOpen}
               onOpenFile={(filePath) => handleOpenFile(
                 filePath,
                 getFileName(filePath),
@@ -2862,21 +2886,31 @@ export function AppShell() {
             <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12 }}>
                {fileTabs.length > 0
                  ? translate("files.clickTabToOpen")
-                 : translate("files.noneOpen")}
+                 : <>
+                     <span>{translate("files.noneOpen")}</span>
+                     {activeCwd && (
+                       <button
+                         type="button"
+                         onClick={() => handleOpenFolder(activeCwd, getFileName(activeCwd))}
+                         title={translate("files.openCwdFolder")}
+                         style={{
+                           display: "flex", alignItems: "center", gap: 6,
+                           padding: "6px 12px",
+                           background: "var(--bg-hover)", border: "1px solid var(--border)",
+                           borderRadius: 6, color: "var(--accent)", cursor: "pointer",
+                           fontSize: 12, fontWeight: 600,
+                         }}
+                       >
+                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                           <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                         </svg>
+                         {translate("files.openCwdFolder")}
+                       </button>
+                     )}
+                   </>}
             </div>
           )}
         </div>
-        {folderPickerOpen && (
-          <PathPicker
-            initialPath={activeCwd ?? undefined}
-            title={translate("files.openFolder")}
-            onPick={(p) => {
-              setFolderPickerOpen(false);
-              handleOpenFolder(p, getFileName(p));
-            }}
-            onCancel={() => setFolderPickerOpen(false)}
-          />
-        )}
       </div>
     </div>
     {/* File panel toggle — always visible at top-right */}

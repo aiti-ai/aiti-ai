@@ -92,6 +92,8 @@ export const enLocale: LocalePlugin = {
     "files.parentDir": "Parent directory",
     "files.noSubdirs": "No subdirectories",
     "files.noneOpen": "No file open",
+    "files.openCwdFolder": "Open current folder",
+    "files.noRecentDirs": "No recent directories",
     "files.clickTabToOpen": "Click a file tab above to open",
     "layout.resizeSidebar": "Resize sidebar",
     "layout.resizeFilePanel": "Resize file panel",

@@ -41,7 +41,10 @@ interface Props {
   filePath: string;
   cwd?: string;
   sourceSessionId?: string | null;
+  /** "file" (default) or "folder" — folder kind delegates to a fileViewer slot takeover (aiti-folder). */
+  kind?: "file" | "folder";
   onOpenFile?: (filePath: string) => void;
+  onOpenFolder?: (folderPath: string, folderName: string) => void;
   onMentionLines?: (relativePath: string, startLine: number, endLine: number) => void;
   /** Insert this file's relative path into the chat input (@ mention). */
   onAtMention?: (relativePath: string, isDir: boolean) => void;
@@ -931,7 +934,9 @@ export function FileViewer({
   filePath,
   cwd,
   sourceSessionId,
+  kind = "file",
   onOpenFile,
+  onOpenFolder,
   onMentionLines,
   onAtMention,
   gitRefreshKey,
@@ -950,20 +955,30 @@ export function FileViewer({
   );
   const takeover = takeoverItems.find((item) => {
     const match = item.meta?.match;
-    return typeof match === "function" && match(filePath, { cwd });
+    return typeof match === "function" && match(filePath, { cwd, kind });
   });
   if (takeover) {
     return takeover.render({
       currentSession: sourceSessionId ? { id: sourceSessionId, cwd: cwd ?? "" } : null,
       filePath,
       cwd,
+      kind,
       sourceSessionId,
       gitRefreshKey,
       watchEnabled,
       onOpenFile,
+      onOpenFolder,
       onMentionLines,
       onAtMention,
     });
+  }
+  if (kind === "folder") {
+    // 无文件夹查看扩展接管 → 极简占位（不丢核心打开能力）
+    return (
+      <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12 }}>
+        <span>{filePath}</span>
+      </div>
+    );
   }
   if (isImagePath(filePath)) {
     return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} watchEnabled={watchEnabled} />;

@@ -34,7 +34,7 @@ export interface ExtUiItemRegistered {
     noMenuLabel?: boolean;
     /** fileViewer 接管判定（aiti-editor）：核心 FileViewer 跳板调用——
      *  文件是否交给该扩展渲染（缺省视为不接管 → 核心原查看器兜底，零回归）。 */
-    match?: (filePath: string, opts: { cwd?: string }) => boolean;
+    match?: (filePath: string, opts: { cwd?: string; kind?: "file" | "folder" }) => boolean;
   };
 }
 
