@@ -1266,10 +1266,11 @@ const messageListEl = useMemo(() => {
         </div>
 
         {/* 消息滚动导航条已抽离为扩展（aiti-msg-nav 注册到 chatOverlay 插槽）；
-            消息锚点横幅（aiti-msg-anchor）同插槽。currentSession 透传会话标题（title 模式用）。 */}
+            消息锚点横幅（aiti-msg-anchor）同插槽。currentSession 透传会话标题：
+            name + firstMessage（无 name 时与左侧 session 列表一致取第一条用户输入）。 */}
         <ExtSlot
           name="chatOverlay"
-          currentSession={session ? { id: session.id, cwd: session.cwd, name: session.name } : null}
+          currentSession={session ? { id: session.id, cwd: session.cwd, name: session.name, firstMessage: session.firstMessage } : null}
           extra={{ agentRunning, isMobile }}
         />
 
