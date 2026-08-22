@@ -81,7 +81,6 @@ lib/
   ext/registry.ts      globalThis.__piWebExt 单例：loadAll/startAll/shutdown/reload/api 分发/middleware 链/manifest/assetPath 防穿越
   ext/core.ts          makeExtCore()：listSessions/getRunningSessionIds/getHomeDir
   ext/data-dir.ts      代码 ~/.pi/web/extensions、数据 ~/.pi/web/data/<extId>/（PI_WEB_EXTENSIONS_DIR/PI_WEB_DATA_DIR 覆盖）
-  ext/float-enhancer.ts 弹窗浮动增强器：DOM 里 [data-ext-float] 面板自动获得拖拽/缩放/持久化/置前（ExtSlotsProvider 安装；扩展侧只加属性，见文件头注释）
   ext-ui-store.ts      client 插槽注册表（window.__piWebExtUI + subscribe 版本号）
   draft-store.ts       local draft persistence helpers
   file-access.ts       allowed file roots for /api/files and worktrees

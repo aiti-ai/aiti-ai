@@ -15,7 +15,6 @@
 import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { apiUrl } from "@/lib/base-path";
 import { getHostApi, type OpenFileOptions } from "@/lib/ext/host-api";
-import { installExtFloatEnhancer } from "@/lib/ext/float-enhancer";
 import type { ExtSlotName, ExtSlotProps, ParagraphClickHandler } from "@/lib/ext/types";
 import {
   getExtMetas,
@@ -247,9 +246,6 @@ export function ExtSlotsProvider({ children }: { children: ReactNode }) {
     const unsub = subscribeExtUi(() => force((v) => v + 1));
     return unsub;
   }, []);
-  // 弹窗浮动增强器（框架级 UI 契约）：DOM 里出现 [data-ext-float] 面板 → 自动
-  // 拖拽/缩放/持久化/置前。装在 Provider（随扩展体系启停，幂等可重入）。
-  useEffect(() => installExtFloatEnhancer(), []);
   return <>{children}</>;
 }
 
