@@ -69,7 +69,8 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{
             // 在 React hydrate 前同步探测界面语言，写入 window.__PI_LOCALE__
             // 供 I18nProvider 懒初始化读取，同时写 cookie 供下次 SSR 命中。
-            __html: `(function(){try{var l=localStorage.getItem("pi-locale");if(l!=="en"&&l!=="zh-CN"){var langs=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language];for(var i=0;i<langs.length;i++){var n=langs[i].toLowerCase();if(n==="zh"||n.startsWith("zh-")){l="zh-CN";break}if(n==="en"||n.startsWith("en-")){l="en";break}}if(!l)l="en"}}window.__PI_LOCALE__=l;document.documentElement.lang=l;document.cookie="pi-locale="+l+";path=/;max-age=31536000;SameSite=Lax"}catch(e){window.__PI_LOCALE__="en"}})();`,
+            // 注意：try 块必须包住下方赋值，不能提前闭合（否则 catch 孤儿 → 整个内联脚本解析失败）。
+            __html: `(function(){try{var l=localStorage.getItem("pi-locale");if(l!=="en"&&l!=="zh-CN"){var langs=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language];for(var i=0;i<langs.length;i++){var n=langs[i].toLowerCase();if(n==="zh"||n.startsWith("zh-")){l="zh-CN";break}if(n==="en"||n.startsWith("en-")){l="en";break}}if(!l)l="en"}window.__PI_LOCALE__=l;document.documentElement.lang=l;document.cookie="pi-locale="+l+";path=/;max-age=31536000;SameSite=Lax"}catch(e){window.__PI_LOCALE__="en"}})();`,
           }}
         />
       </head>
