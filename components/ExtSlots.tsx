@@ -404,7 +404,7 @@ export function ExtSlot<S extends ExtSlotName>({
   extra,
 }: {
   name: S;
-  currentSession?: { id: string; cwd: string; name?: string } | null;
+  currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
   /** 插槽额外 props——类型从 ExtSlotContractMap 契约取（未声明 → 宽松对象）。 */
   extra?: ExtSlotProps<S>;
 }) {

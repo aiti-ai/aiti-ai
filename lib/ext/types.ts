@@ -207,7 +207,7 @@ export type ExtSlotProps<S extends ExtSlotName> =
 
 /** 扩展现有插槽 props（宿主内置 + 扩展声明合并）。 */
 export type ExtSlotPropsWithBuiltIn<S extends ExtSlotName> =
-  { currentSession?: { id: string; cwd: string; name?: string } | null } & ExtSlotProps<S>;
+  { currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null } & ExtSlotProps<S>;
 
 /**
  * i18n 类型契约（DSH LocaleNamespaceMap 反哺）：扩展声明自己的 key 表后，

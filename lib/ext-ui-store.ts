@@ -17,7 +17,7 @@ import type { ExtSlotName } from "@/lib/ext/types";
 
 export interface ExtRenderProps {
   /** Current selected session (null for a fresh new-session composer). */
-  currentSession?: { id: string; cwd: string; name?: string } | null;
+  currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
   [key: string]: unknown;
 }
 
