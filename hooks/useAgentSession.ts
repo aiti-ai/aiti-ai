@@ -1864,6 +1864,26 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [isNew, newSessionCwd, session?.cwd]);
 
+  /**
+   * Pull fresh session stats (incl. contextUsage) from the agent process.
+   * POST /api/agent/[id] spins up the wrapper on demand, so this works even
+   * for idle sessions where /state returned no contextUsage on load — that's
+   * exactly the case where the topbar/panel would otherwise show no context %.
+   * The override self-clears when messages or contextUsage change (effect below).
+   */
+  const refreshSessionStats = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    try {
+      const stats = await sendAgentCommand<SessionStatsInfo>(sid, { type: "get_session_stats" });
+      if (!stats || sessionIdRef.current !== sid) return;
+      setSessionStatsOverride(stats);
+      if (stats.contextUsage) setContextUsage(stats.contextUsage);
+    } catch {
+      // Panel falls back to the locally computed stats; don't surface an error.
+    }
+  }, []);
+
   const handleBuiltinSlashCommand = useCallback(async (text: string): Promise<BuiltinSlashCommandResult> => {
     if (!text.startsWith("/")) return { handled: false };
     const match = text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
@@ -1922,10 +1942,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         case "session": {
           if (!sid) return complete({ handled: true, error: "No active session" });
-          const stats = await sendAgentCommand<SessionStatsInfo>(sid, { type: "get_session_stats" });
-          if (stats) {
-            setSessionStatsOverride(stats);
-          }
+          await refreshSessionStats();
           onSessionStatsPanelOpen?.();
           return complete({ handled: true, action: "openSessionStats" });
         }
@@ -1947,7 +1964,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (commandName === "compact") setIsCompacting(false);
     }
-  }, [addNotice, ensureNewSession, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, promoteNewSession, onSessionStatsPanelOpen]);
+  }, [addNotice, ensureNewSession, isCompacting, loadModels, loadSession, loadSlashCommands, loadTools, promoteNewSession, onSessionStatsPanelOpen, refreshSessionStats]);
 
   // Let AgentSession.prompt decide atomically whether to queue against the
   // current run or start a new turn if it settled while the request was in
@@ -2707,6 +2724,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     handleRecallQueue,
     handleContinueQueue,
     handleBuiltinSlashCommand,
+    refreshSessionStats,
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages,
     scrollToBottom, scrollUserMsgToTop,
     dispatch, setAgentRunning, setForkingEntryId,

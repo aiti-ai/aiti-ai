@@ -270,6 +270,8 @@ export function AppShell() {
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
   const [autoNameStatus, setAutoNameStatus] = useState<AutoNameStatus>({ kind: "idle" });
   const autoNameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** ChatWindow 注册的「拉取最新会话统计」回调（含 idle 会话的 contextUsage） */
+  const [sessionStatsRefresh, setSessionStatsRefresh] = useState<(() => void) | null>(null);
   const activeSessionIdRef = useRef<string | null>(selectedSession?.id ?? null);
   activeSessionIdRef.current = selectedSession?.id ?? null;
   const handleSessionStatsChange = useCallback((stats: SessionStatsInfo | null) => {
@@ -311,8 +313,11 @@ export function AppShell() {
 
   const openSessionStatsPanel = useCallback(() => {
     if (isMobile) setSidebarOpen(false);
+    // idle 会话无 live state 可读（wrapper 被 idle GC），打开面板时主动拉一次
+    // get_session_stats，确保 context % 行有值（手机上这是唯一的查看入口）。
+    sessionStatsRefresh?.();
     setActiveTopPanel("session");
-  }, [isMobile]);
+  }, [isMobile, sessionStatsRefresh]);
 
   const handleSidebarToggle = useCallback(() => {
     if (isMobile) {
@@ -2150,16 +2155,21 @@ export function AppShell() {
             return (
               <button
                 type="button"
-                onClick={() => toggleTopPanel("session")}
+                onClick={() => {
+                  // 打开时拉一次最新统计（idle 会话无 live state，contextUsage 会缺失）
+                  if (activeTopPanel !== "session") sessionStatsRefresh?.();
+                  toggleTopPanel("session");
+                }}
                title={tooltip || translate("session.title")}
                  aria-label={translate("session.title")}
                 aria-pressed={activeTopPanel === "session"}
+                className={isMobile ? "mobile-session-stats" : undefined}
                 style={{
                   marginLeft: "auto",
-                  display: "flex", alignItems: "center", gap: 10,
-                  paddingLeft: 12,
+                  display: "flex", alignItems: "center", gap: isMobile ? 7 : 10,
+                  paddingLeft: isMobile ? 6 : 12,
                   // ⋯ 按钮在其后占住右端，统计无需再为文件面板开关预留大边距
-                  paddingRight: 12,
+                  paddingRight: isMobile ? 6 : 12,
                   height: "100%",
                   background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
                   borderLeft: "none", borderRight: "none", borderBottom: "none",
@@ -2176,6 +2186,35 @@ export function AppShell() {
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
                   </svg>
+                )}
+                {/* 手机档：恢复与大屏对齐的关键统计（原先只剩一个 ⓘ 图标，context % 无处可看）。
+                    容器查询渐进收窄：<158px 藏 in/out（.mobile-session-stat-io），<88px 藏 cost
+                    （.mobile-session-stat-cost）；context % 恒在——手机上这是唯一的一眼入口。 */}
+                {isMobile && contextUsage?.contextWindow && contextUsage.percent !== null && (
+                  <span style={{ display: "flex", alignItems: "center", gap: 3, color: ctxColor, fontWeight: 600, flexShrink: 0 }}>
+                    {contextUsage.percent.toFixed(0)}%
+                  </span>
+                )}
+                {isMobile && tokens && tokens.input > 0 && (
+                  <span className="mobile-session-stat-io" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
+                    </svg>
+                    {fmt(tokens.input)}
+                  </span>
+                )}
+                {isMobile && tokens && tokens.output > 0 && (
+                  <span className="mobile-session-stat-io" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
+                    </svg>
+                    {fmt(tokens.output)}
+                  </span>
+                )}
+                {isMobile && costStr && (
+                  <span className="mobile-session-stat-cost" style={{ display: "flex", alignItems: "center", color: "var(--text)", fontWeight: 500, flexShrink: 0 }}>
+                    {costStr}
+                  </span>
                 )}
                 {/* 紧凑档（pad 竖屏 641–959px）：只保留上下文占用（最有用的一眼信息），把行宽让给 tag 区等 */}
                 {!isMobile && !isCompact && tokens && tokens.input > 0 && (
@@ -2686,6 +2725,7 @@ export function AppShell() {
               onSystemPromptLoaderChange={handleSystemPromptLoaderChange}
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
+              onSessionStatsRefresherRegister={setSessionStatsRefresh}
               onContextUsageChange={handleContextUsageChange}
               onExportQueue={(resolver) => { exportQueueDataRef.current = resolver; }}
               onOpenFile={handleOpenLinkedFile}

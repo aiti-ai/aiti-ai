@@ -49,6 +49,9 @@ interface Props {
   onSystemPromptLoaderChange?: (loader: (() => Promise<void>) | null) => void;
   onSessionStatsChange?: (stats: SessionStatsInfo | null) => void;
   onSessionStatsPanelOpen?: () => void;
+  /** Register the stats refresher so AppShell can pull fresh stats (incl.
+   *  contextUsage for idle sessions) when the session panel opens. */
+  onSessionStatsRefresherRegister?: (fn: (() => void) | null) => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string) => void;
   /** Expose the queue-export resolver to the parent (AppShell export dialog). */
@@ -263,7 +266,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
   );
 }
 
-export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onContextUsageChange, onOpenFile, onExportQueue, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onContextUsageChange, onOpenFile, onExportQueue, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
@@ -313,6 +316,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     lastUserMsgRef,
     handleSend, handleAbort, handleFork, handleNavigate, handleEditFromStartSend, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
+    refreshSessionStats,
     handleRecallQueue, handleContinueQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom,
@@ -330,6 +334,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   useEffect(() => {
     onExportQueue?.(exportQueueData);
   }, [onExportQueue, exportQueueData]);
+
+  // Register the stats refresher (AppShell pulls fresh stats when the session
+  // panel opens — idle sessions have no live state to read contextUsage from).
+  useEffect(() => {
+    onSessionStatsRefresherRegister?.(() => { void refreshSessionStats(); });
+    return () => onSessionStatsRefresherRegister?.(null);
+  }, [onSessionStatsRefresherRegister, refreshSessionStats]);
   const sessionBusy = agentRunning || bashRunning;
 
   // ──「编辑从此处」待发送标记（纯前端，发送才生效）──────────────────────────
