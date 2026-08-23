@@ -176,6 +176,17 @@ type ModelCatalogState =
   | { phase: "success"; recommendation: ModelCatalogRecommendation; appliedCount: number }
   | { phase: "error"; message: string };
 
+type ModelProbeStatus =
+  | { phase: "probing" }
+  | { phase: "done"; corrected: boolean }
+  | { phase: "error"; message: string };
+
+// pi's default output budget; models whose metadata reports at or below this
+// need no probe (under-reporting is harmless, and a request is not worth it).
+const MIN_PROBE_MAX_TOKENS = 16384;
+
+const probeKey = (providerName: string, modelId: string): string => `${providerName}\u0000${modelId}`;
+
 type Selection =
   | { type: "provider"; name: string }
   | { type: "model"; providerName: string; index: number }
@@ -786,9 +797,29 @@ function HeaderListEditor({ headers, onChange }: {
   );
 }
 
+// Verified corrections for providers whose /models metadata disagrees with
+// their request-time validation. Ark's coding endpoint reports glm-5-2-260617
+// with max_output_token_length 131072 but rejects max_tokens above 128000
+// (HTTP 400 verified at 128001). Everything else takes its cap straight from
+// the provider's own model metadata during discovery.
+const MODEL_MAX_OUTPUT_TOKEN_CORRECTIONS: Record<string, Record<string, number>> = {
+  "ark-coding": { "glm-5-2-260617": 128000 },
+};
+
+function capMaxOutputTokens(
+  providerName: string,
+  modelId: string,
+  maxTokens: number | undefined,
+): number | undefined {
+  if (maxTokens === undefined) return undefined;
+  const corrected = MODEL_MAX_OUTPUT_TOKEN_CORRECTIONS[providerName]?.[modelId];
+  return corrected !== undefined ? Math.min(maxTokens, corrected) : maxTokens;
+}
+
 function fillEmptyModelFields(
   model: ModelEntry,
   preset: ModelCatalogPreset,
+  providerName = "",
 ): { model: ModelEntry; appliedCount: number } {
   const next = { ...model };
   let appliedCount = 0;
@@ -809,7 +840,7 @@ function fillEmptyModelFields(
     appliedCount += 1;
   }
   if (model.maxTokens === undefined && preset.maxTokens !== undefined) {
-    next.maxTokens = preset.maxTokens;
+    next.maxTokens = capMaxOutputTokens(providerName, model.id, preset.maxTokens);
     appliedCount += 1;
   }
 
@@ -835,12 +866,14 @@ function ModelDetail({
   providerName,
   provider,
   model,
+  probeStatus,
   onChange,
   onDelete,
 }: {
   providerName: string;
   provider: ProviderEntry;
   model: ModelEntry;
+  probeStatus?: ModelProbeStatus;
   onChange: (m: ModelEntry) => void;
   onDelete: () => void;
 }) {
@@ -954,7 +987,7 @@ function ModelDetail({
         setCatalogState({ phase: "error", message: data.error ?? `HTTP ${res.status}` });
         return;
       }
-      const filled = fillEmptyModelFields(model, data.recommendation.preset);
+      const filled = fillEmptyModelFields(model, data.recommendation.preset, providerName);
       if (filled.appliedCount > 0) {
         catalogUndoRef.current = model;
         onChange(filled.model);
@@ -1196,6 +1229,22 @@ function ModelDetail({
             <NumInput value={model.maxTokens !== undefined ? String(model.maxTokens) : ""}
               onChange={(v) => set("maxTokens", v ? parseInt(v) : undefined)} placeholder="16384" />
           </Field>
+          {probeStatus?.phase === "probing" && (
+            <div style={{ fontSize: 10, color: "#f59e0b", gridColumn: "1 / -1" }}>{t("models.probeInProgress")}</div>
+          )}
+          {probeStatus?.phase === "done" && probeStatus.corrected && (
+            <div style={{ fontSize: 10, color: "#10b981", gridColumn: "1 / -1" }}>
+              {t("models.probeCorrected", { value: String(model.maxTokens ?? "") })}
+            </div>
+          )}
+          {probeStatus?.phase === "done" && !probeStatus.corrected && (
+            <div style={{ fontSize: 10, color: "var(--text-dim)", gridColumn: "1 / -1" }}>{t("models.probeDone")}</div>
+          )}
+          {probeStatus?.phase === "error" && (
+            <div style={{ fontSize: 10, color: "#ef4444", gridColumn: "1 / -1" }} title={probeStatus.message}>
+              {t("models.probeFailed")}: {probeStatus.message}
+            </div>
+          )}
         </div>
 
         <div style={{ marginTop: 16 }}>
@@ -1906,6 +1955,17 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
   const [apiKeyProviders, setApiKeyProviders] = useState<ApiKeyProvider[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
 
+  // Max-output-cap verification for brand-new discovered models: one minimal
+  // probe request per model, only for completely-new unknown models. Keyed by
+  // provider + model id so equal ids in different providers stay distinct.
+  const [probeStatus, setProbeStatus] = useState<Record<string, ModelProbeStatus>>({});
+  const probeStatusRef = useRef<Record<string, ModelProbeStatus>>({});
+  const configRef = useRef(config);
+  useEffect(() => {
+    configRef.current = config;
+    probeStatusRef.current = probeStatus;
+  }, [config, probeStatus]);
+
   const loadOAuthProviders = useCallback(() => {
     fetch(apiUrl("/api/auth/providers"))
       .then((r) => r.json())
@@ -2001,30 +2061,119 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
     });
   }, []);
 
-  const addDiscoveredModels = useCallback((providerName: string, discovered: DiscoveredModel[]) => {
+  // Apply a probed cap correction to a model entry, patching only maxTokens
+  // (downward) so concurrent edits to the entry are preserved.
+  const applyProbeResult = useCallback((providerName: string, modelId: string, confirmedMaxTokens: number) => {
     setConfig((prev) => {
       const provider = prev.providers?.[providerName] ?? {};
       const models = [...(provider.models ?? [])];
-      const existingIds = new Set(models.map((model) => model.id));
-      for (const discoveredModel of discovered) {
-        if (existingIds.has(discoveredModel.id)) continue;
-        existingIds.add(discoveredModel.id);
-        models.push({ id: discoveredModel.id, name: discoveredModel.name });
-      }
+      const idx = models.findIndex((m) => m.id === modelId);
+      if (idx === -1) return prev;
+      const current = models[idx];
+      if (current.maxTokens === undefined || confirmedMaxTokens >= current.maxTokens) return prev;
+      models[idx] = { ...current, maxTokens: confirmedMaxTokens };
       return { ...prev, providers: { ...(prev.providers ?? {}), [providerName]: { ...provider, models } } };
     });
   }, []);
+
+  // One minimal "Reply with OK only." request per brand-new model to confirm
+  // the metadata max output cap is actually accepted (Ark's coding endpoint
+  // rejects glm's reported 131072). On rejection the API's bound is parsed and
+  // applied. Runs at most once per model per session.
+  const probeModelCap = useCallback(async (
+    providerName: string,
+    provider: ProviderEntry,
+    model: ModelEntry,
+  ) => {
+    const modelId = model.id;
+    if (!modelId || model.maxTokens === undefined) return;
+    const key = probeKey(providerName, modelId);
+    if (probeStatusRef.current[key]) return;
+    setProbeStatus((prev) => ({ ...prev, [key]: { phase: "probing" } }));
+    try {
+      const res = await fetch(apiUrl("/api/models-config/probe-cap"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          providerName,
+          provider: {
+            baseUrl: provider.baseUrl,
+            api: provider.api,
+            apiKey: provider.apiKey,
+            headers: provider.headers,
+            compat: provider.compat,
+          },
+          model: { id: modelId, maxTokens: model.maxTokens, compat: model.compat },
+        }),
+      });
+      const d = await res.json() as { ok?: boolean; confirmedMaxTokens?: number; error?: string };
+      if (d.ok && typeof d.confirmedMaxTokens === "number") {
+        const corrected = d.confirmedMaxTokens !== model.maxTokens;
+        if (corrected) applyProbeResult(providerName, modelId, d.confirmedMaxTokens);
+        setProbeStatus((prev) => ({ ...prev, [key]: { phase: "done", corrected } }));
+      } else {
+        setProbeStatus((prev) => ({ ...prev, [key]: { phase: "error", message: d.error ?? "Probe failed" } }));
+      }
+    } catch (e) {
+      setProbeStatus((prev) => ({ ...prev, [key]: { phase: "error", message: e instanceof Error ? e.message : String(e) } }));
+    }
+  }, [applyProbeResult]);
+
+  const addDiscoveredModels = useCallback((providerName: string, discovered: DiscoveredModel[]) => {
+    const provider = configRef.current.providers?.[providerName] ?? {};
+    const existingIds = new Set((provider.models ?? []).map((m) => m.id));
+    const newModels: ModelEntry[] = discovered
+      .filter((discoveredModel) => !existingIds.has(discoveredModel.id))
+      .map((discoveredModel) => ({
+        id: discoveredModel.id,
+        ...(discoveredModel.name ? { name: discoveredModel.name } : {}),
+        ...(discoveredModel.contextWindow !== undefined ? { contextWindow: discoveredModel.contextWindow } : {}),
+        // Seed max output tokens from the provider's own /models metadata
+        // (token_limits.max_output_token_length etc.), corrected only where
+        // that metadata is known to over-report (Ark coding glm).
+        ...(discoveredModel.maxTokens !== undefined
+          ? { maxTokens: capMaxOutputTokens(providerName, discoveredModel.id, discoveredModel.maxTokens) }
+          : {}),
+        ...(discoveredModel.input?.length ? { input: [...discoveredModel.input] } : {}),
+      }));
+    if (newModels.length === 0) return;
+    setConfig((prev) => {
+      const p = prev.providers?.[providerName] ?? {};
+      return { ...prev, providers: { ...(prev.providers ?? {}), [providerName]: { ...p, models: [...(p.models ?? []), ...newModels] } } };
+    });
+    // Verify max output caps of brand-new models with one minimal probe request
+    // each. Scope is intentionally tight: only models that are completely new
+    // (not already configured) and whose cap is not already known via a
+    // correction; models at or below pi's default output budget are skipped.
+    for (const model of newModels) {
+      if (model.maxTokens !== undefined && model.maxTokens > MIN_PROBE_MAX_TOKENS) {
+        void probeModelCap(providerName, provider, model);
+      }
+    }
+  }, [probeModelCap]);
 
   const updateModel = useCallback((providerName: string, index: number, m: ModelEntry) => {
     setConfig((prev) => {
       const provider = prev.providers?.[providerName] ?? {};
       const models = [...(provider.models ?? [])];
-      models[index] = m;
+      // Clamp max output tokens to the provider's API cap (e.g. Ark coding
+      // rejects max_tokens > 128000) so manual edits and catalog fills can
+      // never persist a value the API refuses.
+      const cappedMaxTokens = capMaxOutputTokens(providerName, m.id, m.maxTokens);
+      models[index] = cappedMaxTokens === m.maxTokens ? m : { ...m, maxTokens: cappedMaxTokens };
       return { ...prev, providers: { ...(prev.providers ?? {}), [providerName]: { ...provider, models } } };
     });
   }, []);
 
   const removeModel = useCallback((providerName: string, index: number) => {
+    const removedId = configRef.current.providers?.[providerName]?.models?.[index]?.id;
+    if (removedId) {
+      setProbeStatus((prev) => {
+        const next = { ...prev };
+        delete next[probeKey(providerName, removedId)];
+        return next;
+      });
+    }
     setConfig((prev) => {
       const provider = prev.providers?.[providerName] ?? {};
       const models = [...(provider.models ?? [])];
@@ -2095,6 +2244,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
         providerName={selection.providerName}
         provider={provider}
         model={model}
+        probeStatus={probeStatus[probeKey(selection.providerName, model.id)]}
         onChange={(m) => updateModel(selection.providerName, selection.index, m)}
         onDelete={() => removeModel(selection.providerName, selection.index)}
       />
@@ -2197,6 +2347,7 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
                     {/* Model rows */}
                     {models.map((m, i) => {
                       const isModelSelected = selection?.type === "model" && selection.providerName === pName && selection.index === i;
+                      const probeState = m.id ? probeStatus[probeKey(pName, m.id)] : undefined;
                       return (
                         <div
                           key={i}
@@ -2208,6 +2359,18 @@ export function ModelsConfig({ onClose }: { onClose: () => void }) {
                           <span style={{ fontSize: 11, fontFamily: "var(--font-mono)", color: m.id ? "var(--text-muted)" : "var(--text-dim)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                              {m.id || t("i18n.newModel")}
                           </span>
+                          {probeState?.phase === "probing" && (
+                            <span style={{ fontSize: 9, color: "#f59e0b", flexShrink: 0 }} title={t("models.probeInProgress")}>⏳</span>
+                          )}
+                          {probeState?.phase === "done" && (
+                            <span style={{ fontSize: 9, color: "#10b981", flexShrink: 0 }}
+                              title={probeState.corrected ? t("models.probeCorrected", { value: String(m.maxTokens ?? "") }) : t("models.probeDone")}>
+                              {probeState.corrected ? "✓↓" : "✓"}
+                            </span>
+                          )}
+                          {probeState?.phase === "error" && (
+                            <span style={{ fontSize: 9, color: "#ef4444", flexShrink: 0 }} title={probeState.message}>!</span>
+                          )}
                           {m.reasoning && (
                             <span style={{ fontSize: 9, padding: "1px 4px", background: "rgba(99,102,241,0.12)", color: "rgba(99,102,241,0.8)", borderRadius: 3, flexShrink: 0 }}>T</span>
                           )}
