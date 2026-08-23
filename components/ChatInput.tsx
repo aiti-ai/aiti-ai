@@ -49,6 +49,8 @@ interface ModelOption {
 interface Props {
   onSend: (message: string, images?: AttachedImage[]) => void;
   onAbort: () => void;
+  /** 当前会话 id：透传给 chatInputTop 扩展槽（如 aiti-ai-input 的 AI 用量按会话记账） */
+  sessionId?: string | null;
   onSteer?: (message: string, images?: AttachedImage[]) => void;
   onFollowUp?: (message: string, images?: AttachedImage[]) => void;
   /** Send a queued follow-up as a steer (interrupt now). Available even when idle. */
@@ -822,6 +824,7 @@ function StreamingActionButton({
 }
 
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
+  sessionId,
   onSend, onAbort, onSteer, onFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
@@ -3629,7 +3632,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
             } as React.CSSProperties}
           >
-          <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, textareaRef, setInputValue, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen, model }} />
+          <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, sessionId, textareaRef, setInputValue, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen, model }} />
           <textarea
             ref={textareaRef}
             data-chat-input="1"

@@ -813,6 +813,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const chatInputElement = (
     <ChatInput
       ref={chatInputRef}
+      sessionId={session?.id ?? null}
       onSend={handleSendWrapped}
       onAbort={handleAbort}
       onSteer={agentRunning ? handleSteer : undefined}

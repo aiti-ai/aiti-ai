@@ -2546,7 +2546,7 @@ export function AppShell() {
                         {sessionInfoSection}
                          {section(translate("session.messages"), messageRows)}
                          {section(translate("session.tokens"), [...tokenRows, ...extraTokenRows], "right", true)}
-                         {<AiUsageRows locale={locale} />}
+                         {<AiUsageRows locale={locale} sessionId={selectedSession?.id} />}
                       </div>
                     );
                   })() : (

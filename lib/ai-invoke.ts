@@ -22,6 +22,8 @@ export interface InvokeAIInput {
   modelId?: string;
   /** 调用方扩展 id（core 记账时归并；由 core 注入层自动填） */
   caller?: string;
+  /** 发起调用的会话 id（由调用方尽力传入；会话面板按此过滤出「本会话」用量） */
+  sessionId?: string;
   system?: string;
   messages: InvokeAIMessage[];
   maxTokens?: number;
@@ -78,7 +80,7 @@ function toUsage(u: { input?: number; output?: number; cacheRead?: number; cache
 }
 
 // ---------- token 统计（core 基础设施，非业务；集中记账） ----------
-export interface AiUsageRow { at: number; caller: string; provider: string; model: string; in: number; out: number; cacheRead: number; cacheWrite: number }
+export interface AiUsageRow { at: number; caller: string; provider: string; model: string; in: number; out: number; cacheRead: number; cacheWrite: number; sessionId?: string }
 // usages 挂 globalThis：next dev turbopack 会把本模块复制成多副本（各 route 各自持有），
 // 模块级数组会各记各的——globalThis 共享保证 invokeAI 记账与 ai-usage 查询看到同一份。
 const usages: AiUsageRow[] = (globalThis as unknown as { __aiInvokeUsage?: AiUsageRow[] }).__aiInvokeUsage ??= [];
@@ -86,14 +88,32 @@ function recordUsage(r: Omit<AiUsageRow, "at">) {
   usages.push({ at: Date.now(), ...r });
   if (usages.length > 2000) usages.splice(0, usages.length - 2000);
 }
-export function aiUsage(totalOnly = false): { totals: { in: number; out: number; cacheRead: number; cacheWrite: number; calls: number }; byCaller: Record<string, number>; recent: AiUsageRow[] } {
-  const byCaller: Record<string, number> = {};
-  const totals = { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
-  for (const u of usages) {
-    totals.in += u.in; totals.out += u.out; totals.cacheRead += u.cacheRead; totals.cacheWrite += u.cacheWrite; totals.calls++;
-    byCaller[u.caller || "?"] = (byCaller[u.caller || "?"] || 0) + u.in;
+export interface AiUsageSummary {
+  totals: { in: number; out: number; cacheRead: number; cacheWrite: number; calls: number };
+  byCaller: Record<string, number>;
+  recent: AiUsageRow[];
+}
+/**
+ * 查询 AI 用量。sessionId 给定时只统计该会话的调用（byCaller 同步过滤），
+ * 另附 global（进程存活期内全部会话累计）便于面板区分口径；未带 sessionId 时行为不变。
+ */
+export function aiUsage(totalOnly = false, sessionId?: string): AiUsageSummary & { global?: AiUsageSummary["totals"] } {
+  const scoped = sessionId ? usages.filter((u) => u.sessionId === sessionId) : usages;
+  const agg = (rows: AiUsageRow[]) => {
+    const byCaller: Record<string, number> = {};
+    const totals = { in: 0, out: 0, cacheRead: 0, cacheWrite: 0, calls: 0 };
+    for (const u of rows) {
+      totals.in += u.in; totals.out += u.out; totals.cacheRead += u.cacheRead; totals.cacheWrite += u.cacheWrite; totals.calls++;
+      byCaller[u.caller || "?"] = (byCaller[u.caller || "?"] || 0) + u.in;
+    }
+    return { totals, byCaller };
+  };
+  if (!sessionId) {
+    const { totals, byCaller } = agg(usages);
+    return { totals, byCaller, recent: totalOnly ? [] : usages.slice(-20) };
   }
-  return { totals, byCaller, recent: totalOnly ? [] : usages.slice(-20) };
+  const { totals, byCaller } = agg(scoped);
+  return { totals, byCaller, recent: totalOnly ? [] : scoped.slice(-20), global: agg(usages).totals };
 }
 
 export async function invokeAI(input: InvokeAIInput): Promise<InvokeAIResult> {
@@ -111,7 +131,7 @@ export async function invokeAI(input: InvokeAIInput): Promise<InvokeAIResult> {
     .filter((b): b is { type: "text"; text: string } => b.type === "text")
     .map((b) => b.text).join("");
   const usage = toUsage(assistant.usage);
-  // core 集中记账（基础设施，人人共享样本）
-  if (usage) recordUsage({ caller: input.caller || "?", provider: model.provider, model: model.id, in: usage.input, out: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite });
+  // core 集中记账（基础设施，人人共享样本）；sessionId 尽力传入供会话面板按会话过滤
+  if (usage) recordUsage({ caller: input.caller || "?", provider: model.provider, model: model.id, in: usage.input, out: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite, sessionId: input.sessionId });
   return { text, provider: model.provider, model: model.id, usage };
 }
