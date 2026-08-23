@@ -1936,19 +1936,6 @@ export function AppShell() {
           animation: none;
         }
       }
-      .mobile-session-stats {
-        container-type: inline-size;
-      }
-      @container (max-width: 158px) {
-        .mobile-session-stat-io {
-          display: none !important;
-        }
-      }
-      @container (max-width: 88px) {
-        .mobile-session-stat-cost {
-          display: none !important;
-        }
-      }
       @media (max-width: 640px) {
         .sidebar-overlay-backdrop.sidebar-mobile-pending {
           opacity: 0 !important;
@@ -2163,9 +2150,9 @@ export function AppShell() {
                title={tooltip || translate("session.title")}
                  aria-label={translate("session.title")}
                 aria-pressed={activeTopPanel === "session"}
-                className={isMobile ? "mobile-session-stats" : undefined}
                 style={{
                   marginLeft: "auto",
+                  flexShrink: 0, // 窄屏不被压缩：否则 nowrap 内容溢出绘制到右侧 ⋯ 按钮上（百分比与⋯重叠）；空间不足时先裁 itemsRow（其 overflowX hidden）
                   display: "flex", alignItems: "center", gap: isMobile ? 7 : 10,
                   paddingLeft: isMobile ? 6 : 12,
                   // ⋯ 按钮在其后占住右端，统计无需再为文件面板开关预留大边距
@@ -2176,44 +2163,26 @@ export function AppShell() {
                   borderTop: "none",
                   fontSize: 11, color: "var(--text-muted)",
                   whiteSpace: "nowrap", cursor: "pointer",
+                  overflow: "hidden", // 防御：极端窄屏下裁自己，永不溢出绘制到相邻 ⋯ 按钮
                   fontVariantNumeric: "tabular-nums",
                   transition: "color 0.1s, background 0.1s",
                 }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = activeTopPanel === "session" ? "var(--text)" : "var(--text-muted)"; }}
               >
-                {(isMobile || (isCompact && !ctxStr)) && (
+                {(isCompact && !ctxStr) || (isMobile && contextUsage?.percent == null) ? (
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                     <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
                   </svg>
-                )}
-                {/* 手机档：恢复与大屏对齐的关键统计（原先只剩一个 ⓘ 图标，context % 无处可看）。
-                    容器查询渐进收窄：<158px 藏 in/out（.mobile-session-stat-io），<88px 藏 cost
-                    （.mobile-session-stat-cost）；context % 恒在——手机上这是唯一的一眼入口。 */}
-                {isMobile && contextUsage?.contextWindow && contextUsage.percent !== null && (
-                  <span style={{ display: "flex", alignItems: "center", gap: 3, color: ctxColor, fontWeight: 600, flexShrink: 0 }}>
-                    {contextUsage.percent.toFixed(0)}%
-                  </span>
-                )}
-                {isMobile && tokens && tokens.input > 0 && (
-                  <span className="mobile-session-stat-io" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
+                ) : null}
+                {/* 手机档：电池百分比式 context 指示（dome 图标 + 颜色分档的百分比，>70% 黄 / >90% 红）。
+                    只放这一个紧凑指示，完整统计（in/out/cost/cache…）不塞行内——点开弹窗查看。 */}
+                {isMobile && contextUsage?.percent != null && (
+                  <span style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0, color: ctxColor }}>
+                    <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+                      <path d="M1 9 L1 5 Q1 1 5 1 Q9 1 9 5 L9 9" /><line x1="1" y1="9" x2="9" y2="9" />
                     </svg>
-                    {fmt(tokens.input)}
-                  </span>
-                )}
-                {isMobile && tokens && tokens.output > 0 && (
-                  <span className="mobile-session-stat-io" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                      <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
-                    </svg>
-                    {fmt(tokens.output)}
-                  </span>
-                )}
-                {isMobile && costStr && (
-                  <span className="mobile-session-stat-cost" style={{ display: "flex", alignItems: "center", color: "var(--text)", fontWeight: 500, flexShrink: 0 }}>
-                    {costStr}
+                    <span style={{ fontWeight: 700, fontSize: 11.5 }}>{contextUsage.percent.toFixed(0)}%</span>
                   </span>
                 )}
                 {/* 紧凑档（pad 竖屏 641–959px）：只保留上下文占用（最有用的一眼信息），把行宽让给 tag 区等 */}
