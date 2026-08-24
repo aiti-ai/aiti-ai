@@ -1,6 +1,6 @@
 "use client";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
-import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, CustomMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { apiUrl } from "@/lib/base-path";
@@ -14,6 +14,7 @@ import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtSlot } from "./ExtSlots";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
 import { useRecoveryProviderItems, routeRecoveryResolve } from "@/lib/composer/recovery";
+import { hasComposerEnhancement, subscribeComposerEnhancers, getComposerEnhancersVersion } from "@/lib/composer/bus";
 import { clearDraft, DRAFT_KEY_PREFIX, listDraftSlots, removeDraftSlot, type DraftSlotInfo } from "@/lib/draft-store";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { useI18n } from "@/hooks/useI18n";
@@ -465,10 +466,14 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   // Client-side only: they live in localStorage (survive refresh + browser
   // close); the server never sees them.
   const [pendingDrafts, setPendingDrafts] = useState<DraftSlotInfo[]>([]);
+  // 草稿簇外迁（defork P2）：扩展接管时 core 停用内置扫描/静默恢复——恢复项与
+  // 恢复动作全部让位给 aiti-draft-keeper，避免对话框重复与双重恢复
+  const enhancersVersion = useSyncExternalStore(subscribeComposerEnhancers, getComposerEnhancersVersion, () => 0);
+  const draftsExternallyOwned = enhancersVersion > 0 && hasComposerEnhancement("aiti-draft-keeper");
   const liveSlotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     setPendingDrafts([]);
-    if (!draftKey) return;
+    if (!draftKey || draftsExternallyOwned) return;
     const readDrafts = () => {
       const slots = listDraftSlots(draftKey).filter((slot) => {
         // Foreign / closed-tab slots are recoverable; this tab's own slot only
@@ -504,7 +509,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       window.removeEventListener("storage", onStorage);
       if (liveSlotTimerRef.current) clearTimeout(liveSlotTimerRef.current);
     };
-  }, [draftKey, chatInputRef]);
+  }, [draftKey, chatInputRef, draftsExternallyOwned]);
 
   // Compose the dialog list: server-side queue recovery + the client drafts.
   const draftRecoveryItems: PendingRecoveryItem[] = pendingDrafts.map((slot) => ({

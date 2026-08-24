@@ -18,14 +18,34 @@ export type { ComposerEnhancement, ComposerSnapshot, ComposerWriter };
 
 const enhancers: ComposerEnhancement[] = [];
 let writer: ComposerWriter | null = null;
+let enhancersVersion = 0;
+const enhancerListeners = new Set<() => void>();
 
 /** 注册增强器；返回 disposer（精确移除本次注册）。 */
 export function registerComposerEnhancement(enh: ComposerEnhancement): () => void {
   enhancers.push(enh);
+  enhancersVersion++;
+  for (const l of enhancerListeners) l();
   return () => {
     const i = enhancers.indexOf(enh);
     if (i >= 0) enhancers.splice(i, 1);
+    enhancersVersion++;
+    for (const l of enhancerListeners) l();
   };
+}
+
+/** 是否存在指定 id 的增强器（core 按能力让位：如草稿扫描让位给 aiti-draft-keeper）。 */
+export function hasComposerEnhancement(id: string): boolean {
+  return enhancers.some((e) => e.id === id);
+}
+
+/** React 订阅：增强器集合变化时重渲染（配合 useSyncExternalStore）。 */
+export function subscribeComposerEnhancers(cb: () => void): () => void {
+  enhancerListeners.add(cb);
+  return () => enhancerListeners.delete(cb);
+}
+export function getComposerEnhancersVersion(): number {
+  return enhancersVersion;
 }
 
 /** ChatInput 装配/卸载受控写入口。传 null = 卸载（composer 未挂载）。 */
