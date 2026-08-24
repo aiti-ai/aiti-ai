@@ -12,6 +12,7 @@ import {
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { resolveAnySession } from "@/lib/session";
 import { removeQueue } from "@/lib/queue-store";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
@@ -22,7 +23,49 @@ export async function GET(
 ) {
   const { id } = await params;
   try {
+    // Backend (provider-handle) sessions: no local file exists — serve a
+    // minimal SessionData so the chat view loads instead of bouncing off a
+    // 404. History replay depends on the backend's getMessages capability.
     const rpc = getRpcSession(id);
+    if (!(rpc?.isAlive())) {
+      const wrapped = resolveAnySession(id);
+      if (wrapped?.isAlive()) {
+        // History replay: pull entries through the handle's get_messages
+        // (capability-gated; backends without it serve an empty context and
+        // the live SSE stream covers new turns).
+        let messages: unknown[] = [];
+        try {
+          const r = (await wrapped.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
+          messages = r?.entries ?? [];
+        } catch { /* capability off → empty context */ }
+        const first = messages.find((m) => (m as { role?: string }).role === "user");
+        const firstText = first
+          ? (() => {
+              const c = (first as { content?: unknown }).content;
+              return typeof c === "string" ? c : "(backend session)";
+            })()
+          : "(backend session)";
+        return NextResponse.json({
+          sessionId: id,
+          filePath: "",
+          info: {
+            path: "",
+            id,
+            cwd: wrapped.cwd ?? "",
+            name: undefined,
+            created: new Date().toISOString(),
+            modified: new Date().toISOString(),
+            messageCount: messages.length,
+            firstMessage: firstText.slice(0, 80) || "(backend session)",
+            transient: true,
+          },
+          leafId: null,
+          tree: [],
+          context: { messages, entryIds: [], thinkingLevel: "off", model: null },
+          totalActiveMs: 0,
+        });
+      }
+    }
     const liveRpc = rpc?.isAlive() ? rpc : undefined;
     const resolvedPath = liveRpc ? null : await resolveSessionPath(id);
     if (!liveRpc && !resolvedPath) {

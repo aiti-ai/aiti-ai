@@ -1,6 +1,7 @@
 import { createAgentEventStream } from "@/lib/agent-event-stream";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
+import { resolveAnySession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -12,11 +13,12 @@ export async function GET(
   const { id } = await params;
   if (req.signal.aborted) return new Response(null, { status: 204 });
 
-  // Fast path: already-running session
+  // Fast path: already-running session (local registry, then provider handles)
   const session = getRpcSession(id);
   let sessionPromise;
-  if (session?.isAlive()) {
-    sessionPromise = Promise.resolve(session);
+  const live = session?.isAlive() ? session : resolveAnySession(id);
+  if (live?.isAlive()) {
+    sessionPromise = Promise.resolve(live);
   } else {
     const filePath = await resolveSessionPath(id);
     if (!filePath) {

@@ -139,6 +139,8 @@ export interface UseAgentSessionOptions {
   sessionRunning?: boolean;
   newSessionCwd: string | null;
   newSessionDraftKey: string | null;
+  /** Session backend for NEW sessions (providerType from /api/session-backends). null/undefined = local pi. */
+  newSessionBackend?: string | null;
   onAgentEnd?: () => void;
   onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
   onSessionCreated?: (session: SessionInfo, sourceDraftKey: string) => void;
@@ -292,6 +294,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
+
+  // New-session backend (providerType)：ref 镜像保证 ensureNewSession 回调稳定。
+  const newSessionBackendRef = useRef<string | null | undefined>(opts.newSessionBackend);
+  newSessionBackendRef.current = opts.newSessionBackend;
 
   const [data, setData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(!isNew);
@@ -772,6 +778,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const selectedThinkingLevel = thinkingLevelOverrideRef.current;
       if (selectedModel) setPendingModel(selectedModel);
       const toolNames = getToolNamesForPreset(toolPreset);
+      const backend = newSessionBackendRef.current;
       const res = await fetch(apiUrl("/api/agent/new"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -779,6 +786,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           cwd: newSessionCwd,
           type: "ensure_session",
           toolNames,
+          ...(backend ? { providerType: backend } : {}),
           ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
           ...(selectedThinkingLevel
             ? { thinkingLevel: selectedThinkingLevel }

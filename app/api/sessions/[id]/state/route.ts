@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { resolveAnySession } from "@/lib/session";
 import { resolveSessionPath } from "@/lib/session-reader";
 
 export async function GET(
@@ -11,6 +12,13 @@ export async function GET(
     const rpc = getRpcSession(id);
     if (rpc?.isAlive()) {
       const state = await rpc.send({ type: "get_state" });
+      return NextResponse.json({ running: true, state });
+    }
+
+    // Backend (provider-handle) sessions: state via the wrapper adapter.
+    const wrapped = resolveAnySession(id);
+    if (wrapped?.isAlive()) {
+      const state = await wrapped.send({ type: "get_state" });
       return NextResponse.json({ running: true, state });
     }
 

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
+import { resolveAnySession } from "@/lib/session";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -15,8 +16,8 @@ export async function POST(
     const body = await req.json() as { type: string; [key: string]: unknown };
     commandType = typeof body.type === "string" ? body.type : undefined;
 
-    // Fast path: already-running session
-    const existing = getRpcSession(id);
+    // Fast path: already-running session (local registry, then provider handles)
+    const existing = getRpcSession(id)?.isAlive() ? getRpcSession(id) : resolveAnySession(id);
     if (existing?.isAlive()) {
       const result = await existing.send(body);
       promptAccepted = body.type === "prompt";
@@ -56,7 +57,7 @@ export async function GET(
   const { id } = await params;
 
   try {
-    const session = getRpcSession(id);
+    const session = getRpcSession(id)?.isAlive() ? getRpcSession(id) : resolveAnySession(id);
     if (!session || !session.isAlive()) {
       return NextResponse.json({ running: false });
     }

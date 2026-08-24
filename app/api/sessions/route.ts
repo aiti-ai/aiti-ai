@@ -6,6 +6,7 @@ import {
   invalidateSessionListCache,
 } from "@/lib/session-reader";
 import { getRpcSessionInfos, getRunningRpcSessionIds } from "@/lib/rpc-manager";
+import { getHandleSessionInfos } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,10 @@ export async function GET(req: Request) {
       listAllSessions({ force }),
       attachSessionProjectInfo(getRpcSessionInfos()),
     ]);
-    const sessions = mergeSessionLists(persistedSessions, runtimeSessions);
+    // Live backend sessions (attach/spawn/extension handles) — transient rows
+    // so the sidebar lists them and ?session=<composite-id> restore works.
+    const backendRows = await attachSessionProjectInfo(getHandleSessionInfos());
+    const sessions = mergeSessionLists(mergeSessionLists(persistedSessions, runtimeSessions), backendRows);
     return NextResponse.json(
       { sessions, runningSessionIds: getRunningRpcSessionIds() },
       { headers: { "Cache-Control": "no-store" } },

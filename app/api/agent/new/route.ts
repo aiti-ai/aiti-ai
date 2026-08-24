@@ -5,6 +5,7 @@ import { randomUUID } from "crypto";
 import { allowFileRoot } from "@/lib/file-access";
 import { invalidateSessionListCache } from "@/lib/session-reader";
 import { startRpcSession } from "@/lib/rpc-manager";
+import { createSessionHandle, getProvider } from "@/lib/session";
 
 const THINKING_LEVELS = new Set<ThinkingLevel>(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
 
@@ -15,16 +16,18 @@ function parseThinkingLevel(value: unknown): ThinkingLevel | undefined {
   }
   throw new Error(`Invalid thinking level: ${String(value)}`);
 }
-// POST /api/agent/new  body: { cwd: string; type: string; message?: string; ... }
-// Spawns a brand-new pi session. Most calls immediately send the first command;
-// type:"ensure_session" only creates the runtime so clients can query commands.
-// Returns pi's real session id plus the model/thinking state selected at startup.
+// POST /api/agent/new  body: { cwd: string; type: string; message?: string;
+//                              providerType?: string; socketPath?: string; ... }
+// Spawns a brand-new session. Default (no providerType) = local pi session via
+// startRpcSession — unchanged legacy behavior. With providerType != "local",
+// the session is created through the named SessionProvider (attach/spawn/
+// extension backends) and served to the same chat flow via the handle adapter.
 export async function POST(req: Request) {
   let commandType: string | undefined;
   let promptAccepted = false;
   try {
-    const body = await req.json() as { cwd?: string; [key: string]: unknown };
-    const { cwd, ...command } = body;
+    const body = await req.json() as { cwd?: string; providerType?: string; socketPath?: string; profile?: string; [key: string]: unknown };
+    const { cwd, providerType, socketPath, profile, ...command } = body;
     commandType = typeof command.type === "string" ? command.type : undefined;
 
     if (!cwd || typeof cwd !== "string") {
@@ -42,6 +45,42 @@ export async function POST(req: Request) {
           ? { code: "prompt_rejected", accepted: false }
           : {}),
       }, { status: 400 });
+    }
+
+    // ── Non-local backend path ──────────────────────────────────────────────
+    if (providerType && providerType !== "local") {
+      const provider = getProvider(providerType);
+      if (!provider) {
+        return NextResponse.json({ error: `Unknown session provider "${providerType}"` }, { status: 400 });
+      }
+      try {
+        // cc-switch 语义：model 在创建时应用（spawn 参数/初始状态）
+        const reqModel = typeof command.provider === "string" && typeof command.modelId === "string"
+          ? { provider: command.provider, id: command.modelId }
+          : undefined;
+        const handle = await createSessionHandle({
+          providerType,
+          cwd,
+          ...(socketPath ? { socketPath } : {}),
+          ...(reqModel ? { model: reqModel } : {}),
+          ...(profile ? { profile } : {}),
+        });
+        // ensure_session only provisions; prompt flows through /api/agent/[id]
+        // (handle adapter) exactly like local sessions.
+        return NextResponse.json({
+          success: true,
+          sessionId: handle.id,
+          data: null,
+          model: handle.getModel() ?? null,
+          thinkingLevel: undefined,
+          backend: providerType,
+        });
+      } catch (error) {
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : String(error) },
+          { status: 500 },
+        );
+      }
     }
 
     // Use a one-time key so startRpcSession's lock doesn't conflict with real session ids

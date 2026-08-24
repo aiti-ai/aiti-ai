@@ -273,6 +273,12 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
 
+  // ── 会话后端选择（多 agent 前端）───────────────────────────────────────
+  // 仅 isNew 欢迎页展示；选项来自 /api/session-backends（扩展注册的后端自动出现）。
+  // null = 本地 pi（默认，不出现在列表里也无需请求）。
+  const [backendOptions, setBackendOptions] = useState<Array<{ type: string; label: string; agentKey?: string }>>([]);
+  const [sessionBackend, setSessionBackend] = useState<string | null>(null);
+
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
   // wrapping handleAgentEventRef because useAgentSession overwrites that ref
   // on every render (it syncs the latest callback), which would blow away an
@@ -324,7 +330,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom,
     activeLeafId,
   } = useAgentSession({
-    session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
+    session, sessionRunning, newSessionCwd, newSessionDraftKey, newSessionBackend: sessionBackend, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
     promptAnchorSpacerHeightRef,
     bottomComposerHeightRef,
@@ -774,6 +780,21 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   }, [messages.length]);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
+
+  // 发现可用后端（仅新会话欢迎页；扩展注册的后端自动出现，无后端时选择器不渲染）。
+  useEffect(() => {
+    if (!isNew || backendOptions.length > 0) return;
+    let cancelled = false;
+    fetch(apiUrl("/api/session-backends"))
+      .then((r) => (r.ok ? r.json() : { providers: [] }))
+      .then((d: { providers?: Array<{ type: string; label: string; agentKey?: string }> }) => {
+        if (!cancelled) setBackendOptions(d.providers ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isNew, backendOptions.length]);
   const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
   const bottomComposerRef = useRef<HTMLDivElement | null>(null);
@@ -1260,6 +1281,48 @@ const messageListEl = useMemo(() => {
               </div>
             </div>
             <NoticeShelf notices={notices} align="right" />
+            {backendOptions.length > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginLeft: 16,
+                  marginRight: isMobile || isCompact ? 16 : 52,
+                  marginBottom: 10,
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 12,
+                }}
+              >
+                <span style={{ color: "var(--text-muted)" }}>Backend</span>
+                <select
+                  value={sessionBackend ?? ""}
+                  onChange={(e) => setSessionBackend(e.target.value || null)}
+                  style={{
+                    padding: "4px 8px",
+                    background: "var(--bg-hover)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    color: "var(--text)",
+                    fontFamily: "inherit",
+                    fontSize: 12,
+                    cursor: "pointer",
+                  }}
+                >
+                  <option value="">Pi (local)</option>
+                  {backendOptions.map((b) => (
+                    <option key={b.type} value={b.type}>
+                      {b.label}
+                    </option>
+                  ))}
+                </select>
+                {sessionBackend && (
+                  <span style={{ color: "var(--text-dim)", fontSize: 11 }}>
+                    session runs via: {sessionBackend}
+                  </span>
+                )}
+              </div>
+            )}
             <ExtensionWidgets widgets={aboveEditorWidgets} />
             {chatInputElement}
             <ExtensionWidgets widgets={belowEditorWidgets} />
