@@ -2334,13 +2334,9 @@ function SessionItem({
               )}
             </div>
             <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 11, minWidth: 0 }}>
-              {isRunning ? (
-                <RunningSessionIndicator />
-              ) : isUnread ? (
-                <UnreadSessionIndicator />
-              ) : (
-                <span title={session.modified}>{formatRelativeTime(session.modified)}</span>
-              )}
+              {isRunning && <RunningSessionIndicator />}
+              {!isRunning && isUnread && <UnreadSessionIndicator />}
+              <span title={session.modified}>{formatRelativeTime(session.modified)}</span>
               <span>{t("sidebar.messagesCount", { count: session.messageCount })}</span>
               {session.worktreeBranch && (
                 <span
