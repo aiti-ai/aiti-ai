@@ -56,6 +56,13 @@ export {
 // Live handle store (provider-created sessions)
 export { putHandle, putHandleAt, getHandle, removeHandle, listHandleIds, listAllHandles, getHandleSessionInfos } from "./handle-store.ts";
 
+// Relay (agent-to-agent)
+export { relayToSession, type RelayResult } from "./relay.ts";
+
+// TUI bridge registry (session file → socket 占用识别)
+export { findBridgeSocketForSession, readBridgeRegistry } from "./bridge-registry.ts";
+import { findBridgeSocketForSession } from "./bridge-registry.ts";
+
 // Host-native adapter (wraps AgentSessionWrapper from rpc-manager)
 export { createLocalHandle } from "./local.ts";
 
@@ -131,6 +138,37 @@ export async function openExternalSession(
     }
   }
   throw lastError ?? new Error(`No provider could open ${compositeId}`);
+}
+
+/** attach provider 的注册键（aiti-attach-agent 启动时注册；未装扩展时 undefined）。 */
+function findAttachProviderType(): string | undefined {
+  return listProviders().find((p) => p.type === "aiti-attach-agent/attach")?.type;
+}
+
+/**
+ * 会话文件被运行中的 TUI 桥占用时，懒创建 attach handle 并入库（键 = 文件路径）。
+ * 单写者规则：TUI 持有 session 时 pi-web 绝不本地打开该文件。
+ * 返回 adapter 或 undefined（无桥/socket 不可达时由调用方走本地路径）。
+ */
+export async function attachIfBridged(
+  sessionFile: string,
+): Promise<WrappedSessionLike | undefined> {
+  const socket = await findBridgeSocketForSession(sessionFile);
+  if (!socket) return undefined;
+  const providerType = findAttachProviderType();
+  if (!providerType) return undefined; // 未部署 aiti-attach-agent → 无桥可用
+  try {
+    const handle = await createSessionHandle({
+      providerType,
+      sessionFile,
+      sessionId: sessionFile,
+      socketPath: socket,
+    });
+    return new HandleSessionAdapter(handle);
+  } catch (e) {
+    console.error("[bridge] attach failed:", e instanceof Error ? e.message : e);
+    return undefined;
+  }
 }
 
 /**
