@@ -267,6 +267,9 @@ export type ParagraphClickHandler = ((info: ParagraphClickInfo) => void) & { hin
 export const EXT_PROVIDES = {
   /** 会话删除：声明后侧栏隐藏内置删除按钮（删除流由扩展接管，如先归档再在归档记录上删除）。 */
   sessionDelete: "session-delete",
+  /** 外部 agent 会话源：声明后 session-manager 自动发现本扩展，进程内直调其
+   *  api 钩子拉取 agent-source/manifest|list|session 归一化会话数据。 */
+  sessionAgentSource: "session-agent-source",
 } as const;
 
 export type ExtProvidesName = (typeof EXT_PROVIDES)[keyof typeof EXT_PROVIDES];
