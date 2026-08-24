@@ -8,8 +8,7 @@ const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
   tsconfigPaths: true,
 });
-const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, canRestoreUserMessage, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages } = await jiti.import("./ChatInput.tsx");
-const { clearDraft, getDraft, mergeRestoredSubmissionDraft, mergeRestoredSubmissionText, rekeyDraft, setDraft } = await jiti.import("../lib/draft-store.ts");
+const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, canRestoreUserMessage, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, mergeText, mergeSubmission } = await jiti.import("./ChatInput.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
 test("renders the upstream model error", () => {
@@ -163,25 +162,25 @@ test("restores a cleared submission using the queued React state", () => {
   let value = "failed submission";
   const updates = [
     () => "",
-    (current) => mergeRestoredSubmissionText("failed submission", current),
+    (current) => mergeText("failed submission", current),
   ];
 
   for (const update of updates) value = update(value);
 
   assert.equal(value, "failed submission");
   assert.equal(
-    mergeRestoredSubmissionText("failed submission", "new draft"),
+    mergeText("failed submission", "new draft"),
     "failed submission\n\nnew draft",
   );
   assert.equal(
-    mergeRestoredSubmissionText("failed submission", "failed submission"),
+    mergeText("failed submission", "failed submission"),
     "failed submission\n\nfailed submission",
   );
 });
 
 test("keeps a failed first submission recoverable across a composer remount", () => {
   const image = { data: "AQID", mimeType: "image/png" };
-  const restored = mergeRestoredSubmissionDraft(
+  const restored = mergeSubmission(
     "failed submission",
     [image],
     "",
@@ -193,7 +192,7 @@ test("keeps a failed first submission recoverable across a composer remount", ()
     images: [image],
   });
   assert.deepEqual(
-    mergeRestoredSubmissionDraft("failed submission", [image], "new draft", []),
+    mergeSubmission("failed submission", [image], "new draft", []),
     {
       value: "failed submission\n\nnew draft",
       images: [image],
@@ -203,49 +202,9 @@ test("keeps a failed first submission recoverable across a composer remount", ()
 
 test("preserves duplicate image attachments when restoring a submission", () => {
   const image = { data: "AQID", mimeType: "image/png" };
-  const restored = mergeRestoredSubmissionDraft("", [image, image], "", [image]);
+  const restored = mergeSubmission("", [image, image], "", [image]);
 
   assert.deepEqual(restored.images, [image, image, image]);
-});
-
-test("moves a provisional new-session draft to the real session key", () => {
-  const provisionalKey = "new:/tmp/rekey-test";
-  const sessionKey = "session-rekey-test";
-  clearDraft(provisionalKey);
-  clearDraft(sessionKey);
-  setDraft(provisionalKey, { value: "queued while preflight ran", images: [] });
-
-  assert.deepEqual(rekeyDraft(provisionalKey, sessionKey), {
-    value: "queued while preflight ran",
-    images: [],
-  });
-  assert.equal(getDraft(provisionalKey), null);
-  assert.deepEqual(getDraft(sessionKey), {
-    value: "queued while preflight ran",
-    images: [],
-  });
-
-  clearDraft(sessionKey);
-});
-
-test("rekey keeps a synchronously restored draft when React state is still empty", () => {
-  const provisionalKey = "new:/tmp/rekey-race";
-  const sessionKey = "session-rekey-race";
-  clearDraft(provisionalKey);
-  clearDraft(sessionKey);
-  setDraft(provisionalKey, { value: "restored before state flush", images: [] });
-
-  assert.deepEqual(
-    rekeyDraft(provisionalKey, sessionKey, { value: "", images: [] }),
-    { value: "restored before state flush", images: [] },
-  );
-  assert.equal(getDraft(provisionalKey), null);
-  assert.deepEqual(getDraft(sessionKey), {
-    value: "restored before state flush",
-    images: [],
-  });
-
-  clearDraft(sessionKey);
 });
 
 test("renders compact errors above the input as a wrapping alert", () => {

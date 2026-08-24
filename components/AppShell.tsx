@@ -30,7 +30,7 @@ import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
-import { clearAllDrafts } from "@/lib/draft-store";
+import { getDraftApi } from "@/lib/composer/draft-api";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import {
@@ -794,7 +794,7 @@ export function AppShell() {
 
   const handleSessionDeleted = useCallback((sessionId: string) => {
     // Wipe any persisted drafts (all tabs' slots) for the deleted session.
-    clearAllDrafts(sessionId);
+    getDraftApi()?.clearAllDrafts(sessionId);
     invalidateWorkspaceRestore();
     setRefreshKey((k) => k + 1);
     if (selectedSession?.id === sessionId) {

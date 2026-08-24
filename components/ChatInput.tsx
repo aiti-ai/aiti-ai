@@ -1,22 +1,16 @@
 "use client";
 
-import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, useSyncExternalStore, KeyboardEvent } from "react";
+import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import type { QueueEntry, QueueEntryInput, QueueTrashItem } from "@/lib/queue-store";
 import { downloadQueueExport, parseQueueImport } from "@/lib/queue-export";
 import type { SkillsResponse } from "@/lib/api-types";
 import type { TextContent, UserMessage } from "@/lib/types";
 import {
-  clearDraft,
-  flushAllDrafts,
-  getDraft,
-  mergeRestoredSubmissionDraft,
-  mergeRestoredSubmissionText,
-  rekeyDraft as rekeyStoredDraft,
-  setDraft,
-  type ChatDraft,
+  getDraftApi,
   type ChatDraftImage,
-} from "@/lib/draft-store";
+  type DraftSnapshot as ChatDraft,
+} from "@/lib/composer/draft-api";
 import { apiUrl } from "@/lib/base-path";
 import { useChatHooks, ExtSlot, registerChatSend } from "@/components/ExtSlots";
 
@@ -31,8 +25,7 @@ import {
 } from "@/lib/file-fuzzy";
 import {
   emitComposerChange, emitComposerKeyChange, runComposerSubmit,
-  setComposerWriter, hasComposerEnhancement, subscribeComposerEnhancers,
-  getComposerEnhancersVersion,
+  setComposerWriter,
 } from "@/lib/composer/bus";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile, useIsCompact, useIsCoarsePointer } from "@/hooks/useIsMobile";
@@ -56,6 +49,24 @@ function writeTextareaValue(ta: HTMLTextAreaElement, nextValue: string): void {
   else ta.value = nextValue;
   const tracker = (ta as unknown as { _valueTracker?: { setValue(v: string): void } })._valueTracker;
   tracker?.setValue(nextValue);
+}
+
+/** 合并提交文本到现有文本（submitted 在前，current 在后，空行分隔）。 */
+export function mergeText(submitted: string, current: string): string {
+  if (!submitted.trim()) return current;
+  if (!current.trim()) return submitted;
+  return `${submitted}\n\n${current}`;
+}
+/** 合并提交文本+图片到现有草稿（图片封顶 10）。 */
+export function mergeSubmission(
+  submittedText: string,
+  submittedImages: ChatDraftImage[] | undefined,
+  currentText: string,
+  currentImages: ChatDraftImage[],
+): ChatDraft {
+  const images = [...(submittedImages ?? []), ...currentImages].slice(0, 10)
+    .map(({ data, mimeType }) => ({ data, mimeType }));
+  return { value: mergeText(submittedText, currentText), images };
 }
 
 export interface AttachedImage {
@@ -1192,16 +1203,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // 初始 undefined：让 draftKey effect 在首次挂载也走一遍 → emitComposerKeyChange
   // 广播初始 key（composer 增强契约：扩展需知道当前 key 才能落草稿）
   const draftKeyRef = useRef<string | undefined>(undefined);
-  // 草稿簇外迁（defork P2）：keeper 接管时 core 自身落草稿也让位，避免 draftId 抖动
-  // 时 core 把同一输入写到多个 key（散落）。
-  const enhancersVersion = useSyncExternalStore(subscribeComposerEnhancers, getComposerEnhancersVersion, () => 0);
-  const draftsExternallyOwned = enhancersVersion > 0 && hasComposerEnhancement("aiti-draft-keeper");
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
   // True once the user (or a draft restore) put content into the box — the
   // save effect must NOT touch the stored draft while the box is merely empty
   // on open (that draft may be awaiting recovery in the dialog).
-  const draftEditedRef = useRef(false);  const pendingImageCountRef = useRef(0);
+  const pendingImageCountRef = useRef(0);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
   queueCountRef.current = (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0);
@@ -1308,8 +1315,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     },
     rekeyDraft(previousKey: string, nextKey: string) {
       if (previousKey === nextKey) return;
+      const api = getDraftApi();
       if (draftKeyRef.current !== previousKey) {
-        rekeyStoredDraft(previousKey, nextKey);
+        api?.rekeyDraft(previousKey, nextKey);
         return;
       }
 
@@ -1317,7 +1325,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         value: valueRef.current,
         images: attachedImagesRef.current.map(imageToDraftImage),
       };
-      const moved = rekeyStoredDraft(previousKey, nextKey, currentDraft) ?? { value: "", images: [] };
+      const moved = api?.rekeyDraft(previousKey, nextKey, currentDraft) ?? { value: "", images: [] };
       const unchanged = moved.value === currentDraft.value
         && moved.images.length === currentDraft.images.length
         && moved.images.every((image, index) => (
@@ -1341,27 +1349,20 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     restoreSubmission(text: string, images?: ChatDraftImage[], targetDraftKey?: string) {
       if (!text.trim() && !images?.length) return;
 
-      // clearInput is queued before the submission handler runs. Compose with
-      // that queued state so a fast rejection cannot observe stale DOM text and
-      // then get overwritten by the clear.
+      const api = getDraftApi();
       const currentDraftKey = draftKeyRef.current;
       const destinationDraftKey = targetDraftKey ?? currentDraftKey;
       const targetsCurrentComposer = destinationDraftKey === currentDraftKey;
       const storedDraft = !targetsCurrentComposer && destinationDraftKey
-        ? getDraft(destinationDraftKey)
+        ? api?.getDraft(destinationDraftKey) ?? null
         : null;
-      const restoredDraft = mergeRestoredSubmissionDraft(
-        text,
-        images,
-        targetsCurrentComposer ? valueRef.current : (storedDraft?.value ?? ""),
-        targetsCurrentComposer
-          ? attachedImagesRef.current.map(imageToDraftImage)
-          : (storedDraft?.images ?? []),
-      );
-      // The first optimistic message switches ChatWindow out of its empty-state
-      // layout and remounts this component. Persist synchronously so recovery is
-      // not lost if this instance is the one being unmounted.
-      if (destinationDraftKey) setDraft(destinationDraftKey, restoredDraft);
+      // 合并提交文本+图片到目标草稿（submitted在前，current在后）
+      const curText = targetsCurrentComposer ? valueRef.current : (storedDraft?.value ?? "");
+      const curImages = targetsCurrentComposer
+        ? attachedImagesRef.current.map(imageToDraftImage)
+        : (storedDraft?.images ?? []);
+      const restoredDraft = mergeSubmission(text, images, curText, curImages);
+      if (destinationDraftKey) api?.saveDraft(destinationDraftKey, restoredDraft);
       if (!targetsCurrentComposer) return;
       const restoredImages = images?.length
         ? [
@@ -1377,7 +1378,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       valueRef.current = restoredDraft.value;
       attachedImagesRef.current = restoredImages;
       setValue((current) => {
-        const restored = mergeRestoredSubmissionText(text, current);
+        const restored = mergeText(text, current);
         valueRef.current = restored;
         return restored;
       });
@@ -1521,45 +1522,33 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setValue("");
     setAtQuery(null);
     setHistoryMenuOpen(false);
-    if (draftKey) clearDraft(draftKey);
-    if (draftKeyRef.current && draftKeyRef.current !== draftKey) clearDraft(draftKeyRef.current);
+    // 草稿清理由 aiti-draft-keeper 经 onChange("") 接管（draftsExternallyOwned 时）；
+    // keeper 未接管时回退 registry
+    if (draftKey) getDraftApi()?.clearDraft(draftKey);
+    if (draftKeyRef.current && draftKeyRef.current !== draftKey) getDraftApi()?.clearDraft(draftKeyRef.current);
     clearImages();
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
   }, [clearImages, draftKey]);
 
+  // composer 增强契约：值变化广播（草稿落槽位/队列横幅等扩展消费）
+  // 草稿落盘由 aiti-draft-keeper 经 onChange 接管；core 不再自行落盘（已删原 save effect）
   useEffect(() => {
-    if (!draftKey || draftKeyRef.current !== draftKey) return;
-    // 「编辑从此处」待发送期间不落草稿：预填内容只是临时标记，切走/刷新自动还原
-    if (suppressDraft) return;
-    // 草稿已被 aiti-draft-keeper 接管：core 不再自行落盘（避免双写/散落）
-    if (draftsExternallyOwned) return;
-    if (!value.trim() && attachedImages.length === 0) {
-      // Empty box: never wipe a stored draft on open — it may be awaiting
-      // recovery. But a deliberate clear AFTER typing this mount removes it.
-      if (draftEditedRef.current) clearDraft(draftKey);
-      return;
-    }
-    draftEditedRef.current = true;
-    setDraft(draftKey, {
+    emitComposerChange({
       value,
       images: attachedImages.map(imageToDraftImage),
+      imageCount: attachedImages.length,
+      hasInput: Boolean(value.trim()) || attachedImages.length > 0,
+      suppress: suppressDraft,
     });
-  }, [attachedImages, draftKey, value, suppressDraft, draftsExternallyOwned]);
+  }, [value, attachedImages, suppressDraft]);
 
   useEffect(() => {
     const previousDraftKey = draftKeyRef.current;
     if (previousDraftKey === draftKey) return;
-    draftEditedRef.current = false;
-
-    if (previousDraftKey) {
-      setDraft(previousDraftKey, {
-        value: valueRef.current,
-        images: attachedImagesRef.current.map(imageToDraftImage),
-      });
-    }
-
+    // 旧 key 的草稿落盘/清理由 keeper 经 onKeyChange 接管（writeNow 旧 key + 换 key 扫描）；
+    // core 不再自行 setDraft(previousDraftKey)（避免散落）
     draftKeyRef.current = draftKey;
     // composer 增强契约：key 切换广播（草稿持久化换 key 扫描等扩展消费）
     emitComposerKeyChange(previousDraftKey, draftKey);
@@ -1574,13 +1563,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     });
   }, [draftKey]);
 
-  // SPA tab switches unmount this input; write whatever is still cached so a
-  // later refresh of that tab does not miss the last edit.
-  useEffect(() => {
-    return () => {
-      flushAllDrafts();
-    };
-  }, []);
+  // （已删 flushAllDrafts 卸载 effect——keeper 的 beforeunload/pagehide/visibilitychange
+  // 监听负责落盘；SPA unmount 时 keeper drafts map 持续，onKeyChange 已 flush 旧 key）
 
   // composer 增强契约：装配受控写入口（程序化写值统一走 state → 既有 [value]
   // DOM 同步 effect，tracker 同步在那边保证）。卸载时置空。
@@ -1591,6 +1575,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         images: attachedImagesRef.current.map(imageToDraftImage),
         imageCount: attachedImagesRef.current.length,
         hasInput: Boolean(valueRef.current.trim()) || attachedImagesRef.current.length > 0,
+        suppress: suppressDraft,
       }),
       setValue: (text) => setInputValue(text),
     });

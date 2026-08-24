@@ -16,6 +16,8 @@ export interface ComposerSnapshot {
   imageCount: number;
   /** 框内有文字或图片（含用户正在输入的情况） */
   hasInput: boolean;
+  /** true = 当前值是临时预填（如「编辑从此处」），不应落草稿（与 core suppressDraft 一致） */
+  suppress?: boolean;
 }
 
 /** 扩展侧实现的增强器；core 在固定时机回调。所有回调同步、抛错被隔离。 */
