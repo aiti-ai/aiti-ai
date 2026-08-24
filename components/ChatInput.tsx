@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
+import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, useSyncExternalStore, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import type { QueueEntry, QueueEntryInput, QueueTrashItem } from "@/lib/queue-store";
 import { downloadQueueExport, parseQueueImport } from "@/lib/queue-export";
@@ -31,7 +31,8 @@ import {
 } from "@/lib/file-fuzzy";
 import {
   emitComposerChange, emitComposerKeyChange, runComposerSubmit,
-  setComposerWriter,
+  setComposerWriter, hasComposerEnhancement, subscribeComposerEnhancers,
+  getComposerEnhancersVersion,
 } from "@/lib/composer/bus";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile, useIsCompact, useIsCoarsePointer } from "@/hooks/useIsMobile";
@@ -1187,6 +1188,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // 初始 undefined：让 draftKey effect 在首次挂载也走一遍 → emitComposerKeyChange
   // 广播初始 key（composer 增强契约：扩展需知道当前 key 才能落草稿）
   const draftKeyRef = useRef<string | undefined>(undefined);
+  // 草稿簇外迁（defork P2）：keeper 接管时 core 自身落草稿也让位，避免 draftId 抖动
+  // 时 core 把同一输入写到多个 key（散落）。
+  const enhancersVersion = useSyncExternalStore(subscribeComposerEnhancers, getComposerEnhancersVersion, () => 0);
+  const draftsExternallyOwned = enhancersVersion > 0 && hasComposerEnhancement("aiti-draft-keeper");
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
   // True once the user (or a draft restore) put content into the box — the
@@ -1524,6 +1529,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!draftKey || draftKeyRef.current !== draftKey) return;
     // 「编辑从此处」待发送期间不落草稿：预填内容只是临时标记，切走/刷新自动还原
     if (suppressDraft) return;
+    // 草稿已被 aiti-draft-keeper 接管：core 不再自行落盘（避免双写/散落）
+    if (draftsExternallyOwned) return;
     if (!value.trim() && attachedImages.length === 0) {
       // Empty box: never wipe a stored draft on open — it may be awaiting
       // recovery. But a deliberate clear AFTER typing this mount removes it.
@@ -1535,7 +1542,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       value,
       images: attachedImages.map(imageToDraftImage),
     });
-  }, [attachedImages, draftKey, value, suppressDraft]);
+  }, [attachedImages, draftKey, value, suppressDraft, draftsExternallyOwned]);
 
   useEffect(() => {
     const previousDraftKey = draftKeyRef.current;

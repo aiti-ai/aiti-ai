@@ -448,7 +448,13 @@ export function AppShell() {
         // The sidebar will notify us when it adopts this cwd. Avoid remounting
         // the just-created empty chat during that initial synchronization.
         suppressCwdBumpRef.current = true;
-        const draftId = `initial:${requestedCwd}`;
+        // 同一 cwd 若已有存活的新建 composer（handleCwdChange 已先发 uuid），不覆盖：
+        // 避免 draftId 抖动把一次输入散落多个 new: 槽位（草稿 scatter）。
+        const draftId = activeNewSessionDraftKeyRef.current
+          && activeNewSessionDraftKeyRef.current.startsWith(`new:`)
+          && activeNewSessionDraftKeyRef.current.endsWith(`:${data.cwd}`)
+          ? activeNewSessionDraftKeyRef.current.slice(4, activeNewSessionDraftKeyRef.current.length - data.cwd.length - 1)
+          : `initial:${requestedCwd}`;
         setNewSessionDraftId(draftId);
         activeNewSessionDraftKeyRef.current = `new:${draftId}:${data.cwd}`;
         setNewSessionCwd(data.cwd);
