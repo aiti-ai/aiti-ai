@@ -18,6 +18,7 @@
 
 import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
+import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -99,11 +100,40 @@ export function bridgeSocketName(pid: number): string {
     : `/tmp/pi-tui-bridge-${pid}`;
 }
 
+/** 主动探测 socket 可连接性（权威存活信号——pid 会复用、进程可能假死）。 */
+function probeSocketAlive(socketPath: string, timeoutMs = 1000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const s = createConnection({ path: socketPath });
+    let settled = false;
+    const done = (ok: boolean) => {
+      if (settled) return;
+      settled = true;
+      s.destroy();
+      resolve(ok);
+    };
+    s.once("connect", () => done(true));
+    s.once("error", () => done(false));
+    setTimeout(() => done(false), timeoutMs);
+  });
+}
+
 /**
- * Find a live bridge for a session file. Returns the socket name when the
- * session is owned by a running TUI bridge, undefined otherwise.
+ * Find a live bridge for a session file. Returns the socket name ONLY when
+ * the owning process is alive AND the socket accepts connections — anything
+ * else is treated as stale (self-cleaned) so the session opens locally.
+ *
+ * Liveness layers:
+ *   1. pid check (cheap, read time) — filters obvious deaths
+ *   2. active socket probe (authoritative) — catches pid reuse & hung processes
  */
 export async function findBridgeSocketForSession(sessionFile: string): Promise<string | undefined> {
   const reg = await readBridgeRegistry();
-  return reg[sessionFile]?.socket;
+  const entry = reg[sessionFile];
+  if (!entry) return undefined;
+  // 二次确认（readBridgeRegistry 只查了 pid）：socket 连不上 = 桥已死
+  if (!(await probeSocketAlive(entry.socket))) {
+    await removeBridgeEntry(sessionFile).catch(() => {});
+    return undefined;
+  }
+  return entry.socket;
 }
