@@ -95,6 +95,8 @@ export interface ExtClientContext {
   /** 注册 composer 增强器（值观测/会话 key 切换/发送前链式钩子；见 docs/composer-enhancement-contract.md）。
    *  返回 disposer。 */
   registerComposerEnhancement(enh: ComposerEnhancement): () => void;
+  /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步） */
+  writeComposerValue?(text: string): void | Promise<void>;
   /** 触发宿主侧扩展重载（拉新 manifest + 图对账 + 反卷 materialize）——扩展管理器场景
    *  （服务端热重载后刷新已安装/启停变更；optional 兼容旧宿主）。 */
   reloadExtensions?(): Promise<{ invalidated: string[] }>;
@@ -238,6 +240,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     revealDir: (absPath) => getHostApi().revealDir?.(absPath),
     appendText: (text) => getHostApi().appendText?.(text),
     registerComposerEnhancement: (enh: ComposerEnhancement) => registerComposerEnhancement(enh),
+    writeComposerValue: (text: string) => getHostApi().writeComposerValue?.(text),
     reloadExtensions: () => reloadExtensions(),
     extLoaderState: () => ({ materialized: materializedIds(), prefetched: prefetchedIds() }),
   };

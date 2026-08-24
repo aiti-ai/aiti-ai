@@ -13,6 +13,7 @@ import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtSlot } from "./ExtSlots";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
+import { useRecoveryProviderItems } from "@/lib/composer/recovery";
 import { clearDraft, DRAFT_KEY_PREFIX, listDraftSlots, removeDraftSlot, type DraftSlotInfo } from "@/lib/draft-store";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { useI18n } from "@/hooks/useI18n";
@@ -514,9 +515,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     queuedAt: 0, // drafts carry no timestamp; the dialog hides it for origin=draft
     origin: "draft",
   }));
-  const recoveryItems = draftRecoveryItems.length > 0
-    ? [...pendingRecovery, ...draftRecoveryItems]
-    : pendingRecovery;
+  // 扩展恢复项（composer 契约：草稿簇等把残留输入并入恢复对话框）
+  const extRecoveryItems = useRecoveryProviderItems() as PendingRecoveryItem[];
+  const recoveryItems = [
+    ...pendingRecovery,
+    ...draftRecoveryItems,
+    ...extRecoveryItems,
+  ];
 
   // 草稿静默恢复条件：只有客户端草稿待恢复（无服务端队列需要用户决策）、且输入框为空时，
   // 不弹恢复对话框，直接把草稿恢复到输入框（等价于在对话框里点「保留/重新入队」）。

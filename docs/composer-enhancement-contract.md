@@ -17,6 +17,8 @@
 // lib/composer/types.ts（新文件）
 export interface ComposerSnapshot {
   value: string;
+  /** 已附加图片的持久化形态（base64 data，无 previewUrl）——对象引用共享，仅持久化时才序列化 */
+  images: { data: string; mimeType: string }[];
   imageCount: number;
   /** true = 用户正在打字或框内有内容（含图片） */
   hasInput: boolean;
@@ -64,12 +66,13 @@ registerComposerEnhancement(enh: ComposerEnhancement): () => void; // 返回注�
 | 3 | onSend 入口最前 | `text = composerBus.runSubmit(text, images)` |
 | 4 | useImperativeHandle 的写值方法 | 写入统一走 bus 持有的 writer（writer 内部即现有 writeTextareaValue 路径，不改行为） |
 
-## 4. ChatWindow / 恢复对话框接入点（P2 用，本期只留缝）
+## 4. ChatWindow / 恢复对话框接入（v0.2 已实现）
 
-- QueueRecoveryDialog 已是独立文件；P2 增加「外部恢复项提供者」注册：
-  `registerRecoveryItemsProvider(() => PendingRecoveryItem[])`，
-  ChatWindow 合成 recoveryItems 时并入（≤5 行）。
-- 本期不实现，仅在本文档占位，避免 P2 时临时改接口。
+- `lib/composer/recovery.ts`：`registerRecoveryItemsProvider({id, getItems, subscribe})`
+  —— 扩展把残留输入并入恢复对话框；ChatWindow 合成点 ≤5 行
+  （useRecoveryProviderItems + 展开进 recoveryItems）；getItems 抛错隔离
+- `ctx.writeComposerValue(text)` → HostApi → ChatInputHandle.setValueTracked：
+  扩展程序化写值的受控路径（tracker 同步）
 
 ## 5. P2 草稿簇迁移预演（验证契约够用）
 
@@ -80,9 +83,9 @@ draft-store + ChatWindow 扫描/静默恢复移入扩展后，依赖核对：
 | 观测输入内容落槽位（300ms 防抖） | onChange |
 | 输入框空判定（own slot 过滤 / 静默恢复前检查） | snapshot().hasInput |
 | draftKey 变更时保存旧槽位+换 key 扫描 | onKeyChange |
-| 恢复落地进输入框 | writer.setValue |
+| 恢复落地进输入框 | ctx.writeComposerValue（已实现，走 setValueTracked 受控路径） |
 | 发送后清槽位 | onSubmit（之后 core 清空 → onChange("")） |
-| 残留项进恢复对话框 | registerRecoveryItemsProvider（§4） |
+| 残留项进恢复对话框 | registerRecoveryItemsProvider（已实现） |
 
 ✅ 无缺口即可动工；发现缺口先改本契约再迁移。
 

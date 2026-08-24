@@ -7,6 +7,12 @@
 
 export interface ComposerSnapshot {
   value: string;
+  /**
+   * 已附加图片的持久化形态（base64 data，无 previewUrl）——与对象引用共享，
+   * 仅在持久化时才序列化；高频 onChange 下无拷贝开销。
+   */
+  images: { data: string; mimeType: string }[];
+  /** 便捷字段：images.length */
   imageCount: number;
   /** 框内有文字或图片（含用户正在输入的情况） */
   hasInput: boolean;
@@ -32,4 +38,15 @@ export interface ComposerWriter {
    * 绝不允许绕过此路径裸写 textarea.value（b30d131 教训）。
    */
   setValue(text: string): void;
+}
+
+/**
+ * 恢复项提供者（P2：草稿簇等把残留输入并入恢复对话框；实现见
+ * lib/composer/recovery.ts）。items 与服务端队列恢复项同一结构。
+ */
+export interface RecoveryItemsProvider {
+  id: string;
+  getItems(): unknown[];
+  /** 订阅 items 变化（storage 事件等）；返回取消订阅函数。 */
+  subscribe?(cb: () => void): () => void;
 }

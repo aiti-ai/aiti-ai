@@ -25,6 +25,8 @@ export interface HostApi {
   revealDir?: (absPath: string) => void | Promise<void>;
   /** 输入框追加文本（不发送；引用回复预填用） */
   appendText?: (text: string) => void | Promise<void>;
+  /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步） */
+  writeComposerValue?: (text: string) => void | Promise<void>;
 }
 
 const hostApi: HostApi = {};
@@ -35,6 +37,7 @@ export function registerHostApi(api: HostApi): void {
   if (api.openFolder) hostApi.openFolder = api.openFolder;
   if (api.revealDir) hostApi.revealDir = api.revealDir;
   if (api.appendText) hostApi.appendText = api.appendText;
+  if (api.writeComposerValue) hostApi.writeComposerValue = api.writeComposerValue;
 }
 
 export function getHostApi(): HostApi {

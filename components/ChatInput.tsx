@@ -167,6 +167,8 @@ export interface ChatInputHandle {
   runChatHooks: (text: string) => string;
   /** True when the input box has text or images (used to tell a live draft from a recoverable one). */
   hasInput: () => boolean;
+  /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步） */
+  setValueTracked: (text: string) => void;
   /** 清空输入框（含预填/草稿/图片预览）——「取消 编辑从此处」用 */
   clearInput: () => void;
   /** Force the queue panel to expand (used after recovery/import resolution). */
@@ -1436,6 +1438,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       return Boolean(value.trim()) || attachedImagesRef.current.length > 0;
     },
     clearInput: () => clearInput(),
+    /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步） */
+    setValueTracked: (text: string) => setInputValue(text),
     runChatHooks(text: string) {
       return applyChatHooks(text);
     },
@@ -1571,6 +1575,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setComposerWriter({
       snapshot: () => ({
         value: valueRef.current,
+        images: attachedImagesRef.current.map(imageToDraftImage),
         imageCount: attachedImagesRef.current.length,
         hasInput: Boolean(valueRef.current.trim()) || attachedImagesRef.current.length > 0,
       }),
@@ -1603,6 +1608,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   useEffect(() => {
     emitComposerChange({
       value,
+      images: attachedImages.map(imageToDraftImage),
       imageCount: attachedImages.length,
       hasInput: Boolean(value.trim()) || attachedImages.length > 0,
     });
