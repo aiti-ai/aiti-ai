@@ -83,6 +83,15 @@ core 保有机制（队列容器、草稿槽位、恢复对话框插槽），for
   ④ 恢复对话框插槽（与队列恢复项合成）。近期加固（46dc461）都在这套逻辑里，
   外迁时随迁
 - 前置：P1 契约（就是为此设计的第一组钩子）
+- **⚠ 实地分析新发现的额外耦合（切换前必须解决）**：
+  ① `restoreSubmission`（useAgentSession 队列发送失败回填草稿）与队列簇纠缠——
+     要么随 A 簇一起迁，要么契约补「提交失败回填」事件；
+  ② `rekeyDraft`（promoteNewSession 会话提升）与会话生命周期纠缠——
+     onKeyChange 广播的是结果而非请求，扩展需在切换前保存旧 key 内容
+     （onChange 持续落槽位已天然覆盖，但需验证时序）；
+  ③ sidebar「未落盘会话显示草稿行」直接读 draft-store——需改经扩展 widget 或保留只读；
+  ④ 双写过渡期：core 与扩展写同一批 localStorage key（格式兼容）可安全并存，
+     但恢复对话框会出现重复项——切换提交必须同时关闭 core 扫描（feature flag）
 
 ### C. 流式渲染性能 —— PR 上游（择机）/ 否则 CORE 长期保留
 - 范围：轻量文本渲染、delta rAF 微批次、历史分页 30 条、key 稳定化、rpc flush 节流、
@@ -130,3 +139,6 @@ core 保有机制（队列容器、草稿槽位、恢复对话框插槽），for
 ## 5. 变更记录
 
 - 2026-08-24 初版：基线 380 commits / +21621-8199；确定 P1-P4 顺序，B（草稿簇）为外迁试点
+- 2026-08-24 P1+契约 v0.2 落地于 worktree `pi-web-worktrees/defork-composer`
+  （分支 defork/composer-contract）：四钩子 + 受控写值全链路 + 恢复项提供者；
+  实地分析发现 B 簇与队列/会话生命周期的三处额外交缠（见 §3.B ⚠），P2 切换前逐项解决
