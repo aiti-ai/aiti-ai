@@ -25,15 +25,17 @@ test("session listing merges live registry snapshots and honors force refresh", 
 
 test("session reads use the live SessionManager before requiring a JSONL path", () => {
   for (const source of [detailRoute, contextRoute]) {
-    // Live lookups exist in three forms, all preceding the file-based fallback:
-    //   1. local registry (getRpcSession)
-    //   2. TUI bridge attachment by path (attachIfBridged — TUI owns the file,
-    //      deliberately checked first so a stale local wrapper yields to it)
-    //   3. provider handles (resolveAnySession)
+    // Live lookups precede the file-based fallback:
+    //   local registry (getRpcSession) and — in detail/state routes, where the
+    //   TUI single-writer rule applies — bridge attachment by path
+    //   (attachIfBridged; TUI owns the file so a stale wrapper yields to it)
+    //   plus provider handles (resolveAnySession).
     assert.ok(source.includes("getRpcSession(id)"));
-    assert.match(source, /attachIfBridged\(/);
     assert.match(source, /liveRpc\?\.inner\.sessionManager \?\? SessionManager\.open/);
   }
+  // The detail route additionally honors TUI ownership and provider handles.
+  assert.match(detailRoute, /attachIfBridged\(/);
+  assert.match(detailRoute, /resolveAnySession\(id\)/);
 });
 
 test("live agent state is available before the session file is persisted", () => {
