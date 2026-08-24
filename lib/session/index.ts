@@ -61,7 +61,7 @@ export { relayToSession, type RelayResult } from "./relay.ts";
 
 // TUI bridge registry (session file → socket 占用识别)
 export { findBridgeSocketForSession, readBridgeRegistry } from "./bridge-registry.ts";
-import { findBridgeSocketForSession } from "./bridge-registry.ts";
+import { findBridgeSocketForSession, BridgeOccupiedError } from "./bridge-registry.ts";
 
 // Host-native adapter (wraps AgentSessionWrapper from rpc-manager)
 export { createLocalHandle } from "./local.ts";
@@ -156,7 +156,10 @@ export async function attachIfBridged(
   const socket = await findBridgeSocketForSession(sessionFile);
   if (!socket) return undefined;
   const providerType = findAttachProviderType();
-  if (!providerType) return undefined; // 未部署 aiti-attach-agent → 无桥可用
+  if (!providerType) {
+    // 有桥无后端扩展——同样不能本地打开（会双写），fail loud
+    throw new BridgeOccupiedError(sessionFile, 'backend extension "aiti-attach-agent" not deployed');
+  }
   try {
     const handle = await createSessionHandle({
       providerType,
@@ -167,7 +170,7 @@ export async function attachIfBridged(
     return new HandleSessionAdapter(handle);
   } catch (e) {
     console.error("[bridge] attach failed:", e instanceof Error ? e.message : e);
-    return undefined;
+    throw new BridgeOccupiedError(sessionFile, e instanceof Error ? e.message : String(e));
   }
 }
 

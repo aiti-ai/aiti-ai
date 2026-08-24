@@ -94,6 +94,8 @@ export interface SessionCapabilities {
   listModels: boolean;
   /** 随消息发送文件附件（PDF/document 块级支持；纯图片不算——那走 images）。 */
   fileAttachments: boolean;
+  /** 运行时切换权限模式（cc-connect ModeSwitcher；如 CC 的 set_permission_mode）。 */
+  setPermissionMode: boolean;
 }
 
 /**
@@ -119,6 +121,7 @@ export const FULL_CAPABILITIES: SessionCapabilities = {
   getUsage: false,
   listModels: true,
   fileAttachments: false,
+  setPermissionMode: false,
 };
 
 /** Build a partial capability set with everything unspecified = false. */
@@ -357,6 +360,11 @@ export interface SessionHandle {
   getUsage?(): UsageReport | undefined;
   /** 该后端可选的模型清单。@capability listModels */
   getAvailableModels?(): Promise<HandleModelOption[]>;
+  /**
+   * 运行时切换权限模式（如 "default"/"acceptEdits"/"plan"/"bypassPermissions"）。
+   * @capability setPermissionMode
+   */
+  setPermissionMode?(mode: string): Promise<boolean>;
 }
 
 // ============================================================================

@@ -27,6 +27,8 @@ import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, ext
 import { loadExtensionFromDir, scanExtensionDirs } from "./loader.ts";
 import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
 import { invokeAI as aiInvokeImpl } from "../ai-invoke.ts";
+import { registerExtensionProvider, cleanupAllExtensionProviders, findProvidersForAgent } from "../session/providers.ts";
+import { openExternalSession } from "../session/index.ts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 declare global {
@@ -627,6 +629,8 @@ export class ExtRegistryImpl {
         this.errors.set(ext.id, `shutdown: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    // 会话后端 slot：扩展停用时注销它注册的全部 provider（含 shutdown 回调）。
+    await cleanupAllExtensionProviders();
   }
 
   /** Hot reload: shutdown → reload entries → startup. */
@@ -650,6 +654,21 @@ export class ExtRegistryImpl {
   private serverContext(ext: LoadedExtension): ExtServerContext {
     return {
       id: ext.id, dir: ext.dir, dataDir: ext.dataDir, core: this.core,
+      // 会话后端注册 slot（多 agent 前端）：键自动加 "<extId>/" 前缀，shutdown 时自动注销。
+      // open/canOpen 委托 openExternalSession（agentKey 解析 + handle 入库）。
+      sessionProviders: {
+        register: (provider) => registerExtensionProvider(ext.id, provider),
+        canOpen: (agentKey) => findProvidersForAgent(agentKey).length > 0,
+        open: async (compositeId, options) => {
+          try {
+            const handle = await openExternalSession(compositeId, options);
+            if (!handle) return { ok: false, reason: "no_provider" as const };
+            return { ok: true, sessionId: handle.id };
+          } catch (e) {
+            return { ok: false, reason: "open_failed" as const, error: e instanceof Error ? e.message : String(e) };
+          }
+        },
+      },
       // 通用 AI 调用（core 最底层能力，零业务）；按调用扩展 id 记账（token 统计在 core）。
       // caller 允许扩展细分场景（如 aiti-ai-input/complete、aiti-ai-input/voice-fix），缺省用 ext.id
       invokeAI: (p) => aiInvokeImpl({ ...p, caller: (p && p.caller) || ext.id }),

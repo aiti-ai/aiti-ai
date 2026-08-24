@@ -12,7 +12,7 @@ import {
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession } from "@/lib/rpc-manager";
-import { resolveAnySession } from "@/lib/session";
+import { resolveAnySession, attachIfBridged } from "@/lib/session";
 import { removeQueue } from "@/lib/queue-store";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
@@ -23,6 +23,33 @@ export async function GET(
 ) {
   const { id } = await params;
   try {
+    // 桥占用识别最先（TUI 是文件所有者；即使有陈旧本地 wrapper 也让位）
+    const fpEarly = await resolveSessionPath(id);
+      if (fpEarly) {
+      const bridged = await attachIfBridged(fpEarly);
+      if (bridged?.isAlive()) {
+        const r = (await bridged.send({ type: "get_messages" }).catch(() => null)) as { entries?: unknown[] } | null;
+        const messages = r?.entries ?? [];
+        return NextResponse.json({
+            sessionId: id,
+            filePath: "",
+            info: {
+            path: "", id, cwd: (bridged as { cwd?: string }).cwd ?? "",
+            name: undefined,
+            created: new Date().toISOString(), modified: new Date().toISOString(),
+            messageCount: messages.length,
+            firstMessage: "(bridged session)",
+            transient: true,
+            agent: "tui-bridge",
+            },
+          leafId: null,
+          tree: [],
+          context: { messages, entryIds: [], thinkingLevel: "off", model: null },
+          totalActiveMs: 0,
+          });
+        }
+      }
+
     // Backend (provider-handle) sessions: no local file exists — serve a
     // minimal SessionData so the chat view loads instead of bouncing off a
     // 404. History replay depends on the backend's getMessages capability.
@@ -71,6 +98,40 @@ export async function GET(
     if (!liveRpc && !resolvedPath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
+    // 桥占用识别：文件被 TUI 桥持有 → 历史经桥 get_messages 返回（不本地打开）
+    if (!liveRpc && resolvedPath) {
+      try {
+        const bridged = await attachIfBridged(resolvedPath).catch((e: { name?: string }) => {
+          if (e?.name === "BridgeOccupiedError") throw e;
+          return undefined;
+        });
+        if (bridged?.isAlive()) {
+          const r = (await bridged.send({ type: "get_messages" }).catch(() => null)) as { entries?: unknown[] } | null;
+          const messages = r?.entries ?? [];
+          const firstUser = messages.find((m) => (m as { role?: string }).role === "user");
+          return NextResponse.json({
+            sessionId: id,
+            filePath: "",
+            info: {
+              path: "",
+              id,
+              cwd: bridged.cwd ?? "",
+              name: undefined,
+              created: new Date().toISOString(),
+              modified: new Date().toISOString(),
+              messageCount: messages.length,
+              firstMessage: firstUser ? "(bridged session)" : "(bridged session)",
+              transient: true,
+              agent: "tui-bridge",
+            },
+            leafId: null,
+            tree: [],
+            context: { messages, entryIds: [], thinkingLevel: "off", model: null },
+            totalActiveMs: 0,
+          });
+        }
+      } catch { /* fall through to local */ }
+    }
 
     const sm = liveRpc?.inner.sessionManager ?? SessionManager.open(resolvedPath!);
     const filePath = liveRpc?.sessionFile || sm.getSessionFile() || resolvedPath || "";
@@ -118,6 +179,9 @@ export async function GET(
       totalActiveMs,
     });
   } catch (error) {
+    if ((error as { name?: string }).name === "BridgeOccupiedError") {
+      return NextResponse.json({ error: String(error), code: "session_bridged_unreachable" }, { status: 409 });
+    }
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }

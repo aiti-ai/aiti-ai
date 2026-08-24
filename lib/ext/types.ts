@@ -49,6 +49,49 @@ export interface ExtStatusFeature extends ExtFeature {
   value?: string;
 }
 
+/**
+ * 会话后端注册 slot：扩展在 server.startup 里注册 SessionProvider，把自定义
+ * agent 后端接入 pi-web 的多 agent 前端。注册键自动加扩展 id 前缀
+ * （"<extId>/<type>"），不会遮蔽内置 provider 或其他扩展；扩展 shutdown/
+ * reload 时自动注销。
+ *
+ * 类型契约见 lib/session/types.ts（SessionHandle / SessionCapabilities）——
+ * fail loud：不支持的能力声明 false 并在方法里抛 UnsupportedCapabilityError。
+ */
+export interface ExtSessionProviderRegistration {
+  /** Provider 短名（不含前缀；不能含 "/"）。最终键 = "<extId>/<type>"。 */
+  type: string;
+  /** UI 展示名（新建会话的 provider 选择器）。 */
+  label: string;
+  /** 能力上限声明（fail-loud 契约，UI 据此显隐控件）。 */
+  maxCapabilities: import("../session/types.ts").SessionCapabilities;
+  createSession(options: {
+    sessionFile?: string;
+    cwd?: string;
+    socketPath?: string;
+    env?: Record<string, string>;
+    /** 扩展可自由扩展的额外选项（透传，host 不解释）。 */
+    [key: string]: unknown;
+  }): Promise<import("../session/types.ts").SessionHandle>;
+  shutdown?(): Promise<void>;
+}
+
+export interface ExtSessionProviderSlot {
+  /** 注册后返回完整 registry key（"<extId>/<type>"），调用方作为 providerType 使用。 */
+  register(provider: ExtSessionProviderRegistration): string;
+  /** 是否有能驱动该外部 agent 的后端（all-sessions agentKey，如 "claude"）。 */
+  canOpen(agentKey: string): boolean;
+  /**
+   * 打开外部历史会话为 live 会话（attach-from-history）。成功返回
+   * { ok: true, sessionId }（sessionId = 复合 id，可直接喂给 /api/agent/[id]）；
+   * 无驱动后端返回 { ok: false, reason: "no_provider" }。
+   */
+  open(
+    compositeId: string,
+    options?: { cwd?: string },
+  ): Promise<{ ok: true; sessionId: string } | { ok: false; reason: "no_provider" | "open_failed"; error?: string }>;
+}
+
 /** Core data capabilities handed to extensions — no reimplementation of session access. */
 export interface ExtCoreApi {
   listSessions(): Promise<unknown[]>;
@@ -75,6 +118,8 @@ export interface ExtServerContext {
   /** Absolute path of the extension data directory (~/.pi/web/data/<id>/). */
   dataDir: string;
   core: ExtCoreApi;
+  /** 会话后端注册 slot（多 agent 前端）：扩展经此注册自定义 SessionProvider。 */
+  sessionProviders: ExtSessionProviderSlot;
   /** 通用 AI 调用（core 最底层模型能力）：任意 system+messages → { text, usage }；core 零业务、零统计。
    *  所有 prompt 组装 / 上下文 / 项目现场 / token 统计由调用方扩展负责。 */
   invokeAI?: (params: {

@@ -147,6 +147,11 @@ export async function POST(req: Request, ctx: Params) {
         if (!handle.getAvailableModels) throw new UnsupportedCapabilityError("listModels", handle.source);
         return NextResponse.json({ success: true, data: await handle.getAvailableModels() });
       }
+      case "set_permission_mode": {
+        if (!handle.setPermissionMode) throw new UnsupportedCapabilityError("setPermissionMode", handle.source);
+        const ok = await handle.setPermissionMode(String(body.mode ?? ""));
+        return NextResponse.json({ success: ok });
+      }
       default:
         return NextResponse.json({ error: `unknown action "${action}"` }, { status: 400 });
     }

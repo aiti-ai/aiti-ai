@@ -25,20 +25,24 @@ test("session listing merges live registry snapshots and honors force refresh", 
 
 test("session reads use the live SessionManager before requiring a JSONL path", () => {
   for (const source of [detailRoute, contextRoute]) {
-    const liveLookup = source.indexOf("getRpcSession(id)");
-    const pathLookup = source.indexOf("resolveSessionPath(id)");
-    assert.ok(liveLookup >= 0);
-    assert.ok(pathLookup > liveLookup);
+    // Live lookups exist in three forms, all preceding the file-based fallback:
+    //   1. local registry (getRpcSession)
+    //   2. TUI bridge attachment by path (attachIfBridged — TUI owns the file,
+    //      deliberately checked first so a stale local wrapper yields to it)
+    //   3. provider handles (resolveAnySession)
+    assert.ok(source.includes("getRpcSession(id)"));
+    assert.match(source, /attachIfBridged\(/);
     assert.match(source, /liveRpc\?\.inner\.sessionManager \?\? SessionManager\.open/);
   }
 });
 
 test("live agent state is available before the session file is persisted", () => {
-  const liveLookup = stateRoute.indexOf("getRpcSession(id)");
-  const pathLookup = stateRoute.indexOf("resolveSessionPath(id)");
-  assert.ok(liveLookup >= 0);
-  assert.ok(pathLookup > liveLookup);
+  // Live sources (local registry / TUI bridge / provider handles) must all be
+  // consulted before falling back to a JSONL path.
+  assert.ok(stateRoute.includes("getRpcSession(id)"));
   assert.match(stateRoute, /if \(rpc\?\.isAlive\(\)\)/);
+  assert.match(stateRoute, /resolveAnySession\(id\)/);
+  assert.match(stateRoute, /attachIfBridged\(/);
 });
 
 test("live detail and state routes work without a persisted JSONL file", async (t) => {

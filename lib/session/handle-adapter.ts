@@ -279,6 +279,12 @@ export class HandleSessionAdapter implements WrappedSessionLike {
         return { models: await h.getAvailableModels() };
       }
 
+      case "set_permission_mode": {
+        if (!h.setPermissionMode) this.fail("set_permission_mode", "setPermissionMode");
+        const ok = await h.setPermissionMode(String(command.mode ?? ""));
+        return { success: ok };
+      }
+
       case "get_session_stats":
         return {
           sessionFile: undefined,

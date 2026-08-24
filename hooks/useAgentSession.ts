@@ -1845,6 +1845,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
 
   const loadModels = useCallback(async (signal?: AbortSignal) => {
+    // ── 后端会话（attach/spawn/extension）：模型清单来自 list_models 能力，
+    //    而非本地 /api/models。切换复用现有 set_model 命令（adapter 映射）。
+    if (!isNew && session?.agent && sessionIdRef.current) {
+      try {
+        const d = await sendAgentCommand<{ models?: Array<{ id: string; provider: string; label?: string }> }>(
+          sessionIdRef.current,
+          { type: "list_models" },
+        );
+        const list = (d.models ?? []).map((m) => ({ id: m.id, name: m.label ?? m.id, provider: m.provider }));
+        setModelList(list);
+        setModelNames(Object.fromEntries(list.map((m) => [m.id, m.name])));
+        setModelError(null);
+        setModelScopeWarnings([]);
+        return;
+      } catch {
+        // 后端不支持 listModels → 落回本地清单（多半也为空，选择器自然禁用）
+      }
+    }
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
     const modelsUrl = modelCwd ? apiUrl(`/api/models?cwd=${encodeURIComponent(modelCwd)}`) : apiUrl("/api/models");
     const res = await fetch(modelsUrl, signal ? { signal } : undefined);
@@ -1870,7 +1888,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setThinkingLevel((pinned as ThinkingLevelOption | undefined) ?? "auto");
       }
     }
-  }, [isNew, newSessionCwd, session?.cwd]);
+  }, [isNew, newSessionCwd, session?.cwd, session?.agent]);
 
   /**
    * Pull fresh session stats (incl. contextUsage) from the agent process.
