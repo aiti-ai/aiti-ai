@@ -7,7 +7,7 @@ import { apiUrl } from "@/lib/base-path";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
-import { MessageView } from "./MessageView";
+import { MessageView, estimateTokens } from "./MessageView";
 import { ChatInput, type AttachedImage, type ChatInputHandle } from "./ChatInput";
 import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
@@ -1242,7 +1242,7 @@ const messageListEl = useMemo(() => {
 
             {messageListEl}
             {streamState.isStreaming && hasStreamingContent && streamState.streamingMessage && (
-              <StreamingMessageView message={streamState.streamingMessage as AgentMessage} />
+              <StreamingMessageView message={streamState.streamingMessage as AgentMessage} modelNames={modelNames} />
             )}
 
             {agentRunning && !hasStreamingContent && agentPhase && (
@@ -1730,11 +1730,15 @@ function ExtensionCustomPanel({
  * 与 MarkdownBody 的节流解析（200ms）对齐——文本尾部最多滞后一个节流窗口，视觉无感。
  * 流式结束（isStreaming=false）时组件卸载，消息移入历史列表走完整渲染。
  */
-function StreamingMessageView({ message }: {
+function StreamingMessageView({ message, modelNames }: {
   message: AgentMessage;
+  modelNames?: Record<string, string>;
 }) {
+  const { t } = useI18n();
   const [renderMsg, setRenderMsg] = useState<AgentMessage | null>(message);
   const lastTs = useRef(0);
+  const streamStartRef = useRef<number | null>(null);
+  const prevTokensRef = useRef(0);
   useEffect(() => {
     const now = performance.now();
     if (now - lastTs.current >= 200) {
@@ -1749,10 +1753,60 @@ function StreamingMessageView({ message }: {
     }
   }, [message]);
   if (!renderMsg) return null;
+  const content = streamingTextOf(renderMsg);
+  // 轻量流速指示：估算 token 数 + t/s 徽标（对齐完整渲染 AssistantMessageView 的样式/阈值）。
+  // 只在节流后的渲染（≥200ms 一次）里做一次全量字符扫描，成本可忽略。
+  let tokens = 0;
+  if (renderMsg.role === "assistant") {
+    for (const b of ((renderMsg as AssistantMessage).content ?? []) as AssistantContentBlock[]) {
+      if (b.type === "text") tokens += estimateTokens(b.text);
+      else if (b.type === "thinking") tokens += estimateTokens(b.thinking);
+      else if (b.type === "toolCall") tokens += estimateTokens(b.rawInput ?? JSON.stringify(b.input ?? {}) ?? "");
+    }
+    tokens = Math.round(tokens);
+  }
+  // 计时基线：首次出现 token，或 token 数回落（同一 agent 运行内 message_start 用新消息
+  // 整体替换 streamingMessage、组件不卸载）→ 重置基线，避免后续消息的 t/s 被稀释。
+  if (tokens > 0 && (streamStartRef.current === null || tokens < prevTokensRef.current)) {
+    streamStartRef.current = Date.now();
+  }
+  prevTokensRef.current = tokens;
+  let tps: number | null = null;
+  if (tokens > 0 && streamStartRef.current !== null) {
+    const elapsed = (Date.now() - streamStartRef.current) / 1000;
+    if (elapsed > 0.5) tps = tokens / elapsed;
+  }
   // 流式期间走轻量文本渲染（不解析 markdown）：react-markdown 对几千行增量文本每次解析
   // 成本 100ms+，纯文本 pre-wrap 一次文本节点更新 ~1ms。结束（streamingMessage 置空）后
   // 该消息以完整 MessageView 渲染富文本，流式期成本可忽略。
-  return <StreamingText content={streamingTextOf(renderMsg)} />;
+  return (
+    <div>
+      {tokens > 0 && (
+        <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4, display: "flex", alignItems: "center", gap: 6 }}>
+          {renderMsg.role === "assistant" && (renderMsg as AssistantMessage).provider ? (
+            <span>{modelNames?.[`${(renderMsg as AssistantMessage).provider}:${(renderMsg as AssistantMessage).model}`] ?? modelNames?.[(renderMsg as AssistantMessage).model] ?? (renderMsg as AssistantMessage).model}</span>
+          ) : null}
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, color: "var(--text)" }} title={t("i18n.estimatedTokens")}>
+            <span style={{ display: "flex", alignItems: "center", gap: 2, fontSize: 11, fontWeight: 400 }}>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
+              </svg>
+              {tokens}
+            </span>
+            {tps !== null && (() => {
+              const bg = tps >= 50 ? "#53b3cb" : tps >= 30 ? "#9bc53d" : tps >= 15 ? "#f9c22e" : "#e01a4f";
+              return (
+                <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 4, background: bg, color: "#fff", fontSize: 11, fontWeight: 400 }}>
+                  {tps.toFixed(1)} t/s
+                </span>
+              );
+            })()}
+          </span>
+        </div>
+      )}
+      <StreamingText content={content} />
+    </div>
+  );
 }
 
 /** 流式轻量文本提取：AssistantMessage.content 是块数组（text/thinking/toolCall），
