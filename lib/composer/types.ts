@@ -43,10 +43,14 @@ export interface ComposerWriter {
 /**
  * 恢复项提供者（P2：草稿簇等把残留输入并入恢复对话框；实现见
  * lib/composer/recovery.ts）。items 与服务端队列恢复项同一结构。
+ * id 约定：提供者的项用 `${providerId 前缀}:…` 命名（如 "ext:draft:…"），
+ * ChatWindow 按前缀把用户决议（保留/丢弃）路由回 onResolve。
  */
 export interface RecoveryItemsProvider {
   id: string;
   getItems(): unknown[];
   /** 订阅 items 变化（storage 事件等）；返回取消订阅函数。 */
   subscribe?(cb: () => void): () => void;
+  /** 用户对提供者项的决议：kept = 保留（已由 core 落地或调用方自行落地），discarded = 丢弃。 */
+  onResolve?(kept: string[], discarded: string[]): void;
 }

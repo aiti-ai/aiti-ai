@@ -64,3 +64,29 @@ export function resetRecoveryProvidersForTests(): void {
   listeners.clear();
   cached = [];
 }
+
+/**
+ * 用户决议路由：把 id 按前缀分发给拥有它的 provider（kept/discarded）。
+ * ChatWindow 的恢复对话框对未知来源的 id 调这里；无人认领的 id 原样返回。
+ */
+export function routeRecoveryResolve(kept: string[], discarded: string[]): { kept: string[]; discarded: string[] } {
+  const byOwner = (id: string) => providers.find((p) => id.startsWith(`${p.id}:`));
+  const groups = new Map<RecoveryItemsProvider, { kept: string[]; discarded: string[] }>();
+  const bucket = (id: string, kind: "kept" | "discarded") => {
+    const owner = byOwner(id);
+    if (!owner?.onResolve) return false;
+    let g = groups.get(owner);
+    if (!g) { g = { kept: [], discarded: [] }; groups.set(owner, g); }
+    g[kind].push(id);
+    return true;
+  };
+  const rest = { kept: kept.filter((id) => !bucket(id, "kept")), discarded: discarded.filter((id) => !bucket(id, "discarded")) };
+  for (const [p, g] of groups) {
+    try {
+      p.onResolve!(g.kept, g.discarded);
+    } catch (e) {
+      console.warn(`[composer] recovery provider "${p.id}" onResolve failed:`, e);
+    }
+  }
+  return rest;
+}

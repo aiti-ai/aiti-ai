@@ -1184,7 +1184,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const historyItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const fileIndexMetaRef = useRef<{ cwd: string; fetchedAt: number } | null>(null);
   const fileIndexFetchingRef = useRef<string | null>(null);
-  const draftKeyRef = useRef(draftKey);
+  // 初始 undefined：让 draftKey effect 在首次挂载也走一遍 → emitComposerKeyChange
+  // 广播初始 key（composer 增强契约：扩展需知道当前 key 才能落草稿）
+  const draftKeyRef = useRef<string | undefined>(undefined);
   const valueRef = useRef(value);
   const attachedImagesRef = useRef(attachedImages);
   // True once the user (or a draft restore) put content into the box — the

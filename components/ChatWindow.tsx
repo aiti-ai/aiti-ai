@@ -13,7 +13,7 @@ import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtSlot } from "./ExtSlots";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
-import { useRecoveryProviderItems } from "@/lib/composer/recovery";
+import { useRecoveryProviderItems, routeRecoveryResolve } from "@/lib/composer/recovery";
 import { clearDraft, DRAFT_KEY_PREFIX, listDraftSlots, removeDraftSlot, type DraftSlotInfo } from "@/lib/draft-store";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { useI18n } from "@/hooks/useI18n";
@@ -539,6 +539,8 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     discard: string[],
     continueRun: boolean,
   ): Promise<PendingRecoveryItem[]> => {
+    // 扩展提供者的项（"ext:…" 前缀）路由回提供者自决；余下按 core 逻辑处理
+    ({ kept: keep, discarded: discard } = routeRecoveryResolve(keep, discard));
     const slotById = new Map(pendingDrafts.map((slot) => [`draft:${slot.slotKey}`, slot]));
     const isDraftId = (id: string) => slotById.has(id);
     const draftKept = keep.filter(isDraftId).map((id) => slotById.get(id)!);

@@ -16,7 +16,8 @@ import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo,
 import { apiUrl } from "@/lib/base-path";
 import { getHostApi, type OpenFileOptions } from "@/lib/ext/host-api";
 import { registerComposerEnhancement } from "@/lib/composer/bus";
-import type { ComposerEnhancement } from "@/lib/composer/types";
+import type { ComposerEnhancement, RecoveryItemsProvider } from "@/lib/composer/types";
+import { registerRecoveryItemsProvider } from "@/lib/composer/recovery";
 import type { ExtSlotName, ExtSlotProps, ParagraphClickHandler } from "@/lib/ext/types";
 import {
   getExtMetas,
@@ -97,6 +98,8 @@ export interface ExtClientContext {
   registerComposerEnhancement(enh: ComposerEnhancement): () => void;
   /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步） */
   writeComposerValue?(text: string): void | Promise<void>;
+  /** 注册恢复项提供者（残留输入并入恢复对话框；决议经 onResolve 回流）。返回 disposer。 */
+  registerRecoveryItemsProvider?(provider: RecoveryItemsProvider): () => void;
   /** 触发宿主侧扩展重载（拉新 manifest + 图对账 + 反卷 materialize）——扩展管理器场景
    *  （服务端热重载后刷新已安装/启停变更；optional 兼容旧宿主）。 */
   reloadExtensions?(): Promise<{ invalidated: string[] }>;
@@ -241,6 +244,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     appendText: (text) => getHostApi().appendText?.(text),
     registerComposerEnhancement: (enh: ComposerEnhancement) => registerComposerEnhancement(enh),
     writeComposerValue: (text: string) => getHostApi().writeComposerValue?.(text),
+    registerRecoveryItemsProvider: (provider) => registerRecoveryItemsProvider(provider),
     reloadExtensions: () => reloadExtensions(),
     extLoaderState: () => ({ materialized: materializedIds(), prefetched: prefetchedIds() }),
   };
