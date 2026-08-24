@@ -15,6 +15,8 @@
 import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { apiUrl } from "@/lib/base-path";
 import { getHostApi, type OpenFileOptions } from "@/lib/ext/host-api";
+import { registerComposerEnhancement } from "@/lib/composer/bus";
+import type { ComposerEnhancement } from "@/lib/composer/types";
 import type { ExtSlotName, ExtSlotProps, ParagraphClickHandler } from "@/lib/ext/types";
 import {
   getExtMetas,
@@ -90,6 +92,9 @@ export interface ExtClientContext {
   revealDir?(absPath: string): void | Promise<void>;
   /** 输入框追加文本不发送（引用回复预填用） */
   appendText?(text: string): void | Promise<void>;
+  /** 注册 composer 增强器（值观测/会话 key 切换/发送前链式钩子；见 docs/composer-enhancement-contract.md）。
+   *  返回 disposer。 */
+  registerComposerEnhancement(enh: ComposerEnhancement): () => void;
   /** 触发宿主侧扩展重载（拉新 manifest + 图对账 + 反卷 materialize）——扩展管理器场景
    *  （服务端热重载后刷新已安装/启停变更；optional 兼容旧宿主）。 */
   reloadExtensions?(): Promise<{ invalidated: string[] }>;
@@ -232,6 +237,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
       getHostApi().openFolder?.(path, folderName ?? path.split("/").pop() ?? path),
     revealDir: (absPath) => getHostApi().revealDir?.(absPath),
     appendText: (text) => getHostApi().appendText?.(text),
+    registerComposerEnhancement: (enh: ComposerEnhancement) => registerComposerEnhancement(enh),
     reloadExtensions: () => reloadExtensions(),
     extLoaderState: () => ({ materialized: materializedIds(), prefetched: prefetchedIds() }),
   };

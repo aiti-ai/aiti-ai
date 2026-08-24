@@ -29,6 +29,10 @@ import {
   buildEntriesFromFiles, buildAtInsertText, extractAtQuery, filterFileEntries,
   type AtQueryMatch, type FileIndexEntry,
 } from "@/lib/file-fuzzy";
+import {
+  emitComposerChange, emitComposerKeyChange, runComposerSubmit,
+  setComposerWriter,
+} from "@/lib/composer/bus";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile, useIsCompact, useIsCoarsePointer } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
@@ -1540,6 +1544,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
 
     draftKeyRef.current = draftKey;
+    // composer 增强契约：key 切换广播（草稿持久化换 key 扫描等扩展消费）
+    emitComposerKeyChange(previousDraftKey, draftKey);
     // Drafts are never auto-restored: an unsent draft from a previous visit
     // surfaces in the queue-recovery dialog instead, where the user decides.
     setValue("");
@@ -1558,6 +1564,20 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       flushAllDrafts();
     };
   }, []);
+
+  // composer 增强契约：装配受控写入口（程序化写值统一走 state → 既有 [value]
+  // DOM 同步 effect，tracker 同步在那边保证）。卸载时置空。
+  useEffect(() => {
+    setComposerWriter({
+      snapshot: () => ({
+        value: valueRef.current,
+        imageCount: attachedImagesRef.current.length,
+        hasInput: Boolean(valueRef.current.trim()) || attachedImagesRef.current.length > 0,
+      }),
+      setValue: (text) => setInputValue(text),
+    });
+    return () => setComposerWriter(null);
+  }, [setInputValue]);
 
   useEffect(() => {
     const ta = textareaRef.current;
@@ -1578,6 +1598,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     ta.style.height = "auto";
     if (value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [value]);
+
+  // composer 增强契约：值变化广播（草稿落槽位/队列横幅等扩展消费）
+  useEffect(() => {
+    emitComposerChange({
+      value,
+      imageCount: attachedImages.length,
+      hasInput: Boolean(value.trim()) || attachedImages.length > 0,
+    });
+  }, [value, attachedImages]);
 
   const resizeTextarea = useCallback(() => {
     const ta = textareaRef.current;
@@ -1710,8 +1739,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         return;
       }
     }
-    // 扩展聊天钩子（aiti-devtools）：发送前 [元素N]/[回答N]/[错误N] → 真实候选内容（Enter/steer/queue 统一走 applyChatHooks）
-    const finalMsg = applyChatHooks(msg);
+    // composer 增强契约：发送前链式钩子 → 扩展聊天钩子（既有 [元素N]/[回答N]/[错误N] 替换）
+    const submittedMsg = runComposerSubmit(msg, attachedImages.length);
+    const finalMsg = applyChatHooks(submittedMsg);
     onSend(finalMsg, attachedImages.length ? attachedImages : undefined);
     clearInput();
   }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, onRequeueAt, applyChatHooks]);
