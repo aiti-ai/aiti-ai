@@ -34,6 +34,25 @@ import { useIsMobile, useIsCompact, useIsCoarsePointer } from "@/hooks/useIsMobi
 import { useI18n } from "@/hooks/useI18n";
 import type { ToolPreset } from "@/lib/tool-presets";
 
+/**
+ * Write a textarea value through the native setter AND resync React's internal
+ * value tracker (_valueTracker). The composer is uncontrolled (`defaultValue`,
+ * de8c80f streaming-perf), so programmatic writes that bypass the tracker
+ * leave it stale; React's ChangeEventPlugin then treats the next real user
+ * edit landing on the tracked (stale) value as "no change" and suppresses
+ * onChange. Concrete failure: restore a draft into the box (tracker still
+ * ""), user selects all + deletes (DOM becomes "") → no onChange → state
+ * keeps the draft text → the draft store is never cleared → the deleted
+ * draft resurrects on the next session load (and Enter can re-send stale text).
+ */
+function writeTextareaValue(ta: HTMLTextAreaElement, nextValue: string): void {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value");
+  if (descriptor?.set) descriptor.set.call(ta, nextValue);
+  else ta.value = nextValue;
+  const tracker = (ta as unknown as { _valueTracker?: { setValue(v: string): void } })._valueTracker;
+  tracker?.setValue(nextValue);
+}
+
 export interface AttachedImage {
   data: string;   // base64, no prefix
   mimeType: string;
@@ -1253,7 +1272,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       // setSelectionRange(combined.length) 会被钳到 0，随后 commit 虽把光标移到末尾
       // 却不会滚动——长引用时就停在第一行。同步写后 React 受控提交发现 node.value
       // 已等于新值会跳过覆写（不打断我们刚设的光标）。
-      if (ta) ta.value = combined;
+      // 必须经 writeTextareaValue（原生 setter + 同步 _valueTracker）：裸写 ta.value
+      // 会绕过 React 的值跟踪器，用户随后落到同值的编辑会被去重吞掉。
+      if (ta) writeTextareaValue(ta, combined);
       valueRef.current = combined;
       setValue(combined);
       setAtQuery(null);
@@ -1543,9 +1564,17 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!ta) return;
     // 非受控同步：React state 变化（草稿恢复/扩展注入/发送清空/召回等）写回 DOM。
     // 语音/IME 组合输入期间跳过——组合文本由输入法独占，React 不覆写（防语音输入被打断）。
+    // 经 writeTextareaValue 同步 _valueTracker：裸写 ta.value 会留下过期的跟踪值，
+    // 恢复草稿后用户全选删除时 React 认为「值没变」吞掉 onChange —— state 残留旧稿、
+    // 草稿清不掉、下次加载又复活，回车还会把残留旧稿重新发出去。
     if (!isComposingRef.current && ta.value !== value) {
-      ta.value = value;
+      writeTextareaValue(ta, value);
     }
+    // React 对 defaultValue 的提交走 textContent 路径（不经 value setter），同样绕过
+    // _valueTracker —— 每次提交后强制把跟踪值对齐到真实 DOM 值，保证后续用户编辑
+    // （尤其全选删除回到跟踪旧值的场景）总能正常触发 onChange。
+    const tracker = (ta as unknown as { _valueTracker?: { setValue(v: string): void } })._valueTracker;
+    tracker?.setValue(ta.value);
     ta.style.height = "auto";
     if (value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [value]);
