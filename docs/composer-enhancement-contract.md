@@ -77,6 +77,10 @@ registerComposerEnhancement(enh: ComposerEnhancement): () => void; // 返回注�
   完整还原草稿进框（文本 + 图片，raw 不跑钩子）
 - `ctx.sendChatMessage(text, mode, images?)`：第三参携带图片的 follow-up 排队；
   preSend 钩子（[元素N]/[回答N]/[错误N]）在 ChatInput 内部展开
+- `ctx.queueFollowUp(text, images?)`：**仅入队不触发**（草稿恢复「Re-queue」语义）——
+  空闲也只进 follow-up 队列，不直发；钩子同样展开，images 随队列项携带
+- 恢复对话框的 continueRun：服务端项走 resolveRecovery(continueRun) 启动；
+  纯草稿项走 ChatWindow.handleContinueQueue（continue_queue）启动队列处理
 
 ## 5. P2 草稿簇迁移预演（验证契约够用）
 

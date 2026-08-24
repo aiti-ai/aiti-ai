@@ -77,6 +77,10 @@ interface Props {
   sessionId?: string | null;
   onSteer?: (message: string, images?: AttachedImage[]) => void;
   onFollowUp?: (message: string, images?: AttachedImage[]) => void;
+  /** 仅入队不触发（草稿恢复「Re-queue」语义）：空闲也只进 follow-up 队列，不直发。
+   *  与 onFollowUp 区别：后者仅在 agent 运行时由 ChatWindow 接入（隐藏按钮用）；
+   *  onQueueFollowUp 始终接入（恢复路径需要空闲也能入队）。 */
+  onQueueFollowUp?: (message: string, images?: AttachedImage[]) => void;
   /** Send a queued follow-up as a steer (interrupt now). Available even when idle. */
   onQueueSteerSend?: (message: string) => void;
   /** 显示「继续」按钮：AI 完全停止（无任何 streaming）且输入框为空时出现。 */
@@ -851,7 +855,7 @@ function StreamingActionButton({
 
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionId,
-  onSend, onAbort, onSteer, onFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
+  onSend, onAbort, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
@@ -1764,13 +1768,18 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   /** 扩展程序化发送（aiti-prompts 等）：与用户输入同链路——applyChatHooks 钩子生效；
    *  agent 流式时按 mode 插队(steer)/排队(followUp)（与 sendQueued 同分支），空闲时直接触发（等同 Enter）。
    *  不清空输入框：发的是扩展内容，不动用户正在输入的内容。 */
-  const handleExtensionSend = useCallback((text: string, mode: "steer" | "followUp", images?: { data: string; mimeType: string }[]) => {
+  const handleExtensionSend = useCallback((text: string, mode: "steer" | "followUp" | "queue", images?: { data: string; mimeType: string }[]) => {
     if (!text || !text.trim()) return;
     const finalMsg = applyChatHooks(text);
     // 草稿恢复多条残留等：携带图片的 follow-up 排队（base64 → AttachedImage）
     const attached = images?.length
       ? images.map((im) => ({ data: im.data, mimeType: im.mimeType, previewUrl: `data:${im.mimeType};base64,${im.data}` }))
       : undefined;
+    if (mode === "queue") {
+      // 仅入队不触发：空闲也只进 follow-up 队列（草稿恢复「Re-queue」语义）
+      onQueueFollowUp?.(finalMsg, attached);
+      return;
+    }
     if (finalMsg.startsWith("/") && onPromptWithStreamingBehavior) {
       onPromptWithStreamingBehavior(finalMsg, mode, attached);
       return;
@@ -1783,7 +1792,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       // 空闲（onSteer/onFollowUp 仅在 agent 运行时传入）→ 立即触发一轮
       onSend?.(finalMsg, attached);
     }
-  }, [applyChatHooks, onSend, onSteer, onFollowUp, onPromptWithStreamingBehavior]);
+  }, [applyChatHooks, onSend, onSteer, onFollowUp, onQueueFollowUp, onPromptWithStreamingBehavior]);
 
   useEffect(() => {
     registerChatSend(handleExtensionSend);

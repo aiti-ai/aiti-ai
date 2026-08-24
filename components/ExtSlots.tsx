@@ -75,6 +75,9 @@ export interface ExtClientContext {
   /** 程序化发送一条消息（与用户输入同链路：preSend 钩子生效；空闲直发，流式按 mode 插队/排队；不清空输入框）
    *  images 可选：携带图片的 follow-up 排队（草稿恢复多条残留等场景） */
   sendChatMessage(text: string, mode: "steer" | "followUp", images?: { data: string; mimeType: string }[]): void;
+  /** 仅入队不触发（草稿恢复「Re-queue」语义）：空闲也只进 follow-up 队列，不直发。
+   *  preSend 钩子（[元素N]/[回答N]/[错误N]）同样生效；images 随队列项携带。 */
+  queueFollowUp(text: string, images?: { data: string; mimeType: string }[]): void;
   /** 注册消息段落点击接管 handler（消息点击识别薄宿主：core 广播段落点击事件，弹层 UI 全在扩展侧） */
   registerParagraphClick(handler: ParagraphClickHandler): void;
   /** 同步读本扩展全部功能状态（extman 管理；host 已统一拉取，扩展零独立请求）。boolean feature 为布尔，string feature 为字符串值。 */
@@ -146,12 +149,12 @@ export function getTopicItems<T>(topic: string): T[] {
 }
 
 /** 聊天发送处理器 store（扩展 ctx.sendChatMessage 的统一出口；ChatInput mount 时注册） */
-type ChatSendHandler = (text: string, mode: "steer" | "followUp", images?: { data: string; mimeType: string }[]) => void;
+type ChatSendHandler = (text: string, mode: "steer" | "followUp" | "queue", images?: { data: string; mimeType: string }[]) => void;
 let chatSendHandler: ChatSendHandler | null = null;
 export function registerChatSend(fn: ChatSendHandler | null): void {
   chatSendHandler = fn;
 }
-export function dispatchChatSend(text: string, mode: "steer" | "followUp", images?: { data: string; mimeType: string }[]): void {
+export function dispatchChatSend(text: string, mode: "steer" | "followUp" | "queue", images?: { data: string; mimeType: string }[]): void {
   chatSendHandler?.(text, mode, images);
 }
 
@@ -233,6 +236,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     },
     registerChatHook: (hook) => registerChatHooks(hook),
     sendChatMessage: (text, mode, images) => dispatchChatSend(text, mode, images),
+    queueFollowUp: (text, images) => dispatchChatSend(text, "queue", images),
     registerParagraphClick: (h) => registerParagraphClick(h),
     registerTopicItem: (topic, item) => registerTopicItem(topic, item),
     getTopicItems: (topic) => getTopicItems(topic),

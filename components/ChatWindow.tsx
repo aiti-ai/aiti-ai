@@ -545,6 +545,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     continueRun: boolean,
   ): Promise<PendingRecoveryItem[]> => {
     // 扩展提供者的项（"ext:…" 前缀）路由回提供者自决；余下按 core 逻辑处理
+    const extKept = keep.filter((id) => id.startsWith("ext:")).length;
     ({ kept: keep, discarded: discard } = routeRecoveryResolve(keep, discard));
     const slotById = new Map(pendingDrafts.map((slot) => [`draft:${slot.slotKey}`, slot]));
     const isDraftId = (id: string) => slotById.has(id);
@@ -592,10 +593,15 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       });
       setPendingDrafts((prev) => prev.filter((slot) => !discardedKeys.has(slot.slotKey)));
     }
-    if (serverKeep.length === 0 && serverDiscard.length === 0) return pendingRecovery;
+    if (serverKeep.length === 0 && serverDiscard.length === 0) {
+      // 纯草稿/扩展项：continueRun 仍需触发——keeper 已把多余条目入队，
+      // 这里启动队列处理（与 core 服务端 resolveRecovery(continueRun) 等价）
+      if (continueRun && extKept > 0) void handleContinueQueue();
+      return pendingRecovery;
+    }
     // continueRun only makes sense when actual queued messages are re-queued.
     return resolveRecovery(serverKeep, serverDiscard, continueRun && serverKeep.length > 0);
-  }, [draftKey, pendingDrafts, pendingRecovery, resolveRecovery, chatInputRef, handleFollowUp]);
+  }, [draftKey, pendingDrafts, pendingRecovery, resolveRecovery, chatInputRef, handleFollowUp, handleContinueQueue]);
 
   // 草稿静默恢复：条件满足时不弹恢复对话框，直接把草稿全部恢复到输入框/队列（keep-all）。
   // 注意：恢复依赖 chatInputRef.current（ChatInput 挂载后才就绪）——若尚未就绪则逐帧重试，
@@ -863,6 +869,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       onAbort={handleAbort}
       onSteer={agentRunning ? handleSteer : undefined}
       onFollowUp={agentRunning ? handleFollowUp : undefined}
+      onQueueFollowUp={handleFollowUp}
       onPromptWithStreamingBehavior={agentRunning ? handlePromptWithStreamingBehavior : undefined}
       onQueueSteerSend={handleSteer}
       onConvertQueueItem={convertQueuedMessage}
