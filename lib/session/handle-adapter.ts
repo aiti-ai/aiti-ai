@@ -33,6 +33,8 @@ type Listener = (event: { type: string; [key: string]: unknown }) => void;
 export interface WrappedSessionLike {
   readonly sessionId: string;
   readonly cwd: string;
+  /** Backend tag (provider type tail); undefined for local sessions. */
+  readonly source: string;
   isAlive(): boolean;
   isRunning(): boolean;
   send(command: WrapperCommand): Promise<unknown>;
@@ -54,8 +56,11 @@ export class HandleSessionAdapter implements WrappedSessionLike {
   private partialActive = false;
   private lastModel: { id: string; provider: string } | undefined;
 
+  readonly source: string;
+
   constructor(handle: SessionHandle) {
     this.handle = handle;
+    this.source = handle.source;
     this.lastModel = handle.getModel();
 
     this.unsubscribe = handle.subscribe((event) => {

@@ -55,6 +55,13 @@ export interface SessionProvider {
   /** Registry name, also the SessionHandle.source value. */
   readonly type: string;
 
+  /**
+   * Resolution priority when multiple providers claim the same agentKey
+   * (openExternalSession candidate ordering). Higher = preferred.
+   * Rationale: native CLI drivers beat generic bridges for the same agent.
+   */
+  readonly priority?: number;
+
   /** Human label for UI pickers. */
   readonly label: string;
 
@@ -208,7 +215,9 @@ export function getProvider(type: string): SessionProvider | undefined {
  * key, e.g. "claude"). Ordered by registration; first match wins for resume.
  */
 export function findProvidersForAgent(agentKey: string): SessionProvider[] {
-  return [...providerMap().values()].filter((p) => p.agentKey === agentKey);
+  return [...providerMap().values()]
+    .filter((p) => p.agentKey === agentKey)
+    .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
 }
 
 export function listProviders(): SessionProvider[] {

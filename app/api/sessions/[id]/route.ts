@@ -64,7 +64,9 @@ export async function GET(
         try {
           const r = (await wrapped.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
           messages = r?.entries ?? [];
-        } catch { /* capability off → empty context */ }
+        } catch (e) {
+          console.error("[sessions/[id]] backend get_messages failed:", e instanceof Error ? e.message : e);
+        }
         const first = messages.find((m) => (m as { role?: string }).role === "user");
         const firstText = first
           ? (() => {
