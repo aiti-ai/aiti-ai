@@ -1935,6 +1935,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     });
   }, []);
 
+  /** 按钮点击（含 Tab 聚焦后按 Enter 触发）后把焦点还给输入框——否则焦点留在按钮上，
+   *  用户继续打字不会进入输入框。rAF 等一轮渲染（clearInput 等状态更新）后再聚焦。 */
+  const refocusInput = useCallback(() => {
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, []);
+
   const sendQueued = useCallback((mode: "steer" | "followup") => {
     const msg = value.trim();
     // No typed text: the steer button dispatches the first queued follow-up
@@ -3535,7 +3541,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 {t("chat.recalledEditing", { pos: String(recalledRef.current.index + 1) })}
               </span>
               <button
-                onClick={() => void handleSend()}
+                onClick={() => { void handleSend(); refocusInput(); }}
                 title={t("chat.recalledRequeue")}
                 style={{
                   display: "inline-flex",
@@ -3698,7 +3704,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     : queueDisabledNoInput ? t("chat.steerNoInput")
                     : t("chat.steerHint")}
                   disabled={!canQueueStreamingMessage && !canSteerFromQueue}
-                  onClick={() => sendQueued("steer")}
+                  onClick={() => { sendQueued("steer"); refocusInput(); }}
                   bg="rgba(234,179,8,0.12)"
                   border="rgba(234,179,8,0.35)"
                   fg="rgba(180,130,0,1)"
@@ -3716,7 +3722,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     : queueDisabledNoInput ? t("chat.followUpNoInput")
                     : t("chat.followUpHint")}
                   disabled={!canQueueStreamingMessage}
-                  onClick={() => sendQueued("followup")}
+                  onClick={() => { sendQueued("followup"); refocusInput(); }}
                   bg="rgba(129,140,248,0.16)"
                   border="rgba(129,140,248,0.45)"
                   fg="rgba(99,102,241,1)"
@@ -3735,7 +3741,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <StreamingActionButton
                   label={t("chat.stop")}
                   hint={t("chat.stopAgent")}
-                  onClick={onAbort}
+                  onClick={() => { onAbort(); refocusInput(); }}
                   bg="rgba(239,68,68,0.1)"
                   border="rgba(239,68,68,0.35)"
                   fg="#ef4444"
@@ -3755,7 +3761,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <StreamingActionButton
                   label={t("chat.continue")}
                   hint={t(queueCount > 0 ? "chat.continueQueueHint" : "chat.continueHint")}
-                  onClick={onContinue}
+                  onClick={() => { onContinue(); refocusInput(); }}
                   bg="rgba(16,185,129,0.14)"
                   border="rgba(16,185,129,0.4)"
                   fg="rgba(5,150,105,1)"
@@ -3767,7 +3773,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 </StreamingActionButton>
               )}
               <button
-              onClick={handleSend}
+              onClick={() => { void handleSend(); refocusInput(); }}
               disabled={!value.trim() && !attachedImages.length}
               style={{
                 flexShrink: 0,
