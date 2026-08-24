@@ -2,6 +2,7 @@
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, CustomMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
+import type { AttachedFile } from "@/hooks/useAgentSession";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { apiUrl } from "@/lib/base-path";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
@@ -394,18 +395,18 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
   // 发送：pending 时先回退会话（真正生效点），再发送编辑后的消息。
   // bash 命令（! 前缀）不触发回退——用户此时只是想跑 shell，标记保留待下次发送。
-  const handleSendWrapped = useCallback(async (message: string, images?: AttachedImage[]) => {
+  const handleSendWrapped = useCallback(async (message: string, images?: AttachedImage[], files?: AttachedFile[]) => {
     const pending = editFromHerePendingRef.current;
     if (pending) {
       if (message.trim().startsWith("!")) {
-        await handleSend(message, images);
+        await handleSend(message, images, files);
         return;
       }
       setEditFromHerePending(null);
       await handleEditFromStartSend(pending.targetId, pending.leafId, message, images);
       return;
     }
-    await handleSend(message, images);
+    await handleSend(message, images, files);
   }, [handleEditFromStartSend, handleSend]);
   const [recoveryDismissed, setRecoveryDismissed] = useState(false);
   // 草稿静默恢复状态：true 时不弹恢复对话框；自动恢复失败会回退 false 放行对话框手动处理。

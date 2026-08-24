@@ -25,8 +25,8 @@ test("cancelling the pending mark restores the composer", () => {
 
 test("sending with a pending mark rewinds first; bash commands skip the rewind", () => {
   // 发送才是真正生效点：pending 时先 navigate 回退再发；! 前缀的 bash 命令不消费标记
-  assert.match(source, /const handleSendWrapped = useCallback\(async \(message: string, images\?: AttachedImage\[\]\) => \{/);
-  assert.match(source, /if \(message\.trim\(\)\.startsWith\("!"\)\) \{[\s\S]*?await handleSend\(message, images\);[\s\S]*?return;/);
+  assert.match(source, /const handleSendWrapped = useCallback\(async \(message: string, images\?: AttachedImage\[\], files\?: AttachedFile\[\]\) => \{/);
+  assert.match(source, /if \(message\.trim\(\)\.startsWith\("!"\)\) \{[\s\S]*?await handleSend\(message, images[^)]*\);[\s\S]*?return;/);
   assert.match(source, /setEditFromHerePending\(null\);\n\s+await handleEditFromStartSend\(pending\.targetId, pending\.leafId, message, images\);/);
 });
 

@@ -59,6 +59,13 @@ export interface AttachedImage {
   previewUrl: string; // object URL for display
 }
 
+/** 非图片文件附件（PDF/文档等）——仅后端会话支持（fileAttachments 能力）。 */
+export interface AttachedFile {
+  data: string;   // base64, no prefix
+  mimeType: string;
+  filename: string;
+}
+
 interface ModelOption {
   provider: string;
   modelId: string;
@@ -66,12 +73,12 @@ interface ModelOption {
 }
 
 interface Props {
-  onSend: (message: string, images?: AttachedImage[]) => void;
+  onSend: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
   onAbort: () => void;
   /** 当前会话 id：透传给 chatInputTop 扩展槽（如 aiti-ai-input 的 AI 用量按会话记账） */
   sessionId?: string | null;
-  onSteer?: (message: string, images?: AttachedImage[]) => void;
-  onFollowUp?: (message: string, images?: AttachedImage[]) => void;
+  onSteer?: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
+  onFollowUp?: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
   /** Send a queued follow-up as a steer (interrupt now). Available even when idle. */
   onQueueSteerSend?: (message: string) => void;
   /** 显示「继续」按钮：AI 完全停止（无任何 streaming）且输入框为空时出现。 */
@@ -80,7 +87,7 @@ interface Props {
   onContinue?: () => void;
   /** Convert a queued message's kind (steer ↔ follow-up) without dispatching it. */
   onConvertQueueItem?: (kind: "steer" | "followUp", index: number, targetKind: "steer" | "followUp") => Promise<boolean>;
-  onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => void;
+  onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[], files?: AttachedFile[]) => void;
   isStreaming: boolean;
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
@@ -875,6 +882,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
   const [controlsMenuOpen, setControlsMenuOpen] = useState(false);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const anyFileInputRef = useRef<HTMLInputElement>(null);
   const trimmedValue = value.trimStart();
   const bashMode = attachedImages.length === 0 && trimmedValue.startsWith("!");
   const bashExcluded = bashMode && trimmedValue.startsWith("!!");
@@ -1440,6 +1449,44 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     },
   }));
 
+  const MAX_ATTACHED_FILE_BYTES = 10 * 1024 * 1024;
+  const processDocFiles = useCallback(async (files: File[]) => {
+    const remaining = Math.max(0, MAX_ATTACHED_IMAGES - attachedFiles.length);
+    const docs = files
+      .filter((f) => f.size <= MAX_ATTACHED_FILE_BYTES)
+      .slice(0, remaining);
+    const skipped = files.length - docs.length;
+    if (skipped > 0) showQueueNotice(t("chat.fileTooLarge"), false);
+    if (!docs.length) return;
+    try {
+      const newFiles = await Promise.all(
+        docs.map(
+          (file) =>
+            new Promise<AttachedFile>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const result = reader.result as string;
+                resolve({
+                  data: result.split(",")[1],
+                  mimeType: file.type || "application/octet-stream",
+                  filename: file.name,
+                });
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+            }),
+        ),
+      );
+      setAttachedFiles((prev) => [...prev, ...newFiles].slice(0, MAX_ATTACHED_IMAGES));
+    } catch (e) {
+      console.error("Failed to read file attachment:", e);
+    }
+  }, [attachedFiles.length, t]);
+
+  const removeAttachedFile = useCallback((index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
   const processImageFiles = useCallback(async (files: File[]) => {
     const remaining = Math.max(
       0,
@@ -1712,9 +1759,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
     // 扩展聊天钩子（aiti-devtools）：发送前 [元素N]/[回答N]/[错误N] → 真实候选内容（Enter/steer/queue 统一走 applyChatHooks）
     const finalMsg = applyChatHooks(msg);
-    onSend(finalMsg, attachedImages.length ? attachedImages : undefined);
+    onSend(finalMsg, attachedImages.length ? attachedImages : undefined, attachedFiles.length ? attachedFiles : undefined);
+    setAttachedFiles([]);
     clearInput();
-  }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, onRequeueAt, applyChatHooks]);
+  }, [value, attachedImages, attachedFiles, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, onRequeueAt, applyChatHooks]);
 
   /** 扩展程序化发送（aiti-prompts 等）：与用户输入同链路——applyChatHooks 钩子生效；
    *  agent 流式时按 mode 插队(steer)/排队(followUp)（与 sendQueued 同分支），空闲时直接触发（等同 Enter）。
@@ -2479,6 +2527,21 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           e.target.value = "";
         }}
       />
+      {/* Hidden generic-file input（文件附件：PDF/文档等，后端 fileAttachments 能力） */}
+      <input
+        ref={anyFileInputRef}
+        type="file"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const picked = Array.from(e.target.files ?? []);
+          const imgs = picked.filter((f) => f.type.startsWith("image/"));
+          const docs = picked.filter((f) => !f.type.startsWith("image/"));
+          if (imgs.length) processImageFiles(imgs);
+          processDocFiles(docs);
+          e.target.value = "";
+        }}
+      />
       {/* Hidden queue-import file input */}
       <input
         ref={queueImportFileRef}
@@ -3210,6 +3273,30 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             ))}
           </div>
         )}
+        {attachedFiles.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+            {attachedFiles.map((f, i) => (
+              <div key={`${f.filename}-${i}`} style={{
+                display: "flex", alignItems: "center", gap: 5,
+                padding: "5px 9px", borderRadius: 6,
+                background: "var(--bg-hover)", border: "1px solid var(--border)",
+                fontSize: 11, color: "var(--text)", maxWidth: 220,
+              }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  📎 {f.filename}
+                </span>
+                <button
+                  onClick={() => removeAttachedFile(i)}
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "var(--text-muted)", display: "flex" }}
+                >
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <line x1="1" y1="1" x2="7" y2="7" /><line x1="7" y1="1" x2="1" y2="7" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Main input */}
         <div style={{ position: "relative", minWidth: 0 }}>
@@ -3854,8 +3941,34 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           {/* LEFT: attach + model selector (idle) or steer/followup toggle (streaming) */}
           <div style={{ flex: isMobile ? "1 1 auto" : "0 0 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2 }}>
             <button
+              onClick={() => anyFileInputRef.current?.click()}
+              title={t("chat.attachFile")}
+              style={{
+                flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                width: 32, height: 32, padding: 0,
+                background: "none", border: "none",
+                borderRadius: 9,
+                color: attachedFiles.length ? "var(--accent)" : "var(--text-muted)",
+                cursor: "pointer",
+                transition: "background 0.12s, color 0.12s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--bg-hover)";
+                e.currentTarget.style.color = attachedFiles.length ? "var(--accent)" : "var(--text)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "none";
+                e.currentTarget.style.color = attachedFiles.length ? "var(--accent)" : "var(--text-muted)";
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                <polyline points="14 2 14 8 20 8" />
+              </svg>
+            </button>
+            <button
               onClick={() => fileInputRef.current?.click()}
-             title={t("chat.attachImage")}
+              title={t("chat.attachImage")}
               style={{
                 flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
                 width: 32, height: 32, padding: 0,

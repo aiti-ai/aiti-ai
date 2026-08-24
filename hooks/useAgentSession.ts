@@ -264,6 +264,12 @@ export interface ChatInputHandle {
   restoreSubmission: (text: string, images?: Array<{ data: string; mimeType: string }>, targetDraftKey?: string) => void;
 }
 
+export interface AttachedFile {
+  data: string;   // base64, no prefix
+  mimeType: string;
+  filename: string;
+}
+
 export interface AttachedImage {
   data: string;
   mimeType: string;
@@ -1457,7 +1463,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [addNotice, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
 
-  const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
+  const handleSend = useCallback(async (message: string, images?: AttachedImage[], files?: AttachedFile[]) => {
     const trimmedMessage = message.trim();
     if (!trimmedMessage && !images?.length) return;
     if (agentRunningRef.current || bashRunningRef.current) {
@@ -1553,6 +1559,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           type: "prompt",
           message,
           ...(piImages?.length ? { images: piImages } : {}),
+          ...(files?.length ? { files: files.map((f) => ({ data: f.data, mimeType: f.mimeType, filename: f.filename })) } : {}),
         });
         promoteNewSession(1, message);
       } else if (session) {
@@ -1563,6 +1570,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           type: "prompt",
           message,
           ...(piImages?.length ? { images: piImages } : {}),
+          ...(files?.length ? { files: files.map((f) => ({ data: f.data, mimeType: f.mimeType, filename: f.filename })) } : {}),
         });
       } else {
         throw new Error("No active session for the prompt");
