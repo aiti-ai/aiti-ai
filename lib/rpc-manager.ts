@@ -1,5 +1,6 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme } from "@earendil-works/pi-coding-agent";
+import { bundledPiPluginPaths } from "./pi-plugins";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
 import { existsSync, realpathSync, writeFileSync } from "fs";
@@ -2450,6 +2451,7 @@ export async function startRpcSession(
       agentDir,
       settingsManager,
       resourceLoaderOptions: {
+        additionalExtensionPaths: bundledPiPluginPaths(),
         extensionFactories: [
           createProjectCommandBashExtension({
             cwd: sessionCwd,
