@@ -73,6 +73,10 @@ registerComposerEnhancement(enh: ComposerEnhancement): () => void; // 返回注�
   （useRecoveryProviderItems + 展开进 recoveryItems）；getItems 抛错隔离
 - `ctx.writeComposerValue(text)` → HostApi → ChatInputHandle.setValueTracked：
   扩展程序化写值的受控路径（tracker 同步）
+- `ctx.restoreComposerDraft({value, images})` → ChatInputHandle.restoreDraft：
+  完整还原草稿进框（文本 + 图片，raw 不跑钩子）
+- `ctx.sendChatMessage(text, mode, images?)`：第三参携带图片的 follow-up 排队；
+  preSend 钩子（[元素N]/[回答N]/[错误N]）在 ChatInput 内部展开
 
 ## 5. P2 草稿簇迁移预演（验证契约够用）
 

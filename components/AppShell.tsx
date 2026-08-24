@@ -887,6 +887,7 @@ export function AppShell() {
     revealDir: handleRevealDir,
     appendText: (text) => chatInputRef.current?.appendText(text),
     writeComposerValue: (text) => chatInputRef.current?.setValueTracked(text),
+    restoreComposerDraft: (draft) => chatInputRef.current?.restoreDraft(draft),
   });
 
   // aiti-devtools 扩展请求打开文件（前端在线查看——文件标签页）：aiti 候选详情点"前端打开"

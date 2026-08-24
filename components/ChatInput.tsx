@@ -1764,20 +1764,24 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   /** 扩展程序化发送（aiti-prompts 等）：与用户输入同链路——applyChatHooks 钩子生效；
    *  agent 流式时按 mode 插队(steer)/排队(followUp)（与 sendQueued 同分支），空闲时直接触发（等同 Enter）。
    *  不清空输入框：发的是扩展内容，不动用户正在输入的内容。 */
-  const handleExtensionSend = useCallback((text: string, mode: "steer" | "followUp") => {
+  const handleExtensionSend = useCallback((text: string, mode: "steer" | "followUp", images?: { data: string; mimeType: string }[]) => {
     if (!text || !text.trim()) return;
     const finalMsg = applyChatHooks(text);
+    // 草稿恢复多条残留等：携带图片的 follow-up 排队（base64 → AttachedImage）
+    const attached = images?.length
+      ? images.map((im) => ({ data: im.data, mimeType: im.mimeType, previewUrl: `data:${im.mimeType};base64,${im.data}` }))
+      : undefined;
     if (finalMsg.startsWith("/") && onPromptWithStreamingBehavior) {
-      onPromptWithStreamingBehavior(finalMsg, mode, undefined);
+      onPromptWithStreamingBehavior(finalMsg, mode, attached);
       return;
     }
     if (mode === "steer" && onSteer) {
-      onSteer(finalMsg, undefined);
+      onSteer(finalMsg, attached);
     } else if (mode === "followUp" && onFollowUp) {
-      onFollowUp(finalMsg, undefined);
+      onFollowUp(finalMsg, attached);
     } else {
       // 空闲（onSteer/onFollowUp 仅在 agent 运行时传入）→ 立即触发一轮
-      onSend?.(finalMsg, undefined);
+      onSend?.(finalMsg, attached);
     }
   }, [applyChatHooks, onSend, onSteer, onFollowUp, onPromptWithStreamingBehavior]);
 
