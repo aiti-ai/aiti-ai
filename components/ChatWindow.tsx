@@ -86,6 +86,8 @@ const CHAT_COLUMN_PADDING = 16;
 const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 /** 草稿静默恢复等待输入框就绪的最大帧数（≈5s @60fps）；超时放行对话框手动处理，避免草稿被永久隐藏。 */
 const MAX_DRAFT_RESTORE_READY_FRAMES = 300;
+/** 别的标签页在这个时限内还在写入的草稿槽位视为「活人在用」，不在本页弹恢复框（见 readDrafts）。 */
+const LIVE_FOREIGN_SLOT_MS = 60_000;
 
 function NewSessionUpdateLink({
   label,
@@ -449,8 +451,11 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agentRunning, scrollViewportH, scReady, bottomComposerHeight, loading, error]);
 
-  /** Draft storage key for the active session (matches ChatInput's draftKey). */
-  const draftKey = session?.id ?? (newSessionCwd ? `new:${newSessionCwd}` : undefined);
+  /** Draft storage key for the active session (matches ChatInput's draftKey).
+   *  New sessions MUST use newSessionDraftKey（含每次新建唯一的 draftId）而不是
+   *  `new:<cwd>`：共享 cwd 级 key 会让上一个新建会话未发送的残留（哪怕一个 @）
+   *  在之后每次新建都被静默恢复回来，且 promoteNewSession 的 rekey 永远对不上号。 */
+  const draftKey = session?.id ?? newSessionDraftKey ?? undefined;
 
   // Unsent input drafts (crash-loss recovery) — surfaced as items in the
   // queue-recovery dialog. Each open tab has its own `crashrestore-…` slot, so
@@ -459,18 +464,34 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   // Client-side only: they live in localStorage (survive refresh + browser
   // close); the server never sees them.
   const [pendingDrafts, setPendingDrafts] = useState<DraftSlotInfo[]>([]);
+  const liveSlotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     setPendingDrafts([]);
     if (!draftKey) return;
     const readDrafts = () => {
       const slots = listDraftSlots(draftKey).filter((slot) => {
-        // Foreign / closed-tab slots are always recoverable. This tab's own
-        // slot only when the input box is empty — otherwise it IS the live
-        // input the user is typing in right now.
+        // Foreign / closed-tab slots are recoverable; this tab's own slot only
+        // when the input box is empty — otherwise it IS the live input the
+        // user is typing in right now.
         if (!slot.own) return true;
         return !chatInputRef?.current?.hasInput?.();
       });
-      setPendingDrafts(slots);
+      // Foreign slots written within the live window belong to a tab that is
+      // ACTIVELY typing — surfacing them here would pop the recovery dialog
+      // over this view mid-typing. They surface once writing stops: each new
+      // write re-triggers via storage event (rescheduling the one-shot re-read
+      // below); when the freshest slot leaves the window the timer fires.
+      const now = Date.now();
+      setPendingDrafts(slots.filter((slot) => slot.own || now - slot.ts >= LIVE_FOREIGN_SLOT_MS));
+      if (liveSlotTimerRef.current) {
+        clearTimeout(liveSlotTimerRef.current);
+        liveSlotTimerRef.current = null;
+      }
+      const freshForeign = slots.filter((slot) => !slot.own && now - slot.ts < LIVE_FOREIGN_SLOT_MS);
+      if (freshForeign.length > 0) {
+        const wait = Math.min(...freshForeign.map((slot) => LIVE_FOREIGN_SLOT_MS - (now - slot.ts)));
+        liveSlotTimerRef.current = setTimeout(readDrafts, wait + 250);
+      }
     };
     readDrafts();
     // Another tab wrote/cleared a draft: keep this tab's dialog in sync.
@@ -480,6 +501,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     window.addEventListener("storage", onStorage);
     return () => {
       window.removeEventListener("storage", onStorage);
+      if (liveSlotTimerRef.current) clearTimeout(liveSlotTimerRef.current);
     };
   }, [draftKey, chatInputRef]);
 
@@ -520,11 +542,15 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     const serverDiscard = discard.filter((id) => !isDraftId(id));
 
     if (draftKept.length > 0) {
-      const [first, ...rest] = draftKept;
-      // One input box holds one message: the FIRST draft is restored into the
-      // box for editing/sending; any further drafts are queued as follow-up
-      // messages (visible in the queued banner, recallable there too).
-      chatInputRef?.current?.restoreDraft(first.draft);
+      // One input box holds one message: when the box is EMPTY the FIRST draft
+      // is restored into it for editing/sending and any further drafts become
+      // follow-ups. When the user already typed something, NOTHING overwrites
+      // the box — all kept drafts are queued as follow-up messages instead
+      // (visible in the queued banner, recallable there too).
+      const boxEmpty = !(chatInputRef?.current?.hasInput?.());
+      const first = boxEmpty ? draftKept[0] : undefined;
+      const rest = boxEmpty ? draftKept.slice(1) : draftKept;
+      if (first) chatInputRef?.current?.restoreDraft(first.draft);
       rest.forEach((slot) => {
         const images = slot.draft.images.map((img) => ({
           data: img.data,
@@ -580,6 +606,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
           return;
         }
         requestAnimationFrame(attemptRestore);
+        return;
+      }
+      // 落地前最后一道检查：用户抢在恢复前已经开打了——绝不覆盖新输入。
+      // 本批草稿标记为已自动处理（不再重试），放行对话框由用户手动决定去留。
+      if (input.hasInput?.()) {
+        autoRestoredDraftRef.current = new Set(keys);
+        setSilentDraftRestore(false);
         return;
       }
       autoRestoredDraftRef.current = new Set(keys);

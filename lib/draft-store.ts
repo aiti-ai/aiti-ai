@@ -79,9 +79,7 @@ function getTabId(): string {
   try {
     let id = window.sessionStorage.getItem(TAB_ID_KEY);
     if (!id) {
-      id = typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+      id = newTabId();
       window.sessionStorage.setItem(TAB_ID_KEY, id);
     }
     tabIdCache = id;
@@ -91,6 +89,30 @@ function getTabId(): string {
     // degrade to last-writer-wins, acceptable for an edge case.
     tabIdCache = "fallback";
     return tabIdCache;
+  }
+}
+
+function newTabId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+/**
+ * Mint a fresh per-tab id and use it from now on (sessionStorage updated so a
+ * refresh keeps the new id). Called when another document is caught writing to
+ * a slot bearing OUR tabId — the signature of browser duplicate-tab, which
+ * copies sessionStorage and thus makes two tabs share one slot and clobber
+ * each other. Rotating lets both tabs diverge immediately.
+ */
+function rotateTabId(): void {
+  if (typeof window === "undefined") return;
+  const id = newTabId();
+  tabIdCache = id;
+  try {
+    window.sessionStorage.setItem(TAB_ID_KEY, id);
+  } catch {
+    // ignore — cache alone still diverges this page's writes
   }
 }
 
@@ -298,6 +320,18 @@ if (typeof window !== "undefined") {
   window.addEventListener("pagehide", flushAllDrafts);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "hidden") flushAllDrafts();
+  });
+  // Duplicate-tab self-heal: storage events fire only in OTHER documents, so
+  // seeing OUR slot key change here means a twin tab shares our tabId (browser
+  // duplicate-tab copies sessionStorage). Rotate so the two tabs stop writing
+  // to the same physical key.
+  window.addEventListener("storage", (e) => {
+    if (typeof e.key !== "string" || !e.key.startsWith(DRAFT_KEY_PREFIX)) return;
+    try {
+      if (e.key.endsWith(`-${getTabId()}`)) rotateTabId();
+    } catch {
+      // ignore
+    }
   });
 }
 
