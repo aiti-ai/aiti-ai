@@ -1442,6 +1442,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         const ta = textareaRef.current;
         if (!ta) return;
         ta.focus();
+        // 光标落到还原文本末尾（focus 后默认在开头）
+        const end = ta.value.length;
+        ta.setSelectionRange(end, end);
         ta.style.height = "auto";
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
       });
@@ -1532,18 +1535,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
   }, [clearImages, draftKey]);
 
-  // composer 增强契约：值变化广播（草稿落槽位/队列横幅等扩展消费）
-  // 草稿落盘由 aiti-draft-keeper 经 onChange 接管；core 不再自行落盘（已删原 save effect）
-  useEffect(() => {
-    emitComposerChange({
-      value,
-      images: attachedImages.map(imageToDraftImage),
-      imageCount: attachedImages.length,
-      hasInput: Boolean(value.trim()) || attachedImages.length > 0,
-      suppress: suppressDraft,
-    });
-  }, [value, attachedImages, suppressDraft]);
-
+  // 注意顺序：[draftKey] effect 必须在 [value] 广播 effect 之前——
+  // 挂载/切会话时 keyChange 先行（keeper 记 pendingScan），随后的 onChange("")
+  // 才会触发扫描恢复；反序时 onChange 先发（currentKey 未定被忽略），
+  // pendingScan 永远等不到下一次 onChange，恢复永不执行。
   useEffect(() => {
     const previousDraftKey = draftKeyRef.current;
     if (previousDraftKey === draftKey) return;
@@ -1562,6 +1557,18 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       return [];
     });
   }, [draftKey]);
+
+  // composer 增强契约：值变化广播（草稿落槽位/队列横幅等扩展消费）
+  // 草稿落盘由 aiti-draft-keeper 经 onChange 接管；core 不再自行落盘（已删原 save effect）
+  useEffect(() => {
+    emitComposerChange({
+      value,
+      images: attachedImages.map(imageToDraftImage),
+      imageCount: attachedImages.length,
+      hasInput: Boolean(value.trim()) || attachedImages.length > 0,
+      suppress: suppressDraft,
+    });
+  }, [value, attachedImages, suppressDraft]);
 
   // （已删 flushAllDrafts 卸载 effect——keeper 的 beforeunload/pagehide/visibilitychange
   // 监听负责落盘；SPA unmount 时 keeper drafts map 持续，onKeyChange 已 flush 旧 key）
