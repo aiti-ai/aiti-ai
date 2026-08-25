@@ -1,5 +1,5 @@
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { getModelRuntimeWithExtensions } from "@/lib/model-runtime-ext";
 import { invalidateModelsCache } from "@/lib/models-cache";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +22,8 @@ export async function POST(
   const { provider } = await params;
   const { token, code } = (await req.json()) as { token?: string; code?: string };
 
-  if (!token || !code) {
+  // code 允许为空串：如 qoder 全局版登录的 PAT 提示「留空提交 = 浏览器设备码登录」
+  if (!token || code === undefined) {
     return Response.json({ error: "token and code required" }, { status: 400 });
   }
 
@@ -59,7 +60,7 @@ export async function GET(
 
   const stream = new ReadableStream({
     async start(controller) {
-      const modelRuntime = await ModelRuntime.create();
+      const modelRuntime = await getModelRuntimeWithExtensions();
       if (!modelRuntime.getProvider(provider)?.auth.oauth) {
         send(controller, { type: "error", message: `Unknown provider: ${provider}` });
         controller.close();
