@@ -94,6 +94,8 @@ export interface ExtSessionAnnotatorSlot {
 export interface ExtSessionProviderSlot {
   /** 注册后返回完整 registry key（"<extId>/<type>"），调用方作为 providerType 使用。 */
   register(provider: ExtSessionProviderRegistration): string;
+  /** 按完整键注销一个 provider（热移除，无需 reload）。 */
+  remove(type: string): boolean;
   /** 是否有能驱动该外部 agent 的后端（all-sessions agentKey，如 "claude"）。 */
   canOpen(agentKey: string): boolean;
   /**

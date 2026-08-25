@@ -141,7 +141,7 @@ export async function POST(req: Request, ctx: Params) {
       }
       case "get_usage": {
         if (!handle.getUsage) throw new UnsupportedCapabilityError("getUsage", handle.source);
-        return NextResponse.json({ success: true, data: handle.getUsage() ?? null });
+        return NextResponse.json({ success: true, data: (await handle.getUsage()) ?? null });
       }
       case "list_models": {
         if (!handle.getAvailableModels) throw new UnsupportedCapabilityError("listModels", handle.source);

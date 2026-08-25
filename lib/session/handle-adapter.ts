@@ -276,7 +276,7 @@ export class HandleSessionAdapter implements WrappedSessionLike {
 
       case "get_usage": {
         if (!h.getUsage) this.fail("get_usage", "getUsage");
-        return { usage: h.getUsage() ?? null };
+        return { usage: (await h.getUsage()) ?? null };
       }
 
       case "list_models": {

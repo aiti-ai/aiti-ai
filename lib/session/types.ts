@@ -385,8 +385,8 @@ export interface SessionHandle {
    * @capability respondPermission
    */
   respondPermission?(requestId: string, decision: PermissionDecision): Promise<boolean>;
-  /** 最近一轮的用量/成本快照。@capability getUsage */
-  getUsage?(): UsageReport | undefined;
+  /** 最近一轮的用量/成本快照；账号 credits 类后端（如 qoder）走 API，允许 Promise。@capability getUsage */
+  getUsage?(): UsageReport | undefined | Promise<UsageReport | undefined>;
   /** 该后端可选的模型清单。@capability listModels */
   getAvailableModels?(): Promise<HandleModelOption[]>;
   /**

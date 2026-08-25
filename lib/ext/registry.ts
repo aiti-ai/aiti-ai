@@ -27,7 +27,7 @@ import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, ext
 import { loadExtensionFromDir, scanExtensionDirs } from "./loader.ts";
 import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
 import { invokeAI as aiInvokeImpl } from "../ai-invoke.ts";
-import { registerExtensionProvider, cleanupAllExtensionProviders, findProvidersForAgent } from "../session/providers.ts";
+import { registerExtensionProvider, removeProvider as removeProviderFromRegistry, cleanupAllExtensionProviders, findProvidersForAgent } from "../session/providers.ts";
 import { openExternalSession } from "../session/index.ts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
@@ -693,7 +693,13 @@ export class ExtRegistryImpl {
       // open/canOpen 委托 openExternalSession（agentKey 解析 + handle 入库）。
       sessionProviders: {
         register: (provider) => registerExtensionProvider(ext.id, provider),
-        canOpen: (agentKey) => findProvidersForAgent(agentKey).length > 0,
+        remove: (type: string) => {
+          // 直接操作 globalThis（绕过 turbopack 模块图裁剪）
+          const map = (globalThis as { __sessionProviders?: Map<string, unknown> }).__sessionProviders;
+          if (!map) return false;
+          return map.delete(type);
+        },
+        canOpen: (agentKey: string) => findProvidersForAgent(agentKey).length > 0,
         open: async (compositeId, options) => {
           try {
             const handle = await openExternalSession(compositeId, options);

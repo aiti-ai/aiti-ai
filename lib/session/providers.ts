@@ -217,6 +217,11 @@ export function getProvider(type: string): SessionProvider | undefined {
   return providerMap().get(type);
 }
 
+/** Remove a specific provider by full registry key. Returns true if existed. */
+export function removeProvider(type: string): boolean {
+  return providerMap().delete(type);
+}
+
 /**
  * All providers that can drive the given external agent (all-sessions agent
  * key, e.g. "claude"). Ordered by registration; first match wins for resume.
