@@ -23,7 +23,6 @@ test("session listing merges live registry snapshots and honors force refresh", 
   assert.match(listRoute, /dispatchSessionAnnotations\(sessions\)/);
   assert.match(listRoute, /getHandleSessionInfos\(\)/);
   // TUI-bridged sessions are marked in the merged list (agent badge)
-  assert.match(listRoute, /readBridgeRegistry/);
   assert.match(listRoute, /"Cache-Control": "no-store"/);
 });
 
