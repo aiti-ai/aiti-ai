@@ -318,6 +318,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     slashCommands, slashCommandsLoading, queuedMessages,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    permissionRequest, respondToPermission,
     isAutoModelSelection,
     agentPhase,
     isNew,
@@ -1252,6 +1253,35 @@ const messageListEl = useMemo(() => {
         <NoticeShelf notices={notices} floating />
       </div>
 
+      {permissionRequest && (
+        <div style={{ position: "fixed", bottom: 140, left: "50%", transform: "translateX(-50%)", zIndex: 260,
+          width: "min(480px, 92vw)", background: "var(--bg-panel)", border: "1px solid #f59e0b88",
+          borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.35)", padding: "12px 14px", fontFamily: "var(--font-mono)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 14 }}>🔐</span>
+            <strong style={{ fontSize: 13, color: "var(--text)" }}>工具授权请求</strong>
+            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--accent)" }}>{permissionRequest.toolName}</span>
+          </div>
+          {permissionRequest.input != null && (
+            <pre style={{ maxHeight: 120, overflowY: "auto", fontSize: 11, background: "var(--bg)", borderRadius: 6,
+              padding: "6px 8px", margin: "0 0 8px", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--text-muted)" }}>
+              {typeof permissionRequest.input === "string" ? permissionRequest.input : JSON.stringify(permissionRequest.input, null, 2)}
+            </pre>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => void respondToPermission("deny")}
+              style={{ padding: "5px 14px", borderRadius: 7, border: "1px solid #ef444466",
+                background: "none", color: "#ef4444", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+              Deny
+            </button>
+            <button onClick={() => void respondToPermission("allow")}
+              style={{ padding: "5px 14px", borderRadius: 7, border: "none",
+                background: "#22c55e", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+              Allow
+            </button>
+          </div>
+        </div>
+      )}
       {isEmptyNew ? (
         <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
           <div className="w-full max-w-[820px]">

@@ -413,6 +413,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
   const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
+  /** 后端会话的工具授权请求（permission_request 事件；一次一个，队列简化为覆盖） */
+  const [permissionRequest, setPermissionRequest] = useState<{
+    requestId: string;
+    toolName?: string;
+    input?: unknown;
+  } | null>(null);
+  const permissionRespondingRef = useRef(false);
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
@@ -1459,9 +1466,39 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "extension_ui_request":
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
+      case "permission_request":
+        setPermissionRequest({
+          requestId: String(event.requestId ?? ""),
+          toolName: typeof event.toolName === "string" ? event.toolName : undefined,
+          input: event.input,
+        });
+        addNotice({ type: "error", message: "工具需要授权：" + (typeof event.toolName === "string" ? event.toolName : "unknown") });
+        break;
+      case "permission_expired":
+        setPermissionRequest(null);
+        break;
     }
   }, [addNotice, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
+
+  const respondToPermission = useCallback(async (behavior: "allow" | "deny") => {
+    const req = permissionRequest;
+    if (!req || permissionRespondingRef.current) return;
+    permissionRespondingRef.current = true;
+    try {
+      await sendAgentCommand(sessionIdRef.current ?? session?.id ?? "", {
+        type: "permission_response",
+        requestId: req.requestId,
+        behavior,
+        message: behavior === "deny" ? "denied in web ui" : undefined,
+      });
+      setPermissionRequest(null);
+    } catch (e) {
+      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      permissionRespondingRef.current = false;
+    }
+  }, [permissionRequest, session?.id]);
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[], files?: AttachedFile[]) => {
     const trimmedMessage = message.trim();
@@ -2745,6 +2782,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     queueTrash, restoreQueueItem, purgeQueueTrash,
     moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    permissionRequest, respondToPermission,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,
