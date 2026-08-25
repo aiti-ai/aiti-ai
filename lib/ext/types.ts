@@ -240,6 +240,7 @@ export type ExtSlotName =
   | "fileViewer"     // 文件查看/编辑接管（aiti-editor：文本文件编辑；aiti-folder：文件夹浏览器；未接管时核心原查看器兑底）
   | "pathPicker"    // 目录选择器能力（aiti-folder：FolderSwitcher 同款；顶栏「打开文件夹」等消费）
   | "newSessionBackendBar" // 新会话欢迎页 Backend 选择器旁（各后端扩展自行渲染管理入口，如 ACP agent 管理）
+  | "sessionStats"   // 会话统计下拉内扩展条目行（aiti-ai-usage：报表入口；aiti-ai-input：其他辅助 AI 用量统计行）
   ;
 
 /**

@@ -11,7 +11,6 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
 import { ModelsConfig } from "./ModelsConfig";
-import { AiUsageRows } from "./AiUsageRows";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas } from "./ExtSlots";
@@ -2387,39 +2386,6 @@ export function AppShell() {
                   flexDirection: "column",
                   gap: 10,
                 }}>
-                  {/* AI 用量报表入口（aiti-ai-usage 扩展委托：window.__aitiAiUsageOpen）*/}
-                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
-                    <button
-                      type="button"
-                      title="打开 AI 用量报表（历史趋势 / 模型 / Keys / 会话）"
-                      onClick={() => {
-                        setActiveTopPanel(null);
-                        (window as unknown as { __aitiAiUsageOpen?: () => void }).__aitiAiUsageOpen?.();
-                      }}
-                      style={{
-                        display: "inline-flex", alignItems: "center", gap: 5,
-                        padding: "3px 9px", borderRadius: 7,
-                        border: "1px solid var(--border)", background: "transparent",
-                        color: "var(--text-muted)", fontSize: 11, cursor: "pointer",
-                        transition: "color 0.12s, border-color 0.12s, background 0.12s",
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.color = "var(--text)";
-                        e.currentTarget.style.borderColor = "var(--accent)";
-                        e.currentTarget.style.background = "var(--bg-hover)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.color = "var(--text-muted)";
-                        e.currentTarget.style.borderColor = "var(--border)";
-                        e.currentTarget.style.background = "transparent";
-                      }}
-                    >
-                      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <path d="M3 3v18h18" /><path d="M8 17v-6" /><path d="M13 17V7" /><path d="M18 17v-3" />
-                      </svg>
-                      用量报表
-                    </button>
-                  </div>
                   {sessionStats ? (() => {
                     const formatDuration = (ms: number) => {
                       if (ms <= 0) return "0s";
@@ -2462,7 +2428,8 @@ export function AppShell() {
                          ? [[translate("session.cacheHitRate"), `${(sessionStats.tokens.cacheRead / (sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input) * 100).toFixed(1)}%`]]
                          : []),
                     ];
-                    // AI 用量（core invokeAI 集中记账；按场景分：续写 / 语音修正）——独立组件自持轮询，避免 AppShell 每 15s 全树重渲染
+                    // AI 用量行已归扩展：辅助 AI（续写/语音修正等）用量在 aiti-ai-input 的
+                    // sessionStats 插槽条目里自渲染；总报表入口在 aiti-ai-usage 同插槽条目。
                     const section = (
                       title: string,
                       sectionRows: string[][],
@@ -2575,7 +2542,6 @@ export function AppShell() {
                         {sessionInfoSection}
                          {section(translate("session.messages"), messageRows)}
                          {section(translate("session.tokens"), [...tokenRows, ...extraTokenRows], "right", true)}
-                         {<AiUsageRows locale={locale} sessionId={selectedSession?.id} />}
                       </div>
                     );
                   })() : (
@@ -2583,6 +2549,9 @@ export function AppShell() {
                        {translate("session.load")}
                     </div>
                   )}
+                  {/* sessionStats 扩展点：宿主只放开插槽，条目全由扩展自行渲染——
+                      aiti-ai-usage（报表入口按钮）/ aiti-ai-input（其他辅助 AI 用量统计行） */}
+                  <ExtSlot name="sessionStats" extra={{ locale, sessionId: selectedSession?.id ?? null }} />
                 </div>
               )}
             </div>
