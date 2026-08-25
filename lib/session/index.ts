@@ -163,7 +163,6 @@ export async function attachIfBridged(
   if (existingHandle?.alive()) return new HandleSessionAdapter(existingHandle);
 
   const candidates = listProviders().filter((p) => p.ownsFile);
-  console.log(`[session][dbg] attachIfBridged file=${sessionFile} candidates=${candidates.map((c) => c.type).join(",")}`);
   for (const provider of candidates) {
     let claimed = false;
     try {
@@ -173,7 +172,6 @@ export async function attachIfBridged(
       continue;
     }
     if (!claimed) continue;
-    console.log(`[session][dbg] ${provider.type} claimed=${claimed} file=${sessionFile}`);
     try {
       const handle = await provider.createSession({
         sessionFile,
@@ -182,10 +180,15 @@ export async function attachIfBridged(
       putHandle(handle);
       return new HandleSessionAdapter(handle);
     } catch (e) {
-      throw new BridgeOccupiedError(
-        sessionFile,
-        e instanceof Error ? e.message : String(e),
-      );
+      const msg = e instanceof Error ? e.message : String(e);
+      // 幽灵认领防御：ownsFile 声称占用，但 createSession 自解析不到桥 socket——
+      // 认领与注册表事实已脱节（陈旧模块图/陈旧状态），按无占用处理（本地打开安全：
+      // 真实占用场景下 readBridgeRegistry 的 pid+socket 双重存活检查会先行剔除死条目）。
+      if (/no bridge socket/i.test(msg)) {
+        console.warn(`[session] ${provider.type} claimed "${sessionFile}" but resolves no bridge socket — treating claim as stale`);
+        continue;
+      }
+      throw new BridgeOccupiedError(sessionFile, msg);
     }
   }
   return undefined;

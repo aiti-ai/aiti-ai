@@ -201,6 +201,17 @@ export type HandleModelOption = {
   alias?: string;
 };
 
+/** 账号级配额桶（主窗口/附加包/组织包等）。 */
+export type UsageBucket = {
+  name: string;
+  total?: number;
+  used?: number;
+  remaining?: number;
+  /** 0-100；后端直接给就用，没有则由调用方从 total/used 算。 */
+  usedPercent?: number;
+  limitReached?: boolean;
+};
+
 /** 用量/成本快照（cc-connect UsageReporter 简化版，跨后端归一化）。 */
 export type UsageReport = {
   provider?: string;
@@ -212,6 +223,14 @@ export type UsageReport = {
   costUsd?: number;
   /** 当前轮次序号（后端有则填）。 */
   numTurns?: number;
+  /** 套餐名（"free" | "pro" | ...，后端有则填）。 */
+  plan?: string;
+  /** 账号级配额桶（qoder user_quota/add_on_quota/org_resource_package 对齐）。 */
+  buckets?: UsageBucket[];
+  /** Credits 余额（按 credits 计费的后端；如 qoder quota API）。 */
+  credits?: { remaining?: number; unit?: string; expiresAt?: number };
+  /** 配额是否已耗尽。 */
+  quotaExceeded?: boolean;
 };
 
 // ============================================================================

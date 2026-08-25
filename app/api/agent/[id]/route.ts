@@ -16,17 +16,29 @@ export async function POST(
     const body = await req.json() as { type: string; [key: string]: unknown };
     commandType = typeof body.type === "string" ? body.type : undefined;
 
-    // 桥占用识别最先：被 TUI 桥持有的会话永远走 socket（即使存在陈旧的
-    // 本地 wrapper——单写者规则下 TUI 是文件的所有者）
-    {
-      const fp = await resolveSessionPath(id);
-      if (fp) {
-        const bridged = await attachIfBridged(fp);
-        if (bridged?.isAlive()) {
-          const result = await bridged.send(body);
-          promptAccepted = body.type === "prompt";
-          return NextResponse.json({ success: true, data: result });
+    const filePath = await resolveSessionPath(id);
+
+    // ── 桥占用识别（单写者红线，最先执行）─────────────────────────────
+    // 被 TUI 桥持有的会话永远走 socket——即使存在陈旧的本地 wrapper
+    // （TUI 是文件所有者）。附着失败 = 单写者冲突 → 409。
+    if (filePath) {
+      let bridged;
+      try {
+        bridged = await attachIfBridged(filePath);
+      } catch (e) {
+        if ((e as { name?: string }).name === "BridgeOccupiedError") {
+          return NextResponse.json({
+            error: e instanceof Error ? e.message : String(e),
+            code: "bridge_occupied",
+            ...(commandType === "prompt" ? { accepted: false } : {}),
+          }, { status: 409 });
         }
+        throw e;
+      }
+      if (bridged?.isAlive()) {
+        const result = await bridged.send(body);
+        promptAccepted = body.type === "prompt";
+        return NextResponse.json({ success: true, data: result });
       }
     }
 
@@ -38,29 +50,12 @@ export async function POST(
       return NextResponse.json({ success: true, data: result });
     }
 
-    const filePath = await resolveSessionPath(id);
-    // 桥占用识别：该会话文件被运行中的 TUI 持有时，附着到桥而不是本地打开
-    //（单写者规则——否则两个运行时同时 append 同一 .jsonl）
-    if (filePath) {
-      let bridged;
-      try {
-        bridged = await attachIfBridged(filePath);
-      } catch (e) {
-        if ((e as { name?: string }).name === "BridgeOccupiedError") {
-          return NextResponse.json({ error: String(e), code: "session_bridged_unreachable" }, { status: 409 });
-        }
-        throw e;
-      }
-      if (bridged?.isAlive()) {
-        const result = await bridged.send(body);
-        promptAccepted = body.type === "prompt";
-        return NextResponse.json({ success: true, data: result });
-      }
-    }
+    // 本地路径：文件不存在且无 live 会话 → 404；存在则起本地 runtime
+    // （startRpcSession 内部仍有 ownsFile 总闸兜底——防其他路由先建了 wrapper）
     if (!filePath) {
       return NextResponse.json({
         error: "Session not found",
-        ...(body.type === "prompt"
+        ...(commandType === "prompt"
           ? { code: "prompt_rejected", accepted: false }
           : {}),
       }, { status: 404 });
@@ -72,6 +67,14 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
+    // 单写者红线：占用拒绝是语义性冲突，不是服务器故障
+    if ((error as { name?: string }).name === "BridgeOccupiedError") {
+      return NextResponse.json({
+        error: error instanceof Error ? error.message : String(error),
+        code: "bridge_occupied",
+        ...(commandType === "prompt" && !promptAccepted ? { accepted: false } : {}),
+      }, { status: 409 });
+    }
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
       ...(commandType === "prompt" && !promptAccepted
