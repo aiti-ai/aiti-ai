@@ -6,7 +6,8 @@ import {
   invalidateSessionListCache,
 } from "@/lib/session-reader";
 import { getRpcSessionInfos, getRunningRpcSessionIds } from "@/lib/rpc-manager";
-import { getHandleSessionInfos, readBridgeRegistry } from "@/lib/session";
+import { getHandleSessionInfos } from "@/lib/session";
+import { getRegistry } from "@/lib/ext/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -27,20 +28,18 @@ export async function GET(req: Request) {
     // so the sidebar lists them and ?session=<composite-id> restore works.
     const backendRows = await attachSessionProjectInfo(getHandleSessionInfos());
 
-    // TUI 桥占用标记：注册表命中的会话文件行打 agent="tui-bridge"（侧栏徽标）。
-    // 路径键的 attach handle 行跳过——真实文件行已带标，避免同一会话双行。
-    const bridgeReg = await readBridgeRegistry();
-    const markBridged = <T extends { path?: string; id: string; agent?: string }>(rows: T[]): T[] =>
-      rows.map((r) =>
-        r.path && bridgeReg[r.path] && !r.agent ? { ...r, agent: "tui-bridge" } : r,
-      );
     const pathKeyedHandles = backendRows.filter((r) => !r.id.startsWith("/"));
-    const markedPersisted = markBridged(persistedSessions as never[]);
-
     const sessions = mergeSessionLists(
-      mergeSessionLists(markedPersisted, runtimeSessions),
-      [...pathKeyedHandles, ...backendRows.filter((r) => r.id.startsWith("/"))].map((r) => ({ ...r, agent: r.agent ?? undefined })),
+      mergeSessionLists(persistedSessions as never[], runtimeSessions),
+      pathKeyedHandles,
     );
+    // 会话标注 slot：扩展（如 aiti-attach-agent 的 TUI 桥占用标记）追加自有字段。
+    // 数据所有权在扩展——核心不感知桥注册表等具体格式。
+    try {
+      await getRegistry().dispatchSessionAnnotations(sessions);
+    } catch (e) {
+      console.error("[sessions] annotate failed:", e instanceof Error ? e.message : e);
+    }
     return NextResponse.json(
       { sessions, runningSessionIds: getRunningRpcSessionIds() },
       { headers: { "Cache-Control": "no-store" } },

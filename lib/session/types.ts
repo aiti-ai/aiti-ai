@@ -231,6 +231,16 @@ export class UnsupportedCapabilityError extends Error {
   }
 }
 
+/** 注册表声明占用但后端不可达——调用方必须报错而非回退本地打开（单写者红线）。 */
+export class BridgeOccupiedError extends Error {
+  readonly sessionFile: string;
+  constructor(sessionFile: string, detail: string) {
+    super(`Session is owned by another pi process (${detail}). Refusing to open locally.`);
+    this.name = "BridgeOccupiedError";
+    this.sessionFile = sessionFile;
+  }
+}
+
 /** Thrown when the backend process/connection is gone. */
 export class SessionDeadError extends Error {
   constructor(source: string, detail?: string) {

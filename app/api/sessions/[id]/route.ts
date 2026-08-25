@@ -13,6 +13,7 @@ import {
 import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveAnySession, attachIfBridged } from "@/lib/session";
+import { listProviders } from "@/lib/session/providers";
 import { removeQueue } from "@/lib/queue-store";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
@@ -203,6 +204,15 @@ export async function PATCH(
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
+    // 单写者红线：TUI 桥持有该文件时拒绝本地改写（重命名请回 TUI 操作）
+    {
+      const bridged = await attachIfBridged(filePath);
+      if (bridged?.isAlive()) {
+        const r = (await bridged.send({ type: "set_session_name", name: name.trim() }).catch(() => null)) as { success?: boolean } | null;
+        if (r?.success) return NextResponse.json({ ok: true, via: "bridge" });
+        return NextResponse.json({ error: "Session is owned by a TUI bridge; rename not supported by its backend" }, { status: 409 });
+      }
+    }
     const sm = SessionManager.open(filePath);
     sm.appendSessionInfo(name.trim());
     invalidateSessionListCache();
@@ -222,6 +232,15 @@ export async function DELETE(
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+    // 单写者红线：TUI 桥持有的会话不允许从 Web 删文件（会炸掉正在写的 TUI）
+    for (const p of listProviders()) {
+      if (!p.ownsFile) continue;
+      try {
+        if (await p.ownsFile(filePath)) {
+          return NextResponse.json({ error: "Session is owned by a running agent bridge; close it there first" }, { status: 409 });
+        }
+      } catch { /* probe failure → treat as not-owned */ }
     }
 
     // Read only the bounded header before deleting.

@@ -76,6 +76,21 @@ export interface ExtSessionProviderRegistration {
   shutdown?(): Promise<void>;
 }
 
+/**
+ * 会话标注 slot：扩展为会话列表行追加自有字段（如占用标记）。
+ * 数据的所有权在扩展——核心不感知任何具体格式（如桥注册表文件）。
+ * 返回以行 id 或 path 为键的部分字段映射，由核心合并进响应。
+ */
+export interface ExtSessionAnnotatorSlot {
+  /**
+   * 注册标注器。rows 是当前会话列表行的轻量投影；
+   * 返回 Record<rowKey, Partial<fields>>（rowKey 匹配行的 id 或 path）。
+   */
+  register(annotator: {
+    annotate(rows: Array<{ id: string; path?: string; cwd?: string }>): Promise<Record<string, Record<string, unknown>> | void>;
+  }): void;
+}
+
 export interface ExtSessionProviderSlot {
   /** 注册后返回完整 registry key（"<extId>/<type>"），调用方作为 providerType 使用。 */
   register(provider: ExtSessionProviderRegistration): string;
@@ -120,6 +135,8 @@ export interface ExtServerContext {
   core: ExtCoreApi;
   /** 会话后端注册 slot（多 agent 前端）：扩展经此注册自定义 SessionProvider。 */
   sessionProviders: ExtSessionProviderSlot;
+  /** 会话标注 slot：扩展为会话列表追加自有标记（如 TUI 桥占用）。 */
+  sessionAnnotations: ExtSessionAnnotatorSlot;
   /** 通用 AI 调用（core 最底层模型能力）：任意 system+messages → { text, usage }；core 零业务、零统计。
    *  所有 prompt 组装 / 上下文 / 项目现场 / token 统计由调用方扩展负责。 */
   invokeAI?: (params: {

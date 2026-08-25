@@ -38,6 +38,8 @@ import type {
   SessionMessageEntry,
 } from "./types";
 import { getRegistry as getExtRegistry } from "./ext/registry.ts";
+import { listProviders } from "./session/providers.ts";
+import { BridgeOccupiedError } from "./session/types.ts";
 import { createHeadlessCustomUiTui, DEFAULT_CUSTOM_UI_COLUMNS, type HeadlessCustomUiTui } from "./custom-ui-terminal";
 
 // ============================================================================
@@ -126,6 +128,16 @@ export interface RpcSessionStartOptions {
   toolNames?: string[];
   initialModel?: { provider: string; modelId: string };
   thinkingLevel?: ThinkingLevel;
+  /**
+   * 子代理模式：创建后注入 agent 定义 systemPrompt、按需收窄工具（excludeTools）。
+   * 子代理 session 复用完整会话创建流程（落盘/索引/统计/扩展通知），仅带 parent 标记。
+   */
+  subagent?: {
+    /** 子代理 agent 定义的系统提示词（覆盖默认 systemPrompt） */
+    systemPrompt?: string;
+    /** 工具黑名单（默认全开 = 继承全部系统/扩展工具） */
+    excludeTools?: string[];
+  };
 }
 
 const CODING_TOOL_NAMES = ["read", "bash", "edit", "write", "grep", "find", "ls"];
@@ -2392,6 +2404,25 @@ export async function startRpcSession(
   options: RpcSessionStartOptions = {},
 ): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
   const { toolNames, initialModel, thinkingLevel } = options;
+
+  // ── 单写者红线总闸：被 TUI 桥认领的会话文件，绝不本地起 runtime ──
+  // 所有经此创建会话的调用方（含 queue-recovery/context/auto-name 等）
+  // 都被这一道闸保护；需要桥行为的路由应在调用前先 attachIfBridged。
+  for (const p of listProviders()) {
+    if (!p.ownsFile) continue;
+    try {
+      if (sessionFile && (await p.ownsFile(sessionFile))) {
+        throw new BridgeOccupiedError(
+          sessionFile,
+          `claimed by backend "${p.type}"`,
+        );
+      }
+    } catch (e) {
+      if (e instanceof BridgeOccupiedError) throw e;
+      console.error(`[rpc] ${p.type}.ownsFile failed:`, e instanceof Error ? e.message : e);
+    }
+  }
+
   const registry = getRegistry();
   const locks = getLocks();
 
@@ -2493,9 +2524,15 @@ export async function startRpcSession(
       ...(initial.thinkingLevel ? { thinkingLevel: initial.thinkingLevel } : {}),
       ...(initial.scopedModels.length > 0 ? { scopedModels: initial.scopedModels } : {}),
       ...(toolsOption !== undefined ? { tools: toolsOption } : {}),
+      ...(options.subagent?.excludeTools?.length ? { excludeTools: options.subagent.excludeTools } : {}),
       // 方案 M：扩展注入的 agent 工具（进程内直连，零配置）
       ...(extAgentTools.length > 0 ? { customTools: extAgentTools } : {}),
     });
+
+    // 子代理：注入 agent 定义 systemPrompt（重新组织上下文；同 setForceEmptySystemPrompt 机制）
+    if (options.subagent?.systemPrompt && inner.agent?.state) {
+      inner.agent.state.systemPrompt = options.subagent.systemPrompt;
+    }
 
     const persistedPreferences = await persistExplicitStartupPreferences(
       services.settingsManager,

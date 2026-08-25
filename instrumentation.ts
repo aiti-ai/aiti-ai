@@ -14,6 +14,10 @@ export async function register(): Promise<void> {
   const { configureHttpDispatcher } = await import("@/lib/http-dispatcher");
   configureHttpDispatcher();
 
+  // 子代理工厂：全局挂 globalThis.__piSubagentFactory（aiti-subagents 扩展经此调用）
+  const { installSubagentFactory } = await import("@/lib/subagent");
+  installSubagentFactory();
+
   // Extension framework: load + start extensions (registry on globalThis so
   // the middleware bundle can invoke hooks without importing extension code).
   // service-tunnels（发现/代理/隧道/自暴露）已抽离为扩展：其 server.startup

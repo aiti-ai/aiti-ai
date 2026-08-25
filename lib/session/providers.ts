@@ -98,6 +98,13 @@ export interface SessionProvider {
   createSession(options: CreateSessionOptions): Promise<SessionHandle>;
 
   /**
+   * 该 provider 是否认领此会话文件（如 TUI 桥注册表命中）。
+   * 认领 = 单写者规则生效：核心不得本地打开，须走 createSession 附着。
+   * 数据（注册表格式）归扩展所有——核心只问“谁认领”。
+   */
+  ownsFile?(sessionFile: string): Promise<boolean> | boolean;
+
+  /**
    * Tear down any provider-global resources (socket servers, connection
    * pools). Called on server shutdown.
    */

@@ -37,6 +37,7 @@ export {
   guard,
   UnsupportedCapabilityError,
   SessionDeadError,
+  BridgeOccupiedError,
 } from "./types.ts";
 
 // Layer 1 — registry (incl. extension slot lifecycle)
@@ -60,8 +61,6 @@ export { putHandle, putHandleAt, getHandle, removeHandle, listHandleIds, listAll
 export { relayToSession, type RelayResult } from "./relay.ts";
 
 // TUI bridge registry (session file → socket 占用识别)
-export { findBridgeSocketForSession, readBridgeRegistry } from "./bridge-registry.ts";
-import { findBridgeSocketForSession, BridgeOccupiedError } from "./bridge-registry.ts";
 
 // Host-native adapter (wraps AgentSessionWrapper from rpc-manager)
 export { createLocalHandle } from "./local.ts";
@@ -71,6 +70,7 @@ export { HandleSessionAdapter, type WrappedSessionLike } from "./handle-adapter.
 
 import { getProvider, findProvidersForAgent, listProviders, DEFAULT_PROVIDER_TYPE } from "./providers.ts";
 import type { CreateSessionOptions } from "./providers.ts";
+import { BridgeOccupiedError } from "./types.ts";
 import type { SessionCapabilities, SessionHandle } from "./types.ts";
 import { getHandle as lookupHandle, putHandle, putHandleAt, listAllHandles } from "./handle-store.ts";
 import { HandleSessionAdapter, type WrappedSessionLike } from "./handle-adapter.ts";
@@ -147,32 +147,55 @@ function findAttachProviderType(): string | undefined {
 
 /**
  * 会话文件被运行中的 TUI 桥占用时，懒创建 attach handle 并入库（键 = 文件路径）。
- * 单写者规则：TUI 持有 session 时 pi-web 绝不本地打开该文件。
- * 返回 adapter 或 undefined（无桥/socket 不可达时由调用方走本地路径）。
+ * 占用判定经 provider.ownsFile 协商——注册表格式归扩展所有，核心不感知。
+ *
+ * 语义（单写者红线）：
+ *   - 无认领        → undefined（调用方走本地路径）
+ *   - 认领且附着成功 → adapter
+ *   - 认领但附着失败 → BridgeOccupiedError（拒绝本地打开，绝不静默分叉）
  */
 export async function attachIfBridged(
   sessionFile: string,
 ): Promise<WrappedSessionLike | undefined> {
-  const socket = await findBridgeSocketForSession(sessionFile);
-  if (!socket) return undefined;
-  const providerType = findAttachProviderType();
-  if (!providerType) {
-    // 有桥无后端扩展——同样不能本地打开（会双写），fail loud
-    throw new BridgeOccupiedError(sessionFile, 'backend extension "aiti-attach-agent" not deployed');
+  // 已附着的 handle 直接复用——否则每请求新建连接会 dispose 掉
+  // 正在被 SSE 监听的旧 handle（putHandle 的覆盖语义）
+  const existingHandle = lookupHandle(sessionFile);
+  if (existingHandle?.alive()) return new HandleSessionAdapter(existingHandle);
+
+  const candidates = listProviders().filter((p) => p.ownsFile);
+  console.log(`[session][dbg] attachIfBridged file=${sessionFile} candidates=${candidates.map((c) => c.type).join(",")}`);
+  for (const provider of candidates) {
+    let claimed = false;
+    try {
+      claimed = await provider.ownsFile!(sessionFile);
+    } catch (e) {
+      console.error(`[session] ${provider.type}.ownsFile failed:`, e instanceof Error ? e.message : e);
+      continue;
+    }
+    if (!claimed) continue;
+    console.log(`[session][dbg] ${provider.type} claimed=${claimed} file=${sessionFile}`);
+    try {
+      const handle = await provider.createSession({
+        sessionFile,
+        sessionId: sessionFile,
+      });
+      putHandle(handle);
+      return new HandleSessionAdapter(handle);
+    } catch (e) {
+      throw new BridgeOccupiedError(
+        sessionFile,
+        e instanceof Error ? e.message : String(e),
+      );
+    }
   }
-  try {
-    const handle = await createSessionHandle({
-      providerType,
-      sessionFile,
-      sessionId: sessionFile,
-      socketPath: socket,
-    });
-    return new HandleSessionAdapter(handle);
-  } catch (e) {
-    console.error("[bridge] attach failed:", e instanceof Error ? e.message : e);
-    throw new BridgeOccupiedError(sessionFile, e instanceof Error ? e.message : String(e));
-  }
+  return undefined;
 }
+
+/**
+ * 会话文件被运行中的 TUI 桥占用时，懒创建 attach handle 并入库（键 = 文件路径）。
+ * 单写者规则：TUI 持有 session 时 pi-web 绝不本地打开该文件。
+ * 返回 adapter 或 undefined（无桥/socket 不可达时由调用方走本地路径）。
+ */
 
 /**
  * Resolve a live session by id across BOTH registries: local sessions
