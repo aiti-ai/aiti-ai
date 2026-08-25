@@ -103,6 +103,12 @@ const TOP_BAR_ICON_BUTTON_SIZE = 36;
 const LANGUAGE_MENU_WIDTH = 176;
 
 export function AppShell() {
+  // 水合完成信号：扩展（如 aiti-draft-keeper）的启动恢复必须等水合结束后落框，
+  // 否则 dev 下 hydration 失配重渲染会按服务端 HTML（空框）抹掉恢复的文本。
+  useEffect(() => {
+    (window as unknown as { __piWebHydrated?: boolean }).__piWebHydrated = true;
+    window.dispatchEvent(new Event("pi-web:hydrated"));
+  }, []);
   const router = useRouter();
   const searchParams = useSearchParams();
   // useSearchParams returns an empty instance on the server render, and in

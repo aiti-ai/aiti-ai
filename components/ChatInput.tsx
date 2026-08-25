@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
+import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, useSyncExternalStore, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import type { QueueEntry, QueueEntryInput, QueueTrashItem } from "@/lib/queue-store";
 import { downloadQueueExport, parseQueueImport } from "@/lib/queue-export";
@@ -25,7 +25,7 @@ import {
 } from "@/lib/file-fuzzy";
 import {
   emitComposerChange, emitComposerKeyChange, runComposerSubmit,
-  setComposerWriter,
+  setComposerWriter, subscribeComposerEnhancers, getComposerEnhancersVersion,
 } from "@/lib/composer/bus";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile, useIsCompact, useIsCoarsePointer } from "@/hooks/useIsMobile";
@@ -1574,6 +1574,22 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       suppress: suppressDraft,
     });
   }, [value, attachedImages, suppressDraft]);
+
+  // 增强器晚注册补偿：扩展 client 异步加载，注册前的 keyChange/onChange 广播
+  // 会丢失（keeper 拿不到 currentKey 则完全瘫痪）。增强器集合变化时补发当前
+  // key 与快照（draftKeyRef 已是当前值，直接重发）。
+  const enhancersVersion = useSyncExternalStore(subscribeComposerEnhancers, getComposerEnhancersVersion, () => 0);
+  useEffect(() => {
+    if (enhancersVersion === 0) return;
+    emitComposerKeyChange(draftKeyRef.current, draftKeyRef.current);
+    emitComposerChange({
+      value: valueRef.current,
+      images: attachedImagesRef.current.map(imageToDraftImage),
+      imageCount: attachedImagesRef.current.length,
+      hasInput: Boolean(valueRef.current.trim()) || attachedImagesRef.current.length > 0,
+      suppress: suppressDraft,
+    });
+  }, [enhancersVersion, suppressDraft]);
 
   // （已删 flushAllDrafts 卸载 effect——keeper 的 beforeunload/pagehide/visibilitychange
   // 监听负责落盘；SPA unmount 时 keeper drafts map 持续，onKeyChange 已 flush 旧 key）
