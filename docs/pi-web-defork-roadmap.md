@@ -73,25 +73,18 @@ core 保有机制（队列容器、草稿槽位、恢复对话框插槽），for
   持久化在 rpc-manager 属内核机制。**先立「队列策略契约」（入队/出队/持久化事件 + banner slot）**
 - 前置：P1 契约中的值观测 + 发送前钩子
 
-### B. 草稿持久化 + 恢复 —— EXT（一期，先行试点）
-- 范围：draft-store.ts（295 行新文件，已是零依赖纯模块）、ChatInput 草稿接线
-  （save/clear/rekey/restoreDraft/writeTextareaValue tracker 同步）、ChatWindow 扫描+
-  静默恢复+恢复对话框合成、sidebar 未落盘草稿行
-- 体量：原地修改 ~250 行 + 新文件 ~850 行
-- 评估：**最小试点簇**。API 面最清晰，所需契约最少：① composer 值变更观测；
-  ② 程序化写值（必须走 tracker 同步，b30d131 的教训）；③ draftKey 变更事件；
-  ④ 恢复对话框插槽（与队列恢复项合成）。近期加固（46dc461）都在这套逻辑里，
-  外迁时随迁
-- 前置：P1 契约（就是为此设计的第一组钩子）
-- **⚠ 实地分析新发现的额外耦合（切换前必须解决）**：
-  ① `restoreSubmission`（useAgentSession 队列发送失败回填草稿）与队列簇纠缠——
-     要么随 A 簇一起迁，要么契约补「提交失败回填」事件；
-  ② `rekeyDraft`（promoteNewSession 会话提升）与会话生命周期纠缠——
-     onKeyChange 广播的是结果而非请求，扩展需在切换前保存旧 key 内容
-     （onChange 持续落槽位已天然覆盖，但需验证时序）；
-  ③ sidebar「未落盘会话显示草稿行」直接读 draft-store——需改经扩展 widget 或保留只读；
-  ④ 双写过渡期：core 与扩展写同一批 localStorage key（格式兼容）可安全并存，
-     但恢复对话框会出现重复项——切换提交必须同时关闭 core 扫描（feature flag）
+### B. 草稿持久化 + 恢复 —— ✅ 已完成外迁（P2，2026-08-24）
+- 范围：原 draft-store.ts（295 行）、ChatInput 草稿接线、ChatWindow 扫描/静默恢复/
+  恢复对话框合成、useAgentSession.restoreSubmission/rekeyDraft、AppShell.clearAllDrafts
+- 现状：core 零 draft-store 依赖（`lib/draft-store.ts` 已删）。草稿存储全部归
+  `aiti-draft-keeper` 扩展（自有存储层副本 + DraftApi 注册表 `lib/composer/draft-api.ts`）。
+  core 调用方经 `getDraftApi()` 访问（null 安全）。恢复对话框的恢复项由 keeper 经
+  `registerRecoveryItemsProvider` 并入；「Re-queue / Re-queue & continue」严格对齐。
+- 体量：core 净减 -616 行（ChatWindow -193 / ChatInput -65 / draft-store 删 -397 / 测试 -55）
+- parity：与旧 core 逐项对齐（图片还原 / 元素错误待选展开 / 多残留排队 / boxEmpty 守卫 /
+  own 首条不清 / 60s 活跃外部槽位抑制 / 复制标签页 tabId 自愈 / feature 开关响应）
+- 遗留权衡：删了 2 个 rekey 库单测（逻辑现仅在 keeper 副本，E2E 覆盖 happy path）；
+  extman 关 keeper → 草稿功能随停（keeper 是唯一所有者，无 core 兑底）
 
 ### C. 流式渲染性能 —— PR 上游（择机）/ 否则 CORE 长期保留
 - 范围：轻量文本渲染、delta rAF 微批次、历史分页 30 条、key 稳定化、rpc flush 节流、
@@ -142,3 +135,9 @@ core 保有机制（队列容器、草稿槽位、恢复对话框插槽），for
 - 2026-08-24 P1+契约 v0.2 落地于 worktree `pi-web-worktrees/defork-composer`
   （分支 defork/composer-contract）：四钩子 + 受控写值全链路 + 恢复项提供者；
   实地分析发现 B 簇与队列/会话生命周期的三处额外交缠（见 §3.B ⚠），P2 切换前逐项解决
+- 2026-08-24 **P2 草稿簇外迁完成**（分支累计 15 提交）：删 lib/draft-store.ts，
+  core 零 draft-store 依赖；草稿存储/扫描/静默恢复/对话框合成/restoreSubmission/
+  rekeyDraft/clearAllDrafts 全部归 aiti-draft-keeper（经 DraftApi 注册表）；
+  与旧 core 全 parity（图片/元素错误待选/排队/boxEmpty/own 首条/60s 抑制/
+  复制标签页自愈/feature 开关）；core 净减 -616 行。E2E 实测通过。
+  下一站：合回 main → P3 队列 UI（A 簇）
