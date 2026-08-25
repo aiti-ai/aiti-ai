@@ -145,6 +145,18 @@ export async function GET(
     const deferThinking = searchParams.has("deferThinking");
     const deferToolResultImages = searchParams.has("deferMedia");
     const context = buildSessionContext(entries as never, leafId, { deferThinking, deferToolResultImages });
+    // 显示一致性 overlay：wrapper 存活时，model/thinkingLevel 以进程内真实状态为准。
+    // 原因：运行中（mid-run）的 set_model 会把 model_change 追加到当时 in-flight 的
+    // 消息上；之后 abort + 重发开新分支，这些条目就落在废弃分支上，沿 leaf 路径解析
+    // 会回退到很老的值——页面显示与实际执行的模型不一致。live 状态是权威值。
+    if (liveRpc) {
+      const liveModel = liveRpc.inner.model;
+      if (liveModel && liveModel.provider && liveModel.id) {
+        context.model = { provider: liveModel.provider, modelId: liveModel.id };
+      }
+      const liveThinking = (liveRpc.inner.agent?.state as { thinkingLevel?: string } | undefined)?.thinkingLevel;
+      if (liveThinking) context.thinkingLevel = liveThinking;
+    }
     const totalActiveMs = computeSessionTotalActiveMs(entries);
 
     const header = sm.getHeader();
