@@ -102,3 +102,10 @@ export function removeHandle(id: string): void {
 export function listHandleIds(): string[] {
   return [...store().keys()];
 }
+
+/** 正在执行 turn 的后端会话 id 列表（侧栏运行中指示器数据源之一）。 */
+export function getRunningHandleIds(): string[] {
+  return [...store().entries()]
+    .filter(([, h]) => h.alive() && h.isRunning())
+    .map(([key]) => key);
+}

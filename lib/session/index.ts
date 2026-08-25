@@ -55,7 +55,7 @@ export {
 } from "./providers.ts";
 
 // Live handle store (provider-created sessions)
-export { putHandle, putHandleAt, getHandle, removeHandle, listHandleIds, listAllHandles, getHandleSessionInfos } from "./handle-store.ts";
+export { putHandle, putHandleAt, getHandle, removeHandle, listHandleIds, listAllHandles, getHandleSessionInfos, getRunningHandleIds } from "./handle-store.ts";
 
 // Relay (agent-to-agent)
 export { relayToSession, type RelayResult } from "./relay.ts";

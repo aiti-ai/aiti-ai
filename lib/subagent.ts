@@ -66,6 +66,15 @@ export async function createSubagentSession(options: CreateSubagentOptions): Pro
   // 1. fork 空 session + parent 标记（同 /fork 从头分叉：SessionManager.create + newSession）
   const sm = SessionManager.create(cwd, undefined, { id: randomUUID() });
   sm.newSession({ parentSession: parentSessionFile });
+  // 强制落盘：无 assistant 消息时 SessionManager 惰性不写盘，文件不存在则
+  // startRpcSession 打开时会重建（parentSession header 丢失）。同 pi-web fork 的
+  // _rewriteFile 处理（rpc-manager case "fork"）。
+  try {
+    (sm as any)._rewriteFile?.();
+    (sm as any).flushed = true;
+  } catch (e) {
+    console.warn("[subagent] fork 强制落盘失败（继续）:", e instanceof Error ? e.message : e);
+  }
   const sessionFile = sm.getSessionFile();
   if (!sessionFile) throw new Error("子代理 fork 失败：未生成 session 文件");
 
@@ -81,6 +90,8 @@ export async function createSubagentSession(options: CreateSubagentOptions): Pro
       ...(agent.modelId ? { initialModel: parseModelId(agent.modelId) } : {}),
       // tools 白名单（非空 → 激活这些 + 扩展工具；空数组 → 全禁；缺省 → 全开）
       ...(agent.tools ? { toolNames: agent.tools } : {}),
+      // fork 出的新文件必属本地，跳过桥占用检查
+      skipBridgeCheck: true,
       subagent: {
         systemPrompt: agent.systemPrompt,
         ...(agent.excludeTools?.length ? { excludeTools: agent.excludeTools } : {}),

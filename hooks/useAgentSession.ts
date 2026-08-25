@@ -817,12 +817,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             : {}),
         }),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const result = await res.json() as {
-        sessionId: string;
+      const result = await res.json().catch(() => ({})) as {
+        sessionId?: string;
+        error?: string;
         model?: SelectedModel | null;
         thinkingLevel?: ThinkingLevelOption;
       };
+      if (!res.ok || !result.sessionId) {
+        throw new Error(result.error ?? `HTTP ${res.status}`);
+      }
       const realId = result.sessionId;
       sessionIdRef.current = realId;
       if (result.model && newSessionModelOverrideRef.current === selectedModel) {

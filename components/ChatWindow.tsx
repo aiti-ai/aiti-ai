@@ -688,18 +688,42 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     const sentinel = sentinelRef.current;
     const container = scrollContainerRef.current;
     if (!sentinel || !container) return;
+    
+    let prevVisible = false;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries[0]?.isIntersecting) {
+        const isIntersecting = entries[0]?.isIntersecting ?? false;
+        // Only trigger on transition from hidden to visible (avoid repeated triggers while staying visible)
+        if (isIntersecting && !prevVisible) {
+          prevVisible = true;
           // Save distance from top before prepending to restore scroll later
           prevScrollDistanceRef.current = captureScrollDistance(container.scrollHeight, container.scrollTop);
           setVisibleCount((prev) => getNextVisibleCount(prev));
+        } else if (!isIntersecting) {
+          prevVisible = false;
         }
       },
-      { root: container, threshold: 0 }
+      { root: container, threshold: 0, rootMargin: "0px" }
     );
     observer.observe(sentinel);
-    return () => observer.disconnect();
+    
+    // Fallback: scroll event listener in case IntersectionObserver doesn't trigger reliably.
+    // When scrollTop < 50px (near top) and sentinel is in the DOM, load more.
+    const SCROLL_TOP_THRESHOLD = 50;
+    const onScroll = () => {
+      // Only trigger if sentinel is connected to DOM (hasn't been unmounted)
+      if (!prevVisible && container.scrollTop < SCROLL_TOP_THRESHOLD && sentinel.isConnected) {
+        prevVisible = true;
+        prevScrollDistanceRef.current = container.scrollHeight - container.scrollTop;
+        setVisibleCount((prev) => getNextVisibleCount(prev));
+      }
+    };
+    container.addEventListener("scroll", onScroll, { passive: true });
+    
+    return () => {
+      observer.disconnect();
+      container.removeEventListener("scroll", onScroll);
+    };
   }, [visibleCount, messages.length, scrollContainerRef]);
 
   // After visibleCount increases (more messages prepended), restore the
@@ -1382,6 +1406,10 @@ const messageListEl = useMemo(() => {
                     </option>
                   ))}
                 </select>
+                {/* 后端管理入口是扩展点：各后端扩展经 newSessionBackendBar 插槽
+                    自行渲染管理按钮/面板（如 aiti-acp-agent 的 agent 管理），
+                    core 不感知任何具体后端。 */}
+                <ExtSlot name="newSessionBackendBar" />
                 {sessionBackend && (
                   <span style={{ color: "var(--text-dim)", fontSize: 11 }}>
                     session runs via: {sessionBackend}

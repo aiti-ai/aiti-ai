@@ -128,6 +128,8 @@ export interface RpcSessionStartOptions {
   toolNames?: string[];
   initialModel?: { provider: string; modelId: string };
   thinkingLevel?: ThinkingLevel;
+  /** 跳过单写者红线总闸（ownsFile 桥占用检查）。子代理 fork 出的新文件必属本地，用它。 */
+  skipBridgeCheck?: boolean;
   /**
    * 子代理模式：创建后注入 agent 定义 systemPrompt、按需收窄工具（excludeTools）。
    * 子代理 session 复用完整会话创建流程（落盘/索引/统计/扩展通知），仅带 parent 标记。
@@ -2408,18 +2410,22 @@ export async function startRpcSession(
   // ── 单写者红线总闸：被 TUI 桥认领的会话文件，绝不本地起 runtime ──
   // 所有经此创建会话的调用方（含 queue-recovery/context/auto-name 等）
   // 都被这一道闸保护；需要桥行为的路由应在调用前先 attachIfBridged。
-  for (const p of listProviders()) {
-    if (!p.ownsFile) continue;
-    try {
-      if (sessionFile && (await p.ownsFile(sessionFile))) {
-        throw new BridgeOccupiedError(
-          sessionFile,
-          `claimed by backend "${p.type}"`,
-        );
+  // 子代理 fork 出的文件是全新本地文件（parent 标记只是 header 引用），
+  // 不属于任何桥会话——由调用方传 skipBridgeCheck 显式跳过。
+  if (!options.skipBridgeCheck) {
+    for (const p of listProviders()) {
+      if (!p.ownsFile) continue;
+      try {
+        if (sessionFile && (await p.ownsFile(sessionFile))) {
+          throw new BridgeOccupiedError(
+            sessionFile,
+            `claimed by backend "${p.type}"`,
+          );
+        }
+      } catch (e) {
+        if (e instanceof BridgeOccupiedError) throw e;
+        console.error(`[rpc] ${p.type}.ownsFile failed:`, e instanceof Error ? e.message : e);
       }
-    } catch (e) {
-      if (e instanceof BridgeOccupiedError) throw e;
-      console.error(`[rpc] ${p.type}.ownsFile failed:`, e instanceof Error ? e.message : e);
     }
   }
 
