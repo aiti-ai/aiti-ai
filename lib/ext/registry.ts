@@ -98,12 +98,12 @@ export interface ExtStatusEntry {
   agentHooks?: string[];
   /** 功能管理：声明 + 当前启停状态（扩展声明了 features 才有）。 */
   features?: ExtStatusFeature[];
-  /** 目录里 package.json 的静态信息（不执行代码）。homepage = 来源/文档地址（安装时写入或作者声明）。 */
-  packageInfo?: { name?: string; version?: string; dependencies?: string[]; homepage?: string };
+  /** 目录里 package.json 的静态信息（不执行代码）。homepage = 来源/文档地址（安装时写入或作者声明）；soul = 灵魂句（extman 展示）。 */
+  packageInfo?: { name?: string; version?: string; dependencies?: string[]; homepage?: string; soul?: string };
 }
 
 /** 不执行代码读取扩展目录的 package.json（disabled 条目也能有名字/版本/依赖/来源地址）。 */
-function readPackageInfo(dir?: string): { name?: string; version?: string; dependencies?: string[]; homepage?: string } {
+function readPackageInfo(dir?: string): { name?: string; version?: string; dependencies?: string[]; homepage?: string; soul?: string } {
   if (!dir) return {};
   try {
     const p = join(dir, "package.json");
@@ -115,6 +115,7 @@ function readPackageInfo(dir?: string): { name?: string; version?: string; depen
       homepage?: unknown;
       url?: unknown;
       repository?: unknown;
+      soul?: unknown;
     };
     // homepage → url → repository（string 或 {url}），优先级递减。
     const repoUrl = typeof parsed.repository === "string"
@@ -132,6 +133,7 @@ function readPackageInfo(dir?: string): { name?: string; version?: string; depen
       homepage: typeof parsed.homepage === "string" ? parsed.homepage
         : typeof parsed.url === "string" ? parsed.url
         : repoUrl,
+      soul: typeof parsed.soul === "string" && parsed.soul.trim() ? parsed.soul.trim() : undefined,
     };
   } catch {
     return {};
