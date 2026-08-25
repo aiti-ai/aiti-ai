@@ -430,6 +430,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
   /** 后端会话能力（从 state 端点透传；本地会话无此状态） */
   const [sessionCapabilities, setSessionCapabilities] = useState<Record<string, boolean> | null>(null);
+  /** 后端会话最近一轮用量（get_usage 能力时从 API 拉取） */
+  const [backendUsage, setBackendUsage] = useState<{ inputTokens?: number; outputTokens?: number; costUsd?: number } | null>(null);
   const [backendSource, setBackendSource] = useState<string | undefined>(undefined);
   const [pendingRecovery, setPendingRecovery] = useState<PendingRecoveryItem[]>([]);
   const [queueTrash, setQueueTrash] = useState<QueueTrashItem[]>([]);
@@ -1293,6 +1295,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (!agentWasActive || rpcPromptPendingRef.current) break;
 
         const sid = sessionIdRef.current;
+        // 后端会话：拉取本轮用量
+        if (sid && backendSource && sessionCapabilities?.getUsage) {
+          void sendAgentCommand(sid, { type: "get_usage" })
+            .then((r) => {
+              const d = r as { usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number } };
+              if (d?.usage) setBackendUsage(d.usage);
+            })
+            .catch(() => {});
+        }
         const wasRunning = settleUiStage();
         setIsCompacting(false);
         if (sid) {
@@ -2803,7 +2814,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     queueTrash, restoreQueueItem, purgeQueueTrash,
     moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
-    permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource,
+    permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,

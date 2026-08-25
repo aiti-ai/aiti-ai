@@ -318,7 +318,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     slashCommands, slashCommandsLoading, queuedMessages,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
-    permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource,
+    permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
 
     isAutoModelSelection,
     agentPhase,
@@ -1300,6 +1300,21 @@ const messageListEl = useMemo(() => {
               Allow
             </button>
           </div>
+        </div>
+      )}
+      {backendUsage && !isEmptyNew && (
+        <div style={{
+          position: "fixed", top: 52, right: 16, zIndex: 200,
+          display: "flex", alignItems: "center", gap: 6,
+          padding: "3px 10px", borderRadius: 12,
+          background: "var(--bg-panel)", border: "1px solid var(--border)",
+          fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)",
+        }}>
+          <span title="Backend usage (last turn)">
+            {backendUsage.inputTokens != null && <span>↑{backendUsage.inputTokens >= 1000 ? `${(backendUsage.inputTokens / 1000).toFixed(1)}k` : backendUsage.inputTokens} </span>}
+            {backendUsage.outputTokens != null && <span>↓{backendUsage.outputTokens} </span>}
+            {backendUsage.costUsd != null && backendUsage.costUsd > 0 && <span>${backendUsage.costUsd.toFixed(4)}</span>}
+          </span>
         </div>
       )}
       {isEmptyNew ? (
