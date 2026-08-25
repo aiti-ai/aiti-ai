@@ -219,8 +219,30 @@ if (typeof window !== "undefined") {
 }
 
 /** 为某扩展构造 register ctx（i18n 表 + 宿主 hooks + 注册 API）。 */
+
+const EMPTY_I18N_TABLE: Record<string, string> = {};
+
+/** 语言切换事件（useI18n.setLocale 派发；扩展 client 监听它重渲染）。 */
+export const LOCALE_CHANGED_EVENT = "pi-web:locale-changed";
+
+/** 当前界面语言（localStorage pi-locale，与 useI18n 同源；缺省 en）。 */
+export function currentUiLocale(): string {
+  try {
+    const v = window.localStorage.getItem("pi-locale");
+    if (v === "zh-CN" || v === "en") return v;
+  } catch { /* 存储不可用时用缺省 */ }
+  return "en";
+}
+
 function makeClientContext(ext: ManifestExt): ExtClientContext {
-  const table = ext.ui?.i18n?.["zh-CN"] ?? ext.ui?.i18n?.en ?? {};
+  // i18n 表按当前语言动态取（切语言后 t() 立即生效）：
+  // 当前语言 → 同语言短码（zh）→ en → 任一可用表（避免只有 zh 表时 en 用户看到裸 key）。
+  const ui18n = ext.ui?.i18n;
+  const tableFor = (): Record<string, string> => {
+    if (!ui18n) return EMPTY_I18N_TABLE;
+    const loc = currentUiLocale();
+    return ui18n[loc] ?? ui18n[loc.split("-")[0]] ?? ui18n.en ?? Object.values(ui18n)[0] ?? EMPTY_I18N_TABLE;
+  };
   const ctx: ExtClientContext = {
     h: createElement,
     useState,
@@ -228,7 +250,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     useRef,
     useCallback,
     useMemo,
-    t: (key, params) => interpolate(table[key] ?? key, params),
+    t: (key, params) => interpolate(tableFor()[key] ?? key, params),
     apiUrl,
     registerItems: (slot, items) => {
       registerExtUiItems(
@@ -384,7 +406,10 @@ export function useExtSlotItems(slot: ExtSlotName): ExtUiItemRegistered[] {
   useEffect(() => {
     const update = () => setItems(getExtUiItems(slot));
     update(); // pick up items registered before this hook mounted
-    return subscribeExtUi(update);
+    const unsubUi = subscribeExtUi(update);
+    // 语言切换 → 重拉 items（数组身份变化）→ 已注册的扩展 UI 重渲染（t() 读新语言表）
+    window.addEventListener(LOCALE_CHANGED_EVENT, update);
+    return () => { unsubUi(); window.removeEventListener(LOCALE_CHANGED_EVENT, update); };
   }, [slot]);
 
   // 按需加载：声明了该 slot 但尚未 materialize 的扩展 → 首次渲染时触发
@@ -413,7 +438,9 @@ export function useExtMetas(): Record<string, ExtMeta> {
   useEffect(() => {
     const update = () => setMetas(getExtMetas());
     update();
-    return subscribeExtUi(update);
+    const unsubUi = subscribeExtUi(update);
+    window.addEventListener(LOCALE_CHANGED_EVENT, update);
+    return () => { unsubUi(); window.removeEventListener(LOCALE_CHANGED_EVENT, update); };
   }, []);
   return metas;
 }

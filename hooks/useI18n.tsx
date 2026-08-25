@@ -92,6 +92,8 @@ export function I18nProvider({
     } catch {
       // cookie 写入失败不影响当前页面。
     }
+    // 广播给扩展 client（ExtSlots 监听 → 已注册 UI 重渲染，t() 换新语言表）。
+    window.dispatchEvent(new CustomEvent("pi-web:locale-changed", { detail: { locale: next } }));
   }, []);
 
   const t = useCallback((key: string, params?: TranslationParams) => translateMessage(locale, key, messages, params), [locale, messages]);
