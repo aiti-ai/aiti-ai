@@ -886,8 +886,18 @@ export function AppShell() {
     openFolder: handleOpenFolder,
     revealDir: handleRevealDir,
     appendText: (text) => chatInputRef.current?.appendText(text),
-    writeComposerValue: (text) => chatInputRef.current?.setValueTracked(text),
-    restoreComposerDraft: (draft) => chatInputRef.current?.restoreDraft(draft),
+    writeComposerValue: (text) => {
+      const c = chatInputRef.current;
+      if (!c) return false;
+      c.setValueTracked(text);
+      return true;
+    },
+    restoreComposerDraft: (draft) => {
+      const c = chatInputRef.current;
+      if (!c) return false; // composer 未挂载：调用方不应消费草稿
+      c.restoreDraft(draft);
+      return true;
+    },
   });
 
   // aiti-devtools 扩展请求打开文件（前端在线查看——文件标签页）：aiti 候选详情点"前端打开"

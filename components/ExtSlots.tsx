@@ -102,10 +102,12 @@ export interface ExtClientContext {
   /** 注册 composer 增强器（值观测/会话 key 切换/发送前链式钩子；见 docs/composer-enhancement-contract.md）。
    *  返回 disposer。 */
   registerComposerEnhancement(enh: ComposerEnhancement): () => void;
-  /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步） */
-  writeComposerValue?(text: string): void | Promise<void>;
-  /** 完整还原草稿进输入框（文本 + 图片，raw 不跑钩子——与 core 恢复第一条一致） */
-  restoreComposerDraft?(draft: { value: string; images: { data: string; mimeType: string }[] }): void | Promise<void>;
+  /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步）。
+   *  返回是否真正写入（composer 未挂载时 false）。 */
+  writeComposerValue?(text: string): boolean | Promise<boolean>;
+  /** 完整还原草稿进输入框（文本 + 图片，raw 不跑钩子——与 core 恢复第一条一致）。
+   *  返回是否真正还原（composer 未挂载时 false——调用方不应消费草稿）。 */
+  restoreComposerDraft?(draft: { value: string; images: { data: string; mimeType: string }[] }): boolean | Promise<boolean>;
   /** 注册恢复项提供者（残留输入并入恢复对话框；决议经 onResolve 回流）。返回 disposer。 */
   registerRecoveryItemsProvider?(provider: RecoveryItemsProvider): () => void;
   /** 注册草稿存储 API（core 经 getDraftApi() 访问；草稿功能全部归 keeper）。 */
@@ -254,8 +256,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     revealDir: (absPath) => getHostApi().revealDir?.(absPath),
     appendText: (text) => getHostApi().appendText?.(text),
     registerComposerEnhancement: (enh: ComposerEnhancement) => registerComposerEnhancement(enh),
-    writeComposerValue: (text: string) => getHostApi().writeComposerValue?.(text),
-    restoreComposerDraft: (draft) => getHostApi().restoreComposerDraft?.(draft),
+    writeComposerValue: (text: string) => getHostApi().writeComposerValue?.(text) ?? false,
+    restoreComposerDraft: (draft) => getHostApi().restoreComposerDraft?.(draft) ?? false,
     registerRecoveryItemsProvider: (provider) => registerRecoveryItemsProvider(provider),
     registerDraftApi: (api) => registerDraftApi(api),
     reloadExtensions: () => reloadExtensions(),

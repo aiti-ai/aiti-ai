@@ -1431,6 +1431,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       processImageFiles(files);
     },
     restoreDraft(draft: ChatDraft) {
+      // 同步写 DOM + tracker（不赌 React commit 与 rAF 的时序——异步 setValue 后
+      // rAF 可能跑在 commit 之前，此时 DOM 还是旧值，光标会落在开头）
+      const taNow = textareaRef.current;
+      valueRef.current = draft.value;
+      if (taNow) writeTextareaValue(taNow, draft.value);
       setValue(draft.value);
       setAtQuery(null);
       setHistoryMenuOpen(false);
@@ -1442,7 +1447,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         const ta = textareaRef.current;
         if (!ta) return;
         ta.focus();
-        // 光标落到还原文本末尾（focus 后默认在开头）
+        // 光标落到还原文本末尾
         const end = ta.value.length;
         ta.setSelectionRange(end, end);
         ta.style.height = "auto";
