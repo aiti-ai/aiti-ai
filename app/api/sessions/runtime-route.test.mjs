@@ -19,7 +19,9 @@ test("session listing merges live registry snapshots and honors force refresh", 
   assert.match(listRoute, /searchParams\.get\("force"\) === "1"/);
   assert.match(listRoute, /listAllSessions\(\{ force \}\)/);
   assert.match(listRoute, /attachSessionProjectInfo\(getRpcSessionInfos\(\)\)/);
-  assert.match(listRoute, /mergeSessionLists\(\s*mergeSessionLists\(markedPersisted, runtimeSessions\),/);
+  // TUI 占用标记经扩展协商（sessionAnnotations slot），核心不读注册表文件
+  assert.match(listRoute, /dispatchSessionAnnotations\(sessions\)/);
+  assert.match(listRoute, /getHandleSessionInfos\(\)/);
   // TUI-bridged sessions are marked in the merged list (agent badge)
   assert.match(listRoute, /readBridgeRegistry/);
   assert.match(listRoute, /"Cache-Control": "no-store"/);
