@@ -1541,6 +1541,52 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
     const isSlashCommandPrompt = !images?.length && trimmedMessage.startsWith("/");
 
+    // ── /relay <target-id> <message> ────────────────────────────────────────
+    // agent-to-agent 中继：把消息投递给目标 live 会话，回收回复并注入当前对话。
+    if (trimmedMessage.startsWith("/relay ")) {
+      const rest = trimmedMessage.slice(7);
+      const spaceIdx = rest.indexOf(" ");
+      const targetId = spaceIdx > 0 ? rest.slice(0, spaceIdx) : "";
+      const relayMsg = spaceIdx > 0 ? rest.slice(spaceIdx + 1).trim() : "";
+      if (!targetId || !relayMsg) {
+        addNotice({ type: "error", message: "用法: /relay <session-id> <message>（目标必须是存活的 backend 会话）" });
+        return;
+      }
+
+      // 显示用户消息 + relay 状态
+      const relayUserMsg: AgentMessage = { role: "user", content: trimmedMessage, timestamp: Date.now() };
+      setMessages((prev) => [...prev, relayUserMsg]);
+      setAgentRunning(true);
+      dispatchStream({ type: "start" });
+
+      void (async () => {
+        try {
+          const res = await fetch(apiUrl("/api/relay"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ to: targetId, message: relayMsg }),
+          });
+          const d = await res.json() as { ok?: boolean; reply?: string; error?: string };
+          if (d.ok && d.reply) {
+            setMessages((prev) => [...prev, {
+              role: "assistant" as const,
+              content: [{ type: "text" as const, text: `[relay → ${targetId}] ${d.reply}` }],
+              model: "relay",
+              provider: "relay",
+            } as AgentMessage]);
+          } else {
+            addNotice({ type: "error", message: `Relay failed: ${d.error ?? "unknown"}` });
+          }
+        } catch (e) {
+          addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+        } finally {
+          setAgentRunning(false);
+          dispatchStream({ type: "end" });
+        }
+      })();
+      return;
+    }
+
     const isBashCommand = !images?.length && trimmedMessage.startsWith("!");
     if (isBashCommand) {
       const isExcluded = trimmedMessage.startsWith("!!");
