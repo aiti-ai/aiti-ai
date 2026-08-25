@@ -2377,6 +2377,24 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     else modelsByProvider.push({ provider: opt.provider, options: [opt] });
   }
 
+  // 防呆标注：同名模型出现在多个 provider 分组时（如 opencode-go 与 opencode-go-2
+  // 都列出 ox-alpha-free），相邻分组的选项标签完全一样，极易点错——而 set_model 按
+  // provider+id 精确匹配，点错等于静默切到了另一个 provider。对这些重名选项在名称后
+  // 追加 provider 小字。按完整列表计算（非过滤结果），避免输入过滤词时标注闪烁。
+  const ambiguousModelNames = (() => {
+    const providersByName = new Map<string, Set<string>>();
+    for (const opt of modelOptions) {
+      let provs = providersByName.get(opt.name);
+      if (!provs) { provs = new Set(); providersByName.set(opt.name, provs); }
+      provs.add(opt.provider);
+    }
+    const names = new Set<string>();
+    for (const [name, provs] of providersByName) {
+      if (provs.size > 1) names.add(name);
+    }
+    return names;
+  })();
+
   // Decide whether providers should be auto-collapsed: when there are more
   // than 2 providers and the (unfiltered) model list has more than 6 entries.
   // The provider holding the active model stays expanded so the user can see
@@ -4184,6 +4202,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                     setModelFilter("");
                                     if (!isActive || isAutoModelSelection) onModelChange(opt.provider, opt.modelId);
                                   }}
+                                  title={`${opt.name} · ${opt.provider}`}
                                   style={{
                                     display: "flex", alignItems: "center", gap: 8,
                                     width: "100%", padding: "7px 12px",
@@ -4200,7 +4219,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                   {isActive
                                     ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
                                     : <span style={{ width: 10, flexShrink: 0 }} />}
-                                  {opt.name}
+                                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {opt.name}
+                                    {ambiguousModelNames.has(opt.name) && (
+                                      <span style={{ fontSize: 10, fontWeight: 400, color: "var(--text-dim)", marginLeft: 6 }}>
+                                        {opt.provider}
+                                      </span>
+                                    )}
+                                  </span>
                                 </button>
                               );
                             })}
