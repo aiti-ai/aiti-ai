@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
+import { resolveAnySession, attachIfBridged } from "@/lib/session";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -15,19 +16,46 @@ export async function POST(
     const body = await req.json() as { type: string; [key: string]: unknown };
     commandType = typeof body.type === "string" ? body.type : undefined;
 
-    // Fast path: already-running session
-    const existing = getRpcSession(id);
+    const filePath = await resolveSessionPath(id);
+
+    // ── 桥占用识别（单写者红线，最先执行）─────────────────────────────
+    // 被 TUI 桥持有的会话永远走 socket——即使存在陈旧的本地 wrapper
+    // （TUI 是文件所有者）。附着失败 = 单写者冲突 → 409。
+    if (filePath) {
+      let bridged;
+      try {
+        bridged = await attachIfBridged(filePath);
+      } catch (e) {
+        if ((e as { name?: string }).name === "BridgeOccupiedError") {
+          return NextResponse.json({
+            error: e instanceof Error ? e.message : String(e),
+            code: "bridge_occupied",
+            ...(commandType === "prompt" ? { accepted: false } : {}),
+          }, { status: 409 });
+        }
+        throw e;
+      }
+      if (bridged?.isAlive()) {
+        const result = await bridged.send(body);
+        promptAccepted = body.type === "prompt";
+        return NextResponse.json({ success: true, data: result });
+      }
+    }
+
+    // Fast path: already-running session (local registry, then provider handles)
+    const existing = getRpcSession(id)?.isAlive() ? getRpcSession(id) : resolveAnySession(id);
     if (existing?.isAlive()) {
       const result = await existing.send(body);
       promptAccepted = body.type === "prompt";
       return NextResponse.json({ success: true, data: result });
     }
 
-    const filePath = await resolveSessionPath(id);
+    // 本地路径：文件不存在且无 live 会话 → 404；存在则起本地 runtime
+    // （startRpcSession 内部仍有 ownsFile 总闸兜底——防其他路由先建了 wrapper）
     if (!filePath) {
       return NextResponse.json({
         error: "Session not found",
-        ...(body.type === "prompt"
+        ...(commandType === "prompt"
           ? { code: "prompt_rejected", accepted: false }
           : {}),
       }, { status: 404 });
@@ -39,6 +67,14 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
+    // 单写者红线：占用拒绝是语义性冲突，不是服务器故障
+    if ((error as { name?: string }).name === "BridgeOccupiedError") {
+      return NextResponse.json({
+        error: error instanceof Error ? error.message : String(error),
+        code: "bridge_occupied",
+        ...(commandType === "prompt" && !promptAccepted ? { accepted: false } : {}),
+      }, { status: 409 });
+    }
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
       ...(commandType === "prompt" && !promptAccepted
@@ -56,7 +92,7 @@ export async function GET(
   const { id } = await params;
 
   try {
-    const session = getRpcSession(id);
+    const session = getRpcSession(id)?.isAlive() ? getRpcSession(id) : resolveAnySession(id);
     if (!session || !session.isAlive()) {
       return NextResponse.json({ running: false });
     }

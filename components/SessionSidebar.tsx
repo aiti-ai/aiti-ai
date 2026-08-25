@@ -2332,15 +2332,28 @@ function SessionItem({
                   {t("sidebar.draft")}
                 </span>
               )}
+              {session.agent && (
+                <span
+                  title={`Backend: ${session.agent}`}
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 9,
+                    fontWeight: 600,
+                    color: "#a78bfa",
+                    border: "1px solid #a78bfa66",
+                    borderRadius: 4,
+                    padding: "0 4px",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {session.agent}
+                </span>
+              )}
             </div>
             <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 11, minWidth: 0 }}>
-              {isRunning ? (
-                <RunningSessionIndicator />
-              ) : isUnread ? (
-                <UnreadSessionIndicator />
-              ) : (
-                <span title={session.modified}>{formatRelativeTime(session.modified)}</span>
-              )}
+              {isRunning && <RunningSessionIndicator />}
+              {!isRunning && isUnread && <UnreadSessionIndicator />}
+              <span title={session.modified}>{formatRelativeTime(session.modified)}</span>
               <span>{t("sidebar.messagesCount", { count: session.messageCount })}</span>
               {session.worktreeBranch && (
                 <span

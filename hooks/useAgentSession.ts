@@ -73,6 +73,10 @@ type AgentStateResponse = {
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
   pendingRecovery?: PendingRecoveryItem[] | null;
   queueTrash?: QueueTrashItem[] | null;
+  /** 后端会话能力声明（capability-aware 控件渲染） */
+  capabilities?: Record<string, boolean>;
+  /** 后端来源标签（如 "aiti-claude-code-agent/claude-code"） */
+  backendSource?: string;
 };
 
 export interface QueuedMessages {
@@ -139,6 +143,8 @@ export interface UseAgentSessionOptions {
   sessionRunning?: boolean;
   newSessionCwd: string | null;
   newSessionDraftKey: string | null;
+  /** Session backend for NEW sessions (providerType from /api/session-backends). null/undefined = local pi. */
+  newSessionBackend?: string | null;
   onAgentEnd?: () => void;
   onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
   onSessionCreated?: (session: SessionInfo, sourceDraftKey: string) => void;
@@ -262,6 +268,12 @@ export interface ChatInputHandle {
   restoreSubmission: (text: string, images?: Array<{ data: string; mimeType: string }>, targetDraftKey?: string) => void;
 }
 
+export interface AttachedFile {
+  data: string;   // base64, no prefix
+  mimeType: string;
+  filename: string;
+}
+
 export interface AttachedImage {
   data: string;
   mimeType: string;
@@ -292,6 +304,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
+
+  // New-session backend (providerType)：ref 镜像保证 ensureNewSession 回调稳定。
+  const newSessionBackendRef = useRef<string | null | undefined>(opts.newSessionBackend);
+  newSessionBackendRef.current = opts.newSessionBackend;
 
   const [data, setData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(!isNew);
@@ -401,10 +417,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
   const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
+  /** 后端会话的工具授权请求（permission_request 事件；一次一个，队列简化为覆盖） */
+  const [permissionRequest, setPermissionRequest] = useState<{
+    requestId: string;
+    toolName?: string;
+    input?: unknown;
+  } | null>(null);
+  const permissionRespondingRef = useRef(false);
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
+  /** 后端会话能力（从 state 端点透传；本地会话无此状态） */
+  const [sessionCapabilities, setSessionCapabilities] = useState<Record<string, boolean> | null>(null);
+  /** 后端会话最近一轮用量（get_usage 能力时从 API 拉取） */
+  const [backendUsage, setBackendUsage] = useState<{ inputTokens?: number; outputTokens?: number; costUsd?: number } | null>(null);
+  const [backendSource, setBackendSource] = useState<string | undefined>(undefined);
   const [pendingRecovery, setPendingRecovery] = useState<PendingRecoveryItem[]>([]);
   const [queueTrash, setQueueTrash] = useState<QueueTrashItem[]>([]);
   /** True when the current pending-recovery list came from an import (not a
@@ -684,6 +712,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         const liveState = agentState.state;
         if (liveState) {
+          if (liveState.capabilities !== undefined) setSessionCapabilities(liveState.capabilities);
+          if (liveState.backendSource !== undefined) setBackendSource(liveState.backendSource);
           if (liveState.contextUsage !== undefined) setContextUsage(liveState.contextUsage ?? null);
           if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
           if (liveState.thinkingLevel !== undefined) setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
@@ -773,6 +803,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const selectedThinkingLevel = thinkingLevelOverrideRef.current;
       if (selectedModel) setPendingModel(selectedModel);
       const toolNames = getToolNamesForPreset(toolPreset);
+      const backend = newSessionBackendRef.current;
       const res = await fetch(apiUrl("/api/agent/new"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -780,6 +811,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           cwd: newSessionCwd,
           type: "ensure_session",
           toolNames,
+          ...(backend ? { providerType: backend } : {}),
           ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
           ...(selectedThinkingLevel
             ? { thinkingLevel: selectedThinkingLevel }
@@ -1264,6 +1296,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (!agentWasActive || rpcPromptPendingRef.current) break;
 
         const sid = sessionIdRef.current;
+        // 后端会话：拉取本轮用量
+        if (sid && backendSource && sessionCapabilities?.getUsage) {
+          void sendAgentCommand(sid, { type: "get_usage" })
+            .then((r) => {
+              const d = r as { usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number } };
+              if (d?.usage) setBackendUsage(d.usage);
+            })
+            .catch(() => {});
+        }
         const wasRunning = settleUiStage();
         setIsCompacting(false);
         if (sid) {
@@ -1446,11 +1487,53 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "extension_ui_request":
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
+      case "permission_request":
+        setPermissionRequest({
+          requestId: String(event.requestId ?? ""),
+          toolName: typeof event.toolName === "string" ? event.toolName : undefined,
+          input: event.input,
+        });
+        addNotice({ type: "error", message: "工具需要授权：" + (typeof event.toolName === "string" ? event.toolName : "unknown") });
+        break;
+      case "permission_expired":
+        setPermissionRequest(null);
+        break;
     }
   }, [addNotice, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
 
-  const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
+  const switchPermissionMode = useCallback(async (mode: string): Promise<boolean> => {
+    const sid = sessionIdRef.current ?? session?.id;
+    if (!sid) return false;
+    try {
+      await sendAgentCommand(sid, { type: "set_permission_mode", mode });
+      return true;
+    } catch (e) {
+      console.error("Failed to switch permission mode:", e);
+      return false;
+    }
+  }, [sessionIdRef, session?.id]);
+
+  const respondToPermission = useCallback(async (behavior: "allow" | "deny") => {
+    const req = permissionRequest;
+    if (!req || permissionRespondingRef.current) return;
+    permissionRespondingRef.current = true;
+    try {
+      await sendAgentCommand(sessionIdRef.current ?? session?.id ?? "", {
+        type: "permission_response",
+        requestId: req.requestId,
+        behavior,
+        message: behavior === "deny" ? "denied in web ui" : undefined,
+      });
+      setPermissionRequest(null);
+    } catch (e) {
+      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+    } finally {
+      permissionRespondingRef.current = false;
+    }
+  }, [permissionRequest, session?.id]);
+
+  const handleSend = useCallback(async (message: string, images?: AttachedImage[], files?: AttachedFile[]) => {
     const trimmedMessage = message.trim();
     if (!trimmedMessage && !images?.length) return;
     if (agentRunningRef.current || bashRunningRef.current) {
@@ -1458,6 +1541,52 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       return;
     }
     const isSlashCommandPrompt = !images?.length && trimmedMessage.startsWith("/");
+
+    // ── /relay <target-id> <message> ────────────────────────────────────────
+    // agent-to-agent 中继：把消息投递给目标 live 会话，回收回复并注入当前对话。
+    if (trimmedMessage.startsWith("/relay ")) {
+      const rest = trimmedMessage.slice(7);
+      const spaceIdx = rest.indexOf(" ");
+      const targetId = spaceIdx > 0 ? rest.slice(0, spaceIdx) : "";
+      const relayMsg = spaceIdx > 0 ? rest.slice(spaceIdx + 1).trim() : "";
+      if (!targetId || !relayMsg) {
+        addNotice({ type: "error", message: "用法: /relay <session-id> <message>（目标必须是存活的 backend 会话）" });
+        return;
+      }
+
+      // 显示用户消息 + relay 状态
+      const relayUserMsg: AgentMessage = { role: "user", content: trimmedMessage, timestamp: Date.now() };
+      setMessages((prev) => [...prev, relayUserMsg]);
+      setAgentRunning(true);
+      dispatchStream({ type: "start" });
+
+      void (async () => {
+        try {
+          const res = await fetch(apiUrl("/api/relay"), {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ to: targetId, message: relayMsg }),
+          });
+          const d = await res.json() as { ok?: boolean; reply?: string; error?: string };
+          if (d.ok && d.reply) {
+            setMessages((prev) => [...prev, {
+              role: "assistant" as const,
+              content: [{ type: "text" as const, text: `[relay → ${targetId}] ${d.reply}` }],
+              model: "relay",
+              provider: "relay",
+            } as AgentMessage]);
+          } else {
+            addNotice({ type: "error", message: `Relay failed: ${d.error ?? "unknown"}` });
+          }
+        } catch (e) {
+          addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+        } finally {
+          setAgentRunning(false);
+          dispatchStream({ type: "end" });
+        }
+      })();
+      return;
+    }
 
     const isBashCommand = !images?.length && trimmedMessage.startsWith("!");
     if (isBashCommand) {
@@ -1546,6 +1675,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           type: "prompt",
           message,
           ...(piImages?.length ? { images: piImages } : {}),
+          ...(files?.length ? { files: files.map((f) => ({ data: f.data, mimeType: f.mimeType, filename: f.filename })) } : {}),
         });
         promoteNewSession(1, message);
       } else if (session) {
@@ -1556,6 +1686,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           type: "prompt",
           message,
           ...(piImages?.length ? { images: piImages } : {}),
+          ...(files?.length ? { files: files.map((f) => ({ data: f.data, mimeType: f.mimeType, filename: f.filename })) } : {}),
         });
       } else {
         throw new Error("No active session for the prompt");
@@ -1838,6 +1969,24 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
 
   const loadModels = useCallback(async (signal?: AbortSignal) => {
+    // ── 后端会话（attach/spawn/extension）：模型清单来自 list_models 能力，
+    //    而非本地 /api/models。切换复用现有 set_model 命令（adapter 映射）。
+    if (!isNew && session?.agent && sessionIdRef.current) {
+      try {
+        const d = await sendAgentCommand<{ models?: Array<{ id: string; provider: string; label?: string }> }>(
+          sessionIdRef.current,
+          { type: "list_models" },
+        );
+        const list = (d.models ?? []).map((m) => ({ id: m.id, name: m.label ?? m.id, provider: m.provider }));
+        setModelList(list);
+        setModelNames(Object.fromEntries(list.map((m) => [m.id, m.name])));
+        setModelError(null);
+        setModelScopeWarnings([]);
+        return;
+      } catch {
+        // 后端不支持 listModels → 落回本地清单（多半也为空，选择器自然禁用）
+      }
+    }
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
     const modelsUrl = modelCwd ? apiUrl(`/api/models?cwd=${encodeURIComponent(modelCwd)}`) : apiUrl("/api/models");
     const res = await fetch(modelsUrl, signal ? { signal } : undefined);
@@ -1863,7 +2012,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setThinkingLevel((pinned as ThinkingLevelOption | undefined) ?? "auto");
       }
     }
-  }, [isNew, newSessionCwd, session?.cwd]);
+  }, [isNew, newSessionCwd, session?.cwd, session?.agent]);
 
   /**
    * Pull fresh session stats (incl. contextUsage) from the agent process.
@@ -2712,6 +2861,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     queueTrash, restoreQueueItem, purgeQueueTrash,
     moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,

@@ -17,9 +17,20 @@ export async function POST(
     }
 
     const existing = getRpcSession(id);
-    const { session } = existing?.isAlive()
-      ? { session: existing }
-      : await startRpcSession(id, filePath, undefined);
+    let session: NonNullable<typeof existing>;
+    if (existing?.isAlive()) {
+      session = existing;
+    } else {
+      try {
+        ({ session } = await startRpcSession(id, filePath, undefined));
+      } catch (e) {
+        // 桥占用的会话无法本地起 runtime——自动命名降级跳过（TUI 端可自行命名）
+        if ((e as { name?: string }).name === "BridgeOccupiedError") {
+          return NextResponse.json({ error: "session bridged; auto-name skipped" }, { status: 409 });
+        }
+        throw e;
+      }
+    }
 
     // globalThis keeps wrappers alive across dev hot reloads; older instances
     // may predate waitUntilReady(), but those have already completed startup.

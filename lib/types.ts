@@ -318,6 +318,9 @@ export interface SessionInfo {
   /** True while the runtime session exists only in memory and its JSONL file
    *  has not been created yet. Disk-backed actions must wait until this clears. */
   transient?: boolean;
+  /** Backend/agent tag for non-local sessions (e.g. "claude-code", "spawn").
+   *  Absent (= "pi") for host-native local sessions. Rendered as a sidebar badge. */
+  agent?: string;
 }
 
 export interface SessionContext {

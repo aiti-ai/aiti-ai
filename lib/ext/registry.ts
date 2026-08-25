@@ -27,6 +27,8 @@ import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, ext
 import { loadExtensionFromDir, scanExtensionDirs } from "./loader.ts";
 import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
 import { invokeAI as aiInvokeImpl } from "../ai-invoke.ts";
+import { registerExtensionProvider, removeProvider as removeProviderFromRegistry, cleanupAllExtensionProviders, findProvidersForAgent } from "../session/providers.ts";
+import { openExternalSession } from "../session/index.ts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 
 declare global {
@@ -619,7 +621,42 @@ export class ExtRegistryImpl {
     }
   }
 
+  // ---- 会话标注 slot ----
+  private sessionAnnotators = new Map<string, Array<{ extId: string; annotate: (rows: Array<{ id: string; path?: string; cwd?: string }>) => Promise<Record<string, Record<string, unknown>> | void> }>>();
+
+  private registerSessionAnnotator(
+    extId: string,
+    annotator: { annotate: (rows: Array<{ id: string; path?: string; cwd?: string }>) => Promise<Record<string, Record<string, unknown>> | void> },
+  ): void {
+    if (!this.sessionAnnotators.has(extId)) this.sessionAnnotators.set(extId, []);
+    this.sessionAnnotators.get(extId)!.push({ extId, annotate: annotator.annotate });
+  }
+
+  /**
+   * 分发标注：把各扩展返回的字段映射按行 id/path 合并进 rows（原地）。
+   * 单个标注器异常不阻断整体。
+   */
+  async dispatchSessionAnnotations(
+    rows: Array<{ id: string; path?: string; cwd?: string } & object>,
+  ): Promise<void> {
+    for (const [, annotators] of this.sessionAnnotators) {
+      for (const { annotate } of annotators) {
+        try {
+          const patch = await annotate(rows.map((r) => ({ id: r.id, path: r.path, cwd: r.cwd })));
+          if (!patch) continue;
+          for (const row of rows) {
+            const extra = patch[row.id] ?? (row.path ? patch[row.path] : undefined);
+            if (extra) Object.assign(row, extra);
+          }
+        } catch (e) {
+          console.error("[ext] session annotator 失败:", e instanceof Error ? e.message : e);
+        }
+      }
+    }
+  }
+
   async shutdown(): Promise<void> {
+    this.sessionAnnotators.clear();
     for (const ext of this.extensions.values()) {
       try {
         await ext.ext.server?.shutdown?.(this.serverContext(ext));
@@ -627,6 +664,8 @@ export class ExtRegistryImpl {
         this.errors.set(ext.id, `shutdown: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    // 会话后端 slot：扩展停用时注销它注册的全部 provider（含 shutdown 回调）。
+    await cleanupAllExtensionProviders();
   }
 
   /** Hot reload: shutdown → reload entries → startup. */
@@ -650,6 +689,31 @@ export class ExtRegistryImpl {
   private serverContext(ext: LoadedExtension): ExtServerContext {
     return {
       id: ext.id, dir: ext.dir, dataDir: ext.dataDir, core: this.core,
+      // 会话后端注册 slot（多 agent 前端）：键自动加 "<extId>/"" 前缀，shutdown 时自动注销。
+      // open/canOpen 委托 openExternalSession（agentKey 解析 + handle 入库）。
+      sessionProviders: {
+        register: (provider) => registerExtensionProvider(ext.id, provider),
+        remove: (type: string) => {
+          // 直接操作 globalThis（绕过 turbopack 模块图裁剪）
+          const map = (globalThis as { __sessionProviders?: Map<string, unknown> }).__sessionProviders;
+          if (!map) return false;
+          return map.delete(type);
+        },
+        canOpen: (agentKey: string) => findProvidersForAgent(agentKey).length > 0,
+        open: async (compositeId, options) => {
+          try {
+            const handle = await openExternalSession(compositeId, options);
+            if (!handle) return { ok: false, reason: "no_provider" as const };
+            return { ok: true, sessionId: handle.id };
+          } catch (e) {
+            return { ok: false, reason: "open_failed" as const, error: e instanceof Error ? e.message : String(e) };
+          }
+        },
+      },
+      // 会话标注 slot：数据所有权在扩展（核心不感知桥注册表等具体格式）
+      sessionAnnotations: {
+        register: (annotator) => this.registerSessionAnnotator(ext.id, annotator),
+      },
       // 通用 AI 调用（core 最底层能力，零业务）；按调用扩展 id 记账（token 统计在 core）。
       // caller 允许扩展细分场景（如 aiti-ai-input/complete、aiti-ai-input/voice-fix），缺省用 ext.id
       invokeAI: (p) => aiInvokeImpl({ ...p, caller: (p && p.caller) || ext.id }),

@@ -19,26 +19,35 @@ test("session listing merges live registry snapshots and honors force refresh", 
   assert.match(listRoute, /searchParams\.get\("force"\) === "1"/);
   assert.match(listRoute, /listAllSessions\(\{ force \}\)/);
   assert.match(listRoute, /attachSessionProjectInfo\(getRpcSessionInfos\(\)\)/);
-  assert.match(listRoute, /mergeSessionLists\(persistedSessions, runtimeSessions\)/);
+  // TUI 占用标记经扩展协商（sessionAnnotations slot），核心不读注册表文件
+  assert.match(listRoute, /dispatchSessionAnnotations\(sessions\)/);
+  assert.match(listRoute, /getHandleSessionInfos\(\)/);
+  // TUI-bridged sessions are marked in the merged list (agent badge)
   assert.match(listRoute, /"Cache-Control": "no-store"/);
 });
 
 test("session reads use the live SessionManager before requiring a JSONL path", () => {
   for (const source of [detailRoute, contextRoute]) {
-    const liveLookup = source.indexOf("getRpcSession(id)");
-    const pathLookup = source.indexOf("resolveSessionPath(id)");
-    assert.ok(liveLookup >= 0);
-    assert.ok(pathLookup > liveLookup);
+    // Live lookups precede the file-based fallback:
+    //   local registry (getRpcSession) and — in detail/state routes, where the
+    //   TUI single-writer rule applies — bridge attachment by path
+    //   (attachIfBridged; TUI owns the file so a stale wrapper yields to it)
+    //   plus provider handles (resolveAnySession).
+    assert.ok(source.includes("getRpcSession(id)"));
     assert.match(source, /liveRpc\?\.inner\.sessionManager \?\? SessionManager\.open/);
   }
+  // The detail route additionally honors TUI ownership and provider handles.
+  assert.match(detailRoute, /attachIfBridged\(/);
+  assert.match(detailRoute, /resolveAnySession\(id\)/);
 });
 
 test("live agent state is available before the session file is persisted", () => {
-  const liveLookup = stateRoute.indexOf("getRpcSession(id)");
-  const pathLookup = stateRoute.indexOf("resolveSessionPath(id)");
-  assert.ok(liveLookup >= 0);
-  assert.ok(pathLookup > liveLookup);
+  // Live sources (local registry / TUI bridge / provider handles) must all be
+  // consulted before falling back to a JSONL path.
+  assert.ok(stateRoute.includes("getRpcSession(id)"));
   assert.match(stateRoute, /if \(rpc\?\.isAlive\(\)\)/);
+  assert.match(stateRoute, /resolveAnySession\(id\)/);
+  assert.match(stateRoute, /attachIfBridged\(/);
 });
 
 test("live detail and state routes work without a persisted JSONL file", async (t) => {

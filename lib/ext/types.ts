@@ -49,6 +49,66 @@ export interface ExtStatusFeature extends ExtFeature {
   value?: string;
 }
 
+/**
+ * 会话后端注册 slot：扩展在 server.startup 里注册 SessionProvider，把自定义
+ * agent 后端接入 pi-web 的多 agent 前端。注册键自动加扩展 id 前缀
+ * （"<extId>/<type>"），不会遮蔽内置 provider 或其他扩展；扩展 shutdown/
+ * reload 时自动注销。
+ *
+ * 类型契约见 lib/session/types.ts（SessionHandle / SessionCapabilities）——
+ * fail loud：不支持的能力声明 false 并在方法里抛 UnsupportedCapabilityError。
+ */
+export interface ExtSessionProviderRegistration {
+  /** Provider 短名（不含前缀；不能含 "/"）。最终键 = "<extId>/<type>"。 */
+  type: string;
+  /** UI 展示名（新建会话的 provider 选择器）。 */
+  label: string;
+  /** 能力上限声明（fail-loud 契约，UI 据此显隐控件）。 */
+  maxCapabilities: import("../session/types.ts").SessionCapabilities;
+  createSession(options: {
+    sessionFile?: string;
+    cwd?: string;
+    socketPath?: string;
+    env?: Record<string, string>;
+    /** 扩展可自由扩展的额外选项（透传，host 不解释）。 */
+    [key: string]: unknown;
+  }): Promise<import("../session/types.ts").SessionHandle>;
+  shutdown?(): Promise<void>;
+}
+
+/**
+ * 会话标注 slot：扩展为会话列表行追加自有字段（如占用标记）。
+ * 数据的所有权在扩展——核心不感知任何具体格式（如桥注册表文件）。
+ * 返回以行 id 或 path 为键的部分字段映射，由核心合并进响应。
+ */
+export interface ExtSessionAnnotatorSlot {
+  /**
+   * 注册标注器。rows 是当前会话列表行的轻量投影；
+   * 返回 Record<rowKey, Partial<fields>>（rowKey 匹配行的 id 或 path）。
+   */
+  register(annotator: {
+    annotate(rows: Array<{ id: string; path?: string; cwd?: string }>): Promise<Record<string, Record<string, unknown>> | void>;
+  }): void;
+}
+
+export interface ExtSessionProviderSlot {
+  /** 注册后返回完整 registry key（"<extId>/<type>"），调用方作为 providerType 使用。 */
+  register(provider: ExtSessionProviderRegistration): string;
+  /** 按完整键注销一个 provider（热移除，无需 reload）。 */
+  remove(type: string): boolean;
+  /** 是否有能驱动该外部 agent 的后端（all-sessions agentKey，如 "claude"）。 */
+  canOpen(agentKey: string): boolean;
+  /**
+   * 打开外部历史会话为 live 会话（attach-from-history）。成功返回
+   * { ok: true, sessionId }（sessionId = 复合 id，可直接喂给 /api/agent/[id]）；
+   * 无驱动后端返回 { ok: false, reason: "no_provider" }。
+   */
+  open(
+    compositeId: string,
+    options?: { cwd?: string },
+  ): Promise<{ ok: true; sessionId: string } | { ok: false; reason: "no_provider" | "open_failed"; error?: string }>;
+}
+
 /** Core data capabilities handed to extensions — no reimplementation of session access. */
 export interface ExtCoreApi {
   listSessions(): Promise<unknown[]>;
@@ -75,6 +135,10 @@ export interface ExtServerContext {
   /** Absolute path of the extension data directory (~/.pi/web/data/<id>/). */
   dataDir: string;
   core: ExtCoreApi;
+  /** 会话后端注册 slot（多 agent 前端）：扩展经此注册自定义 SessionProvider。 */
+  sessionProviders: ExtSessionProviderSlot;
+  /** 会话标注 slot：扩展为会话列表追加自有标记（如 TUI 桥占用）。 */
+  sessionAnnotations: ExtSessionAnnotatorSlot;
   /** 通用 AI 调用（core 最底层模型能力）：任意 system+messages → { text, usage }；core 零业务、零统计。
    *  所有 prompt 组装 / 上下文 / 项目现场 / token 统计由调用方扩展负责。 */
   invokeAI?: (params: {
@@ -267,6 +331,9 @@ export type ParagraphClickHandler = ((info: ParagraphClickInfo) => void) & { hin
 export const EXT_PROVIDES = {
   /** 会话删除：声明后侧栏隐藏内置删除按钮（删除流由扩展接管，如先归档再在归档记录上删除）。 */
   sessionDelete: "session-delete",
+  /** 外部 agent 会话源：声明后 session-manager 自动发现本扩展，进程内直调其
+   *  api 钩子拉取 agent-source/manifest|list|session 归一化会话数据。 */
+  sessionAgentSource: "session-agent-source",
 } as const;
 
 export type ExtProvidesName = (typeof EXT_PROVIDES)[keyof typeof EXT_PROVIDES];

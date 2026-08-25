@@ -204,7 +204,7 @@ pi keeps steer/follow-up queues in memory only — a server restart would lose t
 - Allowed roots are stored slash-normalized, but that is a Set-key convention, not a correctness requirement: `isPathWithinRoots()` (`lib/path-security.ts`, the single implementation behind `isFilePathAllowed()`) re-resolves and case-folds both sides, so either path form authorizes correctly. Keep that one implementation — it is the security boundary.
 
 ### Plugins and skills
-- **扩展能力接管（ui.provides）**：扩展在 `ui.provides: string[]` 声明接管内置能力（能力名见 `lib/ext/types.ts` 的 `EXT_PROVIDES`，如 `"session-delete"`）。manifest 原样下发，客户端用 `useExtProvides()` 查询——有人声明时侧栏隐藏内置删除按钮（删除流由扩展接管，如 session-manager 的先归档再删），没人声明则内置按钮照常显示。新增能力：登记进 `EXT_PROVIDES` + 对应内置 UI 加门控。
+- **扩展能力接管（ui.provides）**：扩展在 `ui.provides: string[]` 声明接管内置能力（能力名见 `lib/ext/types.ts` 的 `EXT_PROVIDES`，如 `"session-delete"`）。manifest 原样下发，客户端用 `useExtProvides()` 查询——有人声明时侧栏隐藏内置删除按钮（删除流由扩展接管，如 session-manager 的先归档再删），没人声明则内置按钮照常显示。新增能力：登记进 `EXT_PROVIDES` + 对应内置 UI 加门控。 已登记能力：`session-delete`（会话删除接管）、`session-agent-source`（外部 agent 会话源，session-manager §4.8 slot 契约：manifest/list/session 三端点归一化拉取）。
 - `/api/plugins` uses pi's `SettingsManager` + `DefaultPackageManager` for global/project package install, remove, update, enable, and disable. Disabling writes empty `extensions/skills/prompts/themes` arrays for that package entry.
 - `/api/skills` uses `DefaultResourceLoader` so settings paths, package skills, and project `.agents/skills` are listed the same way the runtime sees them.
 - Skill toggling edits only the `disable-model-invocation` frontmatter key on the target `SKILL.md`; keep that surgical so user formatting survives.

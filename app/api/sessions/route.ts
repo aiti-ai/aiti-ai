@@ -6,6 +6,8 @@ import {
   invalidateSessionListCache,
 } from "@/lib/session-reader";
 import { getRpcSessionInfos, getRunningRpcSessionIds } from "@/lib/rpc-manager";
+import { getHandleSessionInfos } from "@/lib/session";
+import { getRegistry } from "@/lib/ext/registry";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +24,22 @@ export async function GET(req: Request) {
       listAllSessions({ force }),
       attachSessionProjectInfo(getRpcSessionInfos()),
     ]);
-    const sessions = mergeSessionLists(persistedSessions, runtimeSessions);
+    // Live backend sessions (attach/spawn/extension handles) — transient rows
+    // so the sidebar lists them and ?session=<composite-id> restore works.
+    const backendRows = await attachSessionProjectInfo(getHandleSessionInfos());
+
+    const pathKeyedHandles = backendRows.filter((r) => !r.id.startsWith("/"));
+    const sessions = mergeSessionLists(
+      mergeSessionLists(persistedSessions as never[], runtimeSessions),
+      pathKeyedHandles,
+    );
+    // 会话标注 slot：扩展（如 aiti-attach-agent 的 TUI 桥占用标记）追加自有字段。
+    // 数据所有权在扩展——核心不感知桥注册表等具体格式。
+    try {
+      await getRegistry().dispatchSessionAnnotations(sessions);
+    } catch (e) {
+      console.error("[sessions] annotate failed:", e instanceof Error ? e.message : e);
+    }
     return NextResponse.json(
       { sessions, runningSessionIds: getRunningRpcSessionIds() },
       { headers: { "Cache-Control": "no-store" } },

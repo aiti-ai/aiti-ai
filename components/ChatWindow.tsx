@@ -2,6 +2,7 @@
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, CustomMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
+import type { AttachedFile } from "@/hooks/useAgentSession";
 import { normalizeCustomPanelLines, parseAnsiLine } from "@/lib/ansi";
 import { apiUrl } from "@/lib/base-path";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
@@ -269,6 +270,12 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
 
+  // ── 会话后端选择（多 agent 前端）───────────────────────────────────────
+  // 仅 isNew 欢迎页展示；选项来自 /api/session-backends（扩展注册的后端自动出现）。
+  // null = 本地 pi（默认，不出现在列表里也无需请求）。
+  const [backendOptions, setBackendOptions] = useState<Array<{ type: string; label: string; agentKey?: string }>>([]);
+  const [sessionBackend, setSessionBackend] = useState<string | null>(null);
+
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
   // wrapping handleAgentEventRef because useAgentSession overwrites that ref
   // on every render (it syncs the latest callback), which would blow away an
@@ -307,6 +314,8 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     slashCommands, slashCommandsLoading, queuedMessages,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
+
     isAutoModelSelection,
     agentPhase,
     isNew,
@@ -320,11 +329,18 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom,
     activeLeafId,
   } = useAgentSession({
-    session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
+    session, sessionRunning, newSessionCwd, newSessionDraftKey, newSessionBackend: sessionBackend, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemPromptLoaderChange, onSessionStatsPanelOpen,
     promptAnchorSpacerHeightRef,
     bottomComposerHeightRef,
   });
+
+  // ── capability-aware 控件门控 ──────────────────────────────────────
+  // 后端会话按 capabilities 隐藏不支持的功能；本地会话（无 capabilities）全通。
+  const sessionCap = useCallback(<K extends string>(k: K, fallback = true): boolean =>
+    sessionCapabilities ? (sessionCapabilities[k] ?? false) : fallback,
+  [sessionCapabilities]);
+
   const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");
   const belowEditorWidgets = extensionWidgets.filter((widget) => widget.placement === "belowEditor");
 
@@ -384,18 +400,18 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
   // 发送：pending 时先回退会话（真正生效点），再发送编辑后的消息。
   // bash 命令（! 前缀）不触发回退——用户此时只是想跑 shell，标记保留待下次发送。
-  const handleSendWrapped = useCallback(async (message: string, images?: AttachedImage[]) => {
+  const handleSendWrapped = useCallback(async (message: string, images?: AttachedImage[], files?: AttachedFile[]) => {
     const pending = editFromHerePendingRef.current;
     if (pending) {
       if (message.trim().startsWith("!")) {
-        await handleSend(message, images);
+        await handleSend(message, images, files);
         return;
       }
       setEditFromHerePending(null);
       await handleEditFromStartSend(pending.targetId, pending.leafId, message, images);
       return;
     }
-    await handleSend(message, images);
+    await handleSend(message, images, files);
   }, [handleEditFromStartSend, handleSend]);
   const [recoveryDismissed, setRecoveryDismissed] = useState(false);
   /** 「继续」按钮：AI 完全停止（无 streaming）时出现——点击快速发送“继续”消息，触发 agent 继续运行。
@@ -621,6 +637,21 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   }, [messages.length]);
 
   const isEmptyNew = isNew && messages.length === 0 && !streamState.isStreaming && !sessionBusy;
+
+  // 发现可用后端（仅新会话欢迎页；扩展注册的后端自动出现，无后端时选择器不渲染）。
+  useEffect(() => {
+    if (!isNew || backendOptions.length > 0) return;
+    let cancelled = false;
+    fetch(apiUrl("/api/session-backends"))
+      .then((r) => (r.ok ? r.json() : { providers: [] }))
+      .then((d: { providers?: Array<{ type: string; label: string; agentKey?: string }> }) => {
+        if (!cancelled) setBackendOptions(d.providers ?? []);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [isNew, backendOptions.length]);
   const hasStreamingContent = Boolean(streamState.streamingMessage?.content.length);
   const messageCwd = session?.cwd ?? newSessionCwd ?? undefined;
   const bottomComposerRef = useRef<HTMLDivElement | null>(null);
@@ -711,9 +742,15 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       modelList={modelList}
       modelError={modelError}
       modelScopeWarnings={modelScopeWarnings}
-      onModelChange={handleModelChange}
+      onModelChange={
+        session && session.agent && !sessionCap("setModel")
+          ? undefined
+          : handleModelChange
+      }
       modelSwitching={modelSwitching}
-      onCompact={session || isNew ? handleCompact : undefined}
+      onCompact={session || isNew
+        ? (sessionCap("compact") ? handleCompact : undefined)
+        : undefined}
       onAbortCompaction={handleAbortCompaction}
       isCompacting={isCompacting}
       compactError={compactError}
@@ -722,9 +759,15 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       modelSwitchPending={modelSwitchPending}
       onCancelCompactQueue={cancelCompactQueue}
       toolPreset={toolPreset}
-      onToolPresetChange={session || isNew ? handleToolPresetChange : undefined}
+      onToolPresetChange={session || isNew
+        ? (sessionCap("setActiveTools", true) ? handleToolPresetChange : undefined)
+        : undefined}
+      sessionCapabilities={sessionCapabilities}
+      onSwitchPermissionMode={switchPermissionMode}
       thinkingLevel={thinkingLevel}
-      onThinkingLevelChange={session || isNew ? handleThinkingLevelChange : undefined}
+      onThinkingLevelChange={session || isNew
+        ? (sessionCap("setThinkingLevel") ? handleThinkingLevelChange : undefined)
+        : undefined}
       availableThinkingLevels={availableThinkingLevels}
       thinkingLevelMap={currentThinkingLevelMap}
       retryInfo={retryInfo}
@@ -1078,6 +1121,50 @@ const messageListEl = useMemo(() => {
         <NoticeShelf notices={notices} floating />
       </div>
 
+      {permissionRequest && (
+        <div style={{ position: "fixed", bottom: 140, left: "50%", transform: "translateX(-50%)", zIndex: 260,
+          width: "min(480px, 92vw)", background: "var(--bg-panel)", border: "1px solid #f59e0b88",
+          borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.35)", padding: "12px 14px", fontFamily: "var(--font-mono)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span style={{ fontSize: 14 }}>🔐</span>
+            <strong style={{ fontSize: 13, color: "var(--text)" }}>工具授权请求</strong>
+            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--accent)" }}>{permissionRequest.toolName}</span>
+          </div>
+          {permissionRequest.input != null && (
+            <pre style={{ maxHeight: 120, overflowY: "auto", fontSize: 11, background: "var(--bg)", borderRadius: 6,
+              padding: "6px 8px", margin: "0 0 8px", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--text-muted)" }}>
+              {typeof permissionRequest.input === "string" ? permissionRequest.input : JSON.stringify(permissionRequest.input, null, 2)}
+            </pre>
+          )}
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <button onClick={() => void respondToPermission("deny")}
+              style={{ padding: "5px 14px", borderRadius: 7, border: "1px solid #ef444466",
+                background: "none", color: "#ef4444", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+              Deny
+            </button>
+            <button onClick={() => void respondToPermission("allow")}
+              style={{ padding: "5px 14px", borderRadius: 7, border: "none",
+                background: "#22c55e", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+              Allow
+            </button>
+          </div>
+        </div>
+      )}
+      {backendUsage && !isEmptyNew && (
+        <div style={{
+          position: "fixed", top: 52, right: 16, zIndex: 200,
+          display: "flex", alignItems: "center", gap: 6,
+          padding: "3px 10px", borderRadius: 12,
+          background: "var(--bg-panel)", border: "1px solid var(--border)",
+          fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)",
+        }}>
+          <span title="Backend usage (last turn)">
+            {backendUsage.inputTokens != null && <span>↑{backendUsage.inputTokens >= 1000 ? `${(backendUsage.inputTokens / 1000).toFixed(1)}k` : backendUsage.inputTokens} </span>}
+            {backendUsage.outputTokens != null && <span>↓{backendUsage.outputTokens} </span>}
+            {backendUsage.costUsd != null && backendUsage.costUsd > 0 && <span>${backendUsage.costUsd.toFixed(4)}</span>}
+          </span>
+        </div>
+      )}
       {isEmptyNew ? (
         <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
           <div className="w-full max-w-[820px]">
@@ -1108,6 +1195,48 @@ const messageListEl = useMemo(() => {
               </div>
             </div>
             <NoticeShelf notices={notices} align="right" />
+            {backendOptions.length > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginLeft: 16,
+                  marginRight: isMobile || isCompact ? 16 : 52,
+                  marginBottom: 10,
+                  fontFamily: "var(--font-mono)",
+                  fontSize: 12,
+                }}
+              >
+                <span style={{ color: "var(--text-muted)" }}>Backend</span>
+                <select
+                  value={sessionBackend ?? ""}
+                  onChange={(e) => setSessionBackend(e.target.value || null)}
+                  style={{
+                    padding: "4px 8px",
+                    background: "var(--bg-hover)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 8,
+                    color: "var(--text)",
+                    fontFamily: "inherit",
+                    fontSize: 12,
+                    cursor: "pointer",
+                  }}
+                >
+                  <option value="">Pi (local)</option>
+                  {backendOptions.map((b) => (
+                    <option key={b.type} value={b.type}>
+                      {b.label}
+                    </option>
+                  ))}
+                </select>
+                {sessionBackend && (
+                  <span style={{ color: "var(--text-dim)", fontSize: 11 }}>
+                    session runs via: {sessionBackend}
+                  </span>
+                )}
+              </div>
+            )}
             <ExtensionWidgets widgets={aboveEditorWidgets} />
             {chatInputElement}
             <ExtensionWidgets widgets={belowEditorWidgets} />

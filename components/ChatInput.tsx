@@ -75,6 +75,13 @@ export interface AttachedImage {
   previewUrl: string; // object URL for display
 }
 
+/** 非图片文件附件（PDF/文档等）——仅后端会话支持（fileAttachments 能力）。 */
+export interface AttachedFile {
+  data: string;   // base64, no prefix
+  mimeType: string;
+  filename: string;
+}
+
 interface ModelOption {
   provider: string;
   modelId: string;
@@ -82,16 +89,16 @@ interface ModelOption {
 }
 
 interface Props {
-  onSend: (message: string, images?: AttachedImage[]) => void;
+  onSend: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
   onAbort: () => void;
   /** 当前会话 id：透传给 chatInputTop 扩展槽（如 aiti-ai-input 的 AI 用量按会话记账） */
   sessionId?: string | null;
-  onSteer?: (message: string, images?: AttachedImage[]) => void;
-  onFollowUp?: (message: string, images?: AttachedImage[]) => void;
+  onSteer?: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
+  onFollowUp?: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
   /** 仅入队不触发（草稿恢复「Re-queue」语义）：空闲也只进 follow-up 队列，不直发。
    *  与 onFollowUp 区别：后者仅在 agent 运行时由 ChatWindow 接入（隐藏按钮用）；
    *  onQueueFollowUp 始终接入（恢复路径需要空闲也能入队）。 */
-  onQueueFollowUp?: (message: string, images?: AttachedImage[]) => void;
+  onQueueFollowUp?: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
   /** Send a queued follow-up as a steer (interrupt now). Available even when idle. */
   onQueueSteerSend?: (message: string) => void;
   /** 显示「继续」按钮：AI 完全停止（无任何 streaming）且输入框为空时出现。 */
@@ -100,7 +107,13 @@ interface Props {
   onContinue?: () => void;
   /** Convert a queued message's kind (steer ↔ follow-up) without dispatching it. */
   onConvertQueueItem?: (kind: "steer" | "followUp", index: number, targetKind: "steer" | "followUp") => Promise<boolean>;
-  onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[]) => void;
+  onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[], files?: AttachedFile[]) => void;
+  /** 后端会话能力（capability-aware 控件渲染；null = 本地会话） */
+  sessionCapabilities?: Record<string, boolean> | null;
+  /** 当前权限模式（后端会话；本地会话无） */
+  permissionMode?: string;
+  /** 切换权限模式（setPermissionMode 能力时可用） */
+  onSwitchPermissionMode?: (mode: string) => void;
   isStreaming: boolean;
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
@@ -867,6 +880,7 @@ function StreamingActionButton({
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionId,
   onSend, onAbort, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
+  sessionCapabilities, onSwitchPermissionMode, permissionMode,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
@@ -897,6 +911,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
   const [controlsMenuOpen, setControlsMenuOpen] = useState(false);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
+  const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
+  const anyFileInputRef = useRef<HTMLInputElement>(null);
   const trimmedValue = value.trimStart();
   const bashMode = attachedImages.length === 0 && trimmedValue.startsWith("!");
   const bashExcluded = bashMode && trimmedValue.startsWith("!!");
@@ -1468,6 +1484,44 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     },
   }));
 
+  const MAX_ATTACHED_FILE_BYTES = 10 * 1024 * 1024;
+  const processDocFiles = useCallback(async (files: File[]) => {
+    const remaining = Math.max(0, MAX_ATTACHED_IMAGES - attachedFiles.length);
+    const docs = files
+      .filter((f) => f.size <= MAX_ATTACHED_FILE_BYTES)
+      .slice(0, remaining);
+    const skipped = files.length - docs.length;
+    if (skipped > 0) showQueueNotice(t("chat.fileTooLarge"), false);
+    if (!docs.length) return;
+    try {
+      const newFiles = await Promise.all(
+        docs.map(
+          (file) =>
+            new Promise<AttachedFile>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const result = reader.result as string;
+                resolve({
+                  data: result.split(",")[1],
+                  mimeType: file.type || "application/octet-stream",
+                  filename: file.name,
+                });
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+            }),
+        ),
+      );
+      setAttachedFiles((prev) => [...prev, ...newFiles].slice(0, MAX_ATTACHED_IMAGES));
+    } catch (e) {
+      console.error("Failed to read file attachment:", e);
+    }
+  }, [attachedFiles.length, t]);
+
+  const removeAttachedFile = useCallback((index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
   const processImageFiles = useCallback(async (files: File[]) => {
     const remaining = Math.max(
       0,
@@ -1774,9 +1828,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // composer 增强契约：发送前链式钩子 → 扩展聊天钩子（既有 [元素N]/[回答N]/[错误N] 替换）
     const submittedMsg = runComposerSubmit(msg, attachedImages.length);
     const finalMsg = applyChatHooks(submittedMsg);
-    onSend(finalMsg, attachedImages.length ? attachedImages : undefined);
+    onSend(finalMsg, attachedImages.length ? attachedImages : undefined, attachedFiles.length ? attachedFiles : undefined);
+    setAttachedFiles([]);
+    
     clearInput();
-  }, [value, attachedImages, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, onRequeueAt, applyChatHooks]);
+  }, [value, attachedImages, attachedFiles, isStreaming, onBuiltinCommand, onSend, clearInput, onAudioUnlock, onRequeueAt, applyChatHooks]);
 
   /** 扩展程序化发送（aiti-prompts 等）：与用户输入同链路——applyChatHooks 钩子生效；
    *  agent 流式时按 mode 插队(steer)/排队(followUp)（与 sendQueued 同分支），空闲时直接触发（等同 Enter）。
@@ -2393,6 +2449,24 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     else modelsByProvider.push({ provider: opt.provider, options: [opt] });
   }
 
+  // 防呆标注：同名模型出现在多个 provider 分组时（如 opencode-go 与 opencode-go-2
+  // 都列出 ox-alpha-free），相邻分组的选项标签完全一样，极易点错——而 set_model 按
+  // provider+id 精确匹配，点错等于静默切到了另一个 provider。对这些重名选项在名称后
+  // 追加 provider 小字。按完整列表计算（非过滤结果），避免输入过滤词时标注闪烁。
+  const ambiguousModelNames = (() => {
+    const providersByName = new Map<string, Set<string>>();
+    for (const opt of modelOptions) {
+      let provs = providersByName.get(opt.name);
+      if (!provs) { provs = new Set(); providersByName.set(opt.name, provs); }
+      provs.add(opt.provider);
+    }
+    const names = new Set<string>();
+    for (const [name, provs] of providersByName) {
+      if (provs.size > 1) names.add(name);
+    }
+    return names;
+  })();
+
   // Decide whether providers should be auto-collapsed: when there are more
   // than 2 providers and the (unfiltered) model list has more than 6 entries.
   // The provider holding the active model stays expanded so the user can see
@@ -2547,6 +2621,21 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         onChange={(e) => {
           const files = Array.from(e.target.files ?? []);
           processImageFiles(files);
+          e.target.value = "";
+        }}
+      />
+      {/* Hidden generic-file input（文件附件：PDF/文档等，后端 fileAttachments 能力） */}
+      <input
+        ref={anyFileInputRef}
+        type="file"
+        multiple
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const picked = Array.from(e.target.files ?? []);
+          const imgs = picked.filter((f) => f.type.startsWith("image/"));
+          const docs = picked.filter((f) => !f.type.startsWith("image/"));
+          if (imgs.length) processImageFiles(imgs);
+          processDocFiles(docs);
           e.target.value = "";
         }}
       />
@@ -3281,6 +3370,30 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             ))}
           </div>
         )}
+        {attachedFiles.length > 0 && (
+          <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
+            {attachedFiles.map((f, i) => (
+              <div key={`${f.filename}-${i}`} style={{
+                display: "flex", alignItems: "center", gap: 5,
+                padding: "5px 9px", borderRadius: 6,
+                background: "var(--bg-hover)", border: "1px solid var(--border)",
+                fontSize: 11, color: "var(--text)", maxWidth: 220,
+              }}>
+                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  📎 {f.filename}
+                </span>
+                <button
+                  onClick={() => removeAttachedFile(i)}
+                  style={{ background: "none", border: "none", cursor: "pointer", padding: 0, color: "var(--text-muted)", display: "flex" }}
+                >
+                  <svg width="8" height="8" viewBox="0 0 8 8" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                    <line x1="1" y1="1" x2="7" y2="7" /><line x1="7" y1="1" x2="1" y2="7" />
+                  </svg>
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Main input */}
         <div style={{ position: "relative", minWidth: 0 }}>
@@ -3925,8 +4038,34 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           {/* LEFT: attach + model selector (idle) or steer/followup toggle (streaming) */}
           <div style={{ flex: isMobile ? "1 1 auto" : "0 0 auto", minWidth: 0, display: "flex", alignItems: "center", gap: 2 }}>
             <button
+              onClick={() => anyFileInputRef.current?.click()}
+              title={t("chat.attachFile")}
+              style={{
+                flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
+                width: 32, height: 32, padding: 0,
+                background: "none", border: "none",
+                borderRadius: 9,
+                color: attachedFiles.length ? "var(--accent)" : "var(--text-muted)",
+                cursor: "pointer",
+                transition: "background 0.12s, color 0.12s",
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = "var(--bg-hover)";
+                e.currentTarget.style.color = attachedFiles.length ? "var(--accent)" : "var(--text)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "none";
+                e.currentTarget.style.color = attachedFiles.length ? "var(--accent)" : "var(--text-muted)";
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                <polyline points="14 2 14 8 20 8" />
+              </svg>
+            </button>
+            <button
               onClick={() => fileInputRef.current?.click()}
-             title={t("chat.attachImage")}
+              title={t("chat.attachImage")}
               style={{
                 flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
                 width: 32, height: 32, padding: 0,
@@ -4135,6 +4274,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                     setModelFilter("");
                                     if (!isActive || isAutoModelSelection) onModelChange(opt.provider, opt.modelId);
                                   }}
+                                  title={`${opt.name} · ${opt.provider}`}
                                   style={{
                                     display: "flex", alignItems: "center", gap: 8,
                                     width: "100%", padding: "7px 12px",
@@ -4151,7 +4291,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                                   {isActive
                                     ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
                                     : <span style={{ width: 10, flexShrink: 0 }} />}
-                                  {opt.name}
+                                  <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                                    {opt.name}
+                                    {ambiguousModelNames.has(opt.name) && (
+                                      <span style={{ fontSize: 10, fontWeight: 400, color: "var(--text-dim)", marginLeft: 6 }}>
+                                        {opt.provider}
+                                      </span>
+                                    )}
+                                  </span>
                                 </button>
                               );
                             })}
@@ -4331,6 +4478,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </div>
                 )}
               </div>
+            )}
+            {!isStreaming && onSwitchPermissionMode && sessionCapabilities?.setPermissionMode && (
+              <PermissionModeDropdown
+                currentMode={permissionMode ?? "default"}
+                onSwitch={(mode) => onSwitchPermissionMode(mode)}
+              />
             )}
             {!isStreaming && onToolPresetChange && (
               <div ref={toolDropdownRef} style={{ position: "relative" }}>
@@ -4626,6 +4779,77 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       </div>
   );
 });
+// ============================================================================
+// PermissionModeDropdown — 后端会话的运行时权限模式切换（cc-connect ModeSwitcher 对齐）
+// ============================================================================
+
+const PERMISSION_MODES: Array<{ value: string; label: string }> = [
+  { value: "default", label: "Default" },
+  { value: "acceptEdits", label: "Accept Edits" },
+  { value: "plan", label: "Plan" },
+  { value: "dontAsk", label: "Don't Ask" },
+  { value: "bypassPermissions", label: "Bypass" },
+];
+
+function PermissionModeDropdownInner({ currentMode, onSwitch }: {
+  currentMode: string;
+  onSwitch: (mode: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+  const label = PERMISSION_MODES.find((m) => m.value === currentMode)?.label ?? currentMode;
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button onClick={() => setOpen((v) => !v)} title={`Permission mode: ${currentMode}`}
+        style={{
+          display: "flex", alignItems: "center", gap: 5,
+          padding: "6px 10px", height: 30,
+          background: open ? "var(--bg-hover)" : "none", border: "none", borderRadius: 9,
+          color: currentMode !== "default" ? "#f59e0b" : "var(--text-muted)",
+          cursor: "pointer", fontSize: 12,
+          transition: "background 0.12s, color 0.12s",
+        }}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        <span>{label}</span>
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", bottom: "calc(100% + 4px)", left: 0, minWidth: 160,
+          background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 8,
+          boxShadow: "0 -4px 16px rgba(0,0,0,0.15)", zIndex: 130, overflow: "hidden",
+        }}>
+          {PERMISSION_MODES.map((m) => (
+            <button key={m.value} onClick={() => { onSwitch(m.value); setOpen(false); }}
+              style={{
+                display: "block", width: "100%", padding: "7px 14px", textAlign: "left",
+                background: m.value === currentMode ? "var(--bg-selected)" : "none",
+                border: "none", cursor: "pointer", fontSize: 12,
+                color: m.value === currentMode ? "var(--accent)" : "var(--text)",
+                fontWeight: m.value === currentMode ? 600 : 400,
+              }}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+const PermissionModeDropdown = React.memo(PermissionModeDropdownInner);
+
 // memo：AI 流式期间 ChatWindow 每 token 重渲染（streamState 引用变），但传给本组件的
 // props 全部是稳定引用（hook 内 useCallback/useState/useMemo）——memo 后流式期间
 // 输入框不再被波及重渲染（性能 + 避免受控覆写打断语音组合输入）。

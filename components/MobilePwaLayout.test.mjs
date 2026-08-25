@@ -17,12 +17,17 @@ test("configures iOS standalone mode to use the full screen", () => {
 
 test("tracks the visual viewport while the software keyboard is open", () => {
   assert.match(appShellSource, /useViewportHeight\(\)/);
+  // Left/right safe-area padding lives on .app-shell-row (globals.css): kept
+  // on <641px single-column, zeroed on ≥641px multi-column — a tablet's 38px
+  // right gesture inset would pad out the whole three-column row otherwise.
+  assert.match(appShellSource, /className="app-shell-row"/);
+  assert.match(cssSource, /\.app-shell-row \{[\s\S]*?padding-left: env\(safe-area-inset-left\)[\s\S]*?padding-right: env\(safe-area-inset-right\)/);
+  assert.match(cssSource, /@media \(min-width: 641px\) \{[\s\S]*?\.app-shell-row \{[\s\S]*?padding-left: 0;[\s\S]*?padding-right: 0;/);
+  // Top/bottom insets stay inline (top bars + panel bottom).
   assert.match(appShellSource, /paddingTop: "env\(safe-area-inset-top\)"/);
   assert.match(appShellSource, /paddingBottom: "env\(safe-area-inset-bottom\)"/);
-  assert.match(appShellSource, /paddingLeft: "env\(safe-area-inset-left\)"/);
-  assert.match(appShellSource, /paddingRight: "env\(safe-area-inset-right\)"/);
   assert.match(appShellSource, /height: "calc\(36px \+ env\(safe-area-inset-top\)\)"/);
-  assert.match(appShellSource, /\/\* Right panel tab bar \*\/[\s\S]*?height: "calc\(36px \+ env\(safe-area-inset-top\)\)"/);
+  assert.match(appShellSource, /\/\* Right panel tab bar[\s\S]*?height: "calc\(36px \+ env\(safe-area-inset-top\)\)"/);
   assert.match(appShellSource, /height: "var\(--app-viewport-height, 100dvh\)"/);
   assert.match(viewportHookSource, /window\.visualViewport/);
   assert.match(viewportHookSource, /window\.requestAnimationFrame\(update\)/);

@@ -29,6 +29,10 @@ const EXT_CORS: Record<string, string> = {
   "access-control-allow-headers": "Content-Type",
 };
 
+/** vite/rollup 构建产物的内容 hash 文件名（如 editor-KLE6jdfb.js / json.worker-BizpAl9O.js）。
+ *  内容变 → 文件名变，可安全 immutable 永久缓存（Monaco 分包资产等）。 */
+const HASHED_ASSET_RE = /-[A-Za-z0-9_-]{8}\.[a-zA-Z0-9]+$/;
+
 async function handle(req: NextRequest, params: Params): Promise<Response> {
   // aiti-devtools：注入页面（vhost/本地端口）跨域直连桥——放行 origin 门禁（桥本身有 secret 凭证认证 + 本地无鉴权语义）
   // 其他扩展保持默认门禁
@@ -49,14 +53,38 @@ async function handle(req: NextRequest, params: Params): Promise<Response> {
       if (!existsSync(file) || !statSync(file).isFile()) {
         return NextResponse.json({ error: "not found" }, { status: 404 });
       }
-      const content = readFileSync(file);
       const dot = file.lastIndexOf(".");
       const type = dot >= 0 ? CONTENT_TYPES[file.slice(dot)] : undefined;
-      return new Response(content, {
+      const contentType = type ?? "application/octet-stream";
+
+      // 内容 hash 文件名：内容变→名变，immutable 永久缓存（此前一律 no-store，导致
+      // Monaco 等分包资产每次页面加载全量重拉 ~4MB/17 请求，首次打开编辑器秒级→十秒级）
+      if (HASHED_ASSET_RE.test(file)) {
+        return new Response(readFileSync(file), {
+          status: 200,
+          headers: {
+            "content-type": contentType,
+            "cache-control": "public, max-age=31536000, immutable",
+          },
+        });
+      }
+
+      // 非 hash 文件（loader.js / 扩展 client bundle 等）：ETag 协商缓存——文件未变时
+      // 304 免重传；变了立即拿新的（不依赖 URL 变化，部署即生效）
+      const st = statSync(file);
+      const etag = `W/"${st.mtimeMs.toString(36)}-${st.size.toString(36)}"`;
+      if (req.headers.get("if-none-match") === etag) {
+        return new Response(null, {
+          status: 304,
+          headers: { etag, "cache-control": "public, max-age=0, must-revalidate" },
+        });
+      }
+      return new Response(readFileSync(file), {
         status: 200,
         headers: {
-          "content-type": type ?? "application/octet-stream",
-          "cache-control": "no-store",
+          "content-type": contentType,
+          etag,
+          "cache-control": "public, max-age=0, must-revalidate",
         },
       });
     } catch {

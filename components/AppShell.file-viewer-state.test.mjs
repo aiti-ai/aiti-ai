@@ -16,7 +16,9 @@ test("only the active file tab mounts a FileViewer", () => {
   const block = fileContentBlock();
   assert.match(block, /activeFileTab\?\.filePath \? \(/);
   assert.doesNotMatch(block, /fileTabs\.map\(/);
-  assert.equal(block.match(/<FileViewer/g)?.length, 1);
+  // Two mutually-exclusive branches (folder kind | file path) — exactly one
+  // viewer ever mounted at runtime; never one per tab.
+  assert.equal(block.match(/<FileViewer/g)?.length, 2);
 });
 
 test("the active viewer restores tab state and saves it with a revision", () => {
