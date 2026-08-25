@@ -319,6 +319,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource,
+
     isAutoModelSelection,
     agentPhase,
     isNew,
@@ -337,6 +338,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     promptAnchorSpacerHeightRef,
     bottomComposerHeightRef,
   });
+
+  // ── capability-aware 控件门控 ──────────────────────────────────────
+  // 后端会话按 capabilities 隐藏不支持的功能；本地会话（无 capabilities）全通。
+  const sessionCap = useCallback(<K extends string>(k: K, fallback = true): boolean =>
+    sessionCapabilities ? (sessionCapabilities[k] ?? false) : fallback,
+  [sessionCapabilities]);
+
   const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");
   const belowEditorWidgets = extensionWidgets.filter((widget) => widget.placement === "belowEditor");
 
@@ -886,9 +894,15 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       modelList={modelList}
       modelError={modelError}
       modelScopeWarnings={modelScopeWarnings}
-      onModelChange={handleModelChange}
+      onModelChange={
+        session && session.agent && !sessionCap("setModel")
+          ? undefined
+          : handleModelChange
+      }
       modelSwitching={modelSwitching}
-      onCompact={session || isNew ? handleCompact : undefined}
+      onCompact={session || isNew
+        ? (sessionCap("compact") ? handleCompact : undefined)
+        : undefined}
       onAbortCompaction={handleAbortCompaction}
       isCompacting={isCompacting}
       compactError={compactError}
@@ -897,11 +911,15 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       modelSwitchPending={modelSwitchPending}
       onCancelCompactQueue={cancelCompactQueue}
       toolPreset={toolPreset}
-      onToolPresetChange={session || isNew ? handleToolPresetChange : undefined}
+      onToolPresetChange={session || isNew
+        ? (sessionCap("setActiveTools", true) ? handleToolPresetChange : undefined)
+        : undefined}
       sessionCapabilities={sessionCapabilities}
       onSwitchPermissionMode={switchPermissionMode}
       thinkingLevel={thinkingLevel}
-      onThinkingLevelChange={session || isNew ? handleThinkingLevelChange : undefined}
+      onThinkingLevelChange={session || isNew
+        ? (sessionCap("setThinkingLevel") ? handleThinkingLevelChange : undefined)
+        : undefined}
       availableThinkingLevels={availableThinkingLevels}
       thinkingLevelMap={currentThinkingLevelMap}
       retryInfo={retryInfo}
