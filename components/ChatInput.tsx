@@ -88,6 +88,12 @@ interface Props {
   /** Convert a queued message's kind (steer ↔ follow-up) without dispatching it. */
   onConvertQueueItem?: (kind: "steer" | "followUp", index: number, targetKind: "steer" | "followUp") => Promise<boolean>;
   onPromptWithStreamingBehavior?: (message: string, behavior: "steer" | "followUp", images?: AttachedImage[], files?: AttachedFile[]) => void;
+  /** 后端会话能力（capability-aware 控件渲染；null = 本地会话） */
+  sessionCapabilities?: Record<string, boolean> | null;
+  /** 当前权限模式（后端会话；本地会话无） */
+  permissionMode?: string;
+  /** 切换权限模式（setPermissionMode 能力时可用） */
+  onSwitchPermissionMode?: (mode: string) => void;
   isStreaming: boolean;
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
@@ -852,6 +858,7 @@ function StreamingActionButton({
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionId,
   onSend, onAbort, onSteer, onFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
+  sessionCapabilities, onSwitchPermissionMode, permissionMode,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
@@ -4374,6 +4381,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 )}
               </div>
             )}
+            {!isStreaming && onSwitchPermissionMode && sessionCapabilities?.setPermissionMode && (
+              <PermissionModeDropdown
+                currentMode={permissionMode ?? "default"}
+                onSwitch={(mode) => onSwitchPermissionMode(mode)}
+              />
+            )}
             {!isStreaming && onToolPresetChange && (
               <div ref={toolDropdownRef} style={{ position: "relative" }}>
                 <button
@@ -4668,6 +4681,77 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       </div>
   );
 });
+// ============================================================================
+// PermissionModeDropdown — 后端会话的运行时权限模式切换（cc-connect ModeSwitcher 对齐）
+// ============================================================================
+
+const PERMISSION_MODES: Array<{ value: string; label: string }> = [
+  { value: "default", label: "Default" },
+  { value: "acceptEdits", label: "Accept Edits" },
+  { value: "plan", label: "Plan" },
+  { value: "dontAsk", label: "Don't Ask" },
+  { value: "bypassPermissions", label: "Bypass" },
+];
+
+function PermissionModeDropdownInner({ currentMode, onSwitch }: {
+  currentMode: string;
+  onSwitch: (mode: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [open]);
+  const label = PERMISSION_MODES.find((m) => m.value === currentMode)?.label ?? currentMode;
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button onClick={() => setOpen((v) => !v)} title={`Permission mode: ${currentMode}`}
+        style={{
+          display: "flex", alignItems: "center", gap: 5,
+          padding: "6px 10px", height: 30,
+          background: open ? "var(--bg-hover)" : "none", border: "none", borderRadius: 9,
+          color: currentMode !== "default" ? "#f59e0b" : "var(--text-muted)",
+          cursor: "pointer", fontSize: 12,
+          transition: "background 0.12s, color 0.12s",
+        }}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+        </svg>
+        <span>{label}</span>
+      </button>
+      {open && (
+        <div style={{
+          position: "absolute", bottom: "calc(100% + 4px)", left: 0, minWidth: 160,
+          background: "var(--bg-panel)", border: "1px solid var(--border)", borderRadius: 8,
+          boxShadow: "0 -4px 16px rgba(0,0,0,0.15)", zIndex: 130, overflow: "hidden",
+        }}>
+          {PERMISSION_MODES.map((m) => (
+            <button key={m.value} onClick={() => { onSwitch(m.value); setOpen(false); }}
+              style={{
+                display: "block", width: "100%", padding: "7px 14px", textAlign: "left",
+                background: m.value === currentMode ? "var(--bg-selected)" : "none",
+                border: "none", cursor: "pointer", fontSize: 12,
+                color: m.value === currentMode ? "var(--accent)" : "var(--text)",
+                fontWeight: m.value === currentMode ? 600 : 400,
+              }}
+            >
+              {m.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+const PermissionModeDropdown = React.memo(PermissionModeDropdownInner);
+
 // memo：AI 流式期间 ChatWindow 每 token 重渲染（streamState 引用变），但传给本组件的
 // props 全部是稳定引用（hook 内 useCallback/useState/useMemo）——memo 后流式期间
 // 输入框不再被波及重渲染（性能 + 避免受控覆写打断语音组合输入）。

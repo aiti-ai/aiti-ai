@@ -318,7 +318,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     slashCommands, slashCommandsLoading, queuedMessages,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
-    permissionRequest, respondToPermission,
+    permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource,
     isAutoModelSelection,
     agentPhase,
     isNew,
@@ -898,6 +898,8 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       onCancelCompactQueue={cancelCompactQueue}
       toolPreset={toolPreset}
       onToolPresetChange={session || isNew ? handleToolPresetChange : undefined}
+      sessionCapabilities={sessionCapabilities}
+      onSwitchPermissionMode={switchPermissionMode}
       thinkingLevel={thinkingLevel}
       onThinkingLevelChange={session || isNew ? handleThinkingLevelChange : undefined}
       availableThinkingLevels={availableThinkingLevels}

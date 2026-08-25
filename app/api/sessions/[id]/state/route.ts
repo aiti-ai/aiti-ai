@@ -37,8 +37,17 @@ export async function GET(
     // Backend (provider-handle) sessions: state via the wrapper adapter.
     const wrapped = resolveAnySession(id);
     if (wrapped?.isAlive()) {
-      const state = await wrapped.send({ type: "get_state" });
-      return NextResponse.json({ running: true, state });
+      const state = (await wrapped.send({ type: "get_state" })) as Record<string, unknown> | null;
+      return NextResponse.json({
+        running: true,
+        state: {
+          ...(state ?? {}),
+          // 能力声明透传给前端（capability-aware 控件渲染）
+          capabilities: (wrapped as { handle?: { capabilities?: unknown } }).handle
+            ?.capabilities ?? (wrapped as unknown as { capabilities?: unknown }).capabilities,
+          backendSource: wrapped.source,
+        },
+      });
     }
 
     if (!await resolveSessionPath(id)) {

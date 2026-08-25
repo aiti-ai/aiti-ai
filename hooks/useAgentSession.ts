@@ -73,6 +73,10 @@ type AgentStateResponse = {
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
   pendingRecovery?: PendingRecoveryItem[] | null;
   queueTrash?: QueueTrashItem[] | null;
+  /** 后端会话能力声明（capability-aware 控件渲染） */
+  capabilities?: Record<string, boolean>;
+  /** 后端来源标签（如 "aiti-claude-code-agent/claude-code"） */
+  backendSource?: string;
 };
 
 export interface QueuedMessages {
@@ -424,6 +428,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
+  /** 后端会话能力（从 state 端点透传；本地会话无此状态） */
+  const [sessionCapabilities, setSessionCapabilities] = useState<Record<string, boolean> | null>(null);
+  const [backendSource, setBackendSource] = useState<string | undefined>(undefined);
   const [pendingRecovery, setPendingRecovery] = useState<PendingRecoveryItem[]>([]);
   const [queueTrash, setQueueTrash] = useState<QueueTrashItem[]>([]);
   /** True when the current pending-recovery list came from an import (not a
@@ -702,6 +709,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         const liveState = agentState.state;
         if (liveState) {
+          if (liveState.capabilities !== undefined) setSessionCapabilities(liveState.capabilities);
+          if (liveState.backendSource !== undefined) setBackendSource(liveState.backendSource);
           if (liveState.contextUsage !== undefined) setContextUsage(liveState.contextUsage ?? null);
           if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
           if (liveState.thinkingLevel !== undefined) setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
@@ -1480,6 +1489,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
+
+  const switchPermissionMode = useCallback(async (mode: string): Promise<boolean> => {
+    const sid = sessionIdRef.current ?? session?.id;
+    if (!sid) return false;
+    try {
+      await sendAgentCommand(sid, { type: "set_permission_mode", mode });
+      return true;
+    } catch (e) {
+      console.error("Failed to switch permission mode:", e);
+      return false;
+    }
+  }, [sessionIdRef, session?.id]);
 
   const respondToPermission = useCallback(async (behavior: "allow" | "deny") => {
     const req = permissionRequest;
@@ -2782,7 +2803,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     queueTrash, restoreQueueItem, purgeQueueTrash,
     moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
-    permissionRequest, respondToPermission,
+    permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,
