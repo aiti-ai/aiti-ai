@@ -63,7 +63,10 @@ export class HandleSessionAdapter implements WrappedSessionLike {
     this.source = handle.source;
     this.lastModel = handle.getModel();
 
-    this.unsubscribe = handle.subscribe((event) => {
+    this.unsubscribe = handle.subscribe((rawEvent) => {
+      // 规范化合成事件 → pi 词汇表（前端流式渲染依赖精确形状，见 normalize 注释）
+      const merged = this.normalize(rawEvent);
+      const event = { ...rawEvent, ...merged } as Record<string, unknown>;
       const type = String(event.type ?? "");
       // Track streaming state for the SSE surface
       if (type === "agent_start" || type === "turn_start") this._isStreaming = true;
@@ -78,7 +81,10 @@ export class HandleSessionAdapter implements WrappedSessionLike {
         this.partialText += event.delta;
       }
       if (type === "message_end") {
-        const finalText = typeof event.text === "string" ? event.text : undefined;
+        const msg = event.message as { content?: Array<{ type?: string; text?: string }> } | undefined;
+        const finalText = typeof event.text === "string"
+          ? event.text
+          : msg?.content?.find((b) => b.type === "text")?.text;
         if (finalText !== undefined && this.partialActive) this.partialText = finalText;
         this.partialActive = false;
       }
@@ -88,8 +94,39 @@ export class HandleSessionAdapter implements WrappedSessionLike {
         this.lastModel = event.model as { id: string; provider: string };
       }
 
-      for (const l of this.listeners) l(event);
+      for (const l of this.listeners) l(event as Parameters<Listener>[0]);
     });
+  }
+
+  /**
+   * 把后端合成事件规范化为前端已理解的 pi 词汇表。返回需要覆盖的字段子集
+   * （与原事件合并后下发）；已是 pi 原生形状的事件返回空合并。
+   *
+   * 关键契约（缺一即渲染失败）：
+   *   - message_update 必须带 assistantMessageEvent{text_delta,contentIndex,delta}
+   *     —— toClientAgentEvent 对缺失该字段的事件整条丢弃（流式不上屏）
+   *   - message_end 必须带完整 message:{role,content} —— reducer 靠它追加最终消息
+   */
+  private normalize(raw: Record<string, unknown>): Partial<Record<string, unknown>> & { type?: string } {
+    const type = String(raw.type ?? "");
+
+    if (type === "message_update" && typeof raw.delta === "string" && raw.assistantMessageEvent === undefined) {
+      return { type: raw.type as string, assistantMessageEvent: { type: "text_delta", contentIndex: 0, delta: raw.delta } };
+    }
+
+    if (type === "message_end" && raw.message === undefined) {
+      const text = typeof raw.text === "string" ? raw.text : this.partialText;
+      return {
+        type: raw.type as string,
+        message: {
+          role: "assistant",
+          content: [{ type: "text", text }],
+          ...(this.lastModel ? { model: this.lastModel.id, provider: this.lastModel.provider } : {}),
+        },
+      };
+    }
+
+    return {};
   }
 
   // ---- AgentEventStreamSession surface --------------------------------------
