@@ -69,7 +69,7 @@ export interface ExtClientContext {
    */
   t(key: string, params?: Record<string, string | number>): string;
   apiUrl(path: string): string;
-  registerItems(slot: ExtSlotName, items: Array<{ id: string; render: (props: ExtRenderProps) => ReactNode; meta?: Record<string, unknown> }>): void;
+  registerItems(slot: ExtSlotName, items: Array<{ id: string; render: (props: ExtRenderProps) => ReactNode; meta?: Record<string, unknown>; feature?: string }>): void;
   /** 注册时返回 disposer：调用即精确移除本次注册（DSH effect 语义，HMR 反卷用）。 */
   disposeItems(slot: ExtSlotName, ids: string[]): void;
   /** 注册聊天输入钩子（aiti-devtools：发送前 [元素N]/[回答N]/[错误N] 替换 + 收集候选元素） */
@@ -233,7 +233,12 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     registerItems: (slot, items) => {
       registerExtUiItems(
         slot,
-        items.map((it) => ({ id: `${ext.id}:${it.id}`, render: it.render, meta: it.meta })),
+        items.map((it) => ({
+          id: `${ext.id}:${it.id}`,
+          render: it.render,
+          meta: it.meta,
+          ...(it.feature ? { feature: it.feature } : {}),
+        })),
         ext.id,
       );
     },

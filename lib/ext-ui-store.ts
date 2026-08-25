@@ -25,6 +25,10 @@ export interface ExtUiItemRegistered {
   id: string;
   /** 注册来源扩展 id（反卷/HMR 精确移除用）。 */
   extId?: string;
+  /** 门控该条目的 boolean feature id（扩展在 ctx.registerItems 里声明）。
+   *  feature 关闭时宿主统一不渲染此条目（条目仍在注册表中，extman「打开」
+   *  可虚空创建触发）；无需扩展自己在组件内写门控代码。 */
+  feature?: string;
   /** Component receiving ExtRenderProps (currentSession etc.). */
   render: (props: ExtRenderProps) => ReactNode;
   meta?: {
@@ -161,9 +165,22 @@ export function resetExtUiItems(): void {
 
 const NO_UI_ITEMS: ExtUiItemRegistered[] = [];
 
+// 读取时按 feature 门控过滤（带缓存保引用稳定——快照稳定性要求，见 NO_UI_ITEMS 注释）。
+// 缓存键含 store 实例 + version：feature 变更经 patchExtFeature → bump() 推进 version；
+// 测试/HMR 里 globalThis 重置换新 store 时实例不同也自然失效。
+let gatedCache: { store: ExtUiStore; version: number; items: Partial<Record<ExtSlotName, ExtUiItemRegistered[]>> } | null = null;
+
 export function getExtUiItems(slot: ExtSlotName): ExtUiItemRegistered[] {
-  // 空时返回稳定引用（useSyncExternalStore 快照稳定性要求：每次新数组会触发无限循环）
-  return getStore().items[slot] ?? NO_UI_ITEMS;
+  const store = getStore();
+  const raw = store.items[slot] ?? NO_UI_ITEMS;
+  if (!gatedCache || gatedCache.store !== store || gatedCache.version !== store.version) {
+    const next: Partial<Record<ExtSlotName, ExtUiItemRegistered[]>> = {};
+    for (const s of Object.keys(store.items) as ExtSlotName[]) {
+      next[s] = (store.items[s] ?? []).filter((it) => !(it.feature && it.extId && !getExtFeature(it.extId, it.feature)));
+    }
+    gatedCache = { store, version: store.version, items: next };
+  }
+  return gatedCache.items[slot] ?? NO_UI_ITEMS;
 }
 
 export function subscribeExtUi(cb: () => void): () => void {
@@ -188,7 +205,7 @@ export function setExtFeatures(extId: string, features: Record<string, boolean |
   if (features && Object.keys(features).length > 0) next[extId] = features;
   else delete next[extId];
   featureState = next;
-  for (const l of featureListeners) l();
+  bump(); // 同步推进 ui-store 版本：feature 门控的插槽条目即时显隐
 }
 
 /** 就地更新单个功能项（extman 变更事件 → host patch，不重新拉取）。boolean 传布尔，string 传字符串。 */
@@ -197,6 +214,7 @@ export function patchExtFeature(extId: string, featureId: string, value: boolean
   per[featureId] = value;
   featureState = { ...featureState, [extId]: per };
   for (const l of featureListeners) l();
+  bump(); // 同步推进 ui-store 版本：feature 门控的插槽条目即时显隐
 }
 
 /** 同步读某扩展的功能状态（未声明/未知 → undefined !== false → 视为启用）。 */
