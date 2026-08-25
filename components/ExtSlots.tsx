@@ -15,6 +15,11 @@
 import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { apiUrl } from "@/lib/base-path";
 import { getHostApi, type OpenFileOptions } from "@/lib/ext/host-api";
+import { registerComposerEnhancement } from "@/lib/composer/bus";
+import type { ComposerEnhancement, RecoveryItemsProvider } from "@/lib/composer/types";
+import { registerRecoveryItemsProvider } from "@/lib/composer/recovery";
+import { registerDraftApi } from "@/lib/composer/draft-api";
+import type { DraftApi } from "@/lib/composer/draft-api";
 import type { ExtSlotName, ExtSlotProps, ParagraphClickHandler } from "@/lib/ext/types";
 import {
   getExtMetas,
@@ -69,8 +74,12 @@ export interface ExtClientContext {
   disposeItems(slot: ExtSlotName, ids: string[]): void;
   /** 注册聊天输入钩子（aiti-devtools：发送前 [元素N]/[回答N]/[错误N] 替换 + 收集候选元素） */
   registerChatHook(hook: { preSend?: (text: string) => { text?: string; elements?: unknown[] } | null }): void;
-  /** 程序化发送一条消息（与用户输入同链路：preSend 钩子生效；空闲直发，流式按 mode 插队/排队；不清空输入框） */
-  sendChatMessage(text: string, mode: "steer" | "followUp"): void;
+  /** 程序化发送一条消息（与用户输入同链路：preSend 钩子生效；空闲直发，流式按 mode 插队/排队；不清空输入框）
+   *  images 可选：携带图片的 follow-up 排队（草稿恢复多条残留等场景） */
+  sendChatMessage(text: string, mode: "steer" | "followUp", images?: { data: string; mimeType: string }[]): void;
+  /** 仅入队不触发（草稿恢复「Re-queue」语义）：空闲也只进 follow-up 队列，不直发。
+   *  preSend 钩子（[元素N]/[回答N]/[错误N]）同样生效；images 随队列项携带。 */
+  queueFollowUp(text: string, images?: { data: string; mimeType: string }[]): void;
   /** 注册消息段落点击接管 handler（消息点击识别薄宿主：core 广播段落点击事件，弹层 UI 全在扩展侧） */
   registerParagraphClick(handler: ParagraphClickHandler): void;
   /** 同步读本扩展全部功能状态（extman 管理；host 已统一拉取，扩展零独立请求）。boolean feature 为布尔，string feature 为字符串值。 */
@@ -90,6 +99,19 @@ export interface ExtClientContext {
   revealDir?(absPath: string): void | Promise<void>;
   /** 输入框追加文本不发送（引用回复预填用） */
   appendText?(text: string): void | Promise<void>;
+  /** 注册 composer 增强器（值观测/会话 key 切换/发送前链式钩子；见 docs/composer-enhancement-contract.md）。
+   *  返回 disposer。 */
+  registerComposerEnhancement(enh: ComposerEnhancement): () => void;
+  /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步）。
+   *  返回是否真正写入（composer 未挂载时 false）。 */
+  writeComposerValue?(text: string): boolean | Promise<boolean>;
+  /** 完整还原草稿进输入框（文本 + 图片，raw 不跑钩子——与 core 恢复第一条一致）。
+   *  返回是否真正还原（composer 未挂载时 false——调用方不应消费草稿）。 */
+  restoreComposerDraft?(draft: { value: string; images: { data: string; mimeType: string }[] }): boolean | Promise<boolean>;
+  /** 注册恢复项提供者（残留输入并入恢复对话框；决议经 onResolve 回流）。返回 disposer。 */
+  registerRecoveryItemsProvider?(provider: RecoveryItemsProvider): () => void;
+  /** 注册草稿存储 API（core 经 getDraftApi() 访问；草稿功能全部归 keeper）。 */
+  registerDraftApi?(api: DraftApi): void;
   /** 触发宿主侧扩展重载（拉新 manifest + 图对账 + 反卷 materialize）——扩展管理器场景
    *  （服务端热重载后刷新已安装/启停变更；optional 兼容旧宿主）。 */
   reloadExtensions?(): Promise<{ invalidated: string[] }>;
@@ -133,13 +155,13 @@ export function getTopicItems<T>(topic: string): T[] {
 }
 
 /** 聊天发送处理器 store（扩展 ctx.sendChatMessage 的统一出口；ChatInput mount 时注册） */
-type ChatSendHandler = (text: string, mode: "steer" | "followUp") => void;
+type ChatSendHandler = (text: string, mode: "steer" | "followUp" | "queue", images?: { data: string; mimeType: string }[]) => void;
 let chatSendHandler: ChatSendHandler | null = null;
 export function registerChatSend(fn: ChatSendHandler | null): void {
   chatSendHandler = fn;
 }
-export function dispatchChatSend(text: string, mode: "steer" | "followUp"): void {
-  chatSendHandler?.(text, mode);
+export function dispatchChatSend(text: string, mode: "steer" | "followUp" | "queue", images?: { data: string; mimeType: string }[]): void {
+  chatSendHandler?.(text, mode, images);
 }
 
 // 段落点击接管 handler store（扩展注册；MarkdownBody 点击段落时广播）
@@ -219,7 +241,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
       disposeExtUiItems(slot, ext.id, ids.map((raw) => `${ext.id}:${raw}`));
     },
     registerChatHook: (hook) => registerChatHooks(hook),
-    sendChatMessage: (text, mode) => dispatchChatSend(text, mode),
+    sendChatMessage: (text, mode, images) => dispatchChatSend(text, mode, images),
+    queueFollowUp: (text, images) => dispatchChatSend(text, "queue", images),
     registerParagraphClick: (h) => registerParagraphClick(h),
     registerTopicItem: (topic, item) => registerTopicItem(topic, item),
     getTopicItems: (topic) => getTopicItems(topic),
@@ -232,6 +255,11 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
       getHostApi().openFolder?.(path, folderName ?? path.split("/").pop() ?? path),
     revealDir: (absPath) => getHostApi().revealDir?.(absPath),
     appendText: (text) => getHostApi().appendText?.(text),
+    registerComposerEnhancement: (enh: ComposerEnhancement) => registerComposerEnhancement(enh),
+    writeComposerValue: (text: string) => getHostApi().writeComposerValue?.(text) ?? false,
+    restoreComposerDraft: (draft) => getHostApi().restoreComposerDraft?.(draft) ?? false,
+    registerRecoveryItemsProvider: (provider) => registerRecoveryItemsProvider(provider),
+    registerDraftApi: (api) => registerDraftApi(api),
     reloadExtensions: () => reloadExtensions(),
     extLoaderState: () => ({ materialized: materializedIds(), prefetched: prefetchedIds() }),
   };

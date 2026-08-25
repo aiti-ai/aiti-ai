@@ -14,7 +14,7 @@ import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtSlot } from "./ExtSlots";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
-import { clearDraft, DRAFT_KEY_PREFIX, listDraftSlots, removeDraftSlot, type DraftSlotInfo } from "@/lib/draft-store";
+import { useRecoveryProviderItems, routeRecoveryResolve } from "@/lib/composer/recovery";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
@@ -86,10 +86,6 @@ const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 /** 草稿静默恢复等待输入框就绪的最大帧数（≈5s @60fps）；超时放行对话框手动处理，避免草稿被永久隐藏。 */
-const MAX_DRAFT_RESTORE_READY_FRAMES = 300;
-/** 别的标签页在这个时限内还在写入的草稿槽位视为「活人在用」，不在本页弹恢复框（见 readDrafts）。 */
-const LIVE_FOREIGN_SLOT_MS = 60_000;
-
 function NewSessionUpdateLink({
   label,
 }: {
@@ -418,11 +414,6 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     await handleSend(message, images, files);
   }, [handleEditFromStartSend, handleSend]);
   const [recoveryDismissed, setRecoveryDismissed] = useState(false);
-  // 草稿静默恢复状态：true 时不弹恢复对话框；自动恢复失败会回退 false 放行对话框手动处理。
-  const [silentDraftRestore, setSilentDraftRestore] = useState(false);
-  // 已尝试自动恢复的草稿 slot 集合（去重；恢复后即被消费，失败后也不无限重试）。
-  const autoRestoredDraftRef = useRef<Set<string>>(new Set());
-
   /** 「继续」按钮：AI 完全停止（无 streaming）时出现——点击快速发送“继续”消息，触发 agent 继续运行。
    *  仅在 agent 空闲时可见（ChatInput 只在非 streaming 分支渲染）。
    *  队列里有未投递消息（如重启后恢复了队列但没继续）时改为投递队列（runAgentContinue 路径），
@@ -473,180 +464,36 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
    *  在之后每次新建都被静默恢复回来，且 promoteNewSession 的 rekey 永远对不上号。 */
   const draftKey = session?.id ?? newSessionDraftKey ?? undefined;
 
-  // Unsent input drafts (crash-loss recovery) — surfaced as items in the
-  // queue-recovery dialog. Each open tab has its own `crashrestore-…` slot, so
-  // tabs never clobber each other; `listDraftSlots()` loads them ALL for this
-  // session (closed tabs, other tabs, and this tab's own leftover).
-  // Client-side only: they live in localStorage (survive refresh + browser
-  // close); the server never sees them.
-  const [pendingDrafts, setPendingDrafts] = useState<DraftSlotInfo[]>([]);
-  const liveSlotTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    setPendingDrafts([]);
-    if (!draftKey) return;
-    const readDrafts = () => {
-      const slots = listDraftSlots(draftKey).filter((slot) => {
-        // Foreign / closed-tab slots are recoverable; this tab's own slot only
-        // when the input box is empty — otherwise it IS the live input the
-        // user is typing in right now.
-        if (!slot.own) return true;
-        return !chatInputRef?.current?.hasInput?.();
-      });
-      // Foreign slots written within the live window belong to a tab that is
-      // ACTIVELY typing — surfacing them here would pop the recovery dialog
-      // over this view mid-typing. They surface once writing stops: each new
-      // write re-triggers via storage event (rescheduling the one-shot re-read
-      // below); when the freshest slot leaves the window the timer fires.
-      const now = Date.now();
-      setPendingDrafts(slots.filter((slot) => slot.own || now - slot.ts >= LIVE_FOREIGN_SLOT_MS));
-      if (liveSlotTimerRef.current) {
-        clearTimeout(liveSlotTimerRef.current);
-        liveSlotTimerRef.current = null;
-      }
-      const freshForeign = slots.filter((slot) => !slot.own && now - slot.ts < LIVE_FOREIGN_SLOT_MS);
-      if (freshForeign.length > 0) {
-        const wait = Math.min(...freshForeign.map((slot) => LIVE_FOREIGN_SLOT_MS - (now - slot.ts)));
-        liveSlotTimerRef.current = setTimeout(readDrafts, wait + 250);
-      }
-    };
-    readDrafts();
-    // Another tab wrote/cleared a draft: keep this tab's dialog in sync.
-    const onStorage = (e: StorageEvent) => {
-      if (typeof e.key === "string" && e.key.startsWith(DRAFT_KEY_PREFIX)) readDrafts();
-    };
-    window.addEventListener("storage", onStorage);
-    return () => {
-      window.removeEventListener("storage", onStorage);
-      if (liveSlotTimerRef.current) clearTimeout(liveSlotTimerRef.current);
-    };
-  }, [draftKey, chatInputRef]);
+  // 草稿簇外迁（defork P2）：草稿扫描/静默恢复/对话框合成全部由 aiti-draft-keeper
+  // 经 composer 契约接管；core 不再持有 draft-store，仅做服务端队列恢复 + ext 路由。
+  // 恢复项 = 服务端队列恢复 + 扩展提供者（keeper）的草稿项。
+  const extRecoveryItems = useRecoveryProviderItems() as PendingRecoveryItem[];
+  const recoveryItems = [
+    ...pendingRecovery,
+    ...extRecoveryItems,
+  ];
 
-  // Compose the dialog list: server-side queue recovery + the client drafts.
-  const draftRecoveryItems: PendingRecoveryItem[] = pendingDrafts.map((slot) => ({
-    id: `draft:${slot.slotKey}`,
-    kind: "followUp",
-    text: slot.draft.value || "",
-    hasImages: slot.draft.images.length > 0,
-    queuedAt: 0, // drafts carry no timestamp; the dialog hides it for origin=draft
-    origin: "draft",
-  }));
-  const recoveryItems = draftRecoveryItems.length > 0
-    ? [...pendingRecovery, ...draftRecoveryItems]
-    : pendingRecovery;
-
-  // 草稿静默恢复条件：只有客户端草稿待恢复（无服务端队列需要用户决策）、且输入框为空时，
-  // 不弹恢复对话框，直接把草稿恢复到输入框（等价于在对话框里点「保留/重新入队」）。
-  // 服务端队列消息（重启后存活）仍需用户决定，保留弹窗。
-  const hasServerRecovery = pendingRecovery.length > 0;
-  const onlyDraftRecovery = draftRecoveryItems.length > 0 && !hasServerRecovery;
-  const autoRestoreDrafts = onlyDraftRecovery && !(chatInputRef?.current?.hasInput?.());
-
-  // Queue-recovery resolution with draft items handled client-side (the server
-  // knows nothing about drafts): keep = restore into the input box (foreign
-  // slots are consumed; the own slot becomes the live input), discard = wipe
-  // the slot. Server-side items are passed through unchanged.
+  // 恢复对话框决议：ext: 前缀项路由回提供者（keeper 自决还原/排队/丢弃），
+  // 服务端项走 resolveRecovery；continueRun 对纯草稿项触发 handleContinueQueue。
   const handleResolveRecovery = useCallback(async (
     keep: string[],
     discard: string[],
     continueRun: boolean,
   ): Promise<PendingRecoveryItem[]> => {
-    const slotById = new Map(pendingDrafts.map((slot) => [`draft:${slot.slotKey}`, slot]));
-    const isDraftId = (id: string) => slotById.has(id);
-    const draftKept = keep.filter(isDraftId).map((id) => slotById.get(id)!);
-    const draftDiscarded = discard.filter(isDraftId).map((id) => slotById.get(id)!);
-    const serverKeep = keep.filter((id) => !isDraftId(id));
-    const serverDiscard = discard.filter((id) => !isDraftId(id));
-
-    if (draftKept.length > 0) {
-      // One input box holds one message: when the box is EMPTY the FIRST draft
-      // is restored into it for editing/sending and any further drafts become
-      // follow-ups. When the user already typed something, NOTHING overwrites
-      // the box — all kept drafts are queued as follow-up messages instead
-      // (visible in the queued banner, recallable there too).
-      const boxEmpty = !(chatInputRef?.current?.hasInput?.());
-      const first = boxEmpty ? draftKept[0] : undefined;
-      const rest = boxEmpty ? draftKept.slice(1) : draftKept;
-      if (first) chatInputRef?.current?.restoreDraft(first.draft);
-      rest.forEach((slot) => {
-        const images = slot.draft.images.map((img) => ({
-          data: img.data,
-          mimeType: img.mimeType,
-          previewUrl: `data:${img.mimeType};base64,${img.data}`,
-        }));
-        // 恢复为 follow-up 前先跑扩展聊天钩子（[元素N]/[回答N]/[错误N] → 真实内容，与输入框发送一致）
-        const restoredText = chatInputRef?.current?.runChatHooks?.(slot.draft.value) ?? slot.draft.value;
-        void handleFollowUp(restoredText, images.length > 0 ? images : undefined);
-      });
-      const consumedKeys = new Set(draftKept.map((slot) => slot.slotKey));
-      draftKept.forEach((slot) => {
-        // The own slot restored into the input stays as the live input;
-        // everything else (foreign slots, follow-up-dispatched own slot) is
-        // consumed.
-        if (slot === first && slot.own) return;
-        if (slot.own && draftKey) clearDraft(draftKey);
-        else removeDraftSlot(slot.slotKey);
-      });
-      setPendingDrafts((prev) => prev.filter((slot) => !consumedKeys.has(slot.slotKey)));
+    const extKept = keep.filter((id) => id.startsWith("ext:")).length;
+    const routed = routeRecoveryResolve(keep, discard);
+    const serverKeep = routed.kept;
+    const serverDiscard = routed.discarded;
+    if (serverKeep.length === 0 && serverDiscard.length === 0) {
+      if (continueRun && extKept > 0) void handleContinueQueue();
+      return pendingRecovery;
     }
-    if (draftDiscarded.length > 0) {
-      const discardedKeys = new Set(draftDiscarded.map((slot) => slot.slotKey));
-      draftDiscarded.forEach((slot) => {
-        if (slot.own && draftKey) clearDraft(draftKey);
-        else removeDraftSlot(slot.slotKey);
-      });
-      setPendingDrafts((prev) => prev.filter((slot) => !discardedKeys.has(slot.slotKey)));
-    }
-    if (serverKeep.length === 0 && serverDiscard.length === 0) return pendingRecovery;
-    // continueRun only makes sense when actual queued messages are re-queued.
     return resolveRecovery(serverKeep, serverDiscard, continueRun && serverKeep.length > 0);
-  }, [draftKey, pendingDrafts, pendingRecovery, resolveRecovery, chatInputRef, handleFollowUp]);
-
-  // 草稿静默恢复：条件满足时不弹恢复对话框，直接把草稿全部恢复到输入框/队列（keep-all）。
-  // 注意：恢复依赖 chatInputRef.current（ChatInput 挂载后才就绪）——若尚未就绪则逐帧重试，
-  // 草稿绝不先于恢复成功被消费，避免「输入框没拿到文字、草稿却没了」的丢稿。
-  useEffect(() => {
-    if (!autoRestoreDrafts) return;
-    const keys = pendingDrafts.map((slot) => `draft:${slot.slotKey}`);
-    if (keys.every((k) => autoRestoredDraftRef.current.has(k))) return;
-    setSilentDraftRestore(true); // 先隐藏对话框，避免恢复完成前闪烁
-    let cancelled = false;
-    let readyFrames = 0;
-    const attemptRestore = () => {
-      if (cancelled) return;
-      const input = chatInputRef?.current;
-      if (!input?.restoreDraft) {
-        // 输入框还没就绪：下一帧再试（不消费草稿）。迟迟不就绪（如会话加载失败、
-        // 无输入框）则放行对话框手动处理，避免草稿被永久隐藏。
-        if (++readyFrames > MAX_DRAFT_RESTORE_READY_FRAMES) {
-          setSilentDraftRestore(false);
-          return;
-        }
-        requestAnimationFrame(attemptRestore);
-        return;
-      }
-      // 落地前最后一道检查：用户抢在恢复前已经开打了——绝不覆盖新输入。
-      // 本批草稿标记为已自动处理（不再重试），放行对话框由用户手动决定去留。
-      if (input.hasInput?.()) {
-        autoRestoredDraftRef.current = new Set(keys);
-        setSilentDraftRestore(false);
-        return;
-      }
-      autoRestoredDraftRef.current = new Set(keys);
-      handleResolveRecovery(keys, [], false).catch(() => {
-        // 自动恢复失败：放行对话框由用户手动处理（本批草稿不再自动重试）。
-        setSilentDraftRestore(false);
-      });
-    };
-    attemptRestore();
-    return () => {
-      cancelled = true;
-    };
-  }, [autoRestoreDrafts, pendingDrafts, chatInputRef, handleResolveRecovery]);
+  }, [pendingRecovery, resolveRecovery, handleContinueQueue]);
 
   // Reset dismissal whenever the session or its pending list changes identity.
   useEffect(() => {
     setRecoveryDismissed(false);
-    setSilentDraftRestore(false);
   }, [session?.id]);
 
   // After recovery/import resolution (pendingRecovery drops to zero), expand
@@ -906,6 +753,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       onAbort={handleAbort}
       onSteer={agentRunning ? handleSteer : undefined}
       onFollowUp={agentRunning ? handleFollowUp : undefined}
+      onQueueFollowUp={handleFollowUp}
       onPromptWithStreamingBehavior={agentRunning ? handlePromptWithStreamingBehavior : undefined}
       onQueueSteerSend={handleSteer}
       onConvertQueueItem={convertQueuedMessage}
@@ -1269,7 +1117,7 @@ const messageListEl = useMemo(() => {
         />
       )}
 
-      {recoveryItems.length > 0 && !recoveryDismissed && !(silentDraftRestore && recoveryItems.every((i) => i.origin === "draft")) && (
+      {recoveryItems.length > 0 && !recoveryDismissed && (
         <QueueRecoveryDialog
           items={recoveryItems}
           sessionId={session?.id ?? sessionIdRef.current ?? undefined}

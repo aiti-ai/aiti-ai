@@ -25,6 +25,11 @@ export interface HostApi {
   revealDir?: (absPath: string) => void | Promise<void>;
   /** 输入框追加文本（不发送；引用回复预填用） */
   appendText?: (text: string) => void | Promise<void>;
+  /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步） */
+  writeComposerValue?: (text: string) => boolean | Promise<boolean>;
+  /** 完整还原草稿进输入框（文本 + 图片，raw 不跑钩子——与 core 恢复第一条一致）。
+   *  返回是否真正还原（composer 未挂载时 false——调用方不应消费草稿）。 */
+  restoreComposerDraft?: (draft: { value: string; images: { data: string; mimeType: string }[] }) => boolean | Promise<boolean>;
 }
 
 const hostApi: HostApi = {};
@@ -35,6 +40,8 @@ export function registerHostApi(api: HostApi): void {
   if (api.openFolder) hostApi.openFolder = api.openFolder;
   if (api.revealDir) hostApi.revealDir = api.revealDir;
   if (api.appendText) hostApi.appendText = api.appendText;
+  if (api.writeComposerValue) hostApi.writeComposerValue = api.writeComposerValue;
+  if (api.restoreComposerDraft) hostApi.restoreComposerDraft = api.restoreComposerDraft;
 }
 
 export function getHostApi(): HostApi {

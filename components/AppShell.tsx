@@ -30,7 +30,7 @@ import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
-import { clearAllDrafts } from "@/lib/draft-store";
+import { getDraftApi } from "@/lib/composer/draft-api";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import {
@@ -103,6 +103,12 @@ const TOP_BAR_ICON_BUTTON_SIZE = 36;
 const LANGUAGE_MENU_WIDTH = 176;
 
 export function AppShell() {
+  // 水合完成信号：扩展（如 aiti-draft-keeper）的启动恢复必须等水合结束后落框，
+  // 否则 dev 下 hydration 失配重渲染会按服务端 HTML（空框）抹掉恢复的文本。
+  useEffect(() => {
+    (window as unknown as { __piWebHydrated?: boolean }).__piWebHydrated = true;
+    window.dispatchEvent(new Event("pi-web:hydrated"));
+  }, []);
   const router = useRouter();
   const searchParams = useSearchParams();
   // useSearchParams returns an empty instance on the server render, and in
@@ -448,7 +454,13 @@ export function AppShell() {
         // The sidebar will notify us when it adopts this cwd. Avoid remounting
         // the just-created empty chat during that initial synchronization.
         suppressCwdBumpRef.current = true;
-        const draftId = `initial:${requestedCwd}`;
+        // 同一 cwd 若已有存活的新建 composer（handleCwdChange 已先发 uuid），不覆盖：
+        // 避免 draftId 抖动把一次输入散落多个 new: 槽位（草稿 scatter）。
+        const draftId = activeNewSessionDraftKeyRef.current
+          && activeNewSessionDraftKeyRef.current.startsWith(`new:`)
+          && activeNewSessionDraftKeyRef.current.endsWith(`:${data.cwd}`)
+          ? activeNewSessionDraftKeyRef.current.slice(4, activeNewSessionDraftKeyRef.current.length - data.cwd.length - 1)
+          : `initial:${requestedCwd}`;
         setNewSessionDraftId(draftId);
         activeNewSessionDraftKeyRef.current = `new:${draftId}:${data.cwd}`;
         setNewSessionCwd(data.cwd);
@@ -788,7 +800,7 @@ export function AppShell() {
 
   const handleSessionDeleted = useCallback((sessionId: string) => {
     // Wipe any persisted drafts (all tabs' slots) for the deleted session.
-    clearAllDrafts(sessionId);
+    getDraftApi()?.clearAllDrafts(sessionId);
     invalidateWorkspaceRestore();
     setRefreshKey((k) => k + 1);
     if (selectedSession?.id === sessionId) {
@@ -880,6 +892,18 @@ export function AppShell() {
     openFolder: handleOpenFolder,
     revealDir: handleRevealDir,
     appendText: (text) => chatInputRef.current?.appendText(text),
+    writeComposerValue: (text) => {
+      const c = chatInputRef.current;
+      if (!c) return false;
+      c.setValueTracked(text);
+      return true;
+    },
+    restoreComposerDraft: (draft) => {
+      const c = chatInputRef.current;
+      if (!c) return false; // composer 未挂载：调用方不应消费草稿
+      c.restoreDraft(draft);
+      return true;
+    },
   });
 
   // aiti-devtools 扩展请求打开文件（前端在线查看——文件标签页）：aiti 候选详情点"前端打开"

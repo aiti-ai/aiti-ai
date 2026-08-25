@@ -16,8 +16,8 @@ import type {
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
-import type { ChatDraftImage } from "@/lib/draft-store";
-import { clearDraft, rekeyDraft, restoreDraftSubmission } from "@/lib/draft-store";
+import type { ChatDraftImage } from "@/lib/composer/draft-api";
+import { getDraftApi } from "@/lib/composer/draft-api";
 import type { PendingRecoveryItem, QueueEntry, QueueEntryInput, QueueTrashItem } from "@/lib/queue-store";
 import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-preset-preference";
 import { getToolNamesForPreset, type ToolEntry, type ToolPreset } from "@/lib/tool-presets";
@@ -624,7 +624,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (input) {
       input.restoreSubmission(text, draftImages, destinationDraftKey);
     } else if (destinationDraftKey) {
-      restoreDraftSubmission(destinationDraftKey, text, draftImages);
+      // keeper 未接管输入框 handle 时走 registry（草稿功能全部归 keeper）
+      getDraftApi()?.restoreSubmission(destinationDraftKey, text, draftImages);
     }
   }, [newSessionDraftKey, opts.chatInputRef, resolveComposerDraftKey]);
 
@@ -775,7 +776,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       draftKeyAliasesRef.current.set(provisionalDraftKey, sid);
       const input = opts.chatInputRef?.current;
       if (input) input.rekeyDraft(provisionalDraftKey, sid);
-      else rekeyDraft(provisionalDraftKey, sid);
+      else getDraftApi()?.rekeyDraft(provisionalDraftKey, sid);
     }
     onSessionCreated?.({
       id: sid,
@@ -2700,7 +2701,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (abandonedDraftKey) {
         queueMicrotask(() => {
           if (!sessionHookMountedRef.current && !newSessionPromotedRef.current) {
-            clearDraft(abandonedDraftKey);
+            getDraftApi()?.clearDraft(abandonedDraftKey);
           }
         });
       }
