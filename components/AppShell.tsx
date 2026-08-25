@@ -2383,7 +2383,43 @@ export function AppShell() {
                   borderBottom: "1px solid var(--border)",
                   boxShadow: "0 10px 28px rgba(0,0,0,0.10)",
                   padding: "12px 16px",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 10,
                 }}>
+                  {/* AI 用量报表入口（aiti-ai-usage 扩展委托：window.__aitiAiUsageOpen）*/}
+                  <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                    <button
+                      type="button"
+                      title="打开 AI 用量报表（历史趋势 / 模型 / Keys / 会话）"
+                      onClick={() => {
+                        setActiveTopPanel(null);
+                        (window as unknown as { __aitiAiUsageOpen?: () => void }).__aitiAiUsageOpen?.();
+                      }}
+                      style={{
+                        display: "inline-flex", alignItems: "center", gap: 5,
+                        padding: "3px 9px", borderRadius: 7,
+                        border: "1px solid var(--border)", background: "transparent",
+                        color: "var(--text-muted)", fontSize: 11, cursor: "pointer",
+                        transition: "color 0.12s, border-color 0.12s, background 0.12s",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = "var(--text)";
+                        e.currentTarget.style.borderColor = "var(--accent)";
+                        e.currentTarget.style.background = "var(--bg-hover)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = "var(--text-muted)";
+                        e.currentTarget.style.borderColor = "var(--border)";
+                        e.currentTarget.style.background = "transparent";
+                      }}
+                    >
+                      <svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <path d="M3 3v18h18" /><path d="M8 17v-6" /><path d="M13 17V7" /><path d="M18 17v-3" />
+                      </svg>
+                      用量报表
+                    </button>
+                  </div>
                   {sessionStats ? (() => {
                     const formatDuration = (ms: number) => {
                       if (ms <= 0) return "0s";
