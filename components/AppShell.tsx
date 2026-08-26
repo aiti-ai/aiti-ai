@@ -1266,7 +1266,7 @@ export function AppShell() {
   const topbarBuiltinIds = useMemo<TopbarItemId[]>(() => {
     // "services" 已随 service-tunnels 抽离为扩展（扩展条目经 toolbarExtItems 进顶栏）
     const ids: TopbarItemId[] = ["theme", "language"];
-    if (showChat) ids.push("history", "export", "title", "branch", "system");
+    if (showChat) ids.push("history", "export", "title", "branch", "system", "tools");
     return ids;
   }, [showChat]);
   const topbarToolbarExtIds = useMemo(
@@ -1298,7 +1298,7 @@ export function AppShell() {
       // 窄屏时先溢出的改成扩展图标按钮（仍可从 ⋯ 进入）
       ...topbarSessionExtIds,
       ...topbarToolbarExtIds,
-      "history", "export", "title", "branch", "system",
+      "history", "export", "title", "branch", "system", "tools",
     ],
     [topbarToolbarExtIds, topbarSessionExtIds],
   );
@@ -1774,6 +1774,41 @@ export function AppShell() {
         </button>
       );
     }
+    if (id === "tools") {
+      const active = activeTopPanel === "tools";
+      return (
+        <button
+          type="button"
+          onClick={act(() => handleSystemInfoToggle("tools"))(menu)}
+          title={translate("tools.title")}
+          aria-label={translate("tools.title")}
+          aria-pressed={active}
+          style={menu ? { ...topbarMenuRowStyle, ...(active ? { background: "var(--bg-selected)", color: "var(--text)" } : {}) } : {
+            display: "flex", alignItems: "center", gap: 6,
+            height: "100%", padding: "0 12px",
+            background: active ? "var(--bg-selected)" : "none",
+            borderLeft: "none",
+            borderBottom: "none",
+            borderTop: "none",
+            borderRight: "1px solid var(--border)",
+            cursor: "pointer",
+            color: active ? "var(--text)" : "var(--text-muted)",
+            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
+          }}
+          onMouseEnter={menu ? menuEnter : rowEnter}
+          onMouseLeave={menu ? menuLeave : rowLeave}
+        >
+          <span style={menu ? topbarMenuIconSlotStyle : { display: "contents" }}>
+            <span style={{ color: systemTools?.some((tool) => tool.active) ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" />
+              </svg>
+            </span>
+          </span>
+          {!forPreview && <span>{translate("tools.label")}</span>}
+        </button>
+      );
+    }
     if (id === "branch") {
       if (menu) {
         return (
@@ -1934,6 +1969,7 @@ export function AppShell() {
       case "title": return translate("title.generate");
       case "branch": return translate("i18n.branches");
       case "system": return translate("system.label");
+      case "tools": return translate("tools.label");
       default: return extLabel(id);
     }
   };
@@ -3076,10 +3112,7 @@ export function AppShell() {
           </div>
           {!isMobile && (
             <>
-              {renderThemeButton(false)}
-              {renderLanguageButton(false)}
               {renderProjectTrustWarning(false)}
-              {renderChatToolbarActions(false)}
               {renderSessionStatsButton(false)}
             </>
           )}
