@@ -30,8 +30,10 @@ const EXT_CORS: Record<string, string> = {
 };
 
 /** vite/rollup 构建产物的内容 hash 文件名（如 editor-KLE6jdfb.js / json.worker-BizpAl9O.js）。
- *  内容变 → 文件名变，可安全 immutable 永久缓存（Monaco 分包资产等）。 */
-const HASHED_ASSET_RE = /-[A-Za-z0-9_-]{8}\.[a-zA-Z0-9]+$/;
+ *  内容变 → 文件名变，可安全 immutable 永久缓存（Monaco 分包资产等）。
+ *  ⚠ 字符类不能含 '-'：否则 aiti-ai-usage.mjs 这类自身带连字符的扩展 bundle
+ *  会误匹配，拿到 immutable 永久缓存，部署后浏览器永不拉新（rev 参数也被击穿）。 */
+const HASHED_ASSET_RE = /-[A-Za-z0-9_]{8}\.[a-zA-Z0-9]+$/;
 
 async function handle(req: NextRequest, params: Params): Promise<Response> {
   // aiti-devtools：注入页面（vhost/本地端口）跨域直连桥——放行 origin 门禁（桥本身有 secret 凭证认证 + 本地无鉴权语义）
