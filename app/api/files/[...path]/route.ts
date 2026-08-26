@@ -29,6 +29,7 @@ import {
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 import { samePath } from "@/lib/paths";
 import { issueFileTicket, redeemFileTicket } from "@/lib/file-ticket";
+import { decodePathToken, encodePathToken } from "@/lib/path-token";
 
 const IGNORED_NAMES = new Set([
   "node_modules", ".git", ".next", "dist", "build", "__pycache__",
@@ -90,7 +91,12 @@ function parseFileRequestType(value: string): FileRequestType | null {
 async function getUploadDirectory(segments: string[]): Promise<
   { directory: string } | { response: NextResponse }
 > {
-  const directory = filePathFromSegments(segments);
+  return validateUploadDirectory(filePathFromSegments(segments));
+}
+
+async function validateUploadDirectory(directory: string): Promise<
+  { directory: string } | { response: NextResponse }
+> {
   const allowedRoots = await getAllowedFileRoots();
   if (!isFilePathAllowed(directory, allowedRoots)) {
     return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
@@ -469,6 +475,15 @@ export async function GET(
       }
       filePath = t.path;
       rawType = t.type;
+    } else if (segments[0] === "_e" && segments.length === 2) {
+      // 稳态令牌通道：确定性假名（lib/path-token.ts），供 <img>/<video> src、EventSource 等
+      // 只能用 GET URL 的消费者；先 POST /api/files/token { path } 换令牌。
+      const decoded = decodePathToken(segments[1]);
+      if (!decoded) {
+        return NextResponse.json({ error: "Invalid path token" }, { status: 403 });
+      }
+      filePath = decoded;
+      rawType = request.nextUrl.searchParams.get("type") ?? "read";
     } else {
       filePath = filePathFromSegments(segments);
       rawType = request.nextUrl.searchParams.get("type") ?? "list";
@@ -477,8 +492,20 @@ export async function GET(
     if (!type) {
       return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
     }
-    const sessionId = request.nextUrl.searchParams.get("sessionId");
+    return handleFileRequest(request, filePath, type, request.nextUrl.searchParams.get("sessionId"));
+  } catch (error) {
+    return NextResponse.json({ error: String(error) }, { status: 500 });
+  }
+}
 
+/** 文件请求主管线：GET（路径段/票据/稳态令牌）与 POST /api/files/get 共用。 */
+async function handleFileRequest(
+  request: NextRequest,
+  filePath: string,
+  type: FileRequestType,
+  sessionId: string | null,
+): Promise<Response> {
+  try {
     const allowedRoots = await getAllowedFileRoots();
     const allowedByRoot = isFilePathAllowed(filePath, allowedRoots);
     const allowedBySessionReference =
