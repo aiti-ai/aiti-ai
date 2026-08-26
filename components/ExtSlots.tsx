@@ -97,6 +97,10 @@ export interface ExtClientContext {
   openFolder?(path: string, folderName?: string): void | Promise<void>;
   /** 侧栏文件树定位目录 */
   revealDir?(absPath: string): void | Promise<void>;
+  /** 读取当前打开 tab 清单（数组序=打开序；含 kind/pinned 透传）——批量关闭/容量控制原语 */
+  getFileTabs?(): { id: string; filePath: string; kind?: "file" | "folder"; pinned?: boolean }[];
+  /** 关闭指定 tab（仅状态移除+激活位重排；脏确认/钉住保护由扩展负责） */
+  closeFileTabs?(ids: string[]): void;
   /** 输入框追加文本不发送（引用回复预填用） */
   appendText?(text: string): void | Promise<void>;
   /** 注册 composer 增强器（值观测/会话 key 切换/发送前链式钩子；见 docs/composer-enhancement-contract.md）。
@@ -281,6 +285,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     openFolder: (path: string, folderName?: string) =>
       getHostApi().openFolder?.(path, folderName ?? path.split("/").pop() ?? path),
     revealDir: (absPath) => getHostApi().revealDir?.(absPath),
+    getFileTabs: () => getHostApi().getFileTabs?.() ?? [],
+    closeFileTabs: (ids: string[]) => getHostApi().closeFileTabs?.(ids),
     appendText: (text) => getHostApi().appendText?.(text),
     registerComposerEnhancement: (enh: ComposerEnhancement) => registerComposerEnhancement(enh),
     writeComposerValue: (text: string) => getHostApi().writeComposerValue?.(text) ?? false,

@@ -885,11 +885,36 @@ export function AppShell() {
     recordFolder(folderPath, "add");
   }, [isMobile, recordFolder]);
 
+  // ── 通用原语（无策略）：给扩展做 tab 数量/钉住/批量关闭的底层能力 ──
+  // getFileTabs：返回当前打开 tab 清单（数组序=打开序）。
+  const handleGetFileTabs = useCallback(() =>
+    fileTabs.map((t) => ({ id: t.id, filePath: t.filePath, kind: t.kind ?? "file", pinned: t.pinned })),
+  [fileTabs]);
+  // closeFileTabs：仅从状态移除 + 激活位重排；脏确认/钉住保护等策略由调用方（扩展）负责。
+  const handleCloseFileTabs = useCallback((ids: string[]) => {
+    const idSet = new Set(ids);
+    if (idSet.size === 0) return;
+    setFileTabs((prev) => {
+      const next = prev.filter((t) => !idSet.has(t.id));
+      if (next.length === 0) setRightPanelOpen(false);
+      return next;
+    });
+    setActiveFileTabId((cur) => {
+      if (cur && idSet.has(cur)) {
+        const remaining = fileTabs.filter((t) => !idSet.has(t.id));
+        return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
+      }
+      return cur;
+    });
+  }, [fileTabs]);
+
   // 扩展宿主公共接口注册（原样能力，不理解为扩展适配；AppShell 零消息/零罗列）
   registerHostApi({
     openFile: handleOpenFile,
     openFolder: handleOpenFolder,
     revealDir: handleRevealDir,
+    getFileTabs: handleGetFileTabs,
+    closeFileTabs: handleCloseFileTabs,
     appendText: (text) => chatInputRef.current?.appendText(text),
     writeComposerValue: (text) => {
       const c = chatInputRef.current;

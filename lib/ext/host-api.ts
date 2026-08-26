@@ -23,6 +23,10 @@ export interface HostApi {
   openFolder?: (folderPath: string, folderName: string) => void | Promise<void>;
   /** 侧栏文件树定位目录 */
   revealDir?: (absPath: string) => void | Promise<void>;
+  /** 当前打开的标签页清单（{ id, filePath, kind, pinned }，数组序=打开序；仅读原语，无策略） */
+  getFileTabs?: () => { id: string; filePath: string; kind?: "file" | "folder"; pinned?: boolean }[];
+  /** 关闭指定 id 的标签页（原语：只从状态移除+重排激活位；脏确认/钉住等策略由调用方负责） */
+  closeFileTabs?: (ids: string[]) => void;
   /** 输入框追加文本（不发送；引用回复预填用） */
   appendText?: (text: string) => void | Promise<void>;
   /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步） */
@@ -39,6 +43,8 @@ export function registerHostApi(api: HostApi): void {
   if (api.openFile) hostApi.openFile = api.openFile;
   if (api.openFolder) hostApi.openFolder = api.openFolder;
   if (api.revealDir) hostApi.revealDir = api.revealDir;
+  if (api.getFileTabs) hostApi.getFileTabs = api.getFileTabs;
+  if (api.closeFileTabs) hostApi.closeFileTabs = api.closeFileTabs;
   if (api.appendText) hostApi.appendText = api.appendText;
   if (api.writeComposerValue) hostApi.writeComposerValue = api.writeComposerValue;
   if (api.restoreComposerDraft) hostApi.restoreComposerDraft = api.restoreComposerDraft;

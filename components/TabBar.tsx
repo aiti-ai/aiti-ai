@@ -11,6 +11,8 @@ export interface Tab {
   filePath: string;
   /** "file" (default) or "folder" — folder tabs render a FolderViewer. */
   kind?: "file" | "folder";
+  /** 钉住标记（由扩展维护，core 只透传——不在 core 做逐出/关闭策略） */
+  pinned?: boolean;
   sourceSessionId?: string | null;
   initialDisplayMode?: FileViewerDisplayMode;
   viewerState?: FileViewerState;
