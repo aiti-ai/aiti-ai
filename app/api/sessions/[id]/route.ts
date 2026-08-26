@@ -17,6 +17,10 @@ import { listProviders } from "@/lib/session/providers";
 import { removeQueue } from "@/lib/queue-store";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
+import { computeSessionStats } from "@/lib/session-stats";
+import type { SessionEntry } from "@/lib/types";
+import { readSubagentRun, readSubagentSessionResources, SUBAGENT_META_TYPE } from "@/lib/subagents";
+import { readSessionToolSelection } from "@/lib/session-tool-selection";
 
 export async function GET(
   req: Request,
@@ -144,7 +148,14 @@ export async function GET(
     const searchParams = new URL(req.url).searchParams;
     const deferThinking = searchParams.has("deferThinking");
     const deferToolResultImages = searchParams.has("deferMedia");
-    const context = buildSessionContext(entries as never, leafId, { deferThinking, deferToolResultImages });
+    const rawTail = Number(searchParams.get("tail"));
+    const tail = Number.isFinite(rawTail) && rawTail > 0 ? Math.min(rawTail, 1000) : 50;
+    const context = buildSessionContext(entries as never, leafId, {
+      deferThinking,
+      deferToolResultImages,
+      tail,
+      sessionId: id, // local: lazy URLs for historical tool-result images
+    });
     // 显示一致性 overlay：wrapper 存活时，model/thinkingLevel 以进程内真实状态为准。
     // 原因：运行中（mid-run）的 set_model 会把 model_change 追加到当时 in-flight 的
     // 消息上；之后 abort + 重发开新分支，这些条目就落在废弃分支上，沿 leaf 路径解析
@@ -158,6 +169,13 @@ export async function GET(
       if (liveThinking) context.thinkingLevel = liveThinking;
     }
     const totalActiveMs = computeSessionTotalActiveMs(entries);
+    // Cumulative usage over ALL entries, including history compacted away —
+    // the same aggregation the SDK's getSessionStats() uses. Lets the client
+    // keep monotonic token/cost counters across compaction and page reloads.
+    const stats = computeSessionStats(entries as unknown as SessionEntry[]);
+    const sessionName = sm.getSessionName();
+    const firstUserEntry = entries.find((entry) => entry.type === "message" && entry.message.role === "user");
+    const firstUserMessage = firstUserEntry?.type === "message" ? firstUserEntry.message : undefined;
 
     const header = sm.getHeader();
     let modified = header?.timestamp ?? new Date().toISOString();
@@ -165,22 +183,31 @@ export async function GET(
     const parentSessionId = header?.parentSession
       ? await resolveSessionIdByPath(header.parentSession)
       : undefined;
+    const subagent = header
+      ? readSubagentRun(entries as never, header.id, filePath)
+      : null;
+    const toolNames = readSubagentSessionResources(entries as never)?.tools
+      ?? readSessionToolSelection(entries as never);
     const info = header ? {
       path: filePath,
       id: header.id,
       cwd: header.cwd ?? "",
-      name: sm.getSessionName(),
+      name: sessionName,
       created: header.timestamp,
       modified,
-      messageCount: context.messages.length,
-      firstMessage: context.messages.find((m) => m.role === "user")
+      messageCount: stats.totalMessages,
+      firstMessage: firstUserMessage
         ? (() => {
-            const msg = context.messages.find((m) => m.role === "user")!;
-            const c = (msg as { content: unknown }).content;
+            const c = (firstUserMessage as { content: unknown }).content;
             return typeof c === "string" ? c : (Array.isArray(c) ? (c.find((b: { type: string }) => b.type === "text") as { text: string } | undefined)?.text ?? "" : "") || "(no messages)";
           })()
         : "(no messages)",
       parentSessionId,
+      ...(subagent
+        ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description, status: liveRpc?.isRunning() ? "running" as const : subagent.status } }
+        : header.parentSession
+          ? { relation: { kind: "fork" as const, ...(parentSessionId ? { originSessionId: parentSessionId } : {}) } }
+          : {}),
       transient: !filePath || !existsSync(filePath),
     } : null;
 
@@ -191,7 +218,9 @@ export async function GET(
       leafId,
       tree,
       context,
+      stats,
       totalActiveMs,
+      ...(toolNames !== undefined ? { toolNames } : {}),
     });
   } catch (error) {
     if ((error as { name?: string }).name === "BridgeOccupiedError") {
@@ -257,6 +286,9 @@ export async function DELETE(
 
     // Read only the bounded header before deleting.
     const parentSessionPath = readSessionHeader(filePath)?.parentSession;
+    const parentSessionId = parentSessionPath
+      ? readSessionHeader(parentSessionPath)?.id
+      : undefined;
 
     // Re-attach all direct children to this session's parent (cascade re-parent)
     // Scan sibling files in the same directory
@@ -280,6 +312,30 @@ export async function DELETE(
             // Rewrite header with new parentSession
             header.parentSession = parentSessionPath;
             lines[0] = JSON.stringify(header);
+            if (parentSessionPath && parentSessionId) {
+              for (let index = 1; index < lines.length; index += 1) {
+                let entry: { type?: string; customType?: string; data?: unknown };
+                try {
+                  entry = JSON.parse(lines[index]);
+                } catch {
+                  continue;
+                }
+                if (
+                  entry.type !== "custom"
+                  || entry.customType !== SUBAGENT_META_TYPE
+                  || typeof entry.data !== "object"
+                  || entry.data === null
+                  || Array.isArray(entry.data)
+                ) continue;
+                entry.data = {
+                  ...entry.data,
+                  parentSessionId,
+                  parentSessionPath,
+                };
+                lines[index] = JSON.stringify(entry);
+                break;
+              }
+            }
             writeFileSync(childPath, lines.join("\n"));
           }
         } catch { /* skip malformed */ }

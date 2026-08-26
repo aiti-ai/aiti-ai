@@ -10,9 +10,7 @@ import { ChatWindow } from "./ChatWindow";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
-import { ModelsConfig } from "./ModelsConfig";
-import { SkillsConfig } from "./SkillsConfig";
-import { PluginsConfig } from "./PluginsConfig";
+import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas } from "./ExtSlots";
 import type { ExtRenderProps, ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
@@ -21,10 +19,13 @@ import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
 const NO_PATH_PICKER_ITEMS: ExtUiItemRegistered[] = [];
 import { registerHostApi } from "@/lib/ext/host-api";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
-import { BranchNavigator } from "./BranchNavigator";
+import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
+import { SystemPromptPanel } from "./SystemPromptPanel";
+import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
+import { AgentSessionPanel } from "./AgentSessionPanel";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
-import { useIsCompact, useIsMobile } from "@/hooks/useIsMobile";
+import { useIsCompact, useIsMobile, useIsNarrowMobile } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
@@ -37,6 +38,7 @@ import {
   shouldShowBrowserNotification,
   showBrowserNotification,
 } from "@/lib/browser-notifications";
+import { setupPushSubscription } from "@/lib/push-client";
 import { getInitialNavigation, type InitialNavigation } from "@/lib/initial-navigation";
 import {
   SEPARATOR,
@@ -76,6 +78,9 @@ import type { QueueEntry } from "@/lib/queue-store";
 import { ExportDialog } from "./ExportDialog";
 import type { FileExplorerHandle } from "./FileExplorer";
 import type { FileViewerState } from "@/lib/file-viewer-state";
+import type { ToolEntry } from "@/lib/tool-presets";
+import { getSessionFamily } from "@/lib/session-family";
+import { getLastSettingsSection, type SettingsSection } from "@/lib/settings-navigation";
 
 type SessionCopyField = "file" | "id";
 type AutoNameStatus =
@@ -100,6 +105,7 @@ declare global {
 
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
 const LANGUAGE_MENU_WIDTH = 176;
+const AGENT_PANEL_WIDTH = 420;
 
 export function AppShell() {
   // 水合完成信号：扩展（如 aiti-draft-keeper）的启动恢复必须等水合结束后落框，
@@ -127,7 +133,17 @@ export function AppShell() {
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
   // 图标按钮宽度统一 36px（与扩展按钮一致）；图标大小也固定 16px（renderTopbarItem 内 iconDim）
+  const isNarrowMobile = useIsNarrowMobile();
   useViewportHeight();
+
+  // Once the user has granted notification permission, register a Web Push
+  // subscription so the server can notify backgrounded PWAs (notably iOS,
+  // which suspends page JS and never receives the SSE completion event).
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) return;
+    if (Notification.permission !== "granted") return;
+    void setupPushSubscription(locale);
+  }, [locale]);
   // Audio ownership lives here (not in ChatWindow) so the completion tone can
   // also fire for tasks finishing in a non-active workspace whose ChatWindow
   // is not mounted. ChatWindow receives the audio callbacks as props.
@@ -137,6 +153,22 @@ export function AppShell() {
     if (soundEnabledRef.current) playDoneSound();
   }, [playDoneSound, soundEnabledRef]);
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
+  const [sessionCatalog, setSessionCatalog] = useState<SessionInfo[]>([]);
+  const handleSessionsChange = useCallback((sessions: SessionInfo[]) => {
+    setSessionCatalog(sessions);
+  }, []);
+  const sessionsWithSelection = useMemo(() => {
+    if (!selectedSession) return sessionCatalog;
+    return [
+      ...sessionCatalog.filter((session) => session.id !== selectedSession.id),
+      selectedSession,
+    ];
+  }, [selectedSession, sessionCatalog]);
+  const activeSessionFamily = useMemo(
+    () => getSessionFamily(sessionsWithSelection, selectedSession?.id),
+    [selectedSession?.id, sessionsWithSelection],
+  );
+  const hasSubagentSessions = Boolean(activeSessionFamily?.subagents.length);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const handleRunningSessionIdsChange = useCallback((ids: Set<string>) => {
     setRunningSessionIds((previous) => {
@@ -156,10 +188,10 @@ export function AppShell() {
   const [sessionKey, setSessionKey] = useState(0);
   const [explorerRefreshKey, setExplorerRefreshKey] = useState(0);
   const fileExplorerRef = useRef<FileExplorerHandle>(null);
-  const [modelsConfigOpen, setModelsConfigOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
+  const [mobileToolbarMoreOpen, setMobileToolbarMoreOpen] = useState(false);
+  const mobileToolbarRef = useRef<HTMLDivElement>(null);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
-  const [skillsConfigOpen, setSkillsConfigOpen] = useState(false);
-  const [pluginsConfigOpen, setPluginsConfigOpen] = useState(false);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
   const [exportDialogOpen, setExportDialogOpen] = useState(false);
@@ -244,6 +276,7 @@ export function AppShell() {
   const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
   const [branchActiveLeafId, setBranchActiveLeafId] = useState<string | null>(null);
   const branchLeafChangeFnRef = useRef<((leafId: string | null) => void) | null>(null);
+  const sessionHasBranches = hasSessionBranches(branchTree);
 
   const handleBranchDataChange = useCallback((tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => {
     setBranchTree(tree);
@@ -259,16 +292,25 @@ export function AppShell() {
   const [systemPromptLoading, setSystemPromptLoading] = useState(false);
   const systemPromptLoaderRef = useRef<(() => Promise<void>) | null>(null);
   const systemPromptLoadIdRef = useRef(0);
+  const [systemTools, setSystemTools] = useState<ToolEntry[] | null>(null);
+  const [systemInfoLoading, setSystemInfoLoading] = useState(false);
+  const systemInfoLoaderRef = useRef<(() => Promise<void>) | null>(null);
+  const systemInfoLoadIdRef = useRef(0);
+  const systemBtnRef = useRef<HTMLButtonElement>(null);
 
   const handleSystemPromptChange = useCallback((prompt: string | null) => {
     setSystemPrompt(prompt);
-    setSystemPromptLoading(false);
+    setSystemInfoLoading(false);
   }, []);
 
-  const handleSystemPromptLoaderChange = useCallback((loader: (() => Promise<void>) | null) => {
-    systemPromptLoadIdRef.current += 1;
-    systemPromptLoaderRef.current = loader;
-    setSystemPromptLoading(false);
+  const handleSystemToolsChange = useCallback((tools: ToolEntry[] | null) => {
+    setSystemTools(tools);
+  }, []);
+
+  const handleSystemInfoLoaderChange = useCallback((loader: (() => Promise<void>) | null) => {
+    systemInfoLoadIdRef.current += 1;
+    systemInfoLoaderRef.current = loader;
+    setSystemInfoLoading(false);
   }, []);
 
   // Session stats (tokens + cost) — populated by ChatWindow, displayed in top bar
@@ -306,15 +348,64 @@ export function AppShell() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"branches" | "system" | "session" | "language" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "language" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
+  useEffect(() => {
+    if (!sessionHasBranches) {
+      setActiveTopPanel((panel) => panel === "branches" ? null : panel);
+    }
+  }, [sessionHasBranches]);
+
+  useEffect(() => {
+    if (!hasSubagentSessions) {
+      setActiveTopPanel((panel) => panel === "agents" ? null : panel);
+    }
+  }, [hasSubagentSessions]);
+
+  const handleMobileToolbarMoreToggle = useCallback(() => {
+    setSidebarOpen(false);
+    setActiveTopPanel(null);
+    setMobileToolbarMoreOpen((open) => !open);
+  }, []);
+  const handleRightPanelToggle = useCallback(() => {
+    if (isMobile) {
+      setSidebarOpen(false);
+      setActiveTopPanel(null);
+      setMobileToolbarMoreOpen(false);
+    }
+    setRightPanelOpen((open) => !open);
+  }, [isMobile]);
+
   const toggleTopPanel = useCallback((
-    panel: "branches" | "system" | "session" | "language",
+    panel: "agents" | "branches" | "system" | "tools" | "session" | "language",
+    keepMobileToolbarOpen = false,
   ) => {
     if (isMobile) setSidebarOpen(false);
     setActiveTopPanel((cur) => cur === panel ? null : panel);
-  }, [isMobile]);
+    if (isMobile && isNarrowMobile && keepMobileToolbarOpen) setMobileToolbarMoreOpen(true);
+  }, [isMobile, isNarrowMobile]);
+
+  const handleSystemInfoToggle = useCallback((
+    panel: "system" | "tools",
+    keepMobileToolbarOpen = false,
+  ) => {
+    const opening = activeTopPanel !== panel;
+    toggleTopPanel(panel, keepMobileToolbarOpen);
+    if (!opening || systemInfoLoading) return;
+
+    const load = systemInfoLoaderRef.current;
+    if (!load) return;
+    const loadId = ++systemInfoLoadIdRef.current;
+    setSystemInfoLoading(true);
+    void load().catch((error) => {
+      console.error("Failed to load system information:", error);
+    }).finally(() => {
+      if (systemInfoLoadIdRef.current === loadId) {
+        setSystemInfoLoading(false);
+      }
+    });
+  }, [activeTopPanel, systemInfoLoading, toggleTopPanel]);
 
   const openSessionStatsPanel = useCallback(() => {
     if (isMobile) setSidebarOpen(false);
@@ -332,8 +423,35 @@ export function AppShell() {
   }, [isMobile]);
 
   useEffect(() => {
+    if (!mobileToolbarMoreOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      const toolbar = mobileToolbarRef.current;
+      if (toolbar && event.composedPath().includes(toolbar)) return;
+      setMobileToolbarMoreOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      setMobileToolbarMoreOpen(false);
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown, true);
+    document.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown, true);
+      document.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [mobileToolbarMoreOpen]);
+
+  useEffect(() => {
+    setMobileToolbarMoreOpen(false);
+  }, [isMobile, isNarrowMobile, selectedSession?.id, newSessionDraftId]);
+
+  useEffect(() => {
+    if (!activeTopPanel || !topBarRef.current) return;
     const el = topBarRef.current;
-    if (!activeTopPanel || !el) return;
     const update = () => {
       const topBarRect = el.getBoundingClientRect();
       if (activeTopPanel === "language" && !isMobile) {
@@ -349,6 +467,14 @@ export function AppShell() {
           setTopPanelPos({ top: topBarRect.bottom, left, width });
           return;
         }
+      }
+      if (activeTopPanel === "agents") {
+        setTopPanelPos({
+          top: topBarRect.bottom,
+          left: topBarRect.left,
+          width: Math.min(AGENT_PANEL_WIDTH, topBarRect.width),
+        });
+        return;
       }
       setTopPanelPos({ top: topBarRect.bottom, left: topBarRect.left, width: topBarRect.width });
     };
@@ -563,7 +689,8 @@ export function AppShell() {
     setBranchTree([]);
     setBranchActiveLeafId(null);
     setSystemPrompt(null);
-    setSystemPromptLoading(false);
+    setSystemTools(null);
+    setSystemInfoLoading(false);
     setActiveTopPanel(null);
     if (currentProject !== newProject) {
       // File tabs are keyed by absolute path, so tabs opened in the previous
@@ -602,8 +729,12 @@ export function AppShell() {
     setNewSessionCwd(null);
     setSelectedSession(session);
     setSessionKey((k) => k + 1);
+    setBranchTree([]);
+    setBranchActiveLeafId(null);
+    branchLeafChangeFnRef.current = null;
     setSystemPrompt(null);
-    setSystemPromptLoading(false);
+    setSystemTools(null);
+    setSystemInfoLoading(false);
     setInitialSessionRestored(true);
     // On mobile, collapse the overlay drawer so the chat is revealed after pick.
     if (isMobile && !isRestore) setSidebarOpen(false);
@@ -630,7 +761,8 @@ export function AppShell() {
     setBranchTree([]);
     setBranchActiveLeafId(null);
     setSystemPrompt(null);
-    setSystemPromptLoading(false);
+    setSystemTools(null);
+    setSystemInfoLoading(false);
     setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
     router.replace("/", { scroll: false });
@@ -663,6 +795,17 @@ export function AppShell() {
       })
       .catch(() => {});
   }, []);
+
+  const handleOpenSession = useCallback(async (sessionId: string) => {
+    try {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { cache: "no-store" });
+      const data = await response.json() as { info?: SessionInfo; error?: string };
+      if (!response.ok || !data.info) throw new Error(data.error ?? `HTTP ${response.status}`);
+      handleSelectSession(data.info);
+    } catch (error) {
+      console.error("[pi-web] failed to open session:", error instanceof Error ? error.message : error);
+    }
+  }, [handleSelectSession]);
 
   // Called by ChatWindow when a new session gets its real id from pi
   const handleSessionCreated = useCallback((session: SessionInfo, sourceDraftKey: string) => {
@@ -705,26 +848,35 @@ export function AppShell() {
 
     if (Notification.permission === "granted") {
       fire();
+      void setupPushSubscription(locale);
     } else if (Notification.permission === "default") {
-      void Notification.requestPermission().then((p) => { if (p === "granted") fire(); });
+      void Notification.requestPermission().then((p) => {
+        if (p === "granted") {
+          fire();
+          void setupPushSubscription(locale);
+        }
+      });
     }
-  }, [handleSelectSession]);
+  }, [handleSelectSession, locale]);
 
   const handleAgentEnd = useCallback(() => {
     setRefreshKey((k) => k + 1);
     setExplorerRefreshKey((k) => k + 1);
     if (selectedSession) hydrateSelectedSession(selectedSession.id);
 
+    if (selectedSession?.relation?.kind === "subagent") return;
     if (!shouldShowBrowserNotification()) return;
     const targetSession = selectedSession;
     deliverSessionNotification({
       targetSession,
       title: targetSession?.name ?? translate("i18n.sessionComplete"),
       body: translate("i18n.taskFinished"),
+      tag: targetSession ? `pi-session-complete:${targetSession.id}` : "pi-session-complete",
     });
   }, [deliverSessionNotification, hydrateSelectedSession, selectedSession, translate]);
 
   const handleAttentionNeeded = useCallback((request: BlockingExtensionUiRequest) => {
+    if (selectedSession?.relation?.kind === "subagent") return;
     if (!shouldShowBrowserNotification()) return;
     if (!claimExtensionAttentionNotification(request, notifiedAttentionRequestIdsRef.current)) return;
 
@@ -815,7 +967,8 @@ export function AppShell() {
       setBranchTree([]);
       setBranchActiveLeafId(null);
       setSystemPrompt(null);
-      setSystemPromptLoading(false);
+      setSystemTools(null);
+      setSystemInfoLoading(false);
       setActiveTopPanel(null);
       router.replace("/", { scroll: false });
     }
@@ -1822,79 +1975,699 @@ export function AppShell() {
         fileExplorerRef={fileExplorerRef}
         onBackgroundTaskDone={handleBackgroundTaskDone}
         onRunningSessionIdsChange={handleRunningSessionIdsChange}
+        onSessionsChange={handleSessionsChange}
       />
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
-          {
-             label: translate("common.models"),
-            onClick: () => setModelsConfigOpen(true),
-            disabled: false,
-            icon: (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" />
-                <line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" />
-                <line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" />
-                <line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" />
-                <line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
-              </svg>
-            ),
-          },
-          {
-             label: translate("common.skills"),
-            onClick: () => setSkillsConfigOpen(true),
-            disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
-            icon: (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                <path d="M2 17l10 5 10-5" />
-                <path d="M2 12l10 5 10-5" />
-              </svg>
-            ),
-          },
-          {
-             label: translate("common.plugins"),
-            onClick: () => setPluginsConfigOpen(true),
-            disabled: !activeCwd && !selectedSession?.cwd && !newSessionCwd,
-            icon: (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M9 7V2" />
-                <path d="M15 7V2" />
-                <path d="M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0Z" />
-                <path d="M12 19v3" />
-              </svg>
-            ),
-          },
-        ] as { label: string; onClick: () => void; disabled: boolean; icon: React.ReactNode }[]).map(({ label, onClick, disabled, icon }) => (
-          <button
-            key={label}
-            onClick={onClick}
-            disabled={disabled}
-            title={label}
-            style={{
-              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-              height: 32, padding: 0, background: "none", border: "none",
-              borderRadius: 9, color: "var(--text-muted)", cursor: disabled ? "default" : "pointer",
-              fontSize: 12, opacity: disabled ? 0.35 : 1,
-              transition: "background 0.12s, color 0.12s",
-            }}
-            onMouseEnter={(e) => { if (!disabled) { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; } }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted)"; }}
-          >
-            {icon}
-            {label}
-          </button>
-        ))}
+          ["models", translate("common.models")],
+          ["skills", translate("common.skills")],
+        ] as const).map(([section, label]) => {
+          const disabled = section !== "models" && !projectTrustCwd;
+          return (
+            <button
+              key={section}
+              type="button"
+              onClick={() => setSettingsSection(section)}
+              disabled={disabled}
+              title={disabled ? translate("settings.projectRequired") : label}
+              aria-label={label}
+              style={{
+                flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                height: 32, padding: 0, background: "none", border: "none",
+                borderRadius: 9, color: "var(--text-muted)", cursor: disabled ? "default" : "pointer",
+                fontSize: 12, opacity: disabled ? 0.35 : 1,
+                transition: "background 0.12s, color 0.12s",
+              }}
+              onMouseEnter={(event) => { if (!disabled) { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; } }}
+              onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
+            >
+              <SettingsSectionIcon section={section} size={14} strokeWidth={2} />
+              <span>{label}</span>
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          onClick={() => setSettingsSection(getLastSettingsSection(projectTrustCwd))}
+          title={translate("common.settings")}
+          aria-label={translate("common.settings")}
+          style={{
+            flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            height: 32, padding: 0, background: "none", border: "none",
+            borderRadius: 9, color: "var(--text-muted)", cursor: "pointer",
+            fontSize: 12, transition: "background 0.12s, color 0.12s",
+          }}
+          onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; }}
+          onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
+        >
+          <SettingsSectionIcon section="general" size={14} strokeWidth={2} />
+          <span>{translate("common.settings")}</span>
+        </button>
         {/* 扩展点：侧栏底部快捷操作行（与内置 模型/技能/插件 同一排；aiti-extman：扩展管理入口） */}
         <ExtSlot name="sidebarFooter" />
       </div>
     </>
   );
 
+  const renderThemeButton = (mobile: boolean) => (
+    <button
+      type="button"
+      onClick={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        toggleTheme({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 });
+        if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
+      }}
+      title={translate(themeLabelKey)}
+      aria-label={translate(themeLabelKey)}
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+        background: "none", border: "none", borderRight: "1px solid var(--border)",
+        color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+      }}
+      onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
+      onMouseLeave={(event) => { event.currentTarget.style.color = "var(--text-muted)"; }}
+      data-mobile-toolbar-action={mobile ? "theme" : undefined}
+    >
+      {preference === "light" ? (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <circle cx="12" cy="12" r="5" />
+          <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
+          <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+          <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
+          <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+        </svg>
+      ) : preference === "dark" ? (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+        </svg>
+      ) : (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="2" y="3" width="20" height="14" rx="2" />
+          <line x1="8" y1="21" x2="16" y2="21" />
+          <line x1="12" y1="17" x2="12" y2="21" />
+        </svg>
+      )}
+    </button>
+  );
 
 
 
+  const renderLanguageButton = (mobile: boolean) => (
+    <button
+      ref={languageBtnRef}
+      type="button"
+      onClick={() => toggleTopPanel("language", mobile)}
+      title={translate("common.language")}
+      aria-label={translate("common.language")}
+      aria-haspopup="menu"
+      aria-expanded={activeTopPanel === "language"}
+      aria-pressed={activeTopPanel === "language"}
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+        background: activeTopPanel === "language" ? "var(--bg-selected)" : "none",
+        border: "none", borderRight: "1px solid var(--border)",
+        color: activeTopPanel === "language" ? "var(--text)" : "var(--text-muted)",
+        cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
+      }}
+      onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
+      onMouseLeave={(event) => {
+        event.currentTarget.style.color = activeTopPanel === "language" ? "var(--text)" : "var(--text-muted)";
+      }}
+      data-mobile-toolbar-action={mobile ? "language" : undefined}
+    >
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+      >
+        <path d="m5 8 6 6" />
+        <path d="m4 14 6-6 2-3" />
+        <path d="M2 5h12" />
+        <path d="M7 2h1" />
+        <path d="m22 22-5-10-5 10" />
+        <path d="M14 18h6" />
+      </svg>
+    </button>
+  );
+
+  const renderProjectTrustWarning = (mobileBanner: boolean) => {
+    if (!showChat || !projectTrust?.requiresTrust || projectTrust.trusted) return null;
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          setProjectTrustError(null);
+          setProjectTrustDialogOpen(true);
+        }}
+        title={translate("trust.resourcesNotLoaded")}
+        aria-label={translate("trust.resourcesNotLoaded")}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: mobileBanner ? "flex-start" : "center",
+          gap: 6,
+          width: mobileBanner ? "100%" : undefined,
+          minHeight: mobileBanner ? 32 : undefined,
+          height: mobileBanner ? undefined : "100%",
+          padding: mobileBanner ? "6px 12px" : "0 12px",
+          background: mobileBanner ? "color-mix(in srgb, #d97706 8%, var(--bg-panel))" : "none",
+          border: "none",
+          borderRight: mobileBanner ? "none" : "1px solid var(--border)",
+          borderBottom: mobileBanner ? "1px solid var(--border)" : "none",
+          color: "#d97706",
+          cursor: "pointer",
+          flexShrink: 0,
+          fontSize: 11,
+          lineHeight: 1.35,
+          textAlign: "left",
+        }}
+        data-mobile-trust-banner={mobileBanner ? "true" : undefined}
+      >
+        <svg
+          width="13"
+          height="13"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          aria-hidden="true"
+          style={{ flexShrink: 0 }}
+        >
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z" />
+          <path d="M12 8v4" />
+          <path d="M12 16h.01" />
+        </svg>
+        <span>{translate("trust.resourcesNotLoaded")}</span>
+      </button>
+    );
+  };
 
 
+  const renderChatToolbarActions = (mobile: boolean) => {
+    if (!mobile && !showChat) return null;
+    return (
+      <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
+        <button
+          type="button"
+          onClick={() => {
+            handleViewFullHistory();
+            if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
+          }}
+          disabled={!selectedSession}
+          title={selectedSession ? translate("history.full") : translate("history.unsaved")}
+          aria-label={translate("history.full")}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
+            height: "100%",
+            padding: mobile ? 0 : "0 12px",
+            background: "none",
+            border: "none",
+            borderTop: "2px solid transparent",
+            borderRight: "1px solid var(--border)",
+            color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
+            cursor: selectedSession ? "pointer" : "not-allowed",
+            opacity: selectedSession ? 1 : 0.45,
+            flexShrink: 0,
+            fontSize: 11,
+            whiteSpace: "nowrap",
+            transition: "color 0.1s, background 0.1s, opacity 0.1s",
+          }}
+          onMouseEnter={(event) => {
+            if (!selectedSession) return;
+            event.currentTarget.style.color = "var(--text)";
+            event.currentTarget.style.background = "var(--bg-hover)";
+          }}
+          onMouseLeave={(event) => {
+            event.currentTarget.style.color = selectedSession ? "var(--text-muted)" : "var(--text-dim)";
+            event.currentTarget.style.background = "none";
+          }}
+          data-mobile-toolbar-action={mobile ? "history" : undefined}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{
+              color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
+              flexShrink: 0,
+            }}
+            aria-hidden="true"
+          >
+            <path d="M3 12a9 9 0 1 0 3-6.7L3 8" />
+            <path d="M3 3v5h5" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+          {!mobile && <span>{translate("history.label")}</span>}
+        </button>
+        {(() => {
+          // 上下文压缩后当前消息可能不再包含 user 消息，需同时参考会话文件的消息总数。
+          const hasMessages = Boolean(
+            selectedSession
+            && ((sessionStats?.userMessages ?? 0) > 0 || selectedSession.messageCount > 0),
+          );
+          const disabled = !selectedSession || selectedSession.transient || !hasMessages || autoNameStatus.kind === "naming";
+          const isSuccess = autoNameStatus.kind === "success";
+          const isError = autoNameStatus.kind === "error";
+          const label = autoNameStatus.kind === "naming"
+            ? translate("title.generating")
+            : isSuccess
+              ? translate("title.updated")
+              : isError
+                ? translate("title.failed")
+                : translate("title.generate");
+          const title = !selectedSession || selectedSession.transient
+            ? translate("title.unsaved")
+            : !hasMessages
+              ? translate("title.noMessages")
+              : isError
+                ? autoNameStatus.message
+                : translate("title.generateSession");
+
+          return (
+            <button
+              type="button"
+              onClick={() => {
+                void handleAutoName();
+                if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
+              }}
+              disabled={disabled}
+              title={title}
+              aria-label={label}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+                width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
+                height: "100%", padding: mobile ? 0 : "0 12px",
+                background: "none", border: "none",
+                borderTop: "2px solid transparent",
+                borderRight: "1px solid var(--border)",
+                color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
+                cursor: disabled ? "not-allowed" : "pointer",
+                opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
+                flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+                transition: "color 0.1s, background 0.1s, opacity 0.1s",
+              }}
+              onMouseEnter={(event) => {
+                if (disabled) return;
+                event.currentTarget.style.color = isError ? "#dc2626" : "var(--text)";
+                event.currentTarget.style.background = "var(--bg-hover)";
+              }}
+              onMouseLeave={(event) => {
+                event.currentTarget.style.color = isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)";
+                event.currentTarget.style.background = "none";
+              }}
+              data-mobile-toolbar-action={mobile ? "name" : undefined}
+            >
+              {autoNameStatus.kind === "naming" ? (
+                <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
+                  <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                </svg>
+              ) : isSuccess ? (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="m15 4 5 5L7 22l-5-5Z" />
+                  <path d="m14 5 5 5" />
+                  <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
+                </svg>
+              )}
+              {!mobile && <span>{label}</span>}
+            </button>
+          );
+        })()}
+        {hasSubagentSessions && (
+          <button
+            type="button"
+            onClick={() => toggleTopPanel("agents", mobile)}
+            title={translate("agentSwitcher.title")}
+            aria-label={translate("agentSwitcher.title")}
+            aria-pressed={activeTopPanel === "agents"}
+            style={{
+              position: "relative",
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
+              height: "100%", padding: mobile ? 0 : "0 12px",
+              background: activeTopPanel === "agents" ? "var(--bg-selected)" : "none",
+              border: "none",
+              borderTop: activeTopPanel === "agents" ? "2px solid var(--accent)" : "2px solid transparent",
+              borderRight: "1px solid var(--border)",
+              color: activeTopPanel === "agents" ? "var(--text)" : "var(--text-muted)",
+              cursor: "pointer", flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+              transition: "color 0.1s, background 0.1s",
+            }}
+            data-mobile-toolbar-action={mobile ? "agents" : undefined}
+          >
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
+            </svg>
+            {!mobile && <span>{translate("agentSwitcher.title")}</span>}
+            <span
+              aria-hidden="true"
+              style={{
+                minWidth: 15, height: 15, padding: "0 4px", display: "grid", placeItems: "center",
+                borderRadius: 7, background: "var(--bg-selected)", color: "var(--accent)",
+                fontSize: 10, lineHeight: 1, fontVariantNumeric: "tabular-nums",
+                ...(mobile ? { position: "absolute", top: 2, right: 2, minWidth: 13, height: 13, padding: "0 3px", fontSize: 9 } : {}),
+              }}
+            >
+              {activeSessionFamily!.subagents.length}
+            </span>
+          </button>
+        )}
+        {sessionHasBranches && (mobile ? (
+          <button
+            type="button"
+            onClick={() => toggleTopPanel("branches", true)}
+            title={translate("i18n.branches")}
+            aria-label={translate("i18n.branches")}
+            aria-pressed={activeTopPanel === "branches"}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
+              background: activeTopPanel === "branches" ? "var(--bg-selected)" : "none",
+              border: "none",
+              borderTop: activeTopPanel === "branches" ? "2px solid var(--accent)" : "2px solid transparent",
+              borderRight: "1px solid var(--border)",
+              color: activeTopPanel === "branches" ? "var(--text)" : "var(--text-muted)",
+              cursor: "pointer", flexShrink: 0,
+            }}
+            data-mobile-toolbar-action="branches"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: branchTree.length > 0 ? "var(--accent)" : "var(--text-dim)" }} aria-hidden="true">
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+          </button>
+        ) : (
+          <BranchNavigator
+            tree={branchTree}
+            activeLeafId={branchActiveLeafId}
+            onLeafChange={handleBranchLeafChange}
+            inline
+            containerRef={topBarRef}
+            open={activeTopPanel === "branches"}
+            onToggle={() => toggleTopPanel("branches")}
+            hasSession
+          />
+        ))}
+        <button
+          ref={systemBtnRef}
+          type="button"
+          onClick={() => handleSystemInfoToggle("system", mobile)}
+          disabled={mobile && !showChat}
+          title={translate("system.prompt")}
+          aria-label={translate("system.prompt")}
+          aria-pressed={activeTopPanel === "system"}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
+            height: "100%", padding: mobile ? 0 : "0 12px",
+            background: activeTopPanel === "system" ? "var(--bg-selected)" : "none",
+            border: "none",
+            borderTop: activeTopPanel === "system" ? "2px solid var(--accent)" : "2px solid transparent",
+            borderRight: "1px solid var(--border)",
+            cursor: mobile && !showChat ? "not-allowed" : "pointer",
+            color: activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)",
+            opacity: mobile && !showChat ? 0.45 : 1,
+            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
+          }}
+          onMouseEnter={(event) => {
+            if (mobile && !showChat) return;
+            event.currentTarget.style.color = "var(--text)";
+          }}
+          onMouseLeave={(event) => {
+            event.currentTarget.style.color = activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)";
+          }}
+          data-mobile-toolbar-action={mobile ? "system" : undefined}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="8" y1="13" x2="16" y2="13" />
+            <line x1="8" y1="17" x2="13" y2="17" />
+          </svg>
+          {!mobile && <span>{translate("system.label")}</span>}
+        </button>
+        <button
+          type="button"
+          onClick={() => handleSystemInfoToggle("tools", mobile)}
+          disabled={mobile && !showChat}
+          title={translate("tools.title")}
+          aria-label={translate("tools.title")}
+          aria-pressed={activeTopPanel === "tools"}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
+            height: "100%", padding: mobile ? 0 : "0 12px",
+            background: activeTopPanel === "tools" ? "var(--bg-selected)" : "none",
+            border: "none",
+            borderTop: activeTopPanel === "tools" ? "2px solid var(--accent)" : "2px solid transparent",
+            borderRight: "1px solid var(--border)",
+            cursor: mobile && !showChat ? "not-allowed" : "pointer",
+            color: activeTopPanel === "tools" ? "var(--text)" : "var(--text-muted)",
+            opacity: mobile && !showChat ? 0.45 : 1,
+            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
+          }}
+          onMouseEnter={(event) => {
+            if (mobile && !showChat) return;
+            event.currentTarget.style.color = "var(--text)";
+          }}
+          onMouseLeave={(event) => {
+            event.currentTarget.style.color = activeTopPanel === "tools" ? "var(--text)" : "var(--text-muted)";
+          }}
+          data-mobile-toolbar-action={mobile ? "tools" : undefined}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemTools?.some((tool) => tool.active) ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
+            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" />
+          </svg>
+          {!mobile && <span>{translate("tools.label")}</span>}
+        </button>
+        {mobile && renderThemeButton(true)}
+        {mobile && renderLanguageButton(true)}
+      </div>
+    );
+  };
+
+  const renderSessionStatsButton = (mobile: boolean) => {
+    if (!mobile && (!showChat || (!sessionStats && !contextUsage))) return null;
+
+    const tokens = sessionStats?.tokens;
+    const cost = sessionStats?.cost ?? 0;
+    const formatCompact = (value: number) => value >= 1_000_000
+      ? `${(value / 1_000_000).toFixed(1)}M`
+      : value >= 1000
+        ? `${(value / 1000).toFixed(0)}k`
+        : String(value);
+    const costText = cost > 0 ? (cost >= 0.01 ? `$${cost.toFixed(2)}` : `<$0.01`) : null;
+
+    let contextColor = "var(--text-muted)";
+    let desktopContextText: string | null = null;
+    let mobileContextText: string | null = null;
+    if (contextUsage?.contextWindow) {
+      const percent = contextUsage.percent;
+      if (percent !== null && percent > 90) contextColor = "#ef4444";
+      else if (percent !== null && percent > 70) contextColor = "rgba(234,179,8,0.95)";
+      desktopContextText = percent !== null
+        ? `${percent.toFixed(0)}% / ${formatCompact(contextUsage.contextWindow)}`
+        : `? / ${formatCompact(contextUsage.contextWindow)}`;
+      mobileContextText = percent !== null ? `${percent.toFixed(0)}%` : null;
+    }
+
+    const tooltipParts: string[] = [];
+    if (tokens) {
+      tooltipParts.push(`in: ${tokens.input.toLocaleString(locale)}`);
+      tooltipParts.push(`out: ${tokens.output.toLocaleString(locale)}`);
+      tooltipParts.push(`cache read: ${tokens.cacheRead.toLocaleString(locale)}`);
+      tooltipParts.push(`cache write: ${tokens.cacheWrite.toLocaleString(locale)}`);
+      if (cost > 0) tooltipParts.push(`cost: $${cost.toFixed(4)}`);
+    }
+    if (contextUsage?.contextWindow) {
+      const percent = contextUsage.percent;
+      tooltipParts.push(`context: ${percent !== null ? percent.toFixed(1) + "%" : "unknown"} of ${contextUsage.contextWindow.toLocaleString()} tokens`);
+    }
+    const tooltip = tooltipParts.join("  |  ");
+    const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
+    const hasMobileValues = Boolean(
+      (tokens && (tokens.input > 0 || tokens.output > 0))
+      || costText
+      || mobileContextText,
+    );
+
+    return (
+      <button
+        type="button"
+        onClick={() => toggleTopPanel("session")}
+        disabled={!showChat || covered}
+        tabIndex={covered ? -1 : undefined}
+        title={tooltip || translate("session.title")}
+        aria-label={translate("session.title")}
+        aria-pressed={activeTopPanel === "session"}
+        aria-hidden={covered ? true : undefined}
+        className={mobile ? "mobile-session-stats" : undefined}
+        data-mobile-toolbar-stats={mobile ? "true" : undefined}
+        style={{
+          marginLeft: mobile ? 0 : "auto",
+          display: "flex", alignItems: "center", justifyContent: "flex-end",
+          flex: mobile ? 1 : undefined,
+          minWidth: 0,
+          gap: mobile ? 7 : 10,
+          paddingLeft: mobile ? 6 : 12,
+          paddingRight: mobile ? 6 : 12,
+          height: "100%",
+          overflow: "hidden",
+          visibility: covered ? "hidden" : "visible",
+          pointerEvents: covered ? "none" : "auto",
+          background: activeTopPanel === "session" ? "var(--bg-selected)" : "none",
+          border: "none",
+          borderTop: activeTopPanel === "session" ? "2px solid var(--accent)" : "2px solid transparent",
+          fontSize: 11, color: "var(--text-muted)",
+          whiteSpace: "nowrap", cursor: showChat ? "pointer" : "default",
+          fontVariantNumeric: "tabular-nums",
+          transition: "color 0.1s, background 0.1s",
+        }}
+        onMouseEnter={(event) => {
+          if (showChat && !covered) event.currentTarget.style.color = "var(--text)";
+        }}
+        onMouseLeave={(event) => {
+          event.currentTarget.style.color = activeTopPanel === "session" ? "var(--text)" : "var(--text-muted)";
+        }}
+      >
+        {mobile ? (
+          <>
+            {tokens && tokens.input > 0 && (
+              <span className="mobile-session-stat-io" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
+                </svg>
+                {formatCompact(tokens.input)}
+              </span>
+            )}
+            {tokens && tokens.output > 0 && (
+              <span className="mobile-session-stat-io" style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
+                </svg>
+                {formatCompact(tokens.output)}
+              </span>
+            )}
+            {costText && (
+              <span className="mobile-session-stat-cost" style={{ color: "var(--text)", fontWeight: 500, flexShrink: 0 }}>
+                {costText}
+              </span>
+            )}
+            {mobileContextText && (
+              <span style={{ color: contextColor, flexShrink: 0 }}>
+                {mobileContextText}
+              </span>
+            )}
+            {!hasMobileValues && showChat && (
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", color: "var(--text-dim)" }}>
+                {translate("session.title")}
+              </span>
+            )}
+          </>
+        ) : (
+          <>
+            {tokens && tokens.input > 0 && (
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="5" y1="8.5" x2="5" y2="1.5" /><polyline points="2 4 5 1.5 8 4" />
+                </svg>
+                {formatCompact(tokens.input)}
+              </span>
+            )}
+            {tokens && tokens.output > 0 && (
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <line x1="5" y1="1.5" x2="5" y2="8.5" /><polyline points="2 6 5 8.5 8 6" />
+                </svg>
+                {formatCompact(tokens.output)}
+              </span>
+            )}
+            {tokens && tokens.cacheRead > 0 && (
+              <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M8.5 5a3.5 3.5 0 1 1-1-2.45" /><polyline points="6.5 1.5 8.5 2.5 7.5 4.5" />
+                </svg>
+                {formatCompact(tokens.cacheRead)}
+              </span>
+            )}
+            {costText && (
+              <span style={{ display: "flex", alignItems: "center", color: "var(--text)", fontWeight: 500 }}>
+                {costText}
+              </span>
+            )}
+            {desktopContextText && (
+              <span style={{ display: "flex", alignItems: "center", gap: 4, color: contextColor }}>
+                <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M1 9 L1 5 Q1 1 5 1 Q9 1 9 5 L9 9" /><line x1="1" y1="9" x2="9" y2="9" />
+                </svg>
+                {desktopContextText}
+              </span>
+            )}
+          </>
+        )}
+      </button>
+    );
+  };
+
+  const renderMainFileToggle = (mobile: boolean) => {
+    const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
+    return (
+      <button
+        type="button"
+        onClick={handleRightPanelToggle}
+        disabled={covered}
+        tabIndex={covered ? -1 : undefined}
+        aria-controls="file-panel"
+        aria-expanded={rightPanelOpen}
+        aria-hidden={covered ? true : undefined}
+        title={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
+        aria-label={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
+        data-mobile-toolbar-file={mobile ? "true" : undefined}
+        style={{
+          marginLeft: !mobile && !sessionStats && !contextUsage ? "auto" : 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+          visibility: covered ? "hidden" : "visible",
+          pointerEvents: covered ? "none" : "auto",
+          background: rightPanelOpen ? "var(--bg-selected)" : "none",
+          border: "none", borderLeft: "1px solid var(--border)",
+          color: rightPanelOpen ? "var(--text)" : "var(--text-muted)",
+          cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
+        }}
+        onMouseEnter={(event) => { if (!covered) event.currentTarget.style.color = "var(--text)"; }}
+        onMouseLeave={(event) => { event.currentTarget.style.color = rightPanelOpen ? "var(--text)" : "var(--text-muted)"; }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
+        </svg>
+      </button>
+    );
+  };
 
   return (
     <ExtSlotsProvider>
@@ -2276,8 +3049,17 @@ export function AppShell() {
               </svg>
             </button>
           </div>
-          {/* 分支溢出时：下拉面板独立挂在顶栏（按钮在"⋯"里，点击后开面板） */}
-          {activeTopPanel === "branches" && branchOverflowed && (
+          {!isMobile && (
+            <>
+              {renderThemeButton(false)}
+              {renderLanguageButton(false)}
+              {renderProjectTrustWarning(false)}
+              {renderChatToolbarActions(false)}
+              {renderSessionStatsButton(false)}
+            </>
+          )}
+          {!isMobile && renderMainFileToggle(false)}
+          {isMobile && sessionHasBranches && (
             <BranchNavigator
               tree={branchTree}
               activeLeafId={branchActiveLeafId}
@@ -2347,34 +3129,28 @@ export function AppShell() {
                   ))}
                 </div>
               )}
+              {activeTopPanel === "agents" && activeSessionFamily && selectedSession && (
+                <AgentSessionPanel
+                  rootSession={activeSessionFamily.root}
+                  subagents={activeSessionFamily.subagents}
+                  selectedSessionId={selectedSession.id}
+                  runningSessionIds={runningSessionIds}
+                  onSelectSession={handleSelectSession}
+                />
+              )}
               {activeTopPanel === "system" && (
-                <div style={{
-                  background: "var(--bg-panel)",
-                  borderBottom: "1px solid var(--border)",
-                }}>
-                  {systemPrompt ? (
-                    <div style={{
-                      maxHeight: "min(600px, 75vh)",
-                      overflowY: "auto",
-                      padding: "12px 16px",
-                      color: "var(--text-muted)",
-                      fontSize: 12,
-                      lineHeight: 1.6,
-                      whiteSpace: "pre-wrap",
-                      fontFamily: "var(--font-mono)",
-                    }}>
-                      {systemPrompt}
-                    </div>
-                  ) : systemPrompt === "" ? (
-                    <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                       {translate("system.empty")}
-                    </div>
-                  ) : (
-                    <div style={{ padding: "10px 16px", fontSize: 12, color: "var(--text-muted)", fontStyle: "italic" }}>
-                       {systemPromptLoading ? translate("system.loading") : translate("system.load")}
-                    </div>
-                  )}
-                </div>
+                <SystemPromptPanel
+                  loading={systemInfoLoading}
+                  prompt={systemPrompt}
+                  translate={translate}
+                />
+              )}
+              {activeTopPanel === "tools" && (
+                <ToolDefinitionsPanel
+                  loading={systemInfoLoading}
+                  tools={systemTools}
+                  translate={translate}
+                />
               )}
               {activeTopPanel === "session" && (
                 <div className="session-info-popover" style={{
@@ -2720,13 +3496,15 @@ export function AppShell() {
               chatInputRef={chatInputRef}
               onBranchDataChange={handleBranchDataChange}
               onSystemPromptChange={handleSystemPromptChange}
-              onSystemPromptLoaderChange={handleSystemPromptLoaderChange}
+              onSystemToolsChange={handleSystemToolsChange}
+              onSystemInfoLoaderChange={handleSystemInfoLoaderChange}
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
               onSessionStatsRefresherRegister={setSessionStatsRefresh}
               onContextUsageChange={handleContextUsageChange}
               onExportQueue={(resolver) => { exportQueueDataRef.current = resolver; }}
               onOpenFile={handleOpenLinkedFile}
+              onOpenSession={handleOpenSession}
               soundEnabled={soundEnabled}
               onSoundToggle={onSoundToggle}
               playDoneSound={playDoneSound}
@@ -2951,41 +3729,18 @@ export function AppShell() {
         </div>
       </div>
     </div>
-    {/* File panel toggle — always visible at top-right */}
-    <button
-      onClick={() => {
-        const next = !rightPanelOpen;
-        setRightPanelOpen(next);
-        if (next) {
-          const restore = window.__aitiEditor?._restoreSession;
-          if (typeof restore === "function") {
-            setTimeout(() => restore(), 0);
-          }
-        }
-      }}
-       aria-controls="file-panel"
-       aria-expanded={rightPanelOpen}
-       title={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
-       aria-label={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
-      style={{
-        /* right:0 按钮完全贴屏右缘（用户要求“靠到右边”；36px 小按钮无需安全区避让——
-           margin/padding env 都会把它推离边缘 38px，实测反复“没贴边”就是这两种写法造成的） */
-        position: "fixed", top: "env(safe-area-inset-top)", right: 0, zIndex: 300,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        width: 36, height: 36, padding: 0,
-        background: "var(--bg-panel)", borderTop: "none", borderRight: "none",
-        borderLeft: "1px solid var(--border)", borderBottom: "1px solid var(--border)",
-        color: rightPanelOpen ? "var(--text)" : "var(--text-muted)",
-        cursor: "pointer", transition: "color 0.12s",
-      }}
-      onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
-      onMouseLeave={(e) => { e.currentTarget.style.color = rightPanelOpen ? "var(--text)" : "var(--text-muted)"; }}
-    >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
-      </svg>
-    </button>
-    {modelsConfigOpen && <ModelsConfig onClose={() => { setModelsConfigOpen(false); setModelsRefreshKey((k) => k + 1); }} />}
+    {settingsSection && (
+      <SettingsPanel
+        cwd={projectTrustCwd}
+        sessionId={selectedSession?.id ?? null}
+        initialSection={settingsSection}
+        onClose={() => {
+          setSettingsSection(null);
+          setModelsRefreshKey((key) => key + 1);
+        }}
+        onPluginsReloaded={() => setSessionKey((key) => key + 1)}
+      />
+    )}
     {projectTrustDialogOpen && projectTrustCwd && (
       <ProjectTrustDialog
         cwd={projectTrustCwd}
@@ -2995,17 +3750,6 @@ export function AppShell() {
           if (!projectTrustBusy) setProjectTrustDialogOpen(false);
         }}
         onConfirm={() => void handleTrustProject()}
-      />
-    )}
-    {skillsConfigOpen && projectTrustCwd && (
-      <SkillsConfig cwd={projectTrustCwd} onClose={() => setSkillsConfigOpen(false)} />
-    )}
-    {pluginsConfigOpen && projectTrustCwd && (
-      <PluginsConfig
-        cwd={projectTrustCwd}
-        sessionId={selectedSession?.id ?? null}
-        onClose={() => setPluginsConfigOpen(false)}
-        onReloaded={() => setSessionKey((k) => k + 1)}
       />
     )}
     {/* 服务端口弹窗已随 service-tunnels 抽离为扩展（<ExtSlot name="dialogs" /> 渲染） */}

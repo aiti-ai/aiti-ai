@@ -2,12 +2,9 @@
 
 import { memo, useState, useRef, useEffect, useMemo } from "react";
 import { MarkdownBody } from "./MarkdownBody";
-import { ExtSlot } from "./ExtSlots";
 import { ImagePreview } from "./ImagePreview";
 import { copyText } from "@/lib/clipboard";
-import { apiUrl } from "@/lib/base-path";
 import { useI18n } from "@/hooks/useI18n";
-import { useIsCoarsePointer } from "@/hooks/useIsMobile";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
@@ -15,6 +12,7 @@ import { isEditToolName } from "@/lib/tool-names";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import { skillExpansionToCommand } from "@/lib/slash-display";
+import type { SubagentToolDetails } from "@/lib/subagent-extension";
 import type {
   AgentMessage,
   UserMessage,
@@ -159,7 +157,7 @@ function loadThinkingContent(sessionId: string, entryId: string, blockIndex: num
   }
 
   const request = fetch(
-    apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/entries/${encodeURIComponent(entryId)}/thinking?blockIndex=${blockIndex}`),
+    `/api/sessions/${encodeURIComponent(sessionId)}/entries/${encodeURIComponent(entryId)}/thinking?blockIndex=${blockIndex}`,
   ).then(async (response) => {
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json() as { thinking?: unknown };
@@ -185,17 +183,13 @@ interface Props {
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
+  onOpenSession?: (sessionId: string) => void;
   entryId?: string;
   onFork?: (entryId: string) => void;
   forking?: boolean;
   onNavigate?: (entryId: string) => void;
   prevAssistantEntryId?: string;
-  /** 「编辑从此处」统一入口：仅前端标记（预填输入框 + 高亮 + 按钮变取消），真正发送时才执行回退 */
-  onEditFromHere?: (entryId: string, message: UserMessage, branchPointId: string | null) => void;
-  /** 本条消息是否正处于「编辑从此处」待发送状态（高亮 + 按钮变「取消」） */
-  editingFromStart?: boolean;
-  /** 取消当前「编辑从此处」标记（还原高亮、清空预填输入框） */
-  onCancelEditFromStart?: () => void;
+  onEditContent?: (message: UserMessage) => void;
   showTimestamp?: boolean;
   prevTimestamp?: number;
   sessionId?: string;
@@ -254,12 +248,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, showTimestamp, prevTimestamp, sessionId, writtenFiles }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId, writtenFiles }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditFromHere={onEditFromHere} editingFromStart={editingFromStart} onCancelEditFromStart={onCancelEditFromStart} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} writtenFiles={writtenFiles} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} writtenFiles={writtenFiles} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -282,20 +276,19 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.modelNames === next.modelNames
     && prev.cwd === next.cwd
     && prev.onOpenFile === next.onOpenFile
+    && prev.onOpenSession === next.onOpenSession
     && prev.entryId === next.entryId
     && prev.onFork === next.onFork
     && prev.forking === next.forking
     && prev.onNavigate === next.onNavigate
     && prev.prevAssistantEntryId === next.prevAssistantEntryId
-    && prev.onEditFromHere === next.onEditFromHere
-    && prev.editingFromStart === next.editingFromStart
-    && prev.onCancelEditFromStart === next.onCancelEditFromStart
+    && prev.onEditContent === next.onEditContent
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
     && prev.sessionId === next.sessionId;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -304,15 +297,10 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   forking?: boolean;
   onNavigate?: (entryId: string) => void;
   prevAssistantEntryId?: string;
-  onEditFromHere?: (entryId: string, message: UserMessage, branchPointId: string | null) => void;
-  editingFromStart?: boolean;
-  onCancelEditFromStart?: () => void;
+  onEditContent?: (message: UserMessage) => void;
 }) {
   const { t } = useI18n();
-  const isCoarse = useIsCoarsePointer();
   const [hovered, setHovered] = useState(false);
-  // touch（coarse）下无 hover——操作区常显（Copy/💬 引用/📌 收藏 可达），对齐 useIsMobile 惯例
-  const hoverShown = hovered || isCoarse;
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
@@ -370,8 +358,6 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
     </div>
   );
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
-  // 「编辑从此处」统一按钮：有分支点（上一条 assistant）走常规回退；无则首条消息走根重建
-  const canEditFromHere = !!onEditFromHere && !!entryId;
 
   const copyContent = () => {
     copyText(copyTarget).then(() => {
@@ -401,8 +387,6 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
             wordBreak: "break-word",
             maxHeight: USER_BUBBLE_MAX_HEIGHT,
             overflowY: "auto",
-            // 「编辑从此处」待发送标记：不换 border（避免 1px 布局跳动），用外圈 boxShadow 高亮
-            ...(editingFromStart ? { boxShadow: "0 0 0 1.5px var(--accent), 0 0 12px rgba(59,130,246,0.25)" } : {}),
           }}
         >
           {commandText ? (
@@ -461,14 +445,14 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                 )}
               </div>
               {expanded && (
-                <MarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile} messageRole="user">{content}</MarkdownBody>
+                <MarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile}>{content}</MarkdownBody>
               )}
             </div>
           ) : (
-            <>
-              {imageBlocksNode}
-              {content && <SafeMarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile} messageRole="user">{content}</SafeMarkdownBody>}
-            </>
+          <>
+          {imageBlocksNode}
+          {content && <SafeMarkdownBody className="markdown-user-message" cwd={cwd} onOpenFile={onOpenFile}>{content}</SafeMarkdownBody>}
+          </>
           )}
         </div>
 
@@ -482,8 +466,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
         }}>
           <div style={{
             display: "flex", gap: 3,
-            opacity: hoverShown ? 1 : 0,
-            pointerEvents: hoverShown ? "auto" : "none",
+            opacity: hovered ? 1 : 0,
+            pointerEvents: hovered ? "auto" : "none",
             transition: "opacity 0.12s",
           }}>
             <button
@@ -515,48 +499,37 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               )}
                {copied ? t("i18n.copied") : t("i18n.copy")}
             </button>
-            {/* 扩展点：user 消息底部 hover 操作区（aiti-prompts：📌 收藏为 prompt 等） */}
-            <ExtSlot name="userMessageActions" extra={{ text: content, cwd, entryId }} />
           </div>
-          {(canFork || canNavigate || canEditFromHere) && (
+          {(canFork || canNavigate) && (
             <div style={{
               display: "flex", gap: 3,
-              opacity: (hoverShown || forking) ? 1 : 0,
-              pointerEvents: (hoverShown || forking) ? "auto" : "none",
+              opacity: (hovered || forking) ? 1 : 0,
+              pointerEvents: (hovered || forking) ? "auto" : "none",
               transition: "opacity 0.12s",
             }}>
-              {canEditFromHere && (
+              {canNavigate && (
                 <button
-                  onClick={() => {
-                    if (editingFromStart) {
-                      onCancelEditFromStart?.();
-                    } else {
-                      onEditFromHere!(entryId!, editTarget, canNavigate ? prevAssistantEntryId! : null);
-                    }
-                  }}
-                  disabled={forking}
-                   title={editingFromStart
-                     ? t("i18n.editFromHereCancelTitle")
-                     : (canNavigate ? t("i18n.editFromHereTitle") : t("i18n.editFromStartTitle"))}
+                  onClick={() => { onNavigate!(prevAssistantEntryId!); onEditContent?.(editTarget); }}
+                   title={t("i18n.editFromHereTitle")}
                   style={{
                     display: "flex", alignItems: "center", gap: 4,
                     padding: "3px 8px", height: 22,
                     background: "none", border: "none",
                     borderRadius: 5,
-                    color: editingFromStart ? "var(--accent)" : "var(--text-dim)",
+                    color: "var(--text-dim)",
                     cursor: "pointer",
                     fontSize: 11, fontWeight: 400,
                     whiteSpace: "nowrap",
                     transition: "color 0.12s",
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
-                  onMouseLeave={(e) => { if (!editingFromStart) e.currentTarget.style.color = "var(--text-dim)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
                 >
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="15 10 20 15 15 20" />
                     <path d="M4 4v7a4 4 0 0 0 4 4h12" />
                   </svg>
-                   {editingFromStart ? t("i18n.editFromHereCancel") : t("i18n.editFromHere")}
+                   {t("i18n.editFromHere")}
                 </button>
               )}
               {canFork && (
@@ -603,6 +576,7 @@ function AssistantMessageView({
   modelNames,
   cwd,
   onOpenFile,
+  onOpenSession,
   showTimestamp,
   prevTimestamp,
   sessionId,
@@ -615,6 +589,7 @@ function AssistantMessageView({
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
+  onOpenSession?: (sessionId: string) => void;
   showTimestamp?: boolean;
   prevTimestamp?: number;
   sessionId?: string;
@@ -628,10 +603,7 @@ function AssistantMessageView({
     .filter(({ block }) => !isEmptyThinkingBlock(block, { isStreaming })), [message.content, isStreaming]);
   const blocks = useMemo(() => blockItems.map(({ block }) => block), [blockItems]);
   const providerError = getAssistantErrorMessage(message, { isStreaming });
-  const isCoarse = useIsCoarsePointer();
   const [hovered, setHovered] = useState(false);
-  // touch（coarse）下无 hover——操作区常显（Copy/💬 引用/📌 收藏 可达），对齐 useIsMobile 惯例
-  const hoverShown = hovered || isCoarse;
   const [copied, setCopied] = useState(false);
   const streamStartRef = useRef<number | null>(null);
   const [tps, setTps] = useState<number | null>(null);
@@ -800,7 +772,7 @@ function AssistantMessageView({
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {blockItems.map(({ block, originalIndex }) => (
-          <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
+          <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
         ))}
       </div>
 
@@ -850,8 +822,8 @@ function AssistantMessageView({
               cursor: "pointer",
               fontSize: 11, fontWeight: 400,
               whiteSpace: "nowrap",
-              opacity: hoverShown ? 1 : 0,
-              pointerEvents: hoverShown ? "auto" : "none",
+              opacity: hovered ? 1 : 0,
+              pointerEvents: hovered ? "auto" : "none",
               transition: "opacity 0.12s, color 0.12s",
             }}
             onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
@@ -878,9 +850,9 @@ function AssistantMessageView({
   );
 }
 
-function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCallDurations, cwd, onOpenFile, sessionId, entryId, blockIndex }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; cwd?: string; onOpenFile?: (filePath: string) => void; sessionId?: string; entryId?: string; blockIndex: number }) {
+function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCallDurations, cwd, onOpenFile, onOpenSession, sessionId, entryId, blockIndex }: { block: AssistantContentBlock; toolResults?: Map<string, ToolResultMessage>; isStreaming?: boolean; streamingDuration?: number; toolCallDurations?: Map<string, number>; cwd?: string; onOpenFile?: (filePath: string) => void; onOpenSession?: (sessionId: string) => void; sessionId?: string; entryId?: string; blockIndex: number }) {
   if (block.type === "text") {
-    return <TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} entryId={entryId} />;
+    return <TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} />;
   }
   if (block.type === "thinking") {
     return <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} sessionId={sessionId} entryId={entryId} blockIndex={blockIndex} />;
@@ -889,13 +861,13 @@ function BlockView({ block, toolResults, isStreaming, streamingDuration, toolCal
     const tc = block as ToolCallContent;
     const result = toolResults?.get(tc.toolCallId);
     const duration = toolCallDurations?.get(tc.toolCallId);
-    return <ToolCallBlock block={tc} result={result} duration={duration} cwd={cwd} sessionId={sessionId} messageId={entryId} />;
+    return <ToolCallBlock block={tc} result={result} duration={duration} onOpenSession={onOpenSession} />;
   }
   return null;
 }
 
-function TextBlock({ block, isStreaming, cwd, onOpenFile, sessionId, entryId }: { block: TextContent; isStreaming?: boolean; cwd?: string; onOpenFile?: (filePath: string) => void; sessionId?: string; entryId?: string }) {
-  return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} messageRole="assistant" sessionId={sessionId} messageId={entryId}>{block.text}</SafeMarkdownBody>;
+function TextBlock({ block, isStreaming, cwd, onOpenFile }: { block: TextContent; isStreaming?: boolean; cwd?: string; onOpenFile?: (filePath: string) => void }) {
+  return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile}>{block.text}</SafeMarkdownBody>;
 }
 
 function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
@@ -980,8 +952,13 @@ function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
   );
 }
 
+function isSubagentToolDetails(value: unknown): value is SubagentToolDetails {
+  if (!value || typeof value !== "object") return false;
+  const details = value as Partial<SubagentToolDetails>;
+  return details.kind === "pi-web-subagent" && typeof details.sessionId === "string";
+}
 
-function ToolCallBlock({ block, result, duration, cwd, sessionId, messageId }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number; cwd?: string; sessionId?: string; messageId?: string }) {
+function ToolCallBlock({ block, result, duration, onOpenSession }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number; onOpenSession?: (sessionId: string) => void }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
   const inputStr = getToolCallInputText(block);
@@ -993,8 +970,10 @@ function ToolCallBlock({ block, result, duration, cwd, sessionId, messageId }: {
   const resultText = result
     ? result.content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n")
     : null;
+  const resultImages = getMessageImages(result?.content ?? []);
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
   const isError = result?.isError ?? false;
+  const subagent = isSubagentToolDetails(result?.details) ? result.details : null;
 
   return (
     <div
@@ -1007,36 +986,49 @@ function ToolCallBlock({ block, result, duration, cwd, sessionId, messageId }: {
       }}
     >
       {/* ── Tool call header ── */}
-      <button
-        onClick={() => setExpanded((v) => !v)}
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 7,
-          width: "100%",
-          padding: "6px 10px",
-          background: "none",
-          border: "none",
-          color: "var(--text-muted)",
-          cursor: "pointer",
-          fontSize: 12,
-          textAlign: "left",
-          minWidth: 0,
-        }}
-      >
-        <span style={{ color: isError ? "#f87171" : "#16a34a", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
-          {block.toolName}
-        </span>
-        <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
-          {isStreamingInput ? t("chat.generatingToolInput") : getToolPreview(block)}
-        </span>
-        {duration !== undefined && (
-          <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
+      <div style={{ display: "flex", alignItems: "stretch", minWidth: 0 }}>
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 7,
+            flex: 1,
+            minWidth: 0,
+            padding: "6px 10px",
+            background: "none",
+            border: "none",
+            color: "var(--text-muted)",
+            cursor: "pointer",
+            fontSize: 12,
+            textAlign: "left",
+          }}
+        >
+          <span style={{ color: isError ? "#f87171" : "#16a34a", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
+            {block.toolName}
+          </span>
+          <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
+            {isStreamingInput ? t("chat.generatingToolInput") : getToolPreview(block)}
+          </span>
+          {duration !== undefined && (
+            <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
+          )}
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+            <polyline points="2 3.5 5 6.5 8 3.5" />
+          </svg>
+        </button>
+        {subagent && onOpenSession && (
+          <button
+            type="button"
+            onClick={() => onOpenSession(subagent.sessionId)}
+            title={t("subagent.open")}
+            aria-label={t("subagent.open")}
+            style={{ width: 32, display: "grid", placeItems: "center", border: "none", borderLeft: "1px solid var(--border)", background: "none", color: "var(--text-muted)", cursor: "pointer", flexShrink: 0 }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 3h6v6" /><path d="M10 14 21 3" /><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /></svg>
+          </button>
         )}
-        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
-          <polyline points="2 3.5 5 6.5 8 3.5" />
-        </svg>
-      </button>
+      </div>
 
       {/* ── Expanded: input args ── */}
       {expanded && (isStreamingInput || !isEditTool) && (
@@ -1067,6 +1059,7 @@ function ToolCallBlock({ block, result, duration, cwd, sessionId, messageId }: {
         ) : (
           <PairedResult
             text={resultText ?? ""}
+            images={resultImages}
             isEmpty={resultIsEmpty}
             isError={isError}
           />
@@ -1312,15 +1305,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function PairedResult({ text, isEmpty, isError, cwd, sessionId, messageId }: {
+function PairedResult({ text, images, isEmpty, isError }: {
   text: string;
+  images: ImageContent[];
   isEmpty: boolean;
   isError: boolean;
-  cwd?: string;
-  sessionId?: string;
-  messageId?: string;
 }) {
   const { t } = useI18n();
+  const showText = !isEmpty || images.length === 0;
   return (
     <div
       style={{
@@ -1328,24 +1320,56 @@ function PairedResult({ text, isEmpty, isError, cwd, sessionId, messageId }: {
         background: isError ? "rgba(248,113,113,0.04)" : "var(--bg-subtle)",
       }}
     >
-      <pre
-        style={{
-          margin: 0,
-          padding: "8px 10px",
-          color: isError ? "#f87171" : (isEmpty ? "var(--text-dim)" : "var(--text-muted)"),
-          fontSize: 12,
-          lineHeight: 1.5,
-          overflow: "auto",
-          maxHeight: 400,
-          background: "var(--bg)",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-all",
-          fontStyle: isEmpty ? "italic" : "normal",
-          opacity: isEmpty ? 0.6 : 1,
-        }}
-      >
-         {isEmpty ? t("i18n.noOutput") : text}
-      </pre>
+      {images.length > 0 && (
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", padding: "10px", background: "var(--bg)" }}>
+          {images.map((image, index) => {
+            const src = imageSource(image);
+            if (!src) return null;
+            return (
+              <ImagePreview
+                key={`${src}-${index}`}
+                src={src}
+                style={{ maxWidth: "100%" }}
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={src}
+                  alt=""
+                  loading="lazy"
+                  style={{
+                    display: "block",
+                    maxWidth: "min(100%, 720px)",
+                    maxHeight: 520,
+                    borderRadius: 6,
+                    objectFit: "contain",
+                    border: "1px solid var(--border)",
+                  }}
+                />
+              </ImagePreview>
+            );
+          })}
+        </div>
+      )}
+      {showText && (
+        <pre
+          style={{
+            margin: 0,
+            padding: "8px 10px",
+            color: isError ? "#f87171" : (isEmpty ? "var(--text-dim)" : "var(--text-muted)"),
+            fontSize: 12,
+            lineHeight: 1.5,
+            overflow: "auto",
+            maxHeight: 400,
+            background: "var(--bg)",
+            whiteSpace: "pre-wrap",
+            wordBreak: "break-all",
+            fontStyle: isEmpty ? "italic" : "normal",
+            opacity: isEmpty ? 0.6 : 1,
+          }}
+        >
+           {isEmpty ? t("i18n.noOutput") : text}
+        </pre>
+      )}
     </div>
   );
 }
@@ -1572,7 +1596,7 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
           )}
         </div>
 
-        {hasDetails && ((isHiddenDisplay && contentExpanded) || (!isHiddenDisplay && detailsExpanded)) && (<>
+        {hasDetails && ((isHiddenDisplay && contentExpanded) || (!isHiddenDisplay && detailsExpanded)) && (
           <pre
             style={{
               margin: 0,
@@ -1591,7 +1615,6 @@ function CustomMessageView({ message, cwd, onOpenFile }: { message: CustomMessag
           >
             {detailsText}
           </pre>
-          </>
         )}
       </div>
     </div>
@@ -1685,7 +1708,7 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
   const isPending = !message.output && message.exitCode === undefined && !message.cancelled;
   const isError = message.cancelled || (message.exitCode !== undefined && message.exitCode !== 0);
   const fullOutputUrl = sessionId && message.fullOutputPath
-    ? apiUrl(`/api/agent/${encodeURIComponent(sessionId)}/bash-output?path=${encodeURIComponent(message.fullOutputPath)}`)
+    ? `/api/agent/${encodeURIComponent(sessionId)}/bash-output?path=${encodeURIComponent(message.fullOutputPath)}`
     : null;
   const showFullButton = message.truncated && fullOutputUrl && fullOutput === null;
   const displayOutput = fullOutput ?? message.output;
@@ -1732,7 +1755,7 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
 
   return (
     <div style={{ margin: "6px 0" }}>
-      <ToolCallBlock block={block} result={result} sessionId={sessionId} messageId={block.toolCallId} />
+      <ToolCallBlock block={block} result={result} />
       {message.truncated && fullOutputUrl && (
         <div style={{ padding: "4px 10px", fontSize: 11, marginTop: -1 }}>
           {showFullButton && (

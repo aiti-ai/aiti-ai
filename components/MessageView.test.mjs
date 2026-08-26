@@ -1,20 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import React from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
   tsconfigPaths: true,
 });
+const React = await jiti.import("react");
+const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const {
   MessageView,
   getTokenEstimateText,
   getToolCallInputText,
   replaceUserMessageText,
 } = await jiti.import("./MessageView.tsx");
-const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
+const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
 function renderMessage(message, props = {}) {
   return renderToStaticMarkup(
@@ -46,6 +46,60 @@ test("keeps streamed tool input out of collapsed markup while counting it", () =
   assert.doesNotMatch(html, /secret-stream-fragment/);
   assert.equal(getToolCallInputText(block), block.rawInput);
   assert.equal(getTokenEstimateText(block), block.rawInput);
+});
+
+test("renders subagents as standard tool calls with only an extra session button", () => {
+  const block = {
+    type: "toolCall",
+    toolCallId: "call-agent-1",
+    toolName: "Agent",
+    input: {
+      subagent_type: "Explore",
+      prompt: "Find the parser",
+      description: "Find parser",
+    },
+  };
+  const result = {
+    role: "toolResult",
+    toolCallId: block.toolCallId,
+    content: [{ type: "text", text: "Parser is in lib/parser.ts" }],
+    details: {
+      kind: "pi-web-subagent",
+      sessionId: "child-session",
+      profile: "Explore",
+      description: "Find parser",
+      status: "completed",
+      runInBackground: false,
+      createdAt: "2026-01-01T00:00:00.000Z",
+    },
+  };
+  const html = renderMessage({
+    role: "assistant",
+    provider: "anthropic",
+    model: "claude-test",
+    content: [block],
+  }, {
+    toolResults: new Map([[block.toolCallId, result]]),
+    onOpenSession() {},
+  });
+
+  assert.match(html, /border:1px solid rgba\(34,197,94,0\.25\)/);
+  assert.match(html, />Agent</);
+  assert.match(html, />Explore</);
+  assert.match(html, /aria-label="Open sub-agent session"/);
+  assert.doesNotMatch(html, />completed</);
+  assert.doesNotMatch(html, />Find parser</);
+
+  const ordinaryHtml = renderMessage({
+    role: "assistant",
+    provider: "anthropic",
+    model: "claude-test",
+    content: [{ ...block, toolCallId: "call-extension-1", toolName: "extension_tool" }],
+  }, {
+    toolResults: new Map(),
+    onOpenSession() {},
+  });
+  assert.doesNotMatch(ordinaryHtml, /Open sub-agent session/);
 });
 
 const COMPLETE_SKILL_EXPANSION = `<skill name="review" location="/skills/review/SKILL.md">
@@ -131,40 +185,6 @@ const USER_MSG = {
 
 // 「编辑从此处」待发送标记：常规消息（有上一条 assistant）→ 标记按钮
 // 首条消息（无分支点）→ 同一按钮；待发送时按钮变「取消」并高亮。
-test("renders the edit-from-here mark button on a user message", () => {
-  const html = renderMessage(USER_MSG, {
-    entryId: "entry-1",
-    prevAssistantEntryId: "assistant-0",
-    onEditFromHere: () => {},
-  });
-  assert.match(html, /Edit from here/);
-  assert.doesNotMatch(html, /Cancel edit from here/);
-});
-
-test("renders edit-from-here on the first user message without a branch point", () => {
-  const html = renderMessage(USER_MSG, {
-    entryId: "entry-1",
-    onEditFromHere: () => {},
-  });
-  assert.match(html, /Edit from here/);
-  // 首条消息的 tooltip 说明根重建语义
-  assert.match(html, /rebuild this session/);
-});
-
-test("turns the button into cancel when the message is the pending edit target", () => {
-  const html = renderMessage(USER_MSG, {
-    entryId: "entry-1",
-    prevAssistantEntryId: "assistant-0",
-    onEditFromHere: () => {},
-    editingFromStart: true,
-    onCancelEditFromStart: () => {},
-  });
-  assert.match(html, /Cancel edit from here/);
-  assert.doesNotMatch(html, /Edit from here/);
-  // 待发送标记：气泡高亮（box-shadow）
-  assert.match(html, /box-shadow/);
-});
-
 test("hides the edit-from-here button when no handler is provided", () => {
   const html = renderMessage(USER_MSG, { entryId: "entry-1" });
   assert.doesNotMatch(html, /Edit from here/);

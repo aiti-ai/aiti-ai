@@ -29,7 +29,7 @@ export function getModelRuntimeWithExtensions(): Promise<ModelRuntime> {
         agentDir,
         settingsManager,
         noSkills: true,
-        noPrompts: true,
+        noPromptTemplates: true,
         noThemes: true,
         noContextFiles: true,
       });

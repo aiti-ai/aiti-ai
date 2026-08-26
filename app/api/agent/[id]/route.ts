@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
-import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
+import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
 import { resolveAnySession, attachIfBridged } from "@/lib/session";
 
 // POST /api/agent/[id] - Send a command to an existing session
@@ -15,6 +15,14 @@ export async function POST(
   try {
     const body = await req.json() as { type: string; [key: string]: unknown };
     commandType = typeof body.type === "string" ? body.type : undefined;
+    const requestedToolNames = body.toolNames;
+    if (
+      requestedToolNames !== undefined
+      && (!Array.isArray(requestedToolNames) || requestedToolNames.some((name) => typeof name !== "string"))
+    ) {
+      throw new Error("toolNames must be an array of strings");
+    }
+    const toolNames = requestedToolNames as string[] | undefined;
 
     const filePath = await resolveSessionPath(id);
 
@@ -44,6 +52,20 @@ export async function POST(
 
     // Fast path: already-running session (local registry, then provider handles)
     const existing = getRpcSession(id)?.isAlive() ? getRpcSession(id) : resolveAnySession(id);
+
+    // 上游 v0.8.10：set_tools 工具集热更新（会话未运行时按文件路径重建）。
+    // 桥持有的会话已在上面走 socket 转发，到这里的一定是本地管辖的会话。
+    if (body.type === "set_tools") {
+      const targetPath = (existing as { sessionFile?: string } | null | undefined)?.sessionFile || filePath || undefined;
+      if (!existing?.isAlive() && !targetPath) {
+        return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      }
+      const changed = await setRpcSessionTools(id, targetPath, toolNames);
+      return NextResponse.json({
+        success: true,
+        data: { sessionId: changed.sessionId, recreated: changed.recreated },
+      });
+    }
     if (existing?.isAlive()) {
       const result = await existing.send(body);
       promptAccepted = body.type === "prompt";
@@ -61,7 +83,9 @@ export async function POST(
       }, { status: 404 });
     }
 
-    const { session } = await startRpcSession(id, filePath, undefined);
+    const { session } = await startRpcSession(id, filePath, undefined, {
+      ...(toolNames !== undefined ? { toolNames } : {}),
+    });
     const result = await session.send(body);
     promptAccepted = body.type === "prompt";
 

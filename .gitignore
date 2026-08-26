@@ -55,3 +55,4 @@ test-server.log
 # dev server console log
 .next-dev-console.log
 
+e2e_*.mjs

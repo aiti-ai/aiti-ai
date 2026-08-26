@@ -46,7 +46,7 @@ export async function relayToSession(
 
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   let replyText = "";
-  let settled = false;
+  const settled = false;
   let backendDead: string | null = null;
 
   const unsubscribe = handle.subscribe((event) => {

@@ -3,6 +3,7 @@ import { PwaRegistration } from "@/components/PwaRegistration";
 import { withBasePath } from "@/lib/base-path";
 import "katex/dist/katex.min.css";
 import "./globals.css";
+import "./settings.css";
 
 // next/font/google requires fetching Noto Sans Mono from Google Fonts at
 // build time — unreachable on CN networks, so use a local system mono stack

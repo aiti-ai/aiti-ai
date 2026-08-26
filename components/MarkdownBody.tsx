@@ -152,7 +152,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         return <ClickableParagraph as={tag} messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
       };
       return acc;
-    }, {} as Record<string, (p: any) => ReactNode>),
+    }, {} as Record<string, (p: { children?: ReactNode; [k: string]: unknown }) => ReactNode>),
     table({ children }) {
       return (
         <div className="markdown-table-wrap">

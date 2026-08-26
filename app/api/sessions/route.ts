@@ -5,7 +5,11 @@ import {
   mergeSessionLists,
   invalidateSessionListCache,
 } from "@/lib/session-reader";
-import { getRpcSessionInfos, getRunningRpcSessionIds } from "@/lib/rpc-manager";
+import {
+  getCompletionNotificationSuppressedRpcSessionIds,
+  getRpcSessionInfos,
+  getRunningRpcSessionIds,
+} from "@/lib/rpc-manager";
 import { getHandleSessionInfos, getRunningHandleIds } from "@/lib/session";
 import { getRegistry } from "@/lib/ext/registry";
 
@@ -45,6 +49,7 @@ export async function GET(req: Request) {
         sessions,
         // 运行中 = 本地 runtime + 存活且正在执行的后端会话
         runningSessionIds: [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds()])],
+        completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
       },
       { headers: { "Cache-Control": "no-store" } },
     );
