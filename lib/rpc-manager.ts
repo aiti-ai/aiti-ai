@@ -2535,11 +2535,6 @@ export async function startRpcSession(
       ...(extAgentTools.length > 0 ? { customTools: extAgentTools } : {}),
     });
 
-    // 子代理：注入 agent 定义 systemPrompt（重新组织上下文；同 setForceEmptySystemPrompt 机制）
-    if (options.subagent?.systemPrompt && inner.agent?.state) {
-      inner.agent.state.systemPrompt = options.subagent.systemPrompt;
-    }
-
     const persistedPreferences = await persistExplicitStartupPreferences(
       services.settingsManager,
       {
@@ -2561,6 +2556,14 @@ export async function startRpcSession(
     // extensions stay usable in Pi Web just like in the `pi` CLI.
     if (toolNames && toolNames.length > 0) {
       inner.setActiveToolsByName(withExtensionTools(inner, toolNames));
+    }
+
+    // 子代理：注入 agent 定义 systemPrompt（重新组织上下文）。
+    // 必须在 setActiveToolsByName 之后——setActiveToolsByName 会 rebuild systemPrompt
+    // （_systemPromptOverride ?? _baseSystemPrompt），先注入会被覆盖。
+    // 同 setForceEmptySystemPrompt 机制（直接写 agent.state）。
+    if (options.subagent?.systemPrompt && inner.agent?.state) {
+      inner.agent.state.systemPrompt = options.subagent.systemPrompt;
     }
 
     const wrapper = new AgentSessionWrapper(inner);

@@ -49,6 +49,10 @@ function writeTextareaValue(ta: HTMLTextAreaElement, nextValue: string): void {
   else ta.value = nextValue;
   const tracker = (ta as unknown as { _valueTracker?: { setValue(v: string): void } })._valueTracker;
   tracker?.setValue(nextValue);
+  // 扩展点通知（pi-web:* 惯例）：程序化写值刻意不经 input 事件（防 React onChange/tracker
+  // 回环），但扩展无法感知输入框被宿主改了（发送清空/草稿还原/composer 契约写值）——
+  // 这里统一广播 window 自定义事件，不进 React 链路；消费方如 aiti-ai-input 占位符 chips。
+  try { window.dispatchEvent(new CustomEvent("pi-web:composer-value-written")); } catch {}
 }
 
 /** 合并提交文本到现有文本（submitted 在前，current 在后，空行分隔）。 */

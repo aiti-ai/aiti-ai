@@ -42,6 +42,8 @@ export interface CreateSubagentOptions {
   task: string;
   /** 超时 ms（默认 10 分钟） */
   timeoutMs?: number;
+  /** 中止信号：触发时停止子代理（标记 aborted + 关闭 wrapper） */
+  signal?: AbortSignal;
 }
 
 export interface SubagentResult {
@@ -61,7 +63,7 @@ const SUBAGENT_TIMEOUT_DEFAULT = 10 * 60 * 1000;
  * 返回子 session 的最终输出（会话已落盘，消息历史可查、统计共用）。
  */
 export async function createSubagentSession(options: CreateSubagentOptions): Promise<SubagentResult> {
-  const { parentSessionFile, cwd, agent, task, timeoutMs = SUBAGENT_TIMEOUT_DEFAULT } = options;
+  const { parentSessionFile, cwd, agent, task, timeoutMs = SUBAGENT_TIMEOUT_DEFAULT, signal } = options;
 
   // 1. fork 空 session + parent 标记（同 /fork 从头分叉：SessionManager.create + newSession）
   const sm = SessionManager.create(cwd, undefined, { id: randomUUID() });
@@ -102,55 +104,61 @@ export async function createSubagentSession(options: CreateSubagentOptions): Pro
   // 3. 驱动执行 + 订阅结果
   return new Promise<SubagentResult>((resolve) => {
     let settled = false;
-    const timer = setTimeout(() => {
+    let unsubscribe: () => void = () => {};
+    let onAbort: (() => void) | null = null;
+
+    // 收尾：清 timer + 退订事件 + 关闭 wrapper（文件保留，仅移出活跃 registry，不积累）
+    const teardown = () => {
+      clearTimeout(timer);
+      unsubscribe();
+      if (onAbort && signal) signal.removeEventListener("abort", onAbort);
+      void wrapper.shutdown("idle").catch((err) => {
+        console.warn("[subagent] wrapper shutdown 失败:", err instanceof Error ? err.message : err);
+      });
+    };
+
+    const finish = (status: "completed" | "timeout" | "error" | "aborted", out: string) => {
       if (settled) return;
       settled = true;
       teardown();
       resolve({
         sessionId: realSessionId,
         sessionFile,
-        output: wrapper.inner.getLastAssistantText() ?? "",
+        output: out,
         parentSessionFile,
         agent: agent.name,
-        status: "timeout",
+        status,
       });
-    }, timeoutMs);
-
-    const teardown = () => {
-      clearTimeout(timer);
-      unsubscribe();
     };
 
+    const timer = setTimeout(() => {
+      finish("timeout", wrapper.inner.getLastAssistantText() ?? "");
+    }, timeoutMs);
+
+    // 中止信号：停止子代理（用户点 Fleet「停」/ 父会话 abort）
+    if (signal) {
+      if (signal.aborted) {
+        finish("aborted", "");
+      } else {
+        onAbort = () => {
+          void wrapper.send({ type: "abort" }).catch(() => {});
+          finish("aborted", wrapper.inner.getLastAssistantText() ?? "");
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+    }
+
     // agent_settled：一轮完整执行结束（含重试/压缩后）
-    const unsubscribe = wrapper.onEvent((event) => {
-      if (settled) return;
+    unsubscribe = wrapper.onEvent((event) => {
       if (event.type === "agent_settled") {
-        settled = true;
-        teardown();
-        resolve({
-          sessionId: realSessionId,
-          sessionFile,
-          output: wrapper.inner.getLastAssistantText() ?? "",
-          parentSessionFile,
-          agent: agent.name,
-          status: "completed",
-        });
+        finish("completed", wrapper.inner.getLastAssistantText() ?? "");
       }
     });
 
     // 4. 发送任务
     void wrapper.send({ type: "prompt", message: task }).catch((err) => {
-      if (settled) return;
-      settled = true;
-      teardown();
-      resolve({
-        sessionId: realSessionId,
-        sessionFile,
-        output: "",
-        parentSessionFile,
-        agent: agent.name,
-        status: "error",
-      });
+      console.warn("[subagent] send 失败:", err instanceof Error ? err.message : err);
+      finish("error", "");
     });
   });
 }
