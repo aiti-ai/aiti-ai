@@ -104,10 +104,30 @@ async function fetchEntries(dirPath: string): Promise<FileNode[]> {
 }
 
 async function fetchGitStatus(cwd: string): Promise<GitStatusResponse> {
-  const params = new URLSearchParams({ cwd });
-  const res = await fetch(apiUrl(`/api/git/status?${params.toString()}`));
+  const res = await fetch(apiUrl("/api/git/status"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cwd }),
+  });
   if (!res.ok) throw new Error(`Failed to load Git status (HTTP ${res.status})`);
   return res.json() as Promise<GitStatusResponse>;
+}
+
+/** 两步下载：POST 换票据（路径不进 URL，避免落入隧道/代理 access log）→ 带 ticket 的 GET 流式下载 */
+async function downloadViaTicket(fullPath: string): Promise<void> {
+  const res = await fetch(apiUrl("/api/files/ticket"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: fullPath }),
+  });
+  const data = await res.json().catch(() => ({})) as { ticket?: string; error?: string };
+  if (!res.ok || !data.ticket) throw new Error(data.error ?? `HTTP ${res.status}`);
+  const a = document.createElement("a");
+  a.href = apiUrl(`/api/files/_t/${encodeURIComponent(data.ticket)}`);
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 const GIT_STATUS_KEYS: Record<GitFileStatusKind, string> = {
@@ -437,9 +457,13 @@ function TreeNode({
         )}
         {hovered && !node.isDir && (
           <a
-            href={apiUrl(`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`)}
+            href="#"
             download
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              downloadViaTicket(node.fullPath).catch((err) => console.error("Download failed:", err));
+            }}
             title={t("files.download")}
             style={{
               position: "absolute",

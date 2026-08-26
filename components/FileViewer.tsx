@@ -228,12 +228,33 @@ function getFileApiUrl(
   return apiUrl(`/api/files/${encoded}?${searchParams.toString()}`);
 }
 
+/** 两步下载：POST 换票据（路径不进 URL，避免落入隧道/代理 access log）→ 带 ticket 的 GET 流式下载 */
+async function downloadViaTicket(filePath: string): Promise<void> {
+  const res = await fetch(apiUrl("/api/files/ticket"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: filePath }),
+  });
+  const data = await res.json().catch(() => ({})) as { ticket?: string; error?: string };
+  if (!res.ok || !data.ticket) throw new Error(data.error ?? `HTTP ${res.status}`);
+  const a = document.createElement("a");
+  a.href = apiUrl(`/api/files/_t/${encodeURIComponent(data.ticket)}`);
+  a.download = getFileName(filePath);
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceSessionId?: string | null }) {
   const { t } = useI18n();
   return (
     <a
-      href={getFileApiUrl(filePath, "download", sourceSessionId)}
+      href="#"
       download={getFileName(filePath)}
+      onClick={(e) => {
+        e.preventDefault();
+        downloadViaTicket(filePath).catch((err) => console.error("Download failed:", err));
+      }}
       title={t("i18n.downloadFile")}
       aria-label={t("i18n.downloadFile")}
       className="file-viewer-icon-button"

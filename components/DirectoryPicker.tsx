@@ -20,8 +20,12 @@ interface BrowseResponse {
 }
 
 async function loadDirectories(directory?: string): Promise<BrowseResponse> {
-  const query = directory ? `?path=${encodeURIComponent(directory)}` : "";
-  const response = await fetch(apiUrl(`/api/cwd/browse${query}`));
+  // path 走 body 不进 URL（防落入隧道/代理 access log）
+  const response = await fetch(apiUrl("/api/cwd/browse"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: directory ?? undefined }),
+  });
   const data = await response.json() as BrowseResponse;
   if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
   return data;

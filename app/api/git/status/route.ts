@@ -3,9 +3,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getAllowedFileRoots, isExistingFilePathAllowed, isFilePathAllowed, isWindowsAbsolutePath } from "@/lib/file-access";
 import { getGitStatus } from "@/lib/git-changes";
 
-export async function GET(request: NextRequest) {
+// POST /api/git/status { cwd }：cwd 走 body 不进 URL——避免本地路径落入隧道/代理 access log。
+export async function POST(request: NextRequest) {
   try {
-    const cwd = request.nextUrl.searchParams.get("cwd")?.trim() ?? "";
+    const body = await request.json().catch(() => null) as { cwd?: unknown } | null;
+    const cwd = typeof body?.cwd === "string" ? body.cwd.trim() : "";
     if (!cwd || (!cwd.startsWith("/") && !isWindowsAbsolutePath(cwd))) {
       return NextResponse.json({ error: "cwd must be an absolute path" }, { status: 400 });
     }

@@ -28,6 +28,7 @@ import {
 } from "@/lib/file-upload";
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 import { samePath } from "@/lib/paths";
+import { issueFileTicket, redeemFileTicket } from "@/lib/file-ticket";
 
 const IGNORED_NAMES = new Set([
   "node_modules", ".git", ".next", "dist", "build", "__pycache__",
@@ -138,6 +139,40 @@ export async function POST(
 
   try {
     const { path: segments } = await params;
+    // POST /api/files/ticket → 双模式：
+    //   { ticket } → 兑付：返回票据载荷（/viewer 握手用；不核销，TTL 内可重复用）
+    //   { path, kind?, cwd? } → 签发（type="view" 时附 viewer 目标字段）；缺省 type="download"
+    if (segments[0] === "ticket") {
+      const body = await request.json().catch(() => null) as { path?: unknown; kind?: unknown; cwd?: unknown; ticket?: unknown } | null;
+      if (typeof body?.ticket === "string" && body.ticket) {
+        const t = redeemFileTicket(body.ticket);
+        if (!t) {
+          return NextResponse.json({ error: "Ticket invalid or expired" }, { status: 403 });
+        }
+        return NextResponse.json({ ok: true, path: t.path, type: t.type, kind: t.kind ?? null, cwd: t.cwd ?? null });
+      }
+      const p = typeof body?.path === "string" ? body.path : "";
+      if (!p || (!p.startsWith("/") && !isWindowsAbsolutePath(p))) {
+        return NextResponse.json({ error: "path must be absolute" }, { status: 400 });
+      }
+      const allowedRoots = await getAllowedFileRoots();
+      if (!isFilePathAllowed(p, allowedRoots)) {
+        return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      }
+      let st: fs.Stats;
+      try { st = fs.statSync(p); } catch {
+        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      }
+      if (!st.isFile()) {
+        return NextResponse.json({ error: "Not a file" }, { status: 400 });
+      }
+      if (!isExistingFilePathAllowed(p, allowedRoots)) {
+        return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      }
+      const kind = body?.kind === "folder" || body?.kind === "file" ? body.kind : undefined;
+      const cwd = typeof body?.cwd === "string" && body.cwd ? body.cwd : undefined;
+      return NextResponse.json(issueFileTicket(p, kind ? "view" : "download", { kind, cwd }));
+    }
     const uploadDirectory = await getUploadDirectory(segments);
     if ("response" in uploadDirectory) return uploadDirectory.response;
     const { directory } = uploadDirectory;
@@ -423,8 +458,21 @@ export async function GET(
 ) {
   try {
     const { path: segments } = await params;
-    const filePath = filePathFromSegments(segments);
-    const rawType = request.nextUrl.searchParams.get("type") ?? "list";
+    // 票据通道：GET /api/files/_t/<ticket> —— 路径不进 URL（防落入隧道/代理 access log）。
+    // 先 POST /api/files/ticket { path } 换票（TTL 5 分钟、可重复用）；见 lib/file-ticket.ts。
+    let filePath: string;
+    let rawType: string;
+    if (segments[0] === "_t" && segments.length === 2) {
+      const t = redeemFileTicket(segments[1]);
+      if (!t) {
+        return NextResponse.json({ error: "Ticket invalid or expired" }, { status: 403 });
+      }
+      filePath = t.path;
+      rawType = t.type;
+    } else {
+      filePath = filePathFromSegments(segments);
+      rawType = request.nextUrl.searchParams.get("type") ?? "list";
+    }
     const type = parseFileRequestType(rawType);
     if (!type) {
       return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
