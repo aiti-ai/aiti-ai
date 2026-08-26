@@ -84,14 +84,15 @@ const nextConfig: NextConfig = {
   ],
   // Next dev cross-origin guard (allowedDevOrigins): 16.3+ rejects dev
   // resources (_next/static chunks) whose Origin is not allow-listed. Beyond
-  // loopback/LAN we also trust the operator's deployment hostnames from env
-  // (PI_WEB_ALLOWED_HOSTS / PI_WEB_BASE_DOMAIN, host:port stripped) plus their
-  // subdomains (service vhosts, e.g. <port>-pi-web.<domain>) — no hardcoded
-  // Next 16 blocks cross-origin access to dev resources by default. Allow the
-  // loopback and the RFC1918 LAN ranges so the dev server stays reachable
-  // from other machines on the same LAN.
+  // loopback/LAN (RFC1918 ranges keep the dev server reachable from other
+  // machines on the same LAN) we also trust the operator's deployment
+  // hostnames from env (PI_WEB_ALLOWED_HOSTS / PI_WEB_BASE_DOMAIN /
+  // PI_WEB_HOSTNAME, host:port stripped) plus their subdomains (service
+  // vhosts, e.g. <port>-pi-web.<domain>) — no hardcoded hostnames in the
+  // repo. Production `next start` ignores this setting.
   allowedDevOrigins: [
     "127.0.0.1",
+    "localhost",
     "10.*.*.*",
     // 172.16.0.0/12
     "172.16.*.*",
@@ -111,6 +112,7 @@ const nextConfig: NextConfig = {
     "172.30.*.*",
     "172.31.*.*",
     "192.168.*.*",
+    ...deploymentDevOrigins(),
   ],
   async headers() {
     return [
