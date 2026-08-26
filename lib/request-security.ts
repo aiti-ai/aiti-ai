@@ -29,6 +29,20 @@ function hostnameFromAuthority(value: string): string | null {
   }
 }
 
+function normalizeAuthority(value: string): string | null {
+  if (!value || /[\s/@\\]/.test(value)) return null;
+  try {
+    const parsed = new URL(`http://${value}`);
+    if (parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) {
+      return null;
+    }
+    const hostname = normalizeHostname(parsed.hostname);
+    return parsed.port ? `${hostname}:${parsed.port}` : hostname;
+  } catch {
+    return null;
+  }
+}
+
 function normalizeConfiguredHostname(value: string | undefined): string | null {
   const trimmed = value?.trim();
   if (!trimmed) return null;
@@ -135,6 +149,33 @@ export function isApiRequestHostAllowed(
   return isTrustedHostname(hostname, configuredHostnames);
 }
 
+/**
+ * A relay can report the external scheme in `x-forwarded-proto` while rewriting
+ * `Origin` onto the backend authority, so the two disagree on the scheme alone
+ * for a request that really is same-origin (Azure Dev Tunnels does this). Accept
+ * that pairing only when the Origin's authority still equals the Host header,
+ * a proxy is in front, and Fetch Metadata still reports a same-origin request.
+ */
+function isProxyRewrittenSameOrigin(request: Request, origin: string): boolean {
+  if (
+    request.headers.get("sec-fetch-site") !== "same-origin"
+    || !request.headers.get("x-forwarded-proto")
+  ) return false;
+
+  const host = request.headers.get("host");
+  if (!host) return false;
+
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    return false;
+  }
+
+  const originAuthority = normalizeAuthority(originHost);
+  return originAuthority !== null && originAuthority === normalizeAuthority(host);
+}
+
 /** Reject browser cross-site API requests while preserving non-browser clients. */
 export function isApiRequestOriginAllowed(
   request: Request,
@@ -158,10 +199,9 @@ export function isApiRequestOriginAllowed(
   if (!origin) return true;
 
   const requestOrigin = getRequestOrigin(request);
-  if (requestOrigin === null) return false;
   // 预期 origin 若来自 x-forwarded-host(而非实际 host),转发头必须本身可信
   // (回环/IP/operator 域名子域或显式配置主机),否则恶意页可用伪造 XFH 匹配
-  // 自己的 Origin 绕过 CSRF 门禁。
+  // 自己的 Origin 绕过 CSRF 门禁。此门前置于一切放行路径。
   if (request.headers.get("x-forwarded-host")) {
     const fh = request.headers.get("x-forwarded-host");
     const hostname = fh ? hostnameFromAuthority(fh) : null;
@@ -169,7 +209,11 @@ export function isApiRequestOriginAllowed(
       return false;
     }
   }
-  return canonicalOrigin(origin) === requestOrigin;
+  if (requestOrigin !== null && canonicalOrigin(origin) === requestOrigin) return true;
+
+  // 上游：代理改写 Origin 的同源配对（Azure Dev Tunnels 等）——依赖浏览器才有的
+  // Fetch Metadata（sec-fetch-site），非浏览器客户端已在前面被 cross-site 门拦截。
+  return isProxyRewrittenSameOrigin(request, origin);
 }
 
 export function shouldCheckApiRequestOrigin(request: Request): boolean {

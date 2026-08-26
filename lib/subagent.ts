@@ -72,8 +72,8 @@ export async function createSubagentSession(options: CreateSubagentOptions): Pro
   // startRpcSession 打开时会重建（parentSession header 丢失）。同 pi-web fork 的
   // _rewriteFile 处理（rpc-manager case "fork"）。
   try {
-    (sm as any)._rewriteFile?.();
-    (sm as any).flushed = true;
+    (sm as unknown as { _rewriteFile?: () => void })._rewriteFile?.();
+    (sm as unknown as { flushed?: boolean }).flushed = true;
   } catch (e) {
     console.warn("[subagent] fork 强制落盘失败（继续）:", e instanceof Error ? e.message : e);
   }

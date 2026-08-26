@@ -1,15 +1,20 @@
 import {
   SessionManager,
+  buildContextEntries as piBuildContextEntries,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { existsSync, readdirSync, readFileSync, statSync, closeSync, openSync, readSync } from "fs";
-import { join, normalize as normalizePath } from "path";
+import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync, type Dirent } from "fs";
+import { readdir } from "fs/promises";
+import { isAbsolute, join, normalize as normalizePath, relative, resolve as resolvePath, sep } from "path";
 import { writePrivateFileAtomicSync } from "./atomic-file.ts";
-import type { AgentMessage, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types.ts";
+import type { AgentMessage, ImageContent, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types.ts";
+import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize.ts";
 import { projectIdentityKey } from "./project-identity.ts";
 import { sessionPathKey } from "./session-path.ts";
+import { MAX_TOOL_RESULT_IMAGE_BYTES, TOOL_RESULT_IMAGE_MIMES } from "./tool-result-images.ts";
 import type { ProjectInfo } from "./worktree.ts";
+import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents.ts";
 
 export { getAgentDir };
 
@@ -251,41 +256,97 @@ export function __stubSessionScanForTests(stub: SessionScanFn | null): () => voi
   };
 }
 
-async function loadAllSessions(): Promise<SessionInfo[]> {
-  const piSessions: SessionFileInfo[] = await activeSessionScan();
-  const pathToId = new Map<string, string>();
-  for (const s of piSessions) pathToId.set(sessionPathKey(s.path), s.id);
+const SESSION_HEADER_MAX_BYTES = 64 * 1024;
+const SESSION_RELATION_MAX_BYTES = 256 * 1024;
+const SESSION_RELATION_MAX_LINES = 2;
+const SESSION_RESULT_MAX_BYTES = 256 * 1024;
 
-  // Resolve each unique cwd to its project root (main repo shared by all
-  // worktrees). resolveProject caches per-cwd, so this is cheap after warmup.
-  // Lazy import: keeps session-reader importable without the git/worktree
-  // chain in node tests — resolveProject only runs for the full list build.
-  const { resolveProject } = await import("./worktree.ts");
-  const uniqueCwds = [...new Set(piSessions.map((s) => s.cwd).filter(Boolean))];
-  const projectByCwd = new Map<string, ProjectInfo>();
-  await Promise.all(uniqueCwds.map(async (cwd) => {
-    projectByCwd.set(cwd, await resolveProject(cwd));
-  }));
+function readBoundedLines(filePath: string, maxBytes: number, maxLines: number): string[] {
+  const fd = openSync(filePath, "r");
+  try {
+    const chunks: Buffer[] = [];
+    let position = 0;
+    let newlineCount = 0;
+    let reachedEof = false;
 
-  return piSessions.map((s) => {
-    cacheSessionPath(s.id, s.path);
-    const project = s.cwd ? projectByCwd.get(s.cwd) : undefined;
-    return {
-      path: s.path,
-      id: s.id,
-      cwd: s.cwd,
-      name: s.name,
-      created: s.created instanceof Date ? s.created.toISOString() : String(s.created),
-      modified: s.modified instanceof Date ? s.modified.toISOString() : String(s.modified),
-      messageCount: s.messageCount,
-      firstMessage: s.firstMessage || "(no messages)",
-      parentSessionId: s.parentSessionPath ? pathToId.get(sessionPathKey(s.parentSessionPath)) : undefined,
-      projectRoot: project?.projectRoot ?? s.cwd,
-      ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
-    };
+    while (position < maxBytes && newlineCount < maxLines) {
+      const buffer = Buffer.allocUnsafe(Math.min(4096, maxBytes - position));
+      const bytesRead = readSync(fd, buffer, 0, buffer.length, position);
+      if (bytesRead === 0) {
+        reachedEof = true;
+        break;
+      }
+      position += bytesRead;
+      const data = buffer.subarray(0, bytesRead);
+      let end = data.length;
+      for (let index = 0; index < data.length; index += 1) {
+        if (data[index] !== 0x0a) continue;
+        newlineCount += 1;
+        if (newlineCount === maxLines) {
+          end = index + 1;
+          break;
+        }
+      }
+      chunks.push(data.subarray(0, end));
+    }
+
+    const source = Buffer.concat(chunks).toString("utf8");
+    const lines = source.split("\n");
+    if (!reachedEof && !source.endsWith("\n")) lines.pop();
+    if (lines.at(-1) === "") lines.pop();
+    return lines.map((line) => line.endsWith("\r") ? line.slice(0, -1) : line);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function readBoundedTailLines(filePath: string, maxBytes: number): string[] {
+  const fd = openSync(filePath, "r");
+  try {
+    const fileSize = fstatSync(fd).size;
+    const start = Math.max(0, fileSize - maxBytes);
+    const buffer = Buffer.allocUnsafe(fileSize - start);
+    const bytesRead = readSync(fd, buffer, 0, buffer.length, start);
+    if (bytesRead === 0) return [];
+
+    const lines = buffer.subarray(0, bytesRead).toString("utf8").split("\n");
+    if (start > 0) {
+      const previousByte = Buffer.allocUnsafe(1);
+      readSync(fd, previousByte, 0, 1, start - 1);
+      if (previousByte[0] !== 0x0a) lines.shift();
+    }
+    if (lines.at(-1) === "") lines.pop();
+    return lines.map((line) => line.endsWith("\r") ? line.slice(0, -1) : line);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function parseSessionEntries(lines: readonly string[]): SessionEntry[] {
+  return lines.flatMap((line) => {
+    try {
+      const entry = JSON.parse(line) as SessionEntry;
+      return [entry];
+    } catch {
+      return [];
+    }
   });
 }
 
+function readSessionRelationEntries(filePath: string): SessionEntry[] {
+  const prefixEntries = parseSessionEntries(
+    readBoundedLines(filePath, SESSION_RELATION_MAX_BYTES, SESSION_RELATION_MAX_LINES).slice(1),
+  );
+  const isSubagent = prefixEntries.some((entry) => (
+    entry.type === "custom" && entry.customType === SUBAGENT_META_TYPE
+  ));
+  if (!isSubagent) return prefixEntries;
+
+  return [
+    ...prefixEntries,
+    ...parseSessionEntries(readBoundedTailLines(filePath, SESSION_RESULT_MAX_BYTES)),
+  ];
+}
 export async function attachSessionProjectInfo(sessions: SessionInfo[]): Promise<SessionInfo[]> {
   // Lazy import: keeps session-reader importable without the git/worktree
   // chain in node tests (same rationale as loadAllSessions above).
@@ -303,7 +364,8 @@ export async function attachSessionProjectInfo(sessions: SessionInfo[]): Promise
       ...session,
       projectRoot,
       projectKey: projectIdentityKey(projectRoot),
-      ...(project?.isWorktree && project.branch ? { worktreeBranch: project.branch } : {}),
+      ...(project?.branch ? { branch: project.branch } : {}),
+      ...(project?.isWorktree ? { isWorktree: true } : {}),
     };
   });
 }
@@ -319,6 +381,42 @@ export function mergeSessionLists(
   return [...byId.values()].sort((a, b) => b.modified.localeCompare(a.modified));
 }
 
+async function loadAllSessions(): Promise<SessionInfo[]> {
+  // 我方增量磁盘扫描（mtime/size 缓存，只重解析变更文件）替代
+  // SessionManager.listAll() 的全量逐行重解析；富化逻辑与上游一致。
+  const scanned: SessionFileInfo[] = await activeSessionScan();
+  const pathToId = new Map<string, string>();
+  for (const s of scanned) pathToId.set(sessionPathKey(s.path), s.id);
+
+  const sessions = scanned.map((s) => {
+    cacheSessionPath(s.id, s.path);
+    const originSessionId = s.parentSessionPath ? pathToId.get(sessionPathKey(s.parentSessionPath)) : undefined;
+    let subagent = null;
+    if (s.parentSessionPath) {
+      try {
+        subagent = readSubagentRun(readSessionRelationEntries(s.path), s.id, s.path);
+      } catch { /* malformed or concurrently removed session */ }
+    }
+    return {
+      path: s.path,
+      id: s.id,
+      cwd: s.cwd,
+      name: s.name,
+      created: s.created instanceof Date ? s.created.toISOString() : String(s.created),
+      modified: s.modified instanceof Date ? s.modified.toISOString() : String(s.modified),
+      messageCount: s.messageCount,
+      firstMessage: s.firstMessage || "(no messages)",
+      parentSessionId: originSessionId,
+      ...(subagent
+        ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description, status: subagent.status } }
+        : s.parentSessionPath
+          ? { relation: { kind: "fork" as const, ...(originSessionId ? { originSessionId } : {}) } }
+          : {}),
+      transient: false,
+    };
+  });
+  return attachSessionProjectInfo(sessions);
+}
 export async function listAllSessions(options: { force?: boolean } = {}): Promise<SessionInfo[]> {
   if (options.force) invalidateSessionListCache();
   const generation = globalThis.__piSessionListGeneration ?? 0;
@@ -370,6 +468,91 @@ declare global {
 }
 
 const SESSION_LIST_CACHE_TTL_MS = 5_000;
+const SESSION_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
+
+function defaultSessionsDir(): string {
+  return join(getAgentDir(), "sessions");
+}
+
+function resolvePathWithinDefaultSessions(
+  filePath: string,
+  sessionsDir = resolvePath(defaultSessionsDir()),
+): string | null {
+  const candidatePath = resolvePath(filePath);
+  const relativePath = relative(sessionsDir, candidatePath);
+  return relativePath !== ""
+    && relativePath !== ".."
+    && !relativePath.startsWith(`..${sep}`)
+    && !isAbsolute(relativePath)
+    ? candidatePath
+    : null;
+}
+
+async function findSessionPathById(sessionId: string): Promise<string | null> {
+  // The filename is only a candidate hint; the bounded header check remains
+  // authoritative so future layouts and malformed files use the full fallback.
+  if (!SESSION_ID_PATTERN.test(sessionId)) return null;
+
+  let projectDirs: Dirent[];
+  const sessionsDir = resolvePath(defaultSessionsDir());
+  try {
+    projectDirs = await readdir(sessionsDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+
+  const suffix = `_${sessionId}.jsonl`;
+  let match: string | undefined;
+  for (const projectDir of projectDirs) {
+    if (!projectDir.isDirectory() && !projectDir.isSymbolicLink()) continue;
+    const projectPath = resolvePathWithinDefaultSessions(
+      join(sessionsDir, projectDir.name),
+      sessionsDir,
+    );
+    if (!projectPath) continue;
+
+    let files: string[];
+    try {
+      files = await readdir(projectPath);
+    } catch {
+      continue;
+    }
+
+    for (const file of files) {
+      if (!file.endsWith(suffix)) continue;
+      const candidate = resolvePathWithinDefaultSessions(
+        join(projectPath, file),
+        sessionsDir,
+      );
+      if (!candidate) continue;
+      try {
+        if (readSessionHeader(candidate)?.id !== sessionId) continue;
+      } catch {
+        continue;
+      }
+      // Do not choose between duplicate candidates; retain the existing
+      // catalogue fallback for its current resolution semantics.
+      if (match && match !== candidate) return null;
+      match = candidate;
+    }
+  }
+
+  return match ?? null;
+}
+
+function findSessionIdByPath(filePath: string): string | undefined {
+  if (!filePath.endsWith(".jsonl")) return undefined;
+  const candidate = resolvePathWithinDefaultSessions(filePath);
+  if (!candidate) return undefined;
+  try {
+    const sessionId = readSessionHeader(candidate)?.id;
+    if (!sessionId) return undefined;
+    cacheSessionPath(sessionId, candidate);
+    return sessionId;
+  } catch {
+    return undefined;
+  }
+}
 
 export function invalidateSessionListCache(): void {
   globalThis.__piSessionListGeneration = (globalThis.__piSessionListGeneration ?? 0) + 1;
@@ -390,7 +573,14 @@ export async function resolveSessionPath(sessionId: string): Promise<string | nu
   const cached = getPathCache().get(sessionId);
   if (cached) return cached;
 
-  // Cache miss: scan all sessions to populate cache, then retry
+  const targetedPath = await findSessionPathById(sessionId);
+  if (targetedPath) {
+    cacheSessionPath(sessionId, targetedPath);
+    return getPathCache().get(sessionId) ?? null;
+  }
+
+  // Unknown layouts, malformed candidates, and duplicate IDs retain the
+  // existing authoritative catalogue scan instead of negative-caching a miss.
   await listAllSessions();
   return getPathCache().get(sessionId) ?? null;
 }
@@ -399,6 +589,9 @@ export async function resolveSessionIdByPath(filePath: string): Promise<string |
   const pathKey = sessionPathKey(filePath);
   const cached = getPathToIdCache().get(pathKey);
   if (cached) return cached;
+
+  const targetedId = findSessionIdByPath(filePath);
+  if (targetedId) return targetedId;
 
   await listAllSessions();
   return getPathToIdCache().get(pathKey);
@@ -440,35 +633,13 @@ export function invalidateSessionPathCache(sessionId: string): void {
 }
 
 export function readSessionHeader(filePath: string): SessionHeader | null {
-  const fd = openSync(filePath, "r");
+  const firstLine = readBoundedLines(filePath, SESSION_HEADER_MAX_BYTES, 1)[0]?.trimEnd();
+  if (!firstLine) return null;
   try {
-    const chunks: Buffer[] = [];
-    const maxHeaderBytes = 64 * 1024;
-    let position = 0;
-    let foundNewline = false;
-
-    while (position < maxHeaderBytes && !foundNewline) {
-      const buffer = Buffer.allocUnsafe(Math.min(4096, maxHeaderBytes - position));
-      const bytesRead = readSync(fd, buffer, 0, buffer.length, position);
-      if (bytesRead === 0) break;
-      const data = buffer.subarray(0, bytesRead);
-      const newlineIndex = data.indexOf(0x0a);
-      chunks.push(newlineIndex === -1 ? data : data.subarray(0, newlineIndex));
-      position += bytesRead;
-      foundNewline = newlineIndex !== -1;
-    }
-
-    if (!foundNewline && position >= maxHeaderBytes) return null;
-    const firstLine = Buffer.concat(chunks).toString("utf8").trimEnd();
-    if (!firstLine) return null;
-    try {
-      const header = JSON.parse(firstLine) as SessionHeader;
-      return header.type === "session" ? header : null;
-    } catch {
-      return null;
-    }
-  } finally {
-    closeSync(fd);
+    const header = JSON.parse(firstLine) as SessionHeader;
+    return header.type === "session" ? header : null;
+  } catch {
+    return null;
   }
 }
 
@@ -477,88 +648,121 @@ export function getSessionEntries(filePath: string): SessionEntry[] {
   return entries as unknown as SessionEntry[];
 }
 
+function getSessionSettings(entries: SessionEntry[], leafId?: string | null): Pick<SessionContext, "thinkingLevel" | "model"> {
+  if (leafId === null) return { thinkingLevel: "off", model: null };
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  let current = leafId ? byId.get(leafId) : undefined;
+  current ??= entries[entries.length - 1];
+  let thinkingLevel: string | undefined;
+  // 我方语义保留（pre-plan-a）：model 的权威来源是路径上最后一条 `model_change`
+  // （= 反向走链时最先遇到的那条）。运行中 set_model 后 abort 重发开新分支，
+  // 旧的 assistant 模型戳会排在 model_change 之后成为近叶节点——按「就近优先」
+  // 会回退到旧模型，与实际执行不符。因此 model_change 一旦出现即定案，
+  // assistant 消息戳仅作无 model_change 时的回退。
+  let model: SessionContext["model"] | undefined;
+  let sawModelChange = false;
+  let assistantStamp: SessionContext["model"] | undefined;
+
+  while (current && (thinkingLevel === undefined || !(sawModelChange && assistantStamp !== undefined))) {
+    if (thinkingLevel === undefined && current.type === "thinking_level_change") {
+      thinkingLevel = current.thinkingLevel;
+    }
+    if (!sawModelChange && current.type === "model_change") {
+      model = { provider: current.provider, modelId: current.modelId };
+      sawModelChange = true;
+    } else if (assistantStamp === undefined && current.type === "message" && current.message.role === "assistant") {
+      const message = current.message as { provider?: unknown; model?: unknown };
+      if (typeof message.provider === "string" && typeof message.model === "string") {
+        assistantStamp = { provider: message.provider, modelId: message.model };
+      }
+    }
+    current = current.parentId ? byId.get(current.parentId) : undefined;
+  }
+
+  return { thinkingLevel: thinkingLevel ?? "off", model: model ?? assistantStamp ?? null };
+}
+
+export interface BuildSessionContextOptions {
+  deferThinking?: boolean;
+  deferToolResultImages?: boolean;
+  tail?: number;
+  excludeLeaf?: boolean;
+  /** Session id used to build lazy URLs for historical tool-result images. */
+  sessionId?: string;
+}
+
 export function buildSessionContext(
   entries: SessionEntry[],
   leafId?: string | null,
-  options: { deferThinking?: boolean; deferToolResultImages?: boolean } = {},
+  options: BuildSessionContextOptions = {},
 ): SessionContext {
+  const { tail, excludeLeaf } = options;
+  // Restrict SDK conversion and the response payload to the requested page.
+  const sliced = tail && tail > 0 ? sliceActiveBranch(entries, leafId ?? null, tail, excludeLeaf) : entries;
+  const hasMore = Boolean(tail && tail > 0 && sliced[0]?.parentId);
   const byId = new Map<string, SessionEntry>();
-  for (const e of entries) byId.set(e.id, e);
+  for (const e of sliced) byId.set(e.id, e);
 
-  // 不走 SDK 的 buildContextEntries（会过滤掉压缩前的原始消息）
-  // 改为走全父链，所有消息原样返回，保留压缩前的内容
-  const pathEntries = buildFullPath(entries, leafId, byId);
-  const { thinkingLevel, model } = getSessionContextSettings(pathEntries);
+  const piEntries = sliced as unknown as PiSessionEntry[];
+  const contextEntries = piBuildContextEntries(
+    piEntries,
+    leafId,
+    byId as unknown as Map<string, PiSessionEntry>,
+  );
 
+  // Convert the SDK-selected context entries and their IDs together. This keeps
+  // fork/navigation targets aligned while preserving pi's compaction ordering.
   const messages: AgentMessage[] = [];
   const entryIds: string[] = [];
-  for (const entry of pathEntries) {
-    const m = entryToUiMessage(entry, options);
+  for (const entry of contextEntries) {
+    const localEntry = entry as unknown as SessionEntry;
+    const m = entryToUiMessage(localEntry, options);
     if (m) {
       messages.push(m);
-      entryIds.push(entry.id);
+      entryIds.push(localEntry.id);
     }
   }
 
   return {
     messages,
     entryIds,
-    thinkingLevel,
-    model,
+    oldestEntryId: sliced[0]?.id ?? null,
+    hasMore,
+    ...getSessionSettings(entries, leafId),
   };
 }
 
-/** 从 leaf 到 root 走全父链（不丢弃压缩前的消息）。
- *  leafId === null 时返回空，与 SDK buildSessionPath 语义一致（null = 明确无 leaf）。 */
-function buildFullPath(
+/**
+ * Extract the ancestor chain from `leafId` back toward the root, capped at
+ * `tail` entries (most-recent first after the final reverse). Iterative: a
+ * linear session's chain length equals its entry count, so a recursive walk
+ * would overflow the stack. The result is still a valid prefix of the active
+ * branch — older history is loaded on demand via pagination.
+ */
+export function sliceActiveBranch(
   entries: SessionEntry[],
-  leafId: string | null | undefined,
-  byId: Map<string, SessionEntry>,
+  leafId: string | null,
+  tail: number,
+  excludeLeaf = false,
 ): SessionEntry[] {
-  if (leafId === null) return [];
+  if (tail <= 0) return entries;
+  const byId = new Map<string, SessionEntry>();
+  for (const e of entries) byId.set(e.id, e);
 
-  let leaf: SessionEntry | undefined;
-  if (leafId) leaf = byId.get(leafId);
-  leaf ??= entries[entries.length - 1];
+  let leaf = leafId ? byId.get(leafId) : entries[entries.length - 1];
+  // Pagination: `before` is the oldest entry already loaded, so the next page
+  // must start at its parent to avoid duplicating `before` when prepended.
+  if (excludeLeaf) leaf = leaf?.parentId ? byId.get(leaf.parentId) : undefined;
   if (!leaf) return [];
-
-  const path: SessionEntry[] = [];
+  const chain: SessionEntry[] = [];
   let current: SessionEntry | undefined = leaf;
-  while (current) {
-    path.push(current);
+  while (current && chain.length < tail) {
+    chain.push(current);
     current = current.parentId ? byId.get(current.parentId) : undefined;
   }
-  path.reverse();
-  return path;
+  chain.reverse();
+  return chain;
 }
-
-/** 沿路径收集 thinkingLevel 与 model（基于本地全路径计算；model 语义见下）。
- *
- * model 的权威来源是 `model_change` 条目（会话当前模型 = 下一次 run 实际使用的模型）：
- * 运行中切换模型时，`model_change` 被追加后，in-flight 这一轮的输出仍盖着旧模型戳
- * （assistant 消息 model=旧模型）排在它后面成为叶子。若按「最后一条消息」取 model，
- * 停掉/结束该轮后显示会回退到旧模型——而服务端会话模型（agent.state.model）已是新模型。
- * 因此 `model_change` 优先于后续 assistant 消息戳；仅当路径上没有 model_change 时
- * 才回退到最后一条 assistant 消息的模型。 */
-function getSessionContextSettings(path: SessionEntry[]): { thinkingLevel: string; model: { provider: string; modelId: string } | null } {
-  let thinkingLevel = "off";
-  let model: { provider: string; modelId: string } | null = null;
-  let sawModelChange = false;
-  for (const entry of path) {
-    if (entry.type === "thinking_level_change") {
-      thinkingLevel = entry.thinkingLevel;
-    } else if (entry.type === "model_change") {
-      model = { provider: entry.provider, modelId: entry.modelId };
-      sawModelChange = true;
-    } else if (entry.type === "message" && entry.message.role === "assistant") {
-      if (!sawModelChange) {
-        model = { provider: entry.message.provider, modelId: entry.message.model };
-      }
-    }
-  }
-  return { thinkingLevel, model };
-}
-
 function parseEntryTimestamp(timestamp: string): number | undefined {
   const parsed = Date.parse(timestamp);
   return Number.isNaN(parsed) ? undefined : parsed;
@@ -586,21 +790,44 @@ function base64ImageInfo(block: unknown): { bytes: number; mime?: string } | nul
   return { bytes: Math.max(0, Math.floor(data.length * 3 / 4) - padding), mime };
 }
 
-function omitToolResultBase64Images(message: AgentMessage): AgentMessage {
+function deferToolResultBase64Images(
+  message: AgentMessage,
+  sessionId: string | undefined,
+  entryId: string,
+): AgentMessage {
   if (message.role !== "toolResult") return message;
 
   let omitted = 0;
   let bytes = 0;
   const mimes = new Set<string>();
-  const content = message.content.filter((block) => {
+  const content = message.content.flatMap((block, blockIndex) => {
     const image = base64ImageInfo(block);
-    if (!image) return true;
+    if (!image) return [block];
+
+    // Keep the initial history response small, but preserve an image block that
+    // the browser can load only when its collapsed tool result is expanded.
+    if (
+      sessionId &&
+      image.mime &&
+      TOOL_RESULT_IMAGE_MIMES.has(image.mime) &&
+      image.bytes > 0 &&
+      image.bytes <= MAX_TOOL_RESULT_IMAGE_BYTES
+    ) {
+      const source: ImageContent["source"] = {
+        type: "url",
+        media_type: image.mime,
+        url: `/api/sessions/${encodeURIComponent(sessionId)}/entries/${encodeURIComponent(entryId)}/tool-result-image?blockIndex=${blockIndex}`,
+      };
+      return [{ type: "image", source } satisfies ImageContent];
+    }
+
+    // Retain the old bounded fallback for callers that do not have a session id.
     omitted += 1;
     bytes += image.bytes;
     if (image.mime) mimes.add(image.mime);
-    return false;
+    return [];
   });
-  if (omitted === 0) return message;
+  if (omitted === 0) return { ...message, content };
 
   const mimeText = mimes.size > 0 ? `: ${[...mimes].join(", ")}` : "";
   content.push({
@@ -614,7 +841,7 @@ function omitToolResultBase64Images(message: AgentMessage): AgentMessage {
 // Returns null for entries that do not map to chat history (metadata, non-message types).
 function entryToUiMessage(
   entry: SessionEntry,
-  options: { deferThinking?: boolean; deferToolResultImages?: boolean },
+  options: BuildSessionContextOptions,
 ): AgentMessage | null {
   // Supported message roles: user, assistant, toolResult, bashExecution.
   // bashExecution messages enter the case "message" branch (entry.type === "message").
@@ -631,13 +858,18 @@ function entryToUiMessage(
       const safe = (raw as { content?: unknown }).content == null
         ? { ...raw, content: [] }
         : raw;
-      const message = options.deferToolResultImages
-        ? omitToolResultBase64Images(normalizeToolCalls(safe))
+      let message = options.deferToolResultImages
+        ? deferToolResultBase64Images(normalizeToolCalls(safe), options.sessionId, entry.id)
         : normalizeToolCalls(safe);
+      const legacyContent = message.role === "assistant" ? (message as { content: unknown }).content : undefined;
+      if (typeof legacyContent === "string") {
+        message = { ...message, content: [{ type: "text", text: legacyContent }] } as AgentMessage;
+      }
       if (!options.deferThinking || message.role !== "assistant") return message;
+      const content = message.content;
       return {
         ...message,
-        content: message.content.map((block) => (
+        content: content.map((block) => (
           block.type === "thinking" && block.thinking.trim() !== ""
             ? { ...block, thinking: "", deferred: true }
             : block
