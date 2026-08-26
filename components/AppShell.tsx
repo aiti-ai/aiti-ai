@@ -2711,6 +2711,9 @@ export function AppShell() {
         data-mobile-toolbar-file={mobile ? "true" : undefined}
         style={{
           marginLeft: !mobile && !sessionStats && !contextUsage ? "auto" : 0,
+          // 顶栏容器为右上角预留了 44px（文件开关占位 + 安全区），本按钮即该角落的宿主——
+          // 用负右外边距抵消预留 padding，贴到容器最右端（右上角）
+          marginRight: mobile ? 0 : "calc(-44px - min(env(safe-area-inset-right), 8px))",
           display: "flex", alignItems: "center", justifyContent: "center",
           width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
           visibility: covered ? "hidden" : "visible",
