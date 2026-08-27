@@ -15,7 +15,9 @@ export function isWriteToolName(toolName: string): boolean {
 }
 
 export function isEditToolName(toolName: string): boolean {
-  const name = toolName.toLowerCase();
+  // ⚠ 防护：attach/历史消息偶发 toolCall.toolName 缺失（undefined）——此前直接
+  // toLowerCase 会在消息渲染时抛 TypeError（生产页面整个会话区崩，ChatWindow 不挂载）。
+  const name = typeof toolName === "string" ? toolName.toLowerCase() : "";
   return name === "edit" ||
     name.startsWith("edit_") ||
     name.endsWith(".edit") ||
