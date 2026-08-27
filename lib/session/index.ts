@@ -66,7 +66,7 @@ export { relayToSession, type RelayResult } from "./relay.ts";
 export { createLocalHandle } from "./local.ts";
 
 // Wrapper-compatible adapter (lets existing /api/agent/* routes drive handles)
-export { HandleSessionAdapter, type WrappedSessionLike } from "./handle-adapter.ts";
+export { HandleSessionAdapter, handleModelToClient, type WrappedSessionLike } from "./handle-adapter.ts";
 
 import { getProvider, findProvidersForAgent, listProviders, DEFAULT_PROVIDER_TYPE } from "./providers.ts";
 import type { CreateSessionOptions } from "./providers.ts";

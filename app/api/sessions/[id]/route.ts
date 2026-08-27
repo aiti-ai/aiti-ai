@@ -14,7 +14,7 @@ import {
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession } from "@/lib/rpc-manager";
-import { resolveAnySession, attachIfBridged } from "@/lib/session";
+import { resolveAnySession, attachIfBridged, handleModelToClient } from "@/lib/session";
 import { listProviders } from "@/lib/session/providers";
 import { removeQueue } from "@/lib/queue-store";
 import { projectTreeForResponse } from "@/lib/project-tree";
@@ -46,7 +46,8 @@ function bridgedOk(id: string, bridged: { isAlive(): boolean; send(c: unknown): 
         },
         leafId: null,
         tree: [],
-        context: { messages, entryIds: [], thinkingLevel: "off", model: bridged.getModel?.() ?? null },
+        // HandleModel 是 {id,…}，客户端契约是 {modelId,…}——不归一化则选择器当前名渲染为空
+        context: { messages, entryIds: [], thinkingLevel: "off", model: handleModelToClient(bridged.getModel?.()) },
         totalActiveMs: 0,
       });
     });
@@ -159,7 +160,7 @@ export async function GET(
             },
             leafId: null,
             tree: [],
-            context: { messages, entryIds: [], thinkingLevel: "off", model: bridged.getModel?.() ?? null },
+            context: { messages, entryIds: [], thinkingLevel: "off", model: handleModelToClient(bridged.getModel?.()) },
             totalActiveMs: 0,
           });
         }

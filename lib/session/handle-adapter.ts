@@ -30,6 +30,18 @@ type WrapperCommand = Record<string, unknown>;
 type Listener = (event: { type: string; [key: string]: unknown }) => void;
 
 /** Minimal surface copied from AgentSessionWrapper / AgentEventStreamSession. */
+/**
+ * HandleModel（{id, provider}）→ 客户端契约（{provider, modelId}）。
+ * 路由把 attach handle 的 getModel() 回传为 context.model 时必须经此归一化：
+ * 原样透传（shape 是 {id,…}）会让前端 value.modelId === undefined → 模型选择器
+ * 当前名 span 渲染为空（数据链路全通、仅「显示」断链的根因）。
+ */
+export function handleModelToClient(
+  m?: { id: string; provider: string } | null,
+): { provider: string; modelId: string } | null {
+  return m && m.provider && m.id ? { provider: m.provider, modelId: m.id } : null;
+}
+
 export interface WrappedSessionLike {
   readonly sessionId: string;
   readonly cwd: string;
@@ -37,7 +49,7 @@ export interface WrappedSessionLike {
   readonly source: string;
   isAlive(): boolean;
   isRunning(): boolean;
-  /** 当前后端模型（attach/spawn 直达 handle；本地 wrapper 可缺省——调用处用 ?.()）。 */
+  /** 当前后端模型（attach/spawn 直达 handle；本地 wrapper 可缺省——调用处用 ?.()）。注意 shape 是 {id, provider}，回传 context.model 前须经 handleModelToClient 归一化。 */
   getModel?(): { id: string; provider: string } | undefined;
   send(command: WrapperCommand): Promise<unknown>;
   onEvent(listener: Listener): () => void;

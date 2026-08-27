@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveSessionPath, buildSessionContext } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
-import { resolveAttachBySessionId } from "@/lib/session";
+import { resolveAttachBySessionId, handleModelToClient } from "@/lib/session";
 
 export async function GET(
   req: Request,
@@ -41,7 +41,7 @@ export async function GET(
           entryIds: [],
           oldestEntryId: null,
           hasMore: false,
-          model: attachHandle.getModel?.() ?? null,
+          model: handleModelToClient(attachHandle.getModel?.()),
           thinkingLevel: "off",
         },
         tail,
