@@ -7,7 +7,9 @@
  */
 
 export function isWriteToolName(toolName: string): boolean {
-  const name = toolName.toLowerCase();
+  // ⚠ 同 isEditToolName：attach/桥回放偶发 toolCall.toolName 缺失 → 直接 toLowerCase
+  // 会抛 TypeError（页面错误边界「This page couldn’t load」，实机 2026-08-27 复现）
+  const name = typeof toolName === "string" ? toolName.toLowerCase() : "";
   return name === "write" ||
     name.startsWith("write_") ||
     name.endsWith(".write") ||

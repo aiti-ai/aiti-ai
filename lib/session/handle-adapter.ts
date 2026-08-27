@@ -78,6 +78,10 @@ export class HandleSessionAdapter implements WrappedSessionLike {
     this.lastModel = handle.getModel();
 
     this.unsubscribe = handle.subscribe((rawEvent) => {
+      // 反向 RPC 帧（TUI aiti_* 工具转发）不是事件——旧版 handle 会把它当事件吐进
+      // 流里导致前端渲染「未知错误」；此处双重防御：无论新旧 handle，到达适配层的
+      // 该类型一律丢弃（真正消费方 = AttachSessionHandle.handleAitiBridgeReq，socket 层）
+      if ((rawEvent as { type?: unknown } | null)?.type === "aiti_bridge_req") return;
       // 规范化合成事件 → pi 词汇表（前端流式渲染依赖精确形状，见 normalize 注释）
       const merged = this.normalize(rawEvent);
       const event = { ...rawEvent, ...merged } as Record<string, unknown>;
