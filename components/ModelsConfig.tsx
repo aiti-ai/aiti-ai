@@ -120,8 +120,8 @@ type ModelCatalogState =
 
 type ModelProbeStatus =
   | { phase: "probing" }
-  | { phase: "done"; corrected: boolean }
-  | { phase: "error"; message: string };
+  | { phase: "done"; corrected: boolean; probedMaxTokens?: number }
+  | { phase: "error"; message: string; probedMaxTokens?: number };
 
 // pi's default output budget; models whose metadata reports at or below this
 // need no probe (under-reporting is harmless, and a request is not worth it).
@@ -2031,7 +2031,12 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
     const modelId = model.id;
     if (!modelId || model.maxTokens === undefined) return;
     const key = probeKey(providerName, modelId);
-    if (probeStatusRef.current[key]) return;
+    const existing = probeStatusRef.current[key];
+    // Re-probe when the cap changed (catalog fill, manual edit, probe
+    // correction); skip only while a probe is in flight or when the same cap
+    // was already confirmed, so saving with a fresh value re-verifies it.
+    if (existing?.phase === "probing") return;
+    if (existing?.phase === "done" && existing.probedMaxTokens === model.maxTokens) return;
     setProbeStatus((prev) => ({ ...prev, [key]: { phase: "probing" } }));
     try {
       const res = await fetch(apiUrl("/api/models-config/probe-cap"), {
@@ -2053,12 +2058,15 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
       if (d.ok && typeof d.confirmedMaxTokens === "number") {
         const corrected = d.confirmedMaxTokens !== model.maxTokens;
         if (corrected) applyProbeResult(providerName, modelId, d.confirmedMaxTokens);
-        setProbeStatus((prev) => ({ ...prev, [key]: { phase: "done", corrected } }));
+        // Record the final (post-correction) cap so a later save with the same
+        // value is not re-probed, but any edit re-triggers verification.
+        const finalMaxTokens = corrected ? d.confirmedMaxTokens : model.maxTokens;
+        setProbeStatus((prev) => ({ ...prev, [key]: { phase: "done", corrected, probedMaxTokens: finalMaxTokens } }));
       } else {
-        setProbeStatus((prev) => ({ ...prev, [key]: { phase: "error", message: d.error ?? "Probe failed" } }));
+        setProbeStatus((prev) => ({ ...prev, [key]: { phase: "error", message: d.error ?? "Probe failed", probedMaxTokens: model.maxTokens } }));
       }
     } catch (e) {
-      setProbeStatus((prev) => ({ ...prev, [key]: { phase: "error", message: e instanceof Error ? e.message : String(e) } }));
+      setProbeStatus((prev) => ({ ...prev, [key]: { phase: "error", message: e instanceof Error ? e.message : String(e), probedMaxTokens: model.maxTokens } }));
     }
   }, [applyProbeResult]);
 
@@ -2096,17 +2104,26 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
   }, [probeModelCap]);
 
   const updateModel = useCallback((providerName: string, index: number, m: ModelEntry) => {
+    const provider = configRef.current.providers?.[providerName] ?? {};
+    const prevModel = provider.models?.[index];
+    // Re-verify the output cap whenever it changes (catalog fill seeds it,
+    // manual edits tweak it) so a stale/over-reported value is caught before
+    // save. probeModelCap internally skips when the same cap was confirmed.
+    const maxTokensChanged = m.maxTokens !== prevModel?.maxTokens;
     setConfig((prev) => {
-      const provider = prev.providers?.[providerName] ?? {};
-      const models = [...(provider.models ?? [])];
+      const p = prev.providers?.[providerName] ?? {};
+      const models = [...(p.models ?? [])];
       // Clamp max output tokens to the provider's API cap (e.g. Ark coding
       // rejects max_tokens > 128000) so manual edits and catalog fills can
       // never persist a value the API refuses.
       const cappedMaxTokens = capMaxOutputTokens(providerName, m.id, m.maxTokens);
       models[index] = cappedMaxTokens === m.maxTokens ? m : { ...m, maxTokens: cappedMaxTokens };
-      return { ...prev, providers: { ...(prev.providers ?? {}), [providerName]: { ...provider, models } } };
+      return { ...prev, providers: { ...(prev.providers ?? {}), [providerName]: { ...p, models } } };
     });
-  }, []);
+    if (maxTokensChanged && m.id && m.maxTokens !== undefined && m.maxTokens > MIN_PROBE_MAX_TOKENS && provider.baseUrl?.trim()) {
+      void probeModelCap(providerName, provider, m);
+    }
+  }, [probeModelCap]);
 
   const removeModel = useCallback((providerName: string, index: number) => {
     const removedId = configRef.current.providers?.[providerName]?.models?.[index]?.id;
@@ -2131,10 +2148,26 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
     setSaveError(null);
     setSavedOk(false);
     try {
+      // Verify output caps of every probeable model whose value is stale or
+      // unverified before persisting, so a catalog/hand-edited maxTokens that
+      // the provider actually rejects (e.g. a downgraded sensenova variant) is
+      // corrected first rather than saved and failing at runtime.
+      const probeTasks: Promise<void>[] = [];
+      for (const [pName, provider] of Object.entries(config.providers ?? {})) {
+        if (!provider.baseUrl?.trim()) continue;
+        for (const model of provider.models ?? []) {
+          if (!model.id || model.maxTokens === undefined || model.maxTokens <= MIN_PROBE_MAX_TOKENS) continue;
+          probeTasks.push(probeModelCap(pName, provider, model));
+        }
+      }
+      if (probeTasks.length > 0) await Promise.all(probeTasks);
+      // Use the latest config: probes above may have corrected maxTokens via
+      // applyProbeResult, and the closure `config` is the pre-probe snapshot.
+      const latest = configRef.current;
       const res = await fetch(apiUrl("/api/models-config"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(config),
+        body: JSON.stringify(latest),
       });
       const d = await res.json() as { success?: boolean; error?: string };
       if (!res.ok || d.error) setSaveError(d.error ?? `HTTP ${res.status}`);
@@ -2144,7 +2177,7 @@ export function ModelsConfig({ onClose, embedded = false }: { onClose: () => voi
     } finally {
       setSaving(false);
     }
-  }, [config]);
+  }, [config, probeModelCap]);
 
   const providers = Object.entries(config.providers ?? {});
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
