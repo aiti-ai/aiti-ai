@@ -368,7 +368,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
             width: dropdownPos.width,
             background: "var(--bg-panel)",
             borderBottom: "1px solid var(--border)",
-            zIndex: 500,
+            zIndex: 30,  // 低于工具条弹窗（50-120），避免盖住「更多」菜单；仍高于页面内容
           }}>
             {hasContent ? (
               <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>
@@ -429,7 +429,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
           background: "var(--bg)",
           borderBottom: "1px solid var(--border)",
           boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-          zIndex: 100,
+          zIndex: 30,  // 同上：内容上、弹窗下
         }}>
           {hasContent ? (
             <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>
