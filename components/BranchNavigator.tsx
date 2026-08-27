@@ -278,6 +278,20 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
     return () => ro.disconnect();
   }, [open, inline, containerRef]);
 
+  // 点击外部关闭（小屏无键盘友好）：非受控模式（openInternal）下，点击按钮/树面板
+  // 之外的区域收起下拉。受控模式（openProp+onToggle）由父级管理，此处不越权。
+  useEffect(() => {
+    if (!open || openProp !== undefined) return;
+    const onPointerDown = (e: Event) => {
+      const root = containerRef?.current ?? btnRef.current;
+      if (root && !root.contains(e.target as Node)) {
+        setOpenInternal(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open, openProp, containerRef]);
+
   const activePathIds = useMemo(
     () => buildActivePath(tree, activeLeafId),
     [tree, activeLeafId]
