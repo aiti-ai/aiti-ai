@@ -341,6 +341,14 @@ export function AppShell() {
     };
   }, []);
 
+  // 模型配置变更广播：aiti-model-wizard（聚合/多key 保存）dispatch `pi-web:models-changed`
+  // → 刷新模型列表（useAgentSession 重新拉 /api/models），无需等待 60s 服务器缓存或手动刷新
+  useEffect(() => {
+    const onModelsChanged = () => setModelsRefreshKey((key) => key + 1);
+    window.addEventListener("pi-web:models-changed", onModelsChanged);
+    return () => window.removeEventListener("pi-web:models-changed", onModelsChanged);
+  }, []);
+
   // Context usage — populated by ChatWindow, displayed in top bar
   const [contextUsage, setContextUsage] = useState<{ percent: number | null; contextWindow: number; tokens: number | null } | null>(null);
   const handleContextUsageChange = useCallback((usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => {
@@ -798,7 +806,7 @@ export function AppShell() {
 
   const handleOpenSession = useCallback(async (sessionId: string) => {
     try {
-      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { cache: "no-store" });
+      const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { cache: "no-store" });
       const data = await response.json() as { info?: SessionInfo; error?: string };
       if (!response.ok || !data.info) throw new Error(data.error ?? `HTTP ${response.status}`);
       handleSelectSession(data.info);
@@ -2023,6 +2031,7 @@ export function AppShell() {
         initialSessionId={initialSessionId}
         skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
         onInitialRestoreDone={handleInitialRestoreDone}
+        onOpenById={handleOpenSession}
         refreshKey={refreshKey}
         onSessionDeleted={handleSessionDeleted}
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
