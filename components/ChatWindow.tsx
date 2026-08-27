@@ -1113,11 +1113,13 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                     onOpenFile={onOpenFile}
                     onOpenSession={onOpenSession}
                     entryId={entryIds[idx]}
-                    onFork={sessionBusy || isNew || (idx === 0 && msg.role === "user") ? undefined : handleFork}
+                    onFork={isNew ? undefined : handleFork}
                     forking={forkingEntryId === entryIds[idx]}
-                    onNavigate={sessionBusy ? undefined : handleNavigate}
-                    prevAssistantEntryId={sessionBusy ? undefined : prevAssistantEntryId}
-                    onEditContent={handleEditContent}
+                    onNavigate={isNew ? undefined : handleNavigate}
+                    prevAssistantEntryId={isNew ? undefined : prevAssistantEntryId}
+                    onEditFromHere={isNew ? undefined : handleEditFromHereMark}
+                    editingFromStart={editFromHerePending?.entryId === entryIds[idx]}
+                    onCancelEditFromStart={handleCancelEditFromHere}
                     showTimestamp={showTimestamp}
                     prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}

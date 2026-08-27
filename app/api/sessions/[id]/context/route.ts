@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveSessionPath, buildSessionContext } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
+import { resolveAttachBySessionId } from "@/lib/session";
 
 export async function GET(
   req: Request,
@@ -23,8 +24,29 @@ export async function GET(
     const rpc = getRpcSession(id);
     const liveRpc = rpc?.isAlive() ? rpc : undefined;
     const filePath = liveRpc ? null : await resolveSessionPath(id);
+    // attach 会话（含空会话/文件未落盘）：socket 优先——上下文经桥 get_messages +
+    // 连接时快照的 model 返回；否则（local 索引外）404。
+    let attachHandle: { send(c: unknown): Promise<unknown>; getModel?(): { id: string; provider: string } | undefined } | undefined;
     if (!liveRpc && !filePath) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      attachHandle = await resolveAttachBySessionId(id);
+      if (!attachHandle) {
+        return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      }
+    }
+    if (attachHandle) {
+      const r = (await attachHandle.send({ type: "get_messages" }).catch(() => null)) as { entries?: unknown[] } | null;
+      return NextResponse.json({
+        context: {
+          messages: (r?.entries ?? []) as never[],
+          entryIds: [],
+          oldestEntryId: null,
+          hasMore: false,
+          model: attachHandle.getModel?.() ?? null,
+          thinkingLevel: "off",
+        },
+        tail,
+        before: before ?? null,
+      });
     }
 
     const sm = liveRpc?.inner.sessionManager ?? SessionManager.open(filePath!);

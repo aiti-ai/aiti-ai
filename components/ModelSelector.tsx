@@ -19,6 +19,8 @@ interface ModelSelectorProps {
   selectedLabel?: string;
   disabled?: boolean;
   busy?: boolean;
+  /** 运行中切换模型后尚未生效（下轮生效）——显示「下轮生效」徽标，不锁选择器 */
+  pending?: boolean;
   isAutoSelection?: boolean;
   ariaLabel?: string;
   variant?: "toolbar" | "field";
@@ -54,6 +56,7 @@ export function ModelSelector({
   selectedLabel,
   disabled = false,
   busy = false,
+  pending = false,
   isAutoSelection = false,
   ariaLabel,
   variant = "toolbar",
@@ -207,6 +210,12 @@ export function ModelSelector({
           </svg>
         )}
         <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{currentName}</span>
+        {pending && (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0, marginLeft: 4, fontSize: 10, color: "#d97706", whiteSpace: "nowrap", fontWeight: 600 }}>
+            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+            {t("chat.modelSwitchPendingBadge")}
+          </span>
+        )}
         {variant === "field" && (
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, color: "var(--text-dim)" }}>
             <polyline points="6 9 12 15 18 9" />

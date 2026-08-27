@@ -41,3 +41,18 @@ test("branch navigation cancels the pending mark automatically", () => {
 test("suppresses composer draft writes while a pending mark is active", () => {
   assert.match(source, /suppressDraft=\{editFromHerePending != null\}/);
 });
+
+test("wires the edit-from-here mark into the MessageView render", () => {
+  // 合并 plan-a-upstream 时曾把消息渲染改回上游 onNavigate+onEditContent，
+  // 丢掉了把这套 pending 标记机制接线到 MessageView 的三行——内部机制完好却成死代码。
+  // 这里盯住接线：只要合并丢任何一行，立即红灯。
+  assert.match(source, /onEditFromHere=\{isNew \? undefined : handleEditFromHereMark\}/);
+  assert.match(source, /editingFromStart=\{editFromHerePending\?\.entryId === entryIds\[idx\]\}/);
+  assert.match(source, /onCancelEditFromStart=\{handleCancelEditFromHere\}/);
+});
+
+test("never falls back to the superseded upstream navigate+editContent path", () => {
+  // 上游的 onEditContent 立即跳转+预填语义与 fork 的「标记待发送、发送时回退」不同，
+  // 二者不可并存：前者的存在说明 fork 机制被顶掉。禁止它出现在消息渲染行。
+  assert.doesNotMatch(source, /onEditContent=\{handleEditContent\}/);
+});

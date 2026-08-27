@@ -4159,14 +4159,20 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <polyline points="21 15 16 10 5 21" />
               </svg>
             </button>
-            {/* Model selector - visible always, disabled while the session or switch is busy */}
+            {/* Model selector — visible always; only locked while a switch request is in flight. Streaming stays clickable: switching mid-run applies next turn (modelSwitchPending badge). */}
+            {model && (
+              <span style={{ marginLeft: 6, marginRight: 4, fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", verticalAlign: "middle" }}>
+                {modelNames?.[`${model.provider}:${model.modelId}`] ?? modelNames?.[model.modelId] ?? model.modelId}
+              </span>
+            )}
             {(modelOptions.length > 0 || model || modelError) && onModelChange && (
               <ModelSelector
                 options={modelOptions}
                 value={model}
                 onChange={onModelChange}
-                disabled={isStreaming}
+                disabled={false}
                 busy={modelSwitching}
+                pending={modelSwitchPending != null}
                 isAutoSelection={isAutoModelSelection}
               />
             )}

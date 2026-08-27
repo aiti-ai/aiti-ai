@@ -189,7 +189,12 @@ interface Props {
   forking?: boolean;
   onNavigate?: (entryId: string) => void;
   prevAssistantEntryId?: string;
-  onEditContent?: (message: UserMessage) => void;
+  /** 「编辑从此处」统一入口：仅前端标记（预填输入框 + 高亮 + 按钮变取消），真正发送时才执行回退 */
+  onEditFromHere?: (entryId: string, message: UserMessage, branchPointId: string | null) => void;
+  /** 本条消息是否正处于「编辑从此处」待发送状态（高亮 + 按钮变「取消」） */
+  editingFromStart?: boolean;
+  /** 取消当前「编辑从此处」标记（还原高亮、清空预填输入框） */
+  onCancelEditFromStart?: () => void;
   showTimestamp?: boolean;
   prevTimestamp?: number;
   sessionId?: string;
@@ -248,9 +253,9 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent, showTimestamp, prevTimestamp, sessionId, writtenFiles }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, showTimestamp, prevTimestamp, sessionId, writtenFiles }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditContent={onEditContent} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditFromHere={onEditFromHere} editingFromStart={editingFromStart} onCancelEditFromStart={onCancelEditFromStart} />;
   }
   if (message.role === "assistant") {
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} writtenFiles={writtenFiles} />;
@@ -282,13 +287,15 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.forking === next.forking
     && prev.onNavigate === next.onNavigate
     && prev.prevAssistantEntryId === next.prevAssistantEntryId
-    && prev.onEditContent === next.onEditContent
+    && prev.onEditFromHere === next.onEditFromHere
+    && prev.editingFromStart === next.editingFromStart
+    && prev.onCancelEditFromStart === next.onCancelEditFromStart
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
     && prev.sessionId === next.sessionId;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditContent }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string) => void;
@@ -297,7 +304,9 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   forking?: boolean;
   onNavigate?: (entryId: string) => void;
   prevAssistantEntryId?: string;
-  onEditContent?: (message: UserMessage) => void;
+  onEditFromHere?: (entryId: string, message: UserMessage, branchPointId: string | null) => void;
+  editingFromStart?: boolean;
+  onCancelEditFromStart?: () => void;
 }) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
@@ -358,6 +367,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
     </div>
   );
   const canNavigate = !!prevAssistantEntryId && !!onNavigate;
+  // 「编辑从此处」统一按钮：有分支点（上一条 assistant）走常规回退；无则首条消息走根重建
+  const canEditFromHere = !!onEditFromHere && !!entryId;
 
   const copyContent = () => {
     copyText(copyTarget).then(() => {
@@ -387,6 +398,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
             wordBreak: "break-word",
             maxHeight: USER_BUBBLE_MAX_HEIGHT,
             overflowY: "auto",
+            // 「编辑从此处」待发送标记：不换 border（避免 1px 布局跳动），用外圈 boxShadow 高亮
+            ...(editingFromStart ? { boxShadow: "0 0 0 1.5px var(--accent), 0 0 12px rgba(59,130,246,0.25)" } : {}),
           }}
         >
           {commandText ? (
@@ -500,36 +513,45 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                {copied ? t("i18n.copied") : t("i18n.copy")}
             </button>
           </div>
-          {(canFork || canNavigate) && (
+          {(canFork || canNavigate || canEditFromHere) && (
             <div style={{
               display: "flex", gap: 3,
               opacity: (hovered || forking) ? 1 : 0,
               pointerEvents: (hovered || forking) ? "auto" : "none",
               transition: "opacity 0.12s",
             }}>
-              {canNavigate && (
+              {canEditFromHere && (
                 <button
-                  onClick={() => { onNavigate!(prevAssistantEntryId!); onEditContent?.(editTarget); }}
-                   title={t("i18n.editFromHereTitle")}
+                  onClick={() => {
+                    if (editingFromStart) {
+                      onCancelEditFromStart?.();
+                    } else {
+                      onEditFromHere!(entryId!, editTarget, canNavigate ? prevAssistantEntryId! : null);
+                    }
+                  }}
+                  disabled={forking}
+                   title={editingFromStart
+                     ? t("i18n.editFromHereCancelTitle")
+                     : (canNavigate ? t("i18n.editFromHereTitle") : t("i18n.editFromStartTitle"))}
                   style={{
                     display: "flex", alignItems: "center", gap: 4,
                     padding: "3px 8px", height: 22,
                     background: "none", border: "none",
                     borderRadius: 5,
-                    color: "var(--text-dim)",
+                    color: editingFromStart ? "var(--accent)" : "var(--text-dim)",
                     cursor: "pointer",
                     fontSize: 11, fontWeight: 400,
                     whiteSpace: "nowrap",
                     transition: "color 0.12s",
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+                  onMouseLeave={(e) => { if (!editingFromStart) e.currentTarget.style.color = "var(--text-dim)"; }}
                 >
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="15 10 20 15 15 20" />
                     <path d="M4 4v7a4 4 0 0 0 4 4h12" />
                   </svg>
-                   {t("i18n.editFromHere")}
+                   {editingFromStart ? t("i18n.editFromHereCancel") : t("i18n.editFromHere")}
                 </button>
               )}
               {canFork && (

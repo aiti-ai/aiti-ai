@@ -37,6 +37,8 @@ export interface WrappedSessionLike {
   readonly source: string;
   isAlive(): boolean;
   isRunning(): boolean;
+  /** 当前后端模型（attach/spawn 直达 handle；本地 wrapper 可缺省——调用处用 ?.()）。 */
+  getModel?(): { id: string; provider: string } | undefined;
   send(command: WrapperCommand): Promise<unknown>;
   onEvent(listener: Listener): () => void;
   /** SSE reconnect snapshot (AgentEventStreamSession contract). */
@@ -96,6 +98,11 @@ export class HandleSessionAdapter implements WrappedSessionLike {
 
       for (const l of this.listeners) l(event as Parameters<Listener>[0]);
     });
+  }
+
+  /** 当前后端模型（attach/spawn 等直达 handle；本地等同 lastModel）。 */
+  getModel(): { id: string; provider: string } | undefined {
+    return this.handle.getModel() ?? this.lastModel;
   }
 
   /**

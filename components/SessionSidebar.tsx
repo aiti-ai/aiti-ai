@@ -95,6 +95,8 @@ interface Props {
   initialSessionId?: string | null;
   skipInitialProjectSelection?: boolean;
   onInitialRestoreDone?: () => void;
+  /** URL ?session= 在本地列表找不到（如空会话/未索引的 attach 会话）时的兜底：按 id 调 /api/sessions/<id>（socket 优先后台打开） */
+  onOpenById?: (sessionId: string) => void;
   refreshKey?: number;
   onSessionDeleted?: (sessionId: string) => void;
   selectedCwd?: string | null;
@@ -362,7 +364,7 @@ function PiWebTitle() {
   );
 }
 
-export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenFolder, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, fileExplorerRef: fileExplorerRefProp, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
+export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, onOpenById, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenFolder, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, fileExplorerRef: fileExplorerRefProp, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
   const [loading, setLoading] = useState(true);
@@ -790,7 +792,11 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
         onSelectSession(target, true);
         return;
       }
-      // Session not found — notify parent so it can show the placeholder
+      // Session not found in local list — notify parent so it can show the
+      // placeholder, but ALSO try opening by id via the session API: it may be
+      // a live-bridge session (empty/not indexed) where socket attach wins
+      // (registry lookup, no file needed).
+      onOpenById?.(initialSessionId);
       onInitialRestoreDone?.();
     }
 
@@ -798,7 +804,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       const projects = getRecentProjects(allSessions);
       if (projects.length > 0) setSelectedCwd(projects[0].root);
     }
-  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone]);
+  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone, onOpenById]);
 
   // Prefer an exact UI selection while a refetch is in flight. Once the
   // response catches up, the server-resolved path handles Windows case and
@@ -2411,13 +2417,10 @@ function SessionItem({
               )}
             </div>
             <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 11, minWidth: 0 }}>
-              {isRunning ? (
-                <RunningSessionIndicator />
-              ) : isUnread ? (
-                <UnreadSessionIndicator />
-              ) : (
-                <span title={session.modified}>{formatRelativeTime(session.modified, locale)}</span>
-              )}
+              {/* 运行中/未读也有指示器，但相对时间（刚刚/xxx前）始终显示，与不活动 session 一致 */}
+              {isRunning && <RunningSessionIndicator />}
+              {!isRunning && isUnread && <UnreadSessionIndicator />}
+              <span title={session.modified}>{formatRelativeTime(session.modified, locale)}</span>
               <span>{t("sidebar.messagesCount", { count: session.messageCount })}</span>
               {session.isWorktree && session.branch && (
                 <span

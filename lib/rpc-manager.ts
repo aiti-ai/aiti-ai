@@ -980,9 +980,13 @@ export class AgentSessionWrapper {
             this.pendingPromptCount = Math.max(0, this.pendingPromptCount - 1);
             this.resetIdleTimer();
             this.notifyAgentRunCompleteIfIdle();
+            // 运行状态变了（可能从 running → idle）：广播给 SSE，侧栏运行中标志才消失。
+            notifyRunningChange();
           };
 
           this.pendingPromptCount += 1;
+          // 开始执行（isRunning 变 true）：广播 running set，侧栏立即显示运行中标志。
+          notifyRunningChange();
           let prompt: Promise<void>;
           try {
             prompt = this.inner.prompt(command.message as string, {
@@ -1750,6 +1754,8 @@ export class AgentSessionWrapper {
         if (this.pendingPromptCount > 0 || this.inner.isStreaming || this.inner.isCompacting || this.inner.isBashRunning) {
           throw new Error("Cannot run a shell command while the session is busy");
         }
+        // bash 运行会让 isRunning 变 true：开始前广播，侧栏立即显示运行中标志。
+        notifyRunningChange();
         const execution = this.inner.executeBash(
           command.command as string,
           undefined,
@@ -1767,6 +1773,8 @@ export class AgentSessionWrapper {
         } finally {
           this.resetIdleTimer();
           invalidateSessionListCache();
+          // bash 结束（isRunning 可能回落）：广播，侧栏运行中标志才消失。
+          notifyRunningChange();
         }
       }
 

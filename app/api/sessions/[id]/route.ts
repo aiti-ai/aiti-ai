@@ -25,7 +25,7 @@ import { readSubagentRun, readSubagentSessionResources, SUBAGENT_META_TYPE } fro
 import { readSessionToolSelection } from "@/lib/session-tool-selection";
 
 /** 桥会话的固定响应（attach 判定以 socket/registry 为准，文件仅历史回放）。 */
-function bridgedOk(id: string, bridged: { isAlive(): boolean; send(c: unknown): Promise<unknown>; cwd?: string }) {
+function bridgedOk(id: string, bridged: { isAlive(): boolean; send(c: unknown): Promise<unknown>; cwd?: string; getModel?(): { id: string; provider: string } | undefined }) {
   return bridged.send({ type: "get_messages" }).catch(() => null)
     .then((r) => {
       const messages = ((r as { entries?: unknown[] } | null)?.entries ?? []) as unknown[];
@@ -46,7 +46,7 @@ function bridgedOk(id: string, bridged: { isAlive(): boolean; send(c: unknown): 
         },
         leafId: null,
         tree: [],
-        context: { messages, entryIds: [], thinkingLevel: "off", model: null },
+        context: { messages, entryIds: [], thinkingLevel: "off", model: bridged.getModel?.() ?? null },
         totalActiveMs: 0,
       });
     });
@@ -159,7 +159,7 @@ export async function GET(
             },
             leafId: null,
             tree: [],
-            context: { messages, entryIds: [], thinkingLevel: "off", model: null },
+            context: { messages, entryIds: [], thinkingLevel: "off", model: bridged.getModel?.() ?? null },
             totalActiveMs: 0,
           });
         }
