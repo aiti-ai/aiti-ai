@@ -4159,13 +4159,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <polyline points="21 15 16 10 5 21" />
               </svg>
             </button>
-            {/* Model selector — visible always; only locked while a switch request is in flight. Streaming stays clickable: switching mid-run applies next turn (modelSwitchPending badge). */}
-            {model && (
-              <span style={{ marginLeft: 6, marginRight: 4, fontSize: 12, color: "var(--text-muted)", whiteSpace: "nowrap", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", verticalAlign: "middle" }}>
-                {modelNames?.[`${model.provider}:${model.modelId}`] ?? modelNames?.[model.modelId] ?? model.modelId}
-              </span>
-            )}
-            {(modelOptions.length > 0 || model || modelError) && onModelChange && (
+            {/* Model selector — visible always; only locked while a switch request is in flight. Streaming stays clickable: switching mid-run applies next turn (modelSwitchPending badge).
+                ⚠ 条件收紧（2026-08-27）：去掉 modelOptions/model 依赖——数据到达前首帧是空，
+                触发会消失且不重渲染（attach 会话 models cwd 异常时尤甚）。恒渲染，空态由
+                ModelSelector 兜底（No models/Select model title 挡位）。 */}
+            {onModelChange && (
               <ModelSelector
                 options={modelOptions}
                 value={model}
