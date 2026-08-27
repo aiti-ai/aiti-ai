@@ -317,6 +317,9 @@ export interface SessionHandle {
   /** Send a user message. Triggers a turn when idle; queues per opts when running. */
   prompt(text: string, options?: PromptOptions): Promise<void>;
 
+  /** Optional raw command channel (attach/socket backends): send a JSONL command frame and resolve its response data. */
+  send?(command: Record<string, unknown>): Promise<unknown>;
+
   /** Cancel the current run (or pending work). Never kills the session itself. */
   abort(): Promise<void>;
 

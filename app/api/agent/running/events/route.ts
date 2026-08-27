@@ -1,6 +1,12 @@
 import { getRunningRpcSessionIds, subscribeRunningSessions } from "@/lib/rpc-manager";
+import { getRunningHandleIds, subscribeRunningHandles } from "@/lib/session/handle-store";
 
 export const dynamic = "force-dynamic";
+
+/** 合并后的完整运行集（local rpc + handle 后端），两侧任一变化都推合并集（文档 §2.2/§5）。 */
+function mergedRunningIds(): string[] {
+  return [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds()])];
+}
 
 // GET /api/agent/running/events - SSE stream of the set of currently-running
 // session ids. Pushes an update whenever any session starts or stops working,
@@ -16,17 +22,24 @@ export async function GET(req: Request) {
 
       // Subscribe BEFORE taking the initial snapshot so no state change can slip
       // through the gap between snapshot and subscription.
-      const unsubscribe = subscribeRunningSessions((ids) => {
+      const unsubRpc = subscribeRunningSessions(() => {
         try {
-          encode({ type: "running", runningSessionIds: ids });
+          encode({ type: "running", runningSessionIds: mergedRunningIds() });
         } catch {
           // controller already closed
         }
       });
+      const unsubHandle = subscribeRunningHandles(() => {
+        try {
+          encode({ type: "running", runningSessionIds: mergedRunningIds() });
+        } catch {
+          // controller already closed
+        }
+      });
+      const unsubscribe = () => { unsubRpc(); unsubHandle(); };
 
       // Initial snapshot so the client renders the correct state immediately.
-      // (A duplicate frame here is harmless: the client just sets the same set.)
-      encode({ type: "running", runningSessionIds: getRunningRpcSessionIds() });
+      encode({ type: "running", runningSessionIds: mergedRunningIds() });
 
       // Heartbeat to keep the connection alive through proxies/timeouts.
       const heartbeat = setInterval(() => {

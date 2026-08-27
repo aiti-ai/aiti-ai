@@ -1,7 +1,7 @@
 import { createAgentEventStream } from "@/lib/agent-event-stream";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
-import { resolveAnySession, attachIfBridged } from "@/lib/session";
+import { resolveAnySession, resolveAttachBySessionId, attachIfBridged } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -41,10 +41,14 @@ export async function GET(
     }
   }
 
-  // Fast path: already-running session (local registry, then provider handles)
+  // Fast path: already-running session (local registry, then provider handles).
+  // 空会话/未索引：socket 优先——registry 反查 attach（不依赖文件落盘）
+  const liveResolved = !filePath ? await resolveAttachBySessionId(id) : undefined;
   const session = getRpcSession(id);
   let sessionPromise;
-  const live = session?.isAlive() ? session : resolveAnySession(id);
+  const live = (session?.isAlive() ? session : null)
+    ?? liveResolved
+    ?? resolveAnySession(id);
   if (live?.isAlive()) {
     sessionPromise = Promise.resolve(live);
   } else {

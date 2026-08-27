@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
-import { resolveAnySession, attachIfBridged } from "@/lib/session";
+import { resolveAnySession, resolveAttachBySessionId, attachIfBridged } from "@/lib/session";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -116,7 +116,10 @@ export async function GET(
   const { id } = await params;
 
   try {
-    const session = getRpcSession(id)?.isAlive() ? getRpcSession(id) : resolveAnySession(id);
+    // socket 优先：attach 由 registry 判定（空会话/未索引也命中），rpc/本地 handle 兜底
+    const session = getRpcSession(id)?.isAlive()
+      ? getRpcSession(id)
+      : resolveAnySession(id) ?? await resolveAttachBySessionId(id);
     if (!session || !session.isAlive()) {
       return NextResponse.json({ running: false });
     }

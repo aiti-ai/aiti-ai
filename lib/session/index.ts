@@ -74,6 +74,7 @@ import { BridgeOccupiedError } from "./types.ts";
 import type { SessionCapabilities, SessionHandle } from "./types.ts";
 import { getHandle as lookupHandle, putHandle, putHandleAt, listAllHandles } from "./handle-store.ts";
 import { HandleSessionAdapter, type WrappedSessionLike } from "./handle-adapter.ts";
+import { findBridgeSessionFileById } from "@/lib/session-reader";
 
 function listProviderNames(): string[] {
   return listProviders().map((p) => p.type);
@@ -173,11 +174,17 @@ export async function attachIfBridged(
     }
     if (!claimed) continue;
     try {
+      // attach handle 的 id 必须是对外会话 uuid（而非文件路径）——/api/agent/[id]
+      // 的 resolveAnySession(id) 按 id 查 handle-store，id 错位则 GET/SSE 全 404、
+      // 前端聊天窗拉不到 live 状态。双 key 注册：uuid（权威）+ 文件路径（兼容
+      // 既有 lookupHandle(sessionFile) 复用语义）。
+      const sessionUuid = (sessionFile.match(/_([0-9a-f-]{36})\.jsonl$/) ?? [null, sessionFile])[1];
       const handle = await provider.createSession({
         sessionFile,
-        sessionId: sessionFile,
+        sessionId: sessionUuid,
       });
       putHandle(handle);
+      if (sessionUuid !== sessionFile) putHandleAt(sessionFile, handle);
       return new HandleSessionAdapter(handle);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -214,6 +221,22 @@ export function resolveAnySession(id: string): WrappedSessionLike | undefined {
   const handle = lookupHandle(id);
   if (!handle) return undefined;
   return new HandleSessionAdapter(handle);
+}
+
+/**
+ * 按 id 解析 attach（socket 优先）：handle-store miss 时读 bridge registry 反查
+ * registry key（= sessionFile，不依赖文件落盘）再 attach。空会话/未索引会话的
+ * /api/agent/[id]（GET/SSE）据此拿到 live 附着，文件仅历史回放。
+ */
+export async function resolveAttachBySessionId(id: string): Promise<WrappedSessionLike | undefined> {
+  const bridgeFile = await findBridgeSessionFileById(id);
+  if (!bridgeFile) return undefined;
+  try {
+    const bridged = await attachIfBridged(bridgeFile);
+    return bridged?.isAlive() ? bridged : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

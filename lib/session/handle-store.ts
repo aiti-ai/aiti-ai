@@ -38,6 +38,7 @@ export function putHandle(handle: SessionHandle): void {
     void prev.dispose().catch(() => {});
   }
   store().set(handle.id, handle);
+  watchHandleRunning(handle);
 }
 
 export function getHandle(id: string): SessionHandle | undefined {
@@ -103,9 +104,43 @@ export function listHandleIds(): string[] {
   return [...store().keys()];
 }
 
-/** 正在执行 turn 的后端会话 id 列表（侧栏运行中指示器数据源之一）。 */
+/** 正在执行 turn 的后端会话 id 列表（侧栏运行中指示器数据源之一）。
+ * ⚠ 必须用 handle.id（uuid）而非 Map key——双 key 注册（attach 的 uuid+文件路径）
+ * 下按 key 遍历会混入路径脏数据且撞车误匹配。 */
 export function getRunningHandleIds(): string[] {
-  return [...store().entries()]
-    .filter(([, h]) => h.alive() && h.isRunning())
-    .map(([key]) => key);
+  return [...store().values()]
+    .filter((h) => h.alive() && h.isRunning())
+    .map((h) => h.id);
+}
+
+// ── handle 侧 running 广播（对 /api/agent/running[events] 合并用）─────────────
+type RunningListener = (ids: string[]) => void;
+const runningListeners = new Set<RunningListener>();
+
+export function subscribeRunningHandles(listener: RunningListener): () => void {
+  runningListeners.add(listener);
+  return () => runningListeners.delete(listener);
+}
+
+/** 重建 handle 运行集并广播（与 rpc-manager.notifyRunningChange 同构，广播合并后完整集）。 */
+export function notifyHandleRunningChange(): void {
+  const ids = getRunningHandleIds();
+  const snapshot = JSON.stringify(ids);
+  if (snapshot === lastRunningSnapshot) return;
+  lastRunningSnapshot = snapshot;
+  for (const l of runningListeners) l(ids);
+}
+let lastRunningSnapshot = "";
+
+/** putHandle 时给 handle 挂 running 事件监听（agent_start/end/settled/turn_*）——只挂一次。 */
+const runningWatched = new WeakSet<object>();
+export function watchHandleRunning(handle: { id: string; subscribe(listener: (e: { type: string }) => void): () => void }): void {
+  if (runningWatched.has(handle)) return;
+  runningWatched.add(handle);
+  handle.subscribe((event) => {
+    const t = event.type;
+    if (t === "agent_start" || t === "agent_end" || t === "agent_settled" || t === "turn_start" || t === "turn_end") {
+      notifyHandleRunningChange();
+    }
+  });
 }

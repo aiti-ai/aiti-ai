@@ -288,6 +288,14 @@ export class HandleSessionAdapter implements WrappedSessionLike {
         };
       }
 
+      case "get_tools": {
+        cap("listTools");
+        // 后端有 raw 命令通道（attach/socket）时直达，返回 bridge 的真实工具快照
+        // （before_provider_request 捕获）；否则空数组（合法空态）——绝不 fail-loud。
+        if (h.send) return h.send({ type: "get_tools" });
+        return [] as unknown[];
+      }
+
       case "get_messages":
       case "get_entries": {
         if (!h.getMessages) this.fail(type, "getMessages");
