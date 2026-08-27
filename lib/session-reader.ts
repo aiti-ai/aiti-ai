@@ -3,7 +3,8 @@ import {
   buildContextEntries as piBuildContextEntries,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { closeSync, existsSync, fstatSync, openSync, readdirSync, readFileSync, readSync, statSync, type Dirent } from "fs";
+import { openSync, closeSync, existsSync, fstatSync, readFileSync, readSync, readdirSync, statSync, type Dirent } from "fs";
+import { homedir } from "node:os";
 import { readdir } from "fs/promises";
 import { isAbsolute, join, normalize as normalizePath, relative, resolve as resolvePath, sep } from "path";
 import { writePrivateFileAtomicSync } from "./atomic-file.ts";
@@ -583,6 +584,29 @@ export async function resolveSessionPath(sessionId: string): Promise<string | nu
   // existing authoritative catalogue scan instead of negative-caching a miss.
   await listAllSessions();
   return getPathCache().get(sessionId) ?? null;
+}
+
+/**
+ * 空会话（文件惰性未落盘）时，按 id 反查 TUI 桥注册表，返回 registry key
+ * （= sessionFile 路径）。attach 判定以 socket（bridge-registry.json）为优先，
+ * 文件只是历史回放；有 live bridge 即可 attach，不必等文件落盘。
+ */
+export async function findBridgeSessionFileById(sessionId: string): Promise<string | null> {
+  if (!/^[0-9a-f-]{36}$/.test(sessionId)) return null;
+  const registryPath =
+    process.env.PI_BRIDGE_REGISTRY
+    ?? join(homedir(), ".pi", "agent", "bridge-registry.json");
+  try {
+    const raw = readFileSync(registryPath, "utf8");
+    const reg = JSON.parse(raw) as Record<string, unknown>;
+    const suffix = `_${sessionId}.jsonl`;
+    for (const key of Object.keys(reg)) {
+      if (key.endsWith(suffix)) return key;
+    }
+  } catch {
+    // 无注册表/解析失败 → 无桥
+  }
+  return null;
 }
 
 export async function resolveSessionIdByPath(filePath: string): Promise<string | undefined> {

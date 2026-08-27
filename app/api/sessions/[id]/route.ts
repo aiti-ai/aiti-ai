@@ -10,6 +10,7 @@ import {
   invalidateSessionListCache,
   buildSessionContext,
   readSessionHeader,
+  findBridgeSessionFileById,
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession } from "@/lib/rpc-manager";
@@ -23,6 +24,34 @@ import type { SessionEntry } from "@/lib/types";
 import { readSubagentRun, readSubagentSessionResources, SUBAGENT_META_TYPE } from "@/lib/subagents";
 import { readSessionToolSelection } from "@/lib/session-tool-selection";
 
+/** 桥会话的固定响应（attach 判定以 socket/registry 为准，文件仅历史回放）。 */
+function bridgedOk(id: string, bridged: { isAlive(): boolean; send(c: unknown): Promise<unknown>; cwd?: string }) {
+  return bridged.send({ type: "get_messages" }).catch(() => null)
+    .then((r) => {
+      const messages = ((r as { entries?: unknown[] } | null)?.entries ?? []) as unknown[];
+      return NextResponse.json({
+        sessionId: id,
+        filePath: "",
+        info: {
+          path: "",
+          id,
+          cwd: bridged.cwd ?? "",
+          name: undefined,
+          created: new Date().toISOString(),
+          modified: new Date().toISOString(),
+          messageCount: messages.length,
+          firstMessage: "(bridged session)",
+          transient: true,
+          agent: "tui-bridge",
+        },
+        leafId: null,
+        tree: [],
+        context: { messages, entryIds: [], thinkingLevel: "off", model: null },
+        totalActiveMs: 0,
+      });
+    });
+}
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -31,30 +60,12 @@ export async function GET(
   try {
     // 桥占用识别最先（TUI 是文件所有者；即使有陈旧本地 wrapper 也让位）
     const fpEarly = await resolveSessionPath(id);
-      if (fpEarly) {
+    if (fpEarly) {
       const bridged = await attachIfBridged(fpEarly);
       if (bridged?.isAlive()) {
-        const r = (await bridged.send({ type: "get_messages" }).catch(() => null)) as { entries?: unknown[] } | null;
-        const messages = r?.entries ?? [];
-        return NextResponse.json({
-            sessionId: id,
-            filePath: "",
-            info: {
-            path: "", id, cwd: (bridged as { cwd?: string }).cwd ?? "",
-            name: undefined,
-            created: new Date().toISOString(), modified: new Date().toISOString(),
-            messageCount: messages.length,
-            firstMessage: "(bridged session)",
-            transient: true,
-            agent: "tui-bridge",
-            },
-          leafId: null,
-          tree: [],
-          context: { messages, entryIds: [], thinkingLevel: "off", model: null },
-          totalActiveMs: 0,
-          });
-        }
+        return await bridgedOk(id, bridged);
       }
+    }
 
     // Backend (provider-handle) sessions: no local file exists — serve a
     // minimal SessionData so the chat view loads instead of bouncing off a
@@ -104,6 +115,20 @@ export async function GET(
     const liveRpc = rpc?.isAlive() ? rpc : undefined;
     const resolvedPath = liveRpc ? null : await resolveSessionPath(id);
     if (!liveRpc && !resolvedPath) {
+      // 空会话（文件惰性未落盘）也可能有 live bridge：attach 优先走 socket（registry），
+      // 读文件只是历史回放——按 id 反查注册表拿 sessionFile 再 attach（不依赖文件存在）
+      const bridgeFile = await findBridgeSessionFileById(id);
+      if (bridgeFile) {
+        try {
+          const bridgedById = await attachIfBridged(bridgeFile).catch((e: { name?: string }) => {
+            if (e?.name === "BridgeOccupiedError") throw e;
+            return undefined;
+          });
+          if (bridgedById?.isAlive()) return await bridgedOk(id, bridgedById);
+        } catch (e) {
+          throw e;
+        }
+      }
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
     // 桥占用识别：文件被 TUI 桥持有 → 历史经桥 get_messages 返回（不本地打开）
