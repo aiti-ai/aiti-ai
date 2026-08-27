@@ -2503,8 +2503,8 @@ export function AppShell() {
         style={{
           marginLeft: !mobile && !sessionStats && !contextUsage ? "auto" : 0,
           // 顶栏容器为右上角预留了 44px（文件开关占位 + 安全区），本按钮即该角落的宿主——
-          // 用负右外边距抵消预留 padding，贴到容器最右端（右上角）
-          marginRight: mobile ? 0 : "calc(-44px - min(env(safe-area-inset-right), 8px))",
+          // 用负右外边距抵消预留 padding，贴到容器最右端（右上角）。桌面/移动同一容器同一预留，口径一致
+          marginRight: "calc(-44px - min(env(safe-area-inset-right), 8px))",
           display: "flex", alignItems: "center", justifyContent: "center",
           width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
           visibility: covered ? "hidden" : "visible",
@@ -2913,18 +2913,21 @@ export function AppShell() {
               </svg>
             </button>
           </div>
-          {!isMobile && renderMainFileToggle(false)}
+          {/* 文件面板开关固定挂顶栏最右端（右上角）；上游 mobile toolbar 原有 renderMainFileToggle(true)，自定义排序机制重构时曾丢失移动端调用 */}
+          {renderMainFileToggle(isMobile)}
           {isMobile && sessionHasBranches && (
             <BranchNavigator
               tree={branchTree}
               activeLeafId={branchActiveLeafId}
               onLeafChange={handleBranchLeafChange}
               inline
+              compact
               buttonHidden
               containerRef={topBarRef}
-              open
+              // 面板开合受控于顶栏按钮（⋯ More 工具条里的 branches 项）；曾因合并冲突写成裸 `open`（恒 true）导致面板永久摊开
+              open={activeTopPanel === "branches"}
               onToggle={() => toggleTopPanel("branches")}
-              hasSession
+              hasSession={showChat}
             />
           )}
           {/* Top panel dropdown — shared, only one active at a time */}
