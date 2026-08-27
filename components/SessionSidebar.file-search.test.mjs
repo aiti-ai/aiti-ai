@@ -22,7 +22,11 @@ test("renders search results with the existing expandable file tree", () => {
 test("search result rows offer mention and download actions like the file tree", () => {
   assert.match(source, /onAtMention\(getRelativeFilePath\(node\.fullPath, cwd\), node\.isDir\)/);
   assert.match(source, /<MentionIcon \/>/);
-  assert.match(source, /encodeFilePathForApi\(node\.fullPath\)\}\?type=download/);
+  // 下载已从直链 ?type=download 升级为两步票据下载（POST /api/files/ticket → GET /api/files/_t/<ticket>），
+  // 搜索结果行与文件树同走 downloadViaTicket；这里盯住动作区接线 + 票据机制本体仍在。
+  assert.match(source, /downloadViaTicket\(node\.fullPath\)/);
+  assert.match(source, /\/api\/files\/ticket/);
+  assert.match(source, /\/api\/files\/_t\/\$\{encodeURIComponent\(data\.ticket\)\}/);
 });
 
 test("keeps search on the bounded index and reports request failures", () => {

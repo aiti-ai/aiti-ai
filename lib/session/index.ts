@@ -74,7 +74,7 @@ import { BridgeOccupiedError } from "./types.ts";
 import type { SessionCapabilities, SessionHandle } from "./types.ts";
 import { getHandle as lookupHandle, putHandle, putHandleAt, listAllHandles } from "./handle-store.ts";
 import { HandleSessionAdapter, type WrappedSessionLike } from "./handle-adapter.ts";
-import { findBridgeSessionFileById } from "@/lib/session-reader";
+import { findBridgeSessionFileById } from "../session-reader.ts"; // 相对路径+显式扩展名：jiti 不解析 @/ 别名，ESM 要求扩展名
 
 function listProviderNames(): string[] {
   return listProviders().map((p) => p.type);
