@@ -24,6 +24,7 @@
 
 import type { SessionHandle } from "./types.ts";
 import { UnsupportedCapabilityError } from "./types.ts";
+import { normalizeRawMessages } from "../normalize.ts";
 
 type WrapperCommand = Record<string, unknown>;
 
@@ -323,7 +324,9 @@ export class HandleSessionAdapter implements WrappedSessionLike {
       case "get_entries": {
         if (!h.getMessages) this.fail(type, "getMessages");
         const entries = await h.getMessages!();
-        return { entries, leafId: undefined };
+        // 桥后端（attach socket）吐 SDK 原始形状（toolCall: id/name/arguments），
+        // 与文件读取通道（session-reader 已归一化）对齐后再下发
+        return { entries: normalizeRawMessages(entries as unknown[]), leafId: undefined };
       }
 
       case "get_last_assistant_text":

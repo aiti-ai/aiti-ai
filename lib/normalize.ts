@@ -58,6 +58,20 @@ export function normalizeToolCalls(msg: AgentMessage): AgentMessage {
   return normalizeAssistantToolCalls(msg);
 }
 
+/**
+ * Normalize raw SDK-shaped messages coming from non-file channels (bridged/
+ * attach `get_messages`, provider handles) into pi-web render shape.
+ *
+ * Session-file reads already normalize server-side (session-reader
+ * entryToUiMessage); the bridged paths historically served raw SDK messages,
+ * whose toolCall blocks use {id,name,arguments} — ToolCallBlock then rendered
+ * an empty name/preview and could not pair tool results ("命令执行消息为空").
+ * Idempotent: already-normalized messages pass through unchanged.
+ */
+export function normalizeRawMessages(messages: unknown[]): AgentMessage[] {
+  return (Array.isArray(messages) ? messages : []).map((m) => normalizeToolCalls(m as AgentMessage));
+}
+
 export function normalizeStreamingToolCalls(msg: AgentMessage): AgentMessage {
   return normalizeAssistantToolCalls(msg, { includeStreamingRawInput: true });
 }

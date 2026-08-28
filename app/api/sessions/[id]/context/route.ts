@@ -3,6 +3,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveSessionPath, buildSessionContext } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveAttachBySessionId, handleModelToClient } from "@/lib/session";
+import { normalizeRawMessages } from "@/lib/normalize";
 
 export async function GET(
   req: Request,
@@ -37,7 +38,8 @@ export async function GET(
       const r = (await attachHandle.send({ type: "get_messages" }).catch(() => null)) as { entries?: unknown[] } | null;
       return NextResponse.json({
         context: {
-          messages: (r?.entries ?? []) as never[],
+          // 桥端 SDK 原始形状 → 归一化（同 sessions/[id] 桥路径；否则 toolCall 块渲染为空）
+          messages: normalizeRawMessages(r?.entries ?? []) as never[],
           entryIds: [],
           oldestEntryId: null,
           hasMore: false,

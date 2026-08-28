@@ -15,6 +15,7 @@ import {
 import { sessionPathKey } from "@/lib/session-path";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveAnySession, attachIfBridged, handleModelToClient } from "@/lib/session";
+import { normalizeRawMessages } from "@/lib/normalize";
 import { listProviders } from "@/lib/session/providers";
 import { removeQueue } from "@/lib/queue-store";
 import { projectTreeForResponse } from "@/lib/project-tree";
@@ -28,7 +29,10 @@ import { readSessionToolSelection } from "@/lib/session-tool-selection";
 function bridgedOk(id: string, bridged: { isAlive(): boolean; send(c: unknown): Promise<unknown>; cwd?: string; getModel?(): { id: string; provider: string } | undefined }) {
   return bridged.send({ type: "get_messages" }).catch(() => null)
     .then((r) => {
-      const messages = ((r as { entries?: unknown[] } | null)?.entries ?? []) as unknown[];
+      // 桥端（TUI sessionManager）吐的是 SDK 原始形状（toolCall 用 id/name/arguments），
+      // 与本地文件读取（session-reader entryToUiMessage）不同步归一化会导致
+      // ToolCallBlock 名字/预览全空、结果无法配对（attach 会话「命令执行消息为空」根因）
+      const messages = normalizeRawMessages(((r as { entries?: unknown[] } | null)?.entries ?? []) as unknown[]);
       return NextResponse.json({
         sessionId: id,
         filePath: "",
@@ -81,7 +85,7 @@ export async function GET(
         let messages: unknown[] = [];
         try {
           const r = (await wrapped.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
-          messages = r?.entries ?? [];
+          messages = normalizeRawMessages(r?.entries ?? []);
         } catch (e) {
           console.error("[sessions/[id]] backend get_messages failed:", e instanceof Error ? e.message : e);
         }
@@ -141,7 +145,7 @@ export async function GET(
         });
         if (bridged?.isAlive()) {
           const r = (await bridged.send({ type: "get_messages" }).catch(() => null)) as { entries?: unknown[] } | null;
-          const messages = r?.entries ?? [];
+          const messages = normalizeRawMessages(r?.entries ?? []);
           const firstUser = messages.find((m) => (m as { role?: string }).role === "user");
           return NextResponse.json({
             sessionId: id,
