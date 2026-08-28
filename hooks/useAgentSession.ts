@@ -2657,6 +2657,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // up keeps the walked-away state (the user just jumped away from the tail).
     if (isNearBottomRef.current) userScrolledAwayRef.current = false;
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
+    // 发送/导航跳转是显式视口改暈：清掉 pointerdown 打开的 2s 按压守卫窗口，
+    // 否则真实点击发送后，紧随跳转的补偿 step（streaming 占位出现时）会被静默跳过。
+    userScrollIntentUntilRef.current = 0;
     container.scrollTo({ top: targetTop, behavior: "smooth" });
   }, []);
 

@@ -24,6 +24,7 @@ export async function register(): Promise<void> {
   // PI_SUBAGENT_CHILD=1 双条件后自动起桥写 bridge-registry →
   // pi-web 打开该子代理 session 时 attach（双向 IO，不独占）。
   process.env.PI_WEB_BRIDGE_AUTO = "1";
+  console.log("[aiti] PI_WEB_BRIDGE_AUTO=1 injected — fork children will auto-bridge");
 
   // Extension framework: load + start extensions (registry on globalThis so
   // the middleware bundle can invoke hooks without importing extension code).

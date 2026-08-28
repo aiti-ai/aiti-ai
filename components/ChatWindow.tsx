@@ -309,8 +309,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
   const [bottomComposerHeight, setBottomComposerHeight] = useState(0);
   const bottomComposerHeightRef = useRef(0);
   const promptAnchorSpacerHeightRef = useRef(0); // 恒 0：step-follow 由 smartFollowStep 全权负责
-  // 底部「step 余地」state：agent 运行时撑 padding，见下方 useEffect（在 useAgentSession 之后）
-  const [bottomEyeRoom, setBottomEyeRoom] = useState(0);
+  // 底部「step 余地」bottomEyeRoom：渲染期派生（见 scrollViewportH 声明处），不再走 effect+state。
 
   const {
     loading, error, messages, entryIds, historyCursor, hasEarlierMessages, streamState,
@@ -451,17 +450,17 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
     ro?.observe(sc);
     return () => ro?.disconnect();
   }, [scReady, scrollContainerRef]);
-  useEffect(() => {
-    if (!agentRunning) {
-      if (bottomEyeRoom !== 0) setBottomEyeRoom(0);
-      return;
-    }
-    const room = Math.max(0, scrollViewportH - 120 - (bottomComposerHeightRef.current || 0));
-    if (room !== bottomEyeRoom) setBottomEyeRoom(room);
-    // 依赖省略 bottomEyeRoom（读它仅用于“值不变则跳过 set”，避免 padding→RO→重算循环）；
-    // 用 sc.clientHeight（含 padding、稳定）而非 contentRect 也是防循环的关键。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentRunning, scrollViewportH, scReady, bottomComposerHeight, loading, error]);
+  // 底部「step 余地」：agent 运行时撑 padding（ch-120-composerH），让 smartFollowStep 的
+  // 「最后消息底钉 120px」不超过 maxScrollTop（19031a2 删 spacer 后丢失 → step 被 clamp 贴底）。
+  // 必须渲染期派生（不能用 effect+state）：handleSend 同一 commit 里乐观置 agentRunning +
+  // 追加用户消息，发送跳转（scrollUserMsgToTop）在该 commit 的 layout 阶段读 maxScrollTop；
+  // 若垫高晚一拍（旧 effect 版），maxScrollTop 不含 padding → target 被 clamp 到当前位置 =
+  // no-op，新消息留在视口下方且后续 step 被 2s 按压守卫压住 → 「发送后视图不动」（step-follow
+  // 失效根因）。派生值与 agentRunning 同 commit 生效，跳转天然拿到含垫高的 maxScrollTop。
+  // 防循环：padding 不改变 flex 定高的 clientHeight（RO 读它，值不变则 setState bail）。
+  const bottomEyeRoom = agentRunning
+    ? Math.max(0, scrollViewportH - 120 - bottomComposerHeight)
+    : 0;
 
   /** Draft storage key for the active session (matches ChatInput's draftKey).
    *  New sessions MUST use newSessionDraftKey（含每次新建唯一的 draftId）而不是

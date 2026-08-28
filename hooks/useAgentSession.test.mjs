@@ -447,6 +447,28 @@ test("keeps a newly sent user message at the top while its response starts", () 
   assert.match(chatWindowSource, /step-follow 由 smartFollowStep 全权负责/);
 });
 
+test("applies the running eye-room padding in the same commit as the send jump", () => {
+  // 根因（2026-08-28，上游合并后显性化）：bottomEyeRoom 原为 passive-effect + state，
+  // 比 handleSend 的乐观提交（agentRunning 同步置位 + 用户消息追加）晚一拍；发送跳转
+  // scrollUserMsgToTop 在该 commit 的 layout 阶段读 maxScrollTop → 不含 padding →
+  // target 被 clamp 到当前位置 = no-op，新消息留在视口下方；随后补偿 step 又被
+  // pointerdown 打开的 2s 按压守卫压制 → 「发送后视图不动，回复长在视口外」。
+  // 修复：① eye-room 改渲染期派生（与 agentRunning 同 commit 生效）；② 跳转清除按压守卫。
+  const userScrollSource = source.slice(
+    source.indexOf("const scrollUserMsgToTop"),
+    source.indexOf("const markUserScrollIntent"),
+  );
+  // ① 渲染期派生（禁止回退成 effect+state —— 那会重现竞态）
+  assert.match(chatWindowSource, /const bottomEyeRoom = agentRunning\s*\?\s*Math\.max\(0, scrollViewportH - 120 - bottomComposerHeight\)\s*:\s*0;/);
+  assert.doesNotMatch(chatWindowSource, /setBottomEyeRoom/);
+  assert.doesNotMatch(chatWindowSource, /\[agentRunning, scrollViewportH, scReady, bottomComposerHeight, loading, error\]/);
+  // ② 跳转清除按压守卫（在 scrollTo 之前），真实点击发送后补偿 step 不再被静默跳过
+  const clearIdx = userScrollSource.indexOf("userScrollIntentUntilRef.current = 0;");
+  const scrollIdx = userScrollSource.indexOf('container.scrollTo({ top: targetTop, behavior: "smooth" })');
+  assert.ok(clearIdx !== -1, "jump must clear the 2s user-scroll-intent window");
+  assert.ok(scrollIdx !== -1 && clearIdx < scrollIdx, "intent clear must precede the jump scrollTo");
+});
+
 test("sizes the message tail from the rendered bottom composer", () => {
   assert.match(chatWindowSource, /const bottomComposerRef = useRef<HTMLDivElement \| null>\(null\)/);
   assert.match(chatWindowSource, /useLayoutEffect\(\(\) => \{/);
