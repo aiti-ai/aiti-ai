@@ -1409,6 +1409,21 @@ export function AppShell() {
     return () => document.removeEventListener("keydown", onKeyDown, true);
   }, [moreOpen, customizeOpen, activeTopPanel]);
 
+  // 顶栏下拉面板（会话信息/工具/分支/agents/系统提示/语言）：点击顶栏之外任意处即收回（不吞事件，点击照常生效）。
+  // 面板本体是 topbar 的 DOM 子节点（position:fixed 不影响 contains）→ contains 判定天然覆盖；
+  // 顶栏内点击不在此关——交给按钮自身 toggle（再点同按钮收回/点别的按钮切换面板）。
+  useEffect(() => {
+    if (!activeTopPanel) return;
+    const onPointerDown = (e: PointerEvent) => {
+      const target = e.target as Node | null;
+      if (!target) return;
+      if (topBarRef.current?.contains(target)) return;
+      setActiveTopPanel(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, [activeTopPanel]);
+
   // ---- 面板操作（即时生效 + 写回 localStorage） ----
   const persistOrder = useCallback((order: TopbarOrderItem[]) => {
     const normalized = normalizeTopbarOrder(order);
@@ -2925,6 +2940,23 @@ export function AppShell() {
               buttonHidden
               containerRef={topBarRef}
               // 面板开合受控于顶栏按钮（⋯ More 工具条里的 branches 项）；曾因合并冲突写成裸 `open`（恒 true）导致面板永久摊开
+              open={activeTopPanel === "branches"}
+              onToggle={() => toggleTopPanel("branches")}
+              hasSession={showChat}
+            />
+          )}
+          {/* 桌面端分支溢出兜底：branch 条目被挤出顶栏行（收进 ⋯）时行内无 BranchNavigator，
+              ⋯ 菜单的 Branches 项只切 activeTopPanel —— 用隐藏按钮的 inline 副本承接渲染
+              （锚 topBarRef 全宽，几何与共享下拉一致；树为空时面板显示 No branches 提示） */}
+          {!isMobile && branchOverflowed && (
+            <BranchNavigator
+              tree={branchTree}
+              activeLeafId={branchActiveLeafId}
+              onLeafChange={handleBranchLeafChange}
+              inline
+              compact
+              buttonHidden
+              containerRef={topBarRef}
               open={activeTopPanel === "branches"}
               onToggle={() => toggleTopPanel("branches")}
               hasSession={showChat}
