@@ -154,7 +154,8 @@ interface ValidatedProject {
 
 const UNREAD_SESSIONS_STORAGE_KEY = "pi-web:unread-session-ids";
 const LAST_CUSTOM_CWD_STORAGE_KEY = "pi-web:last-custom-cwd";
-const RUNNING_SESSIONS_POLL_MS = 15000; // SSE 主通道的兜底慢轮询（SSE 断线/心跳静默时保险）
+const RUNNING_SESSIONS_POLL_MS = 15000; // SSE 主通道的兜底慢轮询（仅在 SSE 心跳静默时真正发请求）
+const RUNNING_SSE_FRESH_MS = 45_000; // 心跳 30s；45s 内见过任何帧 = SSE 健康，兜底轮询跳过
 
 function loadLastCustomCwd(): string {
   if (typeof window === "undefined") return "";
@@ -506,6 +507,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     let timer: ReturnType<typeof setTimeout> | null = null;
     let controller: AbortController | null = null;
     let es: EventSource | null = null;
+    let lastSseFrameAt = 0; // 最近一次 SSE 帧（数据/心跳）时间；0 = 从未收到
 
     const clearTimer = () => {
       if (timer) clearTimeout(timer);
@@ -518,8 +520,11 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       if (stopped || es) return;
       const source = new EventSource(apiUrl("/api/agent/running/events"));
       es = source;
+      // named event 心跳（服务端 30s 一帧）：onmessage 收不到，专供判活
+      source.addEventListener("heartbeat", () => { lastSseFrameAt = Date.now(); });
       source.onmessage = (e) => {
         if (stopped || source !== es) return;
+        lastSseFrameAt = Date.now(); // 任何数据帧都是活性证明
         try {
           const data = JSON.parse(e.data as string) as { type?: string; runningSessionIds?: string[] };
           if (data.type === "running" && Array.isArray(data.runningSessionIds)) {
@@ -550,9 +555,11 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       timer = setTimeout(() => void poll(), RUNNING_SESSIONS_POLL_MS);
     };
 
-    // 兜底快照：SSE 断线或回前台时拉一次当前状态（不做周期性轮询）。
+    // 兜底快照：仅当 SSE 心跳静默（断线/半开/4xx）或回前台对齐时才真拉。
     const poll = async () => {
       if (stopped || document.visibilityState !== "visible") return;
+      // SSE 健康（45s 内有心跳/数据帧）→ 跳过兜底快照，仅续约定时器
+      if (Date.now() - lastSseFrameAt < RUNNING_SSE_FRESH_MS) { schedule(); return; }
       const current = new AbortController();
       controller?.abort();
       controller = current;

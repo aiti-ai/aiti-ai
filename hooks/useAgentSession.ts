@@ -192,7 +192,7 @@ const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
 const EVENT_STREAM_IDLE_GRACE_MS = 30_000;
-const AGENT_STATE_RECONCILE_MS = 15_000;
+const AGENT_STATE_RECONCILE_MS = 15_000; // 运行中对账兑底：仅前台 tick（后台由 visibility/online 回归时对账）
 const BASH_STATE_RECONCILE_MS = 1_000;
 const EVENT_STREAM_READY_TIMEOUT_MS = 60_000;
 const EVENT_STREAM_RECONNECT_DELAY_MS = 1_000;
@@ -1202,7 +1202,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (!agentRunningRef.current || sessionIdRef.current !== sid) return;
     const runId = promptRunIdRef.current;
     try {
-      const res = await fetch(apiUrl(`/api/agent/${encodeURIComponent(sid)}`));
+      const res = await fetch(apiUrl(`/api/agent/${encodeURIComponent(sid)}?light=1`));
       if (!res.ok) return;
       const data = await res.json() as { running?: boolean; state?: AgentStateResponse };
       // A slow response can straddle a run boundary (previous run finished
@@ -1246,6 +1246,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // Read the ref on every tick: for brand-new sessions the id is
       // assigned only after ensure_session returns.
       const sid = sessionIdRef.current;
+      // 后台 tab 跳过 tick：SSE 是主通道，回前台/网络恢复时已有立即对账，
+      // 对隐藏页周期性轮询纯属浪费（每次响应含全量 state）。
+      if (document.visibilityState !== "visible") return;
       if (sid) void reconcileAgentState(sid);
     };
     const onVisible = () => {
@@ -1270,6 +1273,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [isCompacting]);
 
   const handleAgentEvent = useCallback((event: AgentEvent) => {
+    // [aiti] 子代理生命周期信号：广播给扩展 client（Fleet 面板刷新 + 左侧树刷新）。
+    // 信号源：subagent 工具执行（委派开始）+ 上游 subagent-* 自定义消息（后台启动/完成通知）。
+    try {
+      const t = event.type;
+      if (t === "tool_execution_start" && (event as { toolName?: string }).toolName === "subagent") {
+        window.dispatchEvent(new CustomEvent("aiti-subagents:activity", { detail: { phase: "spawn" } }));
+      } else if (t === "message_end") {
+        const m = (event as { message?: { role?: string; customType?: string } }).message;
+        const ct = m?.customType ?? "";
+        if (m?.role === "custom" && typeof ct === "string" && ct.startsWith("subagent")) {
+          window.dispatchEvent(new CustomEvent("aiti-subagents:activity", { detail: { phase: ct } }));
+        }
+      }
+    } catch { /* 广播失败不影响主流程 */ }
     switch (event.type) {
       case "connected": {
         dispatchStream({ type: "end" });

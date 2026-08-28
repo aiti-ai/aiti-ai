@@ -50,9 +50,12 @@ export async function GET(req: Request) {
       encode({ type: "running", runningSessionIds: mergedRunningIds() });
 
       // Heartbeat to keep the connection alive through proxies/timeouts.
+      // 用 named SSE event（非 message 帧）：宿主 SessionSidebar 监听它判活
+      // （心跳静默才启用兑底轮询）；onmessage 消费方（session-manager 等）
+      // 按规范收不到 named event，零影响、不会被误触发刷新。
       const heartbeat = setInterval(() => {
         try {
-          controller.enqueue(encoder.encode(":\n\n"));
+          controller.enqueue(encoder.encode("event: heartbeat\ndata: {}\n\n"));
         } catch {
           // controller already closed
         }
@@ -73,6 +76,9 @@ export async function GET(req: Request) {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache",
       Connection: "keep-alive",
+      // 同 agent/[id]/events：禁 nginx 缓冲，否则心跳/快照小帧被攒着延迟送达，
+      // 客户端判活与运行状态推送都会失灵
+      "X-Accel-Buffering": "no",
     },
   });
 }

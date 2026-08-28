@@ -109,11 +109,14 @@ export async function POST(
 }
 
 // GET /api/agent/[id] - Get current agent state
+// ?light=1 — 周期性对账轮询用：剥离 state.systemPrompt（唯一多 KB 字段，
+// 客户端已有副本且会话内几乎不变），响应从 ~15KB 降到 ~1KB。
 export async function GET(
-  _req: Request,
+  req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const light = new URL(req.url).searchParams.get("light") === "1";
 
   try {
     // socket 优先：attach 由 registry 判定（空会话/未索引也命中），rpc/本地 handle 兜底
@@ -125,6 +128,10 @@ export async function GET(
     }
 
     const state = await session.send({ type: "get_state" });
+    if (light && state && typeof state === "object") {
+      const { systemPrompt: _stripped, ...lightState } = state as Record<string, unknown>;
+      return NextResponse.json({ running: true, state: lightState });
+    }
     return NextResponse.json({ running: true, state });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
