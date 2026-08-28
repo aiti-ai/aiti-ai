@@ -19,6 +19,7 @@ import {
   type QueueTrashItem,
 } from "./queue-store";
 import { invalidateModelsCache } from "./models-cache";
+import { hasLiveDetachedRuns } from "./subagent-detached";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import {
   createProjectCommandBashExtension,
@@ -809,6 +810,20 @@ export class AgentSessionWrapper {
     if (!this.isRunning()) this.forceShutdownOnIdle = false;
     this.idleTimer = setTimeout(() => {
       if (this.isRunning() && !this.forceShutdownOnIdle) {
+        this.resetIdleTimer();
+        return;
+      }
+      // 上游 pi-subagents detached run 判活：父会话 idle 但后台子代理仍在跑时
+      // 不得回收——completion watcher / wait 订阅随 wrapper 销毁，子代理会
+      // "永不回话"（上游 extension-api.md 宿主警告）。判活异常时保守续命。
+      let hasDetached = true;
+      try {
+        hasDetached = hasLiveDetachedRuns(
+          this.inner.sessionManager.getSessionFile?.() ?? "",
+          this.inner.sessionManager.getSessionId?.() ?? "",
+        );
+      } catch { /* 保守续命 */ }
+      if (hasDetached) {
         this.resetIdleTimer();
         return;
       }
