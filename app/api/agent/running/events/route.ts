@@ -1,11 +1,12 @@
 import { getRunningRpcSessionIds, subscribeRunningSessions } from "@/lib/rpc-manager";
 import { getRunningHandleIds, subscribeRunningHandles } from "@/lib/session/handle-store";
+import { getBridgeRunningIds, subscribeBridgeRunning } from "@/lib/session/bridge-running";
 
 export const dynamic = "force-dynamic";
 
-/** 合并后的完整运行集（local rpc + handle 后端），两侧任一变化都推合并集（文档 §2.2/§5）。 */
+/** 合并后的完整运行集（local rpc + handle 后端 + TUI 桥未认领监听），任一变化都推合并集（文档 §2.2/§5）。 */
 function mergedRunningIds(): string[] {
-  return [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds()])];
+  return [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds(), ...getBridgeRunningIds()])];
 }
 
 // GET /api/agent/running/events - SSE stream of the set of currently-running
@@ -36,7 +37,14 @@ export async function GET(req: Request) {
           // controller already closed
         }
       });
-      const unsubscribe = () => { unsubRpc(); unsubHandle(); };
+      const unsubBridge = subscribeBridgeRunning(() => {
+        try {
+          encode({ type: "running", runningSessionIds: mergedRunningIds() });
+        } catch {
+          // controller already closed
+        }
+      });
+      const unsubscribe = () => { unsubRpc(); unsubHandle(); unsubBridge(); };
 
       // Initial snapshot so the client renders the correct state immediately.
       encode({ type: "running", runningSessionIds: mergedRunningIds() });

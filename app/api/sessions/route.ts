@@ -11,6 +11,7 @@ import {
   getRunningRpcSessionIds,
 } from "@/lib/rpc-manager";
 import { getHandleSessionInfos, getRunningHandleIds } from "@/lib/session";
+import { getBridgeRunningIds } from "@/lib/session/bridge-running";
 import { getRegistry } from "@/lib/ext/registry";
 
 export const dynamic = "force-dynamic";
@@ -47,8 +48,8 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         sessions,
-        // 运行中 = 本地 runtime + 存活且正在执行的后端会话
-        runningSessionIds: [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds()])],
+        // 运行中 = 本地 runtime + 存活且正在执行的后端会话 + TUI 桥（未认领也可见）
+        runningSessionIds: [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds(), ...getBridgeRunningIds()])],
         completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
       },
       { headers: { "Cache-Control": "no-store" } },
