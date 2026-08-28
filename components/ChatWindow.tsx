@@ -5,6 +5,7 @@ import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecuti
 import type { AttachedFile } from "@/hooks/useAgentSession";
 import { normalizeCustomPanelLines } from "@/lib/ansi";
 import { apiUrl } from "@/lib/base-path";
+import { fmtMoney, useMoneySynced } from "@/lib/money";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
@@ -272,6 +273,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
 
 export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onContextUsageChange, onOpenFile, onExportQueue, onOpenSession, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
+  useMoneySynced(); // 汇率异步到位时重渲染 backend usage 悬浮条（补出 ¥ 部分）
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
 
@@ -962,7 +964,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
           <span title="Backend usage (last turn)">
             {backendUsage.inputTokens != null && <span>↑{backendUsage.inputTokens >= 1000 ? `${(backendUsage.inputTokens / 1000).toFixed(1)}k` : backendUsage.inputTokens} </span>}
             {backendUsage.outputTokens != null && <span>↓{backendUsage.outputTokens} </span>}
-            {backendUsage.costUsd != null && backendUsage.costUsd > 0 && <span>${backendUsage.costUsd.toFixed(4)}</span>}
+            {backendUsage.costUsd != null && backendUsage.costUsd > 0 && <span>{fmtMoney(backendUsage.costUsd, 4)}</span>}
           </span>
         </div>
       )}
@@ -1127,7 +1129,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                 );
                 if (!isVisible || options.attachRef === false || currentRefIdx === undefined) return view;
                 return (
-                  <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)} data-chat-msg-role={msg.role}>
+                  <div key={`${keyPrefix}-${idx}`} ref={attachVisibleRef(idx, currentRefIdx)} data-chat-msg-role={msg.role} style={{ contentVisibility: "auto", containIntrinsicSize: "auto 160px" } as React.CSSProperties}>
                     {view}
                   </div>
                 );

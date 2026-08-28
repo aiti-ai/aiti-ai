@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiUrl, withBasePath } from "@/lib/base-path";
+import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
 
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
@@ -130,6 +131,7 @@ export function AppShell() {
   const themeLabelKey =
     preference === "light" ? "theme.light" : preference === "dark" ? "theme.dark" : "theme.auto";
   const { locale, setLocale, t: translate, supportedLocales } = useI18n();
+  useMoneySynced(); // 汇率异步到位时重渲染顶栏（补出 ¥ 部分）
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
   // 图标按钮宽度统一 36px（与扩展按钮一致）；图标大小也固定 16px（renderTopbarItem 内 iconDim）
@@ -2800,7 +2802,7 @@ export function AppShell() {
              const tokens = sessionStats?.tokens;
             const c = sessionStats?.cost ?? 0;
             const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
-            const costStr = c > 0 ? (c >= 0.01 ? `$${c.toFixed(2)}` : `<$0.01`) : null;
+            const costStr = c > 0 ? (c >= 0.01 ? fmtMoney(c, 2) : fmtMoneySmall()) : null;
 
             let ctxColor = "var(--text-muted)";
             let ctxStr: string | null = null;
@@ -2817,7 +2819,7 @@ export function AppShell() {
                tooltipParts.push(`out: ${tokens.output.toLocaleString(locale)}`);
                tooltipParts.push(`cache read: ${tokens.cacheRead.toLocaleString(locale)}`);
                tooltipParts.push(`cache write: ${tokens.cacheWrite.toLocaleString(locale)}`);
-              if (c > 0) tooltipParts.push(`cost: $${c.toFixed(4)}`);
+              if (c > 0) tooltipParts.push(`cost: ${fmtMoney(c, 4)}${fxNote() ? ` · ${fxNote()}` : ""}`);
             }
             if (contextUsage?.contextWindow) {
               const pct = contextUsage.percent;

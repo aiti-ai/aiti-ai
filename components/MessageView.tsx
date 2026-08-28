@@ -5,6 +5,7 @@ import { MarkdownBody } from "./MarkdownBody";
 import { ImagePreview } from "./ImagePreview";
 import { copyText } from "@/lib/clipboard";
 import { apiUrl } from "@/lib/base-path";
+import { fmtMoney, useMoneySynced } from "@/lib/money";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-display";
@@ -621,6 +622,7 @@ function AssistantMessageView({
   writtenFiles?: WrittenFile[];
 }) {
   const { t } = useI18n();
+  useMoneySynced(); // 汇率异步到位时重渲染 usage 行（补出 ¥ 部分）
   const time = showTimestamp ? formatTime(message.timestamp) : null;
   const blockItems = useMemo(() => (message.content ?? [])
     .map((block, originalIndex) => ({ block, originalIndex }))
@@ -1720,7 +1722,7 @@ function formatUsage(usage: {
   if (usage.output) parts.push(`${usage.output.toLocaleString()} out`);
   if (usage.cacheRead) parts.push(`${usage.cacheRead.toLocaleString()} cache R`);
   if (usage.cacheWrite) parts.push(`${usage.cacheWrite.toLocaleString()} cache W`);
-  if (usage.cost?.total) parts.push(`$${usage.cost.total.toFixed(4)}`);
+  if (usage.cost?.total) parts.push(fmtMoney(usage.cost.total, 4));
   return parts.join(" · ");
 }
 
