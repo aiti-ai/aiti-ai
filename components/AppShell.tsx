@@ -758,6 +758,27 @@ export function AppShell() {
     }
   }, [invalidateWorkspaceRestore, router, isMobile, selectedSession]);
 
+  // [aiti] 扩展 client 打开会话通道：pi-web:open-session { id } → 按索引解析并
+  // 复用 handleSelectSession（SPA 内切换，无整页跳转）。供扩展面板（如子代理舰队）
+  // 在保持自身弹窗的前提下打开父/子会话消息窗口。
+  const handleSelectSessionRef = useRef(handleSelectSession);
+  handleSelectSessionRef.current = handleSelectSession;
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent).detail?.id;
+      if (typeof id !== "string" || !id) return;
+      void fetch(apiUrl("/api/sessions?refresh=1"))
+        .then((r) => r.json())
+        .then((d: { sessions?: SessionInfo[] }) => {
+          const s = (d?.sessions ?? []).find((x) => x.id === id);
+          if (s) handleSelectSessionRef.current(s);
+        })
+        .catch(() => { /* ignore */ });
+    };
+    window.addEventListener("pi-web:open-session", handler);
+    return () => window.removeEventListener("pi-web:open-session", handler);
+  }, []);
+
   const handleNewSession = useCallback((sessionId: string, cwd: string) => {
     invalidateWorkspaceRestore();
     const draftKey = `new:${sessionId}:${cwd}`;
