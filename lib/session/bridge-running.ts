@@ -74,9 +74,12 @@ function readRegistryRows(): RegistryRow[] {
       const m = sessionFile.match(/_([0-9a-f-]{36})\.jsonl$/);
       const socket = typeof entry?.socket === "string" ? entry.socket : "";
       const pid = typeof entry?.pid === "number" ? entry.pid : 0;
-      if (!m || !socket) continue;
+      // 平铺文件名 → sessionId 从后缀推导；嵌套路径（fork 子代理
+      // .../<childSessionUuid>/run-0/session.jsonl）→ sessionId 未知，
+      // 由 watcher 播种 get_state 拿权威会话 id（bridge-runningSeed）。
+      if (!socket) continue;
       if (pid && !isPidAlive(pid)) continue;
-      rows.push({ sessionFile, socket, sessionId: m[1] });
+      rows.push({ sessionFile, socket, sessionId: m ? m[1] : "" });
     }
     return rows;
   } catch {
@@ -113,16 +116,21 @@ function watchEntry(row: RegistryRow): void {
       buffer = buffer.slice(idx + 1);
       let msg: { id?: unknown; type?: unknown; data?: unknown };
       try { msg = JSON.parse(line); } catch { continue; }
-      // 播种应答：get_state.isStreaming
+      // 播种应答：get_state 权威化 sessionId（嵌套 fork 子代理条目在注册表里
+      // 推导不出 id，播种拿到子代理运行时 session id = 列表行 id）+ isStreaming
       if (msg.id === "aiti-bridge-running-seed" && msg.type === "response") {
-        const streaming = (msg.data as { isStreaming?: unknown } | null)?.isStreaming === true;
-        if (streaming && !sessionIds.has(row.sessionId)) {
+        const data = msg.data as { sessionId?: unknown; isStreaming?: unknown } | null;
+        const sid = String(data?.sessionId ?? "") || row.sessionId;
+        if (sid && sid !== row.sessionId) row.sessionId = sid;
+        const streaming = (data as { isStreaming?: unknown } | null)?.isStreaming === true;
+        if (streaming && row.sessionId && !sessionIds.has(row.sessionId)) {
           sessionIds.add(row.sessionId);
           notify();
         }
         continue;
       }
       if (typeof msg.type !== "string") continue;
+      if (!row.sessionId) continue; // 播种前 id 未知，不维护 running 集
       if (msg.type === "agent_start" || msg.type === "turn_start") {
         if (!sessionIds.has(row.sessionId)) {
           sessionIds.add(row.sessionId);
