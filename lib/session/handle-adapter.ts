@@ -313,9 +313,11 @@ export class HandleSessionAdapter implements WrappedSessionLike {
       }
 
       case "get_tools": {
-        cap("listTools");
         // 后端有 raw 命令通道（attach/socket）时直达，返回 bridge 的真实工具快照
         // （before_provider_request 捕获）；否则空数组（合法空态）——绝不 fail-loud。
+        // 注：此前这里先 cap("listTools") 抛错，导致 cursor/codex/echo 等声明
+        // listTools:false 的后端在聊天页每次加载都 console.error
+        // "Failed to load tools: AgentCommandError"（与本注释自相矛盾，已修正）。
         if (h.send) return h.send({ type: "get_tools" });
         return [] as unknown[];
       }
