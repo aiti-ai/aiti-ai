@@ -18,6 +18,11 @@ export async function register(): Promise<void> {
   const { installSubagentFactory } = await import("@/lib/subagent");
   installSubagentFactory();
 
+  // 进程内本地会话工厂：globalThis.__piLocalSessionFactory（扩展经此创建/打开真
+  // 实 pi 会话——cc-connect 桥接：aiti-channels ACP server → pi-web 会话）
+  const { installLocalSessionFactory } = await import("@/lib/rpc-manager");
+  installLocalSessionFactory();
+
   // pi-web 启动类后端作为子代理执行器（external-job provider "pi-web-rpc"）：
   // agent md 声明 runner={external-job, pi-web-rpc, options.backend} 即可让子代理
   // 跑成真正的 pi-web 会话（pi RPC / claude-code ACP / qoder …），前端可打开 attach。

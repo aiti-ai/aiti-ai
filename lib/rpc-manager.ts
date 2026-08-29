@@ -3043,10 +3043,14 @@ function getRunningListeners(): Set<(ids: string[]) => void> {
  */
 export function installLocalSessionFactory(): void {
   const g = globalThis as Record<string, unknown>;
-  if (!g.__piLocalSessionFactory) {
-    g.__piLocalSessionFactory = { start: startRpcSession };
-  }
+  if (!g.__piLocalSessionFactory) g.__piLocalSessionFactory = { start: startRpcSession };
 }
+
+// 模块加载即安装（幂等）：任何 realm 加载本模块都设 globalThis。
+// 不只依赖 instrumentation.ts——Next turbopack 下 instrumentation 可能运行在
+// 独立 realm，其 globalThis ≠ 主应用 realm；routes/扩展都在主 realm 加载本模块，
+// 在此设能保证主 realm 也有此缝（aiti-channels ACP 桥等扩展经此创建会话）。
+installLocalSessionFactory();
 
 /** Subscribe to running-session-id changes. Returns an unsubscribe function. */
 export function subscribeRunningSessions(listener: (ids: string[]) => void): () => void {
