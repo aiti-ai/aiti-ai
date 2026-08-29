@@ -102,3 +102,27 @@ draft-store + ChatWindow 扫描/静默恢复移入扩展后，依赖核对：
 - 光标/选区细粒度事件、IME composition 事件（尚无消费者）
 - 队列容器契约（P3 再设计）
 - 多 composer 实例并存（当前单实例假设，与现状一致）
+
+---
+
+## 附：草稿原语收敛（v2，2026-08-29）
+
+方案 A「keeper 唯一所有者」落地后，本契约的草稿部分收敛为：
+
+- **core 不再直接操作槽位**。`saveDraft`/`clearDraft`/`rekeyDraft`/
+  `restoreSubmission` 全部退役（v1 方法在 keeper 中保留为 deprecated，
+  仅部署顺序兼容用）。
+- core 唯一写入口 `applyDraftIntent(intent)`（lib/composer/draft-api.ts）：
+  - `sessionCreated {provisionalKey, sessionId}`：新建会话提升。provisional
+    草稿作废；promote 窗口（React key prop 切换前）的新输入由 keeper 重定向
+    落 sid 槽位（消除「已发送消息残留」竞态）。
+  - `rejected {key, text, images}`：发送失败/被拒时合并回草稿（提交在前），
+    目标为当前框则由 keeper 写回框内。
+- 清空单路径化：发送/清空只走 keeper `onChange("")` 清空确认链（闭包捕获
+  key，换 key 不误清）。
+- 状态机实现在 `pi-web-ext/aiti-draft-keeper/client/core.mjs`（唯一所有者，
+  storage/timers/onRestore 注入可测），测试 `core.test.mjs`（13 用例）。
+- 启动时一次性 `pruneStale()`：>7 天未写入的槽位（含旧 per-tab 残留、无 ts
+  旧格式）自动过期清理，非轮询。
+- 已知修复：「恢复即删」——scan 恢复后同一轮 onChange 的空快照不得再走清空
+  分支（恢复发生即 return，等写框回流的新快照）。
