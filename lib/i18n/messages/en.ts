@@ -437,6 +437,7 @@ export const enLocale: LocalePlugin = {
     "chat.compactQueued": "Queued",
     "chat.cancelCompactQueue": "Click to cancel queued compaction",
     "chat.changeModel": "Change model",
+    "chat.recentModels": "Recently used",
     "chat.modelSwitchStreaming": "Change model (applies next turn)",
     "chat.modelSwitchPendingBadge": "next turn",
     "chat.noModels": "No available models",

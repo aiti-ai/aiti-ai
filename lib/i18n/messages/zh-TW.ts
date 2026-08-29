@@ -686,6 +686,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.compactQueued": "已排队",
     "chat.cancelCompactQueue": "点击取消压缩排队",
     "chat.changeModel": "切换模型",
+    "chat.recentModels": "最近使用",
     "chat.modelSwitchStreaming": "切换模型（下轮生效）",
     "chat.modelSwitchPendingBadge": "下轮生效",
     "chat.noModels": "无可用模型",

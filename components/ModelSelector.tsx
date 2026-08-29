@@ -28,7 +28,42 @@ interface ModelSelectorProps {
 }
 
 const MODEL_FILTER_THRESHOLD = 8;
+const RECENT_MODELS_KEY = "pi-web:recent-models";
+const RECENT_MODELS_LIMIT = 5;
 const MODEL_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+interface RecentModelEntry {
+  provider: string;
+  modelId: string;
+  at: number;
+}
+
+/** 读最近使用的模型（localStorage 持久化；损坏/非法条目静默忽略） */
+function readRecentModels(): RecentModelEntry[] {
+  try {
+    const parsed: unknown = JSON.parse(window.localStorage.getItem(RECENT_MODELS_KEY) || "[]");
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry): entry is RecentModelEntry =>
+      !!entry && typeof entry === "object"
+      && typeof (entry as RecentModelEntry).provider === "string"
+      && typeof (entry as RecentModelEntry).modelId === "string"
+    );
+  } catch {
+    return [];
+  }
+}
+
+/** 记录一次模型使用：置顶 + 去重 + 截断（LRU） */
+function rememberRecentModel(provider: string, modelId: string) {
+  try {
+    const rest = readRecentModels().filter((entry) => entry.provider !== provider || entry.modelId !== modelId);
+    window.localStorage.setItem(RECENT_MODELS_KEY, JSON.stringify(
+      [{ provider, modelId, at: Date.now() }, ...rest].slice(0, RECENT_MODELS_LIMIT),
+    ));
+  } catch {
+    /* 隐私模式等 localStorage 不可用 → 静默降级为无最近使用 */
+  }
+}
 
 function compareModelOptions(a: ModelSelectorOption, b: ModelSelectorOption): number {
   return MODEL_OPTION_COLLATOR.compare(a.name || a.modelId, b.name || b.modelId)
@@ -69,10 +104,29 @@ export function ModelSelector({
   const [open, setOpen] = useState(false);
   const [anchorRect, setAnchorRect] = useState<{ top: number; right: number; bottom: number; left: number; width: number } | null>(null);
   const [filter, setFilter] = useState("");
+  const [recentList, setRecentList] = useState<RecentModelEntry[]>([]);
   const locked = disabled || busy;
   const sortedOptions = useMemo(() => [...options].sort(compareModelOptions), [options]);
   const filteredOptions = filterModelOptions(sortedOptions, filter);
   const showFilter = sortedOptions.length > MODEL_FILTER_THRESHOLD;
+
+  // 面板每次打开时重读最近使用（其他窗口/其他 ModelSelector 实例可能已更新）
+  useEffect(() => {
+    if (open) setRecentList(readRecentModels());
+  }, [open]);
+
+  // 最近使用 → 按使用时间倒序，仅保留当前仍可用的模型（已删除/已下架的自动消失）
+  const recentOptions = useMemo(() => {
+    if (!open || filter.trim()) return [];
+    const byKey = new Map(sortedOptions.map((option) => [`${option.provider}/${option.modelId}`, option] as const));
+    const picked: ModelSelectorOption[] = [];
+    for (const entry of recentList) {
+      if (picked.length >= RECENT_MODELS_LIMIT) break;
+      const option = byKey.get(`${entry.provider}/${entry.modelId}`);
+      if (option && !picked.includes(option)) picked.push(option);
+    }
+    return picked;
+  }, [open, filter, sortedOptions, recentList]);
   const modelsByProvider: { provider: string; options: ModelSelectorOption[] }[] = [];
 
   for (const option of filteredOptions) {
@@ -145,6 +199,7 @@ export function ModelSelector({
 
   const choose = (option: ModelSelectorOption) => {
     const active = option.modelId === value?.modelId && option.provider === value?.provider;
+    rememberRecentModel(option.provider, option.modelId);
     setOpen(false);
     setFilter("");
     if (!active || isAutoSelection) onChange(option.provider, option.modelId);
@@ -291,6 +346,22 @@ export function ModelSelector({
                   onClear();
                 }} />
               )}
+              {recentOptions.length > 0 && (
+                <div key="recent">
+                  <div style={{ padding: "6px 12px 4px", borderTop: onClear ? "1px solid var(--border)" : "none", color: "var(--text-dim)", fontSize: 10, fontWeight: 600, letterSpacing: 0, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 5 }}>
+                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                    {t("chat.recentModels")}
+                  </div>
+                  {recentOptions.map((option) => (
+                    <ModelOptionButton
+                      key={`recent:${option.provider}:${option.modelId}`}
+                      active={option.modelId === value?.modelId && option.provider === value?.provider}
+                      label={option.name}
+                      onClick={() => choose(option)}
+                    />
+                  ))}
+                </div>
+              )}
               {modelsByProvider.length === 0 ? (
                 <div style={{ padding: "8px 12px", color: "var(--text-dim)", fontSize: 12, whiteSpace: "nowrap" }}>
                   {filter.trim() ? t("chat.noMatchingModels") : "No available models"}
@@ -298,7 +369,7 @@ export function ModelSelector({
               ) : modelsByProvider.map((group, index) => (
                 <div key={group.provider}>
                   {modelsByProvider.length > 1 && (
-                    <div style={{ padding: "6px 12px 4px", borderTop: index > 0 || onClear ? "1px solid var(--border)" : "none", color: "var(--text-dim)", fontSize: 10, fontWeight: 600, letterSpacing: 0, textTransform: "uppercase" }}>
+                    <div style={{ padding: "6px 12px 4px", borderTop: index > 0 || onClear || recentOptions.length > 0 ? "1px solid var(--border)" : "none", color: "var(--text-dim)", fontSize: 10, fontWeight: 600, letterSpacing: 0, textTransform: "uppercase" }}>
                       {group.provider}
                     </div>
                   )}
