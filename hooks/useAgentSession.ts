@@ -23,6 +23,7 @@ import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-prese
 import { getPresetFromToolNames, getToolNamesForPreset, type ToolEntry, type ToolPreset } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { mergeSessionStats, type SessionFileStats } from "@/lib/session-stats";
+import { runSessionForkGates } from "@/lib/ext/fork-gates";
 import { userMessageKey } from "@/lib/prompt-recovery";
 import { AgentEventConnection } from "@/lib/agent-event-connection";
 import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
@@ -1821,6 +1822,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleFork = useCallback(async (entryId: string) => {
     const sid = sessionIdRef.current;
     if (!sid) return;
+    // fork 前置门（扩展可取消：如 aiti-git-trace 回撤三选项；false/抛错即中止，不进入 forking 态）
+    const allowed = await runSessionForkGates({ sessionId: sid, entryId, position: "before" });
+    if (!allowed) return;
     setForkingEntryId(entryId);
     try {
       const result = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {

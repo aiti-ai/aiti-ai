@@ -20,7 +20,8 @@ import type { ComposerEnhancement, RecoveryItemsProvider } from "@/lib/composer/
 import { registerRecoveryItemsProvider } from "@/lib/composer/recovery";
 import { registerDraftApi } from "@/lib/composer/draft-api";
 import type { DraftApi } from "@/lib/composer/draft-api";
-import type { ExtSlotName, ExtSlotProps, ParagraphClickHandler } from "@/lib/ext/types";
+import type { ExtSlotName, ExtSlotProps, ParagraphClickHandler, SessionForkGate } from "@/lib/ext/types";
+import { registerSessionForkGate as registerSessionForkGateBus } from "@/lib/ext/fork-gates";
 import {
   getExtMetas,
   getExtUiItems,
@@ -82,6 +83,9 @@ export interface ExtClientContext {
   queueFollowUp(text: string, images?: { data: string; mimeType: string }[]): void;
   /** 注册消息段落点击接管 handler（消息点击识别薄宿主：core 广播段落点击事件，弹层 UI 全在扩展侧） */
   registerParagraphClick(handler: ParagraphClickHandler): void;
+  /** 注册会话 fork 前置门（aiti-git-trace 回撤前置门等）：发起 fork 前依次 await，
+   *  返回 false/抛错即取消。返回 disposer（effect 返回值直接用，HMR 重载时精确移除）。 */
+  registerSessionForkGate(gate: SessionForkGate): () => void;
   /** 同步读本扩展全部功能状态（extman 管理；host 已统一拉取，扩展零独立请求）。boolean feature 为布尔，string feature 为字符串值。 */
   getFeatures?(): Record<string, boolean | string>;
   /** 订阅本扩展功能状态变更（extman 改 feature 后触发；返回退订函数） */
@@ -275,6 +279,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     sendChatMessage: (text, mode, images) => dispatchChatSend(text, mode, images),
     queueFollowUp: (text, images) => dispatchChatSend(text, "queue", images),
     registerParagraphClick: (h) => registerParagraphClick(h),
+    registerSessionForkGate: (gate) => registerSessionForkGateBus(gate),
     registerTopicItem: (topic, item) => registerTopicItem(topic, item),
     getTopicItems: (topic) => getTopicItems(topic),
     getFeatures: () => getExtFeaturesOf(ext.id),

@@ -333,6 +333,23 @@ export type ClickableTag = "p" | "li" | "tr" | "h1" | "h2" | "h3" | "h4" | "h5" 
  *  （如标题 h1-h6）由扩展声明即生效，无需改 core。 */
 export type ParagraphClickHandler = ((info: ParagraphClickInfo) => void) & { hint?: string; tags?: ClickableTag[] };
 
+/** 会话 fork 前置门的入参（发起 fork 时刻的上下文）。position 沿 pi 约定：
+ *  "before" = 从该 entry 之前分叉（/fork 语义）；"at" = 克隆含该 entry（/clone）。 */
+export interface SessionForkGateInfo {
+  /** agent 会话 id（复合 id，与 /api/agent/[id] 一致） */
+  sessionId: string;
+  /** 会话文件路径（客户端不一定可得，缺省时扩展可经 sessionId 服务端解析） */
+  sessionFile?: string;
+  /** fork 分叉点 entry id */
+  entryId: string;
+  position: "before" | "at";
+}
+
+/** 会话 fork 前置门（aiti-git-trace 回撤前置门等）：返回 true 放行、false 或抛错取消本次 fork。
+ *  注册经 client ctx.registerSessionForkGate（总线在 lib/ext/fork-gates.ts，
+ *  消费点 hooks/useAgentSession.handleFork）。 */
+export type SessionForkGate = (info: SessionForkGateInfo) => Promise<boolean>;
+
 /** 能力接管声明：扩展声明后 core 隐藏对应的内置 UI/行为，由扩展全权接管。
  *  能力名是 core 与扩展之间的稳定契约（不是扩展 id）——新增能力时在
  *  EXT_PROVIDES 里登记并同步文档（AGENTS.md）。 */
