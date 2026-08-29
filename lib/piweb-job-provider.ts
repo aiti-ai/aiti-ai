@@ -26,7 +26,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   findProvidersForAgent,
   createLocalHandle,
-  putHandle,
+  createSessionHandle,
   type SessionHandle,
 } from "@/lib/session";
 
@@ -80,10 +80,10 @@ async function lastAssistantText(handle: SessionHandle): Promise<string | undefi
   return undefined;
 }
 
-/** pi 后端：fork 空 session（带 parent 标记可选）+ rpc 会话 + local handle。 */
-async function startPiBackend(cwd: string, parentSessionFile?: string): Promise<SessionHandle> {
+/** pi 后端：fork 空 session + rpc 会话 + local handle。 */
+async function startPiBackend(cwd: string): Promise<SessionHandle> {
   const sm = SessionManager.create(cwd, undefined, { id: randomUUID() });
-  sm.newSession(parentSessionFile ? { parentSession: parentSessionFile } : undefined);
+  sm.newSession();
   try {
     (sm as unknown as { _rewriteFile?: () => void })._rewriteFile?.();
     (sm as unknown as { flushed?: boolean }).flushed = true;
@@ -95,19 +95,11 @@ async function startPiBackend(cwd: string, parentSessionFile?: string): Promise<
   return createLocalHandle(wrapper);
 }
 
-/** 通用后端：session provider 注册表路由（claude/qoder/… ACP/桥后端）。 */
-async function startProviderBackend(backend: string, cwd?: string): Promise<SessionHandle> {
-  const candidates = findProvidersForAgent(backend);
-  if (candidates.length === 0) throw new Error(`没有注册 backend="${backend}" 的 session provider（检查对应扩展是否安装/CLI 是否在 PATH）`);
-  let lastError: unknown;
-  for (const provider of candidates) {
-    try {
-      return await provider.createSession({ ...(cwd ? { cwd } : {}) });
-    } catch (e) {
-      lastError = e;
-    }
-  }
-  throw lastError instanceof Error ? lastError : new Error(`backend="${backend}" 启动失败`);
+/** agentKey → provider type（createSessionHandle 需要 providerType）。 */
+function providerTypeFor(backend: string): string {
+  const provider = findProvidersForAgent(backend)[0];
+  if (!provider) throw new Error(`没有注册 backend="${backend}" 的 session provider（检查对应扩展是否安装/CLI 是否在 PATH）`);
+  return provider.type;
 }
 
 /** 安装 provider（instrumentation 启动时调用；幂等）。 */
@@ -144,10 +136,15 @@ export function installPiWebJobProvider(): void {
             try {
               const handle =
                 backend === "pi"
-                  ? await startPiBackend(input.cwd || process.cwd(), input.sessionId ? undefined : undefined)
-                  : await startProviderBackend(backend, input.cwd);
+                  ? await startPiBackend(input.cwd || process.cwd())
+                  : await createSessionHandle({
+                      providerType: providerTypeFor(backend),
+                      cwd: input.cwd || process.cwd(),
+                    });
               job.handle = handle;
-              if (backend !== "pi") putHandle(handle); // 非 pi 后端 handle 入库（All Sessions 可见）
+              // 非 pi 后端 handle 经统一包装入库（putHandle + session_backend_ready
+              // 换绑监听——cursor/claude 的 chatId 在 init 帧才到手，换绑后
+              // ?session=cursor:<chatId> 才能跨重启恢复）。
               // 完成判定：事件驱动的 isRunning 边沿（无轮询）
               handle.subscribe(() => {
                 if (job.done || !job.started) return;

@@ -134,6 +134,43 @@ export async function GET(
           throw e;
         }
       }
+      // 复合 id（"<agentKey>:<sid>"，多 agent 后端历史）——handle-store miss（如服务
+      // 重启后）时按 id 经 openExternalSession 恢复（provider --resume），再走 wrapped
+      // 分支返回；恢复失败才 404。本地 pi 会话 id 无 ":"，零开销跳过。
+      if (id.includes(":")) {
+        try {
+          const { openExternalSession, resolveAnySession: resolveHandle } = await import("@/lib/session");
+          const sid = id.slice(id.indexOf(":") + 1);
+          const handle = await openExternalSession(id, { sessionId: sid || undefined }).catch(() => undefined);
+          const wrappedAfterOpen = handle?.isAlive() ? resolveHandle(id) : undefined;
+          if (wrappedAfterOpen?.isAlive()) {
+            let messages: unknown[] = [];
+            try {
+              const r = (await wrappedAfterOpen.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
+              messages = normalizeRawMessages(r?.entries ?? []);
+            } catch { /* get_messages 缺省 → 空 */ }
+            return NextResponse.json({
+              sessionId: id,
+              filePath: "",
+              info: {
+                path: "",
+                id,
+                cwd: wrappedAfterOpen.cwd ?? "",
+                name: undefined,
+                created: new Date().toISOString(),
+                modified: new Date().toISOString(),
+                messageCount: messages.length,
+                firstMessage: "(backend session)",
+                transient: true,
+              },
+              leafId: null,
+              tree: [],
+              context: { messages, entryIds: [], thinkingLevel: "off", model: null },
+              totalActiveMs: 0,
+            });
+          }
+        } catch { /* 恢复失败 → 落回 404 */ }
+      }
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
     // 桥占用识别：文件被 TUI 桥持有 → 历史经桥 get_messages 返回（不本地打开）
