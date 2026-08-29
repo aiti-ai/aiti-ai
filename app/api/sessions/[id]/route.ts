@@ -142,7 +142,7 @@ export async function GET(
           const { openExternalSession, resolveAnySession: resolveHandle } = await import("@/lib/session");
           const sid = id.slice(id.indexOf(":") + 1);
           const handle = await openExternalSession(id, { sessionId: sid || undefined }).catch(() => undefined);
-          const wrappedAfterOpen = handle?.isAlive() ? resolveHandle(id) : undefined;
+          const wrappedAfterOpen = handle?.alive() ? resolveHandle(id) : undefined;
           if (wrappedAfterOpen?.isAlive()) {
             let messages: unknown[] = [];
             try {
