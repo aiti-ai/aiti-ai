@@ -8,7 +8,7 @@ const jiti = createJiti(import.meta.url, {
 });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, mergeText, mergeSubmission, shouldCompressImageFile } = await jiti.import("./ChatInput.tsx");
+const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, adjacentQueueTarget, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, mergeText, mergeSubmission, shouldCompressImageFile } = await jiti.import("./ChatInput.tsx");
 const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
@@ -323,6 +323,39 @@ test("preserves duplicate image attachments when restoring a submission", () => 
   const restored = mergeSubmission("", [image, image], "", [image]);
 
   assert.deepEqual(restored.images, [image, image, image]);
+});
+
+// ── ↑/↓ 队列导航目标（拍平 [steering…, followUp…]，与面板展示顺序一致）──
+
+test("queue nav: empty-input Up picks the last followUp entry", () => {
+  // followUp 优先：取最后一条 followUp
+  assert.deepEqual(
+    adjacentQueueTarget("followUp", 0, 0, 0, -1), null,
+  );
+  assert.deepEqual(
+    adjacentQueueTarget("followUp", 2, 0, 3, -1),
+    { kind: "followUp", index: 1 },
+  );
+});
+
+test("queue nav: flattened order is steering first then followUp", () => {
+  // steering=[S0], followUp=[F0,F1,F2] → flat [S0,F0,F1,F2]
+  // 从 F0(flat 1) 向上 → S0；从 S0(flat 0) 向下 → F0
+  assert.deepEqual(
+    adjacentQueueTarget("followUp", 0, 1, 3, -1),
+    { kind: "steer", index: 0 },
+  );
+  assert.deepEqual(
+    adjacentQueueTarget("steer", 0, 1, 3, 1),
+    { kind: "followUp", index: 0 },
+  );
+});
+
+test("queue nav: boundaries keep the current edit in place", () => {
+  // 到顶（首条 ↑）/到底（末条 ↓）→ null（不动）
+  assert.deepEqual(adjacentQueueTarget("steer", 0, 2, 1, -1), null);
+  assert.deepEqual(adjacentQueueTarget("followUp", 2, 1, 3, 1), null);
+  assert.deepEqual(adjacentQueueTarget("followUp", 0, 0, 0, 1), null);
 });
 
 test("renders compact errors above the input as a wrapping alert", () => {

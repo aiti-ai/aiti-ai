@@ -437,6 +437,25 @@ export function canRestoreUserMessage(
   return !value.trim() && attachedImageCount === 0 && pendingImageCount === 0;
 }
 
+/** ↑/↓ 队列导航目标计算（纯函数）：导航范围为拍平后的队列 [steering…, followUp…]
+ *  （与面板展示顺序一致）。越界（到顶/到底）返回 null——保持当前编辑不动。 */
+export function adjacentQueueTarget(
+  kind: "steer" | "followUp",
+  index: number,
+  steeringCount: number,
+  followUpCount: number,
+  dir: -1 | 1,
+): { kind: "steer" | "followUp"; index: number } | null {
+  const total = steeringCount + followUpCount;
+  if (total === 0) return null;
+  const curFlat = kind === "steer" ? index : steeringCount + index;
+  const targetFlat = curFlat + dir;
+  if (targetFlat < 0 || targetFlat >= total) return null;
+  return targetFlat < steeringCount
+    ? { kind: "steer", index: targetFlat }
+    : { kind: "followUp", index: targetFlat - steeringCount };
+}
+
 export function getUserMessageText(message: UserMessage): string {
   if (typeof message.content === "string") return message.content;
   return message.content
@@ -990,6 +1009,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [atActiveIndex, setAtActiveIndex] = useState(0);
   const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
   const [historyActiveIndex, setHistoryActiveIndex] = useState(0);
+  // 会话历史直接翻阅（shell 式 ↑/↓，无排队消息时）：null = 未在翻阅；翻阅中记录
+  // 当前命中的历史下标 + 我们写入输入框的原文（用于检测用户手动编辑 → 自动退出翻阅）。
+  const historyNavIndexRef = useRef<number | null>(null);
+  const historyNavTextRef = useRef<string>("");
+  // 取回（recall）操作互斥锁：↑/↓ 连击或行按钮连点期间禁止并发取回/放回，
+  // 防止同一条目被重复放回/孤儿化。
+  const recallBusyRef = useRef(false);
   const [fileIndex, setFileIndex] = useState<{ cwd: string; entries: FileIndexEntry[]; truncated: boolean } | null>(null);
   const [fileIndexLoading, setFileIndexLoading] = useState(false);
   const [atServerResult, setAtServerResult] = useState<{ cwd: string; query: string; matches: FileIndexEntry[] } | null>(null);
@@ -1230,14 +1256,16 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [queueButtonsCollapsed, setQueueButtonsCollapsed] = useState(false);
   const [buttonsWrapped, setButtonsWrapped] = useState(false);
   const inputRowRef = useRef<HTMLDivElement>(null);
-  const handleRecallOne = useCallback(async (kind: "steer" | "followUp", index: number) => {
+  /** 取回核心（不带互斥锁）。mode="append"（默认）：与输入框已有内容合并（行内取回按钮）；
+   *  mode="replace"：整体替换输入框内容（↑/↓ 队列导航时逐条切换）。 */
+  const doRecallOne = useCallback(async (kind: "steer" | "followUp", index: number, mode: "append" | "replace" = "append") => {
     if (!onRecallOne) return;
     const entry = await onRecallOne(kind, index);
     if (!entry) return;
     recalledRef.current = { kind, index, text: entry.text, images: entry.images };
     setRecalledVisible(true);
     const ta = textareaRef.current;
-    const current = ta ? ta.value : value;
+    const current = mode === "replace" ? "" : (ta ? ta.value : value);
     const combined = [entry.text, current].filter((t) => t.trim()).join("\n\n");
     setValue(combined);
     setAtQuery(null);
@@ -1253,6 +1281,16 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     });
     setQueueCollapsedUser(null);
   }, [onRecallOne, value]);
+  /** 取回一条排队消息进输入框继续编辑（互斥：连击/连按期间忽略新请求）。 */
+  const handleRecallOne = useCallback(async (kind: "steer" | "followUp", index: number, mode: "append" | "replace" = "append") => {
+    if (recallBusyRef.current) return;
+    recallBusyRef.current = true;
+    try {
+      await doRecallOne(kind, index, mode);
+    } finally {
+      recallBusyRef.current = false;
+    }
+  }, [doRecallOne]);
   const cancelRecall = useCallback(() => {
     recalledRef.current = null;
     setRecalledVisible(false);
@@ -1648,7 +1686,34 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
+    historyNavIndexRef.current = null;
+    historyNavTextRef.current = "";
   }, [clearImages, draftKey]);
+
+  /** 取回编辑中的 ↑/↓ 队列导航：把当前编辑放回队列原位，再取回相邻一条继续编辑
+   * （与行内取回按钮完全同一链路）。导航范围为拍平后的队列 [steering…, followUp…]
+   * （与面板展示顺序一致）。编辑框被清空时保底放回原文——导航绝不丢失队列条目。 */
+  const navigateRecalled = useCallback(async (dir: -1 | 1) => {
+    const recalled = recalledRef.current;
+    if (!recalled || !onRequeueAt || !onRecallOne || recallBusyRef.current) return;
+    const steeringCount = queuedMessages?.steering.length ?? 0;
+    const target = adjacentQueueTarget(recalled.kind, recalled.index, steeringCount, queuedMessages?.followUp.length ?? 0, dir);
+    if (!target) return;
+    recallBusyRef.current = true;
+    try {
+      const edited = valueRef.current.trim();
+      const msg = edited || recalled.text;
+      const images = attachedImagesRef.current.length ? attachedImagesRef.current : recalled.images;
+      const ok = await onRequeueAt(recalled.kind, recalled.index, msg, images);
+      if (!ok) return; // 放回失败：保持取回编辑态，用户可重试
+      recalledRef.current = null;
+      setRecalledVisible(false);
+      clearInput();
+      await doRecallOne(target.kind, target.index, "replace");
+    } finally {
+      recallBusyRef.current = false;
+    }
+  }, [queuedMessages, onRequeueAt, onRecallOne, doRecallOne, clearInput]);
 
   // 注意顺序：[draftKey] effect 必须在 [value] 广播 effect 之前——
   // 挂载/切会话时 keyChange 先行（keeper 记 pendingScan），随后的 onChange("")
@@ -2120,6 +2185,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [historyActiveIndex, historyMenuOpen]);
 
   const applyHistoryInput = useCallback((text: string) => {
+    // 菜单选用历史 → 退出直接翻阅模式（两套机制互斥）
+    historyNavIndexRef.current = null;
+    historyNavTextRef.current = "";
     setValue(text);
     setHistoryMenuOpen(false);
     setHistoryActiveIndex(0);
@@ -2133,6 +2201,29 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
     });
   }, []);
+
+  /** shell 式会话历史翻阅：把第 index 条历史复制进输入框（可编辑后重新发送）。 */
+  const applyHistoryNav = useCallback((index: number) => {
+    if (index < 0 || index >= inputHistory.length) {
+      historyNavIndexRef.current = null;
+      historyNavTextRef.current = "";
+      return;
+    }
+    const text = inputHistory[index];
+    historyNavIndexRef.current = index;
+    historyNavTextRef.current = text;
+    valueRef.current = text;
+    setValue(text);
+    setAtQuery(null);
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(text.length, text.length);
+      ta.style.height = "auto";
+      ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+    });
+  }, [inputHistory]);
 
   const applySlashCommand = useCallback((command: SlashCommandPaletteItem) => {
     const nextValue = `/${command.name} `;
@@ -2350,7 +2441,64 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
 
-      if (e.key === "ArrowUp" && !isComposing && !isStreaming && inputHistory.length > 0 && value.trim().length === 0) {
+      // ── 取回编辑中的队列导航（↑/↓）：把当前编辑放回队列原位，取回相邻一条继续编辑。──
+      // 与行内取回按钮完全同一链路；置底/置顶时不动（保留当前编辑）。
+      if (!isComposing && recalledRef.current && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();
+        void navigateRecalled(e.key === "ArrowUp" ? -1 : 1);
+        return;
+      }
+
+      // ── 会话历史直接翻阅进行中（无排队消息时的 shell 式 ↑/↓）──
+      // ↑ 上一条（更旧）；↓ 下一条（更新），翻过最新一条回到空输入。
+      // 用户手动改动过文本（value ≠ 我们写入的原文）→ 视为退出翻阅，恢复正常光标移动。
+      if (!isComposing && historyNavIndexRef.current !== null && valueRef.current === historyNavTextRef.current
+        && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+        e.preventDefault();
+        const navIdx = historyNavIndexRef.current;
+        if (e.key === "ArrowDown") {
+          if (navIdx + 1 >= inputHistory.length) {
+            // 翻过最新一条：清空输入框（翻阅只从空输入进入，恢复原稿 = 空白）
+            historyNavIndexRef.current = null;
+            historyNavTextRef.current = "";
+            valueRef.current = "";
+            setValue("");
+            setAtQuery(null);
+          } else {
+            applyHistoryNav(navIdx + 1);
+          }
+        } else {
+          applyHistoryNav(Math.max(0, navIdx - 1));
+        }
+        return;
+      }
+
+      // 空输入 ↑：有排队消息 → 取回最后一条进输入框继续编辑（followUp 优先，
+      // 无 followUp 时取最后一条 steering；流式中也可用，发送时放回队列原处）；
+      // 无排队消息但有会话历史 → 直接开始翻阅（最新一条先入框，可重复发送）。
+      if (e.key === "ArrowUp" && !isComposing && !e.shiftKey && value.trim().length === 0 && !recalledRef.current) {
+        const steerCount = queuedMessages?.steering.length ?? 0;
+        const followUpCount = queuedMessages?.followUp.length ?? 0;
+        if (followUpCount > 0 || steerCount > 0) {
+          e.preventDefault();
+          setSlashMenuOpen(false);
+          setAtMenuOpen(false);
+          setHistoryMenuOpen(false);
+          const useFollowUp = followUpCount > 0;
+          void handleRecallOne(useFollowUp ? "followUp" : "steer", (useFollowUp ? followUpCount : steerCount) - 1, "replace");
+          return;
+        }
+        if (inputHistory.length > 0) {
+          e.preventDefault();
+          setSlashMenuOpen(false);
+          setAtMenuOpen(false);
+          setHistoryMenuOpen(false);
+          applyHistoryNav(inputHistory.length - 1);
+          return;
+        }
+      }
+      // Shift+↑：打开历史菜单（原空输入 ↑ 行为，可视化浏览，Enter/Tab 选用）。
+      if (e.key === "ArrowUp" && e.shiftKey && !isComposing && !isStreaming && inputHistory.length > 0 && value.trim().length === 0) {
         e.preventDefault();
         setSlashMenuOpen(false);
         setAtMenuOpen(false);
@@ -2384,7 +2532,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         }
       }
     },
-    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, value]
+    [isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, applyHistoryNav, navigateRecalled, handleRecallOne, queuedMessages, value]
   );
 
   const handleInput = resizeTextarea;
