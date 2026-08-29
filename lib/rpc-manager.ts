@@ -2866,12 +2866,9 @@ export async function startRpcSession(
                 isBuiltInSubagentsEnabled,
               ),
             ],
-            extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(base, {
-              // [aiti] 平台自带 fork（@aiti-ai/pi-subagents）即视为子代理功能已由替代实现提供：
-              // 屏蔽原版 pi-subagents 插件加载（同名 subagent 工具双注册冲突），不依赖内置开关。
-              supersededBy: (b) => b.extensions.some((e) =>
-                (e.sourceInfo?.source ?? "").includes("@aiti-ai/pi-subagents") || e.path.includes("@aiti-ai/pi-subagents")),
-            })),
+            // [aiti] 冲突插件机制：pi-web 扩展清单 conflicts 声明的包（如原版
+            // pi-subagents）在组装 SDK 加载结果时整个禁用（同名工具双注册冲突）。
+            extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(disableConflictingExtensions(base, getExtRegistry()))),
           },
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });
@@ -3033,6 +3030,22 @@ let lastRunningSnapshot = "";
 function getRunningListeners(): Set<(ids: string[]) => void> {
   if (!globalThis.__piRunningListeners) globalThis.__piRunningListeners = new Set();
   return globalThis.__piRunningListeners;
+}
+
+/**
+ * 进程内本地会话工厂（globalThis 缝，与 __piSubagentFactory 同模式）。
+ *
+ * 扩展（jiti 加载，无法 import "@/lib/rpc-manager"）经
+ * `globalThis.__piLocalSessionFactory.start(...)` 在本进程内创建/打开真实 pi 会话：
+ * cc-connect 桥接（aiti-channels ACP server → pi-web 会话）等场景用。
+ * start 参数与返回值同 startRpcSession——新会话传一次性 key（`__acp__<uuid>`），
+ * 重开已有会话传真实 session id（registry 命中时直接复用 UI 已打开的 wrapper）。
+ */
+export function installLocalSessionFactory(): void {
+  const g = globalThis as Record<string, unknown>;
+  if (!g.__piLocalSessionFactory) {
+    g.__piLocalSessionFactory = { start: startRpcSession };
+  }
 }
 
 /** Subscribe to running-session-id changes. Returns an unsubscribe function. */

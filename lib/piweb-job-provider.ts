@@ -177,21 +177,7 @@ export function installPiWebJobProvider(): void {
           return { providerJobId: input.parentProviderJobId, state: job.done ? "completed" : "running" };
         },
 
-        status(providerJobId: string) {
-          const job = jobs.get(providerJobId);
-          if (!job) return { providerJobId, state: "failed" as const, failureCode: "unknown-job", failureMessage: "job 不存在（进程重启后历史 job 不可查）" };
-          if (!job.done && job.started && job.handle && !job.handle.isRunning()) {
-            void finalize(job, job.handle); // 事件缺失时的保守收敛（fork 主动查询驱动，非轮询）
-          }
-          const state = job.done
-            ? job.state
-            : job.state === "queued" ? ("queued" as const) : ("running" as const);
-          return {
-            providerJobId,
-            state,
-            ...(job.error ? { failureMessage: job.error } : {}),
-          };
-        },
+        status: (providerJobId: string) => statusJob(providerJobId),
 
         result(providerJobId: string) {
           const job = jobs.get(providerJobId);
@@ -205,14 +191,22 @@ export function installPiWebJobProvider(): void {
           };
         },
 
-        reattach(providerJobId: string) {
-          return this.status(providerJobId);
-        },
+        reattach: (providerJobId: string) => statusJob(providerJobId),
       });
       console.log(`[piweb-job-provider] registered "${PIWEB_JOB_PROVIDER_NAME}" — pi-web backends available as subagent executors`);
     } catch (e) {
       console.warn("[piweb-job-provider] 注册失败（fork 未安装或加载错误）:", e instanceof Error ? e.message : e);
     }
+
+  function statusJob(providerJobId: string) {
+    const job = jobs.get(providerJobId);
+    if (!job) return { providerJobId, state: "failed" as const, failureCode: "unknown-job", failureMessage: "job 不存在（进程重启后历史 job 不可查）" };
+    if (!job.done && job.started && job.handle && !job.handle.isRunning()) {
+      void finalize(job, job.handle); // 事件缺失时的保守收敛（fork 主动查询驱动，非轮询）
+    }
+    const state = job.done ? job.state : job.state === "queued" ? ("queued" as const) : ("running" as const);
+    return { providerJobId, state, ...(job.error ? { failureMessage: job.error } : {}) };
+  }
   })();
 }
 
