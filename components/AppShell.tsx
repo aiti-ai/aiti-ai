@@ -595,7 +595,7 @@ export function AppShell() {
           && activeNewSessionDraftKeyRef.current.startsWith(`new:`)
           && activeNewSessionDraftKeyRef.current.endsWith(`:${data.cwd}`)
           ? activeNewSessionDraftKeyRef.current.slice(4, activeNewSessionDraftKeyRef.current.length - data.cwd.length - 1)
-          : `initial:${requestedCwd}`;
+          : `initial-${requestedCwd}`;
         setNewSessionDraftId(draftId);
         activeNewSessionDraftKeyRef.current = `new:${draftId}:${data.cwd}`;
         setNewSessionCwd(data.cwd);
