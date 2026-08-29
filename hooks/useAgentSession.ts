@@ -795,9 +795,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (!provisionalDraftKey) return;
     if (provisionalDraftKey !== sid) {
       draftKeyAliasesRef.current.set(provisionalDraftKey, sid);
-      const input = opts.chatInputRef?.current;
-      if (input) input.rekeyDraft(provisionalDraftKey, sid);
-      else getDraftApi()?.rekeyDraft(provisionalDraftKey, sid);
+      // promote 发生在首条消息发送成功之后——此时 new 草稿槽位里的内容就是刚
+      // 发出去的消息，搬运到 sid 槽位会让下次打开 sid 时 keeper scan 把「已
+      // 发送的消息」当草稿恢复回来（[aiti] 实测残留：crashrestore-<sid> 里有
+      // [元素1] [错误1]）。删除而非搬运：消息已落会话，草稿无意义。
+      // 直接走 DraftApi（keeper 已注册），不依赖 ChatInput imperative handle：
+      // clearDraft 是纯存储操作（清 new 草稿槽位 + knownMap），无需碰输入框。
+      getDraftApi()?.clearDraft(provisionalDraftKey);
     }
     onSessionCreated?.({
       id: sid,
