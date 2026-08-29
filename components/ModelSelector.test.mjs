@@ -83,9 +83,14 @@ test("readRecentModels tolerates missing key and unavailable storage", () => {
   installStorage();
   assert.deepEqual(readRecentModels(), []);
 
-  delete globalThis.window; // privacy mode etc. → silent degrade
-  assert.deepEqual(readRecentModels(), []);
-  assert.doesNotThrow(() => rememberRecentModel("a", "m1"));
+  const savedWindow = globalThis.window;
+  try {
+    delete globalThis.window; // privacy mode etc. → silent degrade
+    assert.deepEqual(readRecentModels(), []);
+    assert.doesNotThrow(() => rememberRecentModel("a", "m1"));
+  } finally {
+    globalThis.window = savedWindow; // 不污染后续用例（顺序耦合瑕疵修复）
+  }
 });
 
 const CATALOG = [
