@@ -2777,14 +2777,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
     return () => {
       sessionHookMountedRef.current = false;
-      const abandonedDraftKey = isNew ? newSessionDraftKey : null;
-      if (abandonedDraftKey) {
-        queueMicrotask(() => {
-          if (!sessionHookMountedRef.current && !newSessionPromotedRef.current) {
-            getDraftApi()?.clearDraft(abandonedDraftKey);
-          }
-        });
-      }
+      // [aiti] 不在 unmount 清「废弃」新建草稿：用户只是切到别的会话看一眼
+      // （SPA 切换同样触发本 hook unmount），清掉会让切回时 keeper scan 恢复
+      // 无源——「新建→输入→切换→切回」草稿丢。草稿生命周期已由 aiti-draft-keeper
+      // 全权管理（切走 flushAll 落盘、切回 scan 恢复、用户清空 onChange 清槽位）。
       if (liveFollowFrameRef.current !== null) {
         cancelAnimationFrame(liveFollowFrameRef.current);
         liveFollowFrameRef.current = null;
