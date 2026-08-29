@@ -96,8 +96,9 @@ export function filterModelOptions(options: ModelSelectorOption[], query: string
   const normalizedQuery = query.trim().toLocaleLowerCase();
   if (!normalizedQuery) return options;
 
+  // provider 参与匹配：行内已展示 provider 后缀，搜 provider 名应能命中其下模型
   return options.filter((option) => (
-    `${option.name} ${option.modelId}`
+    `${option.provider} ${option.name} ${option.modelId}`
       .toLocaleLowerCase()
       .includes(normalizedQuery)
   ));
@@ -371,6 +372,7 @@ export function ModelSelector({
                       key={`recent:${option.provider}:${option.modelId}`}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
+                      hint={option.provider}
                       onClick={() => choose(option)}
                     />
                   ))}
@@ -392,6 +394,7 @@ export function ModelSelector({
                       key={`${option.provider}:${option.modelId}`}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
+                      hint={option.provider}
                       onClick={() => choose(option)}
                     />
                   ))}
@@ -405,7 +408,7 @@ export function ModelSelector({
   );
 }
 
-function ModelOptionButton({ active, label, onClick }: { active: boolean; label: string; onClick: () => void }) {
+function ModelOptionButton({ active, label, hint, onClick }: { active: boolean; label: string; hint?: string; onClick: () => void }) {
   return (
     <button
       type="button"
@@ -420,6 +423,9 @@ function ModelOptionButton({ active, label, onClick }: { active: boolean; label:
         ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true"><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
         : <span style={{ width: 10, flexShrink: 0 }} />}
       <span title={label} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+      {hint && hint !== label ? (
+        <span style={{ marginLeft: "auto", flexShrink: 0, paddingLeft: 14, fontSize: 10, fontWeight: 400, color: "var(--text-dim)", opacity: 0.8 }} title={hint}>{hint}</span>
+      ) : null}
     </button>
   );
 }

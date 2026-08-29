@@ -134,3 +134,11 @@ test("pickRecentOptions hidden while panel closed or filtering", () => {
   assert.deepEqual(pickRecentOptions(recent, CATALOG, { open: true, filter: "glm" }), []);
   assert.deepEqual(pickRecentOptions(recent, CATALOG, { open: true, filter: "  " }).length, 1); // whitespace-only filter = no filter
 });
+
+test("filterModelOptions matches provider name as well as display name and id", async () => {
+  const { filterModelOptions } = await jiti.import("./ModelSelector.tsx");
+  assert.deepEqual(filterModelOptions(CATALOG, "modelscope"), [CATALOG[2]]); // provider hit
+  assert.deepEqual(filterModelOptions(CATALOG, "GLM-5.3-Flash"), [CATALOG[0]]); // display name hit (unchanged)
+  assert.equal(filterModelOptions(CATALOG, "nomatch").length, 0);
+  assert.deepEqual(filterModelOptions(CATALOG, "  "), CATALOG); // no filter
+});
