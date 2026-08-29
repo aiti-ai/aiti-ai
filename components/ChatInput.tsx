@@ -4640,6 +4640,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 </svg>
               </button>
             )}
+            {/* 扩展入口（composerTools slot）：与压缩/导入同排的 32×32 图标按钮（aiti-git-trace：时间线主入口） */}
+            <ExtSlot name="composerTools" extra={{ sessionId, cwd }} />
             {isMobile && controlsMenuOpen && (
               <button
                 type="button"

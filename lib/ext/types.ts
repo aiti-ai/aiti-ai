@@ -249,6 +249,7 @@ export type ExtSlotName =
   | "pathPicker"    // 目录选择器能力（aiti-folder：FolderSwitcher 同款；顶栏「打开文件夹」等消费）
   | "newSessionBackendBar" // 新会话欢迎页 Backend 选择器旁（各后端扩展自行渲染管理入口，如 ACP agent 管理）
   | "sessionStats"   // 会话统计下拉内扩展条目行（aiti-ai-usage：报表入口；aiti-ai-input：其他辅助 AI 用量统计行）
+  | "composerTools"  // 输入框下方控制行（压缩/停止/导入 queue 同排；aiti-git-trace：时间线主入口等）
   ;
 
 /**
