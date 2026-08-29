@@ -615,8 +615,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       && !newSessionPromotedRef.current
       && targetDraftKey === newSessionDraftKey
     ) return;
+    // 无 key（无 cwd 空态）：无可落草稿，防御空串造出垃圾槽位
+    const intentKey = targetDraftKey ?? composerDraftKey;
+    if (!intentKey) return;
     // alias（provisional→sid）解析归 keeper；目标为当前框时由 keeper 写回框内
-    applyDraftIntent({ type: "rejected", key: targetDraftKey ?? composerDraftKey ?? "", text, images: draftImages });
+    applyDraftIntent({ type: "rejected", key: intentKey, text, images: draftImages });
   }, [composerDraftKey, newSessionDraftKey]);
 
   const sessionStats = useMemo(() => {

@@ -96,16 +96,18 @@ test("opening System or Tools lazily starts a dormant session without sending a 
   );
 });
 
-test("new-session promotion rekeys drafts before publishing the real session", () => {
+test("new-session promotion clears the provisional draft via intent before publishing the real session", () => {
   const promoteSource = source.slice(
     source.indexOf("  const promoteNewSession = useCallback"),
     source.indexOf("  const ensureNewSession = useCallback"),
   );
 
-  assert.match(promoteSource, /draftKeyAliasesRef\.current\.set\(provisionalDraftKey, sid\)/);
-  assert.match(promoteSource, /input\.rekeyDraft\(provisionalDraftKey, sid\)/);
+  // v2 契约：promote 只发意图，provisional 草稿由 keeper 状态机作废；
+  // 不再 rekey 搬运（搬运会把已发送消息带进 sid 槽位）
+  assert.match(promoteSource, /applyDraftIntent\(\{ type: "sessionCreated", provisionalKey: provisionalDraftKey, sessionId: sid \}\)/);
+  assert.doesNotMatch(promoteSource, /rekeyDraft/);
   assert.ok(
-    promoteSource.indexOf("input.rekeyDraft(provisionalDraftKey, sid)")
+    promoteSource.indexOf('applyDraftIntent({ type: "sessionCreated"')
       < promoteSource.indexOf("onSessionCreated?.({"),
   );
   assert.match(promoteSource, /}, provisionalDraftKey\)/);
@@ -152,20 +154,17 @@ test("existing-session prompts rely on the persisted tool selection", () => {
   assert.doesNotMatch(sendSource, /restoreSubmission, toolPreset\]\);/);
 });
 
-test("submission recovery updates live refs before a possible session rekey", () => {
-  const restoreMethod = chatInputSource.slice(
-    chatInputSource.indexOf("    restoreSubmission(text:"),
-    chatInputSource.indexOf("    insertText(text:"),
+test("submission recovery goes through the rejected intent (keeper writes the box)", () => {
+  // v2 契约：core 不再自行写框/写槽，rejected 意图交 keeper 处理
+  const restoreSource = source.slice(
+    source.indexOf("  const restoreSubmission = useCallback"),
+    source.indexOf("  const sessionStats = useMemo"),
   );
-
-  assert.ok(
-    restoreMethod.indexOf("valueRef.current = restoredDraft.value")
-      < restoreMethod.indexOf("setValue((current) =>"),
-  );
-  assert.ok(
-    restoreMethod.indexOf("attachedImagesRef.current = restoredImages")
-      < restoreMethod.indexOf("setAttachedImages((current) =>"),
-  );
+  assert.match(restoreSource, /const intentKey = targetDraftKey \?\? composerDraftKey;/);
+  assert.match(restoreSource, /if \(!intentKey\) return;/);
+  assert.match(restoreSource, /applyDraftIntent\(\{ type: "rejected", key: intentKey, text, images: draftImages \}\)/);
+  assert.match(chatInputSource, /const clearInput = useCallback\(\(\) => \{[\s\S]*?草稿清空唯一路径 = aiti-draft-keeper/);
+  assert.doesNotMatch(chatInputSource, /getDraftApi\(\)\?\.clearDraft/);
 });
 
 test("stale fresh-session completion cannot replace the active composer", () => {
@@ -190,7 +189,7 @@ test("stale fresh-session completion cannot replace the active composer", () => 
     cwdChangeSource,
     /currentProject === newProject\s*&& \(selectedSession !== null \|\| currentFreshCwd === cwd\)/,
   );
-  assert.match(cwdChangeSource, /if \(currentProject !== newProject\) \{[\s\S]*?setFileTabs\(\[\]\)/);
+  assert.match(cwdChangeSource, /if \(isUserProjectSwitch\) \{[\s\S]*?setFileTabs\(\[\]\)/);
   assert.match(
     appShellSource,
     /useLayoutEffect\(\(\) => \{\s*activeNewSessionDraftKeyRef\.current = newSessionDraftKey;/,
@@ -201,19 +200,22 @@ test("stale fresh-session completion cannot replace the active composer", () => 
   );
 });
 
-test("abandoned fresh-session drafts are cleared and cannot be recreated by late rejection", () => {
-  const restoreSource = source.slice(
-    source.indexOf("  const restoreSubmission = useCallback"),
-    source.indexOf("  const sessionStats = useMemo"),
-  );
+test("abandoned fresh-session drafts survive unmount (keeper owns the lifecycle); late rejection still guarded", () => {
+  // v2 契约：unmount 不清「废弃」新建草稿——SPA 切走再切回由 keeper scan 恢复；
+  // 生命周期唯一所有者是 keeper 状态机
   const mountSource = source.slice(
     source.indexOf("  // Load session on mount"),
     source.indexOf("  useEffect(() => {\n    onSystemPromptChange"),
   );
+  const restoreSource = source.slice(
+    source.indexOf("  const restoreSubmission = useCallback"),
+    source.indexOf("  const sessionStats = useMemo"),
+  );
 
+  assert.doesNotMatch(mountSource, /abandonedDraftKey/);
+  assert.doesNotMatch(mountSource, /clearDraft/);
   assert.match(restoreSource, /!sessionHookMountedRef\.current[\s\S]*?!newSessionPromotedRef\.current/);
-  assert.match(mountSource, /const abandonedDraftKey = isNew \? newSessionDraftKey : null/);
-  assert.match(mountSource, /clearDraft\(abandonedDraftKey\)/);
+  assert.match(restoreSource, /type: "rejected"/);
 });
 
 test("streaming submissions cannot be stranded in an idle direct queue", () => {
