@@ -1931,7 +1931,9 @@ function SessionTreeItem({
   const hasChildren = node.children.length > 0;
 
   return (
-    <div>
+    // content-visibility: 视口外会话行跳过布局/绘制（长列表渲染/滚动成本 ↓），
+    // 进入视口自动渲染；估算行高供滚动条占位
+    <div style={{ contentVisibility: "auto", containIntrinsicSize: "auto 64px" }}>
       <div style={{ position: "relative" }}>
         {/* Indent line for child sessions */}
         {depth > 0 && (
