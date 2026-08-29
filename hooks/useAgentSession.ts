@@ -17,7 +17,7 @@ import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { normalizeToolCalls } from "@/lib/normalize";
 import { isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
 import type { ChatDraftImage } from "@/lib/composer/draft-api";
-import { getDraftApi } from "@/lib/composer/draft-api";
+import { applyDraftIntent } from "@/lib/composer/draft-api";
 import type { PendingRecoveryItem, QueueEntry, QueueEntryInput, QueueTrashItem } from "@/lib/queue-store";
 import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-preset-preference";
 import { getPresetFromToolNames, getToolNamesForPreset, type ToolEntry, type ToolPreset } from "@/lib/tool-presets";
@@ -272,8 +272,6 @@ export interface ChatInputHandle {
   appendText: (text: string) => void;
   addImages: (files: File[]) => void;
   expandQueue?: () => void;
-  rekeyDraft: (previousKey: string, nextKey: string) => void;
-  restoreSubmission: (text: string, images?: Array<{ data: string; mimeType: string }>, targetDraftKey?: string) => void;
 }
 
 export interface AttachedFile {
@@ -497,7 +495,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
   const modelSwitchPendingRef = useRef(false);
   const messagesRef = useRef(messages);
-  const draftKeyAliasesRef = useRef(new Map<string, string>());
   const sessionHookMountedRef = useRef(true);
 
   sessionPropIdRef.current = session?.id ?? null;
@@ -606,39 +603,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const displayModel = isNew ? (newSessionModel ?? newSessionDefaultModel) : currentModel;
   const composerDraftKey = session?.id ?? newSessionDraftKey ?? undefined;
 
-  const resolveComposerDraftKey = useCallback((key: string | undefined) => {
-    if (!key) return undefined;
-    let resolved = key;
-    const visited = new Set<string>();
-    while (!visited.has(resolved)) {
-      visited.add(resolved);
-      const next = draftKeyAliasesRef.current.get(resolved);
-      if (!next) break;
-      resolved = next;
-    }
-    return resolved;
-  }, []);
-
   const restoreSubmission = useCallback((
     text: string,
     images: AttachedImage[] | undefined,
     targetDraftKey: string | undefined,
   ) => {
     const draftImages = images?.map(({ data, mimeType }) => ({ data, mimeType }));
-    const destinationDraftKey = resolveComposerDraftKey(targetDraftKey);
+    // 已卸载且未提升的新建页：丢弃（无框可写、无草稿该恢复）
     if (
       !sessionHookMountedRef.current
       && !newSessionPromotedRef.current
       && targetDraftKey === newSessionDraftKey
     ) return;
-    const input = opts.chatInputRef?.current;
-    if (input) {
-      input.restoreSubmission(text, draftImages, destinationDraftKey);
-    } else if (destinationDraftKey) {
-      // keeper 未接管输入框 handle 时走 registry（草稿功能全部归 keeper）
-      getDraftApi()?.restoreSubmission(destinationDraftKey, text, draftImages);
-    }
-  }, [newSessionDraftKey, opts.chatInputRef, resolveComposerDraftKey]);
+    // alias（provisional→sid）解析归 keeper；目标为当前框时由 keeper 写回框内
+    applyDraftIntent({ type: "rejected", key: targetDraftKey ?? composerDraftKey ?? "", text, images: draftImages });
+  }, [composerDraftKey, newSessionDraftKey]);
 
   const sessionStats = useMemo(() => {
     if (sessionStatsOverride) {
@@ -794,14 +773,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const provisionalDraftKey = newSessionDraftKey;
     if (!provisionalDraftKey) return;
     if (provisionalDraftKey !== sid) {
-      draftKeyAliasesRef.current.set(provisionalDraftKey, sid);
-      // promote 发生在首条消息发送成功之后——此时 new 草稿槽位里的内容就是刚
-      // 发出去的消息，搬运到 sid 槽位会让下次打开 sid 时 keeper scan 把「已
-      // 发送的消息」当草稿恢复回来（[aiti] 实测残留：crashrestore-<sid> 里有
-      // [元素1] [错误1]）。删除而非搬运：消息已落会话，草稿无意义。
-      // 直接走 DraftApi（keeper 已注册），不依赖 ChatInput imperative handle：
-      // clearDraft 是纯存储操作（清 new 草稿槽位 + knownMap），无需碰输入框。
-      getDraftApi()?.clearDraft(provisionalDraftKey);
+      // 唯一写入口：provisional 草稿作废 + promote 窗口（React key prop 切换前）
+      // 的新输入由 keeper 重定向落 sid 槽位——「已发送消息残留」竞态在状态机内消除。
+      applyDraftIntent({ type: "sessionCreated", provisionalKey: provisionalDraftKey, sessionId: sid });
     }
     onSessionCreated?.({
       id: sid,

@@ -7,7 +7,6 @@ import { downloadQueueExport, parseQueueImport } from "@/lib/queue-export";
 import type { SkillsResponse } from "@/lib/api-types";
 import type { TextContent, UserMessage } from "@/lib/types";
 import {
-  getDraftApi,
   type ChatDraftImage,
   type DraftSnapshot as ChatDraft,
 } from "@/lib/composer/draft-api";
@@ -210,8 +209,6 @@ export interface ChatInputHandle {
   clearInput: () => void;
   /** Force the queue panel to expand (used after recovery/import resolution). */
   expandQueue: () => void;
-  rekeyDraft: (previousKey: string, nextKey: string) => void;
-  restoreSubmission: (text: string, images?: ChatDraftImage[], targetDraftKey?: string) => void;
 }
 
 const TOOL_PRESETS = ["chat-only", "read-only", "default", "full"] as const;
@@ -1433,96 +1430,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         ta.scrollTop = ta.scrollHeight;
       });
     },
-    rekeyDraft(previousKey: string, nextKey: string) {
-      if (previousKey === nextKey) return;
-      const api = getDraftApi();
-      if (draftKeyRef.current !== previousKey) {
-        api?.rekeyDraft(previousKey, nextKey);
-        return;
-      }
-
-      const currentDraft = {
-        value: valueRef.current,
-        images: attachedImagesRef.current.map(imageToDraftImage),
-      };
-      const moved = api?.rekeyDraft(previousKey, nextKey, currentDraft) ?? { value: "", images: [] };
-      const unchanged = moved.value === currentDraft.value
-        && moved.images.length === currentDraft.images.length
-        && moved.images.every((image, index) => (
-          image.data === currentDraft.images[index]?.data
-          && image.mimeType === currentDraft.images[index]?.mimeType
-        ));
-      draftKeyRef.current = nextKey;
-      if (unchanged) return;
-
-      const movedImages = draftImagesToAttachedImages(moved.images);
-      valueRef.current = moved.value;
-      attachedImagesRef.current = movedImages;
-      setValue(moved.value);
-      setAttachedImages((current) => {
-        current.forEach(revokeImagePreview);
-        return movedImages;
-      });
-      setAtQuery(null);
-      setHistoryMenuOpen(false);
-    },
-    restoreSubmission(text: string, images?: ChatDraftImage[], targetDraftKey?: string) {
-      if (!text.trim() && !images?.length) return;
-
-      const api = getDraftApi();
-      const currentDraftKey = draftKeyRef.current;
-      const destinationDraftKey = targetDraftKey ?? currentDraftKey;
-      const targetsCurrentComposer = destinationDraftKey === currentDraftKey;
-      const storedDraft = !targetsCurrentComposer && destinationDraftKey
-        ? api?.getDraft(destinationDraftKey) ?? null
-        : null;
-      // 合并提交文本+图片到目标草稿（submitted在前，current在后）
-      const curText = targetsCurrentComposer ? valueRef.current : (storedDraft?.value ?? "");
-      const curImages = targetsCurrentComposer
-        ? attachedImagesRef.current.map(imageToDraftImage)
-        : (storedDraft?.images ?? []);
-      const restoredDraft = mergeSubmission(text, images, curText, curImages);
-      if (destinationDraftKey) api?.saveDraft(destinationDraftKey, restoredDraft);
-      if (!targetsCurrentComposer) return;
-      const restoredImages = images?.length
-        ? [
-            ...draftImagesToAttachedImages(images).slice(
-              0,
-              Math.max(0, MAX_ATTACHED_IMAGES - attachedImagesRef.current.length),
-            ),
-            ...attachedImagesRef.current,
-          ].slice(0, MAX_ATTACHED_IMAGES)
-        : attachedImagesRef.current;
-      // Session promotion can rekey this composer before React flushes the
-      // functional updates below, so update the imperative snapshot first.
-      valueRef.current = restoredDraft.value;
-      attachedImagesRef.current = restoredImages;
-      setValue((current) => {
-        const restored = mergeText(text, current);
-        valueRef.current = restored;
-        return restored;
-      });
-      setAtQuery(null);
-      setHistoryMenuOpen(false);
-      if (images?.length) {
-        setAttachedImages((current) => {
-          const available = Math.max(0, MAX_ATTACHED_IMAGES - current.length);
-          const restored = draftImagesToAttachedImages(images)
-            .slice(0, available);
-          const next = restored.length > 0 ? [...restored, ...current] : current;
-          attachedImagesRef.current = next;
-          return next;
-        });
-      }
-      requestAnimationFrame(() => {
-        const ta = textareaRef.current;
-        if (!ta) return;
-        ta.focus();
-        ta.setSelectionRange(ta.value.length, ta.value.length);
-        ta.style.height = "auto";
-        ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
-      });
-    },
     insertText(text: string) {
       const ta = textareaRef.current;
       if (!ta) {
@@ -1678,17 +1585,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setValue("");
     setAtQuery(null);
     setHistoryMenuOpen(false);
-    // 草稿清理由 aiti-draft-keeper 经 onChange("") 接管（draftsExternallyOwned 时）；
-    // keeper 未接管时回退 registry
-    if (draftKey) getDraftApi()?.clearDraft(draftKey);
-    if (draftKeyRef.current && draftKeyRef.current !== draftKey) getDraftApi()?.clearDraft(draftKeyRef.current);
+    // 草稿清空唯一路径 = aiti-draft-keeper 的 onChange("") 清空确认链（单一所有者）；
+    // core 不再直接 clearDraft（与清空确认链/promote 搬运交叠曾是竞态源头）
     clearImages();
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
     }
     historyNavIndexRef.current = null;
     historyNavTextRef.current = "";
-  }, [clearImages, draftKey]);
+  }, [clearImages]);
 
   /** 取回编辑中的 ↑/↓ 队列导航：把当前编辑放回队列原位，再取回相邻一条继续编辑
    * （与行内取回按钮完全同一链路）。导航范围为拍平后的队列 [steering…, followUp…]
