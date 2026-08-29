@@ -24,6 +24,10 @@ export async function register(): Promise<void> {
   // PI_SUBAGENT_CHILD=1 双条件后自动起桥写 bridge-registry →
   // pi-web 打开该子代理 session 时 attach（双向 IO，不独占）。
   process.env.PI_WEB_BRIDGE_AUTO = "1";
+  // 宿主声明（aiti-subagents-fork-upstream-core-plan §4.1/4.2）：fork 扩展在本进程
+  // 内以 pi-web 宿主身份运行——上游 TUI 载体面（widget/Fleet 状态栏/slash）按
+  // host caps 关闭，aiti-subagents 扩展是其完整平替（引擎照常提供 subagent 工具）。
+  process.env.PI_SUBAGENTS_HOST = "pi-web";
   console.log("[aiti] PI_WEB_BRIDGE_AUTO=1 injected — fork children will auto-bridge");
 
   // Extension framework: load + start extensions (registry on globalThis so
