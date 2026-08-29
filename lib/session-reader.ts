@@ -6,7 +6,7 @@ import {
 import { openSync, closeSync, existsSync, fstatSync, readFileSync, readSync, readdirSync, statSync, type Dirent } from "fs";
 import { homedir } from "node:os";
 import { readdir } from "fs/promises";
-import { isAbsolute, join, normalize as normalizePath, relative, resolve as resolvePath, sep } from "path";
+import { dirname, isAbsolute, join, normalize as normalizePath, relative, resolve as resolvePath, sep } from "path";
 import { writePrivateFileAtomicSync } from "./atomic-file.ts";
 import type { AgentMessage, ImageContent, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types.ts";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
@@ -38,6 +38,13 @@ export interface SessionFileInfo {
   messageCount: number;
   firstMessage: string;
   parentSessionPath?: string;
+  /**
+   * 外部子代理（pi-subagents 生态工件）：spawn 模式的子代理 session 落在
+   *   <sessions>/<cwdDir>/<parentDirName>/<runUuid>/run-N/session.jsonl
+   * header 无 parentSession 标记（它走环境变量传父子关系），由落盘路径推断。
+   * parentId = parentDirName 末段（父 session uuid）；profile 从 run 工件名 best-effort。
+   */
+  externalSubagent?: { profile?: string; parentId: string };
 }
 
 interface ListCacheEntry {
@@ -52,7 +59,7 @@ interface ListCacheFile {
   files: Record<string, ListCacheEntry>;
 }
 
-const LIST_CACHE_VERSION = 1;
+const LIST_CACHE_VERSION = 2; // v2: derive 新增 pi-subagents 嵌套工件路径推断（externalSubagent）
 const LIST_CACHE_FILENAME = "session_list_cache.json";
 const MAX_CONCURRENT_PARSE = 10;
 
@@ -115,6 +122,34 @@ export function deriveSessionFileInfo(filePath: string): SessionFileInfo | null 
     : !Number.isNaN(headerTime)
       ? new Date(headerTime)
       : statSync(filePath).mtime;
+  // pi-subagents 工件适配：spawn 模式的子代理 session 落在
+  //   <sessions>/<cwdDir>/<parentDirName>/<runUuid>/run-N/session.jsonl
+  // header 无 parentSession（它用环境变量传父子关系），从落盘路径推断父 session 文件；
+  // profile 从同目录 subagent-artifacts/<runUuid>_<profile>_transcript.jsonl best-effort 提取。
+  let parentSessionPath = header.parentSession;
+  let externalSubagent: SessionFileInfo["externalSubagent"];
+  if (!parentSessionPath) {
+    const m = filePath.match(/\/([^/]+)\/([^/]+)\/run-\d+\/session\.jsonl$/);
+    if (m) {
+      const candidate = `${filePath.slice(0, m.index)}/${m[1]}.jsonl`;
+      if (existsSync(candidate)) {
+        parentSessionPath = candidate;
+        // pi session 文件名 = <timestamp>_<uuid>，末段即父 session id（父文件被归档后仍可标记）
+        const parentId = m[1].includes("_") ? m[1].split("_").pop()! : m[1];
+        let profile: string | undefined;
+        try {
+          const artsDir = join(dirname(dirname(filePath)), "subagent-artifacts");
+          const hit = readdirSync(artsDir).find(
+            (f) => f.startsWith(`${m[2]}_`) && f.endsWith("_transcript.jsonl"),
+          );
+          if (hit) profile = hit.slice(m[2].length + 1, -"_transcript.jsonl".length) || undefined;
+        } catch {
+          // 无 artifacts 目录（清理过/老版本）— profile 留空
+        }
+        externalSubagent = { profile, parentId };
+      }
+    }
+  }
   return {
     path: filePath,
     id: header.id,
@@ -124,7 +159,8 @@ export function deriveSessionFileInfo(filePath: string): SessionFileInfo | null 
     modified,
     messageCount,
     firstMessage: firstMessage || "(no messages)",
-    parentSessionPath: header.parentSession,
+    parentSessionPath: parentSessionPath || undefined,
+    ...(externalSubagent ? { externalSubagent } : {}),
   };
 }
 
@@ -169,7 +205,9 @@ async function parseChangedFiles(files: string[]): Promise<SessionFileInfo[]> {
 
 /**
  * List session files under a sessions root (same layout the SDK scans:
- * <root>/<encoded-cwd>/*.jsonl).
+ * <root>/<encoded-cwd>/*.jsonl). Additionally discovers pi-subagents nested
+ * run artifacts: <root>/<cwdDir>/<parentDir>/<runUuid>/run-N/session.jsonl
+ * (bounded depth + fixed names — no arbitrary recursion).
  */
 export function listSessionFiles(root: string): string[] {
   const files: string[] = [];
@@ -188,6 +226,39 @@ export function listSessionFiles(root: string): string[] {
       }
     } catch {
       // unreadable dir — skip
+    }
+    // pi-subagents 嵌套工件：父目录名与父 session 文件同名；下两层固定
+    // <runUuid>/run-N/session.jsonl。只探固定名，不任意递归。
+    try {
+      for (const sub of readdirSync(dir, { withFileTypes: true })) {
+        if (!sub.isDirectory() && !sub.isSymbolicLink()) continue;
+        const subDir = join(dir, sub.name);
+        let runDirs: Dirent[];
+        try {
+          runDirs = readdirSync(subDir, { withFileTypes: true }).filter((e) => e.isDirectory());
+        } catch {
+          continue;
+        }
+        for (const run of runDirs) {
+          const runDir = join(subDir, run.name);
+          let ns: Dirent[];
+          try {
+            ns = readdirSync(runDir, { withFileTypes: true }).filter((e) => e.isDirectory() && /^run-\d+$/.test(e.name));
+          } catch {
+            continue;
+          }
+          for (const n of ns) {
+            const f = join(runDir, n.name, "session.jsonl");
+            try {
+              if (statSync(f).isFile()) files.push(f);
+            } catch {
+              // no session.jsonl here — skip
+            }
+          }
+        }
+      }
+    } catch {
+      // dir unreadable — skip nested probe
     }
   }
   return files;
@@ -397,6 +468,24 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
       try {
         subagent = readSubagentRun(readSessionRelationEntries(s.path), s.id, s.path);
       } catch { /* malformed or concurrently removed session */ }
+      // 外部子代理（pi-subagents 生态工件）：header 无 parentSession 且无 SUBAGENT_META_TYPE
+      // entry，落盘路径推断出的 parentSessionPath/externalSubagent 即父子关系真源。
+      // 构造等价 subagent relation：前端徽标/父子树/Agents 面板对它一视同仁。
+      if (!subagent && s.externalSubagent) {
+        subagent = {
+          sessionId: s.id,
+          sessionPath: s.path,
+          parentSessionId: originSessionId ?? s.externalSubagent.parentId,
+          parentToolCallId: "",
+          profile: s.externalSubagent.profile || "external",
+          description: s.name || (s.firstMessage !== "(no messages)" ? s.firstMessage.slice(0, 80) : "external subagent"),
+          task: "",
+          runInBackground: true,
+          // spawn 模式子代理落盘后不再变化：有实际对话内容视为完成，否则中断
+          status: s.messageCount > 1 ? "completed" as const : "interrupted" as const,
+          createdAt: s.created instanceof Date ? s.created.toISOString() : String(s.created),
+        };
+      }
     }
     return {
       path: s.path,

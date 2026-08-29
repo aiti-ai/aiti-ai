@@ -44,6 +44,8 @@ export interface CreateSubagentOptions {
   timeoutMs?: number;
   /** 中止信号：触发时停止子代理（标记 aborted + 关闭 wrapper） */
   signal?: AbortSignal;
+  /** 可选：子代理运行期控制回调（wrapper 就绪即调用，供运行中 steer/abort）。 */
+  onControl?: (control: SubagentControl) => void;
 }
 
 export interface SubagentResult {
@@ -56,6 +58,21 @@ export interface SubagentResult {
   status: "completed" | "error" | "timeout" | "aborted";
 }
 
+/**
+ * 子代理运行中控制句柄（在子代理 session 创建成功后立即回调给调用方，
+ * 用于运行中注入 steer / abort —— 对齐 pi-subagents 生态的 steer_subagent 语义）。
+ * 只在子代理 wrapper 运行期有效；完成后 steer 变 no-op（被 settle guard 拦截）。
+ */
+export interface SubagentControl {
+  sessionId: string;
+  /** 运行中注入一条导向消息（rpc-manager 的 type:"steer" 通道 → inner.steer）。 */
+  steer: (text: string) => Promise<void>;
+  /** 主动中止子代理（等价 signal abort，会标记 aborted 并返回当前输出）。 */
+  abort: () => void;
+  /** 当前是否仍在运行（settle 后 false）。 */
+  isRunning: () => boolean;
+}
+
 const SUBAGENT_TIMEOUT_DEFAULT = 10 * 60 * 1000;
 
 /**
@@ -63,7 +80,7 @@ const SUBAGENT_TIMEOUT_DEFAULT = 10 * 60 * 1000;
  * 返回子 session 的最终输出（会话已落盘，消息历史可查、统计共用）。
  */
 export async function createSubagentSession(options: CreateSubagentOptions): Promise<SubagentResult> {
-  const { parentSessionFile, cwd, agent, task, timeoutMs = SUBAGENT_TIMEOUT_DEFAULT, signal } = options;
+  const { parentSessionFile, cwd, agent, task, timeoutMs = SUBAGENT_TIMEOUT_DEFAULT, signal, onControl } = options;
 
   // 1. fork 空 session + parent 标记（同 /fork 从头分叉：SessionManager.create + newSession）
   const sm = SessionManager.create(cwd, undefined, { id: randomUUID() });
@@ -106,11 +123,32 @@ export async function createSubagentSession(options: CreateSubagentOptions): Pro
     let settled = false;
     let unsubscribe: () => void = () => {};
     let onAbort: (() => void) | null = null;
+    let liveWrapper: typeof wrapper | null = wrapper;
+
+    // 运行中控制句柄：wrapper 就绪即回调，供扩展侧实现 steer_subagent / background 模式。
+    // steer 走 rpc-manager type:"steer" 通道；abort 复用 signal 中止路径（标记 aborted + 返回当前输出）。
+    if (onControl) {
+      onControl({
+        sessionId: realSessionId,
+        steer: async (text: string) => {
+          if (settled || !liveWrapper) return;
+          // 不吞异常：让调用方（扩展 steerRun）能感知注入失败（如 session 正在替换/关闭）
+          await liveWrapper.send({ type: "steer", message: text });
+        },
+        abort: () => {
+          if (settled) return;
+          void wrapper.send({ type: "abort" }).catch(() => {});
+          finish("aborted", wrapper.inner.getLastAssistantText() ?? "");
+        },
+        isRunning: () => !settled,
+      });
+    }
 
     // 收尾：清 timer + 退订事件 + 关闭 wrapper（文件保留，仅移出活跃 registry，不积累）
     const teardown = () => {
       clearTimeout(timer);
       unsubscribe();
+      liveWrapper = null;
       if (onAbort && signal) signal.removeEventListener("abort", onAbort);
       void wrapper.shutdown("idle").catch((err) => {
         console.warn("[subagent] wrapper shutdown 失败:", err instanceof Error ? err.message : err);
