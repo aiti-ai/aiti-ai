@@ -26,6 +26,7 @@ import {
   createProjectCommandBashOperations,
   preferUserBashExtension,
 } from "./project-command-env";
+import { disableConflictingExtensions } from "./ext-conflicts";
 import { cacheSessionPath, invalidateSessionListCache, resolveSessionPath } from "./session-reader";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
@@ -2865,7 +2866,12 @@ export async function startRpcSession(
                 isBuiltInSubagentsEnabled,
               ),
             ],
-            extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(base)),
+            extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(base, {
+              // [aiti] 平台自带 fork（@aiti-ai/pi-subagents）即视为子代理功能已由替代实现提供：
+              // 屏蔽原版 pi-subagents 插件加载（同名 subagent 工具双注册冲突），不依赖内置开关。
+              supersededBy: (b) => b.extensions.some((e) =>
+                (e.sourceInfo?.source ?? "").includes("@aiti-ai/pi-subagents") || e.path.includes("@aiti-ai/pi-subagents")),
+            })),
           },
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });

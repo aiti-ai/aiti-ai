@@ -383,6 +383,13 @@ export interface PiWebExtension {
   icon?: string;
   /** 功能管理声明：扩展开放的、可被用户启用/禁用的功能清单（见 ExtFeature）。 */
   features?: ExtFeature[];
+  /**
+   * 冲突插件声明：列出与本扩展功能冲突、必须禁用的第三方扩展/包标识。
+   * 平台组装 SDK 扩展加载结果时，将 source 包名或路径 scoped 包名命中标识的
+   * 扩展整个移除（不初始化）。标识用 npm 包名（如 "pi-subagents"，scoped 写全
+   * "@scope/name"）。声明者自身在 pi-web 扩展体系，与 SDK 加载结果天然隔离。
+   */
+  conflicts?: string[];
 }
 
 /** 扩展来源根：本地(home) > 额外(env 中间层) > dev(dev-exts 开发层) > 内置(程序目录基线)。 */
