@@ -683,6 +683,12 @@ export function AppShell() {
     ) {
       return;
     }
+    // Cross-project switch. Cold start (currentProject === null) is the
+    // sidebar's first identity sync, not a user switch: restoring the
+    // remembered session here would yank a fresh composer (and its just
+    // recovered draft) away to a historical session on every reload, so the
+    // restore only fires when the user actually moves between projects.
+    const isUserProjectSwitch = currentProject !== null && currentProject !== newProject;
     // Close any session that belongs to a different project — it no longer
     // matches the selected project directory.
     const draftId = typeof crypto.randomUUID === "function"
@@ -702,7 +708,7 @@ export function AppShell() {
     setSystemTools(null);
     setSystemInfoLoading(false);
     setActiveTopPanel(null);
-    if (currentProject !== newProject) {
+    if (isUserProjectSwitch) {
       // File tabs are keyed by absolute path, so tabs opened in the previous
       // project must not linger. Same-project worktree switches keep them.
       setFileTabs([]);

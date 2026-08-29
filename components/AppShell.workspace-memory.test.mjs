@@ -35,8 +35,18 @@ test("all active-session transitions share one persistence effect", () => {
 });
 
 test("workspace restoration remains inside the cross-project branch", () => {
+  const body = callbackBody("handleCwdChange", "handleSelectSession");
   assert.match(
-    callbackBody("handleCwdChange", "handleSelectSession"),
-    /if \(currentProject !== newProject\) \{[\s\S]*?restoreWorkspaceContext\(newProject\);[\s\S]*?\}/,
+    body,
+    /if \(isUserProjectSwitch\) \{[\s\S]*?restoreWorkspaceContext\(newProject\);[\s\S]*?\}/,
   );
+});
+
+test("cold start never restores the remembered session (fresh-composer draft survives reload)", () => {
+  // currentProject === null means the sidebar's first identity sync, not a
+  // user switch — restoring there would yank the new-session composer (and
+  // its recovered draft) to a historical session on every reload.
+  const body = callbackBody("handleCwdChange", "handleSelectSession");
+  assert.match(body, /const isUserProjectSwitch = currentProject !== null && currentProject !== newProject;/);
+  assert.doesNotMatch(body, /if \(currentProject !== newProject\) \{[\s\S]*?restoreWorkspaceContext/);
 });
