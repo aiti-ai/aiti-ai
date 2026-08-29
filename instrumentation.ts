@@ -18,6 +18,12 @@ export async function register(): Promise<void> {
   const { installSubagentFactory } = await import("@/lib/subagent");
   installSubagentFactory();
 
+  // pi-web 启动类后端作为子代理执行器（external-job provider "pi-web-rpc"）：
+  // agent md 声明 runner={external-job, pi-web-rpc, options.backend} 即可让子代理
+  // 跑成真正的 pi-web 会话（pi RPC / claude-code ACP / qoder …），前端可打开 attach。
+  const { installPiWebJobProvider } = await import("@/lib/piweb-job-provider");
+  installPiWebJobProvider();
+
   // 子代理 RPC 通道（aiti-subagents-fork-upstream-core-plan §5.4）：
   // 本进程 env 注入 PI_WEB_BRIDGE_AUTO=1，经上游 spawn 的 env 透传链送达每个
   // fork 子代理；子代理内 ambient 加载的 web-bridge 扩展命中该标记 + 上游
