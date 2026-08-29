@@ -1286,6 +1286,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setAgentPhase({ kind: "waiting_model" });
         dispatchStream({ type: "start" });
         break;
+      case "model_select": {
+        // 外部后端模型感知：handle 检测到模型变化（CLI 切换/降级/init 回报）时
+        // 广播 pi 原生 ModelSelectEvent 形状 {model:{id,provider}, previousModel?, source}
+        // —— 即时回显，不等 agent_end 后的 loadSession。命中待生效切换目标时一并清掉
+        // 「下轮生效」提示。
+        const ms = (event as { model?: { id?: unknown; provider?: unknown } }).model;
+        if (
+          ms && typeof ms.id === "string" && ms.id && typeof ms.provider === "string" && ms.provider
+          && sessionIdRef.current
+        ) {
+          setCurrentModelOverride({ provider: ms.provider, modelId: ms.id });
+          setModelSwitchPending((pending) =>
+            pending && pending.provider === ms.provider && pending.modelId === ms.id ? null : pending);
+        }
+        break;
+      }
       case "agent_end":
         // One logical prompt can emit multiple agent_end events before retrying,
         // compacting, or continuing messages queued by extension handlers.
