@@ -12,6 +12,7 @@ import { getAssistantErrorMessage, isEmptyThinkingBlock } from "@/lib/message-di
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { isEditToolName } from "@/lib/tool-names";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
+import { ExtSlot } from "./ExtSlots";
 import type { WrittenFile } from "@/lib/turn-written-files";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import type { SubagentToolDetails } from "@/lib/subagent-extension";
@@ -523,6 +524,13 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
               pointerEvents: (hovered || forking) ? "auto" : "none",
               transition: "opacity 0.12s",
             }}>
+              {entryId && (
+                <ExtSlot
+                  name="userMessageActions"
+                  currentSession={null}
+                  extra={{ entryId }}
+                />
+              )}
               {canEditFromHere && (
                 <button
                   onClick={() => {
