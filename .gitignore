@@ -57,3 +57,6 @@ test-server.log
 .next-dev-console.log
 
 e2e_*.mjs
+
+# aiti 扩展运行时数据（aiti-channels 等），不入仓
+.pi/
