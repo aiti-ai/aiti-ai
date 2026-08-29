@@ -81,9 +81,9 @@ async function lastAssistantText(handle: SessionHandle): Promise<string | undefi
 }
 
 /** pi 后端：fork 空 session + rpc 会话 + local handle。 */
-async function startPiBackend(cwd: string): Promise<SessionHandle> {
+async function startPiBackend(cwd: string, parentSessionFile?: string): Promise<{ handle: SessionHandle; sessionFile: string }> {
   const sm = SessionManager.create(cwd, undefined, { id: randomUUID() });
-  sm.newSession();
+  sm.newSession(parentSessionFile ? { parentSession: parentSessionFile } : undefined);
   try {
     (sm as unknown as { _rewriteFile?: () => void })._rewriteFile?.();
     (sm as unknown as { flushed?: boolean }).flushed = true;
@@ -92,7 +92,24 @@ async function startPiBackend(cwd: string): Promise<SessionHandle> {
   if (!sessionFile) throw new Error("pi 后端启动失败：未生成 session 文件");
   const { startRpcSession } = await import("@/lib/rpc-manager");
   const { session: wrapper } = await startRpcSession(`__subagent__${randomUUID()}`, sessionFile, cwd, {});
-  return createLocalHandle(wrapper);
+  return { handle: createLocalHandle(wrapper), sessionFile };
+}
+
+/** 父 pi 会话 id（fork ExternalJobStartInput.sessionId）→ 会话文件路径（pi 后端
+ *  parentSession 标记——Fleet 树把子代理归到父会话下）。反查失败返回空（无标记）。
+ *  仅命中 rpc registry 的 live 会话；历史父会话走 resolveSessionPath。 */
+async function parentFileOf(parentSessionId: string | undefined): Promise<string | undefined> {
+  if (!parentSessionId) return undefined;
+  try {
+    const { getRpcSession } = await import("@/lib/rpc-manager");
+    const wrapper = getRpcSession(parentSessionId);
+    if (wrapper?.sessionFile) return wrapper.sessionFile;
+  } catch { /* rpc 层不可用 */ }
+  try {
+    const { resolveSessionPath } = await import("@/lib/session-reader");
+    return (await resolveSessionPath(parentSessionId)) ?? undefined;
+  } catch { /* 无法反查 */ }
+  return undefined;
 }
 
 /** agentKey → provider type（createSessionHandle 需要 providerType）。 */
@@ -134,13 +151,17 @@ export function installPiWebJobProvider(): void {
 
           void (async () => {
             try {
-              const handle =
-                backend === "pi"
-                  ? await startPiBackend(input.cwd || process.cwd())
-                  : await createSessionHandle({
-                      providerType: providerTypeFor(backend),
-                      cwd: input.cwd || process.cwd(),
-                    });
+              let handle: SessionHandle;
+              if (backend === "pi") {
+                const started = await startPiBackend(input.cwd || process.cwd(), await parentFileOf(input.sessionId));
+                handle = started.handle;
+                job.sessionFile = started.sessionFile; // 修复：此前从未赋值 → conversationUrl 死逻辑
+              } else {
+                handle = await createSessionHandle({
+                  providerType: providerTypeFor(backend),
+                  cwd: input.cwd || process.cwd(),
+                });
+              }
               job.handle = handle;
               // 非 pi 后端 handle 经统一包装入库（putHandle + session_backend_ready
               // 换绑监听——cursor/claude 的 chatId 在 init 帧才到手，换绑后
