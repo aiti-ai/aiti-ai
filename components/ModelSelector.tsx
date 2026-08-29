@@ -28,18 +28,18 @@ interface ModelSelectorProps {
 }
 
 const MODEL_FILTER_THRESHOLD = 8;
-const RECENT_MODELS_KEY = "pi-web:recent-models";
-const RECENT_MODELS_LIMIT = 5;
+export const RECENT_MODELS_KEY = "pi-web:recent-models";
+export const RECENT_MODELS_LIMIT = 5;
 const MODEL_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
-interface RecentModelEntry {
+export interface RecentModelEntry {
   provider: string;
   modelId: string;
   at: number;
 }
 
 /** 读最近使用的模型（localStorage 持久化；损坏/非法条目静默忽略） */
-function readRecentModels(): RecentModelEntry[] {
+export function readRecentModels(): RecentModelEntry[] {
   try {
     const parsed: unknown = JSON.parse(window.localStorage.getItem(RECENT_MODELS_KEY) || "[]");
     if (!Array.isArray(parsed)) return [];
@@ -54,7 +54,7 @@ function readRecentModels(): RecentModelEntry[] {
 }
 
 /** 记录一次模型使用：置顶 + 去重 + 截断（LRU） */
-function rememberRecentModel(provider: string, modelId: string) {
+export function rememberRecentModel(provider: string, modelId: string) {
   try {
     const rest = readRecentModels().filter((entry) => entry.provider !== provider || entry.modelId !== modelId);
     window.localStorage.setItem(RECENT_MODELS_KEY, JSON.stringify(
@@ -63,6 +63,27 @@ function rememberRecentModel(provider: string, modelId: string) {
   } catch {
     /* 隐私模式等 localStorage 不可用 → 静默降级为无最近使用 */
   }
+}
+
+/**
+ * 最近使用 → 面板分组条目：仅面板打开且非搜索态；按记录时间倒序；
+ * 只保留当前仍可用的模型（已删除/下架自动消失）；去重；截断 RECENT_MODELS_LIMIT。
+ * provider/modelId 分字段拼接作 Map key，从不切分——含 "/" 的模型 id 安全。
+ */
+export function pickRecentOptions(
+  recentList: RecentModelEntry[],
+  sortedOptions: ModelSelectorOption[],
+  opts: { open: boolean; filter: string },
+): ModelSelectorOption[] {
+  if (!opts.open || opts.filter.trim()) return [];
+  const byKey = new Map(sortedOptions.map((option) => [`${option.provider}/${option.modelId}`, option] as const));
+  const picked: ModelSelectorOption[] = [];
+  for (const entry of recentList) {
+    if (picked.length >= RECENT_MODELS_LIMIT) break;
+    const option = byKey.get(`${entry.provider}/${entry.modelId}`);
+    if (option && !picked.includes(option)) picked.push(option);
+  }
+  return picked;
 }
 
 function compareModelOptions(a: ModelSelectorOption, b: ModelSelectorOption): number {
@@ -116,17 +137,10 @@ export function ModelSelector({
   }, [open]);
 
   // 最近使用 → 按使用时间倒序，仅保留当前仍可用的模型（已删除/已下架的自动消失）
-  const recentOptions = useMemo(() => {
-    if (!open || filter.trim()) return [];
-    const byKey = new Map(sortedOptions.map((option) => [`${option.provider}/${option.modelId}`, option] as const));
-    const picked: ModelSelectorOption[] = [];
-    for (const entry of recentList) {
-      if (picked.length >= RECENT_MODELS_LIMIT) break;
-      const option = byKey.get(`${entry.provider}/${entry.modelId}`);
-      if (option && !picked.includes(option)) picked.push(option);
-    }
-    return picked;
-  }, [open, filter, sortedOptions, recentList]);
+  const recentOptions = useMemo(
+    () => pickRecentOptions(recentList, sortedOptions, { open, filter }),
+    [open, filter, sortedOptions, recentList],
+  );
   const modelsByProvider: { provider: string; options: ModelSelectorOption[] }[] = [];
 
   for (const option of filteredOptions) {
