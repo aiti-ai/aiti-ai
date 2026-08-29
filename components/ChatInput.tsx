@@ -1919,27 +1919,26 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const handleSend = useCallback(async () => {
     const msg = value.trim();
-    if (!msg && !attachedImages.length) return;
-    onAudioUnlock?.();
-    // Edited entry pulled out of the queue: sending puts it back at its
-    // original position instead of dispatching it as a new prompt. Re-queueing
-    // is a queue-only operation and must work even while the agent is
-    // streaming (it does not start a new prompt), so this branch runs before
-    // the isStreaming guard below.
+    // 取回编辑中：Enter 一律 = 放回队列原处（不改变顺序）；编辑被清空时放回原文，绝不丢条目。
+    // 放回是纯队列操作，流式中同样成立。
     const recalled = recalledRef.current;
+    if (!msg && !attachedImages.length && !(recalled && recalled.text)) return;
+    onAudioUnlock?.();
     if (recalled) {
       recalledRef.current = null;
       setRecalledVisible(false);
       if (onRequeueAt) {
-        const ok = await onRequeueAt(recalled.kind, recalled.index, msg, attachedImages.length ? attachedImages : recalled.images);
+        const ok = await onRequeueAt(recalled.kind, recalled.index, msg || recalled.text, attachedImages.length ? attachedImages : recalled.images);
         if (!ok) {
           // Failed to requeue: restore the edit state so the user can retry.
-          recalledRef.current = { ...recalled, text: msg };
+          recalledRef.current = { ...recalled, text: msg || recalled.text };
           setRecalledVisible(true);
         }
         clearInput();
         return;
       }
+      // 无 onRequeueAt 的宿主且编辑被清空：无事可做，不发出空消息
+      if (!msg && !attachedImages.length) return;
     }
     // 上游 v0.8.10：builtin 斜杠命令在流式期间也可运行（白名单内命令不打断 agent）
     const builtinAllowed = !isStreaming || canRunBuiltinSlashCommandWhileStreaming(msg);
@@ -2252,6 +2251,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // as a steer (interrupt now) instead of doing nothing.
     if (!msg && !attachedImages.length) {
       if (mode === "steer") {
+        // 取回编辑中（输入被清空）：不抢发队列首条——先按 Enter 放回当前编辑，避免孤儿化
+        if (recalledRef.current) return;
         const fu = queuedMessages?.followUp?.[0];
         if (fu && onQueueSteerSend) {
           onAudioUnlock?.();
@@ -2516,7 +2517,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
       if (sendShortcut) {
         e.preventDefault();
-        if (isStreaming && (onSteer || onFollowUp)) {
+        // 取回编辑中：Enter = 放回队列原处（等同「放回队列」按钮，不改顺序）——
+        // 流式期间也走 handleSend 的取回分支，而不是把文本追加成新 follow-up。
+        if (recalledRef.current) {
+          void handleSend();
+        } else if (isStreaming && (onSteer || onFollowUp)) {
           // Default Enter queues as a follow-up (the non-destructive action).
           // With an empty input, a second Enter promotes the first queued
           // follow-up to a steer (delivered at the next turn boundary instead
