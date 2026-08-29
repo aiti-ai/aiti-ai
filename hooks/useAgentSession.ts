@@ -307,6 +307,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
     session, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
+    newSessionBackend,
   } = opts;
 
   const isNew = session === null && newSessionCwd !== null;
@@ -2013,6 +2014,26 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
 
   const loadModels = useCallback(async (signal?: AbortSignal) => {
+    // ── 新建页 + 已选后端：模型目录来自 provider 静态 listModels（无会话即可取）。
+    //    缺静态目录（models:null）或失败 → 保留本地清单回退。
+    if (isNew && newSessionBackend && !sessionIdRef.current) {
+      try {
+        const res = await fetch(
+          apiUrl(`/api/session-backends?provider=${encodeURIComponent(newSessionBackend)}`),
+          signal ? { signal } : undefined,
+        );
+        const d = await res.json() as { models?: Array<{ id: string; provider: string; label?: string }> | null };
+        if (d.models && d.models.length > 0) {
+          const list = d.models.map((m) => ({ id: m.id, name: m.label ?? m.id, provider: m.provider }));
+          setModelList(list);
+          setModelNames(Object.fromEntries(list.map((m) => [m.id, m.name])));
+          setModelError(null);
+          setModelScopeWarnings([]);
+          setNewSessionDefaultModel({ provider: list[0].provider, modelId: list[0].id });
+          return;
+        }
+      } catch { /* 网络失败 → 落回本地清单 */ }
+    }
     // ── 后端会话（attach/spawn/extension）：模型清单来自 list_models 能力，
     //    而非本地 /api/models。切换复用现有 set_model 命令（adapter 映射）。
     if (!isNew && session?.agent && sessionIdRef.current) {
@@ -2056,7 +2077,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setThinkingLevel((pinned as ThinkingLevelOption | undefined) ?? "auto");
       }
     }
-  }, [isNew, newSessionCwd, session?.cwd, session?.agent]);
+  }, [isNew, newSessionCwd, session?.cwd, session?.agent, newSessionBackend]);
 
   /**
    * Pull fresh session stats (incl. contextUsage) from the agent process.

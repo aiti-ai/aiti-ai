@@ -91,6 +91,12 @@ export interface SessionProvider {
   readonly maxCapabilities: SessionCapabilities;
 
   /**
+   * 静态模型目录（无会话即可取，新建页选后端时给选择器供数据）。可选：
+   * 缺省表示目录绑定会话（如 ACP 需 session/new），前端回退本地清单。
+   */
+  listModels?(): Promise<Array<{ id: string; provider: string; label?: string }>>;
+
+  /**
    * Bring up a session handle. Implementations should be idempotent per
    * sessionFile where meaningful (returning the same live handle instead of
    * duplicating processes).

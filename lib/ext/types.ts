@@ -65,6 +65,8 @@ export interface ExtSessionProviderRegistration {
   label: string;
   /** 能力上限声明（fail-loud 契约，UI 据此显隐控件）。 */
   maxCapabilities: import("../session/types.ts").SessionCapabilities;
+  /** 静态模型目录（无会话即可取；新建页选后端时给选择器供数据）。可选，缺省回退本地清单。 */
+  listModels?(): Promise<Array<{ id: string; provider: string; label?: string }>>;
   createSession(options: {
     sessionFile?: string;
     cwd?: string;

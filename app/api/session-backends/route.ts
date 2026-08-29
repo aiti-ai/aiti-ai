@@ -16,6 +16,8 @@ export const runtime = "nodejs";
  *
  * GET  /api/session-backends
  *        → { providers: [{ type, label, maxCapabilities }] }
+ * GET  /api/session-backends?provider=<key>
+ *        → { ok, provider, models: [...] | null }   # 静态目录（无会话）
  *
  * POST /api/session-backends
  *      body: { providerType: string; sessionFile?: string; cwd?: string;
@@ -29,6 +31,22 @@ export const runtime = "nodejs";
 export async function GET(req: Request) {
   if (!isApiRequestAllowed(req as never)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  }
+  // ?provider=<key> → 静态模型目录（新建页选后端时给选择器供数据；无静态目录 →
+  // models:null，前端保留本地清单回退）。
+  const providerKey = new URL(req.url).searchParams.get("provider");
+  if (providerKey) {
+    const provider = getProvider(providerKey);
+    if (!provider) return NextResponse.json({ error: `unknown provider "${providerKey}"` }, { status: 404 });
+    if (!provider.listModels) return NextResponse.json({ ok: true, provider: providerKey, models: null });
+    try {
+      return NextResponse.json({ ok: true, provider: providerKey, models: await provider.listModels() });
+    } catch (e) {
+      return NextResponse.json(
+        { ok: false, provider: providerKey, error: e instanceof Error ? e.message : String(e) },
+        { status: 502 },
+      );
+    }
   }
   const infos = await Promise.all(
     listProviderInfos().map(async (p) => {
