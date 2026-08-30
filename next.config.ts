@@ -114,6 +114,21 @@ const nextConfig: NextConfig = {
     "192.168.*.*",
     ...deploymentDevOrigins(),
   ],
+  // basePath 模式下根路径友好跳转：访问 / 时 307 到 /dev/（否则是裸 404）。
+  // redirects 的 source 默认会被自动加上 basePath 前缀，必须显式 basePath:false
+  // 才能匹配真正的 /（destination 同样不加前缀，直接写完整目标）。根部署
+  // （basePath 为空）返回空数组，行为不变。查询串由 Next 自动透传。
+  async redirects() {
+    if (!basePath) return [];
+    return [
+      {
+        source: "/",
+        destination: `${basePath}/`,
+        permanent: false,
+        basePath: false,
+      },
+    ];
+  },
   async headers() {
     return [
       {
