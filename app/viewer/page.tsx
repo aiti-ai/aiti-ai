@@ -109,17 +109,26 @@ export default function ViewerPage() {
 function ViewerBody() {
   const { t } = useI18n();
 
-  // 初始：sessionStorage（刷新恢复）→ 第一个 tab；首次打开为空，等 opener postMessage 交接
-  const [tabs, setTabs] = useState<Tab[]>(() => {
+  // 初始 tabs 恒为空（hydration 首帧必须与服务端 HTML 一致）：sessionStorage 是客户端可变
+  // 数据，在 useState 初始化器里读取会让「刷新恢复」场景的 hydration 渲染长出 tab（服务端
+  // 渲染的是空态）→ React hydration mismatch。恢复挪到 mount 后 effect，语义不变。
+  const [tabs, setTabs] = useState<Tab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // 工作目录（深度遍历根 / git 徽标）：存储 cwd 优先；开文件夹 tab 时补齐
+  const [cwd, setCwd] = useState<string | undefined>(undefined);
+
+  // —— sessionStorage 恢复（刷新场景；mount 后一次，先于握手 effect 声明）——
+  // 有存储目标时握手 effect 会因 readStoredTarget() 命中而跳过，二者不叠加。
+  useEffect(() => {
     const init = readStoredTarget();
-    if (!init) return [];
-    return init.kind === "folder"
+    if (!init) return;
+    const restored = init.kind === "folder"
       ? openFolderTab([], { folderName: lastSeg(init.path), folderPath: init.path, tabId: `folder:${init.path}` })
       : openFileTab([], { fileName: lastSeg(init.path), filePath: init.path, sourceSessionId: null, tabId: `file:${init.path}` });
-  });
-  const [activeTabId, setActiveTabId] = useState<string | null>(() => (tabs[0]?.id ?? null));
-  // 工作目录（深度遍历根 / git 徽标）：存储 cwd 优先；开文件夹 tab 时补齐
-  const [cwd, setCwd] = useState<string | undefined>(() => readStoredTarget()?.cwd);
+    setTabs(restored);
+    setActiveTabId(restored[0]?.id ?? null);
+    if (init.cwd) setCwd(init.cwd);
+  }, []);
 
   const activeTab = tabs.find((tb) => tb.id === activeTabId) ?? null;
   // 兜底遍历根：URL 未带 cwd 时，文件用其父目录、文件夹用自身（‹ › 深度遍历 / git 徽标可用）
