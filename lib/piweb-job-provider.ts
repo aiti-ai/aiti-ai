@@ -45,6 +45,12 @@ interface PiWebJob {
   sessionFile?: string;
   handle?: SessionHandle;
   created: number;
+  /** 外部后端桩会话（身份记录，不记对话）：父会话文件/agent 名/任务/runId */
+  parentFile?: string;
+  agent?: string;
+  prompt?: string;
+  runId?: string;
+  cwd?: string;
 }
 
 const jobs = new Map<string, PiWebJob>();
@@ -142,15 +148,20 @@ export function installPiWebJobProvider(): void {
       mod.registerExternalJobProvider({
         name: PIWEB_JOB_PROVIDER_NAME,
 
-        start(input: { prompt: string; cwd: string; options?: { backend?: string }; sessionId?: string }) {
+        start(input: { prompt: string; cwd: string; agent?: string; runId?: string; options?: { backend?: string }; sessionId?: string }) {
           const backend = String(input.options?.backend || "pi").trim() || "pi";
           const id = `pwj_${randomUUID()}`;
           const job: PiWebJob = { id, backend, state: "queued", started: false, done: false, created: Date.now() };
+          job.agent = input.agent ? String(input.agent) : undefined;
+          job.prompt = input.prompt ? String(input.prompt) : undefined;
+          job.runId = input.runId ? String(input.runId) : undefined;
+          job.cwd = input.cwd ? String(input.cwd) : undefined;
           jobs.set(id, job);
           pruneJobs();
 
           void (async () => {
             try {
+              job.parentFile = input.sessionId ? await parentFileOf(input.sessionId) : undefined;
               let handle: SessionHandle;
               if (backend === "pi") {
                 const started = await startPiBackend(input.cwd || process.cwd(), await parentFileOf(input.sessionId));
@@ -242,4 +253,31 @@ async function finalize(job: PiWebJob, handle: SessionHandle): Promise<void> {
     job.state = "failed";
     job.error = e instanceof Error ? e.message : String(e);
   }
+  // 外部后端：落 pi 格式桩会话（只记身份不记对话）——core session-reader 按路径
+  // 推断 externalSubagent → 🤖 徽标/父子树/All Sessions 索引原生生效。
+  if (job.backend !== "pi") writeExternalSubagentStub(job);
+}
+
+/** 外部后端桩会话：<父会话目录>/<runId>/run-0/session.jsonl（core 认的布局，
+ *  profile 从 subagent-artifacts/<runId>_<agent>_transcript.jsonl 提取=agent 名）。
+ *  只写身份元数据（session_info name + 任务/完成指针两条），不转写对话消息。 */
+function writeExternalSubagentStub(job: PiWebJob): void {
+  try {
+    if (!job.parentFile || !job.runId) return;
+    const dir = path.join(path.dirname(job.parentFile), job.runId, "run-0");
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, "session.jsonl");
+    if (fs.existsSync(file)) return;
+    const now = new Date().toISOString();
+    const rid = () => randomUUID().slice(0, 8);
+    const task = String(job.prompt || "").replace(/\s+/g, " ").trim();
+    const lines = [
+      // header 不写 parentSession：路径推断产生 externalSubagent → kind=subagent（徽标/树/面板）
+      JSON.stringify({ type: "session", version: 3, id: randomUUID(), timestamp: now, cwd: job.cwd ?? "" }),
+      JSON.stringify({ type: "session_info", id: rid(), parentId: null, timestamp: now, name: `${job.agent || job.backend} · ${task.slice(0, 60)}` }),
+      JSON.stringify({ type: "message", id: rid(), parentId: null, timestamp: now, message: { role: "user", content: [{ type: "text", text: task.slice(0, 2000) }] } }),
+      JSON.stringify({ type: "message", id: rid(), parentId: null, timestamp: now, message: { role: "assistant", content: [{ type: "text", text: `✅ 外部子代理（${job.backend} 后端）已完成。完整对话在该后端原会话（All Sessions 对应 agent 分组打开）。` }] } }),
+    ];
+    fs.writeFileSync(file, lines.join("\n") + "\n");
+  } catch { /* 桩落盘失败不影响委派主流程 */ }
 }
