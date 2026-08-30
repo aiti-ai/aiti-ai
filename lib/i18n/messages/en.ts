@@ -185,6 +185,8 @@ export const enLocale: LocalePlugin = {
     "files.hidePanel": "Hide file panel",
     "files.showPanel": "Show file panel",
     "files.openFolder": "Open Folder",
+    "files.scrollLeft": "Scroll tabs left",
+    "files.scrollRight": "Scroll tabs right",
     "files.open": "Open",
     "files.openInPanel": "Open in panel",
     "files.switchFolder": "Switch folder",

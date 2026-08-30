@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { getFileIcon, FolderIcon } from "./FileIcons";
 import { useI18n } from "@/hooks/useI18n";
 import type { FileViewerDisplayMode, FileViewerState } from "@/lib/file-viewer-state";
+
+/** 点击左右滚动按钮时的滚动步长（px）。 */
+const SCROLL_STEP = 240;
 
 export interface Tab {
   id: string;
@@ -30,17 +33,88 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
   const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
 
+  // 横向滚动：tabs 溢出时两端显示左右滚动按钮。
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateScrollButtons = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    setCanScrollLeft(el.scrollLeft > 1);
+    setCanScrollRight(el.scrollLeft + el.clientWidth < el.scrollWidth - 1);
+  }, []);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    updateScrollButtons();
+    el.addEventListener("scroll", updateScrollButtons, { passive: true });
+    const ro = new ResizeObserver(updateScrollButtons);
+    ro.observe(el);
+    window.addEventListener("resize", updateScrollButtons);
+    return () => {
+      el.removeEventListener("scroll", updateScrollButtons);
+      ro.disconnect();
+      window.removeEventListener("resize", updateScrollButtons);
+    };
+  }, [updateScrollButtons, tabs]);
+
+  const scrollTabs = useCallback((dir: "left" | "right") => {
+    scrollRef.current?.scrollBy({
+      left: dir === "left" ? -SCROLL_STEP : SCROLL_STEP,
+      behavior: "smooth",
+    });
+  }, []);
+
+  const arrowButtonStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    flexShrink: 0,
+    width: 20, height: "100%",
+    padding: 0,
+    border: "none",
+    background: "transparent",
+    color: "var(--text-muted)",
+    cursor: "pointer",
+  };
+
   return (
     <div
       style={{
         display: "flex",
-        alignItems: "flex-end",
+        alignItems: "center",
         background: "var(--bg-panel)",
-        overflowX: "auto",
         flexShrink: 0,
         height: 36,
       }}
     >
+      {canScrollLeft && (
+        <button
+          type="button"
+          onClick={() => scrollTabs("left")}
+          title={t("files.scrollLeft")}
+          aria-label={t("files.scrollLeft")}
+          style={arrowButtonStyle}
+          onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+        </button>
+      )}
+      <div
+        ref={scrollRef}
+        style={{
+          display: "flex",
+          alignItems: "flex-end",
+          overflowX: "auto",
+          overflowY: "hidden",
+          flex: 1,
+          height: 36,
+          scrollbarWidth: "thin",
+        }}
+      >
       {tabs.map((tab) => {
         const isActive = tab.id === activeTabId;
         return (
@@ -117,6 +191,22 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
           </div>
         );
       })}
+      </div>
+      {canScrollRight && (
+        <button
+          type="button"
+          onClick={() => scrollTabs("right")}
+          title={t("files.scrollRight")}
+          aria-label={t("files.scrollRight")}
+          style={arrowButtonStyle}
+          onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }

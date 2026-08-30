@@ -185,6 +185,8 @@ export const zhCNLocale: LocalePlugin = {
     "files.hidePanel": "隐藏文件面板",
     "files.showPanel": "显示文件面板",
     "files.openFolder": "打开文件夹",
+    "files.scrollLeft": "向左滚动页签",
+    "files.scrollRight": "向右滚动页签",
     "files.open": "打开",
     "files.openInPanel": "在面板打开",
     "files.switchFolder": "切换文件夹",
