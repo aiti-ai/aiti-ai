@@ -31,6 +31,17 @@ type ViewerTarget = { path: string; kind: "file" | "folder"; cwd?: string; /** �
 /** pathPicker 槽稳定空快照（SSR/未注册时不接管；getServerSnapshot 必须返回缓存引用）。 */
 const PATH_PICKER_NO_ITEMS: import("@/lib/ext-ui-store").ExtUiItemRegistered[] = [];
 
+// 独立 viewer 窗口标志（模块层设置，早于 ExtSlotsProvider 加载任何扩展 client 的
+// register/sendReady）：
+//   1) 扩展 composer 动作（@ 提及 / @到新session / 选区 AI）走 postMessage 回 opener
+//      （forwardComposerToOpener），不在本窗内找聊天面；
+//   2) host-protocol 豁免：本窗虽带 opener，但不是 AI 弹窗——不向 opener 发
+//      dbg_ai_ready/元信息心跳，否则主面板 launcher 的孤儿弹窗清理会把本窗口直接
+//      close 掉（新窗口秒关）。
+if (typeof window !== "undefined") {
+  (window as unknown as { __aitiViewerStandalone?: boolean }).__aitiViewerStandalone = true;
+}
+
 function lastSeg(p: string): string {
   const s = p.replace(/[\\/]+$/, "");
   const i = Math.max(s.lastIndexOf("/"), s.lastIndexOf("\\"));
@@ -96,10 +107,6 @@ export default function ViewerPage() {
 
 function ViewerBody() {
   const { t } = useI18n();
-
-  // 独立窗口标志（供扩展 client 判定：@ 提及/@到新session 等动作走 postMessage 回 opener，
-  // 见 forwardComposerToOpener；不能只看 window.opener——主面板自身也可能带 opener 打开）
-  (window as unknown as { __aitiViewerStandalone?: boolean }).__aitiViewerStandalone = true;
 
   // 初始：sessionStorage（刷新恢复）→ 第一个 tab；首次打开为空，等 opener postMessage 交接
   const [tabs, setTabs] = useState<Tab[]>(() => {
