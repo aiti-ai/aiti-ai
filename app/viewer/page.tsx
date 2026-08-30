@@ -84,7 +84,8 @@ function persistTarget(target: { path: string; kind?: string; cwd?: string }): v
 //   { source: "aiti-viewer", type: "composer", action: "append" | "newSession" | "steer", text, cwd? }
 // 接收端在主面板 AppShell（origin 校验 + source/type 门）。无 opener（复制链接新开）时返回 false，
 // 调用方自行提示。
-export function forwardComposerToOpener(action: string, text: string, cwd?: string): boolean {
+// 注意：不可 export——Next page 文件只允许 default/特定字段导出，额外导出会让生产 build 的类型检查失败。
+function forwardComposerToOpener(action: string, text: string, cwd?: string): boolean {
   try {
     const opener = window.opener as Window | null;
     if (!opener || opener.closed) return false;
