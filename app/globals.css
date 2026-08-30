@@ -348,6 +348,30 @@ button.extension-widget-trigger:focus-visible {
   background: var(--text-dim);
 }
 
+/* 文件/文件夹标签条（TabBar 滚动容器）：超细浅色滚动条。
+   注意不能在该元素上设 scrollbar-width/scrollbar-color——设了会让 Chrome 121+
+   忽略 ::-webkit-scrollbar 定制、退回原生粗滚动条，故 Firefox 规则用 @supports 隔离。 */
+.tabbar-scroll::-webkit-scrollbar {
+  height: 3px;
+}
+.tabbar-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.tabbar-scroll::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 2px;
+}
+.tabbar-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+@supports not selector(::-webkit-scrollbar) {
+  /* Firefox only */
+  .tabbar-scroll {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+}
+
 :root {
   --font-mono: var(--font-noto-mono), 'JetBrains Mono', 'Fira Code', 'Consolas', ui-monospace, 'PingFang SC', 'Microsoft YaHei', monospace;
 }

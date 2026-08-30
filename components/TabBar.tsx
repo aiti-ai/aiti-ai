@@ -123,6 +123,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
       )}
       <div
         ref={scrollRef}
+        className="tabbar-scroll"
         style={{
           display: "flex",
           alignItems: "flex-end",
@@ -130,7 +131,8 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
           overflowY: "hidden",
           flex: 1,
           height: 36,
-          scrollbarWidth: "thin",
+          /* 滚动条样式走 globals.css .tabbar-scroll（超细浅色）；勿在此设 scrollbarWidth——
+             Chrome 121+ 设了 scrollbar-width 会禁用 ::-webkit-scrollbar 定制退回原生粗滚动条 */
         }}
       >
       {tabs.map((tab) => {
