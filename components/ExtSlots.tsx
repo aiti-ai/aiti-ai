@@ -17,9 +17,11 @@ import { apiUrl } from "@/lib/base-path";
 import { getHostApi, type OpenFileOptions, type OpenFolderOptions } from "@/lib/ext/host-api";
 import { registerComposerEnhancement } from "@/lib/composer/bus";
 import type { ComposerEnhancement, RecoveryItemsProvider } from "@/lib/composer/types";
+import type { QueuePanelController } from "@/lib/composer/queue-api";
 import { registerRecoveryItemsProvider } from "@/lib/composer/recovery";
 import { registerDraftApi } from "@/lib/composer/draft-api";
 import type { DraftApi } from "@/lib/composer/draft-api";
+import { registerQueuePanelController, getQueuePanelController } from "@/lib/composer/queue-api";
 import type { ExtSlotName, ExtSlotProps, ParagraphClickHandler, SessionForkGate } from "@/lib/ext/types";
 import { registerSessionForkGate as registerSessionForkGateBus } from "@/lib/ext/fork-gates";
 import {
@@ -120,6 +122,11 @@ export interface ExtClientContext {
   registerRecoveryItemsProvider?(provider: RecoveryItemsProvider): () => void;
   /** 注册草稿存储 API（core 经 getDraftApi() 访问；草稿功能全部归 keeper）。 */
   registerDraftApi?(api: DraftApi): void;
+  /** 注册队列面板控制器（ext → core 反向通道：core 恢复/导入解析后调用 expand）。
+   *  返回 disposer。无接管时 core 兜底 banner（无折叠态），expand 为 no-op。 */
+  registerQueuePanelController?(ctrl: QueuePanelController | null): () => void;
+  /** 同步读当前队列面板控制器（无接管返回 null）。 */
+  getQueuePanelController?(): QueuePanelController | null;
   /** 触发宿主侧扩展重载（拉新 manifest + 图对账 + 反卷 materialize）——扩展管理器场景
    *  （服务端热重载后刷新已安装/启停变更；optional 兼容旧宿主）。opts.resyncOnly：
    *  跳过 POST /reload 全量重载（调用方已在服务端重载过，如 extman ops），只补拉
@@ -300,6 +307,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     restoreComposerDraft: (draft) => getHostApi().restoreComposerDraft?.(draft) ?? false,
     registerRecoveryItemsProvider: (provider) => registerRecoveryItemsProvider(provider),
     registerDraftApi: (api) => registerDraftApi(api),
+    registerQueuePanelController: (ctrl) => registerQueuePanelController(ctrl),
+    getQueuePanelController: () => getQueuePanelController(),
     reloadExtensions: (opts?: { resyncOnly?: boolean }) => reloadExtensions(opts),
     extLoaderState: () => ({ materialized: materializedIds(), prefetched: prefetchedIds() }),
   };

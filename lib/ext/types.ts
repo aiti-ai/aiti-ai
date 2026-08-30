@@ -11,6 +11,7 @@
  */
 import type { ReactNode } from "react";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { QueuePanelProps } from "@/lib/composer/queue-api";
 
 /**
  * 扩展功能声明（功能管理）：扩展可把自己开放的「功能点」（如注入 agent 会话的
@@ -250,6 +251,8 @@ export type ExtSlotName =
   | "newSessionBackendBar" // 新会话欢迎页 Backend 选择器旁（各后端扩展自行渲染管理入口，如 ACP agent 管理）
   | "sessionStats"   // 会话统计下拉内扩展条目行（aiti-ai-usage：报表入口；aiti-ai-input：其他辅助 AI 用量统计行）
   | "composerTools"  // 输入框下方控制行（压缩/停止/导入 queue 同排；aiti-git-trace：时间线主入口等）
+  | "queuePanel"    // 队列面板插槽（去 fork 化 P3：aiti-queue-keeper 完整队列 UI 接管；
+                    //   无接管时 core 兜底 banner 渲染，见 docs/pi-web-queue-cluster-ext-plan.md）
   ;
 
 /**
@@ -270,9 +273,16 @@ export type ExtSlotName =
  * 加载正确性仍由 loader 保证。
  */
 // 空接口是 module augmentation（declare module "pi-web-ext/ext"）的合并锚点——
-// DSH SlotMap 同款设计，必须有可合并的空类型。
+// DSH SlotMap 同款设计，必须有可合并的空类型。宿主已声明的插槽契约（如
+// queuePanel）直接合并进来，扩展侧经 augmentation 增补；两边的实现都按
+// 结构契约消费（扩展在仓外，见 aiti-queue-keeper/client/src/types.ts）。
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
-export interface ExtSlotContractMap {}
+export interface ExtSlotContractMap {
+  /** 队列面板（去 fork 化 P3）：core → ext 的 live/trash/actions 原语。
+   *  契约定义在 lib/composer/queue-api.ts（含下载导出/导入解析单实现）；
+   *  扩展 aiti-queue-keeper 经本插槽渲染完整队列 UI。 */
+  queuePanel: { props: QueuePanelProps };
+}
 
 /** 从契约取插槽 props 类型（未声明 → 宽松对象）。 */
 export type ExtSlotProps<S extends ExtSlotName> =
@@ -362,6 +372,8 @@ export const EXT_PROVIDES = {
   /** 外部 agent 会话源：声明后 session-manager 自动发现本扩展，进程内直调其
    *  api 钩子拉取 agent-source/manifest|list|session 归一化会话数据。 */
   sessionAgentSource: "session-agent-source",
+  /** 队列面板：声明后 ChatInput 隐藏兜底 banner，完整队列 UI 由扩展经 queuePanel 插槽渲染。 */
+  queuePanel: "queue-panel",
 } as const;
 
 export type ExtProvidesName = (typeof EXT_PROVIDES)[keyof typeof EXT_PROVIDES];

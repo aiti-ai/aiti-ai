@@ -100,8 +100,29 @@ draft-store + ChatWindow 扫描/静默恢复移入扩展后，依赖核对：
 ## 6. 明确不做（v0.1 范围外）
 
 - 光标/选区细粒度事件、IME composition 事件（尚无消费者）
-- 队列容器契约（P3 再设计）
+- 队列容器契约（P3 再设计）→ **已设计并落地，见下节 §7**
 - 多 composer 实例并存（当前单实例假设，与现状一致）
+
+---
+
+## 7. 队列面板契约（P3，2026-08-30 落地）
+
+队列增强 UI 外迁为 `aiti-queue-keeper`（去 fork 化 P3，执行计划见 aiti-ai
+`docs/pi-web-queue-cluster-ext-plan.md`）。契约实现在 `lib/composer/queue-api.ts`：
+
+- `QueuePanelProps`（core → ext 经 `queuePanel` 插槽 extra 传入）：live 投影
+  （QueueEntryView，脱 base64）/ trash / queueCount / trashCount / actions / isMobile /
+  isCoarsePointer；类型收进 `ExtSlotContractMap.queuePanel`（宿主侧类型级文档）
+- `QueuePanelActions`（ext 可调原语，全部转发 core RPC 处理器）：move/convert/
+  recallOne（返回文本；core 同时置 edit-intent——intent 留核、ext 只触发）/requeueAt/
+  remove/restore/purge/recallAll/steerSend/exportAll/downloadExport/parseImport/
+  importEntries/stageImport（下载导出/导入解析 core 单实现，扩展零逻辑）
+- `QueuePanelController`（ext → core 反向通道，`ctx.registerQueuePanelController`）：
+  expand()——core 恢复流（ChatWindow 恢复对话框处理完 / useAgentSession continue
+  queue）经 ChatInputHandle.expandQueue → controller 展开（无接管 no-op，兜底无折叠态）
+- 接管判定：ChatInput 按 queuePanel 插槽实际项（`useExtSlotItems`）而非仅 provides——
+  feature 关闭/卸载/异步未加载均即时回落上游同形兑底 banner
+- 数据零迁移：sidecar/trash 全在 core（rpc-manager），扩展零自有存储
 
 ---
 

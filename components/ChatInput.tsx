@@ -2,7 +2,8 @@
 
 import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, useSyncExternalStore, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
-import type { QueueEntry, QueueEntryInput, QueueTrashItem } from "@/lib/queue-store";
+import type { QueueTrashItem } from "@/lib/queue-store";
+import type { QueueEntry, QueueEntryInput } from "@/lib/composer/queue-api";
 import { downloadQueueExport, parseQueueImport } from "@/lib/queue-export";
 import type { SkillsResponse } from "@/lib/api-types";
 import type { TextContent, UserMessage } from "@/lib/types";
@@ -11,7 +12,7 @@ import {
   type DraftSnapshot as ChatDraft,
 } from "@/lib/composer/draft-api";
 import { apiUrl } from "@/lib/base-path";
-import { useChatHooks, ExtSlot, registerChatSend } from "@/components/ExtSlots";
+import { useChatHooks, ExtSlot, registerChatSend, useExtSlotItems } from "@/components/ExtSlots";
 
 import {
   MAX_ATTACHED_IMAGE_BYTES,
@@ -26,6 +27,8 @@ import {
   emitComposerChange, emitComposerKeyChange, runComposerSubmit,
   setComposerWriter, subscribeComposerEnhancers, getComposerEnhancersVersion,
 } from "@/lib/composer/bus";
+import type { QueuePanelActions, QueuePanelProps } from "@/lib/composer/queue-api";
+import { getQueuePanelController } from "@/lib/composer/queue-api";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile, useIsCompact, useIsCoarsePointer } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
@@ -483,137 +486,14 @@ function revokeImagePreview(image: AttachedImage): void {
   }
 }
 
-function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove, onSteerSend, onConvertToFollowUp, onDragStart, onDragOver, onDrop, dragging, onTouchMoveTo }: {
-  kind: "steer" | "follow-up";
-  text: string;
-  index: number;
-  total: number;
-  onMove?: (dir: -1 | 1) => void;
-  onRecall?: () => void;
-  onRemove?: () => void;
-  /** Follow-up rows: dispatch this message as a steer (interrupt now). */
-  onSteerSend?: () => void;
-  /** Steer rows: convert this message to a follow-up (waits for the next turn). */
-  onConvertToFollowUp?: () => void;
-  onDragStart?: (index: number) => void;
-  onDragOver?: (index: number) => void;
-  onDrop?: (targetIndex: number) => void;
-  dragging?: boolean;
-  /** Touch drag on mobile: move this row to the given target index. */
-  onTouchMoveTo?: (targetIndex: number) => void;
-}) {
-  const { t } = useI18n();
-  const canUp = onMove && index > 0;
-  const canDown = onMove && index < total - 1;
-  // Disable the HTML5 drag source on coarse-pointer (touch) devices: they get
-  // the dedicated touch-drag implementation below instead.
-  const isCoarsePointer = useIsCoarsePointer();
-  const iconBtn: React.CSSProperties = {
-    display: "inline-flex",
-    alignItems: "center",
-    justifyContent: "center",
-    width: 20,
-    height: 20,
-    padding: 0,
-    border: "none",
-    borderRadius: 5,
-    background: "transparent",
-    color: "var(--text-dim)",
-    cursor: "pointer",
-    flexShrink: 0,
-  };
-  // Touch drag state (mobile). touchOverEl is the row currently highlighted as
-  // the drop target; styled via direct DOM writes to avoid per-frame re-renders.
-  const touchDragRef = useRef<{ y: number; moved: boolean } | null>(null);
-  const touchOverElRef = useRef<HTMLElement | null>(null);
-  const clearTouchOver = () => {
-    if (touchOverElRef.current) {
-      touchOverElRef.current.style.background = "";
-      touchOverElRef.current.style.borderRadius = "";
-      touchOverElRef.current = null;
-    }
-  };
-  const handleTouchStart = (e: React.TouchEvent) => {
-    // Buttons are taps, not drags; stop propagation so the bottom-panel swipe
-    // gesture (full → queueHidden → minimal) does not fight the row drag.
-    if (e.target instanceof Element && e.target.closest("button")) return;
-    e.stopPropagation();
-    touchDragRef.current = { y: e.touches[0].clientY, moved: false };
-  };
-  const handleTouchMove = (e: React.TouchEvent) => {
-    const d = touchDragRef.current;
-    if (!d) return;
-    const t = e.touches[0];
-    const dy = t.clientY - d.y;
-    if (!d.moved) {
-      if (Math.abs(dy) < 8) return;
-      d.moved = true;
-      const el = e.currentTarget as HTMLElement;
-      el.style.opacity = "0.45";
-      el.style.background = "color-mix(in srgb, var(--accent) 8%, transparent)";
-      el.style.borderRadius = "6px";
-    }
-    // No preventDefault here: React registers touchmove as a passive listener
-    // (calling preventDefault would warn and be a no-op). Scrolling is already
-    // prevented by touch-action: none on the row.
-    e.stopPropagation();
-    const el = document.elementFromPoint(t.clientX, t.clientY);
-    const row = el?.closest?.("[data-queue-row]");
-    if (row && row !== e.currentTarget) {
-      const target = row as HTMLElement;
-      if (touchOverElRef.current !== target) {
-        clearTouchOver();
-        touchOverElRef.current = target;
-        target.style.background = "color-mix(in srgb, var(--accent) 14%, transparent)";
-        target.style.borderRadius = "6px";
-      }
-    } else if (touchOverElRef.current) {
-      clearTouchOver();
-    }
-  };
-  const handleTouchEnd = (e: React.TouchEvent) => {
-    const d = touchDragRef.current;
-    touchDragRef.current = null;
-    const rowEl = e.currentTarget as HTMLElement;
-    rowEl.style.opacity = "";
-    rowEl.style.background = "";
-    rowEl.style.borderRadius = "";
-    clearTouchOver();
-    if (!d?.moved) return;
-    e.stopPropagation();
-    const el = document.elementFromPoint(e.changedTouches[0].clientX, e.changedTouches[0].clientY);
-    const row = el?.closest?.("[data-queue-row]") as HTMLElement | null;
-    if (!row || row === e.currentTarget) return;
-    const to = Number(row.dataset.queueIndex);
-    if (!Number.isNaN(to) && to !== index && onTouchMoveTo) onTouchMoveTo(to);
-  };
+/** 队列行只读兜底（上游同形：计数 + Recall all + 只读行；完整行操作 UI 在
+ *  aiti-queue-keeper 扩展的 queuePanel 插槽渲染——去 fork 化 P3，
+ *  docs/pi-web-queue-cluster-ext-plan.md）。
+ *  无接管（扩展未装/禁用）时 core 渲染本行 + Recall all + 计数兜底 banner。 */
+function FallbackQueueRow({ kind, text }: { kind: "steer" | "follow-up"; text: string }) {
   return (
     <div
       title={text}
-      data-queue-row="1"
-      data-queue-kind={kind}
-      data-queue-index={index}
-      draggable={Boolean(onDragStart) && !isCoarsePointer}
-      onDragStart={(e) => {
-        onDragStart?.(index);
-        e.dataTransfer.effectAllowed = "move";
-        try { e.dataTransfer.setData("text/plain", String(index)); } catch { /* ignore */ }
-      }}
-      onDragOver={(e) => {
-        if (!onDragOver) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        onDragOver(index);
-      }}
-      onDrop={(e) => {
-        if (!onDrop) return;
-        e.preventDefault();
-        onDrop(index);
-      }}
-      onTouchStart={handleTouchStart}
-      onTouchMove={handleTouchMove}
-      onTouchEnd={handleTouchEnd}
-      onTouchCancel={handleTouchEnd}
       style={{
         display: "flex",
         alignItems: "center",
@@ -622,16 +502,6 @@ function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove
         fontSize: 12,
         color: "var(--text-muted)",
         minWidth: 0,
-        touchAction: "none",
-        // Long-press must start the drag, not the browser's native text
-        // selection / iOS callout (touchAction alone does not prevent it).
-        userSelect: "none",
-        WebkitUserSelect: "none",
-        WebkitTouchCallout: "none",
-        cursor: onDragStart && !isCoarsePointer ? "grab" : "default",
-        ...(dragging
-          ? { opacity: 0.45, background: "color-mix(in srgb, var(--accent) 8%, transparent)", borderRadius: 6 }
-          : {}),
       }}
     >
       <span
@@ -647,108 +517,7 @@ function QueuedMessageRow({ kind, text, index, total, onMove, onRecall, onRemove
       >
         {kind}
       </span>
-      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{text}</span>
-      {onMove && total > 1 && (
-        <span style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-          <button
-            title={t("chat.queueMoveUp")}
-            aria-label="queueMoveUp"
-            disabled={!canUp}
-            onClick={() => onMove(-1)}
-            style={{ ...iconBtn, cursor: canUp ? "pointer" : "default", opacity: canUp ? 1 : 0.3 }}
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="18 15 12 9 6 15" />
-            </svg>
-          </button>
-          <button
-            title={t("chat.queueMoveDown")}
-            aria-label="queueMoveDown"
-            disabled={!canDown}
-            onClick={() => onMove(1)}
-            style={{ ...iconBtn, cursor: canDown ? "pointer" : "default", opacity: canDown ? 1 : 0.3 }}
-          >
-            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-        </span>
-      )}
-      {onSteerSend && kind === "follow-up" && (
-        <button
-          title={t("chat.queueSteerSend")}
-          aria-label="queueSteerSend"
-          onClick={onSteerSend}
-          style={{ ...iconBtn, color: "rgba(180,130,0,1)" }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(234,179,8,0.12)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-          }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M5 12h14" /><polyline points="12 5 19 12 12 19" />
-          </svg>
-        </button>
-      )}
-      {onConvertToFollowUp && kind === "steer" && (
-        <button
-          title={t("chat.queueToFollowUp")}
-          aria-label="queueToFollowUp"
-          onClick={onConvertToFollowUp}
-          style={{ ...iconBtn, color: "rgba(129,140,248,1)" }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.background = "rgba(129,140,248,0.14)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.background = "transparent";
-          }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="8 3 4 7 8 11" />
-            <polyline points="16 13 20 17 16 21" />
-            <line x1="4" y1="7" x2="20" y2="7" />
-            <line x1="20" y1="17" x2="4" y2="17" />
-          </svg>
-        </button>
-      )}
-      {onRecall && (
-        <button
-          title={t("chat.queueRecallOne")}
-          aria-label="queueRecallOne"
-          onClick={onRecall}
-          style={iconBtn}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="9 14 4 9 9 4" />
-            <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
-          </svg>
-        </button>
-      )}
-      {onRemove && (
-        <button
-          title={t("chat.queueRemove")}
-          aria-label="queueRemoveOne"
-          onClick={onRemove}
-          style={{ ...iconBtn, color: "var(--text-dim)" }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.color = "#ef4444";
-            e.currentTarget.style.background = "rgba(239,68,68,0.12)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.color = "var(--text-dim)";
-            e.currentTarget.style.background = "transparent";
-          }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="3 6 5 6 21 6" />
-            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-            <line x1="10" y1="11" x2="10" y2="17" />
-            <line x1="14" y1="11" x2="14" y2="17" />
-          </svg>
-        </button>
-      )}
+      <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{text}</span>
     </div>
   );
 }
@@ -979,6 +748,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
+  const isCoarsePointer = useIsCoarsePointer();
   const [value, setValue] = useState("");
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -1034,7 +804,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const controlsMenuRef = useRef<HTMLDivElement>(null);
   const historyMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const queueImportFileRef = useRef<HTMLInputElement>(null);
   // Cycle the bottom panels (queue banner + input + toolbar) to leave more
   // room for the conversation during long runs. Persisted so the choice
   // survives reloads. Clicking the thin BottomModeBar cycles on every screen
@@ -1125,125 +894,63 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // No wrapping: hitting either end keeps that state.
     cycleBottomMode(dy > 0 ? 1 : -1, false);
   }, [isMobile, cycleBottomMode]);
-  // Queue area collapse: null = expanded by default; the user can collapse
-  // it manually and that choice is respected — the queue is NEVER auto-hidden
-  // (auto-hide made the panel disappear right after the user edited it).
-  const [queueCollapsedUser, setQueueCollapsedUser] = useState<boolean | null>(null);
-  const [queueNotice, setQueueNotice] = useState<{ text: string; ok: boolean } | null>(null);
-  const queueNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const showQueueNotice = useCallback((text: string, ok: boolean) => {
-    setQueueNotice({ text, ok });
-    if (queueNoticeTimerRef.current) clearTimeout(queueNoticeTimerRef.current);
-    queueNoticeTimerRef.current = setTimeout(() => setQueueNotice(null), 3000);
-  }, []);
+  // ── 队列面板（aiti-queue-keeper 扩展经 queuePanel 插槽渲染；core 只留计数与 edit-intent）──
   const queueCount = (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0);
   const trashCount = queueTrash?.length ?? 0;
-  const queueCollapsed = queueCollapsedUser ?? false;
-  const toggleQueueCollapsed = useCallback(() => {
-    setQueueCollapsedUser((prev) => !(prev ?? false));
+  // 附件过大提示（core 专属轻量通知；队列面板的通知已随 UI 外迁到扩展）
+  const [fileNotice, setFileNotice] = useState<{ text: string; ok: boolean } | null>(null);
+  const fileNoticeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const showFileNotice = useCallback((text: string, ok: boolean) => {
+    setFileNotice({ text, ok });
+    if (fileNoticeTimerRef.current) clearTimeout(fileNoticeTimerRef.current);
+    fileNoticeTimerRef.current = setTimeout(() => setFileNotice(null), 3000);
   }, []);
-  const handleMoveQueue = useCallback(async (kind: "steer" | "followUp", index: number, dir: -1 | 1) => {
-    if (!onMoveQueue) return;
-    await onMoveQueue(kind, index, index + dir);
-  }, [onMoveQueue]);
-  // Soft-deleted entry waiting for the undo toast (trash bin is the fallback
-  // when the toast window passes or a newer delete replaces it).
-  const [lastDeleted, setLastDeleted] = useState<QueueTrashItem & { kind: "steer" | "followUp"; index: number } | null>(null);
-  const undoHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [trashOpen, setTrashOpen] = useState(false);
-  const [purgeConfirmId, setPurgeConfirmId] = useState<string | null>(null);
-  const [purgeAllConfirm, setPurgeAllConfirm] = useState(false);
-  const trashButtonRef = useRef<HTMLButtonElement>(null);
-  const trashPanelRef = useRef<HTMLDivElement>(null);
-  const handleRemoveQueueItem = useCallback(async (
-    kind: "steer" | "followUp",
-    index: number,
-    opts?: { permanent?: boolean },
-  ) => {
-    if (!onRemoveQueueItem) return null;
-    const removed = await onRemoveQueueItem(kind, index, opts);
-    if (removed && !opts?.permanent) {
-      setLastDeleted({ ...removed, kind, index });
-      if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
-      undoHideTimerRef.current = setTimeout(() => setLastDeleted(null), 8000);
-    }
-    return removed;
-  }, [onRemoveQueueItem]);
-  const handleUndoDelete = useCallback(async () => {
-    const item = lastDeleted;
-    if (!item || !onRestoreQueueItem) return;
-    if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
-    setLastDeleted(null);
-    const ok = await onRestoreQueueItem(item.id, item.index);
-    if (!ok) {
-      // Restore failed — put the toast back so the user can retry (or fall
-      // back to the trash bin, where the entry still sits).
-      setLastDeleted(item);
-      if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
-      undoHideTimerRef.current = setTimeout(() => setLastDeleted(null), 8000);
-    } else {
-      setQueueCollapsedUser(null);
-    }
-  }, [lastDeleted, onRestoreQueueItem]);
-  const handleRestoreTrashItem = useCallback(async (item: QueueTrashItem) => {
-    if (!onRestoreQueueItem) return;
-    const ok = await onRestoreQueueItem(item.id);
-    if (ok) {
-      // The restored entry is back in the live queue — drop any pending undo
-      // toast that still points at it.
-      setLastDeleted((cur) => (cur && cur.id === item.id ? null : cur));
-      setQueueCollapsedUser(null);
-      showQueueNotice(t("chat.queueTrashRestored", { count: "1" }), true);
-    }
-  }, [onRestoreQueueItem, showQueueNotice, t]);
-  const handleRestoreAllTrash = useCallback(async () => {
-    if (!onRestoreQueueItem) return;
-    const items = queueTrash ?? [];
-    let ok = true;
-    for (const item of items) {
-      const r = await onRestoreQueueItem(item.id);
-      if (!r) ok = false;
-    }
-    if (ok && items.length > 0) {
-      setLastDeleted(null);
-      if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
-      setQueueCollapsedUser(null);
-      showQueueNotice(t("chat.queueTrashRestored", { count: String(items.length) }), true);
-    }
-  }, [onRestoreQueueItem, queueTrash, showQueueNotice, t]);
-  const handlePurgeTrashItem = useCallback(async (id: string) => {
-    if (!onPurgeQueueTrash) return;
-    const ok = await onPurgeQueueTrash([id]);
-    if (ok) {
-      setLastDeleted((cur) => (cur && cur.id === id ? null : cur));
-      showQueueNotice(t("chat.queueTrashPurged", { count: "1" }), true);
-    }
-    setPurgeConfirmId(null);
-  }, [onPurgeQueueTrash, showQueueNotice, t]);
-  const handlePurgeAllTrash = useCallback(async () => {
-    if (!onPurgeQueueTrash) return;
-    const count = trashCount;
-    const ok = await onPurgeQueueTrash();
-    if (ok) {
-      setLastDeleted(null);
-      if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
-      showQueueNotice(t("chat.queueTrashPurged", { count: String(count) }), true);
-      setTrashOpen(false);
-    }
-    setPurgeAllConfirm(false);
-  }, [onPurgeQueueTrash, trashCount, showQueueNotice, t]);
-  const resetTrashConfirms = useCallback(() => {
-    setPurgeConfirmId(null);
-    setPurgeAllConfirm(false);
-  }, []);
-  // The trash bin has no entry point once empty — auto-close the popover.
-  useEffect(() => {
-    if (trashCount === 0) {
-      setTrashOpen(false);
-      setPurgeConfirmId(null);
-      setPurgeAllConfirm(false);
-    }
-  }, [trashCount]);
+
+  // P3 接管判定：queuePanel 插槽有实际 item（扩展已 materialize 且 feature 开启）→
+  // 隐藏 core 兜底 banner，完整 UI 由扩展经插槽渲染。能力契约 EXT_PROVIDES.queuePanel
+  // 仍登记在 lib/ext/types.ts（文档），运行时以实际插槽项为准——feature 关闭/卸载/异步
+  // 加载未完成时回落兜底 banner（零数据迁移，sidecar/trash 全在 core）。
+  const extOwnsQueuePanel = useExtSlotItems("queuePanel").length > 0;
+
+  // 组装 queuePanel 插槽 props（core → ext：live 视图 + trash + actions 原语）。
+  // actions 全部转发 ChatInput 既有 RPC 处理器；parseImport/downloadExport 直接透传
+  // core 纯函数（单实现，扩展零逻辑）。
+  const queuePanelExtra: QueuePanelProps = {
+    live: {
+      steering: (queuedMessages?.steering ?? []).map((text, i) => ({
+        id: `steer:${i}`, kind: "steer" as const, text, hasImages: false, queuedAt: 0, index: i,
+      })),
+      followUp: (queuedMessages?.followUp ?? []).map((text, i) => ({
+        id: `followUp:${i}`, kind: "followUp" as const, text, hasImages: false, queuedAt: 0, index: i,
+      })),
+    },
+    trash: queueTrash ?? null,
+    queueCount,
+    trashCount,
+    actions: {
+      move: (kind, from, to) => onMoveQueue?.(kind, from, to) ?? Promise.resolve(false),
+      convert: (kind, index, target) => onConvertQueueItem?.(kind, index, target) ?? Promise.resolve(false),
+      // 取回进输入框（edit-intent 状态机收口 core；ext 只触发）——返回文本供展示
+      recallOne: async (kind, index) => {
+        const text = await handleRecallOne(kind, index);
+        return text ? { text } : null;
+      },
+      requeueAt: (kind, index, text, images) => onRequeueAt?.(kind, index, text, images) ?? Promise.resolve(false),
+      // 软删（→ trash，触发 core 侧 edit-intent 不相关路径；undo toast 在 ext 内管理）
+      remove: (kind, index, opts) => handleRemoveQueueItem(kind, index, opts) ?? Promise.resolve(null),
+      restore: (id, index) => onRestoreQueueItem?.(id, index) ?? Promise.resolve(false),
+      purge: (ids) => onPurgeQueueTrash?.(ids) ?? Promise.resolve(false),
+      recallAll: () => onRecallQueue?.(),
+      steerSend: (text) => onQueueSteerSend?.(text),
+      exportAll: () => onExportQueue?.() ?? Promise.resolve(null),
+      downloadExport: (entries, meta, format) => downloadQueueExport(entries, meta, format),
+      parseImport: (content) => parseQueueImport(content),
+      importEntries: (entries) => onImportQueue?.(entries) ?? Promise.resolve(null),
+      stageImport: (entries) => onStageImport?.(entries) ?? Promise.resolve(null),
+    },
+    isMobile,
+    isCoarsePointer,
+  };
   // Entry pulled out for editing; sending re-inserts it at its original spot.
   const recalledRef = useRef<{ kind: "steer" | "followUp"; index: number; text: string; images?: ChatDraftImage[] } | null>(null);
   const [recalledVisible, setRecalledVisible] = useState(false);
@@ -1254,11 +961,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [buttonsWrapped, setButtonsWrapped] = useState(false);
   const inputRowRef = useRef<HTMLDivElement>(null);
   /** 取回核心（不带互斥锁）。mode="append"（默认）：与输入框已有内容合并（行内取回按钮）；
-   *  mode="replace"：整体替换输入框内容（↑/↓ 队列导航时逐条切换）。 */
-  const doRecallOne = useCallback(async (kind: "steer" | "followUp", index: number, mode: "append" | "replace" = "append") => {
-    if (!onRecallOne) return;
+   *  mode="replace"：整体替换输入框内容（↑/↓ 队列导航时逐条切换）。
+   *  返回取回的文本（无取回/失败返回 null）——队列面板契约 actions.recallOne 消费。 */
+  const doRecallOne = useCallback(async (kind: "steer" | "followUp", index: number, mode: "append" | "replace" = "append"): Promise<string | null> => {
+    if (!onRecallOne) return null;
     const entry = await onRecallOne(kind, index);
-    if (!entry) return;
+    if (!entry) return null;
     recalledRef.current = { kind, index, text: entry.text, images: entry.images };
     setRecalledVisible(true);
     const ta = textareaRef.current;
@@ -1276,14 +984,16 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       ta.style.height = "auto";
       ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
     });
-    setQueueCollapsedUser(null);
+    // 取回进框后展开队列面板（扩展接管时经 controller；无接管无折叠态 no-op）
+    getQueuePanelController()?.expand();
+    return entry.text;
   }, [onRecallOne, value]);
-  /** 取回一条排队消息进输入框继续编辑（互斥：连击/连按期间忽略新请求）。 */
+  /** 取回一条排队消息进输入框继续编辑（互斥：连击/连按期间忽略新请求）。返回取回文本。 */
   const handleRecallOne = useCallback(async (kind: "steer" | "followUp", index: number, mode: "append" | "replace" = "append") => {
-    if (recallBusyRef.current) return;
+    if (recallBusyRef.current) return null;
     recallBusyRef.current = true;
     try {
-      await doRecallOne(kind, index, mode);
+      return await doRecallOne(kind, index, mode);
     } finally {
       recallBusyRef.current = false;
     }
@@ -1292,22 +1002,16 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     recalledRef.current = null;
     setRecalledVisible(false);
   }, []);
-  // Drag & drop reordering (desktop); up/down buttons remain for mobile.
-  const dragFromRef = useRef<{ kind: "steer" | "followUp"; index: number } | null>(null);
-  const [dragOverIndex, setDragOverIndex] = useState<{ kind: "steer" | "followUp"; index: number } | null>(null);
-  const handleDragStart = useCallback((kind: "steer" | "followUp", index: number) => {
-    dragFromRef.current = { kind, index };
-  }, []);
-  const handleDragOver = useCallback((kind: "steer" | "followUp", index: number) => {
-    setDragOverIndex({ kind, index });
-  }, []);
-  const handleDrop = useCallback((kind: "steer" | "followUp", targetIndex: number) => {
-    const from = dragFromRef.current;
-    dragFromRef.current = null;
-    setDragOverIndex(null);
-    if (!from || from.kind !== kind || from.index === targetIndex || !onMoveQueue) return;
-    void onMoveQueue(kind, from.index, targetIndex);
-  }, [onMoveQueue]);
+  /** 软删单条（core 原语：转发 RPC + edit-intent 清理；undo toast 在扩展面板内部管理）。
+   *  被发送流（空框 Enter 提升首条）与扩展 actions.remove 共用。 */
+  const handleRemoveQueueItem = useCallback(async (
+    kind: "steer" | "followUp",
+    index: number,
+    opts?: { permanent?: boolean },
+  ): Promise<QueueTrashItem | null> => {
+    if (!onRemoveQueueItem) return null;
+    return onRemoveQueueItem(kind, index, opts);
+  }, [onRemoveQueueItem]);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
   const slashCommandsRequestedRef = useRef(false);
@@ -1491,7 +1195,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       return applyChatHooks(text);
     },
     expandQueue() {
-      setQueueCollapsedUser(false);
+      // P3：扩展接管折叠态，core 恢复/导入解析后经 controller 展开（无接管 no-op）
+      getQueuePanelController()?.expand();
     },
   }));
 
@@ -1502,7 +1207,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       .filter((f) => f.size <= MAX_ATTACHED_FILE_BYTES)
       .slice(0, remaining);
     const skipped = files.length - docs.length;
-    if (skipped > 0) showQueueNotice(t("chat.fileTooLarge"), false);
+    if (skipped > 0) showFileNotice(t("chat.fileTooLarge"), false);
     if (!docs.length) return;
     try {
       const newFiles = await Promise.all(
@@ -2689,23 +2394,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (historyMenuRef.current && !historyMenuRef.current.contains(e.target as Node) && !textareaRef.current?.contains(e.target as Node)) {
         setHistoryMenuOpen(false);
       }
-      if (
-        trashOpen &&
-        trashPanelRef.current && !trashPanelRef.current.contains(e.target as Node) &&
-        trashButtonRef.current && !trashButtonRef.current.contains(e.target as Node)
-      ) {
-        setTrashOpen(false);
-        setPurgeConfirmId(null);
-        setPurgeAllConfirm(false);
-      }
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [trashOpen]);
-
-  // Clear the undo-toast timer on unmount so a late timeout cannot touch state.
-  useEffect(() => () => {
-    if (undoHideTimerRef.current) clearTimeout(undoHideTimerRef.current);
   }, []);
 
   useEffect(() => {
@@ -2788,59 +2479,32 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           e.target.value = "";
         }}
       />
-      {/* Hidden queue-import file input */}
-      <input
-        ref={queueImportFileRef}
-        type="file"
-        accept=".json,application/json"
-        style={{ display: "none" }}
-        onChange={async (e) => {
-          const file = e.target.files?.[0];
-          e.target.value = "";
-          if (!file || !onStageImport) return;
-          try {
-            const entries = parseQueueImport(await file.text());
-            if (entries.length === 0) {
-              showQueueNotice(t("chat.queueImportEmpty"), false);
-              return;
-            }
-            const staged = await onStageImport(entries);
-            if (staged !== null && staged > 0) {
-              showQueueNotice(t("chat.queueImported", { count: String(staged) }), true);
-            }
-          } catch {
-            showQueueNotice(t("chat.queueImportEmpty"), false);
-          }
-        }}
-      />
       <div style={{ maxWidth: 820, margin: "0 auto" }}>
         <ModelErrorBanner error={modelError} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
-        {/* Queue import/export feedback — rendered outside the banner so it is
-            visible even when the queue is empty (import history entry point). */}
-        {queueNotice && (
+        {/* 队列面板：aiti-queue-keeper 扩展经 queuePanel 插槽渲染完整 UI
+            （横幅/行操作/回收站/撤销条/导入导出/通知）。无接管时（扩展未装/禁用
+            或 feature 关闭）渲染上游同形兜底 banner（计数 + Recall all + 只读行）——
+            去 fork 化 P3，docs/pi-web-queue-cluster-ext-plan.md。 */}
+        {fileNotice && (
           <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
             <span style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 4,
-              fontSize: 11,
-              color: queueNotice.ok ? "#16a34a" : "#ef4444",
-              whiteSpace: "nowrap",
+              display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11,
+              color: fileNotice.ok ? "#16a34a" : "#ef4444", whiteSpace: "nowrap",
             }}>
               <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                {queueNotice.ok
+                {fileNotice.ok
                   ? <><polyline points="20 6 9 17 4 12" /></>
                   : <><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></>}
               </svg>
-              {queueNotice.text}
+              {fileNotice.text}
             </span>
           </div>
         )}
-        {/* Queued steering / follow-up messages (delivered by pi on upcoming turns).
-            Also shown (slim header) when only the trash has entries, so the
-            trash bin stays reachable after the last queued message is deleted. */}
-        {bottomMode === "full" && (queueCount > 0 || trashCount > 0) && (
+        {/* 队列面板仅在 bottomMode 展开态渲染（queueHidden/minimal 时连同扩展面板一起隐藏，
+            与 core bottomMode 三态语义一致——计划 §4-④ 留核） */}
+        {bottomMode === "full" && <ExtSlot name="queuePanel" extra={queuePanelExtra} />}
+        {!extOwnsQueuePanel && bottomMode === "full" && (queueCount > 0 || trashCount > 0) && (
           <div style={{
             position: "relative",
             marginBottom: 8,
@@ -2849,597 +2513,63 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             background: "var(--bg-panel)",
             padding: "5px 0",
           }}>
-          <div style={{
-            display: "flex",
-            flexDirection: isMobile ? "column" : "row",
-            alignItems: isMobile ? "stretch" : "center",
-            justifyContent: "space-between",
-            gap: isMobile ? 2 : 8,
-            padding: isMobile ? "6px 10px 4px" : "2px 10px 2px",
-          }}>
             <div style={{
               display: "flex",
               alignItems: "center",
+              justifyContent: "space-between",
               gap: 8,
-              minHeight: 24,
+              padding: "2px 8px 4px 10px",
             }}>
-              {queueCount > 0 && (
-              <button
-                onClick={toggleQueueCollapsed}
-                title={queueCollapsed ? t("chat.queueExpand") : t("chat.queueCollapse")}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 5,
-                  padding: "4px 6px",
-                  border: "none",
-                  background: "transparent",
-                  color: "var(--text-dim)",
-                  cursor: "pointer",
-                  borderRadius: 5,
-                }}
-              >
-                <svg
-                  width="11"
-                  height="11"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{ transition: "transform 0.12s", transform: queueCollapsed ? "rotate(-90deg)" : undefined, flexShrink: 0 }}
-                >
-                  <polyline points="6 9 12 15 18 9" />
-                </svg>
-                {/* Queued-count label next to the collapse button so the header
-                    is not a lone chevron on any screen size. */}
-                <span style={{ fontSize: 11.5, color: "var(--text-dim)", whiteSpace: "nowrap", lineHeight: 1 }}>
-                  {t("chat.queued", { count: String(queueCount) })}
-                </span>
-              </button>
-              )}
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end", marginTop: isMobile ? 2 : 0 }}>
-                {onRecallQueue && (
-                  <button
-                    onClick={onRecallQueue}
-                    title={t("chat.recallTitle")}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "3px 10px",
-                      fontSize: 12,
-                      color: "var(--text)",
-                      background: "transparent",
-                      border: "1px solid var(--border)",
-                      borderRadius: 7,
-                      cursor: "pointer",
-                      transition: "background 0.12s, border-color 0.12s",
-                      whiteSpace: "nowrap",
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = "var(--bg-hover)";
-                      e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 45%, var(--border))";
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = "transparent";
-                      e.currentTarget.style.borderColor = "var(--border)";
-                    }}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="9 14 4 9 9 4" />
-                      <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
-                    </svg>
-                    {t("chat.recall")}
-                  </button>
-                )}
-                {(onExportQueue || onImportQueue) && (
-                  <>
-                    {onExportQueue && (
-                      <button
-                        title={t("chat.queueExport")}
-                        onClick={async () => {
-                          const data = await onExportQueue();
-                          if (!data) return;
-                          downloadQueueExport(data.live, { source: "live" }, "json");
-                          showQueueNotice(
-                            t("chat.queueExported", {
-                              count: String((queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0)),
-                            }),
-                            true,
-                          );
-                        }}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          padding: "3px 10px",
-                          fontSize: 12,
-                          color: "var(--text)",
-                          background: "transparent",
-                          border: "1px solid var(--border)",
-                          borderRadius: 7,
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                          <polyline points="7 10 12 15 17 10" />
-                          <line x1="12" y1="15" x2="12" y2="3" />
-                        </svg>
-                        {t("chat.queueExport")}
-                      </button>
-                    )}
-                    {onImportQueue && (
-                      <button
-                        title={t("chat.queueImport")}
-                        onClick={() => queueImportFileRef.current?.click()}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 6,
-                          padding: "3px 10px",
-                          fontSize: 12,
-                          color: "var(--text)",
-                          background: "transparent",
-                          border: "1px solid var(--border)",
-                          borderRadius: 7,
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                          <polyline points="17 8 12 3 7 8" />
-                          <line x1="12" y1="3" x2="12" y2="15" />
-                        </svg>
-                        {t("chat.queueImport")}
-                      </button>
-                    )}
-                  </>
-                )}
-                {trashCount > 0 && onPurgeQueueTrash && (
-                  <button
-                    ref={trashButtonRef}
-                    title={t("chat.queueTrashTitle")}
-                    onClick={() => { setTrashOpen((v) => !v); setPurgeConfirmId(null); setPurgeAllConfirm(false); }}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      padding: "3px 10px",
-                      fontSize: 12,
-                      color: trashOpen ? "var(--accent)" : "var(--text)",
-                      background: trashOpen ? "var(--bg-hover)" : "transparent",
-                      border: "1px solid var(--border)",
-                      borderRadius: 7,
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                    {t("chat.queueTrash")}
-                    <span style={{
-                      fontSize: 10,
-                      color: "var(--text-muted)",
-                      background: "var(--bg-hover)",
-                      border: "1px solid var(--border)",
-                      padding: "0 6px",
-                      borderRadius: 999,
-                      lineHeight: "15px",
-                    }}>
-                      {trashCount}
-                    </span>
-                  </button>
-                )}
-              </div>
-          </div>
-          {queueCollapsed && queueCount > 0 && (
-            <div
-              onClick={toggleQueueCollapsed}
-              title={t("chat.queueExpand")}
-              role="button"
-              tabIndex={0}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") {
-                  e.preventDefault();
-                  toggleQueueCollapsed();
-                }
-              }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                margin: "0 6px 4px",
-                padding: "3px 6px",
-                borderRadius: 6,
-                fontSize: 11.5,
+              <span style={{
+                fontSize: 10,
+                fontFamily: "var(--font-mono)",
                 color: "var(--text-dim)",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                cursor: "pointer",
-                transition: "background 0.12s",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.background = "var(--bg-hover)";
-                e.currentTarget.style.color = "var(--text)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "";
-                e.currentTarget.style.color = "var(--text-dim)";
-              }}
-            >
-              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: "rotate(-90deg)" }}>
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", flex: 1 }}>
-                {(queuedMessages?.steering?.[0] ?? queuedMessages?.followUp?.[0] ?? "")}
+                textTransform: "uppercase",
+                letterSpacing: 0.4,
+              }}>
+                {t("chat.queued", { count: String(queueCount) })}
               </span>
-              {queueCount > 1 && (
-                <span style={{
-                  flexShrink: 0,
-                  fontSize: 10,
-                  color: "var(--text-muted)",
-                  background: "var(--bg-hover)",
-                  border: "1px solid var(--border)",
-                  padding: "0 6px",
-                  borderRadius: 999,
-                  lineHeight: "16px",
-                }}>
-                  +{queueCount - 1}
-                </span>
-              )}
-              {/* First message is a follow-up: expose a steer-send button right in
-                  the collapsed bar (same action as the row button), always
-                  clickable without expanding. */}
-              {!queuedMessages?.steering?.[0] && queuedMessages?.followUp?.[0] && (
+              {onRecallQueue && (
                 <button
-                  aria-label="queueSteerSendFirst"
-                  title={t("chat.queueSteerSend")}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onQueueSteerSend?.(queuedMessages?.followUp?.[0] ?? "");
-                    void handleRemoveQueueItem("followUp", 0, { permanent: true });
-                  }}
+                  onClick={onRecallQueue}
+                  title={t("chat.recallTitle")}
                   style={{
-                    flexShrink: 0,
-                    display: "inline-flex",
+                    display: "flex",
                     alignItems: "center",
-                    justifyContent: "center",
-                    width: 20,
-                    height: 20,
-                    padding: 0,
-                    border: "none",
-                    borderRadius: 5,
+                    gap: 6,
+                    padding: "4px 12px",
+                    fontSize: 12,
+                    color: "var(--text)",
                     background: "transparent",
-                    color: "rgba(180,130,0,1)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 7,
                     cursor: "pointer",
+                    transition: "background 0.12s, border-color 0.12s",
+                    whiteSpace: "nowrap",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "rgba(234,179,8,0.12)";
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                    e.currentTarget.style.borderColor = "color-mix(in srgb, var(--accent) 45%, var(--border))";
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = "transparent";
+                    e.currentTarget.style.borderColor = "var(--border)";
                   }}
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 12h14" /><polyline points="12 5 19 12 12 19" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          )}
-            {!queueCollapsed && queuedMessages?.steering.map((text, i) => (
-              <QueuedMessageRow
-                key={`steer-${i}`}
-                kind="steer"
-                text={text}
-                index={i}
-                total={queuedMessages?.steering.length ?? 0}
-                onMove={(dir) => void handleMoveQueue("steer", i, dir)}
-                onRecall={() => void handleRecallOne("steer", i)}
-                onRemove={() => void handleRemoveQueueItem("steer", i)}
-                onConvertToFollowUp={() => void onConvertQueueItem?.("steer", i, "followUp")}
-                onDragStart={(idx) => handleDragStart("steer", idx)}
-                onDragOver={(idx) => handleDragOver("steer", idx)}
-                onDrop={(idx) => handleDrop("steer", idx)}
-                onTouchMoveTo={(to) => void handleMoveQueue("steer", i, (to - i) as 1 | -1)}
-                dragging={dragOverIndex?.kind === "steer" && dragOverIndex.index === i}
-              />
-            ))}
-            {!queueCollapsed && queuedMessages?.followUp.map((text, i) => (
-              <QueuedMessageRow
-                key={`followup-${i}`}
-                kind="follow-up"
-                text={text}
-                index={i}
-                total={queuedMessages?.followUp.length ?? 0}
-                onMove={(dir) => void handleMoveQueue("followUp", i, dir)}
-                onRecall={() => void handleRecallOne("followUp", i)}
-                onRemove={() => void handleRemoveQueueItem("followUp", i)}
-                onSteerSend={() => { onQueueSteerSend?.(text); void handleRemoveQueueItem("followUp", i, { permanent: true }); }}
-                onDragStart={(idx) => handleDragStart("followUp", idx)}
-                onDragOver={(idx) => handleDragOver("followUp", idx)}
-                onDrop={(idx) => handleDrop("followUp", idx)}
-                onTouchMoveTo={(to) => void handleMoveQueue("followUp", i, (to - i) as 1 | -1)}
-                dragging={dragOverIndex?.kind === "followUp" && dragOverIndex.index === i}
-              />
-            ))}
-          {lastDeleted && !trashOpen && onRestoreQueueItem && (
-            <div style={{
-              position: "absolute",
-              bottom: "calc(100% + 6px)",
-              right: 8,
-              zIndex: 55,
-              display: "flex",
-              alignItems: "center",
-              gap: 8,
-              maxWidth: "calc(100% - 16px)",
-              padding: "5px 8px 5px 10px",
-              background: "var(--bg-panel)",
-              border: "1px solid color-mix(in srgb, var(--accent) 45%, var(--border))",
-              borderRadius: 7,
-              boxShadow: "0 6px 20px rgba(0,0,0,0.3)",
-              fontSize: 11.5,
-              color: "var(--text)",
-            }}>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 260 }}>
-                {t("chat.queueUndoDeleted")}{lastDeleted.text ? `: ${lastDeleted.text}` : ""}
-              </span>
-              <button
-                onClick={() => void handleUndoDelete()}
-                title={t("chat.queueUndoTitle")}
-                style={{
-                  flexShrink: 0,
-                  border: "none",
-                  background: "transparent",
-                  color: "var(--accent)",
-                  cursor: "pointer",
-                  fontSize: 11.5,
-                  fontWeight: 600,
-                  padding: "2px 6px",
-                  borderRadius: 5,
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-              >
-                {t("chat.queueUndo")}
-              </button>
-            </div>
-          )}
-          {trashOpen && onPurgeQueueTrash && (
-            <div ref={trashPanelRef} style={{
-              position: "absolute",
-              bottom: "calc(100% + 6px)",
-              right: 8,
-              width: "min(430px, calc(100% - 16px))",
-              zIndex: 50,
-              background: "var(--bg-panel)",
-              border: "1px solid var(--border)",
-              borderRadius: 8,
-              boxShadow: "0 10px 30px rgba(0,0,0,0.35)",
-              padding: 8,
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "2px 4px 6px" }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: "var(--text-dim)", flexShrink: 0 }}>
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                </svg>
-                <span style={{ fontSize: 11.5, fontWeight: 600, color: "var(--text)", flex: 1 }}>
-                  {t("chat.queueTrashCount", { count: String(trashCount) })}
-                </span>
-                <button
-                  onClick={() => { setTrashOpen(false); resetTrashConfirms(); }}
-                  title={t("chat.close")}
-                  style={{ border: "none", background: "transparent", color: "var(--text-dim)", cursor: "pointer", padding: 2, display: "flex", borderRadius: 4 }}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                </button>
-              </div>
-              {trashCount === 0 ? (
-                <div style={{ padding: "14px 6px", fontSize: 12, color: "var(--text-dim)", textAlign: "center" }}>
-                  {t("chat.queueTrashEmpty")}
-                </div>
-              ) : (
-                <div style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 2 }}>
-                  {(queueTrash ?? []).map((item) => (
-                    <div
-                      key={item.id}
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 8,
-                        padding: "4px 6px",
-                        borderRadius: 6,
-                        background: "transparent",
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                    >
-                      <span style={{
-                        flexShrink: 0,
-                        fontSize: 9.5,
-                        textTransform: "uppercase",
-                        letterSpacing: 0.4,
-                        color: "var(--text-muted)",
-                        background: "var(--bg-hover)",
-                        border: "1px solid var(--border)",
-                        borderRadius: 4,
-                        padding: "0 5px",
-                        lineHeight: "16px",
-                      }}>
-                        {item.kind === "steer" ? t("chat.queueRecoveryKindSteer") : t("chat.queueRecoveryKindFollowUp")}
-                      </span>
-                      <span
-                        title={item.text || t("chat.queueRecoveryNoText")}
-                        style={{
-                          flex: 1,
-                          fontSize: 11.5,
-                          color: "var(--text)",
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {item.text || t("chat.queueRecoveryNoText")}
-                        {item.hasImages && <span style={{ color: "var(--text-dim)", marginLeft: 4 }}>🖼</span>}
-                      </span>
-                      <button
-                        title={t("chat.queueTrashRestore")}
-                        onClick={() => void handleRestoreTrashItem(item)}
-                        style={{
-                          flexShrink: 0,
-                          display: "inline-flex",
-                          alignItems: "center",
-                          gap: 4,
-                          border: "1px solid var(--border)",
-                          background: "transparent",
-                          color: "var(--text)",
-                          borderRadius: 6,
-                          padding: "2px 8px",
-                          fontSize: 11,
-                          cursor: "pointer",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <polyline points="9 14 4 9 9 4" />
-                          <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
-                        </svg>
-                        {t("chat.queueTrashRestore")}
-                      </button>
-                      {purgeConfirmId === item.id ? (
-                        <button
-                          onClick={() => void handlePurgeTrashItem(item.id)}
-                          style={{
-                            flexShrink: 0,
-                            border: "1px solid #ef4444",
-                            background: "rgba(239,68,68,0.12)",
-                            color: "#ef4444",
-                            borderRadius: 6,
-                            padding: "2px 8px",
-                            fontSize: 11,
-                            cursor: "pointer",
-                            whiteSpace: "nowrap",
-                          }}
-                        >
-                          {t("chat.confirm")}
-                        </button>
-                      ) : (
-                        <button
-                          title={t("chat.queueTrashPurge")}
-                          onClick={() => {
-                            setPurgeConfirmId(item.id);
-                            setTimeout(() => setPurgeConfirmId((cur) => (cur === item.id ? null : cur)), 3000);
-                          }}
-                          style={{
-                            flexShrink: 0,
-                            display: "inline-flex",
-                            alignItems: "center",
-                            justifyContent: "center",
-                            width: 24,
-                            height: 24,
-                            border: "none",
-                            background: "transparent",
-                            color: "var(--text-dim)",
-                            borderRadius: 5,
-                            cursor: "pointer",
-                          }}
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <polyline points="3 6 5 6 21 6" />
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                            <line x1="10" y1="11" x2="10" y2="17" />
-                            <line x1="14" y1="11" x2="14" y2="17" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-              <div style={{ display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end", paddingTop: 6, borderTop: "1px solid var(--border)", marginTop: 6 }}>
-                <button
-                  onClick={() => void handleRestoreAllTrash()}
-                  disabled={trashCount === 0}
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 5,
-                    border: "1px solid var(--border)",
-                    background: "transparent",
-                    color: "var(--text)",
-                    borderRadius: 6,
-                    padding: "3px 10px",
-                    fontSize: 11.5,
-                    cursor: trashCount === 0 ? "default" : "pointer",
-                    opacity: trashCount === 0 ? 0.5 : 1,
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="9 14 4 9 9 4" />
                     <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
                   </svg>
-                  {t("chat.queueTrashRestoreAll")}
+                  {t("chat.recall")}
                 </button>
-                {purgeAllConfirm ? (
-                  <button
-                    onClick={() => void handlePurgeAllTrash()}
-                    style={{
-                      border: "1px solid #ef4444",
-                      background: "rgba(239,68,68,0.12)",
-                      color: "#ef4444",
-                      borderRadius: 6,
-                      padding: "3px 10px",
-                      fontSize: 11.5,
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {t("chat.queueTrashPurgeAllConfirm")}
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => {
-                      setPurgeAllConfirm(true);
-                      setTimeout(() => setPurgeAllConfirm(false), 3000);
-                    }}
-                    disabled={trashCount === 0}
-                    title={t("chat.queueTrashPurgeAll")}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 5,
-                      border: "1px solid var(--border)",
-                      background: "transparent",
-                      color: "var(--text-dim)",
-                      borderRadius: 6,
-                      padding: "3px 10px",
-                      fontSize: 11.5,
-                      cursor: trashCount === 0 ? "default" : "pointer",
-                      opacity: trashCount === 0 ? 0.5 : 1,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                    </svg>
-                    {t("chat.queueTrashPurgeAll")}
-                  </button>
-                )}
-              </div>
+              )}
             </div>
-          )}
+            {queuedMessages?.steering.map((text, i) => (
+              <FallbackQueueRow key={`steer-${i}`} kind="steer" text={text} />
+            ))}
+            {queuedMessages?.followUp.map((text, i) => (
+              <FallbackQueueRow key={`followup-${i}`} kind="follow-up" text={text} />
+            ))}
           </div>
         )}
         {/* Retry banner */}
@@ -4627,40 +3757,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     <line x1="17" y1="9" x2="23" y2="15" />
                   </svg>
                 )}
-              </button>
-            )}
-            {/* Import queue history — always available, even with an empty queue. */}
-            {onImportQueue !== undefined && (
-              <button
-                onClick={() => queueImportFileRef.current?.click()}
-                title={t("chat.queueImport")}
-                aria-label={t("chat.queueImport")}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                  width: isMobile ? 32 : 32,
-                  height: 32,
-                  padding: 0,
-                  background: "none",
-                  border: "none",
-                  borderRadius: 9,
-                  color: "var(--text-muted)",
-                  cursor: "pointer",
-                  transition: "background 0.12s, color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "none";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <polyline points="17 8 12 3 7 8" />
-                  <line x1="12" y1="3" x2="12" y2="15" />
-                </svg>
               </button>
             )}
             {/* 扩展入口（composerTools slot）：与压缩/导入同排的 32×32 图标按钮（aiti-git-trace：时间线主入口） */}
