@@ -576,11 +576,16 @@ export class ExtRegistryImpl {
   /** Invoke all server.startup hooks (best-effort per extension). */
   async startAll(): Promise<void> {
     for (const ext of this.extensions.values()) {
+      const t0 = Date.now();
       try {
         await ext.ext.server?.startup?.(this.serverContext(ext));
       } catch (e) {
         this.errors.set(ext.id, `startup: ${e instanceof Error ? e.message : String(e)}`);
       }
+      // 慢启动钩子告警：startup 阻塞全局 reload（含 extman 启停/安装），单钩子 >1s
+      // 视为异常（重活应放后台，只影响扩展自身功能的就绪速度）。
+      const ms = Date.now() - t0;
+      if (ms > 1000) console.warn(`[ext] slow startup hook: ${ext.id} took ${ms}ms (consider backgrounding init)`);
     }
   }
 

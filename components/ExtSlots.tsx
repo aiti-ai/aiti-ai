@@ -121,8 +121,10 @@ export interface ExtClientContext {
   /** 注册草稿存储 API（core 经 getDraftApi() 访问；草稿功能全部归 keeper）。 */
   registerDraftApi?(api: DraftApi): void;
   /** 触发宿主侧扩展重载（拉新 manifest + 图对账 + 反卷 materialize）——扩展管理器场景
-   *  （服务端热重载后刷新已安装/启停变更；optional 兼容旧宿主）。 */
-  reloadExtensions?(): Promise<{ invalidated: string[] }>;
+   *  （服务端热重载后刷新已安装/启停变更；optional 兼容旧宿主）。opts.resyncOnly：
+   *  跳过 POST /reload 全量重载（调用方已在服务端重载过，如 extman ops），只补拉
+   *  manifest + 反卷 client 缓存；旧宿主忽略参数降级为全量 reload。 */
+  reloadExtensions?(opts?: { resyncOnly?: boolean }): Promise<{ invalidated: string[] }>;
   /** client loader 当前状态（materialized / prefetched 的扩展 id）——扩展管理界面展示用。 */
   extLoaderState?(): { materialized: string[]; prefetched: string[] };
 }
@@ -298,7 +300,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     restoreComposerDraft: (draft) => getHostApi().restoreComposerDraft?.(draft) ?? false,
     registerRecoveryItemsProvider: (provider) => registerRecoveryItemsProvider(provider),
     registerDraftApi: (api) => registerDraftApi(api),
-    reloadExtensions: () => reloadExtensions(),
+    reloadExtensions: (opts?: { resyncOnly?: boolean }) => reloadExtensions(opts),
     extLoaderState: () => ({ materialized: materializedIds(), prefetched: prefetchedIds() }),
   };
   return ctx;
@@ -366,17 +368,22 @@ async function loadExtensions(): Promise<void> {
 }
 
 /** HMR 精确反卷：POST reload（服务端 shutdown→loadAll→startAll）→ 补拉 manifest 刷新
- *  client 缓存（新安装扩展的元数据/i18n/声明的插槽）→ 以最新图比 rev 只反卷变更扩展。 */
-export async function reloadExtensions(): Promise<{ invalidated: string[] }> {
+ *  client 缓存（新安装扩展的元数据/i18n/声明的插槽）→ 以最新图比 rev 只反卷变更扩展。
+ *  opts.resyncOnly：跳过 POST /reload（调用方——extman ops——已在同一请求内完成服务端
+ *  全量重载并在响应里带了最新状态；再 POST 一次是重复的全量 shutdown→loadAll→startAll，
+ *  实测多花 ~4s）。这里只补拉 manifest + 反卷 client 缓存。 */
+export async function reloadExtensions(opts?: { resyncOnly?: boolean }): Promise<{ invalidated: string[] }> {
   if (reloadInFlight) return reloadInFlight;
   reloadInFlight = (async () => {
     try {
-      const res = await fetch(apiUrl("/api/extensions/reload"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (!res.ok) throw new Error(`reload failed: ${res.status}`);
+      if (!opts?.resyncOnly) {
+        const res = await fetch(apiUrl("/api/extensions/reload"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+        });
+        if (!res.ok) throw new Error(`reload failed: ${res.status}`);
+      }
       // 服务端热重载成功后重拉 manifest——manifestCache/declaredSlots/metas 是首次加载
       // 时的快照，不刷新的话新安装扩展找不到元数据，client bundle 不会加载（B）。
       const data = await fetchManifestData();
