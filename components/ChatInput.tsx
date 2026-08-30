@@ -3759,8 +3759,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 )}
               </button>
             )}
-            {/* 扩展入口（composerTools slot）：与压缩/导入同排的 32×32 图标按钮（aiti-git-trace：时间线主入口） */}
-            <ExtSlot name="composerTools" extra={{ sessionId, cwd }} />
+            {/* 扩展入口（composerTools slot）：与压缩/导入同排的 32×32 图标按钮（aiti-git-trace：时间线主入口）；streaming 供 plan chip 等 turn 末刷新状态 */}
+            <ExtSlot name="composerTools" extra={{ sessionId, cwd, streaming: isStreaming }} />
             {isMobile && controlsMenuOpen && (
               <button
                 type="button"
