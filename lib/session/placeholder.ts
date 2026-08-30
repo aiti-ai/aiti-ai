@@ -46,6 +46,8 @@ export interface ExternalPlaceholder {
   name?: string;
   /** 原始项目 cwd（header.cwd 用；文件落盘在 encodeCwd(cwd) 目录下）。 */
   cwd: string;
+  /** 子代理站位：父会话文件路径（header.parentSession，徽标/父子树用）。 */
+  parentSessionFile?: string;
   created: string;
 }
 
@@ -134,6 +136,7 @@ function rewritePlaceholderFile(p: ExternalPlaceholder): void {
       cwd: p.cwd,
       agent: p.agent,
       extId: p.extId,
+      ...(p.parentSessionFile ? { parentSession: p.parentSessionFile } : {}),
     }),
     line({
       type: "session_info",
@@ -157,12 +160,17 @@ export function ensurePlaceholder(input: {
   cwd?: string;
   name?: string;
   createdIso?: string;
+  /** 子代理站位：父会话文件路径（header.parentSession）。已有站位缺该字段时补写。 */
+  parentSessionFile?: string;
 }): ExternalPlaceholder | null {
   const map = loadRegistry();
   const known = map.get(input.extId);
   if (known) {
-    if (input.name && input.name !== known.name) {
-      known.name = input.name;
+    const needsName = input.name && input.name !== known.name;
+    const needsParent = input.parentSessionFile && input.parentSessionFile !== known.parentSessionFile;
+    if (needsName || needsParent) {
+      if (needsName) known.name = input.name;
+      if (needsParent) known.parentSessionFile = input.parentSessionFile;
       try { rewritePlaceholderFile(known); } catch { /* best-effort */ }
       persistRegistry(map);
     }
@@ -181,6 +189,7 @@ export function ensurePlaceholder(input: {
       agent: input.agent,
       cwd,
       ...(input.name ? { name: input.name } : {}),
+      ...(input.parentSessionFile ? { parentSessionFile: input.parentSessionFile } : {}),
       created,
     };
     rewritePlaceholderFile(p);

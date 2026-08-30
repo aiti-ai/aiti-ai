@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
-import { dataRoot } from "@/lib/ext/data-dir";
+import { ensurePlaceholder } from "@/lib/session/placeholder";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   findProvidersForAgent,
@@ -261,30 +261,24 @@ async function finalize(job: PiWebJob, handle: SessionHandle): Promise<void> {
     job.state = "failed";
     job.error = e instanceof Error ? e.message : String(e);
   }
-  // 外部后端：落 child→parent 链接——session-manager 据此给真实历史行打 🤖 子代理徽标，
-  // 打开仍走原会话（历史消息原样）。不建桩会话（用户反馈：打开要看真实历史）。
-  if (job.backend !== "pi") writeExternalSubagentLink(job, handle);
+  // 外部后端：给子会话站位补父链接（header.parentSession = 父会话文件）——
+  // 站位本身已在 createSessionHandle 的 wireExternalPlaceholder 落盘；这一步把
+  // 🤖 子代理徽标/父子树接上（session-reader 按 header.parentSession 算 relation），
+  // 打开仍路由真实后端（历史消息原样）。
+  if (job.backend !== "pi") linkExternalSubagentPlaceholder(job, handle);
 }
 
-/** 外部后端链接落盘：childId（换绑后真实复合 id，回退原 handle id）→ 父会话 id/文件。 */
-function writeExternalSubagentLink(job: PiWebJob, handle: SessionHandle): void {
+/** 外部子代理站位补父链接：childId（换绑后真实复合 id，回退原 handle id）→ 父会话文件。 */
+function linkExternalSubagentPlaceholder(job: PiWebJob, handle: SessionHandle): void {
   try {
-    if (!job.parentFile && !job.parentSessionId) return;
     const childId = job.realChildId || handle.id;
-    if (!childId) return;
-    const file = path.join(dataRoot(), "external-subagent-links.json");
-    let links: Record<string, { parentSessionId?: string; parentSessionFile?: string; backend: string; agent?: string; runId?: string; ts: number }> = {};
-    try { links = JSON.parse(fs.readFileSync(file, "utf8")); } catch { /* 首次为空 */ }
-    links[childId] = {
-      parentSessionId: job.parentSessionId,
-      parentSessionFile: job.parentFile,
-      backend: job.backend,
-      agent: job.agent,
-      runId: job.runId,
-      ts: Date.now(),
-    };
-    const entries = Object.entries(links).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0)).slice(0, 500);
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.writeFileSync(file, JSON.stringify(Object.fromEntries(entries), null, 1));
-  } catch { /* 链接落盘失败不影响委派主流程 */ }
+    if (!childId || !childId.includes(":")) return;
+    if (!job.parentFile && !job.parentSessionId) return;
+    ensurePlaceholder({
+      extId: childId,
+      agent: job.agent || childId.slice(0, childId.indexOf(":")),
+      ...(handle.cwd ? { cwd: handle.cwd } : {}),
+      ...(job.parentFile ? { parentSessionFile: job.parentFile } : {}),
+    });
+  } catch { /* 站位父链接失败不影响委派主流程 */ }
 }
