@@ -515,7 +515,7 @@ export function AppShell() {
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
   // 恢复配套：扩展侧 _restoreSession 把历史文件一律后台打开（select:false，焦点留给用户
   // 刚显式打开的文件——见扩展 registry.ts 注释）；纯展开面板触发时没有「刚打开的文件」，
-  // 会落成「有 tabs 无激活」的空态。这里状态驱动兖底：面板开着、有 tabs、无激活 → 激活
+  // 会落成「有 tabs 无激活」的空态。这里状态驱动兜底：面板开着、有 tabs、无激活 → 激活
   // 当前最后一个 tab（在恢复流里即首个恢复的历史文件；后续文件打开时 activeId 已非空，
   // 守卫保证不再换位，无时序竞争）。单关 tab 的激活位已由 performCloseFileTab 处理，
   // 此状态在恢复场景外不可达，不会抢用户焦点。E2E 实证：展开→内容渲染、无空态提示。
