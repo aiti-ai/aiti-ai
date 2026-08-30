@@ -1710,15 +1710,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [value]);
 
-  // composer 增强契约：值变化广播（草稿落槽位/队列横幅等扩展消费）
-  useEffect(() => {
-    emitComposerChange({
-      value,
-      images: attachedImages.map(imageToDraftImage),
-      imageCount: attachedImages.length,
-      hasInput: Boolean(value.trim()) || attachedImages.length > 0,
-    });
-  }, [value, attachedImages]);
+  // （值变化广播只在上方带 suppress 的一处发——曾有一个无 suppress 的旧广播残留，
+  //  每次变化双发，把 suppressDraft 击穿：「从这里编辑」预填文本借它漏进草稿槽位，
+  //  发送时经 scan「恢复」回框且清空确认被污染失效。已删，勿再加第二个广播点。）
 
   const resizeTextarea = useCallback(() => {
     const ta = textareaRef.current;
