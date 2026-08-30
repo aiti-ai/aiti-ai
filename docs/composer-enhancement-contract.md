@@ -1,6 +1,6 @@
 # Composer 增强契约（草案 v0.1）
 
-> 去 fork 化路线图 P1（见 `pi-web-defork-roadmap.md` §4）。目标：为 composer 定义
+> 去 fork 化路线图 P1（见 aiti-ai 工作区 `docs/pi-web-defork-roadmap.md` §4）。目标：为 composer 定义
 > 最小、稳定的扩展钩子面，让草稿持久化（P2）、队列 UI（P3）等差异从「原地修改
 > ChatInput」变为「机制之上的策略插件」。
 >
@@ -126,3 +126,11 @@ draft-store + ChatWindow 扫描/静默恢复移入扩展后，依赖核对：
   旧格式）自动过期清理，非轮询。
 - 已知修复：「恢复即删」——scan 恢复后同一轮 onChange 的空快照不得再走清空
   分支（恢复发生即 return，等写框回流的新快照）。
+- 已知修复（2026-08-30）：「发送的草稿复活」——ChatInput 曾残留一个无 suppress
+  的旧 emitComposerChange 广播（与带 suppress 的新广播双发），suppressDraft 被击穿：
+  「从这里编辑」预填文本漏进槽位；发送瞬间 enhancersVersion 补偿 effect 因 deps 含
+  suppressDraft 而重跑 onKeyChange(S,S) 重挂 scan → 刚清空的框被 scan「恢复」回刚
+  发走的消息，且恢复污染 lastSnap 使 300ms 清空确认失效。修复：①删除重复广播
+  （值广播只保留带 suppress 的一处）；②keeper scan 在清空确认窗口内否决恢复
+  （clearTimers.has(key) → return false，确认走完后恢复能力不受影响）。
+  回归：core.test.mjs「发送清空确认窗口内 scan 不复活刚发走的草稿」等 2 例。

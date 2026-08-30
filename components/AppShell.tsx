@@ -12,7 +12,7 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
-import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas } from "./ExtSlots";
+import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas, dispatchChatSend } from "./ExtSlots";
 import type { ExtRenderProps, ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
 
@@ -270,6 +270,18 @@ export function AppShell() {
     reclampSidebarWidth();
     reclampRightPanelWidth();
   }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
+  // 面板展开即恢复上次会话打开的文件/文件夹（aiti-editor session 墓碑恢复；扩展侧
+  // _sessionRestored 单次护栏防重复、openFileTab/openFolderTab 幂等）。这条逻辑原本内联在
+  // 文件面板开关按钮的 onClick 里，合并上游 handleRightPanelToggle 重构时被顶掉 → 展开面板
+  // 不再加载历史。收敛为 effect：任何展开路径（开关/打开文件/打开文件夹/扩展 openFile）都触发。
+  // 见 aiti-ai docs/pi-web-merge-notes.md §⑪ 与 AppShell.file-history-restore.test.mjs。
+  useEffect(() => {
+    if (!rightPanelOpen) return;
+    const restore = window.__aitiEditor?._restoreSession;
+    if (typeof restore === "function") {
+      setTimeout(() => restore(), 0);
+    }
+  }, [rightPanelOpen]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
   const languageBtnRef = useRef<HTMLButtonElement>(null);
@@ -501,6 +513,16 @@ export function AppShell() {
   // Right panel — file tabs only
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
+  // 恢复配套：扩展侧 _restoreSession 把历史文件一律后台打开（select:false，焦点留给用户
+  // 刚显式打开的文件——见扩展 registry.ts 注释）；纯展开面板触发时没有「刚打开的文件」，
+  // 会落成「有 tabs 无激活」的空态。这里状态驱动兖底：面板开着、有 tabs、无激活 → 激活
+  // 当前最后一个 tab（在恢复流里即首个恢复的历史文件；后续文件打开时 activeId 已非空，
+  // 守卫保证不再换位，无时序竞争）。单关 tab 的激活位已由 performCloseFileTab 处理，
+  // 此状态在恢复场景外不可达，不会抢用户焦点。E2E 实证：展开→内容渲染、无空态提示。
+  useEffect(() => {
+    if (!rightPanelOpen || fileTabs.length === 0 || activeFileTabId !== null) return;
+    setActiveFileTabId(fileTabs[fileTabs.length - 1].id);
+  }, [activeFileTabId, fileTabs, rightPanelOpen]);
   // pathPicker 能力（aiti-folder FolderSwitcher）：顶栏「打开文件夹」消费。SSR 稳定空快照。
   const pathPickerItems = useSyncExternalStore(
     subscribeExtUi,
@@ -826,6 +848,32 @@ export function AppShell() {
     return () => window.removeEventListener("pi-web:new-session", handler);
   }, [handleNewSession]);
 
+  // [aiti] 独立 viewer 子窗 composer 请求（aiti-viewer 协议复用）：子窗无聊天面，
+  // 扩展的 @ 提及 / @到新session / 选区 AI 在子窗内 postMessage 回 opener 执行。
+  // 消息形状见 app/viewer/page.tsx forwardComposerToOpener；origin 校验 + source/type 门。
+  useEffect(() => {
+    const handler = (ev: MessageEvent) => {
+      if (ev.origin !== window.location.origin) return;
+      const d = ev.data as { source?: string; type?: string; action?: string; text?: unknown; cwd?: unknown } | null;
+      if (!d || d.source !== "aiti-viewer" || d.type !== "composer") return;
+      const text = typeof d.text === "string" ? d.text : "";
+      if (!text) return;
+      if (d.action === "append") {
+        chatInputRef.current?.appendText(text);
+      } else if (d.action === "newSession") {
+        (window as unknown as { __piWebPendingComposer?: { text: string; at: number } }).__piWebPendingComposer = { text, at: Date.now() };
+        const cwd = typeof d.cwd === "string" && d.cwd ? d.cwd : activeCwd;
+        if (!cwd) return;
+        setRightPanelOpen(false);
+        handleNewSession(`ext-${Date.now()}`, cwd);
+      } else if (d.action === "steer") {
+        dispatchChatSend(text, "steer");
+      }
+    };
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, [handleNewSession, activeCwd]);
+
   // Client-built transient SessionInfo (new session / fork) lacks the
   // server-computed projectKey, which the same-project check in
   // handleCwdChange relies on. Hydrate it from the session list so switching
@@ -1081,10 +1129,7 @@ export function AppShell() {
     if (select) {
       setActiveFileTabId(tabId);
       setRightPanelOpen(true);
-      // Opening the right panel triggers session restore (tombstone reopen).
-      if (typeof (window as unknown as { __aitiEditor?: { _restoreSession?: unknown } }).__aitiEditor?._restoreSession === "function") {
-        setTimeout(() => (window as unknown as { __aitiEditor: { _restoreSession: () => void } }).__aitiEditor._restoreSession(), 0);
-      }
+      // Session restore (tombstone reopen) is owned by the rightPanelOpen effect above.
       if (isMobile) setSidebarOpen(false);
     }
     recordFolder(folderPath, "add");

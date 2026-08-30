@@ -67,6 +67,21 @@ function persistTarget(target: { path: string; kind?: string; cwd?: string }): v
   } catch { /* noop */ }
 }
 
+// —— 独立窗口 composer 请求转发（aiti-viewer 协议复用）——
+// 本窗口无聊天面（composer/会话），扩展的 @ 提及 / @到新session / 选区 AI 等动作经
+// postMessage 回 opener（主面板）执行。消息形状：
+//   { source: "aiti-viewer", type: "composer", action: "append" | "newSession" | "steer", text, cwd? }
+// 接收端在主面板 AppShell（origin 校验 + source/type 门）。无 opener（复制链接新开）时返回 false，
+// 调用方自行提示。
+export function forwardComposerToOpener(action: string, text: string, cwd?: string): boolean {
+  try {
+    const opener = window.opener as Window | null;
+    if (!opener || opener.closed) return false;
+    opener.postMessage({ source: "aiti-viewer", type: "composer", action, text, cwd }, window.location.origin);
+    return true;
+  } catch { return false; }
+}
+
 export default function ViewerPage() {
   return (
     <Suspense fallback={<div style={{ height: "100dvh" }} />}>
@@ -81,6 +96,10 @@ export default function ViewerPage() {
 
 function ViewerBody() {
   const { t } = useI18n();
+
+  // 独立窗口标志（供扩展 client 判定：@ 提及/@到新session 等动作走 postMessage 回 opener，
+  // 见 forwardComposerToOpener；不能只看 window.opener——主面板自身也可能带 opener 打开）
+  (window as unknown as { __aitiViewerStandalone?: boolean }).__aitiViewerStandalone = true;
 
   // 初始：sessionStorage（刷新恢复）→ 第一个 tab；首次打开为空，等 opener postMessage 交接
   const [tabs, setTabs] = useState<Tab[]>(() => {
@@ -125,6 +144,8 @@ function ViewerBody() {
         const select = options?.select !== false;
         openTargetRef.current({ path: folderPath, kind: "folder", cwd: stateRef.current.cwd }, select);
       },
+      // 本窗口无聊天输入框：@ 提及的写入动作转发给 opener（主面板）的 composer
+      appendText: (text) => { forwardComposerToOpener("append", text); },
       getFileTabs: () => stateRef.current.tabs.map((tb) => ({ id: tb.id, filePath: tb.filePath, kind: tb.kind, pinned: tb.pinned })),
       closeFileTabs: (ids) => {
         setTabs((prev) => {
