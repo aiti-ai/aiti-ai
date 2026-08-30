@@ -159,7 +159,9 @@ function ViewerBody() {
       },
       openFolder: (folderPath, _folderName, options) => {
         const select = options?.select !== false;
-        openTargetRef.current({ path: folderPath, kind: "folder", cwd: stateRef.current.cwd }, select);
+        // 第三参必须显式传 select：openTarget 的 select 形参缺省 true，漏传会变回
+        // 「文件夹恢复恒激活」——session 恢复的 workspace folder 抢走焦点（openFile 同型）
+        openTargetRef.current({ path: folderPath, kind: "folder", cwd: stateRef.current.cwd }, select, select);
       },
       // 本窗口无聊天输入框：@ 提及的写入动作转发给 opener（主面板）的 composer
       appendText: (text) => { forwardComposerToOpener("append", text); },
