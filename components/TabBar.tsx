@@ -67,6 +67,24 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
     });
   }, []);
 
+  // 鼠标滚轮：垂直滚动转横向滚动（仅页签溢出时接管，不溢出时放行页面滚动）。
+  // 不能用 React onWheel——它在 root 上注册为 passive，preventDefault 无效。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (el.scrollWidth <= el.clientWidth) return;
+      let delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (delta === 0) return;
+      if (e.deltaMode === 1) delta *= 16; // 行 → px（Firefox 默认）
+      else if (e.deltaMode === 2) delta *= el.clientWidth; // 页 → px
+      e.preventDefault();
+      el.scrollLeft += delta;
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   const arrowButtonStyle: React.CSSProperties = {
     display: "flex", alignItems: "center", justifyContent: "center",
     flexShrink: 0,
