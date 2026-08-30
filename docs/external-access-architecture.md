@@ -78,6 +78,10 @@ Authelia：仅监听 127.0.0.1:19091，永不直接暴露；Redis 存会话、SQ
 - **子路径部署**：dev 实例以 `PI_WEB_BASE_PATH=/dev` 挂在 `/dev/` 下，nginx 用
   正则 `location ~ ^/dev(?:/|$)`（匹配带/不带尾斜杠，避免 Next 的尾斜杠重定向
   落进 `location /`），生产实例保持根路径、免前缀。
+- **根路径友好跳转**：basePath 模式下直连实例根路径（如 `http://<ip>:30142/`、
+  隧道/ngrok 入口）由 next.config `redirects()` 307 跳到 `/dev/`（查询串透传；
+  `basePath:false` 才能匹配真正的 `/`；根部署返回空数组零行为变化）。隧道 vhost
+  场景由 service-tunnels 中间件先行 302（`redirectToBase`），两层互补不冲突。
 - **上传限制**：`client_max_body_size` 调大（如 4G），会话里传文件不受限。
 
 ### 2.4 认证层：Authelia（自托管 SSO + 2FA）
