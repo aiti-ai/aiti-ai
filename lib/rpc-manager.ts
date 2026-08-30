@@ -27,6 +27,7 @@ import {
   preferUserBashExtension,
 } from "./project-command-env";
 import { disableConflictingExtensions } from "./ext-conflicts";
+import { dropMcpAdapterForWebSessions } from "./web-mcp-policy";
 import { cacheSessionPath, invalidateSessionListCache, resolveSessionPath } from "./session-reader";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
@@ -2868,7 +2869,10 @@ export async function startRpcSession(
             ],
             // [aiti] 冲突插件机制：pi-web 扩展清单 conflicts 声明的包（如原版
             // pi-subagents）在组装 SDK 加载结果时整个禁用（同名工具双注册冲突）。
-            extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(disableConflictingExtensions(base, getExtRegistry()))),
+            // dropMcpAdapterForWebSessions 放最前：Web 会话默认不加载 MCP 适配器
+            // （shared-global mcp.json 的 12 个 server 在会话创建路径逐个拉起，
+            // 冷启动分钟级 → fork/新会话"卡死"；PI_WEB_LOAD_MCP=1 恢复旧行为）。
+            extensionsOverride: (base) => dropMcpAdapterForWebSessions(preferUserBashExtension(preferPiWebSubagentExtension(disableConflictingExtensions(base, getExtRegistry())))),
           },
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });
