@@ -19,6 +19,7 @@ import {
   type QueueTrashItem,
 } from "./queue-store";
 import { invalidateModelsCache } from "./models-cache";
+import { assertSessionFileQuiescent } from "./session-run-quiescence";
 import { hasLiveDetachedRuns } from "./subagent-detached";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import {
@@ -1115,6 +1116,9 @@ export class AgentSessionWrapper {
         if (this.isSessionRunningForReplacement()) {
           throw new Error("Cannot fork while the session is running");
         }
+        // 跨实例单写者兜底：另一 pi-web 实例（prod/dev 双开）可能正拉起子进程
+        // 流式写同一文件，其内存运行态对本实例不可见（孤儿 run）→ 拒绝。
+        await assertSessionFileQuiescent(this.inner.sessionFile ?? "");
         return this.withSessionReplacement("fork", async () => {
           const entryId = command.entryId as string;
           const sessionManager = this.inner.sessionManager;
@@ -1164,6 +1168,8 @@ export class AgentSessionWrapper {
         if (this.isSessionRunningForReplacement()) {
           throw new Error("Cannot clone while the session is running");
         }
+        // 跨实例单写者兜底（同 fork；孤儿 run 场景下内存守卫不可见另一实例的写入）。
+        await assertSessionFileQuiescent(this.inner.sessionFile ?? "");
         const sessionManager = this.inner.sessionManager;
         const currentSessionFile = this.inner.sessionFile;
         const leafId = typeof command.leafId === "string" ? command.leafId : sessionManager.getLeafId();
