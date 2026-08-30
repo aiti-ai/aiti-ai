@@ -811,6 +811,21 @@ export function AppShell() {
     activeCwd,
   });
 
+  // [aiti] 扩展 client 新建会话通道：pi-web:new-session { cwd } → 切到新建会话页
+  // （不创建服务端会话，首条消息由用户在欢迎页发送）。供「@到新session」类功能：
+  // 扩展先写 window.__piWebPendingComposer 预填文本（ChatInput 挂载后消费），再派发本事件。
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const cwd = (e as CustomEvent).detail?.cwd;
+      if (typeof cwd !== "string" || !cwd) return;
+      // 移动端收起侧栏/右面板（文件 tab 在右面板，不收起会盖住目标 composer——与 @ 插入同款）
+      setRightPanelOpen(false);
+      handleNewSession(`ext-${Date.now()}`, cwd);
+    };
+    window.addEventListener("pi-web:new-session", handler);
+    return () => window.removeEventListener("pi-web:new-session", handler);
+  }, [handleNewSession]);
+
   // Client-built transient SessionInfo (new session / fork) lacks the
   // server-computed projectKey, which the same-project check in
   // handleCwdChange relies on. Hydrate it from the session list so switching

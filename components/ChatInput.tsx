@@ -1643,6 +1643,35 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     });
   }, [draftKey]);
 
+  // [aiti] 跨会话预填（「@到新session」类功能）：扩展先写
+  // window.__piWebPendingComposer = { text, at }，再派发 pi-web:new-session / pi-web:open-session；
+  // 目标输入框挂载/换 key 后在此消费插入。带 15s 时效防陈文误投；一次性短延迟定时器
+  // 避开同 commit 的 [draftKey] 清空 effect（上方的 setValue("")）与扩展恢复链，非轮询。
+  useEffect(() => {
+    const w = window as any;
+    const pending = w.__piWebPendingComposer;
+    if (!pending || typeof pending.text !== "string" || !pending.text) return;
+    if (Date.now() - (Number(pending.at) || 0) > 15000) { delete w.__piWebPendingComposer; return; }
+    const timer = setTimeout(() => {
+      const cur = w.__piWebPendingComposer;
+      if (!cur || cur !== pending) return; // 已被更新/消费
+      delete w.__piWebPendingComposer;
+      const combined = pending.text;
+      valueRef.current = combined;
+      setValue(combined);
+      setAtQuery(null);
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.focus();
+        ta.setSelectionRange(combined.length, combined.length);
+        ta.style.height = "auto";
+        ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+      });
+    }, 150);
+    return () => clearTimeout(timer);
+  }, [draftKey]);
+
   // composer 增强契约：值变化广播（草稿落槽位/队列横幅等扩展消费）
   // 草稿落盘由 aiti-draft-keeper 经 onChange 接管；core 不再自行落盘（已删原 save effect）
   useEffect(() => {
