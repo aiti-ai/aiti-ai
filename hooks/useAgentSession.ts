@@ -2572,7 +2572,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const sid = sessionIdRef.current;
     if (!sid) return null;
     try {
-      const result = await sendAgentCommand<{ removed?: QueueTrashItem; steering?: string[]; followUp?: string[] }>(sid, {
+      const result = await sendAgentCommand<{ removed?: QueueTrashItem; steering?: string[]; followUp?: string[]; queueTrash?: QueueTrashItem[] }>(sid, {
         type: "remove_queue_item",
         kind,
         index,
@@ -2581,6 +2581,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (result && (result.steering !== undefined || result.followUp !== undefined)) {
         setQueuedMessages(normalizeQueuedMessages(result));
       }
+      // 服务端同响应返回更新后的 trash —— 即时刷新回收站徽标（队列面板归扩后
+      // 由扩展消费该状态；不再等 SSE/刷新）
+      if (result?.queueTrash !== undefined) setQueueTrash(result.queueTrash);
       return result?.removed ?? null;
     } catch (e) {
       console.error("Failed to remove queued message:", e);
