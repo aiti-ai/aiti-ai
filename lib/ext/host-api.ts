@@ -16,11 +16,16 @@ export interface OpenFileOptions {
   select?: boolean;
 }
 
+/** 打开文件夹标签页的选项（扩展经 ctx.openFolder 透传；select:false = 后台打开不激活）。 */
+export interface OpenFolderOptions {
+  select?: boolean;
+}
+
 export interface HostApi {
   /** 打开文件标签页（AppShell 原样能力：filePath + fileName 必填，options 透传） */
   openFile?: (filePath: string, fileName: string, options?: OpenFileOptions) => void | Promise<void>;
   /** 打开文件夹标签页（右侧面板 FolderViewer；display-only，不影响 cwd） */
-  openFolder?: (folderPath: string, folderName: string) => void | Promise<void>;
+  openFolder?: (folderPath: string, folderName: string, options?: OpenFolderOptions) => void | Promise<void>;
   /** 侧栏文件树定位目录 */
   revealDir?: (absPath: string) => void | Promise<void>;
   /** 当前打开的标签页清单（{ id, filePath, kind, pinned }，数组序=打开序；仅读原语，无策略） */

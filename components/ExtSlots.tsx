@@ -14,7 +14,7 @@
 
 import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { apiUrl } from "@/lib/base-path";
-import { getHostApi, type OpenFileOptions } from "@/lib/ext/host-api";
+import { getHostApi, type OpenFileOptions, type OpenFolderOptions } from "@/lib/ext/host-api";
 import { registerComposerEnhancement } from "@/lib/composer/bus";
 import type { ComposerEnhancement, RecoveryItemsProvider } from "@/lib/composer/types";
 import { registerRecoveryItemsProvider } from "@/lib/composer/recovery";
@@ -98,7 +98,7 @@ export interface ExtClientContext {
   /** 打开文件标签页（宿主公共接口，同步调用；返回 void/Promise） */
   openFile?(path: string, fileName?: string, options?: OpenFileOptions): void | Promise<void>;
   /** 打开文件夹标签页（右侧面板 FolderViewer；display-only，不影响 cwd） */
-  openFolder?(path: string, folderName?: string): void | Promise<void>;
+  openFolder?(path: string, folderName?: string, options?: OpenFolderOptions): void | Promise<void>;
   /** 侧栏文件树定位目录 */
   revealDir?(absPath: string): void | Promise<void>;
   /** 读取当前打开 tab 清单（数组序=打开序；含 kind/pinned 透传）——批量关闭/容量控制原语 */
@@ -289,8 +289,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     // 宿主公共接口（AppShell 经 registerHostApi 注册原样能力；fileName 兜底适配在框架层）
     openFile: (path: string, fileName?: string, options?: OpenFileOptions) =>
       getHostApi().openFile?.(path, fileName ?? path.split("/").pop() ?? path, options),
-    openFolder: (path: string, folderName?: string) =>
-      getHostApi().openFolder?.(path, folderName ?? path.split("/").pop() ?? path),
+    openFolder: (path: string, folderName?: string, options?: OpenFolderOptions) =>
+      getHostApi().openFolder?.(path, folderName ?? path.split("/").pop() ?? path, options),
     revealDir: (absPath) => getHostApi().revealDir?.(absPath),
     getFileTabs: () => getHostApi().getFileTabs?.() ?? [],
     closeFileTabs: (ids: string[]) => getHostApi().closeFileTabs?.(ids),

@@ -121,8 +121,9 @@ function ViewerBody() {
         // 后台打开（select:false）不入历史栈——地址栏始终跟随激活 tab
         openTargetRef.current({ path: filePath, kind: "file", cwd: stateRef.current.cwd }, select, select);
       },
-      openFolder: (folderPath) => {
-        openTargetRef.current({ path: folderPath, kind: "folder", cwd: stateRef.current.cwd }, true);
+      openFolder: (folderPath, _folderName, options) => {
+        const select = options?.select !== false;
+        openTargetRef.current({ path: folderPath, kind: "folder", cwd: stateRef.current.cwd }, select);
       },
       getFileTabs: () => stateRef.current.tabs.map((tb) => ({ id: tb.id, filePath: tb.filePath, kind: tb.kind, pinned: tb.pinned })),
       closeFileTabs: (ids) => {
