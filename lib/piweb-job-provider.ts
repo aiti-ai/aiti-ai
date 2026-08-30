@@ -184,8 +184,8 @@ export function installPiWebJobProvider(): void {
               // 完成判定：事件驱动的 isRunning 边沿（无轮询）
               handle.subscribe((event) => {
                 // 后端首条消息后才知道真实原生 id（如 cursor chatId）——记录换绑结果供链接落盘
-                if (event && event.type === "session_backend_ready" && typeof (event as { id?: unknown }).id === "string") {
-                  job.realChildId = String((event as { id: unknown }).id);
+                if (event && event.type === "session_backend_ready" && typeof (event as unknown as { id?: unknown }).id === "string") {
+                  job.realChildId = String((event as unknown as { id: unknown }).id);
                 }
                 if (job.done || !job.started) return;
                 if (!handle.isRunning()) void finalize(job, handle);
