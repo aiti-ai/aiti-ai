@@ -22,6 +22,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
+import { dataRoot } from "@/lib/ext/data-dir";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   findProvidersForAgent,
@@ -45,12 +46,14 @@ interface PiWebJob {
   sessionFile?: string;
   handle?: SessionHandle;
   created: number;
-  /** 外部后端桩会话（身份记录，不记对话）：父会话文件/agent 名/任务/runId */
+  /** 外部后端：父会话文件/agent 名/任务/runId/父会话 id/换绑后真实复合 id */
   parentFile?: string;
   agent?: string;
   prompt?: string;
   runId?: string;
   cwd?: string;
+  parentSessionId?: string;
+  realChildId?: string;
 }
 
 const jobs = new Map<string, PiWebJob>();
@@ -156,6 +159,7 @@ export function installPiWebJobProvider(): void {
           job.prompt = input.prompt ? String(input.prompt) : undefined;
           job.runId = input.runId ? String(input.runId) : undefined;
           job.cwd = input.cwd ? String(input.cwd) : undefined;
+          job.parentSessionId = input.sessionId ? String(input.sessionId) : undefined;
           jobs.set(id, job);
           pruneJobs();
 
@@ -178,7 +182,11 @@ export function installPiWebJobProvider(): void {
               // 换绑监听——cursor/claude 的 chatId 在 init 帧才到手，换绑后
               // ?session=cursor:<chatId> 才能跨重启恢复）。
               // 完成判定：事件驱动的 isRunning 边沿（无轮询）
-              handle.subscribe(() => {
+              handle.subscribe((event) => {
+                // 后端首条消息后才知道真实原生 id（如 cursor chatId）——记录换绑结果供链接落盘
+                if (event && event.type === "session_backend_ready" && typeof (event as { id?: unknown }).id === "string") {
+                  job.realChildId = String((event as { id: unknown }).id);
+                }
                 if (job.done || !job.started) return;
                 if (!handle.isRunning()) void finalize(job, handle);
               });
@@ -253,31 +261,30 @@ async function finalize(job: PiWebJob, handle: SessionHandle): Promise<void> {
     job.state = "failed";
     job.error = e instanceof Error ? e.message : String(e);
   }
-  // 外部后端：落 pi 格式桩会话（只记身份不记对话）——core session-reader 按路径
-  // 推断 externalSubagent → 🤖 徽标/父子树/All Sessions 索引原生生效。
-  if (job.backend !== "pi") writeExternalSubagentStub(job);
+  // 外部后端：落 child→parent 链接——session-manager 据此给真实历史行打 🤖 子代理徽标，
+  // 打开仍走原会话（历史消息原样）。不建桩会话（用户反馈：打开要看真实历史）。
+  if (job.backend !== "pi") writeExternalSubagentLink(job, handle);
 }
 
-/** 外部后端桩会话：<父会话目录>/<runId>/run-0/session.jsonl（core 认的布局，
- *  profile 从 subagent-artifacts/<runId>_<agent>_transcript.jsonl 提取=agent 名）。
- *  只写身份元数据（session_info name + 任务/完成指针两条），不转写对话消息。 */
-function writeExternalSubagentStub(job: PiWebJob): void {
+/** 外部后端链接落盘：childId（换绑后真实复合 id，回退原 handle id）→ 父会话 id/文件。 */
+function writeExternalSubagentLink(job: PiWebJob, handle: SessionHandle): void {
   try {
-    if (!job.parentFile || !job.runId) return;
-    const dir = path.join(path.dirname(job.parentFile), job.runId, "run-0");
-    fs.mkdirSync(dir, { recursive: true });
-    const file = path.join(dir, "session.jsonl");
-    if (fs.existsSync(file)) return;
-    const now = new Date().toISOString();
-    const rid = () => randomUUID().slice(0, 8);
-    const task = String(job.prompt || "").replace(/\s+/g, " ").trim();
-    const lines = [
-      // header 不写 parentSession：路径推断产生 externalSubagent → kind=subagent（徽标/树/面板）
-      JSON.stringify({ type: "session", version: 3, id: randomUUID(), timestamp: now, cwd: job.cwd ?? "" }),
-      JSON.stringify({ type: "session_info", id: rid(), parentId: null, timestamp: now, name: `${job.agent || job.backend} · ${task.slice(0, 60)}` }),
-      JSON.stringify({ type: "message", id: rid(), parentId: null, timestamp: now, message: { role: "user", content: [{ type: "text", text: task.slice(0, 2000) }] } }),
-      JSON.stringify({ type: "message", id: rid(), parentId: null, timestamp: now, message: { role: "assistant", content: [{ type: "text", text: `✅ 外部子代理（${job.backend} 后端）已完成。完整对话在该后端原会话（All Sessions 对应 agent 分组打开）。` }] } }),
-    ];
-    fs.writeFileSync(file, lines.join("\n") + "\n");
-  } catch { /* 桩落盘失败不影响委派主流程 */ }
+    if (!job.parentFile && !job.parentSessionId) return;
+    const childId = job.realChildId || handle.id;
+    if (!childId) return;
+    const file = path.join(dataRoot(), "external-subagent-links.json");
+    let links: Record<string, { parentSessionId?: string; parentSessionFile?: string; backend: string; agent?: string; runId?: string; ts: number }> = {};
+    try { links = JSON.parse(fs.readFileSync(file, "utf8")); } catch { /* 首次为空 */ }
+    links[childId] = {
+      parentSessionId: job.parentSessionId,
+      parentSessionFile: job.parentFile,
+      backend: job.backend,
+      agent: job.agent,
+      runId: job.runId,
+      ts: Date.now(),
+    };
+    const entries = Object.entries(links).sort((a, b) => (b[1].ts || 0) - (a[1].ts || 0)).slice(0, 500);
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(file, JSON.stringify(Object.fromEntries(entries), null, 1));
+  } catch { /* 链接落盘失败不影响委派主流程 */ }
 }
