@@ -105,6 +105,12 @@ export function resolveLocalFileHref(
     return null;
   }
 
+  // ~ 开头 = home 相对路径（~/x）：浏览器无 homedir，不与 baseDir 拼接，原样透传——
+  // 由服务端统一展开（core /api/files filePathFromSegments、aiti-editor resolveAllowedWrite）
+  if (normalizedHref === "~" || normalizedHref.startsWith("~/") || normalizedHref.startsWith("~\\")) {
+    return stripLineSuffix(normalizeLocalPath(normalizedHref));
+  }
+
   if (lowerHref.startsWith("file:")) {
     candidate = fileUrlToPath(normalizedHref);
     candidateKind = candidate ? "absolute" : null;
@@ -136,6 +142,11 @@ export function resolveLocalFilePath(filePath: string | undefined, baseDir?: str
   const normalizeSlashes = (value: string) => windowsStyle ? value.replace(/\\/g, "/") : value;
   const normalizedPath = normalizeSlashes(filePath);
   const normalizedBase = baseDir ? normalizeSlashes(baseDir).replace(/\/+$/, "") : undefined;
+
+  // ~ 开头 = home 相对路径（~/x）：浏览器无 homedir，不与 baseDir 拼接，原样透传（服务端展开）
+  if (normalizedPath === "~" || normalizedPath.startsWith("~/") || normalizedPath.startsWith("~\\")) {
+    return normalizeLocalPath(normalizedPath);
+  }
 
   const isDriveAbsolute = /^[a-zA-Z]:\//.test(normalizedPath);
   const isUncAbsolute = normalizedPath.startsWith("//");
