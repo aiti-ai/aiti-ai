@@ -157,7 +157,13 @@ export async function POST(
         }
         return NextResponse.json({ ok: true, path: t.path, type: t.type, kind: t.kind ?? null, cwd: t.cwd ?? null });
       }
-      const p = typeof body?.path === "string" ? body.path : "";
+      const rawPath = typeof body?.path === "string" ? body.path : "";
+      // ~ 开头 = home 相对路径 → 展开（与 GET 段路径 filePathFromSegments 同语义）：
+      // 标签页现在可能持有 ~/ 形式路径（消息里的 ~ 路径透传），下载/票据通道同样要能处理
+      const homeDir = process.env.HOME || process.env.USERPROFILE;
+      const p = rawPath === "~" || rawPath.startsWith("~/")
+        ? (homeDir ? normalizeSlashes(path.join(homeDir, rawPath === "~" ? "" : rawPath.slice(2))) : rawPath)
+        : rawPath;
       if (!p || (!p.startsWith("/") && !isWindowsAbsolutePath(p))) {
         return NextResponse.json({ error: "path must be absolute" }, { status: 400 });
       }
