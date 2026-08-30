@@ -36,6 +36,48 @@ export function resolveExtensionEntry(dir: string): string | null {
   return null;
 }
 
+/**
+ * 解析扩展版本号为可比较结构（"1.2.3" / "v1.2.3" / "1.2" / "1.2.3-beta.1"）。
+ * 数值段全为数字才算可解析；否则返回 null（同名裁决时视为未知，回退根优先级）。
+ */
+export function parseExtVersion(v: unknown): { core: number[]; pre: string } | null {
+  if (typeof v !== "string") return null;
+  const s = v.trim().replace(/^[v=]+/i, "");
+  if (!s) return null;
+  const dash = s.indexOf("-");
+  const corePart = dash >= 0 ? s.slice(0, dash) : s;
+  const pre = dash >= 0 ? s.slice(dash + 1) : "";
+  const parts = corePart.split(".");
+  if (parts.length === 0 || parts.length > 4) return null;
+  const core: number[] = [];
+  for (const p of parts) {
+    if (!/^\d+$/.test(p)) return null;
+    core.push(Number(p));
+  }
+  return { core, pre };
+}
+
+/**
+ * 版本比较：a>b → 1；a<b → -1；相等或任一不可解析 → 0（调用方回退根优先级）。
+ * 数值段逐位比（缺段补 0）；数值相等时正式版 > 预发布，两个预发布按字符串比
+ * （够用即可，不实现完整 semver prerelease 语义）。
+ */
+export function compareExtVersions(a: unknown, b: unknown): number {
+  const va = parseExtVersion(a);
+  const vb = parseExtVersion(b);
+  if (!va || !vb) return 0;
+  const len = Math.max(va.core.length, vb.core.length);
+  for (let i = 0; i < len; i++) {
+    const x = va.core[i] ?? 0;
+    const y = vb.core[i] ?? 0;
+    if (x !== y) return x > y ? 1 : -1;
+  }
+  if (va.pre && vb.pre) return va.pre === vb.pre ? 0 : va.pre > vb.pre ? 1 : -1;
+  if (va.pre) return -1;
+  if (vb.pre) return 1;
+  return 0;
+}
+
 /** Load one extension directory into a PiWebExtension object (default export). */
 export async function loadExtensionFromDir(dir: string): Promise<PiWebExtension | null> {
   const entry = resolveExtensionEntry(dir);

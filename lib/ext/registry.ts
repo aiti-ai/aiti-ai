@@ -24,7 +24,7 @@ import type {
   ManifestExtension,
 } from "./types.ts";
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
-import { loadExtensionFromDir, scanExtensionDirs } from "./loader.ts";
+import { loadExtensionFromDir, scanExtensionDirs, compareExtVersions } from "./loader.ts";
 import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
 import { invokeAI as aiInvokeImpl } from "../ai-invoke.ts";
 import { registerExtensionProvider, removeProvider as removeProviderFromRegistry, cleanupAllExtensionProviders, findProvidersForAgent } from "../session/providers.ts";
@@ -150,6 +150,27 @@ function collectSlots(ui?: ExtUiDefinition): Record<string, string[]> | undefine
   return Object.keys(slots).length > 0 ? slots : undefined;
 }
 
+/**
+ * 候选版本（同名裁决用）：package.json version 优先，缺失时退回 entry 声明的
+ * version（懒加载探测一次，结果缓存）。探测失败按未知处理——真实错误在候选
+ * 胜出后的正式加载时暴露。注意：只对「同名冲突」的候选调用，且禁用的扩展
+ * 绝不探测（不执行代码的不变量）。
+ */
+async function candidateVersion(dir: string, cache: Map<string, string | undefined>): Promise<string | undefined> {
+  if (cache.has(dir)) return cache.get(dir);
+  let v = readPackageInfo(dir).version;
+  if (v === undefined) {
+    try {
+      const ext = await loadExtensionFromDir(dir);
+      v = ext?.version;
+    } catch {
+      v = undefined;
+    }
+  }
+  cache.set(dir, v);
+  return v;
+}
+
 export class ExtRegistryImpl {
   core: ExtCoreApi;
   private readonly extensionsRootOverride?: string;
@@ -158,6 +179,8 @@ export class ExtRegistryImpl {
   private readonly bundledExtensionsRootOverride?: string;
   private readonly dataRootOverride?: string;
   private extensions = new Map<string, LoadedExtension>();
+  /** 同名裁决结果（loadAll 填充）：id → 胜出候选。status() 复用它保证遮蔽口径一致。 */
+  private winners = new Map<string, { dir: string; source: ExtensionSource }>();
   private errors = new Map<string, string>();
   private loaded = false;
 
@@ -357,7 +380,7 @@ export class ExtRegistryImpl {
     return this.dataRootOverride ?? dataRoot();
   }
 
-  /** 解析顺序即优先级：user → extra（env 列出顺序）→ dev（dev-exts）→ bundled。 */
+  /** 解析顺序即优先级：user → extra（env 列出顺序）→ dev（dev-exts）→ bundled（同名同版本时的回退序）。 */
   private extensionRoots(): Array<{ root: string; source: ExtensionSource }> {
     const dev = this.devExtensionsRootOverride !== undefined
       ? this.devExtensionsRootOverride
@@ -372,36 +395,69 @@ export class ExtRegistryImpl {
 
   /**
    * Scan + load every extension directory across all roots. Individual
-   * failures never block others. Same id in a lower-priority root is
-   * shadowed (skipped silently) once a higher-priority root loaded it.
+   * failures never block others.
+   *
+   * 同名裁决（版本优先）：同一 id 出现在多个根时，比各候选目录 package.json 的
+   * version（缺失退 entry version）——**版本高者胜，不论在哪个根**；同版本或
+   * 双方都无法解析版本时回退根优先级（user > extra > dev > bundled）。落选
+   * 候选被遮蔽（静默跳过）。胜出者加载失败不回退到落选候选（fail-fast，
+   * 与旧语义一致——静默回退反而加重「改了没生效」的排查难度）。
+   * 禁用的扩展不加载也不探测版本（不执行代码）。
    */
   async loadAll(): Promise<void> {
     this.invalidateBootGraph();
     this.extensions.clear();
     this.errors.clear();
-    const seen = new Set<string>();
+    this.winners.clear();
+
+    // 1) 收集候选：按根优先级顺序枚举，id → 候选数组（数组序 = 根优先级）。
+    const candidates = new Map<string, Array<{ dir: string; source: ExtensionSource }>>();
     for (const { root, source } of this.extensionRoots()) {
       for (const dir of scanExtensionDirs(root)) {
         const id = dir.split(sep).pop() ?? dir;
-        if (seen.has(id)) continue; // 高优先级根已加载 → 同名遮蔽跳过
-        seen.add(id);
-        if (this.disabledExtensions().has(id)) continue; // 用户禁用 → 不加载（status 里不出现，界面用 isEnabled 展示）
-        try {
-          const ext = await loadExtensionFromDir(dir);
-          if (!ext) {
-            this.errors.set(id, "no extension entry (index.ts / single script)");
-            continue;
+        if (!candidates.has(id)) candidates.set(id, []);
+        candidates.get(id)!.push({ dir, source });
+      }
+    }
+
+    // 2) 裁决：版本高者胜；同版本/未知 → 根优先级（数组序靠前者胜）。缓存胜出者
+    //    供 status() 复用（禁用枚举与 loadAll 保持同一份遮蔽结果）。
+    const disabled = this.disabledExtensions();
+    const versionCache = new Map<string, string | undefined>();
+    for (const [id, cands] of candidates) {
+      let winner = cands[0];
+      if (cands.length > 1 && !disabled.has(id)) {
+        let winnerVer = await candidateVersion(winner.dir, versionCache);
+        for (let i = 1; i < cands.length; i++) {
+          const ver = await candidateVersion(cands[i].dir, versionCache);
+          if (compareExtVersions(ver, winnerVer) > 0) {
+            winner = cands[i];
+            winnerVer = ver;
           }
-          if (ext.id !== id) {
-            this.errors.set(id, `entry id "${ext.id}" does not match directory name "${id}"`);
-            continue;
-          }
-          const dataDir = join(this.dataRoot(), ext.id);
-          if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
-          this.extensions.set(ext.id, { id: ext.id, name: ext.name, version: ext.version, dir, dataDir, source, ext });
-        } catch (e) {
-          this.errors.set(id, e instanceof Error ? e.message : String(e));
         }
+      }
+      this.winners.set(id, winner);
+    }
+
+    // 3) 加载胜出者（保持首见顺序；失败不回退）。
+    for (const [id, winner] of this.winners) {
+      if (disabled.has(id)) continue; // 用户禁用 → 不加载（status 里不出现，界面用 isEnabled 展示）
+      const { dir, source } = winner;
+      try {
+        const ext = await loadExtensionFromDir(dir);
+        if (!ext) {
+          this.errors.set(id, "no extension entry (index.ts / single script)");
+          continue;
+        }
+        if (ext.id !== id) {
+          this.errors.set(id, `entry id "${ext.id}" does not match directory name "${id}"`);
+          continue;
+        }
+        const dataDir = join(this.dataRoot(), ext.id);
+        if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
+        this.extensions.set(ext.id, { id: ext.id, name: ext.name, version: ext.version, dir, dataDir, source, ext });
+      } catch (e) {
+        this.errors.set(id, e instanceof Error ? e.message : String(e));
       }
     }
     this.loaded = true;
@@ -428,9 +484,9 @@ export class ExtRegistryImpl {
   /**
    * 全量状态（含被禁用与加载失败的扩展）：
    *  - 加载失败 → loaded:false + error
-   *  - 被禁用 → enabled:false（从各根重新枚举目录，读 package.json 静态信息，不执行代码）
+   *  - 被禁用 → enabled:false（读 package.json 静态信息，不执行代码；同名目录用
+   *    loadAll 的裁决结果 —— 版本高者胜，同版本/未知回退根优先级）
    *  - 正常 → loaded:true + 插入点/钩子/client 等全部细节
-   * 同名遮蔽规则与 loadAll 一致（高优先级根先看到即占用）。
    */
   status(): Record<string, ExtStatusEntry> {
     const disabled = this.disabledExtensions();
@@ -443,21 +499,40 @@ export class ExtRegistryImpl {
     }
 
     if (disabled.size > 0) {
-      for (const { root, source } of this.extensionRoots()) {
-        for (const dir of scanExtensionDirs(root)) {
-          const id = dir.split(sep).pop() ?? dir;
+      // 优先复用 loadAll 的裁决结果（winners 与加载口径一致）；未 loadAll 过
+      // （winners 空）回退首见扫描（旧口径：根优先级）。
+      if (this.winners.size > 0) {
+        for (const [id, winner] of this.winners) {
           if (seen.has(id) || !disabled.has(id)) continue;
           seen.add(id);
-          const packageInfo = readPackageInfo(dir);
+          const packageInfo = readPackageInfo(winner.dir);
           out[id] = {
             loaded: false,
             enabled: false,
-            source,
-            dir,
+            source: winner.source,
+            dir: winner.dir,
             name: packageInfo.name ?? id,
             version: packageInfo.version,
             packageInfo,
           };
+        }
+      } else {
+        for (const { root, source } of this.extensionRoots()) {
+          for (const dir of scanExtensionDirs(root)) {
+            const id = dir.split(sep).pop() ?? dir;
+            if (seen.has(id) || !disabled.has(id)) continue;
+            seen.add(id);
+            const packageInfo = readPackageInfo(dir);
+            out[id] = {
+              loaded: false,
+              enabled: false,
+              source,
+              dir,
+              name: packageInfo.name ?? id,
+              version: packageInfo.version,
+              packageInfo,
+            };
+          }
         }
       }
     }
