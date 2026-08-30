@@ -1835,10 +1835,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch (e) {
       console.error("Fork failed:", e);
+      // 静默失败曾让「运行中 fork 被拒」看起来像卡死（按钮点不动）——上浮提示。
+      const msg = e instanceof Error ? e.message : String(e);
+      addNotice({ type: "error", message: `Fork failed: ${msg}` });
     } finally {
       setForkingEntryId(null);
     }
-  }, [onSessionForked]);
+  }, [addNotice, onSessionForked]);
 
   const handleNavigate = useCallback(async (entryId: string) => {
     const sid = sessionIdRef.current;
