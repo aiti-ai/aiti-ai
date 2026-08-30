@@ -11,6 +11,7 @@
  */
 
 import type { SessionHandle } from "./types";
+import { hasPlaceholder } from "./placeholder.ts";
 
 declare global {
   var __sessionHandles: Map<string, SessionHandle> | undefined;
@@ -76,6 +77,9 @@ export function getHandleSessionInfos(): Array<{
   for (const [key, h] of store()) {
     if (!h.alive() || seen.has(h)) continue;
     seen.add(h);
+    // 站位文件已接管列表展示（pi 磁盘扫描段）——瞬时行退场，避免同会话双行。
+    // 判定用 handle.id（换绑后为真实复合 id，站位键随换绑迁移）。
+    if (hasPlaceholder(h.id)) continue;
     // agent 标签取 source 的 provider 段："aiti-claude-code-agent/claude-code" → "claude-code"
     const agent = h.source.includes("/") ? h.source.split("/")[1] : h.source;
     out.push({

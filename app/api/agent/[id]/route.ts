@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
-import { resolveAnySession, resolveAttachBySessionId, attachIfBridged } from "@/lib/session";
+import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession } from "@/lib/session";
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -51,7 +51,13 @@ export async function POST(
     }
 
     // Fast path: already-running session (local registry, then provider handles)
-    const existing = getRpcSession(id)?.isAlive() ? getRpcSession(id) : resolveAnySession(id);
+    let existing = getRpcSession(id)?.isAlive() ? getRpcSession(id) : resolveAnySession(id);
+    // 站位 uuid（外部 agent 会话的 pi 持久锚点）：查表 miss 时经站位文件路由真实
+    // 后端——绝不给站位文件起本地 runtime（那会把它当空壳 pi 会话跑起来）。
+    if (!existing?.isAlive()) {
+      const ph = await resolvePlaceholderSession(id).catch(() => undefined);
+      if (ph?.isAlive()) existing = ph;
+    }
 
     // 上游 v0.8.10：set_tools 工具集热更新（会话未运行时按文件路径重建）。
     // 桥持有的会话已在上面走 socket 转发，到这里的一定是本地管辖的会话。

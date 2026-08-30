@@ -74,7 +74,8 @@ import { BridgeOccupiedError } from "./types.ts";
 import type { SessionCapabilities, SessionHandle } from "./types.ts";
 import { getHandle as lookupHandle, putHandle, putHandleAt, listAllHandles } from "./handle-store.ts";
 import { HandleSessionAdapter, type WrappedSessionLike } from "./handle-adapter.ts";
-import { findBridgeSessionFileById } from "../session-reader.ts"; // 相对路径+显式扩展名：jiti 不解析 @/ 别名，ESM 要求扩展名
+import { findBridgeSessionFileById, invalidateSessionListCache, readSessionHeader, resolveSessionPath } from "../session-reader.ts"; // 相对路径+显式扩展名：jiti 不解析 @/ 别名，ESM 要求扩展名
+import { ensurePlaceholder, rebindPlaceholder, getPlaceholder } from "./placeholder.ts";
 
 function listProviderNames(): string[] {
   return listProviders().map((p) => p.type);
@@ -133,6 +134,9 @@ export async function openExternalSession(
         sessionId: options.sessionId ?? sid,
       });
       putHandle(handle);
+      // 接管/恢复路径同样落站位（resume 语义，extId 已知）：⚡接管历史行、
+      // ?session= 恢复、复合 id GET 都汇合在这里。
+      if (provider.agentKey) wireExternalPlaceholder(handle, true, options.cwd);
       return handle;
     } catch (e) {
       lastError = e;
@@ -291,8 +295,59 @@ export async function createSessionHandle(
         putHandleAt(event.id, handle);
       }
     });
+    // 外部 agent 后端（agentKey = 能驱动的外部 agent）：落 pi 站位文件（持久锚点）。
+    // attach/spawn 管的是本地 pi 会话，文件已存在，不落。
+    if (provider.agentKey) wireExternalPlaceholder(handle, !!options.sessionId, options.cwd);
   }
   return handle;
+}
+
+/**
+ * 外部 handle 的站位文件接线（lib/session/placeholder.ts）。
+ *   - resume（extId 已知且非 new- 占位）：创建即写；
+ *   - fresh（new- 占位键）：等 session_backend_ready 真实 id 换绑才写——
+ *     未发过首条消息的空会话不留孤儿站位；
+ *   - 换绑时站位键随迁移（rebindPlaceholder），与 putHandleAt 双注册同步。
+ */
+function wireExternalPlaceholder(handle: SessionHandle, resume: boolean, cwd?: string): void {
+  const colon = handle.id.indexOf(":");
+  if (colon <= 0) return; // 非复合 id 不落站位
+  const agent = handle.id.slice(0, colon);
+  const provisional = handle.id.includes(":new-");
+  const writeNow = () => {
+    // cwd 优先级：显式传入 > handle.cwd（provider createSession 时已解析会话原工作区，
+    // cursor/claude resume 都会回填）> 模块内回落目录
+    const p = ensurePlaceholder({ extId: handle.id, agent, ...(cwd || handle.cwd ? { cwd: cwd || handle.cwd } : {}) });
+    if (p) invalidateSessionListCache(); // 让下一轮 /api/sessions 立即看到站位行
+  };
+  if (resume && !provisional) writeNow();
+  handle.subscribe((event) => {
+    if (event.type !== "session_backend_ready" || typeof event.id !== "string") return;
+    const prevEvent = event as unknown as { oldId?: unknown };
+    const prevId = typeof prevEvent.oldId === "string" ? prevEvent.oldId : undefined;
+    if (prevId && getPlaceholder(prevId)) rebindPlaceholder(prevId, event.id);
+    else if (!getPlaceholder(event.id)) writeNow();
+    invalidateSessionListCache();
+  });
+}
+
+/**
+ * 站位会话解析：uuid → 站位文件 header.extId → 真实 agent 后端。
+ * 非站位 uuid 返回 undefined（调用方走本地路径，只多一次 header 读）。
+ * 打开的 handle 双注册到站位 uuid 下——后续 POST /events 的同步查表直接命中。
+ */
+export async function resolvePlaceholderSession(id: string): Promise<WrappedSessionLike | undefined> {
+  const fp = await resolveSessionPath(id).catch(() => null);
+  if (!fp) return undefined;
+  const header = readSessionHeader(fp) as unknown as { extId?: string } | null;
+  if (!header?.extId || !header.extId.includes(":")) return undefined;
+  const existing = resolveAnySession(id);
+  if (existing?.isAlive()) return existing;
+  const sid = header.extId.slice(header.extId.indexOf(":") + 1);
+  const handle = await openExternalSession(header.extId, { ...(sid ? { sessionId: sid } : {}) }).catch(() => undefined);
+  if (!handle?.alive()) return undefined;
+  putHandleAt(id, handle);
+  return resolveAnySession(id);
 }
 
 /** The registry key a handle was first stored under (identity compare). */

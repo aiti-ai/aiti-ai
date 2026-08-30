@@ -17,6 +17,8 @@ import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveAnySession, attachIfBridged, handleModelToClient } from "@/lib/session";
 import { normalizeRawMessages } from "@/lib/normalize";
 import { listProviders } from "@/lib/session/providers";
+import { resolvePlaceholderSession, removeHandle } from "@/lib/session";
+import { removePlaceholderByUuid } from "@/lib/session/placeholder";
 import { removeQueue } from "@/lib/queue-store";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
@@ -69,6 +71,48 @@ export async function GET(
       const bridged = await attachIfBridged(fpEarly);
       if (bridged?.isAlive()) {
         return await bridgedOk(id, bridged);
+      }
+    }
+
+    // 站位文件（外部 agent 会话的 pi 持久锚点）：header 带 extId → 永不按本地会话
+    // 打开，一律路由真实后端（openExternalSession），handle 双注册到站位 uuid 下。
+    // 失败（后端扩展不在/外部源不可用）才落回本地路径，至少能看到站位元数据。
+    if (fpEarly) {
+      const ph = await resolvePlaceholderSession(id).catch(() => undefined);
+      if (ph?.isAlive()) {
+        let messages: unknown[] = [];
+        try {
+          const r = (await ph.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
+          messages = normalizeRawMessages(r?.entries ?? []);
+        } catch { /* get_messages 缺省 → 空 */ }
+        const first = messages.find((m) => (m as { role?: string }).role === "user");
+        const firstText = first
+          ? (() => {
+              const c = (first as { content?: unknown }).content;
+              return typeof c === "string" ? c : "(backend session)";
+            })()
+          : "(backend session)";
+        const phHeader = readSessionHeader(fpEarly) as unknown as { agent?: string } | null;
+        return NextResponse.json({
+          sessionId: id,
+          filePath: "",
+          info: {
+            path: "",
+            id,
+            cwd: ph.cwd ?? "",
+            name: undefined,
+            created: new Date().toISOString(),
+            modified: new Date().toISOString(),
+            messageCount: messages.length,
+            firstMessage: firstText.slice(0, 80) || "(backend session)",
+            transient: true,
+            agent: phHeader?.agent ?? undefined,
+          },
+          leafId: null,
+          tree: [],
+          context: { messages, entryIds: [], thinkingLevel: "off", model: null },
+          totalActiveMs: 0,
+        });
       }
     }
 
@@ -165,6 +209,8 @@ export async function GET(
                 messageCount: messages.length,
                 firstMessage: "(backend session)",
                 transient: true,
+                // agent 标签（复合 id 前缀）：前端 loadModels 靠它走外部模型目录
+                agent: id.slice(0, id.indexOf(":")) || undefined,
               },
               leafId: null,
               tree: [],
@@ -356,7 +402,17 @@ export async function DELETE(
     }
 
     // Read only the bounded header before deleting.
-    const parentSessionPath = readSessionHeader(filePath)?.parentSession;
+    const deleteHeader = readSessionHeader(filePath) as unknown as { parentSession?: string; extId?: string } | null;
+    // 站位文件：只删锚点（文件 + 注册表项 + 存活 handle），外部原始数据（cursor store.db 等）
+    // 永不动；也不会有子会话挂站位名下——跳过重挂 cascade。
+    if (deleteHeader?.extId) {
+      removePlaceholderByUuid(id); // 含站位文件 unlink
+      removeHandle(id); // 存活 handle 退场（防僵尸瞬时行）
+      invalidateSessionPathCache(id);
+      invalidateSessionListCache();
+      return NextResponse.json({ ok: true });
+    }
+    const parentSessionPath = deleteHeader?.parentSession;
     const parentSessionId = parentSessionPath
       ? readSessionHeader(parentSessionPath)?.id
       : undefined;

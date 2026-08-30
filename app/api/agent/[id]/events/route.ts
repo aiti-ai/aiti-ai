@@ -1,7 +1,7 @@
 import { createAgentEventStream } from "@/lib/agent-event-stream";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
-import { resolveAnySession, resolveAttachBySessionId, attachIfBridged } from "@/lib/session";
+import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -51,13 +51,19 @@ export async function GET(
     ?? resolveAnySession(id);
   if (live?.isAlive()) {
     sessionPromise = Promise.resolve(live);
-  } else {
-    // startRpcSession 内部仍有 ownsFile 总闸兜底
-    if (!filePath) {
-      return new Response("Session not found", { status: 404 });
+  } else if (filePath) {
+    // 站位 uuid（外部 agent 会话的 pi 持久锚点）：路由真实后端，绝不给站位文件
+    // 起本地 runtime（那会把它当空壳 pi 会话跑起来）。
+    const ph = await resolvePlaceholderSession(id).catch(() => undefined);
+    if (ph?.isAlive()) {
+      sessionPromise = Promise.resolve(ph);
+    } else {
+      // startRpcSession 内部仍有 ownsFile 总闸兜底
+      if (req.signal.aborted) return new Response(null, { status: 204 });
+      sessionPromise = startRpcSession(id, filePath, undefined).then((result) => result.session);
     }
-    if (req.signal.aborted) return new Response(null, { status: 204 });
-    sessionPromise = startRpcSession(id, filePath, undefined).then((result) => result.session);
+  } else {
+    return new Response("Session not found", { status: 404 });
   }
 
   const stream = createAgentEventStream(req, id, sessionPromise);

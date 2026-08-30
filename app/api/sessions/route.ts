@@ -13,6 +13,7 @@ import {
 import { getHandleSessionInfos, getRunningHandleIds } from "@/lib/session";
 import { getBridgeRunningIds } from "@/lib/session/bridge-running";
 import { getRegistry } from "@/lib/ext/registry";
+import { stampExternalSessions } from "@/lib/session/placeholder";
 
 export const dynamic = "force-dynamic";
 
@@ -38,6 +39,9 @@ export async function GET(req: Request) {
       mergeSessionLists(persistedSessions as never[], runtimeSessions),
       pathKeyedHandles,
     );
+    // 站位行标注：磁盘扫描出的外部会话站位不携带 header 扩展字段——按注册表补
+    // agent 标签（前端徽标/外部模型目录路由依赖它）。
+    stampExternalSessions(sessions);
     // 会话标注 slot：扩展（如 aiti-attach-agent 的 TUI 桥占用标记）追加自有字段。
     // 数据所有权在扩展——核心不感知桥注册表等具体格式。
     try {
