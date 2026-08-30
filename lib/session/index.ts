@@ -147,6 +147,28 @@ function findAttachProviderType(): string | undefined {
 }
 
 /**
+ * 桥认领成功后，关闭同会话的意外本地 wrapper（单写者恢复）。
+ *
+ * 背景（2026-08-30 实测复现）：TUI 桥登记晚于 web 首开时（pi -c 起动数秒内点开
+ * 会话、或浏览器 SSE 断线重连落在 TUI 重启空档），SSE/prompt 路由会在注册表
+ * miss 窗口内 startRpcSession 抢先起一个本地 runtime。桥随后登记完成 →
+ * split-brain：POST 走桥（attach 优先）、GET/SSE 仍偏向本地双胞胎——用户表现为
+ * 「第一次连不上，切走再切回来才通」。attach 成功即关掉双胞胎，下一轮询自愈。
+ */
+async function shutdownStrayLocalRuntime(sessionId: string, sessionFile: string): Promise<void> {
+  try {
+    const { getRpcSession } = await import("../rpc-manager");
+    for (const key of new Set([sessionId, sessionFile])) {
+      const twin = getRpcSession(key);
+      if (twin?.isAlive()) {
+        console.warn(`[session] bridge claimed "${sessionFile}" — shutting down stray local runtime (race-window twin)`);
+        await twin.shutdown().catch(() => {});
+      }
+    }
+  } catch { /* rpc-manager 不可用（极端裁剪环境）——跳过善后 */ }
+}
+
+/**
  * 会话文件被运行中的 TUI 桥占用时，懒创建 attach handle 并入库（键 = 文件路径）。
  * 占用判定经 provider.ownsFile 协商——注册表格式归扩展所有，核心不感知。
  *
@@ -185,6 +207,8 @@ export async function attachIfBridged(
       });
       putHandle(handle);
       if (sessionUuid !== sessionFile) putHandleAt(sessionFile, handle);
+      // 单写者善后：桥认领成功 → 竞态窗口起的本地双胞胎必须退场（后台执行不阻塞返回）
+      void shutdownStrayLocalRuntime(sessionUuid, sessionFile);
       return new HandleSessionAdapter(handle);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);

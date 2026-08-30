@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import { generateSessionTitle } from "@/lib/session-title";
 import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
+import { attachIfBridged } from "@/lib/session";
 import { invalidateSessionListCache, resolveSessionPath } from "@/lib/session-reader";
 
 export async function POST(
@@ -14,6 +15,20 @@ export async function POST(
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+
+    // 桥占用识别最先（同 agent/[id] POST）：被 TUI 桥认领的会话不在本地起 runtime
+    // 跑命名 turn（会双写文件）；attachIfBridged 附带竞态窗口善后（杀双胞胎）。
+    try {
+      const bridged = await attachIfBridged(filePath);
+      if (bridged?.isAlive()) {
+        return NextResponse.json({ error: "session bridged; auto-name skipped" }, { status: 409 });
+      }
+    } catch (e) {
+      if ((e as { name?: string }).name === "BridgeOccupiedError") {
+        return NextResponse.json({ error: "session bridged; auto-name skipped" }, { status: 409 });
+      }
+      throw e;
     }
 
     const existing = getRpcSession(id);

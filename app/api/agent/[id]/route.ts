@@ -119,10 +119,12 @@ export async function GET(
   const light = new URL(req.url).searchParams.get("light") === "1";
 
   try {
-    // socket 优先：attach 由 registry 判定（空会话/未索引也命中），rpc/本地 handle 兜底
-    const session = getRpcSession(id)?.isAlive()
-      ? getRpcSession(id)
-      : resolveAnySession(id) ?? await resolveAttachBySessionId(id);
+    // socket 优先：attach 由 registry 判定（空会话/未索引也命中），rpc/本地 handle 兜底。
+    // attach 必须压过本地 wrapper（getRpcSession 优先会把竞态窗口起的本地双胞胎
+    // 永久钉在返回值上——桥登记后状态仍走本地，用户看到「连不上」）；且
+    // attachIfBridged 会顺手关闭双胞胎，下一轮询即回到桥状态（无需刷新页面）。
+    const session = (await resolveAttachBySessionId(id))
+      ?? (getRpcSession(id)?.isAlive() ? getRpcSession(id) : resolveAnySession(id));
     if (!session || !session.isAlive()) {
       return NextResponse.json({ running: false });
     }
