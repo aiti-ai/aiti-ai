@@ -736,10 +736,13 @@ function ExtErrorIndicator() {
             <button onClick={() => setAiOpen(v => !v)} title="急救 AI：独立会话修复此错误（含 aiti-configs 工具）" style={btn}>🚑</button>
             <button onClick={() => setOpen(false)} title="关闭：收起面板（错误保留）" style={btn}>✕</button>
           </div>
+          {/* 内容区：flex:1 + minHeight:0 + overflowY auto（aiti-float 约定：标题栏自然高 + 内容区 flex:1 自己滚）——最大化/缩放时内容跟随高度，不撑破/不空白 */}
+          <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 6 }}>
           {cur && (
             <div
               key={cur.id}
               style={{
+                flex: 1, minHeight: 0,
                 display: "flex", flexDirection: "column", gap: 6, fontSize: 11, color: "var(--text, #eee)",
                 background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)",
                 borderRadius: 7, padding: "6px 8px",
@@ -755,16 +758,16 @@ function ExtErrorIndicator() {
               )}
               {/* 动作按钮已移至顶栏；此处不再重复底栏 */}
               {aiOpen && (
-                <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
-                  {/* AI 输出区：始终预留 ≥10 行（minHeight 160），发送前显示占位提示 */}
-                  <div style={{ minHeight: 160, maxHeight: "45vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, padding: "2px 0" }}>
+                <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
+                  {/* AI 输出区：flex:1 随高度增长（≥10 行 minHeight 160），发送前显示占位提示 */}
+                  <div style={{ flex: 1, minHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, padding: "2px 0" }}>
                     {aiLog.length === 0 && !aiBusy ? <span style={{ fontSize: 10, color: "var(--text-dim, #6b7280)", lineHeight: 1.5 }}>发送后 AI 输出原样显示于此（可多轮）。首轮自动带上错误上下文。</span> : null}
                     {aiLog.map((m, i) => (
                       <div key={i} style={{ fontSize: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", lineHeight: 1.4, color: m.role === "user" ? "var(--text-muted, #888)" : "var(--text, #eee)", borderLeft: `2px solid ${m.role === "user" ? "var(--border, #444)" : "#f59e0b"}`, paddingLeft: 5 }}>{m.text}</div>
                     ))}
                     {aiBusy && <div style={{ fontSize: 10, color: "var(--text-muted, #888)" }}>思考中…</div>}
                   </div>
-                  <div style={{ display: "flex", gap: 4 }}>
+                  <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
                     <input value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendAi(); } }} placeholder="急救指令（Enter 发送）…" disabled={aiBusy} style={{ flex: 1, fontSize: 11, padding: "3px 6px", background: "var(--bg, #1a1a1a)", color: "var(--text, #eee)", border: "1px solid var(--border, #444)", borderRadius: 4, outline: "none" }} />
                     <button onClick={sendAi} disabled={aiBusy || !aiInput.trim()} style={btn}>{aiBusy ? "…" : "发送"}</button>
                   </div>
@@ -772,6 +775,7 @@ function ExtErrorIndicator() {
               )}
             </div>
           )}
+          </div>
         </div>
       )}
     </>

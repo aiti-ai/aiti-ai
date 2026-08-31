@@ -19,6 +19,17 @@ export default function GlobalError({
   const [cur, setCur] = useState("");
   const [busy, setBusy] = useState(false);
   const [sid, setSid] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  const errFull = `[${error?.message || String(error || "unknown error")}]
+${error?.stack || "(无堆栈)"}`;
+  const copyErr = async () => {
+    try { await navigator.clipboard.writeText(errFull); } catch {
+      const ta = document.createElement("textarea"); ta.value = errFull; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch {} document.body.removeChild(ta);
+    }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  };
 
   useEffect(() => {
     try {
@@ -76,9 +87,10 @@ export default function GlobalError({
       <body style={{ margin: 0, background: "#1a1a1a", color: "#e8e8e8", fontFamily: "system-ui, sans-serif" }}>
         <div style={{ maxWidth: 640, margin: "0 auto", padding: "32px 20px" }}>
           <h1 style={{ margin: "0 0 8px", fontSize: 20 }}>🚑 页面崩溃 — 急救模式</h1>
-          <p style={{ margin: "0 0 12px", fontSize: 13, color: "#9ca3af" }}>
-            系统遇到错误，已无法正常渲染界面。下面发指令给后台 AI（独立会话，含 aiti-configs 工具），让它定位/回滚/修复最近的扩展或配置变更。
-          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px" }}>
+            <p style={{ margin: 0, fontSize: 13, color: "#9ca3af", flex: 1 }}>系统遇到错误，已无法正常渲染界面。下面发指令给后台 AI（独立会话，含 aiti-configs 工具），让它定位/回滚/修复最近的扩展或配置变更。</p>
+            <button onClick={copyErr} style={{ padding: "4px 10px", fontSize: 12, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer", flexShrink: 0 }}>{copied ? "已复制 ✓" : "复制错误"}</button>
+          </div>
           <pre style={{ ...pre, margin: "0 0 16px", padding: 10, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 8, color: "#f59e0b", maxHeight: 160, overflow: "auto" }}>
             {error?.message || String(error || "unknown error")}
             {error?.stack ? `\n\n${error.stack}` : ""}
