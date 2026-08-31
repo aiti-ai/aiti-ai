@@ -697,6 +697,9 @@ function ExtErrorIndicator() {
       </button>
       {open && errors.length > 0 && (
         <div
+          data-ext-float="1"
+          data-ext-float-full="1"
+          data-ext-float-w="460"
           style={{
             position: "fixed",
             ...(pos
@@ -712,8 +715,10 @@ function ExtErrorIndicator() {
             padding: 8, display: "flex", flexDirection: "column", gap: 6,
           }}
         >
-          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted, #aaa)", marginBottom: 2 }}>
-            <span>扩展错误</span>
+          {/* 顶栏：标题+翻页+动作按钮全归此处（删底栏重复）；首个子元素=aiti-float 拖拽把手。
+              aiti-float 健在→拖拽/缩放/最大化/小屏全屏自动接管；缺失→回退上方 fixed 定位（pos 相对按钮）。 */}
+          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted, #aaa)", flexWrap: "wrap" }}>
+            <span style={{ fontWeight: 600 }}>扩展错误</span>
             {errors.length > 1 ? (
               <>
                 <button onClick={() => setIdx((i) => Math.max(0, i - 1))} disabled={ci === 0} title="上一条" style={{ ...btn, opacity: ci === 0 ? 0.4 : 1 }}>‹</button>
@@ -721,7 +726,13 @@ function ExtErrorIndicator() {
                 <button onClick={() => setIdx((i) => Math.min(errors.length - 1, i + 1))} disabled={ci === errors.length - 1} title="下一条" style={{ ...btn, opacity: ci === errors.length - 1 ? 0.4 : 1 }}>›</button>
               </>
             ) : null}
-            <span style={{ marginLeft: "auto", fontSize: 10 }}>复制·{cur.kind !== "uncaught" ? "忽略·" : ""}✕ 关闭</span>
+            <span style={{ marginLeft: "auto" }} />
+            <button onClick={() => copy(cur)} title="复制完整错误（含堆栈）" style={btn}>{copiedId === cur.id ? "已复制 ✓" : "复制"}</button>
+            {cur.kind !== "uncaught" && (
+              <button onClick={() => { unregisterExtSlotError(cur.id); cur.reset(); }} title="忽略：重试渲染（错误若持续会重新捕获）" style={btn}>忽略</button>
+            )}
+            <button onClick={() => setAiOpen(v => !v)} title="急救 AI：独立会话修复此错误（含 aiti-configs 工具）" style={btn}>🚑</button>
+            <button onClick={() => setOpen(false)} title="关闭：收起面板（错误保留）" style={btn}>✕</button>
           </div>
           {cur && (
             <div
@@ -740,20 +751,7 @@ function ExtErrorIndicator() {
                   {cur.stack}
                 </pre>
               )}
-              <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                <button onClick={() => copy(cur)} title="复制完整错误（含堆栈）" style={btn}>
-                  {copiedId === cur.id ? "已复制 ✓" : "复制"}
-                </button>
-                {cur.kind !== "uncaught" && (
-                  <button
-                    onClick={() => { unregisterExtSlotError(cur.id); cur.reset(); }}
-                    title="忽略：重试渲染（错误若持续会重新捕获）"
-                    style={btn}
-                  >忽略</button>
-                )}
-                <button onClick={() => setAiOpen(v => !v)} title="急救 AI：独立会话修复此错误（含 aiti-configs 工具）" style={btn}>🚑</button>
-                <button onClick={() => setOpen(false)} title="关闭：收起面板（错误保留）" style={btn}>✕</button>
-              </div>
+              {/* 动作按钮已移至顶栏；此处不再重复底栏 */}
               {aiOpen && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
                   {aiLog.length > 0 && (

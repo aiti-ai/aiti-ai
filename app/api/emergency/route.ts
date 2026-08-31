@@ -68,11 +68,11 @@ export async function POST(req: Request) {
         if (closed) return;
         try { controller.enqueue(encoder.encode(s)); } catch { /* stream closed */ }
       };
-      let sent = false;
+      let lastEventAt = Date.now();
 
       const off = session.onEvent?.((ev: { type?: string; assistantMessageEvent?: { partial?: { content?: unknown[] } } }) => {
-        if (!sent) return;
         const t = ev.type;
+        lastEventAt = Date.now();
         // assistant 文本增量（原始 partial.content 带 text 块）
         if (t === "message_update" && ev.assistantMessageEvent?.partial?.content && Array.isArray(ev.assistantMessageEvent.partial.content)) {
           const content = ev.assistantMessageEvent.partial.content as Array<{ type?: string; text?: string; name?: string; toolName?: string; id?: string; toolCallId?: string }>;
@@ -94,7 +94,15 @@ export async function POST(req: Request) {
             }
           }
         } else if (t === "agent_settled") {
-          // 一轮结束：短延后关流（冲刷末尾事件）
+          // 一轮结束：若 partial 未吐文本（部分模型在 settled 才出全文），兑底取
+          // getLastAssistantText() 原样补发；短延后关流（冲刷末尾事件）。
+          if (!lastText) {
+            try {
+              const fin = (session.inner?.getLastAssistantText?.() ?? "") as string;
+              if (fin) { enqueue(fin); lastText = fin; }
+            } catch { /* ignore */ }
+          }
+          if (!lastText) enqueue("\n[急救] AI 未返回文本（模型可能限流/出错，重试或换模型）");
           const tm = setTimeout(() => {
             if (closed) return;
             closed = true;
@@ -115,6 +123,18 @@ export async function POST(req: Request) {
       }, 240000);
       flushTimers.push(timeout);
 
+      // 无活动兑底：30s 无任何事件则关流（防 agent_settled 不发/模型挂起 → 240s 空等）
+      const actTimer = setInterval(() => {
+        if (closed) return;
+        if (Date.now() - lastEventAt > 30000) {
+          enqueue("\n[急救] 30s 无活动，流关闭");
+          closed = true;
+          try { off?.(); } catch { /* ignore */ }
+          try { controller.close(); } catch { /* stream closed */ }
+        }
+      }, 5000);
+      flushTimers.push(actTimer as unknown as ReturnType<typeof setTimeout>);
+
       // 客户端断开
       req.signal.addEventListener("abort", () => {
         if (closed) return;
@@ -123,7 +143,6 @@ export async function POST(req: Request) {
         try { controller.close(); } catch { /* stream closed */ }
       });
 
-      sent = true;
       session.send({ type: "prompt", message }).catch((e: unknown) => {
         enqueue(`\n[发送错误] ${e instanceof Error ? e.message : String(e)}`);
         if (!closed) { closed = true; try { off?.(); } catch { /* ignore */ } try { controller.close(); } catch { /* stream closed */ } }
