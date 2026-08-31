@@ -6,12 +6,14 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 // POST /api/emergency { message, cwd, sessionId? }
-// 最简急救 AI（crash-rescue §5.2 落地）：创建/复用 agent 会话——普通会话（非
-// noExtensions），collectAgentTools 逐扩展 try/catch 容错（broken 扩展跳过）→
-// aiti-configs 工具照常注入（满足"急救ai允许aiti-configs的tools"）。发 prompt，
-// 订阅 agent_settled → wrapper.inner.getLastAssistantText() 原样返回全文。
-// 不依赖 chat UI / SSE 事件解析 / 文本格式化——一个 POST 一轮，原样输出。
-// 多轮：首响返回 sessionId，后续请求带 sessionId 复用同一会话。
+// 最简急救 AI（crash-rescue §5.2 落地）——流式：订阅 session.onEvent（原始事件，
+// 带 partial），把 AI 输出原样持续推流（assistant 文本增量 + 工具调用标记），
+// 直到 agent_settled。客户端 fetch+reader 持续追加、全显示，不等完成。不走 chat
+// UI / SSE 事件解析 / 文本格式化。多轮：首响 x-session-id 复用同一会话。
+//
+// 会话：普通会话（非 noExtensions），collectAgentTools 逐扩展 try/catch 容错；
+// 建新会话前临时启用 aiti-configs 的 agentTools.enabled（默认关）→ 注入 aiti_configs_*
+// 工具，满足"急救ai允许aiti-configs的tools"。
 export async function POST(req: Request) {
   let body: { message?: unknown; cwd?: unknown; sessionId?: unknown };
   try { body = await req.json(); } catch { return Response.json({ error: "invalid json" }, { status: 400 }); }
@@ -20,7 +22,6 @@ export async function POST(req: Request) {
   const prevId = typeof body.sessionId === "string" ? body.sessionId : "";
   if (!message) return Response.json({ error: "message required" }, { status: 400 });
 
-  // 复用或新建会话
   // biome-ignore lint/suspicious/noExplicitAny: wrapper 类型跨文件，按结构用
   let session: any = null;
   let realId: string | undefined = prevId || undefined;
@@ -35,15 +36,16 @@ export async function POST(req: Request) {
       }
     }
     if (!session) {
-      if (!cwd) return Response.json({ error: "cwd required for new session" }, { status: 400 });
-      // 启用 aiti-configs 的 agentTools（默认关；aiti-configs agentTools() 检 feature flag）
-      // → collectAgentTools 注入 aiti_configs_* 工具（满足“急救ai允许aiti-configs的tools”）。
-      // 时序安全：startRpcSession 内 collectAgentTools 同步跑完后才返回，故还原不影响本会话已注入的工具。
+      // 无 cwd 时服务端兑底家目录——锥伤的意义就是正常流程用不了时（无会话/页面崩），
+      // 不能因缺 cwd 拒绝。aiti_configs_* 工具走绝对路径，bash 也能用绝对路径。
+      const useCwd = cwd || process.env.HOME || "/";
+      // 启用 aiti-configs 的 agentTools（默认关）→ collectAgentTools 注入 aiti_configs_* 工具。
+      // 时序安全：startRpcSession 内 collectAgentTools 同步跑完才返回，还原不影响本会话已注入工具。
       const ext = (globalThis as Record<string, unknown> & { __piWebExt?: { setFeatureFlag?: (id: string, f: string, v: boolean) => void; featureEnabled?: (id: string, f: string) => boolean } }).__piWebExt;
       const prevCfg = ext?.featureEnabled?.("aiti-configs", "agentTools.enabled") ?? false;
       if (ext?.setFeatureFlag) ext.setFeatureFlag("aiti-configs", "agentTools.enabled", true);
       try {
-        const r = await startRpcSession(`__emg__${randomUUID()}`, "", cwd, {});
+        const r = await startRpcSession(`__emg__${randomUUID()}`, "", useCwd, {});
         session = r.session;
         realId = r.realSessionId;
       } finally {
@@ -54,42 +56,91 @@ export async function POST(req: Request) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
 
-  // 订阅 agent_settled → 取最终 assistant 文本（subagent.ts:189 同款模式）
-  let resolveSettled!: (t: string) => void;
-  let rejectSettled!: (e: Error) => void;
-  const settled = new Promise<string>((res, rej) => { resolveSettled = res; rejectSettled = rej; });
-  let sent = false;
-  const off: (() => void) | undefined = session.onEvent?.((ev: { type?: string }) => {
-    // 只认 send 之后的首次 agent_settled（含重试/压缩后的一轮结束）
-    if (sent && ev.type === "agent_settled") {
-      try {
-        const text = session.inner?.getLastAssistantText?.() ?? "";
-        resolveSettled(typeof text === "string" ? text : "");
-      } catch (e) {
-        rejectSettled(e instanceof Error ? e : new Error(String(e)));
-      }
-    }
+  const encoder = new TextEncoder();
+  let closed = false;
+  let lastText = "";
+  const emittedTools = new Set<string>();
+  const flushTimers: ReturnType<typeof setTimeout>[] = [];
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const enqueue = (s: string) => {
+        if (closed) return;
+        try { controller.enqueue(encoder.encode(s)); } catch { /* stream closed */ }
+      };
+      let sent = false;
+
+      const off = session.onEvent?.((ev: { type?: string; assistantMessageEvent?: { partial?: { content?: unknown[] } } }) => {
+        if (!sent) return;
+        const t = ev.type;
+        // assistant 文本增量（原始 partial.content 带 text 块）
+        if (t === "message_update" && ev.assistantMessageEvent?.partial?.content && Array.isArray(ev.assistantMessageEvent.partial.content)) {
+          const content = ev.assistantMessageEvent.partial.content as Array<{ type?: string; text?: string; name?: string; toolName?: string; id?: string; toolCallId?: string }>;
+          // 文本增量
+          const full = content.filter((b) => b && b.type === "text").map((b) => b.text || "").join("");
+          if (full.length > lastText.length) {
+            enqueue(full.slice(lastText.length));
+            lastText = full;
+          }
+          // 工具调用标记（新 toolCall 块）
+          for (const b of content) {
+            if (b && b.type === "toolCall") {
+              const id = b.id || b.toolCallId || b.name || b.toolName || "";
+              const name = b.name || b.toolName || "?";
+              if (id && !emittedTools.has(id)) {
+                emittedTools.add(id);
+                enqueue(`\n→ 调用工具: ${name}\n`);
+              }
+            }
+          }
+        } else if (t === "agent_settled") {
+          // 一轮结束：短延后关流（冲刷末尾事件）
+          const tm = setTimeout(() => {
+            if (closed) return;
+            closed = true;
+            try { off?.(); } catch { /* ignore */ }
+            try { controller.close(); } catch { /* stream closed */ }
+          }, 400);
+          flushTimers.push(tm);
+        }
+      });
+
+      // 兜底超时 240s（急救 AI 可能跑很久）
+      const timeout = setTimeout(() => {
+        if (closed) return;
+        enqueue("\n[急救] 超时 240s，流已关闭");
+        closed = true;
+        try { off?.(); } catch { /* ignore */ }
+        try { controller.close(); } catch { /* stream closed */ }
+      }, 240000);
+      flushTimers.push(timeout);
+
+      // 客户端断开
+      req.signal.addEventListener("abort", () => {
+        if (closed) return;
+        closed = true;
+        try { off?.(); } catch { /* ignore */ }
+        try { controller.close(); } catch { /* stream closed */ }
+      });
+
+      sent = true;
+      session.send({ type: "prompt", message }).catch((e: unknown) => {
+        enqueue(`\n[发送错误] ${e instanceof Error ? e.message : String(e)}`);
+        if (!closed) { closed = true; try { off?.(); } catch { /* ignore */ } try { controller.close(); } catch { /* stream closed */ } }
+      });
+    },
+    cancel() {
+      closed = true;
+      for (const tm of flushTimers) clearTimeout(tm);
+    },
   });
 
-  try {
-    sent = true;
-    // send 不阻塞到完成（ack 即返）；agent_settled 到达时 settled resolve
-    await session.send({ type: "prompt", message });
-  } catch (e) {
-    try { off?.(); } catch { /* ignore */ }
-    return Response.json({ error: e instanceof Error ? e.message : String(e), sessionId: realId }, { status: 500 });
-  }
-
-  // 等 agent_settled，兜底超时 240s（急救 AI 可能跑 bash/aiti_configs 工具）
-  let to: ReturnType<typeof setTimeout> | undefined;
-  const text = await Promise.race<string>([
-    settled,
-    new Promise<string>((_, rej) => {
-      to = setTimeout(() => rej(new Error("急救 AI 超时（240s 未 settle）")), 240000);
-    }),
-  ]).catch((e: unknown) => `[急救错误] ${e instanceof Error ? e.message : String(e)}`);
-  if (to) clearTimeout(to);
-  try { off?.(); } catch { /* ignore */ }
-
-  return Response.json({ sessionId: realId ?? null, text: text || "(无输出)" });
+  return new Response(stream, {
+    headers: {
+      "content-type": "text/plain; charset=utf-8",
+      "x-session-id": realId || "",
+      "cache-control": "no-cache, no-transform",
+      "x-accel-buffering": "no",
+    },
+  });
 }

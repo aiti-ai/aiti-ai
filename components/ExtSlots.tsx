@@ -639,17 +639,32 @@ function ExtErrorIndicator() {
     const text = aiInput.trim();
     if (!text || aiBusy) return;
     const cwd = (window as unknown as { __piWebCwd?: string | null }).__piWebCwd;
-    if (!aiSid && !cwd) { setAiLog(l => [...l, { role: "ai", text: "[无当前会话 cwd——请先在主界面打开一个项目会话再急救]" }]); return; }
     const msg = aiSid ? text : `[急救上下文] 扩展 ${cur?.extId ?? "?"} ${cur?.slot}/${cur?.itemId} 崩溃：${cur?.message}\n堆栈：${cur?.stack || "(无)"}\n\n用户指令：${text}`;
-    setAiLog(l => [...l, { role: "user", text }]);
+    // 占位空 AI 消息——流式持续追加（全显示）
+    setAiLog(l => [...l, { role: "user", text }, { role: "ai", text: "" }]);
     setAiInput(""); setAiBusy(true);
+    const setLastAi = (updater: (t: string) => string) =>
+      setAiLog(l => { const n = [...l]; const li = n.length - 1; if (li >= 0 && n[li].role === "ai") n[li] = { role: "ai", text: updater(n[li].text) }; return n; });
     try {
       const r = await fetch(apiUrl("/api/emergency"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: msg, cwd: cwd || undefined, sessionId: aiSid || undefined }) });
-      const d = await r.json().catch(() => ({ error: "返回非 JSON" }));
-      if (d.sessionId) setAiSid(d.sessionId);
-      setAiLog(l => [...l, { role: "ai", text: d.text || d.error || "(无输出)" }]);
+      const sid = r.headers.get("x-session-id");
+      if (sid) setAiSid(sid);
+      const reader = r.body?.getReader();
+      const dec = new TextDecoder();
+      let acc = "";
+      if (reader) {
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          acc += dec.decode(value, { stream: true });
+          setLastAi(() => acc);
+        }
+        acc += dec.decode();
+        setLastAi(() => acc);
+      }
+      if (!acc) setLastAi(() => "(无输出)");
     } catch (e) {
-      setAiLog(l => [...l, { role: "ai", text: `[网络错误] ${e instanceof Error ? e.message : String(e)}` }]);
+      setLastAi((t) => `${t}${t ? "\n" : ""}[网络错误] ${e instanceof Error ? e.message : String(e)}`);
     } finally { setAiBusy(false); }
   };
   const btn: Record<string, string | number> = {
