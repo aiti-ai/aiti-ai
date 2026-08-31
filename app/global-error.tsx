@@ -41,7 +41,8 @@ export default function GlobalError({
   }, []);
 
   const parseModel = (s: string) => { const i = s.indexOf("|"); if (i < 0) return null; const p = s.slice(0, i).trim(), m = s.slice(i + 1).trim(); return p && m ? { provider: p, modelId: m } : null; };
-  const selModel = (mods.length ? parseModel(mSel) : parseModel(mManual));
+  // 手动模式(mOpen 或 fetch 失败)用 mManual；否则用下拉 mSel（默认值=默认 model）
+  const selModel = (mOpen || modelsFailed) ? parseModel(mManual) : parseModel(mSel);
 
   const errFull = `[${error?.message || String(error || "unknown error")}]
 ${error?.stack || "(无堆栈)"}`;
