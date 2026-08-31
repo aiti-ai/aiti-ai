@@ -21,6 +21,7 @@ import {
 import { resolveDirentIsDirectory } from "@/lib/file-dirent";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
 import { isApiRequestAllowed } from "@/lib/request-security";
+import { getParentDirectory } from "@/lib/directory-browser";
 import {
   inspectUploadTargets,
   parseUploadConflictStrategy,
@@ -730,7 +731,14 @@ async function handleFileRequest(
         return a.name.localeCompare(b.name);
       });
 
-    return NextResponse.json({ entries, path: filePath });
+    // 可上溯的父目录（在允许的 file roots 内才有，否则为 null）——文件夹浏览器「上一个目录」
+    // 按钮的边界参照：父目录本身不在允许集合内（如项目根往上到 workspace/home）视为不可再上溯。
+    const parentPath = (() => {
+      const parent = getParentDirectory(filePath);
+      return parent && isFilePathAllowed(parent, allowedRoots) ? parent : null;
+    })();
+
+    return NextResponse.json({ entries, path: filePath, parentPath });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
