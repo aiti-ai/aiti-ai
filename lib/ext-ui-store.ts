@@ -13,7 +13,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { ExtSlotName } from "@/lib/ext/types";
+import type { ExtSlotName, ExtUiItemIcon } from "@/lib/ext/types";
 
 export interface ExtRenderProps {
   /** Current selected session (null for a fresh new-session composer). */
@@ -29,17 +29,30 @@ export interface ExtUiItemRegistered {
    *  feature 关闭时宿主统一不渲染此条目（条目仍在注册表中，extman「打开」
    *  可虚空创建触发）；无需扩展自己在组件内写门控代码。 */
   feature?: string;
-  /** Component receiving ExtRenderProps (currentSession etc.). */
-  render: (props: ExtRenderProps) => ReactNode;
+  /** Component receiving ExtRenderProps (currentSession etc.).
+   *  可选：toolbar 插槽支持声明式条目——不提供 render 时宿主用 meta.icon + meta.onClick
+   *  统一渲染标准按钮（其余插槽仍必须提供 render，消费方按 typeof render === "function" 过滤）。 */
+  render?: (props: ExtRenderProps) => ReactNode;
   meta?: {
     label?: string;
     title?: string;
     badge?: boolean;
     noMenuLabel?: boolean;
+    /** 声明式图标（toolbar）：宿主统一渲染（⋯ 菜单图标槽 + 无 render 时的标准条按钮）；
+     *  提供后扩展 render 的 menu 分支不再被使用。 */
+    icon?: ExtUiItemIcon;
+    /** 声明式条目点击回调（toolbar，与 meta.icon 配套；仅客户端注册可带，服务端 ui: 意图声明不可序列化）：
+     *  ⋯ 菜单行点击 / 标准条按钮点击都会回调（参数为点击事件）。 */
+    onClick?: (e?: unknown) => void;
     /** fileViewer 接管判定（aiti-editor）：核心 FileViewer 跳板调用——
      *  文件是否交给该扩展渲染（缺省视为不接管 → 核心原查看器兜底，零回归）。 */
     match?: (filePath: string, opts: { cwd?: string; kind?: "file" | "folder" }) => boolean;
   };
+}
+
+/** render 是否存在（render 可选化后的类型收窄谓词；消费方统一用它过滤声明式条目）。 */
+export function hasExtRender<T extends ExtUiItemRegistered>(it: T): it is T & { render: (props: ExtRenderProps) => ReactNode } {
+  return typeof it.render === "function";
 }
 
 /** 扩展级元数据（manifest：name/icon），供宿主 UI 标注扩展身份。 */

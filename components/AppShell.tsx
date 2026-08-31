@@ -13,6 +13,7 @@ import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas, dispatchChatSend } from "./ExtSlots";
+import { hasExtRender } from "@/lib/ext-ui-store";
 import type { ExtRenderProps, ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
 
@@ -107,6 +108,73 @@ declare global {
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
 const LANGUAGE_MENU_WIDTH = 176;
 const AGENT_PANEL_WIDTH = 420;
+
+/** 扩展条目声明式图标（meta.icon，ExtUiItemIcon）→ 标准灰度线条渲染（16px，颜色随 currentColor）。
+ *  三种形态：{ svg } 内部标记（24×24 viewBox，lucide 线条风格）/ emoji / 扩展内 .svg 文件（CSS-mask）。
+ *  ⋯ 菜单图标槽与声明式工具条按钮（ExtToolbarIconButton）共用。 */
+function renderExtItemIcon(icon: NonNullable<ExtUiItemRegistered["meta"]>["icon"], extId?: string): React.ReactNode {
+  if (icon == null) return null;
+  if (typeof icon === "object" && "svg" in icon) {
+    return (
+      <svg
+        width={16}
+        height={16}
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true"
+        dangerouslySetInnerHTML={{ __html: icon.svg }}
+      />
+    );
+  }
+  if (typeof icon === "string" && icon.endsWith(".svg")) {
+    const url = apiUrl(`/api/extensions/${extId ?? ""}/assets/${icon}`);
+    return (
+      <span
+        aria-hidden
+        style={{
+          display: "inline-block", width: 16, height: 16, flexShrink: 0, verticalAlign: "middle",
+          background: "currentColor",
+          WebkitMaskImage: `url("${url}")`, maskImage: `url("${url}")`,
+          WebkitMaskRepeat: "no-repeat", maskRepeat: "no-repeat",
+          WebkitMaskPosition: "center", maskPosition: "center",
+          WebkitMaskSize: "contain", maskSize: "contain",
+        }}
+      />
+    );
+  }
+  return <span style={{ fontSize: 15, lineHeight: 1 }}>{String(icon)}</span>;
+}
+
+/** 声明式工具条按钮（扩展 registerItems 提供 meta.icon + meta.onClick、无 render）：
+ *  宿主统一渲染标准 36×36 灰度图标按钮（右分隔线 + hover 变色），与各扩展自绘按钮同款——
+  *  外观归宿主，杜绝逐扩展复制的样式常量漂移（2026-08 契约，见 aiti-docs extension-points）。 */
+function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
+  const icon = item.meta?.icon;
+  const title = item.meta?.title ?? item.meta?.label ?? item.id;
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={(e) => { const cb = item.meta?.onClick; if (typeof cb === "function") cb(e); }}
+      onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+      style={{
+        display: "flex", alignItems: "center", justifyContent: "center",
+        width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
+        background: "none", borderTop: "none", borderBottom: "none", borderLeft: "none",
+        borderRight: "1px solid var(--border)",
+        color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, fontSize: 16, lineHeight: 1,
+        transition: "color 0.12s",
+      }}
+    >
+      {renderExtItemIcon(icon, item.extId)}
+    </button>
+  );
+}
 
 export function AppShell() {
   // 水合完成信号：扩展（如 aiti-draft-keeper）的启动恢复必须等水合结束后落框，
@@ -1983,10 +2051,13 @@ export function AppShell() {
       ? { currentSession: null }
       : { currentSession: selectedSession, newSessionCwd: effectiveNewSessionCwd };
     if (menu) {
-      // ⋯ 下拉里扩展按钮本身常为纯图标（30px），补一个 meta.label 文字，
-      // 与内建条目（图标+文字）对齐，避免"只有图标没文字"；
-      // 两槽都补 label（toolbar 图标按钮 / sessionTopbar widget 统一为图标+文字菜单项）
+      // ⋯ 下拉里扩展条目两种形态：
+      //  a) meta.icon 声明式（2026-08 契约）：图标槽归宿主渲染（topbarMenuIconSlotStyle，与内建条目同款），
+      //     点击走 meta.onClick；扩展 render 的 menu 分支不再被使用
+      //  b) 自绘组件（旧契约 / 交互 widget）：原样嵌入 + 补 meta.label 文字，与内建条目对齐
       const extItem2 = toolbarItem ?? sessionItem;
+      const metaIcon = extItem2?.meta?.icon;
+      const metaOnClick = extItem2?.meta?.onClick;
       // noMenuLabel：扩展在 ⋯ 菜单里已自带完整内容（如搜索输入框+按钮），宿主不再补文字 label
       const label = extItem2 && !extItem2.meta?.noMenuLabel
         ? (extItem2.meta?.label ?? extItem2.meta?.title ?? id)
@@ -2002,15 +2073,24 @@ export function AppShell() {
       return (
         <div
           role="menuitem"
-          onClick={delegateClick}
+          onClick={(e) => {
+            if (typeof metaOnClick === "function") { metaOnClick(e); return; }
+            delegateClick(e);
+          }}
           onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
           onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
           style={{ ...topbarMenuRowStyle, justifyContent: "flex-start" }}
         >
-          <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
-            {/* menu 标志：扩展可在菜单场景切换渲染（如 session-manager 搜索框 → 菜单里只显图标+文字） */}
-            <ExtComponent {...extProps} menu />
-          </div>
+          {metaIcon != null ? (
+            <span style={{ ...topbarMenuIconSlotStyle, color: "var(--text-muted)" }} aria-hidden>
+              {renderExtItemIcon(metaIcon, extItem2?.extId)}
+            </span>
+          ) : (
+            <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
+              {/* menu 标志：扩展可在菜单场景切换渲染（如 session-manager 搜索框 → 菜单里只显图标+文字） */}
+              <ExtComponent {...extProps} menu />
+            </div>
+          )}
           {label && (
             <span style={{ fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
               {label}
@@ -2019,6 +2099,12 @@ export function AppShell() {
         </div>
       );
     }
+    // 声明式工具条条目（meta.icon + meta.onClick，无 render）：宿主统一渲染标准 36×36 灰度按钮；
+    // 仅 toolbar 插槽走此路径，sessionTopbar widget 必须提供 render
+    if (toolbarItem && !toolbarItem.render) {
+      return <ExtToolbarIconButton item={toolbarItem} />;
+    }
+    if (!extItem.render) return null;
     return (
       <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
         <ExtComponent {...extProps} menu={false} />
@@ -3618,7 +3704,7 @@ export function AppShell() {
           </div>
           {(() => {
             // pathPicker 能力（aiti-folder 扩展的 FolderSwitcher）；无接管则兜底按钮开 CWD。
-            const picker = pathPickerItems[0];
+            const picker = pathPickerItems.find(hasExtRender);
             if (picker) {
               return picker.render({
                 path: activeCwd ?? "",

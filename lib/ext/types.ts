@@ -231,7 +231,17 @@ export interface ExtUiItem {
   badge?: boolean;
   /** 菜单内已自带完整内容（如搜索输入框），宿主不再补文字 label */
   noMenuLabel?: boolean;
+  /**
+   * 声明式图标（toolbar 插槽；宿主按标准灰度线条风格渲染，外观收敛归宿主，杜绝各扩展自绘漂移）：
+   * - { svg }: 24×24 viewBox 的 SVG 内部标记字符串（lucide 线条风格，stroke=currentColor，如 `<path d="M3 8h14v9a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4Z"/>`）
+   * - emoji 字符串（如 "📥"）
+   * - 扩展内 .svg 文件相对路径（如 "icon.svg"；CSS-mask 渲染，颜色随 currentColor）
+   */
+  icon?: ExtUiItemIcon;
 }
+
+/** toolbar 条目声明式图标（见 ExtUiItem.icon）。 */
+export type ExtUiItemIcon = string | { svg: string };
 
 export type ExtSlotName =
   | "toolbar"

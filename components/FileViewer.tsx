@@ -21,7 +21,7 @@ import {
 } from "@/lib/file-types";
 import { encodeFilePathForApi, getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { resolveLocalFileHref } from "@/lib/file-links";
-import { getExtUiItems, subscribeExtUi, type ExtUiItemRegistered } from "@/lib/ext-ui-store";
+import { getExtUiItems, subscribeExtUi, hasExtRender, type ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { parseFrontmatter } from "@/lib/frontmatter";
 import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
 import { CodeBlock, MermaidBlock } from "./MermaidBlock";
@@ -976,10 +976,12 @@ export function FileViewer({
     () => FILE_VIEWER_NO_ITEMS, // 服务端稳定空快照（SSR 不接管；hydration 后接管项生效）
   );
   const takeover = takeoverItems.find((item) => {
+    // render 可选化（toolbar 声明式条目）后统一收窄：无 render 的注册项不参与接管
+    if (!hasExtRender(item)) return false;
     const match = item.meta?.match;
     return typeof match === "function" && match(filePath, { cwd, kind });
   });
-  if (takeover) {
+  if (takeover && hasExtRender(takeover)) {
     return takeover.render({
       currentSession: sourceSessionId ? { id: sourceSessionId, cwd: cwd ?? "" } : null,
       filePath,

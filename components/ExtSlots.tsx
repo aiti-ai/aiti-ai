@@ -12,7 +12,7 @@
  */
 "use client";
 
-import { createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { Component, createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { apiUrl } from "@/lib/base-path";
 import { getHostApi, type OpenFileOptions, type OpenFolderOptions } from "@/lib/ext/host-api";
 import { registerComposerEnhancement } from "@/lib/composer/bus";
@@ -36,6 +36,7 @@ import {
   patchExtFeature,
   getExtFeaturesOf,
   subscribeExtFeatures,
+  hasExtRender,
   type ExtMeta,
   type ExtRenderProps,
   type ExtUiItemRegistered,
@@ -72,7 +73,7 @@ export interface ExtClientContext {
    */
   t(key: string, params?: Record<string, string | number>): string;
   apiUrl(path: string): string;
-  registerItems(slot: ExtSlotName, items: Array<{ id: string; render: (props: ExtRenderProps) => ReactNode; meta?: Record<string, unknown>; feature?: string }>): void;
+  registerItems(slot: ExtSlotName, items: Array<{ id: string; render?: (props: ExtRenderProps) => ReactNode; meta?: Record<string, unknown>; feature?: string }>): void;
   /** 注册时返回 disposer：调用即精确移除本次注册（DSH effect 语义，HMR 反卷用）。 */
   disposeItems(slot: ExtSlotName, ids: string[]): void;
   /** 注册聊天输入钩子（aiti-devtools：发送前 [元素N]/[回答N]/[错误N] 替换 + 收集候选元素） */
@@ -274,6 +275,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
         slot,
         items.map((it) => ({
           id: `${ext.id}:${it.id}`,
+          // render 可选：toolbar 声明式条目（meta.icon + meta.onClick）由宿主渲染标准按钮
           render: it.render,
           meta: it.meta,
           ...(it.feature ? { feature: it.feature } : {}),
@@ -485,6 +487,50 @@ export function useExtProvides(): Set<string> {
   }, [metas]);
 }
 
+/** 扩展 item 渲染错误边界（aiti-ext-client-hardening-plan 层 3）。
+ *  item 组件渲染 throw（如 .mjs 里 TS 残留的 ReferenceError）只降级为一行占位，
+ *  不再冒泡打崩整页——crash-rescue §4.2 实验证：sidebar/composerTools 等插槽
+ *  无祖先 boundary，崩则穿透 root。只包渲染输出；注册/dispose/HMR 路径不经过它。 */
+class ExtItemBoundary extends Component<
+  { extId?: string; slot: string; itemId: string; children: ReactNode },
+  { err: Error | null }
+> {
+  state = { err: null as Error | null };
+  static getDerivedStateFromError(err: Error) {
+    return { err };
+  }
+  componentDidCatch(err: Error) {
+    const { extId, slot, itemId } = this.props;
+    console.error(`[ext] ${extId ?? "?"} item ${slot}/${itemId} 渲染失败（已降级为占位）:`, err);
+  }
+  render() {
+    const { err } = this.state;
+    if (!err) return this.props.children;
+    const { extId, slot, itemId } = this.props;
+    return (
+      <span
+        data-ext-error="1"
+        title={err.stack || String(err)}
+        style={{
+          fontSize: 11,
+          color: "var(--muted, #888)",
+          border: "1px dashed var(--border, #ccc)",
+          borderRadius: 4,
+          padding: "1px 6px",
+          display: "inline-block",
+          maxWidth: 280,
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          verticalAlign: "middle",
+        }}
+      >
+        ⚠ {extId ?? "?"}/{itemId} 渲染失败：{err.message}
+      </span>
+    );
+  }
+}
+
 export function ExtSlot<S extends ExtSlotName>({
   name,
   currentSession = null,
@@ -495,7 +541,9 @@ export function ExtSlot<S extends ExtSlotName>({
   /** 插槽额外 props——类型从 ExtSlotContractMap 契约取（未声明 → 宽松对象）。 */
   extra?: ExtSlotProps<S>;
 }) {
-  const items = useExtSlotItems(name);
+  const items = useExtSlotItems(name)
+    // render 可选（toolbar 声明式条目归宿主渲染）；其余插槽只消费带 render 的条目
+    .filter(hasExtRender);
   // 框架级标注扩展身份：只在「弹窗类」插槽（dialogs/pages，都是 position:fixed 覆盖层）
   // 给每个 item 包一层 display:contents 的 div，盖上 data-ext-id/data-ext-slot/data-ext-item——
   // 不产生盒子、不影响布局（fixed 定位子元素照常脱离），但 DOM 上可被外部脚本（aiti-helper
@@ -507,7 +555,9 @@ export function ExtSlot<S extends ExtSlotName>({
     return (
       <>
         {items.map((it) => (
-          <it.render key={it.id} currentSession={currentSession} {...(extra as Record<string, unknown>)} />
+          <ExtItemBoundary key={it.id} extId={it.extId} slot={name} itemId={it.id}>
+            <it.render currentSession={currentSession} {...(extra as Record<string, unknown>)} />
+          </ExtItemBoundary>
         ))}
       </>
     );
@@ -522,7 +572,9 @@ export function ExtSlot<S extends ExtSlotName>({
           data-ext-item={it.id}
           style={{ display: "contents" }}
         >
-          <it.render currentSession={currentSession} {...(extra as Record<string, unknown>)} />
+          <ExtItemBoundary extId={it.extId} slot={name} itemId={it.id}>
+            <it.render currentSession={currentSession} {...(extra as Record<string, unknown>)} />
+          </ExtItemBoundary>
         </div>
       ))}
     </>

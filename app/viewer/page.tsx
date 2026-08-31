@@ -24,7 +24,7 @@ import { openFileTab, openFolderTab, saveFileViewerState } from "@/components/fi
 import { I18nProvider, useI18n } from "@/hooks/useI18n";
 import { withBasePath } from "@/lib/base-path";
 import { registerHostApi } from "@/lib/ext/host-api";
-import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
+import { getExtUiItems, subscribeExtUi, hasExtRender } from "@/lib/ext-ui-store";
 
 type ViewerTarget = { path: string; kind: "file" | "folder"; cwd?: string; /** 显式换根（如「打开文件夹」）：强制把 cwd 切到目标目录 */ setRoot?: boolean };
 
@@ -140,7 +140,8 @@ function ViewerBody() {
     () => getExtUiItems("pathPicker"),
     () => PATH_PICKER_NO_ITEMS,
   );
-  const pathPicker = pathPickerItems[0] ?? null;
+  // render 可选化（toolbar 声明式条目）后统一收窄：只消费带 render 的 pathPicker 项
+  const pathPicker = pathPickerItems.find(hasExtRender) ?? null;
 
   // —— 宿主原语最新态 ref（registerHostApi 是模块级单例，闭包不能过期）——
   const stateRef = useRef({ tabs, activeTabId, cwd: effCwd });
