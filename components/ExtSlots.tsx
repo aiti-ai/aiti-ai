@@ -13,6 +13,7 @@
 "use client";
 
 import { Component, createElement, memo, useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { apiUrl } from "@/lib/base-path";
 import { getHostApi, type OpenFileOptions, type OpenFolderOptions } from "@/lib/ext/host-api";
 import { registerComposerEnhancement } from "@/lib/composer/bus";
@@ -67,6 +68,14 @@ export interface ExtClientContext {
   useRef: typeof useRef;
   useCallback: typeof useCallback;
   useMemo: typeof useMemo;
+  /**
+   * Render children into a DOM node outside the extension's host position
+   * (React portal, typically document.body). Needed for fixed-position
+   * overlays rendered from inside transformed ancestors (e.g. the CWD picker
+   * dropdown's slide animation creates a containing block that traps
+   * position:fixed) — portal escapes it entirely.
+   */
+  createPortal: (children: ReactNode, container: Element | DocumentFragment) => ReactNode;
   /**
    * Translate using the extension's own i18n table (from the manifest).
    * 类型契约：扩展在 LocaleNamespaceMap 声明 key 表后可获得 key 检查；未声明
@@ -270,6 +279,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     useRef,
     useCallback,
     useMemo,
+    createPortal: (children, container) => createPortal(children, container),
     t: (key, params) => interpolate(tableFor()[key] ?? key, params),
     apiUrl,
     registerItems: (slot, items) => {

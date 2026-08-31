@@ -7,6 +7,7 @@ import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getProjectActivity, getRecentProjects, sessionsForProject } from "@/lib/project-groups";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
+import { loadHiddenWorkspaces, WORKSPACES_CHANGED_EVENT } from "@/lib/workspace-hide";
 import { formatRelativeTime } from "@/lib/i18n/format";
 import { useI18n } from "@/hooks/useI18n";
 import { ExtSlot, useExtProvides } from "./ExtSlots";
@@ -264,7 +265,11 @@ function AnimatedDropdown({ open, children, style }: { open: boolean; children: 
       style={{
         ...style,
         opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : "translateY(-8px) scale(0.96)",
+        // Fully-open state must have NO transform: a transform ancestor creates a
+        // containing block that traps position:fixed children (modals rendered
+        // from within the dropdown, e.g. the workspace manage dialog). When the
+        // animation settles, drop it so fixed overlays resolve to the viewport.
+        transform: visible ? "none" : "translateY(-8px) scale(0.96)",
         transformOrigin: "top center",
         transition: `opacity ${DROPDOWN_ANIMATION_MS}ms ease, transform ${DROPDOWN_ANIMATION_MS}ms ease`,
         pointerEvents: open ? "auto" : "none",
@@ -374,6 +379,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   const [homeDir, setHomeDir] = useState<string>("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [projectFilter, setProjectFilter] = useState("");
+  const [hiddenWorkspaces, setHiddenWorkspaces] = useState<ReadonlySet<string>>(() => loadHiddenWorkspaces());
   const [wtFilter, setWtFilter] = useState("");
   const [customPathOpen, setCustomPathOpen] = useState(false);
   const [customPathValue, setCustomPathValue] = useState(loadLastCustomCwd);
@@ -489,6 +495,18 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     window.addEventListener("sm:sessions-changed", onChange);
     return () => window.removeEventListener("sm:sessions-changed", onChange);
   }, [loadSessions, onSessionDeleted]);
+
+  // Re-filter the workspace picker when the hidden list changes (written by the
+  // session-manager extension; dispatched on the same window or across tabs).
+  useEffect(() => {
+    const syncHidden = () => setHiddenWorkspaces(loadHiddenWorkspaces());
+    window.addEventListener(WORKSPACES_CHANGED_EVENT, syncHidden);
+    window.addEventListener("storage", syncHidden);
+    return () => {
+      window.removeEventListener(WORKSPACES_CHANGED_EVENT, syncHidden);
+      window.removeEventListener("storage", syncHidden);
+    };
+  }, []);
 
   // Browser storage is unavailable during server rendering. Restore the panel
   // preference after hydration so a collapsed explorer stays collapsed on reload.
@@ -992,12 +1010,18 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
 
   const recentProjects = getRecentProjects(allSessions);
   const showProjectFilter = recentProjects.length > 8;
-  const visibleProjects = projectFilter.trim()
-    ? recentProjects.filter((project) => project.root.toLowerCase().includes(projectFilter.trim().toLowerCase()))
-    : recentProjects;
 
   // Sessions of every worktree in the selected project are shown together
   const selectedProject = projectFor(selectedCwd);
+  // 隐藏列表只过滤“可切换的”项目：当前选中的项目始终保留在列表中——
+  // 切走后它从下拉消失（隐藏生效），但正在使用中的上下文不丢、随时可切回，
+  // 不会出现“隐藏后找不到自己当前的工作区”的失联局面。
+  const isCurrentProject = (root: string) => selectedProject?.root === root;
+  const visibleProjects = projectFilter.trim()
+    ? recentProjects.filter((project) =>
+        (isCurrentProject(project.root) || !hiddenWorkspaces.has(project.root))
+        && project.root.toLowerCase().includes(projectFilter.trim().toLowerCase()))
+    : recentProjects.filter((project) => isCurrentProject(project.root) || !hiddenWorkspaces.has(project.root));
 
   // Per-project activity counts (running / unread) for the workspace selector.
   // Uses the same stable server key as the project list and filtering.
@@ -1375,6 +1399,19 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
                 </svg>
                 <span>{t("sidebar.customPath")}</span>
               </button>
+
+              {/* Workspace management actions (session-manager: 管理工作区列表） */}
+              <ExtSlot
+                name="workspacePickerActions"
+                extra={{
+                  projects: visibleProjects.map((p) => ({ key: p.key, root: p.root })),
+                  allProjects: recentProjects.map((p) => ({ key: p.key, root: p.root })),
+                  selectedCwd,
+                  hiddenWorkspaces,
+                  onSelect: (root) => { setSelectedCwd(root); setProjectFilter(""); setCustomPathOpen(false); setCustomPathError(null); setDropdownOpen(false); },
+                  onClose: () => setDropdownOpen(false),
+                }}
+              />
           </AnimatedDropdown>
         </div>
 
