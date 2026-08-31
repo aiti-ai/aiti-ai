@@ -682,7 +682,7 @@ function ExtErrorIndicator() {
                 <button onClick={() => setIdx((i) => Math.min(errors.length - 1, i + 1))} disabled={ci === errors.length - 1} title="下一条" style={{ ...btn, opacity: ci === errors.length - 1 ? 0.4 : 1 }}>›</button>
               </>
             ) : null}
-            <span style={{ marginLeft: "auto", fontSize: 10 }}>复制·{cur.kind !== "uncaught" ? "忽略·" : ""}✕ 清除</span>
+            <span style={{ marginLeft: "auto", fontSize: 10 }}>复制·{cur.kind !== "uncaught" ? "忽略·" : ""}✕ 关闭</span>
           </div>
           {cur && (
             <div
@@ -712,7 +712,7 @@ function ExtErrorIndicator() {
                     style={btn}
                   >忽略</button>
                 )}
-                <button onClick={() => unregisterExtSlotError(cur.id)} title="关闭：清除该条" style={btn}>✕</button>
+                <button onClick={() => setOpen(false)} title="关闭：收起面板（错误保留）" style={btn}>✕</button>
               </div>
             </div>
           )}
