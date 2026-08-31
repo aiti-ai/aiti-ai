@@ -1,6 +1,20 @@
 import { startRpcSession, getRpcSession } from "@/lib/rpc-manager";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { randomUUID } from "crypto";
+import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+// 兑底临时工作目录：无 cwd 时新建 ~/aiti-<YYYYMMDD>（隔离、不直接动家目录，到天一天一个），
+// 让急救 AI 有一个干净起步点（能用绝对路径访问 pi-web / ~/.pi/web 等真实目录）。
+async function createTempCwd(): Promise<string> {
+  const d = new Date();
+  const p = (n: number) => String(n).padStart(2, "0");
+  const ts = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}`;
+  const dir = path.join(os.homedir(), "aiti-" + ts);
+  await fs.mkdir(dir, { recursive: true });
+  return dir;
+}
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -53,7 +67,7 @@ export async function POST(req: Request) {
     if (!session) {
       // 无 cwd 时服务端兑底家目录——锥伤的意义就是正常流程用不了时（无会话/页面崩），
       // 不能因缺 cwd 拒绝。aiti_configs_* 工具走绝对路径，bash 也能用绝对路径。
-      const useCwd = cwd || process.env.HOME || "/";
+      const useCwd = cwd || (await createTempCwd());
       // 启用 aiti-configs 的 agentTools（默认关）→ collectAgentTools 注入 aiti_configs_* 工具。
       // 时序安全：startRpcSession 内 collectAgentTools 同步跑完才返回，还原不影响本会话已注入工具。
       const ext = (globalThis as Record<string, unknown> & { __piWebExt?: { setFeatureFlag?: (id: string, f: string, v: boolean) => void; featureEnabled?: (id: string, f: string) => boolean } }).__piWebExt;
