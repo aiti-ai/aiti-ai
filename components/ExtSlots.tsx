@@ -552,7 +552,7 @@ function ExtErrorIndicator() {
         onClick={() => setOpen((v) => !v)}
         title={`扩展渲染错误（${errors.length}）— 点击查看`}
         style={{
-          position: "fixed", left: 12, bottom: 48, zIndex: 2147483600,
+          position: "fixed", left: 12, bottom: 64, zIndex: 2147483600,
           display: "inline-flex", alignItems: "center", gap: 5,
           padding: "4px 10px", borderRadius: 9, cursor: "pointer",
           fontSize: 12, fontWeight: 700, color: "#fff",
@@ -565,7 +565,7 @@ function ExtErrorIndicator() {
       {open && errors.length > 0 && (
         <div
           style={{
-            position: "fixed", left: 12, bottom: 84, zIndex: 2147483600,
+            position: "fixed", left: 12, bottom: 100, zIndex: 2147483600,
             maxWidth: 480, minWidth: 300, maxHeight: "60vh", overflowY: "auto",
             background: "var(--bg-panel, #1a1a1a)",
             border: "1px solid rgba(245,158,11,0.5)", borderRadius: 10,
@@ -573,23 +573,23 @@ function ExtErrorIndicator() {
             padding: 8, display: "flex", flexDirection: "column", gap: 6,
           }}
         >
-          <div style={{ fontSize: 11, color: "var(--text-dim, #888)", marginBottom: 2 }}>
+          <div style={{ fontSize: 11, color: "var(--text-muted, #aaa)", marginBottom: 2 }}>
             扩展渲染错误（{errors.length}）·「忽略」重试 ·「✕」收起插槽
           </div>
           {errors.map((e) => (
             <div
               key={e.id}
               style={{
-                display: "flex", flexDirection: "column", gap: 6, fontSize: 11, color: "#f59e0b",
+                display: "flex", flexDirection: "column", gap: 6, fontSize: 11, color: "var(--text, #eee)",
                 background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)",
                 borderRadius: 7, padding: "6px 8px",
               }}
             >
               <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", lineHeight: 1.5 }} title={e.stack || e.message}>
-                <strong style={{ fontWeight: 700 }}>{e.extId ?? "?"}/{e.itemId}</strong>：{e.message}
+                <strong style={{ fontWeight: 700, color: "#f59e0b" }}>{e.extId ?? "?"}/{e.itemId}</strong>：{e.message}
               </div>
               {e.stack && (
-                <pre style={{ margin: 0, maxHeight: 140, overflow: "auto", fontSize: 10, lineHeight: 1.4, color: "var(--text-dim, #888)", whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", background: "rgba(0,0,0,0.22)", padding: "4px 6px", borderRadius: 5 }}>
+                <pre style={{ margin: 0, maxHeight: 140, overflow: "auto", fontSize: 11, lineHeight: 1.45, color: "var(--text, #e8e8e8)", whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", background: "rgba(0,0,0,0.06)", border: "1px solid var(--border, #444)", padding: "5px 7px", borderRadius: 5 }}>
                   {e.stack}
                 </pre>
               )}
