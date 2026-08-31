@@ -499,7 +499,8 @@ export type ExtSlotError = {
   itemId: string;
   message: string;
   stack?: string;
-  reset: () => void;   // 忽略：重试渲染（boundary setState({err:null})）
+  reset: () => void;   // 忽略：重试渲染（仅 render 期错误有意义；uncaught 为 no-op）
+  kind: "render" | "uncaught";
 };
 const extSlotErrors = new Map<string, ExtSlotError>();
 const errorListeners = new Set<() => void>();
@@ -517,6 +518,11 @@ export function unregisterExtSlotError(id: string) {
   extSlotErrors.delete(id);
   notifyErrorListeners();
 }
+let globSeq = 0;
+function findExtSlotError(extId: string, message: string): ExtSlotError | undefined {
+  for (const e of extSlotErrors.values()) if (e.extId === extId && e.message === message) return e;
+  return undefined;
+}
 function useExtSlotErrors(): ExtSlotError[] {
   return useSyncExternalStore(
     (cb) => { errorListeners.add(cb); return () => { errorListeners.delete(cb); }; },
@@ -532,8 +538,34 @@ function ExtErrorIndicator() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
+  // 全局接管扩展 client 的非 render 期 JS 错误（事件处理器/异步/Promise rejection）
+  // ——boundary 只捕 render throw，这些穿透到 window.onerror/unhandledrejection
+  useEffect(() => {
+    const onErr = (event: ErrorEvent | PromiseRejectionEvent) => {
+      const err = event instanceof ErrorEvent ? event.error : event.reason;
+      const msg = (err instanceof Error ? err.message : String(err ?? "")) || "unknown error";
+      const stack = err instanceof Error ? err.stack : "";
+      const src = event instanceof ErrorEvent ? event.filename ?? "" : "";
+      // 归属扩展：堆栈/源 URL 含 /api/extensions/<id>/；非扩展来源不接管
+      const m = `${stack || ""}\n${src}`.match(/\/api\/extensions\/([^/]+)\//);
+      if (!m) return;
+      const extId = m[1];
+      if (findExtSlotError(extId, msg)) return;  // 去重：同扩展同消息不重复堆
+      registerExtSlotError({
+        id: `ext-glob-${++globSeq}`,
+        extId, slot: "(uncaught)", itemId: msg.slice(0, 60),
+        message: msg, stack, reset: () => {}, kind: "uncaught",
+      });
+    };
+    window.addEventListener("error", onErr as EventListener);
+    window.addEventListener("unhandledrejection", onErr as EventListener);
+    return () => {
+      window.removeEventListener("error", onErr as EventListener);
+      window.removeEventListener("unhandledrejection", onErr as EventListener);
+    };
+  }, []);
   const copy = (e: ExtSlotError) => {
-    const text = `[ext] ${e.extId ?? "?"} item ${e.slot}/${e.itemId} 渲染失败\n${e.message}\n\n${e.stack || ""}`;
+    const text = `[ext] ${e.extId ?? "?"} ${e.slot}/${e.itemId} ${e.kind === "uncaught" ? "未捕获错误" : "渲染失败"}\n${e.message}\n\n${e.stack || ""}`;
     navigator.clipboard?.writeText(text).finally(() => {
       setCopiedId(e.id);
       if (copyTimer.current) clearTimeout(copyTimer.current);
@@ -550,7 +582,7 @@ function ExtErrorIndicator() {
     <>
       <button
         onClick={() => setOpen((v) => !v)}
-        title={`扩展渲染错误（${errors.length}）— 点击查看`}
+        title={`扩展错误（${errors.length}）— 点击查看`}
         style={{
           position: "fixed", left: 12, bottom: 64, zIndex: 2147483600,
           display: "inline-flex", alignItems: "center", gap: 5,
@@ -574,7 +606,7 @@ function ExtErrorIndicator() {
           }}
         >
           <div style={{ fontSize: 11, color: "var(--text-muted, #aaa)", marginBottom: 2 }}>
-            扩展渲染错误（{errors.length}）·「忽略」重试 ·「✕」收起插槽
+            扩展错误（{errors.length}）·「复制」拷堆栈 ·「✕」清除
           </div>
           {errors.map((e) => (
             <div
@@ -586,7 +618,7 @@ function ExtErrorIndicator() {
               }}
             >
               <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", lineHeight: 1.5 }} title={e.stack || e.message}>
-                <strong style={{ fontWeight: 700, color: "#f59e0b" }}>{e.extId ?? "?"}/{e.itemId}</strong>：{e.message}
+                <strong style={{ fontWeight: 700, color: "#f59e0b" }}>{e.extId ?? "?"}</strong>{e.kind === "uncaught" ? " · 未捕获" : `/${e.itemId}`}：{e.message}
               </div>
               {e.stack && (
                 <pre style={{ margin: 0, maxHeight: 140, overflow: "auto", fontSize: 11, lineHeight: 1.45, color: "var(--text, #e8e8e8)", whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", background: "rgba(0,0,0,0.06)", border: "1px solid var(--border, #444)", padding: "5px 7px", borderRadius: 5 }}>
@@ -597,12 +629,14 @@ function ExtErrorIndicator() {
                 <button onClick={() => copy(e)} title="复制完整错误（含堆栈）" style={btn}>
                   {copiedId === e.id ? "已复制 ✓" : "复制"}
                 </button>
-                <button
-                  onClick={() => { unregisterExtSlotError(e.id); e.reset(); }}
-                  title="忽略：重试渲染（错误若持续会重新捕获）"
-                  style={btn}
-                >忽略</button>
-                <button onClick={() => unregisterExtSlotError(e.id)} title="关闭：收起插槽（错误不再提示）" style={btn}>✕</button>
+                {e.kind !== "uncaught" && (
+                  <button
+                    onClick={() => { unregisterExtSlotError(e.id); e.reset(); }}
+                    title="忽略：重试渲染（错误若持续会重新捕获）"
+                    style={btn}
+                  >忽略</button>
+                )}
+                <button onClick={() => unregisterExtSlotError(e.id)} title="关闭：清除该条" style={btn}>✕</button>
               </div>
             </div>
           ))}
@@ -636,6 +670,7 @@ class ExtItemBoundary extends Component<
       message: err.message,
       stack: err.stack,
       reset: () => { if (this.mounted) this.setState({ err: null }); },
+      kind: "render",
     });
   }
   componentWillUnmount() {
