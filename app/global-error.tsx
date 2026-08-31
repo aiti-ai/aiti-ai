@@ -59,6 +59,11 @@ ${error?.stack || "(无堆栈)"}`;
       document.body.style.background = "#1a1a1a";
       document.body.style.color = "#e8e8e8";
       document.body.style.margin = "0";
+      // 覆盖 globals.css 对 html/body 的 overflow:hidden（供 AppShell 自管理滚动）——全局错误页
+      // 必须允许整页滚动，否则小屏内容超出视口时 AI 输出窗/输入框/按钮被裁、无法滚动查看。
+      // setProperty(..., important) 强覆盖（shorthand overflow:auto = 横竖都可滚；错误页横向内容窄无副作用）。
+      document.body.style.setProperty("overflow", "auto", "important");
+      document.documentElement.style.setProperty("overflow", "auto", "important");
     } catch { /* ignore */ }
   }, []);
 
@@ -107,16 +112,20 @@ ${error?.stack || "(无堆栈)"}`;
   };
 
   const pre: CSSProperties = {
-    margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-word",
-    fontSize: 12, lineHeight: 1.5, fontFamily: "monospace",
+    margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", overflowWrap: "break-word",
+    maxWidth: "100%", fontSize: 12, lineHeight: 1.5, fontFamily: "monospace",
   };
 
   return (
-    <html lang="zh">
-      <body style={{ margin: 0, background: "#1a1a1a", color: "#e8e8e8", fontFamily: "system-ui, sans-serif" }}>
-        <div style={{ maxWidth: 640, margin: "0 auto", padding: "32px 20px" }}>
+    <html lang="zh" style={{ overflowY: "auto", overflowX: "hidden", height: "auto" }}>
+      <body style={{ margin: 0, background: "#1a1a1a", color: "#e8e8e8", fontFamily: "system-ui, sans-serif", minHeight: "100vh" }}>
+        {/* 强制 html/body 可整页滚动（globals.css 对 html,body 设 overflow:hidden 供 AppShell 自管理滚动；
+            全局错误页必须可滚，否则小屏内容超出视口时发送按钮/输入框被裁）。style 是 CSS 非 script，不受
+            「React 不执行 script」限制；!important 压过 globals.css 与 Next 错误页内联。 */}
+        <style>{`html, body { overflow: auto !important; height: auto !important; min-height: 100vh !important; overflow-x: hidden !important; }`}</style>
+        <div style={{ maxWidth: 640, width: "100%", boxSizing: "border-box", margin: "0 auto", padding: "32px 20px 64px" }}>
           <h1 style={{ margin: "0 0 8px", fontSize: 20 }}>🚑 页面崩溃 — 急救模式</h1>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px", flexWrap: "wrap" }}>
             <p style={{ margin: 0, fontSize: 13, color: "#9ca3af", flex: 1 }}>系统遇到错误，已无法正常渲染界面。下面发指令给后台 AI（独立会话，含 aiti-configs 工具），让它定位/回滚/修复最近的扩展或配置变更。</p>
             <button onClick={copyErr} style={{ padding: "4px 10px", fontSize: 12, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer", flexShrink: 0 }}>{copied ? "已复制 ✓" : "复制错误"}</button>
           </div>
@@ -158,14 +167,14 @@ ${error?.stack || "(无堆栈)"}`;
               />
             )}
           </div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
               value={msg}
               onChange={(e) => setMsg(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
               placeholder="急救指令（Enter 发送，可多轮）…"
               disabled={busy}
-              style={{ flex: 1, padding: "8px 10px", fontSize: 13, background: "#242424", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, outline: "none" }}
+              style={{ flex: 1, minWidth: 0, padding: "8px 10px", fontSize: 13, background: "#242424", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, outline: "none" }}
             />
             <button onClick={send} disabled={busy || !msg.trim()} style={{ padding: "8px 16px", fontSize: 13, background: "#f59e0b", color: "#1a1a1a", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>
               发送
