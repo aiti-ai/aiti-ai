@@ -646,7 +646,7 @@ function ExtErrorIndicator() {
     const setLastAi = (updater: (t: string) => string) =>
       setAiLog(l => { const n = [...l]; const li = n.length - 1; if (li >= 0 && n[li].role === "ai") n[li] = { role: "ai", text: updater(n[li].text) }; return n; });
     try {
-      const r = await fetch(apiUrl("/api/emergency"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: msg, cwd: cwd || undefined, sessionId: aiSid || undefined }) });
+      const r = await fetch(apiUrl("/api/emergency"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: msg, cwd: cwd || undefined, sessionId: aiSid || undefined, ...(aiSid ? {} : { errors: errors.map((e) => ({ message: e.message, stack: e.stack || "", extId: e.extId || "", slot: e.slot || "", itemId: e.itemId || "" })) }) }) });
       const sid = r.headers.get("x-session-id");
       if (sid) setAiSid(sid);
       const reader = r.body?.getReader();

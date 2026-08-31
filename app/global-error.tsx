@@ -20,6 +20,28 @@ export default function GlobalError({
   const [busy, setBusy] = useState(false);
   const [sid, setSid] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  // 模型切换：默认 model 限流时换一个。加载 /api/models → 下拉；失败则兑底手动输入 provider|modelId。
+  const [mods, setMods] = useState<{ provider: string; id: string; name: string }[]>([]);
+  const [mSel, setMSel] = useState("");       // 下拉选中值 provider|id
+  const [mManual, setMManual] = useState(""); // 手动输入 provider|modelId
+  const [modelsFailed, setModelsFailed] = useState(false);
+  const [mOpen, setMOpen] = useState(false);
+
+  useEffect(() => {
+    fetch(BASE_PATH + "/api/models")
+      .then((r) => r.json())
+      .then((d) => {
+        const list = Array.isArray(d?.modelList) ? d.modelList : [];
+        setMods(list);
+        const dm = d?.defaultModel;
+        if (dm?.provider && dm?.modelId) setMSel(dm.provider + "|" + dm.modelId);
+        if (list.length === 0) setModelsFailed(true);
+      })
+      .catch(() => setModelsFailed(true));
+  }, []);
+
+  const parseModel = (s: string) => { const i = s.indexOf("|"); if (i < 0) return null; const p = s.slice(0, i).trim(), m = s.slice(i + 1).trim(); return p && m ? { provider: p, modelId: m } : null; };
+  const selModel = (mods.length ? parseModel(mSel) : parseModel(mManual));
 
   const errFull = `[${error?.message || String(error || "unknown error")}]
 ${error?.stack || "(无堆栈)"}`;
@@ -50,7 +72,13 @@ ${error?.stack || "(无堆栈)"}`;
       const r = await fetch(BASE_PATH + "/api/emergency", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ message: text, sessionId: sid || undefined }),
+        body: JSON.stringify({
+          message: text,
+          sessionId: sid || undefined,
+          ...(selModel ? { model: selModel } : {}),
+          // 首轮把页面崩溃错误一并送给 AI（让它知道哪坏了）
+          ...(sid ? {} : { errors: [{ message: error?.message || String(error), stack: error?.stack || "", extId: "global-error" }] }),
+        }),
       });
       const s = r.headers.get("x-session-id");
       if (s) setSid(s);
@@ -109,6 +137,26 @@ ${error?.stack || "(无堆栈)"}`;
             )}
           </div>
 
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 12, color: "#9ca3af", flexShrink: 0 }}>模型:</span>
+            {!modelsFailed ? (
+              <>
+                <select value={mSel} onChange={(e) => setMSel(e.target.value)} style={{ flex: 1, minWidth: 150, padding: "5px 8px", fontSize: 12, background: "#242424", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, outline: "none" }}>
+                  <option value="">默认</option>
+                  {mods.map((m) => <option key={m.provider + "|" + m.id} value={m.provider + "|" + m.id}>{m.name || m.id}（{m.provider}）</option>)}
+                </select>
+                <button onClick={() => setMOpen((v) => !v)} style={{ padding: "4px 8px", fontSize: 11, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>{mOpen ? "列表" : "手动"}</button>
+              </>
+            ) : null}
+            {(modelsFailed || mOpen) && (
+              <input
+                value={mManual}
+                onChange={(e) => setMManual(e.target.value)}
+                placeholder="provider|modelId（如 openai|gpt-4o）"
+                style={{ flex: 1, minWidth: 150, padding: "5px 8px", fontSize: 12, background: "#242424", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, outline: "none" }}
+              />
+            )}
+          </div>
           <div style={{ display: "flex", gap: 8 }}>
             <input
               value={msg}
@@ -121,8 +169,8 @@ ${error?.stack || "(无堆栈)"}`;
             <button onClick={send} disabled={busy || !msg.trim()} style={{ padding: "8px 16px", fontSize: 13, background: "#f59e0b", color: "#1a1a1a", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>
               发送
             </button>
-            <button onClick={reset} style={{ padding: "8px 16px", fontSize: 13, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer" }}>
-              重试渲染
+            <button onClick={() => window.location.reload()} style={{ padding: "8px 16px", fontSize: 13, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer" }}>
+              刷新页面
             </button>
           </div>
         </div>

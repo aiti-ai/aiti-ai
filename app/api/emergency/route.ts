@@ -15,11 +15,26 @@ export const maxDuration = 300;
 // 建新会话前临时启用 aiti-configs 的 agentTools.enabled（默认关）→ 注入 aiti_configs_*
 // 工具，满足"急救ai允许aiti-configs的tools"。
 export async function POST(req: Request) {
-  let body: { message?: unknown; cwd?: unknown; sessionId?: unknown };
+  let body: { message?: unknown; cwd?: unknown; sessionId?: unknown; model?: unknown; errors?: unknown };
   try { body = await req.json(); } catch { return Response.json({ error: "invalid json" }, { status: 400 }); }
   const message = typeof body.message === "string" ? body.message : "";
   const cwd = typeof body.cwd === "string" ? body.cwd : "";
   const prevId = typeof body.sessionId === "string" ? body.sessionId : "";
+  // 前端收集到的错误（指示器注册表 / global-error 页错误），建新会话时拼进 AI 消息——
+  // 急救 AI 若不知道哪坏了就无从救。
+  const errors = Array.isArray(body.errors)
+    ? body.errors
+        .filter((e): e is { message?: unknown; stack?: unknown; extId?: unknown; slot?: unknown; itemId?: unknown } => !!e && typeof e === "object")
+        .map((e) => ({ message: String(e.message ?? ""), stack: String(e.stack ?? ""), extId: String(e.extId ?? ""), slot: String(e.slot ?? ""), itemId: String(e.itemId ?? "") }))
+    : [];
+  // 可选 model 切换（默认 model 限流/不可用时换一个）：{ provider, modelId }
+  const model =
+    body.model && typeof body.model === "object"
+      ? {
+          provider: typeof (body.model as { provider?: unknown }).provider === "string" ? (body.model as { provider: string }).provider : "",
+          modelId: typeof (body.model as { modelId?: unknown }).modelId === "string" ? (body.model as { modelId: string }).modelId : "",
+        }
+      : null;
   if (!message) return Response.json({ error: "message required" }, { status: 400 });
 
   // biome-ignore lint/suspicious/noExplicitAny: wrapper 类型跨文件，按结构用
@@ -45,7 +60,7 @@ export async function POST(req: Request) {
       const prevCfg = ext?.featureEnabled?.("aiti-configs", "agentTools.enabled") ?? false;
       if (ext?.setFeatureFlag) ext.setFeatureFlag("aiti-configs", "agentTools.enabled", true);
       try {
-        const r = await startRpcSession(`__emg__${randomUUID()}`, "", useCwd, {});
+        const r = await startRpcSession(`__emg__${randomUUID()}`, "", useCwd, model ? { initialModel: model } : {});
         session = r.session;
         realId = r.realSessionId;
       } finally {
@@ -123,11 +138,12 @@ export async function POST(req: Request) {
       }, 240000);
       flushTimers.push(timeout);
 
-      // 无活动兑底：30s 无任何事件则关流（防 agent_settled 不发/模型挂起 → 240s 空等）
+      // 无活动兑底：150s 无任何事件才关流（AI 用 bash 等工具排查可能 30-60s+ 无新事件，
+      // 30s 太激进会误杀；150s 只在真挂起触发，240s 兑底超时仍是硬顶）
       const actTimer = setInterval(() => {
         if (closed) return;
-        if (Date.now() - lastEventAt > 30000) {
-          enqueue("\n[急救] 30s 无活动，流关闭");
+        if (Date.now() - lastEventAt > 150000) {
+          enqueue("\n[急救] 150s 无活动，流关闭");
           closed = true;
           try { off?.(); } catch { /* ignore */ }
           try { controller.close(); } catch { /* stream closed */ }
@@ -143,7 +159,31 @@ export async function POST(req: Request) {
         try { controller.close(); } catch { /* stream closed */ }
       });
 
-      session.send({ type: "prompt", message }).catch((e: unknown) => {
+      // 建新会话（无 sessionId）时把前端收集的错误 + 后端可用上下文拼进 AI 消息，
+      // 让急救 AI 知道问题在哪；复用会话则历史已含，不再重复拼。
+      let aiMessage = message;
+      if (!prevId) {
+        const ctx: string[] = [];
+        // 急救操作规范：改动前先备份、确保可恢复、避免丢数据（提示词优化）
+        ctx.push(
+          "【急救操作规范——改任何东西之前必须遵守】",
+          "1. 动手改任何文件/配置/数据前，先做可回滚备份，且文件名/标识要唯一、带时间戳：文件改动前 cp 到 `<文件名>.<YYYYMMDD-HHMMSS>.bak`（含年月日时分秒，如 20260831-143052，避免和历史 .bak 混淆/覆盖）；或 git stash 到带时间戳的命名 stash（名含 YYYYMMDD-HHMMSS）。配置/状态改动前先快照（如 aiti_configs_status / git status）并记录时间点。",
+          "2. 任何修改都要给出一条明确、可事后执行的恢复路径（明确的恢复命令或步骤），并在回复里告诉用户怎么恢复。",
+          "3. 避免恢复导致丢数据：不删除没有备份的内容；先备份再覆盖；改已提交文件前确认无未提交的他人改动；不确定影响范围就先只读排查再动手。",
+          "4. 若问题复杂、不确定怎么修，先只读（读文件/看状态/跑只读命令）摸清现场，给出方案让用户确认后再改。",
+          ""
+        );
+        if (errors.length) {
+          ctx.push("【前端收集到的错误】（共 " + errors.length + " 条）");
+          errors.forEach((e, i) => {
+            ctx.push(`${i + 1}. [${e.extId || "?"}] ${e.slot || ""}${e.itemId ? "/" + e.itemId : ""} ${e.message}`);
+            if (e.stack) ctx.push("  堆栈: " + e.stack);
+          });
+          ctx.push("");
+        }
+        aiMessage = (ctx.length ? ctx.join("\n") + "\n\n" : "") + message;
+      }
+      session.send({ type: "prompt", message: aiMessage }).catch((e: unknown) => {
         enqueue(`\n[发送错误] ${e instanceof Error ? e.message : String(e)}`);
         if (!closed) { closed = true; try { off?.(); } catch { /* ignore */ } try { controller.close(); } catch { /* stream closed */ } }
       });
