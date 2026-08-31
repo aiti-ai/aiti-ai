@@ -551,7 +551,7 @@ function ExtErrorIndicator() {
         onClick={() => setOpen((v) => !v)}
         title={`扩展渲染错误（${errors.length}）— 点击查看`}
         style={{
-          position: "fixed", left: 12, bottom: 12, zIndex: 2147483600,
+          position: "fixed", left: 12, bottom: 48, zIndex: 2147483600,
           display: "inline-flex", alignItems: "center", gap: 5,
           padding: "4px 10px", borderRadius: 9, cursor: "pointer",
           fontSize: 12, fontWeight: 700, color: "#fff",
@@ -564,7 +564,7 @@ function ExtErrorIndicator() {
       {open && errors.length > 0 && (
         <div
           style={{
-            position: "fixed", left: 12, bottom: 48, zIndex: 2147483600,
+            position: "fixed", left: 12, bottom: 84, zIndex: 2147483600,
             maxWidth: 480, minWidth: 300, maxHeight: "60vh", overflowY: "auto",
             background: "var(--bg-panel, #1a1a1a)",
             border: "1px solid rgba(245,158,11,0.5)", borderRadius: 10,
@@ -579,26 +579,30 @@ function ExtErrorIndicator() {
             <div
               key={e.id}
               style={{
-                display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#f59e0b",
+                display: "flex", flexDirection: "column", gap: 6, fontSize: 11, color: "#f59e0b",
                 background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)",
-                borderRadius: 7, padding: "4px 6px",
+                borderRadius: 7, padding: "6px 8px",
               }}
             >
-              <span
-                style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, userSelect: "text" }}
-                title={e.stack || e.message}
-              >
-                {e.extId ?? "?"}/{e.itemId}：{e.message}
-              </span>
-              <button onClick={() => copy(e)} title="复制完整错误（含堆栈）" style={btn}>
-                {copiedId === e.id ? "已复制 ✓" : "复制"}
-              </button>
-              <button
-                onClick={() => { unregisterExtSlotError(e.id); e.reset(); }}
-                title="忽略：重试渲染（错误若持续会重新捕获）"
-                style={btn}
-              >忽略</button>
-              <button onClick={() => unregisterExtSlotError(e.id)} title="关闭：收起插槽（错误不再提示）" style={btn}>✕</button>
+              <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", lineHeight: 1.5 }} title={e.stack || e.message}>
+                <strong style={{ fontWeight: 700 }}>{e.extId ?? "?"}/{e.itemId}</strong>：{e.message}
+              </div>
+              {e.stack && (
+                <pre style={{ margin: 0, maxHeight: 140, overflow: "auto", fontSize: 10, lineHeight: 1.4, color: "var(--text-dim, #888)", whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", background: "rgba(0,0,0,0.22)", padding: "4px 6px", borderRadius: 5 }}>
+                  {e.stack}
+                </pre>
+              )}
+              <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                <button onClick={() => copy(e)} title="复制完整错误（含堆栈）" style={btn}>
+                  {copiedId === e.id ? "已复制 ✓" : "复制"}
+                </button>
+                <button
+                  onClick={() => { unregisterExtSlotError(e.id); e.reset(); }}
+                  title="忽略：重试渲染（错误若持续会重新捕获）"
+                  style={btn}
+                >忽略</button>
+                <button onClick={() => unregisterExtSlotError(e.id)} title="关闭：收起插槽（错误不再提示）" style={btn}>✕</button>
+              </div>
             </div>
           ))}
         </div>
