@@ -750,6 +750,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const isCompact = useIsCompact();
   const isCoarsePointer = useIsCoarsePointer();
   const [value, setValue] = useState("");
+  const [autoSendTick, setAutoSendTick] = useState(0);
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
   const [modelDropdownRect, setModelDropdownRect] = useState<{ top: number; left: number; width: number } | null>(null);
   const [modelFilter, setModelFilter] = useState("");
@@ -1030,6 +1031,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // save effect must NOT touch the stored draft while the box is merely empty
   // on open (that draft may be awaiting recovery in the dialog).
   const pendingImageCountRef = useRef(0);
+  // [aiti] autoSend 一次性任务：__piWebPendingComposer.autoSend 触发「零点击发首条」——
+  // 新会话欢迎页预填后自动发送（供 plan 按钮「开新会话进 /plan」全自动链路）。
+  const autoSendPendingRef = useRef<{ text: string; at: number } | null>(null);
   valueRef.current = value;
   attachedImagesRef.current = attachedImages;
   queueCountRef.current = (queuedMessages?.steering.length ?? 0) + (queuedMessages?.followUp.length ?? 0);
@@ -1365,6 +1369,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       valueRef.current = combined;
       setValue(combined);
       setAtQuery(null);
+      // [aiti] autoSend（零点击发首条）：预填成功后再触发一次真实发送（走 handleExtensionSend → onSend）。
+      // 等值提交后再发，避免旧闭包读到空 value。
+      if ((pending as { autoSend?: boolean }).autoSend) {
+        autoSendPendingRef.current = { text: combined, at: Date.now() };
+        setAutoSendTick((t) => t + 1);
+      }
       requestAnimationFrame(() => {
         const ta = textareaRef.current;
         if (!ta) return;
@@ -1619,6 +1629,22 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     registerChatSend(handleExtensionSend);
     return () => registerChatSend(null);
   }, [handleExtensionSend]);
+
+  // [aiti] autoSend（零点击发首条）一次性任务：__piWebPendingComposer.autoSend 预填后触发。
+  // pendingComposer 设置 autoSendPendingRef + bump autoSendTick → 本 effect 消费并发送一次。
+  useEffect(() => {
+    const task = autoSendPendingRef.current;
+    if (!task) return;
+    autoSendPendingRef.current = null;
+    if (!task.text || !task.text.trim()) return;
+    const t = setTimeout(() => {
+      textareaRef.current?.focus();
+      handleExtensionSend(task.text, "steer");
+    }, 60);
+    return () => clearTimeout(t);
+    // 以 autoSendTick 为触发源（不依赖 value——handleExtensionSend 拿的是实参文本）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoSendTick]);
 
   const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
@@ -3760,7 +3786,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </button>
             )}
             {/* 扩展入口（composerTools slot）：与压缩/导入同排的 32×32 图标按钮（aiti-git-trace：时间线主入口）；streaming 供 plan chip 等 turn 末刷新状态 */}
-            <ExtSlot name="composerTools" extra={{ sessionId, cwd, streaming: isStreaming }} />
+            <ExtSlot name="composerTools" extra={{
+              sessionId, cwd, streaming: isStreaming,
+              // 队列 actions（P3）：composerTools 行的导入按钮经此触发 stageImport——
+              // 导入入口回到底部控制行（与压缩/导入同排），队列空时不再孤零零浮在上方。
+              queueActions: queuePanelExtra.actions,
+            }} />
             {isMobile && controlsMenuOpen && (
               <button
                 type="button"
