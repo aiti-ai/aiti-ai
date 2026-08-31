@@ -503,7 +503,8 @@ export type ExtSlotError = {
 };
 const extSlotErrors = new Map<string, ExtSlotError>();
 const errorListeners = new Set<() => void>();
-let errorSnapshot: ExtSlotError[] = [];
+const EMPTY_ERRORS: ExtSlotError[] = [];
+let errorSnapshot: ExtSlotError[] = EMPTY_ERRORS;
 function notifyErrorListeners() {
   errorSnapshot = Array.from(extSlotErrors.values());
   for (const l of [...errorListeners]) l();
@@ -520,7 +521,7 @@ function useExtSlotErrors(): ExtSlotError[] {
   return useSyncExternalStore(
     (cb) => { errorListeners.add(cb); return () => { errorListeners.delete(cb); }; },
     () => errorSnapshot,
-    () => [],
+    () => EMPTY_ERRORS,
   );
 }
 
