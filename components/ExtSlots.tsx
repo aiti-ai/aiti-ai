@@ -12,7 +12,7 @@
  */
 "use client";
 
-import { Component, createElement, memo, useEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { Component, createElement, memo, useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { apiUrl } from "@/lib/base-path";
 import { getHostApi, type OpenFileOptions, type OpenFolderOptions } from "@/lib/ext/host-api";
 import { registerComposerEnhancement } from "@/lib/composer/bus";
@@ -63,6 +63,7 @@ export interface ExtClientContext {
   h: typeof createElement;
   useState: typeof useState;
   useEffect: typeof useEffect;
+  useLayoutEffect: typeof useLayoutEffect;
   useRef: typeof useRef;
   useCallback: typeof useCallback;
   useMemo: typeof useMemo;
@@ -265,6 +266,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     h: createElement,
     useState,
     useEffect,
+    useLayoutEffect,
     useRef,
     useCallback,
     useMemo,
