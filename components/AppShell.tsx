@@ -656,6 +656,12 @@ export function AppShell() {
     setLastOpenSession(projectKey, selectedSession.id);
   }, [selectedSession]);
 
+  // 暴露当前会话 cwd 供全局急救指示器（ExtErrorIndicator 🚑 → /api/emergency）读取；
+  // 无会话时为 null（急救由用户手填或走 global-error 兑底）
+  useEffect(() => {
+    (window as unknown as { __piWebCwd?: string | null }).__piWebCwd = selectedSession?.cwd ?? null;
+  }, [selectedSession]);
+
   useEffect(() => {
     const requestedCwd = initialNavigation.requestedCwd;
     if (!requestedCwd) return;

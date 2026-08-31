@@ -543,6 +543,12 @@ function ExtErrorIndicator() {
   const dragMoved = useRef(false);
   const [idx, setIdx] = useState(0);
   const prevLen = useRef(0);
+  // 🚑 急救 AI 状态（独立会话，不走 chat UI；原样输出）
+  const [aiOpen, setAiOpen] = useState(false);
+  const [aiInput, setAiInput] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiSid, setAiSid] = useState<string | null>(null);
+  const [aiLog, setAiLog] = useState<{ role: "user" | "ai"; text: string }[]>([]);
   useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
   // 多错误翻页：新错误到达 → 跳到最新；错误减少 → 夹紧 idx
   useEffect(() => {
@@ -628,6 +634,24 @@ function ExtErrorIndicator() {
   if (errors.length === 0) return null;
   const ci = Math.min(idx, errors.length - 1);
   const cur = errors[ci];
+  // 🚑 急救 AI：POST /api/emergency（独立会话，含 aiti-configs 工具）；首轮自动带错误上下文
+  const sendAi = async () => {
+    const text = aiInput.trim();
+    if (!text || aiBusy) return;
+    const cwd = (window as unknown as { __piWebCwd?: string | null }).__piWebCwd;
+    if (!aiSid && !cwd) { setAiLog(l => [...l, { role: "ai", text: "[无当前会话 cwd——请先在主界面打开一个项目会话再急救]" }]); return; }
+    const msg = aiSid ? text : `[急救上下文] 扩展 ${cur?.extId ?? "?"} ${cur?.slot}/${cur?.itemId} 崩溃：${cur?.message}\n堆栈：${cur?.stack || "(无)"}\n\n用户指令：${text}`;
+    setAiLog(l => [...l, { role: "user", text }]);
+    setAiInput(""); setAiBusy(true);
+    try {
+      const r = await fetch(apiUrl("/api/emergency"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ message: msg, cwd: cwd || undefined, sessionId: aiSid || undefined }) });
+      const d = await r.json().catch(() => ({ error: "返回非 JSON" }));
+      if (d.sessionId) setAiSid(d.sessionId);
+      setAiLog(l => [...l, { role: "ai", text: d.text || d.error || "(无输出)" }]);
+    } catch (e) {
+      setAiLog(l => [...l, { role: "ai", text: `[网络错误] ${e instanceof Error ? e.message : String(e)}` }]);
+    } finally { setAiBusy(false); }
+  };
   const btn: Record<string, string | number> = {
     fontSize: 11, padding: "1px 6px", borderRadius: 5, cursor: "pointer",
     border: "1px solid rgba(245,158,11,0.5)", background: "transparent",
@@ -712,8 +736,25 @@ function ExtErrorIndicator() {
                     style={btn}
                   >忽略</button>
                 )}
+                <button onClick={() => setAiOpen(v => !v)} title="急救 AI：独立会话修复此错误（含 aiti-configs 工具）" style={btn}>🚑</button>
                 <button onClick={() => setOpen(false)} title="关闭：收起面板（错误保留）" style={btn}>✕</button>
               </div>
+              {aiOpen && (
+                <div style={{ display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
+                  {aiLog.length > 0 && (
+                    <div style={{ maxHeight: 180, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+                      {aiLog.map((m, i) => (
+                        <div key={i} style={{ fontSize: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", lineHeight: 1.4, color: m.role === "user" ? "var(--text-muted, #888)" : "var(--text, #eee)", borderLeft: `2px solid ${m.role === "user" ? "var(--border, #444)" : "#f59e0b"}`, paddingLeft: 5 }}>{m.text}</div>
+                      ))}
+                      {aiBusy && <div style={{ fontSize: 10, color: "var(--text-muted, #888)" }}>思考中…</div>}
+                    </div>
+                  )}
+                  <div style={{ display: "flex", gap: 4 }}>
+                    <input value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendAi(); } }} placeholder="急救指令（Enter 发送）…" disabled={aiBusy} style={{ flex: 1, fontSize: 11, padding: "3px 6px", background: "var(--bg, #1a1a1a)", color: "var(--text, #eee)", border: "1px solid var(--border, #444)", borderRadius: 4, outline: "none" }} />
+                    <button onClick={sendAi} disabled={aiBusy || !aiInput.trim()} style={btn}>{aiBusy ? "…" : "发送"}</button>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
