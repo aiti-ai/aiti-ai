@@ -539,7 +539,7 @@ function ExtErrorIndicator() {
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
-  const dragRef = useRef<{ sx: number; sy: number; sLeft: number; sTop: number; moved: boolean } | null>(null);
+  const dragRef = useRef<{ sx: number; sy: number; sLeft: number; sTop: number; moved: boolean; left: number; top: number } | null>(null);
   const dragMoved = useRef(false);
   const [idx, setIdx] = useState(0);
   const prevLen = useRef(0);
