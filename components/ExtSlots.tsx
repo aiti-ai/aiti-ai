@@ -325,7 +325,7 @@ export function ExtSlotsProvider({ children }: { children: ReactNode }) {
     const unsub = subscribeExtUi(() => force((v) => v + 1));
     return unsub;
   }, []);
-  return <>{children}</>;
+  return <>{children}<ExtErrorIndicator /></>;
 }
 
 /** 拉取 manifest 并刷新 client 侧缓存（manifestCache / declaredSlots / metas）。
@@ -487,75 +487,157 @@ export function useExtProvides(): Set<string> {
   }, [metas]);
 }
 
+// ---- 扩展 slot 渲染错误：全局注册表 + 常驻指示器（aiti-ext-client-hardening-plan 层 3）----
+// item 渲染 throw 不再放插槽内占位（插槽可能隐藏，占位看不见也操作不了）；
+// 改为 boundary 静默收起 + 上报本注册表，由页面左下角常驻小按钮（有错误才显示）统一操作。
+export type ExtSlotError = {
+  id: string;
+  extId?: string;
+  slot: string;
+  itemId: string;
+  message: string;
+  stack?: string;
+  reset: () => void;   // 忽略：重试渲染（boundary setState({err:null})）
+};
+const extSlotErrors = new Map<string, ExtSlotError>();
+const errorListeners = new Set<() => void>();
+let errorSnapshot: ExtSlotError[] = [];
+function notifyErrorListeners() {
+  errorSnapshot = Array.from(extSlotErrors.values());
+  for (const l of [...errorListeners]) l();
+}
+export function registerExtSlotError(e: ExtSlotError) {
+  extSlotErrors.set(e.id, e);
+  notifyErrorListeners();
+}
+export function unregisterExtSlotError(id: string) {
+  extSlotErrors.delete(id);
+  notifyErrorListeners();
+}
+function useExtSlotErrors(): ExtSlotError[] {
+  return useSyncExternalStore(
+    (cb) => { errorListeners.add(cb); return () => { errorListeners.delete(cb); }; },
+    () => errorSnapshot,
+    () => [],
+  );
+}
+
+/** 页面左下角常驻错误指示器：有 slot 渲染错误时显示小按钮，点开列错（复制/忽略/关闭）；无错不显示。 */
+function ExtErrorIndicator() {
+  const errors = useExtSlotErrors();
+  const [open, setOpen] = useState(false);
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
+  const copy = (e: ExtSlotError) => {
+    const text = `[ext] ${e.extId ?? "?"} item ${e.slot}/${e.itemId} 渲染失败\n${e.message}\n\n${e.stack || ""}`;
+    navigator.clipboard?.writeText(text).finally(() => {
+      setCopiedId(e.id);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopiedId(null), 1500);
+    });
+  };
+  if (errors.length === 0) return null;
+  const btn: Record<string, string | number> = {
+    fontSize: 11, padding: "1px 6px", borderRadius: 5, cursor: "pointer",
+    border: "1px solid rgba(245,158,11,0.5)", background: "transparent",
+    color: "var(--text-muted, #888)", flexShrink: 0, lineHeight: 1.4,
+  };
+  return (
+    <>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title={`扩展渲染错误（${errors.length}）— 点击查看`}
+        style={{
+          position: "fixed", left: 12, bottom: 12, zIndex: 2147483600,
+          display: "inline-flex", alignItems: "center", gap: 5,
+          padding: "4px 10px", borderRadius: 9, cursor: "pointer",
+          fontSize: 12, fontWeight: 700, color: "#fff",
+          background: "#f59e0b", border: "1px solid rgba(0,0,0,0.2)",
+          boxShadow: "0 2px 10px rgba(245,158,11,0.45)",
+        }}
+      >
+        ⚠ {errors.length}
+      </button>
+      {open && errors.length > 0 && (
+        <div
+          style={{
+            position: "fixed", left: 12, bottom: 48, zIndex: 2147483600,
+            maxWidth: 480, minWidth: 300, maxHeight: "60vh", overflowY: "auto",
+            background: "var(--bg-panel, #1a1a1a)",
+            border: "1px solid rgba(245,158,11,0.5)", borderRadius: 10,
+            boxShadow: "0 14px 44px rgba(0,0,0,0.5)",
+            padding: 8, display: "flex", flexDirection: "column", gap: 6,
+          }}
+        >
+          <div style={{ fontSize: 11, color: "var(--text-dim, #888)", marginBottom: 2 }}>
+            扩展渲染错误（{errors.length}）·「忽略」重试 ·「✕」收起插槽
+          </div>
+          {errors.map((e) => (
+            <div
+              key={e.id}
+              style={{
+                display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: "#f59e0b",
+                background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)",
+                borderRadius: 7, padding: "4px 6px",
+              }}
+            >
+              <span
+                style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, userSelect: "text" }}
+                title={e.stack || e.message}
+              >
+                {e.extId ?? "?"}/{e.itemId}：{e.message}
+              </span>
+              <button onClick={() => copy(e)} title="复制完整错误（含堆栈）" style={btn}>
+                {copiedId === e.id ? "已复制 ✓" : "复制"}
+              </button>
+              <button
+                onClick={() => { unregisterExtSlotError(e.id); e.reset(); }}
+                title="忽略：重试渲染（错误若持续会重新捕获）"
+                style={btn}
+              >忽略</button>
+              <button onClick={() => unregisterExtSlotError(e.id)} title="关闭：收起插槽（错误不再提示）" style={btn}>✕</button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
+let ebSeq = 0;
 /** 扩展 item 渲染错误边界（aiti-ext-client-hardening-plan 层 3）。
- *  item 组件渲染 throw（如 .mjs 里 TS 残留的 ReferenceError）只降级为一行占位，
- *  不再冒泡打崩整页——crash-rescue §4.2 实验证：sidebar/composerTools 等插槽
- *  无祖先 boundary，崩则穿透 root。只包渲染输出；注册/dispose/HMR 路径不经过它。 */
+ *  item 组件渲染 throw（如 .mjs 里 TS 残留的 ReferenceError）静默收起（render null），
+ *  不冒泡打崩整页（crash-rescue §4.2：sidebar/composerTools 等插槽无祖先 boundary，
+ *  崩则穿透 root）。错误上报全局注册表，由 ExtErrorIndicator 常驻按钮统一操作。 */
 class ExtItemBoundary extends Component<
   { extId?: string; slot: string; itemId: string; children: ReactNode },
-  { err: Error | null; dismissed: boolean; copied: boolean }
+  { err: Error | null }
 > {
-  state = { err: null as Error | null, dismissed: false, copied: false };
-  private copyTimer: ReturnType<typeof setTimeout> | null = null;
+  state = { err: null as Error | null };
+  private bid = `ext-eb-${++ebSeq}`;
+  private mounted = true;
   static getDerivedStateFromError(err: Error) {
     return { err };
   }
   componentDidCatch(err: Error) {
     const { extId, slot, itemId } = this.props;
-    console.error(`[ext] ${extId ?? "?"} item ${slot}/${itemId} 渲染失败（已降级为占位，可复制/忽略/关闭）:`, err);
+    console.error(`[ext] ${extId ?? "?"} item ${slot}/${itemId} 渲染失败（已静默收起，左下角指示器可操作）:`, err);
+    registerExtSlotError({
+      id: this.bid,
+      extId, slot, itemId,
+      message: err.message,
+      stack: err.stack,
+      reset: () => { if (this.mounted) this.setState({ err: null }); },
+    });
   }
   componentWillUnmount() {
-    if (this.copyTimer) clearTimeout(this.copyTimer);
+    this.mounted = false;
+    if (this.state.err) unregisterExtSlotError(this.bid);
   }
-  private copyErr = () => {
-    const { extId, slot, itemId } = this.props;
-    const err = this.state.err;
-    if (!err) return;
-    const text = `[ext] ${extId ?? "?"} item ${slot}/${itemId} 渲染失败\n${err.message}\n\n${err.stack || ""}`;
-    navigator.clipboard?.writeText(text).finally(() => {
-      this.setState({ copied: true });
-      if (this.copyTimer) clearTimeout(this.copyTimer);
-      this.copyTimer = setTimeout(() => this.setState({ copied: false }), 1500);
-    });
-  };
-  private ignore = () => this.setState({ err: null, copied: false });
-  private close = () => this.setState({ dismissed: true });
   render() {
-    if (this.state.dismissed) return null;
-    const { err } = this.state;
-    if (!err) return this.props.children;
-    const { extId, slot, itemId } = this.props;
-    const btn: Record<string, string | number> = {
-      fontSize: 11, padding: "1px 6px", borderRadius: 5, cursor: "pointer",
-      border: "1px solid rgba(245,158,11,0.5)", background: "transparent",
-      color: "var(--text-muted, #888)", flexShrink: 0, lineHeight: 1.4,
-    };
-    return (
-      <div
-        data-ext-error="1"
-        style={{
-          display: "inline-flex", alignItems: "center", gap: 6,
-          fontSize: 11, color: "#f59e0b",
-          background: "rgba(245,158,11,0.10)",
-          border: "1px solid rgba(245,158,11,0.5)",
-          borderRadius: 7, padding: "3px 6px", maxWidth: 460,
-          verticalAlign: "middle",
-        }}
-      >
-        <span style={{ flexShrink: 0 }}>⚠</span>
-        <span
-          style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, userSelect: "text" }}
-          title={err.stack || String(err)}
-        >
-          {extId ?? "?"}/{itemId}：{err.message}
-        </span>
-        <button onClick={this.copyErr} title="复制完整错误（含堆栈）" style={btn}>
-          {this.state.copied ? "已复制 ✓" : "复制"}
-        </button>
-        <button onClick={this.ignore} title="忽略：重试渲染（错误若持续会重新捕获）" style={btn}>忽略</button>
-        <button onClick={this.close} title="关闭占位（插槽收起）" style={btn}>✕</button>
-      </div>
-    );
+    if (this.state.err) return null;
+    return this.props.children;
   }
 }
 
