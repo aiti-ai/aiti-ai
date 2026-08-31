@@ -2365,6 +2365,8 @@ function SessionItem({
       ) : (
         /* ── Normal view ── */
         <>
+          {/* 行前部扩展点：扩展渲染常驻状态图标（如 aiti-plan-first 方案绑定标） */}
+          <ExtSlot name="sessionRowLeading" currentSession={session} />
           {/* Subagent indicator for child sessions */}
           {depth > 0 && (
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>

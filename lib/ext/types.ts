@@ -249,6 +249,7 @@ export type ExtSlotName =
   | "sidebarFooter"  // 侧栏底部快捷操作行（模型/技能/插件同一行；aiti-extman：扩展管理入口）
   | "sessionTopbar"
   | "sessionRowActions"
+  | "sessionRowLeading"
   | "dialogs"
   | "banners"
   | "pages"
@@ -263,6 +264,8 @@ export type ExtSlotName =
   | "composerTools"  // 输入框下方控制行（压缩/停止/导入 queue 同排；aiti-git-trace：时间线主入口等）
   | "queuePanel"    // 队列面板插槽（去 fork 化 P3：aiti-queue-keeper 完整队列 UI 接管；
                     //   无接管时 core 兜底 banner 渲染，见 docs/pi-web-queue-cluster-ext-plan.md）
+  | "workspacePickerActions" // CWD picker 下拉底部动作区（session-manager：管理工作区列表——
+                    //   选择/隐藏/删除；核心只渲染下拉列表，管理 UI 全在扩展侧）
   ;
 
 /**
@@ -287,11 +290,29 @@ export type ExtSlotName =
 // queuePanel）直接合并进来，扩展侧经 augmentation 增补；两边的实现都按
 // 结构契约消费（扩展在仓外，见 aiti-queue-keeper/client/src/types.ts）。
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+/** workspacePickerActions 插槽 props（CWD picker 下拉底部动作区）。 */
+export interface WorkspacePickerActionsProps {
+  /** 当前可见项目列表（已按隐藏列表过滤；key=workspace 稳定键，root=展示路径）。 */
+  projects: { key: string; root: string }[];
+  /** 全部项目列表（未过滤隐藏——管理弹窗需列出含已隐藏的全部项目）。 */
+  allProjects: { key: string; root: string }[];
+  /** 当前选中的 cwd（未选时为 null）。 */
+  selectedCwd: string | null;
+  /** 当前隐藏的 workspace root 集合。 */
+  hiddenWorkspaces: ReadonlySet<string>;
+  /** 选择项目（切到该项目 cwd；管理弹窗「选择」用）。 */
+  onSelect: (root: string) => void;
+  /** 关闭下拉（管理弹窗打开前调用）。 */
+  onClose: () => void;
+}
+
 export interface ExtSlotContractMap {
   /** 队列面板（去 fork 化 P3）：core → ext 的 live/trash/actions 原语。
    *  契约定义在 lib/composer/queue-api.ts（含下载导出/导入解析单实现）；
    *  扩展 aiti-queue-keeper 经本插槽渲染完整队列 UI。 */
   queuePanel: { props: QueuePanelProps };
+  /** CWD picker 下拉底部动作区（session-manager：管理工作区列表）。 */
+  workspacePickerActions: { props: WorkspacePickerActionsProps };
 }
 
 /** 从契约取插槽 props 类型（未声明 → 宽松对象）。 */
