@@ -349,9 +349,11 @@ export class ExtRegistryImpl {
     const t = this.agentHooks(ext)?.agentTools?.(info);
     if (!t) return [];
 
-    // 会话级强制启用：无视 feature，全部放行（execute 包装检查整组门，关即拒）
+    // 会话级强制启用：无视 feature，全部放行。
+    // 不包 execute 门控检查——forced 是本会话显式授权（enableExtTools），工具在本会话应始终可用，
+    // 不能被全局 feature 状态（features.json 里 agentTools.enabled 仍为 false）撤销（否则注入成功但一调就被拒）。
     if (forced) {
-      return t.map((tool) => this.wrapAgentToolExecute(ext, tool, "agentTools.enabled"));
+      return t;
     }
 
     const declared = new Set(ext.ext.features?.map((f) => f.id) ?? []);
