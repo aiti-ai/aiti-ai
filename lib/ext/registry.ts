@@ -339,44 +339,55 @@ export class ExtRegistryImpl {
    * 工具级约定：feature.id = "tool.<注入后的工具名>"。
    * 禁用 → 注入时过滤 + execute 时校验（已有会话的已注入工具也会即时拒绝）。
    */
-  private collectExtAgentTools(ext: LoadedExtension, info: Pick<AgentSessionInfo, "sessionId" | "cwd">): ToolDefinition[] {
-    // 整组门（粗开关）：扩展声明了 boolean 型 `agentTools.enabled` 时，它是整组工具的总开关语义——
-    // 开了就全部放行（忽略单个 per-tool 的 default:false 拦截），关了全不注入。
-    // 这样「按需开」只需翻整组门即可，无需把 per-tool 逐个改回 default:true（保留逐工具关的精细能力）。
-    const hasWholeGate = (ext.ext.features ?? []).some((f) => f.id === "agentTools.enabled" && f.type !== "string");
-    const wholeGateOn = hasWholeGate ? this.featureEnabled(ext.id, "agentTools.enabled") : true; // 未声明整组门 → 保持 per-tool 语义
-
+  /**
+   * 收集单个扩展的 agent 工具（含门控）。
+   * `forced=true`（会话级强制启用）：该扩展在本次会话被显式点名启用，无视 feature 门控全部放行
+   * （用于「按需开」——建会话时传 enableExts，不依赖改全局 feature 状态，无竞态/无残留）。
+   * `forced=false`：走常规 feature 门控（整组门 / per-tool）。
+   */
+  private collectExtAgentTools(ext: LoadedExtension, info: Pick<AgentSessionInfo, "sessionId" | "cwd">, forced = false): ToolDefinition[] {
     const t = this.agentHooks(ext)?.agentTools?.(info);
     if (!t) return [];
-    if (hasWholeGate && !wholeGateOn) return []; // 整组关 → 全不注入（与扩展自 gate 的 agentTools() 双保险）
+
+    // 会话级强制启用：无视 feature，全部放行（execute 包装检查整组门，关即拒）
+    if (forced) {
+      return t.map((tool) => this.wrapAgentToolExecute(ext, tool, "agentTools.enabled"));
+    }
 
     const declared = new Set(ext.ext.features?.map((f) => f.id) ?? []);
     const out: ToolDefinition[] = [];
     for (const tool of t) {
       const fid = "tool." + tool.name;
       const managed = declared.has(fid);
+      // 未声明整组门 → 纯 per-tool 语义
+      const hasWholeGate = (ext.ext.features ?? []).some((f) => f.id === "agentTools.enabled" && f.type !== "string");
+      const wholeGateOn = hasWholeGate ? this.featureEnabled(ext.id, "agentTools.enabled") : true;
       // 整组门开 → 忽略 per-tool 过滤（不管默认关），全部放行；否则按 per-tool 逐项过滤
       const enabled = (hasWholeGate && wholeGateOn) ? true : (managed ? this.featureEnabled(ext.id, fid) : true);
       if (!enabled) continue;
       // 整组门开时 execute 包装检查整组门（关即拒，即时生效）；否则检查 per-tool fid
       const checkFid = (hasWholeGate && wholeGateOn) ? "agentTools.enabled" : fid;
       if (!managed) { out.push(tool); continue; }
-      // execute 包装：禁用即时生效（读内存缓存，开销可忽略）——已有会话的已注入工具也会被拒。
-      const orig = tool.execute;
-      tool.execute = async (toolCallId, params, signal, onUpdate, extCtx) => {
-        if (!this.featureEnabled(ext.id, checkFid)) {
-          return {
-            content: [{ type: "text", text: `[功能管理] 工具 ${tool.name} 已被禁用（扩展 ${ext.id} 的功能管理设置）——请在扩展管理器中重新启用后重试。` }],
-            isError: true,
-          } as never;
-        }
-        return orig
-          ? orig(toolCallId, params, signal, onUpdate, extCtx)
-          : ({ content: [{ type: "text", text: "" }] } as never);
-      };
-      out.push(tool);
+      out.push(this.wrapAgentToolExecute(ext, tool, checkFid));
     }
     return out;
+  }
+
+  /** execute 包装：禁用即时生效（读内存缓存，开销可忽略）——已有会话的已注入工具也会被拒。 */
+  private wrapAgentToolExecute(ext: LoadedExtension, tool: ToolDefinition, checkFid: string): ToolDefinition {
+    const orig = tool.execute;
+    tool.execute = async (toolCallId, params, signal, onUpdate, extCtx) => {
+      if (!this.featureEnabled(ext.id, checkFid)) {
+        return {
+          content: [{ type: "text", text: `[功能管理] 工具 ${tool.name} 已被禁用（扩展 ${ext.id} 的功能管理设置）——请在扩展管理器中重新启用后重试。` }],
+          isError: true,
+        } as never;
+      }
+      return orig
+        ? orig(toolCallId, params, signal, onUpdate, extCtx)
+        : ({ content: [{ type: "text", text: "" }] } as never);
+    };
+    return tool;
   }
 
   extraExtensionsRoots(): string[] {
@@ -686,6 +697,24 @@ export class ExtRegistryImpl {
     for (const ext of this.extensions.values()) {
       try {
         tools.push(...this.collectExtAgentTools(ext, info));
+      } catch (e) {
+        console.error(`[ext] ${ext.id}.agent.agentTools 失败:`, e instanceof Error ? e.message : e);
+      }
+    }
+    return tools;
+  }
+
+  /**
+   * per-session 收集：与本会话默认收集一致，但对 `enableExts` 里的扩展**强制放行**（无视 feature 门控）。
+   * 用于「按需开」——建会话时传 enableExts，不依赖改全局 feature 状态（无竞态、无失败残留）。
+   * 其余扩展仍走 feature 门控。
+   */
+  collectAgentToolsWith(info: Pick<AgentSessionInfo, "sessionId" | "cwd">, enableExts?: string[]): ToolDefinition[] {
+    const forced = new Set(enableExts ?? []);
+    const tools: ToolDefinition[] = [];
+    for (const ext of this.extensions.values()) {
+      try {
+        tools.push(...this.collectExtAgentTools(ext, info, forced.has(ext.id)));
       } catch (e) {
         console.error(`[ext] ${ext.id}.agent.agentTools 失败:`, e instanceof Error ? e.message : e);
       }

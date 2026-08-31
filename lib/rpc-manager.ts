@@ -170,6 +170,11 @@ export interface RpcSessionStartOptions {
     /** 工具黑名单（默认全开 = 继承全部系统/扩展工具） */
     excludeTools?: string[];
   };
+  /**
+   * per-session 强制启用的扩展 agent 工具：建会话时对这些扩展**无视 feature 门控**全部放行。
+   * 用于「按需开」（如 aiti-helper 帮助点）——不依赖改全局 feature 状态（无竞态/无残留）。
+   */
+  enableExtTools?: string[];
 }
 
 const CODING_TOOL_NAMES = ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"];
@@ -2884,7 +2889,7 @@ export async function startRpcSession(
     // into tool-closure identities (agentKey) that never match the id later
     // used by dispatchAgentSession/onAgentSettled.
     const extAgentTools: ToolDefinition[] = (() => {
-      try { return getExtRegistry().collectAgentTools({ sessionId: sessionManagerId, cwd: sessionCwd }); } catch (e) { console.error("[pi-web] collectAgentTools 失败:", e instanceof Error ? e.message : e); return []; }
+      try { return getExtRegistry().collectAgentToolsWith({ sessionId: sessionManagerId, cwd: sessionCwd }, options.enableExtTools); } catch (e) { console.error("[pi-web] collectAgentTools 失败:", e instanceof Error ? e.message : e); return []; }
     })();
     const scope = await resolveVisibleModels(
       services.modelRuntime,
