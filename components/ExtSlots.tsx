@@ -537,7 +537,19 @@ function ExtErrorIndicator() {
   const [open, setOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+  const dragRef = useRef<{ sx: number; sy: number; sLeft: number; sTop: number; moved: boolean } | null>(null);
+  const dragMoved = useRef(false);
+  const [idx, setIdx] = useState(0);
+  const prevLen = useRef(0);
   useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
+  // 多错误翻页：新错误到达 → 跳到最新；错误减少 → 夹紧 idx
+  useEffect(() => {
+    if (errors.length > prevLen.current) setIdx(errors.length - 1);
+    else if (idx > errors.length - 1) setIdx(Math.max(0, errors.length - 1));
+    prevLen.current = errors.length;
+  }, [errors.length, idx]);
   // 全局接管扩展 client 的非 render 期 JS 错误（事件处理器/异步/Promise rejection）
   // ——boundary 只捕 render throw，这些穿透到 window.onerror/unhandledrejection
   useEffect(() => {
@@ -564,6 +576,47 @@ function ExtErrorIndicator() {
       window.removeEventListener("unhandledrejection", onErr as EventListener);
     };
   }, []);
+  // 位置持久化（localStorage）——参照 launcher fab 可移动 + 刷新恢复
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem("ext-err-btn-pos");
+      if (s) { const p = JSON.parse(s); if (typeof p?.left === "number" && typeof p?.top === "number") setPos(p); }
+    } catch {}
+  }, []);
+  // 拖拽移动（makePointerDrag 同款语义：threshold 6px 区分点击/拖、late 捕获、持久化）
+  // 切换面板靠 onClick：拖动后按钮移位 → mouseup 落别处 → 不产生 click → 自然不切换；
+  // 纯点击 → click 触发 → 切换。dragMoved ref 防“极小拖动仍产 click”误触。
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (e.button !== 0) return;
+    const r = btnRef.current?.getBoundingClientRect();
+    if (!r) return;
+    dragMoved.current = false;
+    dragRef.current = { sx: e.clientX, sy: e.clientY, sLeft: r.left, sTop: r.top, moved: false, left: r.left, top: r.top };
+    const move = (ev: PointerEvent) => {
+      const d = dragRef.current; if (!d) return;
+      const dx = ev.clientX - d.sx, dy = ev.clientY - d.sy;
+      if (!d.moved && Math.abs(dx) + Math.abs(dy) <= 6) return;
+      if (!d.moved) d.moved = true;
+      dragMoved.current = true;
+      const left = Math.max(4, Math.min(window.innerWidth - 40, d.sLeft + dx));
+      const top = Math.max(4, Math.min(window.innerHeight - 40, d.sTop + dy));
+      d.left = left; d.top = top;  // 存最终值供 up 持久化（React 重渲染异步，btnRef 此刻还是旧值）
+      setPos({ left, top });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      const d = dragRef.current; dragRef.current = null;
+      if (!d?.moved) return;  // 纯点击 → 不持久化（onClick 管切换）
+      try { localStorage.setItem("ext-err-btn-pos", JSON.stringify({ left: d.left, top: d.top })); } catch {}  // 持久化最终位置
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  };
+  const onToggle = () => {
+    if (dragMoved.current) { dragMoved.current = false; return; }  // 拖动刚结束 → 不切换
+    setOpen((v) => !v);
+  };
   const copy = (e: ExtSlotError) => {
     const text = `[ext] ${e.extId ?? "?"} ${e.slot}/${e.itemId} ${e.kind === "uncaught" ? "未捕获错误" : "渲染失败"}\n${e.message}\n\n${e.stack || ""}`;
     navigator.clipboard?.writeText(text).finally(() => {
@@ -573,6 +626,8 @@ function ExtErrorIndicator() {
     });
   };
   if (errors.length === 0) return null;
+  const ci = Math.min(idx, errors.length - 1);
+  const cur = errors[ci];
   const btn: Record<string, string | number> = {
     fontSize: 11, padding: "1px 6px", borderRadius: 5, cursor: "pointer",
     border: "1px solid rgba(245,158,11,0.5)", background: "transparent",
@@ -581,12 +636,19 @@ function ExtErrorIndicator() {
   return (
     <>
       <button
-        onClick={() => setOpen((v) => !v)}
-        title={`扩展错误（${errors.length}）— 点击查看`}
+        ref={btnRef}
+        onPointerDown={onPointerDown}
+        onClick={onToggle}
+        title={`扩展错误（${errors.length}）— 点击查看 / 可拖动`}
         style={{
-          position: "fixed", left: 12, bottom: 64, zIndex: 2147483600,
+          position: "fixed",
+          left: pos ? pos.left : 12,
+          top: pos ? pos.top : undefined,
+          bottom: pos ? undefined : 64,
+          zIndex: 2147483600,
           display: "inline-flex", alignItems: "center", gap: 5,
-          padding: "4px 10px", borderRadius: 9, cursor: "pointer",
+          padding: "4px 10px", borderRadius: 9, cursor: "grab",
+          touchAction: "none",
           fontSize: 12, fontWeight: 700, color: "#fff",
           background: "#f59e0b", border: "1px solid rgba(0,0,0,0.2)",
           boxShadow: "0 2px 10px rgba(245,158,11,0.45)",
@@ -597,7 +659,13 @@ function ExtErrorIndicator() {
       {open && errors.length > 0 && (
         <div
           style={{
-            position: "fixed", left: 12, bottom: 100, zIndex: 2147483600,
+            position: "fixed",
+            ...(pos
+              ? (pos.top < window.innerHeight / 2
+                  ? { left: pos.left, top: pos.top + 32 }
+                  : { left: pos.left, bottom: window.innerHeight - pos.top + 8 })
+              : { left: 12, bottom: 100 }),
+            zIndex: 2147483600,
             maxWidth: 480, minWidth: 300, maxHeight: "60vh", overflowY: "auto",
             background: "var(--bg-panel, #1a1a1a)",
             border: "1px solid rgba(245,158,11,0.5)", borderRadius: 10,
@@ -605,41 +673,49 @@ function ExtErrorIndicator() {
             padding: 8, display: "flex", flexDirection: "column", gap: 6,
           }}
         >
-          <div style={{ fontSize: 11, color: "var(--text-muted, #aaa)", marginBottom: 2 }}>
-            扩展错误（{errors.length}）·「复制」拷堆栈 ·「✕」清除
+          <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted, #aaa)", marginBottom: 2 }}>
+            <span>扩展错误</span>
+            {errors.length > 1 ? (
+              <>
+                <button onClick={() => setIdx((i) => Math.max(0, i - 1))} disabled={ci === 0} title="上一条" style={{ ...btn, opacity: ci === 0 ? 0.4 : 1 }}>‹</button>
+                <span style={{ fontVariantNumeric: "tabular-nums" }}>{ci + 1}/{errors.length}</span>
+                <button onClick={() => setIdx((i) => Math.min(errors.length - 1, i + 1))} disabled={ci === errors.length - 1} title="下一条" style={{ ...btn, opacity: ci === errors.length - 1 ? 0.4 : 1 }}>›</button>
+              </>
+            ) : null}
+            <span style={{ marginLeft: "auto", fontSize: 10 }}>复制·{cur.kind !== "uncaught" ? "忽略·" : ""}✕ 清除</span>
           </div>
-          {errors.map((e) => (
+          {cur && (
             <div
-              key={e.id}
+              key={cur.id}
               style={{
                 display: "flex", flexDirection: "column", gap: 6, fontSize: 11, color: "var(--text, #eee)",
                 background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.3)",
                 borderRadius: 7, padding: "6px 8px",
               }}
             >
-              <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", lineHeight: 1.5 }} title={e.stack || e.message}>
-                <strong style={{ fontWeight: 700, color: "#f59e0b" }}>{e.extId ?? "?"}</strong>{e.kind === "uncaught" ? " · 未捕获" : `/${e.itemId}`}：{e.message}
+              <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", lineHeight: 1.5 }} title={cur.stack || cur.message}>
+                <strong style={{ fontWeight: 700, color: "#f59e0b" }}>{cur.extId ?? "?"}</strong>{cur.kind === "uncaught" ? " · 未捕获" : `/${cur.itemId}`}：{cur.message}
               </div>
-              {e.stack && (
+              {cur.stack && (
                 <pre style={{ margin: 0, maxHeight: 140, overflow: "auto", fontSize: 11, lineHeight: 1.45, color: "var(--text, #e8e8e8)", whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", background: "rgba(0,0,0,0.06)", border: "1px solid var(--border, #444)", padding: "5px 7px", borderRadius: 5 }}>
-                  {e.stack}
+                  {cur.stack}
                 </pre>
               )}
               <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
-                <button onClick={() => copy(e)} title="复制完整错误（含堆栈）" style={btn}>
-                  {copiedId === e.id ? "已复制 ✓" : "复制"}
+                <button onClick={() => copy(cur)} title="复制完整错误（含堆栈）" style={btn}>
+                  {copiedId === cur.id ? "已复制 ✓" : "复制"}
                 </button>
-                {e.kind !== "uncaught" && (
+                {cur.kind !== "uncaught" && (
                   <button
-                    onClick={() => { unregisterExtSlotError(e.id); e.reset(); }}
+                    onClick={() => { unregisterExtSlotError(cur.id); cur.reset(); }}
                     title="忽略：重试渲染（错误若持续会重新捕获）"
                     style={btn}
                   >忽略</button>
                 )}
-                <button onClick={() => unregisterExtSlotError(e.id)} title="关闭：清除该条" style={btn}>✕</button>
+                <button onClick={() => unregisterExtSlotError(cur.id)} title="关闭：清除该条" style={btn}>✕</button>
               </div>
             </div>
-          ))}
+          )}
         </div>
       )}
     </>
