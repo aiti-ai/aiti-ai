@@ -440,7 +440,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   /** 后端会话能力（从 state 端点透传；本地会话无此状态） */
   const [sessionCapabilities, setSessionCapabilities] = useState<Record<string, boolean> | null>(null);
   /** 后端会话最近一轮用量（get_usage 能力时从 API 拉取） */
-  const [backendUsage, setBackendUsage] = useState<{ inputTokens?: number; outputTokens?: number; costUsd?: number } | null>(null);
+  const [backendUsage, setBackendUsage] = useState<{ inputTokens?: number; outputTokens?: number; costUsd?: number; credits?: { remaining?: number; usedPercent?: number; unit?: string }; quotaExceeded?: boolean; buckets?: Array<{ name: string; remaining?: number; total?: number }> } | null>(null);
   const [backendSource, setBackendSource] = useState<string | undefined>(undefined);
   const [pendingRecovery, setPendingRecovery] = useState<PendingRecoveryItem[]>([]);
   const [queueTrash, setQueueTrash] = useState<QueueTrashItem[]>([]);
