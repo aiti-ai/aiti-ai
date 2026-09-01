@@ -977,7 +977,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
                 </span>
                 {backendUsage.buckets && backendUsage.buckets.length > 0 && (
                   <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
-                    {backendUsage.buckets.map((b, i) => (
+                    {backendUsage.buckets.map((b: { name: string; remaining?: number; total?: number }, i: number) => (
                       <span key={b.name}>
                         {i > 0 && " · "}
                         {({ user_quota: "基础", add_on_quota: "扩展", org_resource_package: "组织" } as Record<string, string>)[b.name] ?? b.name} {b.remaining ?? 0}/{b.total ?? "?"}
