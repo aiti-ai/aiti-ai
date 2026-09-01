@@ -4,8 +4,7 @@ import { memo, useEffect, useId, useMemo, useRef, useState, type JSX, type Mouse
 import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { resolveLocalFileHref } from "@/lib/file-links";
-import { encodeFilePathForApi } from "@/lib/file-paths";
-import { apiUrl } from "@/lib/base-path";
+import { buildTicketUrl } from "@/lib/file-tickets";
 import { markdownRehypePlugins, markdownRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
 import { useI18n } from "@/hooks/useI18n";
@@ -130,12 +129,12 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     img({ src, alt, ...props }) {
       delete props.node;
       const filePath = typeof src === "string" ? resolveLocalFileHref(src, cwd) : null;
-      const imageSrc = filePath
-        ? apiUrl(`/api/files/${encodeFilePathForApi(filePath)}?type=read`)
-        : src;
-      // Dynamic local paths are served directly by the file API.
-      // eslint-disable-next-line @next/next/no-img-element
-      return <img src={imageSrc} alt={alt ?? ""} loading="lazy" {...props} />;
+      if (!filePath) {
+        // eslint-disable-next-line @next/next/no-img-element
+        return <img src={src} alt={alt ?? ""} loading="lazy" {...props} />;
+      }
+      // 本地图片：路径不进 URL，经短时效票据换 GET 地址
+      return <LocalImage filePath={filePath} alt={alt ?? ""} {...props} />;
     },
     // react-markdown 以组件方式调用这些小写渲染函数（createElement(components.p)），
     // Hook 顺序稳定；rules-of-hooks 只按函数名小写误报。候选标签统一生成渲染壳：
@@ -187,6 +186,19 @@ const MemoizedMarkdown = memo(function MemoizedMarkdown({ children, ...props }: 
  * 识别/弹层渲染/动作/关闭全在扩展侧；core 只提供：段落可点击、把完整上下文交给
  * handler、段落内联挂载（in-flow / tr 自动 portal 到 body）。定位/滚动跟随归扩展。
  */
+function LocalImage({ filePath, alt, ...props }: { filePath: string; alt: string } & React.ImgHTMLAttributes<HTMLImageElement>) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    buildTicketUrl(filePath, "read")
+      .then((u) => { if (alive) setSrc(u); })
+      .catch(() => { if (alive) setSrc(null); });
+    return () => { alive = false; };
+  }, [filePath]);
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src ?? undefined} alt={alt} loading="lazy" {...props} />;
+}
+
 function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, messageId }: { children: ReactNode; as?: ClickableTag; messageRole?: string; cwd?: string; sessionId?: string; messageId?: string }) {
   const handlers = useParagraphClickHandlers();
   const pid = useId(); // 段落稳定标识：React 树结构不变时跨渲染稳定（扩展 toggle/去重用）

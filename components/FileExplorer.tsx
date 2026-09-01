@@ -5,7 +5,6 @@ import { getFileIcon, FolderIcon } from "./FileIcons";
 import { apiUrl } from "@/lib/base-path";
 
 import {
-  encodeFilePathForApi,
   getFileDirectory,
   getFileName,
   getRelativeFilePath,
@@ -84,8 +83,11 @@ interface PendingConflict {
 }
 
 async function fetchEntries(dirPath: string): Promise<FileNode[]> {
-  const encoded = encodeFilePathForApi(dirPath);
-  const res = await fetch(apiUrl(`/api/files/${encoded}?type=list`));
+  const res = await fetch(apiUrl("/api/files/get"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: dirPath, type: "list" }),
+  });
   if (!res.ok) {
     let message = `Failed to load files (HTTP ${res.status})`;
     try {
@@ -183,12 +185,13 @@ function uploadFiles(
 ): Promise<{ status: number; data: UploadResponse }> {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
+    formData.append("directory", targetDirectory);
     files.forEach((file) => formData.append("files", file, file.name));
 
     const xhr = new XMLHttpRequest();
     xhr.open(
       "POST",
-      apiUrl(`/api/files/${encodeFilePathForApi(targetDirectory)}?type=upload&conflict=${strategy}`),
+      apiUrl(`/api/files/upload?conflict=${strategy}`),
     );
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total > 0) {
@@ -776,11 +779,11 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
     try {
       const res = await fetch(
-        apiUrl(`/api/files/${encodeFilePathForApi(cwd)}?type=upload-check`),
+        apiUrl("/api/files/upload-check"),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fileNames: files.map((file) => file.name) }),
+          body: JSON.stringify({ directory: cwd, fileNames: files.map((file) => file.name) }),
         },
       );
       const data = await res.json().catch(() => ({})) as UploadResponse;

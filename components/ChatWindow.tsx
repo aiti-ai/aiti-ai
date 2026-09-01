@@ -961,10 +961,32 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
           background: "var(--bg-panel)", border: "1px solid var(--border)",
           fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)",
         }}>
-          <span title="Backend usage (last turn)">
+          <span title="Backend usage (last turn)" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
             {backendUsage.inputTokens != null && <span>↑{backendUsage.inputTokens >= 1000 ? `${(backendUsage.inputTokens / 1000).toFixed(1)}k` : backendUsage.inputTokens} </span>}
             {backendUsage.outputTokens != null && <span>↓{backendUsage.outputTokens} </span>}
             {backendUsage.costUsd != null && backendUsage.costUsd > 0 && <span>{fmtMoney(backendUsage.costUsd, 4)}</span>}
+            {backendUsage.credits && (backendUsage.credits.remaining != null || backendUsage.quotaExceeded) && (
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
+                <span style={{
+                  fontWeight: 600,
+                  color: backendUsage.quotaExceeded && (backendUsage.credits.remaining == null || backendUsage.credits.remaining <= 0) ? "#ef4444" : "var(--text)",
+                }}>
+                  {backendUsage.quotaExceeded && (backendUsage.credits.remaining == null || backendUsage.credits.remaining <= 0)
+                    ? "⊘ 配额耗尽"
+                    : `◈ ${backendUsage.credits.remaining != null ? backendUsage.credits.remaining : "?"}${backendUsage.credits.usedPercent != null ? ` (${backendUsage.credits.usedPercent}%)` : ""}${backendUsage.credits.unit ? ` ${backendUsage.credits.unit}` : ""}`}
+                </span>
+                {backendUsage.buckets && backendUsage.buckets.length > 0 && (
+                  <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
+                    {backendUsage.buckets.map((b, i) => (
+                      <span key={b.name}>
+                        {i > 0 && " · "}
+                        {({ user_quota: "基础", add_on_quota: "扩展", org_resource_package: "组织" } as Record<string, string>)[b.name] ?? b.name} {b.remaining ?? 0}/{b.total ?? "?"}
+                      </span>
+                    ))}
+                  </span>
+                )}
+              </span>
+            )}
           </span>
         </div>
       )}

@@ -62,7 +62,15 @@ export function createAgentEventStream(
       const forwardEvent = (event: AgentEventLike, snapshot: unknown) => {
         if (isEventIncludedInSnapshot(event, snapshot)) return;
         const clientEvent = toClientAgentEvent(event);
-        if (clientEvent) encode(clientEvent);
+        if (clientEvent) {
+          // Deep-clone message_start events to prevent the shared .content array
+          // (shallow-copied from the agent's live partialMessage) from being mutated
+          // by subsequent thinking_delta events before JSON.stringify serializes it.
+          const safeEvent = clientEvent.type === "message_start"
+            ? { ...clientEvent, message: structuredClone(clientEvent.message) }
+            : clientEvent;
+          encode(safeEvent);
+        }
       };
 
       const publishSession = async () => {
@@ -87,7 +95,13 @@ export function createAgentEventStream(
           }
           unsubscribe = stopListening;
 
-          const snapshot = session.streamingMessage;
+          // Deep-clone the snapshot to decouple from the live streamingMessage
+          // whose .content array is shared with the agent's partialMessage and
+          // gets mutated in-place by subsequent thinking_delta events.
+          const rawSnapshot = session.streamingMessage;
+          const snapshot = (rawSnapshot !== undefined && rawSnapshot !== null)
+            ? structuredClone(rawSnapshot)
+            : rawSnapshot;
           encode({
             type: "connected",
             sessionId,

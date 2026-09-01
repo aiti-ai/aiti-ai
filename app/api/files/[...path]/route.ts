@@ -30,7 +30,6 @@ import {
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 import { samePath } from "@/lib/paths";
 import { issueFileTicket, redeemFileTicket } from "@/lib/file-ticket";
-import { decodePathToken, encodePathToken } from "@/lib/path-token";
 
 const IGNORED_NAMES = new Set([
   "node_modules", ".git", ".next", "dist", "build", "__pycache__",
@@ -73,26 +72,29 @@ function getLanguage(filePath: string): string {
   return EXT_TO_LANGUAGE[ext] ?? "text";
 }
 
-function filePathFromSegments(segments: string[]): string {
-  const joined = segments.join("/");
-  const slashJoined = normalizeSlashes(joined);
-  if (isWindowsAbsolutePath(slashJoined)) return slashJoined;
-  // ~ 开头 → 展开为 home 目录（~/x → $HOME/x）——aiti-msg-smart 文件识别等场景浏览器无 homedir
-  if (segments[0] === "~") {
-    const home = process.env.HOME || process.env.USERPROFILE;
-    if (home && segments.length > 1) return normalizeSlashes(path.join(home, ...segments.slice(1)));
-  }
-  return "/" + joined.replace(/^\/+/, "");
-}
-
 function parseFileRequestType(value: string): FileRequestType | null {
   return FILE_REQUEST_TYPE_SET.has(value) ? (value as FileRequestType) : null;
 }
 
-async function getUploadDirectory(segments: string[]): Promise<
+/** 归一化 POST body 里的路径：~ 开头展开为 home，并断言为绝对路径。 */
+function resolveBodyPath(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const homeDir = process.env.HOME || process.env.USERPROFILE;
+  const p = raw === "~" || raw.startsWith("~/")
+    ? (homeDir ? normalizeSlashes(path.join(homeDir, raw === "~" ? "" : raw.slice(2))) : raw)
+    : raw;
+  if (!p || (!p.startsWith("/") && !isWindowsAbsolutePath(p))) return null;
+  return p;
+}
+
+/** 从 POST body（JSON 字段或 FormData 字段）解析并校验上传目录（含符号链接越界防护）。 */
+async function resolveUploadDirectory(raw: unknown): Promise<
   { directory: string } | { response: NextResponse }
 > {
-  return validateUploadDirectory(filePathFromSegments(segments));
+  const directory = resolveBodyPath(raw);
+  if (!directory) return { response: NextResponse.json({ error: "path must be absolute" }, { status: 400 }) };
+
+  return validateUploadDirectory(directory);
 }
 
 async function validateUploadDirectory(directory: string): Promise<
@@ -148,9 +150,12 @@ export async function POST(
     const { path: segments } = await params;
     // POST /api/files/ticket → 双模式：
     //   { ticket } → 兑付：返回票据载荷（/viewer 握手用；不核销，TTL 内可重复用）
-    //   { path, kind?, cwd? } → 签发（type="view" 时附 viewer 目标字段）；缺省 type="download"
+    //   { path, type?, kind?, cwd? } → 签发短时效票据（5 分钟 TTL，随机不可逆）。
+    //     type 缺省 "download"；read/watch/preview/list/meta 也可——供 <img>/<video> src、
+    //     EventSource 等只能用 GET URL 的消费者：先换票再 GET /api/files/_t/<ticket>，路径不进 URL。
+    //     （旧设计曾用稳态令牌 _e，但令牌永久有效→一旦落入 access log 路径永久泄露，故改用短票据。）
     if (segments[0] === "ticket") {
-      const body = await request.json().catch(() => null) as { path?: unknown; kind?: unknown; cwd?: unknown; ticket?: unknown } | null;
+      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; kind?: unknown; cwd?: unknown; ticket?: unknown } | null;
       if (typeof body?.ticket === "string" && body.ticket) {
         const t = redeemFileTicket(body.ticket);
         if (!t) {
@@ -158,41 +163,59 @@ export async function POST(
         }
         return NextResponse.json({ ok: true, path: t.path, type: t.type, kind: t.kind ?? null, cwd: t.cwd ?? null });
       }
-      const rawPath = typeof body?.path === "string" ? body.path : "";
-      // ~ 开头 = home 相对路径 → 展开（与 GET 段路径 filePathFromSegments 同语义）：
-      // 标签页现在可能持有 ~/ 形式路径（消息里的 ~ 路径透传），下载/票据通道同样要能处理
-      const homeDir = process.env.HOME || process.env.USERPROFILE;
-      const p = rawPath === "~" || rawPath.startsWith("~/")
-        ? (homeDir ? normalizeSlashes(path.join(homeDir, rawPath === "~" ? "" : rawPath.slice(2))) : rawPath)
-        : rawPath;
-      if (!p || (!p.startsWith("/") && !isWindowsAbsolutePath(p))) {
-        return NextResponse.json({ error: "path must be absolute" }, { status: 400 });
-      }
+      const p = resolveBodyPath(body?.path);
+      if (!p) return NextResponse.json({ error: "path must be absolute" }, { status: 400 });
       const allowedRoots = await getAllowedFileRoots();
       if (!isFilePathAllowed(p, allowedRoots)) {
         return NextResponse.json({ error: "Access denied" }, { status: 403 });
       }
-      let st: fs.Stats;
-      try { st = fs.statSync(p); } catch {
-        return NextResponse.json({ error: "Not found" }, { status: 404 });
+      // type 校验：只允许文件请求类型；watch/list 允许目标尚不存在（watch 监听待创建、list 父目录）
+      const rawType = typeof body?.type === "string" ? body.type : "download";
+      const type = parseFileRequestType(rawType);
+      if (!type) {
+        return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
       }
-      if (!st.isFile()) {
-        return NextResponse.json({ error: "Not a file" }, { status: 400 });
-      }
-      if (!isExistingFilePathAllowed(p, allowedRoots)) {
-        return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      if (type !== "watch" && type !== "list") {
+        // read/download/meta/preview 要求目标是文件（read 的图片/音频/文档流式、文本内容均需文件）
+        let st: fs.Stats;
+        try { st = fs.statSync(p); } catch {
+          return NextResponse.json({ error: "Not found" }, { status: 404 });
+        }
+        if (!st.isFile()) {
+          return NextResponse.json({ error: "Not a file" }, { status: 400 });
+        }
+        if (!isExistingFilePathAllowed(p, allowedRoots)) {
+          return NextResponse.json({ error: "Access denied" }, { status: 403 });
+        }
       }
       const kind = body?.kind === "folder" || body?.kind === "file" ? body.kind : undefined;
       const cwd = typeof body?.cwd === "string" && body.cwd ? body.cwd : undefined;
-      return NextResponse.json(issueFileTicket(p, kind ? "view" : "download", { kind, cwd }));
+      return NextResponse.json(issueFileTicket(p, type, { kind, cwd }));
     }
-    const uploadDirectory = await getUploadDirectory(segments);
-    if ("response" in uploadDirectory) return uploadDirectory.response;
-    const { directory } = uploadDirectory;
-    const type = request.nextUrl.searchParams.get("type") ?? "upload";
 
-    if (type === "upload-check") {
-      const body = await request.json().catch(() => null) as { fileNames?: unknown } | null;
+    // 路径一律走 body，不进 URL。POST 通道分四类：
+    //   /get         → 文件请求主管线（list/read/meta/preview/download）；body { path, type?, sessionId? }
+    //   /token       → 签发稳态路径令牌（供 <img>/<video>/EventSource 等只能 GET URL 的消费者）；body { path } → { token }
+    //   /upload-check→ 上传冲突检查；body { directory, fileNames }
+    //   /upload      → 上传；multipart FormData(files..., directory)；query conflict 保留（非路径）
+    if (segments[0] === "get") {
+      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; sessionId?: unknown } | null;
+      const p = resolveBodyPath(body?.path);
+      if (!p) return NextResponse.json({ error: "path must be absolute" }, { status: 400 });
+      const rawType = typeof body?.type === "string" ? body.type : "read";
+      const type = parseFileRequestType(rawType);
+      // watch 是 SSE/EventSource，必须 GET → 用 /token 换令牌走 _e 通道，不接受 POST
+      if (!type || type === "watch") {
+        return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
+      }
+      const sessionId = typeof body?.sessionId === "string" && body.sessionId ? body.sessionId : null;
+      return handleFileRequest(request, p, type, sessionId);
+    }
+
+    if (segments[0] === "upload-check") {
+      const body = await request.json().catch(() => null) as { directory?: unknown; fileNames?: unknown } | null;
+      const vd = await resolveUploadDirectory(body?.directory);
+      if ("response" in vd) return vd.response;
       const fileNames = parseUploadFileNames(body?.fileNames);
       if (!fileNames) {
         return NextResponse.json({ error: "fileNames must be an array of strings" }, { status: 400 });
@@ -201,95 +224,97 @@ export async function POST(
       if (validationError) {
         return NextResponse.json({ error: validationError }, { status: 400 });
       }
-      return NextResponse.json(inspectUploadTargets(directory, fileNames));
+      return NextResponse.json(inspectUploadTargets(vd.directory, fileNames));
     }
 
-    if (type !== "upload") {
-      return NextResponse.json({ error: "Invalid upload request type" }, { status: 400 });
-    }
-
-    const strategy = parseUploadConflictStrategy(request.nextUrl.searchParams.get("conflict"));
-    if (!strategy) {
-      return NextResponse.json({ error: "Invalid conflict strategy" }, { status: 400 });
-    }
-
-    let formData: FormData;
-    try {
-      formData = await parseFormDataWithinLimit(request, MAX_UPLOAD_REQUEST_BYTES);
-    } catch (error) {
-      if (error instanceof RequestBodyTooLargeError) {
+    if (segments[0] === "upload") {
+      const strategy = parseUploadConflictStrategy(request.nextUrl.searchParams.get("conflict"));
+      if (!strategy) {
+        return NextResponse.json({ error: "Invalid conflict strategy" }, { status: 400 });
+      }
+      let formData: FormData;
+      try {
+        formData = await parseFormDataWithinLimit(request, MAX_UPLOAD_REQUEST_BYTES);
+      } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+          return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
+        }
+        throw error;
+      }
+      const vd = await resolveUploadDirectory(formData.get("directory"));
+      if ("response" in vd) return vd.response;
+      const { directory } = vd;
+      const files = formData.getAll("files").filter((entry): entry is File => typeof entry !== "string");
+      if (files.some((file) => file.size > MAX_UPLOAD_FILE_BYTES)) {
+        return NextResponse.json({ error: "Each upload must be 25MB or smaller" }, { status: 413 });
+      }
+      if (files.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_TOTAL_BYTES) {
         return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
       }
-      throw error;
-    }
-    const files = formData.getAll("files").filter((entry): entry is File => typeof entry !== "string");
-    if (files.some((file) => file.size > MAX_UPLOAD_FILE_BYTES)) {
-      return NextResponse.json({ error: "Each upload must be 25MB or smaller" }, { status: 413 });
-    }
-    if (files.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_TOTAL_BYTES) {
-      return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
-    }
-    const fileNames = files.map((file) => file.name);
-    const validationError = validateUploadFileNames(fileNames);
-    if (validationError) {
-      return NextResponse.json({ error: validationError }, { status: 400 });
-    }
-
-    const inspection = inspectUploadTargets(directory, fileNames);
-    if (strategy === "error" && inspection.conflicts.length > 0) {
-      return NextResponse.json({
-        error: "One or more files already exist",
-        conflicts: inspection.conflicts,
-        nonReplaceable: inspection.nonReplaceable,
-      }, { status: 409 });
-    }
-
-    const conflictSet = new Set(inspection.conflicts);
-    const nonReplaceableSet = new Set(inspection.nonReplaceable);
-    const uploaded: string[] = [];
-    const skipped: string[] = [];
-    const errors: Array<{ name: string; error: string }> = [];
-
-    for (const file of files) {
-      const destination = path.join(directory, file.name);
-      if (conflictSet.has(file.name) && strategy === "skip") {
-        skipped.push(file.name);
-        continue;
-      }
-      if (conflictSet.has(file.name) && nonReplaceableSet.has(file.name)) {
-        errors.push({ name: file.name, error: "Cannot replace a directory or symbolic link" });
-        continue;
+      const fileNames = files.map((file) => file.name);
+      const validationError = validateUploadFileNames(fileNames);
+      if (validationError) {
+        return NextResponse.json({ error: validationError }, { status: 400 });
       }
 
-      let bytes: Buffer;
-      try {
-        bytes = Buffer.from(await file.arrayBuffer());
-      } catch (error) {
-        errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
-        continue;
+      const inspection = inspectUploadTargets(directory, fileNames);
+      if (strategy === "error" && inspection.conflicts.length > 0) {
+        return NextResponse.json({
+          error: "One or more files already exist",
+          conflicts: inspection.conflicts,
+          nonReplaceable: inspection.nonReplaceable,
+        }, { status: 409 });
       }
 
-      if (conflictSet.has(file.name)) {
+      const conflictSet = new Set(inspection.conflicts);
+      const nonReplaceableSet = new Set(inspection.nonReplaceable);
+      const uploaded: string[] = [];
+      const skipped: string[] = [];
+      const errors: Array<{ name: string; error: string }> = [];
+
+      for (const file of files) {
+        const destination = path.join(directory, file.name);
+        if (conflictSet.has(file.name) && strategy === "skip") {
+          skipped.push(file.name);
+          continue;
+        }
+        if (conflictSet.has(file.name) && nonReplaceableSet.has(file.name)) {
+          errors.push({ name: file.name, error: "Cannot replace a directory or symbolic link" });
+          continue;
+        }
+
+        let bytes: Buffer;
         try {
-          fs.unlinkSync(destination);
+          bytes = Buffer.from(await file.arrayBuffer());
         } catch (error) {
           errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
           continue;
         }
+
+        if (conflictSet.has(file.name)) {
+          try {
+            fs.unlinkSync(destination);
+          } catch (error) {
+            errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
+            continue;
+          }
+        }
+
+        try {
+          fs.writeFileSync(destination, bytes, { flag: "wx" });
+          uploaded.push(file.name);
+        } catch (error) {
+          errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
+        }
       }
 
-      try {
-        fs.writeFileSync(destination, bytes, { flag: "wx" });
-        uploaded.push(file.name);
-      } catch (error) {
-        errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
-      }
+      return NextResponse.json(
+        { uploaded, skipped, errors },
+        { status: errors.length > 0 ? 207 : 200 },
+      );
     }
 
-    return NextResponse.json(
-      { uploaded, skipped, errors },
-      { status: errors.length > 0 ? 207 : 200 },
-    );
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
@@ -493,18 +518,13 @@ export async function GET(
       }
       filePath = t.path;
       rawType = t.type;
-    } else if (segments[0] === "_e" && segments.length === 2) {
-      // 稳态令牌通道：确定性假名（lib/path-token.ts），供 <img>/<video> src、EventSource 等
-      // 只能用 GET URL 的消费者；先 POST /api/files/token { path } 换令牌。
-      const decoded = decodePathToken(segments[1]);
-      if (!decoded) {
-        return NextResponse.json({ error: "Invalid path token" }, { status: 403 });
-      }
-      filePath = decoded;
-      rawType = request.nextUrl.searchParams.get("type") ?? "read";
     } else {
-      filePath = filePathFromSegments(segments);
-      rawType = request.nextUrl.searchParams.get("type") ?? "list";
+      // 设计契约：文件路径不进 URL。GET 仅保留票据(_t)一类不透明通道；
+      // 其它读写一律走 POST /api/files/get（路径在 body）。裸路径段访问直接拒绝。
+      return NextResponse.json(
+        { error: "Path in URL is not allowed; use POST /api/files/get or POST /api/files/ticket" },
+        { status: 404 },
+      );
     }
     const type = parseFileRequestType(rawType);
     if (!type) {
@@ -516,7 +536,7 @@ export async function GET(
   }
 }
 
-/** 文件请求主管线：GET（路径段/票据/稳态令牌）与 POST /api/files/get 共用。 */
+/** 文件请求主管线：GET（票据 _t / 稳态令牌 _e）与 POST /api/files/get 共用。 */
 async function handleFileRequest(
   request: NextRequest,
   filePath: string,

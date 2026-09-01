@@ -19,7 +19,7 @@ import {
   isDocumentPreviewPath,
   isImagePath,
 } from "@/lib/file-types";
-import { encodeFilePathForApi, getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
+import { getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { getExtUiItems, subscribeExtUi, hasExtRender, type ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { parseFrontmatter } from "@/lib/frontmatter";
@@ -214,19 +214,30 @@ function SourceCodeRenderer({ rows, stylesheet, useInlineStyles, wrapLines }: So
   });
 }
 
-function getFileApiUrl(
-  filePath: string,
-  type: "read" | "download" | "meta" | "preview" | "watch",
-  sourceSessionId?: string | null,
+// —— 路径不进 URL：fetch 型请求走 POST /api/files/get；<img>/<video>/EventSource 等
+// 只能用 GET URL 的消费者走短时效票据（POST /api/files/ticket 换票 → GET /api/files/_t/<ticket>），
+// 票据 5 分钟 TTL、随机不可逆，过期失效（不沿用永久的稳态令牌——一旦落入 access log 路径永久泄露）。
+import { buildTicketUrl, fetchFileGet } from "@/lib/file-tickets";
+
+/** React hook：为只能用 GET URL 的消费者（<img>/<video>/EventSource）解析短时效票据 URL。 */
+function useTicketUrl(
+  filePath: string | undefined,
+  type: "read" | "download" | "preview" | "watch",
   params: Record<string, string | number | undefined> = {},
-): string {
-  const encoded = encodeFilePathForApi(filePath);
-  const searchParams = new URLSearchParams({ type });
-  if (sourceSessionId) searchParams.set("sessionId", sourceSessionId);
-  for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) searchParams.set(key, String(value));
-  }
-  return apiUrl(`/api/files/${encoded}?${searchParams.toString()}`);
+): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    setUrl(null);
+    if (!filePath) return;
+    buildTicketUrl(filePath, type, params)
+      .then((u) => { if (alive) setUrl(u); })
+      .catch(() => { if (alive) setUrl(null); });
+    return () => { alive = false; };
+    // params 不稳定对象 → 序列化作依赖键
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filePath, type, JSON.stringify(params)]);
+  return url;
 }
 
 /** 两步下载：POST 换票据（路径不进 URL，避免落入隧道/代理 access log）→ 带 ticket 的 GET 流式下载 */
@@ -244,6 +255,12 @@ async function downloadViaTicket(filePath: string): Promise<void> {
   document.body.appendChild(a);
   a.click();
   a.remove();
+}
+
+function MarkdownImage({ filePath, alt, ...props }: { filePath: string; alt: string } & React.ImgHTMLAttributes<HTMLImageElement>) {
+  const src = useTicketUrl(filePath, "read");
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src ?? undefined} alt={alt} loading="lazy" {...props} />;
 }
 
 function DownloadLink({ filePath, sourceSessionId }: { filePath: string; sourceSessionId?: string | null }) {
@@ -486,7 +503,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     let active = true;
     const synchronize = () => {
       const requestId = ++syncRequestRef.current;
-      fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+      fetchFileGet(filePath, "meta", sourceSessionId)
         .then((response) => response.json())
         .then((next: { size?: number; error?: string }) => {
           if (!active || requestId !== syncRequestRef.current) return;
@@ -504,37 +521,41 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
         });
     };
 
-    const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
-    esRef.current = es;
+    let es: EventSource | null = null;
+      buildTicketUrl(filePath, "watch").then((watchUrl) => {
+        if (!active) return;
+        es = new EventSource(watchUrl);
+        esRef.current = es;
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
+      es.addEventListener("connected", () => {
+        setWatching(true);
+        synchronize();
+      });
+      es.addEventListener("change", (e) => {
+        syncRequestRef.current += 1;
+        try {
+          const d = JSON.parse((e as MessageEvent).data) as { size?: number };
+          if (typeof d.size === "number") setSize(d.size);
+        } catch { /* ignore */ }
+        setNaturalSize(null);
+        setError(null);
+        setBust((b) => b + 1);
+      });
+      const markDisconnected = () => {
+        setWatching(false);
+      };
+      es.addEventListener("error", markDisconnected);
+      es.onerror = markDisconnected;
     });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number };
-        if (typeof d.size === "number") setSize(d.size);
-      } catch { /* ignore */ }
-      setNaturalSize(null);
-      setError(null);
-      setBust((b) => b + 1);
-    });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
+      if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
   }, [filePath, sourceSessionId, watchEnabled]);
 
-  const src = getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined);
+  const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
 
   const formatSizeStr = size != null ? formatSize(size) : null;
 
@@ -599,7 +620,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
         ) : (
           // eslint-disable-next-line @next/next/no-img-element
           <img
-            src={src}
+            src={src ?? undefined}
             alt={filePath}
             onLoad={(e) => {
               const img = e.currentTarget;
@@ -660,7 +681,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     let active = true;
     const synchronize = () => {
       const requestId = ++syncRequestRef.current;
-      fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+      fetchFileGet(filePath, "meta", sourceSessionId)
         .then((response) => response.json())
         .then((next: { size?: number; error?: string }) => {
           if (!active || requestId !== syncRequestRef.current) return;
@@ -678,37 +699,41 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
         });
     };
 
-    const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
-    esRef.current = es;
+    let es: EventSource | null = null;
+      buildTicketUrl(filePath, "watch").then((watchUrl) => {
+        if (!active) return;
+        es = new EventSource(watchUrl);
+        esRef.current = es;
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
+      es.addEventListener("connected", () => {
+        setWatching(true);
+        synchronize();
+      });
+      es.addEventListener("change", (e) => {
+        syncRequestRef.current += 1;
+        try {
+          const d = JSON.parse((e as MessageEvent).data) as { size?: number };
+          if (typeof d.size === "number") setSize(d.size);
+        } catch { /* ignore */ }
+        setDuration(null);
+        setError(null);
+        setBust((b) => b + 1);
+      });
+      const markDisconnected = () => {
+        setWatching(false);
+      };
+      es.addEventListener("error", markDisconnected);
+      es.onerror = markDisconnected;
     });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number };
-        if (typeof d.size === "number") setSize(d.size);
-      } catch { /* ignore */ }
-      setDuration(null);
-      setError(null);
-      setBust((b) => b + 1);
-    });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
+      if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
   }, [filePath, sourceSessionId, watchEnabled]);
 
-  const src = getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined);
+  const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -769,7 +794,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
             key={src}
             controls
             preload="metadata"
-            src={src}
+            src={src ?? undefined}
             onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
             onError={() => setError("Failed to load audio")}
             style={{ width: "100%" }}
@@ -791,9 +816,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }:
 
   const ext = getFileExt(filePath);
   const isPdf = ext === "pdf";
-  const previewUrl = isPdf
-    ? getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined)
-    : getFileApiUrl(filePath, "preview", sourceSessionId, bust ? { v: bust } : undefined);
+  const previewUrl = useTicketUrl(filePath, isPdf ? "read" : "preview", bust ? { v: bust } : {});
 
   useEffect(() => {
     setBust(0);
@@ -803,7 +826,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }:
 
     let active = true;
     const requestId = ++syncRequestRef.current;
-    fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+    fetchFileGet(filePath, "meta", sourceSessionId)
       .then((r) => r.json())
       .then((d: { size?: number; error?: string }) => {
         if (!active || requestId !== syncRequestRef.current) return;
@@ -837,7 +860,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }:
     let active = true;
     const synchronize = () => {
       const requestId = ++syncRequestRef.current;
-      fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+      fetchFileGet(filePath, "meta", sourceSessionId)
         .then((r) => r.json())
         .then((d: { size?: number; error?: string }) => {
           if (!active || requestId !== syncRequestRef.current) return;
@@ -860,37 +883,41 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }:
         });
     };
 
-    const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
-    esRef.current = es;
+    let es: EventSource | null = null;
+      buildTicketUrl(filePath, "watch").then((watchUrl) => {
+        if (!active) return;
+        es = new EventSource(watchUrl);
+        esRef.current = es;
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
-    });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number };
-        if (typeof d.size === "number") {
-          setSize(d.size);
-          if (!isPdf && d.size > DOCX_PREVIEW_MAX_BYTES) {
-            setError("DOCX too large for preview (>10MB)");
-            return;
+      es.addEventListener("connected", () => {
+        setWatching(true);
+        synchronize();
+      });
+      es.addEventListener("change", (e) => {
+        syncRequestRef.current += 1;
+        try {
+          const d = JSON.parse((e as MessageEvent).data) as { size?: number };
+          if (typeof d.size === "number") {
+            setSize(d.size);
+            if (!isPdf && d.size > DOCX_PREVIEW_MAX_BYTES) {
+              setError("DOCX too large for preview (>10MB)");
+              return;
+            }
           }
-        }
-      } catch { /* ignore */ }
-      setError(null);
-      setBust((b) => b + 1);
+        } catch { /* ignore */ }
+        setError(null);
+        setBust((b) => b + 1);
+      });
+      const markDisconnected = () => {
+        setWatching(false);
+      };
+      es.addEventListener("error", markDisconnected);
+      es.onerror = markDisconnected;
     });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
+      if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
   }, [filePath, isPdf, sourceSessionId, watchEnabled]);
@@ -941,7 +968,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }:
         ) : (
           <iframe
             key={previewUrl}
-            src={previewUrl}
+            src={previewUrl ?? undefined}
             sandbox={isPdf ? undefined : "allow-same-origin"}
             title={t("i18n.previewFile", { file: getFileName(filePath) })}
             style={{ width: "100%", height: "100%", border: "none", background: isPdf ? "var(--bg)" : "#eef1f5" }}
@@ -1119,7 +1146,7 @@ function TextFileViewer({
 
   const fetchContent = useCallback((filePath: string) => {
     const requestId = ++contentRequestRef.current;
-    return fetch(getFileApiUrl(filePath, "read", sourceSessionId))
+    return fetchFileGet(filePath, "read", sourceSessionId)
       .then((r) => r.json())
       .then((d: FileData & { error?: string }) => {
         if (requestId !== contentRequestRef.current) return null;
@@ -1199,26 +1226,29 @@ function TextFileViewer({
       void fetchGitDiff(filePath);
     };
 
-    const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
-    esRef.current = es;
+    let es: EventSource | null = null;
+    buildTicketUrl(filePath, "watch").then((watchUrl) => {
+      es = new EventSource(watchUrl);
+      esRef.current = es;
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      // The server emits connected only after its watcher exists. Reading now
-      // closes the gap between the last snapshot and live events.
-      synchronize();
-    });
+      es.addEventListener("connected", () => {
+        setWatching(true);
+        // The server emits connected only after its watcher exists. Reading now
+        // closes the gap between the last snapshot and live events.
+        synchronize();
+      });
 
-    es.addEventListener("change", synchronize);
+      es.addEventListener("change", synchronize);
 
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
+      const markDisconnected = () => {
+        setWatching(false);
+      };
+      es.addEventListener("error", markDisconnected);
+      es.onerror = markDisconnected;
+    }).catch(() => { /* watch unavailable */ });
 
     return () => {
-      es.close();
+      if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
   }, [filePath, fetchContent, fetchGitDiff, sourceSessionId, watchEnabled]);
@@ -1562,12 +1592,12 @@ function TextFileViewer({
                   const imagePath = typeof src === "string"
                     ? resolveLocalFileHref(src, markdownDirectory, cwd ?? markdownDirectory)
                     : null;
-                  const imageSrc = imagePath
-                    ? getFileApiUrl(imagePath, "read", sourceSessionId)
-                    : src;
-                  // Dynamic local paths are served directly by the file API.
-                  // eslint-disable-next-line @next/next/no-img-element
-                  return <img src={imageSrc} alt={alt ?? ""} loading="lazy" {...props} />;
+                  if (!imagePath) {
+                    // eslint-disable-next-line @next/next/no-img-element
+                    return <img src={src} alt={alt ?? ""} loading="lazy" {...props} />;
+                  }
+                  // 本地图片：路径不进 URL，经短时效票据换 GET 地址
+                  return <MarkdownImage filePath={imagePath} alt={alt ?? ""} {...props} />;
                 },
               }}
             >

@@ -228,7 +228,7 @@ export type UsageReport = {
   /** 账号级配额桶（qoder user_quota/add_on_quota/org_resource_package 对齐）。 */
   buckets?: UsageBucket[];
   /** Credits 余额（按 credits 计费的后端；如 qoder quota API）。 */
-  credits?: { remaining?: number; unit?: string; expiresAt?: number };
+  credits?: { remaining?: number; used?: number; usedPercent?: number; unit?: string; expiresAt?: number };
   /** 配额是否已耗尽。 */
   quotaExceeded?: boolean;
 };

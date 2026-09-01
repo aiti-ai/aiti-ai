@@ -1213,6 +1213,9 @@ function SplitDiffCellView({ cell, side }: { cell: SplitDiffCell; side: "left" |
 
   return (
     <div
+      // aiti-msg-smart 点击行引用契约：标 data-diff-line 使该格可被扩展点击 handler 识别
+      // （SplitPatchView 是 div/span 网格、非 <pre>，无此标记则 pre 行点击 handler 接不到）
+      data-diff-line=""
       style={{
         display: "flex",
         minWidth: 0,
