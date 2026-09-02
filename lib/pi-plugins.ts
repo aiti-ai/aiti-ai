@@ -3,7 +3,7 @@ import path from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 /**
- * 内置 pi 插件扫描（方案：docs/pi-models-respect-builtin-and-apikeys-plan.md §3.3）。
+ * 内置 pi 插件扫描（方案：docs/pi-models-combo-builtin-and-apikeys-plan.md §3.3）。
  *
  * 约定：往 <agentDir>/pi-plugins/<name>/ 或 <cwd>/pi-plugins/<name>/ 里放一个含
  * index.ts|js|mjs 的子目录，即成为随包分发的 pi 插件——每个 RPC 会话经 SDK 原生

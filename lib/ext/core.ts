@@ -40,19 +40,6 @@ export function makeExtCore(): ExtCoreApi {
     async writeModelsConfig(data) {
       writeModelsConfig(data);
     },
-    refreshProxies(providerId?: string) {
-      // pi-models-respect 把 refresh 入口挂到 globalThis.__piModelsRespect.refresh；
-      // 未装载（没配该扩展）时静默返回空。
-      try {
-        const g = globalThis as any;
-        const fn = g.__piModelsRespect?.refresh;
-        if (typeof fn !== "function") return [];
-        const res = fn(providerId);
-        return Array.isArray(res) ? res : [];
-      } catch {
-        return [];
-      }
-    },
     fileAccess: {
       allowRoot(root) {
         allowFileRoot(root);

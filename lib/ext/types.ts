@@ -123,12 +123,6 @@ export interface ExtCoreApi {
   readModelsConfig(): Promise<Record<string, unknown>>;
   /** 写 models.json（规范化 + invalidateModelsCache 缓存失效，改动立即生效）。 */
   writeModelsConfig(data: Record<string, unknown>): Promise<void>;
-  /**
-   * 刷新运行中代理的槽位配置（pi-models-respect：从 models.json 读取最新配置，
-   * 原地更新不重启 HTTP）。聚合/多 key 变更后调用，运行中的会话立即生效。
-   * @returns 实际刷新的 provider 列表。
-   */
-  refreshProxies(providerId?: string): string[];
   /** File-access helpers bound to pi-web's allowed-roots security (session cwds etc.). */
   fileAccess: {
     allowRoot(root: string): void;
