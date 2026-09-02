@@ -876,6 +876,20 @@ function AssistantMessageView({
              {copied ? t("i18n.copied") : t("i18n.copy")}
           </button>
         )}
+        {textContent && !isStreaming && (
+          <div style={{
+            display: "flex", alignItems: "center", gap: 3,
+            opacity: hovered ? 1 : 0,
+            pointerEvents: hovered ? "auto" : "none",
+            transition: "opacity 0.12s",
+          }}>
+            <ExtSlot
+              name="assistantMessageActions"
+              currentSession={null}
+              extra={{ entryId, sessionId, text: textContent }}
+            />
+          </div>
+        )}
         {time && !isStreaming && (
           <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>
         )}

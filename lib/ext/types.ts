@@ -251,6 +251,7 @@ export type ExtSlotName =
   | "chatOverlay"    // 消息区覆盖层（消息滚动导航条等；aiti-msg-nav
                      //   在消息列右侧渲染 absolute 悬浮工具栏）
   | "userMessageActions" // user 消息底部 hover 操作区（aiti-prompts：📌 收藏为 prompt 等）
+  | "assistantMessageActions" // assistant 消息底部 hover 操作区（aiti-ai-speek：🔊 朗读这条/⏹ 停止朗读）
   | "fileViewer"     // 文件查看/编辑接管（aiti-editor：文本文件编辑；aiti-folder：文件夹浏览器；未接管时核心原查看器兑底）
   | "pathPicker"    // 目录选择器能力（aiti-folder：FolderSwitcher 同款；顶栏「打开文件夹」等消费）
   | "newSessionBackendBar" // 新会话欢迎页 Backend 选择器旁（各后端扩展自行渲染管理入口，如 ACP agent 管理）
