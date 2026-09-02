@@ -29,7 +29,7 @@ interface ModelSelectorProps {
 
 const MODEL_FILTER_THRESHOLD = 8;
 export const RECENT_MODELS_KEY = "pi-web:recent-models";
-export const RECENT_MODELS_LIMIT = 5;
+export const RECENT_MODELS_LIMIT = 8;
 const MODEL_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 export interface RecentModelEntry {
