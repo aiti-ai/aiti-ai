@@ -758,6 +758,7 @@ function AssistantMessageView({
 
   return (
     <div
+      data-entry-id={entryId ?? undefined}
       style={{ marginBottom: 16 }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
