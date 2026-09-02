@@ -3861,7 +3861,7 @@ export function AppShell() {
     )}
     {/* 服务端口弹窗已随 service-tunnels 抽离为扩展（<ExtSlot name="dialogs" /> 渲染） */}
     <ExtSlot name="dialogs" extra={{ onSelectSession: handleSelectSession }}
-      currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd, name: selectedSession.name } : null} />
+      currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd, name: selectedSession.name, firstMessage: selectedSession.firstMessage } : null} />
     {exportDialogOpen && selectedSession && (
       <ExportDialog
         sessionId={selectedSession.id}
