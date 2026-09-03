@@ -2054,7 +2054,7 @@ export function AppShell() {
     if (!extItem) return null;
     const ExtComponent = extItem.render as React.ComponentType<ExtRenderProps>;
     const extProps = toolbarItem
-      ? { currentSession: null }
+      ? { currentSession: selectedSession }
       : { currentSession: selectedSession, newSessionCwd: effectiveNewSessionCwd };
     if (menu) {
       // ⋯ 下拉里扩展条目两种形态：
