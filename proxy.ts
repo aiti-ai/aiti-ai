@@ -48,8 +48,16 @@ export async function proxy(request: NextRequest) {
   // 扩展静态资源（/api/extensions/<id>/<file>.<js|html|...>）：script/img 标签 no-cors 加载
   // 跨域无 Origin/Origin:null 时默认门禁会 403——静态资源是公共产物（无敏感数据），放行；
   // 扩展 API（claim/sse/mcp 等，带数据语义）保持门禁（API_ALLOW_ORIGINS 配置放行 + secret 凭证）。
+  // 扩展声明的公开 API（publicApi，如 service-tunnels 注入的无后缀端点 meter-version）同样放行。
+  const extApiMatch = isApiRequest
+    ? request.nextUrl.pathname.match(/^\/api\/extensions\/([^/]+)\/(.+)$/)
+    : null;
+  const isPublicApi = !!(extApiMatch
+    && typeof (globalThis as { __piWebExtIsPublicApi?: (extId: string, apiPath: string) => boolean }).__piWebExtIsPublicApi === "function"
+    && (globalThis as { __piWebExtIsPublicApi: (extId: string, apiPath: string) => boolean }).__piWebExtIsPublicApi(extApiMatch[1], extApiMatch[2]));
   const isStaticAsset = isApiRequest
-    && /^\/api\/extensions\/[^/]+\/[^/]+\.(js|mjs|html|css|json|map)$/.test(request.nextUrl.pathname);
+    && (/^\/api\/extensions\/[^/]+\/[^/]+\.(js|mjs|html|css|json|map)$/.test(request.nextUrl.pathname)
+      || isPublicApi);
   const isTrustedRequest = isApiRequest
     ? (isStaticAsset || isApiRequestAllowed(request))
     : isApiRequestHostAllowed(request);

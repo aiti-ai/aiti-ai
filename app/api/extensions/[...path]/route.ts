@@ -1,7 +1,7 @@
 import { readFileSync, existsSync, statSync } from "fs";
 import { NextRequest, NextResponse } from "next/server";
 import { isApiRequestAllowed } from "@/lib/request-security";
-import { getRegistry } from "@/lib/ext/registry";
+import { getRegistry, isPublicApiPath } from "@/lib/ext/registry";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,10 +36,16 @@ const EXT_CORS: Record<string, string> = {
 const HASHED_ASSET_RE = /-[A-Za-z0-9_]{8}\.[a-zA-Z0-9]+$/;
 
 async function handle(req: NextRequest, params: Params): Promise<Response> {
-  // aiti-devtools：注入页面（vhost/本地端口）跨域直连桥——放行 origin 门禁（桥本身有 secret 凭证认证 + 本地无鉴权语义）
-  // 其他扩展保持默认门禁
+  // 跨源豁免（注入页面加载扩展资产/API）两条路：
+  //   ① aiti-devtools：历史特例——全 API 跨源直连桥（桥自身有 secret 凭证认证）；待迁移为声明式
+  //   ② 通用声明式：扩展在 index.ts 声明 publicApi: ["path", ...] → GET 精确命中即豁免
+  //      （service-tunnels 注入到任意页面的资产，如 aiti-cpu-meter.js；跨源 <script src> 带
+  //      Sec-Fetch-Site: cross-site，默认门禁必拦 → 403 JSON → 浏览器 ORB 二次拦截）
   const { path } = await params.params;
-  if (path[0] !== "aiti-devtools" && !isApiRequestAllowed(req)) {
+  const publicApiExempt = req.method === "GET"
+    && path.length >= 2
+    && isPublicApiPath(path[0], path.slice(1).join("/"));
+  if (path[0] !== "aiti-devtools" && !publicApiExempt && !isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   if (path.length === 0) return NextResponse.json({ error: "missing extension id" }, { status: 400 });

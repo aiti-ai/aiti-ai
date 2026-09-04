@@ -893,7 +893,27 @@ export class ExtRegistryImpl {
     if (!resolved.startsWith(ext.dir + sep)) return null;
     return resolved;
   }
+
+  /** 扩展声明的公开 API 路径（publicApi）是否命中该请求 path（调用方保证仅 GET 豁免）。
+   *  未加载 / 未声明 / 不命中 → false（走默认门禁）。实现委托模块级函数（热重载安全，见下）。 */
+  isPublicApiPath(extId: string, apiPath: string): boolean {
+    return extPublicApiHas(extId, apiPath);
+  }
 }
+
+/** 扩展声明的公开 API 路径（publicApi）是否命中。模块级函数：dev 热重载下 globalThis 单例
+ *  可能是旧类实例（无新方法），直接读其 extensions Map —— reload 后 ext.ext 是新加载模块，
+ *  声明字段天然可读，不依赖类方法。 */
+export function isPublicApiPath(extId: string, apiPath: string): boolean {
+  const reg = (globalThis as { __piWebExt?: { extensions?: Map<string, { ext?: { publicApi?: unknown } }> } }).__piWebExt;
+  const ext = reg?.extensions?.get?.(extId);
+  if (!ext) return false;
+  const declared = ext.ext?.publicApi;
+  return Array.isArray(declared) && declared.includes(apiPath);
+}
+
+// proxy.ts（独立 middleware bundle，不经模块图）经 globalThis 桥读声明判定（与 __aitiInject 同模式）
+try { (globalThis as { __piWebExtIsPublicApi?: (extId: string, apiPath: string) => boolean }).__piWebExtIsPublicApi = isPublicApiPath; } catch { /* ignore */ }
 
 /** Process-wide singleton (survives Next.js hot reload). */
 export function getRegistry(): ExtRegistryImpl {
