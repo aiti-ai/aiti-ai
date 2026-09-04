@@ -53,8 +53,8 @@ export async function proxy(request: NextRequest) {
     ? request.nextUrl.pathname.match(/^\/api\/extensions\/([^/]+)\/(.+)$/)
     : null;
   const isPublicApi = !!(extApiMatch
-    && typeof (globalThis as { __piWebExtIsPublicApi?: (extId: string, apiPath: string) => boolean }).__piWebExtIsPublicApi === "function"
-    && (globalThis as { __piWebExtIsPublicApi: (extId: string, apiPath: string) => boolean }).__piWebExtIsPublicApi(extApiMatch[1], extApiMatch[2]));
+    && typeof (globalThis as unknown as { __piWebExtIsPublicApi?: (extId: string, apiPath: string) => boolean }).__piWebExtIsPublicApi === "function"
+    && (globalThis as unknown as { __piWebExtIsPublicApi: (extId: string, apiPath: string) => boolean }).__piWebExtIsPublicApi(extApiMatch[1], extApiMatch[2]));
   const isStaticAsset = isApiRequest
     && (/^\/api\/extensions\/[^/]+\/[^/]+\.(js|mjs|html|css|json|map)$/.test(request.nextUrl.pathname)
       || isPublicApi);

@@ -897,7 +897,7 @@ export class ExtRegistryImpl {
   /** 扩展声明的公开 API 路径（publicApi）是否命中该请求 path（调用方保证仅 GET 豁免）。
    *  未加载 / 未声明 / 不命中 → false（走默认门禁）。实现委托模块级函数（热重载安全，见下）。 */
   isPublicApiPath(extId: string, apiPath: string): boolean {
-    return extPublicApiHas(extId, apiPath);
+    return isPublicApiPath(extId, apiPath);
   }
 }
 
