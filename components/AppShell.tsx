@@ -2056,6 +2056,31 @@ export function AppShell() {
     const extProps = toolbarItem
       ? { currentSession: selectedSession }
       : { currentSession: selectedSession, newSessionCwd: effectiveNewSessionCwd };
+    // ⚠ 扩展 render 组件只在真正使用的位置挂载一次：
+    //   forMeasure（离屏测量 strip）/ forPreview（定制面板预览）一概不挂载，用占位替代。
+    //   （否则扩展组件同时挂载 2-3 个实例、所有 effect 跑多遍——ai-speek 跟读「自动读」effect
+    //     曾因此双实例双启动出双声；barSlotTaken 类单例守卫只是缓解不是根修。）
+    if (forMeasure) {
+      // 离屏测量：固定 36px 占位（= 标准扩展按钮宽 TOP_BAR_ICON_BUTTON_SIZE）。
+      // portal 型组件（如 ai-speek 播放条）行内本就不占宽，误差 ≤36px 仅轻微影响溢出裁剪。
+      return (
+        <div aria-hidden style={{
+          width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+        }} />
+      );
+    }
+    if (forPreview) {
+      // 定制面板 30px 图标预览：meta 图标（同 ⋯ 菜单图标槽）或中性占位，不挂载组件。
+      const pIcon = extItem.meta?.icon;
+      return (
+        <div aria-hidden style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 16 }}>
+          {pIcon != null
+            ? <>{renderExtItemIcon(pIcon, extItem.extId)}</>
+            : <span style={{ width: 10, height: 10, border: "2px solid var(--text-dim, #999)", borderRadius: 3, opacity: 0.7 }} />}
+        </div>
+      );
+    }
     if (menu) {
       // ⋯ 下拉里扩展条目两种形态：
       //  a) meta.icon 声明式（2026-08 契约）：图标槽归宿主渲染（topbarMenuIconSlotStyle，与内建条目同款），
