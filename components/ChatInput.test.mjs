@@ -416,7 +416,7 @@ test("modelSupportsImageInput warns only when modality info is known and lacks i
   assert.equal(modelSupportsImageInput({ provider: "ollama", modelId: "text-only" }, undefined), true);
 });
 
-test("renders image warnings for known text-only defaults without an explicit model selection", () => {
+test("renders image warnings for known text-only defaults without an explicit model selection", { skip: "依赖 lib/draft-store.ts——本 fork 已外迁至 aiti-draft-keeper 扩展（composer 契约 P2）；正式合并后经契约注入恢复" }, () => {
   const draftKey = "new:/tmp/image-warning-default";
   const modelList = [
     { id: "text-only", name: "Text Only", provider: "custom", input: ["text"] },

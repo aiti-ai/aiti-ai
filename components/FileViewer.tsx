@@ -839,7 +839,7 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     let active = true;
     const synchronize = () => {
       const requestId = ++syncRequestRef.current;
-      fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+      fetchFileGet(filePath, "meta", sourceSessionId)
         .then((response) => response.json())
         .then((next: { size?: number; error?: string }) => {
           if (!active || requestId !== syncRequestRef.current) return;
@@ -857,37 +857,41 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
         });
     };
 
-    const es = new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId));
-    esRef.current = es;
+    let es: EventSource | null = null;
+    buildTicketUrl(filePath, "watch").then((watchUrl) => {
+      if (!active) return;
+      es = new EventSource(watchUrl);
+      esRef.current = es;
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
+      es.addEventListener("connected", () => {
+        setWatching(true);
+        synchronize();
+      });
+      es.addEventListener("change", (e) => {
+        syncRequestRef.current += 1;
+        try {
+          const d = JSON.parse((e as MessageEvent).data) as { size?: number };
+          if (typeof d.size === "number") setSize(d.size);
+        } catch { /* ignore */ }
+        setDuration(null);
+        setError(null);
+        setBust((b) => b + 1);
+      });
+      const markDisconnected = () => {
+        setWatching(false);
+      };
+      es.addEventListener("error", markDisconnected);
+      es.onerror = markDisconnected;
     });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number };
-        if (typeof d.size === "number") setSize(d.size);
-      } catch { /* ignore */ }
-      setDuration(null);
-      setError(null);
-      setBust((b) => b + 1);
-    });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
+      if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
   }, [filePath, sourceSessionId, watchEnabled]);
 
-  const src = getFileApiUrl(filePath, "read", sourceSessionId, bust ? { v: bust } : undefined);
+  const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -946,11 +950,11 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
             </div>
           )}
           <video
-            key={src}
+            key={src ?? "pending"}
             controls
             playsInline
             preload="metadata"
-            src={src}
+            src={src ?? undefined}
             onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
             onError={() => setError("Failed to load video")}
             style={{ maxWidth: "100%", maxHeight: "100%" }}

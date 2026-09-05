@@ -1357,8 +1357,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, sessi
             onRevealHistory={revealHistoryForMinimap}
           />
         )}
-        </>
       </div>
+      </>
       )}
 
       <div ref={bottomComposerRef} className="relative">
