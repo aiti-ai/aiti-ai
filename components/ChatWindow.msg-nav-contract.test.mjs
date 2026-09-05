@@ -13,10 +13,9 @@ test("message wrapper div carries the data-chat-msg-role contract", () => {
   // ⑨ 根因：aiti-msg-nav 的 ▲上一个/▼下一个用户输入靠 [data-chat-msg-role="user"]
   // 定位目标；属性被合并丢弃后 getUserEls() 过滤为空 → prev/next 静默 return。
   // 必须打在带 attachVisibleRef 的消息包装 div 上、且 role 取自 msg.role 表达式。
-  assert.match(
-    source,
-    /ref=\{attachVisibleRef\(idx, currentRefIdx\)\} data-chat-msg-role=\{msg\.role\}/,
-  );
+  // （试验合并后 ref 改为 attachRef 条件式，包装 div 仍同时携带两契约）
+  assert.match(source, /data-chat-msg-role=\{msg\.role\}/);
+  assert.match(source, /ref=\{options\.attachRef === false \? undefined : attachVisibleRef\(idx, currentRefIdx\)\}/);
 });
 
 test("scroll container carries the data-chat-scroll contract", () => {
@@ -27,10 +26,11 @@ test("scroll container carries the data-chat-scroll contract", () => {
 test("both user and assistant messages remain visible (and thus nav targets)", () => {
   // isVisible 收窄（如上游把 user 消息改走别渲染路径）会让 ▲▼ 无目标可跳；
   // user 必须与 assistant 同等进入包装 div 渲染分支。
-  assert.match(source, /const isVisible = msg\.role === "user" \|\| msg\.role === "assistant";/);
+  // （试验合并后采用上游 isMessageGroupAnchor 口径 = user + compaction 锚点，覆盖面更宽）
+  assert.match(source, /const isVisible = isMessageGroupAnchor\(msg\) \|\| msg\.role === "assistant";/);
   assert.match(
     source,
-    /if \(!isVisible \|\| options\.attachRef === false \|\| currentRefIdx === undefined\) return view;/,
+    /if \(!isVisible \|\| currentRefIdx === undefined\) return view;/,
   );
 });
 
