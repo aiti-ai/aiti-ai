@@ -643,7 +643,13 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setSearchLoading(true);
     setSearchError(false);
     const timer = setTimeout(() => {
-      fetch(`/api/file-index?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(query)}`, { signal: controller.signal })
+      // POST：cwd 不进 URL（访问日志安全）；apiUrl 补 basePath（子路径部署）
+      fetch(apiUrl("/api/file-index"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cwd, q: query }),
+        signal: controller.signal,
+      })
         .then((response) => response.ok ? response.json() as Promise<{ matches?: FileIndexEntry[] }> : Promise.reject(new Error("Search failed")))
         .then((data) => setSearchPaths((data.matches ?? []).filter((entry) => !entry.isDir).map((entry) => entry.path)))
         .catch(() => {

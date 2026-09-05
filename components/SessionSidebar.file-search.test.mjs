@@ -7,7 +7,9 @@ const apiSource = await readFile(new URL("../app/api/files/[...path]/route.ts", 
 
 test("provides a debounced file search UI and opens selected results", () => {
   assert.match(source, /searchQuery/);
-  assert.match(source, /\/api\/file-index\?cwd=\$\{encodeURIComponent\(cwd\)\}&q=\$\{encodeURIComponent\(query\)\}/);
+  // POST body 形态：cwd 不进 URL（访问日志安全），apiUrl 补 basePath
+  assert.match(source, /apiUrl\("\/api\/file-index"\)/);
+  assert.match(source, /JSON\.stringify\(\{ cwd, q: query \}\)/);
   assert.match(source, /setTimeout\(\(\) =>/);
   assert.match(source, /onOpenFile\(node\.fullPath, node\.name\)/);
 });
