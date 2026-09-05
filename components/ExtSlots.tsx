@@ -218,6 +218,35 @@ interface ManifestExt {
   features?: { id: string; type?: "boolean" | "string"; label?: string; placeholder?: string; enabled: boolean; value?: string }[] | null;
 }
 
+interface ManifestData {
+  extensions: ManifestExt[];
+  graph: PiWebBootGraph;
+  /** server 侧加载/启动失败清单（registry errors：jiti 解析错/entry 校验/startup throw）。
+   *  页面打开即可见（左下角错误指示器），不必再开 extman 查 /status。 */
+  failed?: { id: string; error: string }[];
+}
+
+// ---- server 侧扩展加载失败 → 前端可见 ----
+// registry errors 原本只在 extman 的 /status 里能看到；现在随 manifest 带给页面，
+// 注册进 ExtErrorIndicator（左下角 ⚠）。修复后 reload → failed 清单更新 → 自动消失。
+const registeredLoadErrors = new Set<string>();
+function syncLoadErrors(failed: { id: string; error: string }[] | undefined): void {
+  const next = new Set<string>();
+  for (const f of failed ?? []) {
+    const key = `ext-load-${f.id}`;
+    next.add(key);
+    // startup/shutdown 前缀（startAll/shutdown catch）→ 标签更准确；其余为 entry 加载失败
+    const label = f.error.startsWith("startup: ") ? "启动失败" : f.error.startsWith("shutdown: ") ? "关闭失败" : "加载失败";
+    registerExtSlotError({
+      id: key, extId: f.id, slot: "(load)", itemId: label,
+      message: f.error, kind: "load", reset: () => {},
+    });
+  }
+  for (const key of registeredLoadErrors) if (!next.has(key)) unregisterExtSlotError(key);
+  registeredLoadErrors.clear();
+  for (const k of next) registeredLoadErrors.add(k);
+}
+
 let loadStarted = false;
 let reloadInFlight: Promise<{ invalidated: string[] }> | null = null;
 
@@ -343,11 +372,11 @@ export function ExtSlotsProvider({ children }: { children: ReactNode }) {
 /** 拉取 manifest 并刷新 client 侧缓存（manifestCache / declaredSlots / metas）。
  *  返回 { extensions, graph }；失败返回 null（不抛）。reload 后必须重拉——
  *  否则新安装扩展的元数据/i18n/声明的插槽停留在旧值，client bundle 加载不到。 */
-async function fetchManifestData(): Promise<{ extensions: ManifestExt[]; graph: PiWebBootGraph } | null> {
+async function fetchManifestData(): Promise<ManifestData | null> {
   try {
     const res = await fetch(apiUrl("/api/extensions/manifest"), { cache: "no-store" });
     if (!res.ok) return null;
-    const data = (await res.json()) as { extensions: ManifestExt[]; graph: PiWebBootGraph };
+    const data = (await res.json()) as ManifestData;
     // manifest 元数据（name/icon/provides）→ 宿主 UI 标注扩展身份（顶栏自定义面板等）、
     // 并驱动内置 UI 的能力接管开关（useExtProvides）
     const metas: Record<string, ExtMeta> = {};
@@ -363,6 +392,8 @@ async function fetchManifestData(): Promise<{ extensions: ManifestExt[]; graph: 
     // 已卸载/禁用的扩展不再出现在 manifest——清除其残留的 slot 声明，
     // 防止 pendingForSlot 把不存在的扩展列为按需加载候选。
     pruneDeclaredSlots(data.extensions.map((e) => e.id));
+    // server 侧加载失败 → 错误指示器（同 id 覆盖去重；修复后自动移除）
+    syncLoadErrors(data.failed);
     return data;
   } catch (e) {
     console.error("[ext] failed to fetch extension manifest:", e);
@@ -509,8 +540,8 @@ export type ExtSlotError = {
   itemId: string;
   message: string;
   stack?: string;
-  reset: () => void;   // 忽略：重试渲染（仅 render 期错误有意义；uncaught 为 no-op）
-  kind: "render" | "uncaught";
+  reset: () => void;   // 忽略：重试渲染（仅 render 期错误有意义；uncaught/load 为 no-op）
+  kind: "render" | "uncaught" | "load";
 };
 const extSlotErrors = new Map<string, ExtSlotError>();
 const errorListeners = new Set<() => void>();
@@ -634,7 +665,8 @@ function ExtErrorIndicator() {
     setOpen((v) => !v);
   };
   const copy = (e: ExtSlotError) => {
-    const text = `[ext] ${e.extId ?? "?"} ${e.slot}/${e.itemId} ${e.kind === "uncaught" ? "未捕获错误" : "渲染失败"}\n${e.message}\n\n${e.stack || ""}`;
+    const kindLabel = e.kind === "load" ? "加载失败" : e.kind === "uncaught" ? "未捕获错误" : "渲染失败";
+    const text = `[ext] ${e.extId ?? "?"} ${e.kind === "load" ? kindLabel : `${e.slot}/${e.itemId} ${kindLabel}`}\n${e.message}\n\n${e.stack || ""}`;
     navigator.clipboard?.writeText(text).finally(() => {
       setCopiedId(e.id);
       if (copyTimer.current) clearTimeout(copyTimer.current);
@@ -649,7 +681,8 @@ function ExtErrorIndicator() {
     const text = aiInput.trim();
     if (!text || aiBusy) return;
     const cwd = (window as unknown as { __piWebCwd?: string | null }).__piWebCwd;
-    const msg = aiSid ? text : `[急救上下文] 扩展 ${cur?.extId ?? "?"} ${cur?.slot}/${cur?.itemId} 崩溃：${cur?.message}\n堆栈：${cur?.stack || "(无)"}\n\n用户指令：${text}`;
+    const kindWord = cur?.kind === "load" ? "加载失败" : "崩溃";
+    const msg = aiSid ? text : `[急救上下文] 扩展 ${cur?.extId ?? "?"} ${cur?.slot}/${cur?.itemId} ${kindWord}：${cur?.message}\n堆栈：${cur?.stack || "(无)"}\n\n用户指令：${text}`;
     // 占位空 AI 消息——流式持续追加（全显示）
     setAiLog(l => [...l, { role: "user", text }, { role: "ai", text: "" }]);
     setAiInput(""); setAiBusy(true);
@@ -740,7 +773,7 @@ function ExtErrorIndicator() {
             ) : null}
             <span style={{ marginLeft: "auto" }} />
             <button onClick={() => copy(cur)} title="复制完整错误（含堆栈）" style={btn}>{copiedId === cur.id ? "已复制 ✓" : "复制"}</button>
-            {cur.kind !== "uncaught" && (
+            {cur.kind === "render" && (
               <button onClick={() => { unregisterExtSlotError(cur.id); cur.reset(); }} title="忽略：重试渲染（错误若持续会重新捕获）" style={btn}>忽略</button>
             )}
             <button onClick={() => setAiOpen(v => !v)} title="急救 AI：独立会话修复此错误（含 aiti-configs 工具）" style={btn}>🚑</button>
@@ -759,7 +792,7 @@ function ExtErrorIndicator() {
               }}
             >
               <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", lineHeight: 1.5 }} title={cur.stack || cur.message}>
-                <strong style={{ fontWeight: 700, color: "#f59e0b" }}>{cur.extId ?? "?"}</strong>{cur.kind === "uncaught" ? " · 未捕获" : `/${cur.itemId}`}：{cur.message}
+                <strong style={{ fontWeight: 700, color: "#f59e0b" }}>{cur.extId ?? "?"}</strong>{cur.kind === "uncaught" ? " · 未捕获" : cur.kind === "load" ? ` · ${cur.itemId}` : `/${cur.itemId}`}：{cur.message}
               </div>
               {cur.stack && (
                 <pre style={{ margin: 0, maxHeight: 140, overflow: "auto", fontSize: 11, lineHeight: 1.45, color: "var(--text, #e8e8e8)", whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", background: "rgba(0,0,0,0.06)", border: "1px solid var(--border, #444)", padding: "5px 7px", borderRadius: 5 }}>

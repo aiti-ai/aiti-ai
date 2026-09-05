@@ -481,7 +481,9 @@ export class ExtRegistryImpl {
         if (!existsSync(dataDir)) mkdirSync(dataDir, { recursive: true });
         this.extensions.set(ext.id, { id: ext.id, name: ext.name, version: ext.version, dir, dataDir, source, ext });
       } catch (e) {
-        this.errors.set(id, e instanceof Error ? e.message : String(e));
+        const msg = e instanceof Error ? e.message : String(e);
+        console.error(`[ext] ${id} 加载失败:`, msg);
+        this.errors.set(id, msg);
       }
     }
     this.loaded = true;
@@ -503,6 +505,13 @@ export class ExtRegistryImpl {
 
   all(): LoadedExtension[] {
     return [...this.extensions.values()];
+  }
+
+  /** 加载/启动失败清单（id → error，jiti 解析错/entry 校验/startup throw）。
+   *  manifest 随路带给前端（ExtSlots 注册进左下角错误指示器）——页面打开即可见，
+   *  不必再开 extman 查 /status。 */
+  loadFailures(): Array<{ id: string; error: string }> {
+    return [...this.errors].map(([id, error]) => ({ id, error }));
   }
 
   /**
@@ -563,9 +572,14 @@ export class ExtRegistryImpl {
 
     for (const ext of this.extensions.values()) {
       const server = ext.ext.server as (ExtServerHooks & { agent?: ExtAgentHooks }) | undefined;
+      // startup/shutdown 失败的扩展也在此循环里（加载成功但启动挂了）：error 必须带上，
+      // 否则被 loaded:true 默认值覆盖，extman 里看不到异常（entry 加载失败不在此列，
+      // 那时扩展根本不在 extensions map）。
+      const startupError = this.errors.get(ext.id);
       out[ext.id] = {
         loaded: true,
         enabled: !disabled.has(ext.id),
+        ...(startupError ? { error: startupError } : {}),
         name: ext.name,
         version: ext.version,
         source: ext.source,
@@ -679,7 +693,9 @@ export class ExtRegistryImpl {
       try {
         await ext.ext.server?.startup?.(this.serverContext(ext));
       } catch (e) {
-        this.errors.set(ext.id, `startup: ${e instanceof Error ? e.message : String(e)}`);
+        const msg = `startup: ${e instanceof Error ? e.message : String(e)}`;
+        console.error(`[ext] ${ext.id} startup 失败:`, msg);
+        this.errors.set(ext.id, msg);
       }
       // 慢启动钩子告警：startup 阻塞全局 reload（含 extman 启停/安装），单钩子 >1s
       // 视为异常（重活应放后台，只影响扩展自身功能的就绪速度）。
