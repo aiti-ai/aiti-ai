@@ -1005,90 +1005,6 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, sessi
           </span>
         </div>
       )}
-      {isEmptyNew ? (
-        <div className="flex flex-1 flex-col items-center justify-center overflow-y-auto px-4 py-8">
-          <div className="w-full max-w-[820px]">
-            <div
-              className="mb-3"
-              style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                gap: 12,
-                marginLeft: 16,
-                marginRight: isMobile || isCompact ? 16 : 52,
-                fontFamily: "var(--font-mono)",
-              }}
-            >
-              <div style={{ display: "flex", alignItems: "baseline", gap: isMobile ? 7 : 10, minWidth: 0, flex: 1, lineHeight: 1.4, overflow: "hidden" }}>
-                <span style={{ fontSize: 28, fontWeight: 700, letterSpacing: 0, color: "var(--text)", flexShrink: 0, whiteSpace: "nowrap" }}>π</span>
-                <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, letterSpacing: 0, flexShrink: 0, whiteSpace: "nowrap" }}>Pi Web</span>
-                <NewSessionUpdateLink label={(version) => t("appUpdate.releaseNotes", { version })} />
-              </div>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  web <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}</span>
-                </span>
-                <span style={{ fontSize: 11, color: "var(--text-muted)" }}>
-                  pi <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}</span>
-                </span>
-              </div>
-            </div>
-            <NoticeShelf notices={notices} align="right" />
-            {backendOptions.length > 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginLeft: 16,
-                  marginRight: isMobile || isCompact ? 16 : 52,
-                  marginBottom: 10,
-                  fontFamily: "var(--font-mono)",
-                  fontSize: 12,
-                }}
-              >
-                <span style={{ color: "var(--text-muted)" }}>Backend</span>
-                <select
-                  value={sessionBackend ?? ""}
-                  onChange={(e) => setSessionBackend(e.target.value || null)}
-                  style={{
-                    padding: "4px 8px",
-                    background: "var(--bg-hover)",
-                    border: "1px solid var(--border)",
-                    borderRadius: 8,
-                    color: "var(--text)",
-                    fontFamily: "inherit",
-                    fontSize: 12,
-                    cursor: "pointer",
-                  }}
-                >
-                  <option value="">Pi (local)</option>
-                  {backendOptions.map((b) => (
-                    <option key={b.type} value={b.type}>
-                      {b.label}
-                    </option>
-                  ))}
-                </select>
-                {/* 后端管理入口是扩展点：各后端扩展经 newSessionBackendBar 插槽
-                    自行渲染管理按钮/面板（如 aiti-acp-agent 的 agent 管理），
-                    core 不感知任何具体后端。 */}
-                <ExtSlot name="newSessionBackendBar" />
-                {sessionBackend && (
-                  <span style={{ color: "var(--text-dim)", fontSize: 11 }}>
-                    session runs via: {sessionBackend}
-                  </span>
-                )}
-              </div>
-            )}
-            <ExtensionWidgets widgets={aboveEditorWidgets} />
-            {chatInputElement}
-            <ExtensionWidgets widgets={belowEditorWidgets} />
-            <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
-          </div>
-        </div>
-      ) : (
-      <>
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {extensionDialog && (
           <ExtensionDialog key={extensionDialog.id} request={extensionDialog} onRespond={respondToExtensionUi} />
@@ -1096,7 +1012,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, sessi
         {extensionCustomUi && (
           <ExtensionCustomPanel key={extensionCustomUi.id} request={extensionCustomUi} onInput={sendExtensionCustomInput} />
         )}
-        <div ref={handleScrollBoxRef} data-chat-scroll className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]" style={{ paddingBottom: bottomEyeRoom }}>
+        {!isEmptyNew && (<>
+      <div ref={handleScrollBoxRef} data-chat-scroll className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto pt-4 [scrollbar-width:none]" style={{ paddingBottom: bottomEyeRoom }}>
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
             <div style={{ width: "100%", minWidth: 0, maxWidth: 820, margin: "0 auto" }}>
             {(() => {
@@ -1357,11 +1274,66 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, sessi
             onRevealHistory={revealHistoryForMinimap}
           />
         )}
+        </>)}
       </div>
-      </>
-      )}
 
       <div ref={bottomComposerRef} className="relative">
+        {isEmptyNew && (
+          <div className="mx-auto mb-3 w-full max-w-[820px]" style={{ paddingLeft: 32, paddingRight: isMobile ? 32 : 68 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, fontFamily: "var(--font-mono)" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: isMobile ? 7 : 10, minWidth: 0, flex: 1, lineHeight: 1.4, overflow: "hidden" }}>
+                <span style={{ fontSize: 28, fontWeight: 700, color: "var(--text)", flexShrink: 0, whiteSpace: "nowrap" }}>π</span>
+                <span style={{ fontSize: 22, color: "var(--text)", fontWeight: 700, flexShrink: 0, whiteSpace: "nowrap" }}>Pi Web</span>
+                <NewSessionUpdateLink label={(version) => t("appUpdate.releaseNotes", { version })} />
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2, flexShrink: 0 }}>
+                <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                  web <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}</span>
+                </span>
+                <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
+                  pi <span style={{ color: "var(--text)" }}>v{process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
+        {isEmptyNew && backendOptions.length > 0 && (
+          <div className="mx-auto mb-3 w-full max-w-[820px]" style={{ paddingLeft: 32, paddingRight: isMobile ? 32 : 68 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontFamily: "var(--font-mono)", fontSize: 12 }}>
+              <span style={{ color: "var(--text-muted)" }}>Backend</span>
+              <select
+                value={sessionBackend ?? ""}
+                onChange={(e) => setSessionBackend(e.target.value || null)}
+                style={{
+                  padding: "4px 8px",
+                  background: "var(--bg-hover)",
+                  border: "1px solid var(--border)",
+                  borderRadius: 8,
+                  color: "var(--text)",
+                  fontFamily: "inherit",
+                  fontSize: 12,
+                  cursor: "pointer",
+                }}
+              >
+                <option value="">Pi (local)</option>
+                {backendOptions.map((b) => (
+                  <option key={b.type} value={b.type}>
+                    {b.label}
+                  </option>
+                ))}
+              </select>
+              {/* 后端管理入口是扩展点：各后端扩展经 newSessionBackendBar 插槽
+                  自行渲染管理按钮/面板（如 aiti-acp-agent 的 agent 管理），
+                  core 不感知任何具体后端。 */}
+              <ExtSlot name="newSessionBackendBar" />
+              {sessionBackend && (
+                <span style={{ color: "var(--text-dim)", fontSize: 11 }}>
+                  session runs via: {sessionBackend}
+                </span>
+              )}
+            </div>
+          </div>
+        )}
         <div
           style={{
             padding: `0 ${CHAT_COLUMN_PADDING}px`,
@@ -1385,6 +1357,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, sessi
         </div>
         <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
       </div>
+      {isEmptyNew && <div className="min-h-0 flex-1" />}
     </div>
   );
 }

@@ -68,8 +68,8 @@ export interface QueuePanelActions {
   purge(ids?: string[]): Promise<boolean>;
   /** 全部取回（清空 live 队列，文本合并进输入框）。 */
   recallAll(): void;
-  /** 队列首条插队为 steer（扩展负责在插队后调用 remove 移除首条，permanent）。 */
-  steerSend(text: string): void;
+  /** 队列首条插队为 steer（扩展负责在插队后调用 remove 移除首条，permanent）。带图条目图片随发。 */
+  steerSend(text: string, images?: QueueImage[]): void;
   /** 导出（live + recovery 全量数据）。 */
   exportAll(): Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null>;
   /** 触发浏览器下载（md/json；core 实现，单来源）。 */
