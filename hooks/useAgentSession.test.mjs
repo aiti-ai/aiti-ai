@@ -481,3 +481,58 @@ test("sizes the message tail from the rendered bottom composer", () => {
   assert.match(chatWindowSource, /<div ref=\{bottomComposerRef\} className="relative">/);
   assert.match(chatWindowSource, /height: bottomComposerHeight/);
 });
+
+test("freezes passive chat scrolling while composing on a small screen", () => {
+  // 根因：小屏键盘弹起时，流式 step-follow / 输入框长高触发的尾钉重滚 / 收尾滚底都会
+  // 在用户拇指下移动正文 = 打断输入。修复：文本框持有焦点 + 小屏（或触摸主力设备）
+  // → 冻结一切被动滚动；发送/首屏等显式跳转带 force 例外，失焦时事件驱动补跟。
+  const freezeHelperSource = source.slice(
+    source.indexOf("const CHAT_EDIT_FREEZE_QUERY"),
+    source.indexOf("const PROMPT_SETTLE_INITIAL_DELAY_MS"),
+  );
+  const scrollToBottomSource = source.slice(
+    source.indexOf("const scrollToBottom = useCallback"),
+    source.indexOf("// Step-follow (always on)"),
+  );
+  const followStepSource = source.slice(
+    source.indexOf("const smartFollowStep = useCallback"),
+    source.indexOf("// T-5: rAF-coalesced step-follow"),
+  );
+  const composingGuardSource = source.slice(
+    source.indexOf("// Composing guard (small screens / touch)"),
+    source.indexOf("}, [scheduleFollowStep, scrollToBottom]);"),
+  );
+  const layoutScrollSource = source.slice(
+    source.indexOf("useLayoutEffect(() => {\n    if (messages.length > 0)"),
+    source.indexOf("// Step-follow 检查信号"),
+  );
+
+  // 冻结条件：正在编辑 + 小屏/触摸；桌面鼠标窗口保持流式跟随
+  assert.match(freezeHelperSource, /const CHAT_EDIT_FREEZE_QUERY = "\(max-width: 959px\), \(pointer: coarse\)"/);
+  assert.match(source, /const isChatScrollFrozen = useCallback\(\s*\(\) => isEditFreezeViewport\(\) && editingRef\.current && Date\.now\(\) < composingUntilRef\.current,/);
+  // 冻结靠「最近有编辑事件」的时间窗，不是「有焦点」：手机发送后键盘不收、焦点仍在输入框，
+  // 只看焦点会把整轮回复的跟随一起冻结掉。
+  assert.match(source, /const COMPOSING_ACTIVE_MS = 5_000/);
+  assert.match(source, /const COMPOSING_EVENTS = \["beforeinput", "input", "keydown", "compositionstart"\]/);
+  assert.match(followStepSource, /if \(isChatScrollFrozen\(\)\) return;/);
+  assert.match(scrollToBottomSource, /if \(!opts\?\.force && isChatScrollFrozen\(\)\) return;/);
+  assert.match(followStepSource, /\[isChatScrollFrozen, opts\.promptAnchorSpacerHeightRef/);
+  // 尾钉用容器内 scrollTo，绝不 scrollIntoView（那会连带滚 html/body，键盘弹起时整页被顶走）
+  assert.doesNotMatch(scrollToBottomSource, /scrollIntoView\(\{/);
+  assert.match(scrollToBottomSource, /container\.scrollTo\(\{ top: Math\.max\(0, target\), behavior \}\)/);
+  // 首屏落尾不受冻结影响
+  assert.match(layoutScrollSource, /scrollToBottom\("instant", \{ force: true \}\)/);
+  // 失焦即交还视图：运行中补一帧 step，空闲按原收尾条件滚底（事件驱动，非轮询）
+  assert.match(composingGuardSource, /window\.addEventListener\(type, arm, \{ capture: true, passive: true \}\)/);
+  assert.match(composingGuardSource, /window\.addEventListener\("focusout", onFocusOut, true\)/);
+  assert.match(composingGuardSource, /if \(isEditableNode\(event\.relatedTarget\)\) return;/);
+  assert.match(composingGuardSource, /if \(!isEditFreezeViewport\(\) \|\| !isEditableNode\(event\.target\)\) return;/);
+  // 显式跳转（发送/导航）解除冻结：本轮回复要照常跟随
+  const userScrollSource = source.slice(
+    source.indexOf("const scrollUserMsgToTop"),
+    source.indexOf("const markUserScrollIntent"),
+  );
+  assert.match(userScrollSource, /composingUntilRef\.current = 0;\s*editingRef\.current = false;/);
+  assert.match(composingGuardSource, /if \(agentRunningRef\.current\) \{\s*scheduleFollowStep\(\);/);
+  assert.match(composingGuardSource, /releaseTimer = window\.setTimeout\(\(\) => \{[\s\S]*?release\(\);[\s\S]*?\}, COMPOSING_ACTIVE_MS\);/);
+});

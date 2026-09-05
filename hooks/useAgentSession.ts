@@ -189,6 +189,34 @@ const SCROLL_BOTTOM_THRESHOLD = 150;
 // Keys that scroll the list UP — a definitive "user is leaving the tail"
 // signal (same filtering rules as SCROLL_KEYS).
 const SCROLL_UP_KEYS = new Set(["ArrowUp", "PageUp", "Home"]);
+// Viewports where the on-screen keyboard eats the chat: the app's own
+// phone/tablet breakpoints plus any touch-primary device. On these screens the
+// keyboard is up while the user composes, so every passive scroll (stream
+// step-follow, tail re-pin after the composer grew, completion scroll) moves
+// the transcript under their thumbs — it interrupts typing. Active composing
+// freezes those paths. Focus alone is NOT enough: phones keep the keyboard open
+// after a send and that run must still follow, so the guard is refreshed by
+// each edit event and expires on its own. Desktop windows with a mouse are
+// excluded: there the composer never moves, so live-follow stays useful.
+const CHAT_EDIT_FREEZE_QUERY = "(max-width: 959px), (pointer: coarse)";
+// How long one edit keystroke holds the freeze. Long enough to cover the gaps
+// between words (IME candidate picking included), short enough that pausing to
+// read the streaming answer hands the view back by itself.
+const COMPOSING_ACTIVE_MS = 5_000;
+// Edit signals. `input`/`beforeinput` are the only ones some soft keyboards
+// fire (iOS is not reliable at emitting keydown while composing).
+const COMPOSING_EVENTS = ["beforeinput", "input", "keydown", "compositionstart"] as const;
+
+function isEditFreezeViewport(): boolean {
+  if (typeof window === "undefined" || !window.matchMedia) return false;
+  return window.matchMedia(CHAT_EDIT_FREEZE_QUERY).matches;
+}
+
+function isEditableNode(node: EventTarget | null): boolean {
+  return node instanceof Element
+    && Boolean(node.closest("input:not([type='button']):not([type='submit']):not([type='checkbox']), textarea, select, [contenteditable='true'], [role='textbox']"));
+}
+
 const PROMPT_SETTLE_INITIAL_DELAY_MS = 800;
 const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
@@ -486,6 +514,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // drag). Auto-following pauses for the whole hold — no scrolling until the
   // pointer is released.
   const userPointerDownRef = useRef(false);
+  // True while a text field holds focus, and until when the last edit keystroke
+  // keeps passive chat scrolling frozen — see CHAT_EDIT_FREEZE_QUERY.
+  const editingRef = useRef(false);
+  const composingUntilRef = useRef(0);
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const ensuringNewSessionRef = useRef<Promise<string | null> | null>(null);
@@ -534,14 +566,32 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setToolPresetState(getPreferredToolPreset());
   }, [existingSessionId, isNew, setToolPresetState]);
 
-  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
+  // Passive chat scrolling must stop while the user composes on a small screen
+  // (keyboard up): see CHAT_EDIT_FREEZE_QUERY. Explicit, user-triggered jumps
+  // (send / tap navigation / first paint) pass `force`.
+  const isChatScrollFrozen = useCallback(
+    () => isEditFreezeViewport() && editingRef.current && Date.now() < composingUntilRef.current,
+    [],
+  );
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth", opts?: { force?: boolean }) => {
+    if (!opts?.force && isChatScrollFrozen()) return;
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
     // Landing at the tail re-arms auto-follow for subsequent output.
     userScrolledAwayRef.current = false;
     const container = scrollContainerRef.current;
-    messagesEndRef.current?.scrollIntoView({ behavior });
-    if (container) previousScrollTopRef.current = container.scrollTop;
-  }, []);
+    if (!container) return;
+    // Container-local scroll instead of messagesEndRef.scrollIntoView():
+    // scrollIntoView walks up every ancestor scroller (html/body are overflow:
+    // hidden but still programmatically scrollable), and with the soft keyboard
+    // up that drags the whole page — input and all — out from under the user.
+    const end = messagesEndRef.current;
+    const target = end
+      ? end.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop
+      : container.scrollHeight;
+    container.scrollTo({ top: Math.max(0, target), behavior });
+    previousScrollTopRef.current = container.scrollTop;
+  }, [isChatScrollFrozen, messagesEndRef, scrollContainerRef]);
 
   // Step-follow (always on): instead of scrolling to the bottom on every
   // streaming event, only scroll when new output pushes the last message
@@ -552,6 +602,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // While the user holds a pointer/finger down, pause all follow processing
     // — the view must not move under their finger. Resumes on release.
     if (userPointerDownRef.current) return;
+    // Composing with the keyboard up on a small screen: streaming must not roll
+    // the transcript under the user's thumbs. Resumes when the edit window
+    // expires (they paused to read) or on blur — both queue a catch-up step.
+    if (isChatScrollFrozen()) return;
     const container = scrollContainerRef.current;
     const end = messagesEndRef.current;
     if (!container || !end) return;
@@ -583,7 +637,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       ignoreProgrammaticScrollUntilRef.current = Date.now() + 1200;
       container.scrollTo({ top: target, behavior: "instant" });
     }
-  }, [opts.promptAnchorSpacerHeightRef, opts.bottomComposerHeightRef, scrollContainerRef, messagesEndRef]);
+  }, [isChatScrollFrozen, opts.promptAnchorSpacerHeightRef, opts.bottomComposerHeightRef, scrollContainerRef, messagesEndRef]);
 
   // T-5: rAF-coalesced step-follow. Streaming drives the follow effect via
   // streamState, whose reference changes on EVERY delta — without coalescing,
@@ -2705,6 +2759,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // 发送/导航跳转是显式视口改暈：清掉 pointerdown 打开的 2s 按压守卫窗口，
     // 否则真实点击发送后，紧随跳转的补偿 step（streaming 占位出现时）会被静默跳过。
     userScrollIntentUntilRef.current = 0;
+    // 发送/跳转是显式视口改暈：同时解除输入冻结——手机发送后键盘仍开着（焦点还在
+    // 输入框），本轮回复必须照常跟随；下次编辑事件会重新冻结。
+    composingUntilRef.current = 0;
+    editingRef.current = false;
     container.scrollTo({ top: targetTop, behavior: "smooth" });
   }, []);
 
@@ -2853,6 +2911,59 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     };
   }, [markUserScrollIntent]);
 
+  // Composing guard (small screens / touch): while the user is typing, the soft
+  // keyboard is up and passive chat scrolling (stream step-follow, tail re-pin
+  // after the composer grew, completion scroll) moves the transcript under
+  // their thumbs — it interrupts typing. Each edit event refreshes a short
+  // freeze window; it releases by itself when they pause to read, when focus
+  // leaves the field, or when the view is explicitly jumped (send/navigation).
+  useEffect(() => {
+    const release = () => {
+      const wasComposing = editingRef.current && Date.now() < composingUntilRef.current;
+      editingRef.current = false;
+      composingUntilRef.current = 0;
+      // Hand the view back the moment the freeze lifts (event-driven, no poll):
+      // mid-run → one follow step; finished → the usual guarded scroll-to-tail.
+      if (!wasComposing || pendingScrollToUserRef.current) return;
+      if (agentRunningRef.current) {
+        scheduleFollowStep();
+      } else if (!userPointerDownRef.current && (completionScrollAllowedRef.current || isNearBottomRef.current)) {
+        scrollToBottom("smooth");
+      }
+    };
+    let releaseTimer: number | null = null;
+    const arm = (event: Event) => {
+      if (!isEditFreezeViewport() || !isEditableNode(event.target)) return;
+      editingRef.current = true;
+      composingUntilRef.current = Date.now() + COMPOSING_ACTIVE_MS;
+      if (releaseTimer !== null) window.clearTimeout(releaseTimer);
+      releaseTimer = window.setTimeout(() => {
+        releaseTimer = null;
+        release();
+      }, COMPOSING_ACTIVE_MS);
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      // Field → field (composer → extension input): keep the freeze armed.
+      if (isEditableNode(event.relatedTarget)) return;
+      if (releaseTimer !== null) {
+        window.clearTimeout(releaseTimer);
+        releaseTimer = null;
+      }
+      release();
+    };
+    for (const type of COMPOSING_EVENTS) {
+      window.addEventListener(type, arm, { capture: true, passive: true });
+    }
+    window.addEventListener("focusout", onFocusOut, true);
+    return () => {
+      for (const type of COMPOSING_EVENTS) {
+        window.removeEventListener(type, arm, true);
+      }
+      window.removeEventListener("focusout", onFocusOut, true);
+      if (releaseTimer !== null) window.clearTimeout(releaseTimer);
+    };
+  }, [scheduleFollowStep, scrollToBottom]);
+
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
@@ -2879,7 +2990,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         scrollUserMsgToTop();
       } else if (!initialScrollDoneRef.current) {
         initialScrollDoneRef.current = true;
-        scrollToBottom("instant");
+        // First paint of an opened session always lands at the tail even if a
+        // composer autofocus already counts as "editing".
+        scrollToBottom("instant", { force: true });
       } else if (!agentRunningRef.current && !userPointerDownRef.current && (completionScrollAllowedRef.current || isNearBottomRef.current)) {
         scrollToBottom("smooth");
       }
