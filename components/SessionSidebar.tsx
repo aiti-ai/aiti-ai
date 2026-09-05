@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
+import { subscribeRunningEvents, reconnectRunningEvents } from "@/lib/agent-running-events";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getProjectActivity, getRecentProjects, sessionsForProject } from "@/lib/project-groups";
@@ -601,7 +602,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let controller: AbortController | null = null;
-    let es: EventSource | null = null;
+    let es: (() => void) | null = null; // broker 退订函数（页面级单例连接）
     let lastSseFrameAt = 0; // 最近一次 SSE 帧（数据/心跳）时间；0 = 从未收到
 
     const clearTimer = () => {
@@ -611,37 +612,26 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
 
     // SSE 主通道：running/events 推送运行状态变化（服务端有变化才广播，
     // 不再每 2.5s 轮询）。收到事件即视为权威快照。
+    // 连接为页面级单例（subscribeRunningEvents）——本组件在桌面/移动双渲染下有
+    // 多个实例，各自建连曾耗尽 HTTP/1.1 每主机 6 连接池（媒体请求全部 pending）。
     const connectSSE = () => {
       if (stopped || es) return;
-      const source = new EventSource(apiUrl("/api/agent/running/events"));
-      es = source;
-      // named event 心跳（服务端 30s 一帧）：onmessage 收不到，专供判活
-      source.addEventListener("heartbeat", () => { lastSseFrameAt = Date.now(); });
-      source.onmessage = (e) => {
-        if (stopped || source !== es) return;
-        lastSseFrameAt = Date.now(); // 任何数据帧都是活性证明
-        try {
-          const data = JSON.parse(e.data as string) as { type?: string; runningSessionIds?: string[] };
-          if (data.type === "running" && Array.isArray(data.runningSessionIds)) {
-            runningPollAuthoritativeRef.current = true;
-            setRunningSessionIds(new Set(data.runningSessionIds));
-          }
-        } catch { /* malformed frame — keep last state */ }
-      };
-      source.onerror = () => {
-        // 网络错误：EventSource 原生自动重连（~3s，浏览器默认）。不主动 close
-        //（close 会阻断自动重连，断线后只能靠 15s 慢轮询——状态延迟太久）。
-        // HTTP 非 2xx（4xx/5xx，如桥重启瞬间 502）：EventSource 进入 CLOSED
-        // 且不再自动重试——此时 es 仍非 null 会挡住 connectSSE，需显式重建。
-        if (source.readyState === EventSource.CLOSED && es === source) {
-          // 等一小段再重建（避免 4xx 高频循环），重建前先释放引用
-          setTimeout(() => {
-            if (stopped || es !== source) return;
-            es = null;
-            connectSSE();
-          }, 3000);
+      es = subscribeRunningEvents((kind, data) => {
+        if (stopped) return;
+        if (kind === "heartbeat") { lastSseFrameAt = Date.now(); return; }
+        if (kind === "error") {
+          // HTTP 非 2xx（4xx/5xx，如桥重启瞬间 502）：EventSource 进入 CLOSED
+          // 且不再自动重试——需显式重建（broker 内延迟 3s，避免 4xx 高频循环）。
+          reconnectRunningEvents();
+          return;
         }
-      };
+        // 数据帧：任何帧都是活性证明
+        lastSseFrameAt = Date.now();
+        if (data && data.type === "running" && Array.isArray(data.runningSessionIds)) {
+          runningPollAuthoritativeRef.current = true;
+          setRunningSessionIds(new Set(data.runningSessionIds));
+        }
+      });
     };
 
     const schedule = () => {
@@ -694,7 +684,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
         return;
       }
       // 后台：断开 SSE（省连接），保留慢轮询由 visibility 门控暂停
-      if (es) { es.close(); es = null; }
+      if (es) { es(); es = null; }
       clearTimer();
       controller?.abort();
       controller = null;
@@ -706,7 +696,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       stopped = true;
       clearTimer();
       controller?.abort();
-      if (es) { es.close(); es = null; }
+      if (es) { es(); es = null; }
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [loadSessions]);
