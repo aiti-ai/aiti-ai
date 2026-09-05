@@ -771,14 +771,18 @@ function getSessionSettings(entries: SessionEntry[], leafId?: string | null): Pi
   let current = leafId ? byId.get(leafId) : undefined;
   current ??= entries[entries.length - 1];
   let thinkingLevel: string | undefined;
-  // 我方语义保留（pre-plan-a）：model 的权威来源是路径上最后一条 `model_change`
-  // （= 反向走链时最先遇到的那条）。运行中 set_model 后 abort 重发开新分支，
-  // 旧的 assistant 模型戳会排在 model_change 之后成为近叶节点——按「就近优先」
-  // 会回退到旧模型，与实际执行不符。因此 model_change 一旦出现即定案，
-  // assistant 消息戳仅作无 model_change 时的回退。
+  // 我方语义：model_change 优先（运行中 set_model 后 abort 落盘的旧模型残戳会比
+  // model_change 更靠近 leaf，按「就近优先」会回退旧模型），但增加 branch 纠偏：
+  // 「从这里编辑」/分支导航 branch 回更早节点后，新链祖先上没有切模型时的 model_change
+  // （它留在旧分支上），而新链 assistant 消息戳才是引擎实际执行的模型（引擎内存态
+  // branch 不重置）。两种形状的区别：abort 残戳紧跟 model_change（中间无 user）；
+  // branch 新链的戳与旧 model_change 之间必然隔着新发的 user 消息 →
+  // 仅当「戳更近 + 隔了 user + 模型不同」时才以戳为准，其余维持 model_change 优先。
   let model: SessionContext["model"] | undefined;
   let sawModelChange = false;
   let assistantStamp: SessionContext["model"] | undefined;
+  // assistant 戳先于 model_change 被遇到（= 戳更靠近 leaf），且两者之间隔着 user 消息
+  let stampOnNewBranch = false;
 
   while (current && (thinkingLevel === undefined || !(sawModelChange && assistantStamp !== undefined))) {
     if (thinkingLevel === undefined && current.type === "thinking_level_change") {
@@ -791,11 +795,20 @@ function getSessionSettings(entries: SessionEntry[], leafId?: string | null): Pi
       const message = current.message as { provider?: unknown; model?: unknown };
       if (typeof message.provider === "string" && typeof message.model === "string") {
         assistantStamp = { provider: message.provider, modelId: message.model };
+        stampOnNewBranch = false;
       }
+    } else if (assistantStamp !== undefined && !sawModelChange && current.type === "message" && current.message.role === "user") {
+      stampOnNewBranch = true;
     }
     current = current.parentId ? byId.get(current.parentId) : undefined;
   }
 
+  // branch 纠偏（见上）：戳更近、隔了 user、模型不同 → 新分支上实际执行的就是戳的模型。
+  // 同模型时取谁都一致，维持 model_change；无戳/戳缺 provider 时回退现状。
+  if (model && assistantStamp && stampOnNewBranch &&
+      (assistantStamp.provider !== model.provider || assistantStamp.modelId !== model.modelId)) {
+    return { thinkingLevel: thinkingLevel ?? "off", model: assistantStamp };
+  }
   return { thinkingLevel: thinkingLevel ?? "off", model: model ?? assistantStamp ?? null };
 }
 

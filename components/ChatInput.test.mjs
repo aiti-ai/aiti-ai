@@ -151,10 +151,8 @@ test("filters model options by name and id", () => {
 
   assert.deepEqual(filterModelOptions(options, "QWEN"), [options[0]]);
   assert.deepEqual(filterModelOptions(options, "claude-sonnet"), [options[1]]);
-  // provider 参与匹配（搜 provider 名命中其下模型）：openai 行命中
-  assert.equal(filterModelOptions(options, "OpenAI").length, 1);
-  // 带斜杠的 provider/model 复合串不是子串，不命中
-  assert.equal(filterModelOptions(options, "anthropic/claude").length, 0);
+  assert.equal(filterModelOptions(options, "OpenAI").length, 1); // provider 参与匹配：搜 provider 名命中其下模型
+  assert.equal(filterModelOptions(options, "anthropic/claude").length, 0); // 带斜杠复合串不是子串，不命中
   assert.equal(filterModelOptions(options, "anthropic/claude").length, 0);
   assert.equal(filterModelOptions(options, "missing").length, 0);
   assert.equal(filterModelOptions(options, "  "), options);

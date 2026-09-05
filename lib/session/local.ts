@@ -169,6 +169,9 @@ export function createLocalHandle(wrapper: AgentSessionWrapper): SessionHandle {
       options?: { summarize?: boolean },
     ): Promise<{ cancelled: boolean }> {
       guard(handle, "navigateTree");
+      // TODO(branch-model-sync): 此路径直达 AgentSession，绕过 wrapper 的
+      // navigate_tree 补写（syncSessionSettingsAfterBranch）。当前无消费方；
+      // 若未来接上，需在此同步补写，否则新链显示可能回退旧模型。
       const result = await inner().navigateTree(targetId, options);
       return { cancelled: result.cancelled };
     },

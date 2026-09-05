@@ -1,6 +1,7 @@
 import { getRunningRpcSessionIds, subscribeRunningSessions } from "@/lib/rpc-manager";
 import { getRunningHandleIds, subscribeRunningHandles } from "@/lib/session/handle-store";
 import { getBridgeRunningIds, subscribeBridgeRunning } from "@/lib/session/bridge-running";
+import { addPageEventSink } from "@/lib/agent-page-events";
 
 export const dynamic = "force-dynamic";
 
@@ -9,50 +10,44 @@ function mergedRunningIds(): string[] {
   return [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds(), ...getBridgeRunningIds()])];
 }
 
-// GET /api/agent/running/events - SSE stream of the set of currently-running
-// session ids. Pushes an update whenever any session starts or stops working,
-// so the sidebar never has to poll.
+// GET /api/agent/running/events - 全页唯一事件 SSE（泛化承载）：
+//   - `running` 帧：会话运行集（任一会话 start/stop 即推，侧栏免轮询）
+//   - 扩展帧：plan-first pf:remind / model-check mc:avail / aiti-editor ed-watch…
+//     （扩展经 globalThis.__piPageEvents.publish(type, data) 进程内发布，零 socket）
+// 心跳用 named SSE event（非 message 帧）：SessionSidebar 监听它判活；
+// 其余 message 帧消费方按 type 字段分发，互不误触。
 export async function GET(req: Request) {
   const stream = new ReadableStream({
     start(controller) {
       const encoder = new TextEncoder();
-      const encode = (data: unknown) => {
-        const text = `data: ${JSON.stringify(data)}\n\n`;
-        controller.enqueue(encoder.encode(text));
-      };
+
+      // 注册到页面事件总线：所有帧（running + 扩展帧）统一走这条连接
+      const unsubSink = addPageEventSink((frame) => {
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(frame)}\n\n`));
+        } catch {
+          // controller already closed
+        }
+      });
 
       // Subscribe BEFORE taking the initial snapshot so no state change can slip
       // through the gap between snapshot and subscription.
-      const unsubRpc = subscribeRunningSessions(() => {
-        try {
-          encode({ type: "running", runningSessionIds: mergedRunningIds() });
-        } catch {
-          // controller already closed
-        }
-      });
-      const unsubHandle = subscribeRunningHandles(() => {
-        try {
-          encode({ type: "running", runningSessionIds: mergedRunningIds() });
-        } catch {
-          // controller already closed
-        }
-      });
-      const unsubBridge = subscribeBridgeRunning(() => {
-        try {
-          encode({ type: "running", runningSessionIds: mergedRunningIds() });
-        } catch {
-          // controller already closed
-        }
-      });
+      const onRunningChange = () => {
+        publishRunning();
+      };
+      const publishRunning = () => {
+        (globalThis as any).__piPageEvents?.publish("running", { runningSessionIds: mergedRunningIds() });
+      };
+      const unsubRpc = subscribeRunningSessions(onRunningChange);
+      const unsubHandle = subscribeRunningHandles(onRunningChange);
+      const unsubBridge = subscribeBridgeRunning(onRunningChange);
       const unsubscribe = () => { unsubRpc(); unsubHandle(); unsubBridge(); };
 
       // Initial snapshot so the client renders the correct state immediately.
-      encode({ type: "running", runningSessionIds: mergedRunningIds() });
+      publishRunning();
 
       // Heartbeat to keep the connection alive through proxies/timeouts.
       // 用 named SSE event（非 message 帧）：宿主 SessionSidebar 监听它判活
-      // （心跳静默才启用兑底轮询）；onmessage 消费方（session-manager 等）
-      // 按规范收不到 named event，零影响、不会被误触发刷新。
       const heartbeat = setInterval(() => {
         try {
           controller.enqueue(encoder.encode("event: heartbeat\ndata: {}\n\n"));
@@ -64,6 +59,7 @@ export async function GET(req: Request) {
       const cleanup = () => {
         clearInterval(heartbeat);
         unsubscribe();
+        unsubSink();
         try { controller.close(); } catch { /* already closed */ }
       };
 

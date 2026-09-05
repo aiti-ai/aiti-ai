@@ -93,6 +93,18 @@ export async function GET(
       excludeLeaf: Boolean(before),
       sessionId: id,
     });
+    // 显示一致性 overlay：与 detail route（8857674）同语义——wrapper 存活时 model/thinkingLevel
+    // 以进程内真实状态为准。前端 loadContext 会整体替换 data.context（含 model），不覆盖则
+    // navigate/branch 后选择器显示回退旧值（context route 原本无 overlay，是「从这里编辑」
+    // 显示错误的直接链路；文件读侧另有 branch 纠偏 + navigate 后补写双保险）。
+    if (liveRpc) {
+      const liveModel = liveRpc.inner.model;
+      if (liveModel && liveModel.provider && liveModel.id) {
+        context.model = { provider: liveModel.provider, modelId: liveModel.id };
+      }
+      const liveThinking = (liveRpc.inner.agent?.state as { thinkingLevel?: string } | undefined)?.thinkingLevel;
+      if (liveThinking) context.thinkingLevel = liveThinking;
+    }
 
     return NextResponse.json({ context, tail, before: before ?? null });
   } catch (error) {

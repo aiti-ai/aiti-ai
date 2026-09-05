@@ -29,6 +29,11 @@ export async function register(): Promise<void> {
   const { installPiWebJobProvider } = await import("@/lib/piweb-job-provider");
   installPiWebJobProvider();
 
+  // 页面事件流：globalThis.__piPageEvents.publish(type, data)（全页唯一事件 SSE 承载，
+  // running / pf:remind / mc:avail / ed-watch … 统一帧，各扩展不再自建 SSE 连接）
+  const { publishPageEvent } = await import("@/lib/agent-page-events");
+  void publishPageEvent; // import 副作用：注册 globalThis.__piPageEvents
+
   // 子代理 RPC 通道（aiti-subagents-fork-upstream-core-plan §5.4）：
   // 本进程 env 注入 PI_WEB_BRIDGE_AUTO=1，经上游 spawn 的 env 透传链送达每个
   // fork 子代理；子代理内 ambient 加载的 web-bridge 扩展命中该标记 + 上游

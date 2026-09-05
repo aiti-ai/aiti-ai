@@ -16,6 +16,7 @@ type Listener = (kind: "message" | "heartbeat" | "error", data: RunningFrame | n
 
 interface RunningBroker {
   listeners: Set<Listener>;
+  frameListeners: Set<(frame: Record<string, unknown>) => void>;
   es: EventSource | null;
   dead: boolean;
   reconnectTimer: ReturnType<typeof setTimeout> | null;
@@ -28,6 +29,7 @@ export function subscribeRunningEvents(listener: Listener): () => void {
   if (!b) {
     b = w.__runningEventsBroker = {
       listeners: new Set<Listener>(),
+      frameListeners: new Set<(frame: Record<string, unknown>) => void>(),
       es: null,
       dead: false,
       reconnectTimer: null,
@@ -44,6 +46,7 @@ export function subscribeRunningEvents(listener: Listener): () => void {
           let data: RunningFrame | null = null;
           try { data = JSON.parse((e as MessageEvent).data) as RunningFrame; } catch { /* malformed frame */ }
           b!.listeners.forEach((f) => { try { f("message", data, e as MessageEvent); } catch { /* noop */ } });
+          if (data) b!.frameListeners.forEach((f) => { try { f(data as Record<string, unknown>); } catch { /* noop */ } });
         };
         source.onerror = () => {
           b!.listeners.forEach((f) => { try { f("error", null); } catch { /* noop */ } });
@@ -55,7 +58,7 @@ export function subscribeRunningEvents(listener: Listener): () => void {
   b.listeners.add(listener);
   return () => {
     b.listeners.delete(listener);
-    if (b.listeners.size === 0) {
+    if (b.listeners.size === 0 && b.frameListeners.size === 0) {
       b.dead = true;
       if (b.reconnectTimer) clearTimeout(b.reconnectTimer);
       try { b.es?.close(); } catch { /* noop */ }
@@ -72,4 +75,23 @@ export function reconnectRunningEvents(delayMs = 3000): void {
     b.reconnectTimer = null;
     if (!b.dead && b.listeners.size > 0) b.connect();
   }, delayMs);
+}
+
+// ── 通用帧订阅（跨扩展共享同一连接）──────────────────────────
+// 扩展/其他消费方经 window.__piPageEventsClient.subscribePageFrames(handler) 挂上
+// 同一条连接：每个 message 帧（JSON）原样分发给 handler（frame.type 区分来源：
+// running / pf:remind / mc:avail / ed-watch …）；named heartbeat 帧不投递（判活用）。
+export function subscribePageFrames(handler: (frame: Record<string, unknown>) => void): () => void {
+  const w = window as any;
+  let b = w.__runningEventsBroker as RunningBroker | undefined;
+  if (!b) { subscribeRunningEvents(() => {}); b = w.__runningEventsBroker; }
+  const listeners = b!.frameListeners as Set<(frame: Record<string, unknown>) => void>;
+  listeners.add(handler);
+  return () => listeners.delete(handler);
+}
+
+
+// 跨扩展浏览器端入口（plan-first / model-check / aiti-editor 等经此共享连接）
+if (typeof window !== "undefined") {
+  (window as any).__piPageEventsClient = { subscribePageFrames };
 }

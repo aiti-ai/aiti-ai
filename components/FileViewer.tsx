@@ -23,6 +23,7 @@ import {
 import { getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { resolveLocalFileHref } from "@/lib/file-links";
 import { getExtUiItems, subscribeExtUi, hasExtRender, type ExtUiItemRegistered } from "@/lib/ext-ui-store";
+import { ExtItemBoundary } from "./ExtSlots";
 import { parseFrontmatter } from "@/lib/frontmatter";
 import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, normalizeDisplayMath } from "@/lib/markdown";
 import { CodeBlock, MermaidBlock } from "./MermaidBlock";
@@ -1169,19 +1170,23 @@ export function FileViewer({
     return typeof match === "function" && match(filePath, { cwd, kind });
   });
   if (takeover && hasExtRender(takeover)) {
-    return takeover.render({
-      currentSession: sourceSessionId ? { id: sourceSessionId, cwd: cwd ?? "" } : null,
-      filePath,
-      cwd,
-      kind,
-      sourceSessionId,
-      gitRefreshKey,
-      watchEnabled,
-      onOpenFile,
-      onOpenFolder,
-      onMentionLines,
-      onAtMention,
-    });
+    return (
+      <ExtItemBoundary extId={takeover.extId} slot="fileViewer" itemId={takeover.id}>
+        <takeover.render
+          currentSession={sourceSessionId ? { id: sourceSessionId, cwd: cwd ?? "" } : null}
+          filePath={filePath}
+          cwd={cwd}
+          kind={kind}
+          sourceSessionId={sourceSessionId}
+          gitRefreshKey={gitRefreshKey}
+          watchEnabled={watchEnabled}
+          onOpenFile={onOpenFile}
+          onOpenFolder={onOpenFolder}
+          onMentionLines={onMentionLines}
+          onAtMention={onAtMention}
+        />
+      </ExtItemBoundary>
+    );
   }
   if (kind === "folder") {
     // 无文件夹查看扩展接管 → 极简占位（不丢核心打开能力）

@@ -2526,13 +2526,20 @@ function SessionItem({
         <>
           {/* 行前部扩展点：扩展渲染常驻状态图标（如 aiti-plan-first 方案绑定标） */}
           <ExtSlot name="sessionRowLeading" currentSession={session} />
-          {/* Subagent indicator for child sessions */}
-          {depth > 0 && (
+          {/* Child session indicator — 按关系类型区分：subagent=机器人，fork=分支（与系统分支功能图标一致） */}
+          {depth > 0 && (session.relation?.kind === "subagent" ? (
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
               <rect x="5" y="7" width="14" height="11" rx="2" />
               <path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
             </svg>
-          )}
+          ) : (
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+          ))}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
               style={{
@@ -2592,6 +2599,8 @@ function SessionItem({
               {!isRunning && isUnread && <UnreadSessionIndicator />}
               <span title={session.modified}>{formatRelativeTime(session.modified, locale)}</span>
               <span>{t("sidebar.messagesCount", { count: session.messageCount })}</span>
+              {/* 行内 meta 扩展点（转圈/消息数所在第二行末尾）：如 aiti-plan-first 方案绑定标 + front-matter tags */}
+              <ExtSlot name="sessionRowMeta" currentSession={session} />
               {session.isWorktree && session.branch && (
                 <span
                   title={`Worktree: ${session.cwd}`}
@@ -2613,7 +2622,11 @@ function SessionItem({
           {hasChildren && (
             <button
               onClick={(e) => { e.stopPropagation(); onToggleCollapse?.(); }}
-              title={t(collapsed ? "sidebar.expandSubagents" : "sidebar.collapseSubagents")}
+              title={t(
+                collapsed
+                  ? (session.relation?.kind === "subagent" ? "sidebar.expandSubagents" : "sidebar.expandBranches")
+                  : (session.relation?.kind === "subagent" ? "sidebar.collapseSubagents" : "sidebar.collapseBranches"),
+              )}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
                 width: 20, height: 20, padding: 0, flexShrink: 0,

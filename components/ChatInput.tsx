@@ -12,7 +12,8 @@ import {
   type DraftSnapshot as ChatDraft,
 } from "@/lib/composer/draft-api";
 import { apiUrl } from "@/lib/base-path";
-import { useChatHooks, ExtSlot, registerChatSend, useExtSlotItems } from "@/components/ExtSlots";
+import { useChatHooks, ExtSlot, registerChatSend, useExtSlotItems, ExtItemBoundary } from "@/components/ExtSlots";
+import { hasExtRender } from "@/lib/ext-ui-store";
 
 import {
   MAX_ATTACHED_IMAGE_BYTES,
@@ -961,6 +962,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // 仍登记在 lib/ext/types.ts（文档），运行时以实际插槽项为准——feature 关闭/卸载/异步
   // 加载未完成时回落兜底 banner（零数据迁移，sidecar/trash 全在 core）。
   const extOwnsQueuePanel = useExtSlotItems("queuePanel").length > 0;
+
+  // 模型按钮接管（aiti-model-wizard）：modelSelector 插槽有带 render 的项 → 渲染扩展组件
+  // 替换原生 ModelSelector（传入同等 model/options/onChange 等契约），未注册/未加载完成 →
+  // 原生下拉兜底零回归（fileViewer 同款跳板范式）。useExtSlotItems 自带按需 materialize。
+  const modelSelectorTakeover = useExtSlotItems("modelSelector").find(hasExtRender);
 
   // 组装 queuePanel 插槽 props（core → ext：live 视图 + trash + actions 原语）。
   // actions 全部转发 ChatInput 既有 RPC 处理器；parseImport/downloadExport 直接透传
@@ -3469,17 +3475,33 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {/* Model selector — visible always; only locked while a switch request is in flight. Streaming stays clickable: switching mid-run applies next turn (modelSwitchPending badge).
                 ⚠ 条件收紧（2026-08-27）：去掉 modelOptions/model 依赖——数据到达前首帧是空，
                 触发会消失且不重渲染（attach 会话 models cwd 异常时尤甚）。恒渲染，空态由
-                ModelSelector 兜底（No models/Select model title 挡位）。 */}
+                ModelSelector 兜底（No models/Select model title 挡位）。
+                ⚠ 接管（2026-09）：modelSelector 插槽有扩展接管项 → 交给扩展渲染（传入同等
+                model/options/onChange 契约）；未注册 → 原生下拉兜底。 */}
             {onModelChange && (
-              <ModelSelector
-                options={modelOptions}
-                value={model}
-                onChange={onModelChange}
-                disabled={false}
-                busy={modelSwitching}
-                pending={modelSwitchPending != null}
-                isAutoSelection={isAutoModelSelection}
-              />
+              modelSelectorTakeover ? (
+                <ExtItemBoundary extId={modelSelectorTakeover.extId} slot="modelSelector" itemId={modelSelectorTakeover.id}>
+                  <modelSelectorTakeover.render
+                    currentSession={sessionId ? { id: sessionId, cwd: "" } : null}
+                    model={model}
+                    options={modelOptions}
+                    onChange={onModelChange}
+                    busy={modelSwitching}
+                    pending={modelSwitchPending != null}
+                    isAutoSelection={isAutoModelSelection}
+                  />
+                </ExtItemBoundary>
+              ) : (
+                <ModelSelector
+                  options={modelOptions}
+                  value={model}
+                  onChange={onModelChange}
+                  disabled={false}
+                  busy={modelSwitching}
+                  pending={modelSwitchPending != null}
+                  isAutoSelection={isAutoModelSelection}
+                />
+              )
             )}
           </div>
 

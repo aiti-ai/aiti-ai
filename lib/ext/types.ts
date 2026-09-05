@@ -244,6 +244,7 @@ export type ExtSlotName =
   | "sessionTopbar"
   | "sessionRowActions"
   | "sessionRowLeading"
+  | "sessionRowMeta"  // 会话行内 meta（转圈/消息数所在第二行末尾）：如 aiti-plan-first 方案标 + tags
   | "dialogs"
   | "banners"
   | "pages"
@@ -261,6 +262,10 @@ export type ExtSlotName =
                     //   无接管时 core 兜底 banner 渲染，见 docs/pi-web-queue-cluster-ext-plan.md）
   | "workspacePickerActions" // CWD picker 下拉底部动作区（session-manager：管理工作区列表——
                     //   选择/隐藏/删除；核心只渲染下拉列表，管理 UI 全在扩展侧）
+  | "modelSelector"  // 聊天输入框模型按钮接管（如 aiti-model-wizard）：扩展注册后替换原生 ModelSelector；
+                      //   未注册时核心原生下拉兜底（fileViewer 同款跳板范式）
+  | "settingsModels" // 设置面板「模型」页签接管（如 aiti-model-wizard）：扩展注册后替换原生 ModelsConfig；
+                      //   未注册时核心原生双栏兜底
   ;
 
 /**
@@ -301,6 +306,23 @@ export interface WorkspacePickerActionsProps {
   onClose: () => void;
 }
 
+/** modelSelector 插槽 props（聊天输入框模型按钮接管）：接管组件拿到与原生 ModelSelector
+ *  同等的模型清单/选中态/切换回调，可按需渲染「打开模型向导」+ 保底快速切换。 */
+export interface ModelSelectorSlotProps {
+  model: { provider: string; modelId: string } | null;
+  options: { provider: string; modelId: string; name: string }[];
+  /** 切换当前会话模型（原生语义，保底能力——接管组件必须保留入口，避免丢功能）。 */
+  onChange: (provider: string, modelId: string) => void;
+  busy: boolean;
+  pending: boolean;
+  isAutoSelection: boolean;
+}
+
+/** settingsModels 插槽 props（设置「模型」页签接管）。 */
+export interface SettingsModelsSlotProps {
+  onClose: () => void;
+}
+
 export interface ExtSlotContractMap {
   /** 队列面板（去 fork 化 P3）：core → ext 的 live/trash/actions 原语。
    *  契约定义在 lib/composer/queue-api.ts（含下载导出/导入解析单实现）；
@@ -308,6 +330,10 @@ export interface ExtSlotContractMap {
   queuePanel: { props: QueuePanelProps };
   /** CWD picker 下拉底部动作区（session-manager：管理工作区列表）。 */
   workspacePickerActions: { props: WorkspacePickerActionsProps };
+  /** 聊天输入框模型按钮接管（aiti-model-wizard）。 */
+  modelSelector: { props: ModelSelectorSlotProps };
+  /** 设置「模型」页签接管（aiti-model-wizard）。 */
+  settingsModels: { props: SettingsModelsSlotProps };
 }
 
 /** 从契约取插槽 props 类型（未声明 → 宽松对象）。 */
@@ -411,12 +437,16 @@ export interface ExtUiDefinition {
   sidebarFooter?: ExtUiItem[];
   sessionTopbar?: ExtUiItem[];
   sessionRowActions?: ExtUiItem[];
+  /** 会话行内 meta（第二行·转圈/消息数末尾；如 aiti-plan-first 方案绑定标 + front-matter tags）。 */
+  sessionRowMeta?: ExtUiItem[];
   dialogs?: ExtUiItem[];
   banners?: ExtUiItem[];
   pages?: ExtUiItem[];
   fileViewer?: ExtUiItem[];   // 文件查看/编辑接管项（核心 FileViewer 跳板渲染；项需带 match 判定才生效）
   pathPicker?: ExtUiItem[];   // 目录选择器能力项（核心顶栏「打开文件夹」跳板渲染；项带 render({path,onSelect})）
   chatInputTop?: ExtUiItem[];
+  modelSelector?: ExtUiItem[];  // 聊天输入框模型按钮接管项（核心 ChatInput 跳板渲染；注册后替换原生 ModelSelector）
+  settingsModels?: ExtUiItem[]; // 设置面板「模型」页签接管项（核心 SettingsPanel 跳板渲染；注册后替换原生 ModelsConfig）
   /** 接管内置能力（见 EXT_PROVIDES）：如 ["session-delete"] 让 core 隐藏侧栏内置删除按钮。 */
   provides?: string[];
   /** client bundle 依赖的其他扩展 id（启动图 inject 边：并行预取/加载顺序提示，
@@ -448,6 +478,14 @@ export interface PiWebExtension {
    * "@scope/name"）。声明者自身在 pi-web 扩展体系，与 SDK 加载结果天然隔离。
    */
   conflicts?: string[];
+  /**
+   * 公开 API 声明：列出的 API 路径（相对 /api/extensions/<id>/ 后的 path，用 "/" 拼接，
+   * 如 "aiti-cpu-meter.js"）允许跨源 GET（免 request-security 的 cross-site 门禁）。
+   * 用途：「服务端注入到任意页面」的资产/只读端点（如 service-tunnels 注入的 standalone 脚本）——
+   * 跨源 <script src> 带 Sec-Fetch-Site: cross-site 且无 Origin，默认门禁必拦 → 浏览器 ORB 二次拦截。
+   * 安全边界：仅 GET + 精确 path 命中；写操作与未声明路径仍走默认门禁。
+   */
+  publicApi?: string[];
 }
 
 /** 扩展来源根：本地(home) > 额外(env 中间层) > dev(dev-exts 开发层) > 内置(程序目录基线)。 */

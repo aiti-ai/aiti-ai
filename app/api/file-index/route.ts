@@ -107,20 +107,11 @@ function listWithWalk(cwd: string): FileListing {
   return { files, hardTruncated: false };
 }
 
-// GET /api/file-index?cwd=/abs/path[&q=query]
-// Without q: { files: string[] (relative to cwd, capped at MAX_FILES),
-// truncated: boolean } — the client-side index for local filtering.
-// With q: { matches: { path, isDir }[] } — ranked against the FULL listing so
-// repos larger than MAX_FILES still find deep files (cap applied after
-// matching, like the TUI passing the query to fd).
-// Guarded by the same allow-list as /api/files.
-export async function GET(req: NextRequest) {
+async function handleFileIndex(cwd: string, query: string): Promise<NextResponse> {
   try {
-    const cwd = req.nextUrl.searchParams.get("cwd")?.trim() ?? "";
     if (!cwd || (!cwd.startsWith("/") && !isWindowsAbsolutePath(cwd))) {
       return NextResponse.json({ error: "cwd must be an absolute path" }, { status: 400 });
     }
-    const query = req.nextUrl.searchParams.get("q")?.slice(0, MAX_QUERY_LENGTH) ?? "";
 
     const allowedRoots = await getAllowedFileRoots();
     if (!isFilePathAllowed(cwd, allowedRoots)) {
@@ -166,4 +157,25 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
+}
+
+// GET /api/file-index?cwd=/abs/path[&q=query] — 查询串形态保留给存量调用方；
+// cwd/q 也接受 POST JSON body（同路径同语义）：绝对路径不落 URL（访问日志/代理日志），新代码一律用 POST。
+export async function GET(req: NextRequest) {
+  const cwd = req.nextUrl.searchParams.get("cwd")?.trim() ?? "";
+  const query = req.nextUrl.searchParams.get("q")?.slice(0, MAX_QUERY_LENGTH) ?? "";
+  return handleFileIndex(cwd, query);
+}
+
+export async function POST(req: NextRequest) {
+  let cwd = "";
+  let query = "";
+  try {
+    const body = (await req.json()) as { cwd?: unknown; q?: unknown };
+    cwd = typeof body.cwd === "string" ? body.cwd.trim() : "";
+    query = typeof body.q === "string" ? body.q.slice(0, MAX_QUERY_LENGTH) : "";
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
+  }
+  return handleFileIndex(cwd, query);
 }
