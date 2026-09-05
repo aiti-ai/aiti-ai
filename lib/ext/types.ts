@@ -244,6 +244,7 @@ export type ExtSlotName =
   | "sessionTopbar"
   | "sessionRowActions"
   | "sessionRowLeading"
+  | "sessionRowMeta"  // 会话行内 meta（转圈/消息数所在第二行末尾）：如 aiti-plan-first 方案标 + tags
   | "dialogs"
   | "banners"
   | "pages"
@@ -411,6 +412,8 @@ export interface ExtUiDefinition {
   sidebarFooter?: ExtUiItem[];
   sessionTopbar?: ExtUiItem[];
   sessionRowActions?: ExtUiItem[];
+  /** 会话行内 meta（第二行·转圈/消息数末尾；如 aiti-plan-first 方案绑定标 + front-matter tags）。 */
+  sessionRowMeta?: ExtUiItem[];
   dialogs?: ExtUiItem[];
   banners?: ExtUiItem[];
   pages?: ExtUiItem[];

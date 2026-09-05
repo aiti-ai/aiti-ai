@@ -2470,6 +2470,8 @@ function SessionItem({
               {!isRunning && isUnread && <UnreadSessionIndicator />}
               <span title={session.modified}>{formatRelativeTime(session.modified, locale)}</span>
               <span>{t("sidebar.messagesCount", { count: session.messageCount })}</span>
+              {/* 行内 meta 扩展点（转圈/消息数所在第二行末尾）：如 aiti-plan-first 方案绑定标 + front-matter tags */}
+              <ExtSlot name="sessionRowMeta" currentSession={session} />
               {session.isWorktree && session.branch && (
                 <span
                   title={`Worktree: ${session.cwd}`}

@@ -60,6 +60,7 @@ const UI_SLOT_KEYS = [
   "sidebarFooter",
   "sessionTopbar",
   "sessionRowActions",
+  "sessionRowMeta",
   "dialogs",
   "banners",
   "pages",
