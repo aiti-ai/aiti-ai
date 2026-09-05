@@ -884,7 +884,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         thinkingLevel?: ThinkingLevelOption;
       };
       if (!res.ok || !result.sessionId) {
-        throw new Error(result.error ?? `HTTP ${res.status}`);
+        const raw = result.error ?? `HTTP ${res.status}`;
+        // 目录不存在（会话目录被移动/删除、外部会话占位路径等）：给出可操作的提示而非裸 HTTP 码
+        const missing = /Directory does not exist:\s*(.+)$/i.exec(raw);
+        throw new Error(missing
+          ? `目录不存在：${missing[1].trim()}——该目录可能已被移动或删除，请在侧栏切换到有效目录后重试`
+          : raw);
       }
       const realId = result.sessionId;
       sessionIdRef.current = realId;

@@ -273,6 +273,8 @@ export function AppShell() {
   const exportQueueDataRef = useRef<(() => Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null>) | null>(null);
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
   const [projectTrustError, setProjectTrustError] = useState<string | null>(null);
+  // 目录不存在提示条（信任检查 400「Directory does not exist」时可见化，替代静默控制台报错）
+  const [cwdMissingNotice, setCwdMissingNotice] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
@@ -1377,10 +1379,17 @@ export function AppShell() {
       .then(async (response) => {
         const data = await response.json() as ProjectTrustStatus & { error?: string };
         if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+        setCwdMissingNotice(null);
         setProjectTrust(data);
       })
       .catch((error) => {
         if (error instanceof DOMException && error.name === "AbortError") return;
+        // 目录不存在（被移动/删除的会话目录）：弹可见提示条而非仅控制台报错
+        const missing = /Directory does not exist/i.test(error instanceof Error ? error.message : String(error));
+        if (missing) {
+          setCwdMissingNotice(projectTrustCwd);
+          return;
+        }
         console.error("Failed to load project trust:", error);
       });
     return () => controller.abort();
@@ -2762,6 +2771,32 @@ export function AppShell() {
   return (
     <ExtSlotsProvider>
     <>
+    {cwdMissingNotice && (
+      <div
+        role="alert"
+        style={{
+          position: "fixed", top: 12, left: "50%", transform: "translateX(-50%)", zIndex: 300,
+          display: "flex", alignItems: "center", gap: 10,
+          maxWidth: "min(640px, 92vw)", padding: "10px 14px",
+          background: "var(--bg-panel)", border: "1px solid #f59e0b88", borderRadius: 12,
+          boxShadow: "0 8px 32px rgba(0,0,0,0.35)", fontSize: 12.5, color: "var(--text)",
+        }}
+      >
+        <span style={{ fontSize: 14 }}>📂</span>
+        <span style={{ minWidth: 0, wordBreak: "break-all" }}>
+          <strong>目录不存在：</strong>{cwdMissingNotice}
+          <span style={{ color: "var(--text-muted)" }}>——该目录可能已被移动或删除（对应历史会话仍保留）。请在侧栏切换到有效目录后再新建会话。</span>
+        </span>
+        <button
+          type="button"
+          onClick={() => setCwdMissingNotice(null)}
+          title="关闭"
+          style={{ flexShrink: 0, background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}
+        >
+          ×
+        </button>
+      </div>
+    )}
     <style>{`
       @keyframes session-info-pop {
         0% {
