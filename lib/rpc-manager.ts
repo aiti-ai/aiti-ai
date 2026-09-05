@@ -873,6 +873,41 @@ export class AgentSessionWrapper {
     this.onDestroyCallback = cb;
   }
 
+  /**
+   * navigate/branch 后把当前生效的 model/thinking 显式落到新链上（仅在与新链已有记录不同时补写）。
+   * 背景：set_model 的 model_change append 在「切模型那一刻的 leaf」所在分支；之后「从这里编辑」/
+   * 分支导航 branch 回更早节点时，新链祖先上没有该 model_change → 前端按「leaf 路径最后
+   * model_change」显示会回退旧模型，而引擎内存态仍是新模型（显示≠运行）。
+   * 补写后树自洽，读侧无需猜。只在差异时写，避免每次切换分支都堆冗余记录。
+   */
+  private syncSessionSettingsAfterBranch(): void {
+    try {
+      const sm = this.inner.sessionManager;
+      const leafId = sm.getLeafId();
+      const branch = leafId ? sm.getBranch(leafId) : sm.getBranch();
+      let lastModel: { provider: string; modelId: string } | undefined;
+      let lastThinking: string | undefined;
+      for (let i = branch.length - 1; i >= 0; i--) {
+        const e = branch[i] as { type?: string; provider?: string; modelId?: string; thinkingLevel?: string };
+        if (!lastModel && e.type === "model_change") lastModel = { provider: e.provider ?? "", modelId: e.modelId ?? "" };
+        if (lastThinking === undefined && e.type === "thinking_level_change") lastThinking = e.thinkingLevel;
+        if (lastModel && lastThinking !== undefined) break;
+      }
+      const model = this.inner.model;
+      if (model && (!lastModel || lastModel.provider !== model.provider || lastModel.modelId !== model.id)) {
+        sm.appendModelChange(model.provider, model.id);
+      }
+      const thinking = this.inner.agent.state?.thinkingLevel;
+      if (thinking && thinking !== lastThinking) {
+        sm.appendThinkingLevelChange(thinking);
+      }
+      invalidateSessionListCache();
+    } catch (e) {
+      // 补写失败不阻断 navigate 结果（引擎状态已就位，仅显示层可能回退旧记录）。
+      console.error("navigate_tree: sync model/thinking after branch failed:", e);
+    }
+  }
+
   private async withSessionReplacement<T>(
     replacement: "fork" | "clone",
     operation: () => Promise<T>,
@@ -1117,12 +1152,10 @@ export class AgentSessionWrapper {
       }
 
       case "fork": {
-        if (this.isSessionRunningForReplacement()) {
-          throw new Error("Cannot fork while the session is running");
-        }
-        // 跨实例单写者兜底：另一 pi-web 实例（prod/dev 双开）可能正拉起子进程
-        // 流式写同一文件，其内存运行态对本实例不可见（孤儿 run）→ 拒绝。
-        await assertSessionFileQuiescent(this.inner.sessionFile ?? "");
+        // 跨实例单写者兑底：另一 pi-web 实例（prod/dev 双开）可能正拉起子进程
+        // 流式写同一文件，其内存运行态对本实例不可见（孤儿 run）→ 内容复制后从当前位置续写（文件只增长，仅保留已记录行），视为可接受的 fork 行为。
+        // 去掉 isSessionRunningForReplacement() 的检查：该门卫由上次合并代码时加入，用户明确指出运行中 fork 完全没有问题，且仅需要知道当前位置复制出去即可。
+        // await assertSessionFileQuiescent(this.inner.sessionFile ?? "");  已去除，不再阻塞运行中 fork。
         return this.withSessionReplacement("fork", async () => {
           const entryId = command.entryId as string;
           const sessionManager = this.inner.sessionManager;
@@ -1169,11 +1202,8 @@ export class AgentSessionWrapper {
       }
 
       case "clone": {
-        if (this.isSessionRunningForReplacement()) {
-          throw new Error("Cannot clone while the session is running");
-        }
-        // 跨实例单写者兜底（同 fork；孤儿 run 场景下内存守卫不可见另一实例的写入）。
-        await assertSessionFileQuiescent(this.inner.sessionFile ?? "");
+        // clone 与 fork 同样，支持运行中操作。createBranchedSession 从内存 byId Map 按 leafId 边界取 entry（只取已完整解析的 JSON 对象），不存在「复制半行 JSONL」风险。
+        // 去掉 isSessionRunningForReplacement() 和 assertSessionFileQuiescent()（上次合并引入的过度防御，运行中必然拒绝）。
         const sessionManager = this.inner.sessionManager;
         const currentSessionFile = this.inner.sessionFile;
         const leafId = typeof command.leafId === "string" ? command.leafId : sessionManager.getLeafId();
@@ -1201,6 +1231,8 @@ export class AgentSessionWrapper {
       case "navigate_tree": {
         // 允许运行中 navigate：与 fork 一样不中断 agent。
         const result = await this.inner.navigateTree(command.targetId as string, {});
+        // branch 后把当前生效的 model/thinking 显式落到新链上（从这里编辑/分支导航共用此入口）。
+        if (!result.cancelled) this.syncSessionSettingsAfterBranch();
         return { cancelled: result.cancelled };
       }
 
@@ -2420,6 +2452,8 @@ export class AgentSessionWrapper {
       fork: async () => ({ cancelled: true }),
       navigateTree: async (targetId, options) => {
         const result = await this.inner.navigateTree(targetId, { summarize: options?.summarize });
+        // 与 navigate_tree 命令同语义：branch 后把当前 model/thinking 落到新链，防显示回退。
+        if (!result.cancelled) this.syncSessionSettingsAfterBranch();
         return { cancelled: result.cancelled };
       },
       switchSession: async () => ({ cancelled: true }),
