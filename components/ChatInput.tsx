@@ -110,7 +110,7 @@ interface Props {
    *  onQueueFollowUp 始终接入（恢复路径需要空闲也能入队）。 */
   onQueueFollowUp?: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
   /** Send a queued follow-up as a steer (interrupt now). Available even when idle. */
-  onQueueSteerSend?: (message: string) => void;
+  onQueueSteerSend?: (message: string, images?: AttachedImage[]) => void;
   /** 显示「继续」按钮：AI 完全停止（无任何 streaming）且输入框为空时出现。 */
   canContinue?: boolean;
   /** 点「继续」：发送一条“继续”消息，触发 agent 继续运行。 */
@@ -991,7 +991,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       restore: (id, index) => onRestoreQueueItem?.(id, index) ?? Promise.resolve(false),
       purge: (ids) => onPurgeQueueTrash?.(ids) ?? Promise.resolve(false),
       recallAll: () => onRecallQueue?.(),
-      steerSend: (text) => onQueueSteerSend?.(text),
+      steerSend: (text, images) => onQueueSteerSend?.(text, images?.length ? images.map((im) => ({ data: im.data, mimeType: im.mimeType, previewUrl: `data:${im.mimeType};base64,${im.data}` })) : undefined),
       exportAll: () => onExportQueue?.() ?? Promise.resolve(null),
       downloadExport: (entries, meta, format) => downloadQueueExport(entries, meta, format),
       parseImport: (content) => parseQueueImport(content),
@@ -1731,16 +1731,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     ? t(slashQuery ? "chat.match" : "chat.command")
     : t(slashQuery ? "chat.matches" : "chat.commands", { count: filteredSlashCommands.length });
   const hasInputText = Boolean(value.trim());
-  const canQueueStreamingMessage = hasInputText && attachedImages.length === 0;
+  const canQueueStreamingMessage = hasInputText || attachedImages.length > 0;
   // With no typed text, the steer button still works when the queue holds a
   // follow-up: clicking it dispatches the FIRST queued follow-up as a steer
   // (same action as the row/collapsed-bar steer button).
   const canSteerFromQueue = !hasInputText && !attachedImages.length && (queuedMessages?.followUp?.length ?? 0) > 0;
   // 插队/排队按钮的 hover 提示按状态区分：AI 处理中且输入框为空（无消息、无图片、
-  // 队列里也没有可插队的 follow-up）时两个按钮同时灰掉——此时提示要先输入消息，
-  // 而不是笼统的动作说明。图片不能排队是另一条独立原因。
-  const queueDisabledImages = attachedImages.length > 0;
-  const queueDisabledNoInput = !hasInputText && !queueDisabledImages;
+  // 队列里也没有可插队的 follow-up）时两个按钮同时灰掉——此时提示要先输入消息。
+  // （图片允许随消息排队——queue-store/回收编辑/重放链路原生支持，#3 图片排队恢复）
+  const queueDisabledNoInput = !hasInputText && attachedImages.length === 0;
   // Warn when images are attached but the selected model is known not to accept
   // image input (#584), including a resolved default. Unknown models stay silent.
   const showImageUnsupportedWarning = (
@@ -1985,7 +1984,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       }
       return;
     }
-    if (attachedImages.length) return;
     onAudioUnlock?.();
     if (!attachedImages.length && onBuiltinCommand && canRunBuiltinSlashCommandWhileStreaming(msg)) {
       void runBuiltinCommand(msg);
@@ -3291,8 +3289,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {onSteer && (
                 <StreamingActionButton
                   label={t("chat.steer")}
-                  hint={queueDisabledImages ? t("chat.imagesCannotQueue")
-                    : canSteerFromQueue ? t("chat.steerFromQueueHint")
+                  hint={canSteerFromQueue ? t("chat.steerFromQueueHint")
                     : queueDisabledNoInput ? t("chat.steerNoInput")
                     : t("chat.steerHint")}
                   disabled={!canQueueStreamingMessage && !canSteerFromQueue}
@@ -3310,8 +3307,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {onFollowUp && (hasInputText || !isMobile) && (
                 <StreamingActionButton
                   label={t("chat.followUp")}
-                  hint={queueDisabledImages ? t("chat.imagesCannotQueue")
-                    : queueDisabledNoInput ? t("chat.followUpNoInput")
+                  hint={queueDisabledNoInput ? t("chat.followUpNoInput")
                     : t("chat.followUpHint")}
                   disabled={!canQueueStreamingMessage}
                   onClick={() => { sendQueued("followup"); refocusInput(); }}
