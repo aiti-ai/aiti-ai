@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import {
   attachSessionProjectInfo,
+  getSessionListVersion,
   listAllSessions,
   mergeSessionLists,
   invalidateSessionListCache,
@@ -26,8 +27,11 @@ export async function GET(req: Request) {
       invalidateSessionListCache();
     }
     const force = new URL(req.url).searchParams.get("force") === "1";
+    const persistedSessionsPromise = listAllSessions({ force });
+    // Capture before awaiting: mutations during the scan still require a later refresh.
+    const sessionListVersion = getSessionListVersion();
     const [persistedSessions, runtimeSessions] = await Promise.all([
-      listAllSessions({ force }),
+      persistedSessionsPromise,
       attachSessionProjectInfo(getRpcSessionInfos()),
     ]);
     // Live backend sessions (attach/spawn/extension handles) — transient rows
@@ -52,6 +56,7 @@ export async function GET(req: Request) {
     return NextResponse.json(
       {
         sessions,
+        sessionListVersion,
         // 运行中 = 本地 runtime + 存活且正在执行的后端会话 + TUI 桥（未认领也可见）
         runningSessionIds: [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds(), ...getBridgeRunningIds()])],
         completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
