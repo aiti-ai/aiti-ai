@@ -728,6 +728,22 @@ function StreamingActionButton({
   );
 }
 
+/** 新建会话提升判定：provisional 草稿 key（`new:<draftId>:<cwd>`）→ 真实会话 id。
+ *  这不是「切会话」——切会话走 AppShell 的 sessionKey 自增，整个 ChatWindow 重挂载，
+ *  本实例的 previousDraftKey 是 undefined；只有同一棵 composer 树活着时发生的
+ *  `new:…` → sid 迁移才是提升。 */
+export function isDraftKeyPromotion(previous: string | undefined, next: string | undefined): boolean {
+  return typeof previous === "string" && previous.startsWith("new:")
+    && typeof next === "string" && !next.startsWith("new:");
+}
+
+// 焦点交接：新建会话发送的那一刻，composer 从「欢迎页居中」搬到「消息流底部」——
+// 两个不同 DOM 位置，整棵 ChatInput 重挂载，焦点随旧节点销毁 → 手机键盘收起、
+// 输入法组合被丢。旧实例销毁时把「焦点在我身上」记到模块作用域，新实例挂载即接回
+// （既有会话发送后焦点本就留在框里，两分支行为对齐）。
+let composerLiveFocused = false;
+let pendingFocusHandoff = false;
+
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionId,
   onSend, onAbort, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
@@ -1337,6 +1353,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     draftKeyRef.current = draftKey;
     // composer 增强契约：key 切换广播（草稿持久化换 key 扫描等扩展消费）
     emitComposerKeyChange(previousDraftKey, draftKey);
+    // 提升不换稿：那一刻框里往往是用户在 AI 回答期间刚打下的下一条输入，清空 =
+    // 当面吞字 + 打断输入法组合（小屏上就是「AI 正在显示时打断我打字」）。值留着，
+    // 随后的 onChange 广播会把它落到 sid 槽位（keeper 已在 sessionCreated 意图里
+    // 把 currentKey 重定向到 sid）。
+    if (isDraftKeyPromotion(previousDraftKey, draftKey)) return;
     // Drafts are never auto-restored: an unsent draft from a previous visit
     // surfaces in the queue-recovery dialog instead, where the user decides.
     setValue("");
@@ -1456,12 +1477,35 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
 
   const handleFocus = useCallback(() => {
+    composerLiveFocused = true;
     // Re-measure once the focus-driven layout settles. Focusing alone does not
     // fire onChange/onInput, so a height computed at an earlier width (mobile
     // keyboard opening, buttons wrapping onto their own row) stays stale
     // until the next keystroke — e.g. after pasting text and tapping back in.
     requestAnimationFrame(resizeTextarea);
   }, [resizeTextarea]);
+
+  const handleBlur = useCallback(() => {
+    composerLiveFocused = false;
+  }, []);
+
+  // 焦点跨重挂载交接（见 pendingFocusHandoff）。layout 阶段成对执行：旧实例销毁
+  // 先记下焦点归属，新实例挂载立刻接回，用户看不出断点。preventScroll 防「为了
+  // 还焦点反而把页面滚了一下」。
+  useLayoutEffect(() => {
+    if (pendingFocusHandoff) {
+      pendingFocusHandoff = false;
+      const ta = textareaRef.current;
+      if (ta && document.activeElement !== ta) {
+        ta.focus({ preventScroll: true });
+        composerLiveFocused = true;
+      }
+    }
+    return () => {
+      pendingFocusHandoff = composerLiveFocused;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Collapse the Send button label when the input row gets crowded (narrow
   // viewport or long text); the streaming steer/follow-up buttons are now
@@ -3161,6 +3205,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             }}
             onInput={handleInput}
             onFocus={handleFocus}
+            onBlur={handleBlur}
             onPaste={handlePaste}
             placeholder={
               isStreaming && (onSteer || onFollowUp)
