@@ -232,6 +232,8 @@ test("push shows a notification when no window is visible", async () => {
       body: "Task finished.",
       data: { url: "/?session=session-1" },
       tag: "pi-session-complete:session-1",
+      // #701：同 tag 重复完成通知需要 renotify 才能再次弹出
+      renotify: true,
     },
   }]);
 });

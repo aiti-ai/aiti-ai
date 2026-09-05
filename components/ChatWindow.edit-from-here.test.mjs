@@ -35,7 +35,8 @@ test("branch navigation cancels the pending mark automatically", () => {
   // 待发送标记失效自动取消（否则发送会强行回退、覆盖用户刚导航到的分支）。
   assert.match(source, /useEffect\(\(\) => \{[\s\S]*?setEditFromHerePending\(null\);[\s\S]*?\}, \[activeLeafId\]\);/);
   // activeLeafId 必须来自 useAgentSession 同一 state（handleLeafChange/handleNavigate 更新它）
-  assert.match(source, /loadSlashCommands, scrollToBottom, scrollUserMsgToTop,\n\s+loadContext, activeLeafId,\n\s+\} = useAgentSession\(/);
+  // （试验合并后解构追加上游的 scrollToMessage——会话搜索跳转用，与本契约无关）
+  assert.match(source, /loadSlashCommands, scrollToBottom, scrollUserMsgToTop,\n\s+loadContext, activeLeafId(, scrollToMessage)?,\n\s+\} = useAgentSession\(/);
 });
 
 test("suppresses composer draft writes while a pending mark is active", () => {

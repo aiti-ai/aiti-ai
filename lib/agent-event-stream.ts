@@ -107,7 +107,7 @@ export function createAgentEventStream(
             sessionId,
             isStreaming: session.isStreaming,
           });
-          for (const event of bufferedEvents) forwardEvent(event, snapshot);
+          for (const event of bufferedEvents) forwardEvent(event, rawSnapshot);
           if (snapshot !== undefined && snapshot !== null) {
             encode({ type: "message_start", message: snapshot });
           }
