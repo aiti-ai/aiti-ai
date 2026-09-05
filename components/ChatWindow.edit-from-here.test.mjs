@@ -6,7 +6,7 @@ const source = await readFile(new URL("./ChatWindow.tsx", import.meta.url), "utf
 
 test("marks a user message for edit-from-here without touching the session", () => {
   // 点击标记：纯前端（预填 composer + 高亮 + 按钮变取消），不发起任何后端操作
-  assert.match(source, /const handleEditFromHereMark = useCallback\(\(entryId: string, message: UserMessage, branchPointId: string \| null\) => \{/);
+  assert.match(source, /const handleEditFromHereMark = useCallback\(async \(entryId: string, message: UserMessage, branchPointId: string \| null\) => \{/);
   assert.match(source, /setEditFromHerePending\(\{[\s\S]*?targetId: branchPointId \?\? entryId,[\s\S]*?leafId: branchPointId,[\s\S]*?\}\)/);
   assert.match(source, /handleEditContent\(message\);/);
 });

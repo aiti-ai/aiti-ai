@@ -39,7 +39,8 @@ for (const [name, nextName] of [
 
 test("FileViewer forwards watcher state to every viewer implementation", () => {
   const block = functionBlock("FileViewer", "TextFileViewer");
-  assert.equal(block.match(/watchEnabled=\{watchEnabled\}/g)?.length, 5);
+  // 6 = Text/Image/Audio/Video/Document + 扩展接管跳板（aiti-editor takeover render 也接收 watchEnabled）
+  assert.equal(block.match(/watchEnabled=\{watchEnabled\}/g)?.length, 6);
 });
 
 test("TextFileViewer snapshots and restores lightweight tab state", () => {
