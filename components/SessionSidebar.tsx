@@ -34,6 +34,20 @@ export function getSessionListIndices(count: number, scrollTop: number, viewport
   return indices;
 }
 
+interface FlatTreeRow { node: SessionTreeNode; depth: number; }
+
+/** 树 → 可见行数组（DFS 拍平，保留 depth 缩进；折叠子树不展开）。
+ *  虚拟化前提：行高固定 SESSION_LIST_ITEM_HEIGHT（SessionItem 54px）。 */
+function flattenSessionTree(nodes: SessionTreeNode[], depth: number, collapsedIds: Set<string>, out: FlatTreeRow[] = []): FlatTreeRow[] {
+  for (const node of nodes) {
+    out.push({ node, depth });
+    if (node.children.length > 0 && !collapsedIds.has(node.session.id)) {
+      flattenSessionTree(node.children, depth + 1, collapsedIds, out);
+    }
+  }
+  return out;
+}
+
 declare global {
   interface Window {
     piDesktop?: {
@@ -446,6 +460,15 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   const [listViewportH, setListViewportH] = useState(0);
   const [listScrollTop, setListScrollTop] = useState(0);
   const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
+  // 折叠状态提升到列表层：拍平后的虚拟窗口需要知道哪些子树不展开
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
+  const toggleSessionCollapsed = useCallback((id: string) => {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
   const listScrollRafRef = useRef<number | null>(null);
   const handleListScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const top = e.currentTarget.scrollTop;
@@ -1886,23 +1909,49 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
             {t("sidebar.noSessions")}
           </div>
         )}
-        {sessionTree.map((node) => (
-          <SessionTreeItem
-            key={node.session.id}
-            node={node}
-            isDraft={node.session.id === draftSession?.id}
-            selectedSessionId={selectedSessionId}
-            runningSessionIds={runningSessionIds}
-            unreadSessionIds={unreadSessionIds}
-            onSelectSession={handleSelectSessionFromList}
-            onRenamed={loadSessions}
-            onSessionDeleted={(id) => {
-              onSessionDeleted?.(id);
-              loadSessions();
-            }}
-            depth={0}
-          />
-        ))}
+        {(() => {
+          // 树虚拟化：DFS 拍平成可见行数组（折叠子树不展开），窗口只挂载可见 ± overscan 行。
+          // 行高固定 SESSION_LIST_ITEM_HEIGHT，窗口数学与上游 #626 同一套（getSessionListIndices）。
+          const flatRows = flattenSessionTree(sessionTree, 0, collapsedIds);
+          const indices = getSessionListIndices(
+            flatRows.length,
+            listScrollTop,
+            listViewportH,
+            flatRows.findIndex((row) => row.node.session.id === focusedSessionId),
+          );
+          return (
+            <div style={{ position: "relative", height: flatRows.length * SESSION_LIST_ITEM_HEIGHT }}>
+              {indices.map((index) => {
+                const row = flatRows[index];
+                return (
+                  <div
+                    key={row.node.session.id}
+                    onFocus={() => setFocusedSessionId(row.node.session.id)}
+                    onBlur={() => setFocusedSessionId(null)}
+                    style={{ position: "absolute", top: index * SESSION_LIST_ITEM_HEIGHT, left: 0, right: 0 }}
+                  >
+                    <SessionTreeItem
+                      node={row.node}
+                      depth={row.depth}
+                      selectedSessionId={selectedSessionId}
+                      runningSessionIds={runningSessionIds}
+                      unreadSessionIds={unreadSessionIds}
+                      onSelectSession={handleSelectSessionFromList}
+                      onRenamed={loadSessions}
+                      onSessionDeleted={(id) => {
+                        onSessionDeleted?.(id);
+                        loadSessions();
+                      }}
+                      isDraft={row.node.session.id === draftSession?.id}
+                      collapsed={collapsedIds.has(row.node.session.id)}
+                      onToggleCollapse={() => toggleSessionCollapsed(row.node.session.id)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
       </SessionSearch>
 
@@ -2055,6 +2104,8 @@ function SessionTreeItem({
   onSessionDeleted,
   depth,
   isDraft,
+  collapsed,
+  onToggleCollapse,
 }: {
   node: SessionTreeNode;
   selectedSessionId: string | null;
@@ -2065,58 +2116,39 @@ function SessionTreeItem({
   onSessionDeleted?: (id: string) => void;
   depth: number;
   isDraft?: boolean;
+  /** 折叠状态由列表层持有（虚拟窗口拍平需要）；单行渲染不再递归子树 */
+  collapsed: boolean;
+  onToggleCollapse: () => void;
 }) {
-  const [collapsed, setCollapsed] = useState(false);
   const hasChildren = node.children.length > 0;
 
   return (
-    // content-visibility: 视口外会话行跳过布局/绘制（长列表渲染/滚动成本 ↓），
-    // 进入视口自动渲染；估算行高供滚动条占位
-    <div style={{ contentVisibility: "auto", containIntrinsicSize: "auto 64px" }}>
-      <div style={{ position: "relative" }}>
-        {/* Indent line for child sessions */}
-        {depth > 0 && (
-          <div style={{
-            position: "absolute",
-            left: depth * 12 + 6,
-            top: 0, bottom: 0,
-            width: 1,
-            background: "var(--border)",
-            pointerEvents: "none",
-          }} />
-        )}
-        <SessionItem
-          session={node.session}
-          isSelected={node.session.id === selectedSessionId}
-          isRunning={runningSessionIds.has(node.session.id)}
-          isUnread={unreadSessionIds.has(node.session.id)}
-          onClick={() => onSelectSession(node.session)}
-          onRenamed={onRenamed}
-          onDeleted={(id) => onSessionDeleted?.(id)}
-          depth={depth}
-          isDraft={isDraft}
-          hasChildren={hasChildren}
-          collapsed={collapsed}
-          onToggleCollapse={() => setCollapsed((v) => !v)}
-        />
-      </div>
-      {hasChildren && !collapsed && (
-        <div>
-          {node.children.map((child) => (
-            <SessionTreeItem
-              key={child.session.id}
-              node={child}
-              selectedSessionId={selectedSessionId}
-              runningSessionIds={runningSessionIds}
-              unreadSessionIds={unreadSessionIds}
-              onSelectSession={onSelectSession}
-              onRenamed={onRenamed}
-              onSessionDeleted={onSessionDeleted}
-              depth={depth + 1}
-            />
-          ))}
-        </div>
+    <div style={{ position: "relative" }}>
+      {/* Indent line for child sessions */}
+      {depth > 0 && (
+        <div style={{
+          position: "absolute",
+          left: depth * 12 + 6,
+          top: 0, bottom: 0,
+          width: 1,
+          background: "var(--border)",
+          pointerEvents: "none",
+        }} />
       )}
+      <SessionItem
+        session={node.session}
+        isSelected={node.session.id === selectedSessionId}
+        isRunning={runningSessionIds.has(node.session.id)}
+        isUnread={unreadSessionIds.has(node.session.id)}
+        onClick={() => onSelectSession(node.session)}
+        onRenamed={onRenamed}
+        onDeleted={(id) => onSessionDeleted?.(id)}
+        depth={depth}
+        isDraft={isDraft}
+        hasChildren={hasChildren}
+        collapsed={collapsed}
+        onToggleCollapse={onToggleCollapse}
+      />
     </div>
   );
 }
