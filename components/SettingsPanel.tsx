@@ -13,6 +13,8 @@ import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ConfigSwitch } from "./SettingsUi";
+import { useExtSlotItems, ExtItemBoundary } from "./ExtSlots";
+import { hasExtRender } from "@/lib/ext-ui-store";
 
 interface Props {
   cwd: string | null;
@@ -181,6 +183,9 @@ export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessi
   const [mountedSections, setMountedSections] = useState<ReadonlySet<SettingsSection>>(
     () => new Set([section]),
   );
+  // 「模型」页签接管（aiti-model-wizard）：settingsModels 插槽有带 render 的项 → 渲染扩展
+  // 组件替换原生 ModelsConfig（点击由扩展侧打开向导浮层）；未注册 → 原生双栏兑底零回归。
+  const settingsModelsTakeover = useExtSlotItems("settingsModels").find(hasExtRender);
   const sections: { id: SettingsSection; label: string; requiresProject: boolean }[] = [
     { id: "general", label: t("settings.general"), requiresProject: false },
     { id: "models", label: t("common.models"), requiresProject: false },
@@ -271,7 +276,13 @@ export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessi
 
         <main className="settings-dialog-main">
           {sectionHost("general", <GeneralSettings sessionId={sessionId} onSessionReloaded={onSessionReloaded} />)}
-          {sectionHost("models", <ModelsConfig embedded onClose={onClose} />)}
+          {sectionHost("models", settingsModelsTakeover ? (
+            <ExtItemBoundary extId={settingsModelsTakeover.extId} slot="settingsModels" itemId={settingsModelsTakeover.id}>
+              <settingsModelsTakeover.render currentSession={null} onClose={onClose} />
+            </ExtItemBoundary>
+          ) : (
+            <ModelsConfig embedded onClose={onClose} />
+          ))}
           {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
           {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />)}
         </main>

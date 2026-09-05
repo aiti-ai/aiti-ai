@@ -16,6 +16,7 @@ import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtSlot } from "./ExtSlots";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
 import { useRecoveryProviderItems, routeRecoveryResolve } from "@/lib/composer/recovery";
+import { runSessionForkGates } from "@/lib/ext/fork-gates";
 import { ExtensionStatusBar } from "./ExtensionStatusBar";
 import { AnsiText } from "./AnsiText";
 import { useI18n } from "@/hooks/useI18n";
@@ -386,7 +387,14 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
 
   // 标记（点击「编辑从此处」）：输入框非空且无标记时不覆盖（与 replaceMessage 的 canRestore 约定一致）；
   // 已有标记时先清旧预填再标记新的（避免 composer 残留上一目标文本导致 replaceMessage 静默失效）
-  const handleEditFromHereMark = useCallback((entryId: string, message: UserMessage, branchPointId: string | null) => {
+  // 前置门（ai变更处置）：编辑从此处 = 回退到该分支点重发 → 扩展（如 aiti-git-trace 回撤三选项）
+  // 先让用户决定是否回滚该区间文件变更；取消则中止标记（与 fork 的 gate 语义一致）。
+  const handleEditFromHereMark = useCallback(async (entryId: string, message: UserMessage, branchPointId: string | null) => {
+    const sid = sessionIdRef.current;
+    if (sid) {
+      const allowed = await runSessionForkGates({ sessionId: sid, entryId, position: "before" });
+      if (!allowed) return;
+    }
     const hasPending = editFromHerePendingRef.current != null;
     if (!hasPending && chatInputRef?.current?.hasInput?.()) return;
     if (hasPending) chatInputRef?.current?.clearInput?.();
@@ -396,7 +404,7 @@ export function ChatWindow({ session, sessionRunning, newSessionCwd, newSessionD
       leafId: branchPointId,
     });
     handleEditContent(message);
-  }, [chatInputRef, handleEditContent]);
+  }, [chatInputRef, handleEditContent, sessionIdRef]);
 
   // 取消：还原高亮 + 清空预填输入框（clearInput 同时清掉草稿）
   const handleCancelEditFromHere = useCallback(() => {

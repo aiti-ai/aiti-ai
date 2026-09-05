@@ -12,7 +12,7 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
-import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas, dispatchChatSend } from "./ExtSlots";
+import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary } from "./ExtSlots";
 import { hasExtRender } from "@/lib/ext-ui-store";
 import type { ExtRenderProps, ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
@@ -2119,7 +2119,9 @@ export function AppShell() {
           ) : (
             <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
               {/* menu 标志：扩展可在菜单场景切换渲染（如 session-manager 搜索框 → 菜单里只显图标+文字） */}
-              <ExtComponent {...extProps} menu />
+              <ExtItemBoundary extId={extItem.extId} slot={toolbarItem ? "toolbar" : "sessionTopbar"} itemId={`${id}/menu`}>
+                <ExtComponent {...extProps} menu />
+              </ExtItemBoundary>
             </div>
           )}
           {label && (
@@ -2138,7 +2140,9 @@ export function AppShell() {
     if (!extItem.render) return null;
     return (
       <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
-        <ExtComponent {...extProps} menu={false} />
+        <ExtItemBoundary extId={extItem.extId} slot={toolbarItem ? "toolbar" : "sessionTopbar"} itemId={id}>
+          <ExtComponent {...extProps} menu={false} />
+        </ExtItemBoundary>
       </div>
     );
   };
@@ -3737,11 +3741,15 @@ export function AppShell() {
             // pathPicker 能力（aiti-folder 扩展的 FolderSwitcher）；无接管则兜底按钮开 CWD。
             const picker = pathPickerItems.find(hasExtRender);
             if (picker) {
-              return picker.render({
-                path: activeCwd ?? "",
-                compact: true,
-                onSelect: (p: string) => handleOpenFolder(p, getFileName(p)),
-              });
+              return (
+                <ExtItemBoundary extId={picker.extId} slot="pathPicker" itemId={picker.id}>
+                  <picker.render
+                    path={activeCwd ?? ""}
+                    compact
+                    onSelect={(p: string) => handleOpenFolder(p, getFileName(p))}
+                  />
+                </ExtItemBoundary>
+              );
             }
             return (
               <button

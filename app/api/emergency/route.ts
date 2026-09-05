@@ -197,7 +197,11 @@ export async function POST(req: Request) {
         }
         aiMessage = (ctx.length ? ctx.join("\n") + "\n\n" : "") + message;
       }
-      session.send({ type: "prompt", message: aiMessage }).catch((e: unknown) => {
+      // 复用会话时，agent 可能仍在流式处理上一条消息——不带 streamingBehavior 会抛
+      // "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
+      // 导致重试永远卡死。传 steer：正在流式则打断/接管（queued steering），未流式则正常运行；
+      // 这样首条 network error 后重试也能立即接管，而不是报错冻结。
+      session.send({ type: "prompt", message: aiMessage, streamingBehavior: "steer" }).catch((e: unknown) => {
         enqueue(`\n[发送错误] ${e instanceof Error ? e.message : String(e)}`);
         if (!closed) { closed = true; try { off?.(); } catch { /* ignore */ } try { controller.close(); } catch { /* stream closed */ } }
       });

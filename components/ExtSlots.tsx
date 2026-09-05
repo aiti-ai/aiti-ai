@@ -830,7 +830,7 @@ let ebSeq = 0;
  *  item 组件渲染 throw（如 .mjs 里 TS 残留的 ReferenceError）静默收起（render null），
  *  不冒泡打崩整页（crash-rescue §4.2：sidebar/composerTools 等插槽无祖先 boundary，
  *  崩则穿透 root）。错误上报全局注册表，由 ExtErrorIndicator 常驻按钮统一操作。 */
-class ExtItemBoundary extends Component<
+export class ExtItemBoundary extends Component<
   { extId?: string; slot: string; itemId: string; children: ReactNode },
   { err: Error | null }
 > {

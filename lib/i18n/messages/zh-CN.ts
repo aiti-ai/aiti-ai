@@ -261,8 +261,10 @@ export const zhCNLocale: LocalePlugin = {
     "sidebar.delete": "删除",
     "sidebar.deleteWithShiftClick": "删除（Shift+点击可直接删除，不确认）",
 
-    "sidebar.expandSubagents": "展开子智能体",
-    "sidebar.collapseSubagents": "折叠子智能体",
+    "sidebar.expandSubagents": "展开子会话",
+    "sidebar.collapseSubagents": "折叠子会话",
+    "sidebar.expandBranches": "展开分支会话",
+    "sidebar.collapseBranches": "折叠分支会话",
     "sidebar.messagesCount": "{count} 条消息",
     "sidebar.worktreePath": "Worktree：{path}",
     "sidebar.removeWorktreeTitle": "移除 worktree checkout {path}；保留分支",
