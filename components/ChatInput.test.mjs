@@ -42,6 +42,8 @@ test("streaming Enter queues a follow-up; Alt+Enter is the exact inverse (steer 
     ["composition grace blocks sending", {}, { lastCompositionEndAtRef: { current: 950 } }, "prevented"],
     ["Alt+composition grace blocks sending", { altKey: true }, { lastCompositionEndAtRef: { current: 950 } }, "prevented"],
     ["Enter falls back to follow-up when steer is unavailable", { }, { onSteer: undefined }, "followup"],
+    ["Alt+Enter with both capabilities missing falls through to normal send", { altKey: true }, { onSteer: undefined, onFollowUp: undefined }, "send"],
+    ["mobile Alt+Enter steers the same as desktop (no platform branch)", { altKey: true }, { isMobile: true }, "steer"],
     ["slash completion takes priority", {}, { slashMenuOpen: true, slashQuery: "help" }, "slash"],
     ["available built-in commands take priority", {}, { slashMenuOpen: true, slashQuery: "copy", value: "/copy", displayedSlashCommands: [{ name: "copy", source: "builtin", availableWhileStreaming: true }] }, "send"],
     ["file completion takes priority", {}, { atMenuOpen: true, atQuery: {} }, "file"],
