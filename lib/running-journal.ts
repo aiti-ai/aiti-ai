@@ -64,12 +64,14 @@ const EMPTY: () => RunningJournalFile = () => ({
   interrupted: [],
 });
 
-// globalThis 承载：next dev HMR 换模块实例不丢缓存（同 handle-store 模式）
+// globalThis 承载：next dev HMR 换模块实例不丢缓存/挂起定时器（同 handle-store 模式）
 interface JournalStore {
   file: RunningJournalFile | null;
+  /** 挂起的空集延迟写入（关停取证窗口，见 recordRunningEntries） */
+  pendingEmpty: ReturnType<typeof setTimeout> | null;
 }
 const g = globalThis as { __piRunningJournal?: JournalStore };
-const store: JournalStore = (g.__piRunningJournal ??= { file: null });
+const store: JournalStore = (g.__piRunningJournal ??= { file: null, pendingEmpty: null });
 
 /**
  * 实例隔离键：journal 是「进程代际」数据，必须按 pi-web 实例隔离。
@@ -169,6 +171,8 @@ function writeToDisk(): void {
   const file = store.file;
   if (!file) return;
   file.updatedAt = Date.now();
+  // pid 始终盖为当前进程：字段升级兼容（老缓存对象可能无此字段）+ 防御性纠偏
+  file.pid = process.pid;
   const path = runningJournalPath();
   const tmp = `${path}.tmp-${process.pid}-${randomUUID()}`;
   try {
@@ -223,11 +227,26 @@ export function bootRollRunningJournal(): number {
 /**
  * 运行集变化收口（rpc-manager notifyRunningChange 调）：全量重写当前 boot 的
  * entries。调用方保证仅在运行集真正变化时调用（有 snapshot 去重）。
+ *
+ * 空集延迟 2s 落盘（关停取证窗口）：SIGTERM 关停路径会 dispose wrapper →
+ * agent_end → 运行集清空——若立即写盘，boot roll 将看不到任何中断。延迟写
+ * （unref 不阻塞退出）后：正常跑完 → 2s 后落盘空集；关停/崩溃 → 进程先死，
+ * 磁盘保留最后一个非空快照 = 中断集。不依赖信号 handler 时序，SIGKILL 同样覆盖。
  */
 export function recordRunningEntries(entries: JournalEntry[]): void {
   const file = load();
   file.entries = entries;
-  writeToDisk();
+  if (entries.length > 0) {
+    if (store.pendingEmpty) { clearTimeout(store.pendingEmpty); store.pendingEmpty = null; }
+    writeToDisk();
+    return;
+  }
+  if (store.pendingEmpty) clearTimeout(store.pendingEmpty);
+  store.pendingEmpty = setTimeout(() => {
+    store.pendingEmpty = null;
+    writeToDisk();
+  }, 2_000);
+  store.pendingEmpty.unref();
 }
 
 /** 当前中断集（GET 清单用）。 */
