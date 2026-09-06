@@ -1008,7 +1008,9 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
           flexShrink: expanded ? 0 : 1,
           minWidth: 0,
           minHeight: "1.5em",
-          padding: 0,
+          // 展开态命中区扩大：纯 icon 14px 难点中（实测反馈「标题不好点」）→ padding 撑点击区 +
+          // 负 margin 原位抵消，icon 视觉位置/布局占位完全不变，命中区 14×16 → 28×24
+          ...(expanded ? { padding: "4px 7px", margin: "-4px -7px" } : { padding: 0 }),
           background: "transparent",
           border: "none",
           color: "var(--text-muted)",
@@ -1026,6 +1028,9 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
       </button>
       {expanded && (
         <div
+          // aiti-msg-smart 思考行点击契约：标 data-thinking-content 使思考文本可被扩展点击 handler 识别
+          //（新思考 UI 不走 MarkdownBody，core 段落点击广播覆盖不到 → 扩展自拟 pre 行点击兑底）
+          data-thinking-content=""
           style={{
             flex: 1,
             minWidth: 0,
