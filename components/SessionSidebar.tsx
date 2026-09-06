@@ -1990,6 +1990,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
               homeDir,
               sessions: allSessions,
               loading,
+              error,
               sessionListVersion,
               runningSessionIds,
               unreadSessionIds,
