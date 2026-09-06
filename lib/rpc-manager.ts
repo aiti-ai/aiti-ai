@@ -3,6 +3,8 @@ import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir
 import { bundledPiPluginPaths } from "./pi-plugins";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
+import type { JournalEntry } from "./running-journal.ts";
+import { recordRunningEntries } from "./running-journal.ts";
 import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { validateAgentImages } from "./image-attachments";
@@ -3188,17 +3190,40 @@ export function subscribeRunningSessions(listener: (ids: string[]) => void): () 
  */
 export function notifyRunningChange(): void {
   const listeners = getRunningListeners();
+  const ids = getRunningRpcSessionIds();
   if (listeners.size === 0) {
     // A future subscriber receives its own initial snapshot. Clear this one so
     // its first state transition cannot match stale state from an old listener.
     lastRunningSnapshot = "";
-    return;
+  } else {
+    const snapshot = JSON.stringify([...ids].sort());
+    if (snapshot !== lastRunningSnapshot) {
+      lastRunningSnapshot = snapshot;
+      for (const listener of listeners) {
+        try { listener(ids); } catch { /* ignore listener errors */ }
+      }
+    }
   }
-  const ids = getRunningRpcSessionIds();
-  const snapshot = JSON.stringify([...ids].sort());
-  if (snapshot === lastRunningSnapshot) return;
-  lastRunningSnapshot = snapshot;
-  for (const listener of listeners) {
-    try { listener(ids); } catch { /* ignore listener errors */ }
+  // 重启恢复 P0：运行集镜像落盘（running-journal）。仅在集合真实变化时走到这里
+  // （snapshot 去重），写失败静默降级。无监听者时集合可能未变——重复全量写无害。
+  try {
+    recordRunningEntries(collectRpcJournalEntries());
+  } catch { /* journal 永不阻塞主链路 */ }
+}
+
+/** 当前运行中的本地会话 → journal 快照（含 sessionFile/cwd 元数据）。 */
+function collectRpcJournalEntries(): JournalEntry[] {
+  const now = Date.now();
+  const out: JournalEntry[] = [];
+  for (const [key, session] of getRegistry()) {
+    if (!session.isRunning()) continue;
+    out.push({
+      id: session.sessionId || key,
+      sessionFile: session.sessionFile,
+      cwd: session.cwd,
+      kind: "local",
+      updatedAt: now,
+    });
   }
+  return out;
 }

@@ -22,6 +22,7 @@ import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
 const NO_PATH_PICKER_ITEMS: ExtUiItemRegistered[] = [];
 import { registerHostApi } from "@/lib/ext/host-api";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
+import { RestartRecoveryWizard } from "./RestartRecoveryWizard";
 import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
 import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
@@ -4067,6 +4068,8 @@ export function AppShell() {
       />
     )}
     {/* 服务端口弹窗已随 service-tunnels 抽离为扩展（<ExtSlot name="dialogs" /> 渲染） */}
+    {/* 重启恢复向导：上次进程中断的运行中会话 + 队列（无中断时渲染 null） */}
+    <RestartRecoveryWizard />
     <ExtSlot name="dialogs" extra={{ onSelectSession: handleSelectSession }}
       currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd, name: selectedSession.name, firstMessage: selectedSession.firstMessage } : null} />
     {exportDialogOpen && selectedSession && (

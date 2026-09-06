@@ -55,4 +55,10 @@ export async function register(): Promise<void> {
   const extRegistry = ensureRegistry(makeExtCore());
   await extRegistry.loadAll();
   await extRegistry.startAll();
+
+  // 重启恢复 P0：boot 扫描 —— 上一进程的运行集迁入 interrupted 集 + 滚动 bootId。
+  // 之后 GET /api/agent/recovery/interrupted 消费该集（文件级校验在 GET 时做）。
+  const { bootRollRunningJournal } = await import("@/lib/running-journal");
+  const rolled = bootRollRunningJournal();
+  if (rolled > 0) console.log(`[pi-web] restart recovery: ${rolled} running session(s) interrupted by previous process`);
 }
