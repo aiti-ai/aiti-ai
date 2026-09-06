@@ -12,7 +12,8 @@ export interface Tab {
   id: string;
   label: string;
   filePath: string;
-  /** "file" (default) or "folder"/"terminal" — folder tabs render a FolderViewer, terminal tabs a workspace terminal. */
+  /** "file" (default) or "folder"/"terminal" — folder tabs render a FolderViewer，
+   *  terminal tabs 渲染 TerminalPanelBridge（[aiti] T2 接管：工作区终端由 aiti-cmd 承载） */
   kind?: "file" | "folder" | "terminal";
   /** 钉住标记（由扩展维护，core 只透传——不在 core 做逐出/关闭策略） */
   pinned?: boolean;
@@ -225,8 +226,8 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
                 flexShrink: 0,
                 transition: "background 0.1s, color 0.1s",
               }}
-               title={t(tab.kind === "terminal" ? "terminal.close" : "i18n.close")}
-               aria-label={`${t(tab.kind === "terminal" ? "terminal.close" : "i18n.close")} ${tab.label}`}
+               title={t("i18n.close")}
+               aria-label={`${t("i18n.close")} ${tab.label}`}
             >
               <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
                 <line x1="2" y1="2" x2="8" y2="8" />

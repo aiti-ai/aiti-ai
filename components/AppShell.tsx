@@ -26,7 +26,7 @@ import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
 import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentSessionPanel } from "./AgentSessionPanel";
-import { TerminalPanel } from "./TerminalPanel";
+import { TerminalPanelBridge } from "./TerminalPanelBridge";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
@@ -629,6 +629,8 @@ export function AppShell() {
     () => NO_PATH_PICKER_ITEMS,
   );
 
+  // [aiti] T2 接管：工作区终端页签保留（sessionStorage 会话记忆语义不变），页签内容由
+  // TerminalPanelBridge 引导到 aiti-cmd（原版 TerminalPanel/PTY 实现隐藏，core 无 /api/terminal）。
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
   const [terminalsRestored, setTerminalsRestored] = useState(false);
   const panelTabs: Tab[] = [...fileTabs, ...terminalTabs.map((tab) => ({
@@ -1391,6 +1393,8 @@ export function AppShell() {
     setActiveFileTabId((active) => (active === prevId ? tabId : active));
   }, [activeFileTabId, fileTabs, askEditorClose]);
 
+  // [aiti] T2 接管：侧栏「终端」按钮 → 建 terminal 页签（Bridge 激活时自动唤起
+  // aiti-cmd shell，见 TerminalPanelBridge）；不再直连 __aitiCmd（单一入口防双开）。
   const handleOpenTerminal = useCallback((cwd: string) => {
     const existing = terminalTabs.find((tab) => tab.cwd === cwd);
     const tab = existing ?? newTerminalTab(cwd);
@@ -1400,12 +1404,12 @@ export function AppShell() {
     if (isMobile) setSidebarOpen(false);
   }, [terminalTabs, isMobile]);
 
+  // closing 收尾：本地移除页签即可（shell 生命周期归 aiti-cmd，core 无 PTY 可关）
   const handleTerminalClosed = (tab: TerminalTab) => {
-    const replacement = tab.closing === "restart" ? newTerminalTab(tab.cwd) : null;
     const remaining = terminalTabs.filter((item) => item.id !== tab.id);
-    setTerminalTabs((tabs) => tabs.flatMap((item) => item.id !== tab.id ? [item] : replacement ? [replacement] : []));
-    setActiveFileTabId((current) => current !== tab.id ? current : replacement?.id ?? remaining.at(-1)?.id ?? fileTabs.at(-1)?.id ?? null);
-    if (!replacement && !remaining.length && !fileTabs.length) setRightPanelOpen(false);
+    setTerminalTabs((tabs) => tabs.filter((item) => item.id !== tab.id));
+    setActiveFileTabId((current) => current !== tab.id ? current : remaining.at(-1)?.id ?? fileTabs.at(-1)?.id ?? null);
+    if (!remaining.length && !fileTabs.length) setRightPanelOpen(false);
   };
 
   const performCloseFileTab = useCallback((tabId: string) => {
@@ -1426,7 +1430,7 @@ export function AppShell() {
   }, [fileTabs, terminalTabs, recordFolder]);
 
   const handleCloseFileTab = useCallback((tabId: string) => {
-    // terminal tab 走 closing 两态（restart/close，由 handleTerminalClosed 收尾）
+    // terminal tab 走 closing 收尾（Bridge 本地移除，见 handleTerminalClosed）
     if (terminalTabs.some((tab) => tab.id === tabId)) {
       setTerminalTabs((tabs) => tabs.map((tab) => tab.id === tabId && !tab.closing ? { ...tab, closing: "close" } : tab));
       return;
@@ -4027,12 +4031,10 @@ export function AppShell() {
           ) : null}
           {terminalTabs.map((tab) => (
             <div key={tab.id} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%" }}>
-              <TerminalPanel
+              <TerminalPanelBridge
                 tab={tab}
                 active={rightPanelOpen && tab.id === activeFileTabId}
-                onRestart={() => setTerminalTabs((tabs) => tabs.map((item) => item.id === tab.id ? { ...item, closing: "restart" } : item))}
                 onClosed={() => handleTerminalClosed(tab)}
-                onCloseError={() => setTerminalTabs((tabs) => tabs.map((item) => item.id === tab.id ? { ...item, closing: undefined } : item))}
               />
             </div>
           ))}

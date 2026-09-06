@@ -7,6 +7,22 @@ export interface TerminalTab {
 
 export const TERMINAL_TABS_KEY = "pi-web:terminal-tabs";
 
+/**
+ * [aiti] T2 接管：唤起 aiti-cmd 工作区终端（shell 由 aiti-cmd 承载：沙箱/审计/虚拟键盘/
+ * 24h 会话）。aiti-cmd 未加载时返回 false（调用方展示缺席提示），不抛错。
+ */
+export function openAitiCmdShell(cwd: string): boolean {
+  if (typeof window === "undefined") return false;
+  const api = (window as unknown as { __aitiCmd?: { openShell?: (cwd: string, name?: string) => unknown } }).__aitiCmd;
+  if (!api || typeof api.openShell !== "function") return false;
+  try {
+    api.openShell(cwd, "bash");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function newTerminalTab(cwd: string): TerminalTab {
   const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");
   return { id, cwd };
