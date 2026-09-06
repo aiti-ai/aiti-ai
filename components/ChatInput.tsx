@@ -2301,7 +2301,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     [isStreaming, onSteer, onFollowUp, onAbort, slashMenuOpen, slashQuery, displayedSlashCommands, slashActiveIndex, applySlashCommand, sendQueued, handleSend, getNextSlashIndex, atMenuOpen, atQuery, atMatches, atActiveIndex, applyAtCompletion, historyMenuOpen, inputHistory, historyActiveIndex, applyHistoryInput, applyHistoryNav, navigateRecalled, handleRecallOne, queuedMessages, value]
   );
 
-  const handleInput = resizeTextarea;
+  // onInput 只做高度量测（上游语义）——绝不可复用 resizeTextarea：其中含非受控写值同步
+  // （state 滞后于 DOM 的输入现场会把用户刚敲的字清掉，React onChange 随之丢失）。
+  const handleInput = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    ta.style.height = "auto";
+    if (ta.value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+  }, []);
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
     if (compact) return;

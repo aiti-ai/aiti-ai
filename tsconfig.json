@@ -52,7 +52,9 @@
     ".next-31142/types/**/*.ts",
     ".next-31142/dev/types/**/*.ts",
     ".next-e2e/dev/types/**/*.ts",
-    ".next-e2e/dev/dev/types/**/*.ts"
+    ".next-e2e/dev/dev/types/**/*.ts",
+    ".next-merge-smoke/types/**/*.ts",
+    ".next-merge-smoke/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"
