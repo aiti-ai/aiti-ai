@@ -424,6 +424,9 @@ function PiWebTitle() {
 export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, onOpenById, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenFolder, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, fileExplorerRef: fileExplorerRefProp, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
+  // 「项目 / Projects」区块接管：session-manager SidebarDock（sidebarProjects 有 items 即接管；缺席回退原版）
+  const projectsSlotItems = useExtSlotItems("sidebarProjects");
+  const projectsTakeover = projectsSlotItems.length > 0;
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sessionListVersion, setSessionListVersion] = useState<number | null>(null);
@@ -460,13 +463,6 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
   const [sessionSearchQuery, setSessionSearchQuery] = useState("");
-  // 「项目 / Projects」区块：session-manager SidebarDock 接管（sidebarProjects 有 items 即接管；默认展开）
-  const projectsSlotItems = useExtSlotItems("sidebarProjects");
-  const projectsTakeover = projectsSlotItems.length > 0;
-  const [projectsOpen, setProjectsOpen] = useState(() => {
-    try { return localStorage.getItem("pi-web:sidebar-projects-collapsed") !== "1"; }
-    catch { return true; }
-  });
   const sessionSearchActive = sessionSearchOpen && Boolean(sessionSearchQuery.trim());
   const [changesCount, setChangesCount] = useState(0);
   const [changesCollapsed, setChangesCollapsed] = useState(true);
@@ -1189,128 +1185,11 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   // Build parent-child tree within the filtered set
   const sessionTree = buildSessionTree(sessionsForTree);
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      {customPathOpen && (
-        <DirectoryPicker
-          initialPath={customPathValue}
-          busy={customPathValidating}
-          error={customPathError}
-          onCancel={() => {
-            setCustomPathOpen(false);
-            setCustomPathError(null);
-          }}
-          onSelect={(path) => void commitCustomPath(path)}
-        />
-      )}
-      {/* Header */}
-      <div
-        style={{
-          padding: "12px 10px 10px",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-          <PiWebTitle />
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
-              onClick={handleNewSession}
-              disabled={!selectedCwd}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                background: "var(--bg-hover)",
-                border: "1px solid var(--border)",
-                color: selectedCwd ? "var(--text-muted)" : "var(--text-dim)",
-                cursor: selectedCwd ? "pointer" : "not-allowed",
-                height: 32,
-                paddingLeft: 10,
-                paddingRight: 12,
-                borderRadius: 7,
-                fontSize: 12,
-                fontWeight: 500,
-                letterSpacing: "-0.01em",
-                flexShrink: 0,
-                transition: "background 0.12s, color 0.12s, border-color 0.12s",
-              }}
-             title={selectedCwd ? t("sidebar.newSessionTitle", { path: selectedCwd }) : t("sidebar.selectProject")}
-              onMouseEnter={(e) => {
-                if (!selectedCwd) return;
-                e.currentTarget.style.background = "var(--bg-selected)";
-                e.currentTarget.style.color = "var(--accent)";
-                e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "var(--bg-hover)";
-                e.currentTarget.style.color = selectedCwd ? "var(--text-muted)" : "var(--text-dim)";
-                e.currentTarget.style.borderColor = "var(--border)";
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                <line x1="6" y1="1" x2="6" y2="11" />
-                <line x1="1" y1="6" x2="11" y2="6" />
-              </svg>
-              {t("sidebar.new")}
-            </button>
-            <button
-              onClick={() => loadSessions(false, true)}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center",
-                background: sessionRefreshDone ? "rgba(74,222,128,0.18)" : "var(--bg-hover)",
-                border: `1px solid ${sessionRefreshDone ? "rgba(74,222,128,0.4)" : "var(--border)"}`,
-                color: sessionRefreshDone ? "#4ade80" : "var(--text-muted)",
-                cursor: "pointer",
-                width: 32, height: 32,
-                borderRadius: 7,
-                padding: 0,
-                flexShrink: 0,
-                transition: "background 0.3s, color 0.3s, border-color 0.3s",
-              }}
-              onMouseEnter={(e) => {
-                if (sessionRefreshDone) return;
-                e.currentTarget.style.background = "var(--bg-selected)";
-                e.currentTarget.style.color = "var(--accent)";
-                e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
-              }}
-              onMouseLeave={(e) => {
-                if (sessionRefreshDone) return;
-                e.currentTarget.style.background = "var(--bg-hover)";
-                e.currentTarget.style.color = "var(--text-muted)";
-                e.currentTarget.style.borderColor = "var(--border)";
-              }}
-              title={t("sidebar.refresh")}
-            >
-              {sessionRefreshDone ? (
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
-                </svg>
-              ) : (
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                  <path d="M3 3v5h5" />
-                </svg>
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSessionSearchOpen((open) => !open);
-                setWtDropdownOpen(false);
-              }}
-              title={t("sidebar.toggleSessionSearch")}
-              aria-label={t("sidebar.toggleSessionSearch")}
-              aria-expanded={sessionSearchOpen}
-              aria-controls="session-search-input"
-              className={`flex h-[32px] w-[32px] shrink-0 cursor-pointer items-center justify-center rounded-[7px] border border-border hover:bg-bg-selected focus-visible:outline-2 focus-visible:outline-accent ${sessionSearchOpen ? "bg-bg-selected text-accent" : "bg-bg-hover text-text-muted"}`}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" />
-              </svg>
-            </button>
-          </div>
-          <ExtSlot name="sidebar" />
-        </div>
-
+  // ── 项目区（原版 JSX 原样提取，仅移动位置）：「项目 / Projects」接管分派复用 ──
+  // session-manager SidebarDock 注册 sidebarProjects → 接管折叠头+picker+worktree+列表（extra 透传数据）；
+  // 无接管 → Header 内 picker 块 + 列表原样直出（可回退）。文件区/Header 恒宿主渲染。
+  const projectPickerBlock = (
+    <>
         {/* CWD picker */}
         <div ref={dropdownRef} style={{ position: "relative" }}>
           <button
@@ -1529,7 +1408,6 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
               />
           </AnimatedDropdown>
         </div>
-
         {sessionSearchOpen && (
           <input
             id="session-search-input"
@@ -1549,7 +1427,6 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
             className="mt-[6px] block h-[29px] w-full min-w-0 rounded-[7px] border border-border bg-bg px-[10px] text-xs text-text focus:outline-2 focus:outline-accent"
           />
         )}
-
         {/* Worktree switcher — shown only for git projects at a checkout top
             level (repo subdirs keep their own project identity, so switching
             from them would jump projects). Rendered whenever the selected cwd
@@ -1901,51 +1778,11 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
             <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{inactiveWorktreeSelector.label}</span>
           </button>
         )}
-      </div>
-
-      {/* 项目 / Projects 区块：session-manager SidebarDock 接管（sidebarProjects 无 items 回退原版，保证可回退）；
-          默认展开；persist pi-web:sidebar-projects-collapsed（键存「折叠」语义） */}
-      {projectsTakeover && (
-        <div style={{ display: "flex", flexDirection: "column", flex: "1 1 0", minHeight: 0, overflow: "hidden" }}>
-          <button
-            type="button"
-            onClick={() => {
-              const next = !projectsOpen;
-              setProjectsOpen(next);
-              try { localStorage.setItem("pi-web:sidebar-projects-collapsed", next ? "0" : "1"); } catch {}
-            }}
-            style={{
-              display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
-              padding: "6px 10px", background: "none", border: "none",
-              color: "var(--text-muted)", cursor: "pointer", fontSize: 11,
-              fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", textAlign: "left",
-            }}
-          >
-            <svg
-              width="9" height="9" viewBox="0 0 10 10" fill="none"
-              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-              style={{ transform: projectsOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }}
-            >
-              <polyline points="3 2 7 5 3 8" />
-            </svg>
-            项目 / Projects
-          </button>
-          {projectsOpen && (
-            <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
-              <ExtSlot
-                name="sidebarProjects"
-                currentSession={selectedSessionId ? { id: selectedSessionId, cwd: selectedCwd ?? selectedCwdProp ?? "", name: undefined, firstMessage: undefined } : null}
-                extra={{
-                  cwd: selectedCwd ?? selectedCwdProp ?? undefined,
-                  onCwdChange: onCwdChange,
-                }}
-              />
-            </div>
-          )}
-        </div>
-      )}
-      {!projectsTakeover && (
-      <>{/* Session list */}
+    </>
+  );
+  const projectList = (
+    <>
+      {/* Session list */}
       <SessionSearch open={sessionSearchOpen} query={sessionSearchQuery} refreshKey={sessionListVersion} selectedSessionId={selectedSessionId} onSelectSession={handleSelectSessionFromList}>
       <div
         ref={listScrollRef}
@@ -2012,7 +1849,168 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
         })()}
       </div>
       </SessionSearch>
-      </>
+    </>
+  );
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {customPathOpen && (
+        <DirectoryPicker
+          initialPath={customPathValue}
+          busy={customPathValidating}
+          error={customPathError}
+          onCancel={() => {
+            setCustomPathOpen(false);
+            setCustomPathError(null);
+          }}
+          onSelect={(path) => void commitCustomPath(path)}
+        />
+      )}
+      {/* Header */}
+      <div
+        style={{
+          padding: "12px 10px 10px",
+          borderBottom: "1px solid var(--border)",
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <PiWebTitle />
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              onClick={handleNewSession}
+              disabled={!selectedCwd}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                background: "var(--bg-hover)",
+                border: "1px solid var(--border)",
+                color: selectedCwd ? "var(--text-muted)" : "var(--text-dim)",
+                cursor: selectedCwd ? "pointer" : "not-allowed",
+                height: 32,
+                paddingLeft: 10,
+                paddingRight: 12,
+                borderRadius: 7,
+                fontSize: 12,
+                fontWeight: 500,
+                letterSpacing: "-0.01em",
+                flexShrink: 0,
+                transition: "background 0.12s, color 0.12s, border-color 0.12s",
+              }}
+             title={selectedCwd ? t("sidebar.newSessionTitle", { path: selectedCwd }) : t("sidebar.selectProject")}
+              onMouseEnter={(e) => {
+                if (!selectedCwd) return;
+                e.currentTarget.style.background = "var(--bg-selected)";
+                e.currentTarget.style.color = "var(--accent)";
+                e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "var(--bg-hover)";
+                e.currentTarget.style.color = selectedCwd ? "var(--text-muted)" : "var(--text-dim)";
+                e.currentTarget.style.borderColor = "var(--border)";
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                <line x1="6" y1="1" x2="6" y2="11" />
+                <line x1="1" y1="6" x2="11" y2="6" />
+              </svg>
+              {t("sidebar.new")}
+            </button>
+            <button
+              onClick={() => loadSessions(false, true)}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: sessionRefreshDone ? "rgba(74,222,128,0.18)" : "var(--bg-hover)",
+                border: `1px solid ${sessionRefreshDone ? "rgba(74,222,128,0.4)" : "var(--border)"}`,
+                color: sessionRefreshDone ? "#4ade80" : "var(--text-muted)",
+                cursor: "pointer",
+                width: 32, height: 32,
+                borderRadius: 7,
+                padding: 0,
+                flexShrink: 0,
+                transition: "background 0.3s, color 0.3s, border-color 0.3s",
+              }}
+              onMouseEnter={(e) => {
+                if (sessionRefreshDone) return;
+                e.currentTarget.style.background = "var(--bg-selected)";
+                e.currentTarget.style.color = "var(--accent)";
+                e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+              }}
+              onMouseLeave={(e) => {
+                if (sessionRefreshDone) return;
+                e.currentTarget.style.background = "var(--bg-hover)";
+                e.currentTarget.style.color = "var(--text-muted)";
+                e.currentTarget.style.borderColor = "var(--border)";
+              }}
+              title={t("sidebar.refresh")}
+            >
+              {sessionRefreshDone ? (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSessionSearchOpen((open) => !open);
+                setWtDropdownOpen(false);
+              }}
+              title={t("sidebar.toggleSessionSearch")}
+              aria-label={t("sidebar.toggleSessionSearch")}
+              aria-expanded={sessionSearchOpen}
+              aria-controls="session-search-input"
+              className={`flex h-[32px] w-[32px] shrink-0 cursor-pointer items-center justify-center rounded-[7px] border border-border hover:bg-bg-selected focus-visible:outline-2 focus-visible:outline-accent ${sessionSearchOpen ? "bg-bg-selected text-accent" : "bg-bg-hover text-text-muted"}`}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" />
+              </svg>
+            </button>
+          </div>
+          <ExtSlot name="sidebar" />
+        </div>
+
+        {/* 项目区接管分派：sidebarProjects 有 items → 由扩展 SidebarDock 渲染（含折叠头），宿主 picker 块让位 */}
+        {projectsTakeover ? null : projectPickerBlock}
+      </div>
+
+      {/* 项目区接管分派：sidebarProjects 有 items → 扩展 SidebarDock 整块（数据经 extra 透传，契约=下方对象）；
+          无 items → 原版列表直出（可回退）。文件区恒宿主渲染。 */}
+      {projectsTakeover ? (
+        <div style={{ display: "flex", flexDirection: "column", flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", minHeight: 0, overflow: "hidden" }}>
+          <ExtSlot
+            name="sidebarProjects"
+            currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd ?? "", name: selectedSession.name, firstMessage: selectedSession.firstMessage } : null}
+            extra={{
+              cwd: selectedCwd ?? selectedCwdProp ?? undefined,
+              homeDir,
+              sessions: allSessions,
+              loading,
+              sessionListVersion,
+              runningSessionIds,
+              unreadSessionIds,
+              selectedSessionId,
+              selectedSession: selectedSession ?? null,
+              draftSession,
+              explorerOpen,
+              searchOpen: sessionSearchOpen,
+              searchQuery: sessionSearchQuery,
+              onSearchQueryChange: setSessionSearchQuery,
+              onCwdChange: setSelectedCwd,
+              onSelectSession: handleSelectSessionFromList,
+              onNewSession: handleNewSession,
+              onRenamed: () => void loadSessions(),
+              onSessionDeleted: (id: string) => { onSessionDeleted?.(id); void loadSessions(); },
+              onRefresh: () => void loadSessions(false, true),
+            }}
+          />
+        </div>
+      ) : (
+        projectList
       )}
 
       {/* File Explorer section */}
@@ -2164,7 +2162,6 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     </div>
   );
 }
-
 
 function SessionTreeItem({
   node,

@@ -94,6 +94,16 @@ export interface ExtClientContext {
    */
   createPortal: (children: ReactNode, container: Element | DocumentFragment) => ReactNode;
   /**
+   * 渲染任意宿主扩展插槽（返回宿主 ExtSlot 元素，供扩展组件嵌进自己的树——
+   * 如 SidebarDock 会话行内的 sessionRowLeading/sessionRowMeta/sessionRowActions）。
+   * 宿主组件宿主渲染，无跨 bundle 组件复制问题。
+   */
+  renderSlot?: (name: ExtSlotName, props?: { currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null; extra?: Record<string, unknown> }) => ReactNode;
+  /** 读取全部扩展 ui.provides 声明集合（静态 manifest，运行时不变；非 hook）。 */
+  getExtProvides?: () => Set<string>;
+  /** 当前 UI 语言（formatRelativeTime 等 Intl 格式化用；跟随宿主语言设置）。 */
+  getLocale?: () => string;
+  /**
    * Translate using the extension's own i18n table (from the manifest).
    * 类型契约：扩展在 LocaleNamespaceMap 声明 key 表后可获得 key 检查；未声明
    * 时退化为 string（向后兼容）。
@@ -346,6 +356,19 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     createPortal: (children, container) => createPortal(children, container),
     t: (key, params) => interpolate(tableFor()[key] ?? key, params),
     apiUrl,
+    renderSlot: (name, props) => createElement(ExtSlot, {
+      name,
+      currentSession: props?.currentSession ?? null,
+      ...(props?.extra as Record<string, unknown> ?? {}),
+    }),
+    getExtProvides: () => {
+      const provides = new Set<string>();
+      for (const meta of Object.values(getExtMetas())) {
+        for (const p of meta.provides ?? []) provides.add(p);
+      }
+      return provides;
+    },
+    getLocale: () => currentUiLocale(),
     registerItems: (slot, items) => {
       registerExtUiItems(
         slot,
