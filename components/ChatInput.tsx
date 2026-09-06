@@ -1414,15 +1414,16 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // 目标输入框挂载/换 key 后在此消费插入。带 15s 时效防陈文误投；一次性短延迟定时器
   // 避开同 commit 的 [draftKey] 清空 effect（上方的 setValue("")）与扩展恢复链，非轮询。
   useEffect(() => {
-    const w = window as any;
+    const w = window as Window & { __piWebPendingComposer?: { text?: unknown; at?: unknown } };
     const pending = w.__piWebPendingComposer;
     if (!pending || typeof pending.text !== "string" || !pending.text) return;
+    const text = pending.text; // 守卫后取出窄化值：定时器闭包里不再依赖属性窄化
     if (Date.now() - (Number(pending.at) || 0) > 15000) { delete w.__piWebPendingComposer; return; }
     const timer = setTimeout(() => {
       const cur = w.__piWebPendingComposer;
       if (!cur || cur !== pending) return; // 已被更新/消费
       delete w.__piWebPendingComposer;
-      const combined = pending.text;
+      const combined = text;
       valueRef.current = combined;
       setValue(combined);
       setAtQuery(null);

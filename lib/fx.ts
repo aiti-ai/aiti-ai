@@ -58,7 +58,8 @@ function writeDisk(file: FxFile): void {
 
 // ---------------------------------------------------------------- 拉取源
 
-type Source = { name: string; url: string; pick: (j: any) => number | null };
+type RatesPayload = { rates?: { CNY?: unknown } } | null;
+type Source = { name: string; url: string; pick: (j: RatesPayload) => number | null };
 
 const SOURCES: Source[] = [
   { name: "er-api", url: "https://open.er-api.com/v6/latest/USD", pick: (j) => num(j?.rates?.CNY) },

@@ -23,9 +23,15 @@ interface RunningBroker {
   connect: () => void;
 }
 
+/** window 上的 broker 挂点（core 与各扩展 client bundle 共享同一单例） */
+interface BrokerWindow {
+  __runningEventsBroker?: RunningBroker | null;
+  __piPageEventsClient?: { subscribePageFrames: typeof subscribePageFrames };
+}
+
 export function subscribeRunningEvents(listener: Listener): () => void {
-  const w = window as any;
-  let b = w.__runningEventsBroker as RunningBroker | undefined;
+  const w = window as BrokerWindow;
+  let b = w.__runningEventsBroker;
   if (!b) {
     b = w.__runningEventsBroker = {
       listeners: new Set<Listener>(),
@@ -69,7 +75,7 @@ export function subscribeRunningEvents(listener: Listener): () => void {
 
 /** broker 连接进入 CLOSED（EventSource 不再自动重连）时由订阅方调用：延迟重建 */
 export function reconnectRunningEvents(delayMs = 3000): void {
-  const b = (window as any).__runningEventsBroker as RunningBroker | undefined;
+  const b = (window as BrokerWindow).__runningEventsBroker;
   if (!b || b.dead || b.reconnectTimer) return;
   b.reconnectTimer = setTimeout(() => {
     b.reconnectTimer = null;
@@ -82,8 +88,8 @@ export function reconnectRunningEvents(delayMs = 3000): void {
 // 同一条连接：每个 message 帧（JSON）原样分发给 handler（frame.type 区分来源：
 // running / pf:remind / mc:avail / ed-watch …）；named heartbeat 帧不投递（判活用）。
 export function subscribePageFrames(handler: (frame: Record<string, unknown>) => void): () => void {
-  const w = window as any;
-  let b = w.__runningEventsBroker as RunningBroker | undefined;
+  const w = window as BrokerWindow;
+  let b = w.__runningEventsBroker;
   if (!b) { subscribeRunningEvents(() => {}); b = w.__runningEventsBroker; }
   const listeners = b!.frameListeners as Set<(frame: Record<string, unknown>) => void>;
   listeners.add(handler);
@@ -93,5 +99,5 @@ export function subscribePageFrames(handler: (frame: Record<string, unknown>) =>
 
 // 跨扩展浏览器端入口（plan-first / model-check / aiti-editor 等经此共享连接）
 if (typeof window !== "undefined") {
-  (window as any).__piPageEventsClient = { subscribePageFrames };
+  (window as BrokerWindow).__piPageEventsClient = { subscribePageFrames };
 }

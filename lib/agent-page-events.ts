@@ -26,4 +26,4 @@ export function addPageEventSink(send: (frame: PageFrame) => void): () => void {
 }
 
 // 扩展发布入口（服务端进程内直调）
-(globalThis as any).__piPageEvents = { publish: publishPageEvent };
+(globalThis as { __piPageEvents?: { publish: typeof publishPageEvent } }).__piPageEvents = { publish: publishPageEvent };
