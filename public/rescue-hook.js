@@ -41,7 +41,12 @@
   }
 
   function showBanner(errText) {
-    if (banner) { banner._err.textContent = errText; return; }
+    if (banner) {
+      // 仅在变化时写入：textContent 赋值即使同值也会产生 childList mutation，
+      // 会再触发下方 light observer → check() → showBanner → 无限循环锁死页面（E2E 实踩）
+      if (banner._err.textContent !== errText) banner._err.textContent = errText;
+      return;
+    }
     banner = document.createElement("div");
     banner.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;" +
       "background:#1a1a1a;color:#e8e8e8;border:1px solid #f59e0b;border-radius:10px;" +
@@ -91,21 +96,47 @@
     return t;
   }
 
-  function check() {
+  // 关键：overlay 内容渲染在 portal 的 shadowRoot 内，插入后 shadow 内容再渲染**不会**
+  // 触发 light DOM 的 MutationObserver —— 必须「light 发现 portal → 钻进 shadowRoot 再挂
+  // 一层 observer」（仍是纯事件驱动，零轮询）。
+  var shadowMo = new MutationObserver(function () { check(); });
+
+  function watchPortalShadows() {
     var portals = document.querySelectorAll("nextjs-portal");
-    if (!portals.length) { removeBanner(); return; }
     for (var i = 0; i < portals.length; i++) {
-      var text = deepText(portals[i]);
-      if (RE_BUILD_ERROR.test(text)) {
-        // 取错误首行做横幅摘要（太长的堆栈截断）
-        var line = "";
-        var m = text.match(/([^\n]*(?:doesn't exist in target module|Failed to compile|Build Error)[^\n]*)/i);
-        if (m) line = m[1].trim();
-        showBanner(line.length > 200 ? line.slice(0, 200) + "…" : (line || "Build Error"));
-        return;
-      }
+      var p = portals[i];
+      if (p.__hookShadowWatched || !p.shadowRoot) continue;
+      p.__hookShadowWatched = true;
+      shadowMo.observe(p.shadowRoot, { childList: true, subtree: true });
     }
-    removeBanner(); // portal 在但不是 Build Error（如 Console Error 弹窗）→ 不打扰
+  }
+
+  // 检测范围：只扫 dev overlay 的容器（role=dialog / data-nextjs-dialog* / nextjs-portal），
+  // **不能扫全页** —— 应用自己的聊天/会话摘要文本里可能出现 "Build Error" 字样（实测误报）。
+  // deepText 同时覆盖 light childNodes 与 shadowRoot（实测 Next 16 的 Build Error 对话框是
+  // body 下 light 元素直出；旧版本可能渲染在 portal shadow 里，双兼容）。
+  function matchLine(text) {
+    if (!text) return null;
+    // 按特异性优先级取人类可读错误行；含花括号的行是 CSS/代码样式文本，跳过
+    var patterns = [/([^\n]*doesn't exist in target module[^\n]*)/i, /([^\n]*Failed to compile[^\n]*)/i, /([^\n]*Build Error[^\n]*)/i];
+    for (var p = 0; p < patterns.length; p++) {
+      var m = text.match(patterns[p]);
+      if (!m) continue;
+      var line = m[1].trim();
+      if (/[{}]/.test(line)) continue;
+      return line.length > 200 ? line.slice(0, 200) + "…" : line;
+    }
+    return patterns.some(function (pt) { return pt.test(text); }) ? "Build Error" : null;
+  }
+
+  function check() {
+    watchPortalShadows();
+    var nodes = document.querySelectorAll('[role="dialog"], [data-nextjs-dialog], [data-nextjs-dialog-overlay], nextjs-portal');
+    if (!nodes.length) { removeBanner(); return; }
+    var line = null;
+    for (var i = 0; i < nodes.length && !line; i++) line = matchLine(deepText(nodes[i]));
+    if (line) showBanner(line);
+    else removeBanner(); // overlay 在场但非 Build Error（如 Console Error 弹窗）→ 不打扰
   }
 
   var mo = new MutationObserver(function () { check(); });
