@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🚑 急救模式 — Pi Web</title>
+<!--
+  静态急救页（crash-rescue 场景3：编译期错误 / Build Error）。
+  关键性质：public/ 静态直出，**不进 Turbopack 编译图**——app 模块图坏掉
+  （如 "Export doesn't exist in target module"）时本页依然可达，只要 pi-web
+  进程活着。global-error.tsx 是 React 边界，只能兜「渲染期」错误；编译错误
+  发生在 React 树建立之前，连 global-error 都加载不出来，只能靠本页。
+  功能对齐 global-error.tsx：POST /api/emergency 多轮急救 + 流式显示 +
+  网络中断永久重连(1s) + 模型切换 + 错误复制。纯 vanilla，无任何依赖。
+  入口：rescue-hook.js（dev overlay Build Error 横幅，?err= 带错误文本）。
+-->
+<style>
+  * { box-sizing: border-box; }
+  html, body { overflow: auto !important; height: auto; min-height: 100vh; overflow-x: hidden; }
+  body { margin: 0; background: #1a1a1a; color: #e8e8e8; font: 14px/1.5 system-ui, sans-serif; }
+  .wrap { max-width: 640px; width: 100%; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { margin: 0 0 8px; font-size: 20px; }
+  .sub { margin: 0 0 8px; font-size: 13px; color: #9ca3af; flex: 1; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  button { cursor: pointer; border-radius: 6px; font-size: 12px; padding: 4px 10px; }
+  .btn-dark { background: #333; color: #e8e8e8; border: 1px solid #444; }
+  .btn-amber { background: #f59e0b; color: #1a1a1a; border: none; font-weight: 600; }
+  .btn-amber:disabled { opacity: 0.5; cursor: default; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-all; overflow-wrap: break-word; max-width: 100%; font-size: 12px; line-height: 1.5; font-family: monospace; }
+  .errbox { margin: 0 0 16px; padding: 10px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.4); border-radius: 8px; color: #f59e0b; max-height: 160px; overflow: auto; }
+  #log { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; max-height: 50vh; overflow-y: auto; }
+  .msg { padding: 6px 8px; border-radius: 6px; }
+  .msg-u { border-left: 3px solid #444; background: rgba(255,255,255,0.03); }
+  .msg-a { border-left: 3px solid #f59e0b; background: rgba(245,158,11,0.05); }
+  .bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .hint { font-size: 12px; color: #9ca3af; flex-shrink: 0; }
+  select, input[type=text] { padding: 5px 8px; font-size: 12px; background: #242424; color: #e8e8e8; border: 1px solid #444; border-radius: 6px; outline: none; }
+  #modelManual { flex: 1; min-width: 150px; }
+  #input { flex: 1; min-width: 0; padding: 8px 10px; font-size: 13px; background: #242424; color: #e8e8e8; border: 1px solid #444; border-radius: 6px; outline: none; }
+  .sid { font-size: 11px; color: #666; margin-left: 8px; font-family: monospace; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🚑 急救模式（编译错误 / 页面崩溃）</h1>
+  <div class="row">
+    <p class="sub">应用编译或渲染已崩，此页面不依赖应用代码。下面发指令给后台 AI（独立会话，含 aiti-configs 工具），让它定位 / 回滚 / 修复。</p>
+    <button class="btn-dark" id="copyErr">复制错误</button>
+  </div>
+  <pre class="errbox" id="errbox">（未携带错误详情）</pre>
+  <div id="log"></div>
+  <div class="bar">
+    <span class="hint">模型:</span>
+    <span id="modelSel" style="display:flex;flex:1;gap:8px;align-items:center;min-width:0;">
+      <select id="modelSelect" style="flex:1;min-width:150px;"><option value="">默认</option></select>
+      <button class="btn-dark" id="modelToggle" style="padding:4px 8px;font-size:11px;white-space:nowrap;">手动</button>
+    </span>
+    <input type="text" id="modelManual" placeholder="provider|modelId（如 openai|gpt-4o）" style="display:none;">
+    <span class="sid" id="sid">sid: none</span>
+  </div>
+  <div class="row">
+    <input type="text" id="input" placeholder="急救指令（Enter 发送，可多轮）…">
+    <button class="btn-amber" id="send" style="padding:8px 16px;font-size:13px;">发送</button>
+    <button class="btn-dark" id="back" style="padding:8px 16px;font-size:13px;">返回应用</button>
+  </div>
+</div>
+<script>
+(function () {
+  "use strict";
+  // base 计算：/dev/rescue.html → /dev；/rescue.html → ""（生产无 basePath 同样可用）
+  var BASE = location.pathname.replace(/\/+$/, "").replace(/\/rescue\.html$/, "");
+
+  var $ = function (id) { return document.getElementById(id); };
+  var errbox = $("errbox"), log = $("log"), input = $("input"), sendBtn = $("send");
+  var sid = null, cur = "", abortCtrl = null;
+
+  // ---- 错误详情（?err= 由 rescue-hook 跳转时带上）----
+  var errText = "";
+  try { errText = new URLSearchParams(location.search).get("err") || ""; } catch (e) { /* ignore */ }
+  if (errText) errbox.textContent = errText;
+  $("copyErr").onclick = async function () {
+    try { await navigator.clipboard.writeText(errText); } catch (e) {
+      var ta = document.createElement("textarea"); ta.value = errText; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch (e2) {} document.body.removeChild(ta);
+    }
+    $("copyErr").textContent = "已复制 ✓";
+    setTimeout(function () { $("copyErr").textContent = "复制错误"; }, 1600);
+  };
+
+  // ---- 模型选择（对齐 global-error：/api/models 下拉，失败兑底手动输入）----
+  var mods = [], modelsFailed = false, mOpen = false;
+  var modelSelect = $("modelSelect"), modelManual = $("modelManual"), modelToggle = $("modelToggle");
+  fetch(BASE + "/api/models").then(function (r) { return r.json(); }).then(function (d) {
+    mods = Array.isArray(d && d.modelList) ? d.modelList : [];
+    var dm = d && d.defaultModel;
+    if (mods.length === 0) { modelsFailed = true; }
+    mods.forEach(function (m) {
+      var o = document.createElement("option");
+      o.value = m.provider + "|" + m.id;
+      o.textContent = (m.name || m.id) + "（" + m.provider + "）";
+      if (dm && dm.provider === m.provider && dm.modelId === m.id) o.selected = true;
+      modelSelect.appendChild(o);
+    });
+    if (modelsFailed) syncModelUi();
+  }).catch(function () { modelsFailed = true; syncModelUi(); });
+  function parseModel(s) {
+    var i = s.indexOf("|"); if (i < 0) return null;
+    var p = s.slice(0, i).trim(), m = s.slice(i + 1).trim();
+    return p && m ? { provider: p, modelId: m } : null;
+  }
+  function selModel() { return (mOpen || modelsFailed) ? parseModel(modelManual.value) : parseModel(modelSelect.value); }
+  function syncModelUi() {
+    modelSelect.style.display = (modelsFailed || mOpen) ? "none" : "";
+    modelManual.style.display = (modelsFailed || mOpen) ? "" : "none";
+    modelToggle.textContent = mOpen ? "列表" : "手动";
+  }
+  modelToggle.onclick = function () { mOpen = !mOpen; syncModelUi(); };
+
+  // ---- 急救消息（POST /api/emergency，流式追加；网络中断永久重连 1s，对齐 global-error）----
+  function addMsg(role, text) {
+    var p = document.createElement("pre");
+    p.className = "msg " + (role === "u" ? "msg-u" : "msg-a");
+    p.textContent = text;
+    log.appendChild(p);
+    log.scrollTop = log.scrollHeight;
+  }
+  function showCur(text) {
+    var old = document.getElementById("curStream");
+    if (!text) { if (old) old.remove(); return; }
+    if (!old) { old = document.createElement("pre"); old.id = "curStream"; old.className = "msg msg-a"; log.appendChild(old); }
+    old.textContent = text;
+    log.scrollTop = log.scrollHeight;
+  }
+  function isRetriableNetworkErr(e) {
+    var m = (e instanceof Error ? e.message : String(e)).toLowerCase();
+    if (/^\d{3}\s|quota exceeded|invalid .*model|authentication ?failed|unauthorized|forbidden|not found|deprecated|rate limit|429/.test(m)) return false;
+    return /network\s*error|failed to fetch|abort|err_http2|err_internet|err_connection|err_incomplete|connection ?(lost|closed|reset)|socket ?error|empty ?response|timeout|timed out|disconnect/.test(m);
+  }
+  function attempt(text, tryNo) {
+    var body = { message: text };
+    if (sid) body.sessionId = sid;
+    else {
+      body.errors = [{ message: errText || "(编译/运行时错误，详情见页面)", stack: "", extId: "rescue.html" }];
+      var m = selModel(); if (m) body.model = m;
+    }
+    return fetch(BASE + "/api/emergency", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: abortCtrl.signal,
+    }).then(function (r) {
+      var s = r.headers.get("x-session-id");
+      if (s) { sid = s; $("sid").textContent = "sid: " + s; }
+      if (!r.ok) {
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          throw new Error(j && j.error ? j.error : "HTTP " + r.status);
+        });
+      }
+      var reader = r.body.getReader(), dec = new TextDecoder(), acc = "";
+      function pump() {
+        return reader.read().then(function (chunk) {
+          if (chunk.done) {
+            acc += dec.decode();
+            addMsg("a", acc || "(无输出)");
+            showCur("");
+            return;
+          }
+          acc += dec.decode(chunk.value, { stream: true });
+          showCur(acc);
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (e) {
+      if (abortCtrl && abortCtrl.signal.aborted) return;
+      if (isRetriableNetworkErr(e)) {
+        showCur((cur || "") + "… 连接中断，永久重连中（间隔 1s）");
+        return new Promise(function (res) { setTimeout(res, 1000); }).then(function () {
+          if (abortCtrl && abortCtrl.signal.aborted) return;
+          return attempt(text, tryNo + 1);
+        });
+      }
+      var msg = e instanceof Error ? e.message : String(e);
+      addMsg("a", "[错误] " + msg.substring(0, 80) + (msg.length > 80 ? "..." : ""));
+    });
+  }
+  function send() {
+    var text = input.value.trim();
+    if (!text) return;
+    if (abortCtrl) { try { abortCtrl.abort(); } catch (e) {} }
+    abortCtrl = new AbortController();
+    addMsg("u", text);
+    input.value = "";
+    cur = ""; showCur("");
+    attempt(text, 0);
+  }
+  sendBtn.onclick = send;
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
+  // ---- 返回应用（修复后；未修复会回到 overlay，hook 会再次引导回来）----
+  $("back").onclick = function () { location.href = BASE + "/"; };
+})();
+</script>
+</body>
+</html>

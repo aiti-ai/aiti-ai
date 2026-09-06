@@ -78,6 +78,10 @@ export default function RootLayout({
       <body translate="no" className="notranslate" suppressHydrationWarning>
         {children}
         <PwaRegistration />
+        {/* crash-rescue 场景③（编译期错误）：dev overlay Build Error → 引导进 /rescue.html（public/ 静态页，
+            不进编译图，模块图坏时依然可达）。仅监听 dev overlay（<nextjs-portal>），prod 天然惰性。
+            全新加载时 500 错误页不含本 layout，由 nginx /dev location sub_filter 注入同一脚本兑底。 */}
+        <script src={withBasePath("/rescue-hook.js")} async />
       </body>
     </html>
   );
