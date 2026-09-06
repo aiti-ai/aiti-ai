@@ -245,6 +245,7 @@ export type ExtSlotName =
   | "sessionRowActions"
   | "sessionRowLeading"
   | "sessionRowMeta"  // 会话行内 meta（转圈/消息数所在第二行末尾）：如 aiti-plan-first 方案标 + tags
+  | "sidebarExplorerDock" // 侧栏文件区下方停靠插槽（dock 方案 §4.2：折叠头 + 垂直并列，max-height 45%；无 items 不渲染）
   | "dialogs"
   | "banners"
   | "pages"
@@ -268,6 +269,8 @@ export type ExtSlotName =
                       //   未注册时核心原生双栏兜底
   | "settingsAgentsFeature" // 设置 Agents 页顶部 feature 区块接管（aiti-subagents：pi-subagents 引擎横幅 +
                       //   「打开子代理舰队」入口）；未注册时核心原生「内置子代理」开关区兜底
+  | "settingsAgents"  // 设置「子代理」页签整页接管（aiti-subagents）：扩展注册后替换原生 AgentsConfig；
+                      //   未注册时核心原生双栏兜底（settingsModels 同款跳板范式）
   | "terminalDock" // 工作区终端页签内容接管（aiti-cmd：右侧文件区 terminal tab 真接管——
                       //   页签内直接渲染扩展终端视图；dock 方案 docs/aiti-web-ext-float-dock-plan.md
                       //   的 terminal 专项先行版：tab⇄弹窗单实例二选一，双向占位）；未注册时核心引导页兜底
@@ -341,6 +344,18 @@ export interface SettingsAgentsFeatureSlotProps {
   sessionId: string | null;
 }
 
+/** settingsAgents 插槽 props（设置「子代理」页签整页接管）。 */
+export interface SettingsAgentsSlotProps {
+  /** 当前会话（设置面板是实例级而非会话级，宿主恒传 null——与 ExtRenderProps 同形留作扩展）。 */
+  currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
+  /** 当前工作目录（Agents 页实例级 cwd；扩展可据以展示/过滤项目级定义）。 */
+  cwd: string;
+  /** 当前会话（新建/未选时 null）。 */
+  sessionId: string | null;
+  /** 关闭设置面板（扩展自行决定是否提供关闭入口）。 */
+  onClose: () => void;
+}
+
 /** terminalDock 插槽 props（工作区终端页签内容接管）。 */
 export interface TerminalDockSlotProps {
   currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
@@ -369,6 +384,8 @@ export interface ExtSlotContractMap {
   settingsModels: { props: SettingsModelsSlotProps };
   /** 设置 Agents 页顶部 feature 区块接管（aiti-subagents）。 */
   settingsAgentsFeature: { props: SettingsAgentsFeatureSlotProps };
+  /** 设置「子代理」页签整页接管（aiti-subagents）。 */
+  settingsAgents: { props: SettingsAgentsSlotProps };
   /** 工作区终端页签内容接管（aiti-cmd）。 */
   terminalDock: { props: TerminalDockSlotProps };
 }

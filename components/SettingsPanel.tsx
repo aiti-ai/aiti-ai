@@ -287,6 +287,10 @@ export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessi
   // 「模型」页签接管（aiti-model-wizard）：settingsModels 插槽有带 render 的项 → 渲染扩展
   // 组件替换原生 ModelsConfig（点击由扩展侧打开向导浮层）；未注册 → 原生双栏兑底零回归。
   const settingsModelsTakeover = useExtSlotItems("settingsModels").find(hasExtRender);
+  // 「子代理」页签整页接管（aiti-subagents）：settingsAgents 插槽同款跳板范式——扩展注册后
+  // 渲染扩展 Agent 管理界面替换原生 AgentsConfig（fork 语义下原生 profile 恒不生效）；
+  // 未注册 → 原生 AgentsConfig 兑底（其内部 settingsAgentsFeature 横幅机制保留）。
+  const settingsAgentsTakeover = useExtSlotItems("settingsAgents").find(hasExtRender);
   const sections: { id: SettingsSection; label: string; requiresProject: boolean }[] = [
     { id: "general", label: t("settings.general"), requiresProject: false },
     { id: "models", label: t("common.models"), requiresProject: false },
@@ -386,7 +390,13 @@ export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessi
             <ModelsConfig embedded onClose={onClose} />
           ))}
           {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
-          {cwd && sectionHost("agents", <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />)}
+          {cwd && sectionHost("agents", settingsAgentsTakeover ? (
+            <ExtItemBoundary extId={settingsAgentsTakeover.extId} slot="settingsAgents" itemId={settingsAgentsTakeover.id}>
+              <settingsAgentsTakeover.render currentSession={null} cwd={cwd} sessionId={sessionId} onClose={onClose} />
+            </ExtItemBoundary>
+          ) : (
+            <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />
+          ))}
           {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />)}
         </main>
       </div>
