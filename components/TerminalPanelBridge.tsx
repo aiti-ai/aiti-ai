@@ -17,6 +17,8 @@ interface Props {
   active: boolean;
   /** 页签关闭收尾（本地移除即可——shell 生命周期归 aiti-cmd，core 无 PTY 可关） */
   onClosed: () => void;
+  /** 透传 terminalDock.openShellTab：扩展「＋ 新建」→ 同 cwd 强制新开 shell 页签 */
+  onOpenShellTab?: (cwd: string) => void;
 }
 
 /**
@@ -31,7 +33,7 @@ interface Props {
  * - sessionStorage 会话记忆语义不变（restored 恢复页签不静默起 shell，由扩展出
  *   「接管到页签」按钮）。
  */
-export function TerminalPanelBridge({ tab, active, onClosed }: Props) {
+export function TerminalPanelBridge({ tab, active, onClosed, onOpenShellTab }: Props) {
   const { t } = useI18n();
   // 页签关闭收尾统一在宿主处理（✕/restart → 移除页签；扩展经 onClosed 感知释放归属）。
   // 必须在 takeover early-return 之前调 hooks（Rules of Hooks）。
@@ -54,6 +56,7 @@ export function TerminalPanelBridge({ tab, active, onClosed }: Props) {
             active={active}
             restored={Boolean(tab.restored)}
             onClosed={onClosed}
+            openShellTab={onOpenShellTab}
           />
         </ExtItemBoundary>
       </section>

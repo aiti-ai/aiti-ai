@@ -245,7 +245,7 @@ export type ExtSlotName =
   | "sessionRowActions"
   | "sessionRowLeading"
   | "sessionRowMeta"  // 会话行内 meta（转圈/消息数所在第二行末尾）：如 aiti-plan-first 方案标 + tags
-  | "sidebarExplorerDock" // 侧栏文件区下方停靠插槽（dock 方案 §4.2：折叠头 + 垂直并列，max-height 45%；无 items 不渲染）
+  | "sidebarProjects" // 左栏「项目 / Projects」会话列表整块接管（session-manager SidebarClone，dock 方案项目区形态）
   | "dialogs"
   | "banners"
   | "pages"
@@ -369,6 +369,8 @@ export interface TerminalDockSlotProps {
   restored: boolean;
   /** 页签关闭收尾（✕/restart 时 TabBar 移除页签；扩展应释放该 tabId 的归属记录）。 */
   onClosed: () => void;
+  /** 新建 shell 页签（扩展「＋ 新建」：同 cwd 强制新 tab 不复用；缺席时扩展隐藏入口）。 */
+  openShellTab?: (cwd: string) => void;
 }
 
 export interface ExtSlotContractMap {
@@ -388,8 +390,8 @@ export interface ExtSlotContractMap {
   settingsAgents: { props: SettingsAgentsSlotProps };
   /** 工作区终端页签内容接管（aiti-cmd）。 */
   terminalDock: { props: TerminalDockSlotProps };
-  /** 左栏「项目 / Projects」会话列表接管（session-manager：数据/渲染全扩展，cwd 由宿主传入）。 */
-  sidebarProjects: { props: { cwd?: string } };
+  // sidebarProjects：SessionSidebar 整栏接管（session-manager SidebarClone，props 全量透传）——
+  // 契约即 SessionSidebarProps（不进本 map，宽松对象透传）。
 }
 
 /** 从契约取插槽 props 类型（未声明 → 宽松对象）。 */
@@ -496,6 +498,8 @@ export interface ExtUiDefinition {
   sessionRowActions?: ExtUiItem[];
   /** 会话行内 meta（第二行·转圈/消息数末尾；如 aiti-plan-first 方案绑定标 + front-matter tags）。 */
   sessionRowMeta?: ExtUiItem[];
+  /** 左栏「项目 / Projects」会话列表整块接管（session-manager SidebarClone）。 */
+  sidebarProjects?: ExtUiItem[];
   dialogs?: ExtUiItem[];
   banners?: ExtUiItem[];
   pages?: ExtUiItem[];
