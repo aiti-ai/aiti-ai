@@ -20,6 +20,8 @@ interface I18nContextValue {
 }
 
 const I18nContext = createContext<I18nContextValue | null>(null);
+/** 导出供 ExtSlots（sidebarProjects 接管）：扩展 host-shim 的惰性 context 解析到本真 context。 */
+export { I18nContext };
 
 function getMessages(): Record<string, Record<string, string>> {
   return Object.fromEntries(getSupportedLocales().flatMap((id) => {
