@@ -194,11 +194,14 @@ export function dispatchChatSend(text: string, mode: "steer" | "followUp" | "que
 }
 
 // 段落点击接管 handler store（扩展注册；MarkdownBody 点击段落时广播）
-const paragraphClickHandlers: ParagraphClickHandler[] = [];
+// 注意：必须换新数组引用（不可原地 push）——useSyncExternalStore 以 getSnapshot 引用
+// 判变；扩展 client 动态加载晚于消息首渲染时（如刷新后立即进会话），原地 push 会让
+// 已渲染的段落永不重渲染包装（点击死区）。
+let paragraphClickHandlers: ParagraphClickHandler[] = [];
 const EMPTY_PCLICK: ParagraphClickHandler[] = [];
 const paragraphClickListeners = new Set<() => void>();
 function registerParagraphClick(h: ParagraphClickHandler) {
-  paragraphClickHandlers.push(h);
+  paragraphClickHandlers = [...paragraphClickHandlers, h];
   for (const l of paragraphClickListeners) l();
 }
 export function useParagraphClickHandlers(): ParagraphClickHandler[] {
