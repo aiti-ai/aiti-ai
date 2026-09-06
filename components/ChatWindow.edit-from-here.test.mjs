@@ -18,6 +18,23 @@ test("re-marks a different message by clearing the previous pending prefill", ()
   assert.match(source, /if \(hasPending\) chatInputRef\?\.current\?\.clearInput\?\.\(\);/);
 });
 
+test("runs ai-change gates before marking; free-of-disturbance preflight comes first", () => {
+  // 2026-09 起 ai变更处置前置门挂在「从此处编辑」（fork 不再触发）：
+  // hasInput 预检必须在门之前——输入框非空本就静默中止，先弹门会让用户白答一次。
+  const gatePos = source.indexOf("await runSessionForkGates(");
+  const preflightPos = source.indexOf("if (!hasPending && chatInputRef?.current?.hasInput?.()) return;");
+  assert.ok(gatePos > -1, "gate call missing");
+  assert.ok(preflightPos > -1, "hasInput preflight missing");
+  assert.ok(preflightPos < gatePos, "preflight must run before the gate dialog");
+  assert.match(source, /const allowed = await runSessionForkGates\(\{ sessionId: sid, entryId, position: "before" \}\);/);
+  assert.match(source, /if \(!allowed\) return;/);
+});
+
+test("re-checks composer input after the gate dialog wait", () => {
+  // 回撤门是非模态浮层：等待期间用户可能已手动输入——门后复检防预填覆盖（canRestore 约定）
+  assert.match(source, /if \(!editFromHerePendingRef\.current && chatInputRef\?\.current\?\.hasInput\?\.\(\)\) return;/);
+});
+
 test("cancelling the pending mark restores the composer", () => {
   assert.match(source, /const handleCancelEditFromHere = useCallback\(\(\) => \{/);
   assert.match(source, /setEditFromHerePending\(null\);\n\s+chatInputRef\?\.current\?\.clearInput\?\.\(\);/);

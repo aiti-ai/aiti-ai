@@ -363,15 +363,18 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, sessi
   // 标记（点击「编辑从此处」）：输入框非空且无标记时不覆盖（与 replaceMessage 的 canRestore 约定一致）；
   // 已有标记时先清旧预填再标记新的（避免 composer 残留上一目标文本导致 replaceMessage 静默失效）
   // 前置门（ai变更处置）：编辑从此处 = 回退到该分支点重发 → 扩展（如 aiti-git-trace 回撤三选项）
-  // 先让用户决定是否回滚该区间文件变更；取消则中止标记（与 fork 的 gate 语义一致）。
+  // 先让用户决定是否回滚该区间文件变更；取消则中止标记（fork 新会话不动原会话，不触发门）。
   const handleEditFromHereMark = useCallback(async (entryId: string, message: UserMessage, branchPointId: string | null) => {
+    // 免打扰预检在门之前：输入框非空且无标记时本就静默中止——先弹回撤门会让用户白答一次。
+    const hasPending = editFromHerePendingRef.current != null;
+    if (!hasPending && chatInputRef?.current?.hasInput?.()) return;
     const sid = sessionIdRef.current;
     if (sid) {
       const allowed = await runSessionForkGates({ sessionId: sid, entryId, position: "before" });
       if (!allowed) return;
+      // 回撤门是非模态浮层：等待期间用户可能已手动输入——复检防预填覆盖（canRestore 约定）。
+      if (!editFromHerePendingRef.current && chatInputRef?.current?.hasInput?.()) return;
     }
-    const hasPending = editFromHerePendingRef.current != null;
-    if (!hasPending && chatInputRef?.current?.hasInput?.()) return;
     if (hasPending) chatInputRef?.current?.clearInput?.();
     setEditFromHerePending({
       entryId,

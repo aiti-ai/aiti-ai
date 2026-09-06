@@ -114,6 +114,15 @@ const GUARDS = [
       /import \{ runSessionForkGates \} from "@\/lib\/ext\/fork-gates"/,
       /await runSessionForkGates\(\{ sessionId/,                     // 标记前先问回撤，取消则中止
       /const handleEditFromHereMark = useCallback\(async /,          // 门是 async——签名演进要有测试跟着改
+      /if \(!hasPending && chatInputRef\?\.current\?\.hasInput\?\.\(\)\) return;[\s\S]*?await runSessionForkGates\(\{ sessionId/,
+                                                                      // 免打扰预检在门之前（先弹门会白答一次，2026-09 审核）
+    ],
+  },
+  {
+    name: "fork 不触发 ai变更处置门（9963a46 有意决策：新会话追加式不动原会话，无回滚诉求）",
+    file: "../hooks/useAgentSession.ts",
+    not: [
+      /runSessionForkGates\(/,                                       // 门只在「从此处编辑」（ChatWindow）；fork 重新挂门=回归旧语义，红灯强制有意识决策
     ],
   },
   {
@@ -179,7 +188,7 @@ const GUARDS = [
 for (const g of GUARDS) {
   test(`[fork-guard] ${g.name}`, async () => {
     const src = await read(g.file);
-    for (const re of g.must) {
+    for (const re of g.must ?? []) {
       assert.match(src, re, `\n  ${g.file} 缺少 fork 特性标记: ${re}\n  → 上游合并把特性丢了；按 merge-notes「冲突以我方为准」恢复我方实现，勿改本测试迁就。\n`);
     }
     for (const re of g.not ?? []) {

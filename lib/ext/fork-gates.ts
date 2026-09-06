@@ -1,11 +1,13 @@
 /**
- * sessionForkGate — 会话 fork 前置门（client 侧 handler 扩展点）。
+ * sessionForkGate — 「编辑重发」前置门（client 侧 handler 扩展点；名称沿用 fork 时代，注册 API 不变）。
  *
- * 扩展经 client ctx.registerSessionForkGate(gate) 注册；发起 fork 的调用方
- * （hooks/useAgentSession.handleFork）在发送 fork 命令前依次 await 全部 gate：
- * 任一返回 false 或抛错 → 立即取消本次 fork（后续 gate 不再执行）。
- * 全部放行才真正发起 fork。消费场景：aiti-git-trace 的「回撤前置门」——
- * fork（编辑重发/回撤）前让用户决定是否回滚该区间产生的文件变更（docs/aiti-git-trace-plan.md §5.4）。
+ * 扩展经 client ctx.registerSessionForkGate(gate) 注册；调用方
+ * （components/ChatWindow.handleEditFromHereMark）在「从此处编辑」打标记前依次 await
+ * 全部 gate：任一返回 false 或抛错 → 立即中止本次标记（后续 gate 不再执行）。
+ * 全部放行才进入标记态。消费场景：aiti-git-trace 的「回撤前置门」——编辑重发
+ * （回退到分支点重发）前让用户决定是否回滚该区间产生的文件变更（docs/aiti-git-trace-plan.md §5.4）。
+ * 注：fork（分支按钮 → useAgentSession.handleFork）自 9963a46 起有意不触发本门——
+ * 新会话追加式、不动原会话，无回滚诉求。
  *
  * 本模块零 React 依赖（lib/composer/bus.ts 同款总线模式）：注册方在扩展 client
  * bundle 的 effect 里注册并持有 disposer（HMR 重载时精确移除旧 gate）。

@@ -309,6 +309,8 @@ export interface WorkspacePickerActionsProps {
 /** modelSelector 插槽 props（聊天输入框模型按钮接管）：接管组件拿到与原生 ModelSelector
  *  同等的模型清单/选中态/切换回调，可按需渲染「打开模型向导」+ 保底快速切换。 */
 export interface ModelSelectorSlotProps {
+  /** 当前会话（新会话 composer 为 null；cwd 可能暂为空串——数据未到时不阻塞首帧）。 */
+  currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
   model: { provider: string; modelId: string } | null;
   options: { provider: string; modelId: string; name: string }[];
   /** 切换当前会话模型（原生语义，保底能力——接管组件必须保留入口，避免丢功能）。 */
@@ -320,6 +322,8 @@ export interface ModelSelectorSlotProps {
 
 /** settingsModels 插槽 props（设置「模型」页签接管）。 */
 export interface SettingsModelsSlotProps {
+  /** 当前会话（设置面板是实例级而非会话级，宿主恒传 null——与 ExtRenderProps 同形留作扩展）。 */
+  currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
   onClose: () => void;
 }
 
@@ -410,9 +414,10 @@ export interface SessionForkGateInfo {
   position: "before" | "at";
 }
 
-/** 会话 fork 前置门（aiti-git-trace 回撤前置门等）：返回 true 放行、false 或抛错取消本次 fork。
+/** 「编辑重发」前置门（aiti-git-trace 回撤三选项等）：返回 true 放行、false 或抛错取消本次标记。
  *  注册经 client ctx.registerSessionForkGate（总线在 lib/ext/fork-gates.ts，
- *  消费点 hooks/useAgentSession.handleFork）。 */
+ *  消费点 components/ChatWindow.handleEditFromHereMark「从此处编辑」标记前；
+ *  fork 新会话不动原会话，不触发本门）。 */
 export type SessionForkGate = (info: SessionForkGateInfo) => Promise<boolean>;
 
 /** 能力接管声明：扩展声明后 core 隐藏对应的内置 UI/行为，由扩展全权接管。
