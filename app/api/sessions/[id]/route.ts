@@ -18,7 +18,7 @@ import { resolveAnySession, attachIfBridged, handleModelToClient } from "@/lib/s
 import { normalizeRawMessages } from "@/lib/normalize";
 import { listProviders } from "@/lib/session/providers";
 import { resolvePlaceholderSession, removeHandle } from "@/lib/session";
-import { removePlaceholderByUuid } from "@/lib/session/placeholder";
+import { getPlaceholder, removePlaceholderByUuid } from "@/lib/session/placeholder";
 import { removeQueue } from "@/lib/queue-store";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
@@ -92,7 +92,9 @@ export async function GET(
               return typeof c === "string" ? c : "(backend session)";
             })()
           : "(backend session)";
-        const phHeader = readSessionHeader(fpEarly) as unknown as { agent?: string } | null;
+        const phHeader = readSessionHeader(fpEarly) as unknown as { agent?: string; extId?: string } | null;
+        // 站位真实标题（注册表 extId → name；open-live/回放时写入）
+        const phName = phHeader?.extId ? getPlaceholder(phHeader.extId)?.name : undefined;
         return NextResponse.json({
           sessionId: id,
           filePath: "",
@@ -100,7 +102,7 @@ export async function GET(
             path: "",
             id,
             cwd: ph.cwd ?? "",
-            name: undefined,
+            name: phName,
             created: new Date().toISOString(),
             modified: new Date().toISOString(),
             messageCount: messages.length,
@@ -153,6 +155,8 @@ export async function GET(
             messageCount: messages.length,
             firstMessage: firstText.slice(0, 80) || "(backend session)",
             transient: true,
+            // 站位真实标题（外部后端回放/接管时写入注册表）
+            ...(getPlaceholder(wrapped.id)?.name ? { name: getPlaceholder(wrapped.id)?.name } : {}),
             // 后端/agent 标签（与 getHandleSessionInfos 同款投影）：前端 loadModels
             // 靠它走 list_models 取外部模型目录 —— 缺了会选择器静默落回本地清单。
             agent: wrapped.source.includes("/") ? wrapped.source.split("/")[1] : wrapped.source,
@@ -203,7 +207,7 @@ export async function GET(
                 path: "",
                 id,
                 cwd: wrappedAfterOpen.cwd ?? "",
-                name: undefined,
+                ...(getPlaceholder(id)?.name ? { name: getPlaceholder(id)!.name } : {}),
                 created: new Date().toISOString(),
                 modified: new Date().toISOString(),
                 messageCount: messages.length,
