@@ -110,7 +110,7 @@ export async function GET(
           },
           leafId: null,
           tree: [],
-          context: { messages, entryIds: [], thinkingLevel: "off", model: null },
+          context: { messages, entryIds: [], thinkingLevel: "off", model: handleModelToClient(ph.getModel?.()) },
           totalActiveMs: 0,
         });
       }
@@ -159,7 +159,7 @@ export async function GET(
           },
           leafId: null,
           tree: [],
-          context: { messages, entryIds: [], thinkingLevel: "off", model: null },
+          context: { messages, entryIds: [], thinkingLevel: "off", model: handleModelToClient(wrapped.getModel?.()) },
           totalActiveMs: 0,
         });
       }
@@ -214,7 +214,7 @@ export async function GET(
               },
               leafId: null,
               tree: [],
-              context: { messages, entryIds: [], thinkingLevel: "off", model: null },
+              context: { messages, entryIds: [], thinkingLevel: "off", model: handleModelToClient(wrappedAfterOpen.getModel?.()) },
               totalActiveMs: 0,
             });
           }
