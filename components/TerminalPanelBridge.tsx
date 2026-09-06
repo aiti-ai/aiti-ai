@@ -2,37 +2,85 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
-import { openAitiCmdShell, type TerminalTab } from "./terminal-tab-state";
+import { useExtSlotItems, ExtItemBoundary } from "./ExtSlots";
+import { hasExtRender } from "@/lib/ext-ui-store";
+
+interface TabLike {
+  id: string;
+  cwd: string;
+  restored?: boolean;
+  closing?: "close" | "restart";
+}
 
 interface Props {
-  tab: TerminalTab;
+  tab: TabLike;
   active: boolean;
   /** 页签关闭收尾（本地移除即可——shell 生命周期归 aiti-cmd，core 无 PTY 可关） */
   onClosed: () => void;
 }
 
 /**
- * [aiti] 工作区终端页签接管桥（上游 v0.9 整合 T2）：
- * TabBar 的 terminal 页签保留（sessionStorage 会话记忆语义不变），页签内容不再渲染
- * 原版 TerminalPanel/PTY（原版实现隐藏，core 无 /api/terminal 依赖）——shell 由
- * aiti-cmd 承载（沙箱/审计/虚拟键盘/24h 会话），此处仅做唤起引导：
- *  - 首次激活自动唤起一次（restored 恢复页签除外——对齐原版「恢复不静默起 shell」语义）；
- *  - 「打开终端」按钮手动唤起 / aiti-cmd 缺席提示。
+ * [aiti] 工作区终端页签接管桥（上游 v0.9 整合 T2 → dock 真接管，结合
+ * docs/aiti-web-ext-float-dock-plan.md 的单实例思想）：
+ *
+ * - aiti-cmd 注册 `terminalDock` 插槽（真接管）：页签内**直接渲染**扩展终端视图
+ *   （xterm），不再是「引导唤起弹窗」的间接形态。渲染归属（页签 ⇄ 弹窗）由扩展侧
+ *   单实例状态机保证二选一：dock 态时弹窗内显示占位，⇲ 拉回窗口后弹窗恢复。
+ * - 扩展缺席（未装/禁用 aiti-cmd）时保留原引导页兜底（「打开终端」按钮 +
+ *   aiti-cmd 缺席提示）。
+ * - sessionStorage 会话记忆语义不变（restored 恢复页签不静默起 shell，由扩展出
+ *   「接管到页签」按钮）。
  */
 export function TerminalPanelBridge({ tab, active, onClosed }: Props) {
+  const { t } = useI18n();
+  // 页签关闭收尾统一在宿主处理（✕/restart → 移除页签；扩展经 onClosed 感知释放归属）。
+  // 必须在 takeover early-return 之前调 hooks（Rules of Hooks）。
+  useEffect(() => {
+    if (tab.closing) onClosed();
+  }, [tab.closing, onClosed]);
+  const takeover = useExtSlotItems("terminalDock").find(hasExtRender);
+  if (takeover) {
+    return (
+      <section
+        className="terminal-panel"
+        aria-label={t("terminal.title")}
+        style={{ height: "100%", display: "flex", flexDirection: "column", overflow: "hidden" }}
+      >
+        <ExtItemBoundary extId={takeover.extId} slot="terminalDock" itemId={takeover.id}>
+          <takeover.render
+            currentSession={null}
+            cwd={tab.cwd}
+            tabId={tab.id}
+            active={active}
+            restored={Boolean(tab.restored)}
+            onClosed={onClosed}
+          />
+        </ExtItemBoundary>
+      </section>
+    );
+  }
+  return <TerminalPanelFallback tab={tab} active={active} />;
+}
+
+/** 兜底引导页（aiti-cmd 缺席时）：保留原「打开终端」唤起 + 缺席提示。 */
+function TerminalPanelFallback({ tab, active }: { tab: TabLike; active: boolean }) {
   const { t } = useI18n();
   const [opened, setOpened] = useState(false);
   const [missing, setMissing] = useState(false);
   const autoRef = useRef(false);
 
-  useEffect(() => {
-    if (tab.closing) onClosed();
-  }, [tab.closing, onClosed]);
-
   const open = useCallback(() => {
-    const ok = openAitiCmdShell(tab.cwd);
-    setMissing(!ok);
-    if (ok) setOpened(true);
+    const api = (window as unknown as { __aitiCmd?: { openShell?: (cwd: string, name?: string) => unknown } }).__aitiCmd;
+    if (!api || typeof api.openShell !== "function") {
+      setMissing(true);
+      return;
+    }
+    try {
+      api.openShell(tab.cwd, "bash");
+      setOpened(true);
+    } catch {
+      setMissing(true);
+    }
   }, [tab.cwd]);
 
   useEffect(() => {

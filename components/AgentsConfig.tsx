@@ -6,6 +6,8 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SubagentProfilesResponse, SubagentSettingsResponse } from "@/lib/api-types";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type { ModelsData } from "@/lib/models-cache";
+import { ExtItemBoundary, useExtSlotItems } from "./ExtSlots";
+import { hasExtRender } from "@/lib/ext-ui-store";
 import { isSubagentProfileOverridden } from "@/lib/subagent-profile-precedence";
 import type { SubagentProfile, SubagentScope, SubagentWritableScope } from "@/lib/subagents";
 import {
@@ -168,6 +170,8 @@ export function AgentsConfig({
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [reloadNeeded, setReloadNeeded] = useState(false);
   const [reloading, setReloading] = useState(false);
+  // settingsAgentsFeature 接管项（aiti-subagents 注册后替换原生开关区）
+  const agentsFeatureTakeover = useExtSlotItems("settingsAgentsFeature").find(hasExtRender);
 
   const selected = useMemo(
     () => profiles.find((profile) => profileKey(profile) === selectedKey) ?? null,
@@ -427,26 +431,37 @@ export function AgentsConfig({
 
   return (
     <ConfigPanelShell embedded={embedded} title={t("common.agents")} subtitle={shortenPath(cwd)} closeLabel={t("agents.close")} onClose={onClose}>
+      {/* 顶部 feature 区块接管（settingsAgentsFeature 插槽，settingsModels 跳板范式）：
+          扩展（如 aiti-subagents）注册后替换原生「内置子代理」开关区；未注册时原版兑底。
+          fork 语义：引擎门控 isBuiltInSubagentsEnabled 恒 false（守护测试），开关仅存取文件。 */}
       <div className="agents-feature-setting">
-        <div className="agents-feature-copy">
-          <strong>{t("agents.builtInTitle")}</strong>
-          <span>{t("agents.builtInDescription")}</span>
-          {reloadNeeded && <span role="status" className="agents-feature-reload-notice">{t("agents.reloadRequired")}</span>}
-        </div>
-        <div className="agents-feature-actions">
-          {reloadNeeded && sessionId && (
-            <ConfigButton size="small" onClick={() => void reloadSession()} disabled={reloading || settingsSaving}>
-              {reloading ? t("agents.reloading") : t("agents.reloadSession")}
-            </ConfigButton>
-          )}
-          <ConfigSwitch
-            checked={builtInEnabled}
-            disabled={settingsLoading || reloading}
-            loading={settingsSaving}
-            label={t("agents.builtInTitle")}
-            onChange={(enabled) => void toggleBuiltInSubagents(enabled)}
-          />
-        </div>
+        {agentsFeatureTakeover ? (
+          <ExtItemBoundary extId={agentsFeatureTakeover.extId} slot="settingsAgentsFeature" itemId={agentsFeatureTakeover.id}>
+            <agentsFeatureTakeover.render currentSession={null} cwd={cwd} sessionId={sessionId ?? null} />
+          </ExtItemBoundary>
+        ) : (
+          <>
+            <div className="agents-feature-copy">
+              <strong>{t("agents.builtInTitle")}</strong>
+              <span>{t("agents.builtInDescription")}</span>
+              {reloadNeeded && <span role="status" className="agents-feature-reload-notice">{t("agents.reloadRequired")}</span>}
+            </div>
+            <div className="agents-feature-actions">
+              {reloadNeeded && sessionId && (
+                <ConfigButton size="small" onClick={() => void reloadSession()} disabled={reloading || settingsSaving}>
+                  {reloading ? t("agents.reloading") : t("agents.reloadSession")}
+                </ConfigButton>
+              )}
+              <ConfigSwitch
+                checked={builtInEnabled}
+                disabled={settingsLoading || reloading}
+                loading={settingsSaving}
+                label={t("agents.builtInTitle")}
+                onChange={(enabled) => void toggleBuiltInSubagents(enabled)}
+              />
+            </div>
+          </>
+        )}
       </div>
       <ConfigSplitView>
         <ConfigSidebar>

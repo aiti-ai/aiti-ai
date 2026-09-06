@@ -266,6 +266,11 @@ export type ExtSlotName =
                       //   未注册时核心原生下拉兜底（fileViewer 同款跳板范式）
   | "settingsModels" // 设置面板「模型」页签接管（如 aiti-model-wizard）：扩展注册后替换原生 ModelsConfig；
                       //   未注册时核心原生双栏兜底
+  | "settingsAgentsFeature" // 设置 Agents 页顶部 feature 区块接管（aiti-subagents：pi-subagents 引擎横幅 +
+                      //   「打开子代理舰队」入口）；未注册时核心原生「内置子代理」开关区兜底
+  | "terminalDock" // 工作区终端页签内容接管（aiti-cmd：右侧文件区 terminal tab 真接管——
+                      //   页签内直接渲染扩展终端视图；dock 方案 docs/aiti-web-ext-float-dock-plan.md
+                      //   的 terminal 专项先行版：tab⇄弹窗单实例二选一，双向占位）；未注册时核心引导页兜底
   ;
 
 /**
@@ -327,6 +332,30 @@ export interface SettingsModelsSlotProps {
   onClose: () => void;
 }
 
+/** settingsAgentsFeature 插槽 props（设置 Agents 页顶部 feature 区块接管）。 */
+export interface SettingsAgentsFeatureSlotProps {
+  currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
+  /** 当前工作目录（Agents 页实例级 cwd）。 */
+  cwd: string;
+  /** 当前会话（新建/未选时 null）。 */
+  sessionId: string | null;
+}
+
+/** terminalDock 插槽 props（工作区终端页签内容接管）。 */
+export interface TerminalDockSlotProps {
+  currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
+  /** 页签工作目录（shell 在此目录起）。 */
+  cwd: string;
+  /** 页签 id（terminalTabs 的 32 位 hex；归属状态机 key——同 tabId 复接同一 shell）。 */
+  tabId: string;
+  /** 页签是否激活（右栏展开且为当前 tab）。非激活时扩展可暂停渲染（TabBar 用 hidden 保持挂载）。 */
+  active: boolean;
+  /** sessionStorage 恢复的页签（原版语义：恢复不静默起 shell，由扩展出「接管」按钮）。 */
+  restored: boolean;
+  /** 页签关闭收尾（✕/restart 时 TabBar 移除页签；扩展应释放该 tabId 的归属记录）。 */
+  onClosed: () => void;
+}
+
 export interface ExtSlotContractMap {
   /** 队列面板（去 fork 化 P3）：core → ext 的 live/trash/actions 原语。
    *  契约定义在 lib/composer/queue-api.ts（含下载导出/导入解析单实现）；
@@ -338,6 +367,10 @@ export interface ExtSlotContractMap {
   modelSelector: { props: ModelSelectorSlotProps };
   /** 设置「模型」页签接管（aiti-model-wizard）。 */
   settingsModels: { props: SettingsModelsSlotProps };
+  /** 设置 Agents 页顶部 feature 区块接管（aiti-subagents）。 */
+  settingsAgentsFeature: { props: SettingsAgentsFeatureSlotProps };
+  /** 工作区终端页签内容接管（aiti-cmd）。 */
+  terminalDock: { props: TerminalDockSlotProps };
 }
 
 /** 从契约取插槽 props 类型（未声明 → 宽松对象）。 */
