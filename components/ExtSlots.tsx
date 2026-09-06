@@ -34,6 +34,7 @@ import {
   removeExtUiItems,
   subscribeExtUi,
   setExtFeatures,
+  setExtOrder,
   patchExtFeature,
   getExtFeaturesOf,
   subscribeExtFeatures,
@@ -389,6 +390,9 @@ async function fetchManifestData(): Promise<ManifestData | null> {
       registerDeclaredSlots(ext.id, ext.ui ? Object.keys(ext.ui).filter((k) => k !== "i18n" && k !== "provides" && k !== "clientDependsOn") : []);
     }
     registerExtMetas(metas);
+    // 扩展稳定顺序（manifest 清单序）：注册完成序随加载流水线交错而随机，
+    // 插槽展示序以清单序为准（ext-ui-store.getExtUiItems 排序），顶栏等不再跳动
+    setExtOrder(data.extensions.map((e) => e.id));
     // 已卸载/禁用的扩展不再出现在 manifest——清除其残留的 slot 声明，
     // 防止 pendingForSlot 把不存在的扩展列为按需加载候选。
     pruneDeclaredSlots(data.extensions.map((e) => e.id));

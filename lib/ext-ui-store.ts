@@ -96,6 +96,31 @@ export function registerExtMetas(metas: Record<string, ExtMeta>): void {
   bump();
 }
 
+// ── 扩展稳定顺序（manifest 清单序）：client bundle 的注册完成序随机（启动批量与
+//    slot 按需加载两条 materialize 流水线交错，谁先到 register 谁先进 store），
+//    store 内 items 数组序不能作为展示序——顶栏/状态条等按数组序渲染的插槽
+//    每次加载顺序都会变。host 拉到 manifest 后写入清单序（≈ 安装/注册顺序，稳定），
+//    getExtUiItems 返回前按它稳定排序；清单外的扩展（动态注册）保持注册序排最后。──
+let extOrder: Record<string, number> = {};
+
+/** 写入扩展稳定顺序（manifest extensions 数组序）。变化时 bump（重排已注册 items）。 */
+export function setExtOrder(ids: string[]): void {
+  const next: Record<string, number> = {};
+  for (let i = 0; i < ids.length; i++) next[ids[i]] = i;
+  const prevKeys = Object.keys(extOrder);
+  const changed =
+    prevKeys.length !== Object.keys(next).length ||
+    prevKeys.some((k) => extOrder[k] !== next[k]);
+  extOrder = next;
+  if (changed) bump(); // 推进 version：getExtUiItems 缓存失效 → 按新序重排
+}
+
+/** 扩展展示排序键：清单序优先；未知/无 extId 排最后（保持注册序）。 */
+function extSortKey(extId: string | undefined): number {
+  if (extId === undefined) return Number.MAX_SAFE_INTEGER - 1;
+  return extOrder[extId] ?? Number.MAX_SAFE_INTEGER;
+}
+
 export function getExtMetas(): Record<string, ExtMeta> {
   return getStore().metas;
 }
@@ -189,7 +214,13 @@ export function getExtUiItems(slot: ExtSlotName): ExtUiItemRegistered[] {
   if (!gatedCache || gatedCache.store !== store || gatedCache.version !== store.version) {
     const next: Partial<Record<ExtSlotName, ExtUiItemRegistered[]>> = {};
     for (const s of Object.keys(store.items) as ExtSlotName[]) {
-      next[s] = (store.items[s] ?? []).filter((it) => !(it.feature && it.extId && !getExtFeature(it.extId, it.feature)));
+      // 先 feature 门控过滤，再按 manifest 清单序稳定排序（注册完成序随机，见
+      // setExtOrder 注释）。带原索引兜底：同扩展内保持注册序，且不依赖引擎稳定排序。
+      const filtered = (store.items[s] ?? []).filter((it) => !(it.feature && it.extId && !getExtFeature(it.extId, it.feature)));
+      next[s] = filtered
+        .map((it, idx) => ({ it, idx }))
+        .sort((a, b) => (extSortKey(a.it.extId) - extSortKey(b.it.extId)) || (a.idx - b.idx))
+        .map((x) => x.it);
     }
     gatedCache = { store, version: store.version, items: next };
   }
