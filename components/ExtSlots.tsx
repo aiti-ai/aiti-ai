@@ -12,11 +12,17 @@
  */
 "use client";
 
-import { Component, createElement, memo, useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { Component, createElement, memo, forwardRef, createContext, useContext, useReducer, useImperativeHandle, useId, useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { apiUrl } from "@/lib/base-path";
 import { getHostApi, type OpenFileOptions, type OpenFolderOptions } from "@/lib/ext/host-api";
 import { registerComposerEnhancement } from "@/lib/composer/bus";
+import { useI18n } from "@/hooks/useI18n";
+/** SidebarClone（@/ 宿主模块链）的 react 全 alias 到 host-shim——其 useI18n 的
+ *  context 解析走 ctx.useContext → 这里缓存的宿主 useI18n() 快照（每渲染刷新）。
+ *  hook 时机：快照更新在 ExtSlotsProvider 渲染体（合法 hook 调用），
+ *  materialize（effect）只读快照，不在回调里调 hook。 */
+let extI18nSnapshot: ReturnType<typeof useI18n> | null = null;
 import type { ComposerEnhancement, RecoveryItemsProvider } from "@/lib/composer/types";
 import type { QueuePanelController } from "@/lib/composer/queue-api";
 import { registerRecoveryItemsProvider } from "@/lib/composer/recovery";
@@ -69,6 +75,16 @@ export interface ExtClientContext {
   useRef: typeof useRef;
   useCallback: typeof useCallback;
   useMemo: typeof useMemo;
+  /** SidebarClone（宿主 SessionSidebar 复制版）经 @/ alias 引入宿主组件/hooks，
+   *  这些模块的 react 全部 alias 到 host-shim —— 需在此补齐委托的真 hooks。 */
+  useContext?: <T>(ctx: T) => T;
+  useReducer?: (fn: (s: any, a: any) => any, init: any, initArg?: any) => [any, (a: any) => void];
+  useSyncExternalStore?: (sub: () => () => void, get: () => unknown, getServer?: () => unknown) => unknown;
+  useImperativeHandle?: (ref: unknown, fn: () => unknown, deps?: unknown[]) => void;
+  useId?: () => string;
+  createContext?: <T>(d: T) => { Provider: any; Consumer: any };
+  forwardRef?: <P = {}, R = any>(fn: (props: P, ref: React.Ref<R>) => ReactNode) => any;
+  memo?: <T>(fn: T) => T;
   /**
    * Render children into a DOM node outside the extension's host position
    * (React portal, typically document.body). Needed for fixed-position
@@ -312,6 +328,21 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     useRef,
     useCallback,
     useMemo,
+    // SidebarClone（宿主 SessionSidebar 复制版）经 @/ alias 引入宿主组件/hooks——
+    // 这些模块的 react 全部 alias 到 host-shim，需在此补齐委托的真 hooks
+    // host-shim 的惰性 context（createContext 在 _ctx 注入前无法创建真 context）——
+    // 标记 __smI18nCtx 的 wrapper 统一解析到宿主真 I18nContext（SidebarClone 的 useI18n 链）
+    // host-shim 惰性 context（__smI18nCtx）→ 直接返回宿主 useI18n() 当前值（t/locale 随宿主语言）
+    useContext: ((c: any) => (c && (c as any).__smI18nCtx
+      ? { t: (key: string, params?: Record<string, string | number>) => interpolate(tableFor()[key] ?? key, params), locale: currentUiLocale() }
+      : useContext(c))) as any,
+    useSyncExternalStore: ((sub: any, get: any, getServer?: any) => useSyncExternalStore(sub as any, get, getServer)) as any,
+    useReducer: ((fn: any, init: any, initArg?: any) => useReducer(fn, init, initArg as never)) as any,
+    useImperativeHandle: ((ref: any, fn: any, deps?: any) => useImperativeHandle(ref, fn, deps)) as any,
+    useId: (() => useId()) as any,
+    createContext: ((d: any) => ({ __smI18nCtx: true, defaultValue: d })) as any,
+    forwardRef: ((fn: any) => forwardRef(fn as any)) as any,
+    memo: ((fn: any) => memo(fn as any)) as any,
     createPortal: (children, container) => createPortal(children, container),
     t: (key, params) => interpolate(tableFor()[key] ?? key, params),
     apiUrl,
@@ -365,6 +396,8 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
 /** AppShell 注入的宿主能力（经 ExtSlotsProvider props；makeClientContext 包装下发）。 */
 export function ExtSlotsProvider({ children }: { children: ReactNode }) {
   const [, force] = useState(0);
+  // SidebarClone（@/ 宿主模块链）的 useI18n 经 host-shim 委托到这里——快照每渲染刷新
+  extI18nSnapshot = useI18n();
   useEffect(() => {
     void loadExtensions();
     const unsub = subscribeExtUi(() => force((v) => v + 1));

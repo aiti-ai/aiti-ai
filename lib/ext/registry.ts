@@ -61,6 +61,7 @@ const UI_SLOT_KEYS = [
   "sessionTopbar",
   "sessionRowActions",
   "sessionRowMeta",
+  "sidebarProjects", // 左栏「项目 / Projects」会话列表整块接管（session-manager SidebarClone）
   "dialogs",
   "banners",
   "pages",

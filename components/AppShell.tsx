@@ -1559,8 +1559,6 @@ export function AppShell() {
 
   // 扩展槽条目（拍平进顶栏条目列表，id 沿用 ext-ui-store 的 extId:itemId）
   const toolbarExtItems = useExtSlotItems("toolbar");
-  const sidebarProjectsExtItems = useExtSlotItems("sidebarProjects");
-  const smSidebarTakeover = sidebarProjectsExtItems.length > 0;
   const sessionTopbarExtItems = useExtSlotItems("sessionTopbar");
   // 扩展级元数据（manifest name/icon）——面板中标注扩展身份用
   const extMetas = useExtMetas();
@@ -2379,39 +2377,6 @@ export function AppShell() {
 
   const sidebarContent = (
     <>
-      {/* sidebarProjects 接管分派：session-manager SidebarClone（props 全量透传，行为零差异）
-          无接管（扩展禁用/缺席）→ 原版 SessionSidebar */}
-      {smSidebarTakeover ? (
-        <ExtSlot
-          name="sidebarProjects"
-          currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd, name: selectedSession.name, firstMessage: selectedSession.firstMessage } : null}
-          extra={{
-            selectedSessionId: selectedSession?.id ?? null,
-            selectedSession,
-            onSelectSession: handleSelectSession,
-            onNewSession: handleNewSession,
-            initialSessionId,
-            skipInitialProjectSelection: initialNavigation.requestedCwd !== null,
-            onInitialRestoreDone: handleInitialRestoreDone,
-            onOpenById: handleOpenSession,
-            refreshKey,
-            onSessionDeleted: handleSessionDeleted,
-            selectedCwd: selectedSession?.cwd ?? newSessionCwd ?? null,
-            onCwdChange: handleCwdChange,
-            onOpenFile: handleOpenFile,
-            onOpenFolder: handleOpenFolder,
-            onOpenTerminal: handleOpenTerminal,
-            explorerRefreshKey,
-            onExplorerRefresh: handleExplorerRefresh,
-            onAtMention: handleAtMention,
-            onAtMentions: handleAtMentions,
-            fileExplorerRef,
-            onBackgroundTaskDone: handleBackgroundTaskDone,
-            onRunningSessionIdsChange: handleRunningSessionIdsChange,
-            onSessionsChange: handleSessionsChange,
-          }}
-        />
-      ) : (
       <SessionSidebar
         selectedSessionId={selectedSession?.id ?? null}
         selectedSession={selectedSession}
@@ -2437,7 +2402,6 @@ export function AppShell() {
         onRunningSessionIdsChange={handleRunningSessionIdsChange}
         onSessionsChange={handleSessionsChange}
       />
-      )}
       <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
         {([
           ["models", translate("common.models")],
