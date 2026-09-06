@@ -75,7 +75,7 @@ function readSessionTail(filePath: string): SessionTail {
     let firstUser = "";
     let lastUser = "";
     let lastAssistantStopped = false;
-    for (const e of getSessionEntries(filePath) as Array<Record<string, unknown>>) {
+    for (const e of getSessionEntries(filePath) as unknown as Array<Record<string, unknown>>) {
       if (e.type === "session_info") {
         const name = (e as { name?: string }).name?.trim();
         if (name) out.title = name;
