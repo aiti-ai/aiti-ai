@@ -388,18 +388,36 @@ function PiWebTitle() {
   useEffect(() => () => { if (revertTimerRef.current) clearTimeout(revertTimerRef.current); }, []);
 
   return (
-    <button
-      onClick={handleClick}
-      style={{
-        background: "none", border: "none", padding: 0, cursor: "default",
-        fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em",
-        color: showVersion ? "var(--accent)" : "var(--text)",
-        fontFamily: "var(--font-mono)",
-        minWidth: "6ch",
-      }}
-    >
-      {display}
-    </button>
+    <span style={{ display: "inline-flex", alignItems: "baseline", gap: 3, minWidth: "6ch" }}>
+      <button
+        onClick={handleClick}
+        style={{
+          background: "none", border: "none", padding: 0, cursor: "default",
+          fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em",
+          color: showVersion ? "var(--accent)" : "var(--text)",
+          fontFamily: "var(--font-mono)",
+        }}
+      >
+        {display}
+      </button>
+      {/* 在线文档链接（aiti.pw）——点标题仍是版本号彩蛋，↗ 才是外链 */}
+      <a
+        href="https://aiti.pw/"
+        target="_blank"
+        rel="noopener noreferrer"
+        title="aiti.pw 文档"
+        aria-label="aiti.pw 文档"
+        style={{
+          fontSize: 12, lineHeight: 1, padding: "0 1px",
+          color: "var(--text-muted)", textDecoration: "none", cursor: "pointer",
+          transition: "color 0.12s",
+        }}
+        onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
+      >
+        ↗
+      </a>
+    </span>
   );
 }
 
