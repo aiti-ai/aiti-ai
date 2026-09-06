@@ -27,9 +27,8 @@
   var BASE = /^\/dev(?=\/|$)/.test(location.pathname) ? "/dev" : location.pathname.replace(/\/[^\/]*$/, "");
 
   var COUNTDOWN = 30; // 秒；给「AI 正在改文件、马上修好」的暂态留余地
-  var RE_BUILD_ERROR = /Build Error|Failed to compile|doesn't exist in target module/i;
-
   var banner = null, timer = null, left = 0;
+  // 注：原版顶部的 RE_BUILD_ERROR 变量声明已删——它从未被 check 流程引用（实际用的是 matchLine 内的 patterns）
 
   function removeBanner() {
     if (timer) { clearInterval(timer); timer = null; }
@@ -82,18 +81,27 @@
     }, 1000);
   }
 
-  // 穿透 shadow root 取文本（dev overlay 全在 shadow DOM 里）
-  function deepText(node) {
-    if (!node) return "";
-    if (node.nodeType === 3) return node.textContent || "";
-    var t = "";
+  // 穿透 shadow root 取文本（dev overlay 全在 shadow DOM 里）。
+  // 性能闸（实测踩坑）：overlay 文本可能含超大单行（devtools 内联压缩 CSS ~10万字符），
+  // 逐节点回调 + 每节点字符预算上限；配合 matchLine 的逐行线性扫描，
+  // 避免 /([^\n]*X[^\n]*)/ 对巨串全文 match 的 O(n²) 回溯（实测单次 check 卡死主线程 4~90s）。
+  // 注意：预算必须按节点独立 —— 共享预算会让文档序靠前的 portal（~10万字符）耗尽额度，
+  // 导致排在后面的真正错误对话框被跳过（漏报，2026-09-06 审核实测）。
+  var DEEP_TEXT_BUDGET = 256 * 1024; // 每节点最多扫这么多字符，Build Error 行不会藏得更深
+  function deepText(node, cb) {
+    if (!node || cb.done) return;
+    if (node.nodeType === 3) {
+      var s = node.textContent || "";
+      if (s) { cb.chars += s.length; cb.lines.push(s); if (cb.chars > DEEP_TEXT_BUDGET) cb.done = true; }
+      return;
+    }
     if (node.shadowRoot) {
       var sr = node.shadowRoot.childNodes || [];
-      for (var i = 0; i < sr.length; i++) t += deepText(sr[i]);
+      for (var i = 0; i < sr.length; i++) deepText(sr[i], cb);
+      if (cb.done) return;
     }
     var cn = node.childNodes || [];
-    for (var j = 0; j < cn.length; j++) t += deepText(cn[j]);
-    return t;
+    for (var j = 0; j < cn.length; j++) deepText(cn[j], cb);
   }
 
   // 关键：overlay 内容渲染在 portal 的 shadowRoot 内，插入后 shadow 内容再渲染**不会**
@@ -117,26 +125,46 @@
   // body 下 light 元素直出；旧版本可能渲染在 portal shadow 里，双兼容）。
   function matchLine(text) {
     if (!text) return null;
-    // 按特异性优先级取人类可读错误行；含花括号的行是 CSS/代码样式文本，跳过
-    var patterns = [/([^\n]*doesn't exist in target module[^\n]*)/i, /([^\n]*Failed to compile[^\n]*)/i, /([^\n]*Build Error[^\n]*)/i];
+    // 按特异性优先级取人类可读错误行；含花括号的行是 CSS/代码样式文本，跳过。
+    // 语义与原版对齐：pattern 外循环（特异性优先）× 行内 test（线性无回溯）。
+    // 不要用 /([^\n]*X[^\n]*)/ 对全文 match —— O(n²) 回溯，实测单次 check 卡死主线程 4~90s。
+    var lines = text.split("\n");
+    var patterns = [/doesn't exist in target module/i, /Failed to compile/i, /Build Error/i];
+    var sawAny = false;
     for (var p = 0; p < patterns.length; p++) {
-      var m = text.match(patterns[p]);
-      if (!m) continue;
-      var line = m[1].trim();
-      if (/[{}]/.test(line)) continue;
-      return line.length > 200 ? line.slice(0, 200) + "…" : line;
+      for (var i = 0; i < lines.length; i++) {
+        if (!patterns[p].test(lines[i])) continue;
+        sawAny = true;
+        var line = lines[i].trim();
+        if (/[{}]/.test(line)) break; // 该 pattern 的首个命中行是 CSS/代码样式 → 换下一个 pattern
+        return line.length > 200 ? line.slice(0, 200) + "…" : line;
+      }
     }
-    return patterns.some(function (pt) { return pt.test(text); }) ? "Build Error" : null;
+    return sawAny ? "Build Error" : null;
   }
 
+  // 防重入 + 尾随合并（保底防御；同步单线程下当前无重入路径）。
+  // 逐节点独立扫描：每节点独立预算（见上），命中即停 —— portal 在文档序靠前也不得跳过后面的 dialog。
+  var checking = false, pendingCheck = false;
   function check() {
-    watchPortalShadows();
-    var nodes = document.querySelectorAll('[role="dialog"], [data-nextjs-dialog], [data-nextjs-dialog-overlay], nextjs-portal');
-    if (!nodes.length) { removeBanner(); return; }
-    var line = null;
-    for (var i = 0; i < nodes.length && !line; i++) line = matchLine(deepText(nodes[i]));
-    if (line) showBanner(line);
-    else removeBanner(); // overlay 在场但非 Build Error（如 Console Error 弹窗）→ 不打扰
+    if (checking) { pendingCheck = true; return; }
+    checking = true;
+    try {
+      watchPortalShadows();
+      var nodes = document.querySelectorAll('[role="dialog"], [data-nextjs-dialog], [data-nextjs-dialog-overlay], nextjs-portal');
+      if (!nodes.length) { removeBanner(); return; }
+      var line = null;
+      for (var i = 0; i < nodes.length && !line; i++) {
+        var cb = { chars: 0, lines: [], done: false };
+        deepText(nodes[i], cb);
+        line = matchLine(cb.lines.join("\n"));
+      }
+      if (line) showBanner(line);
+      else removeBanner(); // overlay 在场但非 Build Error（如 Console Error 弹窗）→ 不打扰
+    } finally {
+      checking = false;
+      if (pendingCheck) { pendingCheck = false; setTimeout(check, 120); }
+    }
   }
 
   var mo = new MutationObserver(function () { check(); });
