@@ -89,6 +89,8 @@ export async function POST(req: Request) {
   } catch (e) {
     return Response.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
+  if (!session) return Response.json({ error: "session unavailable" }, { status: 503 });
+  const s = session; // const 收窄：start(controller)/onEvent 闭包内可直达（let 跨闭包不保留窄化）
 
   const encoder = new TextEncoder();
   let closed = false;
@@ -104,7 +106,7 @@ export async function POST(req: Request) {
       };
       let lastEventAt = Date.now();
 
-      const off = session.onEvent?.((ev: { type?: string; assistantMessageEvent?: { partial?: { content?: unknown[] } } }) => {
+      const off = s.onEvent?.((ev: { type?: string; assistantMessageEvent?: { partial?: { content?: unknown[] } } }) => {
         const t = ev.type;
         lastEventAt = Date.now();
         // assistant 文本增量（原始 partial.content 带 text 块）
@@ -132,7 +134,7 @@ export async function POST(req: Request) {
           // getLastAssistantText() 原样补发；短延后关流（冲刷末尾事件）。
           if (!lastText) {
             try {
-              const fin = (session.inner?.getLastAssistantText?.() ?? "") as string;
+              const fin = (s.inner?.getLastAssistantText?.() ?? "") as string;
               if (fin) { enqueue(fin); lastText = fin; }
             } catch { /* ignore */ }
           }
@@ -206,7 +208,7 @@ export async function POST(req: Request) {
       // "Agent is already processing. Specify streamingBehavior ('steer' or 'followUp') to queue the message."
       // 导致重试永远卡死。传 steer：正在流式则打断/接管（queued steering），未流式则正常运行；
       // 这样首条 network error 后重试也能立即接管，而不是报错冻结。
-      session.send({ type: "prompt", message: aiMessage, streamingBehavior: "steer" }).catch((e: unknown) => {
+      s.send({ type: "prompt", message: aiMessage, streamingBehavior: "steer" }).catch((e: unknown) => {
         enqueue(`\n[发送错误] ${e instanceof Error ? e.message : String(e)}`);
         if (!closed) { closed = true; try { off?.(); } catch { /* ignore */ } try { controller.close(); } catch { /* stream closed */ } }
       });
