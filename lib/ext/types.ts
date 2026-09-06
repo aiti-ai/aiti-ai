@@ -388,6 +388,8 @@ export interface ExtSlotContractMap {
   settingsAgents: { props: SettingsAgentsSlotProps };
   /** 工作区终端页签内容接管（aiti-cmd）。 */
   terminalDock: { props: TerminalDockSlotProps };
+  /** 左栏「项目 / Projects」会话列表接管（session-manager：数据/渲染全扩展，cwd 由宿主传入）。 */
+  sidebarProjects: { props: { cwd?: string } };
 }
 
 /** 从契约取插槽 props 类型（未声明 → 宽松对象）。 */

@@ -11,7 +11,7 @@ import { workspaceKeyOf } from "@/lib/workspace-memory";
 import { loadHiddenWorkspaces, WORKSPACES_CHANGED_EVENT } from "@/lib/workspace-hide";
 import { formatRelativeTime } from "@/lib/i18n/format";
 import { useI18n } from "@/hooks/useI18n";
-import { ExtSlot, useExtProvides } from "./ExtSlots";
+import { ExtSlot, useExtProvides, useExtSlotItems } from "./ExtSlots";
 import { EXT_PROVIDES } from "@/lib/ext/types";
 import { apiUrl } from "@/lib/base-path";
 
@@ -460,6 +460,13 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
   const [sessionSearchOpen, setSessionSearchOpen] = useState(false);
   const [sessionSearchQuery, setSessionSearchQuery] = useState("");
+  // 项目 / Projects 区块：session-manager 接管（sidebarProjects 有 items 即接管，默认展开）
+  const projectsSlotItems = useExtSlotItems("sidebarProjects");
+  const projectsTakeover = projectsSlotItems.length > 0;
+  const [projectsOpen, setProjectsOpen] = useState(() => {
+    try { return localStorage.getItem("pi-web:sidebar-projects-collapsed") !== "1"; }
+    catch { return true; }
+  });
   const sessionSearchActive = sessionSearchOpen && Boolean(sessionSearchQuery.trim());
   const [changesCount, setChangesCount] = useState(0);
   const [changesCollapsed, setChangesCollapsed] = useState(true);
@@ -1896,6 +1903,47 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
         )}
       </div>
 
+      {/* 项目 / Projects 区块：session-manager 接管（sidebarProjects 无 items 时回退原版列表，保证可回退）；
+          默认展开，折叠状态 persist pi-web:sidebar-projects-collapsed */}
+      {projectsTakeover && (
+        <div style={{ display: "flex", flexDirection: "column", flex: "1 1 0", minHeight: 0, overflow: "hidden" }}>
+          <button
+            type="button"
+            onClick={() => {
+              const next = !projectsOpen;
+              setProjectsOpen(next);
+              // 键存「是否折叠」：展开写 "0"，折叠写 "1"（默认展开）
+              try { localStorage.setItem("pi-web:sidebar-projects-collapsed", next ? "0" : "1"); } catch {}
+            }}
+            style={{
+              display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+              padding: "6px 10px", background: "none", border: "none",
+              color: "var(--text-muted)", cursor: "pointer", fontSize: 11,
+              fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", textAlign: "left",
+            }}
+          >
+            <svg
+              width="9" height="9" viewBox="0 0 10 10" fill="none"
+              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transform: projectsOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }}
+            >
+              <polyline points="3 2 7 5 3 8" />
+            </svg>
+            项目 / Projects
+          </button>
+          {projectsOpen && (
+            <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+              <ExtSlot
+                name="sidebarProjects"
+                currentSession={selectedSessionId ? { id: selectedSessionId } : null}
+                extra={{ cwd: selectedCwd ?? selectedCwdProp ?? undefined }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      {!projectsTakeover && (
+      <>
       {/* Session list */}
       <SessionSearch open={sessionSearchOpen} query={sessionSearchQuery} refreshKey={sessionListVersion} selectedSessionId={selectedSessionId} onSelectSession={handleSelectSessionFromList}>
       <div
@@ -1963,6 +2011,8 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
         })()}
       </div>
       </SessionSearch>
+      </>
+      )}
 
       {/* File Explorer section */}
       {(selectedCwdProp || selectedCwd) && (
@@ -2108,6 +2158,63 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
               />
             </div>
           )}
+          <SidebarExplorerDockSection />
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * sidebarExplorerDock 停靠区（dock 方案 aiti-web-ext-float-dock-plan §4.2）：
+ * 文件区下方垂直并列，折叠头宿主渲染+记忆（pi-web:sidebar-explorer-dock-collapsed），
+ * 无 items 整个不渲染；次级区块限高 45vh 防挤占主内容。
+ */
+function SidebarExplorerDockSection() {
+  const dockItems = useExtSlotItems("sidebarExplorerDock");
+  const [dockOpen, setDockOpen] = useState(() => {
+    try { return localStorage.getItem("pi-web:sidebar-explorer-dock-collapsed") !== "0"; }
+    catch { return true; }
+  });
+  if (!dockItems.length) return null;
+  return (
+    <div
+      style={{
+        borderTop: "1px solid var(--border)",
+        display: "flex",
+        flexDirection: "column",
+        flex: dockOpen ? "0 1 auto" : "0 0 auto",
+        minHeight: 0,
+        maxHeight: dockOpen ? "45vh" : "none",
+        overflow: "hidden",
+      }}
+    >
+      <button
+        onClick={() => {
+          const next = !dockOpen;
+          setDockOpen(next);
+          try { localStorage.setItem("pi-web:sidebar-explorer-dock-collapsed", next ? "1" : "0"); } catch {}
+        }}
+        style={{
+          display: "flex", alignItems: "center", gap: 6, flexShrink: 0,
+          padding: "6px 10px", background: "none", border: "none",
+          color: "var(--text-muted)", cursor: "pointer", fontSize: 11,
+          fontWeight: 600, letterSpacing: "0.05em", textTransform: "uppercase", textAlign: "left",
+        }}
+      >
+        <svg
+          width="9" height="9" viewBox="0 0 10 10" fill="none"
+          stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+          style={{ transform: dockOpen ? "rotate(90deg)" : "none", transition: "transform 0.15s", flexShrink: 0 }}
+        >
+          <polyline points="3 2 7 5 3 8" />
+        </svg>
+        停靠面板
+        <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>({dockItems.length})</span>
+      </button>
+      {dockOpen && (
+        <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+          <ExtSlot name="sidebarExplorerDock" />
         </div>
       )}
     </div>
