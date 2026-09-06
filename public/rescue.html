@@ -70,14 +70,11 @@
   // base 计算：/dev/rescue.html → /dev；/rescue.html → ""（生产无 basePath 同样可用）
   var BASE = location.pathname.replace(/\/+$/, "").replace(/\/rescue\.html$/, "");
 
-  // ---- 急救后端（关键：跨实例兑底）----
-  // dev 编译错期间，整个 dev server 的 HTTP 面全部 500（含 /dev/api/emergency 自身），
-  // 本实例急救后端不可用。经 nginx 部署下：/dev/* → dev 实例，裸 /api/emergency → prod 实例
-  // ——另一实例进程独立、必是健康的，切过去开急救 AI（AI 有 bash，能修 dev 源文件）。
-  var isDev = BASE === "/dev";
-  var apiBase = BASE;                                  // 当前使用的实例前缀
-  var altBase = isDev ? "" : "/dev";                    // 另一实例前缀（切换兑底）
-  var emgUrl = function () { return apiBase + "/api/emergency"; };
+  // ---- 急救后端（本实例同源）----
+  // 说明：急救后端 = 本实例自身（BASE + /api/emergency）。实例死（如 dev 编译错期间
+  // 整个 server 全部 500）时急救功能随之不可用 —— 本页不做跨实例兑底（那依赖特定
+  // 部署拓扑，非通用架构），此时诚实降级：明示后端不可用，用户走复制错误/手动恢复。
+  var emgUrl = function () { return BASE + "/api/emergency"; };
 
   var $ = function (id) { return document.getElementById(id); };
   var errbox = $("errbox"), log = $("log"), input = $("input"), sendBtn = $("send");
@@ -96,15 +93,12 @@
     setTimeout(function () { $("copyErr").textContent = "复制错误"; }, 1600);
   };
 
-  // ---- 模型选择（对齐 global-error：/api/models 下拉，失败兑底手动输入；本实例死则切另一实例）----
+  // ---- 模型选择（对齐 global-error：/api/models 下拉，失败兑底手动输入）----
   var mods = [], modelsFailed = false, mOpen = false;
   var modelSelect = $("modelSelect"), modelManual = $("modelManual"), modelToggle = $("modelToggle");
   fetch(BASE + "/api/models").then(function (r) {
     if (!r.ok) throw new Error("HTTP " + r.status);
     return r.json();
-  }).catch(function () {
-    apiBase = altBase;                                 // 本实例 /api/models 不可用 → 切另一实例
-    return fetch(apiBase + "/api/models").then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); });
   }).then(function (d) {
     mods = Array.isArray(d && d.modelList) ? d.modelList : [];
     var dm = d && d.defaultModel;
@@ -167,12 +161,11 @@
       var s = r.headers.get("x-session-id");
       if (s) { sid = s; $("sid").textContent = "sid: " + s; }
       if (!r.ok) {
-        // 本实例 5xx/HTML 错误页（dev 编译错期间整个 dev server 都这样）→ 切另一实例重发一次
-        var ct = r.headers.get("content-type") || "";
-        if (r.status >= 500 && apiBase !== altBase) {
-          apiBase = altBase;
-          addMsg("a", "[本实例急救后端不可用（编译错期间 dev server 全部 500）→ 切换另一实例重试]");
-          return attempt(text, tryNo + 1);
+        // 5xx/HTML 错误页（实例死或编译错期间整个 server 都这样）→ 诚实降级：
+        // 明示后端不可用，不假装能救；4xx 业务错误照常上报
+        if (r.status >= 500) {
+          addMsg("a", "[急救后端不可用（本实例已死或整体 500）— 本页无法代发指令。请复制错误后手动恢复（终端/git），或使用独立急救入口（如已部署）。]");
+          return;
         }
         return r.json().catch(function () { return {}; }).then(function (j) {
           throw new Error(j && j.error ? j.error : "HTTP " + r.status);
