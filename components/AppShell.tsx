@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { apiUrl, withBasePath } from "@/lib/base-path";
+import { apiUrl, inAppPathname, withBasePath } from "@/lib/base-path";
 import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
 
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
@@ -820,7 +820,7 @@ export function AppShell() {
       // the default welcome page when none is remembered.
       restoreWorkspaceContext(newProject);
     }
-    router.replace(typeof window !== "undefined" ? window.location.pathname : "/", { scroll: false });
+    router.replace(inAppPathname("/"), { scroll: false });
   }, [activeCwd, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number) => {
@@ -914,7 +914,7 @@ export function AppShell() {
     setSystemInfoLoading(false);
     setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
-    router.replace(typeof window !== "undefined" ? window.location.pathname : "/", { scroll: false });
+    router.replace(inAppPathname("/"), { scroll: false });
   }, [invalidateWorkspaceRestore, router, isMobile]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
@@ -1160,7 +1160,7 @@ export function AppShell() {
       setSystemTools(null);
       setSystemInfoLoading(false);
       setActiveTopPanel(null);
-      router.replace(typeof window !== "undefined" ? window.location.pathname : "/", { scroll: false });
+      router.replace(inAppPathname("/"), { scroll: false });
     }
   }, [invalidateWorkspaceRestore, selectedSession, router]);
 

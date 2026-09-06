@@ -35,3 +35,21 @@ export function withBasePath(path: string): string {
 export function apiUrl(path: string): string {
   return withBasePath(path);
 }
+
+/**
+ * Current document pathname with the base path stripped — safe to feed to
+ * router.replace()/push(). Next's router re-prepends the configured basePath
+ * itself, so a raw window.location.pathname on a sub-path deployment (e.g.
+ * `/dev/`) would double the prefix (`/dev/dev/`). Root deployments are
+ * unaffected (pathname passes through unchanged).
+ */
+export function inAppPathname(fallback = "/"): string {
+  if (typeof window === "undefined") return fallback;
+  const p = window.location.pathname;
+  const basePath = getBasePath();
+  if (basePath && (p === basePath || p.startsWith(`${basePath}/`))) {
+    const stripped = p.slice(basePath.length);
+    return stripped.startsWith("/") ? stripped : `/${stripped}`;
+  }
+  return p || fallback;
+}
