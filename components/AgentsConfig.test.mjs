@@ -19,12 +19,16 @@ test("uses the shared enabled status treatment", () => {
   assert.match(cssSource, /\.config-sidebar-text\.is-muted \{[\s\S]*?color: var\(--text-dim\)/);
 });
 
-test("offers a persisted built-in sub-agent switch with explicit session reload", () => {
+test("shows the pi-subagents engine banner with explicit session reload and no built-in switch", () => {
+  // fork 语义：区块展示引擎装载状态（GET engine），不再提供上游 built-in 开关（PUT 已删）；
+  // profile 增删/启停后 reloadNeeded → 复用上游 reload session 链
   assert.match(source, /fetch\("\/api\/subagents\/settings"/);
-  assert.match(source, /JSON\.stringify\(\{ enabled \}\)/);
-  assert.match(source, /<ConfigSwitch[\s\S]*?checked=\{builtInEnabled\}[\s\S]*?t\("agents\.builtInTitle"\)/);
+  assert.match(source, /t\("agents\.engineTitle"\)/);
+  assert.match(source, /t\("agents\.engineDescription", \{ version: engineInfo\.version \?\? engineInfo\.spec \?\? "" \}\)/);
+  assert.match(source, /t\("agents\.engineNotInstalled"\)/);
   assert.match(source, /sendAgentCommand\(sessionId, \{ type: "reload" \}\)/);
   assert.match(source, /reloadNeeded && sessionId/);
+  assert.doesNotMatch(source, /agents\.builtInTitle|toggleBuiltInSubagents|builtInEnabled/);
   assert.match(cssSource, /\.agents-feature-setting \{[\s\S]*?border-bottom: 1px solid var\(--border\)/);
 });
 

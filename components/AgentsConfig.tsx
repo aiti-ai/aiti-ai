@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
-import type { SubagentProfilesResponse, SubagentSettingsResponse } from "@/lib/api-types";
+import type { SubagentProfilesResponse } from "@/lib/api-types";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type { ModelsData } from "@/lib/models-cache";
 import { isSubagentProfileOverridden } from "@/lib/subagent-profile-precedence";
@@ -134,6 +134,13 @@ function Toggle({ checked, disabled, label, onChange }: { checked: boolean; disa
   );
 }
 
+interface SubagentEngineInfo {
+  installed: boolean;
+  packageName: string;
+  spec: string | null;
+  version: string | null;
+}
+
 export function AgentsConfig({
   cwd,
   sessionId = null,
@@ -162,10 +169,8 @@ export function AgentsConfig({
   const [savedOk, setSavedOk] = useState(false);
   const [toggling, setToggling] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [builtInEnabled, setBuiltInEnabled] = useState(false);
-  const [settingsLoading, setSettingsLoading] = useState(true);
-  const [settingsSaving, setSettingsSaving] = useState(false);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const [engineInfo, setEngineInfo] = useState<SubagentEngineInfo | null>(null);
+  const [engineError, setEngineError] = useState<string | null>(null);
   const [reloadNeeded, setReloadNeeded] = useState(false);
   const [reloading, setReloading] = useState(false);
 
@@ -213,24 +218,21 @@ export function AgentsConfig({
 
   useEffect(() => {
     const controller = new AbortController();
-    setSettingsLoading(true);
-    setSettingsError(null);
+    setEngineError(null);
     void (async () => {
       try {
         const response = await fetch("/api/subagents/settings", {
           cache: "no-store",
           signal: controller.signal,
         });
-        const data = await response.json() as Partial<SubagentSettingsResponse> & { error?: string };
-        if (!response.ok || data.error || typeof data.enabled !== "boolean") {
+        const data = await response.json() as { engine?: SubagentEngineInfo; error?: string };
+        if (!response.ok || data.error || !data.engine) {
           throw new Error(data.error ?? `HTTP ${response.status}`);
         }
-        setBuiltInEnabled(data.enabled);
+        setEngineInfo(data.engine);
       } catch (cause) {
         if (controller.signal.aborted) return;
-        setSettingsError(cause instanceof Error ? cause.message : String(cause));
-      } finally {
-        if (!controller.signal.aborted) setSettingsLoading(false);
+        setEngineError(cause instanceof Error ? cause.message : String(cause));
       }
     })();
     return () => controller.abort();
@@ -308,6 +310,7 @@ export function AgentsConfig({
       if (!response.ok || data.error || !data.profile) throw new Error(data.error ?? `HTTP ${response.status}`);
       await loadProfiles(profileKey(data.profile));
       setSavedOk(true);
+      setReloadNeeded(Boolean(sessionId)); // profile 落盘后重载会话生效（引擎启动时读 agents/*.md）
       setTimeout(() => setSavedOk(false), 2000);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -330,6 +333,7 @@ export function AgentsConfig({
       const data = await response.json() as { error?: string };
       if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
       await loadProfiles();
+      setReloadNeeded(Boolean(sessionId)); // 删除 profile 同样需重载生效
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -381,6 +385,7 @@ export function AgentsConfig({
       const saved = data.profile;
       setProfiles((current) => current.map((profile) => profileKey(profile) === profileKey(saved) ? saved : profile));
       setDraft((current) => ({ ...current, enabled: saved.enabled }));
+      setReloadNeeded(Boolean(sessionId)); // 启停 profile 需重载生效
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -388,38 +393,16 @@ export function AgentsConfig({
     }
   };
 
-  const toggleBuiltInSubagents = async (enabled: boolean) => {
-    setSettingsSaving(true);
-    setSettingsError(null);
-    try {
-      const response = await fetch("/api/subagents/settings", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled }),
-      });
-      const data = await response.json() as Partial<SubagentSettingsResponse> & { error?: string };
-      if (!response.ok || data.error || typeof data.enabled !== "boolean") {
-        throw new Error(data.error ?? `HTTP ${response.status}`);
-      }
-      setBuiltInEnabled(data.enabled);
-      setReloadNeeded(Boolean(sessionId));
-    } catch (cause) {
-      setSettingsError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setSettingsSaving(false);
-    }
-  };
-
   const reloadSession = async () => {
     if (!sessionId) return;
     setReloading(true);
-    setSettingsError(null);
+    setError(null);
     try {
       await sendAgentCommand(sessionId, { type: "reload" });
       setReloadNeeded(false);
       onReloaded?.();
     } catch (cause) {
-      setSettingsError(cause instanceof Error ? cause.message : String(cause));
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setReloading(false);
     }
@@ -429,23 +412,24 @@ export function AgentsConfig({
     <ConfigPanelShell embedded={embedded} title={t("common.agents")} subtitle={shortenPath(cwd)} closeLabel={t("agents.close")} onClose={onClose}>
       <div className="agents-feature-setting">
         <div className="agents-feature-copy">
-          <strong>{t("agents.builtInTitle")}</strong>
-          <span>{t("agents.builtInDescription")}</span>
+          <strong>{t("agents.engineTitle")}</strong>
+          <span>
+            {engineError
+              ? engineError
+              : engineInfo
+                ? engineInfo.installed
+                  ? t("agents.engineDescription", { version: engineInfo.version ?? engineInfo.spec ?? "" })
+                  : t("agents.engineNotInstalled")
+                : t("agents.loading")}
+          </span>
           {reloadNeeded && <span role="status" className="agents-feature-reload-notice">{t("agents.reloadRequired")}</span>}
         </div>
         <div className="agents-feature-actions">
           {reloadNeeded && sessionId && (
-            <ConfigButton size="small" onClick={() => void reloadSession()} disabled={reloading || settingsSaving}>
+            <ConfigButton size="small" onClick={() => void reloadSession()} disabled={reloading}>
               {reloading ? t("agents.reloading") : t("agents.reloadSession")}
             </ConfigButton>
           )}
-          <ConfigSwitch
-            checked={builtInEnabled}
-            disabled={settingsLoading || reloading}
-            loading={settingsSaving}
-            label={t("agents.builtInTitle")}
-            onChange={(enabled) => void toggleBuiltInSubagents(enabled)}
-          />
         </div>
       </div>
       <ConfigSplitView>
@@ -600,7 +584,7 @@ export function AgentsConfig({
           </ConfigDetailStack>
         </ConfigDetail>
       </ConfigSplitView>
-      <ConfigFooter status={(settingsError || error) && <span role="alert" style={{ color: "#ef4444" }}>{settingsError || error}</span>}>
+      <ConfigFooter status={error && <span role="alert" style={{ color: "#ef4444" }}>{error}</span>}>
         {editing && (
           <ConfigButton
             variant="primary"
