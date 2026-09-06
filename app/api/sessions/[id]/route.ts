@@ -156,7 +156,7 @@ export async function GET(
             firstMessage: firstText.slice(0, 80) || "(backend session)",
             transient: true,
             // 站位真实标题（外部后端回放/接管时写入注册表）
-            ...(getPlaceholder(wrapped.id)?.name ? { name: getPlaceholder(wrapped.id)?.name } : {}),
+            ...(getPlaceholder(wrapped.sessionId)?.name ? { name: getPlaceholder(wrapped.sessionId)?.name } : {}),
             // 后端/agent 标签（与 getHandleSessionInfos 同款投影）：前端 loadModels
             // 靠它走 list_models 取外部模型目录 —— 缺了会选择器静默落回本地清单。
             agent: wrapped.source.includes("/") ? wrapped.source.split("/")[1] : wrapped.source,
