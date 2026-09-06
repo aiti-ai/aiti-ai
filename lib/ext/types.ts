@@ -108,7 +108,7 @@ export interface ExtSessionProviderSlot {
    */
   open(
     compositeId: string,
-    options?: { cwd?: string },
+    options?: { cwd?: string; /** 站位文件显示名（All Sessions 接管时传真实标题） */ name?: string },
   ): Promise<{ ok: true; sessionId: string } | { ok: false; reason: "no_provider" | "open_failed"; error?: string }>;
 }
 

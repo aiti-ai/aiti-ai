@@ -210,7 +210,6 @@ let gatedCache: { store: ExtUiStore; version: number; items: Partial<Record<ExtS
 
 export function getExtUiItems(slot: ExtSlotName): ExtUiItemRegistered[] {
   const store = getStore();
-  const raw = store.items[slot] ?? NO_UI_ITEMS;
   if (!gatedCache || gatedCache.store !== store || gatedCache.version !== store.version) {
     const next: Partial<Record<ExtSlotName, ExtUiItemRegistered[]>> = {};
     for (const s of Object.keys(store.items) as ExtSlotName[]) {

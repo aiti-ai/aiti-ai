@@ -121,7 +121,7 @@ export function splitHandleId(id: string): { agent: string; sid: string } {
  */
 export async function openExternalSession(
   compositeId: string,
-  options: Omit<CreateSessionOptions, "sessionFile"> & { sessionId?: string } = {},
+  options: Omit<CreateSessionOptions, "sessionFile"> & { sessionId?: string; /** 站位文件显示名（All Sessions 接管时传入真实标题） */ name?: string } = {},
 ): Promise<SessionHandle | undefined> {
   const { agent, sid } = splitHandleId(compositeId);
   const candidates = findProvidersForAgent(agent);
@@ -136,7 +136,7 @@ export async function openExternalSession(
       putHandle(handle);
       // 接管/恢复路径同样落站位（resume 语义，extId 已知）：⚡接管历史行、
       // ?session= 恢复、复合 id GET 都汇合在这里。
-      if (provider.agentKey) wireExternalPlaceholder(handle, true, options.cwd);
+      if (provider.agentKey) wireExternalPlaceholder(handle, true, options.cwd, options.name);
       return handle;
     } catch (e) {
       lastError = e;
@@ -308,17 +308,45 @@ export async function createSessionHandle(
  *   - fresh（new- 占位键）：等 session_backend_ready 真实 id 换绑才写——
  *     未发过首条消息的空会话不留孤儿站位；
  *   - 换绑时站位键随迁移（rebindPlaceholder），与 putHandleAt 双注册同步。
+ *   - 命名优先级：调用方显式 name（All Sessions 接管时的真实标题）> handle
+ *     首条 user 消息截断（新会话首轮后换绑场景）> [agent] sid fallback。
  */
-function wireExternalPlaceholder(handle: SessionHandle, resume: boolean, cwd?: string): void {
+async function placeholderNameFor(handle: SessionHandle, explicit?: string): Promise<string | undefined> {
+  if (explicit?.trim()) return explicit.trim();
+  try {
+    const msgs = (await handle.getMessages?.()) ?? [];
+    const first = msgs.find((m) => (m as { role?: unknown }).role === "user") as
+      { content?: unknown } | undefined;
+    const c = first?.content;
+    const text = typeof c === "string"
+      ? c
+      : Array.isArray(c)
+        ? ((c as Array<{ type?: unknown; text?: unknown }>).find((b) => b?.type === "text")?.text as string | undefined ?? "")
+        : "";
+    if (typeof text === "string" && text.trim()) return text.trim().slice(0, 60);
+  } catch { /* getMessages 缺省/失败 → fallback 名 */ }
+  return undefined;
+}
+
+function wireExternalPlaceholder(handle: SessionHandle, resume: boolean, cwd?: string, name?: string): void {
   const colon = handle.id.indexOf(":");
   if (colon <= 0) return; // 非复合 id 不落站位
   const agent = handle.id.slice(0, colon);
   const provisional = handle.id.includes(":new-");
   const writeNow = () => {
-    // cwd 优先级：显式传入 > handle.cwd（provider createSession 时已解析会话原工作区，
-    // cursor/claude resume 都会回填）> 模块内回落目录
-    const p = ensurePlaceholder({ extId: handle.id, agent, ...(cwd || handle.cwd ? { cwd: cwd || handle.cwd } : {}) });
-    if (p) invalidateSessionListCache(); // 让下一轮 /api/sessions 立即看到站位行
+    void placeholderNameFor(handle, name)
+      .catch(() => undefined)
+      .then((resolvedName) => {
+        // cwd 优先级：显式传入 > handle.cwd（provider createSession 时已解析会话原工作区，
+        // cursor/claude resume 都会回填）> 模块内回落目录
+        const p = ensurePlaceholder({
+          extId: handle.id,
+          agent,
+          ...(resolvedName ? { name: resolvedName } : {}),
+          ...(cwd || handle.cwd ? { cwd: cwd || handle.cwd } : {}),
+        });
+        if (p) invalidateSessionListCache(); // 让下一轮 /api/sessions 立即看到站位行
+      });
   };
   if (resume && !provisional) writeNow();
   handle.subscribe((event) => {
