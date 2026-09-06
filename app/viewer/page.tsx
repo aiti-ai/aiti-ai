@@ -166,7 +166,7 @@ function ViewerBody() {
       },
       // 本窗口无聊天输入框：@ 提及的写入动作转发给 opener（主面板）的 composer
       appendText: (text) => { forwardComposerToOpener("append", text); },
-      getFileTabs: () => stateRef.current.tabs.map((tb) => ({ id: tb.id, filePath: tb.filePath, kind: tb.kind, pinned: tb.pinned })),
+      getFileTabs: () => stateRef.current.tabs.map((tb) => ({ id: tb.id, filePath: tb.filePath, kind: (tb.kind === "terminal" ? "file" : tb.kind) ?? "file", pinned: tb.pinned })),
       closeFileTabs: (ids) => {
         setTabs((prev) => {
           const next = prev.filter((tb) => !ids.includes(tb.id));

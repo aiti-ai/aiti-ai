@@ -36,7 +36,7 @@ export async function GET(req: Request) {
         publishRunning();
       };
       const publishRunning = () => {
-        (globalThis as any).__piPageEvents?.publish("running", { runningSessionIds: mergedRunningIds() });
+        (globalThis as { __piPageEvents?: { publish: (type: string, data: Record<string, unknown>) => void } }).__piPageEvents?.publish("running", { runningSessionIds: mergedRunningIds() });
       };
       const unsubRpc = subscribeRunningSessions(onRunningChange);
       const unsubHandle = subscribeRunningHandles(onRunningChange);

@@ -3,9 +3,9 @@
 import { memo, useEffect, useId, useMemo, useRef, useState, type JSX, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
-import { resolveLocalFileHref } from "@/lib/file-links";
+import { resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
 import { buildTicketUrl } from "@/lib/file-tickets";
-import { markdownRehypePlugins, markdownRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
+import { markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
 import { useI18n } from "@/hooks/useI18n";
 import { useParagraphClickHandlers } from "./ExtSlots";
@@ -82,7 +82,13 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       const isBlock = className?.includes("language-") || raw.includes("\n");
       if (isBlock) {
         if (lang === "mermaid") {
-          return <MermaidBlock code={raw.replace(/\n$/, "")} isStreaming={isStreaming} />;
+          return (
+            <MermaidBlock
+              code={raw.replace(/\n$/, "")}
+              isStreaming={isStreaming}
+              defaultPreview
+            />
+          );
         }
         return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId} />;
       }
@@ -112,8 +118,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       }
 
       const handleClick = (event: MouseEvent<HTMLAnchorElement>) => {
-        if (event.defaultPrevented || event.button !== 0) return;
-        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        if (!shouldOpenLocalFileInApp(event)) return;
         const target = event.currentTarget.getAttribute("target");
         if (target && target !== "_self") return;
         event.preventDefault();
@@ -166,6 +171,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       <MemoizedMarkdown
         remarkPlugins={markdownRemarkPlugins}
         rehypePlugins={markdownRehypePlugins}
+        urlTransform={onOpenFile ? markdownUrlTransform : undefined}
         components={components}
       >
         {renderText}

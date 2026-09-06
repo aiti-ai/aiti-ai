@@ -73,6 +73,7 @@ const nextConfig: NextConfig = {
   distDir: process.env.PI_WEB_DIST_DIR || (process.env.PI_WEB_DEV_DIST ? ".next-dev" : ".next"),
   outputFileTracingRoot: configDir,
   serverExternalPackages: [
+    "node-pty",
     "undici",
     "web-push",
     "@earendil-works/pi-coding-agent",

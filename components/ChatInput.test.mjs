@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
+import { Script } from "node:vm";
 import { createJiti } from "jiti";
+import ts from "typescript";
 
 const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
@@ -11,6 +14,78 @@ const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, adjacentQueueTarget, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, mergeText, mergeSubmission, modelSupportsImageInput, shouldCompressImageFile } = await jiti.import("./ChatInput.tsx");
 const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
+
+test("streaming Enter queues a follow-up; empty-input Enter promotes to steer (fork semantics)", () => {
+  const source = ts.createSourceFile("ChatInput.tsx", readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  function findHandler(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === "handleKeyDown") {
+      return node.initializer.arguments[0];
+    }
+    return ts.forEachChild(node, findHandler);
+  }
+  // Execute the component's actual callback without mounting the rest of the UI.
+  const script = new Script(ts.transpileModule(findHandler(source).getText(source), {
+    compilerOptions: { target: ts.ScriptTarget.ES2020 },
+  }).outputText);
+  const cases = [
+    ["typed Enter queues as follow-up", { }, {}, "followup"],
+    ["empty-input Enter promotes the queue to steer", { }, { value: "" }, "steer"],
+    ["no follow-up capability falls back to steer", { }, { onFollowUp: undefined }, "steer"],
+    ["Shift+Enter inserts a newline", { shiftKey: true }, {}, "native"],
+    ["Alt+Shift+Enter keeps native behavior", { altKey: true, shiftKey: true }, {}, "native"],
+    ["composition ref blocks sending", {}, { isComposingRef: { current: true } }, "native"],
+    ["native composition blocks sending", { nativeEvent: { isComposing: true } }, {}, "native"],
+    ["IME keyCode blocks sending", { nativeEvent: { keyCode: 229 } }, {}, "native"],
+    ["composition grace blocks sending", {}, { lastCompositionEndAtRef: { current: 950 } }, "prevented"],
+    ["Enter falls back to follow-up when steer is unavailable", { }, { onSteer: undefined }, "followup"],
+    ["slash completion takes priority", {}, { slashMenuOpen: true, slashQuery: "help" }, "slash"],
+    ["available built-in commands take priority", {}, { slashMenuOpen: true, slashQuery: "copy", value: "/copy", displayedSlashCommands: [{ name: "copy", source: "builtin", availableWhileStreaming: true }] }, "send"],
+    ["file completion takes priority", {}, { atMenuOpen: true, atQuery: {} }, "file"],
+    ["history selection takes priority", {}, { historyMenuOpen: true }, "history"],
+  ];
+  for (const [name, keys, state, expected] of cases) {
+    let action = "native";
+    const handler = script.runInNewContext({
+      Date: { now: () => 1000 },
+      COMPOSITION_END_ENTER_GRACE_MS: 100,
+      isMobile: false, isStreaming: true,
+      isComposingRef: { current: false }, lastCompositionEndAtRef: { current: 0 },
+      recalledRef: { current: false }, historyNavIndexRef: { current: 0 },
+      valueRef: { current: "" }, isExactSlashCommand: (v) => false,
+      historyNavTextRef: { current: null },
+      historyMenuOpen: false, inputHistory: ["previous"], historyActiveIndex: 0,
+      slashMenuOpen: false, slashQuery: null, displayedSlashCommands: [{}], slashActiveIndex: 0,
+      atMenuOpen: false, atQuery: null, atMatches: [{}], atActiveIndex: 0,
+      onSteer() {}, onFollowUp() {},
+      sendQueued(mode) { action = mode; }, handleSend() { action = "send"; },
+      applySlashCommand() { action = "slash"; },
+      isExactSlashCommand, value: "typed text", setSlashMenuOpen() {},
+      applyAtCompletion() { action = "file"; },
+      applyHistoryInput() { action = "history"; },
+      ...state,
+    });
+    handler({
+      key: "Enter", shiftKey: false, altKey: false, ctrlKey: false, metaKey: false,
+      nativeEvent: { isComposing: false, keyCode: 13 },
+      preventDefault() { action = "prevented"; },
+      ...keys,
+    });
+    assert.equal(action, expected, name);
+  }
+});
+
+test("follow-up button renders with the fork hover-tooltip wrapper", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(I18nProvider, null, React.createElement(ChatInput, {
+      onSend() {}, onAbort() {}, onFollowUp() {}, isStreaming: true,
+    })),
+  );
+
+  // 我方 follow-up 按钮走 StreamingActionButton（bg/border/fg 封装 + hover 弹出 hint），
+  // 快捷键语义是「Enter 排队、再按升级 steer」而非上游的 Alt+Enter，故无快捷键 title。
+  assert.doesNotMatch(html, /aria-keyshortcuts/);
+  assert.match(html, /follow-up/i);
+});
 
 test("renders the upstream model error", () => {
   const html = renderToStaticMarkup(
@@ -115,6 +190,26 @@ test("renders the empty tool preset as Chat only", () => {
 
   assert.match(html, /title="Change tool preset: Chat only"/);
   assert.match(html, />Chat only<\/span>/);
+});
+
+test("renders the compact composer with the standard Send button and no session controls", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(ChatInput, {
+        onSend() {},
+        onAbort() {},
+        isStreaming: false,
+        compact: true,
+      }),
+    ),
+  );
+
+  assert.match(html, /<textarea/);
+  assert.match(html, />Send<\/button>/);
+  assert.equal((html.match(/<button\b/g) ?? []).length, 1);
+  assert.doesNotMatch(html, /type="file"|Attach image|Change tool preset/);
 });
 
 test("shows and locks the optimistic model while a switch is pending", () => {

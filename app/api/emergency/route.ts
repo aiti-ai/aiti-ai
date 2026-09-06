@@ -51,8 +51,13 @@ export async function POST(req: Request) {
       : null;
   if (!message) return Response.json({ error: "message required" }, { status: 400 });
 
-  // biome-ignore lint/suspicious/noExplicitAny: wrapper 类型跨文件，按结构用
-  let session: any = null;
+  // wrapper 类型跨文件，按结构用（send 恒在；onEvent/inner 可选）——eslint 化后不用 any。
+  // send 返回 Promise<unknown>（wrapper 泛型擦除），调用方只挂 catch 不消费值。
+  let session: {
+    send: (cmd: { type: "prompt"; message: string; streamingBehavior?: "steer" | "followUp" }) => Promise<unknown>;
+    onEvent?: (handler: (ev: { type?: string; assistantMessageEvent?: { partial?: { content?: unknown[] } } }) => void) => () => void;
+    inner?: { getLastAssistantText?: () => string | undefined };
+  } | null = null;
   let realId: string | undefined = prevId || undefined;
   try {
     if (prevId) {

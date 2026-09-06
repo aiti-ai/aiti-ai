@@ -169,6 +169,7 @@ export interface UseAgentSessionOptions {
    *  last message actually ends. */
   promptAnchorSpacerHeightRef?: React.MutableRefObject<number>;
   bottomComposerHeightRef?: React.MutableRefObject<number>;
+  deferInitialScroll?: boolean;
 }
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -224,6 +225,8 @@ const AGENT_STATE_RECONCILE_MS = 15_000; // 运行中对账兑底：仅前台 ti
 const BASH_STATE_RECONCILE_MS = 1_000;
 const EVENT_STREAM_READY_TIMEOUT_MS = 60_000;
 const EVENT_STREAM_RECONNECT_DELAY_MS = 1_000;
+// Retry temporary model-list failures without requiring a page refresh.
+const MODELS_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
 const MAX_NOTICES = 5;
 const NOTICE_VISIBLE_MS = 5000;
 const NOTICE_EXIT_ANIMATION_MS = 180;
@@ -490,7 +493,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const bashRunningRef = useRef(false);
   const bashRecoveryIdRef = useRef(0);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
-  const initialScrollDoneRef = useRef(false);
+  const initialScrollDoneRef = useRef(Boolean(opts.deferInitialScroll));
   const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
   const pendingScrollToUserRef = useRef(false);
   const completionScrollAllowedRef = useRef(true);
@@ -2120,9 +2123,30 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
     const modelsUrl = modelCwd ? apiUrl(`/api/models?cwd=${encodeURIComponent(modelCwd)}`) : apiUrl("/api/models");
-    const res = await fetch(modelsUrl, signal ? { signal } : undefined);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const d = await res.json() as ModelsResponse;
+    let d: ModelsResponse;
+    try {
+      const res = await fetch(modelsUrl, signal ? { signal } : undefined);
+      if (!res.ok) {
+        let detail = "";
+        try {
+          const body: unknown = await res.json();
+          if (body && typeof body === "object" && "error" in body && typeof body.error === "string") {
+            detail = body.error;
+          }
+        } catch (e) {
+          if (e instanceof DOMException && e.name === "AbortError") throw e;
+          // Non-JSON error responses fall back to the HTTP status.
+        }
+        throw new Error(detail || `Failed to load models (HTTP ${res.status})`);
+      }
+      d = await res.json() as ModelsResponse;
+      signal?.throwIfAborted();
+    } catch (e) {
+      if (!signal?.aborted && !(e instanceof DOMException && e.name === "AbortError")) {
+        setModelError(e instanceof Error ? e.message : String(e));
+      }
+      throw e;
+    }
     setModelNames(d.models);
     setModelError(d.modelError ?? null);
     setModelScopeWarnings(d.modelScopeWarnings ?? []);
@@ -2746,7 +2770,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [cancelEventStreamGrace, closeEvents, loadTools, setToolPresetState]);
 
-  const scrollToMessage = useCallback((element: HTMLElement) => {
+  const scrollToMessage = useCallback((element: HTMLElement, viewportOffset = 16) => {
     const container = scrollContainerRef.current;
     if (!container) return;
     if (liveFollowFrameRef.current !== null) {
@@ -2758,7 +2782,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isNearBottomRef.current = false;
     setPromptAnchorActive(false);
     container.scrollTo({
-      top: element.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop - 16,
+      top: element.getBoundingClientRect().top
+        - container.getBoundingClientRect().top
+        + container.scrollTop
+        - viewportOffset,
       behavior: "instant",
     });
     previousScrollTopRef.current = container.scrollTop;
@@ -3060,9 +3087,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // Load model list
   useEffect(() => {
     const controller = new AbortController();
-    loadModels(controller.signal).catch((e) => {
-      if (e instanceof DOMException && e.name === "AbortError") return;
-    });
+    (async () => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await loadModels(controller.signal);
+          return;
+        } catch (e) {
+          if (controller.signal.aborted) return;
+          if (e instanceof DOMException && e.name === "AbortError") return;
+          if (attempt >= MODELS_RETRY_DELAYS_MS.length) return;
+          await delay(MODELS_RETRY_DELAYS_MS[attempt]);
+          if (controller.signal.aborted) return;
+        }
+      }
+    })();
     return () => controller.abort();
   }, [loadModels, modelsRefreshKey]);
 

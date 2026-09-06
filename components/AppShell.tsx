@@ -8,6 +8,7 @@ import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { SessionSidebar } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
+import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
@@ -25,6 +26,8 @@ import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
 import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentSessionPanel } from "./AgentSessionPanel";
+import { TerminalPanel } from "./TerminalPanel";
+import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsCompact, useIsMobile, useIsNarrowMobile } from "@/hooks/useIsMobile";
@@ -33,6 +36,7 @@ import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
 import { getDraftApi } from "@/lib/composer/draft-api";
+import { sendAgentCommand } from "@/lib/agent-client";
 import { getFileName } from "@/lib/file-paths";
 import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import {
@@ -218,6 +222,22 @@ export function AppShell() {
   // also fire for tasks finishing in a non-active workspace whose ChatWindow
   // is not mounted. ChatWindow receives the audio callbacks as props.
   const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio, soundEnabledRef } = useAudio();
+  const [quoteSelectionEnabled, setQuoteSelectionEnabled] = useState(false);
+  useEffect(() => {
+    try {
+      setQuoteSelectionEnabled(localStorage.getItem("pi-quote-selection-enabled") === "true");
+    } catch {
+      // Browser storage is best-effort.
+    }
+  }, []);
+  const handleQuoteSelectionChange = useCallback((enabled: boolean) => {
+    setQuoteSelectionEnabled(enabled);
+    try {
+      localStorage.setItem("pi-quote-selection-enabled", String(enabled));
+    } catch {
+      // Keep the current page usable when storage is unavailable.
+    }
+  }, []);
   const notifiedAttentionRequestIdsRef = useRef(new Set<string>());
   const handleBackgroundTaskDone = useCallback(() => {
     if (soundEnabledRef.current) playDoneSound();
@@ -256,6 +276,10 @@ export function AppShell() {
   const [initialCwdError, setInitialCwdError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
+  const sessionScrollPositionsRef = useRef(new Map<string, ChatScrollPosition>());
+  const handleSessionScrollPositionChange = useCallback((sessionId: string, position: ChatScrollPosition) => {
+    sessionScrollPositionsRef.current.set(sessionId, position);
+  }, []);
   const [searchTarget, setSearchTarget] = useState<{ sessionId: string; entryId: string; blockIndex?: number } | null>(null);
   const handleSearchTargetHandled = useCallback((target: { sessionId: string; entryId: string }) => {
     setSearchTarget((current) => current === target ? null : current);
@@ -357,6 +381,7 @@ export function AppShell() {
     }
   }, [rightPanelOpen]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
+  const [pendingQuotePrompt, setPendingQuotePrompt] = useState<{ sessionId: string; text: string } | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
   const languageBtnRef = useRef<HTMLButtonElement>(null);
 
@@ -584,7 +609,7 @@ export function AppShell() {
     };
   }, [activeTopPanel, isMobile]);
 
-  // Right panel — file tabs only
+  // Files unmount when inactive; workspace terminals stay mounted until closed.
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
   // 恢复配套：扩展侧 _restoreSession 把历史文件一律后台打开（select:false，焦点留给用户
@@ -603,6 +628,39 @@ export function AppShell() {
     () => getExtUiItems("pathPicker"),
     () => NO_PATH_PICKER_ITEMS,
   );
+
+  const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
+  const [terminalsRestored, setTerminalsRestored] = useState(false);
+  const panelTabs: Tab[] = [...fileTabs, ...terminalTabs.map((tab) => ({
+    id: tab.id,
+    label: getFileName(tab.cwd) || tab.cwd,
+    filePath: tab.cwd,
+    kind: "terminal" as const,
+    closing: Boolean(tab.closing),
+  }))];
+
+  useEffect(() => {
+    try {
+      const saved = restoreTerminalTabs(window.sessionStorage.getItem(TERMINAL_TABS_KEY));
+      setTerminalTabs(saved.tabs);
+      if (saved.activeId) {
+        setActiveFileTabId(saved.activeId);
+        setRightPanelOpen(saved.open);
+      }
+    } catch { /* storage is optional */ }
+    setTerminalsRestored(true);
+  }, []);
+
+  useEffect(() => {
+    if (!terminalsRestored) return;
+    try {
+      window.sessionStorage.setItem(TERMINAL_TABS_KEY, JSON.stringify({
+        tabs: terminalTabs.map(({ id, cwd }) => ({ id, cwd })),
+        activeId: activeFileTabId,
+        open: rightPanelOpen,
+      }));
+    } catch { /* storage is optional */ }
+  }, [terminalTabs, activeFileTabId, rightPanelOpen, terminalsRestored]);
 
   const handleFileViewerStateChange = useCallback((
     tabId: string,
@@ -716,7 +774,7 @@ export function AppShell() {
   // from handleCwdChange once the outgoing context has been reset. The session
   // is looked up against the live list so a deleted or drifted session falls
   // back to the default welcome page instead of erroring.
-  const restoreWorkspaceContext = useCallback((projectKey: string) => {
+  const restoreWorkspaceContext = useCallback((projectKey: string, cwd: string) => {
     const token = ++workspaceRestoreTokenRef.current;
     const lastOpenSessionId = getLastOpenSession(projectKey);
     if (!lastOpenSessionId) return;
@@ -737,6 +795,7 @@ export function AppShell() {
           clearLastOpen(projectKey);
           return;
         }
+        activeNewSessionDraftKeyRef.current = null;
         // Selecting the session must remount the chat with the session
         // present: useAgentSession loads content in a mount-only effect, so
         // the null-session welcome mount from the switch would never load
@@ -796,8 +855,9 @@ export function AppShell() {
     const draftId = typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+    const draftKey = `new:${draftId}:${cwd}`;
     setNewSessionDraftId(draftId);
-    activeNewSessionDraftKeyRef.current = `new:${draftId}:${cwd}`;
+    activeNewSessionDraftKeyRef.current = draftKey;
     setSelectedSession(null);
     setNewSessionCwd((prev) => {
       if (prev && prev !== cwd) return null;
@@ -814,14 +874,16 @@ export function AppShell() {
       // File tabs are keyed by absolute path, so tabs opened in the previous
       // project must not linger. Same-project worktree switches keep them.
       setFileTabs([]);
-      setActiveFileTabId(null);
-      setRightPanelOpen(false);
+      if (!activeFileTabId || activeFileTabId.startsWith("file:")) {
+        setActiveFileTabId(null);
+        setRightPanelOpen(false);
+      }
       // Restore the workspace we switched to: its last open session, or keep
       // the default welcome page when none is remembered.
-      restoreWorkspaceContext(newProject);
+      restoreWorkspaceContext(newProject, cwd);
     }
     router.replace(inAppPathname("/"), { scroll: false });
-  }, [activeCwd, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
+  }, [activeCwd, activeFileTabId, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number) => {
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
@@ -837,8 +899,10 @@ export function AppShell() {
     const projectKey = workspaceKeyOf(session);
     if (activeProjectKeyRef.current !== projectKey) {
       setFileTabs([]);
-      setActiveFileTabId(null);
-      setRightPanelOpen(false);
+      if (!activeFileTabId || activeFileTabId.startsWith("file:")) {
+        setActiveFileTabId(null);
+        setRightPanelOpen(false);
+      }
       setActiveTopPanel(null);
     }
     activeProjectKeyRef.current = projectKey;
@@ -876,7 +940,7 @@ export function AppShell() {
     if (!isRestore) {
       router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
-  }, [invalidateWorkspaceRestore, router, isMobile, selectedSession]);
+  }, [activeCwd, activeFileTabId, invalidateWorkspaceRestore, router, isMobile, newSessionCwd, selectedSession]);
 
   // [aiti] 扩展 client 打开会话通道：pi-web:open-session { id } → 按索引解析并
   // 复用 handleSelectSession（SPA 内切换，无整页跳转）。供扩展面板（如子代理舰队）
@@ -1135,6 +1199,20 @@ export function AppShell() {
     router.replace(`?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
   }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
+  const handleAskInNewChat = useCallback(async (
+    prompt: string,
+    sourceSessionId: string,
+    sourceEntryId: string,
+  ) => {
+    const result = await sendAgentCommand<{ newSessionId?: string }>(sourceSessionId, {
+      type: "fork_branch",
+      entryId: sourceEntryId,
+    });
+    if (!result?.newSessionId) throw new Error(translate("chat.quoteForkFailed"));
+    setPendingQuotePrompt({ sessionId: result.newSessionId, text: prompt });
+    handleSessionForked(result.newSessionId);
+  }, [handleSessionForked, translate]);
+
   const handleInitialRestoreDone = useCallback(() => {
     setInitialSessionRestored(true);
   }, []);
@@ -1228,7 +1306,8 @@ export function AppShell() {
   // ── 通用原语（无策略）：给扩展做 tab 数量/钉住/批量关闭的底层能力 ──
   // getFileTabs：返回当前打开 tab 清单（数组序=打开序）。
   const handleGetFileTabs = useCallback(() =>
-    fileTabs.map((t) => ({ id: t.id, filePath: t.filePath, kind: t.kind ?? "file", pinned: t.pinned })),
+    // fileTabs 不含 terminal tab（terminal 单独存 terminalTabs）；kind 收窄为宿主 API 声明的两态。
+    fileTabs.map((t) => ({ id: t.id, filePath: t.filePath, kind: (t.kind === "terminal" ? "file" : t.kind) ?? "file", pinned: t.pinned })),
   [fileTabs]);
   // closeFileTabs：仅从状态移除 + 激活位重排；脏确认/钉住保护等策略由调用方（扩展）负责。
   const handleCloseFileTabs = useCallback((ids: string[]) => {
@@ -1312,6 +1391,23 @@ export function AppShell() {
     setActiveFileTabId((active) => (active === prevId ? tabId : active));
   }, [activeFileTabId, fileTabs, askEditorClose]);
 
+  const handleOpenTerminal = useCallback((cwd: string) => {
+    const existing = terminalTabs.find((tab) => tab.cwd === cwd);
+    const tab = existing ?? newTerminalTab(cwd);
+    if (!existing) setTerminalTabs((tabs) => [...tabs, tab]);
+    setActiveFileTabId(tab.id);
+    setRightPanelOpen(true);
+    if (isMobile) setSidebarOpen(false);
+  }, [terminalTabs, isMobile]);
+
+  const handleTerminalClosed = (tab: TerminalTab) => {
+    const replacement = tab.closing === "restart" ? newTerminalTab(tab.cwd) : null;
+    const remaining = terminalTabs.filter((item) => item.id !== tab.id);
+    setTerminalTabs((tabs) => tabs.flatMap((item) => item.id !== tab.id ? [item] : replacement ? [replacement] : []));
+    setActiveFileTabId((current) => current !== tab.id ? current : replacement?.id ?? remaining.at(-1)?.id ?? fileTabs.at(-1)?.id ?? null);
+    if (!replacement && !remaining.length && !fileTabs.length) setRightPanelOpen(false);
+  };
+
   const performCloseFileTab = useCallback((tabId: string) => {
     const closing = fileTabs.find((t) => t.id === tabId);
     if (closing?.kind === "folder" && closing.filePath) {
@@ -1319,17 +1415,22 @@ export function AppShell() {
     }
     setFileTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
-      if (next.length === 0) setRightPanelOpen(false);
+      if (next.length === 0 && terminalTabs.length === 0) setRightPanelOpen(false);
       return next;
     });
     setActiveFileTabId((cur) => {
       if (cur !== tabId) return cur;
       const remaining = fileTabs.filter((t) => t.id !== tabId);
-      return remaining.length > 0 ? remaining[remaining.length - 1].id : null;
+      return remaining.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? null;
     });
-  }, [fileTabs, recordFolder]);
+  }, [fileTabs, terminalTabs, recordFolder]);
 
   const handleCloseFileTab = useCallback((tabId: string) => {
+    // terminal tab 走 closing 两态（restart/close，由 handleTerminalClosed 收尾）
+    if (terminalTabs.some((tab) => tab.id === tabId)) {
+      setTerminalTabs((tabs) => tabs.map((tab) => tab.id === tabId && !tab.closing ? { ...tab, closing: "close" } : tab));
+      return;
+    }
     // aiti-editor 关闭守卫：异步问询文件查看器是否放行关闭（文件夹 tab 无编辑状态，直接关）
     const closing = fileTabs.find((t) => t.id === tabId);
     if (closing?.kind !== "folder" && closing?.filePath) {
@@ -1337,7 +1438,7 @@ export function AppShell() {
       return;
     }
     performCloseFileTab(tabId);
-  }, [fileTabs, askEditorClose, performCloseFileTab]);
+  }, [fileTabs, terminalTabs, askEditorClose, performCloseFileTab]);
 
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
@@ -2286,6 +2387,7 @@ export function AppShell() {
         onCwdChange={handleCwdChange}
         onOpenFile={handleOpenFile}
         onOpenFolder={handleOpenFolder}
+        onOpenTerminal={handleOpenTerminal}
         explorerRefreshKey={explorerRefreshKey}
         onExplorerRefresh={handleExplorerRefresh}
         onAtMention={handleAtMention}
@@ -3672,6 +3774,8 @@ export function AppShell() {
               session={selectedSession}
               searchTarget={searchTarget?.sessionId === selectedSession?.id ? searchTarget : null}
               onSearchTargetHandled={handleSearchTargetHandled}
+              initialScrollPosition={selectedSession ? sessionScrollPositionsRef.current.get(selectedSession.id) ?? null : null}
+              onScrollPositionChange={handleSessionScrollPositionChange}
               sessionRunning={Boolean(selectedSession && runningSessionIds.has(selectedSession.id))}
               newSessionCwd={effectiveNewSessionCwd}
               newSessionDraftKey={newSessionDraftKey}
@@ -3692,6 +3796,10 @@ export function AppShell() {
               onExportQueue={(resolver) => { exportQueueDataRef.current = resolver; }}
               onOpenFile={handleOpenLinkedFile}
               onOpenSession={handleOpenSession}
+              onAskInNewChat={handleAskInNewChat}
+              quoteSelectionEnabled={quoteSelectionEnabled}
+              initialPrompt={pendingQuotePrompt?.sessionId === selectedSession?.id ? pendingQuotePrompt?.text : undefined}
+              onInitialPromptConsumed={() => setPendingQuotePrompt(null)}
               soundEnabled={soundEnabled}
               onSoundToggle={onSoundToggle}
               playDoneSound={playDoneSound}
@@ -3782,7 +3890,7 @@ export function AppShell() {
         }}>
           <div style={{ flex: 1, overflow: "hidden" }}>
             <TabBar
-              tabs={fileTabs}
+              tabs={panelTabs}
               activeTabId={activeFileTabId ?? ""}
               onSelectTab={guardedSelectFileTab}
               onCloseTab={handleCloseFileTab}
@@ -3848,7 +3956,7 @@ export function AppShell() {
         </div>
 
         {/* Only the active viewer is mounted. Lightweight per-tab state is restored on activation. */}
-        <div style={{ flex: 1, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
+        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
           {activeFileTab?.kind === "folder" ? (
             <FileViewer
               key={activeFileTab.id}
@@ -3889,7 +3997,7 @@ export function AppShell() {
                 { sourceSessionId: activeFileTab.sourceSessionId },
               )}
             />
-          ) : (
+          ) : !terminalTabs.some((tab) => tab.id === activeFileTabId) ? (
             <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12 }}>
                {fileTabs.length > 0
                  ? translate("files.clickTabToOpen")
@@ -3916,7 +4024,18 @@ export function AppShell() {
                      )}
                    </>}
             </div>
-          )}
+          ) : null}
+          {terminalTabs.map((tab) => (
+            <div key={tab.id} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%" }}>
+              <TerminalPanel
+                tab={tab}
+                active={rightPanelOpen && tab.id === activeFileTabId}
+                onRestart={() => setTerminalTabs((tabs) => tabs.map((item) => item.id === tab.id ? { ...item, closing: "restart" } : item))}
+                onClosed={() => handleTerminalClosed(tab)}
+                onCloseError={() => setTerminalTabs((tabs) => tabs.map((item) => item.id === tab.id ? { ...item, closing: undefined } : item))}
+              />
+            </div>
+          ))}
         </div>
       </div>
     </div>
@@ -3925,6 +4044,8 @@ export function AppShell() {
         cwd={projectTrustCwd}
         sessionId={selectedSession?.id ?? null}
         initialSection={settingsSection}
+        quoteSelectionEnabled={quoteSelectionEnabled}
+        onQuoteSelectionChange={handleQuoteSelectionChange}
         onClose={() => {
           setSettingsSection(null);
           setModelsRefreshKey((key) => key + 1);

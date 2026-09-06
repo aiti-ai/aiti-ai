@@ -32,6 +32,7 @@ import { cacheSessionPath, invalidateSessionListCache, resolveSessionPath } from
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { notifySessionComplete } from "./web-push";
+import { hasActiveSessionLivenessProvider } from "./session-liveness";
 import type { SlashCommandInfo, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
 import type {
@@ -142,6 +143,29 @@ const IDLE_RESET_EVENT_TYPES = new Set([
   "compaction_end",
 ]);
 
+const DEFAULT_SESSION_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Resolves the PI_WEB_IDLE_TIMEOUT_MS environment variable into a session idle
+ * timeout in milliseconds. An unset/blank value returns the 10-minute default,
+ * `0` disables idle shutdown, and positive values up to Node's timer limit
+ * (2147483647 ms) are used as-is. Invalid or out-of-range values fall back to
+ * the default with a console warning.
+ * @param rawValue Value to parse; defaults to the environment variable.
+ */
+export function resolveSessionIdleTimeoutMs(
+  rawValue: string | undefined = process.env.PI_WEB_IDLE_TIMEOUT_MS,
+): number {
+  if (rawValue !== undefined && rawValue.trim() !== "") {
+    const parsed = Number(rawValue);
+    if (Number.isFinite(parsed) && parsed >= 0 && parsed <= 2_147_483_647) return parsed;
+    console.warn(`[pi-web] invalid PI_WEB_IDLE_TIMEOUT_MS "${rawValue}", falling back to 10 minutes`);
+  }
+  return DEFAULT_SESSION_IDLE_TIMEOUT_MS;
+}
+
+const SESSION_IDLE_TIMEOUT_MS = resolveSessionIdleTimeoutMs();
+
 const SESSION_REPLACEMENT_COMMAND_TYPES = new Set(["fork", "clone"]);
 const COMMANDS_ALLOWED_DURING_SESSION_REPLACEMENT = new Set([
   "get_state",
@@ -184,7 +208,7 @@ const THINKING_LEVEL_NAMES = new Set<ThinkingLevel>(["off", "minimal", "low", "m
 class PlainTextTheme extends Theme {
   constructor() {
     super(
-      { thinkingXhigh: "", searchMatchText: "" } as ConstructorParameters<typeof Theme>[0],
+      { muted: "", text: "", thinkingXhigh: "", searchMatchText: "" } as ConstructorParameters<typeof Theme>[0],
       { selectedBg: "" } as ConstructorParameters<typeof Theme>[1],
       "truecolor",
     );
@@ -815,22 +839,29 @@ export class AgentSessionWrapper {
   private resetIdleTimer(): void {
     if (this.idleTimer) clearTimeout(this.idleTimer);
     if (!this._alive) return;
+    // A resolved timeout of 0 disables idle shutdown entirely.
+    if (SESSION_IDLE_TIMEOUT_MS === 0) return;
     if (!this.isRunning()) this.forceShutdownOnIdle = false;
     this.idleTimer = setTimeout(() => {
-      if (this.isRunning() && !this.forceShutdownOnIdle) {
+      if (!this.forceShutdownOnIdle && (this.isRunning() || hasActiveSessionLivenessProvider({
+        sessionId: this.sessionId,
+        sessionFile: this.sessionFile || undefined,
+      }))) {
         this.resetIdleTimer();
         return;
       }
       // 上游 pi-subagents detached run 判活：父会话 idle 但后台子代理仍在跑时
       // 不得回收——completion watcher / wait 订阅随 wrapper 销毁，子代理会
       // "永不回话"（上游 extension-api.md 宿主警告）。判活异常时保守续命。
-      let hasDetached = true;
-      try {
-        hasDetached = hasLiveDetachedRuns(
-          this.inner.sessionManager.getSessionFile?.() ?? "",
-          this.inner.sessionManager.getSessionId?.() ?? "",
-        );
-      } catch { /* 保守续命 */ }
+      // 无 sessionManager（无会话）时不保守——否则纯 idle 会话永不被回收。
+      let hasDetached = false;
+      const detachedSessionFile = this.inner.sessionManager?.getSessionFile?.() ?? "";
+      const detachedSessionId = this.inner.sessionManager?.getSessionId?.() ?? "";
+      if (detachedSessionFile || detachedSessionId) {
+        try {
+          hasDetached = hasLiveDetachedRuns(detachedSessionFile, detachedSessionId);
+        } catch { /* 保守续命 */ hasDetached = true; }
+      }
       if (hasDetached) {
         this.resetIdleTimer();
         return;
@@ -838,7 +869,7 @@ export class AgentSessionWrapper {
       void this.shutdown("idle").catch((error) => {
         console.error("[pi-web] failed to shut down idle session:", error instanceof Error ? error.message : error);
       });
-    }, 10 * 60 * 1000);
+    }, SESSION_IDLE_TIMEOUT_MS);
   }
 
   private persistBashOnlySession(): void {
@@ -1205,6 +1236,28 @@ export class AgentSessionWrapper {
           await this.shutdownAfterSessionReplacement("fork");
           return { cancelled: false, newSessionId };
         });
+      }
+
+      case "fork_branch": {
+        if (this.isSessionRunningForReplacement()) {
+          throw new Error("Cannot fork while the session is running");
+        }
+        const entryId = command.entryId as string;
+        const sessionManager = this.inner.sessionManager;
+        const currentSessionFile = this.inner.sessionFile;
+        if (!sessionManager.isPersisted()) return { cancelled: true };
+        if (!currentSessionFile) throw new Error("Persisted session is missing a session file");
+        if (!sessionManager.getEntry(entryId)) throw new Error("Invalid entry ID for forking");
+
+        const sessionDir = sessionManager.getSessionDir();
+        const sourceManager = SessionManager.open(currentSessionFile, sessionDir);
+        const forkedPath = sourceManager.createBranchedSession(entryId);
+        if (!forkedPath) throw new Error("Failed to create forked session");
+
+        const newSessionId = SessionManager.open(forkedPath, sessionDir).getSessionId();
+        cacheSessionPath(newSessionId, forkedPath);
+        invalidateSessionListCache();
+        return { cancelled: false, newSessionId };
       }
 
       case "clone": {

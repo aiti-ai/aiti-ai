@@ -33,6 +33,7 @@ import { getQueuePanelController } from "@/lib/composer/queue-api";
 import { FolderIcon, getFileIcon } from "./FileIcons";
 import { useIsMobile, useIsCompact, useIsCoarsePointer } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
+import { useChatAppearance } from "@/hooks/useChatAppearance";
 import type { ToolPreset } from "@/lib/tool-presets";
 import { ModelSelector, type ModelSelectorOption } from "./ModelSelector";
 
@@ -126,6 +127,8 @@ interface Props {
   /** 切换权限模式（setPermissionMode 能力时可用） */
   onSwitchPermissionMode?: (mode: string) => void;
   isStreaming: boolean;
+  /** Text-only composer without the session controls or outer spacing. */
+  compact?: boolean;
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
@@ -203,6 +206,8 @@ export interface ChatInputHandle {
   addImages: (files: File[]) => void;
   /** Restore an unsent draft (crash recovery) into the input box. */
   restoreDraft: (draft: ChatDraft) => void;
+  /** 提交失败回填（quoted-branch 用）：把文本并回当前输入（已有输入则拼接），草稿经 onChange 广播由 keeper 落盘。 */
+  restoreSubmission: (text: string) => void;
   /** 跑一遍扩展聊天钩子 preSend（[元素N]/[回答N]/[错误N] → 真实内容）；未注册钩子时原样返回。 */
   runChatHooks: (text: string) => string;
   /** True when the input box has text or images (used to tell a live draft from a recoverable one). */
@@ -794,8 +799,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   draftKey,
   cwd,
   suppressDraft,
+  compact = false,
 }: Props, ref) {
   const { t } = useI18n();
+  const { fontSize } = useChatAppearance();
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
   const isCoarsePointer = useIsCoarsePointer();
@@ -1250,6 +1257,21 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     runChatHooks(text: string) {
       return applyChatHooks(text);
     },
+    restoreSubmission(text: string) {
+      if (!text.trim()) return;
+      const restored = valueRef.current.trim() ? `${valueRef.current}\n\n${text}` : text;
+      valueRef.current = restored;
+      setInputValue(restored);
+      setAtQuery(null);
+      requestAnimationFrame(() => {
+        const ta = textareaRef.current;
+        if (!ta) return;
+        ta.focus();
+        ta.setSelectionRange(ta.value.length, ta.value.length);
+        ta.style.height = "auto";
+        ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+      });
+    },
     expandQueue() {
       // P3：扩展接管折叠态，core 恢复/导入解析后经 controller 展开（无接管 no-op）
       getQueuePanelController()?.expand();
@@ -1295,6 +1317,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, []);
 
   const processImageFiles = useCallback(async (files: File[]) => {
+    if (compact) return;
     const remaining = Math.max(
       0,
       MAX_ATTACHED_IMAGES - attachedImagesRef.current.length - pendingImageCountRef.current,
@@ -1321,7 +1344,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     } finally {
       pendingImageCountRef.current -= imageFiles.length;
     }
-  }, []);
+  }, [compact]);
 
   const removeImage = useCallback((index: number) => {
     setAttachedImages((prev) => {
@@ -1414,15 +1437,16 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // 目标输入框挂载/换 key 后在此消费插入。带 15s 时效防陈文误投；一次性短延迟定时器
   // 避开同 commit 的 [draftKey] 清空 effect（上方的 setValue("")）与扩展恢复链，非轮询。
   useEffect(() => {
-    const w = window as any;
+    const w = window as Window & { __piWebPendingComposer?: { text?: unknown; at?: unknown } };
     const pending = w.__piWebPendingComposer;
     if (!pending || typeof pending.text !== "string" || !pending.text) return;
+    const text = pending.text; // 守卫后取出窄化值：定时器闭包里不再依赖属性窄化
     if (Date.now() - (Number(pending.at) || 0) > 15000) { delete w.__piWebPendingComposer; return; }
     const timer = setTimeout(() => {
       const cur = w.__piWebPendingComposer;
       if (!cur || cur !== pending) return; // 已被更新/消费
       delete w.__piWebPendingComposer;
-      const combined = pending.text;
+      const combined = text;
       valueRef.current = combined;
       setValue(combined);
       setAtQuery(null);
@@ -1485,7 +1509,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     return () => setComposerWriter(null);
   }, [setInputValue]);
 
-  useEffect(() => {
+  // 上游把高度量测抽为 resizeTextarea（useLayoutEffect [value,fontSize] + 宽度 ResizeObserver 复用）；
+  // 我方在具中并入非受控同步（writeTextareaValue + tracker 对齐）——草稿恢复/扩展注入在 React 之外
+  // 改写 DOM value，必须在此同步回写，否则 tracker 过期会吞 onChange（草稿复活/清不掉，见下注释）。
+  const resizeTextarea = useCallback(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     // 非受控同步：React state 变化（草稿恢复/扩展注入/发送清空/召回等）写回 DOM。
@@ -1502,19 +1529,28 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const tracker = (ta as unknown as { _valueTracker?: { setValue(v: string): void } })._valueTracker;
     tracker?.setValue(ta.value);
     ta.style.height = "auto";
-    if (value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+    if (ta.value) ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
   }, [value]);
+
+  useLayoutEffect(resizeTextarea, [value, fontSize, resizeTextarea]);
+
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    let previousWidth = -1;
+    const observer = new ResizeObserver(([entry]) => {
+      // Height updates also notify the observer; only remeasure on width changes.
+      if (entry.contentRect.width === previousWidth) return;
+      previousWidth = entry.contentRect.width;
+      resizeTextarea();
+    });
+    observer.observe(ta);
+    return () => observer.disconnect();
+  }, [resizeTextarea]);
 
   // （值变化广播只在上方带 suppress 的一处发——曾有一个无 suppress 的旧广播残留，
   //  每次变化双发，把 suppressDraft 击穿：「从这里编辑」预填文本借它漏进草稿槽位，
   //  发送时经 scan「恢复」回框且清空确认被污染失效。已删，勿再加第二个广播点。）
-
-  const resizeTextarea = useCallback(() => {
-    const ta = textareaRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
-  }, []);
 
   const handleFocus = useCallback(() => {
     composerLiveFocused = true;
@@ -1704,7 +1740,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     return () => registerChatSend(null);
   }, [handleExtensionSend]);
 
-  const slashQuery = value.startsWith("/") && !/\s/.test(value.slice(1))
+  const slashQuery = !compact && value.startsWith("/") && !/\s/.test(value.slice(1))
     ? value.slice(1).toLowerCase()
     : null;
 
@@ -2268,13 +2304,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const handleInput = resizeTextarea;
 
   const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    if (compact) return;
     const items = Array.from(e.clipboardData?.items ?? []);
     const imageItems = items.filter((item) => item.type.startsWith("image/"));
     if (!imageItems.length) return;
     e.preventDefault();
     const files = imageItems.map((item) => item.getAsFile()).filter((f): f is File => f !== null);
     processImageFiles(files);
-  }, [processImageFiles]);
+  }, [compact, processImageFiles]);
 
   useEffect(() => {
     if (slashQuery === null) {
@@ -2503,8 +2540,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         position: "relative",
         flexShrink: 0,
         background: "transparent",
-        padding: "0 16px 8px",
-        paddingRight: isMobile || isCompact ? 16 : 52, // desktop: 16px base + 36px for ChatMinimap alignment
+        padding: compact ? 0 : "0 16px 8px",
+        paddingRight: compact ? 0 : isMobile || isCompact ? 16 : 52, // desktop: 16px base + 36px for ChatMinimap alignment
       }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
@@ -2544,7 +2581,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         </div>
       )}
       {/* Hidden file input */}
-      <input
+      {!compact && <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
@@ -2555,9 +2592,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           processImageFiles(files);
           e.target.value = "";
         }}
-      />
+      />}
       {/* Hidden generic-file input（文件附件：PDF/文档等，后端 fileAttachments 能力） */}
-      <input
+      {!compact && <input
         ref={anyFileInputRef}
         type="file"
         multiple
@@ -2570,8 +2607,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           processDocFiles(docs);
           e.target.value = "";
         }}
-      />
-      <div style={{ maxWidth: 820, margin: "0 auto" }}>
+      />}
+      <div style={{ maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
         <ModelErrorBanner error={modelError} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
         {showImageUnsupportedWarning && (() => {
@@ -3220,16 +3257,17 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             style={{
               minWidth: 0,
               display: "flex",
-              flexWrap: "wrap",
+              flexDirection: compact ? "column" : "row",
+              flexWrap: compact ? "nowrap" : "wrap",
               gap: 8,
-              alignItems: "center",
+              alignItems: compact ? "stretch" : "center",
               background: "var(--bg)",
-              border: `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
+              border: compact ? "none" : `1px solid ${bashMode ? "var(--tool-bg)" : isStreaming && (onSteer || onFollowUp)
                 ? "rgba(234,179,8,0.4)"
                 : "color-mix(in srgb, var(--border) 70%, transparent)"}`,
-              borderRadius: 14,
-              padding: "10px 10px 10px 14px",
-              boxShadow: "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
+              borderRadius: compact ? 0 : 14,
+              padding: compact ? 0 : "10px 10px 10px 14px",
+              boxShadow: compact ? "none" : "0 1px 2px rgba(15,23,42,0.04), 0 8px 24px -12px rgba(15,23,42,0.10)",
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
             } as React.CSSProperties}
           >
@@ -3238,6 +3276,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             ref={textareaRef}
             data-chat-input="1"
             enterKeyHint="send"
+            className="chat-input-textarea"
+            aria-label={compact ? t("chat.quoteQuestion") : undefined}
             defaultValue={value}
             onChange={(e) => {
               valueRef.current = e.target.value;
@@ -3274,17 +3314,17 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             }
             rows={1}
             style={{
-              flex: buttonsWrapped ? "1 1 100%" : "1 1 0",
+              flex: compact ? "none" : buttonsWrapped ? "1 1 100%" : "1 1 0",
               minWidth: 0,
               background: "none",
               border: "none",
               outline: "none",
               resize: "none",
               color: "var(--text)",
-              fontSize: 14,
+              fontSize: "var(--chat-content-font-size, 14px)",
               lineHeight: 1.6,
               fontFamily: "inherit",
-              minHeight: 24,
+              minHeight: compact ? 96 : 24,
               maxHeight: 200,
               overflow: "auto",
             }}
@@ -3407,7 +3447,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         )}
 
         {/* Bottom bar: left | center (context) | right */}
-        {bottomMode !== "minimal" && (
+        {!compact && bottomMode !== "minimal" && (
         <div style={{
           marginTop: 8,
           display: isMobile ? "grid" : "flex",

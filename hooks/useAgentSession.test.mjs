@@ -420,6 +420,20 @@ test("keeps live following cancellable when the user scrolls away from the tail"
   assert.match(scrollHandlerSource, /cancelAnimationFrame\(liveFollowFrameRef\.current\)/);
 });
 
+test("restores an in-page session viewport without the default tail jump", () => {
+  assert.match(source, /const initialScrollDoneRef = useRef\(Boolean\(opts\.deferInitialScroll\)\)/);
+  assert.match(source, /const scrollToMessage = useCallback\(\(element: HTMLElement, viewportOffset = 16\)/);
+  assert.match(source, /container\.scrollTop\s+- viewportOffset/);
+  assert.match(chatWindowSource, /deferInitialScroll: Boolean\(pendingScrollRestore\)/);
+  assert.match(chatWindowSource, /isScrollAtTail\(container\.scrollTop, container\.clientHeight, container\.scrollHeight\)/);
+  assert.match(chatWindowSource, /findChatScrollAnchor\(/);
+  assert.match(chatWindowSource, /while \(hasMore && before && !controller\.signal\.aborted\)/);
+  assert.match(chatWindowSource, /context\.oldestEntryId === position\.oldestEntryId/);
+  assert.match(chatWindowSource, /if \(!context\) \{\s*scrollToBottom\("instant"\);\s*setPendingScrollRestore\(null\);/);
+  assert.match(chatWindowSource, /scrollToMessage\(element, position\.anchorOffset\)/);
+  assert.match(chatWindowSource, /visibility: pendingScrollRestore \? "hidden" : undefined/);
+});
+
 test("keeps a newly sent user message at the top while its response starts", () => {
   const streamUpdateSource = source.slice(
     source.indexOf('case "message_start"'),
@@ -478,7 +492,7 @@ test("sizes the message tail from the rendered bottom composer", () => {
   assert.match(chatWindowSource, /bottomComposerScrollFrameRef = useRef<number \| null>\(null\)/);
   assert.match(chatWindowSource, /distanceFromBottom <= Math\.abs\(nextHeight - previousHeight\) \+ 1/);
   assert.match(chatWindowSource, /scrollToBottom\("auto"\)/);
-  assert.match(chatWindowSource, /<div ref=\{bottomComposerRef\} className="relative">/);
+  assert.match(chatWindowSource, /<div ref=\{bottomComposerRef\} className="relative( shrink-0)?"?>/);
   assert.match(chatWindowSource, /height: bottomComposerHeight/);
 });
 
