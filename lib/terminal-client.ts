@@ -1,5 +1,7 @@
+import { apiUrl } from "./base-path";
+
 export async function terminalRequest(path: string, options?: RequestInit): Promise<{ id?: string; cwd?: string }> {
-  const response = await fetch(path, { ...options, signal: AbortSignal.timeout(15_000) });
+  const response = await fetch(apiUrl(path), { ...options, signal: AbortSignal.timeout(15_000) });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error ?? `HTTP ${response.status}`);
   return data;
