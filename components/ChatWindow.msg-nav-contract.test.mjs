@@ -36,9 +36,11 @@ test("both user and assistant messages remain visible (and thus nav targets)", (
 
 test("chatOverlay slot stays wired for the nav toolbar extension", () => {
   // 内置 ScrollToolbar 抽离为 aiti-msg-nav（4678bc9）后，core 只剩这个插槽挂载点；
-  // agentRunning/isMobile 透传驱动「长按到最新保持常亮」与移动端贴边。
+  // agentRunning/isMobile 透传驱动「长按到最新保持常亮」与移动端贴边；
+  // revealHistory（2026-09-06）供「到最早/上一条」跳转目标在渲染窗口外时全量展开
+  // （与 ChatMinimap 的 onRevealHistory 同源，一次性 setVisibleCount(messages.length*2)）。
   assert.match(source, /<ExtSlot\n\s+name="chatOverlay"/);
-  assert.match(source, /extra=\{\{ agentRunning, isMobile \}\}/);
+  assert.match(source, /extra=\{\{ agentRunning, isMobile, revealHistory: revealHistoryForMinimap \}\}/);
 });
 
 test("chatOverlay slot keeps passing currentSession for the anchor banner", () => {

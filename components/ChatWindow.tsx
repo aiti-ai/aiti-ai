@@ -1269,11 +1269,13 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, sessi
 
         {/* 消息滚动导航条已抽离为扩展（aiti-msg-nav 注册到 chatOverlay 插槽）；
             消息锚点横幅（aiti-msg-anchor）同插槽。currentSession 透传会话标题：
-            name + firstMessage（无 name 时与左侧 session 列表一致取第一条用户输入）。 */}
+            name + firstMessage（无 name 时与左侧 session 列表一致取第一条用户输入）。
+            extra.revealHistory：aiti-msg-nav「到最早/上一条」跳转目标在渲染窗口外时
+            一次性全量展开，与 ChatMinimap 的 onRevealHistory 同源。 */}
         <ExtSlot
           name="chatOverlay"
           currentSession={session ? { id: session.id, cwd: session.cwd, name: session.name, firstMessage: session.firstMessage } : null}
-          extra={{ agentRunning, isMobile }}
+          extra={{ agentRunning, isMobile, revealHistory: revealHistoryForMinimap }}
         />
 
         {isMobile || isCompact ? null : (
