@@ -15,7 +15,7 @@ const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, adjacentQueueTarge
 const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
-test("streaming Enter queues a follow-up; empty-input Enter promotes to steer (fork semantics)", () => {
+test("streaming Enter queues a follow-up; Alt+Enter is the exact inverse (steer now); empty-input Enter promotes to steer (fork semantics)", () => {
   const source = ts.createSourceFile("ChatInput.tsx", readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   function findHandler(node) {
     if (ts.isVariableDeclaration(node) && node.name.getText(source) === "handleKeyDown") {
@@ -29,14 +29,18 @@ test("streaming Enter queues a follow-up; empty-input Enter promotes to steer (f
   }).outputText);
   const cases = [
     ["typed Enter queues as follow-up", { }, {}, "followup"],
+    ["typed Alt+Enter is the inverse: steers immediately", { altKey: true }, {}, "steer"],
+    ["typed Alt+Enter falls back to follow-up when steer is unavailable", { altKey: true }, { onSteer: undefined }, "followup"],
+    ["empty-input Alt+Enter promotes the queue to steer (no queueable text to invert)", { altKey: true }, { value: "" }, "steer"],
     ["empty-input Enter promotes the queue to steer", { }, { value: "" }, "steer"],
     ["no follow-up capability falls back to steer", { }, { onFollowUp: undefined }, "steer"],
     ["Shift+Enter inserts a newline", { shiftKey: true }, {}, "native"],
-    ["Alt+Shift+Enter keeps native behavior", { altKey: true, shiftKey: true }, {}, "native"],
+    ["Alt+Shift+Enter keeps native behavior (newline wins over Alt)", { altKey: true, shiftKey: true }, {}, "native"],
     ["composition ref blocks sending", {}, { isComposingRef: { current: true } }, "native"],
     ["native composition blocks sending", { nativeEvent: { isComposing: true } }, {}, "native"],
     ["IME keyCode blocks sending", { nativeEvent: { keyCode: 229 } }, {}, "native"],
     ["composition grace blocks sending", {}, { lastCompositionEndAtRef: { current: 950 } }, "prevented"],
+    ["Alt+composition grace blocks sending", { altKey: true }, { lastCompositionEndAtRef: { current: 950 } }, "prevented"],
     ["Enter falls back to follow-up when steer is unavailable", { }, { onSteer: undefined }, "followup"],
     ["slash completion takes priority", {}, { slashMenuOpen: true, slashQuery: "help" }, "slash"],
     ["available built-in commands take priority", {}, { slashMenuOpen: true, slashQuery: "copy", value: "/copy", displayedSlashCommands: [{ name: "copy", source: "builtin", availableWhileStreaming: true }] }, "send"],

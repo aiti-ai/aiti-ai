@@ -398,7 +398,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.agentPlaceholder": "Agent 运行中…",
     "chat.messagePlaceholder": "消息…输入 / 使用命令，输入 @ 查找文件",
     "chat.steer": "插队",
-    "chat.steerHint": "尝试插队，等待 agent 优先调度",
+    "chat.steerHint": "尝试插队，等待 agent 优先调度（Alt/Option+Enter）",
     "chat.steerFromQueueHint": "尝试让队列里第一个消息插队",
     "chat.steerNoInput": "输入消息后可插队",
     "chat.followUp": "排队",

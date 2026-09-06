@@ -2287,9 +2287,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           // With an empty input, a second Enter promotes the first queued
           // follow-up to a steer (delivered at the next turn boundary instead
           // of waiting for the run to end) — so "Enter to queue, Enter again
-          // to insert". Steering with typed text is still the steer button.
+          // to insert". Alt/Option+Enter is the exact inverse: with typed text
+          // it steers immediately (interrupt), degrading to the other mode
+          // when that capability is missing. An empty input has no queueable
+          // text to invert, so both keys promote the queue to a steer.
           if (value.trim()) {
-            sendQueued(onFollowUp ? "followup" : "steer");
+            const wants = e.altKey ? "steer" : "followup";
+            const fallback = e.altKey ? "followup" : "steer";
+            sendQueued((wants === "steer" ? onSteer : onFollowUp) ? wants : fallback);
           } else {
             sendQueued("steer");
           }

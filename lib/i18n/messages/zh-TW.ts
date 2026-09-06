@@ -699,7 +699,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.recalledEditing": "正在编辑已移回的排队消息——发送将放回队列原处（第 {pos} 位）",
     "chat.recalledRequeue": "放回队列",
     "chat.recalledCancel": "取消移回",
-    "chat.steerHint": "尝试插队，等待 agent 优先调度",
+    "chat.steerHint": "嘗試插隊，等待 agent 優先調度（Alt/Option+Enter）",
     "chat.steerFromQueueHint": "尝试让队列里第一个消息插队",
     "chat.steerNoInput": "输入消息后可插队",
     "chat.followUpHint": "回车排队，再次回车尝试插队",
