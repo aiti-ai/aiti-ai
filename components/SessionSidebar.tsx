@@ -773,6 +773,12 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     const hasUnlistedRunningSession = newlyRunning.some(
       (id) => !allSessions.some((session) => session.id === id),
     );
+    // 非接管态下，会话开始/完成（running 集变化）需重拉列表：让占位行/临时行的
+    // modified 随活动更新（外部 agent 会话由 /api/sessions 的 getLastActivity 覆盖）。
+    // 注释块本已写明「选中的会话完成也需列表刷新」，但此前未实际触发 loadSessions。
+    if (newlyRunning.length > 0 || selectedSessionCompleted || completedInBackground.length > 0) {
+      void loadSessions();
+    }
     // 接管后列表数据归 session-manager（其 SSE running 集合变化时自行刷新），
     // 宿主不再派生拉取；完成通知（onBackgroundTaskDone）保留。
     if (completedWithNotifications.length > 0) {
