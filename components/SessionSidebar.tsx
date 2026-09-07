@@ -434,6 +434,11 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     setAllSessions(sessions);
     onSessionsChange?.(sessions);
   }, [onSessionsChange]);
+  // running 回灌（同 allSessions 模式）：刷新后初始快照来自扩展 refreshSessions
+  // 的 runRes（原 loadSessions 快照已下线）；SSE 变化帧由扩展转发。幂等 set。
+  const handleExtRunning = useCallback((ids: Set<string>) => {
+    setRunningSessionIds(new Set(ids));
+  }, []);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sessionListVersion, setSessionListVersion] = useState<number | null>(null);
@@ -2019,6 +2024,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
               loading,
               error,
               onSessionsChange: handleExtSessions,
+              onRunningSessionIds: handleExtRunning,
               refreshKey,
               sessionListVersion,
               runningSessionIds,
