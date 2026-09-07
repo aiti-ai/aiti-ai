@@ -376,7 +376,8 @@ export function ModelSelector({
                       key={`recent:${option.provider}:${option.modelId}`}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
-                      hint={option.provider}
+                      hint={isMobile ? undefined : option.provider}
+                      status={option.status}
                       onClick={() => choose(option)}
                     />
                   ))}
@@ -401,7 +402,7 @@ export function ModelSelector({
                       key={`${option.provider}:${option.modelId}`}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
-                      hint={option.provider}
+                      hint={isMobile ? undefined : option.provider}
                       status={option.status}
                       onClick={() => choose(option)}
                     />
