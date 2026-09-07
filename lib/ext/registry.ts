@@ -636,6 +636,18 @@ export class ExtRegistryImpl {
         this.errors.set(id, msg);
       }
     }
+    // [懒加载 v2] 标懒静态诊断（不拦截）：clientImmediately:false 却没有任何
+    // ui[slot][] 条目声明 → 首插槽渲染即物化（常挂插槽）或永不物化（静默失效）。
+    // 有条目声明的交给客户端静态入口/交互插槽机制（dev 断言在 ext-ui-store 合并层）。
+    for (const ext of this.extensions.values()) {
+      if (ext.ext.ui?.clientImmediately !== false) continue;
+      const hasStaticEntry = Object.entries(ext.ext.ui).some(
+        ([k, v]) => !["i18n", "provides", "clientDependsOn", "clientImmediately"].includes(k) && Array.isArray(v) && v.length > 0,
+      );
+      if (!hasStaticEntry) {
+        this.errors.set(ext.id, "标懒无效：无任何 ui[slot][] 静态入口（常挂插槽首渲染即物化，或永不物化静默失效）——补静态条目或去掉 clientImmediately:false");
+      }
+    }
     this.buildCapabilityIndex();
     this.loaded = true;
   }

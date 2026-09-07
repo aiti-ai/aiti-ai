@@ -17,7 +17,7 @@
  */
 
 import { Suspense, useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { ExtSlotsProvider } from "@/components/ExtSlots";
+import { ExtSlotsProvider, ensureExtSlotMaterialized } from "@/components/ExtSlots";
 import { FileViewer } from "@/components/FileViewer";
 import { TabBar, type Tab } from "@/components/TabBar";
 import { openFileTab, openFolderTab, saveFileViewerState } from "@/components/file-tab-state";
@@ -142,6 +142,11 @@ function ViewerBody() {
   );
   // render 可选化（toolbar 声明式条目）后统一收窄：只消费带 render 的 pathPicker 项
   const pathPicker = pathPickerItems.find(hasExtRender) ?? null;
+  // [懒加载 v2] viewer 页打开 = 交互时刻——声明 pathPicker 的懒扩展（folder）一次性物化；
+  // 未到位时兜底按钮在，物化后 store bump → FolderSwitcher 接管生效。
+  useEffect(() => {
+    void ensureExtSlotMaterialized("pathPicker");
+  }, []);
 
   // —— 宿主原语最新态 ref（registerHostApi 是模块级单例，闭包不能过期）——
   const stateRef = useRef({ tabs, activeTabId, cwd: effCwd });

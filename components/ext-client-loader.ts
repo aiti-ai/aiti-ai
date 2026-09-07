@@ -188,6 +188,54 @@ export function pendingForSlot(slot: string): string[] {
 }
 
 /**
+ * [懒加载 v2] 常挂插槽自动触发用：从 pendingForSlot 排除全部懒扩展（immediately:false）。
+ * 常挂插槽（toolbar/sidebar/…20+）首屏即渲染——若不排除懒扩展，「标懒」照样启动即物化。
+ * 懒扩展在常挂插槽上的入口由 manifest 静态条目承担（点击经 ensureMaterialized 拉起）。
+ */
+export function pendingForSlotAuto(slot: string): string[] {
+  return pendingForSlot(slot).filter((id) => entryOf(id)?.immediately !== false);
+}
+
+/**
+ * [懒加载 v2] 交互时挂载插槽清单：这些插槽的 useExtSlotItems 物化 effect 保持
+ * 「首渲染即拉起全部声明扩展（含懒扩展）」语义——插槽挂载本身就是用户可感知的
+ * 交互时刻（打开设置/打开文件/打开终端…）。清单外（常挂）插槽一律走 pendingForSlotAuto。
+ * 宿主维护；新增交互时挂载插槽时同步登记（见 docs/aiti-ext-lazy-loading-plan.md §1.2 全景表）。
+ */
+export const INTERACTIVE_SLOTS: ReadonlySet<string> = new Set([
+  "sessionStats",
+  "fileViewer",
+  "pathPicker",
+  "terminalDock",
+  "settingsModels",
+  "settingsAgents",
+  "settingsAgentsFeature",
+  "rightFileDock",
+]);
+
+/**
+ * [懒加载 v2] 幂等物化：确保某扩展 client 已 register(ctx)（并发安全——复用
+ * materialize 的 materializing Map 互斥）。
+ * @returns true 当本次调用真正执行了注册；已 materialize / 无 bundle 返回 false。
+ */
+export async function ensureMaterialized(id: string, makeCtx: (id: string) => unknown): Promise<boolean> {
+  const mod = modules.get(id);
+  if (mod?.materialized) return false;
+  return materialize(id, makeCtx);
+}
+
+/**
+ * [懒加载 v2] 物化声明了 slot 的全部懒扩展（交互时挂载插槽 / 接管直读点跳板用）。
+ * 幂等：全部已 materialize 时空转返回。
+ */
+export async function ensureSlotMaterialized(slot: string, makeCtx: (id: string) => unknown): Promise<void> {
+  const pending = pendingForSlot(slot);
+  for (const id of pending) {
+    await ensureMaterialized(id, makeCtx);
+  }
+}
+
+/**
  * HMR 钩子：丢弃某扩展的已注册项与 materialized 标记（rev 已变）。
  * @param removeItems 宿主提供的「按扩展清除 UI 项」回调（ext-ui-store.removeExtUiItems）。
  * @returns 该扩展下次 materialize 会重新 import + 重新注册。

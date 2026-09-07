@@ -23,7 +23,7 @@ import {
 import { getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
 import { getExtUiItems, subscribeExtUi, hasExtRender, type ExtUiItemRegistered } from "@/lib/ext-ui-store";
-import { ExtItemBoundary } from "./ExtSlots";
+import { ExtItemBoundary, ensureExtSlotMaterialized } from "./ExtSlots";
 import { parseFrontmatter } from "@/lib/frontmatter";
 import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, markdownUrlTransform, normalizeDisplayMath } from "@/lib/markdown";
 import { CodeBlock, MermaidBlock } from "./MermaidBlock";
@@ -1163,6 +1163,12 @@ export function FileViewer({
     () => getExtUiItems("fileViewer"),
     () => FILE_VIEWER_NO_ITEMS, // 服务端稳定空快照（SSR 不接管；hydration 后接管项生效）
   );
+  // [懒加载 v2] 接管跳板补触发：文件 tab 打开 = 用户可感知的交互时刻——声明 fileViewer
+  // 的懒扩展（editor/folder）在首次接管判定前一次性物化；未到位时上方接管 find 落空，
+  // 核心原查看器兜底，物化完成 store bump → 重渲染 → 下一次渲染接管生效。
+  useEffect(() => {
+    void ensureExtSlotMaterialized("fileViewer");
+  }, []);
   const takeover = takeoverItems.find((item) => {
     // render 可选化（toolbar 声明式条目）后统一收窄：无 render 的注册项不参与接管
     if (!hasExtRender(item)) return false;
@@ -1681,6 +1687,27 @@ function TextFileViewer({
             }}
           />
         )}
+
+        {/* [P1-6 链④] 文件时间线入口：派发 aiti-git-trace-open（trace 扩展在场则打开
+            该文件的变更时间线；缺席时无监听方，按钮空操作——零耦合依赖） */}
+        <button
+          type="button"
+          title="⎇ 文件时间线：查看此文件的变更历史（aiti-git-trace）"
+          onClick={() => {
+            try {
+              window.dispatchEvent(new CustomEvent("aiti-git-trace-open", {
+                detail: { kind: "timeline", data: { sessionId: sourceSessionId || undefined, view: "file", file: filePath } },
+              }));
+            } catch { /* noop */ }
+          }}
+          style={{
+            display: "inline-flex", alignItems: "center", gap: 3,
+            background: "transparent", border: "none", cursor: "pointer",
+            color: "var(--text-dim)", fontSize: 11, padding: "1px 4px",
+          }}
+          onMouseEnter={(e: any) => { e.currentTarget.style.color = "var(--text)"; }}
+          onMouseLeave={(e: any) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+        >⎇</button>
 
         <div className="file-viewer-controls">
           {displayModes.length > 1 && (

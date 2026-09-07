@@ -29,7 +29,7 @@ import { registerRecoveryItemsProvider } from "@/lib/composer/recovery";
 import { registerDraftApi } from "@/lib/composer/draft-api";
 import type { DraftApi } from "@/lib/composer/draft-api";
 import { registerQueuePanelController, getQueuePanelController } from "@/lib/composer/queue-api";
-import type { ExtSlotName, ExtSlotProps, ParagraphClickHandler, SessionForkGate } from "@/lib/ext/types";
+import type { ExtSlotName, ExtSlotProps, ParagraphClickHandler, SessionForkGate, ExtUiStaticSlots } from "@/lib/ext/types";
 import { registerSessionForkGate as registerSessionForkGateBus } from "@/lib/ext/fork-gates";
 import {
   getExtMetas,
@@ -45,6 +45,11 @@ import {
   getExtFeaturesOf,
   subscribeExtFeatures,
   hasExtRender,
+  registerStaticItems,
+  setStaticClickHandler,
+  setStaticItemPending,
+  pruneStaticItems,
+  removeStaticItems,
   type ExtMeta,
   type ExtRenderProps,
   type ExtUiItemRegistered,
@@ -57,6 +62,10 @@ import {
   materialize,
   materializedIds,
   pendingForSlot,
+  pendingForSlotAuto,
+  ensureMaterialized,
+  ensureSlotMaterialized,
+  INTERACTIVE_SLOTS,
   prefetch,
   prefetchedIds,
   pruneDeclaredSlots,
@@ -179,6 +188,11 @@ export interface ExtClientContext {
   reloadExtensions?(opts?: { resyncOnly?: boolean }): Promise<{ invalidated: string[] }>;
   /** client loader 当前状态（materialized / prefetched 的扩展 id）——扩展管理界面展示用。 */
   extLoaderState?(): { materialized: string[]; prefetched: string[] };
+  /** [懒加载 v2] 确保某扩展 client 已物化（幂等；懒/即时通用）。返回是否本次真正完成注册。
+   *  静态入口点击转发 / extman 虚空打开 / 跨扩展交互时刻拉起用。 */
+  ensureMaterialized?(id: string): Promise<boolean>;
+  /** [懒加载 v2] 确保声明了某插槽的全部懒扩展已物化（接管直读点跳板/交互时插槽用）。 */
+  ensureSlotMaterialized?(slot: ExtSlotName): Promise<void>;
 }
 
 /** 聊天输入钩子 store（扩展注册；ChatInput 发送时调用） */
@@ -291,7 +305,9 @@ interface ManifestExt {
   name: string;
   version: string;
   clientUrl: string | null;
-  ui: { i18n?: Record<string, Record<string, string>>; provides?: string[] } | null;
+  // ui 随 manifest 全量序列化（registry.ts `ui: e.ext.ui ?? null`）：i18n/provides 之外
+  // 还含各插槽的静态条目数组（ExtUiStaticSlots）——懒加载 v2 的零 bundle 入口数据源。
+  ui: (ExtUiStaticSlots & { i18n?: Record<string, Record<string, string>>; provides?: string[]; clientImmediately?: boolean }) | null;
   icon?: string | null;
   features?: { id: string; type?: "boolean" | "string"; label?: string; placeholder?: string; enabled: boolean; value?: string }[] | null;
 }
@@ -463,6 +479,9 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     getQueuePanelController: () => getQueuePanelController(),
     reloadExtensions: (opts?: { resyncOnly?: boolean }) => reloadExtensions(opts),
     extLoaderState: () => ({ materialized: materializedIds(), prefetched: prefetchedIds() }),
+    // [懒加载 v2] 显式物化 API（extman 虚空打开 / 跨扩展交互时刻拉起）
+    ensureMaterialized: (id: string) => ensureExtMaterialized(id),
+    ensureSlotMaterialized: (slot: ExtSlotName) => ensureExtSlotMaterialized(slot),
   };
   return ctx;
 }
@@ -480,14 +499,40 @@ export function ExtSlotsProvider({ children }: { children: ReactNode }) {
   return <>{children}<ExtErrorIndicator /></>;
 }
 
+/** manifest 本地持久缓存：带 If-None-Match → 304 时零传输、零解析。
+ *  写失败（配额/隐私模式）静默降级为每次全量。 */
+const MANIFEST_CACHE_KEY = "pi-web:ext-manifest-cache";
+function loadManifestCache(): { etag: string; data: ManifestData } | null {
+  try {
+    const raw = localStorage.getItem(MANIFEST_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { etag: string; data: ManifestData };
+    return parsed?.etag && parsed?.data ? parsed : null;
+  } catch { return null; }
+}
+function saveManifestCache(etag: string, data: ManifestData): void {
+  try { localStorage.setItem(MANIFEST_CACHE_KEY, JSON.stringify({ etag, data })); } catch { /* quota */ }
+}
+
 /** 拉取 manifest 并刷新 client 侧缓存（manifestCache / declaredSlots / metas）。
  *  返回 { extensions, graph }；失败返回 null（不抛）。reload 后必须重拉——
  *  否则新安装扩展的元数据/i18n/声明的插槽停留在旧值，client bundle 加载不到。 */
 async function fetchManifestData(): Promise<ManifestData | null> {
   try {
-    const res = await fetch(apiUrl("/api/extensions/manifest"), { cache: "no-store" });
-    if (!res.ok) return null;
-    const data = (await res.json()) as ManifestData;
+    const cached = loadManifestCache();
+    const res = await fetch(apiUrl("/api/extensions/manifest"), {
+      cache: "no-store",
+      headers: cached ? { "if-none-match": cached.etag } : undefined,
+    });
+    let data: ManifestData | null = null;
+    if (res.status === 304 && cached) {
+      data = cached.data; // 未变：零传输，直接用本地副本
+    } else if (res.ok) {
+      data = (await res.json()) as ManifestData;
+      const etag = res.headers.get("etag");
+      if (etag) saveManifestCache(etag, data);
+    }
+    if (!data) return null;
     // manifest 元数据（name/icon/provides）→ 宿主 UI 标注扩展身份（顶栏自定义面板等）、
     // 并驱动内置 UI 的能力接管开关（useExtProvides）
     const metas: Record<string, ExtMeta> = {};
@@ -497,7 +542,24 @@ async function fetchManifestData(): Promise<ManifestData | null> {
       // 功能状态统一写入共享 store（extman 管理；扩展经 ctx.getFeatures 读，零独立请求）
       setExtFeatures(ext.id, ext.features ? Object.fromEntries(ext.features.map((f) => [f.id, f.type === "string" ? (f.value ?? "") : (f.enabled !== false)])) : null);
       // 按需加载登记：声明了哪些 UI 插槽（ui 定义里非空数组的 slot 键）。
-      registerDeclaredSlots(ext.id, ext.ui ? Object.keys(ext.ui).filter((k) => k !== "i18n" && k !== "provides" && k !== "clientDependsOn") : []);
+      const declaredSlotKeys = ext.ui ? Object.keys(ext.ui).filter((k) => k !== "i18n" && k !== "provides" && k !== "clientDependsOn" && k !== "clientImmediately") : [];
+      registerDeclaredSlots(ext.id, declaredSlotKeys);
+      // [懒加载 v2] 静态条目登记：manifest ui[slot][] 的可序列化声明 → 零 bundle 入口
+      //（物化前宿主直接渲染；点击经 staticClickForwarder 物化后转发注册条目 onClick）。
+      // 仅对懒扩展（clientImmediately:false）注册：即时扩展启动批就物化，静态条目只会
+      // 造成一闪而过的双渲染；且即时扩展的 ui 声明与 client 注册 id 从未对齐过（历史
+      // 上宿主不渲染静态声明，错位不可见）——按 §5.5 SOP 逐扩展转懒时才对齐并启用。
+      if (ext.ui?.clientImmediately === false) {
+        for (const slot of declaredSlotKeys) {
+          const items = (ext.ui as Record<string, unknown>)[slot];
+          if (Array.isArray(items) && items.length > 0) {
+            registerStaticItems(slot as ExtSlotName, items as Parameters<typeof registerStaticItems>[1], ext.id);
+          }
+        }
+      } else {
+        // 懒翻回即时（或即时扩展原本就该清）的扩展：静态入口退役——不清理会残留幽灵按钮
+        removeStaticItems(ext.id);
+      }
     }
     registerExtMetas(metas);
     // 扩展稳定顺序（manifest 清单序）：注册完成序随加载流水线交错而随机，
@@ -506,6 +568,8 @@ async function fetchManifestData(): Promise<ManifestData | null> {
     // 已卸载/禁用的扩展不再出现在 manifest——清除其残留的 slot 声明，
     // 防止 pendingForSlot 把不存在的扩展列为按需加载候选。
     pruneDeclaredSlots(data.extensions.map((e) => e.id));
+    // [懒加载 v2] 同点清理静态条目残留（扩展卸载/禁用后按钮不能还挂在顶栏）
+    pruneStaticItems(data.extensions.map((e) => e.id));
     // server 侧加载失败 → 错误指示器（同 id 覆盖去重；修复后自动移除）
     syncLoadErrors(data.failed);
     return data;
@@ -586,6 +650,73 @@ export async function reloadExtensions(opts?: { resyncOnly?: boolean }): Promise
 /** manifest 缓存（reload 反卷后重新 materialize 需要原 ext 元数据/i18n 表）。 */
 const manifestCache = new Map<string, ManifestExt>();
 
+// ── [懒加载 v2] 静态条目点击转发器：零 bundle 入口 → 物化 → 注册条目行为 ──
+// pending 置位（按钮加载态+防连点）→ ensureMaterialized → 同 (extId,id) 注册条目
+// meta.onClick / meta.open → 复位。失败经 registerExtSlotError(kind:"load") 进左下角
+// 指示器（§7-R2）。manifest 里已无该扩展（卸载/禁用后残留点击）同样走错误指示器。
+// in-flight 集合防重入：工具条按钮 + ⋯ 菜单行两个入口并发点击只跑一次转发。
+const staticForwardInFlight = new Set<string>();
+async function staticClickForwarder(extId: string, itemId: string, slot: ExtSlotName, ev?: unknown): Promise<void> {
+  const fkey = `${extId}\u0000${itemId}`;
+  if (staticForwardInFlight.has(fkey)) return;
+  staticForwardInFlight.add(fkey);
+  setStaticItemPending(extId, itemId, true);
+  const errId = `ext-static-${extId}:${slot}:${itemId}`;
+  try {
+    const ext = manifestCache.get(extId);
+    if (!ext) {
+      registerExtSlotError({
+        id: errId, extId, slot, itemId, kind: "load",
+        message: "静态入口点击：manifest 中已无此扩展（被卸载/禁用？）", reset: () => {},
+      });
+      return;
+    }
+    await ensureMaterialized(extId, () => makeClientContext(ext));
+    const reg = getExtUiItems(slot).find((it) => it.extId === extId && it.id === itemId);
+    if (!reg) {
+      registerExtSlotError({
+        id: errId, extId, slot, itemId, kind: "load",
+        message: `静态入口点击后未发现 ${slot} 注册条目（client 未注册或 id 未对齐）`, reset: () => {},
+      });
+      return;
+    }
+    const onClick = reg.meta?.onClick;
+    const open = (reg.meta as { open?: unknown } | undefined)?.open;
+    if (typeof onClick === "function") onClick(ev);
+    else if (typeof open === "function") (open as (e?: unknown) => void)(ev);
+    else console.warn(`[ext] ${extId} 注册条目 ${slot}/${itemId} 缺少 onClick/open，静态点击转发落空`);
+  } catch (e) {
+    registerExtSlotError({
+      id: errId, extId, slot, itemId, kind: "load",
+      message: e instanceof Error ? e.message : String(e), reset: () => {},
+    });
+  } finally {
+    staticForwardInFlight.delete(fkey);
+    setStaticItemPending(extId, itemId, false);
+  }
+}
+// 注入一次（模块级；Fast Refresh 重建本模块时随重注入）。转发器运行期才解引用
+// manifestCache/makeClientContext，声明顺序无 TDZ 问题。
+setStaticClickHandler(staticClickForwarder);
+
+/** [懒加载 v2] 确保某扩展 client 已物化（幂等；manifest 缺失返回 false）。
+ *  宿主组件（FileViewer/viewer page 接管跳板）与跨扩展消费方共用。 */
+export function ensureExtMaterialized(id: string): Promise<boolean> {
+  const ext = manifestCache.get(id);
+  if (!ext) return Promise.resolve(false);
+  return ensureMaterialized(id, () => makeClientContext(ext));
+}
+
+/** [懒加载 v2] 确保声明了 slot 的全部懒扩展已物化（接管直读点跳板：文件 tab 打开=
+ *  交互时刻，editor/folder 首次接管前一次性加载）。 */
+export async function ensureExtSlotMaterialized(slot: ExtSlotName): Promise<void> {
+  await ensureSlotMaterialized(slot, (id) => {
+    const ext = manifestCache.get(id);
+    if (!ext) throw new Error(`[ext] ${id}: manifest 缺失，无法物化`);
+    return makeClientContext(ext);
+  });
+}
+
 /** Read registered items for a slot, re-rendering when the store changes. */
 export function useExtSlotItems(slot: ExtSlotName): ExtUiItemRegistered[] {
   const [items, setItems] = useState<ExtUiItemRegistered[]>(() => getExtUiItems(slot));
@@ -600,8 +731,12 @@ export function useExtSlotItems(slot: ExtSlotName): ExtUiItemRegistered[] {
 
   // 按需加载：声明了该 slot 但尚未 materialize 的扩展 → 首次渲染时触发
   // materialize（副作用 = register(ctx)），完成后 store bump → 重渲染。
+  // [懒加载 v2] 触发面按插槽分流：交互时挂载插槽（INTERACTIVE_SLOTS——打开设置/
+  // 文件/终端等本身就是交互时刻）拉起全部声明扩展（含懒扩展，pendingForSlot 原语义）；
+  // 常挂插槽（toolbar/sidebar/…20+，首屏即渲染）只拉即时扩展（pendingForSlotAuto），
+  // 懒扩展在常挂插槽上的入口由 manifest 静态条目承担，点击才物化——首屏零请求成立。
   useEffect(() => {
-    const pending = pendingForSlot(slot);
+    const pending = INTERACTIVE_SLOTS.has(slot) ? pendingForSlot(slot) : pendingForSlotAuto(slot);
     if (pending.length === 0) return;
     let alive = true;
     void (async () => {

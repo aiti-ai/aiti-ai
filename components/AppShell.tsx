@@ -161,11 +161,15 @@ function renderExtItemIcon(icon: NonNullable<ExtUiItemRegistered["meta"]>["icon"
 function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
   const icon = item.meta?.icon;
   const title = item.meta?.title ?? item.meta?.label ?? item.id;
+  // [懒加载 v2] 静态条目点击物化期间：半透明 + 防连点；无 icon 的静态声明渲染
+  // label 首字符占位（SOP 要求补 icon，占位仅兜底）。
+  const pending = item.pending === true;
   return (
     <button
       type="button"
-      title={title}
-      onClick={(e) => { const cb = item.meta?.onClick; if (typeof cb === "function") cb(e); }}
+      title={pending ? `${title} …` : title}
+      disabled={pending}
+      onClick={(e) => { if (!pending) { const cb = item.meta?.onClick; if (typeof cb === "function") cb(e); } }}
       onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
       onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
       style={{
@@ -175,9 +179,12 @@ function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
         borderRight: "1px solid var(--border)",
         color: "var(--text-muted)", cursor: "pointer", flexShrink: 0, fontSize: 16, lineHeight: 1,
         transition: "color 0.12s",
+        opacity: pending ? 0.45 : 1,
       }}
     >
-      {renderExtItemIcon(icon, item.extId)}
+      {icon != null
+        ? renderExtItemIcon(icon, item.extId)
+        : <span style={{ fontSize: 13, fontWeight: 600, lineHeight: 1 }}>{(item.meta?.label ?? item.id).slice(0, 1)}</span>}
     </button>
   );
 }
@@ -2274,13 +2281,19 @@ export function AppShell() {
             <span style={{ ...topbarMenuIconSlotStyle, color: "var(--text-muted)" }} aria-hidden>
               {renderExtItemIcon(metaIcon, extItem2?.extId)}
             </span>
-          ) : (
+          ) : typeof ExtComponent === "function" ? (
             <div style={{ display: "flex", alignItems: "center", flexShrink: 0 }}>
               {/* menu 标志：扩展可在菜单场景切换渲染（如 session-manager 搜索框 → 菜单里只显图标+文字） */}
               <ExtItemBoundary extId={extItem.extId} slot={toolbarItem ? "toolbar" : "sessionTopbar"} itemId={`${id}/menu`}>
                 <ExtComponent {...extProps} menu />
               </ExtItemBoundary>
             </div>
+          ) : (
+            /* [懒加载 v2] 声明式静态条目（无 render）缺 icon 的兜底：label 首字符占位
+               （不挂载 ExtComponent——undefined 会炸 React 元素树；SOP 要求补 icon，占位仅兜底） */
+            <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 16, height: 16, flexShrink: 0, fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }} aria-hidden>
+              {(extItem2?.meta?.label ?? extItem2?.meta?.title ?? "?").slice(0, 1)}
+            </span>
           )}
           {label && (
             <span style={{ fontSize: 13, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>

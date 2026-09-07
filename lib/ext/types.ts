@@ -293,10 +293,25 @@ export interface ExtUiItem {
    * - 扩展内 .svg 文件相对路径（如 "icon.svg"；CSS-mask 渲染，颜色随 currentColor）
    */
   icon?: ExtUiItemIcon;
+  /** [懒加载 v2] 门控该「静态条目」的 boolean feature id（与注册条目 item.feature 同语义）。
+   *  关 → 宿主不渲染静态条目；物化后由注册条目自身的 feature 接管门控。
+   *  仅对懒加载两段式条目有意义（manifest ui[slot][] 声明 + client 注册 onClick）。 */
+  feature?: string;
 }
 
 /** toolbar 条目声明式图标（见 ExtUiItem.icon）。 */
 export type ExtUiItemIcon = string | { svg: string };
+
+/**
+ * [懒加载 v2] manifest 里可静态渲染的 UI 插槽条目集（ExtUiDefinition 去掉行为/
+ * 声明性字段）——宿主在 client bundle 物化前据它渲染「零 bundle 入口」。
+ * manifest 的 ui 字段已全量序列化该结构（registry.ts `ui: e.ext.ui ?? null`），
+ * 客户端 registerStaticItems 逐槽位收集，服务端零改动。
+ */
+export type ExtUiStaticSlots = Omit<
+  ExtUiDefinition,
+  "provides" | "i18n" | "clientDependsOn" | "clientImmediately"
+>;
 
 export type ExtSlotName =
   | "toolbar"

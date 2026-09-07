@@ -13,7 +13,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { ExtSlotName, ExtUiItemIcon } from "@/lib/ext/types";
+import type { ExtSlotName, ExtUiItem, ExtUiItemIcon } from "@/lib/ext/types";
 
 export interface ExtRenderProps {
   /** Current selected session (null for a fresh new-session composer). */
@@ -29,6 +29,11 @@ export interface ExtUiItemRegistered {
    *  feature 关闭时宿主统一不渲染此条目（条目仍在注册表中，extman「打开」
    *  可虚空创建触发）；无需扩展自己在组件内写门控代码。 */
   feature?: string;
+  /** [懒加载 v2] 静态条目标记（manifest ui[slot][] 声明、client 物化前由宿主渲染
+   *  的零 bundle 入口）。注册条目同 (extId,id) 到场后静态条目自动退场。 */
+  static?: boolean;
+  /** [懒加载 v2] 静态条目点击加载进行中（ExtToolbarIconButton 显示加载态 + 防连点）。 */
+  pending?: boolean;
   /** Component receiving ExtRenderProps (currentSession etc.).
    *  可选：toolbar 插槽支持声明式条目——不提供 render 时宿主用 meta.icon + meta.onClick
    *  统一渲染标准按钮（其余插槽仍必须提供 render，消费方按 typeof render === "function" 过滤）。 */
@@ -66,6 +71,9 @@ export interface ExtMeta {
 
 export interface ExtUiStore {
   items: Partial<Record<ExtSlotName, ExtUiItemRegistered[]>>;
+  /** [懒加载 v2] manifest 静态条目（物化前可渲染的零 bundle 入口；注册条目按
+   *  (extId,id) 覆盖之）。与 items 分 open 存，getExtUiItems 合并输出。 */
+  staticItems: Partial<Record<ExtSlotName, ExtUiItemRegistered[]>>;
   /** extId → manifest 元数据（name/icon） */
   metas: Record<string, ExtMeta>;
   version: number;
@@ -77,10 +85,16 @@ declare global {
 }
 
 function getStore(): ExtUiStore {
-  if (!globalThis.__piWebExtUI) {
-    globalThis.__piWebExtUI = { items: {}, metas: {}, version: 0, listeners: new Set() };
-  }
-  return globalThis.__piWebExtUI;
+  // 本模块挂在 globalThis 上跨 HMR 存活；结构升级（如 v2 加 staticItems）后，
+  // 旧版本留下的残缺 store 过不了纯 truthy 检查 → getExtUiItems 的 Object.keys
+  // 炸 "Cannot convert undefined or null to object"（SSR 直接崩）。此处逐字段补齐。
+  const s = globalThis.__piWebExtUI ?? (globalThis.__piWebExtUI = {} as ExtUiStore);
+  s.items ??= {};
+  s.staticItems ??= {};
+  s.metas ??= {};
+  s.version ??= 0;
+  s.listeners ??= new Set();
+  return s;
 }
 
 function bump(): void {
@@ -201,6 +215,101 @@ export function resetExtUiItems(): void {
   bump();
 }
 
+// ── [懒加载 v2] manifest 静态条目（零 bundle 入口）──
+// 数据在 manifest（id/label/title/icon/feature，可序列化）、行为在 client（onClick
+// 物化后由注册条目提供）。宿主在 client 物化前渲染静态条目；点击 → 转发器物化 →
+// 注册条目按 (extId,id) 覆盖静态条目（同 id 顶格，顶栏排序/⋯菜单/按钮外观无缝切换）。
+// 详见 docs/aiti-ext-lazy-loading-plan.md §4.3。
+
+/** 静态条目点击转发器（ExtSlots loadExtensions 时注入一次；本 store 不反向依赖 loader）。
+ *  slot 供转发器回查注册条目所在插槽；ev 为原始点击事件（物化后转发给注册条目 onClick）。 */
+let staticClickHandler: ((extId: string, itemId: string, slot: ExtSlotName, ev?: unknown) => Promise<void>) | null = null;
+
+export function setStaticClickHandler(fn: ((extId: string, itemId: string, slot: ExtSlotName, ev?: unknown) => Promise<void>) | null): void {
+  staticClickHandler = fn;
+}
+
+/** 静态条目 pending 态（key `extId\0id`）——转发器物化期间置位，按钮显示加载态 + 防连点。 */
+const staticPending = new Set<string>();
+
+/** 转发器专用：翻转某静态条目 pending 态并 bump（渲染层即时反映）。 */
+export function setStaticItemPending(extId: string, itemId: string, pending: boolean): void {
+  const key = `${extId}\u0000${itemId}`;
+  if (pending === staticPending.has(key)) return;
+  if (pending) staticPending.add(key);
+  else staticPending.delete(key);
+  bump();
+}
+
+/**
+ * 注册某扩展在某插槽的静态条目（manifest ui[slot][] 拉取后调用；覆盖写——同扩展
+ * 同插槽旧声明整组替换，与 manifest 恒一致）。条目 id 为扩展内 raw id，合并输出时
+ * 呈现复合 id「extId:rawId」（与注册条目 id 规则一致，消费方零感知）。
+ */
+export function registerStaticItems(
+  slot: ExtSlotName,
+  items: (ExtUiItem & { meta?: ExtUiItemRegistered["meta"] })[],
+  extId: string,
+): void {
+  const store = getStore();
+  const built: ExtUiItemRegistered[] = items.map((decl) => {
+    const compositeId = `${extId}:${decl.id}`;
+    return {
+      ...decl,
+      id: compositeId,
+      extId,
+      static: true,
+      meta: {
+        label: decl.meta?.label ?? decl.label,
+        title: decl.meta?.title ?? decl.title,
+        badge: decl.meta?.badge ?? decl.badge,
+        noMenuLabel: decl.meta?.noMenuLabel,
+        icon: decl.meta?.icon ?? decl.icon,
+        onClick: (e?: unknown) => {
+          void Promise.resolve(staticClickHandler?.(extId, compositeId, slot, e)).catch(() => {});
+        },
+      },
+    };
+  });
+  const prev = (store.staticItems[slot] ?? []).filter((it) => it.extId !== extId);
+  const next = [...prev, ...built];
+  const cur = store.staticItems[slot] ?? [];
+  store.staticItems[slot] = next;
+  if (next.length !== cur.length || next.some((it, i) => it !== cur[i])) bump();
+}
+
+/** 清除不在 activeIds 里的静态条目（manifest 重拉后调用；与 pruneDeclaredSlots 同点）。 */
+export function pruneStaticItems(activeIds: Iterable<string>): void {
+  const store = getStore();
+  const active = new Set(activeIds);
+  let changed = false;
+  for (const slot of Object.keys(store.staticItems) as ExtSlotName[]) {
+    const cur = store.staticItems[slot] ?? [];
+    const next = cur.filter((it) => it.extId !== undefined && active.has(it.extId));
+    if (next.length !== cur.length) {
+      store.staticItems[slot] = next;
+      changed = true;
+    }
+  }
+  if (changed) bump();
+}
+
+/** 清除某扩展在全部插槽的静态条目（扩展从懒翻回即时后调用——静态入口随之退役，
+ *  不清则注册条目到场后仍可能残留幽灵按钮/占位）。 */
+export function removeStaticItems(extId: string): void {
+  const store = getStore();
+  let changed = false;
+  for (const slot of Object.keys(store.staticItems) as ExtSlotName[]) {
+    const cur = store.staticItems[slot] ?? [];
+    const next = cur.filter((it) => it.extId !== extId);
+    if (next.length !== cur.length) {
+      store.staticItems[slot] = next;
+      changed = true;
+    }
+  }
+  if (changed) bump();
+}
+
 const NO_UI_ITEMS: ExtUiItemRegistered[] = [];
 
 // 读取时按 feature 门控过滤（带缓存保引用稳定——快照稳定性要求，见 NO_UI_ITEMS 注释）。
@@ -208,14 +317,41 @@ const NO_UI_ITEMS: ExtUiItemRegistered[] = [];
 // 测试/HMR 里 globalThis 重置换新 store 时实例不同也自然失效。
 let gatedCache: { store: ExtUiStore; version: number; items: Partial<Record<ExtSlotName, ExtUiItemRegistered[]>> } | null = null;
 
+// [懒加载 v2] 静态/注册条目 id 不对齐告警（双按钮风险，§7-R1）——每 (slot,extId,id) 只 warn 一次。
+const staticIdMismatchWarned = new Set<string>();
+
 export function getExtUiItems(slot: ExtSlotName): ExtUiItemRegistered[] {
   const store = getStore();
   if (!gatedCache || gatedCache.store !== store || gatedCache.version !== store.version) {
     const next: Partial<Record<ExtSlotName, ExtUiItemRegistered[]>> = {};
-    for (const s of Object.keys(store.items) as ExtSlotName[]) {
+    const slotKeys = new Set([...Object.keys(store.items), ...Object.keys(store.staticItems)] as ExtSlotName[]);
+    for (const s of slotKeys) {
+      const registered = store.items[s] ?? [];
+      const statics = store.staticItems[s] ?? [];
+      // [懒加载 v2] 合并：注册条目按 (extId,id) 覆盖静态条目——带 render/onClick 的注册
+      // 条目到场后静态条目自然退场（物化前后同 id，顶栏排序/⋯菜单/按钮无缝切换）。
+      let merged = registered;
+      if (statics.length > 0) {
+        const regKeys = new Set(registered.map((it) => `${it.extId ?? ""}\u0000${it.id}`));
+        const tail = statics.filter((st) => !regKeys.has(`${st.extId ?? ""}\u0000${st.id}`));
+        if (tail.length > 0) {
+          merged = [...registered, ...tail];
+          // dev 断言：同扩展在该插槽已有注册条目但无一与静态 id 对齐 → 双按钮风险
+          for (const st of tail) {
+            const hasOther = registered.some((it) => it.extId === st.extId);
+            const wkey = `${s}\u0000${st.extId ?? ""}\u0000${st.id}`;
+            if (hasOther && !staticIdMismatchWarned.has(wkey)) {
+              staticIdMismatchWarned.add(wkey);
+              console.warn(`[ext] static/registered item id mismatch in slot "${s}" for ${st.extId}: static "${st.id}" has no matching registered item — check ui declaration vs ctx.registerItems id (double-button risk)`);
+            }
+          }
+        }
+        // pending 态注入（新对象身份仅在翻转时产生，渲染层经 bump 重取快照）
+        merged = merged.map((it) => (it.static && it.extId !== undefined && staticPending.has(`${it.extId}\u0000${it.id}`) ? { ...it, pending: true } : it));
+      }
       // 先 feature 门控过滤，再按 manifest 清单序稳定排序（注册完成序随机，见
       // setExtOrder 注释）。带原索引兜底：同扩展内保持注册序，且不依赖引擎稳定排序。
-      const filtered = (store.items[s] ?? []).filter((it) => !(it.feature && it.extId && !getExtFeature(it.extId, it.feature)));
+      const filtered = merged.filter((it) => !(it.feature && it.extId && !getExtFeature(it.extId, it.feature)));
       next[s] = filtered
         .map((it, idx) => ({ it, idx }))
         .sort((a, b) => (extSortKey(a.it.extId) - extSortKey(b.it.extId)) || (a.idx - b.idx))

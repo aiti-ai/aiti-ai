@@ -112,3 +112,46 @@ test("graph swaps to the new one after reconcile", () => {
   const invalidated = reconcileGraph(g2);
   assert.deepEqual(invalidated, []);
 });
+
+// ── [懒加载 v2] 常挂/交互插槽分流 + 显式物化 API ──
+
+test("pendingForSlotAuto excludes immediately:false entries (lazy extensions)", async () => {
+  const { registerDeclaredSlots, pendingForSlot, pendingForSlotAuto, setBootGraph } =
+    await import("../components/ext-client-loader.ts");
+  const SLOT = "test-slot-auto-unique";
+  registerDeclaredSlots("ext-auto-imm", [SLOT]);
+  registerDeclaredSlots("ext-auto-lazy", [SLOT]);
+  setBootGraph({
+    rev: "auto",
+    entries: [
+      { id: "ext-auto-imm", url: `/api/extensions/ext-auto-imm/assets/client.js`, rev: "i1" },
+      { id: "ext-auto-lazy", url: `/api/extensions/ext-auto-lazy/assets/client.js`, rev: "l1", immediately: false },
+    ],
+  });
+  assert.deepEqual(pendingForSlot(SLOT), ["ext-auto-imm", "ext-auto-lazy"], "原语义含懒扩展（交互时插槽用）");
+  assert.deepEqual(pendingForSlotAuto(SLOT), ["ext-auto-imm"], "常挂插槽自动通道排除懒扩展");
+  // 图里没有的扩展（动态注册）不算懒 → 保留（兜底语义与 pendingForSlot 一致）
+  registerDeclaredSlots("ext-auto-orphan", [SLOT]);
+  assert.ok(pendingForSlotAuto(SLOT).includes("ext-auto-orphan"));
+});
+
+test("INTERACTIVE_SLOTS covers the interactive-mount slots", async () => {
+  const { INTERACTIVE_SLOTS, pendingForSlotAuto } = await import("../components/ext-client-loader.ts");
+  for (const s of ["sessionStats", "fileViewer", "pathPicker", "terminalDock", "settingsModels", "settingsAgents", "settingsAgentsFeature", "rightFileDock"]) {
+    assert.ok(INTERACTIVE_SLOTS.has(s), `interactive slot registered: ${s}`);
+    assert.ok(!INTERACTIVE_SLOTS.has("toolbar") && !INTERACTIVE_SLOTS.has("sidebar"), "常挂插槽不在交互清单");
+  }
+  // pendingForSlotAuto 对交互插槽本就含懒扩展（同 pendingForSlot）——分流点在消费方 hook
+  const SLOT = "test-slot-inter-unique";
+  const { registerDeclaredSlots, pendingForSlot, setBootGraph } = await import("../components/ext-client-loader.ts");
+  registerDeclaredSlots("ext-inter-lazy", [SLOT]);
+  setBootGraph({ rev: "inter", entries: [{ id: "ext-inter-lazy", url: "/x", rev: "1", immediately: false }] });
+  assert.deepEqual(pendingForSlotAuto(SLOT), [], "懒扩展被 auto 通道排除");
+  assert.deepEqual(pendingForSlot(SLOT), ["ext-inter-lazy"], "交互通道保留");
+});
+
+test("ensureMaterialized: no bundle → false; already materialized → false (idempotent)", async () => {
+  const { ensureMaterialized } = await import("../components/ext-client-loader.ts");
+  // 无 bundle（import 失败）→ materialize 返回 false，不 throw
+  assert.equal(await ensureMaterialized("ext-ensure-no-bundle", () => null), false);
+});
