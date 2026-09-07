@@ -580,9 +580,9 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     if (projectsTakeover) return;
     const isFirst = !initialLoadDone.current;
     initialLoadDone.current = true;
-    // 统一 200ms debounce：首拉给扩展加载窗口；refreshKey 分支同样避开窗口期
-    //（扩展未就绪时 bump 的 forceRefresh 拉取残留 1.22MB——实测已见）
-    const t = setTimeout(() => loadSessions(isFirst, !isFirst), 200);
+    // 统一 600ms debounce：首拉给扩展加载窗口（生产外网 manifest+bundle 下载
+    // 实测 >200ms，200ms 窗口被 1.22MB 首拉击穿）；refreshKey 分支同样避开窗口期
+    const t = setTimeout(() => loadSessions(isFirst, !isFirst), 600);
     return () => clearTimeout(t);
   }, [loadSessions, refreshKey, projectsTakeover]);
 
