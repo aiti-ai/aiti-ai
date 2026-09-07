@@ -954,11 +954,15 @@ export function AppShell() {
     const handler = (e: Event) => {
       const id = (e as CustomEvent).detail?.id;
       if (typeof id !== "string" || !id) return;
-      void fetch(apiUrl("/api/sessions?refresh=1"))
-        .then((r) => r.json())
-        .then((d: { sessions?: SessionInfo[] }) => {
-          const s = (d?.sessions ?? []).find((x) => x.id === id);
-          if (s) handleSelectSessionRef.current(s);
+      // P0-A：单条需求走轻量 meta 端点（~1KB）；404（桥/RPC/复合 id 等
+      // meta 未覆盖的形态）回退一次全量 refresh=1，功能零损失。
+      const selectById = (s: SessionInfo) => handleSelectSessionRef.current(s);
+      void fetch(apiUrl(`/api/sessions/${encodeURIComponent(id)}/meta`))
+        .then((r) => (r.status === 404 ? fetch(apiUrl("/api/sessions?refresh=1")) : r))
+        .then((r) => (r.ok ? (r.json() as Promise<{ session?: SessionInfo; sessions?: SessionInfo[] }>) : null))
+        .then((d) => {
+          const s = d?.session ?? d?.sessions?.find((x) => x.id === id);
+          if (s) selectById(s);
         })
         .catch(() => { /* ignore */ });
     };
@@ -1039,10 +1043,12 @@ export function AppShell() {
     // Use ?refresh=1 to bypass the 5s TTL cache: a new session's .jsonl may
     // have just been persisted, and a stale cache hit would leave
     // selectedSession as a transient draft (no name, transient=true).
-    void fetch(apiUrl("/api/sessions?refresh=1"), { cache: "no-store" })
-      .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
+    // P0-A：单条 hydrate 走轻量 meta；404（桥/RPC/复合 id）回退一次全量 refresh=1。
+    void fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/meta`), { cache: "no-store" })
+      .then((r) => (r.status === 404 ? fetch(apiUrl("/api/sessions?refresh=1"), { cache: "no-store" }) : r))
+      .then((r) => (r.ok ? (r.json() as Promise<{ session?: SessionInfo; sessions?: SessionInfo[] }>) : null))
       .then((d) => {
-        const full = d?.sessions.find((s) => s.id === sessionId);
+        const full = d?.session ?? d?.sessions?.find((s) => s.id === sessionId);
         if (!full) return;
         setSelectedSession((prev) => (
           prev?.id === sessionId
@@ -1431,6 +1437,12 @@ export function AppShell() {
   }, [fileTabs, terminalTabs, recordFolder]);
 
   const handleCloseFileTab = useCallback((tabId: string) => {
+    // dock tab（aiti-float dock v0.5.0）：✕ = 状态机 close（命令事件，零宿主状态清理——
+    // dock tabs 本就不进 fileTabs/terminalTabs state；激活位回落由 present-change closed 分支处理）
+    if (tabId.startsWith("dock:")) {
+      try { window.dispatchEvent(new CustomEvent("piwe-float-present-command", { detail: { key: tabId.slice(5), mode: "close" } })); } catch { /* ignore */ }
+      return;
+    }
     // terminal tab 走 closing 收尾（Bridge 本地移除，见 handleTerminalClosed）
     if (terminalTabs.some((tab) => tab.id === tabId)) {
       setTerminalTabs((tabs) => tabs.map((tab) => tab.id === tabId && !tab.closing ? { ...tab, closing: "close" } : tab));
@@ -3873,6 +3885,7 @@ export function AppShell() {
       <div
         ref={rightPanelResizer.panelRef}
         id="file-panel"
+        data-ext-float-dock-zone="right-panel"
         className={`right-panel-container${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}${rightPanelResizer.isResizing ? " right-panel-resizing" : ""}`}
         style={{
           "--right-panel-width": `${rightPanelResizer.width}px`,
@@ -4002,6 +4015,10 @@ export function AppShell() {
                 { sourceSessionId: activeFileTab.sourceSessionId },
               )}
             />
+          ) : activeFileTabId?.startsWith("dock:") ? (
+            // [aiti] dock v0.5.0：右栏停靠内容分派——ExtSlot only 只挂载激活的 dock item
+            //（item render 内经状态机 gate，非 docked → null，结构性防双开不变）
+            <ExtSlot name="rightFileDock" only={activeFileTabId.slice(5)} />
           ) : !terminalTabs.some((tab) => tab.id === activeFileTabId) ? (
             <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12 }}>
                {fileTabs.length > 0

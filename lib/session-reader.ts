@@ -419,6 +419,18 @@ function readSessionRelationEntries(filePath: string): SessionEntry[] {
     ...parseSessionEntries(readBoundedTailLines(filePath, SESSION_RESULT_MAX_BYTES)),
   ];
 }
+/** 单条 SessionInfo（P0-A 轻量 meta 端点用）：走同一增量扫描缓存（mtime/size，
+ *  命中已有缓存零磁盘成本），拼装与列表完全同源（relation/项目信息/扩展标注在外层）。 */
+export async function getSessionMeta(id: string): Promise<SessionInfo | null> {
+  const scanned: SessionFileInfo[] = await activeSessionScan();
+  const s = scanned.find((x) => x.id === id);
+  if (!s) return null;
+  const pathToId = new Map<string, string>();
+  for (const x of scanned) pathToId.set(sessionPathKey(x.path), x.id);
+  const [info] = await attachSessionProjectInfo([sessionInfoFromScan(s, pathToId)]);
+  return info ?? null;
+}
+
 export async function attachSessionProjectInfo(sessions: SessionInfo[]): Promise<SessionInfo[]> {
   // Lazy import: keeps session-reader importable without the git/worktree
   // chain in node tests (same rationale as loadAllSessions above).
@@ -460,7 +472,13 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
   const pathToId = new Map<string, string>();
   for (const s of scanned) pathToId.set(sessionPathKey(s.path), s.id);
 
-  const sessions = scanned.map((s) => {
+  const sessions = scanned.map((s) => sessionInfoFromScan(s, pathToId));
+  return attachSessionProjectInfo(sessions);
+}
+
+/** 单条扫描记录 → SessionInfo（loadAllSessions / getSessionMeta 共用拼装）。 */
+function sessionInfoFromScan(s: SessionFileInfo, pathToId: Map<string, string>) {
+  {
     cacheSessionPath(s.id, s.path);
     const originSessionId = s.parentSessionPath ? pathToId.get(sessionPathKey(s.parentSessionPath)) : undefined;
     let subagent = null;
@@ -504,8 +522,7 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
           : {}),
       transient: false,
     };
-  });
-  return attachSessionProjectInfo(sessions);
+  }
 }
 export async function listAllSessions(options: { force?: boolean } = {}): Promise<SessionInfo[]> {
   if (options.force) invalidateSessionListCache();

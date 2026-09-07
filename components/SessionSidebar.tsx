@@ -458,6 +458,12 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   const wtDropdownRef = useRef<HTMLDivElement>(null);
   const wtNewInputRef = useRef<HTMLInputElement>(null);
   const [explorerOpen, setExplorerOpen] = useState(true);
+  // ── aiti-float dock v0.5.0/v0.5.1（float 方案 §4.2/§4.3/§4.4）：停靠/任务 items 与区块折叠态 ──
+  const explorerDockItems = useExtSlotItems("sidebarExplorerDock").filter((it) => typeof it.render === "function");
+  const sidebarTasksItems = useExtSlotItems("sidebarTasks").filter((it) => typeof it.render === "function");
+  const [dockSectionCollapsed, setDockSectionCollapsed] = useState(false);
+  const [sidebarTasksCollapsed, setSidebarTasksCollapsed] = useState(false);
+  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
   const [explorerKey, setExplorerKey] = useState(0);
   const [explorerUploadBusy, setExplorerUploadBusy] = useState(false);
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
@@ -566,10 +572,19 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
 
   const initialLoadDone = useRef(false);
   useEffect(() => {
+    // 接管态（session-manager SidebarDock）：列表数据由扩展统一供给（含外部 agent
+    // 会话，经 sm:sessions-changed → onSessionsChange 回灌 catalog），宿主不再
+    // 全量拉 /api/sessions（aiti-web-sessions-payload-plan：砍掉 1.25MB 大调用）。
+    // P1-C：projectsTakeover 判定异步到达（slot items 注册）——首拉延迟 200ms 给
+    // 扩展加载窗口，期间接管生效则取消（cleanup），竞态首拉消失。
+    if (projectsTakeover) return;
     const isFirst = !initialLoadDone.current;
     initialLoadDone.current = true;
-    loadSessions(isFirst, !isFirst);
-  }, [loadSessions, refreshKey]);
+    // 统一 200ms debounce：首拉给扩展加载窗口；refreshKey 分支同样避开窗口期
+    //（扩展未就绪时 bump 的 forceRefresh 拉取残留 1.22MB——实测已见）
+    const t = setTimeout(() => loadSessions(isFirst, !isFirst), 200);
+    return () => clearTimeout(t);
+  }, [loadSessions, refreshKey, projectsTakeover]);
 
   // Extension-triggered session mutations (session-manager archive / archive
   // delete) change the list outside pi-web's own flows. The extension client
@@ -580,8 +595,11 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   // sidebar delete button does (clear drafts, close the open tab).
   const allSessionsRef = useRef<SessionInfo[]>([]);
   useEffect(() => { allSessionsRef.current = allSessions; }, [allSessions]);
+  const projectsTakeoverRef = useRef(projectsTakeover);
+  useEffect(() => { projectsTakeoverRef.current = projectsTakeover; }, [projectsTakeover]);
   useEffect(() => {
     const onChange = () => {
+      if (projectsTakeoverRef.current) return; // 接管态：扩展侧刷新 store
       const prevIds = new Set(allSessionsRef.current.map((s) => s.id));
       void (async () => {
         const fresh = await loadSessions(false, true);
@@ -612,6 +630,21 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   // preference after hydration so a collapsed explorer stays collapsed on reload.
   useEffect(() => {
     setExplorerOpen(loadExplorerOpen());
+    // aiti-float dock v0.5.x：三区块折叠偏好两段式恢复（与 explorerOpen 同款两段式）
+    try { setDockSectionCollapsed(localStorage.getItem("pi-web:sidebar-explorer-dock-collapsed") === "true"); } catch { /* optional */ }
+    try { setSidebarTasksCollapsed(localStorage.getItem("pi-sidebar-tasks-collapsed") === "true"); } catch { /* optional */ }
+    try { setProjectsCollapsed(localStorage.getItem("pi-sidebar-projects-collapsed") === "true"); } catch { /* optional */ }
+  }, []);
+
+  // aiti-float dock v0.5.2：拖拽吸附落点到本区（docked:sidebar-explorer）时自动展开折叠区，
+  // 保证落点重建后面板立即可见（事件驱动零轮询；用户再手动折叠不被覆盖——仅状态迁移时触发一次）
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<{ key: string; state: string }>).detail;
+      if (detail?.state === "docked:sidebar-explorer") setDockSectionCollapsed(false);
+    };
+    window.addEventListener("piwe-float-present-change", handler);
+    return () => window.removeEventListener("piwe-float-present-change", handler);
   }, []);
 
   // Persist unread markers so they survive a browser refresh before the user
@@ -1190,13 +1223,39 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   // 无接管 → Header 内 picker 块 + 列表原样直出（可回退）。文件区/Header 恒宿主渲染。
   const projectPickerBlock = (
     <>
-        {/* CWD picker */}
-        <div ref={dropdownRef} style={{ position: "relative" }}>
+        {/* CWD picker —— aiti-float dock v0.5.1 §4.4.1：升级为「项目」折叠头行（▾ 折叠/展开会话列表，
+            点项目名仍弹项目下拉，切换行为不变；折叠持久化 pi-sidebar-projects-collapsed） */}
+        <div ref={dropdownRef} style={{ position: "relative", display: "flex", alignItems: "center", gap: 4, padding: "0 10px" }}>
+          <button
+            type="button"
+            onClick={() => setProjectsCollapsed((v) => {
+              const next = !v;
+              try { window.localStorage.setItem("pi-sidebar-projects-collapsed", String(next)); } catch { /* optional */ }
+              return next;
+            })}
+            aria-expanded={!projectsCollapsed}
+            title={projectsCollapsed ? "展开会话列表" : "折叠会话列表"}
+            aria-label={projectsCollapsed ? "展开会话列表" : "折叠会话列表"}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 22, height: 26, padding: 0, flexShrink: 0,
+              background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer",
+            }}
+          >
+            <svg
+              width="9" height="9" viewBox="0 0 10 10" fill="none"
+              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transform: projectsCollapsed ? "none" : "rotate(90deg)", transition: "transform 0.15s", flexShrink: 0 }}
+            >
+              <polyline points="3 2 7 5 3 8" />
+            </svg>
+          </button>
           <button
             onClick={() => setDropdownOpen((v) => !v)}
             title={selectedProject?.root ?? selectedCwd ?? ""}
             style={{
-              width: "100%",
+              flex: 1,
+              minWidth: 0,
               display: "flex",
               alignItems: "center",
               padding: "6px 10px",
@@ -1916,7 +1975,14 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
               {t("sidebar.new")}
             </button>
             <button
-              onClick={() => loadSessions(false, true)}
+              onClick={() => {
+                if (projectsTakeover) {
+                  // 接管态：列表数据在扩展侧（session-manager store），事件通知扩展刷新
+                  try { window.dispatchEvent(new Event("sm:sessions-changed")); } catch { /* ignore */ }
+                  return;
+                }
+                void loadSessions(false, true);
+              }}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
                 background: sessionRefreshDone ? "rgba(74,222,128,0.18)" : "var(--bg-hover)",
@@ -1991,6 +2057,8 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
               sessions: allSessions,
               loading,
               error,
+              onSessionsChange,
+              refreshKey,
               sessionListVersion,
               runningSessionIds,
               unreadSessionIds,
@@ -2011,7 +2079,50 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
           />
         </div>
       ) : (
-        projectList
+        !projectsCollapsed ? projectList : null
+      )}
+
+      {/* aiti-float dock v0.5.1：sidebarTasks「任务」区（§4.4.2）——会话列表与文件区之间；
+          无 items 整块不渲染（未接 aiti-subagents 的部署左栏零变化）；次级区块 max-height 30% */}
+      {sidebarTasksItems.length > 0 && (
+        <div
+          style={{
+            borderTop: "1px solid var(--border)",
+            display: "flex",
+            flexDirection: "column",
+            flex: sidebarTasksCollapsed ? "0 0 auto" : "0 1 auto",
+            maxHeight: sidebarTasksCollapsed ? undefined : "30%",
+            minHeight: 0,
+            overflow: "hidden",
+          }}
+        >
+          <button
+            onClick={() => setSidebarTasksCollapsed((v) => {
+              const next = !v;
+              try { window.localStorage.setItem("pi-sidebar-tasks-collapsed", String(next)); } catch { /* optional */ }
+              return next;
+            })}
+            aria-expanded={!sidebarTasksCollapsed}
+            style={{
+              display: "flex", alignItems: "center", gap: 6, flex: "0 0 auto",
+              padding: "6px 10px", background: "none", border: "none", color: "var(--text-muted)",
+              cursor: "pointer", fontSize: 11, fontWeight: 600, letterSpacing: "0.05em",
+              textTransform: "uppercase", textAlign: "left",
+            }}
+          >
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transform: sidebarTasksCollapsed ? "none" : "rotate(90deg)", transition: "transform 0.15s", flexShrink: 0 }}>
+              <polyline points="3 2 7 5 3 8" />
+            </svg>
+            {t("sidebar.tasks")}
+            <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>({sidebarTasksItems.length})</span>
+          </button>
+          {!sidebarTasksCollapsed && (
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+              <ExtSlot name="sidebarTasks" />
+            </div>
+          )}
+        </div>
       )}
 
       {/* File Explorer section */}
@@ -2156,6 +2267,51 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
                 fileSearchOpen={fileSearchOpen}
                 onFileSearchOpenChange={setFileSearchOpen}
               />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* aiti-float dock v0.5.0：sidebarExplorerDock 停靠区（§4.2）——文件管理器下方垂直并列，
+          与浮窗同内容组件经状态机 gate 互补渲染（防双开）；无 items 整块不渲染；
+          explorer 折叠时独占剩余空间（§4.2）；折叠头由宿主渲染与记忆（§4.4.3 次级区块 45% 上限） */}
+      {explorerDockItems.length > 0 && (
+        <div
+          data-ext-float-dock-zone="sidebar-explorer"
+          style={{
+            borderTop: "1px solid var(--border)",
+            display: "flex",
+            flexDirection: "column",
+            flex: dockSectionCollapsed ? "0 0 auto" : explorerOpen ? "0 1 auto" : "1 1 0",
+            maxHeight: dockSectionCollapsed || !explorerOpen ? undefined : "45%",
+            minHeight: 0,
+            overflow: "hidden",
+          }}
+        >
+          <button
+            onClick={() => setDockSectionCollapsed((v) => {
+              const next = !v;
+              try { window.localStorage.setItem("pi-web:sidebar-explorer-dock-collapsed", String(next)); } catch { /* optional */ }
+              return next;
+            })}
+            aria-expanded={!dockSectionCollapsed}
+            style={{
+              display: "flex", alignItems: "center", gap: 6, flex: "0 0 auto",
+              padding: "6px 10px", background: "none", border: "none", color: "var(--text-muted)",
+              cursor: "pointer", fontSize: 11, fontWeight: 600, letterSpacing: "0.05em",
+              textTransform: "uppercase", textAlign: "left",
+            }}
+          >
+            <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transform: dockSectionCollapsed ? "none" : "rotate(90deg)", transition: "transform 0.15s", flexShrink: 0 }}>
+              <polyline points="3 2 7 5 3 8" />
+            </svg>
+            {t("sidebar.dockPanels")}
+            <span style={{ color: "var(--text-dim)", fontWeight: 400 }}>({explorerDockItems.length})</span>
+          </button>
+          {!dockSectionCollapsed && (
+            <div style={{ flex: 1, minHeight: 0, overflowY: "auto", overflowX: "hidden" }}>
+              <ExtSlot name="sidebarExplorerDock" />
             </div>
           )}
         </div>
