@@ -572,32 +572,14 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
 
   const initialLoadDone = useRef(false);
   useEffect(() => {
-    // 接管态（session-manager SidebarDock）：列表数据由扩展统一供给，宿主不再
-    // 全量拉 /api/sessions（aiti-web-sessions-payload-plan：砍掉 1.22MB 大调用）。
+    // 接管态（session-manager SidebarDock）：列表数据由扩展统一供给，宿主不拉。
+    // 首拉竞态（接管判定异步到达前的一次全量拉）接受——时序控制不进宿主核心，
+    // 若未来要消除，走扩展侧 bootGraph 预执行/manifest 预判方向，而非宿主补丁。
     if (projectsTakeover) return;
-    // 首拉信号驱动（P1-C）：拍时间的 debounce 在生产外网（41 扩展 bundle 并行
-    // 加载）不可靠——实测 200/600ms 均被击穿。改为：任一扩展注册 items（信号
-    // pi-web:ext-ui-updated）后仍未接管 → 扩展系统已活跃但无接管 → 立即拉；
-    // 2s 兜底覆盖扩展全禁用/加载失败（罕见场景侧栏空 2s 可接受）。
-    const pull = () => {
-      if (initialLoadDone.current) return;
-      initialLoadDone.current = true;
-      loadSessions(true, false);
-    };
-    window.addEventListener("pi-web:ext-ui-updated", pull);
-    const t = setTimeout(pull, 2000);
-    return () => {
-      window.removeEventListener("pi-web:ext-ui-updated", pull);
-      clearTimeout(t);
-    };
-  }, [loadSessions, projectsTakeover]);
-  // refreshKey 分支：首拉完成后才生效（首拉前 bump 的 refreshKey 由首拉覆盖）；
-  // 接管态跳过（列表数据在扩展侧，由 sm:sessions-changed 闭环驱动）。
-  useEffect(() => {
-    if (projectsTakeoverRef.current) return;
-    if (!initialLoadDone.current) return;
-    loadSessions(false, true);
-  }, [refreshKey]);
+    const isFirst = !initialLoadDone.current;
+    initialLoadDone.current = true;
+    loadSessions(isFirst, !isFirst);
+  }, [loadSessions, refreshKey]);
 
   // Extension-triggered session mutations (session-manager archive / archive
   // delete) change the list outside pi-web's own flows. The extension client
