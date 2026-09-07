@@ -48,6 +48,8 @@ export interface ExternalPlaceholder {
   cwd: string;
   /** 子代理站位：父会话文件路径（header.parentSession，徽标/父子树用）。 */
   parentSessionFile?: string;
+  /** 换绑前的 new- 占位复合 id（别名键）：浏览器未迁移的 ?session= URL 靠它解析回本会话。 */
+  aliases?: string[];
   created: string;
 }
 
@@ -81,7 +83,13 @@ function loadRegistry(): Map<string, ExternalPlaceholder> {
     try {
       const raw = JSON.parse(readFileSync(registryFile(), "utf8")) as RegistryFile;
       for (const s of raw.sessions ?? []) {
-        if (s && typeof s === "object" && s.extId && s.uuid) map.set(s.extId, s);
+        if (s && typeof s === "object" && s.extId && s.uuid) {
+          map.set(s.extId, s);
+          // 别名键展开 → 同一记录（占位 id 换绑后旧 ?session= URL 继续可解析）
+          for (const a of s.aliases ?? []) {
+            if (a && a !== s.extId) map.set(a, s);
+          }
+        }
       }
     } catch {
       /* 损坏 → 空表（header 标记兜底，见模块注释） */
@@ -94,7 +102,8 @@ function loadRegistry(): Map<string, ExternalPlaceholder> {
 function persistRegistry(map: Map<string, ExternalPlaceholder>): void {
   try {
     mkdirSync(dataRoot(), { recursive: true });
-    const payload: RegistryFile = { version: 1, sessions: [...map.values()] };
+    // map 值含别名键的重复引用（同记录多键）——按对象身份去重后落盘
+    const payload: RegistryFile = { version: 1, sessions: [...new Set(map.values())] };
     const file = registryFile();
     const tmp = `${file}.tmp`;
     writeFileSync(tmp, JSON.stringify(payload, null, 2));
@@ -166,6 +175,9 @@ export function ensurePlaceholder(input: {
   const map = loadRegistry();
   const known = map.get(input.extId);
   if (known) {
+    // 别名命中（known.extId ≠ 请求键）：该占位 id 已换绑到真实 extId，原样返回，
+    // 不做改名/补写——写入语义只属于真实键的调用。
+    if (known.extId !== input.extId) return known;
     const needsName = input.name && input.name !== known.name;
     const needsParent = input.parentSessionFile && input.parentSessionFile !== known.parentSessionFile;
     if (needsName || needsParent) {
@@ -204,17 +216,52 @@ export function ensurePlaceholder(input: {
 /**
  * 站位键迁移：外部后端懒初始化暴露真实原生 id（new- 占位 → 真实 chatId）时，
  * 注册表键与文件 header 随之换绑。旧文件名不改（uuid 身份稳定，改引用会断）。
+ * 旧键保留为别名（同一记录）：浏览器/书签里的占位 URL（?session=agent:new-…）
+ * 在 handle-store 清空（扩展 reload/重启）后仍能解析回同一会话，而不是被当成
+ * 全新会话再实例化出第二只 handle（实测 2026-09-07：同会话双行 + 历史分叉）。
  */
 export function rebindPlaceholder(oldExtId: string, newExtId: string): ExternalPlaceholder | null {
   const map = loadRegistry();
   const p = map.get(oldExtId);
   if (!p || !newExtId || newExtId === oldExtId) return map.get(newExtId) ?? null;
-  map.delete(oldExtId);
   p.extId = newExtId;
   map.set(newExtId, p);
+  addAlias(p, oldExtId); // 旧占位键留别名（记录内 aliases[]，加载时展开回 map 键）
+  map.set(oldExtId, p);
   try { rewritePlaceholderFile(p); } catch { /* best-effort */ }
   persistRegistry(map);
   return p;
+}
+
+function addAlias(p: ExternalPlaceholder, alias: string): void {
+  if (alias === p.extId) return;
+  p.aliases = p.aliases ?? [];
+  if (!p.aliases.includes(alias)) p.aliases.push(alias);
+}
+
+/**
+ * 记录占位别名：oldExtId（换绑前的 new- 占位复合 id）→ newExtId 的既有站位记录。
+ * fresh 会话（new- 键下从未落过站位）的换绑走这里——rebindPlaceholder 只覆盖
+ * 「旧键已有站位」的 resume 场景。幂等：目标缺失或已含该别名时不写盘。
+ */
+export function aliasPlaceholder(oldExtId: string, newExtId: string): ExternalPlaceholder | null {
+  if (!oldExtId || !newExtId || oldExtId === newExtId) return null;
+  const map = loadRegistry();
+  const target = map.get(newExtId);
+  if (!target) return null;
+  if (map.get(oldExtId) === target) return target;
+  addAlias(target, oldExtId);
+  map.set(oldExtId, target);
+  persistRegistry(map);
+  return target;
+}
+
+/**
+ * new- 占位 sid 判定（各后端扩展的懒初始化占位：zcode/codex `new-<n>-<ts>`、
+ * claude/qoder `new-<ts>`、cursor `new-<uuid>`）。真实原生 id 均不带 new- 前缀。
+ */
+export function isProvisionalExtSid(sid: string): boolean {
+  return sid.startsWith("new-");
 }
 
 export function getPlaceholder(extId: string): ExternalPlaceholder | undefined {
@@ -232,7 +279,7 @@ export function placeholderByUuid(uuid: string): ExternalPlaceholder | undefined
 }
 
 /**
- * 删除站位（只删锚点：站位文件 + 注册表项）。外部原始数据永不动。
+ * 删除站位（只删锚点：站位文件 + 注册表项含全部别名键）。外部原始数据永不动。
  * 返回 false = 该 uuid 不是站位。
  */
 export function removePlaceholderByUuid(uuid: string): boolean {
@@ -240,7 +287,9 @@ export function removePlaceholderByUuid(uuid: string): boolean {
   const p = placeholderByUuid(uuid);
   if (!p) return false;
   try { unlinkSync(p.path); } catch { /* already gone */ }
-  map.delete(p.extId);
+  for (const [key, rec] of map) {
+    if (rec === p || rec.uuid === uuid) map.delete(key);
+  }
   persistRegistry(map);
   return true;
 }

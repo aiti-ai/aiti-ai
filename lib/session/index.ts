@@ -75,7 +75,7 @@ import type { SessionCapabilities, SessionHandle } from "./types.ts";
 import { getHandle as lookupHandle, putHandle, putHandleAt, listAllHandles } from "./handle-store.ts";
 import { HandleSessionAdapter, type WrappedSessionLike } from "./handle-adapter.ts";
 import { findBridgeSessionFileById, invalidateSessionListCache, readSessionHeader, resolveSessionPath } from "../session-reader.ts"; // 相对路径+显式扩展名：jiti 不解析 @/ 别名，ESM 要求扩展名
-import { ensurePlaceholder, rebindPlaceholder, getPlaceholder } from "./placeholder.ts";
+import { ensurePlaceholder, rebindPlaceholder, aliasPlaceholder, getPlaceholder, isProvisionalExtSid } from "./placeholder.ts";
 
 function listProviderNames(): string[] {
   return listProviders().map((p) => p.type);
@@ -123,12 +123,27 @@ export async function openExternalSession(
   compositeId: string,
   options: Omit<CreateSessionOptions, "sessionFile"> & { sessionId?: string; /** 站位文件显示名（All Sessions 接管时传入真实标题） */ name?: string } = {},
 ): Promise<SessionHandle | undefined> {
-  const { agent, sid } = splitHandleId(compositeId);
-  // 同一后端会话已有活 handle（占位 uuid / 复合 id 多门口打开）——复用而非重建：
-  // putHandle 的覆盖语义会 dispose 前一只，两个门口互相杀死（在途轮次连带被杀）。
+  const requestedId = compositeId;
+  const { agent } = splitHandleId(compositeId);
+  let sid = splitHandleId(compositeId).sid;
+  // new- 占位复活守卫（2026-09-07 实测）：handle-store 清空（扩展 reload/重启）后，
+  // 浏览器里未迁移的 ?session=agent:new-… URL 会在下方兜底分支把占位 id 当全新
+  // 会话再实例化——同会话双行（站位行 + 瞬时行）、再发消息另起后端会话（历史分叉）。
+  // 已换绑的占位 id 注册表留有别名 → 改开真实会话；无别名（从未发出首条消息的
+  // 瞬时会话，本无内容可复用）→ 拒绝，回退历史行为（404）。
+  if (isProvisionalExtSid(sid)) {
+    const alias = getPlaceholder(compositeId);
+    if (!alias || alias.extId === compositeId) return undefined;
+    compositeId = alias.extId;
+    sid = splitHandleId(compositeId).sid;
+    options = { ...options, sessionId: sid }; // 调用方传来的占位 sid 作废
+  }
+  // 同一后端会话已有活 handle（占位 uuid / 复合 id / 旧占位别名多门口打开）——
+  // 复用而非重建：putHandle 的覆盖语义会 dispose 前一只，两个门口互相杀死。
   for (const [key, existing] of listAllHandles()) {
     if (!existing.alive() || existing.id !== compositeId) continue;
     if (key !== compositeId) putHandleAt(compositeId, existing);
+    if (requestedId !== compositeId) putHandleAt(requestedId, existing);
     return existing;
   }
   const candidates = findProvidersForAgent(agent);
@@ -141,6 +156,9 @@ export async function openExternalSession(
         sessionId: options.sessionId ?? sid,
       });
       putHandle(handle);
+      // 占位别名复活路径：handle 以真实复合 id 入库，请求 id（旧占位键）双注册，
+      // 后续 /api/agent/<旧id> 的 GET/POST/SSE 与 /api/sessions/<旧id> 查表直接命中。
+      if (requestedId !== handle.id) putHandleAt(requestedId, handle);
       // 接管/恢复路径同样落站位（resume 语义，extId 已知）：⚡接管历史行、
       // ?session= 恢复、复合 id GET 都汇合在这里。
       if (provider.agentKey) wireExternalPlaceholder(handle, true, options.cwd, options.name);
@@ -339,8 +357,8 @@ function wireExternalPlaceholder(handle: SessionHandle, resume: boolean, cwd?: s
   const colon = handle.id.indexOf(":");
   if (colon <= 0) return; // 非复合 id 不落站位
   const agent = handle.id.slice(0, colon);
-  const provisional = handle.id.includes(":new-");
-  const writeNow = () => {
+  const provisional = isProvisionalExtSid(handle.id.slice(colon + 1));
+  const writeNow = (aliasFrom?: string) => {
     void placeholderNameFor(handle, name)
       .catch(() => undefined)
       .then((resolvedName) => {
@@ -352,6 +370,9 @@ function wireExternalPlaceholder(handle: SessionHandle, resume: boolean, cwd?: s
           ...(resolvedName ? { name: resolvedName } : {}),
           ...(cwd || handle.cwd ? { cwd: cwd || handle.cwd } : {}),
         });
+        // fresh 会话换绑（new- 键下无既有站位）：记录占位别名，浏览器里尚未迁移的
+        // ?session=agent:new-… URL 在 store 清空后仍解析回本会话
+        if (p && aliasFrom) aliasPlaceholder(aliasFrom, handle.id);
         if (p) invalidateSessionListCache(); // 让下一轮 /api/sessions 立即看到站位行
       });
   };
@@ -360,8 +381,8 @@ function wireExternalPlaceholder(handle: SessionHandle, resume: boolean, cwd?: s
     if (event.type !== "session_backend_ready" || typeof event.id !== "string") return;
     const prevEvent = event as unknown as { oldId?: unknown };
     const prevId = typeof prevEvent.oldId === "string" ? prevEvent.oldId : undefined;
-    if (prevId && getPlaceholder(prevId)) rebindPlaceholder(prevId, event.id);
-    else if (!getPlaceholder(event.id)) writeNow();
+    if (prevId && getPlaceholder(prevId)) rebindPlaceholder(prevId, event.id); // 换绑 + 旧键留别名
+    else if (!getPlaceholder(event.id)) writeNow(prevId && prevId !== event.id ? prevId : undefined);
     invalidateSessionListCache();
   });
 }
