@@ -980,15 +980,15 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
 
   return (
     <div style={{
-      display: "flex", alignItems: "flex-start", gap: 6, minWidth: 0,
+      minWidth: 0,
       border: "1px solid var(--border)",
       borderRadius: 7,
-      padding: "2px 8px",
       background: "var(--bg)",
       fontFamily: "var(--font-mono)",
       fontSize: "calc(11px + var(--chat-font-size-offset, 0px))",
       lineHeight: 1.4,
     }}>
+      {/* ── 标题行：整行可点（同 ToolCallBlock header，不再缩成 14px 小图标挤在内容旁） ── */}
       <button
         type="button"
         aria-expanded={expanded}
@@ -996,16 +996,12 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
         title={t("i18n.thinking")}
         onClick={() => setExpanded((v) => !v)}
         style={{
-          display: "inline-flex",
+          display: "flex",
           alignItems: "center",
-          gap: 6,
-          width: expanded ? 14 : "100%",
-          flexShrink: expanded ? 0 : 1,
+          gap: 7,
+          width: "100%",
           minWidth: 0,
-          minHeight: "1.4em",
-          // 展开态命中区扩大：纯 icon 14px 难点中（实测反馈「标题不好点」）→ padding 撑点击区 +
-          // 负 margin 原位抵消，icon 视觉位置/布局占位完全不变，命中区 14×16 → 28×24
-          ...(expanded ? { padding: "4px 7px", margin: "-4px -7px" } : { padding: 0 }),
+          padding: "3px 10px",
           background: "transparent",
           border: "none",
           color: "var(--text-muted)",
@@ -1015,11 +1011,18 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
         }}
       >
         <ThinkingIcon active={expanded} />
-        {!expanded && (
-          <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {preview ? <ReactMarkdown allowedElements={[]} unwrapDisallowed skipHtml>{preview}</ReactMarkdown> : "..."}
-          </span>
+        {/* 折叠态=首行预览；展开态内容区在下方，标题行改显标签避免与首行重复 */}
+        <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {expanded
+            ? t("i18n.thinking")
+            : (preview ? <ReactMarkdown allowedElements={[]} unwrapDisallowed skipHtml>{preview}</ReactMarkdown> : "...")}
+        </span>
+        {duration !== undefined && (
+          <span style={{ flexShrink: 0, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
         )}
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--text-dim)" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+          <polyline points="2 3.5 5 6.5 8 3.5" />
+        </svg>
       </button>
       {expanded && (
         <div
@@ -1027,8 +1030,9 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
           //（新思考 UI 不走 MarkdownBody，core 段落点击广播覆盖不到 → 扩展自拟 pre 行点击兑底）
           data-thinking-content=""
           style={{
-            flex: 1,
             minWidth: 0,
+            padding: "4px 10px",
+            borderTop: "1px solid var(--border)",
             color: error ? "#f87171" : "var(--text-muted)",
             whiteSpace: "pre-wrap",
             overflowWrap: "anywhere",
@@ -1036,9 +1040,6 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
         >
            {loading ? t("i18n.loadingThinking") : error ?? (block.deferred ? content : block.thinking)}
         </div>
-      )}
-      {duration !== undefined && (
-        <span style={{ flexShrink: 0, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
       )}
     </div>
   );
