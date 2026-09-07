@@ -35,6 +35,13 @@ export async function GET(
   try {
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
+      // 外部 agent 复合 id（`zcode:sess_xxx`、`cursor:<sid>` 等）没有 pi 的 JSONL
+      // 队列文件，本就没有 pi 队列待恢复；返回空列表而非 404。否则 useAgentSession
+      // 挂载任意会话时无条件拉取该端点，会让所有带前缀的外部 agent 会话刷出 404
+      // 噪音（语义上「无队列」本身就是正确答案，且能区分真不存在的本地 id）。
+      if (id.indexOf(":") > 0) {
+        return NextResponse.json({ items: [] });
+      }
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
