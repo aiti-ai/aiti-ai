@@ -188,6 +188,12 @@ interface ValidatedProject {
 
 const UNREAD_SESSIONS_STORAGE_KEY = "pi-web:unread-session-ids";
 const LAST_CUSTOM_CWD_STORAGE_KEY = "pi-web:last-custom-cwd";
+// 接管标志缓存：扩展 items 异步注册（首帧渲染时必空，projectsTakeover 首帧恒 false），
+// 不记则接管态首载宿主必白拉一次全量 /api/sessions（~257KB，与扩展 fmt=2 数据重复）。
+const SESSIONS_TAKEOVER_KEY = "pi-web:sessions-takeover";
+function loadSessionsTakeoverHint(): boolean {
+  try { return localStorage.getItem(SESSIONS_TAKEOVER_KEY) === "1"; } catch { return false; }
+}
 const RUNNING_SESSIONS_POLL_MS = 15000; // SSE 主通道的兜底慢轮询（仅在 SSE 心跳静默时真正发请求）
 const RUNNING_SSE_FRESH_MS = 45_000; // 心跳 30s；45s 内见过任何帧 = SSE 健康，兜底轮询跳过
 
@@ -478,6 +484,10 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   // 在接管态下拉了也没消费方（纯浪费）；ref 同步避免 effect 依赖扩散。
   const projectsTakeoverRef = useRef(projectsTakeover);
   projectsTakeoverRef.current = projectsTakeover;
+  // 上次会话的接管记忆：首帧 items 未注册时用它判定，拦截接管态首载的宿主全量拉取。
+  // 撤销/兑底 effect 在 loadSessions 定义之后（依赖它做回退态补拉）。
+  const takeoverHintRef = useRef<boolean>(loadSessionsTakeoverHint());
+  const takeoverEverSeenRef = useRef<boolean | null>(null); // null=尚未观察到注册态
   // 负总责数据回灌（session-manager dock → 宿主）：接管态宿主 loadSessions 已下线，
   // allSessions 的唯一更新源 = 扩展 store 回灌（无网络调用、无首拉竞态）。
   // 消费方：auto-select（默认项目/?session= 恢复）、draftSession、projectFor、catalog。
@@ -628,6 +638,35 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       if (loadId === sessionLoadIdRef.current) setLoading(false);
     }
   }, []);
+
+  // 接管标志写入/撤销路径：items 注册后从有到无（扩展禁用/卸载）→ 清 hint + 回退态补拉一次；
+  // 兑底：hint 为 true 但扩展始终未注册（刷新后扩展已被禁用）→ 3s 一次性校验后补拉
+  //（非轮询：一次性延迟校验，覆盖「缓存残留但接管已不存在」的罕见场景）。
+  useEffect(() => {
+    if (projectsTakeover) {
+      takeoverEverSeenRef.current = true;
+      try { localStorage.setItem(SESSIONS_TAKEOVER_KEY, "1"); } catch { /* optional */ }
+      return;
+    }
+    if (takeoverEverSeenRef.current === true) {
+      takeoverEverSeenRef.current = false;
+      try { localStorage.setItem(SESSIONS_TAKEOVER_KEY, "0"); } catch { /* optional */ }
+      if (takeoverHintRef.current) {
+        takeoverHintRef.current = false;
+        void loadSessions(); // 回退态恢复：宿主需要列表数据（fetchSessionsList 合流去重）
+      }
+    }
+    // 首帧 items 未注册（everSeen===null）时什么都不做：等注册事件写缓存，避免抹掉记忆
+  }, [projectsTakeover, loadSessions]);
+  useEffect(() => {
+    if (!takeoverHintRef.current) return;
+    const timer = setTimeout(() => {
+      if (projectsTakeoverRef.current || !takeoverHintRef.current) return;
+      takeoverHintRef.current = false; // 3s 仍无接管者：缓存残留，回退态补拉
+      void loadSessions();
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [loadSessions]);
 
   // Re-filter the workspace picker when the hidden list changes (written by the
   // session-manager extension; dispatched on the same window or across tabs).
@@ -812,7 +851,8 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     // 注释块本已写明「选中的会话完成也需列表刷新」，但此前未实际触发 loadSessions。
     // 接管态跳过：列表归扩展 store（回灌 allSessions），扩展自己事件驱动刷新——
     // 首载 running 快照回灌 + SSE 帧会连续两次触发这里，宿主各拉一次全量纯属浪费。
-    if (!projectsTakeoverRef.current && (newlyRunning.length > 0 || selectedSessionCompleted || completedInBackground.length > 0)) {
+    // hint=上次会话的接管记忆（首帧 items 未注册时的判定依据）。
+    if ((!projectsTakeoverRef.current && !takeoverHintRef.current) && (newlyRunning.length > 0 || selectedSessionCompleted || completedInBackground.length > 0)) {
       void loadSessions();
     }
     // 接管后列表数据归 session-manager（其 SSE running 集合变化时自行刷新），
