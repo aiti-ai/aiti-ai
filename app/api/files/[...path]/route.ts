@@ -195,12 +195,12 @@ export async function POST(
     }
 
     // 路径一律走 body，不进 URL。POST 通道分四类：
-    //   /get         → 文件请求主管线（list/read/meta/preview/download）；body { path, type?, sessionId? }
+    //   /get         → 文件请求主管线（list/read/meta/preview/download）；body { path, type?, sessionId?, probe? }
     //   /token       → 签发稳态路径令牌（供 <img>/<video>/EventSource 等只能 GET URL 的消费者）；body { path } → { token }
     //   /upload-check→ 上传冲突检查；body { directory, fileNames }
     //   /upload      → 上传；multipart FormData(files..., directory)；query conflict 保留（非路径）
     if (segments[0] === "get") {
-      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; sessionId?: unknown } | null;
+      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; sessionId?: unknown; probe?: unknown } | null;
       const p = resolveBodyPath(body?.path);
       if (!p) return NextResponse.json({ error: "path must be absolute" }, { status: 400 });
       const rawType = typeof body?.type === "string" ? body.type : "read";
@@ -210,7 +210,11 @@ export async function POST(
         return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
       }
       const sessionId = typeof body?.sessionId === "string" && body.sessionId ? body.sessionId : null;
-      return handleFileRequest(request, p, type, sessionId);
+      // probe=true：存在性探测——未命中返回 200 { exists:false } 而非 404，
+      // 供消息文件识别等「探测路径是否存在」的消费方使用（消除浏览器对 4xx 的 console 噪音）。
+      // 权限检查照常（探测也不可越权枚举）。
+      const probe = body?.probe === true;
+      return handleFileRequest(request, p, type, sessionId, probe);
     }
 
     if (segments[0] === "upload-check") {
@@ -543,6 +547,7 @@ async function handleFileRequest(
   filePath: string,
   type: FileRequestType,
   sessionId: string | null,
+  probe = false,
 ): Promise<Response> {
   try {
     const allowedRoots = await getAllowedFileRoots();
@@ -559,9 +564,20 @@ async function handleFileRequest(
     try {
       stat = fs.statSync(filePath);
     } catch {
+      if (probe) {
+        return NextResponse.json({ exists: false, path: filePath });
+      }
       if (type !== "watch") {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
+    }
+
+    if (probe && stat) {
+      return NextResponse.json({
+        exists: true,
+        isDir: stat.isDirectory(),
+        path: filePath,
+      });
     }
 
     const existingAuthorizationPath = stat ? filePath : path.dirname(filePath);
