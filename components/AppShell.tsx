@@ -1072,6 +1072,21 @@ export function AppShell() {
     }
   }, [handleSelectSession]);
 
+  // 外部会话占位/别名 id 规范化（服务端把 zcode:new-* / 别名解析成真实复合 id）：
+  // 原位迁移选中 id 与 URL，不 bump sessionKey——挂载中的聊天/SSE 继续用旧注册
+  //（服务端双注册保证命中），下次进入即全量走规范 id。侧栏行身份随之统一，
+  // 同一后端会话不再双行（瞬时行 + 列表行）。
+  const handleSessionIdCanonicalized = useCallback((previousId: string, canonicalId: string) => {
+    setSelectedSession((s) => (s && s.id === previousId ? { ...s, id: canonicalId } : s));
+    if (new URLSearchParams(window.location.search).get("session") === previousId) {
+      router.replace(`?session=${encodeURIComponent(canonicalId)}`, { scroll: false });
+    }
+    // 通知 session-manager dock：旧 id 的未落盘草稿行已被规范行取代（同会话），可移除
+    try {
+      window.dispatchEvent(new CustomEvent("pi-web:session-id-canonicalized", { detail: { previousId, canonicalId } }));
+    } catch { /* 非浏览器环境忽略 */ }
+  }, [router]);
+
   // Called by ChatWindow when a new session gets its real id from pi
   const handleSessionCreated = useCallback((session: SessionInfo, sourceDraftKey: string) => {
     setRefreshKey((k) => k + 1);
@@ -3802,6 +3817,7 @@ export function AppShell() {
               onAttentionNeeded={handleAttentionNeeded}
               onSessionCreated={handleSessionCreated}
               onSessionForked={handleSessionForked}
+              onSessionIdCanonicalized={handleSessionIdCanonicalized}
               modelsRefreshKey={modelsRefreshKey}
               chatInputRef={chatInputRef}
               onBranchDataChange={handleBranchDataChange}

@@ -155,6 +155,9 @@ export interface UseAgentSessionOptions {
   onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
   onSessionCreated?: (session: SessionInfo, sourceDraftKey: string) => void;
   onSessionForked?: (newSessionId: string) => void;
+  /** 外部会话占位/别名 id 被服务端解析成真实复合 id（如 zcode:new-* → zcode:sess_*）——
+   *  客户端据此迁移选中与 URL，避免侧栏同一后端会话双行。挂载中的聊天不复位。 */
+  onSessionIdCanonicalized?: (previousId: string, canonicalId: string) => void;
   modelsRefreshKey?: number;
   chatInputRef?: React.RefObject<ChatInputHandle | null>;
   onBranchDataChange?: (tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => void;
@@ -349,6 +352,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // New-session backend (providerType)：ref 镜像保证 ensureNewSession 回调稳定。
   const newSessionBackendRef = useRef<string | null | undefined>(opts.newSessionBackend);
   newSessionBackendRef.current = opts.newSessionBackend;
+
+  // 规范 id 回调：ref 镜像保证 loadSession 依赖稳定。
+  const onSessionIdCanonicalizedRef = useRef(opts.onSessionIdCanonicalized);
+  onSessionIdCanonicalizedRef.current = opts.onSessionIdCanonicalized;
 
   const [data, setData] = useState<SessionData | null>(null);
   const [loading, setLoading] = useState(!isNew);
@@ -744,6 +751,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json() as SessionData;
       if (sessionIdRef.current !== sid) return null;
+      // 占位/别名 id 规范化：服务端把 new-*/别名解析成真实复合 id 时，客户端随之
+      // 迁移选中与 URL（挂载中的聊天不复位，双注册保证旧 id 请求继续命中）。
+      if (d.sessionId && d.sessionId !== sid) {
+        try { onSessionIdCanonicalizedRef.current?.(sid, d.sessionId); } catch { /* 回调异常不阻塞加载 */ }
+      }
       const persistedMessages = d.context.messages;
       setData(d);
       setActiveLeafId(d.leafId);

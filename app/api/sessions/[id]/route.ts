@@ -27,6 +27,15 @@ import type { SessionEntry } from "@/lib/types";
 import { readSubagentRun, readSubagentSessionResources, SUBAGENT_META_TYPE } from "@/lib/subagents";
 import { readSessionToolSelection } from "@/lib/session-tool-selection";
 
+/**
+ * 外部复合 id → 规范 id：懒初始化占位（agent:new-*）解析出的真实复合 id。
+ * 侧栏接管态的列表行以复合 id 为身份（session-manager 源），选中 id 必须与之一致，
+ * 否则同一后端会话会钉出第二行（Draft 行）。无解析结果时原样返回。
+ */
+function canonicalExternalId(requested: string, handleSessionId?: string): string {
+  return handleSessionId || requested;
+}
+
 /** 桥会话的固定响应（attach 判定以 socket/registry 为准，文件仅历史回放）。 */
 function bridgedOk(id: string, bridged: { isAlive(): boolean; send(c: unknown): Promise<unknown>; cwd?: string; getModel?(): { id: string; provider: string } | undefined }) {
   return bridged.send({ type: "get_messages" }).catch(() => null)
@@ -95,12 +104,15 @@ export async function GET(
         const phHeader = readSessionHeader(fpEarly) as unknown as { agent?: string; extId?: string } | null;
         // 站位真实标题（注册表 extId → name；open-live/回放时写入）
         const phName = phHeader?.extId ? getPlaceholder(phHeader.extId)?.name : undefined;
+        // 站位 uuid 请求同样规范到真实复合 id：接管态列表行以复合 id 为身份，
+        // 选中 uuid 会在 dock 里多钉一行 Draft（同一后端会话双行）。
+        const cid = phHeader?.extId && phHeader.extId.includes(":") ? phHeader.extId : id;
         return NextResponse.json({
-          sessionId: id,
+          sessionId: cid,
           filePath: "",
           info: {
             path: "",
-            id,
+            id: cid,
             cwd: ph.cwd ?? "",
             name: phName,
             created: new Date().toISOString(),
@@ -142,12 +154,13 @@ export async function GET(
               return typeof c === "string" ? c : "(backend session)";
             })()
           : "(backend session)";
+        const cid = canonicalExternalId(id, wrapped.sessionId);
         return NextResponse.json({
-          sessionId: id,
+          sessionId: cid,
           filePath: "",
           info: {
             path: "",
-            id,
+            id: cid,
             cwd: wrapped.cwd ?? "",
             name: undefined,
             created: new Date().toISOString(),
@@ -194,18 +207,19 @@ export async function GET(
           const sid = id.slice(id.indexOf(":") + 1);
           const handle = await openExternalSession(id, { sessionId: sid || undefined }).catch(() => undefined);
           const wrappedAfterOpen = handle?.alive() ? resolveHandle(id) : undefined;
-          if (wrappedAfterOpen?.isAlive()) {
+          if (handle && wrappedAfterOpen?.isAlive()) {
+            const cid = canonicalExternalId(id, handle.id);
             let messages: unknown[] = [];
             try {
               const r = (await wrappedAfterOpen.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
               messages = normalizeRawMessages(r?.entries ?? []);
             } catch { /* get_messages 缺省 → 空 */ }
             return NextResponse.json({
-              sessionId: id,
+              sessionId: cid,
               filePath: "",
               info: {
                 path: "",
-                id,
+                id: cid,
                 cwd: wrappedAfterOpen.cwd ?? "",
                 ...(getPlaceholder(id)?.name ? { name: getPlaceholder(id)!.name } : {}),
                 created: new Date().toISOString(),
