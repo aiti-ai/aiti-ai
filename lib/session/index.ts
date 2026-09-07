@@ -124,6 +124,13 @@ export async function openExternalSession(
   options: Omit<CreateSessionOptions, "sessionFile"> & { sessionId?: string; /** 站位文件显示名（All Sessions 接管时传入真实标题） */ name?: string } = {},
 ): Promise<SessionHandle | undefined> {
   const { agent, sid } = splitHandleId(compositeId);
+  // 同一后端会话已有活 handle（占位 uuid / 复合 id 多门口打开）——复用而非重建：
+  // putHandle 的覆盖语义会 dispose 前一只，两个门口互相杀死（在途轮次连带被杀）。
+  for (const [key, existing] of listAllHandles()) {
+    if (!existing.alive() || existing.id !== compositeId) continue;
+    if (key !== compositeId) putHandleAt(compositeId, existing);
+    return existing;
+  }
   const candidates = findProvidersForAgent(agent);
   if (candidates.length === 0) return undefined;
   let lastError: unknown;

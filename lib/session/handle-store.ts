@@ -63,16 +63,63 @@ export function listAllHandles(): Array<[string, SessionHandle]> {
  * 不清理则已有会话继续跑旧逻辑（实测：新增的 queue_update 分支对旧 handle 不生效）。
  * dispose 后下次访问按需重建（createSession → 新代码）；zcode 等有状态后端
  * respawn+resume 无损，attach 类为断线重连语义。返回清理数量。
+ *
+ * 运行中的 handle 不杀（2026-09-07 事故）：reload 曾把在途 zcode app-server 连
+ * 进程带轮次一起 dispose——轮次无终态、UI 无提示、内存待发队列随实例丢弃，
+ * 用户侧表现即「发消息无响应」。「respawn+resume 无损」只对轮次之间成立。
+ * 改为：在途 handle 连同其全部别名键保留在库内跑完当前轮，settle 后自动
+ * dispose + 出库，此后下次访问才以新代码重建。
  */
 export async function disposeAllHandles(): Promise<number> {
   const all = listAllHandles();
   const ids = new Set<string>();
+  const deferred = new Set<SessionHandle>();
   for (const [key, h] of all) {
     ids.add(key);
+    if (typeof h.isRunning === "function" && h.isRunning()) {
+      deferred.add(h);
+      continue;
+    }
     try { await h.dispose(); } catch { /* best effort */ }
   }
+  // 清库但保留在途 handle 的全部键（占位 uuid / 复合 id 多门口双注册）
+  const preserved: Array<[string, SessionHandle]> = [];
+  for (const [key, h] of store()) {
+    if (deferred.has(h)) preserved.push([key, h]);
+  }
   store().clear();
+  for (const [key, h] of preserved) store().set(key, h);
+  for (const h of deferred) armDeferredDispose(h);
   return ids.size;
+}
+
+/** 已挂过 settle 钩子的在途 handle（reload 重复触发时防重复订阅）。 */
+const deferredDisposeArmed = new WeakSet<object>();
+
+/** 在途 handle settle 后延迟复核再出库——紧随 agent_end 的排队续轮可能立刻 agent_start。 */
+function armDeferredDispose(h: SessionHandle): void {
+  if (deferredDisposeArmed.has(h)) return;
+  deferredDisposeArmed.add(h);
+  try {
+    h.subscribe((event: { type: string }) => {
+      const t = event?.type;
+      if (t !== "agent_settled" && t !== "agent_end") return;
+      setTimeout(() => {
+        if (!h.alive()) return;
+        if (typeof h.isRunning === "function" && h.isRunning()) return;
+        removeHandleEverywhere(h);
+      }, 1000);
+    });
+  } catch { /* 订阅失败则留在库内，由进程退出清理兜底 */ }
+}
+
+/** 按对象身份出库 + dispose（别名键一并清）。 */
+function removeHandleEverywhere(h: SessionHandle): void {
+  for (const [key, stored] of [...store()]) {
+    if (stored === h) store().delete(key);
+  }
+  void h.dispose().catch(() => {});
+  notifyHandleRunningChange();
 }
 
 /**
