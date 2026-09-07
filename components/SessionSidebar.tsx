@@ -191,6 +191,42 @@ const LAST_CUSTOM_CWD_STORAGE_KEY = "pi-web:last-custom-cwd";
 const RUNNING_SESSIONS_POLL_MS = 15000; // SSE 主通道的兜底慢轮询（仅在 SSE 心跳静默时真正发请求）
 const RUNNING_SSE_FRESH_MS = 45_000; // 心跳 30s；45s 内见过任何帧 = SSE 健康，兜底轮询跳过
 
+/** 全量列表响应形状（loadSessions 网络层）。 */
+interface SessionsListPayload {
+  sessions: SessionInfo[];
+  sessionListVersion: number;
+  runningSessionIds?: string[];
+  completionNotificationSuppressedSessionIds?: string[];
+}
+// 模块级合流 + 短 TTL + ETag/304：loadSessions 触发点分散（running 回灌快照、SSE
+// 变化帧、回退态回调），首载可在同秒内并发触发多次全量 /api/sessions（实测 257KB×5）。
+// 同一时刻并发触发共享同一次 fetch；3s 内重复触发直接复用上次结果（服务端另有 5s
+// 扫描缓存，窗口内数据几乎不变）；非强制请求带 If-None-Match，列表与运行集未变 → 304 空传输。
+const SESSIONS_LIST_TTL_MS = 3000;
+let slInFlight: Promise<SessionsListPayload> | null = null;
+let slLastAt = 0;
+let slEtag = "";
+let slLastData: SessionsListPayload | null = null;
+async function fetchSessionsList(forceRefresh = false): Promise<SessionsListPayload> {
+  if (slInFlight) return slInFlight;
+  if (!forceRefresh && slLastData && Date.now() - slLastAt < SESSIONS_LIST_TTL_MS) return slLastData;
+  const req = (async (): Promise<SessionsListPayload> => {
+    const res = await fetch(apiUrl(`/api/sessions${forceRefresh ? "?refresh=1" : ""}`), {
+      headers: slEtag && !forceRefresh ? { "if-none-match": slEtag } : undefined,
+      cache: "no-store",
+    });
+    if (res.status === 304 && slLastData) { slLastAt = Date.now(); return slLastData; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json() as SessionsListPayload;
+    slEtag = res.headers.get("etag") ?? "";
+    slLastData = data;
+    slLastAt = Date.now();
+    return data;
+  })();
+  slInFlight = req;
+  try { return await req; } finally { slInFlight = null; }
+}
+
 function loadLastCustomCwd(): string {
   if (typeof window === "undefined") return "";
   try {
@@ -438,6 +474,10 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   // 「项目 / Projects」区块接管：session-manager SidebarDock（sidebarProjects 有 items 即接管；缺席回退原版）
   const projectsSlotItems = useExtSlotItems("sidebarProjects");
   const projectsTakeover = projectsSlotItems.length > 0;
+  // 接管态门控供 effect 内读取：列表数据归扩展回灌，宿主 loadSessions（全量 /api/sessions）
+  // 在接管态下拉了也没消费方（纯浪费）；ref 同步避免 effect 依赖扩散。
+  const projectsTakeoverRef = useRef(projectsTakeover);
+  projectsTakeoverRef.current = projectsTakeover;
   // 负总责数据回灌（session-manager dock → 宿主）：接管态宿主 loadSessions 已下线，
   // allSessions 的唯一更新源 = 扩展 store 回灌（无网络调用、无首拉竞态）。
   // 消费方：auto-select（默认项目/?session= 恢复）、draftSession、projectFor、catalog。
@@ -544,18 +584,12 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
 
   // [回退态专用] 仅 session-manager 禁用/未注册（非接管）时的手动路径：
   // 接管态列表数据归扩展（store 增量同步），本函数已无自动触发点（payload 方案 §8）。
+  // 网络层走模块级 fetchSessionsList：多触发点/多触发时机并发时只发一次真实请求。
   const loadSessions = useCallback(async (showLoading = false, forceRefresh = false): Promise<SessionInfo[] | undefined> => {
     const loadId = ++sessionLoadIdRef.current;
     try {
       if (showLoading) setLoading(true);
-      const res = await fetch(apiUrl(`/api/sessions${forceRefresh ? "?refresh=1" : ""}`));
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as {
-        sessions: SessionInfo[];
-        sessionListVersion: number;
-        runningSessionIds?: string[];
-        completionNotificationSuppressedSessionIds?: string[];
-      };
+      const data = await fetchSessionsList(forceRefresh);
       if (loadId !== sessionLoadIdRef.current) return;
       sessionListVersionRef.current = data.sessionListVersion;
       setSessionListVersion(data.sessionListVersion);
@@ -776,7 +810,9 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     // 非接管态下，会话开始/完成（running 集变化）需重拉列表：让占位行/临时行的
     // modified 随活动更新（外部 agent 会话由 /api/sessions 的 getLastActivity 覆盖）。
     // 注释块本已写明「选中的会话完成也需列表刷新」，但此前未实际触发 loadSessions。
-    if (newlyRunning.length > 0 || selectedSessionCompleted || completedInBackground.length > 0) {
+    // 接管态跳过：列表归扩展 store（回灌 allSessions），扩展自己事件驱动刷新——
+    // 首载 running 快照回灌 + SSE 帧会连续两次触发这里，宿主各拉一次全量纯属浪费。
+    if (!projectsTakeoverRef.current && (newlyRunning.length > 0 || selectedSessionCompleted || completedInBackground.length > 0)) {
       void loadSessions();
     }
     // 接管后列表数据归 session-manager（其 SSE running 集合变化时自行刷新），

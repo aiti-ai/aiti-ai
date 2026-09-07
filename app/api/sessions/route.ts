@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { createHash } from "crypto";
 import {
   attachSessionProjectInfo,
   getSessionListVersion,
@@ -66,16 +67,23 @@ export async function GET(req: Request) {
     } catch (e) {
       console.error("[sessions] annotate failed:", e instanceof Error ? e.message : e);
     }
-    return NextResponse.json(
-      {
-        sessions,
-        sessionListVersion,
-        // 运行中 = 本地 runtime + 存活且正在执行的后端会话 + TUI 桥（未认领也可见）
-        runningSessionIds: [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds(), ...getBridgeRunningIds()])],
-        completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
-      },
-      { headers: { "Cache-Control": "no-store" } },
-    );
+    // ETag/304：首载多触发点（running 回灌/SSE 帧/恢复流程）重复拉全量时，
+    // 列表与运行集未变 → 304 空传输（客户端带 If-None-Match）。
+    // sha1 对 ~250KB JSON 为毫秒级，远小于网络传输与客户端解析。
+    const body = JSON.stringify({
+      sessions,
+      sessionListVersion,
+      // 运行中 = 本地 runtime + 存活且正在执行的后端会话 + TUI 桥（未认领也可见）
+      runningSessionIds: [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds(), ...getBridgeRunningIds()])],
+      completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
+    });
+    const etag = `"${createHash("sha1").update(body).digest("hex")}"`;
+    if (req.headers.get("if-none-match") === etag) {
+      return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-store" } });
+    }
+    return new Response(body, {
+      headers: { "content-type": "application/json; charset=utf-8", ETag: etag, "Cache-Control": "no-store" },
+    });
   } catch (error) {
     return NextResponse.json(
       { error: String(error) },

@@ -955,14 +955,14 @@ export function AppShell() {
     const handler = (e: Event) => {
       const id = (e as CustomEvent).detail?.id;
       if (typeof id !== "string" || !id) return;
-      // P0-A：单条需求走轻量 meta 端点（~1KB）；404（桥/RPC/复合 id 等
-      // meta 未覆盖的形态）回退一次全量 refresh=1，功能零损失。
+      // P0-A：单条需求走轻量 meta 端点（~1KB）；404 回退单条 /api/sessions/<id>
+      //（info 形态，不拉全量列表也不触发强制重扫）——不再回退全量 refresh=1。
       const selectById = (s: SessionInfo) => handleSelectSessionRef.current(s);
       void fetch(apiUrl(`/api/sessions/${encodeURIComponent(id)}/meta`))
-        .then((r) => (r.status === 404 ? fetch(apiUrl("/api/sessions?refresh=1")) : r))
-        .then((r) => (r.ok ? (r.json() as Promise<{ session?: SessionInfo; sessions?: SessionInfo[] }>) : null))
+        .then((r) => (r.status === 404 ? fetch(apiUrl(`/api/sessions/${encodeURIComponent(id)}`)) : r))
+        .then((r) => (r.ok ? (r.json() as Promise<{ session?: SessionInfo; info?: SessionInfo; sessions?: SessionInfo[] }>) : null))
         .then((d) => {
-          const s = d?.session ?? d?.sessions?.find((x) => x.id === id);
+          const s = d?.session ?? d?.info ?? d?.sessions?.find((x) => x.id === id);
           if (s) selectById(s);
         })
         .catch(() => { /* ignore */ });
@@ -1044,12 +1044,13 @@ export function AppShell() {
     // Use ?refresh=1 to bypass the 5s TTL cache: a new session's .jsonl may
     // have just been persisted, and a stale cache hit would leave
     // selectedSession as a transient draft (no name, transient=true).
-    // P0-A：单条 hydrate 走轻量 meta；404（桥/RPC/复合 id）回退一次全量 refresh=1。
+    // P0-A：单条 hydrate 走轻量 meta；404 回退单条 /api/sessions/<id>（info 形态，
+    // 按 id 直查不受列表扫描缓存影响）——不再回退全量 refresh=1。
     void fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/meta`), { cache: "no-store" })
-      .then((r) => (r.status === 404 ? fetch(apiUrl("/api/sessions?refresh=1"), { cache: "no-store" }) : r))
-      .then((r) => (r.ok ? (r.json() as Promise<{ session?: SessionInfo; sessions?: SessionInfo[] }>) : null))
+      .then((r) => (r.status === 404 ? fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { cache: "no-store" }) : r))
+      .then((r) => (r.ok ? (r.json() as Promise<{ session?: SessionInfo; info?: SessionInfo; sessions?: SessionInfo[] }>) : null))
       .then((d) => {
-        const full = d?.session ?? d?.sessions?.find((s) => s.id === sessionId);
+        const full = d?.session ?? d?.info ?? d?.sessions?.find((s) => s.id === sessionId);
         if (!full) return;
         setSelectedSession((prev) => (
           prev?.id === sessionId

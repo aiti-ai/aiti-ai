@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
-import { getSessionMeta } from "@/lib/session-reader";
+import { getSessionMeta, attachSessionProjectInfo } from "@/lib/session-reader";
+import { getRpcSessionInfos } from "@/lib/rpc-manager";
+import { getHandleSessionInfos } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -18,7 +20,15 @@ export async function GET(
 ) {
   const { id } = await params;
   try {
-    const info = await getSessionMeta(id);
+    let info = await getSessionMeta(id);
+    if (!info) {
+      // 内存态形态兜底（与 /api/sessions 列表同源拼装，零磁盘）：桥/RPC 会话、
+      // attach/spawn/扩展 handle 会话均不在磁盘扫描范围——此前一律 404，消费方
+      // （AppShell ?session= 恢复/open-session）被迫回退全量 refresh=1 重拉
+      //（首载一次 404 即 ~257KB 全量 + 服务端强制重扫，高频浪费源）。
+      const rows = await attachSessionProjectInfo([...getRpcSessionInfos(), ...getHandleSessionInfos()]);
+      info = rows.find((s) => s.id === id) ?? null;
+    }
     if (!info) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
