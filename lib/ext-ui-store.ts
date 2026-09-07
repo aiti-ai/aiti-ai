@@ -159,6 +159,10 @@ export function registerExtUiItems(
     store.items[slot] = next;
     bump();
   }
+  // 扩展注册完成信号（payload 方案 P1-C）：接管判定消费方（SessionSidebar 首拉
+  // 消除竞态）需要「items 已到齐」的确定性信号——拍时间的 debounce 在生产外网
+  //（41 bundle 并行加载）下不可靠，实测 600ms 被击穿。幂等：内容一致时不发。
+  try { window.dispatchEvent(new Event("pi-web:ext-ui-updated")); } catch { /* non-DOM */ }
   return () => {
     const cur = store.items[slot] ?? [];
     const stampedIds = new Set(stamped.map((s) => s.id));
