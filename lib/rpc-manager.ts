@@ -2830,6 +2830,21 @@ export function getRunningRpcSessionIds(): string[] {
   return [...ids];
 }
 
+/**
+ * Attached (alive) rpc session ids — includes idle sessions. Guards for
+ * disk-mutating operations (archive/move/delete) must use this, not the
+ * running-only list: an idle-but-open session keeps its SessionManager in
+ * memory and will silently recreate its JSONL on the next turn after the
+ * file is moved away (archived snapshot + resurrected live file, both stale).
+ */
+export function getAliveRpcSessionIds(): string[] {
+  const ids = new Set<string>();
+  for (const [sessionId, session] of getRegistry()) {
+    if (session.isAlive()) ids.add(session.sessionId || sessionId);
+  }
+  return [...ids];
+}
+
 export function getCompletionNotificationSuppressedRpcSessionIds(): string[] {
   const ids = new Set<string>();
   for (const [sessionId, session] of getRegistry()) {

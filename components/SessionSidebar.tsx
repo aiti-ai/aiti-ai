@@ -424,6 +424,17 @@ function PiWebTitle() {
 export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, onOpenById, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenFolder, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, fileExplorerRef: fileExplorerRefProp, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
+  // session-manager 归档了当前选中会话 → 选中态必须收尾（复用 onSessionDeleted：清草稿、
+  // 回新会话空态）。否则选中会话从列表消失后，draftSession 判定「选中不在列表」会把
+  // 归档行误显示为草稿，聊天窗也留在已归档会话上（实测复现：归档后继续对话，JSONL 复活）。
+  useEffect(() => {
+    const onArchived = (e: Event) => {
+      const ids = (e as CustomEvent<{ ids?: string[] }>).detail?.ids ?? [];
+      if (selectedSessionId && ids.includes(selectedSessionId)) onSessionDeleted?.(selectedSessionId);
+    };
+    window.addEventListener("sm:sessions-archived", onArchived);
+    return () => window.removeEventListener("sm:sessions-archived", onArchived);
+  }, [selectedSessionId, onSessionDeleted]);
   // 「项目 / Projects」区块接管：session-manager SidebarDock（sidebarProjects 有 items 即接管；缺席回退原版）
   const projectsSlotItems = useExtSlotItems("sidebarProjects");
   const projectsTakeover = projectsSlotItems.length > 0;

@@ -13,7 +13,7 @@ import {
   findBridgeSessionFileById,
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
-import { getRpcSession } from "@/lib/rpc-manager";
+import { getRpcSession, getAliveRpcSessionIds } from "@/lib/rpc-manager";
 import { resolveAnySession, attachIfBridged, handleModelToClient } from "@/lib/session";
 import { normalizeRawMessages } from "@/lib/normalize";
 import { listProviders } from "@/lib/session/providers";
@@ -403,6 +403,10 @@ export async function DELETE(
           return NextResponse.json({ error: "Session is owned by a running agent bridge; close it there first" }, { status: 409 });
         }
       } catch { /* probe failure → treat as not-owned */ }
+    }
+    // 本进程 rpc 会话仍存活（含空闲）：文件删了运行中的 SessionManager 下轮会原地把 JSONL 写回来
+    if (getAliveRpcSessionIds().includes(id)) {
+      return NextResponse.json({ error: "Session is still open in this workspace — close it first" }, { status: 409 });
     }
 
     // Read only the bounded header before deleting.

@@ -116,6 +116,8 @@ export interface ExtSessionProviderSlot {
 export interface ExtCoreApi {
   listSessions(): Promise<unknown[]>;
   getRunningSessionIds(): Promise<string[]>;
+  /** Attached (alive, possibly idle) rpc session ids — disk-write guards must include these. */
+  getAliveSessionIds(): Promise<string[]>;
   getHomeDir(): Promise<string>;
   /** Full session context (messages + entry ids) for a session id; null when missing. */
   readSession(id: string): Promise<unknown | null>;
