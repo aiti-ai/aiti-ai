@@ -8,7 +8,7 @@
  */
 import { homedir } from "os";
 import { listAllSessions, resolveSessionPath, getSessionEntries, buildSessionContext } from "@/lib/session-reader.ts";
-import { getRunningRpcSessionIds, getAliveRpcSessionIds } from "@/lib/rpc-manager.ts";
+import { getRunningRpcSessionIds, getAliveRpcSessionIds, stopIdleRpcSession } from "@/lib/rpc-manager.ts";
 import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed } from "@/lib/file-access.ts";
 import { readModelsConfig, writeModelsConfig } from "@/lib/models-config-store.ts";
 import type { ExtCoreApi } from "./types.ts";
@@ -23,6 +23,9 @@ export function makeExtCore(): ExtCoreApi {
     },
     async getAliveSessionIds() {
       return getAliveRpcSessionIds();
+    },
+    async stopAliveSession(id) {
+      return stopIdleRpcSession(id);
     },
     async getHomeDir() {
       return homedir();

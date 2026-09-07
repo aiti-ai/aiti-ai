@@ -13,7 +13,7 @@ import {
   findBridgeSessionFileById,
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
-import { getRpcSession, getAliveRpcSessionIds } from "@/lib/rpc-manager";
+import { getRpcSession, getAliveRpcSessionIds, stopIdleRpcSession } from "@/lib/rpc-manager";
 import { resolveAnySession, attachIfBridged, handleModelToClient } from "@/lib/session";
 import { normalizeRawMessages } from "@/lib/normalize";
 import { listProviders } from "@/lib/session/providers";
@@ -404,9 +404,16 @@ export async function DELETE(
         }
       } catch { /* probe failure → treat as not-owned */ }
     }
-    // 本进程 rpc 会话仍存活（含空闲）：文件删了运行中的 SessionManager 下轮会原地把 JSONL 写回来
+    // 本进程 rpc 会话仍存活：运行中的拒绝；已结束（仅 handle 挂着）→ 用户显式删除，
+    // 先释放 handle（shutdown flush 落盘、wrapper 退出 registry）再删文件，不再要求先关页面。
     if (getAliveRpcSessionIds().includes(id)) {
-      return NextResponse.json({ error: "Session is still open in this workspace — close it first" }, { status: 409 });
+      const stopResult = await stopIdleRpcSession(id);
+      if (stopResult === "running") {
+        return NextResponse.json({ error: "Session is running — stop it before deleting" }, { status: 409 });
+      }
+      if (stopResult !== "stopped") {
+        return NextResponse.json({ error: "Session is still open in this workspace — close it first" }, { status: 409 });
+      }
     }
 
     // Read only the bounded header before deleting.

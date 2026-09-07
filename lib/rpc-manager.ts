@@ -2845,6 +2845,35 @@ export function getAliveRpcSessionIds(): string[] {
   return [...ids];
 }
 
+/**
+ * 主动释放一个「alive 但非 running」的 rpc 会话。
+ *
+ * 用户显式归档/删除时调用：对话早已结束、只剩 handle 挂载（idle-but-open），
+ * 不应再要求用户先手动关页面——这里替用户把 handle 清掉（shutdown flush 落盘），
+ * 随后磁盘操作为安全。真在运行的会话不碰。
+ *
+ * 返回调用方据此裁决是否继续动盘：
+ *  - "stopped":     shutdown 完成、wrapper 已退出 registry，可安全归档/删除
+ *  - "running":     真在运行（isRunning），不碰——调用方必须拒绝操作
+ *  - "not-alive":   registry 已无此会话（本就不是守卫内目标）
+ *  - "missing":     不是本进程的 rpc 会话（TUI 桥等外部持有），调用方自行裁决
+ *  - "still-alive": shutdown 后仍存活（罕见：destroy 卡住），调用方应保守跳过
+ */
+export async function stopIdleRpcSession(
+  sessionId: string,
+): Promise<"stopped" | "running" | "not-alive" | "missing" | "still-alive"> {
+  const wrapper = getRpcSession(sessionId);
+  if (!wrapper) return "missing";
+  if (!wrapper.isAlive()) return "not-alive";
+  if (wrapper.isRunning()) return "running";
+  try {
+    await wrapper.shutdown("shutdown");
+  } catch (error) {
+    console.error("[pi-web] stopIdleRpcSession shutdown failed:", error instanceof Error ? error.message : error);
+  }
+  return wrapper.isAlive() ? "still-alive" : "stopped";
+}
+
 export function getCompletionNotificationSuppressedRpcSessionIds(): string[] {
   const ids = new Set<string>();
   for (const [sessionId, session] of getRegistry()) {
