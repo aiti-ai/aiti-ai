@@ -222,6 +222,10 @@ const PROMPT_SETTLE_POLL_MS = 600;
 const PROMPT_SETTLE_MAX_MS = 20_000;
 const EVENT_STREAM_IDLE_GRACE_MS = 30_000;
 const AGENT_STATE_RECONCILE_MS = 15_000; // 运行中对账兑底：仅前台 tick（后台由 visibility/online 回归时对账）
+// SSE 通道活跃（业务事件 + 30s 可感知心跳）时，状态对账延后到此静默阈值才真正发起——
+// agent_end 等事件由 SSE 主通道送达，轮询只是丢事件兜底；心跳连续丢失/半开死链/连接错误时
+// 自动回到 AGENT_STATE_RECONCILE_MS 基线频率，无需任何开关。
+const SSE_ACTIVITY_IDLE_RECONCILE_MS = 120_000;
 const BASH_STATE_RECONCILE_MS = 1_000;
 const EVENT_STREAM_READY_TIMEOUT_MS = 60_000;
 const EVENT_STREAM_RECONNECT_DELAY_MS = 1_000;
@@ -493,6 +497,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const bashRunningRef = useRef(false);
   const bashRecoveryIdRef = useRef(0);
   const handleAgentEventRef = useRef<((event: AgentEvent) => void) | null>(null);
+  // SSE 通道最后活跃时刻（事件连接层 onActivity/onTrouble 维护）：
+  // onActivity 刷新（任何 data 含 30s 心跳）；onTrouble 清零（连接出错 → 下一 tick 立即对账）。
+  const lastSseActivityRef = useRef(0);
+  // reconcileAgentState 中转：连接层闭包在渲染期创建一次，不能捕获后续版本的 useCallback。
+  const reconcileNowRef = useRef<() => void>(() => {});
+  // 立即对账节流戳：断线重试循环（~1s/次失败）会反复触发 onTrouble，限制风暴。
+  const lastReconcileAtRef = useRef(0);
   const initialScrollDoneRef = useRef(Boolean(opts.deferInitialScroll));
   const lastUserMsgRef = useRef<HTMLDivElement | null>(null);
   const pendingScrollToUserRef = useRef(false);
@@ -550,6 +561,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       ),
       readinessTimeoutMs: EVENT_STREAM_READY_TIMEOUT_MS,
       reconnectDelayMs: EVENT_STREAM_RECONNECT_DELAY_MS,
+      onActivity: () => { lastSseActivityRef.current = Date.now(); },
+      onTrouble: () => {
+        // 连接出错：丢事件窗口已开，应尽快对账，但断线重试循环会反复触发本回调——
+        // 立即对账节流到至少相距一个基线间隔，其余由 15s tick 兜底；
+        // 清零活跃戳让后续 tick 回到短间隔基线。agent 未在跑时 reconcile 自返。
+        lastSseActivityRef.current = 0;
+        const now = Date.now();
+        if (now - lastReconcileAtRef.current >= AGENT_STATE_RECONCILE_MS) {
+          lastReconcileAtRef.current = now;
+          reconcileNowRef.current?.();
+        }
+      },
       onUnexpectedError: (error) => {
         console.error("Failed to maintain the agent event stream:", error);
       },
@@ -1295,7 +1318,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // 后台 tab 跳过 tick：SSE 是主通道，回前台/网络恢复时已有立即对账，
       // 对隐藏页周期性轮询纯属浪费（每次响应含全量 state）。
       if (document.visibilityState !== "visible") return;
-      if (sid) void reconcileAgentState(sid);
+      if (!sid) return;
+      // 智能降频：SSE 通道活跃（业务事件 + 30s 心跳持续到达，活跃戳常新）时跳过本轮——
+      // 事件走主通道，对账只是丢事件兜底，无需 15s 高频。只有静默超过最大间隔
+      // （心跳连续丢失/半开死链，判定可靠）或连接出错（onTrouble 已清零 + 即时对账）
+      // 才真正调服务端；活跃戳为 0（连接一直没建立/首次）保持基线频率。
+      if (Date.now() - lastSseActivityRef.current < SSE_ACTIVITY_IDLE_RECONCILE_MS) return;
+      lastReconcileAtRef.current = Date.now();
+      void reconcileAgentState(sid);
     };
     const onVisible = () => {
       if (document.visibilityState === "visible") reconcile();
@@ -1309,6 +1339,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       window.removeEventListener("online", reconcile);
     };
   }, [agentRunning, reconcileAgentState]);
+
+  // 连接层 onTrouble 需要最新版 reconcileAgentState（闭包在渲染期一次性创建）。
+  reconcileNowRef.current = () => {
+    const sid = sessionIdRef.current;
+    if (sid) void reconcileAgentState(sid);
+  };
 
   useEffect(() => {
     agentRunningRef.current = agentRunning;

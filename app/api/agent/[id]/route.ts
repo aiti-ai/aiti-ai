@@ -115,8 +115,10 @@ export async function POST(
 }
 
 // GET /api/agent/[id] - Get current agent state
-// ?light=1 — 周期性对账轮询用：剥离 state.systemPrompt（唯一多 KB 字段，
+// ?light=1 — 对账兑底请求用：剥离 state.systemPrompt（唯一多 KB 字段，
 // 客户端已有副本且会话内几乎不变），响应从 ~15KB 降到 ~1KB。
+// 调用频率由前端智能控制：SSE 通道活跃（30s 可感知心跳）时静默延后至
+// 最长 2 分钟一次，仅心跳丢失/连接错误/回前台等可疑窗口才高频对账。
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }

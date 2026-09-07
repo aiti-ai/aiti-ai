@@ -40,6 +40,10 @@ export interface AgentEventConnectionOptions {
   readinessTimeoutMs: number;
   reconnectDelayMs: number;
   onUnexpectedError?(error: unknown): void;
+  /** 任何 data 事件（含服务端心跳 ping）到达时调用——通道活跃信号。 */
+  onActivity?(): void;
+  /** 连接出错（onerror → 进入重连调度）时调用——通道可疑信号。 */
+  onTrouble?(): void;
 }
 
 const EVENT_SOURCE_OPEN = 1;
@@ -146,6 +150,13 @@ export class AgentEventConnection {
         return;
       }
 
+      // 心跳 ping 只刷新活跃度，不投递给业务层（调用方无需处理）。
+      if (event.type === "ping") {
+        this.options.onActivity?.();
+        return;
+      }
+      this.options.onActivity?.();
+
       if (event.type === "connected") {
         attempt.ready = true;
         attempt.succeed();
@@ -158,6 +169,7 @@ export class AgentEventConnection {
       this.options.onEvent(event);
     };
     source.onerror = () => {
+      this.options.onTrouble?.();
       this.fail(connection, new AgentEventConnectionError("closed"));
     };
 

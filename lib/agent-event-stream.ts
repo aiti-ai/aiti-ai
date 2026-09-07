@@ -147,7 +147,10 @@ export function createAgentEventStream(
       }
       req.signal.addEventListener("abort", abortHandler, { once: true });
 
-      heartbeat = setInterval(() => enqueueText(":\n\n"), HEARTBEAT_INTERVAL_MS);
+      // 心跳必须是可感知的 data 事件而非注释行：注释行（":\n\n"）不触发
+      // EventSource.onmessage，客户端无法据此判断通道活跃，只能靠高频状态
+      // 轮询兜底。data 事件让客户端能把「静默超阈」可靠地判定为通道死亡。
+      heartbeat = setInterval(() => encode({ type: "ping", ts: Date.now() }), HEARTBEAT_INTERVAL_MS);
 
       // Force the response headers through without claiming that the agent is
       // ready. The client waits for the later `connected` data event.
