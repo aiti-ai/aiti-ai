@@ -15,8 +15,8 @@ import type { ExtCoreApi } from "./types.ts";
 
 export function makeExtCore(): ExtCoreApi {
   return {
-    async listSessions() {
-      return listAllSessions();
+    async listSessions(options?: { refresh?: boolean }) {
+      return listAllSessions(options?.refresh ? { force: true } : {});
     },
     async getRunningSessionIds() {
       return getRunningRpcSessionIds();

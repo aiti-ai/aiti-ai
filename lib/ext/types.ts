@@ -136,7 +136,8 @@ export interface ExtDepResolution {
 
 /** Core data capabilities handed to extensions — no reimplementation of session access. */
 export interface ExtCoreApi {
-  listSessions(): Promise<unknown[]>;
+  /** 可选 refresh：绕过 5s 列表扫描缓存强制重扫（会话刚落盘、归档后等需要立即见效的场合）。 */
+  listSessions(options?: { refresh?: boolean }): Promise<unknown[]>;
   getRunningSessionIds(): Promise<string[]>;
   /** Attached (alive, possibly idle) rpc session ids — disk-write guards must include these. */
   getAliveSessionIds(): Promise<string[]>;
