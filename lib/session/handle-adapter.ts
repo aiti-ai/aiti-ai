@@ -100,10 +100,15 @@ export class HandleSessionAdapter implements WrappedSessionLike {
         this.partialText += event.delta;
       }
       if (type === "message_end") {
-        const msg = event.message as { content?: Array<{ type?: string; text?: string }> } | undefined;
+        const msg = event.message as { content?: Array<{ type?: string; text?: string }> | string } | undefined;
+        // content 可能是 string（UserMessage 合法形状，如后端 steer/续轮的 user 气泡）——仅数组才可 find
         const finalText = typeof event.text === "string"
           ? event.text
-          : msg?.content?.find((b) => b.type === "text")?.text;
+          : Array.isArray(msg?.content)
+            ? msg.content.find((b) => b.type === "text")?.text
+            : typeof msg?.content === "string"
+              ? msg.content
+              : undefined;
         if (finalText !== undefined && this.partialActive) this.partialText = finalText;
         this.partialActive = false;
       }
