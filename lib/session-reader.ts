@@ -233,6 +233,20 @@ export function listSessionFiles(root: string): string[] {
       for (const sub of readdirSync(dir, { withFileTypes: true })) {
         if (!sub.isDirectory() && !sub.isSymbolicLink()) continue;
         const subDir = join(dir, sub.name);
+        // pi fork 子代理（pi 内部 fork 子代理落盘）：<parentDir>/forks/<date>_<id>.jsonl
+        // 平铺一层，文件名与顶层会话同构（<date>_<uuid>.jsonl）；父子关系由 header
+        // parentSession（父会话文件路径）在解析期推导——这里只需把文件扫进列表。
+        // 与上方的 run-N 工件探测正交（forks 目录只存在于 fork 父目录下）。
+        try {
+          const forksDir = join(subDir, "forks");
+          if (statSync(forksDir).isDirectory()) {
+            for (const f of readdirSync(forksDir)) {
+              if (f.endsWith(".jsonl")) files.push(join(forksDir, f));
+            }
+          }
+        } catch {
+          // no forks dir — skip
+        }
         let runDirs: Dirent[];
         try {
           runDirs = readdirSync(subDir, { withFileTypes: true }).filter((e) => e.isDirectory());
