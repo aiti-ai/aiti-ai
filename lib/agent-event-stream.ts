@@ -107,9 +107,23 @@ export function createAgentEventStream(
             sessionId,
             isStreaming: session.isStreaming,
           });
-          for (const event of bufferedEvents) forwardEvent(event, rawSnapshot);
+          // 【重复首字根因修复】buffer 里的事件（listener 装好 → snapshot 发布之间到达）
+          // 其效果已全部体现在 snapshot（live partialMessage 的克隆）里：pi 在 emit
+          // message_update 之前就已把 delta 应用到 partialMessage。若先重放 buffer
+          // 再发 snapshot，前端会先拼接重放 delta、又被 snapshot 覆盖，接着 rAF flush
+          // 的批内 delta 在 snapshot 之上再次拼接 → 流式期间开头内容重复
+          // （“重复第一个字母/词”），直到 thinking_end/text_end 的全量覆盖才修正。
+          // 因此：有 snapshot 时只重放非内容类事件（agent_start 等状态事件），
+          // 内容类（message_update/message_start）一律以 snapshot 为准；
+          // 无 snapshot（streamingMessage 未建立）时才用 buffer 重放重建。
           if (snapshot !== undefined && snapshot !== null) {
+            for (const event of bufferedEvents) {
+              if (event.type === "message_update" || event.type === "message_start") continue;
+              forwardEvent(event, rawSnapshot);
+            }
             encode({ type: "message_start", message: snapshot });
+          } else {
+            for (const event of bufferedEvents) forwardEvent(event, rawSnapshot);
           }
           snapshotPublished = true;
         } catch (error) {
