@@ -127,12 +127,21 @@ export function listHandleIds(): string[] {
 }
 
 /** 正在执行 turn 的后端会话 id 列表（侧栏运行中指示器数据源之一）。
- * ⚠ 必须用 handle.id（uuid）而非 Map key——双 key 注册（attach 的 uuid+文件路径）
- * 下按 key 遍历会混入路径脏数据且撞车误匹配。 */
+ * 返回该 handle 注册的**全部**对外 id：Map key + handle.id。
+ * 侧栏行 id 因后端而异：
+ *   - attach：对外行 id = handle.id（uuid），Map key 另有文件路径（脏，过滤 `/` 开头）
+ *   - 外部 agent（zcode/cursor/…）：对外行 id = 占位 uuid（putHandleAt(uuid) 的 key），
+ *     handle.id 是复合 id（如 `zcode:sess_xxx`）——两者不同，只返回 handle.id 会匹配不上。
+ * 因此必须同时收 key 与 handle.id，保证 runningSessionIds.has(行.id) 命中。
+ * `/` 开头的 key 是 attach 的会话文件路径（仅内部复用），不暴露给 running。 */
 export function getRunningHandleIds(): string[] {
-  return [...store().values()]
-    .filter((h) => h.alive() && h.isRunning())
-    .map((h) => h.id);
+  const ids = new Set<string>();
+  for (const [key, h] of store()) {
+    if (!h.alive() || !h.isRunning()) continue;
+    if (!key.startsWith("/")) ids.add(key);
+    if (h.id && !h.id.startsWith("/")) ids.add(h.id);
+  }
+  return [...ids];
 }
 
 // ── handle 侧 running 广播（对 /api/agent/running[events] 合并用）─────────────

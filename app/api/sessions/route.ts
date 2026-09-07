@@ -11,7 +11,7 @@ import {
   getRpcSessionInfos,
   getRunningRpcSessionIds,
 } from "@/lib/rpc-manager";
-import { getHandleSessionInfos, getRunningHandleIds } from "@/lib/session";
+import { getHandleSessionInfos, getRunningHandleIds, getHandle } from "@/lib/session";
 import { getBridgeRunningIds } from "@/lib/session/bridge-running";
 import { getRegistry } from "@/lib/ext/registry";
 import { stampExternalSessions } from "@/lib/session/placeholder";
@@ -46,6 +46,19 @@ export async function GET(req: Request) {
     // 站位行标注：磁盘扫描出的外部会话站位不携带 header 扩展字段——按注册表补
     // agent 标签（前端徽标/外部模型目录路由依赖它）。
     stampExternalSessions(sessions);
+    // 外部会话占位行活动时间：占位文件是静态锚点（无 message 行），modified 冻结在
+    // 创建时间——续聊不自动更新。handle 存活（用户已打开会话）时以 handle 最后活动
+    // 时间覆盖，侧栏「xxx前/刚刚」随对话实时刷新。
+    let refreshPatched = false;
+    for (const s of sessions) {
+      const h = getHandle(s.id);
+      const act = h?.alive() ? h.getLastActivity?.() : undefined;
+      if (typeof act === "number" && act > 0) {
+        s.modified = new Date(act).toISOString();
+        refreshPatched = true;
+      }
+    }
+    if (refreshPatched) sessions.sort((a, b) => b.modified.localeCompare(a.modified));
     // 会话标注 slot：扩展（如 aiti-attach-agent 的 TUI 桥占用标记）追加自有字段。
     // 数据所有权在扩展——核心不感知桥注册表等具体格式。
     try {

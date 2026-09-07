@@ -343,6 +343,14 @@ export interface SessionHandle {
   /** Working directory of the session (backend-provided; empty string if unknown). */
   readonly cwd: string;
 
+  /**
+   * 最后活动时间（epoch ms）。外部 agent 会话以占位文件（uuid）行展示在侧栏，
+   * 占位文件是静态锚点、不含对话 → its `modified` 冻结在创建时间。续聊后 handle
+   * 有活动但占位行不会自动更新——/api/sessions 靠本方法从存活 handle 取实时活动
+   * 时间覆盖占位行 modified。未实现返回 undefined（行为不变）。
+   */
+  getLastActivity?(): number | undefined;
+
   // ---- optional operations (capability-gated) -----------------------------
 
   /** @capability steer */
