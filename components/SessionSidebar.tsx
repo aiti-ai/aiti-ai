@@ -427,6 +427,13 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   // 「项目 / Projects」区块接管：session-manager SidebarDock（sidebarProjects 有 items 即接管；缺席回退原版）
   const projectsSlotItems = useExtSlotItems("sidebarProjects");
   const projectsTakeover = projectsSlotItems.length > 0;
+  // 负总责数据回灌（session-manager dock → 宿主）：接管态宿主 loadSessions 已下线，
+  // allSessions 的唯一更新源 = 扩展 store 回灌（无网络调用、无首拉竞态）。
+  // 消费方：auto-select（默认项目/?session= 恢复）、draftSession、projectFor、catalog。
+  const handleExtSessions = useCallback((sessions: SessionInfo[]) => {
+    setAllSessions(sessions);
+    onSessionsChange?.(sessions);
+  }, [onSessionsChange]);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sessionListVersion, setSessionListVersion] = useState<number | null>(null);
@@ -2011,7 +2018,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
               sessions: allSessions,
               loading,
               error,
-              onSessionsChange,
+              onSessionsChange: handleExtSessions,
               refreshKey,
               sessionListVersion,
               runningSessionIds,
