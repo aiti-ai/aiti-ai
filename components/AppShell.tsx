@@ -23,6 +23,7 @@ const NO_PATH_PICKER_ITEMS: ExtUiItemRegistered[] = [];
 import { registerHostApi } from "@/lib/ext/host-api";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { RestartRecoveryWizard } from "./RestartRecoveryWizard";
+import { BackendConnBanner } from "./BackendConnBanner";
 import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
 import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
@@ -4088,6 +4089,8 @@ export function AppShell() {
     {/* 服务端口弹窗已随 service-tunnels 抽离为扩展（<ExtSlot name="dialogs" /> 渲染） */}
     {/* 重启恢复向导：上次进程中断的运行中会话 + 队列（无中断时渲染 null） */}
     <RestartRecoveryWizard />
+    {/* 后端断连/恢复横幅：后端重启窗口提示「请刷新」（SSE broker 存活判定，无断连时渲染 null） */}
+    <BackendConnBanner />
     <ExtSlot name="dialogs" extra={{ onSelectSession: handleSelectSession }}
       currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd, name: selectedSession.name, firstMessage: selectedSession.firstMessage } : null} />
     {exportDialogOpen && selectedSession && (

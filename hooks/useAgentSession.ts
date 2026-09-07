@@ -15,7 +15,7 @@ import type {
 } from "@/lib/types";
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { normalizeToolCalls } from "@/lib/normalize";
-import { isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
+import { describeAgentCommandError, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
 import type { ChatDraftImage } from "@/lib/composer/draft-api";
 import { applyDraftIntent } from "@/lib/composer/draft-api";
 import type { PendingRecoveryItem, QueueEntry, QueueEntryInput, QueueTrashItem } from "@/lib/queue-store";
@@ -2319,7 +2319,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (isPromptRejectedError(e)) restore();
       addNotice({
         type: "error",
-        message: e instanceof Error ? e.message : String(e),
+        // 传输失败/网关 502 → 文案自带「后端可能正在重启，请稍后刷新页面」（describe 里归一）
+        message: describeAgentCommandError(e),
       });
     }
   }, [addNotice, composerDraftKey, restoreSubmission]);

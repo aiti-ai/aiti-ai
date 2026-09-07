@@ -20,7 +20,43 @@ interface RunningBroker {
   es: EventSource | null;
   dead: boolean;
   reconnectTimer: ReturnType<typeof setTimeout> | null;
+  /** 连续失败次数（每次 EventSource onerror +1；onopen 清零）——≥2 判定后端断连 */
+  connFails: number;
+  /** 当前是否已广播「断连」（只广播状态迁移，不重复刷屏） */
+  connOffline: boolean;
   connect: () => void;
+}
+
+// ── 后端断连/恢复广播（后端重启提示横幅的数据源）──────────────────
+// 后端（pi-web）重启窗口内所有请求 502/拒连，页面上散落的「HTTP 502」toast 没有
+// 任何「请刷新」指引。这里复用 broker 既有连接生命周期做全页统一的存活信号：
+//   - EventSource onerror = 失败一次（重启期间既有的 3s 重建循环会持续喂错误）；
+//     连续 ≥2 次才判定断连——过滤单次网络抖动（移动端隧道闪断常见）。
+//   - onopen = 恢复（连接真正建起来）。
+// 零新增轮询：检测节奏就是既有 reconnect 循环本身。
+export type BackendConnState = "offline" | "online";
+const connStateListeners = new Set<(state: BackendConnState) => void>();
+
+/** 订阅后端断连/恢复（模块级监听 + window CustomEvent 双通道，扩展 bundle 也可经事件消费） */
+export function onBackendConnChange(listener: (state: BackendConnState) => void): () => void {
+  connStateListeners.add(listener);
+  return () => connStateListeners.delete(listener);
+}
+
+/** 最近一次广播的状态（订阅者挂上之前可能已错过 offline——进横幅时先查一次） */
+let lastConnState: BackendConnState | null = null;
+export function getBackendConnState(): BackendConnState | null {
+  return lastConnState;
+}
+
+function broadcastConnState(state: BackendConnState): void {
+  if (lastConnState === state) return;
+  lastConnState = state;
+  connStateListeners.forEach((f) => { try { f(state); } catch { /* 订阅方异常不扩散 */ } });
+  // window 事件通道：跨 bundle（扩展 client）消费用；非浏览器环境静默
+  try {
+    window.dispatchEvent(new CustomEvent("piwe-backend-conn", { detail: { state } }));
+  } catch { /* non-browser */ }
 }
 
 /** window 上的 broker 挂点（core 与各扩展 client bundle 共享同一单例） */
@@ -39,6 +75,8 @@ export function subscribeRunningEvents(listener: Listener): () => void {
       es: null,
       dead: false,
       reconnectTimer: null,
+      connFails: 0,
+      connOffline: false,
       connect: () => {
         if (b!.dead) return;
         try { b!.es?.close(); } catch { /* noop */ }
@@ -48,6 +86,16 @@ export function subscribeRunningEvents(listener: Listener): () => void {
         source.addEventListener("heartbeat", () => {
           b!.listeners.forEach((f) => { try { f("heartbeat", null); } catch { /* noop */ } });
         });
+        source.onopen = () => {
+          // 连接建起 = 后端存活：清失败计数；若此前广播过断连 → 广播恢复。
+          // lastConnState 兜底：broker 全退订销毁后重建时 connOffline 已随旧对象
+          // 丢失，但模块级 lastConnState 可能仍是 offline——首个成功连接负责纠正。
+          b!.connFails = 0;
+          if (b!.connOffline || lastConnState === "offline") {
+            b!.connOffline = false;
+            broadcastConnState("online");
+          }
+        };
         source.onmessage = (e) => {
           let data: RunningFrame | null = null;
           try { data = JSON.parse((e as MessageEvent).data) as RunningFrame; } catch { /* malformed frame */ }
@@ -56,6 +104,13 @@ export function subscribeRunningEvents(listener: Listener): () => void {
         };
         source.onerror = () => {
           b!.listeners.forEach((f) => { try { f("error", null); } catch { /* noop */ } });
+          // 断连判定：连续 ≥2 次失败（第一次可能是重启刚掐断在途连接，第二次来自
+          // 重建循环的拒连/502——到这一步基本确定后端不在了）→ 广播 offline
+          b!.connFails++;
+          if (b!.connFails >= 2 && !b!.connOffline) {
+            b!.connOffline = true;
+            broadcastConnState("offline");
+          }
         };
       },
     };
