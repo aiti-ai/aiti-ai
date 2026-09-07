@@ -28,6 +28,10 @@
 
   var COUNTDOWN = 30; // 秒；给「AI 正在改文件、马上修好」的暂态留余地
   var banner = null, timer = null, left = 0;
+  // 「留在本页」的持久记忆：同一条错误点留后不再弹回（否则 overlay 在场时任何 DOM
+  // 变动都会 check() → showBanner 立刻弹回 = 实际关不掉，2026-09-08 反馈）。
+  // overlay 消失（错误被修好）时重置，下一条新错误照常提醒。
+  var dismissedErr = null;
   // 注：原版顶部的 RE_BUILD_ERROR 变量声明已删——它从未被 check 流程引用（实际用的是 matchLine 内的 patterns）
 
   function removeBanner() {
@@ -40,19 +44,48 @@
   }
 
   function showBanner(errText) {
+    if (dismissedErr === errText) return; // 用户已对这条错误选「留在本页」，不再打扰
     if (banner) {
       // 仅在变化时写入：textContent 赋值即使同值也会产生 childList mutation，
       // 会再触发下方 light observer → check() → showBanner → 无限循环锁死页面（E2E 实踩）
       if (banner._err.textContent !== errText) banner._err.textContent = errText;
       return;
     }
+    // 右上角紧凑卡片：不横贯底边（此前 left:12px;right:12px 的全宽底栏正好压住
+    // Next.js dev overlay 左下角的工具按钮，2026-09-08 反馈），标题栏可拖动。
     banner = document.createElement("div");
-    banner.style.cssText = "position:fixed;left:12px;right:12px;bottom:12px;z-index:2147483647;" +
+    banner.style.cssText = "position:fixed;top:12px;right:12px;width:440px;max-width:calc(100vw - 24px);z-index:2147483647;" +
       "background:#1a1a1a;color:#e8e8e8;border:1px solid #f59e0b;border-radius:10px;" +
       "padding:12px 14px;font:13px/1.5 system-ui,sans-serif;box-shadow:0 12px 40px rgba(0,0,0,.5);";
     var title = document.createElement("div");
-    title.style.cssText = "font-weight:700;color:#f59e0b;margin-bottom:4px;";
+    title.style.cssText = "font-weight:700;color:#f59e0b;margin-bottom:4px;cursor:move;user-select:none;display:flex;align-items:center;";
     title.textContent = "🚑 dev 编译错误 — 急救页可用";
+    // 标题栏拖动（标题栏 = 拖拽把手；拖后改为 top/left 定位，不再跟随 right 锚点）
+    title.onmousedown = function (e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      var r = banner.getBoundingClientRect();
+      var ox = e.clientX - r.left, oy = e.clientY - r.top;
+      banner.style.right = "auto";
+      banner.style.left = r.left + "px";
+      banner.style.top = r.top + "px";
+      var move = function (ev) {
+        banner.style.left = Math.max(0, Math.min(window.innerWidth - 40, ev.clientX - ox)) + "px";
+        banner.style.top = Math.max(0, Math.min(window.innerHeight - 40, ev.clientY - oy)) + "px";
+      };
+      var up = function () {
+        document.removeEventListener("mousemove", move);
+        document.removeEventListener("mouseup", up);
+      };
+      document.addEventListener("mousemove", move);
+      document.addEventListener("mouseup", up);
+    };
+    var close = document.createElement("button");
+    close.textContent = "✕";
+    close.title = "留在本页（同一条错误不再提醒）";
+    close.style.cssText = "margin-left:auto;background:transparent;color:#9ca3af;border:none;font-size:14px;cursor:pointer;line-height:1;";
+    close.onclick = function () { dismissedErr = banner._err.textContent; removeBanner(); };
+    title.appendChild(close);
     var err = document.createElement("div");
     err.style.cssText = "color:#9ca3af;margin-bottom:10px;max-height:3.2em;overflow:hidden;word-break:break-all;";
     err.textContent = errText;
@@ -68,9 +101,9 @@
     var stay = document.createElement("button");
     stay.textContent = "留在本页";
     stay.style.cssText = "background:#333;color:#e8e8e8;border:1px solid #444;border-radius:6px;padding:6px 12px;cursor:pointer;";
-    stay.onclick = function () { removeBanner(); };
+    stay.onclick = function () { dismissedErr = errText; removeBanner(); };
     row.appendChild(go); row.appendChild(stay); row.appendChild(cd);
-    banner.appendChild(title); banner.appendChild(err); row.appendChild(cd); banner.appendChild(row);
+    banner.appendChild(title); banner.appendChild(err); banner.appendChild(row);
     document.documentElement.appendChild(banner);
     left = COUNTDOWN;
     cd.textContent = left + "s 后自动进入";
@@ -152,7 +185,7 @@
     try {
       watchPortalShadows();
       var nodes = document.querySelectorAll('[role="dialog"], [data-nextjs-dialog], [data-nextjs-dialog-overlay], nextjs-portal');
-      if (!nodes.length) { removeBanner(); return; }
+      if (!nodes.length) { dismissedErr = null; removeBanner(); return; }
       var line = null;
       for (var i = 0; i < nodes.length && !line; i++) {
         var cb = { chars: 0, lines: [], done: false };
@@ -160,7 +193,7 @@
         line = matchLine(cb.lines.join("\n"));
       }
       if (line) showBanner(line);
-      else removeBanner(); // overlay 在场但非 Build Error（如 Console Error 弹窗）→ 不打扰
+      else { dismissedErr = null; removeBanner(); } // overlay 在场但非 Build Error（如 Console Error 弹窗）→ 不打扰
     } finally {
       checking = false;
       if (pendingCheck) { pendingCheck = false; setTimeout(check, 120); }

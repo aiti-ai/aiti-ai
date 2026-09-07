@@ -26,7 +26,8 @@ const GUARDS = [
     file: "./SessionSidebar.tsx",
     must: [
       /function buildSessionTree/,                                   // 我方树形侧栏（上游 families 方案不回退）
-      /onClick=\{\(\) => loadSessions\(false, true\)\}/,             // 手动刷新按钮
+      /loadSessions\(false, true\)/, // P1-B：刷新按钮分支化（接管态通知扩展），绕缓存语义保留
+      /sessionRefreshDone/, // 绿闪反馈仍在
       /sessionRefreshDone \? "rgba\(74,222,128,0\.18\)"/,            // 刷新成功绿闪反馈
       /name="sessionRowMeta"/,                                       // 行内 meta 扩展槽（aiti-plan-first 方案标/tags）
       /relation\?\.kind === "subagent"/,                             // 子会话/分支关系图标

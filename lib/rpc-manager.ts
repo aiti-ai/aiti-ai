@@ -815,7 +815,8 @@ export class AgentSessionWrapper {
     this.applyExactSystemPrompt();
   }
 
-  private emit(event: AgentEvent): void {
+  // public：受理式发送（lib/agent-command-accept）在 202 后晚到的失败经此补发 prompt_error
+  emit(event: AgentEvent): void {
     for (const listener of this.listeners) {
       try {
         listener(event);

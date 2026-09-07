@@ -53,6 +53,8 @@ export interface WrappedSessionLike {
   /** 当前后端模型（attach/spawn 直达 handle；本地 wrapper 可缺省——调用处用 ?.()）。注意 shape 是 {id, provider}，回传 context.model 前须经 handleModelToClient 归一化。 */
   getModel?(): { id: string; provider: string } | undefined;
   send(command: WrapperCommand): Promise<unknown>;
+  /** 服务端合成事件注入口（可选）：如 202 受理后晚到的 prompt_error 补发（lib/agent-command-accept）。 */
+  emit?(event: { type: string; [key: string]: unknown }): void;
   onEvent(listener: Listener): () => void;
   /** SSE reconnect snapshot (AgentEventStreamSession contract). */
   readonly isStreaming: boolean;
@@ -79,47 +81,56 @@ export class HandleSessionAdapter implements WrappedSessionLike {
     this.lastModel = handle.getModel();
 
     this.unsubscribe = handle.subscribe((rawEvent) => {
-      // 反向 RPC 帧（TUI aiti_* 工具转发）不是事件——旧版 handle 会把它当事件吐进
-      // 流里导致前端渲染「未知错误」；此处双重防御：无论新旧 handle，到达适配层的
-      // 该类型一律丢弃（真正消费方 = AttachSessionHandle.handleAitiBridgeReq，socket 层）
-      if ((rawEvent as { type?: unknown } | null)?.type === "aiti_bridge_req") return;
-      // 规范化合成事件 → pi 词汇表（前端流式渲染依赖精确形状，见 normalize 注释）
-      const merged = this.normalize(rawEvent);
-      const event = { ...rawEvent, ...merged } as Record<string, unknown>;
-      const type = String(event.type ?? "");
-      // Track streaming state for the SSE surface
-      if (type === "agent_start" || type === "turn_start") this._isStreaming = true;
-      if (type === "agent_settled" || type === "agent_end") this._isStreaming = false;
-
-      // Rebuild a partial assistant message from deltas (snapshot source).
-      if (type === "message_start" && (event.role ?? "assistant") === "assistant") {
-        this.partialText = "";
-        this.partialActive = true;
-      }
-      if (type === "message_update" && typeof event.delta === "string") {
-        this.partialText += event.delta;
-      }
-      if (type === "message_end") {
-        const msg = event.message as { content?: Array<{ type?: string; text?: string }> | string } | undefined;
-        // content 可能是 string（UserMessage 合法形状，如后端 steer/续轮的 user 气泡）——仅数组才可 find
-        const finalText = typeof event.text === "string"
-          ? event.text
-          : Array.isArray(msg?.content)
-            ? msg.content.find((b) => b.type === "text")?.text
-            : typeof msg?.content === "string"
-              ? msg.content
-              : undefined;
-        if (finalText !== undefined && this.partialActive) this.partialText = finalText;
-        this.partialActive = false;
-      }
-      if (type === "agent_settled") this.partialActive = false;
-
-      if (type === "model_select" && event.model) {
-        this.lastModel = event.model as { id: string; provider: string };
-      }
-
-      for (const l of this.listeners) l(event as Parameters<Listener>[0]);
+      this.dispatch(rawEvent as Record<string, unknown>);
     });
+  }
+
+  /** 服务端合成事件注入口：走与后端事件完全相同的规范化/流式状态/分发管线。 */
+  emit(event: { type: string; [key: string]: unknown }): void {
+    this.dispatch({ ...event });
+  }
+
+  private dispatch(rawEvent: Record<string, unknown>): void {
+    // 反向 RPC 帧（TUI aiti_* 工具转发）不是事件——旧版 handle 会把它当事件吐进
+    // 流里导致前端渲染「未知错误」；此处双重防御：无论新旧 handle，到达适配层的
+    // 该类型一律丢弃（真正消费方 = AttachSessionHandle.handleAitiBridgeReq，socket 层）
+    if (rawEvent.type === "aiti_bridge_req") return;
+    // 规范化合成事件 → pi 词汇表（前端流式渲染依赖精确形状，见 normalize 注释）
+    const merged = this.normalize(rawEvent);
+    const event = { ...rawEvent, ...merged } as Record<string, unknown>;
+    const type = String(event.type ?? "");
+    // Track streaming state for the SSE surface
+    if (type === "agent_start" || type === "turn_start") this._isStreaming = true;
+    if (type === "agent_settled" || type === "agent_end") this._isStreaming = false;
+
+    // Rebuild a partial assistant message from deltas (snapshot source).
+    if (type === "message_start" && (event.role ?? "assistant") === "assistant") {
+      this.partialText = "";
+      this.partialActive = true;
+    }
+    if (type === "message_update" && typeof event.delta === "string") {
+      this.partialText += event.delta;
+    }
+    if (type === "message_end") {
+      const msg = event.message as { content?: Array<{ type?: string; text?: string }> | string } | undefined;
+      // content 可能是 string（UserMessage 合法形状，如后端 steer/续轮的 user 气泡）——仅数组才可 find
+      const finalText = typeof event.text === "string"
+        ? event.text
+        : Array.isArray(msg?.content)
+          ? msg.content.find((b) => b.type === "text")?.text
+          : typeof msg?.content === "string"
+            ? msg.content
+            : undefined;
+      if (finalText !== undefined && this.partialActive) this.partialText = finalText;
+      this.partialActive = false;
+    }
+    if (type === "agent_settled") this.partialActive = false;
+
+    if (type === "model_select" && event.model) {
+      this.lastModel = event.model as { id: string; provider: string };
+    }
+
+    for (const l of this.listeners) l(event as Parameters<Listener>[0]);
   }
 
   /** 当前后端模型（attach/spawn 等直达 handle；本地等同 lastModel）。 */

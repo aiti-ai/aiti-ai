@@ -2,6 +2,28 @@ import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
 import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession } from "@/lib/session";
+import { sendWithAcceptWindow } from "@/lib/agent-command-accept";
+
+/**
+ * prompt 族命令的受理式发送：窗口内定局 → 原语义响应；超时未决 → 202（结果走
+ * SSE events）。lib/agent-command-accept.ts 有完整背景（nginx 60s 网关超时根因）。
+ * onAccepted 仅在受理成功（202 / 成功定局）时回调——catch 路径靠 promptAccepted
+ * 未置位来标注 prompt_rejected/accepted:false（客户端「确定被拒」判定依据）。
+ */
+async function sendAccepted(
+  wrapper: Parameters<typeof sendWithAcceptWindow>[0],
+  body: { type?: unknown; [key: string]: unknown },
+  onAccepted: () => void,
+): Promise<NextResponse> {
+  const outcome = await sendWithAcceptWindow(wrapper, body as Record<string, unknown>);
+  if (!outcome.settled) {
+    onAccepted();
+    return NextResponse.json({ success: true, accepted: true, pending: true }, { status: 202 });
+  }
+  if ("error" in outcome) throw outcome.error;
+  onAccepted();
+  return NextResponse.json({ success: true, data: outcome.result });
+}
 
 // POST /api/agent/[id] - Send a command to an existing session
 export async function POST(
@@ -44,9 +66,7 @@ export async function POST(
         throw e;
       }
       if (bridged?.isAlive()) {
-        const result = await bridged.send(body);
-        promptAccepted = body.type === "prompt";
-        return NextResponse.json({ success: true, data: result });
+        return await sendAccepted(bridged, body, () => { promptAccepted = body.type === "prompt"; });
       }
     }
 
@@ -73,9 +93,7 @@ export async function POST(
       });
     }
     if (existing?.isAlive()) {
-      const result = await existing.send(body);
-      promptAccepted = body.type === "prompt";
-      return NextResponse.json({ success: true, data: result });
+      return await sendAccepted(existing, body, () => { promptAccepted = body.type === "prompt"; });
     }
 
     // 本地路径：文件不存在且无 live 会话 → 404；存在则起本地 runtime
@@ -92,10 +110,7 @@ export async function POST(
     const { session } = await startRpcSession(id, filePath, undefined, {
       ...(toolNames !== undefined ? { toolNames } : {}),
     });
-    const result = await session.send(body);
-    promptAccepted = body.type === "prompt";
-
-    return NextResponse.json({ success: true, data: result });
+    return await sendAccepted(session, body, () => { promptAccepted = body.type === "prompt"; });
   } catch (error) {
     // 单写者红线：占用拒绝是语义性冲突，不是服务器故障
     if ((error as { name?: string }).name === "BridgeOccupiedError") {

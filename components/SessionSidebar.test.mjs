@@ -110,10 +110,12 @@ test("offers the downstream context-menu hook only on a normal session row", () 
 
 test("manual and lifecycle refreshes bypass the server session-list cache", () => {
   assert.match(source, /\/api\/sessions\$\{forceRefresh \? "\?refresh=1" : ""\}/);
-  assert.match(source, /loadSessions\(isFirst, !isFirst\)/);
+  // P1-B 重构后首载形态演进（接管 hint/补拉 + 合流去重），绕缓存语义由 forceRefresh 承载
+  assert.match(source, /loadSessions\(false, true\)/);
   // 手动刷新按钮（绿闪反馈）已随试验合并恢复到 header
-  assert.match(source, /onClick=\{\(\) => loadSessions\(false, true\)\}/);
-  assert.match(source, /loadSessions\(false, true\);[\s\S]*?onBackgroundTaskDone/);
+  assert.match(source, /sessionRefreshDone/); // P1-B：绿闪反馈仍在（onClick 多行分支化）
+  // P1-B：生命周期刷新走 ETag 非强制路径（接管态跳过），完成通知保留
+  assert.match(source, /void loadSessions\(\);[\s\S]*?onBackgroundTaskDone/);
 });
 
 test("does not expose disk-backed actions for transient sessions", () => {
