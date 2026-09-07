@@ -384,6 +384,25 @@ export interface SessionHandle {
   /** @capability getCommands */
   getCommands?(): Promise<HandleCommandInfo[]>;
   /**
+   * 后端侧队列管理原语（queue keeper 适配；本地会话由 wrapper 自持镜像不走此路径）。
+   * 未实现时 adapter 的队列命令族维持 no-op（向后兼容）。
+   * @capability queueManage
+   */
+  queueManage?(req: {
+    action: "list" | "clear" | "move" | "convert" | "remove" | "recall" | "requeue";
+    kind?: "steer" | "followUp";
+    from?: number;
+    to?: number;
+    index?: number;
+    targetKind?: "steer" | "followUp";
+    text?: string;
+  }): Promise<{
+    steering: string[];
+    followUp: string[];
+    entry?: { text: string };
+    removed?: { id: string; kind: string; text: string; hasImages: boolean; queuedAt: number };
+  }>;
+  /**
    * 响应一个待决的工具授权请求（事件流里 type="permission_request" 的 request）。
    * @capability respondPermission
    */

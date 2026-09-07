@@ -255,7 +255,9 @@ export class HandleSessionAdapter implements WrappedSessionLike {
             : undefined,
           messageCount: 0,
           pendingMessageCount: 0,
-          queuedMessages: { steering: [], followUp: [] },
+          queuedMessages: h.queueManage
+            ? await h.queueManage({ action: "list" })
+            : { steering: [], followUp: [] },
           systemPrompt: "",
           thinkingLevel: "off",
         };
@@ -376,16 +378,56 @@ export class HandleSessionAdapter implements WrappedSessionLike {
           cost: 0,
         };
 
-      // ---- backend-owned queues: acknowledge without action -------------------
-      // The remote process owns its steering/follow-up queues; the web-side
-      // queue UI features (recovery/trash/reorder) don't apply.
-      case "continue_queue":
+      // ---- backend-owned queues -------------------------------------------------
+      // The remote process owns its steering/follow-up queues. Handles that
+      // implement queueManage (queue keeper 适配) get full CRUD forwarded;
+      // others keep the legacy no-op (向后兼容).
       case "clear_queue":
+        if (h.queueManage) return await h.queueManage({ action: "clear" });
+        return null;
       case "move_queue":
+        if (h.queueManage) {
+          return await h.queueManage({ action: "move", kind: command.kind as "steer" | "followUp", from: Number(command.fromIndex), to: Number(command.toIndex) });
+        }
+        return null;
       case "convert_queue_item":
+        if (h.queueManage) {
+          return await h.queueManage({ action: "convert", kind: command.kind as "steer" | "followUp", index: Number(command.index), targetKind: command.targetKind as "steer" | "followUp" });
+        }
+        return null;
       case "recall_queue_item":
+        if (h.queueManage) {
+          return await h.queueManage({ action: "recall", kind: command.kind as "steer" | "followUp", index: Number(command.index) });
+        }
+        return null;
       case "requeue_at":
+        if (h.queueManage) {
+          return await h.queueManage({ action: "requeue", kind: command.kind as "steer" | "followUp", index: Number(command.index), text: String(command.text ?? "") });
+        }
+        return null;
       case "remove_queue_item":
+        if (h.queueManage) {
+          const r = await h.queueManage({ action: "remove", kind: command.kind as "steer" | "followUp", index: Number(command.index) });
+          // 前端 removeQueuedMessage 消费 removed（QueueTrashItem 形状）刷新撤销条；
+          // trash 持久化为本地机制（wrapper），后端仅返回即时效条目
+          const removedEntry = r.entry ?? undefined;
+          return {
+            ...r,
+            ...(removedEntry
+              ? {
+                  removed: {
+                    id: `bq-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                    kind: String(command.kind ?? "followUp"),
+                    text: removedEntry.text,
+                    hasImages: false,
+                    queuedAt: Date.now(),
+                  },
+                }
+              : {}),
+          };
+        }
+        return null;
+      case "continue_queue":
       case "restore_trash_item":
       case "purge_trash":
       case "resolve_recovery":

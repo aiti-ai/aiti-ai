@@ -58,6 +58,24 @@ export function listAllHandles(): Array<[string, SessionHandle]> {
 }
 
 /**
+ * Dispose every backend handle and clear the store（扩展 reload 后调用）。
+ * 扩展热重载替换了 server 代码，但存活的 handle 仍是旧类实例（globalThis 存活）——
+ * 不清理则已有会话继续跑旧逻辑（实测：新增的 queue_update 分支对旧 handle 不生效）。
+ * dispose 后下次访问按需重建（createSession → 新代码）；zcode 等有状态后端
+ * respawn+resume 无损，attach 类为断线重连语义。返回清理数量。
+ */
+export async function disposeAllHandles(): Promise<number> {
+  const all = listAllHandles();
+  const ids = new Set<string>();
+  for (const [key, h] of all) {
+    ids.add(key);
+    try { await h.dispose(); } catch { /* best effort */ }
+  }
+  store().clear();
+  return ids.size;
+}
+
+/**
  * Sidebar/session-list rows for live backend sessions (deduped by object).
  * transient:true — no local file backs them.
  */
