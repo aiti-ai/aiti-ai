@@ -11,6 +11,16 @@
 // （如 CLOSED 后延迟重建走 broker.reconnect()）。
 import { apiUrl } from "./base-path";
 
+// 服务端 30s 心跳；超过 HEARTBEAT_FRAME_TIMEOUT_MS 无任何帧（message/heartbeat）= 连接半死/
+// 被浏览器后台冻结（EventSource 仍 OPEN 但不再收数据、也不触发 onerror 的"静默死连接"）
+// → 由 broker 心跳 watchdog 主动关旧连接重建，治愈半连接（此问题此前让 session-manager
+// 健康时钟恒超时，持续每 15s 兜底轮询 /api/agent/running，后端负载被无谓放大）。
+export const HEARTBEAT_FRAME_TIMEOUT_MS = 75_000;
+// 宿主 broker 投递给 frameListeners 的「心跳帧」type（扩展健康时钟专用；消费方按 type 分发，
+// 对未知 type 忽略，互不误触）。原契约 named heartbeat 帧不投递给 frameListeners，导致扩展
+// 在运行集稳定（无 running 变化帧）时收不到任何帧 → 恒判 SSE 死。此帧补上该缺口。
+export const HEARTBEAT_FRAME_TYPE = "piwe:heartbeat";
+
 export type RunningFrame = { type?: string; runningSessionIds?: string[] };
 type Listener = (kind: "message" | "heartbeat" | "error", data: RunningFrame | null, raw?: MessageEvent) => void;
 
@@ -24,6 +34,11 @@ interface RunningBroker {
   connFails: number;
   /** 当前是否已广播「断连」（只广播状态迁移，不重复刷屏） */
   connOffline: boolean;
+  /** 最近一次收到帧（message/heartbeat）时刻——心跳 watchdog 判活基准 */
+  lastFrameAt: number;
+  /** 心跳超时 watchdog（事件驱动：每帧重置；超时无帧即连接半死 → 主动重建）。
+   *  零业务轮询——它就是 TCP keepalive 的等效，帧驱动重置，不引入定时拉取。 */
+  frameWatchdog: ReturnType<typeof setTimeout> | null;
   connect: () => void;
 }
 
@@ -62,7 +77,11 @@ function broadcastConnState(state: BackendConnState): void {
 /** window 上的 broker 挂点（core 与各扩展 client bundle 共享同一单例） */
 interface BrokerWindow {
   __runningEventsBroker?: RunningBroker | null;
-  __piPageEventsClient?: { subscribePageFrames: typeof subscribePageFrames };
+  __piPageEventsClient?: {
+    subscribePageFrames: typeof subscribePageFrames;
+    /** 强制立即重建共享连接（判活超时/半连接时由扩展调用；走 0ms 重建） */
+    reconnectRunning: () => void;
+  };
 }
 
 export function subscribeRunningEvents(listener: Listener): () => void {
@@ -77,26 +96,58 @@ export function subscribeRunningEvents(listener: Listener): () => void {
       reconnectTimer: null,
       connFails: 0,
       connOffline: false,
+      lastFrameAt: 0,
+      frameWatchdog: null,
       connect: () => {
+        // 心跳 watchdog（事件驱动，零业务轮询）：每收到一帧（message/heartbeat）重置；
+        // 超时窗口内无任何帧 = 连接半死/被浏览器后台冻结（EventSource 仍 OPEN 但收不到
+        // 数据、也不触发 onerror——"静默死连接"正是 session-manager 持续兜底轮询的根源）。
+        // 守护到点主动关旧连接重建，治愈半连接，让 heartbeat/快照帧恢复流动。
+        const armFrameWatchdog = () => {
+          if (b!.frameWatchdog) clearTimeout(b!.frameWatchdog);
+          b!.frameWatchdog = setTimeout(() => {
+            b!.frameWatchdog = null;
+            if (b!.dead) return;
+            if (Date.now() - b!.lastFrameAt >= HEARTBEAT_FRAME_TIMEOUT_MS) {
+              try { b!.es?.close(); } catch { /* noop */ }
+              b!.es = null;
+              b!.connect();
+            } else {
+              armFrameWatchdog(); // 刚收到过帧，timer 只是迟触发——续判
+            }
+          }, HEARTBEAT_FRAME_TIMEOUT_MS);
+        };
+        const markFrame = () => {
+          b!.lastFrameAt = Date.now();
+          armFrameWatchdog();
+        };
         if (b!.dead) return;
         try { b!.es?.close(); } catch { /* noop */ }
         const source = new EventSource(apiUrl("/api/agent/running/events"));
         b!.es = source;
+        markFrame(); // 建连即给活性基准，避免 watchdog 首巡误判
         // named event 心跳（服务端 30s 一帧）：专供订阅方判活
         source.addEventListener("heartbeat", () => {
+          markFrame();
           b!.listeners.forEach((f) => { try { f("heartbeat", null); } catch { /* noop */ } });
+          // 顺带投递给 frameListeners（扩展健康时钟靠它）。原契约缺失导致运行集稳定时
+          // session-manager 恒判 SSE 死 → 持续兜底轮询 /api/agent/running。
+          // 专用 type=HEARTBEAT_FRAME_TYPE；消费方按 type 分发，未知 type 忽略。
+          b!.frameListeners.forEach((f) => { try { f({ type: HEARTBEAT_FRAME_TYPE, at: b!.lastFrameAt }); } catch { /* noop */ } });
         });
         source.onopen = () => {
           // 连接建起 = 后端存活：清失败计数；若此前广播过断连 → 广播恢复。
           // lastConnState 兜底：broker 全退订销毁后重建时 connOffline 已随旧对象
           // 丢失，但模块级 lastConnState 可能仍是 offline——首个成功连接负责纠正。
           b!.connFails = 0;
+          markFrame();
           if (b!.connOffline || lastConnState === "offline") {
             b!.connOffline = false;
             broadcastConnState("online");
           }
         };
         source.onmessage = (e) => {
+          markFrame();
           let data: RunningFrame | null = null;
           try { data = JSON.parse((e as MessageEvent).data) as RunningFrame; } catch { /* malformed frame */ }
           b!.listeners.forEach((f) => { try { f("message", data, e as MessageEvent); } catch { /* noop */ } });
@@ -141,7 +192,9 @@ export function reconnectRunningEvents(delayMs = 3000): void {
 // ── 通用帧订阅（跨扩展共享同一连接）──────────────────────────
 // 扩展/其他消费方经 window.__piPageEventsClient.subscribePageFrames(handler) 挂上
 // 同一条连接：每个 message 帧（JSON）原样分发给 handler（frame.type 区分来源：
-// running / pf:remind / mc:avail / ed-watch …）；named heartbeat 帧不投递（判活用）。
+// running / pf:remind / mc:avail / ed-watch …）；named heartbeat 帧现也作为
+// { type: HEARTBEAT_FRAME_TYPE, at } 帧投递（修复扩展健康时钟缺失），扩展按 type 分发、
+// 未知 type 忽略，互不误触。
 export function subscribePageFrames(handler: (frame: Record<string, unknown>) => void): () => void {
   const w = window as BrokerWindow;
   let b = w.__runningEventsBroker;
@@ -154,5 +207,9 @@ export function subscribePageFrames(handler: (frame: Record<string, unknown>) =>
 
 // 跨扩展浏览器端入口（plan-first / model-check / aiti-editor 等经此共享连接）
 if (typeof window !== "undefined") {
-  (window as BrokerWindow).__piPageEventsClient = { subscribePageFrames };
+  (window as BrokerWindow).__piPageEventsClient = {
+    subscribePageFrames,
+    // 判活超时/半连接时扩展可主动重建共享连接（0ms），缩短自愈时间
+    reconnectRunning: () => reconnectRunningEvents(0),
+  };
 }
