@@ -535,7 +535,17 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     if (!hasPending && chatInputRef?.current?.hasInput?.()) return;
     const sid = sessionIdRef.current;
     if (sid) {
-      const allowed = await runSessionForkGates({ sessionId: sid, entryId, position: "before" });
+      // 被裁轮次集合 = 被编辑消息 M 及之后全部用户消息 entryId（按会话顺序）——
+      // 扩展据此精确圈定回滚区间（含被编辑轮），而非仅 entryId 之后的 op。
+      // 从 entryIds 找 M 的位置，收集其后 role==="user" 的 entryId。
+      let cutUserEntryIds: string[] = [];
+      const mi = entryIds.indexOf(entryId);
+      if (mi >= 0) {
+        for (let i = mi; i < messages.length; i++) {
+          if (messages[i]?.role === "user" && entryIds[i]) cutUserEntryIds.push(entryIds[i]);
+        }
+      }
+      const allowed = await runSessionForkGates({ sessionId: sid, entryId, position: "before", cutUserEntryIds });
       if (!allowed) return;
       // 回撤门是非模态浮层：等待期间用户可能已手动输入——复检防预填覆盖（canRestore 约定）。
       if (!editFromHerePendingRef.current && chatInputRef?.current?.hasInput?.()) return;
@@ -547,7 +557,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       leafId: branchPointId,
     });
     handleEditContent(message);
-  }, [chatInputRef, handleEditContent, sessionIdRef]);
+  }, [chatInputRef, handleEditContent, sessionIdRef, messages, entryIds]);
 
   // 取消：还原高亮 + 清空预填输入框（clearInput 同时清掉草稿）
   const handleCancelEditFromHere = useCallback(() => {

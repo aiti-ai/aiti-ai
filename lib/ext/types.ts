@@ -466,6 +466,9 @@ export interface SessionForkGateInfo {
   /** fork 分叉点 entry id */
   entryId: string;
   position: "before" | "at";
+  /** 「从这里编辑」被裁掉的消息轮次（被编辑消息 M 及之后全部用户消息 entryId），按会话顺序。
+   *  扩展据此精确圈定回滚区间（含被编辑轮），而非仅 entryId 之后的 op（方案 docs/aiti-git-trace-edit-here-reverse-rollback-plan.md）。 */
+  cutUserEntryIds?: string[];
 }
 
 /** 「编辑重发」前置门（aiti-git-trace 回撤三选项等）：返回 true 放行、false 或抛错取消本次标记。

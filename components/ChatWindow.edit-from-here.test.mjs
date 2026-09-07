@@ -26,7 +26,8 @@ test("runs ai-change gates before marking; free-of-disturbance preflight comes f
   assert.ok(gatePos > -1, "gate call missing");
   assert.ok(preflightPos > -1, "hasInput preflight missing");
   assert.ok(preflightPos < gatePos, "preflight must run before the gate dialog");
-  assert.match(source, /const allowed = await runSessionForkGates\(\{ sessionId: sid, entryId, position: "before" \}\);/);
+  assert.match(source, /const allowed = await runSessionForkGates\(\{ sessionId: sid, entryId, position: "before", cutUserEntryIds \}\);/);
+  assert.match(source, /cutUserEntryIds/);
   assert.match(source, /if \(!allowed\) return;/);
 });
 
