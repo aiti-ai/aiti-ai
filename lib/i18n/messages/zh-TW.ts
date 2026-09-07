@@ -273,6 +273,8 @@ export const zhTWLocale: LocalePlugin = {
     "files.loading": "正在載入檔案...",
     "files.noFiles": "找不到檔案",
     "files.explorer": "檔案瀏覽器",
+    "sidebar.dockPanels": "停靠面板",
+    "sidebar.tasks": "任務",
     "files.changedCount": "{count} 個檔案",
     "files.changeStats": "{count} 個變更檔案，新增 {additions} 行，刪除 {deletions} 行",
     "files.conflictSummary": "{count} 個檔案已存在：{files}",

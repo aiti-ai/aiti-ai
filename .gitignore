@@ -61,3 +61,7 @@ e2e_*.mjs
 
 # aiti 扩展运行时数据（aiti-channels 等），不入仓
 .pi/
+
+# aiti 审核清理：误落仓库根的工作区数据 / 崩溃恢复备份（勿提交，需提交时 git add -f）
+/trend
+/app/page.tsx.*.bak*

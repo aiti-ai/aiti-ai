@@ -135,6 +135,13 @@ export interface ExtClientContext {
   registerTopicItem<T>(topic: string, item: T): () => void;
   /** 同步读取主题全部条目（消费方在交互时刻调用）。 */
   getTopicItems<T>(topic: string): T[];
+  /** 跨扩展客户端服务注册（依赖注入方案 §4-C，key 强制 "<extId>." 前缀；同页进程内直调，不走 HTTP）。
+   *  返回 disposer。 */
+  registerExtService?<T>(key: string, impl: T): () => void;
+  /** 同步读跨扩展客户端服务（缺席 undefined——提供方懒加载未就绪时消费方必须降级）。 */
+  getExtService?<T>(key: string): T | undefined;
+  /** 订阅客户端服务上/下线（提供方 materialize/卸载）。返回退订函数。 */
+  onExtServiceChange?(cb: (key: string, phase: "up" | "down") => void): () => void;
   /** 打开文件标签页（宿主公共接口，同步调用；返回 void/Promise） */
   openFile?(path: string, fileName?: string, options?: OpenFileOptions): void | Promise<void>;
   /** 打开文件夹标签页（右侧面板 FolderViewer；display-only，不影响 cwd） */
@@ -207,6 +214,47 @@ export function registerTopicItem<T>(topic: string, item: T): () => void {
 /** 同步读取主题全部条目（消费方在交互时刻调用；非响应式，无需订阅）。 */
 export function getTopicItems<T>(topic: string): T[] {
   return Array.from(topicItems.get(topic) ?? []) as T[];
+}
+
+// ── 扩展服务注册表（依赖注入方案 §4-C：topicItems 同源升级版——同步本地直调，
+//    不走 HTTP）── key 契约与服务端一致 "<extId>.<name>"（ctx 闭包校验前缀防冒充）。
+//    同页进程内共享：页面级 Map，提供方 client materialize 时注册，消费方判空降级。
+type ExtServicePhase = "up" | "down";
+const extServices = new Map<string, { impl: unknown }>();
+const extServiceListeners = new Set<(key: string, phase: ExtServicePhase) => void>();
+function emitExtService(key: string, phase: ExtServicePhase) {
+  for (const cb of [...extServiceListeners]) {
+    try { cb(key, phase); } catch { /* 监听方错误不阻断 */ }
+  }
+}
+/** 注册跨扩展客户端服务（key 强制 "<extId>." 前缀）。返回 disposer（反卷用）。 */
+export function registerExtClientService<T>(extId: string, key: string, impl: T): () => void {
+  // 与服务端 assertServiceKey 同契约：必须 "<extId>.<name>"，拒绝空 name 段（防冒充）
+  if (typeof key !== "string" || key.length === 0 || !key.startsWith(extId + ".") || key === extId + ".") {
+    throw new Error(`[ext] client service key 必须以 "<extId>.<name>" 形式（防冒充）：${extId} 试图 provide "${key}"`);
+  }
+  const wasAbsent = !extServices.has(key);
+  extServices.set(key, { impl });
+  if (wasAbsent) emitExtService(key, "up");
+  let disposed = false;
+  return () => {
+    if (disposed) return;
+    disposed = true;
+    const cur = extServices.get(key);
+    if (cur && cur.impl === impl) {
+      extServices.delete(key);
+      emitExtService(key, "down");
+    }
+  };
+}
+/** 同步读跨扩展客户端服务（缺席 undefined——消费方判空降级）。 */
+export function getExtClientService<T>(key: string): T | undefined {
+  return extServices.get(key)?.impl as T | undefined;
+}
+/** 订阅客户端服务上/下线（提供方懒加载 materialize / 卸载时触发）。返回退订函数。 */
+export function onExtClientServiceChange(cb: (key: string, phase: ExtServicePhase) => void): () => void {
+  extServiceListeners.add(cb);
+  return () => { extServiceListeners.delete(cb); };
 }
 
 /** 聊天发送处理器 store（扩展 ctx.sendChatMessage 的统一出口；ChatInput mount 时注册） */
@@ -392,6 +440,9 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     registerSessionForkGate: (gate) => registerSessionForkGateBus(gate),
     registerTopicItem: (topic, item) => registerTopicItem(topic, item),
     getTopicItems: (topic) => getTopicItems(topic),
+    registerExtService: (key, impl) => registerExtClientService(ext.id, key, impl),
+    getExtService: (key) => getExtClientService(key),
+    onExtServiceChange: (cb) => onExtClientServiceChange(cb),
     getFeatures: () => getExtFeaturesOf(ext.id),
     onFeatureChange: (cb) => subscribeExtFeatures(cb),
     // 宿主公共接口（AppShell 经 registerHostApi 注册原样能力；fileName 兜底适配在框架层）
@@ -929,15 +980,20 @@ export function ExtSlot<S extends ExtSlotName>({
   name,
   currentSession = null,
   extra,
+  only,
 }: {
   name: S;
   currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
   /** 插槽额外 props——类型从 ExtSlotContractMap 契约取（未声明 → 宽松对象）。 */
   extra?: ExtSlotProps<S>;
+  /** 只渲染注册 id 等于该值的 item（aiti-float dock 方案 §4.3：rightFileDock 内容区按激活
+   *  tab 分派用；id = 注册复合 id "extId:itemId"。缺省不过滤——其余插槽零影响）。 */
+  only?: string;
 }) {
   const items = useExtSlotItems(name)
     // render 可选（toolbar 声明式条目归宿主渲染）；其余插槽只消费带 render 的条目
-    .filter(hasExtRender);
+    .filter(hasExtRender)
+    .filter((it) => !only || it.id === only);
   // 框架级标注扩展身份：只在「弹窗类」插槽（dialogs/pages，都是 position:fixed 覆盖层）
   // 给每个 item 包一层 display:contents 的 div，盖上 data-ext-id/data-ext-slot/data-ext-item——
   // 不产生盒子、不影响布局（fixed 定位子元素照常脱离），但 DOM 上可被外部脚本（aiti-helper

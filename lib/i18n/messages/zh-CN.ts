@@ -303,6 +303,8 @@ export const zhCNLocale: LocalePlugin = {
     "files.loading": "正在加载文件...",
     "files.noFiles": "未找到文件",
     "files.explorer": "文件浏览器",
+    "sidebar.dockPanels": "停靠面板",
+    "sidebar.tasks": "任务",
     "files.changedCount": "{count} 个文件",
     "files.changeStats": "{count} 个变更文件，新增 {additions} 行，删除 {deletions} 行",
     "files.conflictSummary": "已有 {count} 个文件：{files}",

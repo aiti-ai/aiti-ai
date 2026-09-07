@@ -29,7 +29,10 @@ interface ClientModule {
   /** bundle 导出的 register 入口（import 后取得，materialize 时调用）。
    *  ctx 类型由宿主提供（ExtSlots.makeClientContext）——loader 保持框架无关，
    *  不依赖具体 ctx 形状（避免 tsx 文件被 node 测试解析）。 */
-  registerFn: ((ctx: unknown) => void) | null;
+  registerFn: ((ctx: unknown) => unknown) | null;
+  /** register(ctx) 的返回 disposer（DI 方案 P2：跨扩展客户端服务反卷用；非函数返回忽略）。
+   *  invalidate（rev 变更/扩展移除）时调用——服务下线广播 down，消费方 onExtServiceChange 可感。 */
+  disposeFn: (() => void) | null;
   /** 已 materialize（register 已调用）——同一 rev 只注册一次。 */
   materialized: boolean;
 }
@@ -106,7 +109,7 @@ export async function prefetch(id: string): Promise<void> {
         : typeof ns.register === "function"
           ? ns.register
           : null;
-    modules.set(id, { id, url: entry.url, rev: entry.rev, registerFn, materialized: false });
+    modules.set(id, { id, url: entry.url, rev: entry.rev, registerFn, disposeFn: null, materialized: false });
   } catch (e) {
     console.error(`[ext] failed to fetch client bundle for ${id}:`, e);
     modules.delete(id);
@@ -141,7 +144,9 @@ export async function materialize(id: string, makeCtx: (id: string) => unknown):
       return false;
     }
     try {
-      mod.registerFn(makeCtx(id));
+      const ret: unknown = mod.registerFn(makeCtx(id));
+      // DI 方案 P2：捕获 register 返回的 disposer（invalidate 时反卷客户端服务注册）
+      mod.disposeFn = typeof ret === "function" ? (ret as () => void) : null;
       mod.materialized = true;
       return true;
     } catch (e) {
@@ -188,6 +193,9 @@ export function pendingForSlot(slot: string): string[] {
  * @returns 该扩展下次 materialize 会重新 import + 重新注册。
  */
 export function invalidate(id: string, removeItems?: (extId: string) => void): void {
+  // DI 方案 P2：反卷 register 返回的 disposer（跨扩展客户端服务注销 → down 广播）
+  const mod = modules.get(id);
+  try { mod?.disposeFn?.(); } catch (e) { console.warn(`[ext] ${id}: client dispose failed:`, e); }
   removeItems?.(id);
   modules.delete(id);
 }

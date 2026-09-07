@@ -112,12 +112,38 @@ export interface ExtSessionProviderSlot {
   ): Promise<{ ok: true; sessionId: string } | { ok: false; reason: "no_provider" | "open_failed"; error?: string }>;
 }
 
+/**
+ * 依赖声明条目的解析结果（registry status 输出；extman 详情渲染/警告口径直接消费，
+ * 不复刻解析器——单一事实源在 core，旧宿主读不到该字段时 extman 降级不渲染）。
+ * 解析规则（依赖与能力模型 §5.1）：元素先按扩展 id 精确命中（id 优先），否则按能力名解析。
+ */
+export interface ExtDepResolution {
+  /** 声明元素原值（扩展 id 或能力名）。 */
+  name: string;
+  /** id 命中（含禁用/加载失败的存在性）→ "ext"；否则按能力解析 → "cap"。 */
+  kind: "ext" | "cap";
+  /** 硬依赖（dependsOn）= true；可选依赖（optionalDependsOn）= false。 */
+  hard: boolean;
+  /** kind="ext" → 目标扩展 id；kind="cap" → 生效提供者 id（missing 时缺省）。 */
+  target?: string;
+  /** ok=已生效（目标扩展已加载 / 能力有生效提供者）；inactive=目标扩展存在但被禁用或加载失败；missing=扩展不存在且无能力提供者。 */
+  status: "ok" | "inactive" | "missing";
+  /** 生效提供者是用户 pin 的（仅 cap 边）。 */
+  viaPin?: boolean;
+  /** kind="cap"：能力提供者全集（id 列表；多实现时 >1）。 */
+  providers?: string[];
+}
+
 /** Core data capabilities handed to extensions — no reimplementation of session access. */
 export interface ExtCoreApi {
   listSessions(): Promise<unknown[]>;
   getRunningSessionIds(): Promise<string[]>;
   /** Attached (alive, possibly idle) rpc session ids — disk-write guards must include these. */
   getAliveSessionIds(): Promise<string[]>;
+  /** 主动释放一个 alive-but-idle 的 rpc 会话（用户显式归档/删除时先清 handle 再动盘）。
+   *  running 会话不碰（返回 "running"）；TUI 桥等外部持有返回 "missing"。
+   *  缺省 = 旧核心无此能力（扩展保持原守卫/提示用户关闭）。 */
+  stopAliveSession?(id: string): Promise<"stopped" | "running" | "not-alive" | "missing" | "still-alive">;
   getHomeDir(): Promise<string>;
   /** Full session context (messages + entry ids) for a session id; null when missing. */
   readSession(id: string): Promise<unknown | null>;
@@ -132,6 +158,34 @@ export interface ExtCoreApi {
   };
 }
 
+/**
+ * ctx.services 服务定位器（依赖注入方案 §4-A，2026-09-06 拍板——简单定位器，
+ * 不做拓扑排序/PENDING）。跨扩展服务端调用的唯一正道；key 契约 "<extId>.<name>"
+ * （core 预置服务用 "core." 前缀），core 校验前缀防冒充。
+ * 规范与红线见 aiti-docs/docs/guide/ext-services.md。
+ */
+export interface ExtServicesSlot {
+  /** 提供服务。key 强制以本扩展 "<extId>." 为前缀（否则抛错）。返回 disposer（扩展 shutdown/reload 时 core 自动反卷）。 */
+  provide<T>(key: string, impl: T): () => void;
+  /** 软依赖：缺席返回 undefined（保持降级哲学）。服务对象建议设计为惰性 getter（热重载/重装不悬空）。 */
+  get<T>(key: string): T | undefined;
+  /** 硬依赖：等待 provide（事件驱动非轮询），超时拒绝。用于启动期确保就绪。 */
+  require<T>(key: string, timeoutMs?: number): Promise<T>;
+  /** 订阅服务上/下线（提供方 provide/revoke 时触发；替代手写「自愈重订」）。 */
+  onChange(cb: (key: string, phase: "up" | "down") => void): () => void;
+}
+
+/** ctx.features：feature 状态读写收口（替代 __piWebExt.featureValue/setFeatureFlag 直调）。 */
+export interface ExtFeaturesSlot {
+  /**
+   * 读 feature 当前生效值：get(fid) 读本扩展；get(extId, fid) 读指定扩展。
+   * boolean 类型返回启停，string 类型返回值；未知/未声明 feature 按「未显式设置」语义返回声明默认（boolean 缺省 true）。
+   */
+  get(extIdOrFeatureId?: string, featureId?: string): boolean | string | undefined;
+  /** 订阅 feature 状态变更（任一扩展，extman 改动后触发）。返回退订函数；扩展 shutdown 时随 ctx 失效。 */
+  on(cb: () => void): () => void;
+}
+
 /** Server context passed to startup/shutdown/api hooks. */
 export interface ExtServerContext {
   id: string;
@@ -140,6 +194,10 @@ export interface ExtServerContext {
   /** Absolute path of the extension data directory (~/.pi/web/data/<id>/). */
   dataDir: string;
   core: ExtCoreApi;
+  /** 跨扩展服务定位器（依赖注入方案 §4-A）：provide/get/require/onChange。 */
+  services: ExtServicesSlot;
+  /** feature 状态读写收口（§4-A）：get/on。 */
+  features: ExtFeaturesSlot;
   /** 会话后端注册 slot（多 agent 前端）：扩展经此注册自定义 SessionProvider。 */
   sessionProviders: ExtSessionProviderSlot;
   /** 会话标注 slot：扩展为会话列表追加自有标记（如 TUI 桥占用）。 */
@@ -276,6 +334,13 @@ export type ExtSlotName =
   | "terminalDock" // 工作区终端页签内容接管（aiti-cmd：右侧文件区 terminal tab 真接管——
                       //   页签内直接渲染扩展终端视图；dock 方案 docs/aiti-web-ext-float-dock-plan.md
                       //   的 terminal 专项先行版：tab⇄弹窗单实例二选一，双向占位）；未注册时核心引导页兜底
+  | "sidebarExplorerDock" // aiti-float dock v0.5.0：侧栏文件区下方垂直并列停靠区（宿主 DockSection
+                      //   折叠头 + 多 items 垂直堆叠；无 items 整块不渲染。float 方案 §4.2）
+  | "rightFileDock"   // aiti-float dock v0.5.0：右栏停靠区——每个 item 派生一个 TabBar tab（id
+                      //   "dock:<extId>:<itemId>"，激活位复用 activeFileTabId；与文件/终端 tab 互斥切换。
+                      //   float 方案 §4.3）
+  | "sidebarTasks"    // aiti-float dock v0.5.1：左栏「任务」区（会话列表与文件区之间；宿主折叠头，
+                      //   无 items 整块不渲染；承载 = aiti-subagents 子代理任务。float 方案 §4.4.2）
   ;
 
 /**
@@ -511,6 +576,12 @@ export interface ExtUiDefinition {
   fileViewer?: ExtUiItem[];   // 文件查看/编辑接管项（核心 FileViewer 跳板渲染；项需带 match 判定才生效）
   pathPicker?: ExtUiItem[];   // 目录选择器能力项（核心顶栏「打开文件夹」跳板渲染；项带 render({path,onSelect})）
   chatInputTop?: ExtUiItem[];
+  /** aiti-float dock v0.5.0：侧栏文件区下方停靠块（宿主 DockSection 折叠容器；float 方案 §4.2）。 */
+  sidebarExplorerDock?: ExtUiItem[];
+  /** aiti-float dock v0.5.0：右栏停靠块——每 item 派生一个 TabBar tab（float 方案 §4.3）。 */
+  rightFileDock?: ExtUiItem[];
+  /** aiti-float dock v0.5.1：左栏「任务」区块（float 方案 §4.4.2）。 */
+  sidebarTasks?: ExtUiItem[];
   modelSelector?: ExtUiItem[];  // 聊天输入框模型按钮接管项（核心 ChatInput 跳板渲染；注册后替换原生 ModelSelector）
   settingsModels?: ExtUiItem[]; // 设置面板「模型」页签接管项（核心 SettingsPanel 跳板渲染；注册后替换原生 ModelsConfig）
   /** 接管内置能力（见 EXT_PROVIDES）：如 ["session-delete"] 让 core 隐藏侧栏内置删除按钮。 */
@@ -544,6 +615,31 @@ export interface PiWebExtension {
    * "@scope/name"）。声明者自身在 pi-web 扩展体系，与 SDK 加载结果天然隔离。
    */
   conflicts?: string[];
+  /**
+   * 功能级硬依赖（依赖与能力模型 §2）：元素 = 扩展 id **或能力名**（cap.* 前缀约定，
+   * id 命中优先）。被依赖者被禁用/卸载时 extman 弹警告；解析失败（missing）在
+   * extman 标「依赖未满足」。声明性质：不阻断本扩展加载（§9：避免声明冲突导致
+   * 功能瘫痪），运行时强校验由扩展自行经 manifest 探测。
+   */
+  dependsOn?: string[];
+  /**
+   * 可选依赖（npm optionalDependencies 语义）：存在 → 消费方可启用附加功能；
+   * 缺席/禁用 → 完全不影响。纯声明，不触发任何警告（extman 仅详情视图展示）。
+   */
+  optionalDependsOn?: string[];
+  /**
+   * 提供的能力（capability，多实现）：同能力可多扩展同时声明，消费方 dependsOn
+   * 可指向能力名，由平台解析出生效提供者（裁决：用户 pin > takeover 声明者 >
+   * semver 最新 > 扩展 id 字典序）。约定能力名带 "cap." 前缀（不强制，id 命中优先）。
+   */
+  provides?: string[];
+  /**
+   * 独占接管的特性：同特性多个声明者 → 冲突，平台裁决唯一生效者（裁决规则同
+   * provides）。不阻断加载（提供者照常加载），仅裁决生效者 + extman 冲突面板提示。
+   * 注意与 ui.provides（EXT_PROVIDES 内置接管，legacy 特例）不同——那是 core
+   * 内置能力的接管声明，演进路线见 aiti-ext-deps-capabilities-plan.md §7。
+   */
+  takeover?: string[];
   /**
    * 公开 API 声明：列出的 API 路径（相对 /api/extensions/<id>/ 后的 path，用 "/" 拼接，
    * 如 "aiti-cpu-meter.js"）允许跨源 GET（免 request-security 的 cross-site 门禁）。
@@ -579,6 +675,14 @@ export interface ManifestExtension {
   source?: ExtensionSource;
   error?: string;
   icon?: string | null;
+  /** 功能级硬依赖声明（运行时可探测：client 拿全量 manifest 判断依赖/能力是否满足）。 */
+  dependsOn?: string[];
+  /** 可选依赖声明（运行时可探测：决定是否启用附加功能）。 */
+  optionalDependsOn?: string[];
+  /** 提供的能力声明。 */
+  provides?: string[];
+  /** 独占接管特性声明。 */
+  takeover?: string[];
   /** 功能状态（extman 管理）：host 客户端加载时一并取，扩展只读共享 store，无独立请求。 */
   features?: { id: string; type?: "boolean" | "string"; label?: string; placeholder?: string; enabled: boolean; value?: string }[] | null;
 }

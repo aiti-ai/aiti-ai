@@ -13,6 +13,7 @@ import type {
   ExtAgentHooks,
   ExtApiContext,
   ExtCoreApi,
+  ExtDepResolution,
   ExtFeature,
   ExtMiddlewareResult,
   ExtServerContext,
@@ -26,6 +27,7 @@ import type {
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
 import { loadExtensionFromDir, scanExtensionDirs, compareExtVersions } from "./loader.ts";
 import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
+import { ExtServicesRegistry } from "./services.ts";
 import { invokeAI as aiInvokeImpl } from "../ai-invoke.ts";
 import { registerExtensionProvider, removeProvider as removeProviderFromRegistry, cleanupAllExtensionProviders, findProvidersForAgent } from "../session/providers.ts";
 import { openExternalSession } from "../session/index.ts";
@@ -52,6 +54,8 @@ export interface RegistryOptions {
 const DISABLED_FILE = "disabled-extensions.json";
 /** 功能管理持久化：<dataRoot>/features.json → { [extId]: { [featureId]: boolean | string } }（只存显式设置，默认不落盘）。 */
 const FEATURES_FILE = "features.json";
+/** 依赖与能力模型 pin 持久化（P2）：<dataRoot>/ext-pins.json。与 disabled/features 同机制（dataRoot，dev 实例自动隔离）。 */
+const PINS_FILE = "ext-pins.json";
 
 /** ExtUiDefinition 里带条目数组的插槽（扩展管理界面按此统计插入点）。 */
 const UI_SLOT_KEYS = [
@@ -66,6 +70,9 @@ const UI_SLOT_KEYS = [
   "banners",
   "pages",
   "chatInputTop",
+  "sidebarExplorerDock", // aiti-float dock v0.5.0：侧栏停靠区
+  "rightFileDock",       // aiti-float dock v0.5.0：右栏停靠区（tab 化）
+  "sidebarTasks",        // aiti-float dock v0.5.1：左栏任务区
 ] as const;
 
 const SERVER_HOOK_KEYS = ["startup", "shutdown", "api", "middleware"] as const;
@@ -102,6 +109,35 @@ export interface ExtStatusEntry {
   features?: ExtStatusFeature[];
   /** 目录里 package.json 的静态信息（不执行代码）。homepage = 来源/文档地址（安装时写入或作者声明）；soul = 灵魂句（extman 展示）。 */
   packageInfo?: { name?: string; version?: string; dependencies?: string[]; homepage?: string; soul?: string };
+  /** 功能级硬依赖声明（依赖与能力模型：元素 = 扩展 id 或能力名）。 */
+  dependsOn?: string[];
+  /** 可选依赖声明（纯声明，缺席不影响，不警告）。 */
+  optionalDependsOn?: string[];
+  /** 提供的能力（provides 声明；与 ui.provides 内置接管区分）。 */
+  capsProvides?: string[];
+  /** 独占接管的特性（takeover 声明）。 */
+  capsTakeover?: string[];
+  /** 依赖解析结果（硬 + 可选全部边；core 解析，extman 只渲染）。 */
+  depsResolved?: ExtDepResolution[];
+  /** takeover 生效状态（同特性多声明者时仅一个 effective=true）。 */
+  takeoverResolved?: Array<{ name: string; effective: boolean }>;
+}
+
+/** statusPayload.capabilities 的一行：能力名 → 提供者/生效者/消费方（extman 能力视图数据源）。 */
+export interface CapabilityViewEntry {
+  /** 提供者全集（provides ∪ takeover 声明者，含版本/来源/是否 takeover 声明）。 */
+  providers: Array<{ id: string; version: string; source?: ExtensionSource; takeover: boolean }>;
+  /** 生效提供者（裁决：pin > takeover > semver 最新 > id 字典序）；无提供者 = null（missing）。 */
+  effective: string | null;
+  /** 用户 pin 的提供者（未 pin 或 pin 失效时缺省）。 */
+  pinnedTo?: string;
+  /** 消费方（dependsOn/optionalDependsOn 指向本能力名且未 id 命中的已加载扩展）。 */
+  consumers: Array<{ extId: string; hard: boolean }>;
+}
+
+/** statusPayload.multiSource 的一行：同 id 多来源组（候选 >1 时才有；extman 冲突/版本管理数据源）。 */
+export interface MultiSourceGroup {
+  candidates: Array<{ dir: string; source: ExtensionSource; version?: string; winner: boolean }>;
 }
 
 /** 不执行代码读取扩展目录的 package.json（disabled 条目也能有名字/版本/依赖/来源地址）。 */
@@ -173,8 +209,22 @@ async function candidateVersion(dir: string, cache: Map<string, string | undefin
   return v;
 }
 
+/** pin 持久化文件结构（<dataRoot>/ext-pins.json）。 */
+interface ExtPins {
+  /** dev 调试优先（同 id 多来源裁决时 dev 根候选直接胜出；默认关——保持既有裁决契约，开发者显式开启）。 */
+  devPriority?: boolean;
+  /** pin 表："source:<extId>" → 候选目录；"capability:<cap>" → 提供者扩展 id。 */
+  pins?: Record<string, string>;
+}
+
 export class ExtRegistryImpl {
   core: ExtCoreApi;
+  /** ctx.services 定位器内核（§4-A）：provide/get/require/onChange + reload 反卷。 */
+  readonly services = new ExtServicesRegistry();
+  /** ctx.features.on 的变更监听（setFeatureValue 后触发；shutdown 时随周期清空）。 */
+  private featureListeners = new Set<() => void>();
+  /** pin 文件缓存（mtime 失效，同 disabledCache 模式）。 */
+  private pinsCache: { mtimeMs: number; data: ExtPins } | null = null;
   private readonly extensionsRootOverride?: string;
   private readonly extraExtensionsRootsOverride?: string[];
   private readonly devExtensionsRootOverride?: string | null;
@@ -183,6 +233,10 @@ export class ExtRegistryImpl {
   private extensions = new Map<string, LoadedExtension>();
   /** 同名裁决结果（loadAll 填充）：id → 胜出候选。status() 复用它保证遮蔽口径一致。 */
   private winners = new Map<string, { dir: string; source: ExtensionSource }>();
+  /** 同 id 多来源候选组（loadAll 填充，仅候选 >1 的 id；multiSource 面板数据源）。 */
+  private candidates = new Map<string, MultiSourceGroup["candidates"]>();
+  /** 能力注册表（loadAll 重建）：能力名 → 提供者全集（provides ∪ takeover 声明者）。解析器输入。 */
+  private _caps = new Map<string, Array<{ id: string; version: string; source?: ExtensionSource; takeover: boolean }>>();
   private errors = new Map<string, string>();
   private loaded = false;
 
@@ -240,6 +294,66 @@ export class ExtRegistryImpl {
     else set.add(id);
     this.persistDisabled(set);
     this.disabledCache = null; // 使缓存失效（下次读盘）
+  }
+
+  // ── pin（依赖与能力模型 P2：冲突/版本管理）───────────────────────────────
+  // 持久化到 <dataRoot>/ext-pins.json：{ devPriority?: boolean, pins: { [key]: value } }。
+  // key 约定："source:<extId>" → 值 = 候选目录（同 id 多来源用户指定来源）；
+  //          "capability:<cap>" → 值 = 提供者扩展 id（能力生效者用户指定）。
+  // pin 只在裁决时软校验（值不在候选/提供者集合 → 忽略回自动），卸载时 clearExtPins 清理。
+
+  private extPins(): ExtPins {
+    const file = join(this.dataRoot(), PINS_FILE);
+    try {
+      const st = statSync(file);
+      if (this.pinsCache && this.pinsCache.mtimeMs === st.mtimeMs) return this.pinsCache.data;
+      const parsed = JSON.parse(readFileSync(file, "utf8")) as ExtPins;
+      const data = parsed && typeof parsed === "object" ? parsed : {};
+      this.pinsCache = { mtimeMs: st.mtimeMs, data };
+      return data;
+    } catch {
+      return {};
+    }
+  }
+
+  private persistPins(data: ExtPins): void {
+    try {
+      writeFileSync(join(this.dataRoot(), PINS_FILE), JSON.stringify(data, null, 2));
+    } catch (e) {
+      console.error("[ext] failed to persist ext pins:", e);
+    }
+    this.pinsCache = null; // 缓存失效（下次读盘）
+  }
+
+  /** 设置/清除 pin（value 为 null/undefined 即清除）。调用方随后应 reload() 让裁决生效。 */
+  setPin(key: string, value: string | null): void {
+    const data = this.extPins();
+    const pins = { ...(data.pins ?? {}) };
+    if (value) pins[key] = value;
+    else delete pins[key];
+    this.persistPins({ ...data, pins });
+  }
+
+  /** dev 调试优先开关（同 id 多来源裁决：pin > dev 优先 > 版本 > 根顺序；默认关，显式 opt-in）。 */
+  setDevPriority(on: boolean): void {
+    this.persistPins({ ...this.extPins(), devPriority: on });
+  }
+
+  /** dev 调试优先开关当前值（默认关）。 */
+  devPriorityEnabled(): boolean {
+    return this.extPins().devPriority === true;
+  }
+
+  /** 卸载扩展时清理其相关 pin：source pin 直接删；capability pin 值命中也删。 */
+  clearExtPins(extId: string): void {
+    const data = this.extPins();
+    const pins = { ...(data.pins ?? {}) };
+    let changed = false;
+    if (("source:" + extId) in pins) { delete pins["source:" + extId]; changed = true; }
+    for (const [k, v] of Object.entries(pins)) {
+      if (k.startsWith("capability:") && v === extId) { delete pins[k]; changed = true; }
+    }
+    if (changed) this.persistPins({ ...data, pins });
   }
 
   // ── 功能管理（features）───────────────────────────────────────────────────
@@ -333,7 +447,15 @@ export class ExtRegistryImpl {
     if (Object.keys(per).length > 0) next[extId] = per;
     else delete next[extId];
     this.persistFeatureFlags(next);
+    this.notifyFeatureListeners();
     return this.featureValue(extId, featureId);
+  }
+
+  /** ctx.features.on 的广播（任一 feature 落盘变更后触发；监听方错误不阻断）。 */
+  private notifyFeatureListeners(): void {
+    for (const cb of [...this.featureListeners]) {
+      try { cb(); } catch { /* ignore */ }
+    }
   }
 
   /**
@@ -423,18 +545,22 @@ export class ExtRegistryImpl {
    * Scan + load every extension directory across all roots. Individual
    * failures never block others.
    *
-   * 同名裁决（版本优先）：同一 id 出现在多个根时，比各候选目录 package.json 的
-   * version（缺失退 entry version）——**版本高者胜，不论在哪个根**；同版本或
-   * 双方都无法解析版本时回退根优先级（user > extra > dev > bundled）。落选
-   * 候选被遮蔽（静默跳过）。胜出者加载失败不回退到落选候选（fail-fast，
-   * 与旧语义一致——静默回退反而加重「改了没生效」的排查难度）。
-   * 禁用的扩展不加载也不探测版本（不执行代码）。
+   * 同名裁决（依赖与能力模型 §5.2）：同一 id 出现在多个根时——
+   *   用户 pin（ext-pins.json source:<id>，值命中候选目录）
+   *   > dev 调试优先（extPins.devPriority 缺省开；dev 根候选直接胜出，
+   *     解决 dev-exts 开发被 user 根「更新版本」遮蔽的痛点；只影响有 dev 根的机器）
+   *   > 版本高者胜（候选目录 package.json version，缺失退 entry version）
+   *   > 根优先级（user > extra > dev > bundled；同版本/双方都不可解析时兑底）。
+   * 落选候选被遮蔽（静默跳过），多候选组记入 candidates（multiSource 面板展示）。
+   * 胜出者加载失败不回退到落选候选（fail-fast，与旧语义一致——静默回退反而加重
+   * 「改了没生效」的排查难度）。禁用的扩展不加载也不探测版本（不执行代码）。
    */
   async loadAll(): Promise<void> {
     this.invalidateBootGraph();
     this.extensions.clear();
     this.errors.clear();
     this.winners.clear();
+    this.candidates.clear();
 
     // 1) 收集候选：按根优先级顺序枚举，id → 候选数组（数组序 = 根优先级）。
     const candidates = new Map<string, Array<{ dir: string; source: ExtensionSource }>>();
@@ -446,21 +572,43 @@ export class ExtRegistryImpl {
       }
     }
 
-    // 2) 裁决：版本高者胜；同版本/未知 → 根优先级（数组序靠前者胜）。缓存胜出者
-    //    供 status() 复用（禁用枚举与 loadAll 保持同一份遮蔽结果）。
+    // 2) 裁决：pin > dev 优先 > 版本 > 根优先级。胜出者缓存供 status() 复用；
+    //    多候选组连同各自版本记入 candidates（multiSource 面板展示 + pin 可选）。
     const disabled = this.disabledExtensions();
+    const pinsData = this.extPins();
+    const pinMap = pinsData.pins ?? {};
+    const devPriority = pinsData.devPriority === true; // 默认关（拍板反转 plan 倾向）：既有契约「dev 同名不抢 extra/版本裁决」保持；开发者显式 opt-in（extman 开关）
     const versionCache = new Map<string, string | undefined>();
     for (const [id, cands] of candidates) {
       let winner = cands[0];
       if (cands.length > 1 && !disabled.has(id)) {
-        let winnerVer = await candidateVersion(winner.dir, versionCache);
-        for (let i = 1; i < cands.length; i++) {
-          const ver = await candidateVersion(cands[i].dir, versionCache);
-          if (compareExtVersions(ver, winnerVer) > 0) {
-            winner = cands[i];
-            winnerVer = ver;
+        const vers = new Map<string, string | undefined>();
+        for (const c of cands) vers.set(c.dir, await candidateVersion(c.dir, versionCache));
+        const pinnedDir = pinMap["source:" + id];
+        const pinned = pinnedDir ? cands.find((c) => c.dir === pinnedDir) : undefined;
+        const devCand = devPriority ? cands.find((c) => c.source === "dev") : undefined;
+        if (pinned) {
+          winner = pinned;
+        } else if (devCand) {
+          winner = devCand;
+        } else {
+          let winnerVer = vers.get(winner.dir);
+          for (let i = 1; i < cands.length; i++) {
+            const ver = vers.get(cands[i].dir);
+            if (compareExtVersions(ver, winnerVer) > 0) {
+              winner = cands[i];
+              winnerVer = ver;
+            }
           }
         }
+        this.candidates.set(id, cands.map((c) => ({
+          dir: c.dir,
+          source: c.source,
+          version: vers.get(c.dir),
+          winner: c.dir === winner.dir,
+        })));
+      } else if (cands.length > 1) {
+        this.candidates.set(id, cands.map((c) => ({ dir: c.dir, source: c.source, winner: c.dir === winner.dir })));
       }
       this.winners.set(id, winner);
     }
@@ -488,7 +636,69 @@ export class ExtRegistryImpl {
         this.errors.set(id, msg);
       }
     }
+    this.buildCapabilityIndex();
     this.loaded = true;
+  }
+
+  /**
+   * 能力注册表（依赖与能力模型 §4）：loadAll 尾部构建，reload 重建——
+   * 能力名 → 提供者全集（provides ∪ takeover 声明者，均为已加载扩展）。
+   * 解析 O(1) 查表；禁用/加载失败者不在集合内（不提供能力）。
+   */
+  private buildCapabilityIndex(): void {
+    const caps = new Map<string, Array<{ id: string; version: string; source?: ExtensionSource; takeover: boolean }>>();
+    for (const ext of this.extensions.values()) {
+      const provides = Array.isArray(ext.ext.provides) ? ext.ext.provides : [];
+      const takeover = Array.isArray(ext.ext.takeover) ? ext.ext.takeover : [];
+      const names = new Set([...provides, ...takeover]);
+      for (const name of names) {
+        if (!caps.has(name)) caps.set(name, []);
+        caps.get(name)!.push({
+          id: ext.id,
+          version: ext.version,
+          source: ext.source,
+          takeover: takeover.includes(name),
+        });
+      }
+    }
+    this._caps = caps;
+  }
+
+  /**
+   * 能力生效提供者裁决（§5.1）：用户 pin > takeover 声明者优先（独占语义）>
+   * semver 版本最新 > 扩展 id 字典序（末位保证确定性）。pin 值不在提供者集合时
+   * 忽略（软校验回自动，卸载/重装后 pin 失效不患空）。
+   */
+  private effectiveProvider(name: string, providers: Array<{ id: string; version: string; takeover: boolean }>): string | null {
+    if (!providers || providers.length === 0) return null;
+    const pinTo = this.extPins().pins?.["capability:" + name];
+    if (pinTo && providers.some((p) => p.id === pinTo)) return pinTo;
+    const takers = providers.filter((p) => p.takeover);
+    const pool = takers.length > 0 ? takers : providers;
+    return [...pool].sort((a, b) => compareExtVersions(b.version, a.version) || a.id.localeCompare(b.id))[0].id;
+  }
+
+  /**
+   * 依赖声明元素解析（§5.1）：id 精确命中（含禁用/失败的存在性，winners 全集）→
+   * kind="ext"；否则按能力名解析 → kind="cap"。missing/inactive 只标注不拦截。
+   */
+  private resolveDep(name: string, hard: boolean): ExtDepResolution {
+    if (this.winners.has(name)) {
+      return { name, kind: "ext", hard, target: name, status: this.extensions.has(name) ? "ok" : "inactive" };
+    }
+    const providers = this._caps.get(name);
+    if (!providers || providers.length === 0) return { name, kind: "cap", hard, status: "missing" };
+    const pinTo = this.extPins().pins?.["capability:" + name];
+    const pinned = !!(pinTo && providers.some((p) => p.id === pinTo));
+    return {
+      name,
+      kind: "cap",
+      hard,
+      target: this.effectiveProvider(name, providers) ?? undefined,
+      status: "ok",
+      ...(pinned ? { viaPin: true } : {}),
+      providers: providers.map((p) => p.id),
+    };
   }
 
   isLoaded(): boolean {
@@ -578,6 +788,15 @@ export class ExtRegistryImpl {
       // 否则被 loaded:true 默认值覆盖，extman 里看不到异常（entry 加载失败不在此列，
       // 那时扩展根本不在 extensions map）。
       const startupError = this.errors.get(ext.id);
+      // 依赖与能力模型（§4 透传）：四字段声明 + 解析结果（id 优先；能力边含生效提供者）。
+      const dependsOn = ext.ext.dependsOn?.length ? [...ext.ext.dependsOn] : undefined;
+      const optionalDependsOn = ext.ext.optionalDependsOn?.length ? [...ext.ext.optionalDependsOn] : undefined;
+      const capsProvides = ext.ext.provides?.length ? [...ext.ext.provides] : undefined;
+      const capsTakeover = ext.ext.takeover?.length ? [...ext.ext.takeover] : undefined;
+      const depsResolved = [
+        ...(dependsOn ?? []).map((n) => this.resolveDep(n, true)),
+        ...(optionalDependsOn ?? []).map((n) => this.resolveDep(n, false)),
+      ];
       out[ext.id] = {
         loaded: true,
         enabled: !disabled.has(ext.id),
@@ -601,6 +820,15 @@ export class ExtRegistryImpl {
           ? ext.ext.features.map((f) => ({ ...f, enabled: this.featureEnabled(ext.id, f.id), ...(f.type === "string" ? { value: String(this.featureValue(ext.id, f.id)) } : {}) }))
           : undefined,
         packageInfo: readPackageInfo(ext.dir),
+        ...(dependsOn ? { dependsOn } : {}),
+        ...(optionalDependsOn ? { optionalDependsOn } : {}),
+        ...(capsProvides ? { capsProvides } : {}),
+        ...(capsTakeover ? { capsTakeover } : {}),
+        ...(depsResolved.length > 0 ? { depsResolved } : {}),
+        ...(capsTakeover ? { takeoverResolved: capsTakeover.map((n) => {
+          const providers = this._caps.get(n);
+          return { name: n, effective: this.effectiveProvider(n, providers ?? []) === ext.id };
+        }) } : {}),
       };
     }
     return out;
@@ -615,6 +843,14 @@ export class ExtRegistryImpl {
     bundledExtensionsRoot: string;
     dataRoot: string;
     extensions: Record<string, ExtStatusEntry>;
+    /** 存活服务清单（§7-7 服务可见性：key + 提供者；extman 面板消费）。 */
+    services: Array<{ key: string; extId: string }>;
+    /** 能力视图（依赖与能力模型 P1）：能力名 → 提供者/生效者/消费方；含 missing 能力。 */
+    capabilities: Record<string, CapabilityViewEntry>;
+    /** 同 id 多来源组（P2）：候选 >1 的 id → 候选列表（winner 标记当前生效者）。 */
+    multiSource: Record<string, MultiSourceGroup>;
+    /** pin 现状（P2）：dev 优先开关 + pin 表（extman 面板回显）。 */
+    pins: { devPriority: boolean; pins: Record<string, string> };
   } {
     return {
       loaded: this.isLoaded(),
@@ -624,7 +860,51 @@ export class ExtRegistryImpl {
       bundledExtensionsRoot: this.bundledExtensionsRoot(),
       dataRoot: this.dataRoot(),
       extensions: this.status(),
+      services: this.services.list(),
+      capabilities: this.capabilitiesView(),
+      multiSource: this.multiSourceView(),
+      pins: { devPriority: this.devPriorityEnabled(), pins: { ...(this.extPins().pins ?? {}) } },
     };
+  }
+
+  /**
+   * 能力视图（extman 渲染数据源，§6.2）：提供者/生效提供者/pin/消费方；
+   * 还收编只在依赖声明里出现、无提供者的能力（missing 标注用）。
+   */
+  private capabilitiesView(): Record<string, CapabilityViewEntry> {
+    const out: Record<string, CapabilityViewEntry> = {};
+    const pins = this.extPins().pins ?? {};
+    const entry = (name: string): CapabilityViewEntry => {
+      if (!out[name]) out[name] = { providers: [], effective: null, consumers: [] };
+      return out[name];
+    };
+    for (const [name, providers] of this._caps) {
+      const e = entry(name);
+      e.providers = providers.map((p) => ({ id: p.id, version: p.version, source: p.source, takeover: p.takeover }));
+      e.effective = this.effectiveProvider(name, providers);
+      const pinTo = pins["capability:" + name];
+      if (pinTo && providers.some((p) => p.id === pinTo)) e.pinnedTo = pinTo;
+    }
+    // 消费方（含 missing 能力）：依赖元素指向能力名且未 id 命中的已加载扩展。
+    for (const ext of this.extensions.values()) {
+      for (const [names, hard] of [[ext.ext.dependsOn, true], [ext.ext.optionalDependsOn, false]] as const) {
+        for (const n of names ?? []) {
+          if (this.winners.has(n)) continue; // id 优先：已按扩展依赖处理，不算能力消费
+          const e = entry(n);
+          e.consumers.push({ extId: ext.id, hard });
+        }
+      }
+    }
+    return out;
+  }
+
+  /** 同 id 多来源组（仅候选 >1 的 id；候选版本缺失 = 禁用未探测）。 */
+  private multiSourceView(): Record<string, MultiSourceGroup> {
+    const out: Record<string, MultiSourceGroup> = {};
+    for (const [id, cands] of this.candidates) {
+      if (cands.length > 1) out[id] = { candidates: cands.map((c) => ({ ...c })) };
+    }
+    return out;
   }
 
   manifest(): ManifestExtension[] {
@@ -637,6 +917,12 @@ export class ExtRegistryImpl {
       ui: e.ext.ui ?? null,
       source: e.source,
       icon: e.ext.icon ?? null,
+      // 依赖与能力模型（§4 透传）：运行时可探测——扩展 client 拿全量 manifest 后
+      // 可判断依赖的能力是否有生效提供者 / 某可选扩展在不在，决定是否启用附加功能。
+      ...(e.ext.dependsOn?.length ? { dependsOn: [...e.ext.dependsOn] } : {}),
+      ...(e.ext.optionalDependsOn?.length ? { optionalDependsOn: [...e.ext.optionalDependsOn] } : {}),
+      ...(e.ext.provides?.length ? { provides: [...e.ext.provides] } : {}),
+      ...(e.ext.takeover?.length ? { takeover: [...e.ext.takeover] } : {}),
       // 功能状态（extman 管理）：host 客户端加载时一并取，扩展只读共享 store，无独立请求
       features: e.ext.features?.length ? e.ext.features.map((f) => ({ id: f.id, type: f.type, label: f.label, placeholder: f.placeholder, enabled: this.featureEnabled(e.id, f.id), ...(f.type === "string" ? { value: String(this.featureValue(e.id, f.id)) } : {}) })) : null,
     }));
@@ -690,6 +976,7 @@ export class ExtRegistryImpl {
 
   /** Invoke all server.startup hooks (best-effort per extension). */
   async startAll(): Promise<void> {
+    this.provideCoreServices();
     for (const ext of this.extensions.values()) {
       const t0 = Date.now();
       try {
@@ -805,9 +1092,14 @@ export class ExtRegistryImpl {
       } catch (e) {
         this.errors.set(ext.id, `shutdown: ${e instanceof Error ? e.message : String(e)}`);
       }
+      // 服务反卷（§4-A）：扩展提供的全部服务下线（钩子收尾后才撤，广播 down 供消费方重订）
+      this.services.revokeExt(ext.id);
     }
     // 会话后端 slot：扩展停用时注销它注册的全部 provider（含 shutdown 回调）。
     await cleanupAllExtensionProviders();
+    // 重载周期收尾：core.* 预置服务一并下线（startAll 重新 provide），监听随旧周期闭包清空
+    this.services.clear();
+    this.featureListeners.clear();
   }
 
   /** Hot reload: shutdown → reload entries → startup. */
@@ -859,7 +1151,55 @@ export class ExtRegistryImpl {
       // 通用 AI 调用（core 最底层能力，零业务）；按调用扩展 id 记账（token 统计在 core）。
       // caller 允许扩展细分场景（如 aiti-ai-input/complete、aiti-ai-input/voice-fix），缺省用 ext.id
       invokeAI: (p) => aiInvokeImpl({ ...p, caller: (p && p.caller) || ext.id }),
+      // 跨扩展服务定位器（§4-A）：provide 强制 "<extId>." 前缀（防冒充）；reload 反卷在 shutdown()
+      services: {
+        provide: <T,>(key: string, impl: T) => this.services.provide(ext.id, key, impl),
+        get: <T,>(key: string) => this.services.get<T>(key),
+        require: <T,>(key: string, timeoutMs?: number) => this.services.require<T>(key, timeoutMs),
+        onChange: (cb) => this.services.onChange(cb),
+      },
+      // feature 读写收口（§4-A）：get(fid) 读本扩展 / get(extId, fid) 读指定扩展；on 订阅变更
+      features: {
+        get: (extIdOrFeatureId?: string, featureId?: string) =>
+          featureId !== undefined ? this.featureValue(extIdOrFeatureId as string, featureId)
+            : extIdOrFeatureId !== undefined ? this.featureValue(ext.id, extIdOrFeatureId)
+            : undefined,
+        on: (cb) => {
+          this.featureListeners.add(cb);
+          return () => {
+            this.featureListeners.delete(cb);
+          };
+        },
+      },
     };
+  }
+
+  /** core.* 预置服务（§4-A core 命名空间）：惰性现取的只读视图（单例/热重载更替不悬空）。 */
+  private provideCoreServices(): void {
+    const provide = (key: string, impl: unknown) => this.services.provide("core", key, impl);
+    // core.sessions —— rpc-manager 会话 wrapper 只读表（§1.1：替代 __piSessions 直读；
+    // wrapper 本体是运行面句柄（send/onEvent/abortBash…），「只读」指不得增删改会话表）
+    provide("core.sessions", {
+      ids: () => [...piSessionsMap().keys()],
+      has: (id: string) => piSessionsMap().has(id),
+      get: (id: string) => piSessionsMap().get(id),
+    });
+    // core.registry —— registry 只读投影（extman 等管理面用；替代 __piWebExt 直读。
+    // 不发 ext entry 本体——只给元数据投影 + status 快照 + ui 声明只读视图）
+    provide("core.registry", {
+      ids: () => [...this.extensions.keys()],
+      get: (id: string) => {
+        const e = this.extensions.get(id);
+        return e
+          ? { id: e.id, name: e.name, version: e.version, dir: e.dir, dataDir: e.dataDir, source: e.source }
+          : undefined;
+      },
+      ui: (id: string) => this.byId(id)?.ext?.ui ?? null,
+      status: () => this.status(),
+    });
+    // 注：core.bridges 不在此预置——__aitiBridges 实为 aiti-devtools 扩展自建的桥表
+    // （写入方在该扩展），P1 提供方迁移时由它以 "aiti-devtools.bridges" provide
+    // （契约归所有者，§7-1）；core 不代发不确定的契约。
   }
 
   /** Dispatch one API call to an extension; null when no extension/handler matches. */
@@ -928,6 +1268,12 @@ export function isPublicApiPath(extId: string, apiPath: string): boolean {
   if (!ext) return false;
   const declared = ext.ext?.publicApi;
   return Array.isArray(declared) && declared.includes(apiPath);
+}
+
+/** rpc-manager 会话 wrapper 表（globalThis 单例，热重载幸存）的惰性只读访问（core.sessions 视图用）。 */
+const EMPTY_SESSIONS: Map<string, unknown> = new Map();
+function piSessionsMap(): Map<string, unknown> {
+  return (globalThis as { __piSessions?: Map<string, unknown> }).__piSessions ?? EMPTY_SESSIONS;
 }
 
 // proxy.ts（独立 middleware bundle，不经模块图）经 globalThis 桥读声明判定（与 __aitiInject 同模式）

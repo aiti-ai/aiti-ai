@@ -12,9 +12,10 @@ export interface Tab {
   id: string;
   label: string;
   filePath: string;
-  /** "file" (default) or "folder"/"terminal" — folder tabs render a FolderViewer，
-   *  terminal tabs 渲染 TerminalPanelBridge（[aiti] T2 接管：工作区终端由 aiti-cmd 承载） */
-  kind?: "file" | "folder" | "terminal";
+  /** "file" (default) or "folder"/"terminal"/"dock" — folder tabs render a FolderViewer，
+   *  terminal tabs 渲染 TerminalPanelBridge（[aiti] T2 接管：工作区终端由 aiti-cmd 承载），
+   *  dock tabs 渲染停靠的扩展面板（aiti-float dock v0.5.0：id "dock:<extId>:<itemId>"） */
+  kind?: "file" | "folder" | "terminal" | "dock";
   /** 钉住标记（由扩展维护，core 只透传——不在 core 做逐出/关闭策略） */
   pinned?: boolean;
   closing?: boolean;
@@ -195,6 +196,12 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
               {tab.kind === "folder" ? <FolderIcon size={13} open={isActive} /> : tab.kind === "terminal" ? (
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
+                </svg>
+              ) : tab.kind === "dock" ? (
+                // 停靠 tab（aiti-float dock v0.5.0）：四格板块图形，与文件/终端图形区分
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="8" height="8" rx="1" /><rect x="13" y="3" width="8" height="8" rx="1" />
+                  <rect x="3" y="13" width="8" height="8" rx="1" /><rect x="13" y="13" width="8" height="8" rx="1" />
                 </svg>
               ) : getFileIcon(tab.label, 13)}
             </span>

@@ -74,6 +74,15 @@ export default function RootLayout({
             __html: `(function(){try{var l=localStorage.getItem("pi-locale");if(l!=="en"&&l!=="zh-CN"){var langs=navigator.languages&&navigator.languages.length?navigator.languages:[navigator.language];for(var i=0;i<langs.length;i++){var n=langs[i].toLowerCase();if(n==="zh"||n.startsWith("zh-")){l="zh-CN";break}if(n==="en"||n.startsWith("en-")){l="en";break}}if(!l)l="en"}window.__PI_LOCALE__=l;document.documentElement.lang=l;document.cookie="pi-locale="+l+";path=/;max-age=31536000;SameSite=Lax"}catch(e){window.__PI_LOCALE__="en"}})();`,
           }}
         />
+        <script
+          dangerouslySetInnerHTML={{
+            // 全局静默良性 ResizeObserver loop 报错（同一帧内布局反复变化，通知延后送达，
+            // 浏览器按 uncaught error 派发；页面 ResizeObserver 众多 + 流式输出/拖动窗口时偶发，非功能 bug）。
+            // 必须内联在 head：Next app-globals 启动即注册自己的 window error listener 且不检查
+            // defaultPrevented，只有比它先注册并 stopImmediatePropagation 才能拦住 dev overlay 弹窗。
+            __html: `(function(){window.addEventListener("error",function(e){try{var m=e.message||"";if(m.indexOf("ResizeObserver loop")===0){e.stopImmediatePropagation();e.preventDefault()}}catch(err){}})})();`,
+          }}
+        />
       </head>
       <body translate="no" className="notranslate" suppressHydrationWarning>
         {children}
