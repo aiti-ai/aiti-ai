@@ -772,7 +772,7 @@ function AssistantMessageView({
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
     >
-      {/* Model label */}
+      {/* Meta line：model + usage + 悬停操作 + 时间戳合并一行（减少每条消息的纵向高度） */}
       <div
         style={{
           fontSize: 11,
@@ -780,12 +780,18 @@ function AssistantMessageView({
           marginBottom: 4,
           display: "flex",
           alignItems: "center",
-          gap: 6,
+          flexWrap: "wrap",
+          columnGap: 4,
+          rowGap: 2,
         }}
       >
         {message.provider && (
           <span>{modelNames?.[`${message.provider}:${message.model}`] ?? modelNames?.[message.model] ?? message.model}</span>
         )}
+        {message.usage && !isStreaming && (() => {
+          const usageStr = formatUsage(message.usage);
+          return usageStr ? <span style={{ fontVariantNumeric: "tabular-nums" }}>{usageStr}</span> : null;
+        })()}
         {isStreaming && (() => {
           const est = Math.round(estimatedTokens);
           return (
@@ -812,9 +818,57 @@ function AssistantMessageView({
             </>
           );
         })()}
+        {textContent && !isStreaming && (
+          <div
+            style={{
+              display: "flex", alignItems: "center", gap: 6, marginLeft: "auto",
+              opacity: hovered ? 1 : 0,
+              pointerEvents: hovered ? "auto" : "none",
+              transition: "opacity 0.12s",
+            }}
+          >
+            <button
+              onClick={copyContent}
+              title={t("i18n.copyMessage")}
+              style={{
+                display: "flex", alignItems: "center", gap: 4,
+                padding: "1px 6px", height: 18,
+                background: "none", border: "none",
+                borderRadius: 5,
+                color: copied ? "var(--accent)" : "var(--text-dim)",
+                cursor: "pointer",
+                fontSize: 11, fontWeight: 400,
+                whiteSpace: "nowrap",
+                transition: "color 0.12s",
+              }}
+              onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
+              onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
+            >
+              {copied ? (
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                </svg>
+              )}
+              {copied ? t("i18n.copied") : t("i18n.copy")}
+            </button>
+            <ExtSlot
+              name="assistantMessageActions"
+              currentSession={null}
+              extra={{ entryId, sessionId, text: textContent }}
+            />
+          </div>
+        )}
+        {time && !isStreaming && (
+          <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: (textContent && !isStreaming) ? 0 : "auto" }}>{time}</span>
+        )}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {blockItems.map(({ block, originalIndex }) => (
           <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} searchTarget={block === searchBlock} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
         ))}
@@ -845,65 +899,6 @@ function AssistantMessageView({
         <TurnWrittenFiles files={writtenFiles} onOpenFile={onOpenFile} />
       )}
 
-      <div style={{
-        display: "flex", alignItems: "center", gap: 8, marginTop: 4,
-      }}>
-        {message.usage && !isStreaming && (
-          <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-            {formatUsage(message.usage)}
-          </div>
-        )}
-        {textContent && !isStreaming && (
-          <button
-            onClick={copyContent}
-             title={t("i18n.copyMessage")}
-            style={{
-              display: "flex", alignItems: "center", gap: 4,
-              padding: "3px 8px", height: 22,
-              background: "none", border: "none",
-              borderRadius: 5,
-              color: copied ? "var(--accent)" : "var(--text-dim)",
-              cursor: "pointer",
-              fontSize: 11, fontWeight: 400,
-              whiteSpace: "nowrap",
-              opacity: hovered ? 1 : 0,
-              pointerEvents: hovered ? "auto" : "none",
-              transition: "opacity 0.12s, color 0.12s",
-            }}
-            onMouseEnter={(e) => { if (!copied) e.currentTarget.style.color = "var(--accent)"; }}
-            onMouseLeave={(e) => { if (!copied) e.currentTarget.style.color = "var(--text-dim)"; }}
-          >
-            {copied ? (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
-            ) : (
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-              </svg>
-            )}
-             {copied ? t("i18n.copied") : t("i18n.copy")}
-          </button>
-        )}
-        {textContent && !isStreaming && (
-          <div style={{
-            display: "flex", alignItems: "center", gap: 3,
-            opacity: hovered ? 1 : 0,
-            pointerEvents: hovered ? "auto" : "none",
-            transition: "opacity 0.12s",
-          }}>
-            <ExtSlot
-              name="assistantMessageActions"
-              currentSession={null}
-              extra={{ entryId, sessionId, text: textContent }}
-            />
-          </div>
-        )}
-        {time && !isStreaming && (
-          <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: "auto" }}>{time}</span>
-        )}
-      </div>
     </div>
   );
 }
@@ -988,11 +983,11 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
       display: "flex", alignItems: "flex-start", gap: 6, minWidth: 0,
       border: "1px solid var(--border)",
       borderRadius: 7,
-      padding: "6px 10px",
+      padding: "2px 8px",
       background: "var(--bg)",
       fontFamily: "var(--font-mono)",
       fontSize: "calc(11px + var(--chat-font-size-offset, 0px))",
-      lineHeight: 1.5,
+      lineHeight: 1.4,
     }}>
       <button
         type="button"
@@ -1007,7 +1002,7 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
           width: expanded ? 14 : "100%",
           flexShrink: expanded ? 0 : 1,
           minWidth: 0,
-          minHeight: "1.5em",
+          minHeight: "1.4em",
           // 展开态命中区扩大：纯 icon 14px 难点中（实测反馈「标题不好点」）→ padding 撑点击区 +
           // 负 margin 原位抵消，icon 视觉位置/布局占位完全不变，命中区 14×16 → 28×24
           ...(expanded ? { padding: "4px 7px", margin: "-4px -7px" } : { padding: 0 }),
@@ -1092,7 +1087,7 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
             gap: 7,
             flex: 1,
             minWidth: 0,
-            padding: "6px 10px",
+            padding: "3px 10px",
             background: "none",
             border: "none",
             color: "var(--text-muted)",
@@ -1132,10 +1127,10 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
         <pre
           style={{
             margin: 0,
-            padding: "8px 10px",
+            padding: "3px 10px",
             color: "var(--text-muted)",
             fontSize: "calc(12px + var(--chat-font-size-offset, 0px))",
-            lineHeight: 1.5,
+            lineHeight: 1.4,
             overflow: "auto",
             background: "var(--bg-subtle)",
             borderTop: isError ? "1px solid rgba(248,113,113,0.25)" : "1px solid rgba(34,197,94,0.2)",
@@ -1201,7 +1196,7 @@ function SplitPatchView({ text }: { text: string }) {
             borderTop: fileIndex === 0 ? "none" : "1px solid var(--border)",
             fontFamily: "var(--font-mono)",
             fontSize: "calc(12px + var(--chat-font-size-offset, 0px))",
-            lineHeight: 1.55,
+            lineHeight: 1.45,
           }}
         >
           {showFileHeaders && (
@@ -1331,7 +1326,7 @@ function PatchTextView({ text }: { text: string }) {
   const lines = text.split(/\r?\n/);
 
   return (
-    <div style={{ maxHeight: 520, overflowY: "auto", overflowX: "hidden", fontFamily: "var(--font-mono)", fontSize: "calc(12px + var(--chat-font-size-offset, 0px))", lineHeight: 1.55, minWidth: 0 }}>
+    <div style={{ maxHeight: 520, overflowY: "auto", overflowX: "hidden", fontFamily: "var(--font-mono)", fontSize: "calc(12px + var(--chat-font-size-offset, 0px))", lineHeight: 1.45, minWidth: 0 }}>
       {lines.map((line, i) => {
         const kind =
           line.startsWith("@@") ? "hunk" :
@@ -1454,10 +1449,10 @@ function PairedResult({ text, images, isEmpty, isError }: {
         <pre
           style={{
             margin: 0,
-            padding: "8px 10px",
+            padding: "3px 10px",
             color: isError ? "#f87171" : (isEmpty ? "var(--text-dim)" : "var(--text-muted)"),
             fontSize: "calc(12px + var(--chat-font-size-offset, 0px))",
-            lineHeight: 1.5,
+            lineHeight: 1.4,
             overflow: "auto",
             maxHeight: 400,
             background: "var(--bg)",
