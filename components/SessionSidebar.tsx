@@ -519,6 +519,8 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     return () => ro.disconnect();
   }, [sessionSearchActive]);
 
+  // [回退态专用] 仅 session-manager 禁用/未注册（非接管）时的手动路径：
+  // 接管态列表数据归扩展（store 增量同步），本函数已无自动触发点（payload 方案 §8）。
   const loadSessions = useCallback(async (showLoading = false, forceRefresh = false): Promise<SessionInfo[] | undefined> => {
     const loadId = ++sessionLoadIdRef.current;
     try {
@@ -569,45 +571,6 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       if (loadId === sessionLoadIdRef.current) setLoading(false);
     }
   }, []);
-
-  const initialLoadDone = useRef(false);
-  useEffect(() => {
-    // 接管态（session-manager SidebarDock）：列表数据由扩展统一供给，宿主不拉。
-    // 首拉竞态（接管判定异步到达前的一次全量拉）接受——时序控制不进宿主核心，
-    // 若未来要消除，走扩展侧 bootGraph 预执行/manifest 预判方向，而非宿主补丁。
-    if (projectsTakeover) return;
-    const isFirst = !initialLoadDone.current;
-    initialLoadDone.current = true;
-    loadSessions(isFirst, !isFirst);
-  }, [loadSessions, refreshKey]);
-
-  // Extension-triggered session mutations (session-manager archive / archive
-  // delete) change the list outside pi-web's own flows. The extension client
-  // dispatches "sm:sessions-changed" after its API calls; force a refresh=1
-  // fetch so the sidebar reflects archived sessions immediately. Sessions
-  // that vanished from the refreshed list (archived or deleted by the
-  // extension) flow through onSessionDeleted — the same cleanup the built-in
-  // sidebar delete button does (clear drafts, close the open tab).
-  const allSessionsRef = useRef<SessionInfo[]>([]);
-  useEffect(() => { allSessionsRef.current = allSessions; }, [allSessions]);
-  const projectsTakeoverRef = useRef(projectsTakeover);
-  useEffect(() => { projectsTakeoverRef.current = projectsTakeover; }, [projectsTakeover]);
-  useEffect(() => {
-    const onChange = () => {
-      if (projectsTakeoverRef.current) return; // 接管态：扩展侧刷新 store
-      const prevIds = new Set(allSessionsRef.current.map((s) => s.id));
-      void (async () => {
-        const fresh = await loadSessions(false, true);
-        if (!fresh) return;
-        const nextIds = new Set(fresh.map((s) => s.id));
-        for (const id of prevIds) {
-          if (!nextIds.has(id)) onSessionDeleted?.(id);
-        }
-      })();
-    };
-    window.addEventListener("sm:sessions-changed", onChange);
-    return () => window.removeEventListener("sm:sessions-changed", onChange);
-  }, [loadSessions, onSessionDeleted]);
 
   // Re-filter the workspace picker when the hidden list changes (written by the
   // session-manager extension; dispatched on the same window or across tabs).
@@ -715,10 +678,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
           data.completionNotificationSuppressedSessionIds ?? [],
         );
         setRunningSessionIds(new Set(data.runningSessionIds ?? []));
-        if (data.sessionListVersion !== sessionListVersionRef.current) {
-          // Reuse the invalidated cache; forcing a scan would change the version again.
-          await loadSessions();
-        }
+        // 接管后列表数据归 session-manager（store 增量同步），宿主不再伴生拉取。
       } catch {
         // Keep the last known state; the next visible-tab poll retries.
       } finally {
@@ -790,9 +750,8 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     const hasUnlistedRunningSession = newlyRunning.some(
       (id) => !allSessions.some((session) => session.id === id),
     );
-    if (completedInBackground.length > 0 || hasUnlistedRunningSession || selectedSessionCompleted) {
-      loadSessions(false, true);
-    }
+    // 接管后列表数据归 session-manager（其 SSE running 集合变化时自行刷新），
+    // 宿主不再派生拉取；完成通知（onBackgroundTaskDone）保留。
     if (completedWithNotifications.length > 0) {
       onBackgroundTaskDone?.();
     }
@@ -2067,9 +2026,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
               onCwdChange: setSelectedCwd,
               onSelectSession: handleSelectSessionFromList,
               onNewSession: handleNewSession,
-              onRenamed: () => void loadSessions(),
-              onSessionDeleted: (id: string) => { onSessionDeleted?.(id); void loadSessions(); },
-              onRefresh: () => void loadSessions(false, true),
+              onSessionDeleted: (id: string) => { onSessionDeleted?.(id); },
             }}
           />
         </div>
