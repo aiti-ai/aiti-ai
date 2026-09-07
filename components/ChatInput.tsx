@@ -132,7 +132,7 @@ interface Props {
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
-  modelList?: { id: string; name: string; provider: string; input?: string[] }[];
+  modelList?: { id: string; name: string; provider: string; input?: string[]; avail?: "ok" | "rl" | "err" | "unprobed"; providerRL?: boolean }[];
   modelError?: string | null;
   /** Diagnostics from resolving `enabledModels`, e.g. a pattern that matched nothing. */
   modelScopeWarnings?: string[];
@@ -2431,7 +2431,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // Build model options: prefer modelList (has provider info), fallback to modelNames
   const modelOptions: ModelSelectorOption[] = (() => {
     if (modelList && modelList.length > 0) {
-      return modelList.map((m) => ({ provider: m.provider, modelId: m.id, name: m.name }));
+      return modelList.map((m) => ({ provider: m.provider, modelId: m.id, name: m.name, status: m.avail, ...(m.providerRL ? { providerRL: true } : {}) }));
     }
     return Object.entries(modelNames ?? {}).map(([modelId, name]) => ({
       provider: model?.provider ?? "unknown",

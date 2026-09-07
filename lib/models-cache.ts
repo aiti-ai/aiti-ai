@@ -1,6 +1,12 @@
 export interface ModelsData {
   models: Record<string, string>;
-  modelList: { id: string; name: string; provider: string; input?: string[] }[];
+  modelList: {
+    id: string; name: string; provider: string; input?: string[];
+    /** aiti-model-check 探测/运行期可用性：ok=可用 / rl=限流429 / err=其它错误 / unprobed=未测（缺省=无数据） */
+    avail?: "ok" | "rl" | "err" | "unprobed";
+    /** 该 provider 是否整体限流（全部模型当前都 429）——仅展示提示，不自动禁用 */
+    providerRL?: boolean;
+  }[];
   defaultModel: { provider: string; modelId: string } | null;
   thinkingLevels: Record<string, string[]>;
   thinkingLevelMaps: Record<string, Record<string, string | null>>;

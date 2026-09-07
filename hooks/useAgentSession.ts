@@ -321,7 +321,7 @@ export interface AttachedImage {
 }
 
 type SelectedModel = { provider: string; modelId: string };
-type ModelEntry = { id: string; name: string; provider: string };
+type ModelEntry = { id: string; name: string; provider: string; avail?: "ok" | "rl" | "err" | "unprobed"; providerRL?: boolean };
 type ModelsResponse = {
   models: Record<string, string>;
   modelList?: ModelEntry[];

@@ -8,6 +8,10 @@ export interface ModelSelectorOption {
   provider: string;
   modelId: string;
   name: string;
+  /** 当前可用性（aiti-model-check 探测/运行期）：ok/rl(429)/err/unprobed——仅展示提示 */
+  status?: "ok" | "rl" | "err" | "unprobed";
+  /** 该 provider 整体限流（全部模型当前 429）——组头提示，不自动禁用 */
+  providerRL?: boolean;
 }
 
 interface ModelSelectorProps {
@@ -385,8 +389,11 @@ export function ModelSelector({
               ) : modelsByProvider.map((group, index) => (
                 <div key={group.provider}>
                   {modelsByProvider.length > 1 && (
-                    <div style={{ padding: "6px 12px 4px", borderTop: index > 0 || onClear || recentOptions.length > 0 ? "1px solid var(--border)" : "none", color: "var(--text-dim)", fontSize: 10, fontWeight: 600, letterSpacing: 0, textTransform: "uppercase" }}>
+                    <div style={{ padding: "6px 12px 4px", borderTop: index > 0 || onClear || recentOptions.length > 0 ? "1px solid var(--border)" : "none", color: "var(--text-dim)", fontSize: 10, fontWeight: 600, letterSpacing: 0, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
                       {group.provider}
+                      {group.options.some((o) => o.providerRL) && (
+                        <span style={{ color: "#d97706", fontSize: 9, fontWeight: 700, textTransform: "none", letterSpacing: 0, padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.12)", whiteSpace: "nowrap" }} title="该 provider 全部模型当前都 429 限流——仅提示，不会自动禁用">⛔ 整体限流</span>
+                      )}
                     </div>
                   )}
                   {group.options.map((option) => (
@@ -395,6 +402,7 @@ export function ModelSelector({
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
                       hint={option.provider}
+                      status={option.status}
                       onClick={() => choose(option)}
                     />
                   ))}
@@ -408,7 +416,14 @@ export function ModelSelector({
   );
 }
 
-function ModelOptionButton({ active, label, hint, onClick }: { active: boolean; label: string; hint?: string; onClick: () => void }) {
+function ModelOptionButton({ active, label, hint, status, onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; onClick: () => void }) {
+  const statusMark = status === "rl"
+    ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#b45309", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.14)" }} title="当前限流（429）——选中可能被冷却拒发，仅提示不会自动禁用">429</span>
+    : status === "err"
+      ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#dc2626", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(239,68,68,.5)", background: "rgba(239,68,68,.1)" }} title="当前探测异常（非限流错误）——仅提示不会自动禁用">✗ 异常</span>
+      : status === "unprobed"
+        ? <span style={{ flexShrink: 0, fontSize: 9, color: "var(--text-dim)", padding: "0 6px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--bg-subtle,#f5f5f5)" }} title="尚未探测可用性（模型检查未跑过）">未测</span>
+        : null;
   return (
     <button
       type="button"
@@ -423,6 +438,7 @@ function ModelOptionButton({ active, label, hint, onClick }: { active: boolean; 
         ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true"><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
         : <span style={{ width: 10, flexShrink: 0 }} />}
       <span title={label} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
+      {statusMark}
       {hint && hint !== label ? (
         <span style={{ marginLeft: "auto", flexShrink: 0, paddingLeft: 14, fontSize: 10, fontWeight: 400, color: "var(--text-dim)", opacity: 0.8 }} title={hint}>{hint}</span>
       ) : null}
