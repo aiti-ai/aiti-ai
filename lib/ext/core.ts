@@ -7,11 +7,14 @@
  * list cache) without breaking extensions.
  */
 import { homedir } from "os";
-import { listAllSessions, resolveSessionPath, getSessionEntries, buildSessionContext } from "@/lib/session-reader.ts";
-import { getRunningRpcSessionIds, getAliveRpcSessionIds, stopIdleRpcSession } from "@/lib/rpc-manager.ts";
-import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed } from "@/lib/file-access.ts";
-import { readModelsConfig, writeModelsConfig } from "@/lib/models-config-store.ts";
+import { listAllSessions, resolveSessionPath, getSessionEntries, buildSessionContext } from "../session-reader.ts";
+import { getRunningRpcSessionIds, getAliveRpcSessionIds, stopIdleRpcSession } from "../rpc-manager.ts";
+import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed } from "../file-access.ts";
+import { readModelsConfig, writeModelsConfig } from "../models-config-store.ts";
+import { readLiveHandleSession } from "./core-live-session.ts";
 import type { ExtCoreApi } from "./types.ts";
+
+export { readLiveHandleSession };
 
 export function makeExtCore(): ExtCoreApi {
   return {
@@ -32,13 +35,18 @@ export function makeExtCore(): ExtCoreApi {
     },
     async readSession(id) {
       const path = await resolveSessionPath(id);
-      if (!path) return null;
-      try {
-        const entries = getSessionEntries(path);
-        return buildSessionContext(entries);
-      } catch {
-        return null;
+      if (path) {
+        try {
+          const entries = getSessionEntries(path);
+          return buildSessionContext(entries);
+        } catch {
+          return null;
+        }
       }
+      // 外部后端会话（zcode/codex/…）无 pi 会话文件——回退到活 handle 的内存历史
+      //（getMessages capability），适配成 {messages, entryIds} 文件形态供扩展零改动消费
+      //（ai-speek 跟读等按文件形态 readSession 的消费方）。
+      return readLiveHandleSession(id);
     },
     async readModelsConfig() {
       return readModelsConfig();
