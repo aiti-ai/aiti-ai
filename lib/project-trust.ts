@@ -1,7 +1,7 @@
 import { stat } from "fs/promises";
 import { resolve } from "path";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
-import { getAllowedFileRoots, isExistingFilePathAllowed } from "./file-access";
+import { getAllowedFileRoots, isExistingFilePathAllowed } from "./file-access.ts";
 import type { ProjectTrustStatus } from "./api-types";
 
 /** 校验 /api/project-trust（及 /status 子路径）的 cwd 参数：非空字符串、存在的目录、在允许根内。
