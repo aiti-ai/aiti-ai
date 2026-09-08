@@ -101,7 +101,23 @@ export async function prefetch(id: string): Promise<void> {
     // webpackIgnore: keep the native dynamic import (Next would otherwise
     // rewrite it into a bundled context stub). apiUrl 补 basePath（graph 的
     // assetUrl 是裸 /api/...，部署在子路径下必须带 /dev 前缀）。
-    const mod = (await import(/* webpackIgnore: true */ apiUrl(entry.url))) as unknown;
+    const importBundle = (bust?: number) =>
+      import(/* webpackIgnore: true */ bust
+        ? `${apiUrl(entry.url)}${entry.url.includes("?") ? "&" : "?"}bust=${bust}`
+        : apiUrl(entry.url));
+    let mod: unknown;
+    try {
+      mod = await importBundle();
+    } catch (firstErr) {
+      // 模块负缓存兜底：HTML module map 按 URL 记账，同文档内 import 失败后
+      // 重试同一 URL 必失败、且不再发请求——网络瞬断（dev 重编译/deploy reload
+      // 窗口）撞上时会表现为「按钮点了没反应」。bundle 是内容寻址（rev 锚定），
+      // 加一次性参数语义不变，重试一次即可穿透负缓存。
+      mod = await importBundle(Date.now());
+      console.warn(
+        `[ext] ${id}: bundle import 重试成功（首次失败：${String((firstErr as Error)?.message ?? firstErr).slice(0, 120)}）`,
+      );
+    }
     const ns = mod as { default?: unknown; register?: (ctx: unknown) => void };
     const registerFn =
       typeof ns.default === "function"
