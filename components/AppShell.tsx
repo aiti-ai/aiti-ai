@@ -11,6 +11,8 @@ import { ChatWindow } from "./ChatWindow";
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
+import { TabBody, type TabBodyCtx } from "./TabBody";
+import { DetachedTabWindow } from "./DetachedTabWindow";
 import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary } from "./ExtSlots";
@@ -621,6 +623,17 @@ export function AppShell() {
   // Files unmount when inactive; workspace terminals stay mounted until closed.
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
+
+  // ═══ [aiti-float tab-detach v0.6.0] tabHost 二态机（方案 §3/§5.1）═══
+  // detachedTabIds 只记 window 态（缺省即 panel）；不持久化——刷新后全部回 panel
+  // （tab 是临时工作对象，刷新回常规布局是干净默认；float 窗口位置记忆按 tabId 存，
+  // 刷新后 key 失配自然失效）。单实例不变式：detached 的 tab 不进 panelTabs、不进
+  // 右栏常挂载列表、内容区不渲染——窗口列表 = 现存 tabs ∩ detached，结构性防双渲染。
+  const [detachedTabIds, setDetachedTabIds] = useState<Set<string>>(new Set());
+  // detach 瞬间右栏内容区尺寸（窗口原地长出的初始几何；测量失败兜底 720×480）。
+  const rightPanelContentRef = useRef<HTMLDivElement | null>(null);
+  const [detachInitGeom, setDetachInitGeom] = useState({ w: 720, h: 480 });
+  // ═══ [tab-detach 状态结束] ═══
   // 恢复配套：扩展侧 _restoreSession 把历史文件一律后台打开（select:false，焦点留给用户
   // 刚显式打开的文件——见扩展 registry.ts 注释）；纯展开面板触发时没有「刚打开的文件」，
   // 会落成「有 tabs 无激活」的空态。这里状态驱动兜底：面板开着、有 tabs、无激活 → 激活
@@ -628,9 +641,11 @@ export function AppShell() {
   // 守卫保证不再换位，无时序竞争）。单关 tab 的激活位已由 performCloseFileTab 处理，
   // 此状态在恢复场景外不可达，不会抢用户焦点。E2E 实证：展开→内容渲染、无空态提示。
   useEffect(() => {
-    if (!rightPanelOpen || fileTabs.length === 0 || activeFileTabId !== null) return;
-    setActiveFileTabId(fileTabs[fileTabs.length - 1].id);
-  }, [activeFileTabId, fileTabs, rightPanelOpen]);
+    // tab-detach：自动激活只在「panel 内可见 tabs」里挑（detached 的 tab 不占右栏激活位）
+    const visibleTabs = fileTabs.filter((t) => !detachedTabIds.has(t.id));
+    if (!rightPanelOpen || visibleTabs.length === 0 || activeFileTabId !== null) return;
+    setActiveFileTabId(visibleTabs[visibleTabs.length - 1].id);
+  }, [activeFileTabId, fileTabs, detachedTabIds, rightPanelOpen]);
   // pathPicker 能力（aiti-folder FolderSwitcher）：顶栏「打开文件夹」消费。SSR 稳定空快照。
   const pathPickerItems = useSyncExternalStore(
     subscribeExtUi,
@@ -683,18 +698,36 @@ export function AppShell() {
   }, [fileTabs, terminalTabs]);
   // ═══ [aiti-float dock 批次A 重补结束] ═══
 
-  const panelTabs: Tab[] = [...fileTabs, ...terminalTabs.map((tab) => ({
-    id: tab.id,
-    label: getFileName(tab.cwd) || tab.cwd,
-    filePath: tab.cwd,
-    kind: "terminal" as const,
-    closing: Boolean(tab.closing),
-  // dock tabs（批次A）：只渲染 docked:right-panel 态 item 为 tab——✕ close → 状态机回发
-  // closed → 镜像删除 → tab 消失；floating/closed/侧栏停靠不占 tab 位。激活位复用
-  // activeFileTabId（terminal tab 先例），不进 fileTabs/terminalTabs state（零独立 state）。
-  })), ...rightDockItems
-    .filter((it) => dockPanelStates.get(it.id) === "docked:right-panel")
-    .map((it) => ({ id: `dock:${it.id}`, label: it.meta?.title || it.meta?.label || it.extId || it.id, filePath: "", kind: "dock" as const }))];
+  const panelTabs: Tab[] = [
+    // detached 的 tab 不进右栏渲染面（只在拆出窗口渲染一份——单实例不变式 §3）
+    ...fileTabs.filter((t) => !detachedTabIds.has(t.id)),
+    ...terminalTabs.filter((t) => !detachedTabIds.has(t.id)).map((tab) => ({
+      id: tab.id,
+      label: getFileName(tab.cwd) || tab.cwd,
+      filePath: tab.cwd,
+      kind: "terminal" as const,
+      closing: Boolean(tab.closing),
+    // dock tabs（批次A）：只渲染 docked:right-panel 态 item 为 tab——✕ close → 状态机回发
+    // closed → 镜像删除 → tab 消失；floating/closed/侧栏停靠不占 tab 位。激活位复用
+    // activeFileTabId（terminal tab 先例），不进 fileTabs/terminalTabs state（零独立 state）。
+    })),
+    ...rightDockItems
+      .filter((it) => dockPanelStates.get(it.id) === "docked:right-panel")
+      .map((it) => ({ id: `dock:${it.id}`, label: it.meta?.title || it.meta?.label || it.extId || it.id, filePath: "", kind: "dock" as const })),
+  ];
+
+  // 拆出窗口列表 = 现存 tabs ∩ detached（file/folder/terminal；dock tab 拆窗走状态机
+  // present float，不经本列表）。tab 移除即窗口消失（performCloseFileTab 无需感知 detached）。
+  const detachedWindows: Tab[] = [
+    ...fileTabs,
+    ...terminalTabs.map((tab) => ({
+      id: tab.id,
+      label: getFileName(tab.cwd) || tab.cwd,
+      filePath: tab.cwd,
+      kind: "terminal" as const,
+      closing: Boolean(tab.closing),
+    })),
+  ].filter((t) => detachedTabIds.has(t.id));
 
   useEffect(() => {
     try {
@@ -1526,6 +1559,66 @@ export function AppShell() {
     }
     performCloseFileTab(tabId);
   }, [fileTabs, terminalTabs, askEditorClose, performCloseFileTab]);
+
+  // ═══ [aiti-float tab-detach v0.6.0] 拆窗 / 收回（方案 §5.1）═══
+  const detachTab = useCallback((tabId: string) => {
+    // 初始几何 = detach 瞬间右栏内容区尺寸（原地长出）；挂载前经 ref 测量存入 state。
+    const rect = rightPanelContentRef.current?.getBoundingClientRect();
+    setDetachInitGeom({ w: Math.round(rect?.width || 720), h: Math.round(rect?.height || 480) });
+    setDetachedTabIds((prev) => prev.has(tabId) ? prev : new Set(prev).add(tabId));
+    // 激活位回落：与 performCloseFileTab 同算法（panel 内 remaining.at(-1)，跨 file/terminal）。
+    setActiveFileTabId((cur) => {
+      if (cur !== tabId) return cur;
+      const remainingFiles = fileTabs.filter((t) => t.id !== tabId);
+      const remainingTerms = terminalTabs.filter((t) => t.id !== tabId);
+      return remainingFiles.at(-1)?.id ?? remainingTerms.at(-1)?.id ?? null;
+    });
+    // panelTabs 全空 → 收右栏（与「关光 tab 收起」同语义；拆出窗口仍在，独立于右栏开合）。
+    const remainingPanel = fileTabs.filter((t) => t.id !== tabId).length + terminalTabs.filter((t) => t.id !== tabId).length;
+    if (remainingPanel === 0) setRightPanelOpen(false);
+  }, [fileTabs, terminalTabs]);
+
+  const dockBackTab = useCallback((tabId: string) => {
+    setDetachedTabIds((prev) => {
+      const next = new Set(prev);
+      next.delete(tabId);
+      return next;
+    });
+    // 回来即激活，用户立刻看到（右栏重开 + 激活该 tab）。
+    setActiveFileTabId(tabId);
+    setRightPanelOpen(true);
+  }, []);
+
+  // TabBar 双击：dock tab 拆窗 = 状态机既有迁移 present(k,"float")（零新机制，方案 §5.8；
+  // 命令事件通道与 handleCloseFileTab dock 分支同款，宿主不 import 扩展代码）；
+  // file/folder/terminal = tabHost detach。mobile 右栏是 overlay 抽屉，拆窗语义纠缠 → 禁用。
+  const handleTabDoubleClick = useCallback((tab: Tab) => {
+    if (tab.kind === "dock") {
+      try { window.dispatchEvent(new CustomEvent("piwe-float-present-command", { detail: { key: tab.id.slice(5), mode: "float" } })); } catch { /* ignore */ }
+      return;
+    }
+    if (isMobile || tab.closing) return;
+    detachTab(tab.id);
+  }, [detachTab, isMobile]);
+  // ═══ [tab-detach 处理结束] ═══
+
+  // TabBody 宿主上下文（右栏与拆出窗口共用同一份；handler 原样透传，无策略差异）。
+  const tabBodyCtx: TabBodyCtx = {
+    cwd: activeCwd ?? null,
+    gitRefreshKey: explorerRefreshKey,
+    panelOpen: rightPanelOpen,
+    selectedSessionId: selectedSession?.id ?? null,
+    onStateChange: handleFileViewerStateChange,
+    onLineMention: handleFileLineMention,
+    onAtMention: handleAtMention,
+    openFile: handleOpenFile,
+    openFolder: handleOpenFolder,
+    onTerminalClosed: handleTerminalClosed,
+    onOpenShellTab: (openCwd) => handleOpenTerminal(openCwd, true),
+  };
+  // 内容分派对象：直接查 panelTabs 派生面（已排除 detached、含 dock tab——dock 不在
+  // fileTabs 里）。terminal 激活时为 null（常挂载容器负责，见下方 hidden 容器列表）。
+  const activeTabForBody: Tab | null = panelTabs.find((t) => t.id === activeFileTabId) ?? null;
 
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
@@ -3999,6 +4092,7 @@ export function AppShell() {
               activeTabId={activeFileTabId ?? ""}
               onSelectTab={guardedSelectFileTab}
               onCloseTab={handleCloseFileTab}
+              onDetachTab={handleTabDoubleClick}
             />
           </div>
           {(() => {
@@ -4061,51 +4155,11 @@ export function AppShell() {
         </div>
 
         {/* Only the active viewer is mounted. Lightweight per-tab state is restored on activation. */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
-          {activeFileTab?.kind === "folder" ? (
-            <FileViewer
-              key={activeFileTab.id}
-              kind="folder"
-              filePath={activeFileTab.filePath}
-              cwd={activeCwd ?? undefined}
-              sourceSessionId={selectedSession?.id ?? null}
-              gitRefreshKey={explorerRefreshKey}
-              watchEnabled={rightPanelOpen}
-              onOpenFile={(filePath) => handleOpenFile(
-                filePath,
-                getFileName(filePath),
-                { sourceSessionId: selectedSession?.id ?? null },
-              )}
-              onOpenFolder={(folderPath) => handleOpenFolder(folderPath, getFileName(folderPath))}
-              onAtMention={handleAtMention}
-            />
-          ) : activeFileTab?.filePath ? (
-            <FileViewer
-              key={`${activeFileTab.id}:${activeFileTab.viewerRevision ?? 0}`}
-              filePath={activeFileTab.filePath}
-              cwd={activeCwd ?? undefined}
-              sourceSessionId={activeFileTab.sourceSessionId}
-              gitRefreshKey={explorerRefreshKey}
-              initialDisplayMode={activeFileTab.initialDisplayMode}
-              initialState={activeFileTab.viewerState}
-              watchEnabled={rightPanelOpen}
-              onStateChange={(viewerState) => handleFileViewerStateChange(
-                activeFileTab.id,
-                activeFileTab.viewerRevision ?? 0,
-                viewerState,
-              )}
-              onMentionLines={rightPanelOpen ? handleFileLineMention : undefined}
-              onAtMention={handleAtMention}
-              onOpenFile={(filePath) => handleOpenFile(
-                filePath,
-                getFileName(filePath),
-                { sourceSessionId: activeFileTab.sourceSessionId },
-              )}
-            />
-          ) : activeFileTabId?.startsWith("dock:") ? (
-            // [aiti] dock v0.5.0：右栏停靠内容分派——ExtSlot only 只挂载激活的 dock item
-            //（item render 内经状态机 gate，非 docked → null，结构性防双开不变）
-            <ExtSlot name="rightFileDock" only={activeFileTabId.slice(5)} />
+        <div ref={rightPanelContentRef} style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
+          {/* [aiti-float tab-detach v0.6.0] 内容分派抽 TabBody（file/folder/dock 三分支，
+              与拆出窗口完全同构——行为等价重构，渲染语义改动前对照本注释回归基线） */}
+          {activeTabForBody ? (
+            <TabBody tab={activeTabForBody} host="panel" ctx={tabBodyCtx} />
           ) : !terminalTabs.some((tab) => tab.id === activeFileTabId) ? (
             <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12 }}>
                {fileTabs.length > 0
@@ -4134,7 +4188,9 @@ export function AppShell() {
                    </>}
             </div>
           ) : null}
-          {terminalTabs.map((tab) => (
+          {/* terminal 常挂载 hidden 容器：detached 的 tab 摘除——只在拆出窗口渲染一份，
+              防双 xterm 实例双 SSE 连接（tab-detach §5.3/§5.7） */}
+          {terminalTabs.filter((tab) => !detachedTabIds.has(tab.id)).map((tab) => (
             <div key={tab.id} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%" }}>
               <TerminalPanelBridge
                 tab={tab}
@@ -4147,6 +4203,24 @@ export function AppShell() {
         </div>
       </div>
     </div>
+    {/* [aiti-float tab-detach v0.6.0] 拆出窗口：React 顶层常驻（独立于右栏开合/isMobile——
+        拆窗核心价值：编辑器不再被右栏宽度囚禁）。壳盖 data-ext-float 属性族 → aiti-float
+        scan() 接管拖/缩/最大化/置前/持久化；✕ 走既有 handleCloseFileTab 守卫链（aiti-editor
+        脏检查）；⇲ = dockBackTab 回右栏并激活。 */}
+    {detachedWindows.map((w) => (
+      <DetachedTabWindow
+        key={w.id}
+        tab={w}
+        initW={detachInitGeom.w}
+        initH={detachInitGeom.h}
+        dockBackLabel={translate("files.dockBack")}
+        closeLabel={translate("i18n.close")}
+        onDockBack={() => dockBackTab(w.id)}
+        onClose={() => handleCloseFileTab(w.id)}
+      >
+        <TabBody tab={w} host="window" ctx={tabBodyCtx} />
+      </DetachedTabWindow>
+    ))}
     {settingsSection && (
       <SettingsPanel
         cwd={projectTrustCwd}

@@ -30,9 +30,12 @@ interface Props {
   activeTabId: string;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
+  /** 双击 tab 拆出为窗口（aiti-float tab-detach v0.6.0；不传则双击无操作——其他
+   *  使用方零影响。mobile 由调用方决定是否传入）。 */
+  onDetachTab?: (tab: Tab) => void;
 }
 
-export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
+export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab }: Props) {
   const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
 
@@ -163,6 +166,8 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab }: Props) {
               }
             }}
             onClick={() => onSelectTab(tab.id)}
+            onDoubleClick={onDetachTab ? () => onDetachTab(tab) : undefined}
+            title={onDetachTab ? t("files.detachHint") : undefined}
             onMouseDown={(e) => {
               if (e.button === 1) e.preventDefault();
             }}

@@ -193,6 +193,8 @@ export const zhCNLocale: LocalePlugin = {
     "viewer.reload": "重新加载",
     "viewer.missingPath": "缺少文件路径。用法：/viewer?path=<绝对路径>&kind=file|folder&cwd=<工作目录>",
     "files.hidePanel": "隐藏文件面板",
+    "files.detachHint": "双击拆出为窗口",
+    "files.dockBack": "移回右栏",
     "files.showPanel": "显示文件面板",
     "files.openFolder": "打开文件夹",
     "files.scrollLeft": "向左滚动页签",

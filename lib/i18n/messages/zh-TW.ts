@@ -176,6 +176,8 @@ export const zhTWLocale: LocalePlugin = {
     "viewer.reload": "重新載入",
     "viewer.missingPath": "缺少檔案路徑。用法：/viewer?path=<絕對路徑>&kind=file|folder&cwd=<工作目錄>",
     "files.hidePanel": "隱藏檔案面板",
+    "files.detachHint": "雙擊拆出為視窗",
+    "files.dockBack": "移回右欄",
     "files.scrollLeft": "向左捲動頁籤",
     "files.scrollRight": "向右捲動頁籤",
     "files.showPanel": "顯示檔案面板",

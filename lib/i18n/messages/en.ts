@@ -193,6 +193,8 @@ export const enLocale: LocalePlugin = {
     "viewer.reload": "Reload",
     "viewer.missingPath": "Missing file path. Usage: /viewer?path=<absolute path>&kind=file|folder&cwd=<working dir>",
     "files.hidePanel": "Hide file panel",
+    "files.detachHint": "Double-click to detach into a window",
+    "files.dockBack": "Dock back to panel",
     "files.showPanel": "Show file panel",
     "files.openFolder": "Open Folder",
     "files.scrollLeft": "Scroll tabs left",
