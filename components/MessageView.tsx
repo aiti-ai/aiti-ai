@@ -1,6 +1,7 @@
 "use client";
 
 import { memo, useState, useRef, useEffect, useMemo } from "react";
+import type { CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import { MarkdownBody } from "./MarkdownBody";
 import { ImagePreview } from "./ImagePreview";
@@ -10,7 +11,7 @@ import { apiUrl } from "@/lib/base-path";
 import { fmtMoney, useMoneySynced } from "@/lib/money";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
-import { getAssistantErrorMessage, getThinkingPreview, isEmptyThinkingBlock } from "@/lib/message-display";
+import { getAssistantErrorMessage, getThinkingPreview, getThinkingTailPreview, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
 import { isEditToolName } from "@/lib/tool-names";
 import { isThinkingExpandedByDefault, THINKING_EXPANDED_EVENT } from "@/lib/thinking-expansion-preference";
@@ -908,7 +909,7 @@ function BlockView({ block, searchTarget, toolResults, isStreaming, streamingDur
     return <div data-message-text data-search-target={searchTarget || undefined}><TextBlock block={block as TextContent} isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId} /></div>;
   }
   if (block.type === "thinking") {
-    return <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} sessionId={sessionId} entryId={entryId} blockIndex={blockIndex} />;
+    return <ThinkingBlock block={block as ThinkingContent} duration={streamingDuration} isStreaming={isStreaming} sessionId={sessionId} entryId={entryId} blockIndex={blockIndex} />;
   }
   if (block.type === "toolCall") {
     const tc = block as ToolCallContent;
@@ -924,9 +925,23 @@ function TextBlock({ block, isStreaming, cwd, onOpenFile, sessionId }: { block: 
   return <SafeMarkdownBody isStreaming={isStreaming} cwd={cwd} onOpenFile={onOpenFile} sessionId={sessionId}>{block.text}</SafeMarkdownBody>;
 }
 
-export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex }: {
+/** 跑马灯折叠行刷新节流：最多 1s 更新一次（对齐 zcode reasoning 的 1s 时长节奏；不做逐行动画，
+ *  只把单行内容换成最新尾行 + scrollLeft 推到最右） */
+const THINKING_TAIL_THROTTLE_MS = 1000;
+/** 跑马灯溢出时的左右渐变遮罩（对齐 zcode：宽 16px 透明淡入/淡出；mask 走 alpha 通道，颜色写死不透明即可） */
+const THINKING_TAIL_FADE_MASK_STYLE: CSSProperties = {
+  WebkitMaskImage: "linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%)",
+  maskImage: "linear-gradient(to right, transparent 0, black 16px, black calc(100% - 16px), transparent 100%)",
+  WebkitMaskRepeat: "no-repeat",
+  maskRepeat: "no-repeat",
+  WebkitMaskSize: "100% 100%",
+  maskSize: "100% 100%",
+};
+
+export function ThinkingBlock({ block, duration, isStreaming, sessionId, entryId, blockIndex }: {
   block: ThinkingContent;
   duration?: number;
+  isStreaming?: boolean;
   sessionId?: string;
   entryId?: string;
   blockIndex: number;
@@ -939,6 +954,43 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
   const tRef = useRef(t);
   tRef.current = t;
   const preview = getThinkingPreview(block.thinking);
+
+  // ── 流式折叠行跑马灯（对齐 zcode reasoning roll）──
+  // 只在「流式 + 折叠」启用：预览取最后一个非空行（最新思考），最多 1s 刷新一次（节流，非逐行动画），
+  // 每次刷新把 scrollLeft 推到最右始终展示行尾最新内容；溢出时加左右渐变 mask。
+  // 历史/展开态不进此分支（tail 为空，零额外渲染开销）。
+  const tailActive = !!isStreaming && !expanded;
+  const tail = useMemo(() => (tailActive ? getThinkingTailPreview(block.thinking) : ""), [tailActive, block.thinking]);
+  const [tailShown, setTailShown] = useState(tail);
+  const [tailOverflow, setTailOverflow] = useState(false);
+  const tailWrapRef = useRef<HTMLSpanElement | null>(null);
+  const tailTsRef = useRef(0);
+  useEffect(() => {
+    if (!tailActive) {
+      setTailShown("");
+      setTailOverflow(false);
+      tailTsRef.current = 0;
+      return;
+    }
+    if (tail === tailShown) return; // 节流窗口内的重复渲染：内容未变不重排
+    const elapsed = performance.now() - tailTsRef.current;
+    const flush = () => {
+      tailTsRef.current = performance.now();
+      setTailShown(tail);
+    };
+    if (elapsed >= THINKING_TAIL_THROTTLE_MS) {
+      flush();
+      return;
+    }
+    const timer = setTimeout(flush, THINKING_TAIL_THROTTLE_MS - elapsed);
+    return () => clearTimeout(timer);
+  }, [tailActive, tail, tailShown]);
+  useEffect(() => {
+    const el = tailWrapRef.current;
+    if (!el || !tailShown) return;
+    el.scrollLeft = el.scrollWidth; // 跑马灯跟随：始终展示最新内容（行尾）
+    setTailOverflow(el.scrollWidth > el.clientWidth + 1); // 仅溢出行启用渐变 mask（值不变时 setState bail out）
+  }, [tailShown]);
 
   // Keep already-mounted blocks in sync when the preference changes.
   useEffect(() => {
@@ -1012,10 +1064,24 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
       >
         <ThinkingIcon active={expanded} />
         {/* 折叠态=首行预览；展开态内容区在下方，标题行改显标签避免与首行重复 */}
-        <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span
+          ref={tailActive ? tailWrapRef : undefined}
+          style={{
+            minWidth: 0,
+            flex: 1,
+            overflow: "hidden",
+            // tail 分支不用 ellipsis：scrollLeft 推右时浏览器会把省略号画在滚出内容的左端，
+            // 与渐变 mask 叠加出孤立「…」；跑马灯的截断指示由左端渐变淡出承担。
+            textOverflow: tailActive ? "clip" : "ellipsis",
+            whiteSpace: "nowrap",
+            ...(tailActive && tailOverflow ? THINKING_TAIL_FADE_MASK_STYLE : null),
+          }}
+        >
           {expanded
             ? t("i18n.thinking")
-            : (preview ? <ReactMarkdown allowedElements={[]} unwrapDisallowed skipHtml>{preview}</ReactMarkdown> : "...")}
+            : tailActive && tailShown
+              ? <ReactMarkdown allowedElements={[]} unwrapDisallowed skipHtml>{tailShown}</ReactMarkdown>
+              : (preview ? <ReactMarkdown allowedElements={[]} unwrapDisallowed skipHtml>{preview}</ReactMarkdown> : "...")}
         </span>
         {duration !== undefined && (
           <span style={{ flexShrink: 0, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
