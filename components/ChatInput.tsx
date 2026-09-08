@@ -916,10 +916,18 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [swipeHint, setSwipeHint] = useState<"up" | "down" | null>(null);
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     if (!isMobile) return;
-    // Text editing / scrolling inside the textarea takes priority.
-    if (e.target instanceof Element && e.target.closest("textarea")) {
-      touchStartRef.current = null;
-      return;
+    if (e.target instanceof Element) {
+      // Text editing / scrolling inside the textarea takes priority.
+      if (e.target.closest("textarea")) {
+        touchStartRef.current = null;
+        return;
+      }
+      // 悬浮在输入区之上的弹出面板（模型列表/ slash、@、历史菜单/思考、工具下拉）：
+      // 在面板内滚动列表是正常操作，不能被当成下滑手势把整个底部输入区收起。
+      if (e.target.closest("[data-input-overlay]")) {
+        touchStartRef.current = null;
+        return;
+      }
     }
     const t = e.touches[0];
     touchStartRef.current = { y: t.clientY, x: t.clientX, active: true };
@@ -2831,6 +2839,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           {historyMenuOpen && inputHistory.length > 0 && (
             <div
               ref={historyMenuRef}
+              data-input-overlay="1"
               style={{
                 position: "absolute",
                 left: 0,
@@ -2918,6 +2927,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           {slashMenuOpen && slashQuery !== null && (
             <div
               ref={slashMenuRef}
+              data-input-overlay="1"
               style={{
                 position: "absolute",
                 left: 0,
@@ -3076,6 +3086,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               : "";
             return (
               <div
+                data-input-overlay="1"
                 style={{
                   position: "absolute",
                   left: 0,
@@ -3612,7 +3623,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 {t("chat.moreControls")}
               </button>
             )}
-            <div style={{
+            <div data-input-overlay="1" style={{
               display: isMobile ? (controlsMenuOpen ? "flex" : "none") : "flex",
               alignItems: "center",
               gap: isMobile ? 1 : 2,
@@ -3672,7 +3683,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{thinkingDisplayLabel}</span>}
                 </button>
                 {thinkingDropdownOpen && (
-                  <div style={{
+                  <div data-input-overlay="1" style={{
                     position: "absolute", bottom: "calc(100% + 6px)",
                     ...(isMobile ? { left: 0 } : { right: 0 }),
                     zIndex: 100, background: "var(--bg)", border: "1px solid var(--border)",
@@ -3764,7 +3775,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{toolPresetLabel}</span>}
                 </button>
                 {toolDropdownOpen && (
-                  <div style={{
+                  <div data-input-overlay="1" style={{
                     position: "absolute",
                     bottom: "calc(100% + 6px)",
                     right: isMobile ? undefined : 0,

@@ -142,3 +142,46 @@ test("filterModelOptions matches provider name as well as display name and id", 
   assert.equal(filterModelOptions(CATALOG, "nomatch").length, 0);
   assert.deepEqual(filterModelOptions(CATALOG, "  "), CATALOG); // no filter
 });
+
+test("computePanelGeometry: desktop (no keyboard) keeps legacy anchored-above layout", async () => {
+  const { computePanelGeometry } = await jiti.import("./ModelSelector.tsx");
+  // 无键盘：可视区 == layout viewport
+  const vp = { layoutHeight: 800, visibleTop: 0, visibleBottom: 800 };
+  const g = computePanelGeometry({ top: 300, bottom: 332 }, vp, "up");
+  assert.equal(g.openAbove, true);
+  assert.equal(g.bottom, 800 - (300 - 6)); // 底边贴锚点上方 6px
+  assert.equal(g.maxHeight, Math.min(300 - 12, 800 * 0.6)); // 可视空间与 0.6 上限取小
+});
+
+test("computePanelGeometry: keyboard open pins panel above keyboard when anchor obscured", async () => {
+  const { computePanelGeometry } = await jiti.import("./ModelSelector.tsx");
+  // 键盘弹出：可视区压缩到 0..400，锚点（composer）仍报旧位置 top=760（被键盘遮住）
+  const g = computePanelGeometry(
+    { top: 760, bottom: 792 },
+    { layoutHeight: 800, visibleTop: 0, visibleBottom: 400 },
+    "up",
+  );
+  assert.equal(g.openAbove, true);
+  assert.equal(g.bottom, 800 - (400 - 6)); // 底边钳到键盘上方，面板不再伸进键盘后面
+  assert.equal(g.maxHeight, Math.max(120, Math.min(394 - 6, 400 * 0.6))); // 空间/上限按可视高度
+});
+
+test("computePanelGeometry: anchor scrolled above visible top → panel pinned to visible bottom", async () => {
+  const { computePanelGeometry } = await jiti.import("./ModelSelector.tsx");
+  const g = computePanelGeometry(
+    { top: 10, bottom: 42 },
+    { layoutHeight: 800, visibleTop: 100, visibleBottom: 500 },
+    "up",
+  );
+  assert.equal(g.bottom, 800 - (500 - 6));
+  assert.equal(g.maxHeight, Math.max(120, Math.min(494 - 100 - 6, 400 * 0.6)));
+});
+
+test("computePanelGeometry: placement auto opens below when more space below", async () => {
+  const { computePanelGeometry } = await jiti.import("./ModelSelector.tsx");
+  const vp = { layoutHeight: 800, visibleTop: 0, visibleBottom: 800 };
+  const g = computePanelGeometry({ top: 100, bottom: 132 }, vp, "auto");
+  assert.equal(g.openAbove, false);
+  assert.equal(g.top, 132 + 6);
+  assert.equal(g.maxHeight, Math.max(120, Math.min(800 - 6 - 138, 800 * 0.6)));
+});

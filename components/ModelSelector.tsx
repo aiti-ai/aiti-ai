@@ -33,6 +33,77 @@ interface ModelSelectorProps {
 
 const MODEL_FILTER_THRESHOLD = 8;
 export const RECENT_MODELS_KEY = "pi-web:recent-models";
+
+// ── 面板几何（fixed 定位基准 = layout viewport，移动端键盘配合的关键）──
+// 移动端键盘弹出/收起会改 visualViewport 并触发 useViewportHeight 的根高度重排
+// （composer 随之移动），若面板只在打开瞬间算一次几何，就会错位并在后续重渲染时
+// 忽大忽小。因此：打开期间监听视口事件触发重渲染，每次渲染重测锚点并按「可视区域」
+// 钳制面板（锚点被键盘遮住 → 底边顶到键盘上方；空间/上限按可视高度算）。
+export interface PanelViewport {
+  /** layout viewport 高度（position:fixed 的基准） */
+  layoutHeight: number;
+  /** 可视区域上下缘（layout 坐标）：键盘弹出后被压缩 */
+  visibleTop: number;
+  visibleBottom: number;
+}
+
+/** 读取当前视口快照（渲染期调用） */
+export function measurePanelViewport(): PanelViewport {
+  const layoutHeight = window.innerHeight;
+  const viewport = window.visualViewport;
+  if (!viewport) return { layoutHeight, visibleTop: 0, visibleBottom: layoutHeight };
+  return { layoutHeight, visibleTop: viewport.offsetTop, visibleBottom: viewport.offsetTop + viewport.height };
+}
+
+export interface PanelGeometry {
+  openAbove: boolean;
+  maxHeight: number;
+  /** layout 坐标（top 与 bottom 二选一） */
+  top?: number;
+  bottom?: number;
+}
+
+const PANEL_GAP = 6;
+const PANEL_MIN_HEIGHT = 120;
+const PANEL_MAX_HEIGHT_RATIO = 0.6;
+
+/**
+ * 由锚点矩形 + 视口快照计算面板几何（纯函数，输入/输出均为 layout 坐标）。
+ * 无键盘时（visibleTop=0/visibleBottom=layoutHeight）与固定锚点上方展开的历史
+ * 行为一致；键盘弹出时面板整体压缩进可视区域，不再被键盘遮住或随重排跳变。
+ */
+export function computePanelGeometry(
+  anchor: { top: number; bottom: number },
+  viewport: PanelViewport,
+  placement: "up" | "auto",
+): PanelGeometry {
+  const visibleHeight = viewport.visibleBottom - viewport.visibleTop;
+  const spaceAbove = anchor.top - viewport.visibleTop - PANEL_GAP;
+  const spaceBelow = viewport.visibleBottom - anchor.bottom - PANEL_GAP;
+  const openAbove = placement === "up" || spaceAbove > spaceBelow;
+  if (openAbove) {
+    // 期望底边 = 锚点上方留缝；锚点被键盘遮住（低于可视底）→ 钳到可视底之上；
+    // 锚点滚出可视顶（desired ≤ visibleTop）→ 面板贴可视区底部展开。
+    const desired = anchor.top - PANEL_GAP;
+    const bottomEdge = desired <= viewport.visibleTop
+      ? viewport.visibleBottom - PANEL_GAP
+      : Math.min(desired, viewport.visibleBottom - PANEL_GAP);
+    const maxHeight = Math.max(
+      PANEL_MIN_HEIGHT,
+      Math.min(bottomEdge - viewport.visibleTop - PANEL_GAP, visibleHeight * PANEL_MAX_HEIGHT_RATIO),
+    );
+    return { openAbove, maxHeight, bottom: viewport.layoutHeight - bottomEdge };
+  }
+  const desired = anchor.bottom + PANEL_GAP;
+  const topEdge = desired >= viewport.visibleBottom
+    ? viewport.visibleTop + PANEL_GAP
+    : Math.max(desired, viewport.visibleTop + PANEL_GAP);
+  const maxHeight = Math.max(
+    PANEL_MIN_HEIGHT,
+    Math.min(viewport.visibleBottom - PANEL_GAP - topEdge, visibleHeight * PANEL_MAX_HEIGHT_RATIO),
+  );
+  return { openAbove, maxHeight, top: topEdge };
+}
 export const RECENT_MODELS_LIMIT = 8;
 const MODEL_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
@@ -126,9 +197,11 @@ export function ModelSelector({
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [anchorRect, setAnchorRect] = useState<{ top: number; right: number; bottom: number; left: number; width: number } | null>(null);
+  // 面板打开期间的视口变化计数：只触发重渲染，几何在渲染时用实时值重算（见下方 effect）
+  const [viewportTick, setViewportTick] = useState(0);
   const [filter, setFilter] = useState("");
   const [recentList, setRecentList] = useState<RecentModelEntry[]>([]);
   const locked = disabled || busy;
@@ -139,6 +212,34 @@ export function ModelSelector({
   // 面板每次打开时重读最近使用（其他窗口/其他 ModelSelector 实例可能已更新）
   useEffect(() => {
     if (open) setRecentList(readRecentModels());
+  }, [open]);
+
+  // 面板打开期间跟踪可视视口：移动端键盘弹出/收起（visualViewport resize/scroll +
+  // 焦点变化）会压缩可视区并触发根高度重排，rAF 合并后重渲染 → 面板实时重锚。
+  useEffect(() => {
+    if (!open) return;
+    let frameId: number | null = null;
+    const schedule = () => {
+      if (frameId !== null) return;
+      frameId = requestAnimationFrame(() => {
+        frameId = null;
+        setViewportTick((tick) => tick + 1);
+      });
+    };
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", schedule);
+    viewport?.addEventListener("scroll", schedule);
+    window.addEventListener("resize", schedule);
+    window.addEventListener("focusin", schedule);
+    window.addEventListener("focusout", schedule);
+    return () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      viewport?.removeEventListener("resize", schedule);
+      viewport?.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
+      window.removeEventListener("focusin", schedule);
+      window.removeEventListener("focusout", schedule);
+    };
   }, [open]);
 
   // 最近使用 → 按使用时间倒序，仅保留当前仍可用的模型（已删除/已下架的自动消失）
@@ -238,6 +339,7 @@ export function ModelSelector({
       }}
     >
       <button
+        ref={buttonRef}
         type="button"
         aria-label={ariaLabel}
         aria-haspopup="listbox"
@@ -246,9 +348,7 @@ export function ModelSelector({
         disabled={locked}
         title={busy ? "Switching model" : locked ? currentName : sortedOptions.length > 0 || onClear ? "Change model" : "No available models"}
         style={buttonStyle}
-        onClick={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect();
-          setAnchorRect({ top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width });
+        onClick={() => {
           setOpen((current) => {
             if (current) setFilter("");
             return !current;
@@ -297,38 +397,34 @@ export function ModelSelector({
         )}
       </button>
 
-      {open && anchorRect && (() => {
-        const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
-        const viewportWidth = window.visualViewport?.width ?? window.innerWidth;
-        const spaceAbove = anchorRect.top - 8;
-        const spaceBelow = viewportHeight - anchorRect.bottom - 8;
-        const openAbove = placement === "up" || spaceAbove > spaceBelow;
-        const maxHeight = Math.max(120, Math.min(openAbove ? spaceAbove : spaceBelow, viewportHeight * 0.6));
-        const verticalPosition = openAbove
-          ? { bottom: viewportHeight - anchorRect.top + 6 }
-          : { top: anchorRect.bottom + 6 };
+      {open && (() => {
+        void viewportTick; // 视口变化 → 上方 effect 触发重渲染，此处每次重测锚点/视口
+        const anchor = buttonRef.current?.getBoundingClientRect();
+        if (!anchor) return null;
+        const geometry = computePanelGeometry(anchor, measurePanelViewport(), placement);
         const horizontalPosition: CSSProperties = isMobile
           ? { left: 8, right: 8, maxWidth: "calc(100vw - 16px)" }
-          : { left: anchorRect.left, width: "max-content", minWidth: anchorRect.width, maxWidth: Math.max(anchorRect.width, viewportWidth - anchorRect.left - 8) };
+          : { left: anchor.left, width: "max-content", minWidth: anchor.width, maxWidth: Math.max(anchor.width, (window.visualViewport?.width ?? window.innerWidth) - anchor.left - 8) };
 
         return (
           <div
             ref={panelRef}
             role="listbox"
             aria-label={ariaLabel}
+            data-input-overlay="1"
             style={{
               position: "fixed",
-              ...verticalPosition,
+              ...(geometry.top !== undefined ? { top: geometry.top } : { bottom: geometry.bottom }),
               ...horizontalPosition,
               zIndex: 500,
               display: "flex",
               flexDirection: "column",
-              maxHeight,
+              maxHeight: geometry.maxHeight,
               overflow: "hidden",
               border: "1px solid var(--border)",
               borderRadius: 8,
               background: "var(--bg)",
-              boxShadow: openAbove ? "0 -4px 16px rgba(0,0,0,0.10)" : "0 4px 16px rgba(0,0,0,0.10)",
+              boxShadow: geometry.openAbove ? "0 -4px 16px rgba(0,0,0,0.10)" : "0 4px 16px rgba(0,0,0,0.10)",
             }}
           >
             {showFilter && (
@@ -338,7 +434,9 @@ export function ModelSelector({
                   onChange={(event) => setFilter(event.target.value)}
                   placeholder={t("chat.filterModels")}
                   aria-label={t("chat.filterModels")}
-                  autoFocus
+                  // 移动端不自动聚焦：自动聚焦会立刻弹键盘压缩可视区，把刚打开的列表
+                  // 顶得只剩一条缝；让用户先浏览，点筛选框时再弹（弹出由几何跟踪接住）
+                  autoFocus={!isMobile}
                   autoComplete="off"
                   spellCheck={false}
                   style={{
