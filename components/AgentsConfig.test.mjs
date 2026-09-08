@@ -74,7 +74,8 @@ test("persists existing profile toggles immediately without submitting unsaved f
 });
 
 test("reuses the ChatInput model selector with scoped models", () => {
-  assert.match(source, /fetch\(`\/api\/models\?cwd=\$\{encodeURIComponent\(cwd\)\}`/);
+  // cwd 改 POST body 不落 URL（9968e2f 安全修复）：断言随迁——cwd 在请求体内、不再出现在 URL
+  assert.match(source, /fetch\(`\/api\/models`, \{[\s\S]*?method: "POST"[\s\S]*?body: JSON\.stringify\(\{ cwd \}\)/);
   assert.match(source, /import \{ ModelSelector \} from "\.\/ModelSelector"/);
   assert.match(chatInputSource, /import \{ ModelSelector, type ModelSelectorOption \} from "\.\/ModelSelector"/);
   assert.match(source, /<ModelSelector[\s\S]*?options=\{modelSelectorOptions\}[\s\S]*?variant="field"/);

@@ -66,8 +66,9 @@ test("恢复配套：面板开+有tabs+无激活 → 激活当前最后一个（
   // 面板会落成「点击标签打开」空态。此 effect 状态驱动兜底——恢复流首个文件 commit 时
   // 激活（当时即最后一个），后续文件打开时 activeFileTabId !== null 守卫挡住再激活
   // （= 用户手工打开的文件焦点也不被抢占）。E2E 实证：展开→内容渲染、无空态提示。
+  // tab-detach v0.6.0：激活面收窄到 panel 内可见 tabs（detached 的不占右栏激活位）。
   const m = source.match(
-    /useEffect\(\(\) => \{\s*\n\s*if \(!rightPanelOpen \|\| fileTabs\.length === 0 \|\| activeFileTabId !== null\) return;\s*\n\s*setActiveFileTabId\(fileTabs\[fileTabs\.length - 1\]\.id\);\s*\n\s*\}, \[activeFileTabId, fileTabs, rightPanelOpen\]\);/,
+    /useEffect\(\(\) => \{\s*\n\s*\/\/ tab-detach：自动激活只在「panel 内可见 tabs」里挑[^\n]*\n\s*const visibleTabs = fileTabs\.filter\(\(t\) => !detachedTabIds\.has\(t\.id\)\);\s*\n\s*if \(!rightPanelOpen \|\| visibleTabs\.length === 0 \|\| activeFileTabId !== null\) return;\s*\n\s*setActiveFileTabId\(visibleTabs\[visibleTabs\.length - 1\]\.id\);\s*\n\s*\}, \[activeFileTabId, fileTabs, detachedTabIds, rightPanelOpen\]\);/,
   );
   assert.ok(m, "恢复激活兜底 effect 丢失 —— 展开面板后历史 tab 打开但无激活，内容区空态");
 });
