@@ -195,6 +195,8 @@ export const enLocale: LocalePlugin = {
     "files.hidePanel": "Hide file panel",
     "files.detachHint": "Double-click to detach into a window",
     "files.dockBack": "Dock back to panel",
+    "files.ctxDetach": "Detach into window",
+    "files.ctxFloat": "Detach into floating panel",
     "files.showPanel": "Show file panel",
     "files.openFolder": "Open Folder",
     "files.scrollLeft": "Scroll tabs left",

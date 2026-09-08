@@ -195,6 +195,8 @@ export const zhCNLocale: LocalePlugin = {
     "files.hidePanel": "隐藏文件面板",
     "files.detachHint": "双击拆出为窗口",
     "files.dockBack": "移回右栏",
+    "files.ctxDetach": "拆出为窗口",
+    "files.ctxFloat": "拆出为浮窗",
     "files.showPanel": "显示文件面板",
     "files.openFolder": "打开文件夹",
     "files.scrollLeft": "向左滚动页签",

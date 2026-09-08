@@ -178,6 +178,8 @@ export const zhTWLocale: LocalePlugin = {
     "files.hidePanel": "隱藏檔案面板",
     "files.detachHint": "雙擊拆出為視窗",
     "files.dockBack": "移回右欄",
+    "files.ctxDetach": "拆出為視窗",
+    "files.ctxFloat": "拆出為浮動視窗",
     "files.scrollLeft": "向左捲動頁籤",
     "files.scrollRight": "向右捲動頁籤",
     "files.showPanel": "顯示檔案面板",

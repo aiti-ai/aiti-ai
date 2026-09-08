@@ -30,14 +30,39 @@ interface Props {
   activeTabId: string;
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
-  /** 双击 tab 拆出为窗口（aiti-float tab-detach v0.6.0；不传则双击无操作——其他
-   *  使用方零影响。mobile 由调用方决定是否传入）。 */
+  /** 双击/右键 tab 拆出为窗口（aiti-float tab-detach v0.6.0/0.6.2；不传则双击无操作、
+   *  无右键菜单——其他使用方零影响。mobile 由调用方决定是否传入）。 */
   onDetachTab?: (tab: Tab) => void;
+}
+
+/** 右键菜单项（tab-detach v0.6.2）：file/folder/terminal → 拆出为窗口；dock tab → 拆出为
+ *  浮窗（present float，方案 §5.8）。「移回右栏」不在本菜单——拆出后 tab 不在 TabBar，
+ *  移回经窗口标题栏 ⇲（语义唯一入口）。 */
+interface CtxMenu {
+  tab: Tab;
+  x: number;
+  y: number;
 }
 
 export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab }: Props) {
   const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
+  const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
+
+  // 右键菜单关闭：点外/ Escape/滚动（fixed 定位菜单不跟随滚动，收掉最稳）
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setCtxMenu(null); };
+    window.addEventListener("click", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
 
   // 横向滚动：tabs 溢出时两端显示左右滚动按钮。
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -167,6 +192,11 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
             }}
             onClick={() => onSelectTab(tab.id)}
             onDoubleClick={onDetachTab ? () => onDetachTab(tab) : undefined}
+            onContextMenu={onDetachTab ? (e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setCtxMenu({ tab, x: Math.min(e.clientX, window.innerWidth - 170), y: Math.min(e.clientY, window.innerHeight - 70) });
+            } : undefined}
             title={onDetachTab ? t("files.detachHint") : undefined}
             onMouseDown={(e) => {
               if (e.button === 1) e.preventDefault();
@@ -264,6 +294,41 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
+      )}
+      {/* 右键菜单（tab-detach v0.6.2）：fixed 定位；点外/Escape 关闭（effect 挂窗级监听） */}
+      {ctxMenu && onDetachTab && (
+        <div
+          role="menu"
+          style={{
+            position: "fixed",
+            left: ctxMenu.x,
+            top: ctxMenu.y,
+            zIndex: 3200,
+            minWidth: 150,
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            boxShadow: "0 8px 24px rgba(0,0,0,.28)",
+            padding: 4,
+            fontSize: 12,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            style={{
+              display: "flex", alignItems: "center", gap: 8, width: "100%",
+              padding: "7px 10px", border: "none", borderRadius: 6, cursor: "pointer",
+              background: "transparent", color: "var(--text)", textAlign: "left",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+            onClick={() => { const tab = ctxMenu.tab; setCtxMenu(null); onDetachTab(tab); }}
+          >
+            {ctxMenu.tab.kind === "dock" ? t("files.ctxFloat") : t("files.ctxDetach")}
+          </button>
+        </div>
       )}
     </div>
   );
