@@ -1515,7 +1515,10 @@ export function AppShell() {
     if (!projectTrustCwd) return;
 
     const controller = new AbortController();
-    fetch(apiUrl(`/api/project-trust?cwd=${encodeURIComponent(projectTrustCwd)}`), {
+    fetch(apiUrl("/api/project-trust/status"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: projectTrustCwd }),
       signal: controller.signal,
     })
       .then(async (response) => {
@@ -2248,12 +2251,19 @@ export function AppShell() {
     }
     if (menu) {
       // ⋯ 下拉里扩展条目两种形态：
-      //  a) meta.icon 声明式（2026-08 契约）：图标槽归宿主渲染（topbarMenuIconSlotStyle，与内建条目同款），
-      //     点击走 meta.onClick；扩展 render 的 menu 分支不再被使用
-      //  b) 自绘组件（旧契约 / 交互 widget）：原样嵌入 + 补 meta.label 文字，与内建条目对齐
+      //  a) 声明式图标形态：meta.icon + meta.onClick（2026-08 契约，无 render），或带 meta.onClick
+      //     的 render 条目（点击走 meta.onClick，不挂载 render）——图标槽归宿主渲染
+      //     （topbarMenuIconSlotStyle，与内建条目同款）。
+      //     仅「有 meta.onClick 或无 render」才走此形态：有 render 无 meta.onClick 的自绘条目
+      //     （如 session-manager sessions/kanban/search）若也只画图标，菜单行内没有任何可点目标
+      //     （metaOnClick 缺失、delegateClick 找不到内部 button）→ 点击无效（2026-09 修复）。
+      //  b) 自绘组件（旧契约 / 交互 widget）：原样嵌入（menu=true）+ 补 meta.label 文字，与内建
+      //     条目对齐；点击委托内部 button（delegateClick）
       const extItem2 = toolbarItem ?? sessionItem;
       const metaIcon = extItem2?.meta?.icon;
       const metaOnClick = extItem2?.meta?.onClick;
+      const declarativeIcon = metaIcon != null
+        && (typeof metaOnClick === "function" || typeof ExtComponent !== "function");
       // noMenuLabel：扩展在 ⋯ 菜单里已自带完整内容（如搜索输入框+按钮），宿主不再补文字 label
       const label = extItem2 && !extItem2.meta?.noMenuLabel
         ? (extItem2.meta?.label ?? extItem2.meta?.title ?? id)
@@ -2277,7 +2287,7 @@ export function AppShell() {
           onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
           style={{ ...topbarMenuRowStyle, justifyContent: "flex-start" }}
         >
-          {metaIcon != null ? (
+          {declarativeIcon ? (
             <span style={{ ...topbarMenuIconSlotStyle, color: "var(--text-muted)" }} aria-hidden>
               {renderExtItemIcon(metaIcon, extItem2?.extId)}
             </span>

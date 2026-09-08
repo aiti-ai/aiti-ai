@@ -1,5 +1,29 @@
+import { stat } from "fs/promises";
+import { resolve } from "path";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { getAllowedFileRoots, isExistingFilePathAllowed } from "./file-access";
 import type { ProjectTrustStatus } from "./api-types";
+
+/** 校验 /api/project-trust（及 /status 子路径）的 cwd 参数：非空字符串、存在的目录、在允许根内。
+ *  HTTP 无关（route 层把 error/status 转成响应）。 */
+export async function checkTrustCwd(value: unknown): Promise<{ cwd: string } | { error: string; status: number }> {
+  if (typeof value !== "string" || !value.trim()) {
+    return { error: "cwd required", status: 400 };
+  }
+  const cwd = resolve(value);
+  try {
+    if (!(await stat(cwd)).isDirectory()) {
+      return { error: "cwd must be a directory", status: 400 };
+    }
+  } catch {
+    return { error: "Directory does not exist", status: 400 };
+  }
+  const allowedRoots = await getAllowedFileRoots();
+  if (!isExistingFilePathAllowed(cwd, allowedRoots)) {
+    return { error: "Access denied", status: 403 };
+  }
+  return { cwd };
+}
 
 export function getProjectTrustStatus(cwd: string, agentDir: string): ProjectTrustStatus {
   const requiresTrust = Boolean(cwd) && hasTrustRequiringProjectResources(cwd);

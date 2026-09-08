@@ -958,7 +958,11 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     }
     let cancelled = false;
     setWorktreeLoadingCwd(selectedCwd);
-    fetch(apiUrl(`/api/worktrees?cwd=${encodeURIComponent(selectedCwd)}`))
+    fetch(apiUrl("/api/worktrees/query"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: selectedCwd }),
+    })
       .then((r) => r.json())
       .then((d: { projectRoot?: string; projectKey?: string; isGit?: boolean; isTopLevel?: boolean; currentWorktreePath?: string | null; worktrees?: WorktreeEntry[]; error?: string }) => {
         if (cancelled) return;

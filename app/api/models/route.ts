@@ -126,9 +126,8 @@ const EMPTY_MODELS: ModelsData = {
   thinkingLevelPins: {},
 };
 
-export async function GET(req: Request) {
-  const requestedCwd = new URL(req.url).searchParams.get("cwd") || process.cwd();
-  const cwd = resolve(requestedCwd);
+async function handleModels(requestedCwd: string | null): Promise<Response> {
+  const cwd = resolve(requestedCwd || process.cwd());
 
   let cwdStat;
   try {
@@ -149,4 +148,21 @@ export async function GET(req: Request) {
   } catch {
     return Response.json(withSafeModelLoadFailure(EMPTY_MODELS));
   }
+}
+
+// GET /api/models?cwd= — 查询串形态保留给存量调用方；新代码一律用 POST（cwd 走 JSON body，不落 URL/访问日志）。
+export async function GET(req: Request) {
+  return handleModels(new URL(req.url).searchParams.get("cwd"));
+}
+
+// POST /api/models  body: { cwd? } — 同语义；cwd 缺省时用 process.cwd()（与无 cwd 参数的 GET 一致）。
+export async function POST(req: Request) {
+  let bodyCwd: string | null = null;
+  try {
+    const body = (await req.json()) as { cwd?: unknown };
+    if (typeof body.cwd === "string" && body.cwd.trim()) bodyCwd = body.cwd;
+  } catch {
+    // 空/非 JSON body → 默认 cwd
+  }
+  return handleModels(bodyCwd);
 }

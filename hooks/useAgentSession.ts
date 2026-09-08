@@ -2170,10 +2170,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     }
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
-    const modelsUrl = modelCwd ? apiUrl(`/api/models?cwd=${encodeURIComponent(modelCwd)}`) : apiUrl("/api/models");
     let d: ModelsResponse;
     try {
-      const res = await fetch(modelsUrl, signal ? { signal } : undefined);
+      const res = await fetch(apiUrl("/api/models"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(modelCwd ? { cwd: modelCwd } : {}),
+        ...(signal ? { signal } : {}),
+      });
       if (!res.ok) {
         let detail = "";
         try {
