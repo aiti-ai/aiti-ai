@@ -164,10 +164,15 @@ const nextConfig: NextConfig = {
   },
   // 低内存主机本地 build 兜底（PI_WEB_BUILD_LOW_MEM=1）：webpack 编译 worker 是单进程但
   // 内存 cache 可达数 GB——15.7G 机器（如 Windows 155）8192 堆也会 OOM。关内存 cache +
-  // 限制并行度后 6-8G 堆可过（build 变慢属预期）。正常机器不要设，cache 加速明显。
-  // 背景见 aiti-ai/docs/pi-web-win-deployment.md §8。
+  // 限制并行度 + 撤掉独立编译 worker（主进程内编译）后单进程 6-8G 堆可过（build 变慢属预期）。
+  // 正常机器不要设，cache 加速明显。背景见 aiti-ai/docs/pi-web-win-deployment.md §8。
   ...(process.env.PI_WEB_BUILD_LOW_MEM === "1"
     ? {
+        experimental: {
+          // Next 16 默认把 webpack 编译放独立 worker 进程；多进程 + 虚拟内存边界在低内存
+          // Windows 主机反复 exit 134（AddressSpaceReservation 失败），撤掉回主进程单线程。
+          webpackBuildWorker: false,
+        },
         webpack: (config: Record<string, unknown>) => {
           config.parallelism = 1;
           config.cache = false;
