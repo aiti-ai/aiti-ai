@@ -131,7 +131,7 @@ const GUARDS = [
     file: "./ChatWindow.tsx",
     must: [
       /data-entry-id=\{entryIds\[idx\]\}/,                           // msg-smart/锚点扩展的 DOM 契约
-      /onEditFromHere=\{isNew \? undefined : handleEditFromHereMark\}/,
+      /onEditFromHere=\{sessionBusy \|\| isNew \? undefined : handleEditFromHereMark\}/,  // 运行中隐藏（2026-09-08 拍板：发送时回退与在跑轮次冲突）
       /name="chatOverlay"/,                                          // 消息导航条/锚点横幅插槽
     ],
   },
