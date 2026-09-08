@@ -84,6 +84,27 @@ interface BrokerWindow {
   };
 }
 
+/** 回前台立即重建可疑连接的 document 监听（只注册一次，随首个 broker 创建） */
+let visibilityRelayWired = false;
+function ensureVisibilityRelay(): void {
+  if (visibilityRelayWired || typeof document === "undefined") return;
+  visibilityRelayWired = true;
+  document.addEventListener("visibilitychange", () => {
+    if (typeof document === "undefined" || document.visibilityState !== "visible") return;
+    const b = (window as BrokerWindow).__runningEventsBroker;
+    if (!b || b.dead) return;
+    const stale = b.connOffline
+      || Date.now() - b.lastFrameAt >= HEARTBEAT_FRAME_TIMEOUT_MS
+      || b.reconnectTimer != null;
+    if (!stale) return; // 连接健康（后台短暂切走再回来），不动
+    if (b.reconnectTimer) clearTimeout(b.reconnectTimer);
+    b.reconnectTimer = null;
+    try { b.es?.close(); } catch { /* noop */ }
+    b.es = null;
+    b.connect();
+  });
+}
+
 export function subscribeRunningEvents(listener: Listener): () => void {
   const w = window as BrokerWindow;
   let b = w.__runningEventsBroker;
@@ -162,10 +183,24 @@ export function subscribeRunningEvents(listener: Listener): () => void {
             b!.connOffline = true;
             broadcastConnState("offline");
           }
+          // HTTP 错误（重启窗口 502/503）会把 EventSource 打成 CLOSED——浏览器不再
+          // 自动重试。回退态订阅方会经 error 回调调 reconnectRunningEvents 兜底，
+          // 但接管态消费方（sidebar-dock 经 subscribePageFrames）无 error 回调，
+          // 不兜底就躺平到 75s watchdog，断连横幅在后端恢复后迟迟不下。这里在
+          // broker 层统一调度重建（短延迟防 502 高频循环），恢复即刻 onopen。
+          if (b!.es === source && source.readyState === 2 /* CLOSED */) {
+            reconnectRunningEvents(3000);
+          }
         };
       },
     };
     b.connect();
+    // 回前台立即验证（事件驱动，零轮询）：手机后台冻结常把 EventSource 杀成「静默
+    // 死连接」——浏览器不触发 onerror，要等 75s watchdog 才重建，断连横幅就一直挂
+    // 着。切回前台时若已断连/帧已静默/重连还挂在延迟 timer 里，立即关旧建新：
+    // onopen 成功即广播 online → 断连横幅即刻下掉，不等心跳超时。
+    // （listener 动态读单例，broker 销毁后残留无害；ensureVisibilityRelay 防重复注册。）
+    ensureVisibilityRelay();
   }
   b.listeners.add(listener);
   return () => {
