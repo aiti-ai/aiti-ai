@@ -162,6 +162,19 @@ const nextConfig: NextConfig = {
     NEXT_PUBLIC_PI_VERSION: piVersion,
     NEXT_PUBLIC_BASE_PATH: basePath,
   },
+  // 低内存主机本地 build 兜底（PI_WEB_BUILD_LOW_MEM=1）：webpack 编译 worker 是单进程但
+  // 内存 cache 可达数 GB——15.7G 机器（如 Windows 155）8192 堆也会 OOM。关内存 cache +
+  // 限制并行度后 6-8G 堆可过（build 变慢属预期）。正常机器不要设，cache 加速明显。
+  // 背景见 aiti-ai/docs/pi-web-win-deployment.md §8。
+  ...(process.env.PI_WEB_BUILD_LOW_MEM === "1"
+    ? {
+        webpack: (config: Record<string, unknown>) => {
+          config.parallelism = 1;
+          config.cache = false;
+          return config;
+        },
+      }
+    : {}),
 };
 
 export default nextConfig;
