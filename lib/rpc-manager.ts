@@ -34,6 +34,7 @@ import { cacheSessionPath, invalidateSessionListCache, resolveSessionPath } from
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { notifySessionComplete } from "./web-push";
+import { publishPageEvent } from "./agent-page-events";
 import { hasActiveSessionLivenessProvider } from "./session-liveness";
 import type { SlashCommandInfo, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
@@ -2899,6 +2900,9 @@ export async function startRpcSession(
   options: RpcSessionStartOptions = {},
 ): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
   const { toolNames, initialModel, allowInitialModelFallback, thinkingLevel } = options;
+  // 全新创建（sessionFile 为空 = SessionManager.create 分支）vs 打开/恢复已有会话。
+  // 仅前者在启动成功后广播 sm:session-created（跨 tab 侧栏列表即时出新行）。
+  const isNewSession = !sessionFile;
 
   // ── 单写者红线总闸：被 TUI 桥认领的会话文件，绝不本地起 runtime ──
   // 所有经此创建会话的调用方（含 queue-recovery/context/auto-name 等）
@@ -3183,6 +3187,14 @@ export async function startRpcSession(
       });
     } catch (e) { console.error("[pi-web] agent 会话启动分发失败:", e instanceof Error ? e.message : e); }
 
+    // 全新会话创建广播（泛化页面事件帧，SSE 直达所有 tab）：跨 tab 侧栏列表
+    // （session-manager dock/面板）靠它即时显示别 tab/服务端直建的新会话
+    //（ai-helper invoke/急救 AI/定时任务/ACP 桥），不再只依赖 running 帧间接带动
+    //（jsonl 未落盘 + 5s 扫描缓存窗口内两帧都拉空 → 新会话长期不出现）。客户端
+    // session-manager 收帧后记 pendingDraft 草稿行，由其现有有界补拉链兜底落盘转正。
+    if (isNewSession) {
+      try { publishPageEvent("sm:session-created", { sessionId: realSessionId, cwd: sessionCwd }); } catch { /* 广播失败不阻断启动 */ }
+    }
     return { session: wrapper, realSessionId };
   })().finally(() => {
     locks.delete(sessionId);
