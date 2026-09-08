@@ -642,13 +642,59 @@ export function AppShell() {
   // TerminalPanelBridge 引导到 aiti-cmd（原版 TerminalPanel/PTY 实现隐藏，core 无 /api/terminal）。
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
   const [terminalsRestored, setTerminalsRestored] = useState(false);
+
+  // ═══ [aiti-float dock v0.5.0 批次A·2026-09-08 重补] 右栏 dock tab 化 ═══
+  // ⚠ 本段（dockPanelStates 镜像 / panelTabs dock 派生 / present-change 打开联动 /
+  // 激活位回落）曾在历史上游合并中整体丢失（消费点 handleCloseFileTab 与内容分派幸存
+  // 但不可达）。重补务必整段保留、改 AppShell 时勿拆散——方案见
+  // aiti-work/docs/aiti-web-ext-float-dock-plan.md §4.3/§11。
+  // 数据流：aiti-float dock.ts（或未装 float 时 _shared/ext-float-dock.ts 降级 store）
+  // 发 `piwe-float-present-change` → 宿主镜像形态 → 派生面只渲染 docked:right-panel 的
+  // item 为 tab（id "dock:<extId>:<itemId>"）；宿主零扩展代码 import（解耦通道 =
+  // 同名事件 + `piwe-float-present-command` 命令事件，见 handleCloseFileTab dock 分支）。
+  const rightDockItems = useExtSlotItems("rightFileDock").filter(hasExtRender);
+  const [dockPanelStates, setDockPanelStates] = useState<Map<string, string>>(new Map());
+  useEffect(() => {
+    const onPresent = (e: Event) => {
+      const detail = (e as CustomEvent<{ key: string; state: string }>).detail;
+      if (!detail?.key) return;
+      setDockPanelStates((prev) => {
+        const next = new Map(prev);
+        if (detail.state === "closed") next.delete(detail.key);
+        else next.set(detail.key, detail.state);
+        return next;
+      });
+      // 打开联动（仅显式 dock 命令触发；同态幂等不派发事件 → 手动收起右栏后重复
+      // open/floating 幂等不会误展开）：自动展开右栏并激活对应 dock tab。
+      if (detail.state === "docked:right-panel") {
+        setRightPanelOpen(true);
+        setActiveFileTabId(`dock:${detail.key}`);
+      } else if (detail.state === "closed") {
+        // ✕（TabBar ✕ 转命令事件后由状态机回发 closed）：激活位停在该 dock tab →
+        // 回落最近 file/terminal tab（performCloseFileTab 同款回落语义）。
+        setActiveFileTabId((cur) => {
+          if (cur !== `dock:${detail.key}`) return cur;
+          return fileTabs.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? null;
+        });
+      }
+    };
+    window.addEventListener("piwe-float-present-change", onPresent);
+    return () => window.removeEventListener("piwe-float-present-change", onPresent);
+  }, [fileTabs, terminalTabs]);
+  // ═══ [aiti-float dock 批次A 重补结束] ═══
+
   const panelTabs: Tab[] = [...fileTabs, ...terminalTabs.map((tab) => ({
     id: tab.id,
     label: getFileName(tab.cwd) || tab.cwd,
     filePath: tab.cwd,
     kind: "terminal" as const,
     closing: Boolean(tab.closing),
-  }))];
+  // dock tabs（批次A）：只渲染 docked:right-panel 态 item 为 tab——✕ close → 状态机回发
+  // closed → 镜像删除 → tab 消失；floating/closed/侧栏停靠不占 tab 位。激活位复用
+  // activeFileTabId（terminal tab 先例），不进 fileTabs/terminalTabs state（零独立 state）。
+  })), ...rightDockItems
+    .filter((it) => dockPanelStates.get(it.id) === "docked:right-panel")
+    .map((it) => ({ id: `dock:${it.id}`, label: it.meta?.title || it.meta?.label || it.extId || it.id, filePath: "", kind: "dock" as const }))];
 
   useEffect(() => {
     try {
