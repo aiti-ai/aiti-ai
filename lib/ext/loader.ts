@@ -2,7 +2,7 @@
  * Extension loader — scans the extensions root and loads each extension entry
  * with jiti (TypeScript transpilation, same mechanism the pi TUI uses).
  */
-import { existsSync, readdirSync, statSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join } from "path";
 import { pathToFileURL } from "url";
 import { createJiti } from "jiti";
@@ -91,5 +91,33 @@ export async function loadExtensionFromDir(dir: string): Promise<PiWebExtension 
   if (!ext || typeof ext !== "object") return null;
   const candidate = ext as Partial<PiWebExtension>;
   if (typeof candidate.id !== "string" || !candidate.id) return null;
+  embedUiSvgIcons(dir, candidate);
   return candidate as PiWebExtension;
+}
+
+/**
+ * ui 条目图标文件内嵌（2026-09 契约）：icon 写扩展内 .svg 文件相对路径（如 "icons/mic.svg"）
+ * 时，加载即读取文件、抽出 <svg> 内层标记，替换为 { svg } 内嵌对象——manifest 发给前端的
+ * 已是内嵌 svg，渲染零请求；文件缺失/非法则保留原字符串（前端走 assets mask 兑底渲染）。
+ * 每次扩展加载/reload 执行一次（结果随 ext.ext.ui 缓存，manifest() 直读）。
+ */
+function embedUiSvgIcons(dir: string, ext: Partial<PiWebExtension>): void {
+  const ui = ext.ui as Record<string, unknown> | undefined;
+  if (!ui || typeof ui !== "object") return;
+  for (const val of Object.values(ui)) {
+    if (!Array.isArray(val)) continue;
+    for (const item of val) {
+      if (!item || typeof item !== "object") continue;
+      const icon = (item as { icon?: unknown }).icon;
+      if (typeof icon !== "string" || !icon.endsWith(".svg")) continue;
+      if (icon.startsWith("/") || icon.includes("..") || icon.includes("://")) continue;
+      try {
+        const raw = readFileSync(join(dir, icon), "utf8");
+        const inner = /<svg[^>]*>([\s\S]*?)<\/svg\s*>/.exec(raw)?.[1]?.trim();
+        if (inner) (item as { icon: unknown }).icon = { svg: inner };
+      } catch {
+        // 文件缺失：保留字符串，前端 renderExtItemIcon 走 assets mask 兑底
+      }
+    }
+  }
 }
