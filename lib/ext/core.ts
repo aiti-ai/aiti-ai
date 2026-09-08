@@ -40,7 +40,7 @@ export function makeExtCore(): ExtCoreApi {
           const entries = getSessionEntries(path);
           return buildSessionContext(entries);
         } catch {
-          return null;
+          // 文件形态解析失败 → 继续尝试活 handle 回退
         }
       }
       // 外部后端会话（zcode/codex/…）无 pi 会话文件——回退到活 handle 的内存历史
