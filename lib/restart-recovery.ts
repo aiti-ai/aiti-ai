@@ -36,6 +36,8 @@ export interface InterruptedSessionInfo {
   title: string;
   /** 中断时正在跑的 prompt（最后一条 user 消息，截断预览） */
   lastPrompt: string;
+  /** 最后一条 assistant 消息（截断预览；用户发出后尚无回复则为空） */
+  lastAssistant: string;
   queueCount: number;
   /** 中断 turn 未正常收尾（最后一条不是 stop 的 assistant 消息） */
   turnInterrupted: boolean;
@@ -58,13 +60,14 @@ function truncate(text: string, max = 200): string {
 interface SessionTail {
   title: string;
   lastPrompt: string;
+  lastAssistant: string;
   turnInterrupted: boolean;
   isSubagentByPath: boolean;
 }
 
 /** 一次解析 entries 拿齐展示元数据（清单条目少，全量解析可接受）。 */
 function readSessionTail(filePath: string): SessionTail {
-  const out: SessionTail = { title: "", lastPrompt: "", turnInterrupted: true, isSubagentByPath: false };
+  const out: SessionTail = { title: "", lastPrompt: "", lastAssistant: "", turnInterrupted: true, isSubagentByPath: false };
   // pi-subagents spawn 模式路径特征：<parent>.jsonl 同目录 + /run-N/session.jsonl
   if (/\/run-\d+\/session\.jsonl$/.test(filePath) || /\/run-\d+\/[^/]+\.jsonl$/.test(filePath)) {
     out.isSubagentByPath = true;
@@ -93,6 +96,9 @@ function readSessionTail(filePath: string): SessionTail {
       } else if (msg.role === "assistant") {
         // stop 正常收尾；error/aborted/无 stopReason（半截）都视为未完成
         lastAssistantStopped = msg.stopReason === "stop";
+        // 半截（aborted/无 stopReason）的回复也有展示价值——用户能看到 AI 跑到哪了
+        const text = extractText(msg.content);
+        if (text) out.lastAssistant = truncate(text);
       }
     }
     if (!out.title) out.title = truncate(firstUser, 60);
@@ -147,32 +153,34 @@ export async function scanInterruptedSessions(): Promise<InterruptedReport> {
     }
     const bridgeOwner = await findBridgeOwner(entry.sessionFile);
     if (bridgeOwner) {
-      items.push(toInfo(entry, {
-        title: tail.title, lastPrompt: tail.lastPrompt, queueCount: loadQueue(entry.sessionFile).length,
-        turnInterrupted: tail.turnInterrupted, resumable: false, reason: "bridge",
-      }));
+      items.push(toInfo(entry, { ...tailInfo(tail, entry), resumable: false, reason: "bridge" }));
       continue;
     }
     // 跨实例互斥：同一 session 文件正被另一个活实例运行（共享 sessions 目录，
     // dev/prod 同文件双开 runtime 会互相覆盖写入）→ 只展示不可恢复
     const otherInstance = findOtherInstanceRunner(entry.sessionFile);
     if (otherInstance) {
-      items.push(toInfo(entry, {
-        title: tail.title, lastPrompt: tail.lastPrompt, queueCount: loadQueue(entry.sessionFile).length,
-        turnInterrupted: tail.turnInterrupted, resumable: false, reason: "other-instance",
-      }));
+      items.push(toInfo(entry, { ...tailInfo(tail, entry), resumable: false, reason: "other-instance" }));
       continue;
     }
-    items.push(toInfo(entry, {
-      title: tail.title, lastPrompt: tail.lastPrompt, queueCount: loadQueue(entry.sessionFile).length,
-      turnInterrupted: tail.turnInterrupted, resumable: true,
-    }));
+    items.push(toInfo(entry, { ...tailInfo(tail, entry), resumable: true }));
   }
   const pending = items.filter((i) => i.state === "pending");
   return {
     items,
     pendingCount: pending.length,
     totalQueued: pending.reduce((n, i) => n + i.queueCount, 0),
+  };
+}
+
+/** readSessionTail 结果 + queueCount → 清单条目的展示字段。 */
+function tailInfo(tail: SessionTail, entry: JournalEntry): Partial<InterruptedSessionInfo> {
+  return {
+    title: tail.title,
+    lastPrompt: tail.lastPrompt,
+    lastAssistant: tail.lastAssistant,
+    queueCount: loadQueue(entry.sessionFile).length,
+    turnInterrupted: tail.turnInterrupted,
   };
 }
 
@@ -189,6 +197,7 @@ function toInfo(
     state: entry.state ?? "pending",
     title: "",
     lastPrompt: "",
+    lastAssistant: "",
     queueCount: 0,
     turnInterrupted: false,
     resumable: true,

@@ -25,6 +25,7 @@ interface InterruptedItem {
   state: "pending" | "dismissed";
   title: string;
   lastPrompt: string;
+  lastAssistant: string;
   queueCount: number;
   turnInterrupted: boolean;
   resumable: boolean;
@@ -152,6 +153,13 @@ export function RestartRecoveryWizard() {
   const btnPrimary: React.CSSProperties = { ...btnBase, color: "var(--accent)", background: "color-mix(in srgb, var(--accent) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--accent) 45%, var(--border))" };
   const btnPrimarySolid: React.CSSProperties = { ...btnBase, color: "#fff", background: "var(--accent)", border: "1px solid var(--accent)" };
   const dim = (s: React.CSSProperties, off: boolean): React.CSSProperties => ({ ...s, opacity: off ? 0.45 : 1, cursor: off ? "not-allowed" : "pointer" });
+  // 会话行消息预览（用户/AI 各最多 2 行，超出省略）
+  const previewTextStyle: React.CSSProperties = {
+    minWidth: 0, flex: 1,
+    fontSize: 12, lineHeight: 1.5, color: "var(--text)",
+    display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical",
+    overflow: "hidden", wordBreak: "break-word",
+  };
 
   const stepTitle = active
     ? t("chat.restartRecoveryQueueOf", { name: active.title || active.sessionId.slice(0, 8) })
@@ -308,6 +316,32 @@ export function RestartRecoveryWizard() {
                       ? <span style={{ color: "#d97706" }}>⚠ {t("chat.restartRecoveryInterrupted")}</span>
                       : <span>✓ {t("chat.restartRecoveryCompleted")}</span>}
                   </div>
+                  {(item.lastPrompt || item.lastAssistant) && (
+                    <div style={{ marginTop: 7, display: "grid", gap: 4 }}>
+                      {item.lastPrompt && (
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                          <span style={{
+                            flexShrink: 0, minWidth: 34, textAlign: "center",
+                            fontSize: 10, fontWeight: 650, padding: "1px 6px", borderRadius: 5,
+                            marginTop: 1.5, color: "var(--text-muted)", border: "1px solid var(--border)",
+                          }}>{t("chat.restartRecoveryLastUser")}</span>
+                          <span style={previewTextStyle}>{item.lastPrompt}</span>
+                        </div>
+                      )}
+                      {item.lastAssistant && (
+                        <div style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                          <span style={{
+                            flexShrink: 0, minWidth: 34, textAlign: "center",
+                            fontSize: 10, fontWeight: 650, padding: "1px 6px", borderRadius: 5,
+                            marginTop: 1.5, color: "var(--accent)",
+                            border: "1px solid color-mix(in srgb, var(--accent) 40%, transparent)",
+                            background: "color-mix(in srgb, var(--accent) 6%, transparent)",
+                          }}>{t("chat.restartRecoveryLastAi")}</span>
+                          <span style={{ ...previewTextStyle, color: "var(--text-muted)" }}>{item.lastAssistant}</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </button>
             );

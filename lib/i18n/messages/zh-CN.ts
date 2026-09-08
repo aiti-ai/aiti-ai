@@ -384,6 +384,8 @@ export const zhCNLocale: LocalePlugin = {
     "chat.restartRecoveryWasRunning": "中断时正在运行：{prompt}",
     "chat.restartRecoveryQueued": "{count} 条排队",
     "chat.restartRecoveryInterrupted": "任务未完成",
+    "chat.restartRecoveryLastUser": "用户",
+    "chat.restartRecoveryLastAi": "AI",
     "chat.restartRecoveryCompleted": "上次任务已完成",
     "chat.restartRecoveryExternal": "外部会话，不自动恢复",
     "chat.restartRecoveryBridge": "已被其他后端接管",

@@ -704,6 +704,8 @@ export const zhTWLocale: LocalePlugin = {
     "chat.restartRecoveryWasRunning": "中斷時正在運行：{prompt}",
     "chat.restartRecoveryQueued": "{count} 條排隊",
     "chat.restartRecoveryInterrupted": "任務未完成",
+    "chat.restartRecoveryLastUser": "使用者",
+    "chat.restartRecoveryLastAi": "AI",
     "chat.restartRecoveryCompleted": "前任務已完成",
     "chat.restartRecoveryExternal": "外部會話，不自動恢復",
     "chat.restartRecoveryBridge": "已被其他後端接管",

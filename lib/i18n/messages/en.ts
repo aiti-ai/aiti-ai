@@ -383,6 +383,8 @@ export const enLocale: LocalePlugin = {
     "chat.restartRecoveryWasRunning": "Was running when interrupted: {prompt}",
     "chat.restartRecoveryQueued": "{count} queued",
     "chat.restartRecoveryInterrupted": "turn unfinished",
+    "chat.restartRecoveryLastUser": "User",
+    "chat.restartRecoveryLastAi": "AI",
     "chat.restartRecoveryCompleted": "last turn finished",
     "chat.restartRecoveryExternal": "external session",
     "chat.restartRecoveryBridge": "claimed by another backend",
