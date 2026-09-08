@@ -66,7 +66,7 @@ interface RegistryRow { sessionFile: string; socket: string; sessionId: string }
 function readRegistryRows(): RegistryRow[] {
   const registryPath =
     process.env.PI_BRIDGE_REGISTRY
-    ?? join(homedir(), ".pi", "agent", "bridge-registry.json");
+    ?? join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "bridge-registry.json");
   try {
     const reg = JSON.parse(readFileSync(registryPath, "utf8")) as Record<string, { socket?: unknown; pid?: unknown }>;
     const rows: RegistryRow[] = [];

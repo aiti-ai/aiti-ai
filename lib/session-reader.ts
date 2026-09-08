@@ -719,7 +719,7 @@ export async function findBridgeSessionFileById(sessionId: string): Promise<stri
   if (!/^[0-9a-f-]{36}$/.test(sessionId)) return null;
   const registryPath =
     process.env.PI_BRIDGE_REGISTRY
-    ?? join(homedir(), ".pi", "agent", "bridge-registry.json");
+    ?? join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "bridge-registry.json");
   try {
     const raw = readFileSync(registryPath, "utf8");
     const reg = JSON.parse(raw) as Record<string, unknown>;

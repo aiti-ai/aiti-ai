@@ -38,7 +38,8 @@ export interface InvokeAIResult {
   usage?: InvokeAIUsage;
 }
 
-const AGENT_DIR = join(homedir(), ".pi", "agent");
+// Docker 标准化 S2（aiti-docker-image-plan 附录 C A1）：env 优先，未设行为不变。
+const AGENT_DIR = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 const MODELS_PATH = process.env.PI_MODELS_JSON || join(AGENT_DIR, "models.json");
 
 let runtimePromise: Promise<ModelRuntime> | null = null;
