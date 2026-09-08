@@ -3,10 +3,22 @@
  * with jiti (TypeScript transpilation, same mechanism the pi TUI uses).
  */
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
-import { join } from "path";
+import { join, resolve } from "path";
 import { pathToFileURL } from "url";
 import { createJiti } from "jiti";
 import type { PiWebExtension } from "./types.ts";
+
+// 宿主 SDK alias：扩展部署产物通常不带 node_modules（如 ~/.pi/web/extensions/*），
+// 裸说明符 @earendil-works/pi-coding-agent 由宿主 node_modules 提供——依赖宿主而非外部链接。
+// 与 pi-web 自身依赖同版本同实例（package.json dependencies 锁 0.85.x）。
+// Turbopack 编译 instrumentation hook 时 import.meta.dirname 为 undefined（Next 16 已知坑），
+// 而 next dev/start 恒以项目根为 cwd——用 cwd 推导 node_modules 位置。
+const hostSdkDir = resolve(
+  import.meta.dirname ? join(import.meta.dirname, "..", "..") : process.cwd(),
+  "node_modules",
+  "@earendil-works",
+  "pi-coding-agent",
+);
 
 const ENTRY_NAMES = ["index.ts", "index.mjs", "index.js", "index.cjs"];
 
@@ -85,7 +97,13 @@ export async function loadExtensionFromDir(dir: string): Promise<PiWebExtension 
   // jiti id = 扩展入口文件（而非加载器自身）：裸说明符从扩展目录解析——扩展可带
   // 标准 node_modules 依赖（npm 安装），不依赖宿主 node_modules。
   // moduleCache: false so POST /api/extensions/reload picks up code changes.
-  const jiti = createJiti(pathToFileURL(entry).href, { interopDefault: true, moduleCache: false });
+  // alias：宿主 SDK（@earendil-works/pi-coding-agent）由宿主 node_modules 解析，
+  // 扩展部署产物无需自带/链接 node_modules（依赖宿主而非外部）；宿主无该包时保持原行为。
+  const jiti = createJiti(pathToFileURL(entry).href, {
+    interopDefault: true,
+    moduleCache: false,
+    ...(existsSync(hostSdkDir) ? { alias: { "@earendil-works/pi-coding-agent": hostSdkDir } } : {}),
+  });
   const mod = (await jiti.import(pathToFileURL(entry).href)) as unknown;
   const ext = (mod as { default?: unknown } | undefined)?.default ?? mod;
   if (!ext || typeof ext !== "object") return null;
