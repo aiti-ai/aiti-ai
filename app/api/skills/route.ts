@@ -9,14 +9,8 @@ import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-acces
 
 export const dynamic = "force-dynamic";
 
-// GET /api/skills?cwd=<path>
-// Uses DefaultResourceLoader (same logic as AgentSession startup) so settings.json
-// skill paths, package skills, and .agents/skills directories are all included.
-export async function GET(req: Request) {
-  const { searchParams } = new URL(req.url);
-  const cwd = searchParams.get("cwd");
+async function handleSkills(cwd: string | null): Promise<NextResponse> {
   if (!cwd) return NextResponse.json({ error: "cwd required" }, { status: 400 });
-
   try {
     const allowedRoots = await getAllowedFileRoots();
     if (!isExistingFilePathAllowed(cwd, allowedRoots)) {
@@ -26,6 +20,23 @@ export async function GET(req: Request) {
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
+}
+
+// GET /api/skills?cwd=<path> — 查询串形态保留给存量调用方；新代码一律用 POST（cwd 走 JSON body，不落 URL/访问日志）。
+export async function GET(req: Request) {
+  return handleSkills(new URL(req.url).searchParams.get("cwd"));
+}
+
+// POST /api/skills  body: { cwd } — 同语义。
+export async function POST(req: Request) {
+  let bodyCwd: string | null = null;
+  try {
+    const body = (await req.json()) as { cwd?: unknown };
+    if (typeof body.cwd === "string") bodyCwd = body.cwd;
+  } catch {
+    /* fallthrough → cwd required */
+  }
+  return handleSkills(bodyCwd);
 }
 
 // PATCH /api/skills — toggle disable-model-invocation on a SKILL.md file

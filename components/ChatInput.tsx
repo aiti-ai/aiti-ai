@@ -2366,7 +2366,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const requestCwd = cwd;
     let cancelled = false;
     setSkillDormancyState({ cwd: requestCwd, values: {} });
-    fetch(apiUrl(`/api/skills?cwd=${encodeURIComponent(requestCwd)}`))
+    fetch(apiUrl("/api/skills"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: requestCwd }),
+    })
       .then((res) => {
         if (!res.ok) throw new Error(`skills fetch failed: ${res.status}`);
         return res.json() as Promise<Partial<SkillsResponse>>;

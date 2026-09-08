@@ -187,7 +187,12 @@ export function AgentsConfig({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/subagents/profiles?cwd=${encodeURIComponent(cwd)}`, { cache: "no-store" });
+      const response = await fetch(`/api/subagents/profiles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd }),
+        cache: "no-store",
+      });
       const data = await response.json() as Partial<SubagentProfilesResponse> & { error?: string };
       if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
       const next = data.profiles ?? [];

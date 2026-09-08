@@ -12,11 +12,11 @@ import { isBashOutputPathReferencedBySession } from "@/lib/session-file-referenc
 // GET /api/agent/[id]/bash-output?path=<absPath>
 // Reads a bash output temp file referenced by this session. Inline display is
 // size-limited; download responses stream the file without buffering it.
+// GET ?path=<absPath>[&download=1] — 查询串形态保留给存量调用方；新代码一律用 POST（path 走 JSON body，不落 URL/访问日志）。
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
   let path: string | null = null;
   let download = false;
   try {
@@ -26,7 +26,29 @@ export async function GET(
   } catch {
     return NextResponse.json({ error: "invalid url" }, { status: 400 });
   }
+  const { id } = await params;
+  return handleBashOutput(id, path, download);
+}
 
+// POST body: { path, download? } — 同语义。
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  let path: string | null = null;
+  let download = false;
+  try {
+    const body = (await req.json()) as { path?: unknown; download?: unknown };
+    if (typeof body.path === "string") path = body.path;
+    download = body.download === true;
+  } catch {
+    return NextResponse.json({ error: "invalid body" }, { status: 400 });
+  }
+  return handleBashOutput(id, path, download);
+}
+
+async function handleBashOutput(id: string, path: string | null, download: boolean): Promise<Response> {
   if (!path) {
     return NextResponse.json({ error: "path required" }, { status: 400 });
   }

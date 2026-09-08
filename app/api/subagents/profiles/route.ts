@@ -22,14 +22,31 @@ function validateScope(scope: unknown): SubagentWritableScope {
   return scope;
 }
 
-export async function GET(req: Request) {
+async function handleProfiles(cwd: unknown): Promise<NextResponse> {
   try {
-    const cwd = await validateCwd(new URL(req.url).searchParams.get("cwd"));
-    return NextResponse.json({ profiles: listSubagentProfileSources(cwd) });
+    const validCwd = await validateCwd(cwd);
+    return NextResponse.json({ profiles: listSubagentProfileSources(validCwd) });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json({ error: message }, { status: message === "Access denied" ? 403 : 400 });
   }
+}
+
+// GET /api/subagents/profiles?cwd= — 查询串形态保留给存量调用方；新代码一律用 POST（cwd 走 JSON body，不落 URL/访问日志）。
+export async function GET(req: Request) {
+  return handleProfiles(new URL(req.url).searchParams.get("cwd"));
+}
+
+// POST /api/subagents/profiles  body: { cwd } — 同语义。
+export async function POST(req: Request) {
+  let bodyCwd: unknown = null;
+  try {
+    const body = (await req.json()) as { cwd?: unknown };
+    bodyCwd = body.cwd;
+  } catch {
+    /* fallthrough → validateCwd 报 Valid cwd required */
+  }
+  return handleProfiles(bodyCwd);
 }
 
 export async function PUT(req: Request) {

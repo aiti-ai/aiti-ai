@@ -297,6 +297,8 @@ export async function GET(req: Request) {
 }
 
 // POST /api/plugins body: { action, source?, scope?, cwd }
+// 查询形态：body 只带 cwd（无 action）→ 返回插件清单，与 GET ?cwd= 同语义；
+// cwd 走 JSON body 不落 URL（访问日志/代理日志），新代码一律用 POST。
 export async function POST(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
@@ -312,6 +314,15 @@ export async function POST(req: Request) {
       scope?: PluginScope;
       cwd?: string;
     };
+    if (!body.action) {
+      // 查询分支（无 action）：cwd 必带，行为等同 GET ?cwd=
+      if (!body.cwd) return NextResponse.json({ error: "cwd required" }, { status: 400 });
+      const allowedRoots = await getAllowedFileRoots();
+      if (!isExistingFilePathAllowed(body.cwd, allowedRoots)) {
+        return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      }
+      return NextResponse.json(await readPlugins(body.cwd));
+    }
     if (!body.cwd) return NextResponse.json({ error: "cwd required" }, { status: 400 });
     if (!body.action) return NextResponse.json({ error: "action required" }, { status: 400 });
     const allowedRoots = await getAllowedFileRoots();

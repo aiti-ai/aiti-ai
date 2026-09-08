@@ -1800,21 +1800,35 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
   const [fullOutput, setFullOutput] = useState<string | null>(null);
   const [loadingFull, setLoadingFull] = useState(false);
   const [fullError, setFullError] = useState<string | null>(null);
+  const [downloading, setDownloading] = useState(false);
 
   const isPending = !message.output && message.exitCode === undefined && !message.cancelled;
   const isError = message.cancelled || (message.exitCode !== undefined && message.exitCode !== 0);
-  const fullOutputUrl = sessionId && message.fullOutputPath
-    ? apiUrl(`/api/agent/${encodeURIComponent(sessionId)}/bash-output?path=${encodeURIComponent(message.fullOutputPath)}`)
-    : null;
-  const showFullButton = message.truncated && fullOutputUrl && fullOutput === null;
+  // path 走 POST body，不落 URL（访问日志/代理日志）
+  const canFetchFullOutput = Boolean(sessionId && message.fullOutputPath);
+  const showFullButton = message.truncated && canFetchFullOutput && fullOutput === null;
   const displayOutput = fullOutput ?? message.output;
 
-  async function loadFullOutput() {
-    if (!fullOutputUrl) return;
+  async function fetchFullOutput(download: boolean): Promise<Response | null> {
+    if (!sessionId || !message.fullOutputPath) return null;
     setLoadingFull(true);
+    try {
+      return await fetch(apiUrl(`/api/agent/${encodeURIComponent(sessionId)}/bash-output`), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: message.fullOutputPath, download }),
+      });
+    } finally {
+      setLoadingFull(false);
+    }
+  }
+
+  async function loadFullOutput() {
+    if (!canFetchFullOutput) return;
     setFullError(null);
     try {
-      const res = await fetch(fullOutputUrl);
+      const res = await fetchFullOutput(false);
+      if (!res) return;
       const d = await res.json() as { success?: boolean; data?: { output?: string }; error?: string };
       if (d.success) {
         setFullOutput(d.data?.output ?? "");
@@ -1823,8 +1837,29 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
       }
     } catch (e) {
       setFullError(String(e));
+    }
+  }
+
+  async function downloadFullOutput() {
+    if (!canFetchFullOutput || downloading) return;
+    setFullError(null);
+    setDownloading(true);
+    try {
+      const res = await fetchFullOutput(true);
+      if (!res || !res.ok) return;
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "bash-output.log";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setFullError(String(e));
     } finally {
-      setLoadingFull(false);
+      setDownloading(false);
     }
   }
 
@@ -1852,7 +1887,7 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
   return (
     <div style={{ margin: "6px 0" }}>
       <ToolCallBlock block={block} result={result} />
-      {message.truncated && fullOutputUrl && (
+      {message.truncated && canFetchFullOutput && (
         <div style={{ padding: "4px 10px", fontSize: 11, marginTop: -1 }}>
           {showFullButton && (
             <button
@@ -1864,10 +1899,11 @@ function BashExecutionView({ message, sessionId }: { message: BashExecutionMessa
             </button>
           )}
           <a
-            href={`${fullOutputUrl}&download=1`}
-            style={{ marginLeft: showFullButton ? 10 : 0, color: "var(--accent)", fontSize: 11, textDecoration: "underline" }}
+            href="#"
+            onClick={(e) => { e.preventDefault(); void downloadFullOutput(); }}
+            style={{ marginLeft: showFullButton ? 10 : 0, color: "var(--accent)", fontSize: 11, textDecoration: "underline", cursor: downloading ? "default" : "pointer" }}
           >
-            download full output
+            {downloading ? "downloading…" : "download full output"}
           </a>
           {fullError && <span style={{ marginLeft: 6, color: "var(--text-dim)", fontSize: 11 }}>({fullError})</span>}
         </div>
