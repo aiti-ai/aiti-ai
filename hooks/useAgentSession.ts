@@ -516,6 +516,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const sessionPropIdRef = useRef<string | null>(session?.id ?? null);
   const sessionRunningRef = useRef(Boolean(sessionRunning));
   const agentRunningRef = useRef(false);
+  // 本轮起始时间（epoch ms）：agent_start 重置、agent_settled 清空——phase 标签读秒的起点（zcode desktop「工作中 (x分y秒)」同款语义）
+  const runStartedAtRef = useRef<number | null>(null);
   const isCompactingRef = useRef(false);
   const sdkAgentActiveRef = useRef(false);
   const rpcPromptPendingRef = useRef(false);
@@ -1191,6 +1193,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           sdkAgentActiveRef.current = Boolean(state?.isStreaming);
           rpcPromptPendingRef.current = Boolean(state?.isPromptRunning);
           agentRunningRef.current = true;
+          runStartedAtRef.current ??= Date.now();
           setAgentRunning(true);
           setAgentPhase(state?.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
           return;
@@ -1407,6 +1410,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           cancelEventStreamGrace();
           sdkAgentActiveRef.current = true;
           agentRunningRef.current = true;
+          runStartedAtRef.current ??= Date.now();
           setAgentRunning(true);
           setAgentPhase({ kind: "waiting_model" });
         }
@@ -1416,6 +1420,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         cancelEventStreamGrace();
         sdkAgentActiveRef.current = true;
         agentRunningRef.current = true;
+        runStartedAtRef.current = Date.now();
         setAgentRunning(true);
         setAgentPhase({ kind: "waiting_model" });
         dispatchStream({ type: "start" });
@@ -1465,6 +1470,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "agent_settled": {
         const agentWasActive = sdkAgentActiveRef.current;
         sdkAgentActiveRef.current = false;
+        runStartedAtRef.current = null;
         if (!agentWasActive || rpcPromptPendingRef.current) break;
 
         const sid = sessionIdRef.current;
@@ -1878,6 +1884,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     optimisticUserMessageKeyRef.current = userMessageKey(userMsg);
     promptRunIdRef.current = promptRunId;
     agentRunningRef.current = true;
+    runStartedAtRef.current = Date.now();
     setAgentRunning(true);
     setAgentPhase(isSlashCommandPrompt ? { kind: "running_command" } : { kind: "waiting_model" });
     dispatchStream({ type: "start" });
@@ -2510,6 +2517,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           sdkAgentActiveRef.current = Boolean(st.isStreaming);
           rpcPromptPendingRef.current = Boolean(st.isPromptRunning);
           agentRunningRef.current = true;
+          runStartedAtRef.current ??= Date.now();
           setAgentRunning(true);
           setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
           dispatchStream({ type: "start" });
@@ -3003,6 +3011,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             sdkAgentActiveRef.current = Boolean(agentState.state.isStreaming);
             rpcPromptPendingRef.current = Boolean(agentState.state.isPromptRunning);
             agentRunningRef.current = true;
+            runStartedAtRef.current ??= Date.now();
             setAgentRunning(true);
             setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
             dispatchStream({ type: "start" });
@@ -3305,7 +3314,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isNew,
     promptAnchorActive,
     // Refs
-    sessionIdRef, messagesEndRef, scrollContainerRef,
+    sessionIdRef, messagesEndRef, scrollContainerRef, runStartedAtRef,
     lastUserMsgRef, pendingScrollToUserRef, initialScrollDoneRef,
     // Actions
     handleSend, handleAbort, handleFork, handleNavigate, handleEditFromStartSend, handleModelChange,

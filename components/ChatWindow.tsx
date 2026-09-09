@@ -104,6 +104,19 @@ function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, 
   return null;
 }
 
+/** 轮次读秒徽标（对齐 zcode desktop「工作中 (x分y秒)」）：纯本地 UI 时钟每秒自刷新，
+ *  起点 = 本轮 agent_start（useAgentSession.runStartedAtRef）；仅显示逻辑，无任何状态轮询/请求。 */
+function ElapsedBadge({ startedAt }: { startedAt: number }) {
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const timer = setInterval(() => setTick((n) => n + 1), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  const secs = Math.max(0, Math.round((Date.now() - startedAt) / 1000));
+  const label = secs < 60 ? `${secs}s` : `${Math.floor(secs / 60)}m${String(secs % 60).padStart(2, "0")}s`;
+  return <span style={{ fontVariantNumeric: "tabular-nums" }}>({label})</span>;
+}
+
 const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
@@ -320,6 +333,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     interactionRequest, respondToInteraction,
     isAutoModelSelection,
     agentPhase,
+    runStartedAtRef,
     isNew,
     sessionIdRef, messagesEndRef, scrollContainerRef,
     lastUserMsgRef,
@@ -1524,7 +1538,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
             {agentRunning && !hasStreamingContent && agentPhase && (
               <div className="break-words py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">{phaseLabel(agentPhase, t)}</span>
+                <span className="animate-[pulse_1.5s_infinite]">
+                  {phaseLabel(agentPhase, t)}
+                  {runStartedAtRef.current !== null && <ElapsedBadge startedAt={runStartedAtRef.current} />}
+                </span>
               </div>
             )}
 
