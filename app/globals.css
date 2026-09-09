@@ -130,16 +130,38 @@ body {
 }
 
 
+/* 滚动条：轨道 10px 保证可点（拖拽/点击翻页都有足够命中区），
+   thumb 用透明 border + content-box 裁剪保持 4px 细视觉；
+   悬停 border 收窄 → 视觉加宽到 6px 并提亮，提示可交互。 */
 ::-webkit-scrollbar {
-  width: 4px;
-  height: 4px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 7px;
   background: var(--border);
-  border-radius: 2px;
+  background-clip: content-box;
+  min-height: 24px;
+  min-width: 24px;
+}
+::-webkit-scrollbar-thumb:hover {
+  border-width: 2px;
+  background-color: var(--text-dim);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  /* Firefox：scrollbar-color 可继承，:root 设一次全文档生效 */
+  :root {
+    scrollbar-color: var(--border) transparent;
+  }
+
+  * {
+    scrollbar-width: thin;
+  }
 }
 
 
@@ -348,25 +370,24 @@ button.extension-widget-trigger:focus-visible {
   line-height: 1.45;
   white-space: pre;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: var(--text-dim);
-}
-
-/* 文件/文件夹标签条（TabBar 滚动容器）：超细浅色滚动条。
+/* 文件/文件夹标签条（TabBar 滚动容器）：细浅色横向滚动条（轨道 9px 可点，视觉 3px）。
    注意不能在该元素上设 scrollbar-width/scrollbar-color——设了会让 Chrome 121+
    忽略 ::-webkit-scrollbar 定制、退回原生粗滚动条，故 Firefox 规则用 @supports 隔离。 */
 .tabbar-scroll::-webkit-scrollbar {
-  height: 3px;
+  height: 9px;
 }
 .tabbar-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 .tabbar-scroll::-webkit-scrollbar-thumb {
+  border: 3px solid transparent;
+  border-radius: 5px;
   background: var(--border);
-  border-radius: 2px;
+  background-clip: content-box;
 }
 .tabbar-scroll::-webkit-scrollbar-thumb:hover {
-  background: var(--text-dim);
+  border-width: 2px;
+  background-color: var(--text-dim);
 }
 @supports not selector(::-webkit-scrollbar) {
   /* Firefox only */
