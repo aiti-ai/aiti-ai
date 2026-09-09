@@ -49,6 +49,9 @@ function deploymentDevOrigins(): string[] {
 }
 
 const nextConfig: NextConfig = {
+  // Docker 镜像瘦身开关：构建期设 NEXT_OUTPUT_STANDALONE=1 产出 .next/standalone 最小
+  // 依赖树（替代整棵 node_modules，core 镜像 -1.4GB）。宿主/dev 不设该 env，行为不变。
+  ...(process.env.NEXT_OUTPUT_STANDALONE === "1" ? { output: "standalone" as const } : {}),
   // 关闭 Next 内置 gzip（默认 compress:true 会压缩 middleware rewrite 转发的响应，
   // 含 SSE——gzip 缓冲攒块，首帧延迟到下个写入才 flush，隧道场景 15s+，页面连不上桥）。
   // 边缘压缩由 nginx 负责（见 conf.d/pi-web.conf 的「响应重压」段），Next 层压缩纯冗余。
