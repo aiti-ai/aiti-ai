@@ -488,8 +488,9 @@ export class ExtRegistryImpl {
       // 未声明整组门 → 纯 per-tool 语义
       const hasWholeGate = (ext.ext.features ?? []).some((f) => f.id === "agentTools.enabled" && f.type !== "string");
       const wholeGateOn = hasWholeGate ? this.featureEnabled(ext.id, "agentTools.enabled") : true;
-      // 整组门开 → 忽略 per-tool 过滤（不管默认关），全部放行；否则按 per-tool 逐项过滤
-      const enabled = (hasWholeGate && wholeGateOn) ? true : (managed ? this.featureEnabled(ext.id, fid) : true);
+      // 整组门（粗开关，覆盖 per-tool）：关 → 全组不注入；开 → 忽略 per-tool 默认、全部放行。
+      // 未声明整组门 → 纯 per-tool 语义（managed ? featureEnabled : true）。
+      const enabled = hasWholeGate ? wholeGateOn : (managed ? this.featureEnabled(ext.id, fid) : true);
       if (!enabled) continue;
       // 整组门开时 execute 包装检查整组门（关即拒，即时生效）；否则检查 per-tool fid
       const checkFid = (hasWholeGate && wholeGateOn) ? "agentTools.enabled" : fid;
