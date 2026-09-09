@@ -1,0 +1,7 @@
+allowBuilds:
+  '@google/genai': true
+  esbuild: true
+  protobufjs: true
+  unrs-resolver: true
+overrides:
+  esbuild: 0.25.12
