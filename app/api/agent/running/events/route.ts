@@ -1,7 +1,13 @@
 import { getRunningRpcSessionIds, subscribeRunningSessions } from "@/lib/rpc-manager";
 import { getRunningHandleIds, subscribeRunningHandles } from "@/lib/session/handle-store";
 import { getBridgeRunningIds, subscribeBridgeRunning } from "@/lib/session/bridge-running";
-import { addPageEventSink } from "@/lib/agent-page-events";
+// publishRunning 必须走本模块直接 import（不可经 globalThis.__piPageEvents）：
+// prod 构建下 instrumentation 与路由的模块图 realm 分裂（见 lib/rpc-manager.ts 顶部
+// 同款警告），路由 realm 的 globalThis 上没有全局槽 → 可选链静默吞帧。症状实证
+// （2026-09-09，155 /win）：SSE 只有心跳、running 帧（含连接初始快照）全丢，
+// 心跳又喂活了客户端全部判活兜底 → 侧栏运行中状态冻结到下次刷新。
+// 直接 import 与下方 addPageEventSink 同模块实例，sink 集合必然一致。
+import { addPageEventSink, publishPageEvent } from "@/lib/agent-page-events";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +42,7 @@ export async function GET(req: Request) {
         publishRunning();
       };
       const publishRunning = () => {
-        (globalThis as { __piPageEvents?: { publish: (type: string, data: Record<string, unknown>) => void } }).__piPageEvents?.publish("running", { runningSessionIds: mergedRunningIds() });
+        publishPageEvent("running", { runningSessionIds: mergedRunningIds() });
       };
       const unsubRpc = subscribeRunningSessions(onRunningChange);
       const unsubHandle = subscribeRunningHandles(onRunningChange);
