@@ -1420,7 +1420,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         cancelEventStreamGrace();
         sdkAgentActiveRef.current = true;
         agentRunningRef.current = true;
-        runStartedAtRef.current = Date.now();
+        // ??=：本轮起点取最早值——SSE 重连会重放 buffer 里的 agent_start（新会话换绑后必然重连），
+        // 无条件重置会让读秒中途回零；settled 已置 null，下一轮自然起新点。
+        runStartedAtRef.current ??= Date.now();
         setAgentRunning(true);
         setAgentPhase({ kind: "waiting_model" });
         dispatchStream({ type: "start" });
@@ -1884,7 +1886,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     optimisticUserMessageKeyRef.current = userMessageKey(userMsg);
     promptRunIdRef.current = promptRunId;
     agentRunningRef.current = true;
-    runStartedAtRef.current = Date.now();
+    // ??=：运行中 steer/续发不重置本轮读秒（空闲新轮时 ref 为 null，照常起新点）
+    runStartedAtRef.current ??= Date.now();
     setAgentRunning(true);
     setAgentPhase(isSlashCommandPrompt ? { kind: "running_command" } : { kind: "waiting_model" });
     dispatchStream({ type: "start" });
