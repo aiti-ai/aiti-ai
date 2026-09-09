@@ -998,6 +998,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     trash: queueTrash ?? null,
     queueCount,
     trashCount,
+    // 外部 agent 后端（session id 带 provider 前缀，如 zcode:/codex:）的 steer 条目已注入
+    // 后端 CLI 进程（aii-*-agent backend-queue），协议不支持撤回/移动/转换——操作必报
+    // AgentCommandError。置只读让 queuePanel 隐藏 steer 条目行级操作；排除 new: 草稿
+    // （新建会话是内置 pi 后端，steer 可管理）。内置 pi 会话 id 是纯 UUID 无前缀。
+    steerReadonly: /^(?!new:)[a-z][\w-]*:/i.test(sessionId ?? ""),
     actions: {
       move: (kind, from, to) => onMoveQueue?.(kind, from, to) ?? Promise.resolve(false),
       convert: (kind, index, target) => onConvertQueueItem?.(kind, index, target) ?? Promise.resolve(false),

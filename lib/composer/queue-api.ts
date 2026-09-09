@@ -96,6 +96,11 @@ export interface QueuePanelProps {
   isMobile?: boolean;
   /** 粗指针（触屏）判定——扩展无 useIsCoarsePointer hook，由核心传入（HTML5 drag vs touch drag）。 */
   isCoarsePointer?: boolean;
+  /** steer 只读（外部 agent 后端，如 zcode:/codex:）：条目已注入后端 CLI 进程的 steer
+   *  队列（工具间隙自动消费），协议不支持撤回/移动/转换——对这些条目的管理操作一律
+   *  报 AgentCommandError。扩展应隐藏 steer 条目的行级操作仅展示；core 兕底 banner
+   *  本就纯展示不受影响。内置 pi 后端（无前缀/ new: 草稿）恒 false。 */
+  steerReadonly?: boolean;
 }
 
 /** ext → core 反向通道（bus 注册；core 恢复流等调用，无接管时 no-op）。 */
