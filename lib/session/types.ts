@@ -88,6 +88,12 @@ export interface SessionCapabilities {
   // ---- cc-connect 对齐的进阶能力 ──────────────────────────────────
   /** 响应 agent 的工具授权请求（cc-connect RespondPermission；如 CC 的 can_use_tool）。 */
   respondPermission: boolean;
+  /**
+   * 响应 agent 的交互元语请求（interaction_request 事件：plan 方案审批 / 问题询问）。
+   * 外部后端适配器把自己的「询问/审批」反向协议（如 zcode ExitPlanMode·AskUserQuestion）
+   * 映射为 interaction_request 事件 + 本方法，前端渲染统一的审批卡/问题卡。
+   */
+  respondInteraction: boolean;
   /** 查询账号/模型用量与成本（cc-connect UsageReporter）。 */
   getUsage: boolean;
   /** 列出该后端可选模型（cc-connect AvailableModels；模型选择器数据源）。 */
@@ -118,6 +124,7 @@ export const FULL_CAPABILITIES: SessionCapabilities = {
   deleteSession: true,
   getCommands: true,
   respondPermission: false, // 本地会话无此概念（权限走 TUI/扩展 UI）
+  respondInteraction: false, // 本地会话无此概念（交互走 TUI/扩展 UI）
   getUsage: false,
   listModels: true,
   fileAttachments: false,
@@ -176,6 +183,48 @@ export type PermissionDecision = {
   /** allow 时可回传修正后的工具入参。 */
   updatedInput?: Record<string, unknown>;
   /** deny 时的理由。 */
+  message?: string;
+};
+
+/**
+ * 交互元语请求（handle 事件 type="interaction_request" 的统一形状）。
+ *
+ * pi-web 的交互元语：agent 在一轮执行中暂停下来向用户请求决策——
+ *   - kind="plan_approval"：方案审批（如 zcode ExitPlanMode；plan 字段=方案全文）
+ *   - kind="ask_user"：问题询问（如 zcode AskUserQuestion；questions=问题+选项组）
+ *   - kind="permission"：工具授权（预留；与 permission_request 互为冗余视图）
+ *   - kind="generic"：其他自由形态（仅 prompt + input）
+ * 后端把自有协议映射到这里（未知类型优雅忽略的约定让旧前端安全）。
+ */
+export type InteractionRequestEvent = {
+  type: "interaction_request";
+  /** 请求唯一 id（respondInteraction 的寻址键）。 */
+  requestId: string;
+  kind: "plan_approval" | "ask_user" | "permission" | "generic";
+  /** 来源工具名（如 "ExitPlanMode" / "AskUserQuestion"）。 */
+  toolName?: string;
+  /** 请求说明（agent 给出的一句话理由/上下文）。 */
+  prompt?: string;
+  /** plan_approval：方案全文（markdown）。 */
+  plan?: string;
+  /** ask_user：问题组（question 为寻址键——answers 按它回填）。 */
+  questions?: Array<{
+    header?: string;
+    question: string;
+    multiSelect?: boolean;
+    options?: Array<{ label: string; description?: string }>;
+  }>;
+  /** 原始请求负载（后端自定义；前端 generic 卡兜底展示）。 */
+  input?: unknown;
+};
+
+/** 用户对交互元语请求的回答（SessionHandle.respondInteraction 的入参）。 */
+export type InteractionAnswer = {
+  /** accept = 批准/提交所选；decline = 拒绝。 */
+  action: "accept" | "decline";
+  /** ask_user：按问题文本（question）回填答案；单选=字符串（option label），多选=字符串数组。 */
+  answers?: Record<string, string | string[]>;
+  /** plan_approval 拒绝时的反馈文本（后端应把它作为拒绝理由回给 agent 继续修改方案）。 */
   message?: string;
 };
 
@@ -415,6 +464,12 @@ export interface SessionHandle {
    * @capability respondPermission
    */
   respondPermission?(requestId: string, decision: PermissionDecision): Promise<boolean>;
+  /**
+   * 响应一个待决的交互元语请求（事件流里 type="interaction_request" 的 request）。
+   * 返回 false 表示请求已失效/不存在（超时清理、轮次结束等）。
+   * @capability respondInteraction
+   */
+  respondInteraction?(requestId: string, answer: InteractionAnswer): Promise<boolean>;
   /** 最近一轮的用量/成本快照；账号 credits 类后端（如 qoder）走 API，允许 Promise。@capability getUsage */
   getUsage?(): UsageReport | undefined | Promise<UsageReport | undefined>;
   /** 该后端可选的模型清单。@capability listModels */

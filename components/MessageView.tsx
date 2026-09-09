@@ -1189,8 +1189,8 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
         )}
       </div>
 
-      {/* ── Expanded: input args ── */}
-      {expanded && (isStreamingInput || !isEditTool) && (
+      {/* ── Expanded: input args（交互元语工具特殊渲染：方案全文/问题选项可读化；其余 JSON 兑底） ── */}
+      {expanded && isStreamingInput && (
         <pre
           style={{
             margin: 0,
@@ -1207,6 +1207,9 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
         >
           {inputStr}
         </pre>
+      )}
+      {expanded && !isStreamingInput && !isEditTool && (
+        <InteractionToolCallDetails toolName={block.toolName} input={block.input} fallback={inputStr} isError={isError} />
       )}
 
       {/* ── Paired result — only shown when expanded ── */}
@@ -1818,6 +1821,76 @@ export function getToolCallInputText(block: ToolCallContent): string {
   return block.rawInput ?? JSON.stringify(block.input, null, 2);
 }
 
+/**
+ * 交互元语工具的展开体（zcode ExitPlanMode / AskUserQuestion 适配，历史回放同构）：
+ *   - ExitPlanMode：input.plan 以 markdown 渲染（方案全文可读，不再是 JSON 里打滚）
+ *   - AskUserQuestion：input.questions 按问题分组展示选项（label + description）
+ *   - 其他工具：JSON 兑底（原样）
+ */
+function InteractionToolCallDetails({ toolName, input, fallback, isError }: {
+  toolName: string;
+  input: Record<string, unknown>;
+  fallback: string;
+  isError: boolean;
+}) {
+  const preStyle: React.CSSProperties = {
+    margin: 0,
+    padding: "3px 10px",
+    color: "var(--text-muted)",
+    fontSize: "calc(12px + var(--chat-font-size-offset, 0px))",
+    lineHeight: 1.4,
+    overflow: "auto",
+    background: "var(--bg-subtle)",
+    borderTop: isError ? "1px solid rgba(248,113,113,0.25)" : "1px solid rgba(34,197,94,0.2)",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-all",
+  };
+
+  if (toolName === "ExitPlanMode" && typeof input.plan === "string" && input.plan.trim()) {
+    return (
+      <div style={{ background: "var(--bg-subtle)", borderTop: isError ? "1px solid rgba(248,113,113,0.25)" : "1px solid rgba(34,197,94,0.2)", padding: "6px 12px" }}>
+        <div style={{ fontSize: 10, color: "var(--text-dim)", marginBottom: 4, fontFamily: "var(--font-mono)" }}>PLAN</div>
+        <SafeMarkdownBody className="text-[13px]">{input.plan}</SafeMarkdownBody>
+      </div>
+    );
+  }
+
+  if (toolName === "AskUserQuestion" && Array.isArray(input.questions) && input.questions.length > 0) {
+    return (
+      <div style={{ background: "var(--bg-subtle)", borderTop: isError ? "1px solid rgba(248,113,113,0.25)" : "1px solid rgba(34,197,94,0.2)", padding: "6px 12px" }}>
+        {(input.questions as Array<Record<string, unknown>>).map((q, qi) => {
+          if (!q || typeof q.question !== "string") return null;
+          const options = Array.isArray(q.options) ? q.options as Array<Record<string, unknown>> : [];
+          return (
+            <div key={qi} style={{ marginBottom: options.length > 0 ? 8 : 0 }}>
+              <div style={{ fontSize: 12, color: "var(--text)", marginBottom: 4 }}>
+                {typeof q.header === "string" && q.header && (
+                  <span style={{ color: "var(--text-dim)", marginRight: 6 }}>[{q.header}]</span>
+                )}
+                {q.question}
+                {q.multiSelect === true && <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: 6 }}>（多选）</span>}
+              </div>
+              {options.map((o, oi) =>
+                typeof o?.label === "string" ? (
+                  <div key={oi} style={{ fontSize: 12, color: "var(--text-muted)", padding: "1px 0 1px 14px" }}>
+                    <span style={{ marginRight: 6 }}>◯</span>
+                    <span style={{ fontWeight: 600, color: "var(--text)" }}>{o.label}</span>
+                    {typeof o.description === "string" && (
+                      <span style={{ marginLeft: 8, fontSize: 11 }}>{o.description}</span>
+                    )}
+                  </div>
+                ) : null,
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return <pre style={preStyle}>{fallback}</pre>;
+}
+
 function formatCustomType(type: string): string {
   return type || "extension";
 }
@@ -1836,6 +1909,12 @@ function getToolPreview(block: ToolCallContent): string {
   if (keys.length === 0) return "";
 
   // Common tool input patterns
+  if (block.toolName === "ExitPlanMode") return input.plan ? "提交方案审批" : "退出 plan 模式";
+  if (block.toolName === "AskUserQuestion") {
+    const qs = Array.isArray(input.questions) ? input.questions as Array<Record<string, unknown>> : [];
+    const firstQ = qs.find((q) => typeof q?.question === "string")?.question as string | undefined;
+    return firstQ ? firstQ.slice(0, 120) : "向用户提问";
+  }
   if ("command" in input) return String(input.command).slice(0, 120);
   if ("path" in input) return String(input.path).slice(0, 120);
   if ("file_path" in input) return String(input.file_path).slice(0, 120);

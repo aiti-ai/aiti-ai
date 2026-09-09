@@ -12,6 +12,7 @@ import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantB
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { MessageView, estimateTokens } from "./MessageView";
+import { InteractionRequestCard } from "./InteractionRequestCard";
 import { ChatInput, type AttachedImage, type ChatInputHandle } from "./ChatInput";
 import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
@@ -316,6 +317,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused,
     permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
+    interactionRequest, respondToInteraction,
     isAutoModelSelection,
     agentPhase,
     isNew,
@@ -1261,6 +1263,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </button>
           </div>
         </div>
+      )}
+      {interactionRequest && (
+        <InteractionRequestCard request={interactionRequest} onRespond={respondToInteraction} />
       )}
       {backendUsage && !isEmptyNew && (
         <div style={{

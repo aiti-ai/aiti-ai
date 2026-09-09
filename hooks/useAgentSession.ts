@@ -474,6 +474,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     input?: unknown;
   } | null>(null);
   const permissionRespondingRef = useRef(false);
+  /**
+   * 后端会话的交互元语请求（interaction_request 事件；一次一个，后到覆盖）。
+   * plan_approval = 方案审批卡（zcode ExitPlanMode）；ask_user = 问题选项卡（zcode AskUserQuestion）。
+   */
+  const [interactionRequest, setInteractionRequest] = useState<{
+    requestId: string;
+    kind: "plan_approval" | "ask_user" | "permission" | "generic";
+    toolName?: string;
+    prompt?: string;
+    plan?: string;
+    questions?: Array<{
+      header?: string;
+      question: string;
+      multiSelect?: boolean;
+      options: Array<{ label: string; description?: string }>;
+    }>;
+    input?: unknown;
+  } | null>(null);
+  const interactionRespondingRef = useRef(false);
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
@@ -1651,6 +1670,37 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "permission_expired":
         setPermissionRequest(null);
         break;
+      case "interaction_request":
+        // 交互元语（zcode plan 审批/问题询问；一次一个，后到覆盖旧未决）
+        setInteractionRequest({
+          requestId: String(event.requestId ?? ""),
+          kind: event.kind === "plan_approval" || event.kind === "ask_user" || event.kind === "permission" || event.kind === "generic"
+            ? event.kind
+            : "generic",
+          toolName: typeof event.toolName === "string" ? event.toolName : undefined,
+          prompt: typeof event.prompt === "string" ? event.prompt : undefined,
+          plan: typeof event.plan === "string" ? event.plan : undefined,
+          questions: Array.isArray(event.questions)
+            ? (event.questions as Array<Record<string, unknown>>).flatMap((q) => {
+              if (!q || typeof q.question !== "string") return [];
+              return [{
+                header: typeof q.header === "string" ? q.header : undefined,
+                question: q.question,
+                multiSelect: q.multiSelect === true,
+                options: Array.isArray(q.options)
+                  ? (q.options as Array<Record<string, unknown>>).flatMap((o) =>
+                    o && typeof o.label === "string" ? [{ label: o.label, description: typeof o.description === "string" ? o.description : undefined }] : [])
+                  : [],
+              }];
+            })
+            : undefined,
+          input: event.input,
+        });
+        break;
+      case "interaction_expired":
+        // 同步失效（后端已 resolve/清理或 turn 收口）；若正是当前展示的请求则清卡
+        setInteractionRequest((current) => current?.requestId === String(event.requestId ?? "") ? null : current);
+        break;
       case "extension_ui_closed":
         setExtensionDialog((current) => current?.id === event.id ? null : current);
         break;
@@ -1658,6 +1708,32 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage]);
   handleAgentEventRef.current = handleAgentEvent;
+
+  const respondToInteraction = useCallback(async (requestId: string, answer: {
+    action: "accept" | "decline";
+    answers?: Record<string, string | string[]>;
+    message?: string;
+  }): Promise<boolean> => {
+    if (interactionRespondingRef.current) return false;
+    interactionRespondingRef.current = true;
+    try {
+      await sendAgentCommand(sessionIdRef.current ?? session?.id ?? "", {
+        type: "respond_interaction",
+        requestId,
+        action: answer.action,
+        ...(answer.answers ? { answers: answer.answers } : {}),
+        ...(answer.message ? { message: answer.message } : {}),
+      });
+      // 本端立即清卡（其他端由 interaction_expired 广播帧同步）
+      setInteractionRequest((current) => current?.requestId === requestId ? null : current);
+      return true;
+    } catch (e) {
+      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      return false;
+    } finally {
+      interactionRespondingRef.current = false;
+    }
+  }, [sessionIdRef, session?.id]);
 
   const switchPermissionMode = useCallback(async (mode: string): Promise<boolean> => {
     const sid = sessionIdRef.current ?? session?.id;
@@ -3223,6 +3299,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
+    interactionRequest, respondToInteraction,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,
