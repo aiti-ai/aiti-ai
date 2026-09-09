@@ -371,6 +371,7 @@ export const enLocale: LocalePlugin = {
     "chat.recall": "Edit",
     "chat.recallTitle": "Remove all queued messages and put them back into the input box for editing",
     "chat.queueImport": "Import",
+    "chat.queueExport": "Export",
     "chat.queueImportEmpty": "No valid entries found in that file",
     "chat.fileTooLarge": "Some files were too large or exceeded the attachment limit",
     "chat.queueImported": "Imported {count} message(s) to the queue",

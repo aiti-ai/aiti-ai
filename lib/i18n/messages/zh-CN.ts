@@ -372,6 +372,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.recall": "编辑",
     "chat.recallTitle": "移除所有排队消息并将其放回输入框编辑",
     "chat.queueImport": "导入",
+    "chat.queueExport": "导出",
     "chat.queueImportEmpty": "文件中没有有效的消息条目",
     "chat.fileTooLarge": "部分文件过大或超出附件数量上限",
     "chat.queueImported": "已导入 {count} 条消息到队列",
