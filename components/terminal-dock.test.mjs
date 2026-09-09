@@ -9,6 +9,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const bridgeSource = await readFile(new URL("./TerminalPanelBridge.tsx", import.meta.url), "utf8");
+const extSlotsSource = await readFile(new URL("./ExtSlots.tsx", import.meta.url), "utf8");
 const typesSource = await readFile(new URL("../lib/ext/types.ts", import.meta.url), "utf8");
 const tabStateSource = await readFile(new URL("./terminal-tab-state.ts", import.meta.url), "utf8");
 
@@ -70,4 +71,27 @@ test("归属状态机（tab⇄弹窗二选一）与双向占位（aiti-cmd 侧�
 
 test("openAitiCmdShell 死代码已清理（真接管后 core 不再间接唤起弹窗）", () => {
   assert.doesNotMatch(tabStateSource, /openAitiCmdShell/);
+});
+
+// ---- [懒加载适配 2026-09-09] 恢复终端页签永驻「未检测到 aiti-cmd 扩展」根因守护 ----
+// 常挂载 dock 插槽（AppShell hidden 容器）挂载早于 manifest 异步拉取：物化 effect 若只
+// 依赖 [slot]（恒不变）则首跑 pendingForSlot 恒空，声明扩展永不物化，takeover 永不出现。
+
+test("useExtSlotItems 物化 effect 依赖 ui-store version（manifest 就绪后重估 pending）", () => {
+  // version 经 useSyncExternalStore 订阅（manifest 就绪/静态条目/reload 反卷都会 bump）
+  assert.match(extSlotsSource, /useSyncExternalStore\(subscribeExtUi, extUiVersion/);
+  // 物化 effect 依赖必须含 version；仍是裸 [slot] = 时序竞争回归
+  assert.match(extSlotsSource, /\}, \[slot, version\]\);/);
+});
+
+test("fallback open() 先 ensureExtSlotMaterialized 再试 __aitiCmd（交互时刻拉起）", () => {
+  // open 内先拉起声明 terminalDock 的懒扩展，物化完成后再读全局桥
+  const ensureIdx = bridgeSource.indexOf('await ensureExtSlotMaterialized("terminalDock")');
+  const apiIdx = bridgeSource.indexOf(").__aitiCmd;");
+  assert.ok(ensureIdx !== -1, "open() 缺少 ensureExtSlotMaterialized 跳板");
+  assert.ok(apiIdx !== -1, "open() 未读 __aitiCmd");
+  assert.ok(ensureIdx < apiIdx, "ensureExtSlotMaterialized 必须在 __aitiCmd 读取之前（先拉起后探测）");
+  // 物化中为 waking 态（按钮禁用防连点），不得提前置 missing
+  assert.match(bridgeSource, /setWaking\(true\)/);
+  assert.match(bridgeSource, /disabled=\{waking\}/);
 });

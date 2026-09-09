@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
-import { useExtSlotItems, ExtItemBoundary } from "./ExtSlots";
+import { useExtSlotItems, ExtItemBoundary, ensureExtSlotMaterialized } from "./ExtSlots";
 import { hasExtRender } from "@/lib/ext-ui-store";
 
 interface TabLike {
@@ -70,9 +70,18 @@ function TerminalPanelFallback({ tab, active }: { tab: TabLike; active: boolean 
   const { t } = useI18n();
   const [opened, setOpened] = useState(false);
   const [missing, setMissing] = useState(false);
+  const [waking, setWaking] = useState(false);
   const autoRef = useRef(false);
 
-  const open = useCallback(() => {
+  const open = useCallback(async () => {
+    // [懒加载适配 2026-09-09] aiti-cmd client 可能尚未物化（dock 页签常挂载早于
+    // manifest 拉取，槽位物化 effect 未及触发/未完成）。点按与自动唤起本身就是
+    // 交互时刻：先经宿主标准跳板拉起声明 terminalDock 的懒扩展，物化完成后再试
+    // 全局桥 __aitiCmd；确实无扩展才报缺席（此前直接查空即置 missing，误报
+    // 「未检测到 aiti-cmd 扩展」）。
+    setWaking(true);
+    try { await ensureExtSlotMaterialized("terminalDock"); } catch { /* 拉起失败按缺席处理 */ }
+    setWaking(false);
     const api = (window as unknown as { __aitiCmd?: { openShell?: (cwd: string, name?: string) => unknown } }).__aitiCmd;
     if (!api || typeof api.openShell !== "function") {
       setMissing(true);
@@ -89,7 +98,7 @@ function TerminalPanelFallback({ tab, active }: { tab: TabLike; active: boolean 
   useEffect(() => {
     if (!active || tab.restored || autoRef.current) return;
     autoRef.current = true;
-    open();
+    void open();
   }, [active, tab.restored, open]);
 
   return (
@@ -109,11 +118,12 @@ function TerminalPanelFallback({ tab, active }: { tab: TabLike; active: boolean 
         <button
           type="button"
           onClick={open}
+          disabled={waking}
           style={{
             display: "flex", alignItems: "center", gap: 6,
             padding: "6px 14px",
             background: "var(--bg-hover)", border: "1px solid var(--border)",
-            borderRadius: 6, color: "var(--accent)", cursor: "pointer",
+            borderRadius: 6, color: "var(--accent)", cursor: waking ? "wait" : "pointer",
             fontSize: 12, fontWeight: 600,
           }}
         >
@@ -123,6 +133,7 @@ function TerminalPanelFallback({ tab, active }: { tab: TabLike; active: boolean 
           {t("terminal.open")}
         </button>
       )}
+      {waking && !opened && <span role="status" style={{ color: "var(--text-muted)" }}>{t("terminal.title")} · aiti-cmd …</span>}
       {opened && <span role="status" style={{ color: "var(--text-muted)" }}>{t("terminal.title")} · aiti-cmd</span>}
       {missing && <span role="alert" style={{ color: "#ef4444" }}>{t("terminal.needAitiCmd")}</span>}
     </section>

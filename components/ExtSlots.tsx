@@ -39,6 +39,7 @@ import {
   registerExtUiItems,
   removeExtUiItems,
   subscribeExtUi,
+  extUiVersion,
   setExtFeatures,
   setExtOrder,
   patchExtFeature,
@@ -423,7 +424,11 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     renderSlot: (name, props) => createElement(ExtSlot, {
       name,
       currentSession: props?.currentSession ?? null,
-      ...(props?.extra as Record<string, unknown> ?? {}),
+      // extra 原样透传（ExtSlot 内部解构 extra 再展开给 item render）——此前误写成
+      // ...props.extra 平铺到顶层 props，ExtSlot 解构不到 extra 恒 undefined，
+      // 插槽 item 全收不到 extra（session-manager workspacePickerActions 管理弹窗
+      // allProjects.length 崩溃即此因）。
+      extra: props?.extra as Record<string, unknown> | undefined,
     }),
     getExtProvides: () => {
       const provides = new Set<string>();
@@ -720,6 +725,14 @@ export async function ensureExtSlotMaterialized(slot: ExtSlotName): Promise<void
 /** Read registered items for a slot, re-rendering when the store changes. */
 export function useExtSlotItems(slot: ExtSlotName): ExtUiItemRegistered[] {
   const [items, setItems] = useState<ExtUiItemRegistered[]>(() => getExtUiItems(slot));
+  // [懒加载适配 2026-09-09] ui-store 版本号:manifest 就绪（registerDeclaredSlots/
+  // registerStaticItems/registerExtMetas 都 bump）、reload 反卷、feature 变更都会推进。
+  // 物化 effect 以它为依赖——terminalDock 等「常挂载」插槽（AppShell hidden 容器里的
+  // TerminalPanelBridge）挂载时刻早于 manifest 异步拉取完成，此前 effect 依赖仅 [slot]
+  // 只跑一次：首跑时 declaredSlots 未登记 → pendingForSlot 恒空 → 声明扩展永不物化 →
+  // 恢复的终端页签永驻「未检测到 aiti-cmd 扩展」fallback。version bump 后 effect 重跑，
+  // pendingForSlot 幂等（已物化不重触发），顺带修复 reload 反卷后懒扩展不再被插槽拉起。
+  const version = useSyncExternalStore(subscribeExtUi, extUiVersion, () => 0);
   useEffect(() => {
     const update = () => setItems(getExtUiItems(slot));
     update(); // pick up items registered before this hook mounted
@@ -748,7 +761,7 @@ export function useExtSlotItems(slot: ExtSlotName): ExtUiItemRegistered[] {
       if (alive) setItems(getExtUiItems(slot)); // materialize → store bump → 拉最新
     })();
     return () => { alive = false; };
-  }, [slot]);
+  }, [slot, version]);
 
   return items;
 }
@@ -1079,6 +1092,12 @@ let ebSeq = 0;
  *  item 组件渲染 throw（如 .mjs 里 TS 残留的 ReferenceError）静默收起（render null），
  *  不冒泡打崩整页（crash-rescue §4.2：sidebar/composerTools 等插槽无祖先 boundary，
  *  崩则穿透 root）。错误上报全局注册表，由 ExtErrorIndicator 常驻按钮统一操作。 */
+function findRenderSlotError(extId?: string, slot?: string, itemId?: string): ExtSlotError | undefined {
+  for (const e of extSlotErrors.values())
+    if (e.kind === "render" && e.extId === extId && e.slot === slot && e.itemId === itemId) return e;
+  return undefined;
+}
+
 export class ExtItemBoundary extends Component<
   { extId?: string; slot: string; itemId: string; children: ReactNode },
   { err: Error | null }
@@ -1092,8 +1111,11 @@ export class ExtItemBoundary extends Component<
   componentDidCatch(err: Error) {
     const { extId, slot, itemId } = this.props;
     console.error(`[ext] ${extId ?? "?"} item ${slot}/${itemId} 渲染失败（已静默收起，左下角指示器可操作）:`, err);
+    // 指纹去重（extId+slot+itemId+render）：瞬态 slot（如下拉）反复开关会反复卸载/重挂
+    // boundary，重挂再崩时复用原条目覆盖（Map.set 同 id），不堆积重复卡片。
+    const existing = findRenderSlotError(extId, slot, itemId);
     registerExtSlotError({
-      id: this.bid,
+      id: existing ? existing.id : this.bid,
       extId, slot, itemId,
       message: err.message,
       stack: err.stack,
@@ -1103,7 +1125,10 @@ export class ExtItemBoundary extends Component<
   }
   componentWillUnmount() {
     this.mounted = false;
-    if (this.state.err) unregisterExtSlotError(this.bid);
+    // 不在此注销错误：slot 卸载 ≠ 错误消失。瞬态 slot（picker 下拉等）点外关闭时
+    // boundary 随之卸载，若当场注销，用户点 ⚠/🚑（都算下拉外点击）会连锁关下拉→
+    // 注销→⚠ 和错误面板一起闪没（「点了无效」的元凶）。错误保留至「忽略」按钮
+    // 显式清除，或同指纹重注册时覆盖。
   }
   render() {
     if (this.state.err) return null;
