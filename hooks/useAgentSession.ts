@@ -550,6 +550,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // never set this; a purely positional heuristic cannot tell the two apart.
   // Cleared when the user returns to the tail (near-bottom) or on a new run.
   const userScrolledAwayRef = useRef(false);
+  // userScrolledAwayRef 的反应态镜像：小屏占位符「跟随中/已暂停」消费
+  // （ChatInput followStreaming prop）。setUserScrolledAway 是唯一写入口——ref 照旧
+  // 服务同步读路径（smartFollowStep 每帧读），state 同值 set 由 React bail-out，
+  // 不产生多余渲染。
+  const [followPaused, setFollowPaused] = useState(false);
+  const setUserScrolledAway = useCallback((v: boolean) => {
+    userScrolledAwayRef.current = v;
+    setFollowPaused(v);
+  }, []);
   // Last observed scrollTop — lets the scroll handler see direction (a real
   // decrease outside the programmatic window = user scrolling up).
   const lastScrollTopRef = useRef(0);
@@ -634,7 +643,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (!opts?.force && isChatScrollFrozen()) return;
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
     // Landing at the tail re-arms auto-follow for subsequent output.
-    userScrolledAwayRef.current = false;
+    setUserScrolledAway(false);
     const container = scrollContainerRef.current;
     if (!container) return;
     // Container-local scroll instead of messagesEndRef.scrollIntoView():
@@ -647,7 +656,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       : container.scrollHeight;
     container.scrollTo({ top: Math.max(0, target), behavior });
     previousScrollTopRef.current = container.scrollTop;
-  }, [isChatScrollFrozen, messagesEndRef, scrollContainerRef]);
+  }, [isChatScrollFrozen, messagesEndRef, scrollContainerRef, setUserScrolledAway]);
 
   // Step-follow (always on): instead of scrolling to the bottom on every
   // streaming event, only scroll when new output pushes the last message
@@ -2996,7 +3005,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isNearBottomRef.current = targetTop >= maxScrollTop - SCROLL_BOTTOM_THRESHOLD;
     // Landing near the tail re-arms follow; scrolling to a user message high
     // up keeps the walked-away state (the user just jumped away from the tail).
-    if (isNearBottomRef.current) userScrolledAwayRef.current = false;
+    if (isNearBottomRef.current) setUserScrolledAway(false);
     ignoreProgrammaticScrollUntilRef.current = Date.now() + PROGRAMMATIC_SCROLL_IGNORE_MS;
     // 发送/导航跳转是显式视口改暈：清掉 pointerdown 打开的 2s 按压守卫窗口，
     // 否则真实点击发送后，紧随跳转的补偿 step（streaming 占位出现时）会被静默跳过。
@@ -3006,21 +3015,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     composingUntilRef.current = 0;
     editingRef.current = false;
     container.scrollTo({ top: targetTop, behavior: "smooth" });
-  }, []);
+  }, [setUserScrolledAway]);
 
   const markUserScrollIntent = useCallback((event: Event) => {
     if (event instanceof KeyboardEvent) {
       if (!SCROLL_KEYS.has(event.key)) return;
       if (event.target instanceof Element && event.target.closest("input, textarea, [contenteditable='true']")) return;
       // Up-direction keys are a definitive "user is leaving the tail" signal.
-      if (SCROLL_UP_KEYS.has(event.key)) userScrolledAwayRef.current = true;
+      if (SCROLL_UP_KEYS.has(event.key)) setUserScrolledAway(true);
     } else if (event instanceof WheelEvent && event.deltaY < 0) {
       // Wheel-up likewise: no programmatic scroll ever emits wheel events, so
       // this can't be content growth or our own step scrolling.
-      userScrolledAwayRef.current = true;
+      setUserScrolledAway(true);
     }
     userScrollIntentUntilRef.current = Date.now() + USER_SCROLL_INTENT_MS;
-  }, []);
+  }, [setUserScrolledAway]);
 
   const handleScrollPositionChange = useCallback(() => {
     const container = scrollContainerRef.current;
@@ -3031,7 +3040,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       isNearBottomRef.current = scrollTop + clientHeight >= scrollHeight - SCROLL_BOTTOM_THRESHOLD;
       if (isNearBottomRef.current) {
         // Back at the tail: re-arm auto-follow for the rest of this run.
-        userScrolledAwayRef.current = false;
+        setUserScrolledAway(false);
       } else if (
         agentRunningRef.current &&
         scrollTop < prevScrollTop - 1 &&
@@ -3041,7 +3050,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // missed wheel edge): content growing BELOW the fold never moves
         // scrollTop, and programmatic scrolls are filtered by the ignore
         // window, so this is the user reading history.
-        userScrolledAwayRef.current = true;
+        setUserScrolledAway(true);
       }
       if (!isNearBottomRef.current && liveFollowFrameRef.current !== null) {
         cancelAnimationFrame(liveFollowFrameRef.current);
@@ -3222,8 +3231,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // A new run re-arms auto-follow: whatever the user did while reading the
     // previous answer, a fresh prompt starts following from the current
     // position (send paths also scroll to the tail / user message).
-    else userScrolledAwayRef.current = false;
-  }, [agentRunning]);
+    else setUserScrolledAway(false);
+  }, [agentRunning, setUserScrolledAway]);
 
   useLayoutEffect(() => {
     if (messages.length > 0) {
@@ -3351,6 +3360,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // State
     data, loading, error, activeLeafId, messages, entryIds, historyCursor, hasEarlierMessages, streamState,
     agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
+    followPaused,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, currentModel, displayModel, modelSwitching, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,

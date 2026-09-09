@@ -12,6 +12,11 @@ import {
   type DraftSnapshot as ChatDraft,
 } from "@/lib/composer/draft-api";
 import { apiUrl } from "@/lib/base-path";
+import type { ExtensionStatusItem, ExtensionWidgetItem } from "@/lib/types";
+import { stripAnsi } from "@/lib/ansi";
+import { formatExtensionStatusLine } from "./ExtensionStatusBar";
+import { AnsiText } from "./AnsiText";
+import { ExtensionWidgets } from "./ExtensionWidgets";
 import { useChatHooks, ExtSlot, registerChatSend, useExtSlotItems, ExtItemBoundary } from "@/components/ExtSlots";
 import { hasExtRender } from "@/lib/ext-ui-store";
 
@@ -198,6 +203,12 @@ interface Props {
   cwd?: string | null;
   /** 「编辑从此处」待发送标记期间为 true：禁止把预填内容写入草稿（切走/刷新即自动还原） */
   suppressDraft?: boolean;
+  /** 小屏：滚动跟随状态（smartFollow 的 userScrolledAway 镜像取反）——占位符 P3/P4 消费。 */
+  followStreaming?: boolean;
+  /** 小屏 ⓘ sheet「扩展状态」行数据（桌面状态架照旧，由 ChatWindow 直渲）。 */
+  extensionStatuses?: ExtensionStatusItem[];
+  /** 小屏 ⓘ sheet「扩展面板」行数据（桌面状态架照旧）。 */
+  extensionWidgets?: ExtensionWidgetItem[];
 }
 
 export interface ChatInputHandle {
@@ -796,6 +807,266 @@ function StreamingActionButton({
   );
 }
 
+// ============================================================================
+// 小屏「微信式」输入区助手（docs/pi-web-mobile-input-wechat-plan.md v3）
+// ============================================================================
+
+/** base64 → Blob（清空撤销恢复图片预览：快照只持 data 引用，previewUrl 需重建）。 */
+export function base64ToBlob(b64: string, mimeType: string): Blob {
+  const bin = atob(b64);
+  const arr = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+  return new Blob([arr], { type: mimeType });
+}
+
+// ============================================================================
+// 小屏「微信式」状态矩阵（docs/pi-web-mobile-input-wechat-plan.md §三/§七）——
+// 纯函数：组件按结果渲染，单测钉死矩阵与占位符优先级（P8）。
+// ============================================================================
+
+/** 小屏占位符档位（优先级 P1 > P2 > P3 > P4 > agent > P5b/P5 > P6）。 */
+export type MobilePlaceholderKey =
+  | "runImages" | "steer" | "runPaused" | "runFollow" | "agent"
+  | "shellLocal" | "shellModel" | "message";
+
+const MOBILE_PLACEHOLDER_I18N: Record<MobilePlaceholderKey, string> = {
+  runImages: "chat.mPlaceholderRunImages",
+  steer: "chat.mPlaceholderSteer",
+  runPaused: "chat.mPlaceholderRunPaused",
+  runFollow: "chat.mPlaceholderRunFollow",
+  agent: "chat.agentPlaceholder",
+  shellLocal: "chat.mShellLocal",
+  shellModel: "chat.mShellModel",
+  message: "chat.messagePlaceholder",
+};
+
+export function mobilePlaceholderI18nKey(key: MobilePlaceholderKey): string {
+  return MOBILE_PLACEHOLDER_I18N[key];
+}
+
+export function computeMobilePlaceholder(opts: {
+  isStreaming: boolean;
+  hasSteerCapability: boolean;
+  hasInputText: boolean;
+  imageCount: number;
+  followStreaming: boolean;
+  bashMode: boolean;
+  bashExcluded: boolean;
+  queueCount: number;
+}): { key: MobilePlaceholderKey; queueCount: number | null } {
+  const { isStreaming, hasSteerCapability, hasInputText, imageCount, followStreaming, bashMode, bashExcluded, queueCount } = opts;
+  let key: MobilePlaceholderKey;
+  if (isStreaming && hasSteerCapability) {
+    if (hasInputText && imageCount > 0) key = "runImages";       // P1
+    else if (hasInputText) key = "steer";                        // P2
+    else if (!followStreaming) key = "runPaused";                // P3
+    else key = "runFollow";                                      // P4
+  } else if (isStreaming) key = "agent";
+  else if (bashMode) key = bashExcluded ? "shellLocal" : "shellModel"; // P5b/P5
+  else key = "message";                                          // P6
+  return { key, queueCount: queueCount > 0 ? queueCount : null };
+}
+
+/** 小屏输入行控件矩阵（§三）：四态 空闲/运行中 × 空/有内容（图片单列——运行中带图禁发）。 */
+export interface MobileComposerMatrix {
+  hasContent: boolean;
+  /** steer/⏰（运行中）启用条件：有文本且无图片。 */
+  steerReady: boolean;
+  /** 发送按钮启用：空闲=有内容；运行中=有文本且无图片。 */
+  sendEnabled: boolean;
+  /** 左组：prompt / ＋（空输入态）。 */
+  prompt: boolean;
+  plus: boolean;
+  /** 左组：stop（仅运行中空输入；打字时手滑不误停）。 */
+  stop: boolean;
+  /** 左组：steer ⇢ / ⏰ 时钟（仅运行中）。 */
+  steer: boolean;
+  clock: boolean;
+  /** 右端发送胶囊（仅有内容）。 */
+  send: boolean;
+  /** affix 位：× 清空（有内容）/ 扩展 🎤 插槽（空输入）——同帧不同现。 */
+  clear: boolean;
+  affixSlot: boolean;
+}
+
+export function computeMobileComposerMatrix(opts: {
+  isStreaming: boolean;
+  hasInputText: boolean;
+  imageCount: number;
+  canSteerFromQueue: boolean;
+  hasSteerCapability: boolean;
+  hasFollowUpCapability: boolean;
+  hasAbortCapability: boolean;
+}): MobileComposerMatrix {
+  const { isStreaming, hasInputText, imageCount, canSteerFromQueue, hasSteerCapability, hasFollowUpCapability, hasAbortCapability } = opts;
+  const hasContent = hasInputText || imageCount > 0;
+  const steerReady = hasInputText && imageCount === 0;
+  if (!isStreaming) {
+    return {
+      hasContent,
+      steerReady: false,
+      sendEnabled: hasContent,
+      prompt: !hasContent,
+      plus: !hasContent,
+      stop: false,
+      steer: false,
+      clock: false,
+      send: hasContent,
+      clear: hasContent,
+      affixSlot: !hasContent,
+    };
+  }
+  return {
+    hasContent,
+    steerReady,
+    sendEnabled: steerReady,
+    prompt: false,
+    plus: !hasContent,
+    stop: !hasContent && hasAbortCapability,
+    steer: hasSteerCapability,
+    clock: hasFollowUpCapability,
+    send: hasContent,
+    clear: hasContent,
+    affixSlot: !hasContent,
+    // canSteerFromQueue（空输入注入队列首条）只影响 steer 的 disabled 态，不改变存在性——
+    // 组件用 `!steerReady && !canSteerFromQueue` 计算 disabled。
+  };
+}
+
+/** 小屏矩阵图标按钮：32×32 触达、无背景，入场 120ms 淡入（微信「＋↔发送」动效的
+ *  轻量版）。纯展示组件，启停/色调由调用方给。 */
+function MobileIconButton({ label, title, onClick, disabled, color, children }: {
+  label: string;
+  title?: string;
+  onClick: () => void;
+  disabled?: boolean;
+  color?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={title ?? label}
+      disabled={disabled}
+      onClick={onClick}
+      className="ci-mobile-icon"
+      style={{
+        flexShrink: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        width: 32,
+        height: 32,
+        padding: 0,
+        background: "none",
+        border: "none",
+        borderRadius: 9,
+        color: color ?? "var(--text-muted)",
+        opacity: disabled ? 0.4 : 1,
+        cursor: disabled ? "not-allowed" : "pointer",
+        transition: "opacity 0.12s, color 0.12s",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** ⓘ sheet 折叠分组行：标题行（点按开合）+ 展开体。单开模式由父级 state 控制。 */
+function SheetSection({ label, summary, badge, open, onToggle, children }: {
+  label: string;
+  summary?: React.ReactNode;
+  badge?: React.ReactNode;
+  open: boolean;
+  onToggle: () => void;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div style={{ borderBottom: "1px solid color-mix(in srgb, var(--border) 60%, transparent)" }}>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        style={{
+          width: "100%",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "11px 14px",
+          background: "none",
+          border: "none",
+          color: "var(--text)",
+          cursor: "pointer",
+          fontSize: 13.5,
+          textAlign: "left",
+        }}
+      >
+        <span style={{ flexShrink: 0, display: "inline-flex", width: 7, height: 7, borderRadius: 99, background: "var(--accent)", opacity: 0.75 }} />
+        <span style={{ flexShrink: 0, fontWeight: 600 }}>{label}</span>
+        <span style={{ minWidth: 0, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)", fontSize: 12.5, textAlign: "right" }}>{summary}</span>
+        {badge}
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, transform: open ? "rotate(180deg)" : undefined, transition: "transform 0.15s" }}>
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      {open && <div style={{ padding: "0 14px 12px" }}>{children}</div>}
+    </div>
+  );
+}
+
+/** 选项行（sheet 内）：勾选态 + 标签 + 右侧描述。 */
+function SheetOptionRow({ active, label, desc, onClick }: {
+  active: boolean;
+  label: React.ReactNode;
+  desc?: React.ReactNode;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "8px 10px",
+        background: active ? "var(--bg-selected)" : "none",
+        border: "none",
+        borderRadius: 7,
+        color: active ? "var(--text)" : "var(--text-muted)",
+        cursor: "pointer",
+        fontSize: 12.5,
+        textAlign: "left",
+        fontWeight: active ? 600 : 400,
+      }}
+    >
+      {active
+        ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
+        : <span style={{ width: 10, flexShrink: 0 }} />}
+      <span style={{ flex: 1, minWidth: 0 }}>{label}</span>
+      {desc != null && <span style={{ fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>{desc}</span>}
+    </button>
+  );
+}
+
+/** sheet 行内迷你操作按钮（队列 召回/导入/导出）。 */
+function sheetMiniBtn(): React.CSSProperties {
+  return {
+    display: "inline-flex",
+    alignItems: "center",
+    padding: "5px 10px",
+    background: "none",
+    border: "1px solid var(--border)",
+    borderRadius: 7,
+    color: "var(--text)",
+    cursor: "pointer",
+    fontSize: 11.5,
+    whiteSpace: "nowrap",
+  };
+}
+
 /** 新建会话提升判定：provisional 草稿 key（`new:<draftId>:<cwd>`）→ 真实会话 id。
  *  这不是「切会话」——切会话走 AppShell 的 sessionKey 自增，整个 ChatWindow 重挂载，
  *  本实例的 previousDraftKey 是 undefined；只有同一棵 composer 树活着时发生的
@@ -828,6 +1099,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   draftKey,
   cwd,
   suppressDraft,
+  followStreaming = true,
+  extensionStatuses = [],
+  extensionWidgets = [],
   compact = false,
 }: Props, ref) {
   const { t } = useI18n();
@@ -847,7 +1121,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const collapsedProvidersInitializedRef = useRef(false);
   const [toolDropdownOpen, setToolDropdownOpen] = useState(false);
   const [thinkingDropdownOpen, setThinkingDropdownOpen] = useState(false);
-  const [controlsMenuOpen, setControlsMenuOpen] = useState(false);
+  // 小屏 ⓘ InfoSheet（微信式底部面板：模型/思考/工具/压缩/声音/队列/扩展状态/扩展面板）
+  const [infoSheetOpen, setInfoSheetOpen] = useState(false);
+  const [infoSheetSection, setInfoSheetSection] = useState<"model" | "thinking" | "tools" | "extStatus" | "extWidgets" | null>(null);
+  const [infoSheetBottom, setInfoSheetBottom] = useState(12);
+  const [infoSheetMaxHeight, setInfoSheetMaxHeight] = useState(480);
+  const queueImportInputRef = useRef<HTMLInputElement>(null);
   const [attachedImages, setAttachedImages] = useState<AttachedImage[]>([]);
   const [attachedFiles, setAttachedFiles] = useState<AttachedFile[]>([]);
   const anyFileInputRef = useRef<HTMLInputElement>(null);
@@ -888,7 +1167,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const modelDropdownPanelRef = useRef<HTMLDivElement>(null);
   const toolDropdownRef = useRef<HTMLDivElement>(null);
   const thinkingDropdownRef = useRef<HTMLDivElement>(null);
-  const controlsMenuRef = useRef<HTMLDivElement>(null);
   const historyMenuRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Cycle the bottom panels (queue banner + input + toolbar) to leave more
@@ -932,7 +1210,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const next = order[nextIdx];
     try { window.localStorage.setItem("pi-chat-bottom-mode", next); } catch { /* ignore */ }
     if (next === "minimal") {
-      setControlsMenuOpen(false);
       setModelDropdownOpen(false);
     }
     setBottomMode(next);
@@ -945,9 +1222,19 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [swipeHint, setSwipeHint] = useState<"up" | "down" | null>(null);
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     if (!isMobile) return;
+    // ⓘ sheet 打开时手势禁用（防遮罩上的滑动误折叠底部区）
+    if (infoSheetOpen) {
+      touchStartRef.current = null;
+      return;
+    }
     if (e.target instanceof Element) {
       // Text editing / scrolling inside the textarea takes priority.
       if (e.target.closest("textarea")) {
+        touchStartRef.current = null;
+        return;
+      }
+      // affix 位按钮（core × / 扩展 🎤）：按住说话是长按手势，绝不能当成下滑折叠
+      if (e.target.closest("[data-composer-affix]")) {
         touchStartRef.current = null;
         return;
       }
@@ -960,7 +1247,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
     const t = e.touches[0];
     touchStartRef.current = { y: t.clientY, x: t.clientX, active: true };
-  }, [isMobile]);
+  }, [isMobile, infoSheetOpen]);
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     const s = touchStartRef.current;
     if (!s || !s.active || !isMobile) return;
@@ -1421,6 +1708,44 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     historyNavTextRef.current = "";
   }, [clearImages]);
 
+  // ── 小屏清空撤销（v3 §3.1）：× 清空前抓内存快照（零拷贝——images 元素按引用持有，
+  // clearImages 只 revoke previewUrl、data 不受影响），5s 内可整体恢复。快照纯内存、
+  // 不进 localStorage 不动 draft-keeper（防丢主链路仍是草稿机制）。仅单级：再次清空覆盖。
+  const [undoSnapshot, setUndoSnapshot] = useState<{ text: string; images: AttachedImage[] } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearWithUndo = useCallback(() => {
+    const snapshot = { text: valueRef.current, images: attachedImagesRef.current };
+    clearInput();
+    setUndoSnapshot(snapshot);
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = setTimeout(() => setUndoSnapshot(null), 5000);
+    // 清空后 refocus：键盘不收（微信同款）
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [clearInput]);
+  const undoClear = useCallback(() => {
+    if (undoTimerRef.current) { clearTimeout(undoTimerRef.current); undoTimerRef.current = null; }
+    const snap = undoSnapshot;
+    setUndoSnapshot(null);
+    if (!snap) return;
+    const images = snap.images.map((im) => ({ ...im, previewUrl: URL.createObjectURL(base64ToBlob(im.data, im.mimeType)) }));
+    valueRef.current = snap.text;
+    setInputValue(snap.text);
+    setAtQuery(null);
+    setAttachedImages((prev) => {
+      prev.forEach(revokeImagePreview);
+      attachedImagesRef.current = images;
+      return images;
+    });
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(snap.text.length, snap.text.length);
+      ta.style.height = "auto";
+      ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+    });
+  }, [undoSnapshot, setInputValue]);
+
   /** 取回编辑中的 ↑/↓ 队列导航：把当前编辑放回队列原位，再取回相邻一条继续编辑
    * （与行内取回按钮完全同一链路）。导航范围为拍平后的队列 [steering…, followUp…]
    * （与面板展示顺序一致）。编辑框被清空时保底放回原文——导航绝不丢失队列条目。 */
@@ -1824,6 +2149,61 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // 队列里也没有可插队的 follow-up）时两个按钮同时灰掉——此时提示要先输入消息。
   // （图片允许随消息排队——queue-store/回收编辑/重放链路原生支持，#3 图片排队恢复）
   const queueDisabledNoInput = !hasInputText && attachedImages.length === 0;
+  // ── 小屏「微信式」矩阵派生（§三/§七）：纯函数 computeMobileComposerMatrix /
+  // computeMobilePlaceholder（单测钉死）——草稿恢复（F14）/发送清空（F15）后自动重派生。
+  const mobileMatrix = computeMobileComposerMatrix({
+    isStreaming,
+    hasInputText,
+    imageCount: attachedImages.length,
+    canSteerFromQueue,
+    hasSteerCapability: Boolean(onSteer),
+    hasFollowUpCapability: Boolean(onFollowUp),
+    hasAbortCapability: Boolean(onAbort),
+  });
+  const mobileSteerReady = mobileMatrix.steerReady;
+  const mobileSendEnabled = mobileMatrix.sendEnabled;
+  const hasContent = mobileMatrix.hasContent;
+  const composerAffixExtCount = useExtSlotItems("composerAffix").length;
+  const affixVisible = isMobile && (mobileMatrix.hasContent || composerAffixExtCount > 0);
+  const mobilePlaceholderKey = computeMobilePlaceholder({
+    isStreaming,
+    hasSteerCapability: Boolean(onSteer || onFollowUp),
+    hasInputText,
+    imageCount: attachedImages.length,
+    followStreaming,
+    bashMode,
+    bashExcluded,
+    queueCount,
+  });
+  const mobilePlaceholder = (() => {
+    const base = t(mobilePlaceholderI18nKey(mobilePlaceholderKey.key));
+    return mobilePlaceholderKey.queueCount != null
+      ? `${base} ${t("chat.queueSuffix", { count: String(mobilePlaceholderKey.queueCount) })}`
+      : base;
+  })();
+  // ⓘ sheet 打开：先关其他浮层 + 取消录音（S28 互斥），再按输入条位置定位 bottom。
+  // maxHeight 同步收紧为「输入条上方可用空间」——欢迎页输入条居中时上方空间不足，
+  // 只封 60vh 会把 sheet 顶出视口上缘（✕ 够不着）。
+  const openInfoSheet = useCallback(() => {
+    setHistoryMenuOpen(false);
+    setModelDropdownOpen(false);
+    setToolDropdownOpen(false);
+    setThinkingDropdownOpen(false);
+    try { window.dispatchEvent(new CustomEvent("pi-web:composer-affix-cancel")); } catch { /* 无监听者亦可 */ }
+    const rect = inputRowRef.current?.getBoundingClientRect();
+    const vh = window.visualViewport?.height ?? window.innerHeight;
+    const bottom = rect && rect.height > 0 ? Math.max(8, vh - rect.top + 6) : 12;
+    setInfoSheetBottom(bottom);
+    setInfoSheetMaxHeight(Math.max(220, Math.floor(vh - bottom - 12)));
+    setInfoSheetSection(null);
+    setInfoSheetOpen(true);
+  }, []);
+  const handleSheetQueueExport = useCallback(async () => {
+    if (!onExportQueue) return;
+    const data = await onExportQueue();
+    if (data) downloadQueueExport(data.live, { sessionId: sessionId ?? undefined, source: "live" }, "json");
+  }, [onExportQueue, sessionId]);
+  const extStatusLine = formatExtensionStatusLine(extensionStatuses);
   // Warn when images are attached but the selected model is known not to accept
   // image input (#584), including a resolved default. Unknown models stay silent.
   const showImageUnsupportedWarning = (
@@ -2615,9 +2995,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (thinkingDropdownRef.current && !thinkingDropdownRef.current.contains(e.target as Node)) {
         setThinkingDropdownOpen(false);
       }
-      if (controlsMenuRef.current && !controlsMenuRef.current.contains(e.target as Node)) {
-        setControlsMenuOpen(false);
-      }
       if (historyMenuRef.current && !historyMenuRef.current.contains(e.target as Node) && !textareaRef.current?.contains(e.target as Node)) {
         setHistoryMenuOpen(false);
       }
@@ -2625,10 +3002,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
-
-  useEffect(() => {
-    if (!isMobile) setControlsMenuOpen(false);
-  }, [isMobile]);
 
 
 
@@ -2678,6 +3051,50 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
         </div>
       )}
+      {/* 清空撤销 toast（v3 §3.1）：5s 窗口，单级。position 同 swipeHint——悬在底部区上方 */}
+      {undoSnapshot && isMobile && (
+        <div style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: "calc(100% + 8px)",
+          display: "flex",
+          justifyContent: "center",
+          zIndex: 90,
+        }}>
+          <div style={{
+            display: "inline-flex",
+            alignItems: "center",
+            gap: 10,
+            padding: "7px 8px 7px 14px",
+            borderRadius: 999,
+            background: "color-mix(in srgb, var(--bg-panel) 94%, var(--bg))",
+            border: "1px solid var(--border)",
+            boxShadow: "0 4px 14px rgba(0,0,0,0.14)",
+            fontSize: 12.5,
+            color: "var(--text)",
+            whiteSpace: "nowrap",
+          }}>
+            {t("chat.clearedToast")}
+            <button
+              type="button"
+              onClick={undoClear}
+              style={{
+                padding: "4px 12px",
+                background: "none",
+                border: "none",
+                borderRadius: 999,
+                color: "var(--accent)",
+                fontWeight: 700,
+                fontSize: 12.5,
+                cursor: "pointer",
+              }}
+            >
+              {t("chat.undoClear")}
+            </button>
+          </div>
+        </div>
+      )}
       {/* Hidden file input */}
       {!compact && <input
         ref={fileInputRef}
@@ -2704,6 +3121,22 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           if (imgs.length) processImageFiles(imgs);
           processDocFiles(docs);
           e.target.value = "";
+        }}
+      />}
+      {/* Hidden queue-import input（小屏 ⓘ sheet 队列「导入」：.json → parse → stageImport） */}
+      {!compact && <input
+        ref={queueImportInputRef}
+        type="file"
+        accept="application/json,.json"
+        style={{ display: "none" }}
+        onChange={async (e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (!file || !onStageImport) return;
+          try {
+            const entries = parseQueueImport(await file.text());
+            if (entries.length) await onStageImport(entries);
+          } catch { /* 解析失败静默——与桌面导入的宽容语义一致 */ }
         }}
       />}
       <div style={{ maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
@@ -3356,6 +3789,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           <div
             ref={inputRowRef}
             style={{
+              position: "relative",
               minWidth: 0,
               display: "flex",
               flexDirection: compact ? "column" : "row",
@@ -3372,7 +3806,73 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               transition: "border-color 0.15s, background 0.15s, box-shadow 0.15s",
             } as React.CSSProperties}
           >
+          {/* notch 把手（v3：原 BottomModeBar 细条并入输入条上缘；手势区=输入条整体，见根节点 touch 链） */}
+          {isMobile && (
+            <div
+              aria-hidden="true"
+              onClick={() => cycleBottomMode()}
+              title={t(bottomMode === "full" ? (queueCount > 0 ? "chat.minimizeQueue" : "chat.minimizeInput") : "chat.restoreBottom")}
+              style={{ position: "absolute", top: 4, left: "50%", transform: "translateX(-50%)", width: 28, height: 4, borderRadius: 2, background: "var(--border)", cursor: "pointer", zIndex: 1 }}
+            />
+          )}
           <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, sessionId, textareaRef, setInputValue, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen, model }} />
+          {/* 小屏左组（§三矩阵）：ⓘ 恒在；状态图标按 空闲/运行中 × 空/有内容 纯派生 */}
+          {isMobile && (
+            <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+              <span style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+                <MobileIconButton label={t("chat.info")} onClick={openInfoSheet}>
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><line x1="12" y1="11" x2="12" y2="16.2" /><line x1="12" y1="7.6" x2="12" y2="7.7" /></svg>
+                </MobileIconButton>
+                {modelSwitchPending && <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: 99, background: "#f59e0b" }} />}
+              </span>
+              {!hasContent && !isStreaming && (
+                <MobileIconButton
+                  label={t("chat.insertCommand")}
+                  onClick={() => { setInputValue("/"); requestAnimationFrame(() => { const ta = textareaRef.current; if (!ta) return; ta.focus(); ta.setSelectionRange(1, 1); }); }}
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5 8.9 8.9 0 0 1-3.9-.9L3.5 20.5l1.4-4.6A8.5 8.5 0 1 1 21 11.5z" /><line x1="13.2" y1="8.2" x2="10.8" y2="14.8" /></svg>
+                </MobileIconButton>
+              )}
+              {!hasContent && (
+                <MobileIconButton
+                  label={t("chat.addImage")}
+                  title={isStreaming ? t("chat.addImageRunning") : undefined}
+                  disabled={isStreaming}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><line x1="12" y1="8" x2="12" y2="16" /><line x1="8" y1="12" x2="16" y2="12" /></svg>
+                </MobileIconButton>
+              )}
+              {mobileMatrix.stop && (
+                <MobileIconButton label={t("chat.stop")} onClick={() => { onAbort(); refocusInput(); }} color="#ef4444">
+                  <svg width="13" height="13" viewBox="0 0 10 10" fill="none"><rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" /></svg>
+                </MobileIconButton>
+              )}
+              {mobileMatrix.steer && (
+                <MobileIconButton
+                  label={t("chat.steer")}
+                  title={canSteerFromQueue ? t("chat.steerFromQueueTitle") : undefined}
+                  disabled={!mobileSteerReady && !canSteerFromQueue}
+                  onClick={() => { sendQueued("steer"); refocusInput(); }}
+                  color="rgba(180,130,0,1)"
+                >
+                  <svg width="15" height="15" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 1 L9 5 L5 9" /><line x1="1" y1="5" x2="9" y2="5" /></svg>
+                </MobileIconButton>
+              )}
+              {mobileMatrix.clock && (
+                <MobileIconButton
+                  label={t("chat.delayedTask")}
+                  disabled={!mobileSteerReady}
+                  onClick={() => { sendQueued("followup"); refocusInput(); }}
+                  color="rgba(99,102,241,1)"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></svg>
+                </MobileIconButton>
+              )}
+            </div>
+          )}
+          {/* textarea 包裹层：affix 位（框内右缘）的定位上下文；flex 契约从 textarea 移到包裹层 */}
+          <div style={{ position: "relative", flex: compact ? "none" : buttonsWrapped ? "1 1 100%" : "1 1 0", minWidth: 0, display: "flex" }}>
           <textarea
             ref={textareaRef}
             data-chat-input="1"
@@ -3407,15 +3907,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             onFocus={handleFocus}
             onBlur={handleBlur}
             onPaste={handlePaste}
-            placeholder={
-              isStreaming && (onSteer || onFollowUp)
+            placeholder={isMobile
+              ? mobilePlaceholder
+              : isStreaming && (onSteer || onFollowUp)
                 ? t("chat.steerPlaceholder")
                 : isStreaming ? t("chat.agentPlaceholder")
-                : t("chat.messagePlaceholder")
-            }
+                : t("chat.messagePlaceholder")}
             rows={1}
             style={{
-              flex: compact ? "none" : buttonsWrapped ? "1 1 100%" : "1 1 0",
+              flex: "1 1 auto",
               minWidth: 0,
               background: "none",
               border: "none",
@@ -3428,10 +3928,89 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               minHeight: compact ? 96 : 24,
               maxHeight: 200,
               overflow: "auto",
+              paddingRight: affixVisible ? 36 : undefined,
             }}
           />
+          {/* affix 位：有内容=core ×清空（撤销 toast）；空输入=扩展 composerAffix 插槽（🎤）。
+              互斥由「空/有内容」派生天然保证——core 与扩展互不知晓（§3.2）。
+              padding-right:36px 保证文字不从图标下穿过 */}
+          {affixVisible && (
+            <div data-composer-affix="1" style={{ position: "absolute", right: 2, top: 12, width: 32, height: 32, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              {hasContent ? (
+                <button
+                  type="button"
+                  aria-label={t("chat.clearComposer")}
+                  onClick={clearWithUndo}
+                  style={{
+                    width: 32,
+                    height: 32,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 0,
+                    background: "none",
+                    border: "none",
+                    borderRadius: 9,
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    touchAction: "manipulation",
+                    WebkitTouchCallout: "none",
+                    userSelect: "none",
+                    transition: "opacity 0.12s, color 0.12s",
+                  }}
+                >
+                  <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="3.2" y1="3.2" x2="10.8" y2="10.8" /><line x1="10.8" y1="3.2" x2="3.2" y2="10.8" /></svg>
+                </button>
+              ) : (
+                <ExtSlot name="composerAffix" extra={{ hasContent, hasInputText, isStreaming, inputValue: value, textareaRef, setInputValue, focusComposer: refocusInput }} />
+              )}
+            </div>
+          )}
+          </div>
 
-          {isStreaming ? (
+          {/* 小屏右端组：有内容=发送（空闲=发送；运行中=立即引导 steer，§三矩阵） */}
+          {isMobile && hasContent && (
+            <button
+              type="button"
+              onClick={() => { if (isStreaming) { sendQueued("steer"); } else { void handleSend(); } refocusInput(); }}
+              disabled={!mobileSendEnabled}
+              title={isStreaming ? t("chat.mPlaceholderSteer") : undefined}
+              style={{
+                flexShrink: 0,
+                alignSelf: "flex-end",
+                display: "flex", alignItems: "center", gap: 7,
+                padding: "8px 17px",
+                background: mobileSendEnabled ? "var(--accent)" : "var(--bg-panel)",
+                border: "none",
+                borderRadius: 10,
+                color: mobileSendEnabled ? "#fff" : "var(--text-dim)",
+                cursor: mobileSendEnabled ? "pointer" : "not-allowed",
+                fontSize: 16,
+                fontWeight: 600,
+                letterSpacing: "-0.01em",
+                boxShadow: mobileSendEnabled ? "0 1px 3px rgba(37,99,235,0.25)" : "none",
+                opacity: mobileSendEnabled ? 1 : 0.6,
+                transition: "background 0.15s, box-shadow 0.15s, opacity 0.12s",
+              }}
+            >
+              <svg width="17" height="17" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="2" y1="7" x2="11" y2="7" />
+                <polyline points="7.5 3 12 7 7.5 11" />
+              </svg>
+              {t("chat.send")}
+            </button>
+          )}
+          {/* 小屏空闲·空输入右端：「继续」（矩阵外保留项——恢复队列/暂停 agent 的续跑入口，
+              不在删除清单，收编到右端空位） */}
+          {isMobile && !isStreaming && !hasContent && onContinue && canContinue && (
+            <MobileIconButton label={t("chat.continue")} onClick={() => { onContinue(); refocusInput(); }} color="rgba(5,150,105,1)">
+              <svg width="15" height="15" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="1.5 2.5 5.5 6 1.5 9.5" />
+                <polyline points="6.5 2.5 10.5 6 6.5 9.5" />
+              </svg>
+            </MobileIconButton>
+          )}
+          {!isMobile && (isStreaming ? (
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end", marginLeft: "auto" }}>
               {onSteer && (
                 <StreamingActionButton
@@ -3538,20 +4117,22 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {!queueButtonsCollapsed && t("chat.send")}
             </button>
             </div>
-          )}
+          ))}
           </div>
           )}
         </div>
 
-        {/* Bash mode status label */}
-        {bottomMode !== "minimal" && bashMode && (
+        {/* Bash mode status label（v3：小屏删行——信息内嵌 placeholder（P5/P5b），桌面照旧） */}
+        {bottomMode !== "minimal" && bashMode && !isMobile && (
           <div className="text-xs px-2 py-1" style={{ color: bashExcluded ? "var(--text-muted)" : "var(--accent)", marginTop: 4 }}>
              {t("chat.shell")} · {bashExcluded ? t("chat.outputLocal") : t("chat.outputModel")}
           </div>
         )}
 
-        {/* Bottom bar: left | center (context) | right */}
-        {!compact && bottomMode !== "minimal" && (
+        {/* Bottom bar: left | center (context) | right
+            v3：小屏整行删除（附件/模型/思考/工具/压缩/声音/队列操作收进 ⓘ InfoSheet，
+            BottomModeBar 并入输入条上缘 notch）——输入条成为小屏最底常驻元素。 */}
+        {!compact && !isMobile && bottomMode !== "minimal" && (
         <div style={{
           marginTop: 8,
           display: isMobile ? "grid" : "flex",
@@ -3653,77 +4234,18 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           {!isMobile && <div style={{ flex: 1 }} />}
 
           {/* RIGHT: thinking + tools preset + compact + sound (idle) | Stop + sound (streaming) */}
-          <div ref={controlsMenuRef} style={{
+          <div style={{
             flex: "0 0 auto",
             display: "flex",
             alignItems: "center",
             justifyContent: "flex-end",
             position: "relative",
-            marginLeft: isMobile ? 0 : "auto",
+            marginLeft: "auto",
           }}>
-            {isMobile && (
-              <button
-                type="button"
-                 title={controlsMenuOpen ? undefined : t("chat.moreControls")}
-                 aria-label={t("chat.moreControls")}
-                aria-expanded={controlsMenuOpen}
-                aria-hidden={controlsMenuOpen || undefined}
-                tabIndex={controlsMenuOpen ? -1 : undefined}
-                onClick={() => {
-                  setControlsMenuOpen(true);
-                }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: "100%",
-                  height: 32,
-                  padding: "8px 10px",
-                  background: "none",
-                  border: "none",
-                  borderRadius: 9,
-                  color: "var(--text-muted)",
-                  cursor: controlsMenuOpen ? "default" : "pointer",
-                  fontSize: 12,
-                  fontWeight: 500,
-                  visibility: controlsMenuOpen ? "hidden" : "visible",
-                  pointerEvents: controlsMenuOpen ? "none" : "auto",
-                  transition: "background 0.12s, color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  if (controlsMenuOpen) return;
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text)";
-                }}
-                onMouseLeave={(e) => {
-                  if (controlsMenuOpen) return;
-                  e.currentTarget.style.background = "none";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                }}
-              >
-                {t("chat.moreControls")}
-              </button>
-            )}
             <div data-input-overlay="1" style={{
-              display: isMobile ? (controlsMenuOpen ? "flex" : "none") : "flex",
+              display: "flex",
               alignItems: "center",
-              gap: isMobile ? 1 : 2,
-              ...(isMobile ? {
-                position: "absolute",
-                right: 0,
-                bottom: 0,
-                zIndex: 60,
-                padding: 1,
-                width: "max-content",
-                maxWidth: "calc(100vw - 32px)",
-                flexWrap: "nowrap",
-                justifyContent: "flex-end",
-                border: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
-                borderRadius: 10,
-                background: "color-mix(in srgb, var(--bg-panel) 92%, var(--bg))",
-                boxShadow: "0 8px 24px rgba(0,0,0,0.14)",
-                backdropFilter: "blur(10px)",
-              } : null),
+              gap: 2,
             }}>
             {!isStreaming && onThinkingLevelChange && (
               <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
@@ -3761,7 +4283,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     <line x1="7" y1="18" x2="12" y2="18" />
                     <line x1="8" y1="21" x2="11" y2="21" />
                   </svg>
-                  {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{thinkingDisplayLabel}</span>}
+                  <span style={{ whiteSpace: "nowrap" }}>{thinkingDisplayLabel}</span>
                 </button>
                 {thinkingDropdownOpen && (
                   <div data-input-overlay="1" style={{
@@ -3853,7 +4375,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
                   </svg>
-                  {(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{toolPresetLabel}</span>}
+                  <span style={{ whiteSpace: "nowrap" }}>{toolPresetLabel}</span>
                 </button>
                 {toolDropdownOpen && (
                   <div data-input-overlay="1" style={{
@@ -3937,14 +4459,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                    aria-label={isCompacting ? t("chat.stopCompaction") : compactQueued ? t("chat.cancelCompactQueue") : t("chat.compactContext")}
                 >
                   {isCompacting ? (
-                    <><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x="2" y="2" width="6" height="6" rx="1" fill="currentColor" /></svg>{(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{t("chat.compacting")}</span>}</>
+                    <><svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x="2" y="2" width="6" height="6" rx="1" fill="currentColor" /></svg><span style={{ whiteSpace: "nowrap" }}>{t("chat.compacting")}</span></>
                   ) : compactQueued ? (
-                    <><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>{(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{t("chat.compactQueued")}</span>}</>
+                    <><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg><span style={{ whiteSpace: "nowrap" }}>{t("chat.compactQueued")}</span></>
                   ) : (
                     <><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                       <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" />
                       <line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" />
-                    </svg>{(!isMobile || controlsMenuOpen) && <span style={{ whiteSpace: "nowrap" }}>{t("chat.compact")}</span>}</>
+                    </svg><span style={{ whiteSpace: "nowrap" }}>{t("chat.compact")}</span></>
                   )}
                 </button>
               </div>
@@ -4038,51 +4560,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               // 导入入口回到底部控制行（与压缩/导入同排），队列空时不再孤零零浮在上方。
               queueActions: queuePanelExtra.actions,
             }} />
-            {isMobile && controlsMenuOpen && (
-              <button
-                type="button"
-                 title={t("chat.collapseControls")}
-                 aria-label={t("chat.collapseControls")}
-                aria-expanded={true}
-                onClick={() => {
-                  setToolDropdownOpen(false);
-                  setThinkingDropdownOpen(false);
-                  setControlsMenuOpen(false);
-                }}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  width: 36,
-                  height: 32,
-                  padding: 0,
-                  marginLeft: 0,
-                  background: "var(--bg-hover)",
-                  borderTop: "none", borderRight: "none", borderBottom: "none",
-                  borderLeft: "1px solid color-mix(in srgb, var(--border) 72%, transparent)",
-                  borderRadius: "0 9px 9px 0",
-                  color: "var(--text)",
-                  cursor: "pointer",
-                  transition: "background 0.12s, color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "var(--bg-selected)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                }}
-              >
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-                  <line x1="18" y1="6" x2="6" y2="18" />
-                  <line x1="6" y1="6" x2="18" y2="18" />
-                </svg>
-              </button>
-            )}
             </div>
-            {/* Desktop and mobile cycle identically: click walks the bottom
+            {/* Desktop cycle: click walks the bottom
                 modes (full → queueHidden → minimal → full, queueHidden skipped
                 when the queue is empty). Collapsing the queue rows themselves
-                stays on the queue header chevron button. */}
+                stays on the queue header chevron button. 小屏：BottomModeBar 并入
+                输入条上缘 notch（v3），本行整行不渲染。 */}
             <BottomModeBar
               mode={bottomMode}
               onClick={() => cycleBottomMode()}
@@ -4092,6 +4575,251 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         </div>
         )}
 
+        {/* 小屏 ⓘ InfoSheet：微信「+」面板气质的 bottom sheet——模型/思考/工具/压缩/声音/
+            队列/扩展状态/扩展面板（§五）。fixed 定位 bottom 按输入条上缘计算，遮罩点击关闭。 */}
+        {infoSheetOpen && (
+          <>
+            <div
+              data-input-overlay="1"
+              onClick={() => setInfoSheetOpen(false)}
+              style={{ position: "fixed", inset: 0, zIndex: 118, background: "rgba(0,0,0,0.28)" }}
+            />
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={t("chat.info")}
+              data-input-overlay="1"
+              style={{
+                position: "fixed",
+                left: 8,
+                right: 8,
+                bottom: infoSheetBottom,
+                zIndex: 119,
+                background: "var(--bg-panel)",
+                border: "1px solid var(--border)",
+                borderRadius: 14,
+                boxShadow: "0 -8px 30px rgba(0,0,0,0.22)",
+                maxHeight: `min(60vh, ${infoSheetMaxHeight}px)`,
+                overflowY: "auto",
+                overscrollBehavior: "contain",
+              }}
+            >
+              <div style={{ position: "sticky", top: 0, zIndex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "9px 12px 3px", background: "var(--bg-panel)", borderBottom: "1px solid color-mix(in srgb, var(--border) 40%, transparent)" }}>
+                <span style={{ width: 36, height: 4, borderRadius: 2, background: "var(--border)" }} />
+                <button
+                  type="button"
+                  aria-label={t("chat.collapseControls")}
+                  onClick={() => setInfoSheetOpen(false)}
+                  style={{ position: "absolute", right: 10, top: 5, width: 28, height: 28, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 8, color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1 }}
+                >
+                  ✕
+                </button>
+              </div>
+              {/* 模型：当前名 + pending 琥珀角标；展开=分组列表+过滤框（不 autoFocus，防二次弹键盘） */}
+              {onModelChange && (
+                <SheetSection
+                  label={t("chat.sheetModel")}
+                  summary={modelSwitching ? `${currentName ?? ""}…` : currentName ?? undefined}
+                  badge={modelSwitchPending ? <span style={{ flexShrink: 0, width: 7, height: 7, borderRadius: 99, background: "#f59e0b" }} /> : undefined}
+                  open={infoSheetSection === "model"}
+                  onToggle={() => setInfoSheetSection(infoSheetSection === "model" ? null : "model")}
+                >
+                  {showModelFilter && (
+                    <input
+                      value={modelFilter}
+                      onChange={(e) => setModelFilter(e.target.value)}
+                      placeholder={t("chat.filterModels")}
+                      aria-label={t("chat.filterModels")}
+                      style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", marginBottom: 8, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text)", fontSize: 13, outline: "none" }}
+                    />
+                  )}
+                  {modelsByProvider.length === 0 && (
+                    <div style={{ padding: "4px 2px", fontSize: 12, color: "var(--text-dim)" }}>{t("chat.noMatchingModels")}</div>
+                  )}
+                  {modelsByProvider.map((group) => (
+                    <div key={group.provider} style={{ marginBottom: 6 }}>
+                      <div style={{ padding: "4px 2px", fontSize: 10, fontWeight: 600, textTransform: "uppercase", color: "var(--text-dim)" }}>{group.provider}</div>
+                      {group.options.map((opt) => {
+                        const active = model?.provider === opt.provider && model?.modelId === opt.modelId;
+                        return (
+                          <SheetOptionRow
+                            key={`${opt.provider}:${opt.modelId}`}
+                            active={active}
+                            label={opt.name}
+                            desc={ambiguousModelNames.has(opt.name) ? opt.provider : undefined}
+                            onClick={() => { onModelChange(opt.provider, opt.modelId); }}
+                          />
+                        );
+                      })}
+                    </div>
+                  ))}
+                </SheetSection>
+              )}
+              {/* 思考深度（运行中禁改，与桌面下拉一致） */}
+              {onThinkingLevelChange && !isStreaming && (
+                <SheetSection
+                  label={t("chat.sheetThinking")}
+                  summary={thinkingDisplayLabel}
+                  open={infoSheetSection === "thinking"}
+                  onToggle={() => setInfoSheetSection(infoSheetSection === "thinking" ? null : "thinking")}
+                >
+                  {THINKING_LEVELS.filter((lvl) => {
+                    if (!availableThinkingLevels) return true;
+                    if (lvl === "auto") return true;
+                    return availableThinkingLevels.includes(lvl);
+                  }).map((lvl) => {
+                    const isActive = (thinkingLevel ?? "auto") === lvl;
+                    const mappedVal = (lvl !== "auto" && thinkingLevelMap) ? thinkingLevelMap[lvl] : undefined;
+                    const displayLabel = (mappedVal != null && mappedVal !== lvl) ? mappedVal : lvl;
+                    return (
+                      <SheetOptionRow
+                        key={lvl}
+                        active={isActive}
+                        label={<>{displayLabel}{mappedVal != null && mappedVal !== lvl && <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", marginLeft: 5 }}>({lvl})</span>}</>}
+                        desc={t(THINKING_LEVEL_DESC_KEYS[lvl])}
+                        onClick={() => { if (!isActive) onThinkingLevelChange(lvl); }}
+                      />
+                    );
+                  })}
+                </SheetSection>
+              )}
+              {/* 工具预设（运行中禁改，与桌面下拉一致） */}
+              {onToolPresetChange && !isStreaming && (
+                <SheetSection
+                  label={t("chat.sheetTools")}
+                  summary={toolPresetLabel}
+                  open={infoSheetSection === "tools"}
+                  onToggle={() => setInfoSheetSection(infoSheetSection === "tools" ? null : "tools")}
+                >
+                  {TOOL_PRESETS.map((lvl) => {
+                    const preset = TOOL_PRESET_MAP[lvl];
+                    const isActive = (toolPreset ?? "default") === preset;
+                    let desc: string;
+                    if (lvl === "chat-only") desc = t("chat.chatOnly");
+                    else if (lvl === "read-only") desc = t("chat.readOnlyTools", { count: 4 });
+                    else if (lvl === "default") desc = t("chat.builtInTools", { count: 4 });
+                    else desc = t("chat.allBuiltInTools");
+                    return (
+                      <SheetOptionRow
+                        key={lvl}
+                        active={isActive}
+                        label={lvl}
+                        desc={desc}
+                        onClick={() => { if (!isActive) onToolPresetChange(preset); }}
+                      />
+                    );
+                  })}
+                </SheetSection>
+              )}
+              {/* 压缩：三态单行（压缩中→停止；排队→取消；空闲→压缩） */}
+              {onCompact && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderBottom: "1px solid color-mix(in srgb, var(--border) 60%, transparent)" }}>
+                  <span style={{ flexShrink: 0, display: "inline-flex", width: 7, height: 7, borderRadius: 99, background: "var(--accent)", opacity: 0.75 }} />
+                  <span style={{ flexShrink: 0, fontWeight: 600, fontSize: 13.5 }}>{t("chat.sheetCompact")}</span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isCompacting) onAbortCompaction?.();
+                      else if (compactQueued) onCancelCompactQueue?.();
+                      else onCompact();
+                    }}
+                    style={{
+                      marginLeft: "auto",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "6px 12px",
+                      background: isCompacting ? "rgba(239,68,68,0.08)" : compactQueued ? "rgba(217,119,6,0.1)" : "none",
+                      border: `1px solid ${isCompacting ? "rgba(239,68,68,0.35)" : compactQueued ? "rgba(217,119,6,0.4)" : "var(--border)"}`,
+                      borderRadius: 8,
+                      color: isCompacting ? "#ef4444" : compactQueued ? "#d97706" : "var(--text)",
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontWeight: 600,
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {isCompacting ? t("chat.stopCompaction") : compactQueued ? t("chat.cancelCompactQueue") : t("chat.compactContext")}
+                  </button>
+                </div>
+              )}
+              {/* 声音：开/关 switch 行 */}
+              {onSoundToggle !== undefined && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderBottom: "1px solid color-mix(in srgb, var(--border) 60%, transparent)" }}>
+                  <span style={{ flexShrink: 0, display: "inline-flex", width: 7, height: 7, borderRadius: 99, background: "var(--accent)", opacity: 0.75 }} />
+                  <span style={{ flexShrink: 0, fontWeight: 600, fontSize: 13.5 }}>{t("chat.sheetSound")}</span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={soundEnabled}
+                    aria-label={soundEnabled ? t("chat.disableSound") : t("chat.enableSound")}
+                    onClick={onSoundToggle}
+                    style={{
+                      marginLeft: "auto",
+                      display: "inline-flex",
+                      alignItems: "center",
+                      padding: 2,
+                      width: 40,
+                      height: 22,
+                      background: soundEnabled ? "var(--accent)" : "var(--border)",
+                      border: "none",
+                      borderRadius: 99,
+                      cursor: "pointer",
+                      justifyContent: soundEnabled ? "flex-end" : "flex-start",
+                      transition: "background 0.15s",
+                    }}
+                  >
+                    <span style={{ width: 18, height: 18, borderRadius: 99, background: "#fff", display: "inline-flex", alignItems: "center", justifyContent: "center", fontSize: 9, color: "var(--text-muted)", fontWeight: 700 }} />
+                  </button>
+                  <span style={{ flexShrink: 0, fontSize: 12, color: "var(--text-muted)", minWidth: 16, textAlign: "center" }}>{soundEnabled ? t("chat.soundOn") : t("chat.soundOff")}</span>
+                </div>
+              )}
+              {/* 队列：计数 + 召回/导出/导入 */}
+              {(onRecallQueue || onExportQueue || onStageImport) && (
+                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "11px 14px", borderBottom: "1px solid color-mix(in srgb, var(--border) 60%, transparent)", flexWrap: "wrap" }}>
+                  <span style={{ flexShrink: 0, display: "inline-flex", width: 7, height: 7, borderRadius: 99, background: "var(--accent)", opacity: 0.75 }} />
+                  <span style={{ flexShrink: 0, fontWeight: 600, fontSize: 13.5 }}>{t("chat.sheetQueue")}</span>
+                  <span style={{ fontSize: 12, color: "var(--text-muted)" }}>{t("chat.queued", { count: String(queueCount) })}</span>
+                  <span style={{ marginLeft: "auto", display: "inline-flex", gap: 6 }}>
+                    {onRecallQueue && (
+                      <button type="button" onClick={() => { onRecallQueue(); setInfoSheetOpen(false); }} style={sheetMiniBtn()}>{t("chat.queueRecall")}</button>
+                    )}
+                    {onExportQueue && (
+                      <button type="button" onClick={() => { void handleSheetQueueExport(); }} style={sheetMiniBtn()}>{t("chat.queueExport")}</button>
+                    )}
+                    {onStageImport && (
+                      <button type="button" onClick={() => queueImportInputRef.current?.click()} style={sheetMiniBtn()}>{t("chat.queueImport")}</button>
+                    )}
+                  </span>
+                </div>
+              )}
+              {/* 扩展状态：statuses 全量 ANSI（桌面状态架的归宿） */}
+              {extensionStatuses.length > 0 && (
+                <SheetSection
+                  label={t("chat.sheetExtStatus")}
+                  summary={String(extensionStatuses.length)}
+                  open={infoSheetSection === "extStatus"}
+                  onToggle={() => setInfoSheetSection(infoSheetSection === "extStatus" ? null : "extStatus")}
+                >
+                  <div style={{ fontSize: 11, lineHeight: 1.5, whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+                    <AnsiText text={extStatusLine} />
+                  </div>
+                </SheetSection>
+              )}
+              {/* 扩展面板：extensionWidgets 全量（v2 漏洞补上——widgets 归宿） */}
+              {extensionWidgets.length > 0 && (
+                <SheetSection
+                  label={t("chat.sheetExtWidgets")}
+                  summary={String(extensionWidgets.length)}
+                  open={infoSheetSection === "extWidgets"}
+                  onToggle={() => setInfoSheetSection(infoSheetSection === "extWidgets" ? null : "extWidgets")}
+                >
+                  <ExtensionWidgets widgets={extensionWidgets} />
+                </SheetSection>
+              )}
+            </div>
+          </>
+        )}
         </div>
       </div>
   );

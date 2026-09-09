@@ -357,6 +357,8 @@ export type ExtSlotName =
                       //   float 方案 §4.3）
   | "sidebarTasks"    // aiti-float dock v0.5.1：左栏「任务」区（会话列表与文件区之间；宿主折叠头，
                       //   无 items 整块不渲染；承载 = aiti-subagents 子代理任务。float 方案 §4.4.2）
+  | "composerAffix" // 输入框内右缘 affix 位（小屏微信式 🎤；仅小屏输入行渲染。core 自有 × 清空
+                    //   与扩展注册按「空/有内容」派生天然互斥——见 docs/pi-web-mobile-input-wechat-plan.md §3.2）
   ;
 
 /**

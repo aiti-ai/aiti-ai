@@ -1820,3 +1820,12 @@ span.token.table {
     padding-right: 0;
   }
 }
+
+/* 小屏「微信式」输入区：矩阵图标入场淡入（120ms，docs/pi-web-mobile-input-wechat-plan.md §3） */
+@keyframes ci-mobile-icon-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.ci-mobile-icon {
+  animation: ci-mobile-icon-in 0.12s ease;
+}

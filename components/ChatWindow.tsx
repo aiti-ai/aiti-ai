@@ -20,7 +20,7 @@ import { ExtSlot } from "./ExtSlots";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
 import { useRecoveryProviderItems, routeRecoveryResolve } from "@/lib/composer/recovery";
 import { runSessionForkGates } from "@/lib/ext/fork-gates";
-import { ExtensionStatusBar } from "./ExtensionStatusBar";
+import { ExtensionStatusBar, ExtensionStatusToast } from "./ExtensionStatusBar";
 import { AnsiText } from "./AnsiText";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
@@ -324,6 +324,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const {
     loading, error, messages, entryIds, historyCursor, hasEarlierMessages, streamState,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
+    followPaused,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, displayModel: displayModelValue, sessionStats, modelSwitching,
     slashCommands, slashCommandsLoading, queuedMessages,
@@ -1173,6 +1174,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       draftKey={draftKey}
       cwd={session?.cwd ?? newSessionCwd}
       suppressDraft={editFromHerePending != null}
+      followStreaming={!followPaused}
+      extensionStatuses={extensionStatuses}
+      extensionWidgets={extensionWidgets}
     />
   );
 
@@ -1768,7 +1772,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             <ExtensionWidgets widgets={belowEditorWidgets} />
           </div>
         </div>
-        <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />
+        {/* 小屏：状态架整架不常驻（输入条=最底常驻元素），变化走 toast；详情收进
+            ChatInput 的 ⓘ sheet。桌面状态架照旧。docs/pi-web-mobile-input-wechat-plan.md §六 */}
+        {isMobile
+          ? <ExtensionStatusToast statuses={extensionStatuses} />
+          : <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />}
       </div>
       {isEmptyNew && <div className="min-h-0 flex-1" />}
     </div>
