@@ -1416,6 +1416,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
         break;
       }
+      case "session_backend_ready": {
+        // 外部后端懒初始化换绑真实复合 id（zcode:new-* → zcode:sess_*，服务端已
+        // putHandleAt 双注册）：随 rebind 实时迁移选中 id + URL（原位迁移不 bump
+        // sessionKey，挂载中聊天/SSE 不断），并派发 canonicalized 事件让
+        // session-manager dock 即刻清掉占位 id 的草稿行——否则同会话双行要等
+        // pendingDrafts 10min TTL 或下次 loadSession 规范化才收敛。
+        const newId = event.id;
+        const currentSid = sessionIdRef.current;
+        if (typeof newId === "string" && newId && currentSid && newId !== currentSid) {
+          sessionIdRef.current = newId; // 后续命令/加载直接用规范 id（旧 id 双注册仍命中）
+          try { onSessionIdCanonicalizedRef.current?.(currentSid, newId); } catch { /* 回调异常不阻塞事件流 */ }
+        }
+        break;
+      }
       case "agent_start":
         cancelEventStreamGrace();
         sdkAgentActiveRef.current = true;
