@@ -1528,7 +1528,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const agentWasActive = sdkAgentActiveRef.current;
         sdkAgentActiveRef.current = false;
         runStartedAtRef.current = null;
-        if (!agentWasActive || rpcPromptPendingRef.current) break;
+        // agentRunningRef 也算有效运行证据：外部后端（zcode 等）「受理即发 agent_start」，
+        // 页面事件流接入晚于该帧且 connected 重放时 isStreaming 尚为 false → sdkAgentActive
+        // 恒 false，但 send 路径已乐观置 agentRunningRef——此时 settled 必须照常收尾，
+        // 否则 spinner 永挂（实测 2026-09-10：zcode 停止/自然结束均卡「正在等待模型」）。
+        if ((!agentWasActive && !agentRunningRef.current) || rpcPromptPendingRef.current) break;
 
         const sid = sessionIdRef.current;
         // 后端会话：拉取本轮用量
