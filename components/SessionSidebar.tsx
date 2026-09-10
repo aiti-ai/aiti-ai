@@ -2346,7 +2346,10 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
             flexDirection: "column",
             flex: dockSectionCollapsed ? "0 0 auto" : explorerOpen ? "0 1 auto" : "1 1 0",
             maxHeight: dockSectionCollapsed || !explorerOpen ? undefined : "45%",
-            minHeight: 0,
+            // 展开态 minHeight 保底：会话列表 (flex-basis auto) 会占满整列，dock 区
+            // flex-basis≈0 无剩余空间可分 → 被压扁到 ~0 高（面板内容链式塌陷，点「打开」
+            // 毫无可见反馈）。保底高度强制 dock 面板可见（会话区 flex-shrink 让出）。
+            minHeight: dockSectionCollapsed ? 0 : 160,
             overflow: "hidden",
           }}
         >
