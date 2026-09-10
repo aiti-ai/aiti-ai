@@ -18,63 +18,61 @@ const BASE = {
   hasAbortCapability: true,
 };
 
-test("mobile matrix §三: 空闲·空输入 = [prompt, ＋] + 🎤 插槽，无 stop/steer/clock/发送", () => {
+test("mobile matrix v4: 空闲·空输入 = ＋/图片恒驻；条件组仅「继续」待上浮", () => {
   const m = matrix(BASE);
   assert.deepEqual(
-    { prompt: m.prompt, plus: m.plus, stop: m.stop, steer: m.steer, clock: m.clock, send: m.send, clear: m.clear, affixSlot: m.affixSlot },
-    { prompt: true, plus: true, stop: false, steer: false, clock: false, send: false, clear: false, affixSlot: true },
+    { plus: m.plus, image: m.image, clear: m.clear, cont: m.cont, send: m.send, stop: m.stop, steer: m.steer, clock: m.clock },
+    { plus: true, image: true, clear: false, cont: true, send: false, stop: false, steer: false, clock: false },
   );
 });
 
-test("mobile matrix §三: 空闲·有内容 = ×清空 + 发送；prompt/＋/🎤 消失（v3 瘦身：左组空）", () => {
+test("mobile matrix v4: 空闲·有内容 = ＋/图片/×清空/发送；继续退出", () => {
   const m = matrix({ ...BASE, hasInputText: true });
   assert.deepEqual(
-    { prompt: m.prompt, plus: m.plus, stop: m.stop, steer: m.steer, clock: m.clock, send: m.send, clear: m.clear, affixSlot: m.affixSlot },
-    { prompt: false, plus: false, stop: false, steer: false, clock: false, send: true, clear: true, affixSlot: false },
+    { plus: m.plus, image: m.image, clear: m.clear, cont: m.cont, send: m.send, stop: m.stop, steer: m.steer, clock: m.clock },
+    { plus: true, image: true, clear: true, cont: false, send: true, stop: false, steer: false, clock: false },
   );
   // 纯图片也算有内容（与发送可用条件一致）
   const m2 = matrix({ ...BASE, imageCount: 2 });
   assert.equal(m2.send, true);
   assert.equal(m2.clear, true);
-  assert.equal(m2.affixSlot, false);
+  assert.equal(m2.cont, false);
 });
 
-test("mobile matrix §三: 运行中·空输入 = [stop, steer, ⏰, ＋] + 🎤；＋ 能力缺失可整组缺席", () => {
-  const m = matrix({ ...BASE, isStreaming: true });
+test("mobile matrix v4: 运行中·空输入 = 停止浮出；插队/排队不出现（非空才显，canSteerFromQueue 回归队列横幅）", () => {
+  const m = matrix({ ...BASE, isStreaming: true, canSteerFromQueue: true });
   assert.deepEqual(
-    { prompt: m.prompt, plus: m.plus, stop: m.stop, steer: m.steer, clock: m.clock, send: m.send, clear: m.clear, affixSlot: m.affixSlot },
-    { prompt: false, plus: true, stop: true, steer: true, clock: true, send: false, clear: false, affixSlot: true },
+    { plus: m.plus, image: m.image, clear: m.clear, cont: m.cont, send: m.send, stop: m.stop, steer: m.steer, clock: m.clock },
+    { plus: true, image: true, clear: false, cont: false, send: false, stop: true, steer: false, clock: false },
   );
-  // 外部 agent 无 steer/followUp/abort 能力 → 按钮缺席（不影响 ＋/affix）
-  const m2 = matrix({ ...BASE, isStreaming: true, hasSteerCapability: false, hasFollowUpCapability: false, hasAbortCapability: false });
+  // 外部 agent 无 abort 能力 → 停止缺席（＋/图片仍恒驻）
+  const m2 = matrix({ ...BASE, isStreaming: true, hasAbortCapability: false });
   assert.equal(m2.stop, false);
-  assert.equal(m2.steer, false);
-  assert.equal(m2.clock, false);
   assert.equal(m2.plus, true);
+  assert.equal(m2.image, true);
 });
 
-test("mobile matrix §三: 运行中·有内容 = [steer, ⏰] + × + 发送；stop 消失（打字不误停）", () => {
+test("mobile matrix v4: 运行中·有内容 = 全量浮出 [×, 发送, 停止, 插队, 排队]；v4 起停止不再限空输入", () => {
   const m = matrix({ ...BASE, isStreaming: true, hasInputText: true });
   assert.deepEqual(
-    { prompt: m.prompt, plus: m.plus, stop: m.stop, steer: m.steer, clock: m.clock, send: m.send, clear: m.clear, affixSlot: m.affixSlot },
-    { prompt: false, plus: false, stop: false, steer: true, clock: true, send: true, clear: true, affixSlot: false },
+    { plus: m.plus, image: m.image, clear: m.clear, cont: m.cont, send: m.send, stop: m.stop, steer: m.steer, clock: m.clock },
+    { plus: true, image: true, clear: true, cont: false, send: true, stop: true, steer: true, clock: true },
   );
 });
 
-test("mobile matrix §三/S8: 运行中带图 steer/⏰/发送禁用（steerReady=false），× 仍可用", () => {
+test("mobile matrix v4/S8: 运行中带图 = 插队/排队存在但禁用（steerReady=false），× 仍可用", () => {
   const m = matrix({ ...BASE, isStreaming: true, imageCount: 1 });
   assert.equal(m.steerReady, false);
   assert.equal(m.sendEnabled, false);
   assert.equal(m.clear, true);
-  // steer 图标仍在（disabled 态），canSteerFromQueue 也可救活空输入 steer
+  // 存在性=有内容（带图也算）；禁用由组件按 steerReady 计算
   assert.equal(m.steer, true);
-});
-
-test("mobile matrix S9: 空输入 + followUp 队列非空 → steer 存在（disabled 由组件按 canSteerFromQueue 计算）", () => {
-  const m = matrix({ ...BASE, isStreaming: true, canSteerFromQueue: true });
-  assert.equal(m.steer, true);
-  assert.equal(m.steerReady, false);
-  assert.equal(m.sendEnabled, false);
+  assert.equal(m.clock, true);
+  // steer/followUp 能力缺失 → 插队/排队缺席
+  const m2 = matrix({ ...BASE, isStreaming: true, hasInputText: true, hasSteerCapability: false, hasFollowUpCapability: false });
+  assert.equal(m2.steer, false);
+  assert.equal(m2.clock, false);
+  assert.equal(m2.stop, true);
 });
 
 test("mobile placeholder §七: 优先级 P1 > P2 > P3 > P4 > agent > P5b/P5 > P6", () => {

@@ -483,8 +483,11 @@ export const enLocale: LocalePlugin = {
     "chat.noMatchingModels": "No matching models",
     "chat.moreControls": "More controls",
     "chat.collapseControls": "Collapse controls",
-    // ── Mobile "WeChat-style" composer (docs/pi-web-mobile-input-wechat-plan.md v3) ──
+    // ── Mobile "WeChat-style" composer (docs/pi-web-mobile-input-wechat-plan.md v3; v4 §19) ──
     "chat.info": "Info",
+    "chat.plusPanel": "More",
+    "chat.camera": "Camera",
+    "chat.attachFiles": "Files",
     "chat.clearComposer": "Clear input",
     "chat.undoClear": "Undo",
     "chat.clearedToast": "Cleared",

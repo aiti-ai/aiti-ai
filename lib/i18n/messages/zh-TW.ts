@@ -392,8 +392,11 @@ export const zhTWLocale: LocalePlugin = {
     "chat.noMatchingModels": "找不到相符的模型",
     "chat.moreControls": "更多控制項",
     "chat.collapseControls": "收起控制項",
-    // ── 小屏「微信式」輸入區（docs/pi-web-mobile-input-wechat-plan.md v3）──
+    // ── 小屏「微信式」輸入區（docs/pi-web-mobile-input-wechat-plan.md v3；v4 §十九）──
     "chat.info": "資訊",
+    "chat.plusPanel": "更多",
+    "chat.camera": "相機",
+    "chat.attachFiles": "檔案",
     "chat.clearComposer": "清空輸入",
     "chat.undoClear": "復原",
     "chat.clearedToast": "已清空",

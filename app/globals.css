@@ -1829,3 +1829,13 @@ span.token.table {
 .ci-mobile-icon {
   animation: ci-mobile-icon-in 0.12s ease;
 }
+
+/* 小屏队列横幅 pulse（v4 §十九：任何队列增加 → 强制回 full + 横幅脉冲一次） */
+@keyframes queue-banner-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.55); }
+  100% { box-shadow: 0 0 0 14px rgba(59, 130, 246, 0); }
+}
+.queue-banner-pulse {
+  animation: queue-banner-pulse 0.9s ease-out 1;
+  border-radius: 8px;
+}
