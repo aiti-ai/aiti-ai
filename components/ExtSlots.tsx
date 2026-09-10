@@ -1242,6 +1242,7 @@ export const MemoExtSlot = memo(ExtSlot, (prev, next) =>
 //  · 兑底窗口 800ms（方案 §3.8 拍板，原 3s 压缩）：记忆命中但 items 迟迟不注册
 //    （扩展被禁用/卸载后缓存残留）→ 到点清记忆并保持 fallback。
 const TAKEOVER_MEM_PREFIX = "pi-web:takeover:";
+const emptySubscribe = () => () => {};
 export function takeoverMemKey(name: string): string { return TAKEOVER_MEM_PREFIX + name; }
 function readTakeoverMem(name: string, legacyKey?: string): boolean {
   try {
@@ -1290,34 +1291,36 @@ export function TakeoverSlot({ name, fallback, extra, legacyKey, currentSession 
   if (memRef.current === null) memRef.current = readTakeoverMem(name, legacyKey);
   const everSeenRef = useRef<boolean | null>(null); // null=本会话尚未观察到注册态
   // 等待窗（§7-2 配套）：记忆命中但 items 未到 → 渲染空白占位而非整个 fallback——
-  // 防旧侧栏整块闪现（fallback 可能是懒 chunk，加载窗口内本来也是空白，观感一致）。
-  const [hintPending, setHintPending] = useState(() => memRef.current === true);
+  // 防旧侧栏整块闪现。hintPending 必须 hydration 安全：SSR/首帧恒 false（与服务端
+  // 一致，防 #418 mismatch），挂载后经 uSES 的 hydrated 标记 paint 前翻真。
+  const [hintCleared, setHintCleared] = useState(false);
+  const hydrated = useSyncExternalStore(emptySubscribe, () => true, () => false);
+  const hintPending = hydrated && !hintCleared && memRef.current === true;
   useEffect(() => {
     if (takeover) {
       everSeenRef.current = true;
-      if (hintPending) setHintPending(false);
       if (!memRef.current) { memRef.current = true; writeTakeoverMem(name, true); window.dispatchEvent(new Event(TAKEOVER_MEM_EVENT)); }
       return;
     }
     if (everSeenRef.current === true) {
       everSeenRef.current = false;
       if (memRef.current) { memRef.current = false; writeTakeoverMem(name, false); window.dispatchEvent(new Event(TAKEOVER_MEM_EVENT)); }
-      setHintPending(false);
+      setHintCleared(true);
     }
     // 首帧未注册（everSeen===null）时不动记忆：等注册事件裁决，避免抹掉真接管记忆
   }, [takeover, name]);
   // 兑底：记忆命中但扩展始终未注册（缓存残留）→ 800ms 一次性校验后清记忆并放行 fallback（方案 §3.8）
   useEffect(() => {
-    if (!hintPending) return;
+    if (!hydrated || hintCleared || memRef.current !== true) return;
     const timer = setTimeout(() => {
-      if (takeoverRef.current) { setHintPending(false); return; }
+      if (takeoverRef.current) return;
       memRef.current = false;
       writeTakeoverMem(name, false);
-      setHintPending(false);
+      setHintCleared(true);
       window.dispatchEvent(new Event(TAKEOVER_MEM_EVENT));
     }, 800);
     return () => clearTimeout(timer);
-  }, [hintPending, name]);
+  }, [hydrated, hintCleared, name]);
   if (takeover) return <ExtSlot name={name} currentSession={currentSession} extra={extra as never} />;
   if (hintPending) return null;
   return <>{fallback}</>;
