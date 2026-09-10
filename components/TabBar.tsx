@@ -251,8 +251,41 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
             >
               {tab.label}
             </span>
+            {tab.kind === "dock" && (
+              /* v3.1 位置选择器：dock tab ⇱ → piwe-float-dock-menu 事件（菜单由 aiti-float/
+                 降级层渲染：浮窗/左栏/右栏 + 当前态✓ + 默认标）。停靠态的统一换位入口——
+                 内容区不再渲染 DockBody 头行（消灭三层工具条）。 */
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  try {
+                    const r = e.currentTarget.getBoundingClientRect();
+                    window.dispatchEvent(new CustomEvent("piwe-float-dock-menu", {
+                      detail: { key: tab.id.slice(5), rect: { left: r.left, bottom: r.bottom } },
+                    }));
+                  } catch { /* ignore */ }
+                }}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: 20, height: 20,
+                  background: "transparent",
+                  border: "none",
+                  borderRadius: 4,
+                  color: isActive ? "var(--text-muted)" : "var(--text-dim)",
+                  cursor: "pointer",
+                  padding: 0,
+                  fontSize: 11,
+                  lineHeight: 1,
+                  flexShrink: 0,
+                }}
+                title="位置（浮窗/左栏/右栏）"
+                aria-label={`Position ${tab.label}`}
+              >
+                ⇱
+              </button>
+            )}
             <button
-              disabled={tab.closing}
+              disabled={Boolean(tab.closing)}
               onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
               onMouseEnter={() => setHoveredClose(tab.id)}
               onMouseLeave={() => setHoveredClose(null)}

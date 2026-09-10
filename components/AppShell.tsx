@@ -746,7 +746,20 @@ export function AppShell() {
       }
     };
     window.addEventListener("piwe-float-present-change", onPresent);
-    return () => window.removeEventListener("piwe-float-present-change", onPresent);
+    // v3.1 激活联动：已 docked 面板重复 open/dock:同区（无状态迁移，change 不发）→ 状态机
+    // 发 activate——右栏展开并置前对应 tab（工具条重复打开后台 dock 的「不置前」修复）。
+    // 仅 docked 态触发；floating 幂等不发事件，「手动收起右栏后重复 open 浮窗不误展开」不变。
+    const onActivate = (e: Event) => {
+      const detail = (e as CustomEvent<{ key: string; state: string }>).detail;
+      if (!detail?.key || !detail.state?.startsWith("docked:right-panel")) return;
+      setRightPanelOpen(true);
+      setActiveFileTabId(`dock:${detail.key}`);
+    };
+    window.addEventListener("piwe-float-present-activate", onActivate);
+    return () => {
+      window.removeEventListener("piwe-float-present-change", onPresent);
+      window.removeEventListener("piwe-float-present-activate", onActivate);
+    };
   }, [fileTabs, terminalTabs]);
   // ═══ [aiti-float dock 批次A 重补结束] ═══
 
