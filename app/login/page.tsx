@@ -3,6 +3,7 @@
 import Image from "next/image";
 import { useState, type FormEvent } from "react";
 import { I18nProvider, useI18n } from "@/hooks/useI18n";
+import { apiUrl, withBasePath } from "@/lib/base-path";
 
 function safeDestination(): string {
   const destination = new URLSearchParams(window.location.search).get("next");
@@ -20,7 +21,7 @@ function LoginForm() {
     setBusy(true);
     setError("");
     try {
-      const response = await fetch("/api/web-auth", {
+      const response = await fetch(apiUrl("/api/web-auth"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password }),
@@ -29,7 +30,7 @@ function LoginForm() {
         setError(response.status === 401 ? t("auth.invalidPassword") : t("auth.loginFailed"));
         return;
       }
-      window.location.replace(safeDestination());
+      window.location.replace(withBasePath(safeDestination()));
     } catch {
       setError(t("auth.loginFailed"));
     } finally {

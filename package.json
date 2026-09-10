@@ -29,6 +29,7 @@
     "package.json"
   ],
   "scripts": {
+    "postinstall": "node bin/prepare-terminal.js",
     "dev": "next dev -H 127.0.0.1 -p 30141",
     "dev:lan": "next dev -H 0.0.0.0 -p 30141",
     "build": "next build",

@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useTheme } from "@/hooks/useTheme";
+import { apiUrl, withBasePath } from "@/lib/base-path";
 import { THEME_OPTIONS } from "@/lib/theme";
 import { ThemeIcon } from "./ThemeIcon";
 import {
@@ -77,7 +78,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
 
   useEffect(() => {
     setThinkingExpanded(isThinkingExpandedByDefault());
-    void fetch("/api/web-auth")
+    void fetch(apiUrl("/api/web-auth"))
       .then((response) => response.ok ? response.json() : null)
       .then((data: { enabled?: boolean } | null) => setWebAuthEnabled(data?.enabled === true))
       .catch(() => {});
@@ -87,9 +88,9 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
     setLoggingOut(true);
     setLogoutError("");
     try {
-      const response = await fetch("/api/web-auth", { method: "DELETE" });
+      const response = await fetch(apiUrl("/api/web-auth"), { method: "DELETE" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      window.location.replace("/login");
+      window.location.replace(withBasePath("/login"));
     } catch {
       setLogoutError(t("auth.logoutFailed"));
     } finally {

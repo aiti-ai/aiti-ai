@@ -71,10 +71,13 @@ export async function proxy(request: NextRequest) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
   }
 
+  // basePath 感知：middleware 的 nextUrl.pathname 已剥 basePath（如 /dev 部署下 pathname=/login、
+  // basePath=/dev），redirect 目标必须手工补回前缀，否则子路径部署会 404。
+  const base = request.nextUrl.basePath || "";
   const password = process.env.PI_WEB_PASSWORD;
   if (!isWebPasswordEnabled(password)) {
     if (request.nextUrl.pathname === "/login") {
-      return NextResponse.redirect(new URL("/", request.url));
+      return NextResponse.redirect(new URL(`${base}/`, request.url));
     }
     return NextResponse.next();
   }
@@ -83,14 +86,14 @@ export async function proxy(request: NextRequest) {
     || (isApiRequest && isValidBasicAuthorization(request.headers.get("authorization"), password));
   if (request.nextUrl.pathname === "/login") {
     return authenticated
-      ? NextResponse.redirect(new URL("/", request.url))
+      ? NextResponse.redirect(new URL(`${base}/`, request.url))
       : NextResponse.next();
   }
   if (request.nextUrl.pathname === "/api/web-auth") return NextResponse.next();
 
   if (!authenticated) {
     if (!isApiRequest) {
-      const loginUrl = new URL("/login", request.url);
+      const loginUrl = new URL(`${base}/login`, request.url);
       if (request.nextUrl.search) {
         loginUrl.searchParams.set("next", `${request.nextUrl.pathname}${request.nextUrl.search}`);
       }

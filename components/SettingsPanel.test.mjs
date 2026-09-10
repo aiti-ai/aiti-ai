@@ -136,7 +136,8 @@ test("keeps password authentication to one login field and one settings action",
   assert.doesNotMatch(loginSource, /type="(?:text|email)"/);
   assert.match(loginSource, /autoComplete="current-password"/);
   assert.match(loginSource, /!destination\.startsWith\("\/\/"\)/);
-  assert.match(panelSource, /fetch\("\/api\/web-auth", \{ method: "DELETE" \}\)/);
+  // 本地 fork 用 apiUrl() 包裹以适配 basePath 部署（根路径部署下 apiUrl 恒等返回）
+  assert.match(panelSource, /fetch\(apiUrl\("\/api\/web-auth"\), \{ method: "DELETE" \}\)/);
   assert.match(panelSource, /t\("auth\.logOut"\)/);
   assert.match(loginSource, /className="web-login-composer"[\s\S]*?type="password"[\s\S]*?<button type="submit"/);
   assert.match(globalCssSource, /\.web-login-composer \{[\s\S]*?display: flex;[\s\S]*?border-radius: 14px/);

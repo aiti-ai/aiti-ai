@@ -570,6 +570,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const promptRunIdRef = useRef(0);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
   const modelSwitchPendingRef = useRef(false);
+  const draftKeyAliasesRef = useRef(new Map<string, string>());
   const messagesRef = useRef(messages);
   const sessionHookMountedRef = useRef(true);
 
@@ -717,6 +718,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setLiveModel(state?.model
       ? { provider: state.model.provider, modelId: state.model.id }
       : null);
+  }, []);
+
+  // 上游草稿 key 别名解析（provisional → 真实 sid）。本地 promote 重定向由
+  // aiti-draft-keeper 契约承担，此映射表保留以对齐上游代码形状（减少合并冲突）。
+  const resolveComposerDraftKey = useCallback((key: string | undefined) => {
+    if (!key) return undefined;
+    let resolved = key;
+    const visited = new Set<string>();
+    while (!visited.has(resolved)) {
+      visited.add(resolved);
+      const next = draftKeyAliasesRef.current.get(resolved);
+      if (!next) break;
+      resolved = next;
+    }
+    return resolved;
   }, []);
 
   const restoreSubmission = useCallback((
@@ -900,6 +916,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const provisionalDraftKey = newSessionDraftKey;
     if (!provisionalDraftKey) return;
     if (provisionalDraftKey !== sid) {
+      draftKeyAliasesRef.current.set(provisionalDraftKey, sid);
       // 唯一写入口：provisional 草稿作废 + promote 窗口（React key prop 切换前）
       // 的新输入由 keeper 重定向落 sid 槽位——「已发送消息残留」竞态在状态机内消除。
       applyDraftIntent({ type: "sessionCreated", provisionalKey: provisionalDraftKey, sessionId: sid });
