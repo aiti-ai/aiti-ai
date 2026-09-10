@@ -113,7 +113,9 @@ function ensureVisibilityRelay(): void {
  *  消费者同通道；模块内订阅收不到外部测试/扩展手动广播的事件）。 */
 let connGuardRelayWired = false;
 function ensureConnGuardRelay(): void {
-  if (connGuardRelayWired || typeof window === "undefined") return;
+  // 极简环境（单测桩 window 只有 dispatchEvent）无从挂事件面 → 静默跳过，不影响主链路
+  if (connGuardRelayWired || typeof window === "undefined"
+    || typeof window.addEventListener !== "function") return;
   connGuardRelayWired = true;
   window.addEventListener("piwe-conn-starve", ((ev: CustomEvent<{ starved?: boolean }>) => {
     const starved = Boolean(ev.detail?.starved);

@@ -380,8 +380,6 @@ export const zhTWLocale: LocalePlugin = {
     "terminal.exited": "終端機已關閉",
     "terminal.error": "連線錯誤",
     "terminal.exitCode": "程序已結束，結束代碼 {code}",
-    "terminal.managedBy": "工作區終端機已由 aiti-cmd 接管——點「開啟終端機」在 aiti-cmd 命令面板中開啟/回到 shell 會話。",
-    "terminal.needAitiCmd": "未偵測到 aiti-cmd 擴充功能——啟用 aiti-cmd 後即可開啟工作區終端機。",
     "chat.newQuoteChat": "關於選取文字的新對話",
     "chat.quoteIntro": "關於這段內容：",
     "chat.quoteQuestion": "我的問題是：",

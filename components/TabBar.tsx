@@ -18,7 +18,11 @@ export interface Tab {
   kind?: "file" | "folder" | "terminal" | "dock";
   /** 钉住标记（由扩展维护，core 只透传——不在 core 做逐出/关闭策略） */
   pinned?: boolean;
-  closing?: boolean;
+  /** 关闭/重启收尾中（terminal tab："close"/"restart" 原值供拆出窗口透传
+   *  TerminalPanelBridge——原生兜底层的重启语义依赖它；渲染处一律 Boolean 归一） */
+  closing?: boolean | "close" | "restart";
+  /** terminal tab（原生兜底层）：恢复页签标记——拆出窗口透传，恢复页签不静默起 shell */
+  restored?: boolean;
   sourceSessionId?: string | null;
   initialDisplayMode?: FileViewerDisplayMode;
   viewerState?: FileViewerState;
@@ -301,8 +305,8 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
                 flexShrink: 0,
                 transition: "background 0.1s, color 0.1s",
               }}
-               title={t("i18n.close")}
-               aria-label={`${t("i18n.close")} ${tab.label}`}
+               title={t(tab.kind === "terminal" ? "terminal.close" : "i18n.close")}
+               aria-label={`${t(tab.kind === "terminal" ? "terminal.close" : "i18n.close")} ${tab.label}`}
             >
               <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
                 <line x1="2" y1="2" x2="8" y2="8" />

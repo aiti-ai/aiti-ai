@@ -10,6 +10,7 @@ import test from "node:test";
 
 const bridgeSource = await readFile(new URL("./TerminalPanelBridge.tsx", import.meta.url), "utf8");
 const extSlotsSource = await readFile(new URL("./ExtSlots.tsx", import.meta.url), "utf8");
+const extLoaderSource = await readFile(new URL("./ext-client-loader.ts", import.meta.url), "utf8");
 const typesSource = await readFile(new URL("../lib/ext/types.ts", import.meta.url), "utf8");
 const tabStateSource = await readFile(new URL("./terminal-tab-state.ts", import.meta.url), "utf8");
 
@@ -31,18 +32,24 @@ test("TerminalPanelBridge renders terminalDock slot items when registered (真�
 });
 
 test("closing→onClosed stays before the takeover early-return (Rules of Hooks)", () => {
-  // ✕/restart 收尾必须无条件触发；hook 必须在 if (takeover) 之前（顺序变化 = 部分渲染路径丢 hook）
-  const closingIdx = bridgeSource.indexOf("if (tab.closing) onClosed();");
+  // 接管态 ✕ 收尾立即触发（原生兜底态交给 TerminalPanel 完整收尾）；hook 必须在
+  // if (takeover) 之前（顺序变化 = 部分渲染路径丢 hook）
+  const closingIdx = bridgeSource.indexOf("if (tab.closing && takeover) onClosed();");
   const returnIdx = bridgeSource.indexOf("if (takeover) {");
-  assert.ok(closingIdx !== -1, "closing→onClosed effect 丢失");
+  assert.ok(closingIdx !== -1, "closing→onClosed effect 丢失（接管态立即收尾）");
   assert.ok(returnIdx !== -1, "takeover 分支丢失");
   assert.ok(closingIdx < returnIdx, "closing effect 必须在 takeover early-return 之前调用（Rules of Hooks）");
 });
 
-test("fallback 引导页在扩展缺席时保留（兜底不丢）", () => {
-  assert.match(bridgeSource, /TerminalPanelFallback/);
-  assert.match(bridgeSource, /t\("terminal\.managedBy"\)/);
-  assert.match(bridgeSource, /t\("terminal\.needAitiCmd"\)/);
+test("扩展缺席回落原生 PTY 面板（三层：接管优先/未决占位/原生兜底）", () => {
+  // 裁决钩子：boot manifest settle + 无人声明 terminalDock → settled（一次快照定案）
+  assert.match(bridgeSource, /useExtSlotSettled\("terminalDock"\)/);
+  // settle 前空壳占位（接管迟到即双开，不预判）；settle 后才渲染原生面板
+  const settledIdx = bridgeSource.indexOf("if (!settled) {");
+  const panelIdx = bridgeSource.indexOf("<TerminalPanel");
+  assert.ok(settledIdx !== -1 && panelIdx !== -1, "原生兜底层丢失");
+  assert.ok(settledIdx < panelIdx, "占位层必须在原生面板之前（未决不建 PTY）");
+  assert.match(bridgeSource, /import \{ TerminalPanel \} from "\.\/TerminalPanel";/);
 });
 
 test("terminalDock 契约存在于插槽类型表", () => {
@@ -84,14 +91,12 @@ test("useExtSlotItems 物化 effect 依赖 ui-store version（manifest 就绪后
   assert.match(extSlotsSource, /\}, \[slot, version\]\);/);
 });
 
-test("fallback open() 先 ensureExtSlotMaterialized 再试 __aitiCmd（交互时刻拉起）", () => {
-  // open 内先拉起声明 terminalDock 的懒扩展，物化完成后再读全局桥
-  const ensureIdx = bridgeSource.indexOf('await ensureExtSlotMaterialized("terminalDock")');
-  const apiIdx = bridgeSource.indexOf(").__aitiCmd;");
-  assert.ok(ensureIdx !== -1, "open() 缺少 ensureExtSlotMaterialized 跳板");
-  assert.ok(apiIdx !== -1, "open() 未读 __aitiCmd");
-  assert.ok(ensureIdx < apiIdx, "ensureExtSlotMaterialized 必须在 __aitiCmd 读取之前（先拉起后探测）");
-  // 物化中为 waking 态（按钮禁用防连点），不得提前置 missing
-  assert.match(bridgeSource, /setWaking\(true\)/);
-  assert.match(bridgeSource, /disabled=\{waking\}/);
+test("接管缺席裁决语义：boot settle + 无人声明（ExtSlots/ext-client-loader 侧）", () => {
+  // useExtSlotSettled = extBootSettled && !slotDeclared(slot)——以 manifest 声明为准：
+  // 物化时序/成败不影响定案（声明了接管就不做原生兜底，防双开；失败走错误指示器）
+  assert.match(extSlotsSource, /export function useExtSlotSettled\(slot: ExtSlotName\): boolean \{/);
+  assert.match(extSlotsSource, /extBootSettled && !slotDeclared\(slot\)/);
+  // boot settle 与加载成败解耦：fetch 失败也置位（此时无人声明 → 原生兜底可用）
+  assert.match(extSlotsSource, /notifyExtBootSettled\(\);/);
+  assert.match(extLoaderSource, /export function slotDeclared\(slot: string\): boolean \{/);
 });

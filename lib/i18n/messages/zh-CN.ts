@@ -470,8 +470,6 @@ export const zhCNLocale: LocalePlugin = {
     "terminal.exited": "终端已关闭",
     "terminal.error": "连接错误",
     "terminal.exitCode": "进程已退出，退出码 {code}",
-    "terminal.managedBy": "工作区终端已由 aiti-cmd 接管——点「打开终端」在 aiti-cmd 命令面板中打开/回到 shell 会话。",
-    "terminal.needAitiCmd": "未检测到 aiti-cmd 扩展——启用 aiti-cmd 后即可打开工作区终端。",
     "chat.newQuoteChat": "关于选中文字的新对话",
     "chat.quoteIntro": "关于这段内容：",
     "chat.quoteQuestion": "我的问题是：",

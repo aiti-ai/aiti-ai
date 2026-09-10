@@ -62,3 +62,14 @@ checks. `npm run test:terminal` starts an isolated development server and runs
 desktop/mobile browser checks using generated session fixtures. Install the
 Playwright Chromium browser first with `npx playwright install chromium`.
 The browser check prints the temporary location of its screenshots and log.
+
+## Fork note (aiti)
+
+The terminal tab surface is tiered in this fork. When the extension manifest is
+ready and an extension declares the `terminalDock` slot (aiti-cmd), that
+extension renders its own xterm view and owns the shell. When nothing declares
+the slot, the tab falls back to this native PTY panel. Until the manifest
+settles, the tab renders a placeholder: creating a native PTY before a late
+takeover arrives would run two shells for one tab. `npm run test:terminal`
+points `PI_WEB_EXTENSIONS_DIR` at an empty directory so the native baseline is
+what the browser checks exercise.

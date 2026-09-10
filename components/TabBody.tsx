@@ -34,8 +34,12 @@ export interface TabBodyCtx {
   onAtMention: (relativePath: string, isDir: boolean) => void;
   openFile: (filePath: string, fileName: string, options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean }) => void;
   openFolder: (folderPath: string, folderName: string, options?: { select?: boolean }) => void;
-  /** window 宿主 terminal：closing 收尾（AppShell handleTerminalClosed 原样透传）。 */
+  /** window 宿主 terminal：closing 收尾（AppShell handleTerminalClosed 原样透传；
+   *  closing === "restart" 时由宿主原地换新 id——原生兜底层重启语义）。 */
   onTerminalClosed: (tab: TerminalTab) => void;
+  /** window 宿主 terminal：原生兜底层重启/关闭失败（接管态由扩展自行处置，不经过此）。 */
+  onTerminalRestart: (tabId: string) => void;
+  onTerminalCloseError: (tabId: string) => void;
   onOpenShellTab: (cwd: string) => void;
 }
 
@@ -68,9 +72,20 @@ export function TabBody({ tab, host, ctx }: { tab: Tab; host: "panel" | "window"
     if (host === "panel") return null;
     return (
       <TerminalPanelBridge
-        tab={{ id: tab.id, cwd: tab.filePath, closing: tab.closing ? "close" : undefined }}
+        tab={{
+          id: tab.id,
+          cwd: tab.filePath,
+          restored: tab.restored,
+          closing: tab.closing === "restart" ? "restart" : tab.closing ? "close" : undefined,
+        }}
         active
-        onClosed={() => ctx.onTerminalClosed({ id: tab.id, cwd: tab.filePath })}
+        onClosed={() => ctx.onTerminalClosed({
+          id: tab.id,
+          cwd: tab.filePath,
+          closing: tab.closing === "restart" ? "restart" : "close",
+        })}
+        onRestart={() => ctx.onTerminalRestart(tab.id)}
+        onCloseError={() => ctx.onTerminalCloseError(tab.id)}
         onOpenShellTab={ctx.onOpenShellTab}
       />
     );

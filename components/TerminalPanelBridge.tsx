@@ -1,46 +1,49 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { useI18n } from "@/hooks/useI18n";
-import { useExtSlotItems, ExtItemBoundary, ensureExtSlotMaterialized } from "./ExtSlots";
+import { useExtSlotItems, ExtItemBoundary, useExtSlotSettled } from "./ExtSlots";
 import { hasExtRender } from "@/lib/ext-ui-store";
-
-interface TabLike {
-  id: string;
-  cwd: string;
-  restored?: boolean;
-  closing?: "close" | "restart";
-}
+import { TerminalPanel } from "./TerminalPanel";
+import type { TerminalTab } from "./terminal-tab-state";
 
 interface Props {
-  tab: TabLike;
+  tab: TerminalTab;
   active: boolean;
-  /** 页签关闭收尾（本地移除即可——shell 生命周期归 aiti-cmd，core 无 PTY 可关） */
+  /** 页签关闭收尾（接管态 = 本地移除即可——shell 生命周期归 aiti-cmd；原生兜底态由
+   *  TerminalPanel 等创建与在途输入收尾完成后再回调，重启/失败语义见 docs/terminal.md）。 */
   onClosed: () => void;
+  /** 原生兜底层专用：重启/关闭失败经宿主页签状态机（接管态由扩展自行处置）。 */
+  onRestart?: () => void;
+  onCloseError?: () => void;
   /** 透传 terminalDock.openShellTab：扩展「＋ 新建」→ 同 cwd 强制新开 shell 页签 */
   onOpenShellTab?: (cwd: string) => void;
 }
 
 /**
- * [aiti] 工作区终端页签接管桥（上游 v0.9 整合 T2 → dock 真接管，结合
- * docs/aiti-web-ext-float-dock-plan.md 的单实例思想）：
+ * [aiti] 工作区终端页签接管桥（上游 v0.9 整合 T2 → dock 真接管 + 原生 PTY 兜底）：
  *
  * - aiti-cmd 注册 `terminalDock` 插槽（真接管）：页签内**直接渲染**扩展终端视图
  *   （xterm），不再是「引导唤起弹窗」的间接形态。渲染归属（页签 ⇄ 弹窗）由扩展侧
  *   单实例状态机保证二选一：dock 态时弹窗内显示占位，⇲ 拉回窗口后弹窗恢复。
- * - 扩展缺席（未装/禁用 aiti-cmd）时保留原引导页兜底（「打开终端」按钮 +
- *   aiti-cmd 缺席提示）。
- * - sessionStorage 会话记忆语义不变（restored 恢复页签不静默起 shell，由扩展出
- *   「接管到页签」按钮）。
+ * - manifest 就绪且无人声明接管（未装/禁用 aiti-cmd）→ 回落**原生 PTY 面板**
+ *   （lib/terminal-manager + /api/terminal 全套，见 docs/terminal.md：幂等创建/
+ *   120s 租约/断点续传/有界回放）。manifest 未决（启动拉取中）期间渲染空壳占位——
+ *   声明了接管的扩展物化到位前抢先建原生 PTY 就是双开，声明与否以 manifest 快照
+ *   一次定案（useExtSlotSettled）。
+ * - sessionStorage 会话记忆语义不变（restored 恢复页签不静默起 shell：原生层 GET
+ *   探测、接管层由扩展出「接管到页签」按钮）。
  */
-export function TerminalPanelBridge({ tab, active, onClosed, onOpenShellTab }: Props) {
+export function TerminalPanelBridge({ tab, active, onClosed, onRestart, onCloseError, onOpenShellTab }: Props) {
   const { t } = useI18n();
-  // 页签关闭收尾统一在宿主处理（✕/restart → 移除页签；扩展经 onClosed 感知释放归属）。
+  const takeover = useExtSlotItems("terminalDock").find(hasExtRender);
+  const settled = useExtSlotSettled("terminalDock");
+  // 页签关闭收尾分流：接管态立即本地移除；原生态由 TerminalPanel 的 closing effect
+  // 走完整收尾（等创建/在途输入 → DELETE → 回调；失败 onCloseError 留页签可重试）。
   // 必须在 takeover early-return 之前调 hooks（Rules of Hooks）。
   useEffect(() => {
-    if (tab.closing) onClosed();
-  }, [tab.closing, onClosed]);
-  const takeover = useExtSlotItems("terminalDock").find(hasExtRender);
+    if (tab.closing && takeover) onClosed();
+  }, [tab.closing, takeover, onClosed]);
   if (takeover) {
     return (
       <section
@@ -62,80 +65,18 @@ export function TerminalPanelBridge({ tab, active, onClosed, onOpenShellTab }: P
       </section>
     );
   }
-  return <TerminalPanelFallback tab={tab} active={active} />;
-}
-
-/** 兜底引导页（aiti-cmd 缺席时）：保留原「打开终端」唤起 + 缺席提示。 */
-function TerminalPanelFallback({ tab, active }: { tab: TabLike; active: boolean }) {
-  const { t } = useI18n();
-  const [opened, setOpened] = useState(false);
-  const [missing, setMissing] = useState(false);
-  const [waking, setWaking] = useState(false);
-  const autoRef = useRef(false);
-
-  const open = useCallback(async () => {
-    // [懒加载适配 2026-09-09] aiti-cmd client 可能尚未物化（dock 页签常挂载早于
-    // manifest 拉取，槽位物化 effect 未及触发/未完成）。点按与自动唤起本身就是
-    // 交互时刻：先经宿主标准跳板拉起声明 terminalDock 的懒扩展，物化完成后再试
-    // 全局桥 __aitiCmd；确实无扩展才报缺席（此前直接查空即置 missing，误报
-    // 「未检测到 aiti-cmd 扩展」）。
-    setWaking(true);
-    try { await ensureExtSlotMaterialized("terminalDock"); } catch { /* 拉起失败按缺席处理 */ }
-    setWaking(false);
-    const api = (window as unknown as { __aitiCmd?: { openShell?: (cwd: string, name?: string) => unknown } }).__aitiCmd;
-    if (!api || typeof api.openShell !== "function") {
-      setMissing(true);
-      return;
-    }
-    try {
-      api.openShell(tab.cwd, "bash");
-      setOpened(true);
-    } catch {
-      setMissing(true);
-    }
-  }, [tab.cwd]);
-
-  useEffect(() => {
-    if (!active || tab.restored || autoRef.current) return;
-    autoRef.current = true;
-    void open();
-  }, [active, tab.restored, open]);
-
+  if (!settled) {
+    // manifest 未决：既不能渲染接管层也不能预判缺席（防接管迟到双开），先给空壳
+    // 占位（manifest 拉取 <1s，正常情况下可见时间可忽略）。
+    return <section className="terminal-panel" aria-label={t("terminal.title")} />;
+  }
   return (
-    <section
-      className="terminal-panel"
-      aria-label={t("terminal.title")}
-      style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24, color: "var(--text-dim)", fontSize: 12 }}
-    >
-      <div className="terminal-panel-path" title={tab.cwd} style={{ display: "flex", alignItems: "center", gap: 6, maxWidth: "100%", overflow: "hidden" }}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
-        </svg>
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{tab.cwd}</span>
-      </div>
-      <span style={{ textAlign: "center", lineHeight: 1.6, maxWidth: 420 }}>{t("terminal.managedBy")}</span>
-      {!opened && (
-        <button
-          type="button"
-          onClick={open}
-          disabled={waking}
-          style={{
-            display: "flex", alignItems: "center", gap: 6,
-            padding: "6px 14px",
-            background: "var(--bg-hover)", border: "1px solid var(--border)",
-            borderRadius: 6, color: "var(--accent)", cursor: waking ? "wait" : "pointer",
-            fontSize: 12, fontWeight: 600,
-          }}
-        >
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
-          </svg>
-          {t("terminal.open")}
-        </button>
-      )}
-      {waking && !opened && <span role="status" style={{ color: "var(--text-muted)" }}>{t("terminal.title")} · aiti-cmd …</span>}
-      {opened && <span role="status" style={{ color: "var(--text-muted)" }}>{t("terminal.title")} · aiti-cmd</span>}
-      {missing && <span role="alert" style={{ color: "#ef4444" }}>{t("terminal.needAitiCmd")}</span>}
-    </section>
+    <TerminalPanel
+      tab={tab}
+      active={active}
+      onRestart={onRestart ?? (() => {})}
+      onClosed={onClosed}
+      onCloseError={onCloseError ?? (() => {})}
+    />
   );
 }

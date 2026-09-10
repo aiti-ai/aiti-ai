@@ -150,7 +150,11 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
           if (disposed || exited) return;
           connected = false;
           terminal.options.disableStdin = true;
-          setStatus(events?.readyState === 2 /* CLOSED，总线不可达一次性 onerror */ ? "error" : "connecting");
+          if (events && events.readyState === 2 /* CLOSED：总线缺席已定案（一次性 onerror）*/) {
+            connect(); // 重走裁决：getEventBus 此后返回 null → 落到下方原样 EventSource
+            return;
+          }
+          setStatus("connecting");
         };
         return;
       }

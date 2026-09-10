@@ -67,6 +67,15 @@ function readSlot(): PiEventBusSlot | null {
   return bus?.subscribeTopics ? bus : null;
 }
 
+/** 总线缺席定案：等待窗口耗尽仍未见槽 → 置位。此后 getEventBus 直接返回 null，
+ *  调用方现有的「?? new EventSource / if (!bus)」原 SSE 回退才真正生效（否则
+ *  adapter 恒真值，回退分支是死代码——无 aiti-event-bus 的部署会永远连不上）。
+ *  总线注册（piwe-event-bus-ready）时复位，之后新连接自动切回总线通道。 */
+let busAbsent = false;
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("piwe-event-bus-ready", () => { busAbsent = false; });
+}
+
 /**
  * 返回总线适配器（EventSource 兼容面）；总线能力最终不在 → 适配器转 CLOSED 并
  * 触发一次 onerror，调用方按各自重试语义回退原 SSE（下次 connect 重新探测——
@@ -74,6 +83,8 @@ function readSlot(): PiEventBusSlot | null {
  */
 export function getEventBus(route: string, opts: GetEventBusOptions = {}): BusEventSource | null {
   if (typeof window === "undefined") return null;
+  // 缺席已定案 → 同步回退（slot 又挂上的极端窗口由 readSlot 兜底照常走总线）
+  if (busAbsent && !readSlot()) return null;
   const topic = opts.topic ?? topicFromRoute(route);
   const slot = readSlot();
 
@@ -86,11 +97,17 @@ export function getEventBus(route: string, opts: GetEventBusOptions = {}): BusEv
 
   const messageListeners = new Set<(e: MessageEvent<string>) => void>();
   const namedListeners = new Map<string, Set<(e: MessageEvent<string>) => void>>();
+  // onmessage 是 EventSource 的属性式句柄（订阅方 bus.onmessage = fn 直接赋值），不进
+  // 任何集合——必须单独保存并在 emitMessage 里调用。曾漏接线：赋值落在普通数据属性上，
+  // 总线模式下数据帧永远进不了订阅方（named/心跳/onopen 均正常，极难察觉）。
+  let onmessageHandler: ((event: MessageEvent<string>) => void) | null = null;
 
   const emitMessage = (data: string) => {
+    const event = new MessageEvent("message", { data });
     for (const fn of [...messageListeners]) {
-      try { fn(new MessageEvent("message", { data })); } catch { /* 订阅方异常不扩散 */ }
+      try { fn(event); } catch { /* 订阅方异常不扩散 */ }
     }
+    try { onmessageHandler?.(event); } catch { /* noop */ }
   };
   const emitNamed = (name: string, data: string) => {
     for (const fn of [...(namedListeners.get(name) ?? [])]) {
@@ -103,7 +120,8 @@ export function getEventBus(route: string, opts: GetEventBusOptions = {}): BusEv
 
   const adapter: BusEventSource = {
     get readyState() { return readyState; },
-    onmessage: null,
+    get onmessage() { return onmessageHandler; },
+    set onmessage(fn: ((event: MessageEvent<string>) => void) | null) { onmessageHandler = fn; },
     onerror: null,
     onopen: null,
     addEventListener(type, listener) {
@@ -128,8 +146,10 @@ export function getEventBus(route: string, opts: GetEventBusOptions = {}): BusEv
   const handler = (frame: Record<string, unknown>) => {
     if (closed) return;
     const { evt, ...payload } = frame as { evt?: string };
+    // 展开顺序：type: evt 必须写在 payload 之后——payload 里残留的 topic type 否则会
+    // 覆盖掉 evt（重组产物 type 错成 topic，订阅方按 evt 分派全部落空）
     const data = evt !== undefined
-      ? JSON.stringify({ type: evt, ...payload })
+      ? JSON.stringify({ ...payload, type: evt })
       : JSON.stringify(frame);
     emitMessage(data);
     if (evt !== undefined) emitNamed(evt, data);
@@ -194,12 +214,18 @@ export function getEventBus(route: string, opts: GetEventBusOptions = {}): BusEv
   }
 
   // 槽未挂（loader 懒加载竞态）：等待 ready 广播（register 时派发，立即唤醒），
-  // 超时槽仍不在 → 转 CLOSED + 一次性 onerror（调用方回退原 SSE）
+  // 超时槽仍不在 → 定案总线缺席 + 转 CLOSED + 一次性 onerror（调用方回退原 SSE）
+  if (typeof window.addEventListener !== "function") {
+    // 无事件面的极简环境（单测桩等）：无从等待也无从挂槽，立即定案缺席
+    busAbsent = true;
+    return null;
+  }
   const onReady = () => {
     cleanupWait();
     const s = readSlot();
     if (s) beginSubscribe(s);
     else {
+      busAbsent = true;
       closed = true;
       readyState = CLOSED;
       fireError();
@@ -213,6 +239,7 @@ export function getEventBus(route: string, opts: GetEventBusOptions = {}): BusEv
     const s = readSlot();
     if (s) beginSubscribe(s);
     else {
+      busAbsent = true;
       closed = true;
       readyState = CLOSED;
       fireError();

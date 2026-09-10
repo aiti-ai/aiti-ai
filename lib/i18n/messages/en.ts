@@ -470,8 +470,6 @@ export const enLocale: LocalePlugin = {
     "terminal.exited": "Terminal closed",
     "terminal.error": "Connection error",
     "terminal.exitCode": "Process exited with code {code}",
-    "terminal.managedBy": "Workspace terminals are now handled by aiti-cmd — click \"Open terminal\" to open/resume the shell session in the aiti-cmd panel.",
-    "terminal.needAitiCmd": "aiti-cmd extension not detected — enable aiti-cmd to open workspace terminals.",
     "chat.newQuoteChat": "New chat about selected text",
     "chat.quoteIntro": "About this passage:",
     "chat.quoteQuestion": "My question:",
