@@ -352,6 +352,14 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     deferInitialScroll: Boolean(pendingScrollRestore),
   });
 
+  // ── Stop 等待状态：点击后立即反馈（zcode session/stop 曾最长挂 23s，后端已改 fire-and-forget，
+  // 但仍要等 agent_settled 才收口）——按钮显示「停止中」+ 旋转沙漏，sessionBusy 结束自动复位。 ──
+  const [aborting, setAborting] = useState(false);
+  const handleAbortRequest = useCallback(() => {
+    setAborting(true);
+    void handleAbort(); // handleAbort 内部已吞错记日志，不抛
+  }, [handleAbort]);
+
   // ── capability-aware 控件门控 ──────────────────────────────────────
   // 后端会话按 capabilities 隐藏不支持的功能；本地会话（无 capabilities）全通。
   const sessionCap = useCallback(<K extends string>(k: K, fallback = true): boolean =>
@@ -373,6 +381,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     return () => onSessionStatsRefresherRegister?.(null);
   }, [onSessionStatsRefresherRegister, refreshSessionStats]);
   const sessionBusy = agentRunning || bashRunning;
+  // 停止中状态复位：agent/bash 完全停下（agent_settled 到达）才取消等待态；
+  // 若从未运行（sessionBusy 初始即 false）或已复位则幂等无害。
+  useEffect(() => {
+    if (!sessionBusy) setAborting(false);
+  }, [sessionBusy]);
   const [quotedSelection, setQuotedSelection] = useState<{
     text: string;
     top: number;
@@ -704,8 +717,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
   // Register the abort handler for the global Esc shortcut
   useEffect(() => {
-    registerAbortHandler(sessionBusy ? handleAbort : null);
-  }, [sessionBusy, handleAbort]);
+    registerAbortHandler(sessionBusy ? handleAbortRequest : null);
+  }, [sessionBusy, handleAbortRequest]);
 
   // --- Scroll-to-earliest / scroll-to-latest floating buttons ---
 
@@ -1091,7 +1104,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       ref={chatInputRef}
       sessionId={session?.id ?? null}
       onSend={handleSendWrapped}
-      onAbort={handleAbort}
+      onAbort={handleAbortRequest}
+      aborting={aborting}
       onSteer={agentRunning ? handleSteer : undefined}
       onFollowUp={agentRunning ? handleFollowUp : undefined}
       onQueueFollowUp={handleFollowUp}

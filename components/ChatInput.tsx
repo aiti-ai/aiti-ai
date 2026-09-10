@@ -103,6 +103,9 @@ interface ModelOption {
 interface Props {
   onSend: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
   onAbort: () => void;
+  /** 停止请求已发出、等 agent 收口中（后端 fire-and-forget 后仍要等 agent_settled）：
+   *  stop 按钮切换为「停止中」旋转沙漏 + 禁用，防重复点击。 */
+  aborting?: boolean;
   /** 当前会话 id：透传给 chatInputTop 扩展槽（如 aiti-ai-input 的 AI 用量按会话记账） */
   sessionId?: string | null;
   onSteer?: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
@@ -785,7 +788,7 @@ let pendingFocusHandoff = false;
 
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionId,
-  onSend, onAbort, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
+  onSend, onAbort, aborting, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
   sessionCapabilities, onSwitchPermissionMode, permissionMode,
   onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
@@ -3413,15 +3416,18 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   大屏底部工具栏恒有 Stop，无需重复。 */}
               {!hasInputText && onAbort && isMobile && (
                 <StreamingActionButton
-                  label={t("chat.stop")}
-                  hint={t("chat.stopAgent")}
+                  label={aborting ? t("chat.stopping") : t("chat.stop")}
+                  hint={aborting ? t("chat.stopping") : t("chat.stopAgent")}
+                  disabled={aborting}
                   onClick={() => { onAbort(); refocusInput(); }}
                   bg="rgba(239,68,68,0.1)"
                   border="rgba(239,68,68,0.35)"
                   fg="#ef4444"
                 >
-                  <svg width="11" height="11" viewBox="0 0 10 10" fill="none">
-                    <rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" />
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round"
+                    style={aborting ? { animation: "spin 1s linear infinite" } : undefined}>
+                    <path d="M12 3a9 9 0 0 1 9 9" />
+                    <path d="M12 21a9 9 0 0 1-9-9" opacity="0.45" />
                   </svg>
                 </StreamingActionButton>
               )}
@@ -3889,7 +3895,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             {isStreaming && (
               <button
                 onClick={onAbort}
-                 title={t("chat.stopAgent")}
+                disabled={aborting}
+                 title={aborting ? t("chat.stopping") : t("chat.stopAgent")}
+                 aria-label={aborting ? t("chat.stopping") : t("chat.stopAgent")}
                 style={{
                   display: "flex", alignItems: "center", gap: 6,
                   padding: "8px 14px",
@@ -3898,18 +3906,26 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   border: "1px solid rgba(239,68,68,0.3)",
                   borderRadius: 9,
                   color: "#ef4444",
-                  cursor: "pointer",
+                  cursor: aborting ? "default" : "pointer",
                   fontSize: 12, fontWeight: 600,
                   whiteSpace: "nowrap", letterSpacing: "-0.01em",
                   transition: "background 0.12s",
+                  opacity: aborting ? 0.85 : 1,
                 }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(239,68,68,0.16)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(239,68,68,0.08)"; }}
+                onMouseEnter={(e) => { if (!aborting) e.currentTarget.style.background = "rgba(239,68,68,0.16)"; }}
+                onMouseLeave={(e) => { if (!aborting) e.currentTarget.style.background = "rgba(239,68,68,0.08)"; }}
               >
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                  <rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" />
-                </svg>
-                 {t("chat.stop")}
+                {aborting ? (
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" style={{ animation: "spin 1s linear infinite" }}>
+                    <path d="M12 3a9 9 0 0 1 9 9" />
+                    <path d="M12 21a9 9 0 0 1-9-9" opacity="0.45" />
+                  </svg>
+                ) : (
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                    <rect x="1.5" y="1.5" width="7" height="7" rx="1.5" fill="currentColor" />
+                  </svg>
+                )}
+                {aborting ? t("chat.stopping") : t("chat.stop")}
               </button>
             )}
 
