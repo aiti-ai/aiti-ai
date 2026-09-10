@@ -26,6 +26,10 @@ export const MIN_STARVE_GAP_MS = 3_000;
  *  立刻回占 socket，下一个 fetch 又卡满阈值——周期性 8s 抖动。延迟恢复给短请求
  *  一个畅通窗口（SSE 少在线几秒无感知，它们各自重连机制会接上）。 */
 export const UNSTARVE_REBUILD_DELAY_MS = 5_000;
+/** 恢复抖动：多个 tab 往往几乎同时进入/解除饥饿（同一波刷新/同一波让路），
+ *  固定延迟会让所有 tab 的 SSE 在同一毫秒回占连接池——重连风暴。各 tab 独立
+ *  随机 0~JITTER 后广播 unstarve，重连时刻天然错开。 */
+export const UNSTARVE_JITTER_MS = 4_000;
 
 interface PendingEntry {
   url: string;
@@ -74,11 +78,13 @@ function settle(id: number): void {
   pending.delete(id);
   if (starved && !hasOverageLocked(Date.now()) && !unstarveTimer) {
     // 恢复延迟（见 UNSTARVE_REBUILD_DELAY_MS）：给短请求一个畅通窗口，
-    // 避免「SSE 回占 → 下一个 fetch 又卡满阈值」的周期性抖动
+    // 避免「SSE 回占 → 下一个 fetch 又卡满阈值」的周期性抖动；
+    // 再叠加随机抖动（UNSTARVE_JITTER_MS）错开多 tab 的恢复/重连时刻。
+    const delay = UNSTARVE_REBUILD_DELAY_MS + Math.random() * UNSTARVE_JITTER_MS;
     unstarveTimer = setTimeout(() => {
       unstarveTimer = null;
       if (pending.size === 0 || !hasOverageLocked(Date.now())) broadcast(false);
-    }, UNSTARVE_REBUILD_DELAY_MS);
+    }, delay);
   }
 }
 
