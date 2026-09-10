@@ -31,6 +31,7 @@ import { FrontmatterCard } from "./FrontmatterCard";
 import { parseUnifiedPatch } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
 import { useI18n } from "@/hooks/useI18n";
+import { useConnStarvation } from "@/hooks/useConnStarvation";
 import {
   resolveInitialFileDisplayMode,
   type FileViewerDisplayMode as DisplayMode,
@@ -481,6 +482,8 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
   const [size, setSize] = useState<number | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 连接池饥饿让路（防抱死）：starved/epoch 进 watch effect 依赖，见 useConnStarvation
+  const { starved: connStarved, epoch: connEpoch } = useConnStarvation();
   const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
 
@@ -502,6 +505,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
       esRef.current = null;
     }
 
+    if (connStarved) return; // 饥饿让路：旧 watch 已关，暂不重建（unstarve 后 epoch 触发重跑）
     if (!watchEnabled) return;
 
     let active = true;
@@ -557,7 +561,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
       if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, sourceSessionId, watchEnabled]);
+  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch]);
 
   const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
 
@@ -659,6 +663,8 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
   const [size, setSize] = useState<number | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 连接池饥饿让路（防抱死）：starved/epoch 进 watch effect 依赖，见 useConnStarvation
+  const { starved: connStarved, epoch: connEpoch } = useConnStarvation();
   const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
 
@@ -680,6 +686,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
       esRef.current = null;
     }
 
+    if (connStarved) return; // 饥饿让路：旧 watch 已关，暂不重建（unstarve 后 epoch 触发重跑）
     if (!watchEnabled) return;
 
     let active = true;
@@ -735,7 +742,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
       if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, sourceSessionId, watchEnabled]);
+  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch]);
 
   const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
 
@@ -816,6 +823,8 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
   const [size, setSize] = useState<number | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 连接池饥饿让路（防抱死）：starved/epoch 进 watch effect 依赖，见 useConnStarvation
+  const { starved: connStarved, epoch: connEpoch } = useConnStarvation();
   const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
 
@@ -837,6 +846,7 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
       esRef.current = null;
     }
 
+    if (connStarved) return; // 饥饿让路：旧 watch 已关，暂不重建（unstarve 后 epoch 触发重跑）
     if (!watchEnabled) return;
 
     let active = true;
@@ -892,7 +902,7 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
       if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, sourceSessionId, watchEnabled]);
+  }, [filePath, sourceSessionId, watchEnabled, connStarved, connEpoch]);
 
   const src = useTicketUrl(filePath, "read", bust ? { v: bust } : {});
 
@@ -974,6 +984,8 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }:
   const [bust, setBust] = useState(0);
   const [size, setSize] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 连接池饥饿让路（防抱死）：starved/epoch 进 watch effect 依赖，见 useConnStarvation
+  const { starved: connStarved, epoch: connEpoch } = useConnStarvation();
   const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
 
@@ -1018,6 +1030,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }:
       esRef.current = null;
     }
 
+    if (connStarved) return; // 饥饿让路：旧 watch 已关，暂不重建（unstarve 后 epoch 触发重跑）
     if (!watchEnabled) return;
 
     let active = true;
@@ -1083,7 +1096,7 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }:
       if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, isPdf, sourceSessionId, watchEnabled]);
+  }, [filePath, isPdf, sourceSessionId, watchEnabled, connStarved, connEpoch]);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
@@ -1262,6 +1275,8 @@ function TextFileViewer({
   const [displayMode, setDisplayMode] = useState<DisplayMode>(requestedInitialDisplayMode);
   const [wrapLines, setWrapLines] = useState(initialWrapLines);
   const [watching, setWatching] = useState(false);
+  // 连接池饥饿让路（防抱死）：starved/epoch 进 watch effect 依赖，见 useConnStarvation
+  const { starved: connStarved, epoch: connEpoch } = useConnStarvation();
   const esRef = useRef<EventSource | null>(null);
   const contentRequestRef = useRef(0);
   const gitDiffRequestRef = useRef(0);
@@ -1401,6 +1416,7 @@ function TextFileViewer({
       esRef.current = null;
     }
 
+    if (connStarved) return; // 饥饿让路：旧 watch 已关，暂不重建（unstarve 后 epoch 触发重跑）
     if (!watchEnabled) return;
 
     const synchronize = () => {
@@ -1433,7 +1449,7 @@ function TextFileViewer({
       if (es) es.close();
       if (esRef.current === es) esRef.current = null;
     };
-  }, [filePath, fetchContent, fetchGitDiff, sourceSessionId, watchEnabled]);
+  }, [filePath, fetchContent, fetchGitDiff, sourceSessionId, watchEnabled, connStarved, connEpoch]);
 
   useEffect(() => {
     void fetchGitDiff(filePath);

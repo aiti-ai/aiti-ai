@@ -511,6 +511,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [recoveryIsImport, setRecoveryIsImport] = useState(false);
 
   const eventConnectionRef = useRef<AgentEventConnection | null>(null);
+  /** 连接池饥饿态镜像（防抱死）：shouldMaintain 的让路门，见 onConnStarvation 订阅 */
+  const connStarvedRef = useRef(false);
   const eventStreamGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const eventStreamGraceGenerationRef = useRef(0);
   const eventStreamGraceActiveRef = useRef(false);
@@ -593,6 +595,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       shouldMaintain: (sid) => (
         sessionHookMountedRef.current
         && sessionIdRef.current === sid
+        && !connStarvedRef.current
         && (
           agentRunningRef.current
           || eventStreamGraceActiveRef.current
@@ -1063,6 +1066,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const maintainEventsConnected = useCallback((sid: string) => {
     eventConnectionRef.current!.maintain(sid);
+  }, []);
+
+  // 连接池饥饿让路（防抱死，lib/conn-guard）：饿死场景下长连接占满浏览器同 host
+  // socket，聊天 fetch 也发不出去——此时主动断开本 SSE 让路（shouldMaintain 里的
+  // starved 门同时拦住重连），恢复后由 maintain() 重建。走 window "piwe-conn-starve"
+  // 广播协议（与 running broker / bridge-client 同通道）。事件驱动，零轮询。
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const starved = Boolean((ev as CustomEvent<{ starved?: boolean }>).detail?.starved);
+      connStarvedRef.current = starved;
+      if (starved) {
+        eventConnectionRef.current?.close();
+      } else {
+        const sid = sessionIdRef.current;
+        if (sid) eventConnectionRef.current?.maintain(sid);
+      }
+    };
+    window.addEventListener("piwe-conn-starve", handler);
+    return () => window.removeEventListener("piwe-conn-starve", handler);
   }, []);
 
   // A different browser can start this session after it was opened here.

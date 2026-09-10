@@ -10,6 +10,7 @@
 // 服务端 30s 心跳（named event "heartbeat"）供判活；错误广播由订阅方自行决策
 // （如 CLOSED 后延迟重建走 broker.reconnect()）。
 import { apiUrl } from "./base-path";
+import { isConnStarved } from "./conn-guard";
 
 // 服务端 30s 心跳；超过 HEARTBEAT_FRAME_TIMEOUT_MS 无任何帧（message/heartbeat）= 连接半死/
 // 被浏览器后台冻结（EventSource 仍 OPEN 但不再收数据、也不触发 onerror 的"静默死连接"）
@@ -105,6 +106,29 @@ function ensureVisibilityRelay(): void {
   });
 }
 
+/** 连接池饥饿让路（防抱死）：饥饿时主动关闭共享连接释放 socket，恢复后立即重建。
+ *  running/events 是全页长连接里最“可让”的一条（可安全丢弃重连），饿死时先松它。
+ *  走 window "piwe-conn-starve" 事件（conn-guard 广播协议，与 bridge-client 等跨 bundle
+ *  消费者同通道；模块内订阅收不到外部测试/扩展手动广播的事件）。 */
+let connGuardRelayWired = false;
+function ensureConnGuardRelay(): void {
+  if (connGuardRelayWired || typeof window === "undefined") return;
+  connGuardRelayWired = true;
+  window.addEventListener("piwe-conn-starve", ((ev: CustomEvent<{ starved?: boolean }>) => {
+    const starved = Boolean(ev.detail?.starved);
+    const b = (window as BrokerWindow).__runningEventsBroker;
+    if (!b || b.dead) return;
+    if (starved) {
+      if (b.reconnectTimer) clearTimeout(b.reconnectTimer);
+      b.reconnectTimer = null;
+      try { b.es?.close(); } catch { /* noop */ }
+      b.es = null;
+    } else if (!b.es && (b.listeners.size > 0 || b.frameListeners.size > 0)) {
+      b.connect();
+    }
+  }) as EventListener);
+}
+
 export function subscribeRunningEvents(listener: Listener): () => void {
   const w = window as BrokerWindow;
   let b = w.__runningEventsBroker;
@@ -120,6 +144,9 @@ export function subscribeRunningEvents(listener: Listener): () => void {
       lastFrameAt: 0,
       frameWatchdog: null,
       connect: () => {
+        // 连接池饥饿（防抱死）期间拒绝建连：避免刚释放的 socket 又被长连接吃回去；
+        // 恢复由 ensureConnGuardRelay 的 unstarve 回调负责。
+        if (isConnStarved()) return;
         // 心跳 watchdog（事件驱动，零业务轮询）：每收到一帧（message/heartbeat）重置；
         // 超时窗口内无任何帧 = 连接半死/被浏览器后台冻结（EventSource 仍 OPEN 但收不到
         // 数据、也不触发 onerror——"静默死连接"正是 session-manager 持续兜底轮询的根源）。
@@ -201,6 +228,7 @@ export function subscribeRunningEvents(listener: Listener): () => void {
     // onopen 成功即广播 online → 断连横幅即刻下掉，不等心跳超时。
     // （listener 动态读单例，broker 销毁后残留无害；ensureVisibilityRelay 防重复注册。）
     ensureVisibilityRelay();
+    ensureConnGuardRelay();
   }
   b.listeners.add(listener);
   return () => {

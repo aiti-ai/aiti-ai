@@ -5,6 +5,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useI18n } from "@/hooks/useI18n";
 import { createTerminalWriter, terminalRequest } from "@/lib/terminal-client";
+import { onConnStarvation } from "@/lib/conn-guard";
 import type { TerminalEvent } from "@/lib/terminal-manager";
 import type { TerminalTab } from "./terminal-tab-state";
 
@@ -161,8 +162,12 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
     window.addEventListener("pageshow", pageShow);
     window.addEventListener("offline", pageHide);
     window.addEventListener("online", connect);
+    // 连接池饥饿让路（防抱死，lib/conn-guard）：饿死时终端 SSE 与其它长连接一起
+    // 占满同 host socket，主动让路；pageHide/connect 恰好就是让路/恢复语义，直接复用。
+    const unstarve = onConnStarvation((starved) => { if (starved) pageHide(); else connect(); });
     return () => {
       disposed = true;
+      unstarve();
       events?.close();
       void writer.stop();
       resizeObserver.disconnect();

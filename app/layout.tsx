@@ -1,4 +1,5 @@
 import type { Metadata, Viewport } from "next";
+import { ConnGuard } from "@/components/ConnGuard";
 import { PwaRegistration } from "@/components/PwaRegistration";
 import { withBasePath } from "@/lib/base-path";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
@@ -87,6 +88,7 @@ export default function RootLayout({
       </head>
       <body translate="no" className="notranslate" suppressHydrationWarning>
         {children}
+        <ConnGuard />
         <PwaRegistration />
         {/* crash-rescue 场景③（编译期错误）：dev overlay Build Error → 引导进 /rescue.html（public/ 静态页，
             不进编译图，模块图坏时依然可达）。仅监听 dev overlay（<nextjs-portal>），prod 天然惰性。
