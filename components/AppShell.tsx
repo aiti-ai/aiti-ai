@@ -16,7 +16,7 @@ import { DetachedTabWindow } from "./DetachedTabWindow";
 import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import dynamic from "next/dynamic";
-import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary } from "./ExtSlots";
+import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService } from "./ExtSlots";
 /** SessionSidebar 懒加载（统一 dock 方案 §7-2）：接管态（sidebarContent 有接管者）
  *  本组件整体不渲染，chunk 永不加载——主包瘦身；回退态首次渲染时按需拉取
  *  （本地 chunk，加载窗口毫秒级）。ssr:false：组件依赖 localStorage 两段式恢复，
@@ -2747,6 +2747,21 @@ export function AppShell() {
     setSettingsSection,
     isMobile,
   };
+
+  // ── §7-4 宿主组件工厂注册表（ctx.services 化）：sidebarContent extra 的同一契约以
+  //    "pi-web.ui" 服务对全部扩展开放——消费方 getExtService("pi-web.ui") 按名取工厂。
+  //    impl 经 ref 委托最新渲染闭包（AppShell 每渲染刷新 ref，服务注册仅挂载一次），
+  //    避免注册 stale closure；卸载时反注册。 ──
+  const hostUiRef = useRef<Record<string, unknown>>({});
+  hostUiRef.current = { ...sidebarContentExtra, sidebarFooterRow };
+  useEffect(() => {
+    return registerExtClientService("pi-web", "pi-web.ui", {
+      /** 按名取宿主工厂（renderTitle/renderSidebarFooter/回调……与 sidebarContent extra 同集）。 */
+      get: (name: string) => hostUiRef.current[name],
+      /** 工厂名清单。 */
+      names: () => Object.keys(hostUiRef.current),
+    });
+  }, []);
 
   const sidebarContent = (
     <TakeoverSlot
