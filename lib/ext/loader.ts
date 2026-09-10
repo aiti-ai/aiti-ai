@@ -34,7 +34,11 @@ let hostSdkModulePromise: Promise<Record<string, unknown> | null> | null = null;
 function hostSdkModule(): Promise<Record<string, unknown> | null> | null {
   const entry = join(hostSdkDir, "dist", "index.js");
   if (!existsSync(entry)) return null;
-  hostSdkModulePromise ??= import(pathToFileURL(entry).href).catch((e: unknown) => {
+  // webpackIgnore/turbopackIgnore：打包器会把动态 import(表达式) 当模块图静态分析，
+  // Turbopack 下直接报「expression is too dynamic」致原生 import 走不通（纯 Node
+  // harness 测不出——Next 编译口径差异）；魔注后打包器放行，运行时原生 import 按
+  // URL 命中宿主 ESM 缓存（serverExternalPackages 同 URL 同实例）。
+  hostSdkModulePromise ??= import(/* webpackIgnore: true */ /* turbopackIgnore: true */ pathToFileURL(entry).href).catch((e: unknown) => {
     console.error("[ext] 宿主 SDK virtualModules 注入失败，回退 alias 解析:", e instanceof Error ? e.message : e);
     hostSdkModulePromise = null;
     return null;
