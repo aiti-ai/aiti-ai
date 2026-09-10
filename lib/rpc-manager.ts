@@ -1557,10 +1557,21 @@ export class AgentSessionWrapper {
         const steeringEntries = this.queueMirror.filter((e) => e.kind === "steer");
         const followUpEntries = this.queueMirror.filter((e) => e.kind === "followUp");
         const entries = kind === "steer" ? steeringEntries : followUpEntries;
+        const permanent = command.permanent === true;
         if (index < 0 || index >= entries.length) {
+          // 幂等消费：目标项被派发消费（如 steer-send 已带走）后，迟到/并发的 remove
+          // 带着旧 index 到达属良性 no-op——目标态（该项已不在队列）本就成立。
+          // 此处 throw 会与消费路径竞态，在客户端浮成假错误（mac 2026-09-10 实测）。
+          // 非 permanent（用户显式删除）仍严格报错，保留逻辑缺陷捕获。
+          if (permanent) {
+            return {
+              queueTrash: this.getQueueTrashView(),
+              steering: [...this.inner.getSteeringMessages()],
+              followUp: [...this.inner.getFollowUpMessages()],
+            };
+          }
           throw new Error("remove_queue_item index out of range");
         }
-        const permanent = command.permanent === true;
         const [removed] = entries.splice(index, 1);
         if (!permanent) this.queueTrash.push(removed);
         const newSteering = kind === "steer" ? entries : steeringEntries;
