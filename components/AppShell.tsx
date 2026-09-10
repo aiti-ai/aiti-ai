@@ -2742,6 +2742,7 @@ export function AppShell() {
   const sidebarContent = (
     <TakeoverSlot
       name="sidebarContent"
+      legacyKey="pi-web:sessions-takeover"
       fallback={
         <>
           <SessionSidebar
