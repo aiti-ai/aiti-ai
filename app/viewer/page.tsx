@@ -114,6 +114,10 @@ function ViewerBody() {
   // 渲染的是空态）→ React hydration mismatch。恢复挪到 mount 后 effect，语义不变。
   const [tabs, setTabs] = useState<Tab[]>([]);
   const [activeTabId, setActiveTabId] = useState<string | null>(null);
+  // 启动期：sessionStorage 恢复 / opener 握手兑票尚未落定。SSR 与 hydration 首帧都渲染
+  // 中性 loading（两端一致，无 mismatch）；落定后切内容或空态——避免等待期闪现误导性的
+  // 「No file open」空态（2026-09-10：刷新恢复必经此态，观感像丢了文件）。
+  const [booted, setBooted] = useState(false);
   // 工作目录（深度遍历根 / git 徽标）：存储 cwd 优先；开文件夹 tab 时补齐
   const [cwd, setCwd] = useState<string | undefined>(undefined);
 
@@ -128,6 +132,7 @@ function ViewerBody() {
     setTabs(restored);
     setActiveTabId(restored[0]?.id ?? null);
     if (init.cwd) setCwd(init.cwd);
+    setBooted(true);
   }, []);
 
   const activeTab = tabs.find((tb) => tb.id === activeTabId) ?? null;
@@ -207,10 +212,11 @@ function ViewerBody() {
   // —— aiti-viewer 握手（子窗拉取式）：加载后向 opener 发 ready 拿 ticket，再自行兑付目标 ——
   // 票据里才有路径，postMessage 只传不透明 token；刷新恢复走 sessionStorage，不再找 opener 重拉。
   useEffect(() => {
-    if (readStoredTarget()) return; // 刷新恢复场景：已有目标，跳过握手
+    if (readStoredTarget()) return; // 刷新恢复场景：已有目标，跳过握手（booting 由恢复 effect 落定）
     const opener = window.opener as Window | null;
-    if (!opener || opener.closed) return;
+    if (!opener || opener.closed) { setBooted(true); return; } // 直开无上下文：直接进空态
     let dead = false;
+    const finish = () => { if (!dead) setBooted(true); };
     const onMsg = async (ev: MessageEvent) => {
       if (ev.origin !== location.origin || ev.source !== window.opener) return;
       const d = ev.data as { source?: string; type?: string; ticket?: string } | null;
@@ -226,11 +232,15 @@ function ViewerBody() {
         if (!dead && r.ok && data?.path) {
           openTargetRef.current({ path: data.path, kind: data.kind === "folder" ? "folder" : "file", cwd: data.cwd || undefined }, true);
         }
-      } catch { /* opener 已关/网络失败：留空窗 */ }
+      } catch { /* opener 已关/网络失败 */ }
+      finish(); // 无论兑付成败，启动期结束（失败落空态）
     };
     window.addEventListener("message", onMsg);
-    try { opener.postMessage({ source: "aiti-viewer", type: "ready" }, location.origin); } catch { /* noop */ }
-    return () => { dead = true; window.removeEventListener("message", onMsg); };
+    try { opener.postMessage({ source: "aiti-viewer", type: "ready" }, location.origin); } catch { finish(); }
+    // 兜底死线：opener 在但永不回复（旧标签/异常态）时不至于永远停在 loading——一次性
+    // 定时器（非轮询）3s 后自动落定空态，回复晚到仍会正常开文件。
+    const deadline = window.setTimeout(finish, 3000);
+    return () => { dead = true; window.clearTimeout(deadline); window.removeEventListener("message", onMsg); };
   }, []);
 
   // 窗口标题跟随当前 tab
@@ -257,8 +267,27 @@ function ViewerBody() {
     });
   }, []);
 
+  if (!booted) {
+    // 启动期：中性 loading 占位（SSR 同形；恢复/兑票落定后切内容或空态）
+    return (
+      <div
+        role="status"
+        aria-label={t("sidebar.loading")}
+        style={{ height: "100dvh", display: "flex", alignItems: "center", justifyContent: "center", background: "var(--bg)" }}
+      >
+        <span
+          style={{
+            width: 18, height: 18, borderRadius: "50%",
+            border: "2px solid var(--border)", borderTopColor: "var(--accent)",
+            animation: "spin 0.8s linear infinite",
+          }}
+        />
+      </div>
+    );
+  }
+
   if (!tabs.length || !activeTab) {
-    // 全部 tab 已关闭：居中空态 + 「打开文件夹」入口（复用 pathPicker 槽）
+    // 全部 tab 已关闭（或确无上下文）：居中空态 + 「打开文件夹」入口（复用 pathPicker 槽）
     return (
       <div style={{ height: "100dvh", display: "flex", flexDirection: "column", background: "var(--bg)", color: "var(--text)" }}>
         <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 16 }}>
