@@ -41,13 +41,19 @@ export async function buildTicketUrl(
   return apiUrl(`/api/files/_t/${encodeURIComponent(ticket)}?${searchParams.toString()}`);
 }
 
-/** fetch 型文件请求（list/read/meta/preview/download）：路径走 body。 */
+/** fetch 型文件请求（list/read/meta/preview/download）：路径走 body。params 仅限非敏感分页/格式参数走 URL query，路径永不进 URL。 */
 export function fetchFileGet(
   filePath: string,
   type: FileGetType,
   sessionId?: string | null,
+  params: Record<string, string | number | undefined> = {},
 ): Promise<Response> {
-  return fetch(apiUrl("/api/files/get"), {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) search.set(key, String(value));
+  }
+  const qs = search.toString();
+  return fetch(apiUrl(`/api/files/get${qs ? `?${qs}` : ""}`), {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ path: filePath, type, sessionId: sessionId || undefined }),

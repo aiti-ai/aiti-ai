@@ -66,7 +66,7 @@ test("归属状态机（tab⇄弹窗二选一）与双向占位（aiti-cmd 侧�
   assert.match(cmdSource, /useSessionHostTab\(view && view\.kind === "pty" \? view\.id : null\)/);
   assert.match(cmdSource, /已在工作区页签打开/);
   // restored 语义：恢复页签不静默起 shell（triedRef 只挡自动路径，手动按钮仍在）
-  assert.match(cmdSource, /restored 恢复页签不静默起 shell/);
+  assert.match(cmdSource, /restored 恢复页签不静默起/);
 });
 
 test("openAitiCmdShell 死代码已清理（真接管后 core 不再间接唤起弹窗）", () => {

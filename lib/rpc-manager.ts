@@ -30,7 +30,7 @@ import {
   preferUserBashExtension,
 } from "./project-command-env";
 import { disableConflictingExtensions } from "./ext-conflicts";
-import { cacheSessionPath, invalidateSessionListCache, resolveSessionPath } from "./session-reader";
+import { cacheSessionPath, getLatestModelChange, invalidateSessionListCache, resolveSessionPath } from "./session-reader";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { notifySessionComplete } from "./web-push";
@@ -2853,7 +2853,13 @@ export function getRunningRpcSessionIds(): string[] {
 export function getAliveRpcSessionIds(): string[] {
   const ids = new Set<string>();
   for (const [sessionId, session] of getRegistry()) {
-    if (session.isAlive()) ids.add(session.sessionId || sessionId);
+    // duck-typing 容错：registry 里可能挂非标准句柄（如上游 #440 测试 mock 只带 isRunning/shutdown），
+    // 有 isAlive 的真 wrapper 走原语义，否则降级 isRunning 探测。
+    const alive = typeof session.isAlive === "function"
+      ? session.isAlive()
+      : typeof (session as { isRunning?: unknown }).isRunning === "function"
+        && (session as { isRunning: () => boolean }).isRunning();
+    if (alive) ids.add(session.sessionId || sessionId);
   }
   return [...ids];
 }
@@ -3076,22 +3082,30 @@ export async function startRpcSession(
       : undefined;
     const defaultProvider = services.settingsManager.getDefaultProvider();
     const defaultModelId = services.settingsManager.getDefaultModel();
-    const hasExistingMessages = sessionManager.getBranch().some((entry) => entry.type === "message");
-    const initial = hasExistingMessages
-      ? { scopedModels: [...scope.scopedModels] }
-      : selectInitialModelScope(scope, {
+    const branch = sessionManager.getBranch();
+    const hasExistingMessages = branch.some((entry) => entry.type === "message");
+    const savedModel = hasExistingMessages
+      ? getLatestModelChange(branch as unknown as SessionEntry[])
+      : null;
+    const restoredModel = savedModel
+      ? services.modelRuntime.getModel(savedModel.provider, savedModel.modelId)
+      : undefined;
+    const initial = hasExistingMessages ? null : selectInitialModelScope(scope, {
         ...(effectiveInitialModel ? { requestedModel: effectiveInitialModel } : {}),
         ...(defaultProvider && defaultModelId
           ? { defaultModel: { provider: defaultProvider, modelId: defaultModelId } }
           : {}),
         ...(thinkingLevel ? { thinkingLevel } : {}),
       });
+    const startupModel = restoredModel && services.modelRuntime.hasConfiguredAuth(restoredModel.provider)
+      ? restoredModel
+      : initial?.model;
     const { session: inner } = await createAgentSessionFromServices({
       services,
       sessionManager,
-      ...(initial.model ? { model: initial.model } : {}),
-      ...(initial.thinkingLevel ? { thinkingLevel: initial.thinkingLevel } : {}),
-      ...(initial.scopedModels.length > 0 ? { scopedModels: initial.scopedModels } : {}),
+      ...(startupModel ? { model: startupModel } : {}),
+      ...(initial?.thinkingLevel ? { thinkingLevel: initial.thinkingLevel } : {}),
+      ...(scope.scopedModels.length > 0 ? { scopedModels: [...scope.scopedModels] } : {}),
       ...(toolsOption !== undefined ? { tools: toolsOption } : {}),
       ...(options.subagent?.excludeTools?.length ? { excludeTools: options.subagent.excludeTools } : {}),
       // 方案 M：扩展注入的 agent 工具（进程内直连，零配置）

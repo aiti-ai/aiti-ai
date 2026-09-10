@@ -431,7 +431,13 @@ export async function DELETE(
     }
 
     // Read only the bounded header before deleting.
-    const deleteHeader = readSessionHeader(filePath) as unknown as { parentSession?: string; extId?: string } | null;
+    let deleteHeader: { parentSession?: string; extId?: string } | null = null;
+    try {
+      deleteHeader = readSessionHeader(filePath) as unknown as { parentSession?: string; extId?: string } | null;
+    } catch (error) {
+      // Empty runtime sessions have a cached path before their first disk write (upstream #440).
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     // 站位文件：只删锚点（文件 + 注册表项 + 存活 handle），外部原始数据（cursor store.db 等）
     // 永不动；也不会有子会话挂站位名下——跳过重挂 cascade。
     if (deleteHeader?.extId) {
@@ -505,8 +511,13 @@ export async function DELETE(
     } catch { /* skip if dir unreadable */ }
 
     await getRpcSession(id)?.shutdown();
-    unlinkSync(filePath);
-    removeQueue(filePath);
+      try {
+        unlinkSync(filePath);
+      } catch (error) {
+        // Unpersisted runtime sessions may already be gone (upstream #440).
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      removeQueue(filePath);
     invalidateSessionPathCache(id);
     invalidateSessionListCache();
     return NextResponse.json({ ok: true });
