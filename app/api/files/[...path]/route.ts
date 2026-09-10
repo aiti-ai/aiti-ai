@@ -31,6 +31,7 @@ import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounde
 import { filePathFromApiSegments, samePath } from "@/lib/paths";
 import { issueFileTicket, redeemFileTicket } from "@/lib/file-ticket";
 import { readTextPreviewChunk } from "@/lib/text-preview";
+import { startFileWatch, stopFileWatch } from "@/lib/file-watch-registry";
 
 const IGNORED_NAMES = new Set([
   "node_modules", ".git", ".next", "dist", "build", "__pycache__",
@@ -156,7 +157,7 @@ export async function POST(
     //     EventSource 等只能用 GET URL 的消费者：先换票再 GET /api/files/_t/<ticket>，路径不进 URL。
     //     （旧设计曾用稳态令牌 _e，但令牌永久有效→一旦落入 access log 路径永久泄露，故改用短票据。）
     if (segments[0] === "ticket") {
-      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; kind?: unknown; cwd?: unknown; ticket?: unknown } | null;
+      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; kind?: unknown; cwd?: unknown; ticket?: unknown; wantWatch?: unknown } | null;
       if (typeof body?.ticket === "string" && body.ticket) {
         const t = redeemFileTicket(body.ticket);
         if (!t) {
@@ -191,7 +192,24 @@ export async function POST(
       }
       const kind = body?.kind === "folder" || body?.kind === "file" ? body.kind : undefined;
       const cwd = typeof body?.cwd === "string" && body.cwd ? body.cwd : undefined;
-      return NextResponse.json(issueFileTicket(p, type, { kind, cwd }));
+      const ticket = issueFileTicket(p, type, { kind, cwd });
+      // 总线 watch 注册（lib/file-watch-registry）：type=watch + wantWatch → 票据响应
+      // 内联带 watchId（服务端即刻启动 fs.watch，变化经总线 "file-watch" 帧分发，
+      // 走 /api/files/watch-stop 显式停 / 30min 空闲自动停）。仅总线订阅方使用；
+      // fallback 客户端仍走原 watch SSE（buildTicketUrl → _t/<ticket>）。
+      let watchId: string | undefined;
+      if (type === "watch" && body?.wantWatch === true) {
+        watchId = `fw-${ticket.ticket}`;
+        startFileWatch(watchId, p);
+      }
+      return NextResponse.json({ ...ticket, ...(watchId ? { watchId } : {}) });
+    }
+
+    // POST /api/files/watch-stop { watchId } —— 停总线 watch（显式退订；30min 空闲兜底）
+    if (segments[0] === "watch-stop") {
+      const body = await request.json().catch(() => null) as { watchId?: unknown } | null;
+      if (typeof body?.watchId === "string" && body.watchId) stopFileWatch(body.watchId);
+      return NextResponse.json({ ok: true });
     }
 
     // 路径一律走 body，不进 URL。POST 通道分四类：

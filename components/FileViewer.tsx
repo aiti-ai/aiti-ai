@@ -32,6 +32,7 @@ import { parseUnifiedPatch } from "@/lib/patch";
 import type { GitFileDiffResponse } from "@/lib/git-types";
 import { useI18n } from "@/hooks/useI18n";
 import { useConnStarvation } from "@/hooks/useConnStarvation";
+import { openFileWatchBus } from "@/lib/file-watch-client";
 import {
   resolveInitialFileDisplayMode,
   type FileViewerDisplayMode as DisplayMode,
@@ -532,6 +533,13 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     let es: EventSource | null = null;
       buildTicketUrl(filePath, "watch").then((watchUrl) => {
         if (!active) return;
+        const busWatch = openFileWatchBus(filePath);
+        if (busWatch) {
+          // 页面事件唯一 SSE 收敛：watch 注册走总线（named connected/change/error 与原 SSE 逐字段一致）
+          es = busWatch as unknown as EventSource;
+          esRef.current = es;
+          return;
+        }
         es = new EventSource(watchUrl);
         esRef.current = es;
 
@@ -713,6 +721,13 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     let es: EventSource | null = null;
       buildTicketUrl(filePath, "watch").then((watchUrl) => {
         if (!active) return;
+        const busWatch = openFileWatchBus(filePath);
+        if (busWatch) {
+          // 页面事件唯一 SSE 收敛：watch 注册走总线（named connected/change/error 与原 SSE 逐字段一致）
+          es = busWatch as unknown as EventSource;
+          esRef.current = es;
+          return;
+        }
         es = new EventSource(watchUrl);
         esRef.current = es;
 
@@ -873,6 +888,13 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
     let es: EventSource | null = null;
     buildTicketUrl(filePath, "watch").then((watchUrl) => {
       if (!active) return;
+      const busWatch = openFileWatchBus(filePath);
+      if (busWatch) {
+        // 页面事件唯一 SSE 收敛：watch 注册走总线（named connected/change/error 与原 SSE 逐字段一致）
+        es = busWatch as unknown as EventSource;
+        esRef.current = es;
+        return;
+      }
       es = new EventSource(watchUrl);
       esRef.current = es;
 
@@ -1062,6 +1084,13 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }:
     let es: EventSource | null = null;
       buildTicketUrl(filePath, "watch").then((watchUrl) => {
         if (!active) return;
+        const busWatch = openFileWatchBus(filePath);
+        if (busWatch) {
+          // 页面事件唯一 SSE 收敛：watch 注册走总线（named connected/change/error 与原 SSE 逐字段一致）
+          es = busWatch as unknown as EventSource;
+          esRef.current = es;
+          return;
+        }
         es = new EventSource(watchUrl);
         esRef.current = es;
 
@@ -1426,6 +1455,13 @@ function TextFileViewer({
 
     let es: EventSource | null = null;
     buildTicketUrl(filePath, "watch").then((watchUrl) => {
+      const busWatch = openFileWatchBus(filePath);
+      if (busWatch) {
+        // 页面事件唯一 SSE 收敛：watch 注册走总线（named connected/change/error 与原 SSE 逐字段一致）
+        es = busWatch as unknown as EventSource;
+        esRef.current = es;
+        return;
+      }
       es = new EventSource(watchUrl);
       esRef.current = es;
 

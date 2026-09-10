@@ -11,6 +11,7 @@
 // （如 CLOSED 后延迟重建走 broker.reconnect()）。
 import { apiUrl } from "./base-path";
 import { isConnStarved } from "./conn-guard";
+import { getEventBus, type BusEventSource } from "./event-bus-client";
 
 // 服务端 30s 心跳；超过 HEARTBEAT_FRAME_TIMEOUT_MS 无任何帧（message/heartbeat）= 连接半死/
 // 被浏览器后台冻结（EventSource 仍 OPEN 但不再收数据、也不触发 onerror 的"静默死连接"）
@@ -28,7 +29,7 @@ type Listener = (kind: "message" | "heartbeat" | "error", data: RunningFrame | n
 interface RunningBroker {
   listeners: Set<Listener>;
   frameListeners: Set<(frame: Record<string, unknown>) => void>;
-  es: EventSource | null;
+  es: EventSource | BusEventSource | null;
   dead: boolean;
   reconnectTimer: ReturnType<typeof setTimeout> | null;
   /** 连续失败次数（每次 EventSource onerror +1；onopen 清零）——≥2 判定后端断连 */
@@ -171,7 +172,12 @@ export function subscribeRunningEvents(listener: Listener): () => void {
         };
         if (b!.dead) return;
         try { b!.es?.close(); } catch { /* noop */ }
-        const source = new EventSource(apiUrl("/api/agent/running/events"));
+        // 页面事件唯一 SSE 收敛：总线能力在（aiti-event-bus 部署）→ 走唯一总线
+        // （分发 type "running"，传输层 named heartbeat 契约一致）；不在 → 原样
+        // EventSource（fallback，现状行为）。
+        const busSource = getEventBus("/api/agent/running/events", { topic: "running" });
+        const source: EventSource | BusEventSource = busSource
+          ?? new EventSource(apiUrl("/api/agent/running/events"));
         b!.es = source;
         markFrame(); // 建连即给活性基准，避免 watchdog 首巡误判
         // named event 心跳（服务端 30s 一帧）：专供订阅方判活
@@ -194,7 +200,7 @@ export function subscribeRunningEvents(listener: Listener): () => void {
             broadcastConnState("online");
           }
         };
-        source.onmessage = (e) => {
+        source.onmessage = (e: MessageEvent) => {
           markFrame();
           let data: RunningFrame | null = null;
           try { data = JSON.parse((e as MessageEvent).data) as RunningFrame; } catch { /* malformed frame */ }

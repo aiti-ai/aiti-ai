@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { homedir } from "os";
 import type { IPty } from "node-pty";
 import { samePath } from "./paths";
+import { publishPageEventToBus } from "./agent-page-events";
 
 export type TerminalEvent =
   | { type: "output"; data: string; offset: number; reset?: boolean }
@@ -57,6 +58,17 @@ function shellEnvironment(): Record<string, string> {
 
 function emit(record: TerminalRecord, event: TerminalEvent): void {
   for (const listener of record.listeners) listener(event);
+}
+
+/** 终端事件总线发布（页面事件唯一 SSE 收敛）：terminal 存在即发布，帧协议
+ *  { type: "terminal-<id>", evt: <TerminalEvent.type>, ...payload }（见
+ *  lib/event-bus-client.ts 适配器重组约定——重组后与原 SSE 帧逐字段一致）。
+ *  宽发布（publishPageEventToBus：core sinks + 总线槽）；总线按白名单
+ *  过滤，无订阅者时仅进程内函数调用，零连接开销；fallback 客户端连原 SSE
+ *  （不经 publish），双通道并存互不干扰。 */
+function publishTerminalBusEvent(id: string, event: TerminalEvent): void {
+  const { type, ...payload } = event;
+  publishPageEventToBus(`terminal-${id}`, { evt: type, ...payload });
 }
 
 function scheduleCleanup(id: string, record: TerminalRecord): void {
@@ -118,14 +130,18 @@ export function createTerminal(cwd: string, cols: number, rows: number, id: stri
   pty.onData((data) => {
     record.backlog = (record.backlog + data).slice(-MAX_BACKLOG);
     record.offset += data.length;
-    emit(record, { type: "output", data, offset: record.offset });
+    const event: TerminalEvent = { type: "output", data, offset: record.offset };
+    emit(record, event);
+    publishTerminalBusEvent(id, event);
   });
   pty.onExit(({ exitCode }) => {
     if (record.cleanupTimer) clearTimeout(record.cleanupTimer);
     record.cleanupTimer = null;
     record.exited = true;
     record.exitCode = exitCode;
-    emit(record, { type: "exit", exitCode });
+    const event: TerminalEvent = { type: "exit", exitCode };
+    emit(record, event);
+    publishTerminalBusEvent(id, event);
     scheduleCleanup(id, record);
   });
   return id;
@@ -197,6 +213,7 @@ export function killTerminal(id: string, force = false): boolean {
     }
   }
   emit(record, { type: "closed" });
+  publishTerminalBusEvent(id, { type: "closed" });
   record.listeners.clear();
   return true;
 }

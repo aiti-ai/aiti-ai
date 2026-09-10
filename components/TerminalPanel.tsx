@@ -6,6 +6,7 @@ import { Terminal } from "@xterm/xterm";
 import { useI18n } from "@/hooks/useI18n";
 import { createTerminalWriter, terminalRequest } from "@/lib/terminal-client";
 import { onConnStarvation } from "@/lib/conn-guard";
+import { getEventBus, type BusEventSource } from "@/lib/event-bus-client";
 import type { TerminalEvent } from "@/lib/terminal-manager";
 import type { TerminalTab } from "./terminal-tab-state";
 
@@ -35,7 +36,7 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
     const container = containerRef.current;
     if (!container) return;
     let disposed = false;
-    let events: EventSource | null = null;
+    let events: EventSource | BusEventSource | null = null;
     let offset: number | undefined;
     let connected = false;
     let exited = false;
@@ -98,9 +99,9 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
     const connect = () => {
       if (disposed || exited || !navigator.onLine) return;
       events?.close();
-      events = new EventSource(`/api/terminal/${encodeURIComponent(id)}/events${offset === undefined ? "" : `?after=${offset}`}`);
-      events.onmessage = (message) => {
-        const event = JSON.parse(message.data) as TerminalEvent;
+      // 处理器（总线/原 SSE 两通道共用）：output 走 offset 去重（总线订阅 ready 后
+      // 快照补段的竞态也靠它：旧快照 offset 落后直接丢弃，reset 仅在快照不落后时生效）
+      const handleEvent = (event: TerminalEvent) => {
         if (event.type === "output") {
           if (event.reset) terminal.reset();
           else if (offset !== undefined && event.offset <= offset) return;
@@ -114,6 +115,48 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
           setExitCode(event.type === "exit" ? event.exitCode : null);
           setStatus("exited");
         }
+      };
+      // 页面事件唯一 SSE 收敛：总线能力在 → 订阅 terminal-<id>（aiti-cmd 范式：
+      // ready 后拉 /buffered 快照补段，seq(offset) 去重）；不在 → 原样 EventSource。
+      const bus = getEventBus(`/api/terminal/${encodeURIComponent(id)}/events`, {
+        topic: `terminal-${id}`,
+      });
+      if (bus) {
+        events = bus;
+        bus.onmessage = (message) => handleEvent(JSON.parse(message.data) as TerminalEvent);
+        bus.onopen = () => {
+          connected = true;
+          if (!inputFailed) {
+            terminal.options.disableStdin = false;
+            setStatus("ready");
+            fitAndResize();
+            writer.resize(terminal.cols, terminal.rows);
+            if (container.offsetWidth && container.offsetHeight) terminal.focus();
+          }
+          // 先订阅后快照：断线重连/首次接入都拉（snapshot ⊇ ready 时刻，
+          // 实时帧与快照按 offset 去重无缝衔接；落后快照丢弃防回退）
+          const snapCursor = offset;
+          fetch(`/api/terminal/${encodeURIComponent(id)}/buffered${snapCursor === undefined ? "" : `?after=${snapCursor}`}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((snap: { output?: TerminalEvent & { type: "output" }; exited?: boolean; exitCode?: number | null } | null) => {
+              if (disposed || exited || !snap?.output) return;
+              if (snapCursor !== undefined && snap.output.offset <= (offset ?? snapCursor)) return;
+              handleEvent(snap.output);
+              if (snap.exited) handleEvent({ type: "exit", exitCode: snap.exitCode ?? 0 });
+            })
+            .catch(() => { /* 快照失败不致命：下一条实时帧/重连再补 */ });
+        };
+        bus.onerror = () => {
+          if (disposed || exited) return;
+          connected = false;
+          terminal.options.disableStdin = true;
+          setStatus(events?.readyState === 2 /* CLOSED，总线不可达一次性 onerror */ ? "error" : "connecting");
+        };
+        return;
+      }
+      events = new EventSource(`/api/terminal/${encodeURIComponent(id)}/events${offset === undefined ? "" : `?after=${offset}`}`);
+      events.onmessage = (message) => {
+        handleEvent(JSON.parse(message.data) as TerminalEvent);
       };
       events.onopen = () => {
         connected = true;

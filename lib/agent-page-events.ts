@@ -20,6 +20,22 @@ export function publishPageEvent(type: string, data: Record<string, unknown> = {
   }
 }
 
+/**
+ * 宽发布：core sinks（fallback SSE / core route 消费方）+ 总线（若 aiti-event-bus
+ * 已接管 globalThis 槽）。唯一 SSE 收敛的服务端发布统一走本函数——直调
+ * publishPageEvent 只进模块级 sinks，绕过总线接管槽（接管的正是槽的 wrapper）。
+ * 防双发：槽是本模块自己的 plain 赋值（总线不在场）时跳过（已直调过）；
+ * accessor wrapper 场景下 wrapper 的「前任」可能也是本模块实例——重复帧只会落
+ * 到 core sinks（此时 fallback 客户端不在线，无实际重复），总线侧仅一份。
+ */
+export function publishPageEventToBus(type: string, data: Record<string, unknown> = {}): void {
+  publishPageEvent(type, data);
+  const slot = (globalThis as { __piPageEvents?: { publish: typeof publishPageEvent } }).__piPageEvents;
+  if (slot?.publish && slot.publish !== publishPageEvent) {
+    try { slot.publish(type, data); } catch { /* 总线不可达静默 */ }
+  }
+}
+
 export function addPageEventSink(send: (frame: PageFrame) => void): () => void {
   sinks.add(send);
   return () => sinks.delete(send);
