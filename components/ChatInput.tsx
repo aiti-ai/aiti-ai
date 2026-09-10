@@ -4833,8 +4833,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <span style={{ flexShrink: 0, fontSize: 12, color: "var(--text-muted)", minWidth: 16, textAlign: "center" }}>{soundEnabled ? t("chat.soundOn") : t("chat.soundOff")}</span>
                 </div>
               )}
-              {/* 队列：计数 + 召回/导出/导入 */}
-              {(onRecallQueue || onExportQueue || onStageImport) && (
+              {/* 队列：计数 + 召回/导出/导入。v4 重审（队列空时不可见，与大屏一致）：
+                  队列空整行隐藏——桌面 queue-keeper QueuePanel / core 兜底横幅同为
+                  hasAny=queueCount>0||trashCount>0 门控；导入不受影响（底部操作区
+                  composerTools 的 queue-keeper 导入按钮与桌面同源恒在）。 */}
+              {(queueCount > 0 || trashCount > 0) && (onRecallQueue || onExportQueue || onStageImport) && (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "11px 14px", borderBottom: "1px solid color-mix(in srgb, var(--border) 60%, transparent)", flexWrap: "wrap" }}>
                   <span style={{ flexShrink: 0, display: "inline-flex", width: 7, height: 7, borderRadius: 99, background: "var(--accent)", opacity: 0.75 }} />
                   <span style={{ flexShrink: 0, fontWeight: 600, fontSize: 13.5 }}>{t("chat.sheetQueue")}</span>
