@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
+import { PiWebTitle } from "./PiWebTitle";
 import { subscribeRunningEvents, reconnectRunningEvents } from "@/lib/agent-running-events";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
@@ -11,7 +12,7 @@ import { workspaceKeyOf } from "@/lib/workspace-memory";
 import { loadHiddenWorkspaces, WORKSPACES_CHANGED_EVENT } from "@/lib/workspace-hide";
 import { formatRelativeTime } from "@/lib/i18n/format";
 import { useI18n } from "@/hooks/useI18n";
-import { ExtSlot, useExtProvides, useExtSlotItems, useTakeoverHint } from "./ExtSlots";
+import { ExtSlot, useExtProvides } from "./ExtSlots";
 import { EXT_PROVIDES } from "@/lib/ext/types";
 import { apiUrl } from "@/lib/base-path";
 
@@ -188,12 +189,6 @@ interface ValidatedProject {
 
 const UNREAD_SESSIONS_STORAGE_KEY = "pi-web:unread-session-ids";
 const LAST_CUSTOM_CWD_STORAGE_KEY = "pi-web:last-custom-cwd";
-// 接管标志缓存：扩展 items 异步注册（首帧渲染时必空，projectsTakeover 首帧恒 false），
-// 不记则接管态首载宿主必白拉一次全量 /api/sessions（~257KB，与扩展 fmt=2 数据重复）。
-const SESSIONS_TAKEOVER_KEY = "pi-web:sessions-takeover";
-function loadSessionsTakeoverHint(): boolean {
-  try { return localStorage.getItem(SESSIONS_TAKEOVER_KEY) === "1"; } catch { return false; }
-}
 const RUNNING_SESSIONS_POLL_MS = 15000; // SSE 主通道的兜底慢轮询（仅在 SSE 心跳静默时真正发请求）
 const RUNNING_SSE_FRESH_MS = 45_000; // 心跳 30s；45s 内见过任何帧 = SSE 健康，兜底轮询跳过
 
@@ -357,144 +352,9 @@ function AnimatedDropdown({ open, children, style }: { open: boolean; children: 
 
 
 
-const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-
-function useScramble(target: string, running: boolean): string {
-  const [display, setDisplay] = useState(target);
-  const frameRef = useRef<number | null>(null);
-  const iterRef = useRef(0);
-
-  useEffect(() => {
-    if (!running) {
-      setDisplay(target);
-      return;
-    }
-    iterRef.current = 0;
-    const totalFrames = target.length * 4;
-
-    const step = () => {
-      iterRef.current += 1;
-      const progress = iterRef.current / totalFrames;
-      const resolved = Math.floor(progress * target.length);
-
-      setDisplay(
-        target
-          .split("")
-          .map((char, i) => {
-            if (char === " ") return " ";
-            if (i < resolved) return char;
-            return SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
-          })
-          .join("")
-      );
-
-      if (iterRef.current < totalFrames) {
-        frameRef.current = requestAnimationFrame(step);
-      } else {
-        setDisplay(target);
-      }
-    };
-
-    frameRef.current = requestAnimationFrame(step);
-    return () => { if (frameRef.current) cancelAnimationFrame(frameRef.current); };
-  }, [target, running]);
-
-  return display;
-}
-
-/** 宿主左栏标题（Pi Web + 版本彩蛋 + 文档链接）。接管态经 sidebarContent extra
- *  的 renderTitle 工厂透传给扩展 Header（统一 dock 方案 §3.4 组件工厂契约）。 */
-export function PiWebTitle() {
-  const [showVersion, setShowVersion] = useState(false);
-  const [scrambling, setScrambling] = useState(false);
-  const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const target = showVersion ? `${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}p${process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}` : "Pi Web";
-  const display = useScramble(target, scrambling);
-
-  const triggerScramble = useCallback((toVersion: boolean) => {
-    setShowVersion(toVersion);
-    setScrambling(true);
-    setTimeout(() => setScrambling(false), (toVersion ? 6 : 8) * 4 * (1000 / 60) + 100);
-  }, []);
-
-  const handleClick = useCallback(() => {
-    if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
-
-    const next = !showVersion;
-    triggerScramble(next);
-
-    if (next) {
-      revertTimerRef.current = setTimeout(() => triggerScramble(false), 3000);
-    }
-  }, [showVersion, triggerScramble]);
-
-  useEffect(() => () => { if (revertTimerRef.current) clearTimeout(revertTimerRef.current); }, []);
-
-  return (
-    <span style={{ display: "inline-flex", alignItems: "baseline", gap: 3, minWidth: "6ch" }}>
-      <button
-        onClick={handleClick}
-        style={{
-          background: "none", border: "none", padding: 0, cursor: "default",
-          fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em",
-          color: showVersion ? "var(--accent)" : "var(--text)",
-          fontFamily: "var(--font-mono)",
-        }}
-      >
-        {display}
-      </button>
-      {/* 在线文档链接（aiti.pw）——点标题仍是版本号彩蛋，↗ 才是外链 */}
-      <a
-        href="https://aiti.pw/"
-        target="_blank"
-        rel="noopener noreferrer"
-        title="aiti.pw 文档"
-        aria-label="aiti.pw 文档"
-        style={{
-          fontSize: 12, lineHeight: 1, padding: "0 1px",
-          color: "var(--text-muted)", textDecoration: "none", cursor: "pointer",
-          transition: "color 0.12s",
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.color = "var(--accent)"; }}
-        onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-muted)"; }}
-      >
-        ↗
-      </a>
-    </span>
-  );
-}
-
 export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, onOpenById, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenFolder, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, fileExplorerRef: fileExplorerRefProp, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
-  // 「项目 / Projects」区块接管：session-manager SidebarDock（sidebarProjects 有 items 即接管；缺席回退原版）
-  const projectsSlotItems = useExtSlotItems("sidebarProjects");
-  const projectsTakeover = projectsSlotItems.length > 0;
-  // 接管态门控供 effect 内读取：列表数据归扩展回灌，宿主 loadSessions（全量 /api/sessions）
-  // 在接管态下拉了也没消费方（纯浪费）；ref 同步避免 effect 依赖扩散。
-  const projectsTakeoverRef = useRef(projectsTakeover);
-  projectsTakeoverRef.current = projectsTakeover;
-  // 上次会话的接管记忆：首帧 items 未注册时用它判定，拦截接管态首载的宿主全量拉取。
-  // 撤销/兑底 effect 在 loadSessions 定义之后（依赖它做回退态补拉）。
-  const takeoverHintRef = useRef<boolean>(loadSessionsTakeoverHint());
-  const takeoverEverSeenRef = useRef<boolean | null>(null); // null=尚未观察到注册态
-  // FileExplorer 门控（统一 dock 方案 §3.9）：接管记忆响应式读（sidebarContent 新 key +
-  // 旧 sessions-takeover 迁移）。接管态首帧 hint=true 不闪文件区；禁用扩展后 TakeoverSlot
-  // 兑底清记忆 → 本 hook 收事件自动恢复文件区（旧 ref 非响应式，缓存残留会永久藏住文件区）。
-  const takeoverHint = useTakeoverHint("sidebarContent", "pi-web:sessions-takeover");
-  // 负总责数据回灌（session-manager dock → 宿主）：接管态宿主 loadSessions 已下线，
-  // allSessions 的唯一更新源 = 扩展 store 回灌（无网络调用、无首拉竞态）。
-  // 消费方：auto-select（默认项目/?session= 恢复）、draftSession、projectFor、catalog。
-  const handleExtSessions = useCallback((sessions: SessionInfo[]) => {
-    setAllSessions(sessions);
-    onSessionsChange?.(sessions);
-  }, [onSessionsChange]);
-  // running 回灌（同 allSessions 模式）：刷新后初始快照来自扩展 refreshSessions
-  // 的 runRes（原 loadSessions 快照已下线）；SSE 变化帧由扩展转发。幂等 set。
-  const handleExtRunning = useCallback((ids: Set<string>) => {
-    setRunningSessionIds(new Set(ids));
-  }, []);
   const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
   const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sessionListVersion, setSessionListVersion] = useState<number | null>(null);
@@ -628,44 +488,12 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       if (loadId === sessionLoadIdRef.current) setLoading(false);
     }
   }, []);
-  // 首载列表（非接管态）：接管态列表归扩展回灌、宿主首拉下线；但非接管环境（无扩展
-  // 部署/上游 e2e）此前没有任何首拉触发点——初始列表只能靠 running 变化派生，无运行
-  // 会话时永远停在「加载中」。hint=false 时补一次宿主首拉：首次访问的接管机器会多拉
-  // 一次全量（随后 hint 记忆生效），换非接管基线可用性。
+  // 首载列表：本组件现仅作 sidebarContent 回退态渲染（统一 dock 方案 §7-1 纯化），
+  // 宿主列表是唯一来源——挂载即拉（fetchSessionsList 合流去重/ETag 304）。
   useEffect(() => {
-    if (projectsTakeoverRef.current || takeoverHintRef.current) return;
     void loadSessions();
   }, [loadSessions]);
 
-
-  // 接管标志写入/撤销路径：items 注册后从有到无（扩展禁用/卸载）→ 清 hint + 回退态补拉一次；
-  // 兑底：hint 为 true 但扩展始终未注册（刷新后扩展已被禁用）→ 3s 一次性校验后补拉
-  //（非轮询：一次性延迟校验，覆盖「缓存残留但接管已不存在」的罕见场景）。
-  useEffect(() => {
-    if (projectsTakeover) {
-      takeoverEverSeenRef.current = true;
-      try { localStorage.setItem(SESSIONS_TAKEOVER_KEY, "1"); } catch { /* optional */ }
-      return;
-    }
-    if (takeoverEverSeenRef.current === true) {
-      takeoverEverSeenRef.current = false;
-      try { localStorage.setItem(SESSIONS_TAKEOVER_KEY, "0"); } catch { /* optional */ }
-      if (takeoverHintRef.current) {
-        takeoverHintRef.current = false;
-        void loadSessions(); // 回退态恢复：宿主需要列表数据（fetchSessionsList 合流去重）
-      }
-    }
-    // 首帧 items 未注册（everSeen===null）时什么都不做：等注册事件写缓存，避免抹掉记忆
-  }, [projectsTakeover, loadSessions]);
-  useEffect(() => {
-    if (!takeoverHintRef.current) return;
-    const timer = setTimeout(() => {
-      if (projectsTakeoverRef.current || !takeoverHintRef.current) return;
-      takeoverHintRef.current = false; // 3s 仍无接管者：缓存残留，回退态补拉
-      void loadSessions();
-    }, 3000);
-    return () => clearTimeout(timer);
-  }, [loadSessions]);
 
   // Re-filter the workspace picker when the hidden list changes (written by the
   // session-manager extension; dispatched on the same window or across tabs).
@@ -840,7 +668,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     // 接管态跳过：列表归扩展 store（回灌 allSessions），扩展自己事件驱动刷新——
     // 首载 running 快照回灌 + SSE 帧会连续两次触发这里，宿主各拉一次全量纯属浪费。
     // hint=上次会话的接管记忆（首帧 items 未注册时的判定依据）。
-    if ((!projectsTakeoverRef.current && !takeoverHintRef.current) && (newlyRunning.length > 0 || selectedSessionCompleted || completedInBackground.length > 0)) {
+    if (newlyRunning.length > 0 || selectedSessionCompleted || completedInBackground.length > 0) {
       void loadSessions();
     }
     // 接管后列表数据归 session-manager（其 SSE running 集合变化时自行刷新），
@@ -2084,55 +1912,20 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
           <ExtSlot name="sidebar" />
         </div>
 
-        {/* 项目区接管分派：sidebarProjects 有 items → 由扩展 SidebarDock 渲染（含折叠头），宿主 picker 块让位 */}
-        {projectsTakeover ? null : projectPickerBlock}
+        {projectPickerBlock}
       </div>
 
-      {/* 项目区接管分派：sidebarProjects 有 items → 扩展 SidebarDock 整块（数据经 extra 透传，契约=下方对象）；
-          无 items → 原版列表直出（可回退）。文件区恒宿主渲染。 */}
-      {projectsTakeover ? (
-        <div style={{ display: "flex", flexDirection: "column", flex: explorerOpen && (selectedCwdProp || selectedCwd) ? "1 1 0" : "1 1 auto", minHeight: 0, overflow: "hidden" }}>
-          <ExtSlot
-            name="sidebarProjects"
-            currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd ?? "", name: selectedSession.name, firstMessage: selectedSession.firstMessage } : null}
-            extra={{
-              cwd: selectedCwd ?? selectedCwdProp ?? undefined,
-              homeDir,
-              sessions: allSessions,
-              loading,
-              error,
-              onSessionsChange: handleExtSessions,
-              onRunningSessionIds: handleExtRunning,
-              refreshKey,
-              sessionListVersion,
-              runningSessionIds,
-              unreadSessionIds,
-              selectedSessionId,
-              selectedSession: selectedSession ?? null,
-              draftSession,
-              explorerOpen,
-              searchOpen: sessionSearchOpen,
-              searchQuery: sessionSearchQuery,
-              onSearchQueryChange: setSessionSearchQuery,
-              onCwdChange: setSelectedCwd,
-              onSelectSession: handleSelectSessionFromList,
-              onNewSession: handleNewSession,
-              onSessionDeleted: (id: string) => { onSessionDeleted?.(id); },
-            }}
-          />
-        </div>
-      ) : (
-        !projectsCollapsed ? projectList : null
-      )}
+      {/* 项目列表（纯宿主原版）：sidebarProjects 旧接管分支已删——新宿主左栏接管
+          一律走 sidebarContent（SessionContentDock 整块）；旧宿主回滚用旧代码。 */}
+      {!projectsCollapsed ? projectList : null}
 
       {/* 「任务」区 / sidebarExplorerDock 停靠区容器已退役（统一 dock 方案 §3.8）：
           区块栈归 session-manager SidebarContentDock + aiti-float DockStack 接管；
           回退态（无接管）不渲染这两区——扩展禁用时宿主原版侧栏仍完整可用（§2.2）。 */}
 
-      {/* File Explorer section（接管态退役：文件区块归 aiti-folder 多实例；回退态兜底保留。
-          useTakeoverHint 参与首帧判定——接管态刷新不闪文件区；缓存残留由 TakeoverSlot
-          800ms 兑底清记忆后自动恢复） */}
-      {!(projectsTakeover || takeoverHint) && (selectedCwdProp || selectedCwd) && (
+      {/* File Explorer section：纯回退组件恒渲染（接管态本组件不挂载——文件区块归
+          aiti-folder 多实例，统一 dock 方案 §3.5/§7-1） */}
+      {(selectedCwdProp || selectedCwd) && (
         <div
           style={{
             borderTop: "1px solid var(--border)",

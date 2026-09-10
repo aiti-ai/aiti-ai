@@ -6,7 +6,7 @@ import { apiUrl, inAppPathname, withBasePath } from "@/lib/base-path";
 import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
 
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
-import { SessionSidebar, PiWebTitle } from "./SessionSidebar";
+import { PiWebTitle } from "./PiWebTitle";
 import { ChatWindow } from "./ChatWindow";
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
@@ -15,7 +15,16 @@ import { TabBody, type TabBodyCtx } from "./TabBody";
 import { DetachedTabWindow } from "./DetachedTabWindow";
 import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
+import dynamic from "next/dynamic";
 import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary } from "./ExtSlots";
+/** SessionSidebar 懒加载（统一 dock 方案 §7-2）：接管态（sidebarContent 有接管者）
+ *  本组件整体不渲染，chunk 永不加载——主包瘦身；回退态首次渲染时按需拉取
+ *  （本地 chunk，加载窗口毫秒级）。ssr:false：组件依赖 localStorage 两段式恢复，
+ *  服务端渲染无增益。 */
+const SessionSidebarLazy = dynamic(
+  () => import("./SessionSidebar").then((m) => ({ default: m.SessionSidebar })),
+  { ssr: false, loading: () => null },
+);
 import { hasExtRender } from "@/lib/ext-ui-store";
 import type { ExtRenderProps, ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
@@ -2745,7 +2754,7 @@ export function AppShell() {
       legacyKey="pi-web:sessions-takeover"
       fallback={
         <>
-          <SessionSidebar
+          <SessionSidebarLazy
             selectedSessionId={selectedSession?.id ?? null}
             selectedSession={selectedSession}
             onSelectSession={handleSelectSession}

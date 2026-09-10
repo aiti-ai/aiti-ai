@@ -1289,29 +1289,36 @@ export function TakeoverSlot({ name, fallback, extra, legacyKey, currentSession 
   const memRef = useRef<boolean | null>(null);
   if (memRef.current === null) memRef.current = readTakeoverMem(name, legacyKey);
   const everSeenRef = useRef<boolean | null>(null); // null=本会话尚未观察到注册态
+  // 等待窗（§7-2 配套）：记忆命中但 items 未到 → 渲染空白占位而非整个 fallback——
+  // 防旧侧栏整块闪现（fallback 可能是懒 chunk，加载窗口内本来也是空白，观感一致）。
+  const [hintPending, setHintPending] = useState(() => memRef.current === true);
   useEffect(() => {
     if (takeover) {
       everSeenRef.current = true;
+      if (hintPending) setHintPending(false);
       if (!memRef.current) { memRef.current = true; writeTakeoverMem(name, true); window.dispatchEvent(new Event(TAKEOVER_MEM_EVENT)); }
       return;
     }
     if (everSeenRef.current === true) {
       everSeenRef.current = false;
       if (memRef.current) { memRef.current = false; writeTakeoverMem(name, false); window.dispatchEvent(new Event(TAKEOVER_MEM_EVENT)); }
+      setHintPending(false);
     }
     // 首帧未注册（everSeen===null）时不动记忆：等注册事件裁决，避免抹掉真接管记忆
   }, [takeover, name]);
-  // 兑底：记忆命中但扩展始终未注册（缓存残留）→ 800ms 一次性校验后清记忆（方案 §3.8）
+  // 兑底：记忆命中但扩展始终未注册（缓存残留）→ 800ms 一次性校验后清记忆并放行 fallback（方案 §3.8）
   useEffect(() => {
-    if (!memRef.current) return;
+    if (!hintPending) return;
     const timer = setTimeout(() => {
-      if (takeoverRef.current || !memRef.current) return;
+      if (takeoverRef.current) { setHintPending(false); return; }
       memRef.current = false;
       writeTakeoverMem(name, false);
+      setHintPending(false);
       window.dispatchEvent(new Event(TAKEOVER_MEM_EVENT));
     }, 800);
     return () => clearTimeout(timer);
-  }, [name]);
+  }, [hintPending, name]);
   if (takeover) return <ExtSlot name={name} currentSession={currentSession} extra={extra as never} />;
+  if (hintPending) return null;
   return <>{fallback}</>;
 }
