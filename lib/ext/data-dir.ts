@@ -73,6 +73,16 @@ export function dataRoot(): string {
   return process.env.PI_WEB_DATA_DIR || join(webRoot(), "data");
 }
 
+/**
+ * jiti 转译缓存目录（宿主级，不属于任何扩展）：默认 <webRoot()>/.cache/jiti——
+ * 持久（重启不丢），键=文件路径 hash、尾部源码 hash 校验，内容不变即命中；
+ * dev/prod 各自 webRoot 天然隔离。隐藏名 .cache 命中备份 excludes 的 .cache 通配排除。
+ * env 覆盖仅供测试隔离/迁移用。可整目录 rm -rf，下次访问自动重建（缓存契约）。
+ */
+export function jitiCacheDir(): string {
+  return process.env.PI_WEB_JITI_CACHE_DIR || join(webRoot(), ".cache", "jiti");
+}
+
 /** Resolve (and create) the data directory for one extension. */
 export function extensionDataDir(id: string): string {
   const dir = join(dataRoot(), id);

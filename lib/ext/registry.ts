@@ -25,7 +25,7 @@ import type {
   ManifestExtension,
 } from "./types.ts";
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
-import { loadExtensionFromDir, scanExtensionDirs, compareExtVersions } from "./loader.ts";
+import { loadExtensionFromDir, scanExtensionDirs, compareExtVersions, snapshotJitiCache, countRetranspiled } from "./loader.ts";
 import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
 import { ExtServicesRegistry } from "./services.ts";
 import { invokeAI as aiInvokeImpl } from "../ai-invoke.ts";
@@ -615,9 +615,16 @@ export class ExtRegistryImpl {
     }
 
     // 3) 加载胜出者（保持首见顺序；失败不回退）。
+    //    PI_WEB_EXT_TIMING=1：逐扩展记 import 耗时 + 重转译文件数（jiti 缓存快照
+    //    diff），循环尾打总表——「fsCache 持久命中」验收从外部 bench 估算变为直接
+    //    读表（pi PI_TIMING 式加载观测，方案 §7.1②）。串行加载保证 miss 归因正确。
+    const timingEnabled = process.env.PI_WEB_EXT_TIMING === "1";
+    const timings: Array<{ id: string; ms: number; retranspiled: number }> = [];
     for (const [id, winner] of this.winners) {
       if (disabled.has(id)) continue; // 用户禁用 → 不加载（status 里不出现，界面用 isEnabled 展示）
       const { dir, source } = winner;
+      const timingT0 = timingEnabled ? performance.now() : 0;
+      const cacheBefore = timingEnabled ? snapshotJitiCache() : null;
       try {
         const ext = await loadExtensionFromDir(dir);
         if (!ext) {
@@ -635,6 +642,10 @@ export class ExtRegistryImpl {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`[ext] ${id} 加载失败:`, msg);
         this.errors.set(id, msg);
+      } finally {
+        if (timingEnabled) {
+          timings.push({ id, ms: performance.now() - timingT0, retranspiled: countRetranspiled(cacheBefore!, snapshotJitiCache()) });
+        }
       }
     }
     // [懒加载 v2] 标懒静态诊断（不拦截）：clientImmediately:false 却没有任何
@@ -651,6 +662,14 @@ export class ExtRegistryImpl {
     }
     this.buildCapabilityIndex();
     this.loaded = true;
+    if (timingEnabled) {
+      const total = timings.reduce((s, t) => s + t.ms, 0);
+      const misses = timings.filter((t) => t.retranspiled > 0).length;
+      console.log(`[ext-timing] loadAll: ${timings.length} 个扩展 / ${total.toFixed(0)}ms — 缓存命中 ${timings.length - misses}、重转译 ${misses}（PI_WEB_EXT_TIMING=1 门控观测）`);
+      for (const [i, t] of timings.entries()) {
+        console.log(`[ext-timing]   ${(i + 1).toString().padStart(2)}. ${t.id.padEnd(32)} ${t.ms.toFixed(0).padStart(5)}ms  ${t.retranspiled > 0 ? `MISS（重转译 ${t.retranspiled} 文件）` : "hit"}`);
+      }
+    }
   }
 
   /**

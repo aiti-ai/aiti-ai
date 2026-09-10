@@ -6,7 +6,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { pathToFileURL } from "url";
 import { createJiti } from "jiti";
-import { webRoot } from "./data-dir.ts";
+import { jitiCacheDir } from "./data-dir.ts";
 import type { PiWebExtension } from "./types.ts";
 
 // 宿主 SDK alias：扩展部署产物通常不带 node_modules（如 ~/.pi/web/extensions/*），
@@ -20,6 +20,27 @@ const hostSdkDir = resolve(
   "@earendil-works",
   "pi-coding-agent",
 );
+
+const HOST_SDK_ID = "@earendil-works/pi-coding-agent";
+
+// 宿主 SDK 模块对象（懒单例原生 import）：virtualModules 直注每个 jiti 实例——
+// 扩展与宿主拿到结构性同一 SDK 实例（SDK 内部单例/全局注册表不分裂），不再依赖
+// serverExternalPackages 的「同 URL 命中 ESM 缓存」配置巧合（磁盘出现双份 SDK /
+// 打包策略变化时 alias 目录指向可能分叉出第二实例）。求值链里 virtualModules 在
+// alias 之前：裸 ID 精确命中直注；子路径（.../client）走 alias 前缀解析兜底。
+// 宿主无 SDK 或原生 import 失败 → null → 回退纯 alias 分支（与旧行为一致）。
+let hostSdkModulePromise: Promise<Record<string, unknown> | null> | null = null;
+
+function hostSdkModule(): Promise<Record<string, unknown> | null> | null {
+  const entry = join(hostSdkDir, "dist", "index.js");
+  if (!existsSync(entry)) return null;
+  hostSdkModulePromise ??= import(pathToFileURL(entry).href).catch((e: unknown) => {
+    console.error("[ext] 宿主 SDK virtualModules 注入失败，回退 alias 解析:", e instanceof Error ? e.message : e);
+    hostSdkModulePromise = null;
+    return null;
+  });
+  return hostSdkModulePromise;
+}
 
 const ENTRY_NAMES = ["index.ts", "index.mjs", "index.js", "index.cjs"];
 
@@ -98,16 +119,24 @@ export async function loadExtensionFromDir(dir: string): Promise<PiWebExtension 
   // jiti id = 扩展入口文件（而非加载器自身）：裸说明符从扩展目录解析——扩展可带
   // 标准 node_modules 依赖（npm 安装），不依赖宿主 node_modules。
   // moduleCache: false so POST /api/extensions/reload picks up code changes.
-  // alias：宿主 SDK（@earendil-works/pi-coding-agent）由宿主 node_modules 解析，
-  // 扩展部署产物无需自带/链接 node_modules（依赖宿主而非外部）；宿主无该包时保持原行为。
+  // 宿主 SDK：virtualModules 直注单实例（见 hostSdkModule 注释）；直注不可用时
+  // 回退 alias 目录解析（宿主无 SDK 则不传，保持原行为）。
+  const sdk = await hostSdkModule();
   const jiti = createJiti(pathToFileURL(entry).href, {
     interopDefault: true,
     moduleCache: false,
     // jiti 转译缓存固定到持久目录（默认回落 /tmp/jiti，重启即清）：键=文件路径 hash、
     // 尾部源码 hash 校验——内容不变即命中，重启后首启免全量重转译；dev/prod 各自
     // webRoot 天然隔离。详见 docs/pi-web-ext-loader-jiti-fscache-persist-plan.md §1。
-    fsCache: join(webRoot(), ".cache", "jiti"),
-    ...(existsSync(hostSdkDir) ? { alias: { "@earendil-works/pi-coding-agent": hostSdkDir } } : {}),
+    fsCache: jitiCacheDir(),
+    ...(sdk
+      ? {
+          virtualModules: { [HOST_SDK_ID]: sdk },
+          alias: { [HOST_SDK_ID]: hostSdkDir }, // 子路径前缀兜底（裸 ID 由 virtual 命中）
+        }
+      : existsSync(hostSdkDir)
+        ? { alias: { [HOST_SDK_ID]: hostSdkDir } }
+        : {}),
   });
   const mod = (await jiti.import(pathToFileURL(entry).href)) as unknown;
   const ext = (mod as { default?: unknown } | undefined)?.default ?? mod;
@@ -116,6 +145,35 @@ export async function loadExtensionFromDir(dir: string): Promise<PiWebExtension 
   if (typeof candidate.id !== "string" || !candidate.id) return null;
   embedUiSvgIcons(dir, candidate);
   return candidate as PiWebExtension;
+}
+
+/**
+ * jiti 持久缓存目录快照（PI_WEB_EXT_TIMING=1 观测用）：path → mtimeMs 平铺映射
+ * （jiti 缓存键形如 <basename>-<hash>.mjs，一层平铺）。命中不写文件、miss 覆盖写
+ * （mtime 变化）→ 前后快照 diff 即该扩展加载期间的重转译文件数。
+ */
+export function snapshotJitiCache(): Map<string, number> {
+  const dir = jitiCacheDir();
+  const snap = new Map<string, number>();
+  if (!existsSync(dir)) return snap;
+  for (const name of readdirSync(dir)) {
+    if (!name.endsWith(".mjs")) continue;
+    try {
+      snap.set(name, statSync(join(dir, name)).mtimeMs);
+    } catch {
+      // 竞态删除：跳过（diff 口径宁少勿多）
+    }
+  }
+  return snap;
+}
+
+/** 快照 diff：after 中新增或 mtime 变化的文件数 = 重转译数（0 = 全命中）。 */
+export function countRetranspiled(before: Map<string, number>, after: Map<string, number>): number {
+  let n = 0;
+  for (const [name, mtime] of after) {
+    if (before.get(name) !== mtime) n++;
+  }
+  return n;
 }
 
 /**
