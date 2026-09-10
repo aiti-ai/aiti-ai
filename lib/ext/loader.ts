@@ -6,6 +6,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { join, resolve } from "path";
 import { pathToFileURL } from "url";
 import { createJiti } from "jiti";
+import { webRoot } from "./data-dir.ts";
 import type { PiWebExtension } from "./types.ts";
 
 // 宿主 SDK alias：扩展部署产物通常不带 node_modules（如 ~/.pi/web/extensions/*），
@@ -102,6 +103,10 @@ export async function loadExtensionFromDir(dir: string): Promise<PiWebExtension 
   const jiti = createJiti(pathToFileURL(entry).href, {
     interopDefault: true,
     moduleCache: false,
+    // jiti 转译缓存固定到持久目录（默认回落 /tmp/jiti，重启即清）：键=文件路径 hash、
+    // 尾部源码 hash 校验——内容不变即命中，重启后首启免全量重转译；dev/prod 各自
+    // webRoot 天然隔离。详见 docs/pi-web-ext-loader-jiti-fscache-persist-plan.md §1。
+    fsCache: join(webRoot(), ".cache", "jiti"),
     ...(existsSync(hostSdkDir) ? { alias: { "@earendil-works/pi-coding-agent": hostSdkDir } } : {}),
   });
   const mod = (await jiti.import(pathToFileURL(entry).href)) as unknown;

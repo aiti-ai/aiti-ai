@@ -20,7 +20,7 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 
 /** dev 实例根（PI_WEB_DEV_DIST=1）——与生产扩展隔离，避免共享加载/运行时状态。 */
-function webRoot(): string {
+export function webRoot(): string {
   return process.env.PI_WEB_DEV_DIST === "1"
     ? join(homedir(), ".pi", "web-dev")
     : join(homedir(), ".pi", "web");
