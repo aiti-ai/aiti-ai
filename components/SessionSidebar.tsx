@@ -402,7 +402,9 @@ function useScramble(target: string, running: boolean): string {
   return display;
 }
 
-function PiWebTitle() {
+/** 宿主左栏标题（Pi Web + 版本彩蛋 + 文档链接）。接管态经 sidebarContent extra
+ *  的 renderTitle 工厂透传给扩展 Header（统一 dock 方案 §3.4 组件工厂契约）。 */
+export function PiWebTitle() {
   const [showVersion, setShowVersion] = useState(false);
   const [scrambling, setScrambling] = useState(false);
   const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -638,6 +640,15 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       if (loadId === sessionLoadIdRef.current) setLoading(false);
     }
   }, []);
+  // 首载列表（非接管态）：接管态列表归扩展回灌、宿主首拉下线；但非接管环境（无扩展
+  // 部署/上游 e2e）此前没有任何首拉触发点——初始列表只能靠 running 变化派生，无运行
+  // 会话时永远停在「加载中」。hint=false 时补一次宿主首拉：首次访问的接管机器会多拉
+  // 一次全量（随后 hint 记忆生效），换非接管基线可用性。
+  useEffect(() => {
+    if (projectsTakeoverRef.current || takeoverHintRef.current) return;
+    void loadSessions();
+  }, [loadSessions]);
+
 
   // 接管标志写入/撤销路径：items 注册后从有到无（扩展禁用/卸载）→ 清 hint + 回退态补拉一次；
   // 兑底：hint 为 true 但扩展始终未注册（刷新后扩展已被禁用）→ 3s 一次性校验后补拉

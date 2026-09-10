@@ -6,7 +6,7 @@ import { apiUrl, inAppPathname, withBasePath } from "@/lib/base-path";
 import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
 
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
-import { SessionSidebar } from "./SessionSidebar";
+import { SessionSidebar, PiWebTitle } from "./SessionSidebar";
 import { ChatWindow } from "./ChatWindow";
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
@@ -15,7 +15,7 @@ import { TabBody, type TabBodyCtx } from "./TabBody";
 import { DetachedTabWindow } from "./DetachedTabWindow";
 import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
-import { ExtSlotsProvider, ExtSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary } from "./ExtSlots";
+import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary } from "./ExtSlots";
 import { hasExtRender } from "@/lib/ext-ui-store";
 import type { ExtRenderProps, ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
@@ -706,7 +706,8 @@ export function AppShell() {
   );
 
   // [aiti] T2 接管：工作区终端页签保留（sessionStorage 会话记忆语义不变），页签内容由
-  // TerminalPanelBridge 引导到 aiti-cmd（原版 TerminalPanel/PTY 实现隐藏，core 无 /api/terminal）。
+  // TerminalPanelBridge 三层裁决：aiti-cmd terminalDock 接管优先；manifest 就绪且无人
+  // 声明接管 → 回落原生 PTY 面板（lib/terminal-manager + /api/terminal，见 docs/terminal.md）。
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
   const [terminalsRestored, setTerminalsRestored] = useState(false);
 
@@ -790,7 +791,8 @@ export function AppShell() {
       label: getFileName(tab.cwd) || tab.cwd,
       filePath: tab.cwd,
       kind: "terminal" as const,
-      closing: Boolean(tab.closing),
+      closing: tab.closing,
+      restored: tab.restored,
     })),
   ].filter((t) => detachedTabIds.has(t.id));
 
@@ -1568,8 +1570,8 @@ export function AppShell() {
     setActiveFileTabId((active) => (active === prevId ? tabId : active));
   }, [activeFileTabId, fileTabs, askEditorClose]);
 
-  // [aiti] T2 接管：侧栏「终端」按钮 → 建 terminal 页签（Bridge 激活时自动唤起
-  // aiti-cmd shell，见 TerminalPanelBridge）；不再直连 __aitiCmd（单一入口防双开）。
+  // [aiti] T2 接管：侧栏「终端」按钮 → 建 terminal 页签（Bridge 接管优先唤起 aiti-cmd
+  // shell，缺席回落原生 PTY 面板，见 TerminalPanelBridge）；不再直连 __aitiCmd（单一入口防双开）。
   const handleOpenTerminal = useCallback((cwd: string, forceNew?: boolean) => {
     const existing = forceNew ? undefined : terminalTabs.find((tab) => tab.cwd === cwd);
     const tab = existing ?? newTerminalTab(cwd);
@@ -1579,12 +1581,33 @@ export function AppShell() {
     if (isMobile) setSidebarOpen(false);
   }, [terminalTabs, isMobile]);
 
-  // closing 收尾：本地移除页签即可（shell 生命周期归 aiti-cmd，core 无 PTY 可关）
+  // closing 收尾（上游 #695 语义 + 接管态本地移除）：restart 在终止完成后原地换新 id
+  // （等终止再建新进程——docs/terminal.md Lifecycle）；接管态无 restart，closing 只会是
+  // "close"（本地移除即可，shell 生命周期归 aiti-cmd）。
   const handleTerminalClosed = (tab: TerminalTab) => {
+    const replacement = tab.closing === "restart" ? newTerminalTab(tab.cwd) : null;
     const remaining = terminalTabs.filter((item) => item.id !== tab.id);
-    setTerminalTabs((tabs) => tabs.filter((item) => item.id !== tab.id));
-    setActiveFileTabId((current) => current !== tab.id ? current : remaining.at(-1)?.id ?? fileTabs.at(-1)?.id ?? null);
-    if (!remaining.length && !fileTabs.length) setRightPanelOpen(false);
+    setTerminalTabs((tabs) => tabs.flatMap((item) => item.id !== tab.id ? [item] : replacement ? [replacement] : []));
+    // 拆出窗口连续性：重启换 id 后窗口跟随新 id（否则终端会掉回右栏）。
+    if (replacement && detachedTabIds.has(tab.id)) {
+      setDetachedTabIds((prev) => {
+        const next = new Set(prev);
+        next.delete(tab.id);
+        next.add(replacement.id);
+        return next;
+      });
+    }
+    setActiveFileTabId((current) => current !== tab.id ? current : replacement?.id ?? remaining.at(-1)?.id ?? fileTabs.at(-1)?.id ?? null);
+    if (!replacement && !remaining.length && !fileTabs.length) setRightPanelOpen(false);
+  };
+
+  // 原生兜底层：重启 = 关闭收尾带 restart 标记（TerminalPanel 等终止完成后回调上面）；
+  // 关闭失败（DELETE 网络失败等）清标记留页签可重试。
+  const handleTerminalRestart = (tabId: string) => {
+    setTerminalTabs((tabs) => tabs.map((tab) => tab.id === tabId && !tab.closing ? { ...tab, closing: "restart" } : tab));
+  };
+  const handleTerminalCloseError = (tabId: string) => {
+    setTerminalTabs((tabs) => tabs.map((tab) => tab.id === tabId && tab.closing ? { ...tab, closing: undefined } : tab));
   };
 
   const performCloseFileTab = useCallback((tabId: string) => {
@@ -1679,6 +1702,8 @@ export function AppShell() {
     openFile: handleOpenFile,
     openFolder: handleOpenFolder,
     onTerminalClosed: handleTerminalClosed,
+    onTerminalRestart: handleTerminalRestart,
+    onTerminalCloseError: handleTerminalCloseError,
     onOpenShellTab: (openCwd) => handleOpenTerminal(openCwd, true),
   };
   // 内容分派对象：直接查 panelTabs 派生面（已排除 detached、含 dock tab——dock 不在
@@ -2618,83 +2643,137 @@ export function AppShell() {
     </div>
   );
 
+  // ── 左栏底部行（模型/技能/设置 + sidebarFooter 扩展点）：回退态直出、接管态经
+  //    renderSidebarFooter 工厂透传（统一 dock 方案 §3.4 组件工厂契约）──
+  const sidebarFooterRow = (
+    <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
+      {([
+        ["models", translate("common.models")],
+        ["skills", translate("common.skills")],
+      ] as const).map(([section, label]) => {
+        const disabled = section !== "models" && !projectTrustCwd;
+        return (
+          <button
+            key={section}
+            type="button"
+            onClick={() => setSettingsSection(section)}
+            disabled={disabled}
+            title={disabled ? translate("settings.projectRequired") : label}
+            aria-label={label}
+            style={{
+              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              height: 32, padding: 0, background: "none", border: "none",
+              borderRadius: 9, color: "var(--text-muted)", cursor: disabled ? "default" : "pointer",
+              fontSize: 12, opacity: disabled ? 0.35 : 1,
+              transition: "background 0.12s, color 0.12s",
+            }}
+            onMouseEnter={(event) => { if (!disabled) { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; } }}
+            onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
+          >
+            <SettingsSectionIcon section={section} size={14} strokeWidth={2} />
+            <span>{label}</span>
+          </button>
+        );
+      })}
+      <button
+        type="button"
+        onClick={() => setSettingsSection(getLastSettingsSection(projectTrustCwd))}
+        title={translate("common.settings")}
+        aria-label={translate("common.settings")}
+        style={{
+          flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+          height: 32, padding: 0, background: "none", border: "none",
+          borderRadius: 9, color: "var(--text-muted)", cursor: "pointer",
+          fontSize: 12, transition: "background 0.12s, color 0.12s",
+        }}
+        onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; }}
+        onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
+      >
+        <SettingsSectionIcon section="general" size={14} strokeWidth={2} />
+        <span>{translate("common.settings")}</span>
+      </button>
+      {/* 扩展点：侧栏底部快捷操作行（与内置 模型/技能/插件 同一排；aiti-extman：扩展管理入口） */}
+      <ExtSlot name="sidebarFooter" />
+    </div>
+  );
+
+  // ── 左栏整块接管契约（sidebar 统一 dock 方案 §3.4）：extra 经 TakeoverSlot 透传给
+  //    sidebarContent 接管者（session-manager SidebarContentDock）——组件工厂直出宿主
+  //    元素（单渲染实例下 element.type=宿主组件引用天然合法），数据/回调全量透传，
+  //    接管态宿主 SessionSidebar 不渲染。回退态 = fallback（原版侧栏）。──
+  const sidebarContentExtra: Record<string, unknown> = {
+    // 组件工厂
+    renderTitle: () => <PiWebTitle />,
+    renderSidebarFooter: () => sidebarFooterRow,
+    // 会话数据
+    selectedSession,
+    selectedSessionId: selectedSession?.id ?? null,
+    selectedCwd: selectedSession?.cwd ?? newSessionCwd ?? null,
+    newSessionCwd: effectiveNewSessionCwd,
+    refreshKey,
+    explorerRefreshKey,
+    sessionListVersion: null,
+    // 初始恢复（URL ?session= / 默认项目自动选）
+    initialSessionId,
+    skipInitialProjectSelection: initialNavigation.requestedCwd !== null,
+    // 导航回调
+    onSelectSession: handleSelectSession,
+    onNewSession: handleNewSession,
+    onOpenById: handleOpenSession,
+    onSessionDeleted: handleSessionDeleted,
+    onCwdChange: handleCwdChange,
+    onOpenFile: handleOpenFile,
+    onOpenFolder: handleOpenFolder,
+    onOpenTerminal: handleOpenTerminal,
+    onAtMention: handleAtMention,
+    onAtMentions: handleAtMentions,
+    onExplorerRefresh: handleExplorerRefresh,
+    onInitialRestoreDone: handleInitialRestoreDone,
+    onBackgroundTaskDone: handleBackgroundTaskDone,
+    onRunningSessionIdsChange: handleRunningSessionIdsChange,
+    onSessionsChange: handleSessionsChange,
+    // 状态/工具
+    translate,
+    settingsSection,
+    setSettingsSection,
+    isMobile,
+  };
+
   const sidebarContent = (
-    <>
-      <SessionSidebar
-        selectedSessionId={selectedSession?.id ?? null}
-        selectedSession={selectedSession}
-        onSelectSession={handleSelectSession}
-        onNewSession={handleNewSession}
-        initialSessionId={initialSessionId}
-        skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
-        onInitialRestoreDone={handleInitialRestoreDone}
-        onOpenById={handleOpenSession}
-        refreshKey={refreshKey}
-        onSessionDeleted={handleSessionDeleted}
-        selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
-        onCwdChange={handleCwdChange}
-        onOpenFile={handleOpenFile}
-        onOpenFolder={handleOpenFolder}
-        onOpenTerminal={handleOpenTerminal}
-        explorerRefreshKey={explorerRefreshKey}
-        onExplorerRefresh={handleExplorerRefresh}
-        onAtMention={handleAtMention}
-        onAtMentions={handleAtMentions}
-        fileExplorerRef={fileExplorerRef}
-        onBackgroundTaskDone={handleBackgroundTaskDone}
-        onRunningSessionIdsChange={handleRunningSessionIdsChange}
-        onSessionsChange={handleSessionsChange}
-      />
-      <div style={{ padding: "8px", flexShrink: 0, display: "flex", justifyContent: "space-between", gap: 4 }}>
-        {([
-          ["models", translate("common.models")],
-          ["skills", translate("common.skills")],
-        ] as const).map(([section, label]) => {
-          const disabled = section !== "models" && !projectTrustCwd;
-          return (
-            <button
-              key={section}
-              type="button"
-              onClick={() => setSettingsSection(section)}
-              disabled={disabled}
-              title={disabled ? translate("settings.projectRequired") : label}
-              aria-label={label}
-              style={{
-                flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-                height: 32, padding: 0, background: "none", border: "none",
-                borderRadius: 9, color: "var(--text-muted)", cursor: disabled ? "default" : "pointer",
-                fontSize: 12, opacity: disabled ? 0.35 : 1,
-                transition: "background 0.12s, color 0.12s",
-              }}
-              onMouseEnter={(event) => { if (!disabled) { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; } }}
-              onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
-            >
-              <SettingsSectionIcon section={section} size={14} strokeWidth={2} />
-              <span>{label}</span>
-            </button>
-          );
-        })}
-        <button
-          type="button"
-          onClick={() => setSettingsSection(getLastSettingsSection(projectTrustCwd))}
-          title={translate("common.settings")}
-          aria-label={translate("common.settings")}
-          style={{
-            flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            height: 32, padding: 0, background: "none", border: "none",
-            borderRadius: 9, color: "var(--text-muted)", cursor: "pointer",
-            fontSize: 12, transition: "background 0.12s, color 0.12s",
-          }}
-          onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; }}
-          onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
-        >
-          <SettingsSectionIcon section="general" size={14} strokeWidth={2} />
-          <span>{translate("common.settings")}</span>
-        </button>
-        {/* 扩展点：侧栏底部快捷操作行（与内置 模型/技能/插件 同一排；aiti-extman：扩展管理入口） */}
-        <ExtSlot name="sidebarFooter" />
-      </div>
-    </>
+    <TakeoverSlot
+      name="sidebarContent"
+      fallback={
+        <>
+          <SessionSidebar
+            selectedSessionId={selectedSession?.id ?? null}
+            selectedSession={selectedSession}
+            onSelectSession={handleSelectSession}
+            onNewSession={handleNewSession}
+            initialSessionId={initialSessionId}
+            skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
+            onInitialRestoreDone={handleInitialRestoreDone}
+            onOpenById={handleOpenSession}
+            refreshKey={refreshKey}
+            onSessionDeleted={handleSessionDeleted}
+            selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
+            onCwdChange={handleCwdChange}
+            onOpenFile={handleOpenFile}
+            onOpenFolder={handleOpenFolder}
+            onOpenTerminal={handleOpenTerminal}
+            explorerRefreshKey={explorerRefreshKey}
+            onExplorerRefresh={handleExplorerRefresh}
+            onAtMention={handleAtMention}
+            onAtMentions={handleAtMentions}
+            fileExplorerRef={fileExplorerRef}
+            onBackgroundTaskDone={handleBackgroundTaskDone}
+            onRunningSessionIdsChange={handleRunningSessionIdsChange}
+            onSessionsChange={handleSessionsChange}
+          />
+          {sidebarFooterRow}
+        </>
+      }
+      extra={sidebarContentExtra}
+    />
   );
 
   const renderThemeButton = (mobile: boolean) => (
@@ -4280,6 +4359,8 @@ export function AppShell() {
                 tab={tab}
                 active={rightPanelOpen && tab.id === activeFileTabId}
                 onClosed={() => handleTerminalClosed(tab)}
+                onRestart={() => handleTerminalRestart(tab.id)}
+                onCloseError={() => handleTerminalCloseError(tab.id)}
                 onOpenShellTab={(openCwd) => handleOpenTerminal(openCwd, true)}
               />
             </div>

@@ -64,6 +64,7 @@ import {
   materializedIds,
   pendingForSlot,
   pendingForSlotAuto,
+  slotDeclared,
   ensureMaterialized,
   ensureSlotMaterialized,
   INTERACTIVE_SLOTS,
@@ -108,7 +109,11 @@ export interface ExtClientContext {
    * 如 SidebarDock 会话行内的 sessionRowLeading/sessionRowMeta/sessionRowActions）。
    * 宿主组件宿主渲染，无跨 bundle 组件复制问题。
    */
-  renderSlot?: (name: ExtSlotName, props?: { currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null; extra?: Record<string, unknown> }) => ReactNode;
+  renderSlot?: (name: ExtSlotName, props?: { currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null; extra?: Record<string, unknown>; /** 只渲染注册 id 等于该值的 item（复合 id "extId:itemId"；DockStack 按 item 分格渲染用） */ only?: string }) => ReactNode;
+  /** 插槽 items 响应式读取（hook——必须在组件渲染体调用；内部 = 宿主 useExtSlotItems，
+   *  含懒加载拉起副作用与 store/语言订阅。返回条目 id 复合 "extId:itemId"，meta 可携
+   *  title/priority 等。aiti-float DockStack 自编排容器的数据源。 */
+  useSlotItems?: (slot: ExtSlotName) => ExtUiItemRegistered[];
   /** 读取全部扩展 ui.provides 声明集合（静态 manifest，运行时不变；非 hook）。 */
   getExtProvides?: () => Set<string>;
   /** 当前 UI 语言（formatRelativeTime 等 Intl 格式化用；跟随宿主语言设置）。 */
@@ -429,7 +434,11 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
       // 插槽 item 全收不到 extra（session-manager workspacePickerActions 管理弹窗
       // allProjects.length 崩溃即此因）。
       extra: props?.extra as Record<string, unknown> | undefined,
+      only: props?.only,
     }),
+    // 插槽 items 响应式读取（DockStack 等自编排容器用：按 meta 分格/排序后逐 item 渲染）。
+    // hook：必须在组件渲染体内调用（内部是 useExtSlotItems 真 hook，含懒加载拉起副作用）。
+    useSlotItems: (slot: ExtSlotName) => useExtSlotItems(slot),
     getExtProvides: () => {
       const provides = new Set<string>();
       for (const meta of Object.values(getExtMetas())) {
@@ -584,23 +593,41 @@ async function fetchManifestData(): Promise<ManifestData | null> {
   }
 }
 
+/** 启动就绪信号：loadExtensions 首次尝试 settle（成功/失败都算）即置位。
+ *  「缺席即原生兜底」的裁决点（TerminalPanelBridge → 原生 TerminalPanel）用它 +
+ *  useExtSlotSettled 区分「manifest 还没回来（不能预判，防接管迟到双开）」与
+ *  「该插槽确定无人接管」。 */
+let extBootSettled = false;
+const extBootSettledListeners = new Set<() => void>();
+
+function notifyExtBootSettled(): void {
+  extBootSettled = true;
+  for (const listener of [...extBootSettledListeners]) {
+    try { listener(); } catch { /* 快照通知失败不阻断 */ }
+  }
+}
+
 /** 首次加载：拉 manifest → 写元数据 + 启动图 → 按图 prefetch + materialize。 */
 async function loadExtensions(): Promise<void> {
   if (loadStarted) return;
   loadStarted = true;
-  const data = await fetchManifestData();
-  if (!data) return;
-  setBootGraph(data.graph ?? { rev: "", entries: [] });
-  // 两阶段加载：prefetch 立即项（注册入口就绪，副作用未发生）→ materialize 立即项
-  // （register(ctx) 调用，副作用发生）。immediately:false 的懒加载扩展既不预取也不
-  // materialize——首次渲染到它声明的插槽时由 useExtSlotItems 按需触发（下载+注册）。
-  // 失败隔离：单扩展失败不影响其他。
-  const immediate = immediateEntries(data.graph ?? { rev: "", entries: [] });
-  await Promise.allSettled(immediate.map((e) => prefetch(e.id)));
-  for (const entry of immediate) {
-    const ext = manifestCache.get(entry.id) ?? data.extensions.find((e) => e.id === entry.id);
-    if (!ext) continue; // 图里有条目但 manifest 无对应扩展——跳过，不构造 ctx
-    await materialize(entry.id, () => makeClientContext(ext));
+  try {
+    const data = await fetchManifestData();
+    if (!data) return;
+    setBootGraph(data.graph ?? { rev: "", entries: [] });
+    // 两阶段加载：prefetch 立即项（注册入口就绪，副作用未发生）→ materialize 立即项
+    // （register(ctx) 调用，副作用发生）。immediately:false 的懒加载扩展既不预取也不
+    // materialize——首次渲染到它声明的插槽时由 useExtSlotItems 按需触发（下载+注册）。
+    // 失败隔离：单扩展失败不影响其他。
+    const immediate = immediateEntries(data.graph ?? { rev: "", entries: [] });
+    await Promise.allSettled(immediate.map((e) => prefetch(e.id)));
+    for (const entry of immediate) {
+      const ext = manifestCache.get(entry.id) ?? data.extensions.find((e) => e.id === entry.id);
+      if (!ext) continue; // 图里有条目但 manifest 无对应扩展——跳过，不构造 ctx
+      await materialize(entry.id, () => makeClientContext(ext));
+    }
+  } finally {
+    notifyExtBootSettled();
   }
 }
 
@@ -720,6 +747,15 @@ export async function ensureExtSlotMaterialized(slot: ExtSlotName): Promise<void
     if (!ext) throw new Error(`[ext] ${id}: manifest 缺失，无法物化`);
     return makeClientContext(ext);
   });
+}
+
+/** 插槽接管缺席裁决：boot manifest 已 settle 且无人声明该插槽。「缺席即原生兜底」
+ *  直读点（TerminalPanelBridge）用——定案前不能渲染原生面板：声明了接管但尚未物化
+ *  （或物化失败）时抢先建原生 PTY，接管随后到位就是双开。声明/未声明以 manifest
+ *  快照为准，一次定案无物化竞态。随 ui-store 版本推进重渲染。 */
+export function useExtSlotSettled(slot: ExtSlotName): boolean {
+  useSyncExternalStore(subscribeExtUi, extUiVersion, () => 0);
+  return extBootSettled && !slotDeclared(slot);
 }
 
 /** Read registered items for a slot, re-rendering when the store changes. */
@@ -1195,3 +1231,87 @@ export function ExtSlot<S extends ExtSlotName>({
 export const MemoExtSlot = memo(ExtSlot, (prev, next) =>
   prev.name === next.name && prev.currentSession?.id === next.currentSession?.id
 );
+
+// ── TakeoverSlot —— 通用「有接管者即整块让位」插槽（sidebar 统一 dock 方案 §3.2）──
+// 从 SessionSidebar 私有接管逻辑（projectsTakeover + 3s 兑底 + 首帧记忆）泛化：
+//  · 接管记忆 key = `pi-web:takeover:<name>`（"1"=上次会话曾接管）。扩展 items 异步注册
+//    （首帧必空），记忆让「接管态刷新」首帧就按接管语义渲染 fallback（不闪旧 UI、
+//    不白拉宿主数据）；消费方读 `useTakeoverHint(name)` 同步判定。
+//  · 旧 key 迁移（legacyKey）：首帧读一次，命中即迁入新 key（单向，旧 key 保留——
+//    回滚旧宿主仍可读）。
+//  · 兑底窗口 800ms（方案 §3.8 拍板，原 3s 压缩）：记忆命中但 items 迟迟不注册
+//    （扩展被禁用/卸载后缓存残留）→ 到点清记忆并保持 fallback。
+const TAKEOVER_MEM_PREFIX = "pi-web:takeover:";
+export function takeoverMemKey(name: string): string { return TAKEOVER_MEM_PREFIX + name; }
+function readTakeoverMem(name: string, legacyKey?: string): boolean {
+  try {
+    const cur = window.localStorage.getItem(takeoverMemKey(name));
+    if (cur !== null) return cur === "1";
+    if (legacyKey) {
+      const legacy = window.localStorage.getItem(legacyKey);
+      if (legacy === "1") { window.localStorage.setItem(takeoverMemKey(name), "1"); return true; }
+    }
+  } catch { /* storage unavailable */ }
+  return false;
+}
+function writeTakeoverMem(name: string, on: boolean): void {
+  try { window.localStorage.setItem(takeoverMemKey(name), on ? "1" : "0"); } catch { /* optional */ }
+}
+const TAKEOVER_MEM_EVENT = "pi-web:takeover-mem-changed";
+/** 响应式读接管记忆（首帧同步命中——SessionSidebar 等 fallback 组件用它门控
+ *  「接管态不渲染/不拉数据」的区块，无闪现）。 */
+export function useTakeoverHint(name: string, legacyKey?: string): boolean {
+  const [hint, setHint] = useState(() => readTakeoverMem(name, legacyKey));
+  useEffect(() => {
+    const sync = () => setHint(readTakeoverMem(name, legacyKey));
+    sync();
+    window.addEventListener(TAKEOVER_MEM_EVENT, sync);
+    window.addEventListener("storage", sync);
+    return () => { window.removeEventListener(TAKEOVER_MEM_EVENT, sync); window.removeEventListener("storage", sync); };
+  }, [name, legacyKey]);
+  return hint;
+}
+
+export function TakeoverSlot({ name, fallback, extra, legacyKey, currentSession }: {
+  name: ExtSlotName;
+  fallback: ReactNode;
+  extra?: Record<string, unknown>;
+  /** 旧接管记忆 key（历史私有 key 迁移入口；缺省无迁移）。 */
+  legacyKey?: string;
+  currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
+}) {
+  const items = useExtSlotItems(name).filter(hasExtRender);
+  const takeover = items.length > 0;
+  const takeoverRef = useRef(takeover);
+  takeoverRef.current = takeover;
+  // 记忆（首帧从 localStorage 读，含旧 key 迁移）：live 接管态写入 "1"；
+  // 从有到无（禁用/卸载/反卷）写 "0" 并广播（fallback 组件即时恢复旧区块）。
+  const memRef = useRef<boolean | null>(null);
+  if (memRef.current === null) memRef.current = readTakeoverMem(name, legacyKey);
+  const everSeenRef = useRef<boolean | null>(null); // null=本会话尚未观察到注册态
+  useEffect(() => {
+    if (takeover) {
+      everSeenRef.current = true;
+      if (!memRef.current) { memRef.current = true; writeTakeoverMem(name, true); window.dispatchEvent(new Event(TAKEOVER_MEM_EVENT)); }
+      return;
+    }
+    if (everSeenRef.current === true) {
+      everSeenRef.current = false;
+      if (memRef.current) { memRef.current = false; writeTakeoverMem(name, false); window.dispatchEvent(new Event(TAKEOVER_MEM_EVENT)); }
+    }
+    // 首帧未注册（everSeen===null）时不动记忆：等注册事件裁决，避免抹掉真接管记忆
+  }, [takeover, name]);
+  // 兑底：记忆命中但扩展始终未注册（缓存残留）→ 800ms 一次性校验后清记忆（方案 §3.8）
+  useEffect(() => {
+    if (!memRef.current) return;
+    const timer = setTimeout(() => {
+      if (takeoverRef.current || !memRef.current) return;
+      memRef.current = false;
+      writeTakeoverMem(name, false);
+      window.dispatchEvent(new Event(TAKEOVER_MEM_EVENT));
+    }, 800);
+    return () => clearTimeout(timer);
+  }, [name]);
+  if (takeover) return <ExtSlot name={name} currentSession={currentSession} extra={extra as never} />;
+  return <>{fallback}</>;
+}
