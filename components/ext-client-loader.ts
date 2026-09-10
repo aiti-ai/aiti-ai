@@ -203,6 +203,13 @@ export function pendingForSlot(slot: string): string[] {
     });
 }
 
+/** 某插槽是否有扩展声明（manifest ui 快照；registerDeclaredSlots 登记后生效）。
+ *  「缺席即原生兜底」裁决用：无人声明 = 一次快照定案，与物化时序/成败无关。 */
+export function slotDeclared(slot: string): boolean {
+  for (const slots of declaredSlots.values()) if (slots.includes(slot)) return true;
+  return false;
+}
+
 /**
  * [懒加载 v2] 常挂插槽自动触发用：从 pendingForSlot 排除全部懒扩展（immediately:false）。
  * 常挂插槽（toolbar/sidebar/…20+）首屏即渲染——若不排除懒扩展，「标懒」照样启动即物化。
