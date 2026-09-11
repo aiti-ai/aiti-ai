@@ -638,6 +638,38 @@ function BottomModeBar({ mode, onClick, height = 32, tapWidth = 32, count, label
   );
 }
 
+/** 抓手（v4 十三审共用）：胶囊（嵌数字 ⎯ N ⎯，有 queue 时）或细横杠两态；点按循环底部三档。 */
+function NotchHandle({ capsule, count, onClick, title }: {
+  capsule: boolean;
+  count: number;
+  onClick: () => void;
+  title: string;
+}) {
+  if (!capsule) {
+    return (
+      <div
+        aria-hidden="true"
+        onClick={onClick}
+        title={title}
+        style={{ width: 28, height: 4, borderRadius: 2, background: "var(--border)", cursor: "pointer" }}
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      aria-label={title}
+      onClick={onClick}
+      title={title}
+      style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 99, background: "var(--border)", border: "none", color: "var(--text-muted)", fontSize: 11, fontWeight: 700, lineHeight: 1.2, cursor: "pointer" }}
+    >
+      <span aria-hidden="true" style={{ width: 9, height: 2, borderRadius: 1, background: "currentColor" }} />
+      {count}
+      <span aria-hidden="true" style={{ width: 9, height: 2, borderRadius: 1, background: "currentColor" }} />
+    </button>
+  );
+}
+
 function ModelNoticeBanner({ tone, title, body, onClose }: { tone: "error" | "warning"; title: string; body: string; onClose?: () => void }) {
   const color = tone === "error" ? "239,68,68" : "234,179,8";
   return (
@@ -3768,42 +3800,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             </div>
           )}
           {bottomMode === "minimal" ? (
-            <div style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "flex-end",
-              gap: 8,
-              minHeight: 44,
-              paddingRight: 4,
-            }}>
-              {queueCount > 0 && (
-                <button
-                  onClick={() => cycleBottomMode()}
-                  title={t("chat.restoreBottom")}
-                  style={{
-                    fontSize: 11,
-                    color: "var(--text-dim)",
-                    whiteSpace: "nowrap",
-                    background: "none",
-                    border: "none",
-                    padding: "4px 6px",
-                    borderRadius: 6,
-                    cursor: "pointer",
-                    transition: "background 0.12s, color 0.12s",
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "var(--bg-hover)";
-                    e.currentTarget.style.color = "var(--text)";
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = "none";
-                    e.currentTarget.style.color = "var(--text-dim)";
-                  }}
-                >
-                  {t("chat.queued", { count: String(queueCount) })}
-                </button>
-              )}
-              <BottomModeBar mode="minimal" onClick={() => cycleBottomMode()} height={44} count={queueCount} />
+            /* v4 十三审：minimal 折叠态 = 纯抓手（与 notch 同款）——无 queue 细横杠、
+                有 queue 嵌数字胶囊 ⎯ N ⎯，点按展开回 full；原「已排队 N」文字条退休。 */
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 44 }}>
+              <NotchHandle
+                capsule={queueCount > 0}
+                count={queueCount}
+                onClick={() => cycleBottomMode()}
+                title={t("chat.restoreBottom")}
+              />
             </div>
           ) : (
           <div
@@ -3829,24 +3834,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           {/* notch 把手（v3 并入输入条上缘；手势区=输入条整体）。v4：非 full 档且有队列时
               放大为嵌数字小胶囊（⎯ 3 ⎯），点按仍循环三档折叠——队列藏起来时留一个可见锚点。 */}
           {isMobile && (bottomMode !== "full" && queueCount > 0 ? (
-            <button
-              type="button"
-              aria-label={t("chat.restoreBottom")}
-              onClick={() => cycleBottomMode()}
-              title={t("chat.restoreBottom")}
-              style={{ position: "absolute", top: 3, left: "50%", transform: "translateX(-50%)", display: "flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 99, background: "var(--border)", border: "none", color: "var(--text-muted)", fontSize: 11, fontWeight: 700, lineHeight: 1.2, cursor: "pointer", zIndex: 1 }}
-            >
-              <span aria-hidden="true" style={{ width: 9, height: 2, borderRadius: 1, background: "currentColor" }} />
-              {queueCount}
-              <span aria-hidden="true" style={{ width: 9, height: 2, borderRadius: 1, background: "currentColor" }} />
-            </button>
+            <div style={{ position: "absolute", top: 3, left: "50%", transform: "translateX(-50%)", zIndex: 1 }}>
+              <NotchHandle capsule count={queueCount} onClick={() => cycleBottomMode()} title={t("chat.restoreBottom")} />
+            </div>
           ) : (
-            <div
-              aria-hidden="true"
-              onClick={() => cycleBottomMode()}
-              title={t(bottomMode === "full" ? (queueCount > 0 ? "chat.minimizeQueue" : "chat.minimizeInput") : "chat.restoreBottom")}
-              style={{ position: "absolute", top: 4, left: "50%", transform: "translateX(-50%)", width: 28, height: 4, borderRadius: 2, background: "var(--border)", cursor: "pointer", zIndex: 1 }}
-            />
+            <div style={{ position: "absolute", top: 4, left: "50%", transform: "translateX(-50%)", zIndex: 1 }}>
+              <NotchHandle capsule={false} count={0} onClick={() => cycleBottomMode()} title={t(bottomMode === "full" ? (queueCount > 0 ? "chat.minimizeQueue" : "chat.minimizeInput") : "chat.restoreBottom")} />
+            </div>
           ))}
           <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, sessionId, textareaRef, setInputValue, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen, model }} />
           {/* textarea 包裹层：affix 位（框内右缘）的定位上下文；flex 契约从 textarea 移到包裹层。
