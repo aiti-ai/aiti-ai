@@ -2227,15 +2227,18 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // v4 二次重审（用户拍板「＋ 还在右边」返工）：＋ 落位 textarea 左侧（左端首位）。
   // 单行态渲染在 textarea 前；换行态（buttonsWrapped）/compact 引用框随右端按钮簇——
   // 否则 flexWrap 下 textarea 独占整行时 ＋ 会孤悬一行。
-  // ＋/图片按钮按下不夸走 textarea 焦点（微信同款）：pointerdown preventDefault 阻止
-  // 浏览器把焦点从 textarea 移到按钮（click 仍正常触发）——聚焦展开态点这两个按钮
-  // 不再先失焦收起打断输入，sheet/图片选择器直接在展开态弹出。
+  // 小屏底排按钮按下不夸走 textarea 焦点（微信同款）：pointerdown preventDefault 阻止
+  // 浏览器把焦点从 textarea 移到按钮（click 仍正常触发）——聚焦展开态点底排任意按钮
+  // （＋/模型/🎤/图片/继续/发送/停止/插队/排队）不再先失焦收起打断输入。
+  // 挂在底排容器统一覆盖（模型选择器小屏全屏面板也渲染在容器 DOM 内，面板内按钮同享）；
+  // 唯独 input/textarea/contenteditable 放行——模型面板筛选框点击必须能正常聚焦弹键盘。
   const suppressComposerBlurOnPress = useCallback((e: React.PointerEvent) => {
+    if ((e.target as HTMLElement | null)?.closest?.("input, textarea, [contenteditable]")) return;
     e.preventDefault();
   }, []);
   const mobilePlusButton = (
     <span style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
-      <MobileIconButton label={t("chat.plusPanel")} onClick={openInfoSheet} onPointerDown={suppressComposerBlurOnPress}>
+      <MobileIconButton label={t("chat.plusPanel")} onClick={openInfoSheet}>
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><line x1="12" y1="8" x2="12" y2="16" /><line x1="8" y1="12" x2="16" y2="12" /></svg>
       </MobileIconButton>
       {modelSwitchPending && <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: 99, background: "#f59e0b" }} />}
@@ -3932,7 +3935,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             <MobileIconButton
               label={t("chat.addImage")}
               onClick={() => fileInputRef.current?.click()}
-              onPointerDown={suppressComposerBlurOnPress}
             >
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" /><circle cx="8.7" cy="8.7" r="1.6" /><path d="M21 15.5l-4.5-4.5L6 21.5" /></svg>
             </MobileIconButton>
@@ -4042,7 +4044,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               ＋ 两态不位移；图片收起态在单行 textarea 右缘、展开态在语音之后。
               收起态单行 [＋|textarea|图片] 不变。data-composer-affix 标记随组迁移——🎤 手势不被劫持。 */}
           {isMobile && (
-            <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, flexGrow: (isMobile && mobileExpanded) ? 1 : 0 }}>
+            <div
+              onPointerDown={suppressComposerBlurOnPress}
+              style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, flexGrow: (isMobile && mobileExpanded) ? 1 : 0 }}
+            >
               {(compact || (isMobile && mobileExpanded)) && mobilePlusButton}
               {/* 小屏展开态：模型选择直接露出（＋ 右侧）——v4 曾收进 ⓘ sheet，用户要求还原直露；
                   sheet 内同欸保留（双入口并存）。宽度馳制防长模型名挤爆按钮排；trigger 高 32 与
@@ -4052,7 +4057,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <ModelSelector
                     options={modelOptions}
                     value={model}
-                    onChange={onModelChange}
+                    onChange={(provider, modelId) => { onModelChange(provider, modelId); refocusInput(); }}
                     disabled={false}
                     busy={modelSwitching}
                     pending={modelSwitchPending != null}
@@ -4079,7 +4084,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <MobileIconButton
                   label={t("chat.addImage")}
                   onClick={() => fileInputRef.current?.click()}
-                  onPointerDown={suppressComposerBlurOnPress}
                 >
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" /><circle cx="8.7" cy="8.7" r="1.6" /><path d="M21 15.5l-4.5-4.5L6 21.5" /></svg>
                 </MobileIconButton>
