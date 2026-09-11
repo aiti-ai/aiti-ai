@@ -39,13 +39,15 @@ test("mobile matrix v4: 空闲·有内容 = ＋/图片/×清空/发送；继续�
   assert.equal(m2.cont, false);
 });
 
-test("mobile matrix v4: 运行中·空输入 = 停止浮出；插队/排队不出现（非空才显，canSteerFromQueue 回归队列横幅）", () => {
+test("mobile matrix v4/十一审: 运行中·空输入 = 停止浮出；有队列时插队出现（派发首条为 steer，S9a 回归）", () => {
   const m = matrix({ ...BASE, isStreaming: true, canSteerFromQueue: true });
   assert.deepEqual(
     { plus: m.plus, image: m.image, clear: m.clear, cont: m.cont, send: m.send, stop: m.stop, steer: m.steer, clock: m.clock },
-    { plus: true, image: true, clear: false, cont: false, send: false, stop: true, steer: false, clock: false },
+    { plus: true, image: true, clear: false, cont: false, send: false, stop: true, steer: true, clock: false },
   );
-  // 外部 agent 无 abort 能力 → 停止缺席（＋/图片仍恒驻）
+  // 无队列 → 插队缺席；外部 agent 无 abort 能力 → 停止缺席（＋/图片仍恒驻）
+  const m1 = matrix({ ...BASE, isStreaming: true });
+  assert.equal(m1.steer, false);
   const m2 = matrix({ ...BASE, isStreaming: true, hasAbortCapability: false });
   assert.equal(m2.stop, false);
   assert.equal(m2.plus, true);

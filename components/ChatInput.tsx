@@ -827,8 +827,8 @@ export function base64ToBlob(b64: string, mimeType: string): Blob {
 
 /** 小屏右端按钮矩阵（v4，§十九）：左组废除，全部按钮右置——恒驻 ＋(信息面板)/图片，
  *  条件按钮（清空/🎤/继续/发送/停止/插队/排队）由渲染层按「聚焦或有内容」上浮，
- *  矩阵只给存在性。canSteerFromQueue 不再影响按钮存在性（空输入注入队列首条入口
- *  回归队列横幅/面板本身）。 */
+ *  矩阵只给存在性。canSteerFromQueue（十一审恢复）：空输入且有队列时插队重新出现——
+ *  点击派发队列首条 follow-up 为 steer（v3 S9a 入口回归，sendQueued 空输路径原生支持）。 */
 export interface MobileComposerMatrix {
   hasContent: boolean;
   /** steer/⏰（运行中）启用条件：有文本或图片（v4 九审：带图解禁，链路本就透传 images）。 */
@@ -862,7 +862,7 @@ export function computeMobileComposerMatrix(opts: {
   hasFollowUpCapability: boolean;
   hasAbortCapability: boolean;
 }): MobileComposerMatrix {
-  const { isStreaming, hasInputText, imageCount, hasSteerCapability, hasFollowUpCapability, hasAbortCapability } = opts;
+  const { isStreaming, hasInputText, imageCount, canSteerFromQueue, hasSteerCapability, hasFollowUpCapability, hasAbortCapability } = opts;
   const hasContent = hasInputText || imageCount > 0;
   // v4 九审：带图解禁——steer/followUp 链路本就透传 images（onSteer/onFollowUp/onPromptWithStreamingBehavior），
   // 禁用纯属 UI 层 F3 旧约束。现在有内容即可引导。
@@ -893,7 +893,8 @@ export function computeMobileComposerMatrix(opts: {
     // v4 五审：运行中不渲染发送（与插队重复——同是 sendQueued("steer")，唯一入口=插队）
     send: false,
     stop: hasAbortCapability,
-    steer: hasSteerCapability && hasContent,
+    // v4 十一审：空输入但有排队时插队仍出现——点击派发队列首条为 steer（空输路径 sendQueued 原生支持）
+    steer: hasSteerCapability && (hasContent || Boolean(canSteerFromQueue)),
     clock: hasFollowUpCapability && hasContent,
   };
 }
@@ -2156,6 +2157,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     isStreaming,
     hasInputText,
     imageCount: attachedImages.length,
+    canSteerFromQueue,
     hasSteerCapability: Boolean(onSteer),
     hasFollowUpCapability: Boolean(onFollowUp),
     hasAbortCapability: Boolean(onAbort),
@@ -2166,7 +2168,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // ＋/图片恒驻。composerAffixExtCount 仅用于避免空插槽占位（🎤 未注册时）。
   const composerAffixExtCount = useExtSlotItems("composerAffix").length;
   const [inputFocused, setInputFocused] = useState(false);
-  const mobileExpanded = !isMobile || inputFocused || hasContent;
+  const mobileExpanded = !isMobile || inputFocused || hasContent || isStreaming;
   // ⓘ sheet 打开：先关其他浮层 + 取消录音（S28 互斥），再按输入条位置定位 bottom。
   // maxHeight 同步收紧为「输入条上方可用空间」——欢迎页输入条居中时上方空间不足，
   // 只封 60vh 会把 sheet 顶出视口上缘（✕ 够不着）。
