@@ -60,12 +60,12 @@ test("mobile matrix v4/五审: 运行中·有内容 = [×随输入框, 停止, �
   );
 });
 
-test("mobile matrix v4/S8: 运行中带图 = 插队/排队存在但禁用（steerReady=false），× 仍可用", () => {
+test("mobile matrix v4/九审: 运行中带图 = 插队/排队可用（带图解禁，链路透传 images），× 仍可用", () => {
   const m = matrix({ ...BASE, isStreaming: true, imageCount: 1 });
-  assert.equal(m.steerReady, false);
-  assert.equal(m.sendEnabled, false);
+  assert.equal(m.steerReady, true);
+  assert.equal(m.sendEnabled, true);
   assert.equal(m.clear, true);
-  // 存在性=有内容（带图也算）；禁用由组件按 steerReady 计算
+  // 存在性=有内容（带图也算）；九审起带图不再禁用
   assert.equal(m.steer, true);
   assert.equal(m.clock, true);
   // steer/followUp 能力缺失 → 插队/排队缺席

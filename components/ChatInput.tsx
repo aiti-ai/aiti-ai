@@ -873,7 +873,7 @@ export function computeMobilePlaceholder(opts: {
  *  回归队列横幅/面板本身）。 */
 export interface MobileComposerMatrix {
   hasContent: boolean;
-  /** steer/⏰（运行中）启用条件：有文本且无图片。 */
+  /** steer/⏰（运行中）启用条件：有文本或图片（v4 九审：带图解禁，链路本就透传 images）。 */
   steerReady: boolean;
   /** 发送按钮启用：空闲=有内容；运行中=有文本且无图片。 */
   sendEnabled: boolean;
@@ -906,7 +906,9 @@ export function computeMobileComposerMatrix(opts: {
 }): MobileComposerMatrix {
   const { isStreaming, hasInputText, imageCount, hasSteerCapability, hasFollowUpCapability, hasAbortCapability } = opts;
   const hasContent = hasInputText || imageCount > 0;
-  const steerReady = hasInputText && imageCount === 0;
+  // v4 九审：带图解禁——steer/followUp 链路本就透传 images（onSteer/onFollowUp/onPromptWithStreamingBehavior），
+  // 禁用纯属 UI 层 F3 旧约束。现在有内容即可引导。
+  const steerReady = hasContent;
   if (!isStreaming) {
     return {
       hasContent,
@@ -2200,7 +2202,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     hasFollowUpCapability: Boolean(onFollowUp),
     hasAbortCapability: Boolean(onAbort),
   });
-  const mobileSteerReady = mobileMatrix.steerReady;
   const mobileSendEnabled = mobileMatrix.sendEnabled;
   const hasContent = mobileMatrix.hasContent;
   // v4「上浮」：条件按钮组（清空/🎤/继续/发送/停止/插队/排队）仅聚焦或有内容时浮出；
@@ -4082,8 +4083,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 {mobileMatrix.steer && (
                   <MobileIconButton
                     label={t("chat.steer")}
-                    title={mobileSteerReady ? undefined : t("chat.steerNoInput")}
-                    disabled={!mobileSteerReady}
                     onClick={() => { sendQueued("steer"); refocusInput(); }}
                     color="rgba(180,130,0,1)"
                   >
@@ -4093,7 +4092,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 {mobileMatrix.clock && (
                   <MobileIconButton
                     label={t("chat.delayedTask")}
-                    disabled={!mobileSteerReady}
                     onClick={() => { sendQueued("followup"); refocusInput(); }}
                     color="rgba(99,102,241,1)"
                   >
