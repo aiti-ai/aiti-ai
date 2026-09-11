@@ -537,7 +537,36 @@ function revokeImagePreview(image: AttachedImage): void {
  *  aiti-queue-keeper 扩展的 queuePanel 插槽渲染——去 fork 化 P3，
  *  docs/pi-web-queue-cluster-ext-plan.md）。
  *  无接管（扩展未装/禁用）时 core 渲染本行 + Recall all + 计数兜底 banner。 */
-function FallbackQueueRow({ kind, text }: { kind: "steer" | "follow-up"; text: string }) {
+/** 队列行附件图标（lucide image / paperclip，与行内操作图标同风格）。
+ *  core 兕底行与扩展队列行共用视觉语义：消息文本前标记该条带图片/文件。 */
+export function QueueAttachIcons({ hasImages, hasFiles, imageTitle, fileTitle }: {
+  hasImages?: boolean; hasFiles?: boolean; imageTitle?: string; fileTitle?: string;
+}) {
+  if (!hasImages && !hasFiles) return null;
+  return (
+    <span style={{ display: "inline-flex", alignItems: "center", gap: 2, flexShrink: 0, color: "var(--text-dim)" }}>
+      {hasImages && (
+        <span title={imageTitle} style={{ display: "inline-flex", alignItems: "center" }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+            <circle cx="8.5" cy="8.5" r="1.5" />
+            <polyline points="21 15 16 10 5 21" />
+          </svg>
+        </span>
+      )}
+      {hasFiles && (
+        <span title={fileTitle} style={{ display: "inline-flex", alignItems: "center" }}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+          </svg>
+        </span>
+      )}
+    </span>
+  );
+}
+
+function FallbackQueueRow({ kind, text, hasImages }: { kind: "steer" | "follow-up"; text: string; hasImages?: boolean }) {
+  const { t } = useI18n();
   return (
     <div
       title={text}
@@ -564,6 +593,7 @@ function FallbackQueueRow({ kind, text }: { kind: "steer" | "follow-up"; text: s
       >
         {kind}
       </span>
+      <QueueAttachIcons hasImages={hasImages} imageTitle={t("chat.queueHasImages")} fileTitle={t("chat.queueHasFiles")} />
       <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{text}</span>
     </div>
   );
@@ -1339,10 +1369,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const queuePanelExtra: QueuePanelProps = {
     live: {
       steering: (queuedMessages?.steering ?? []).map((text, i) => ({
-        id: `steer:${i}`, kind: "steer" as const, text, hasImages: false, queuedAt: 0, index: i,
+        id: `steer:${i}`, kind: "steer" as const, text,
+        hasImages: Boolean(queuedMessages?.steeringHasImages?.[i]), hasFiles: false, queuedAt: 0, index: i,
       })),
       followUp: (queuedMessages?.followUp ?? []).map((text, i) => ({
-        id: `followUp:${i}`, kind: "followUp" as const, text, hasImages: false, queuedAt: 0, index: i,
+        id: `followUp:${i}`, kind: "followUp" as const, text,
+        hasImages: Boolean(queuedMessages?.followUpHasImages?.[i]), hasFiles: false, queuedAt: 0, index: i,
       })),
     },
     trash: queueTrash ?? null,
@@ -3299,10 +3331,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               )}
             </div>
             {queuedMessages?.steering.map((text, i) => (
-              <FallbackQueueRow key={`steer-${i}`} kind="steer" text={text} />
+              <FallbackQueueRow key={`steer-${i}`} kind="steer" text={text}
+                hasImages={Boolean(queuedMessages?.steeringHasImages?.[i])} />
             ))}
             {queuedMessages?.followUp.map((text, i) => (
-              <FallbackQueueRow key={`followup-${i}`} kind="follow-up" text={text} />
+              <FallbackQueueRow key={`followup-${i}`} kind="follow-up" text={text}
+                hasImages={Boolean(queuedMessages?.followUpHasImages?.[i])} />
             ))}
           </div>
         )}

@@ -491,6 +491,16 @@ export class AgentSessionWrapper {
     }));
   }
 
+  /** 队列并行附件标记（与 steering/followUp 数组同索引）：队列行附件图标用。
+   *  pi 的 queue_update/取队列只报纯文本，附件仅存本端 queueMirror——文本投影取 pi live
+   *  队列时附件标记从镜像取（竞态时长度可能短暂不齐，前端按索引取、越界即 false，安全）。 */
+  private getQueueAttachmentView(): { steeringHasImages: boolean[]; followUpHasImages: boolean[] } {
+    return {
+      steeringHasImages: this.queueMirror.filter((e) => e.kind === "steer").map((e) => Boolean(e.images?.length)),
+      followUpHasImages: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => Boolean(e.images?.length)),
+    };
+  }
+
   private getPendingRecoveryView(): PendingRecoveryItem[] {
     return this.queueRecovery.map((entry) => ({
       id: entry.id,
@@ -1165,6 +1175,10 @@ export class AgentSessionWrapper {
           queuedMessages: {
             steering: this.queueMirror.filter((e) => e.kind === "steer").map((e) => e.text),
             followUp: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => e.text),
+            // 并行附件标记（与 steering/followUp 同索引）：队列行图标用——pi 的 queue_update
+            // 只报文本，真实附件信息仅存本端 queueMirror，随状态投影下发。
+            steeringHasImages: this.queueMirror.filter((e) => e.kind === "steer").map((e) => Boolean(e.images?.length)),
+            followUpHasImages: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => Boolean(e.images?.length)),
           },
           pendingRecovery: this.getPendingRecoveryView(),
           queueTrash: this.getQueueTrashView(),
@@ -1401,7 +1415,7 @@ export class AgentSessionWrapper {
         }
         this.queueMirror = [...newSteering, ...newFollowUp];
         this.persistQueue();
-        return { steering: [...this.inner.getSteeringMessages()], followUp: [...this.inner.getFollowUpMessages()] };
+        return { ...this.getQueueAttachmentView(), steering: [...this.inner.getSteeringMessages()], followUp: [...this.inner.getFollowUpMessages()] };
       }
 
       case "convert_queue_item": {
@@ -1452,7 +1466,7 @@ export class AgentSessionWrapper {
         }
         this.queueMirror = [...newSteering, ...newFollowUp];
         this.persistQueue();
-        return { steering: [...this.inner.getSteeringMessages()], followUp: [...this.inner.getFollowUpMessages()] };
+        return { ...this.getQueueAttachmentView(), steering: [...this.inner.getSteeringMessages()], followUp: [...this.inner.getFollowUpMessages()] };
       }
 
       case "recall_queue_item": {
@@ -1492,6 +1506,7 @@ export class AgentSessionWrapper {
           entry: { text: removed.text, images: removed.images ?? [] },
           steering: [...this.inner.getSteeringMessages()],
           followUp: [...this.inner.getFollowUpMessages()],
+          ...this.getQueueAttachmentView(),
         };
       }
 
@@ -1537,6 +1552,7 @@ export class AgentSessionWrapper {
         return {
           steering: [...this.inner.getSteeringMessages()],
           followUp: [...this.inner.getFollowUpMessages()],
+          ...this.getQueueAttachmentView(),
         };
       }
 
@@ -1568,6 +1584,7 @@ export class AgentSessionWrapper {
               queueTrash: this.getQueueTrashView(),
               steering: [...this.inner.getSteeringMessages()],
               followUp: [...this.inner.getFollowUpMessages()],
+              ...this.getQueueAttachmentView(),
             };
           }
           throw new Error("remove_queue_item index out of range");
@@ -1599,6 +1616,7 @@ export class AgentSessionWrapper {
           queueTrash: this.getQueueTrashView(),
           steering: [...this.inner.getSteeringMessages()],
           followUp: [...this.inner.getFollowUpMessages()],
+          ...this.getQueueAttachmentView(),
         };
       }
 
@@ -1646,6 +1664,7 @@ export class AgentSessionWrapper {
         return {
           steering: [...this.inner.getSteeringMessages()],
           followUp: [...this.inner.getFollowUpMessages()],
+          ...this.getQueueAttachmentView(),
           queueTrash: this.getQueueTrashView(),
         };
       }
@@ -1743,6 +1762,7 @@ export class AgentSessionWrapper {
           imported,
           steering: this.queueMirror.filter((e) => e.kind === "steer").map((e) => e.text),
           followUp: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => e.text),
+          ...this.getQueueAttachmentView(),
         };
       }
 

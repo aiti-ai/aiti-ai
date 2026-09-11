@@ -89,10 +89,28 @@ type AgentStateResponse = {
 export interface QueuedMessages {
   steering: string[];
   followUp: string[];
+  /** 并行附件标记（与 steering/followUp 同索引，可选/向后兼容）：队列行附件图标用。 */
+  steeringHasImages?: boolean[];
+  followUpHasImages?: boolean[];
 }
 
-function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null): QueuedMessages {
-  return { steering: q?.steering ?? [], followUp: q?.followUp ?? [] };
+function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[]; steeringHasImages?: boolean[]; followUpHasImages?: boolean[] } | null): QueuedMessages {
+  return {
+    steering: q?.steering ?? [],
+    followUp: q?.followUp ?? [],
+    ...(Array.isArray(q?.steeringHasImages) ? { steeringHasImages: q.steeringHasImages } : {}),
+    ...(Array.isArray(q?.followUpHasImages) ? { followUpHasImages: q.followUpHasImages } : {}),
+  };
+}
+
+/** queue_update 只报纯文本（pi 协议限制）：把本地旧的附件标记数组与新文本长度对齐。
+ *  同长 → 原样保留（多数 fresh 值刚由 queue RPC 响应写入）；变短 → FIFO 头部消费，滑窗保尾；
+ *  变长 → 尾部新入队条目标记未知 → 补 false。 */
+function alignQueueAttachmentFlags(prev: boolean[] | undefined, nextLen: number): boolean[] {
+  const p = prev ?? [];
+  if (p.length === nextLen) return p;
+  if (p.length > nextLen) return p.slice(p.length - nextLen);
+  return [...p, ...Array<boolean>(nextLen - p.length).fill(false)];
 }
 
 type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
@@ -1717,9 +1735,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       }
       case "queue_update":
-        setQueuedMessages({
-          steering: [...((event.steering as string[] | undefined) ?? [])],
-          followUp: [...((event.followUp as string[] | undefined) ?? [])],
+        setQueuedMessages((prev) => {
+          const steering = [...((event.steering as string[] | undefined) ?? [])];
+          const followUp = [...((event.followUp as string[] | undefined) ?? [])];
+          return {
+            steering,
+            followUp,
+            // pi 只报文本：附件标记按本地旧值对齐（fresh 值由 queue RPC 响应写入）。
+            steeringHasImages: alignQueueAttachmentFlags(prev.steeringHasImages, steering.length),
+            followUpHasImages: alignQueueAttachmentFlags(prev.followUpHasImages, followUp.length),
+          };
         });
         break;
       case "auto_retry_start":

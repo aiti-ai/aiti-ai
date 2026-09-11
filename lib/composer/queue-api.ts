@@ -40,6 +40,9 @@ export interface QueueEntryView {
   kind: QueueKind;
   text: string;
   hasImages: boolean;
+  /** 前向兼容：队列链路尚不支持文件附件（pi steer/followUp 仅图片），恒 false；
+   *  未来 files 入队后扩展行图标自动生效。 */
+  hasFiles?: boolean;
   queuedAt: number;
   index: number;
 }
