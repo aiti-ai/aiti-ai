@@ -1,7 +1,7 @@
 import { createAgentEventStream } from "@/lib/agent-event-stream";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
-import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession } from "@/lib/session";
+import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 
@@ -62,6 +62,17 @@ export async function GET(
       if (req.signal.aborted) return new Response(null, { status: 204 });
       sessionPromise = startRpcSession(id, filePath, undefined).then((result) => result.session);
     }
+  } else if (/^[a-z][\w-]*:/.test(id) && !id.startsWith("pi:")) {
+    // 复合外部 id（zcode:sess_x 等）无站位文件可查：进程重启/扩展 reload 后
+    // handle 注册表为空的窗口里不 404——直接冷恢复后端。SSE 立即打开，失败经
+    // startup_error 把真实原因送达前端（60s 就绪超时足够覆盖 app-server 拉起）。
+    if (req.signal.aborted) return new Response(null, { status: 204 });
+    sessionPromise = resolveExternalCompositeSession(id).then((s) => {
+      if (!s?.isAlive()) {
+        throw new Error(`会话后端不可用：${id}（服务可能刚重启，agent provider 未就绪，或会话已无法续接）`);
+      }
+      return s;
+    });
   } else {
     return new Response("Session not found", { status: 404 });
   }

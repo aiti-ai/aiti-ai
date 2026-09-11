@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
-import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession } from "@/lib/session";
+import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession } from "@/lib/session";
 import { sendWithAcceptWindow } from "@/lib/agent-command-accept";
 
 /**
@@ -99,6 +99,20 @@ export async function POST(
     // 本地路径：文件不存在且无 live 会话 → 404；存在则起本地 runtime
     // （startRpcSession 内部仍有 ownsFile 总闸兜底——防其他路由先建了 wrapper）
     if (!filePath) {
+      // 复合外部 id（zcode:sess_x 等）：handle 注册表 miss（进程重启/扩展 reload
+      // 窗口）时不 404——直接冷恢复后端再发送；打不开才带真实原因 404。
+      if (/^[a-z][\w-]*:/.test(id) && !id.startsWith("pi:")) {
+        const ext = await resolveExternalCompositeSession(id).catch(() => undefined);
+        if (ext?.isAlive()) {
+          return await sendAccepted(ext, body, () => { promptAccepted = body.type === "prompt"; });
+        }
+        return NextResponse.json({
+          error: `会话后端不可用：${id}（服务可能刚重启，agent provider 未就绪，或会话已无法续接）`,
+          ...(commandType === "prompt"
+            ? { code: "prompt_rejected", accepted: false }
+            : {}),
+        }, { status: 404 });
+      }
       return NextResponse.json({
         error: "Session not found",
         ...(commandType === "prompt"

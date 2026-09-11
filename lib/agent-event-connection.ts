@@ -13,8 +13,8 @@ export class AgentEventConnectionError extends Error {
   constructor(public readonly status: AgentEventConnectionStatus, message?: string) {
     super(message ?? (
       status === "ready_timeout"
-        ? "Timed out starting the agent session. Please try again."
-        : "Failed to connect to the agent event stream. Please try again."
+        ? "会话后端启动超时（服务可能刚重启、正在冷恢复），请稍后重试"
+        : "会话事件流连接失败（服务可能刚重启或网络波动），请稍后重试"
     ));
     this.name = "AgentEventConnectionError";
   }

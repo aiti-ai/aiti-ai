@@ -406,6 +406,24 @@ export async function resolvePlaceholderSession(id: string): Promise<WrappedSess
   return resolveAnySession(id);
 }
 
+/**
+ * 复合外部 id（zcode:sess_x 等）直接冷恢复：不依赖站位文件。进程重启/扩展
+ * reload 后 handle 注册表为空的窗口里，events/POST 路由据此直接驱动后端
+ * resume，而不是 404。返回 undefined = 非复合 id、占位 sid、无 provider
+ * 可驱动或后端打不开。
+ */
+export async function resolveExternalCompositeSession(id: string): Promise<WrappedSessionLike | undefined> {
+  if (!id.includes(":") || id.startsWith("pi:")) return undefined;
+  const existing = resolveAnySession(id);
+  if (existing?.isAlive()) return existing;
+  const { sid } = splitHandleId(id);
+  if (!sid || isProvisionalExtSid(sid)) return undefined;
+  const handle = await openExternalSession(id, { sessionId: sid }).catch(() => undefined);
+  if (!handle?.alive()) return undefined;
+  putHandleAt(id, handle);
+  return resolveAnySession(id);
+}
+
 /** The registry key a handle was first stored under (identity compare). */
 function handleKeyOf(handle: SessionHandle): string {
   for (const [key, h] of [...listAllHandles()]) {
