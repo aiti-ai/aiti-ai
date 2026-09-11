@@ -661,11 +661,14 @@ function NotchHandle({ capsule, count, onClick, title }: {
       aria-label={title}
       onClick={onClick}
       title={title}
-      style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 99, background: "var(--border)", border: "none", color: "var(--text-muted)", fontSize: 11, fontWeight: 700, lineHeight: 1.2, cursor: "pointer" }}
+      style={{ display: "flex", alignItems: "center", padding: "3px 9px", background: "transparent", border: "none", cursor: "pointer" }}
     >
-      <span aria-hidden="true" style={{ width: 9, height: 2, borderRadius: 1, background: "currentColor" }} />
-      {count}
-      <span aria-hidden="true" style={{ width: 9, height: 2, borderRadius: 1, background: "currentColor" }} />
+      {/* 胶囊背景只包中间 ⎯ N ⎯ 内容；button 两端透明，不遮底下的文字 */}
+      <span style={{ display: "flex", alignItems: "center", gap: 5, padding: "3px 9px", borderRadius: 99, background: "var(--border)", color: "var(--text-muted)", fontSize: 11, fontWeight: 700, lineHeight: 1.2 }}>
+        <span aria-hidden="true" style={{ width: 9, height: 2, borderRadius: 1, background: "currentColor" }} />
+        {count}
+        <span aria-hidden="true" style={{ width: 9, height: 2, borderRadius: 1, background: "currentColor" }} />
+      </span>
     </button>
   );
 }
