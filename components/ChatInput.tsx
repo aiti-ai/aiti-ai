@@ -16,6 +16,7 @@ import type { ExtensionStatusItem, ExtensionWidgetItem } from "@/lib/types";
 import { stripAnsi } from "@/lib/ansi";
 import { formatExtensionStatusLine } from "./ExtensionStatusBar";
 import { AnsiText } from "./AnsiText";
+import { ImagePreview } from "./ImagePreview";
 import { ExtensionWidgets } from "./ExtensionWidgets";
 import { useChatHooks, ExtSlot, registerChatSend, useExtSlotItems, ExtItemBoundary } from "@/components/ExtSlots";
 import { hasExtRender } from "@/lib/ext-ui-store";
@@ -3312,12 +3313,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
             {attachedImages.map((img, i) => (
               <div key={i} style={{ position: "relative", flexShrink: 0 }}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img
-                  src={img.previewUrl}
-                  alt=""
-                  style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 6, border: "1px solid var(--border)", display: "block" }}
-                />
+                {/* v4 十二审：点击缩略图预览（复用消息图片同款 ImagePreview 大图 dialog）——此前 img 无点击处理 */}
+                <ImagePreview src={img.previewUrl} style={{ borderRadius: 6 }}>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={img.previewUrl}
+                    alt=""
+                    style={{ width: 56, height: 56, objectFit: "cover", borderRadius: 6, border: "1px solid var(--border)", display: "block" }}
+                  />
+                </ImagePreview>
                 <button
                   onClick={() => removeImage(i)}
                   style={{
