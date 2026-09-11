@@ -4692,45 +4692,25 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   ✕
                 </button>
               </div>
-              {/* 模型：当前名 + pending 琥珀角标；展开=分组列表+过滤框（不 autoFocus，防二次弹键盘） */}
+              {/* 模型：桌面同款 ModelSelector（v4 七审——sheet 自写列表废弃，用户要求用回同款组件，
+                  不自写）。最近使用/过滤/重名防呆/几何重锚全部组件自带；面板 fixed zIndex 500 盖过 sheet。 */}
               {onModelChange && (
-                <SheetSection
-                  label={t("chat.sheetModel")}
-                  summary={modelSwitching ? `${currentName ?? ""}…` : currentName ?? undefined}
-                  badge={modelSwitchPending ? <span style={{ flexShrink: 0, width: 7, height: 7, borderRadius: 99, background: "#f59e0b" }} /> : undefined}
-                  open={infoSheetSections.has("model")}
-                  onToggle={() => setInfoSheetSections((s) => { const n = new Set(s); n.has("model") ? n.delete("model") : n.add("model"); return n; })}
-                >
-                  {showModelFilter && (
-                    <input
-                      value={modelFilter}
-                      onChange={(e) => setModelFilter(e.target.value)}
-                      placeholder={t("chat.filterModels")}
-                      aria-label={t("chat.filterModels")}
-                      style={{ width: "100%", boxSizing: "border-box", padding: "7px 10px", marginBottom: 8, background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, color: "var(--text)", fontSize: 13, outline: "none" }}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 14px", borderBottom: "1px solid color-mix(in srgb, var(--border) 60%, transparent)" }}>
+                  <span style={{ flexShrink: 0, display: "inline-flex", width: 7, height: 7, borderRadius: 99, background: "var(--accent)", opacity: 0.75 }} />
+                  <span style={{ flexShrink: 0, fontWeight: 600, fontSize: 13.5 }}>{t("chat.sheetModel")}</span>
+                  {modelSwitchPending && <span style={{ flexShrink: 0, width: 7, height: 7, borderRadius: 99, background: "#f59e0b" }} />}
+                  <div style={{ marginLeft: "auto", minWidth: 0, display: "flex", justifyContent: "flex-end" }}>
+                    <ModelSelector
+                      options={modelOptions}
+                      value={model}
+                      onChange={onModelChange}
+                      disabled={false}
+                      busy={modelSwitching}
+                      pending={modelSwitchPending != null}
+                      isAutoSelection={isAutoModelSelection}
                     />
-                  )}
-                  {modelsByProvider.length === 0 && (
-                    <div style={{ padding: "4px 2px", fontSize: 12, color: "var(--text-dim)" }}>{t("chat.noMatchingModels")}</div>
-                  )}
-                  {modelsByProvider.map((group) => (
-                    <div key={group.provider} style={{ marginBottom: 6 }}>
-                      <div style={{ padding: "4px 2px", fontSize: 10, fontWeight: 600, textTransform: "uppercase", color: "var(--text-dim)" }}>{group.provider}</div>
-                      {group.options.map((opt) => {
-                        const active = model?.provider === opt.provider && model?.modelId === opt.modelId;
-                        return (
-                          <SheetOptionRow
-                            key={`${opt.provider}:${opt.modelId}`}
-                            active={active}
-                            label={opt.name}
-                            desc={ambiguousModelNames.has(opt.name) ? opt.provider : undefined}
-                            onClick={() => { onModelChange(opt.provider, opt.modelId); }}
-                          />
-                        );
-                      })}
-                    </div>
-                  ))}
-                </SheetSection>
+                  </div>
+                </div>
               )}
               {/* 思考深度（运行中禁改，与桌面下拉一致） */}
               {onThinkingLevelChange && !isStreaming && (

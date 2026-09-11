@@ -401,10 +401,10 @@ export function ModelSelector({
         void viewportTick; // 视口变化 → 上方 effect 触发重渲染，此处每次重测锚点/视口
         const anchor = buttonRef.current?.getBoundingClientRect();
         if (!anchor) return null;
+        // v4 七审（用户拍板）：小屏模型面板全屏全高——锚定弹层在小屏被 maxHeight 压扁没法用；
+        // 桌面（!isMobile）保持原锚定几何不变。
         const geometry = computePanelGeometry(anchor, measurePanelViewport(), placement);
-        const horizontalPosition: CSSProperties = isMobile
-          ? { left: 8, right: 8, maxWidth: "calc(100vw - 16px)" }
-          : { left: anchor.left, width: "max-content", minWidth: anchor.width, maxWidth: Math.max(anchor.width, (window.visualViewport?.width ?? window.innerWidth) - anchor.left - 8) };
+        const horizontalPosition: CSSProperties = { left: anchor.left, width: "max-content", minWidth: anchor.width, maxWidth: Math.max(anchor.width, (window.visualViewport?.width ?? window.innerWidth) - anchor.left - 8) };
 
         return (
           <div
@@ -412,7 +412,15 @@ export function ModelSelector({
             role="listbox"
             aria-label={ariaLabel}
             data-input-overlay="1"
-            style={{
+            style={isMobile ? {
+              position: "fixed",
+              inset: 0,
+              zIndex: 500,
+              display: "flex",
+              flexDirection: "column",
+              background: "var(--bg)",
+              overflow: "hidden",
+            } : {
               position: "fixed",
               ...(geometry.top !== undefined ? { top: geometry.top } : { bottom: geometry.bottom }),
               ...horizontalPosition,
@@ -427,6 +435,19 @@ export function ModelSelector({
               boxShadow: geometry.openAbove ? "0 -4px 16px rgba(0,0,0,0.10)" : "0 4px 16px rgba(0,0,0,0.10)",
             }}
           >
+            {isMobile && (
+              <div style={{ flexShrink: 0, display: "flex", alignItems: "center", gap: 8, padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
+                <span style={{ fontWeight: 600, fontSize: 13.5 }}>{ariaLabel ?? t("chat.sheetModel")}</span>
+                <button
+                  type="button"
+                  aria-label={t("chat.collapseControls")}
+                  onClick={() => setOpen(false)}
+                  style={{ marginLeft: "auto", width: 30, height: 30, display: "flex", alignItems: "center", justifyContent: "center", background: "none", border: "none", borderRadius: 8, color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1 }}
+                >
+                  ✕
+                </button>
+              </div>
+            )}
             {showFilter && (
               <div style={{ flexShrink: 0, padding: "6px 8px", borderBottom: "1px solid var(--border)" }}>
                 <input
@@ -455,7 +476,7 @@ export function ModelSelector({
                 />
               </div>
             )}
-            <div style={{ minHeight: 0, overflowY: "auto" }}>
+            <div style={{ minHeight: 0, overflowY: "auto", ...(isMobile ? { flex: 1 } : null) }}>
               {onClear && !filter.trim() && (
                 <ModelOptionButton active={!value} label={emptyLabel ?? "Default"} onClick={() => {
                   setOpen(false);
