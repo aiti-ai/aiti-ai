@@ -2236,6 +2236,17 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     setInfoSheetSections(new Set(["extStatus", "extWidgets"])); // v4：扩展状态/扩展面板默认展开
     setInfoSheetOpen(true);
   }, []);
+  // v4 二次重审（用户拍板「＋ 还在右边」返工）：＋ 落位 textarea 左侧（左端首位）。
+  // 单行态渲染在 textarea 前；换行态（buttonsWrapped）/compact 引用框随右端按钮簇——
+  // 否则 flexWrap 下 textarea 独占整行时 ＋ 会孤悬一行。
+  const mobilePlusButton = (
+    <span style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+      <MobileIconButton label={t("chat.plusPanel")} onClick={openInfoSheet}>
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><line x1="12" y1="8" x2="12" y2="16" /><line x1="8" y1="12" x2="16" y2="12" /></svg>
+      </MobileIconButton>
+      {modelSwitchPending && <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: 99, background: "#f59e0b" }} />}
+    </span>
+  );
   const handleSheetQueueExport = useCallback(async () => {
     if (!onExportQueue) return;
     const data = await onExportQueue();
@@ -3884,8 +3895,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             />
           ))}
           <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, sessionId, textareaRef, setInputValue, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen, model }} />
-          {/* textarea 包裹层：affix 位（框内右缘）的定位上下文；flex 契约从 textarea 移到包裹层 */}
+          {/* textarea 包裹层：affix 位（框内右缘）的定位上下文；flex 契约从 textarea 移到包裹层。
+              ＋ 在包裹层内 textarea 左缘（v4 重审「左端首位」）——外层 flexWrap 不再可能把
+              ＋ 与 chatInputTop 条目排到上一行；换行态/compact 时改由右端按钮簇承接。 */}
           <div style={{ position: "relative", flex: compact ? "none" : buttonsWrapped ? "1 1 100%" : "1 1 0", minWidth: 0, display: "flex" }}>
+          {isMobile && !compact && !buttonsWrapped && mobilePlusButton}
           <textarea
             ref={textareaRef}
             data-chat-input="1"
@@ -3945,17 +3959,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           />
           </div>
 
-          {/* v4 右端组（§十九）：＋(信息面板)/图片 恒驻；条件按钮组（清空/🎤插槽/继续/
+          {/* v4 右端组（§十九）：图片恒驻；条件按钮组（清空/🎤插槽/继续/
               发送/停止/插队/排队）在「聚焦或有内容」时上浮（120ms 过渡，收起时零占位）。
+              ＋(信息面板) 左置（v4 重审「左端首位」，textarea 左侧；换行/compact 随本簇）。
               data-composer-affix 标记随组迁移——🎤 按住说话手势不被折叠手势劫持。 */}
           {isMobile && (
             <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-              <span style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
-                <MobileIconButton label={t("chat.plusPanel")} onClick={openInfoSheet}>
-                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><line x1="12" y1="8" x2="12" y2="16" /><line x1="8" y1="12" x2="16" y2="12" /></svg>
-                </MobileIconButton>
-                {modelSwitchPending && <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: 99, background: "#f59e0b" }} />}
-              </span>
+              {(compact || buttonsWrapped) && mobilePlusButton}
               <MobileIconButton
                 label={t("chat.addImage")}
                 title={isStreaming ? t("chat.addImageRunning") : undefined}
