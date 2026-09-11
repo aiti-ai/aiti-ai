@@ -2769,6 +2769,8 @@ export function AppShell() {
     settingsSection,
     setSettingsSection,
     isMobile,
+    // 小屏全屏抽屉的收起回调（接管侧头部收起按钮用；桌面无抽屉不消费）
+    onCloseSidebar: () => setSidebarOpen(false),
   };
 
   // ── §7-4 宿主组件工厂注册表（ctx.services 化）：sidebarContent extra 的同一契约以
