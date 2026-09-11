@@ -263,6 +263,7 @@ export type AgentWrapperEndReason = "shutdown" | "fork" | "idle";
 
 export class AgentSessionWrapper {
   private listeners: EventListener[] = [];
+  private activeToolEvents = new Map<string, AgentEvent>();
   private pendingUiResponses = new Map<string, PendingUiResponse>();
   private pendingUiRequests = new Map<string, AgentEvent>();
   private activeCustomUis = new Map<string, ActiveCustomUi>();
@@ -380,6 +381,14 @@ export class AgentSessionWrapper {
           (event as { steering?: string[] }).steering,
           (event as { followUp?: string[] }).followUp,
         );
+      }
+      const toolCallId = event.toolCallId;
+      if (typeof toolCallId === "string") {
+        if (event.type === "tool_execution_start" || event.type === "tool_execution_update") {
+          this.activeToolEvents.set(toolCallId, event);
+        } else if (event.type === "tool_execution_end") {
+          this.activeToolEvents.delete(toolCallId);
+        }
       }
       // 方案 M：记录本轮 run 是否产出过带文本的 assistant 消息（见字段注释）。
       // Event-driven（非 prompt-command-driven）——扩展注入的 run 也走同一订阅。
@@ -909,6 +918,7 @@ export class AgentSessionWrapper {
   onEvent(listener: EventListener): () => void {
     this.listeners.push(listener);
     for (const event of this.pendingUiRequests.values()) listener(event);
+    for (const event of this.activeToolEvents.values()) listener(event);
     return () => {
       const i = this.listeners.indexOf(listener);
       if (i !== -1) this.listeners.splice(i, 1);
@@ -1224,28 +1234,31 @@ export class AgentSessionWrapper {
 
           const sessionDir = sessionManager.getSessionDir();
           let newSessionFile: string;
+          let forkedManager: SessionManager;
 
           if (!entry.parentId) {
             // Fork before the first message: create an empty session linked to this one
-            const newManager = SessionManager.create(sessionManager.getCwd(), sessionDir);
-            newManager.newSession({ parentSession: currentSessionFile });
-            newSessionFile = newManager.getSessionFile() as string;
+            forkedManager = SessionManager.create(sessionManager.getCwd(), sessionDir, {
+              parentSession: currentSessionFile,
+            });
+            newSessionFile = forkedManager.getSessionFile() as string;
           } else {
             // Fork after some history: copy path up to (but not including) the fork point
-            const sourceManager = SessionManager.open(currentSessionFile, sessionDir);
-            const forkedPath = sourceManager.createBranchedSession(entry.parentId);
+            forkedManager = SessionManager.open(currentSessionFile, sessionDir);
+            const forkedPath = forkedManager.createBranchedSession(entry.parentId);
             if (!forkedPath) throw new Error("Failed to create forked session");
             newSessionFile = forkedPath;
           }
 
-          // 分支文件在「无 assistant 消息」时不会被写盘（_persist 的 no-assistant guard）：
-          // 不写则新会话无法被 resolveSessionPath 找到 → 发送时报 “Session not found”。
-          // 这里强制写出 header-only 文件；并对齐 flushed 标志，后续消息走安全追加。
-          const forkedManager = SessionManager.open(newSessionFile, sessionDir);
-          const forkedEntries = forkedManager.getEntries() as { type?: string; message?: { role?: string } }[];
-          if (!forkedEntries.some((e) => e.type === "message" && e.message?.role === "assistant")) {
-            (forkedManager as unknown as { _rewriteFile(): void })._rewriteFile();
-            (forkedManager as unknown as { flushed: boolean }).flushed = true;
+          // 分支文件可能因 no-assistant guard 未落盘——此时按内存 header/entries 手动
+          // 写出（wx 防并发重复创建）；newSessionId 取创建者实例，与文件头一致。
+          if (!existsSync(newSessionFile)) {
+            const header = forkedManager.getHeader();
+            if (!header) throw new Error("Forked session is missing a session header");
+            const content = [header, ...forkedManager.getEntries()]
+              .map((forkedEntry) => JSON.stringify(forkedEntry))
+              .join("\n") + "\n";
+            writeFileSync(newSessionFile, content, { encoding: "utf8", flag: "wx" });
           }
 
           const newSessionId = forkedManager.getSessionId();
@@ -1958,6 +1971,7 @@ export class AgentSessionWrapper {
     for (const id of Array.from(this.activeCustomUis.keys())) this.closeCustomUi(id, undefined);
     this.pendingUiResponses.clear();
     this.pendingUiRequests.clear();
+    this.activeToolEvents.clear();
     this.clearExtensionWidgets(false);
 
     const finishDispose = () => {
@@ -2783,12 +2797,13 @@ function runtimeMessageActivityMs(entry: SessionMessageEntry): number | undefine
  * the first JSONL flush until an assistant message exists, so an accepted new
  * prompt must temporarily be described from its in-memory SessionManager.
  */
-export function getRpcSessionInfos(): SessionInfo[] {
+export function getRpcSessionInfos(options: { includeTransient?: boolean } = {}): SessionInfo[] {
   const sessions: SessionInfo[] = [];
   for (const session of getRegistry().values()) {
-    if (!session.isAlive()) continue;
+    if (typeof session.isAlive !== "function" || !session.isAlive()) continue;
 
-    const manager = session.inner.sessionManager;
+    const manager = session.inner?.sessionManager;
+    if (!manager) continue;
     const header = manager.getHeader();
     const entries = manager.getEntries() as unknown as Array<
       { type: string; timestamp: string } | SessionMessageEntry
@@ -2801,7 +2816,7 @@ export function getRpcSessionInfos(): SessionInfo[] {
 
     // An ensure_session call creates an idle, empty runtime while the composer
     // loads commands. Do not leak it into history before a prompt is accepted.
-    if (!persisted && (!session.isRunning() || !firstUserMessage)) continue;
+    if (!persisted && !options.includeTransient && (!session.isRunning() || !firstUserMessage)) continue;
 
     const created = header?.timestamp
       ?? entries[0]?.timestamp
@@ -3156,11 +3171,13 @@ export async function startRpcSession(
       inner.setActiveToolsByName(withExtensionTools(inner, selectedToolNames ?? inner.getActiveToolNames()));
     }
 
-    const exactSystemPrompt = chatOnly
-      ? subagentResources
-        ? () => subagentResources.appendSystemPrompt[0] ?? ""
-        : () => contextFilesSystemPrompt(inner.resourceLoader.getAgentsFiles().agentsFiles)
-      : undefined;
+    const exactSystemPrompt = subagentResources?.exactSystemPrompt !== undefined
+      ? () => subagentResources.exactSystemPrompt!
+      : chatOnly
+        ? subagentResources
+          ? () => subagentResources.appendSystemPrompt[0] ?? ""
+          : () => contextFilesSystemPrompt(inner.resourceLoader.getAgentsFiles().agentsFiles)
+        : undefined;
     const wrapper = new AgentSessionWrapper(inner, {
       exactSystemPrompt,
       chatOnly,

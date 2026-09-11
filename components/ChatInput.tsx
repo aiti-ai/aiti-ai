@@ -251,6 +251,11 @@ export function getUpwardMenuMaxHeight(menuBottom: number, visibleTop: number, g
   return Math.max(0, Math.floor(menuBottom - visibleTop - gap));
 }
 
+export function cycleListIndex(index: number, length: number, delta: number): number {
+  if (length <= 0) return 0;
+  return ((index + delta) % length + length) % length;
+}
+
 export function replaceLinksWithMarkdown(
   text: string,
   links: Iterable<{ label: string; href: string; occurrence: number }>,
@@ -288,6 +293,47 @@ function getVisibleTopBoundary(element: HTMLElement): number {
   }
 
   return visibleTop;
+}
+
+function subscribeUpwardMenuMaxHeight(
+  menu: HTMLElement,
+  onChange: (height: number) => void,
+): () => void {
+  let frameId: number | null = null;
+  const update = () => {
+    frameId = null;
+    onChange(getUpwardMenuMaxHeight(
+      menu.getBoundingClientRect().bottom,
+      getVisibleTopBoundary(menu),
+    ));
+  };
+  const scheduleUpdate = () => {
+    if (frameId !== null) cancelAnimationFrame(frameId);
+    frameId = requestAnimationFrame(update);
+  };
+
+  update();
+  const parent = menu.parentElement;
+  const layoutContainer = parent?.parentElement;
+  const anchorObserver = typeof ResizeObserver === "undefined" || !parent
+    ? null
+    : new ResizeObserver(scheduleUpdate);
+  if (parent) anchorObserver?.observe(parent);
+  if (layoutContainer) anchorObserver?.observe(layoutContainer);
+  const viewport = window.visualViewport;
+  viewport?.addEventListener("resize", scheduleUpdate);
+  viewport?.addEventListener("scroll", scheduleUpdate);
+  window.addEventListener("resize", scheduleUpdate);
+  window.addEventListener("scroll", scheduleUpdate, true);
+
+  return () => {
+    anchorObserver?.disconnect();
+    viewport?.removeEventListener("resize", scheduleUpdate);
+    viewport?.removeEventListener("scroll", scheduleUpdate);
+    window.removeEventListener("resize", scheduleUpdate);
+    window.removeEventListener("scroll", scheduleUpdate, true);
+    if (frameId !== null) cancelAnimationFrame(frameId);
+  };
 }
 
 const THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
@@ -1174,6 +1220,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [slashMenuMaxHeight, setSlashMenuMaxHeight] = useState<number | null>(null);
   const [atQuery, setAtQuery] = useState<AtQueryMatch | null>(null);
   const [atMenuOpen, setAtMenuOpen] = useState(false);
+  const [atMenuMaxHeight, setAtMenuMaxHeight] = useState<number | null>(null);
   const [atActiveIndex, setAtActiveIndex] = useState(0);
   const [imageWarningDismissed, setImageWarningDismissed] = useState(false);
   const [historyMenuOpen, setHistoryMenuOpen] = useState(false);
@@ -1185,6 +1232,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // 取回（recall）操作互斥锁：↑/↓ 连击或行按钮连点期间禁止并发取回/放回，
   // 防止同一条目被重复放回/孤儿化。
   const recallBusyRef = useRef(false);
+  const [builtinCommandPending, setBuiltinCommandPending] = useState(false);
+  const builtinCommandPendingRef = useRef(false);
   const [fileIndex, setFileIndex] = useState<{ cwd: string; entries: FileIndexEntry[]; truncated: boolean } | null>(null);
   const [fileIndexLoading, setFileIndexLoading] = useState(false);
   const [atServerResult, setAtServerResult] = useState<{ cwd: string; query: string; matches: FileIndexEntry[] } | null>(null);
@@ -1475,6 +1524,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const slashCommandsRequestedRef = useRef(false);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const atMenuRef = useRef<HTMLDivElement>(null);
   const atItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const historyItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const fileIndexMetaRef = useRef<{ cwd: string; fetchedAt: number } | null>(null);
@@ -2103,10 +2153,18 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
   const runBuiltinCommand = useCallback(async (msg: string): Promise<boolean> => {
     if (attachedImages.length || !msg.startsWith("/") || !onBuiltinCommand) return false;
-    const result = await onBuiltinCommand(msg);
-    if (!result.handled) return false;
-    if (!result.error && canClearBuiltinCommandInput(valueRef.current, attachedImagesRef.current.length, msg)) clearInput();
-    return true;
+    if (builtinCommandPendingRef.current) return true;
+    builtinCommandPendingRef.current = true;
+    setBuiltinCommandPending(true);
+    try {
+      const result = await onBuiltinCommand(msg);
+      if (!result.handled) return false;
+      if (!result.error && canClearBuiltinCommandInput(valueRef.current, attachedImagesRef.current.length, msg)) clearInput();
+      return true;
+    } finally {
+      builtinCommandPendingRef.current = false;
+      setBuiltinCommandPending(false);
+    }
   }, [attachedImages.length, clearInput, onBuiltinCommand]);
 
   const handleSend = useCallback(async () => {
@@ -2691,12 +2749,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       if (atMenuOpen && atQuery !== null && !isComposing) {
         if (e.key === "ArrowDown") {
           e.preventDefault();
-          setAtActiveIndex((i) => Math.min(Math.max(0, atMatches.length - 1), i + 1));
+          setAtActiveIndex((i) => cycleListIndex(i, atMatches.length, 1));
           return;
         }
         if (e.key === "ArrowUp") {
           e.preventDefault();
-          setAtActiveIndex((i) => Math.max(0, i - 1));
+          setAtActiveIndex((i) => cycleListIndex(i, atMatches.length, -1));
           return;
         }
         if (e.key === "Escape") {
@@ -2933,44 +2991,24 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       setSlashMenuMaxHeight(null);
       return;
     }
-
     const menu = slashMenuRef.current;
     if (!menu) return;
-
-    let frameId: number | null = null;
-    const update = () => {
-      frameId = null;
-      const nextHeight = getUpwardMenuMaxHeight(
-        menu.getBoundingClientRect().bottom,
-        getVisibleTopBoundary(menu),
-      );
+    return subscribeUpwardMenuMaxHeight(menu, (nextHeight) => {
       setSlashMenuMaxHeight((current) => current === nextHeight ? current : nextHeight);
-    };
-    const scheduleUpdate = () => {
-      if (frameId !== null) cancelAnimationFrame(frameId);
-      frameId = requestAnimationFrame(update);
-    };
-
-    update();
-    const anchorObserver = typeof ResizeObserver === "undefined" || !menu.parentElement
-      ? null
-      : new ResizeObserver(scheduleUpdate);
-    if (menu.parentElement) anchorObserver?.observe(menu.parentElement);
-    const viewport = window.visualViewport;
-    viewport?.addEventListener("resize", scheduleUpdate);
-    viewport?.addEventListener("scroll", scheduleUpdate);
-    window.addEventListener("resize", scheduleUpdate);
-    window.addEventListener("scroll", scheduleUpdate, true);
-
-    return () => {
-      anchorObserver?.disconnect();
-      viewport?.removeEventListener("resize", scheduleUpdate);
-      viewport?.removeEventListener("scroll", scheduleUpdate);
-      window.removeEventListener("resize", scheduleUpdate);
-      window.removeEventListener("scroll", scheduleUpdate, true);
-      if (frameId !== null) cancelAnimationFrame(frameId);
-    };
+    });
   }, [slashMenuOpen, slashQuery]);
+
+  useLayoutEffect(() => {
+    if (!atMenuOpen || atQuery === null) {
+      setAtMenuMaxHeight(null);
+      return;
+    }
+    const menu = atMenuRef.current;
+    if (!menu) return;
+    return subscribeUpwardMenuMaxHeight(menu, (nextHeight) => {
+      setAtMenuMaxHeight((current) => current === nextHeight ? current : nextHeight);
+    });
+  }, [atMenuOpen, atQuery]);
 
   // Build model options: prefer modelList (has provider info), fallback to modelNames
   const modelOptions: ModelSelectorOption[] = (() => {
@@ -3084,13 +3122,20 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
 
   return (
-    <div
+    <fieldset
+      disabled={builtinCommandPending}
+      aria-busy={builtinCommandPending}
       style={{
         position: "relative",
         flexShrink: 0,
+        minWidth: 0,
+        margin: 0,
+        border: 0,
         background: "transparent",
         padding: compact ? 0 : "0 16px 8px",
         paddingRight: compact ? 0 : isMobile || isCompact ? 16 : 52, // desktop: 16px base + 36px for ChatMinimap alignment
+        opacity: builtinCommandPending ? 0.5 : 1,
+        transition: "opacity 0.15s",
       }}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
@@ -3699,6 +3744,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             return (
               <div
                 data-input-overlay="1"
+                ref={atMenuRef}
                 style={{
                   position: "absolute",
                   left: 0,
@@ -3710,7 +3756,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   borderRadius: 8,
                   boxShadow: "0 -6px 20px rgba(0,0,0,0.12)",
                   overflow: "hidden",
-                  maxHeight: "min(48vh, 400px)",
+                  boxSizing: "border-box",
+                  display: "flex",
+                  flexDirection: "column",
+                  maxHeight: atMenuMaxHeight === null
+                    ? "min(48vh, 400px)"
+                    : `min(48vh, 400px, ${atMenuMaxHeight}px)`,
                 }}
               >
                 <div
@@ -3723,6 +3774,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     gap: 8,
                     fontSize: 11,
                     color: "var(--text-dim)",
+                    flexShrink: 0,
                   }}
                 >
                   <span>
@@ -3732,7 +3784,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </span>
                    <span style={{ fontFamily: "var(--font-mono)" }}>{t("chat.tabEnter")}</span>
                 </div>
-                <div style={{ maxHeight: "calc(min(48vh, 400px) - 34px)", overflowY: "auto", padding: 4 }}>
+                <div style={{ flex: "1 1 auto", minHeight: 0, overflowY: "auto", padding: 4 }}>
                   {!indexLoading && atMatches.length === 0 ? (
                     <div style={{ padding: "6px 8px", fontSize: 12, color: "var(--text-dim)" }}>
                        {needsServerSearch && !serverResultInUse ? t("chat.searching") : t("chat.noMatchingFiles")}
@@ -5041,7 +5093,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </>
         )}
         </div>
-      </div>
+    </fieldset>
   );
 });
 // ============================================================================

@@ -196,7 +196,7 @@ interface Props {
   searchBlock?: AssistantContentBlock;
   onFork?: (entryId: string) => void;
   forking?: boolean;
-  onNavigate?: (entryId: string) => void;
+  onNavigate?: (entryId: string) => Promise<boolean>;
   prevAssistantEntryId?: string;
   /** 「编辑从此处」统一入口：仅前端标记（预填输入框 + 高亮 + 按钮变取消），真正发送时才执行回退 */
   onEditFromHere?: (entryId: string, message: UserMessage, branchPointId: string | null) => void;
@@ -332,7 +332,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   entryId?: string;
   onFork?: (entryId: string) => void;
   forking?: boolean;
-  onNavigate?: (entryId: string) => void;
+  onNavigate?: (entryId: string) => Promise<boolean>;
   prevAssistantEntryId?: string;
   onEditFromHere?: (entryId: string, message: UserMessage, branchPointId: string | null) => void;
   editingFromStart?: boolean;

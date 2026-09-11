@@ -125,8 +125,8 @@ declare global {
 }
 
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
-const SELECTION_MENU_WIDTH = 176;
 const AGENT_PANEL_WIDTH = 420;
+const SELECTION_MENU_WIDTH = 176;
 
 /** 扩展条目声明式图标（meta.icon，ExtUiItemIcon）→ 标准灰度线条渲染（16px，颜色随 currentColor）。
  *  三种形态：{ svg } 内部标记（24×24 viewBox，lucide 线条风格）/ emoji / 扩展内 .svg 文件（CSS-mask）。
@@ -320,7 +320,8 @@ export function AppShell() {
   const [projectTrustError, setProjectTrustError] = useState<string | null>(null);
   // 目录不存在提示条（信任检查 400「Directory does not exist」时可见化，替代静默控制台报错）
   const [cwdMissingNotice, setCwdMissingNotice] = useState<string | null>(null);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // 上游 #712：?sidebar=collapsed 嵌入式启动时侧栏初始收起
+  const [sidebarOpen, setSidebarOpen] = useState(() => !initialNavigation.sidebarCollapsed);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
   const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
@@ -572,12 +573,10 @@ export function AppShell() {
     const handlePointerDown = (event: PointerEvent) => {
       const toolbar = mobileToolbarRef.current;
       if (toolbar && event.composedPath().includes(toolbar)) return;
-      // An open selector dismisses both layers together.
-      if (selectionMenuRef.current) return;
       setMobileToolbarMoreOpen(false);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || selectionMenuRef.current) return;
+      if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();
       setMobileToolbarMoreOpen(false);
@@ -594,47 +593,6 @@ export function AppShell() {
   useEffect(() => {
     setMobileToolbarMoreOpen(false);
   }, [isMobile, isNarrowMobile, selectedSession?.id, newSessionDraftId]);
-
-  useLayoutEffect(() => {
-    if (activeTopPanel !== "theme" && activeTopPanel !== "language") return;
-    const menu = selectionMenuRef.current;
-    const trigger = activeTopPanel === "theme" ? themeBtnRef.current : languageBtnRef.current;
-    if (!menu || !trigger) return;
-    const items = Array.from(menu.querySelectorAll<HTMLButtonElement>("[role=menuitemradio]"));
-    (items.find((item) => item.getAttribute("aria-checked") === "true") ?? items[0])?.focus();
-
-    const dismissOutside = (event: Event) => {
-      if (event.composedPath().includes(menu) || event.composedPath().includes(trigger)) return;
-      setActiveTopPanel(null);
-      const toolbar = mobileToolbarRef.current;
-      if (event.type === "pointerdown" && (!toolbar || !event.composedPath().includes(toolbar))) {
-        setMobileToolbarMoreOpen(false);
-      }
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopPropagation();
-        trigger.focus();
-        setActiveTopPanel(null);
-        return;
-      }
-      if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
-      event.preventDefault();
-      const index = items.indexOf(document.activeElement as HTMLButtonElement);
-      const next = event.key === "Home" ? 0 : event.key === "End" ? items.length - 1
-        : (index + (event.key === "ArrowDown" ? 1 : -1) + items.length) % items.length;
-      items[next]?.focus();
-    };
-    document.addEventListener("pointerdown", dismissOutside, true);
-    document.addEventListener("focusin", dismissOutside);
-    document.addEventListener("keydown", handleKeyDown, true);
-    return () => {
-      document.removeEventListener("pointerdown", dismissOutside, true);
-      document.removeEventListener("focusin", dismissOutside);
-      document.removeEventListener("keydown", handleKeyDown, true);
-    };
-  }, [activeTopPanel, topPanelPos]);
 
   useEffect(() => {
     if (!activeTopPanel || !topBarRef.current) return;
@@ -3186,8 +3144,6 @@ export function AppShell() {
           </svg>
           {!mobile && <span>{translate("tools.label")}</span>}
         </button>
-        {mobile && renderThemeButton(true)}
-        {mobile && renderLanguageButton(true)}
       </div>
     );
   };

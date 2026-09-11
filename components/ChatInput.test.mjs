@@ -11,7 +11,7 @@ const jiti = createJiti(import.meta.url, {
 });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, adjacentQueueTarget, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, mergeText, mergeSubmission, modelSupportsImageInput, replaceLinksWithMarkdown, shouldCompressImageFile } = await jiti.import("./ChatInput.tsx");
+const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, adjacentQueueTarget, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, mergeText, mergeSubmission, modelSupportsImageInput, replaceLinksWithMarkdown, shouldCompressImageFile } = await jiti.import("./ChatInput.tsx");
 const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
@@ -99,6 +99,66 @@ test("streaming Enter queues a follow-up; Alt+Enter is the exact inverse (steer 
     });
     assert.equal(action, expected, name);
   }
+});
+
+test("file mention arrows wrap around the match list", () => {
+  const source = ts.createSourceFile("ChatInput.tsx", readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  function findHandler(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === "handleKeyDown") {
+      return node.initializer.arguments[0];
+    }
+    return ts.forEachChild(node, findHandler);
+  }
+  const script = new Script(ts.transpileModule(findHandler(source).getText(source), {
+    compilerOptions: { target: ts.ScriptTarget.ES2020 },
+  }).outputText);
+
+  function move(key, atActiveIndex, length) {
+    let next = null;
+    const handler = script.runInNewContext({
+      Date: { now: () => 1000 },
+      COMPOSITION_END_ENTER_GRACE_MS: 100,
+      isMobile: false, isStreaming: false,
+      isComposingRef: { current: false }, lastCompositionEndAtRef: { current: 0 },
+      historyMenuOpen: false, inputHistory: [], historyActiveIndex: 0,
+      slashMenuOpen: false, slashQuery: null, displayedSlashCommands: [], slashActiveIndex: 0,
+      atMenuOpen: true, atQuery: {}, atMatches: Array.from({ length }, () => ({})), atActiveIndex,
+      onSteer() {}, onFollowUp() {},
+      sendQueued() {}, handleSend() {},
+      applySlashCommand() {},
+      isExactSlashCommand() { return false; }, value: "@file",
+      setSlashMenuOpen() {}, setAtMenuOpen() {},
+      applyAtCompletion() {},
+      applyHistoryInput() {},
+      cycleListIndex,
+      setAtActiveIndex(update) {
+        next = typeof update === "function" ? update(atActiveIndex) : update;
+      },
+    });
+    handler({
+      key, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false,
+      nativeEvent: { isComposing: false, keyCode: 0 },
+      preventDefault() {},
+    });
+    return next;
+  }
+
+  assert.equal(move("ArrowDown", 0, 3), 1);
+  assert.equal(move("ArrowDown", 2, 3), 0);
+  assert.equal(move("ArrowUp", 0, 3), 2);
+  assert.equal(move("ArrowUp", 1, 3), 0);
+  assert.equal(move("ArrowDown", 0, 1), 0);
+  assert.equal(move("ArrowDown", 0, 0), 0);
+});
+
+test("cycleListIndex wraps in both directions", () => {
+  assert.equal(cycleListIndex(0, 3, 1), 1);
+  assert.equal(cycleListIndex(2, 3, 1), 0);
+  assert.equal(cycleListIndex(0, 3, -1), 2);
+  assert.equal(cycleListIndex(1, 3, -1), 0);
+  assert.equal(cycleListIndex(0, 1, 1), 0);
+  assert.equal(cycleListIndex(4, 0, 1), 0);
+  assert.equal(cycleListIndex(-1, 4, 1), 0);
 });
 
 test("follow-up button renders with the fork hover-tooltip wrapper", () => {
@@ -307,6 +367,31 @@ test("renders the shared field model selector as a disabled gray control", () =>
 test("caps an upward menu to the visible space above its anchor", () => {
   assert.equal(getUpwardMenuMaxHeight(343, 36), 299);
   assert.equal(getUpwardMenuMaxHeight(40, 36), 0);
+  // Composer sitting under a 36px top bar with only ~160px of air: a 400px
+  // file list would paint through the bar and hide the leading matches.
+  assert.equal(getUpwardMenuMaxHeight(200, 36), 156);
+  assert.ok(getUpwardMenuMaxHeight(200, 36) < 400);
+});
+
+test("file mention menu applies the measured upward height cap", () => {
+  const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  const start = source.indexOf("{atMenuOpen && atQuery !== null && (() => {");
+  assert.notEqual(start, -1);
+  const block = source.slice(start, start + 4000);
+  assert.match(block, /ref=\{atMenuRef\}/);
+  assert.match(block, /min\(48vh, 400px, \$\{atMenuMaxHeight\}px\)/);
+  assert.match(block, /flexDirection: "column"/);
+  assert.match(block, /minHeight: 0/);
+  assert.equal(block.includes("maxHeight: \"min(48vh, 400px)\""), false);
+});
+
+test("file mention menu remeasures when its layout container shifts the anchor", () => {
+  const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  const start = source.indexOf("function subscribeUpwardMenuMaxHeight");
+  assert.notEqual(start, -1);
+  const block = source.slice(start, start + 1800);
+  assert.match(block, /const layoutContainer = parent\?\.parentElement;/);
+  assert.match(block, /anchorObserver\?\.observe\(layoutContainer\)/);
 });
 
 test("compresses large images while preserving small images and GIFs", async () => {
@@ -373,6 +458,39 @@ test("clears a completed built-in only while its submitted input is unchanged", 
   assert.equal(canClearBuiltinCommandInput("/copy", 0, "/copy"), true);
   assert.equal(canClearBuiltinCommandInput("new follow-up", 0, "/copy"), false);
   assert.equal(canClearBuiltinCommandInput("/copy", 1, "/copy"), false);
+});
+
+test("locks built-in command submission until it settles", async () => {
+  const sourceText = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  const source = ts.createSourceFile("ChatInput.tsx", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  function findCallback(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === "runBuiltinCommand") {
+      return node.initializer.arguments[0];
+    }
+    return ts.forEachChild(node, findCallback);
+  }
+  const callback = new Script(ts.transpileModule(findCallback(source).getText(source), {
+    compilerOptions: { target: ts.ScriptTarget.ES2020 },
+  }).outputText).runInNewContext({
+    attachedImages: [],
+    attachedImagesRef: { current: [] },
+    builtinCommandPendingRef: { current: false },
+    canClearBuiltinCommandInput,
+    clearInput() {},
+    onBuiltinCommand: async () => new Promise((resolve) => { callback.resolve = resolve; }),
+    setBuiltinCommandPending(value) { callback.pendingStates.push(value); },
+    valueRef: { current: "/reload" },
+  });
+  callback.pendingStates = [];
+
+  const first = callback("/reload");
+  assert.deepEqual(callback.pendingStates, [true]);
+  assert.equal(await callback("/reload"), true);
+  assert.deepEqual(callback.pendingStates, [true]);
+  callback.resolve({ handled: true });
+  assert.equal(await first, true);
+  assert.deepEqual(callback.pendingStates, [true, false]);
+  assert.match(sourceText, /<fieldset\s+disabled=\{builtinCommandPending\}\s+aria-busy=\{builtinCommandPending\}/);
 });
 
 test("keeps only read-only built-ins available while a run is active", () => {
@@ -539,7 +657,7 @@ test("modelSupportsImageInput warns only when modality info is known and lacks i
   assert.equal(modelSupportsImageInput({ provider: "ollama", modelId: "text-only" }, undefined), true);
 });
 
-test("renders image warnings for known text-only defaults without an explicit model selection", { skip: "依赖 lib/draft-store.ts——本 fork 已外迁至 aiti-draft-keeper 扩展（composer 契约 P2）；正式合并后经契约注入恢复" }, () => {
+test("renders image warnings for known text-only defaults without an explicit model selection", { skip: "依赖 lib/draft-store.ts——本 fork 已外迁至 aiti-draft-keeper 扩展（composer 契约 P2），经契约注入恢复前无法驱动 draft 装图路径；意图由下方 [fork] 渲染条件钉子 + 上方 modelSupportsImageInput 纯函数测试共同钉住" }, () => {
   const draftKey = "new:/tmp/image-warning-default";
   const modelList = [
     { id: "text-only", name: "Text Only", provider: "custom", input: ["text"] },
@@ -579,4 +697,13 @@ test("renders image warnings for known text-only defaults without an explicit mo
   } finally {
     clearDraft(draftKey);
   }
+});
+
+test("[fork] 图片警告渲染条件钉子：attachedImages>0 且模型确认不支持且未手动关闭（draft 管线外迁后的等价覆盖）", () => {
+  // 上游用例经 draft-store 驱动端到端渲染；fork 的图片来源改为 aiti-draft-keeper 契约注入
+  // （attachedImages props），这里钉住渲染判定本身，契约恢复前防渲染逻辑回归。
+  const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  assert.match(source, /const showImageUnsupportedWarning = \(\n[\s\S]{0,160}?attachedImages\.length > 0[\s\S]{0,160}?!modelSupportsImageInput\(model, modelList\)[\s\S]{0,160}?!imageWarningDismissed/);
+  // 手动关闭后同会话重新附图时复位（不吞后续警告）
+  assert.match(source, /if \(attachedImages\.length === 0\) setImageWarningDismissed\(false\);/);
 });
