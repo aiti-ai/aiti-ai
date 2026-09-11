@@ -3996,8 +3996,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
 
           {/* v4 右端组（§十九）：条件按钮组在「聚焦或有内容」时上浮（120ms 过渡，收起零占位）。
-              v4 四审（用户拍板「＋/图片位置不要动，最后一排中间空出来」）：展开态按钮排
-              [＋ 固定左｜弹性空档｜条件组｜图片 固定右]——＋/图片两端锚定，不随条件组伸缩移动；
+              v4 六审（最终排序）：底排 [＋ 固定左｜弹性空档｜🎤语音｜图片｜继续/发送/停止/插队/排队]——
+              ＋ 两态不位移；图片收起态在单行 textarea 右缘、展开态在语音之后。
               收起态单行 [＋|textarea|图片] 不变。data-composer-affix 标记随组迁移——🎤 手势不被劫持。 */}
           {isMobile && (
             <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, ...((isMobile && mobileExpanded) ? { flex: "1 0 auto" } : null) }}>
@@ -4014,6 +4014,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 }}
               >
                 <ExtSlot name="composerAffix" extra={{ hasContent, hasInputText, isStreaming, focused: inputFocused, inputValue: value, textareaRef, setInputValue, focusComposer: refocusInput }} />
+                {/* v4 六审：图片排在🎤语音之后、其余按钮（继续/发送/停止/插队/排队）之前 */}
+                <MobileIconButton
+                  label={t("chat.addImage")}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" /><circle cx="8.7" cy="8.7" r="1.6" /><path d="M21 15.5l-4.5-4.5L6 21.5" /></svg>
+                </MobileIconButton>
                 {mobileMatrix.cont && onContinue && canContinue && (
                   <MobileIconButton label={t("chat.continue")} onClick={() => { onContinue(); refocusInput(); }} color="rgba(5,150,105,1)">
                     <svg width="15" height="15" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
@@ -4078,12 +4085,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </MobileIconButton>
                 )}
               </div>
-              <MobileIconButton
-                label={t("chat.addImage")}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" /><circle cx="8.7" cy="8.7" r="1.6" /><path d="M21 15.5l-4.5-4.5L6 21.5" /></svg>
-              </MobileIconButton>
             </div>
           )}
           {!isMobile && (isStreaming ? (
