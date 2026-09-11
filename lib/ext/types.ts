@@ -6,7 +6,7 @@
  * Runtime data goes to ~/.pi/web/data/<id>/ (PI_WEB_DATA_DIR overrides) so
  * code and data never mix.
  *
- * Design aligns with docs/service-tunnels-extension.md §3/§11 (pending-design
+ * Design aligns with the service-tunnels extension integration (pending-design
  * items for generic slots, core data contract, data dir convention).
  */
 import type { ReactNode } from "react";

@@ -1,5 +1,5 @@
 /**
- * 恢复项提供者注册表（契约见 docs/composer-enhancement-contract.md §4）。
+ * 恢复项提供者注册表（契约类型见 lib/composer/types.ts）。
  *
  * P2 草稿簇等把「残留输入」作为恢复项并入队列恢复对话框：扩展注册 provider，
  * ChatWindow 合成 recoveryItems 时经 useRecoveryProviderItems() 并入（≤5 行接入）。

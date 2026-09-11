@@ -1,6 +1,5 @@
 /**
- * Composer 增强总线（契约实现在 lib/composer/types.ts 旁；设计文档
- * docs/composer-enhancement-contract.md）。
+ * Composer 增强总线（契约实现在 lib/composer/types.ts 旁）。
  *
  * - 注册表 + 固定时机分发。分发同步、按注册序；单个 enhancer 抛错被隔离
  *   （console.warn，不打断其他 enhancer 与主流程）。

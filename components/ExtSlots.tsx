@@ -170,7 +170,7 @@ export interface ExtClientContext {
   closeFileTabs?(ids: string[]): void;
   /** 输入框追加文本不发送（引用回复预填用） */
   appendText?(text: string): void | Promise<void>;
-  /** 注册 composer 增强器（值观测/会话 key 切换/发送前链式钩子；见 docs/composer-enhancement-contract.md）。
+  /** 注册 composer 增强器（值观测/会话 key 切换/发送前链式钩子）。
    *  返回 disposer。 */
   registerComposerEnhancement(enh: ComposerEnhancement): () => void;
   /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步）。

@@ -1,5 +1,5 @@
 /**
- * Composer 增强契约类型（去 fork 化 P1，见 docs/composer-enhancement-contract.md）。
+ * Composer 增强契约类型（去 fork 化 P1）。
  *
  * 目标：对 composer 的扩展差异（草稿持久化、队列 UI、输入增强…）从「原地修改
  * ChatInput」变为「机制之上的策略插件」。本文件只放类型；注册表与分发在 bus.ts。
