@@ -6,7 +6,7 @@ const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
   tsconfigPaths: true,
 });
-const { computeMobileComposerMatrix: matrix, computeMobilePlaceholder: placeholder, mobilePlaceholderI18nKey, base64ToBlob } = await jiti.import("./ChatInput.tsx");
+const { computeMobileComposerMatrix: matrix, base64ToBlob } = await jiti.import("./ChatInput.tsx");
 
 const BASE = {
   isStreaming: false,
@@ -75,28 +75,12 @@ test("mobile matrix v4/九审: 运行中带图 = 插队/排队可用（带图解
   assert.equal(m2.stop, true);
 });
 
-test("mobile placeholder §七: 优先级 P1 > P2 > P3 > P4 > agent > P5b/P5 > P6", () => {
-  const b = { isStreaming: true, hasSteerCapability: true, hasInputText: false, imageCount: 0, followStreaming: true, bashMode: false, bashExcluded: false, queueCount: 0 };
-  assert.equal(placeholder(b).key, "runFollow");                    // P4
-  assert.equal(placeholder({ ...b, followStreaming: false }).key, "runPaused"); // P3
-  assert.equal(placeholder({ ...b, hasInputText: true }).key, "steer");          // P2
-  assert.equal(placeholder({ ...b, hasInputText: true, imageCount: 1 }).key, "runImages"); // P1
-  assert.equal(placeholder({ ...b, isStreaming: false }).key, "message");        // P6
-  assert.equal(placeholder({ ...b, isStreaming: false, bashMode: true }).key, "shellModel");   // P5
-  assert.equal(placeholder({ ...b, isStreaming: false, bashMode: true, bashExcluded: true }).key, "shellLocal"); // P5b
-  assert.equal(placeholder({ ...b, isStreaming: true, hasSteerCapability: false }).key, "agent");
-});
-
-test("mobile placeholder §七: queueCount>0 追加队列后缀", () => {
-  const r = placeholder({ isStreaming: false, hasSteerCapability: true, hasInputText: false, imageCount: 0, followStreaming: true, bashMode: false, bashExcluded: false, queueCount: 3 });
-  assert.equal(r.queueCount, 3);
-  assert.equal(placeholder({ isStreaming: false, hasSteerCapability: true, hasInputText: false, imageCount: 0, followStreaming: true, bashMode: false, bashExcluded: false, queueCount: 0 }).queueCount, null);
-});
-
-test("mobile placeholder: i18n key 映射齐全", () => {
-  for (const key of ["runImages", "steer", "runPaused", "runFollow", "agent", "shellLocal", "shellModel", "message"]) {
-    assert.match(mobilePlaceholderI18nKey(key), /^chat\./);
-  }
+test("mobile matrix v4/十审: placeholder 与大屏同逻辑（自写档位矩阵已废弃，渲染层直接三态 i18n）", () => {
+  // computeMobilePlaceholder/mobilePlaceholderI18nKey 已从模块导出中移除
+  return jiti.import("./ChatInput.tsx").then((mod) => {
+    assert.equal("computeMobilePlaceholder" in mod, false);
+    assert.equal("mobilePlaceholderI18nKey" in mod, false);
+  });
 });
 
 test("base64ToBlob: 清空撤销的图片 previewUrl 重建原料", () => {

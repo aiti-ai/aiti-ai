@@ -820,52 +820,10 @@ export function base64ToBlob(b64: string, mimeType: string): Blob {
 }
 
 // ============================================================================
-// 小屏「微信式」状态矩阵（docs/pi-web-mobile-input-wechat-plan.md §三/§七）——
-// 纯函数：组件按结果渲染，单测钉死矩阵与占位符优先级（P8）。
+// 小屏「微信式」状态矩阵（docs/pi-web-mobile-input-wechat-plan.md §三/§七；v4 十审：
+// placeholder 矩阵废弃——与大屏完全同逻辑，自写档位不再维护）——
+// 纯函数：组件按结果渲染，单测钉死矩阵（P8）。
 // ============================================================================
-
-/** 小屏占位符档位（优先级 P1 > P2 > P3 > P4 > agent > P5b/P5 > P6）。 */
-export type MobilePlaceholderKey =
-  | "runImages" | "steer" | "runPaused" | "runFollow" | "agent"
-  | "shellLocal" | "shellModel" | "message";
-
-const MOBILE_PLACEHOLDER_I18N: Record<MobilePlaceholderKey, string> = {
-  runImages: "chat.mPlaceholderRunImages",
-  steer: "chat.mPlaceholderSteer",
-  runPaused: "chat.mPlaceholderRunPaused",
-  runFollow: "chat.mPlaceholderRunFollow",
-  agent: "chat.agentPlaceholder",
-  shellLocal: "chat.mShellLocal",
-  shellModel: "chat.mShellModel",
-  message: "chat.messagePlaceholder",
-};
-
-export function mobilePlaceholderI18nKey(key: MobilePlaceholderKey): string {
-  return MOBILE_PLACEHOLDER_I18N[key];
-}
-
-export function computeMobilePlaceholder(opts: {
-  isStreaming: boolean;
-  hasSteerCapability: boolean;
-  hasInputText: boolean;
-  imageCount: number;
-  followStreaming: boolean;
-  bashMode: boolean;
-  bashExcluded: boolean;
-  queueCount: number;
-}): { key: MobilePlaceholderKey; queueCount: number | null } {
-  const { isStreaming, hasSteerCapability, hasInputText, imageCount, followStreaming, bashMode, bashExcluded, queueCount } = opts;
-  let key: MobilePlaceholderKey;
-  if (isStreaming && hasSteerCapability) {
-    if (hasInputText && imageCount > 0) key = "runImages";       // P1
-    else if (hasInputText) key = "steer";                        // P2
-    else if (!followStreaming) key = "runPaused";                // P3
-    else key = "runFollow";                                      // P4
-  } else if (isStreaming) key = "agent";
-  else if (bashMode) key = bashExcluded ? "shellLocal" : "shellModel"; // P5b/P5
-  else key = "message";                                          // P6
-  return { key, queueCount: queueCount > 0 ? queueCount : null };
-}
 
 /** 小屏右端按钮矩阵（v4，§十九）：左组废除，全部按钮右置——恒驻 ＋(信息面板)/图片，
  *  条件按钮（清空/🎤/继续/发送/停止/插队/排队）由渲染层按「聚焦或有内容」上浮，
@@ -2192,8 +2150,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // 队列里也没有可插队的 follow-up）时两个按钮同时灰掉——此时提示要先输入消息。
   // （图片允许随消息排队——queue-store/回收编辑/重放链路原生支持，#3 图片排队恢复）
   const queueDisabledNoInput = !hasInputText && attachedImages.length === 0;
-  // ── 小屏「微信式」矩阵派生（§三/§七）：纯函数 computeMobileComposerMatrix /
-  // computeMobilePlaceholder（单测钉死）——草稿恢复（F14）/发送清空（F15）后自动重派生。
+  // ── 小屏「微信式」矩阵派生：纯函数 computeMobileComposerMatrix（单测钉死）——
+  // 草稿恢复（F14）/发送清空（F15）后自动重派生。placeholder 与大屏完全同逻辑（v4 十审）。
   const mobileMatrix = computeMobileComposerMatrix({
     isStreaming,
     hasInputText,
@@ -2209,22 +2167,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const composerAffixExtCount = useExtSlotItems("composerAffix").length;
   const [inputFocused, setInputFocused] = useState(false);
   const mobileExpanded = !isMobile || inputFocused || hasContent;
-  const mobilePlaceholderKey = computeMobilePlaceholder({
-    isStreaming,
-    hasSteerCapability: Boolean(onSteer || onFollowUp),
-    hasInputText,
-    imageCount: attachedImages.length,
-    followStreaming,
-    bashMode,
-    bashExcluded,
-    queueCount,
-  });
-  const mobilePlaceholder = (() => {
-    const base = t(mobilePlaceholderI18nKey(mobilePlaceholderKey.key));
-    return mobilePlaceholderKey.queueCount != null
-      ? `${base} ${t("chat.queueSuffix", { count: String(mobilePlaceholderKey.queueCount) })}`
-      : base;
-  })();
   // ⓘ sheet 打开：先关其他浮层 + 取消录音（S28 互斥），再按输入条位置定位 bottom。
   // maxHeight 同步收紧为「输入条上方可用空间」——欢迎页输入条居中时上方空间不足，
   // 只封 60vh 会把 sheet 顶出视口上缘（✕ 够不着）。
@@ -3941,12 +3883,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             onFocus={handleFocus}
             onBlur={handleBlur}
             onPaste={handlePaste}
-            placeholder={isMobile
-              ? mobilePlaceholder
-              : isStreaming && (onSteer || onFollowUp)
-                ? t("chat.steerPlaceholder")
-                : isStreaming ? t("chat.agentPlaceholder")
-                : t("chat.messagePlaceholder")}
+            placeholder={isStreaming && (onSteer || onFollowUp)
+              ? t("chat.steerPlaceholder")
+              : isStreaming ? t("chat.agentPlaceholder")
+              : t("chat.messagePlaceholder")}
             rows={1}
             style={{
               flex: "1 1 auto",
