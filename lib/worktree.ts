@@ -36,9 +36,10 @@ export interface WorktreeInfo {
 
 declare global {
   var __piProjectCache: Map<string, { info: ProjectInfo; expiresAt: number }> | undefined;
+  var __piProjectRefreshInFlight: Set<string> | undefined;
 }
 
-const PROJECT_CACHE_TTL_MS = 60_000;
+const PROJECT_CACHE_TTL_MS = 300_000; // stale-while-revalidate：过期后回旧值+后台刷新，TTL 即信息最大滞后
 
 function getProjectCache(): Map<string, { info: ProjectInfo; expiresAt: number }> {
   if (!globalThis.__piProjectCache) globalThis.__piProjectCache = new Map();
@@ -87,6 +88,40 @@ export async function resolveProject(cwd: string): Promise<ProjectInfo> {
   const cached = cache.get(cwd);
   if (cached && cached.expiresAt > Date.now()) return cached.info;
 
+  // stale-while-revalidate：有过期旧值 → 立即返回旧值 + 后台刷新。会话列表路径
+  // 一次 resolveProject 全集 ≈ 68 个 git spawn，在繁忙事件循环（dev 多 agent/SSE
+  // 并发）上排队可达 4s+（「首次打开卡死」主因之一）——绝不让请求等待它；
+  // 项目/分支信息最多滞后一个 TTL。
+  if (cached) {
+    kickProjectRefresh(cwd);
+    return cached.info;
+  }
+  const info = await computeProjectInfo(cwd);
+  cache.set(cwd, { info, expiresAt: Date.now() + PROJECT_CACHE_TTL_MS });
+  return info;
+}
+
+function getProjectRefreshInFlight(): Set<string> {
+  if (!globalThis.__piProjectRefreshInFlight) globalThis.__piProjectRefreshInFlight = new Set();
+  return globalThis.__piProjectRefreshInFlight;
+}
+
+function kickProjectRefresh(cwd: string): void {
+  const inFlight = getProjectRefreshInFlight();
+  if (inFlight.has(cwd)) return; // 已在刷新，不重复 kick
+  inFlight.add(cwd);
+  void computeProjectInfo(cwd)
+    .then((info) => {
+      getProjectCache().set(cwd, { info, expiresAt: Date.now() + PROJECT_CACHE_TTL_MS });
+    })
+    .catch(() => { /* keep stale value */ })
+    .finally(() => {
+      inFlight.delete(cwd);
+    });
+}
+
+async function computeProjectInfo(cwd: string): Promise<ProjectInfo> {
+  const cache = getProjectCache();
   let info: ProjectInfo;
   try {
     if (!existsSync(cwd)) {

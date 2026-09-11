@@ -2,9 +2,9 @@ import {
   SessionManager,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { openSync, closeSync, existsSync, fstatSync, readFileSync, readSync, readdirSync, statSync, type Dirent } from "fs";
+import { openSync, closeSync, existsSync, fstatSync, readFileSync, readSync, readdirSync, statSync, type Dirent, type Stats } from "fs";
 import { homedir } from "node:os";
-import { readdir } from "fs/promises";
+import { open as openFileAsync, readdir } from "fs/promises";
 import { dirname, isAbsolute, join, normalize as normalizePath, relative, resolve as resolvePath, sep } from "path";
 import { writePrivateFileAtomicSync } from "./atomic-file.ts";
 import type { AgentMessage, ImageContent, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types.ts";
@@ -50,6 +50,11 @@ export interface SessionFileInfo {
 interface ListCacheEntry {
   mtimeMs: number;
   size: number;
+  /**
+   * 已解析到的字节偏移（append-only 增量解析基准）：下轮扫描只解析此后追加的行。
+   * 缺省 = 该条目尚无偏移基准（旧版缓存条目）；其文件一旦变更即走全量解析并补记偏移。
+   */
+  offset?: number;
   info: SessionFileInfo;
 }
 
@@ -59,9 +64,8 @@ interface ListCacheFile {
   files: Record<string, ListCacheEntry>;
 }
 
-const LIST_CACHE_VERSION = 2; // v2: derive 新增 pi-subagents 嵌套工件路径推断（externalSubagent）
+const LIST_CACHE_VERSION = 2; // v2: derive 新增 pi-subagents 嵌套工件路径推断（externalSubagent）；条目 offset 为向后兼容新增（旧缓存缺 offset → 变更时全量解析一次补记）
 const LIST_CACHE_FILENAME = "session_list_cache.json";
-const MAX_CONCURRENT_PARSE = 10;
 
 function isMessageWithContent(message: AgentMessage): boolean {
   return typeof message.role === "string" && "content" in message;
@@ -95,6 +99,15 @@ function getMessageActivityTime(entry: SessionEntry & { message?: AgentMessage }
  * reusing the SDK's entry parser. null when the file is not a session.
  */
 export function deriveSessionFileInfo(filePath: string): SessionFileInfo | null {
+  return deriveSessionFileInfoFull(filePath)?.info ?? null;
+}
+
+/**
+ * 全量解析 + 记录解析终点（字节偏移，作为后续增量解析的基准）。
+ * ⚠ 同步读整文件并逐行 JSON.parse——大会话（10-20MB）耗时秒级，只应在
+ * 首次解析/基准失效（截断、无偏移）时使用；日常追加走 deriveSessionFileInfoAppended。
+ */
+function deriveSessionFileInfoFull(filePath: string): { info: SessionFileInfo; parsedEnd: number } | null {
   const header = readSessionHeader(filePath);
   if (!header) return null;
   let name: string | undefined;
@@ -150,24 +163,132 @@ export function deriveSessionFileInfo(filePath: string): SessionFileInfo | null 
       }
     }
   }
+  let parsedEnd: number;
+  try {
+    parsedEnd = statSync(filePath).size;
+  } catch {
+    return null; // file vanished mid-parse
+  }
   return {
-    path: filePath,
-    id: header.id,
-    cwd: header.cwd ?? "",
-    name,
-    created: new Date(header.timestamp),
-    modified,
-    messageCount,
-    firstMessage: firstMessage || "(no messages)",
-    parentSessionPath: parentSessionPath || undefined,
-    ...(externalSubagent ? { externalSubagent } : {}),
+    info: {
+      path: filePath,
+      id: header.id,
+      cwd: header.cwd ?? "",
+      name,
+      created: new Date(header.timestamp),
+      modified,
+      messageCount,
+      firstMessage: firstMessage || "(no messages)",
+      parentSessionPath: parentSessionPath || undefined,
+      ...(externalSubagent ? { externalSubagent } : {}),
+    },
+    parsedEnd,
   };
+}
+
+/**
+ * Append-only 增量解析：只解析 prev.offset 之后的追加段，字段累计语义与全量版逐条镜像
+ * （message 计数、user/assistant 活动时间戳、首条 user 消息、session_info 改名后者覆盖）。
+ * 返回 null = 基准无效（无偏移/文件截断重写/读失败），调用方回退全量解析。
+ * IO 走 fs.promises 异步读，不阻塞事件循环（服务端红线）。
+ */
+async function deriveSessionFileInfoAppended(
+  filePath: string,
+  prev: ListCacheEntry,
+  st: Pick<Stats, "size">,
+): Promise<{ info: SessionFileInfo; parsedEnd: number } | null> {
+  const start = prev.offset;
+  if (typeof start !== "number" || !Number.isFinite(start) || start < 0) return null;
+  if (st.size < start) return null; // truncated / rewritten — full re-parse
+  if (st.size === start) return { info: prev.info, parsedEnd: start }; // mtime-only change, no appended bytes
+
+  let chunk: string;
+  try {
+    const fh = await openFileAsync(filePath, "r");
+    try {
+      const buf = Buffer.allocUnsafe(st.size - start);
+      const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+      chunk = buf.toString("utf8", 0, bytesRead);
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return null;
+  }
+
+  let name = prev.info.name;
+  let messageCount = prev.info.messageCount;
+  let firstMessage = prev.info.firstMessage;
+  let lastActivityMs = prev.info.modified.getTime();
+  // \n 不会是多字节 UTF-8 序列的一部分（自同步编码），字符串级切行安全。
+  let end = start;
+  let lineStart = 0;
+  for (;;) {
+    const nl = chunk.indexOf("\n", lineStart);
+    const isTail = nl === -1;
+    const line = isTail ? chunk.slice(lineStart) : chunk.slice(lineStart, nl);
+    // 与 SDK parseSessionEntryLine 同语义：空行/坏行跳过；可完整解析的无换行尾行也计入
+    //（写入方 append \n 前的窗口），半行则留待下轮（end 不推进过它）。
+    const entry = line.trim() ? tryParseEntryLine(line) : null;
+    if (entry) {
+      if (entry.type === "session_info") {
+        name = (entry as { name?: string }).name?.trim() || undefined;
+      } else if (entry.type === "message") {
+        messageCount++;
+        const ts = getMessageActivityTime(entry as SessionEntry & { message?: AgentMessage });
+        if (typeof ts === "number" && ts > lastActivityMs) lastActivityMs = ts;
+        if (!firstMessage || firstMessage === "(no messages)") {
+          const msg = (entry as { message?: AgentMessage }).message;
+          if (msg?.role === "user") {
+            const text = extractTextContent(msg);
+            if (text) firstMessage = text;
+          }
+        }
+      }
+    }
+    if (isTail) {
+      if (entry) end = start + Buffer.byteLength(chunk, "utf8");
+      break;
+    }
+    end = start + nl + 1;
+    lineStart = nl + 1;
+  }
+
+  return {
+    info: {
+      ...prev.info,
+      name,
+      messageCount,
+      firstMessage,
+      modified: new Date(lastActivityMs),
+    },
+    parsedEnd: end,
+  };
+}
+
+function tryParseEntryLine(line: string): SessionEntry | null {
+  try {
+    return JSON.parse(line) as SessionEntry;
+  } catch {
+    return null;
+  }
 }
 
 function readListCache(root: string): ListCacheFile | null {
   const p = join(root, LIST_CACHE_FILENAME);
   try {
-    if (!existsSync(p)) return null;
+    let diskMtimeMs: number;
+    try {
+      diskMtimeMs = statSync(p).mtimeMs;
+    } catch {
+      memListCache = null;
+      return null;
+    }
+    // 内存层：1.5MB+ JSON 每次扫描同步 parse 不菲（dev/prod 双实例共享 sessions 目录时
+    // 对方写入会使 mtime 变化 → 自动失效重读，语义安全）。
+    if (memListCache?.root === root && memListCache.diskMtimeMs === diskMtimeMs) {
+      return memListCache.cache;
+    }
     const raw = JSON.parse(readFileSync(p, "utf8")) as ListCacheFile;
     if (raw?.version !== LIST_CACHE_VERSION) return null;
     // JSON round-trip turns Dates into strings — restore them.
@@ -175,32 +296,57 @@ function readListCache(root: string): ListCacheFile | null {
       entry.info.created = new Date(entry.info.created);
       entry.info.modified = new Date(entry.info.modified);
     }
+    memListCache = { root, cache: raw, diskMtimeMs };
     return raw;
   } catch {
     return null;
   }
 }
 
+let memListCache: { root: string; cache: ListCacheFile; diskMtimeMs: number } | null = null;
+
 function writeListCache(root: string, cache: ListCacheFile): void {
   try {
     writePrivateFileAtomicSync(join(root, LIST_CACHE_FILENAME), JSON.stringify(cache));
+    // 同步刷新内存层指向刚写入的版本（避免下轮扫描因 mtime 变化重读盘）。
+    try {
+      memListCache = { root, cache, diskMtimeMs: statSync(join(root, LIST_CACHE_FILENAME)).mtimeMs };
+    } catch {
+      memListCache = null;
+    }
   } catch {
     // Non-fatal: the in-memory result is still correct; next scan rebuilds.
   }
 }
 
-async function parseChangedFiles(files: string[]): Promise<SessionFileInfo[]> {
-  const out = new Array<SessionFileInfo | null>(files.length).fill(null);
-  let next = 0;
-  const workerCount = Math.min(MAX_CONCURRENT_PARSE, files.length) || 1;
-  await Promise.all(Array.from({ length: workerCount }, async () => {
-    for (;;) {
-      const i = next++;
-      if (i >= files.length) return;
-      out[i] = deriveSessionFileInfo(files[i]);
+/**
+ * 变更文件解析：增量优先（append-only 追加段，KB 级/次），基准缺失/失效回退全量。
+ * 按解析字节数分批让出事件循环（setImmediate）——大库冷扫描（1500+ 文件，活跃
+ * 会话 10-20MB）不再冻结 dev server 的其他请求（服务端红线：禁长阻塞）。
+ */
+async function parseChangedEntries(
+  items: Array<{ path: string; st: Stats; prev: ListCacheEntry | null }>,
+): Promise<Array<{ info: SessionFileInfo; mtimeMs: number; size: number; offset?: number }>> {
+  const out: Array<{ info: SessionFileInfo; mtimeMs: number; size: number; offset?: number }> = [];
+  let parsedBytesSinceYield = 0;
+  let filesSinceYield = 0;
+  for (const item of items) {
+    const appended = item.prev ? await deriveSessionFileInfoAppended(item.path, item.prev, item.st) : null;
+    const full = appended ?? deriveSessionFileInfoFull(item.path);
+    if (full) {
+      out.push({ info: full.info, mtimeMs: item.st.mtimeMs, size: item.st.size, offset: full.parsedEnd });
     }
-  }));
-  return out.filter((x): x is SessionFileInfo => x !== null);
+    // 让步预算：增量段只计实际解析字节；全量解析按整文件计（同步大块）。
+    parsedBytesSinceYield += appended
+      ? Math.max(0, item.st.size - (item.prev?.offset ?? 0))
+      : item.st.size;
+    if (++filesSinceYield >= 16 || parsedBytesSinceYield >= 1_000_000) {
+      filesSinceYield = 0;
+      parsedBytesSinceYield = 0;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+  return out;
 }
 
 /**
@@ -287,8 +433,8 @@ export async function scanSessionsFromRoot(root: string): Promise<SessionFileInf
   const files = listSessionFiles(root);
   const cache = readListCache(root);
   const knownKeys = new Set<string>();
-  const changed: string[] = [];
-  const merged: SessionFileInfo[] = [];
+  const changed: Array<{ path: string; st: Stats; prev: ListCacheEntry | null }> = [];
+  const merged: Array<{ info: SessionFileInfo; entry: { mtimeMs: number; size: number; offset?: number } }> = [];
 
   for (const f of files) {
     const key = sessionPathKey(f);
@@ -301,31 +447,29 @@ export async function scanSessionsFromRoot(root: string): Promise<SessionFileInf
     }
     const hit = cache?.files[key];
     if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
-      merged.push(hit.info);
+      merged.push({ info: hit.info, entry: hit });
     } else {
-      changed.push(f);
+      changed.push({ path: f, st, prev: hit ?? null });
     }
   }
 
-  const fresh = changed.length > 0 ? await parseChangedFiles(changed) : [];
-  merged.push(...fresh);
+  const fresh = changed.length > 0 ? await parseChangedEntries(changed) : [];
+  merged.push(...fresh.map((x) => ({ info: x.info, entry: x })));
 
   // Rebuild cache: reused entries + freshly parsed ones; drop deleted paths.
+  // （本轮 stat/解析结果直接组装，不再对全部文件二次 statSync。）
   const stale = cache ? Object.keys(cache.files).filter((k) => !knownKeys.has(k)).length : 0;
   if (changed.length > 0 || stale > 0) {
     const files2: ListCacheFile = { version: LIST_CACHE_VERSION, updatedAt: new Date().toISOString(), files: {} };
-    for (const info of merged) {
-      try {
-        const st = statSync(info.path);
-        files2.files[sessionPathKey(info.path)] = { mtimeMs: st.mtimeMs, size: st.size, info };
-      } catch {
-        // file vanished mid-scan — omit
-      }
+    for (const m of merged) {
+      files2.files[sessionPathKey(m.info.path)] = { mtimeMs: m.entry.mtimeMs, size: m.entry.size, offset: m.entry.offset, info: m.info };
     }
     writeListCache(root, files2);
   }
 
-  return merged.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+  return merged
+    .map((m) => m.info)
+    .sort((a, b) => b.modified.getTime() - a.modified.getTime());
 }
 
 /** Production entry: scan ~/.pi/agent/sessions incrementally. */
@@ -451,9 +595,17 @@ export async function attachSessionProjectInfo(sessions: SessionInfo[]): Promise
   const { resolveProject } = await import("./worktree.ts");
   const uniqueCwds = [...new Set(sessions.map((s) => s.cwd).filter(Boolean))];
   const projectByCwd = new Map<string, ProjectInfo>();
-  await Promise.all(uniqueCwds.map(async (cwd) => {
-    projectByCwd.set(cwd, await resolveProject(cwd));
-  }));
+  // 分批限并发：冷启动一波几十个 git spawn 在繁忙事件循环上排队数秒；批间让步。
+  const RESOLVE_BATCH = 8;
+  for (let i = 0; i < uniqueCwds.length; i += RESOLVE_BATCH) {
+    const batch = uniqueCwds.slice(i, i + RESOLVE_BATCH);
+    await Promise.all(batch.map(async (cwd) => {
+      projectByCwd.set(cwd, await resolveProject(cwd));
+    }));
+    if (i + RESOLVE_BATCH < uniqueCwds.length) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
 
   return sessions.map((session) => {
     const project = session.cwd ? projectByCwd.get(session.cwd) : undefined;
