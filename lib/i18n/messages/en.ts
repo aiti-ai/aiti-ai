@@ -439,7 +439,7 @@ export const enLocale: LocalePlugin = {
 
     "chat.agentPlaceholder": "Agent is running…",
     "chat.steerPlaceholder": "Enter to queue; Enter again to steer",
-    "chat.messagePlaceholder": "Message… Type / for commands, @ for files",
+    "chat.messagePlaceholder": "Message… / commands · @ files",
     "chat.steer": "Steer",
     "chat.steerHint": "Attempts to steer; the agent prioritizes it (Alt/Option+Enter)",
     "chat.steerFromQueueHint": "Attempts to steer the first queued message",

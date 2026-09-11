@@ -358,7 +358,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.indexTruncated": " · 索引已截斷",
     "chat.steerPlaceholder": "立即引導 / 將後續訊息排入佇列...",
     "chat.agentPlaceholder": "Agent 執行中…",
-    "chat.messagePlaceholder": "訊息…輸入 / 使用命令，輸入 @ 搜尋檔案",
+    "chat.messagePlaceholder": "訊息… / 指令 @ 檔案",
     "chat.steer": "引導",
     "chat.followUp": "後續訊息",
     "chat.inputHistory": "輸入紀錄",

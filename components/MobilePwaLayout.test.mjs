@@ -46,9 +46,11 @@ test("contains chat content and inputs within the mobile viewport", () => {
   assert.match(cssSource, /\.markdown-body \{[\s\S]*?min-width: 0;[\s\S]*?max-width: 100%;[\s\S]*?overflow-x: hidden;/);
   assert.match(cssSource, /\.markdown-code-block \{[\s\S]*?min-width: 0;[\s\S]*?max-width: 100%;/);
   assert.match(chatWindowSource, /overflow-x-hidden overflow-y-auto/);
-  assert.match(chatInputSource, /flex: compact \? "none" : buttonsWrapped \? "1 1 100%" : "1 1 0",\s*minWidth: 0,/);
+  assert.match(chatInputSource, /flex: compact \? "none" : buttonsWrapped \|\| \(isMobile && mobileExpanded\) \? "1 1 100%" : "1 1 0",\s*minWidth: 0,/);
   assert.match(chatWindowSource, /maxHeight: "min\(760px, 100%\)"/);
-  // 我方提交按钮区用 buttonsWrapped 三态换行（上一条断言已覆盖），无上游的固定 width:"100%" 写法
+  // 我方提交按钮区换行（textarea 独占整行）：buttonsWrapped（按钮换行）或移动端展开态
+  // mobileExpanded（聚焦/有内容/流式，v4 三审）均取 1 1 100%，否则与按钮同行 1 1 0
+  // （上一条断言已覆盖），无上游的固定 width:"100%" 写法
 });
 
 test("prevents iOS focus zoom from widening the layout", () => {

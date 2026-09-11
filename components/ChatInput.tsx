@@ -937,12 +937,13 @@ export function computeMobileComposerMatrix(opts: {
 
 /** 小屏矩阵图标按钮：32×32 触达、无背景，入场 120ms 淡入（微信「＋↔发送」动效的
  *  轻量版）。纯展示组件，启停/色调由调用方给。 */
-function MobileIconButton({ label, title, onClick, disabled, color, children }: {
+function MobileIconButton({ label, title, onClick, disabled, color, onPointerDown, children }: {
   label: string;
   title?: string;
   onClick: () => void;
   disabled?: boolean;
   color?: string;
+  onPointerDown?: React.PointerEventHandler<HTMLButtonElement>;
   children: React.ReactNode;
 }) {
   return (
@@ -951,6 +952,7 @@ function MobileIconButton({ label, title, onClick, disabled, color, children }: 
       aria-label={label}
       title={title ?? label}
       disabled={disabled}
+      onPointerDown={onPointerDown}
       onClick={onClick}
       className="ci-mobile-icon"
       style={{
@@ -2225,9 +2227,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // v4 二次重审（用户拍板「＋ 还在右边」返工）：＋ 落位 textarea 左侧（左端首位）。
   // 单行态渲染在 textarea 前；换行态（buttonsWrapped）/compact 引用框随右端按钮簇——
   // 否则 flexWrap 下 textarea 独占整行时 ＋ 会孤悬一行。
+  // ＋/图片按钮按下不夸走 textarea 焦点（微信同款）：pointerdown preventDefault 阻止
+  // 浏览器把焦点从 textarea 移到按钮（click 仍正常触发）——聚焦展开态点这两个按钮
+  // 不再先失焦收起打断输入，sheet/图片选择器直接在展开态弹出。
+  const suppressComposerBlurOnPress = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+  }, []);
   const mobilePlusButton = (
     <span style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
-      <MobileIconButton label={t("chat.plusPanel")} onClick={openInfoSheet}>
+      <MobileIconButton label={t("chat.plusPanel")} onClick={openInfoSheet} onPointerDown={suppressComposerBlurOnPress}>
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="12" cy="12" r="9" /><line x1="12" y1="8" x2="12" y2="16" /><line x1="8" y1="12" x2="16" y2="12" /></svg>
       </MobileIconButton>
       {modelSwitchPending && <span style={{ position: "absolute", top: 3, right: 3, width: 7, height: 7, borderRadius: 99, background: "#f59e0b" }} />}
@@ -3278,9 +3286,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     e.currentTarget.style.borderColor = "var(--border)";
                   }}
                 >
+                  {/* 铅笔（square-pen）= 移回输入框编辑（与 queue-keeper 扩展同图标）*/}
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <polyline points="9 14 4 9 9 4" />
-                    <path d="M20 20v-7a4 4 0 0 0-4-4H4" />
+                    <path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" />
                   </svg>
                   {t("chat.recall")}
                 </button>
@@ -3904,18 +3913,43 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               fontFamily: "inherit",
               minHeight: compact ? 96 : 24,
               maxHeight: 200,
-              paddingRight: isMobile ? 34 : undefined,
+              // 尾缀 affix 让位：大屏框内右缘 [×清空|🎤] 组（🎤 注册时按双钮位让 62px；
+              // 🎤 未注册仅有内容 × 单钮让 30px；两者皆无不让）——避免文字流到按钮底下
+              paddingRight: isMobile ? 34 : composerAffixExtCount > 0 ? 62 : hasContent ? 30 : undefined,
               overflow: "auto",
             }}
           />
+          {/* 收起态 composerAffix（🎤 语音，扩展注册）：与图片/继续并排——语音开启时收起态
+              图标数与展开上浮一致（＋恒驻左 + [🎤][图片][继续?]）；feature 关时组件渲染
+              null 零占位；按钮自带 data-composer-affix（长按手势不被折叠手势劫持）。
+              展开态由条件组内位承接，两处互斥渲染不重复（图片同范式） */}
+          {isMobile && !compact && !mobileExpanded && (
+            <ExtSlot name="composerAffix" extra={{ hasContent, hasInputText, isStreaming, focused: inputFocused, inputValue: value, textareaRef, setInputValue, focusComposer: refocusInput }} />
+          )}
           {/* v4 八审：图片恒驻的收起态位（textarea 右缘，未聚焦+空输入单行态）；
               展开态由条件组内位承接（语音之后），两处互斥渲染不重复 */}
           {isMobile && !compact && !mobileExpanded && (
             <MobileIconButton
               label={t("chat.addImage")}
               onClick={() => fileInputRef.current?.click()}
+              onPointerDown={suppressComposerBlurOnPress}
             >
               <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" /><circle cx="8.7" cy="8.7" r="1.6" /><path d="M21 15.5l-4.5-4.5L6 21.5" /></svg>
+            </MobileIconButton>
+          )}
+          {/* 收起态「继续」：空闲（未聚焦+空输入+非运行，matrix.cont 恒真）时与图片并排——
+              此前继续只在展开条件组，收起态单行 [＋|textarea|图片] 漏了继续；
+              展开态仍由条件组内位承接，两处互斥渲染不重复 */}
+          {isMobile && !compact && !mobileExpanded && mobileMatrix.cont && onContinue && canContinue && (
+            <MobileIconButton
+              label={t("chat.continue")}
+              onClick={() => { onContinue(); refocusInput(); }}
+              color="rgba(5,150,105,1)"
+            >
+              <svg width="15" height="15" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="1.5 2.5 5.5 6 1.5 9.5" />
+                <polyline points="6.5 2.5 10.5 6 6.5 9.5" />
+              </svg>
             </MobileIconButton>
           )}
           {/* v4 五审：× 清空钉回输入框尾部（框内右缘垂直居中）——始终跟随输入框（有内容即显，
@@ -3952,6 +3986,55 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><line x1="3.5" y1="3.5" x2="10.5" y2="10.5" /><line x1="10.5" y1="3.5" x2="3.5" y2="10.5" /></svg>
             </button>
           )}
+          {/* 大屏（桌面）输入框尾缀 affix 组：[×清空 | 🎤语音]——对齐小屏语义：
+              × 细清空钮 20px 触达、11px × 无底色（对齐文字行高，clearWithUndo 同小屏）；
+              🎤 32px 对齐按钮高度（composerAffix 插槽，扩展 feature 门控组件内自理，
+              未注册零占位）。与小屏两处 ExtSlot（收起态包裹层位/展开态条件组位）
+              isMobile 互斥，任意时刻恒单实例挂载。 */}
+          {!isMobile && (hasContent || composerAffixExtCount > 0) && (
+            <div
+              data-composer-affix="1"
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                display: "flex",
+                alignItems: "center",
+                gap: 2,
+                zIndex: 1,
+              }}
+            >
+              {hasContent && (
+                <button
+                  type="button"
+                  aria-label={t("chat.clearComposer")}
+                  onClick={clearWithUndo}
+                  style={{
+                    width: 20,
+                    height: 20,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    padding: 0,
+                    background: "none",
+                    border: "none",
+                    borderRadius: 99,
+                    color: "var(--text-dim)",
+                    cursor: "pointer",
+                    touchAction: "manipulation",
+                    userSelect: "none",
+                    transition: "opacity 0.12s, color 0.12s",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.color = "var(--text)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.color = "var(--text-dim)"; }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><line x1="3.5" y1="3.5" x2="10.5" y2="10.5" /><line x1="10.5" y1="3.5" x2="3.5" y2="10.5" /></svg>
+                </button>
+              )}
+              <ExtSlot name="composerAffix" extra={{ hasContent, hasInputText, isStreaming, focused: inputFocused, inputValue: value, textareaRef, setInputValue, focusComposer: refocusInput }} />
+            </div>
+          )}
           </div>
 
           {/* v4 右端组（§十九）：条件按钮组在「聚焦或有内容」时上浮（120ms 过渡，收起零占位）。
@@ -3961,6 +4044,22 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           {isMobile && (
             <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, flexGrow: (isMobile && mobileExpanded) ? 1 : 0 }}>
               {(compact || (isMobile && mobileExpanded)) && mobilePlusButton}
+              {/* 小屏展开态：模型选择直接露出（＋ 右侧）——v4 曾收进 ⓘ sheet，用户要求还原直露；
+                  sheet 内同欸保留（双入口并存）。宽度馳制防长模型名挤爆按钮排；trigger 高 32 与
+                  MobileIconButton 齐平，pending 徽标组件自带。compact 引用框不露（同弹性空隙条件）。 */}
+              {isMobile && mobileExpanded && !compact && onModelChange && (
+                <div style={{ flex: "0 1 auto", minWidth: 72, maxWidth: 150, display: "flex" }}>
+                  <ModelSelector
+                    options={modelOptions}
+                    value={model}
+                    onChange={onModelChange}
+                    disabled={false}
+                    busy={modelSwitching}
+                    pending={modelSwitchPending != null}
+                    isAutoSelection={isAutoModelSelection}
+                  />
+                </div>
+              )}
               {isMobile && mobileExpanded && !compact && <span aria-hidden="true" style={{ flex: 1 }} />}
               <div
                 data-composer-affix="1"
@@ -3972,12 +4071,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   transition: "opacity 0.12s, max-width 0.15s",
                 }}
               >
-                <ExtSlot name="composerAffix" extra={{ hasContent, hasInputText, isStreaming, focused: inputFocused, inputValue: value, textareaRef, setInputValue, focusComposer: refocusInput }} />
+                {/* 十六/十七审：composerAffix（🎤）仅展开态挂载——收起态由包裹层内收起位承接，
+                    双位互斥挂载（任意时刻一个实例），与图片同范式 */}
+                {mobileExpanded && <ExtSlot name="composerAffix" extra={{ hasContent, hasInputText, isStreaming, focused: inputFocused, inputValue: value, textareaRef, setInputValue, focusComposer: refocusInput }} />}
                 {/* v4 六/八审：图片在🎤语音之后、其余按钮之前；仅展开态渲染（收起态由 wrapper 右缘位承接，恒驻不重复） */}
                 {mobileExpanded && (
                 <MobileIconButton
                   label={t("chat.addImage")}
                   onClick={() => fileInputRef.current?.click()}
+                  onPointerDown={suppressComposerBlurOnPress}
                 >
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" /><circle cx="8.7" cy="8.7" r="1.6" /><path d="M21 15.5l-4.5-4.5L6 21.5" /></svg>
                 </MobileIconButton>

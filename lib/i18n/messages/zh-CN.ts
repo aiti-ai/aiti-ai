@@ -439,7 +439,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.indexTruncated": " · 索引不完整",
     "chat.steerPlaceholder": "回车排队，再次回车尝试插队",
     "chat.agentPlaceholder": "Agent 运行中…",
-    "chat.messagePlaceholder": "消息…输入 / 使用命令，输入 @ 查找文件",
+    "chat.messagePlaceholder": "消息… / 命令 @ 文件",
     "chat.steer": "插队",
     "chat.steerHint": "尝试插队，等待 agent 优先调度（Alt/Option+Enter）",
     "chat.steerFromQueueHint": "尝试让队列里第一个消息插队",
