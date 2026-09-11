@@ -15,15 +15,13 @@
 //     （调用方用 onmessage 或 addEventListener("change",…) 都行，与原 SSE 等价）
 // 总线传输层 named heartbeat（30s）→ 派发 named "heartbeat"（running broker 判活用）。
 
-import { isExtBootSettled, notifyExtBootSettled, onExtBootSettled } from "./ext-boot-signal";
+import { eventBusDeployedVerdict, onEventBusDeployed, settleEventBusDeployed } from "./ext-boot-signal";
 
-// boot-settle 信号同图重导出：置位方（ExtSlots）/消费方/测试在同一模块图内驱动（§3-C1 定案锚点）
-export { isExtBootSettled, notifyExtBootSettled, onExtBootSettled };
+// 事件总线部署定案同图重导出：置位方（ExtSlots）/消费方/测试在同一模块图内驱动。
+// 定案语义：manifest 清单里有 aiti-event-bus = 已安装且启用（disabled 不进 manifest）。
+export { settleEventBusDeployed, eventBusDeployedVerdict, onEventBusDeployed };
 
 export const BUS_FRAME_HEARTBEAT = "heartbeat";
-/** 硬超时兑底：等待机制（ready 广播 / boot settle 信号）失效时的最后防线。常态下定案
- *  由启动批量 settle 锚定（§3-C1，配合 materialize 优先级总线先挂槽），远早于它。 */
-const FALLBACK_WAIT_MS = 10_000;
 
 /** 与 lib/agent-event-connection.ts 的 AgentEventSourceLike / 原生 EventSource 的公共面 */
 export interface BusEventSource {
@@ -79,10 +77,9 @@ function readSlot(): PiEventBusSlot | null {
  *  总线注册（piwe-event-bus-ready）时复位，之后新连接自动切回总线通道。 */
 let busAbsent = false;
 if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
-  // 中途启用（扩展启用/装上后 reload）：复位缺席定案——之后的 getEventBus 重新探测走
-  // 总线；已回退的原生连接由各调用方既有断线重连语义在下次重连时自动切回（重连重走
-  // getEventBus 探测）。不主动关闭已回退连接：缺席只在真缺席（禁用/卸载）时定案，
-  // 此时回退是正确终态，主动切回反而破坏降级（§3-C2 裁决，见方案文档 §3-C 注）。
+  // 复位场景：总线中途启用（未部署→装上，或早期误判）。之后的 getEventBus 重新探测
+  // 走总线；已回退的原生连接由各调用方既有断线重连语义在下次重连时自动切回（重连
+  // 重走 getEventBus 探测）。
   window.addEventListener("piwe-event-bus-ready", () => { busAbsent = false; });
 }
 
@@ -93,10 +90,8 @@ if (typeof window !== "undefined" && typeof window.addEventListener === "functio
  */
 export function getEventBus(route: string, opts: GetEventBusOptions = {}): BusEventSource | null {
   if (typeof window === "undefined") return null;
-  // 启动批量已 settle 而槽仍不在 → 立即定案缺席（同步回退，调用方走原生 SSE）。
-  // §3-C1：部署了总线的页面 settle 时槽必已在（materialize 优先级），不会误伤。
-  if (!readSlot() && isExtBootSettled()) busAbsent = true;
-  // 缺席已定案 → 同步回退（slot 又挂上的极端窗口由 readSlot 兜底照常走总线）
+  // 部署定案未部署（manifest 无 aiti-event-bus）→ 唯一同步回退条件（调用方走原生 SSE）
+  if (eventBusDeployedVerdict() === false) busAbsent = true;
   if (busAbsent && !readSlot()) return null;
   const topic = opts.topic ?? topicFromRoute(route);
   const slot = readSlot();
@@ -226,11 +221,14 @@ export function getEventBus(route: string, opts: GetEventBusOptions = {}): BusEv
     return adapter;
   }
 
-  // 槽未挂（loader 懒加载竞态）：三源先到先定案（统一 SSE 端口方案 §3-C1）——
-  //   1. piwe-event-bus-ready 广播（register 时派发）：槽在 → 立即上总线
-  //   2. 启动批量 settle 信号：部署了总线的页面此时槽必已在；仍未挂 → 定案缺席回退
-  //   3. 硬超时兑底：仅作信号机制失效的最后防线（BOOT_SETTLED 前 3s 固定窗口已废——
-  //      它把「正常但慢的加载」误判成缺席，是 SSE 泄露的根因之一）
+  // 槽未挂（loader 懒加载竞态 / 宿主组件早于扩展 materialize）：**排队等待，不回退**
+  //（统一 SSE 端口方案 v2 §3-C，用户拍板：先用总线的代码进 queue，等总线就绪统一接上）。
+  // 等待源二选一定案：
+  //   1. piwe-event-bus-ready 广播（client register 挂槽）→ 上总线
+  //   2. onEventBusDeployed(false)（manifest 定案未部署）→ 转 CLOSED + 一次性 onerror
+  //      （调用方按各自契约回退原生 SSE）
+  // 已部署（verdict true/未知）时无超时放弃——部署=可用是平台契约，等到 register 为止；
+  // 期间 adapter 保持 CONNECTING（调用方视为连接建立中，不会另起原生 EventSource）。
   if (typeof window.addEventListener !== "function") {
     // 无事件面的极简环境（单测桩等）：无从等待也无从挂槽，立即定案缺席
     busAbsent = true;
@@ -246,26 +244,22 @@ export function getEventBus(route: string, opts: GetEventBusOptions = {}): BusEv
   };
   const onReady = () => {
     const s = readSlot();
-    if (!s) return; // 广播时槽不在（异常时序）：不定案，继续等 settle/超时
+    if (!s) return; // 广播时槽不在（异常时序）：继续等
     cleanupWait();
     beginSubscribe(s);
   };
-  const onSettle = () => {
+  const onVerdict = (deployed: boolean) => {
+    if (deployed) return; // 定案已部署：继续等 ready（ queue 不散）
     cleanupWait();
-    if (closed) return;
-    const s = readSlot();
-    if (s) beginSubscribe(s);
-    else markAbsent();
+    if (!closed) markAbsent();
   };
-  const timer = setTimeout(() => onSettle(), FALLBACK_WAIT_MS);
-  let unwaitSettle: () => void = () => {}; // 占位：onExtBootSettled 同步回调时 cleanupWait 已可用
+  let unwaitDeployed: () => void = () => {}; // 占位：onEventBusDeployed 同步回调时 cleanupWait 已可用
   const cleanupWait = () => {
     window.removeEventListener("piwe-event-bus-ready", onReady);
-    unwaitSettle();
-    clearTimeout(timer);
+    unwaitDeployed();
   };
   window.addEventListener("piwe-event-bus-ready", onReady);
-  unwaitSettle = onExtBootSettled(onSettle);
+  unwaitDeployed = onEventBusDeployed(onVerdict);
   const originalClose = adapter.close.bind(adapter);
   adapter.close = () => {
     cleanupWait();

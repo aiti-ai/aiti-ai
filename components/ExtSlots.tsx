@@ -76,7 +76,7 @@ import {
   setBootGraph,
 } from "./ext-client-loader";
 import type { PiWebBootGraph } from "@/lib/ext/client-modules";
-import { notifyExtBootSettled as notifyBootSignal } from "@/lib/ext-boot-signal";
+import { notifyExtBootSettled as notifyBootSignal, settleEventBusDeployed } from "@/lib/ext-boot-signal";
 
 /** The register(ctx) surface handed to a client bundle. */
 export interface ExtClientContext {
@@ -548,6 +548,14 @@ async function fetchManifestData(): Promise<ManifestData | null> {
       if (etag) saveManifestCache(etag, data);
     }
     if (!data) return null;
+    // 事件总线部署定案（manifest 事实，最早时机）：aiti-event-bus 在清单里 = 已安装
+    // 且启用（disabled 扩展 loadAll 跳过不进 manifest），client register 只是时间问题。
+    // getEventBus 据此把未 ready 的订阅请求排队挂起（绝不回退原生 SSE）；reload 重拉
+    // manifest 自动翻转（安装/卸载/启停）。失败（null return）不置位：维持乐观排队。
+    settleEventBusDeployed(
+      data.extensions.some((e) => e.id === "aiti-event-bus") ||
+      (data.graph?.entries ?? []).some((e) => e.id === "aiti-event-bus"),
+    );
     // manifest 元数据（name/icon/provides）→ 宿主 UI 标注扩展身份（顶栏自定义面板等）、
     // 并驱动内置 UI 的能力接管开关（useExtProvides）
     const metas: Record<string, ExtMeta> = {};

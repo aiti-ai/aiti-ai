@@ -54,6 +54,10 @@ export async function register(): Promise<void> {
   const { makeExtCore } = await import("@/lib/ext/core");
   const extRegistry = ensureRegistry(makeExtCore());
   await extRegistry.loadAll();
+  // 统一 SSE 端口单开先行（方案 §3-A 强化）：总线 /events /subscribe 路由与
+  // __piPageEvents 接管在其余扩展及宿主后续初始化之前就绪——不依赖扩展批量
+  // startup 顺序；扩展缺席（未安装/停用）静默跳过，消费方按各自契约回退。
+  await extRegistry.startupById("aiti-event-bus");
   await extRegistry.startAll();
 
   // 重启恢复 P0：boot 扫描 —— 上一进程的运行集迁入 interrupted 集 + 滚动 bootId。

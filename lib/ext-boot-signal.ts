@@ -1,14 +1,11 @@
 /**
- * ext-boot-signal — 扩展启动批量 settle 信号（lib 侧轻量共享，无 React/组件依赖）。
+ * ext-boot-signal — 宿主启动信号中心（lib 侧轻量共享，无 React/组件依赖）。
  *
- * 统一 SSE 端口方案 §3-C1：getEventBus（lib/event-bus-client.ts）的「总线缺席定案」
- * 锚定到扩展启动批量 settle，而非固定 3s 超时——配合 materialize 优先级（aiti-event-bus
- * 先挂槽），部署了总线的页面在 boot settle 时 window.__piEventBus 必已在；届时仍未挂槽
- * 才判缺席。这消除了「正常但慢的加载」被误判缺席 → 回退原生 EventSource → SSE 泄露的窗口。
- *
- * 置位方：ExtSlots.loadExtensions() 的 finally（成功/失败都算 settle，语义与宿主
- * extBootSettled 一致）；消费方：event-bus-client 等非组件 lib 模块（不能反向 import
- * components/ExtSlots，故信号经本模块中转）。
+ * 1）boot-settle：扩展启动批量 settle 信号（§3-C1）。
+ * 2）事件总线部署定案：manifest 拉取后置位 aiti-event-bus 是否在部署清单
+ *    （disabled 扩展不进 manifest = 清单即「已安装且启用」事实）。getEventBus
+ *    据此三态裁决：已部署未 ready → 订阅排队挂起（绝不回退原生）；未部署 →
+ *    回退；未知（manifest 未回）→ 乐观排队。置位方：ExtSlots.fetchManifestData。
  */
 
 let settled = false;
@@ -37,4 +34,40 @@ export function onExtBootSettled(fn: () => void): () => void {
   }
   listeners.add(fn);
   return () => listeners.delete(fn);
+}
+
+// ── 事件总线部署定案（统一 SSE 端口方案 v2：部署事实，非运行时猜测）──────
+// manifest 拉取后由宿主（ExtSlots.fetchManifestData）置位：aiti-event-bus 在
+// manifest 清单里（disabled 扩展 loadAll 跳过、不进 manifest）= 总线已安装且启用，
+// client register 只是时间问题。getEventBus 据此三态裁决：
+//   true  → 未 ready 的订阅请求进队列挂起（绝不回退原生 SSE——泄露根源杜绝）
+//   false → 未部署，调用方按各自契约回退原生 SSE（唯一回退条件）
+//   null  → manifest 未回（极早窗口）：乐观排队，待定案后分流
+// reload 拉新 manifest 可翻转定案（安装/卸载/启停），等待者随之分流。
+
+let busDeployed: boolean | null = null;
+const busDeployedListeners = new Set<(deployed: boolean) => void>();
+
+/** 部署定案（manifest 回来即调；值变化时通知等待者）。 */
+export function settleEventBusDeployed(deployed: boolean): void {
+  if (busDeployed === deployed) return;
+  busDeployed = deployed;
+  for (const fn of [...busDeployedListeners]) {
+    try { fn(deployed); } catch { /* 消费方异常不扩散 */ }
+  }
+}
+
+/** 当前定案：true 已部署 / false 未部署 / null 未知（manifest 未回）。 */
+export function eventBusDeployedVerdict(): boolean | null {
+  return busDeployed;
+}
+
+/** 订阅部署定案（已定案则同步触发一次）。返回退订函数。 */
+export function onEventBusDeployed(fn: (deployed: boolean) => void): () => void {
+  if (busDeployed !== null) {
+    try { fn(busDeployed); } catch { /* 消费方异常不扩散 */ }
+    return () => {};
+  }
+  busDeployedListeners.add(fn);
+  return () => busDeployedListeners.delete(fn);
 }

@@ -1027,19 +1027,45 @@ export class ExtRegistryImpl {
       .sort((a, b) => (b.ext.ext.startupPriority ?? 0) - (a.ext.ext.startupPriority ?? 0) || a.i - b.i)
       .map((x) => x.ext);
     for (const ext of ordered) {
-      const t0 = Date.now();
-      try {
-        await ext.ext.server?.startup?.(this.serverContext(ext));
-      } catch (e) {
-        const msg = `startup: ${e instanceof Error ? e.message : String(e)}`;
-        console.error(`[ext] ${ext.id} startup 失败:`, msg);
-        this.errors.set(ext.id, msg);
-      }
-      // 慢启动钩子告警：startup 阻塞全局 reload（含 extman 启停/安装），单钩子 >1s
-      // 视为异常（重活应放后台，只影响扩展自身功能的就绪速度）。
-      const ms = Date.now() - t0;
-      if (ms > 1000) console.warn(`[ext] slow startup hook: ${ext.id} took ${ms}ms (consider backgrounding init)`);
+      if (this.startedIds.has(ext.id)) continue; // 已被 startupById 单开先行启动：不重复
+      await this.startupOne(ext);
     }
+  }
+
+  /** 已执行 startup 的扩展 id（startupById/startAll 共账；shutdown 周期清空）。 */
+  private startedIds = new Set<string>();
+
+  /** 单扩展 startup（best-effort + 慢启动告警），成功后记账。 */
+  private async startupOne(ext: LoadedExtension): Promise<void> {
+    const t0 = Date.now();
+    try {
+      await ext.ext.server?.startup?.(this.serverContext(ext));
+    } catch (e) {
+      const msg = `startup: ${e instanceof Error ? e.message : String(e)}`;
+      console.error(`[ext] ${ext.id} startup 失败:`, msg);
+      this.errors.set(ext.id, msg);
+    }
+    // 慢启动钩子告警：startup 阻塞全局 reload（含 extman 启停/安装），单钩子 >1s
+    // 视为异常（重活应放后台，只影响扩展自身功能的就绪速度）。
+    const ms = Date.now() - t0;
+    if (ms > 1000) console.warn(`[ext] slow startup hook: ${ext.id} took ${ms}ms (consider backgrounding init)`);
+    this.startedIds.add(ext.id);
+  }
+
+  /**
+   * 统一 SSE 端口方案 §3-A 强化：总线服务端单开先行 startup——不等扩展批量。
+   * 宿主启动序列（instrumentation）在 loadAll 后、startAll 前单独调用：/events
+   * /subscribe 路由与 __piPageEvents 接管在任何消费扩展（及宿主后续初始化）之前
+   * 就绪。幂等：重复调用/与 startAll 重叠都不会二次 startup；扩展缺席（未安装/
+   * 停用）静默跳过（返回 false），消费方按各自契约回退。
+   * @returns 总线是否存在且已（或此前已）startup。
+   */
+  async startupById(id: string): Promise<boolean> {
+    if (this.startedIds.has(id)) return true;
+    const ext = this.extensions.get(id);
+    if (!ext) return false;
+    await this.startupOne(ext);
+    return true;
   }
 
   // ---- 方案 M：agent 会话级扩展点 ----
@@ -1141,6 +1167,7 @@ export class ExtRegistryImpl {
       .sort((a, b) => (a.ext.ext.startupPriority ?? 0) - (b.ext.ext.startupPriority ?? 0) || b.i - a.i)
       .map((x) => x.ext);
     for (const ext of ordered) {
+      this.startedIds.delete(ext.id); // 本周期 startup 账目清零（下周期重新记账）
       try {
         await ext.ext.server?.shutdown?.(this.serverContext(ext));
       } catch (e) {
