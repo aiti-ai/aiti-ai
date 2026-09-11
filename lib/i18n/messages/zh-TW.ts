@@ -423,7 +423,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.queueRecall": "召回",
     "chat.soundOn": "開",
     "chat.soundOff": "關",
-    "chat.extStatusToast": "擴充狀態已更新，點 ⓘ 查看",
+    "chat.extStatusToast": "擴充狀態已更新，點 + 查看",
     "chat.shell": "Shell",
     "chat.outputLocal": "輸出保留在本地",
     "chat.outputModel": "輸出會傳送給模型",

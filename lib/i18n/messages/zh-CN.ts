@@ -513,7 +513,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.queueRecall": "召回",
     "chat.soundOn": "开",
     "chat.soundOff": "关",
-    "chat.extStatusToast": "扩展状态已更新，点 ⓘ 查看",
+    "chat.extStatusToast": "扩展状态已更新，点 + 查看",
     "chat.minimizeQueue": "折叠队列面板",
     "chat.minimizeInput": "折叠输入面板",
     "chat.restoreBottom": "全部展开",

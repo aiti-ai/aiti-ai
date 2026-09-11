@@ -513,7 +513,7 @@ export const enLocale: LocalePlugin = {
     "chat.queueRecall": "Recall",
     "chat.soundOn": "On",
     "chat.soundOff": "Off",
-    "chat.extStatusToast": "Extension status updated — tap ⓘ",
+    "chat.extStatusToast": "Extension status updated — tap +",
     "chat.minimizeQueue": "Collapse queue panel",
     "chat.minimizeInput": "Collapse input panel",
     "chat.restoreBottom": "Expand all",
