@@ -40,7 +40,6 @@ import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentSessionPanel } from "./AgentSessionPanel";
 import { TerminalPanelBridge } from "./TerminalPanelBridge";
-import { DirectoryPicker } from "./DirectoryPicker";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
 import { useTheme } from "@/hooks/useTheme";
 import { THEME_OPTIONS } from "@/lib/theme";
@@ -863,8 +862,6 @@ export function AppShell() {
 
   const initialSessionId = initialNavigation.sessionId;
   const [activeCwd, setActiveCwd] = useState<string | null>(null);
-  // 右面板空态「打开文件夹」选择器（无 activeCwd 时经目录浏览器选工作区）。
-  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
   const activeProjectKeyRef = useRef<string | null>(null);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
@@ -1494,21 +1491,19 @@ export function AppShell() {
     recordFolder(folderPath, "add");
   }, [isMobile, recordFolder]);
 
-  // 右面板空态「打开文件夹」：目录选择器选工作区后打开 folder tab，并同步 cwd
-  //（此前空态按钮被 activeCwd 条件门控——无活跃工作区时按钮消失，只剩 noneOpen 文案）。
-  const handleEmptyStateOpenFolder = useCallback((folderPath: string) => {
-    setFolderPickerOpen(false);
-    handleOpenFolder(folderPath, getFileName(folderPath));
-    if (activeCwd === folderPath) return;
-    void fetch(apiUrl("/api/cwd/validate"), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ cwd: folderPath }),
-    })
+  // 右面板空态「打开当前工作目录」：有 activeCwd 直接打开 CWD；无则取默认工作目录
+  //（~/pi-cwd-YYYYMMDD，同侧栏「使用默认目录」语义）再打开——不弹目录选择器。
+  const handleOpenCurrentWorkspace = useCallback(() => {
+    if (activeCwd) {
+      handleOpenFolder(activeCwd, getFileName(activeCwd));
+      return;
+    }
+    void fetch(apiUrl("/api/default-cwd"), { method: "POST" })
       .then((res) => res.json())
-      .then((data: { cwd?: string; projectRoot?: string; projectKey?: string; error?: string }) => {
-        if (data.cwd && !data.error) {
-          handleCwdChange(data.cwd, data.projectRoot ?? null, data.projectKey ?? null);
+      .then((data: { cwd?: string; error?: string }) => {
+        if (data.cwd) {
+          handleCwdChange(data.cwd, null, null);
+          handleOpenFolder(data.cwd, getFileName(data.cwd));
         }
       })
       .catch(() => {});
@@ -4379,43 +4374,23 @@ export function AppShell() {
                  ? translate("files.clickTabToOpen")
                  : <>
                      <span>{translate("files.noneOpen")}</span>
-                     {activeCwd ? (
-                       <button
-                         type="button"
-                         onClick={() => handleOpenFolder(activeCwd, getFileName(activeCwd))}
-                         title={translate("files.openCwdFolder")}
-                         style={{
-                           display: "flex", alignItems: "center", gap: 6,
-                           padding: "6px 12px",
-                           background: "var(--bg-hover)", border: "1px solid var(--border)",
-                           borderRadius: 6, color: "var(--accent)", cursor: "pointer",
-                           fontSize: 12, fontWeight: 600,
-                         }}
-                       >
-                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                           <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                         </svg>
-                         {translate("files.openCwdFolder")}
-                       </button>
-                     ) : (
-                       <button
-                         type="button"
-                         onClick={() => setFolderPickerOpen(true)}
-                         title={translate("files.openFolder")}
-                         style={{
-                           display: "flex", alignItems: "center", gap: 6,
-                           padding: "6px 12px",
-                           background: "var(--bg-hover)", border: "1px solid var(--border)",
-                           borderRadius: 6, color: "var(--accent)", cursor: "pointer",
-                           fontSize: 12, fontWeight: 600,
-                         }}
-                       >
-                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                           <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
-                         </svg>
-                         {translate("files.openFolder")}
-                       </button>
-                     )}
+                     <button
+                       type="button"
+                       onClick={handleOpenCurrentWorkspace}
+                       title={translate("files.openCwd")}
+                       style={{
+                         display: "flex", alignItems: "center", gap: 6,
+                         padding: "6px 12px",
+                         background: "var(--bg-hover)", border: "1px solid var(--border)",
+                         borderRadius: 6, color: "var(--accent)", cursor: "pointer",
+                         fontSize: 12, fontWeight: 600,
+                       }}
+                     >
+                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                         <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+                       </svg>
+                       {translate("files.openCwd")}
+                     </button>
                    </>}
             </div>
           ) : null}
@@ -4454,13 +4429,6 @@ export function AppShell() {
         <TabBody tab={w} host="window" ctx={tabBodyCtx} />
       </DetachedTabWindow>
     ))}
-    {folderPickerOpen && (
-      <DirectoryPicker
-        initialPath={activeCwd ?? undefined}
-        onCancel={() => setFolderPickerOpen(false)}
-        onSelect={(path) => handleEmptyStateOpenFolder(path)}
-      />
-    )}
     {settingsSection && (
       <SettingsPanel
         cwd={projectTrustCwd}
