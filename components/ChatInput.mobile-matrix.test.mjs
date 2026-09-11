@@ -52,11 +52,11 @@ test("mobile matrix v4: 运行中·空输入 = 停止浮出；插队/排队不�
   assert.equal(m2.image, true);
 });
 
-test("mobile matrix v4: 运行中·有内容 = 全量浮出 [×, 发送, 停止, 插队, 排队]；v4 起停止不再限空输入", () => {
+test("mobile matrix v4/五审: 运行中·有内容 = [×随输入框, 停止, 插队, 排队]；发送不渲染（与插队重复——steer 唯一入口=插队）", () => {
   const m = matrix({ ...BASE, isStreaming: true, hasInputText: true });
   assert.deepEqual(
     { plus: m.plus, image: m.image, clear: m.clear, cont: m.cont, send: m.send, stop: m.stop, steer: m.steer, clock: m.clock },
-    { plus: true, image: true, clear: true, cont: false, send: true, stop: true, steer: true, clock: true },
+    { plus: true, image: true, clear: true, cont: false, send: false, stop: true, steer: true, clock: true },
   );
 });
 

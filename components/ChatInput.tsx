@@ -885,7 +885,7 @@ export interface MobileComposerMatrix {
   clear: boolean;
   /** 继续（空输入且非运行；渲染处再 && onContinue && canContinue）。 */
   cont: boolean;
-  /** 发送（有内容；运行中=立即引导）。 */
+  /** 发送（空闲且有内容；运行中不渲染——steer 引导唯一入口=插队，避免重复按钮 v4 五审）。 */
   send: boolean;
   /** 停止（运行中；v4 起[用户拍板]不再限空输入）。 */
   stop: boolean;
@@ -930,7 +930,8 @@ export function computeMobileComposerMatrix(opts: {
     image: true,
     clear: hasContent,
     cont: false,
-    send: hasContent,
+    // v4 五审：运行中不渲染发送（与插队重复——同是 sendQueued("steer")，唯一入口=插队）
+    send: false,
     stop: hasAbortCapability,
     steer: hasSteerCapability && hasContent,
     clock: hasFollowUpCapability && hasContent,
@@ -3955,9 +3956,43 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               fontFamily: "inherit",
               minHeight: compact ? 96 : 24,
               maxHeight: 200,
+              paddingRight: isMobile ? 34 : undefined,
               overflow: "auto",
             }}
           />
+          {/* v4 五审：× 清空钉回输入框尾部（框内右缘垂直居中）——始终跟随输入框（有内容即显，
+              不随底排上浮），点击 clearWithUndo（撤销 toast 保留）。移动端专用（桌面有键删）。 */}
+          {isMobile && mobileMatrix.clear && (
+            <button
+              type="button"
+              aria-label={t("chat.clearComposer")}
+              onClick={clearWithUndo}
+              style={{
+                position: "absolute",
+                right: 8,
+                top: "50%",
+                transform: "translateY(-50%)",
+                width: 26,
+                height: 26,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                padding: 0,
+                background: "var(--border)",
+                border: "none",
+                borderRadius: 99,
+                color: "var(--text-muted)",
+                cursor: "pointer",
+                zIndex: 1,
+                touchAction: "manipulation",
+                WebkitTouchCallout: "none",
+                userSelect: "none",
+                transition: "opacity 0.12s",
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><line x1="3.5" y1="3.5" x2="10.5" y2="10.5" /><line x1="10.5" y1="3.5" x2="3.5" y2="10.5" /></svg>
+            </button>
+          )}
           </div>
 
           {/* v4 右端组（§十九）：条件按钮组在「聚焦或有内容」时上浮（120ms 过渡，收起零占位）。
@@ -3978,33 +4013,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   transition: "opacity 0.12s, max-width 0.15s",
                 }}
               >
-                {mobileMatrix.clear && (
-                  <button
-                    type="button"
-                    aria-label={t("chat.clearComposer")}
-                    onClick={clearWithUndo}
-                    style={{
-                      flexShrink: 0,
-                      width: 32,
-                      height: 32,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      padding: 0,
-                      background: "none",
-                      border: "none",
-                      borderRadius: 9,
-                      color: "var(--text-muted)",
-                      cursor: "pointer",
-                      touchAction: "manipulation",
-                      WebkitTouchCallout: "none",
-                      userSelect: "none",
-                      transition: "opacity 0.12s, color 0.12s",
-                    }}
-                  >
-                    <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><line x1="3.2" y1="3.2" x2="10.8" y2="10.8" /><line x1="10.8" y1="3.2" x2="3.2" y2="10.8" /></svg>
-                  </button>
-                )}
                 <ExtSlot name="composerAffix" extra={{ hasContent, hasInputText, isStreaming, focused: inputFocused, inputValue: value, textareaRef, setInputValue, focusComposer: refocusInput }} />
                 {mobileMatrix.cont && onContinue && canContinue && (
                   <MobileIconButton label={t("chat.continue")} onClick={() => { onContinue(); refocusInput(); }} color="rgba(5,150,105,1)">
@@ -4017,9 +4025,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 {mobileMatrix.send && (
                   <button
                     type="button"
-                    onClick={() => { if (isStreaming) { sendQueued("steer"); } else { void handleSend(); } refocusInput(); }}
+                    onClick={() => { void handleSend(); refocusInput(); }}
                     disabled={!mobileSendEnabled}
-                    title={isStreaming ? t("chat.mPlaceholderSteer") : undefined}
                     style={{
                       flexShrink: 0,
                       display: "flex", alignItems: "center", gap: 7,
@@ -4067,14 +4074,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     onClick={() => { sendQueued("followup"); refocusInput(); }}
                     color="rgba(99,102,241,1)"
                   >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><polyline points="12 7 12 12 15 14" /></svg>
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M5 22h14" /><path d="M5 2h14" /><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22" /><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 10l4.414-4.414A2 2 0 0 0 17 4.172V2" /></svg>
                   </MobileIconButton>
                 )}
               </div>
               <MobileIconButton
                 label={t("chat.addImage")}
-                title={isStreaming ? t("chat.addImageRunning") : undefined}
-                disabled={isStreaming}
                 onClick={() => fileInputRef.current?.click()}
               >
                 <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" /><circle cx="8.7" cy="8.7" r="1.6" /><path d="M21 15.5l-4.5-4.5L6 21.5" /></svg>
