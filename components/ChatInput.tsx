@@ -3955,7 +3955,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               ＋ 两态不位移；图片收起态在单行 textarea 右缘、展开态在语音之后。
               收起态单行 [＋|textarea|图片] 不变。data-composer-affix 标记随组迁移——🎤 手势不被劫持。 */}
           {isMobile && (
-            <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, ...((isMobile && mobileExpanded) ? { flex: "1 0 auto" } : null) }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, flexGrow: (isMobile && mobileExpanded) ? 1 : 0 }}>
               {(compact || (isMobile && mobileExpanded)) && mobilePlusButton}
               {isMobile && mobileExpanded && !compact && <span aria-hidden="true" style={{ flex: 1 }} />}
               <div
