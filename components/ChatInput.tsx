@@ -2007,6 +2007,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       clone.style.width = `${el.clientWidth - 2}px`;
       clone.style.height = "auto";
       clone.style.minHeight = "0";
+      // v4 八审：placeholder 折行不计入内容测量——空输入时全宽占位文案折 2 行 →
+      // scrollHeight 51>30 → buttonsWrapped 误判 true → 未聚焦空输入卡死两行布局、
+      // 底部多一条隐形按钮排（真机截图：输入框不落底+底部空白）。测的是「输入内容」是否折行。
+      clone.placeholder = "";
       document.body.appendChild(clone);
       const fullWidthHeight = clone.scrollHeight;
       const fullWidthScrollW = clone.scrollWidth;
@@ -3960,6 +3964,16 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               overflow: "auto",
             }}
           />
+          {/* v4 八审：图片恒驻的收起态位（textarea 右缘，未聚焦+空输入单行态）；
+              展开态由条件组内位承接（语音之后），两处互斥渲染不重复 */}
+          {isMobile && !compact && !mobileExpanded && (
+            <MobileIconButton
+              label={t("chat.addImage")}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" /><circle cx="8.7" cy="8.7" r="1.6" /><path d="M21 15.5l-4.5-4.5L6 21.5" /></svg>
+            </MobileIconButton>
+          )}
           {/* v4 五审：× 清空钉回输入框尾部（框内右缘垂直居中）——始终跟随输入框（有内容即显，
               不随底排上浮），点击 clearWithUndo（撤销 toast 保留）。移动端专用（桌面有键删）。 */}
           {isMobile && mobileMatrix.clear && (
@@ -4014,13 +4028,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 }}
               >
                 <ExtSlot name="composerAffix" extra={{ hasContent, hasInputText, isStreaming, focused: inputFocused, inputValue: value, textareaRef, setInputValue, focusComposer: refocusInput }} />
-                {/* v4 六审：图片排在🎤语音之后、其余按钮（继续/发送/停止/插队/排队）之前 */}
+                {/* v4 六/八审：图片在🎤语音之后、其余按钮之前；仅展开态渲染（收起态由 wrapper 右缘位承接，恒驻不重复） */}
+                {mobileExpanded && (
                 <MobileIconButton
                   label={t("chat.addImage")}
                   onClick={() => fileInputRef.current?.click()}
                 >
                   <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" /><circle cx="8.7" cy="8.7" r="1.6" /><path d="M21 15.5l-4.5-4.5L6 21.5" /></svg>
                 </MobileIconButton>
+                )}
                 {mobileMatrix.cont && onContinue && canContinue && (
                   <MobileIconButton label={t("chat.continue")} onClick={() => { onContinue(); refocusInput(); }} color="rgba(5,150,105,1)">
                     <svg width="15" height="15" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
