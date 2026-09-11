@@ -3816,15 +3816,44 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           )}
           {bottomMode === "minimal" ? (
             /* v4 十三审：minimal 折叠态 = 纯抓手（与 notch 同款）——无 queue 细横杠、
-                有 queue 嵌数字胶囊 ⎯ N ⎯，点按展开回 full；原「已排队 N」文字条退休。 */
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 44 }}>
-              <NotchHandle
-                capsule={queueCount > 0}
-                count={queueCount}
-                onClick={() => cycleBottomMode()}
-                title={t("chat.restoreBottom")}
-              />
-            </div>
+                有 queue 嵌数字胶囊 ⎯ N ⎯，点按展开回 full；原「已排队 N」文字条退休。
+                小屏悬浮化：44px 占位条会把消息流顶开、透出壳底白色空带（用户反馈）——
+                改 absolute 浮层不占布局，消息流延伸到底，两侧全透明不挡触控
+                （pointer-events 收敛到把手本体）。桌面保持流内占位不变。 */
+            isMobile ? (
+              <div
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  bottom: 0,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  minHeight: 44,
+                  pointerEvents: "none",
+                  zIndex: 5,
+                }}
+              >
+                <div style={{ pointerEvents: "auto" }}>
+                  <NotchHandle
+                    capsule={queueCount > 0}
+                    count={queueCount}
+                    onClick={() => cycleBottomMode()}
+                    title={t("chat.restoreBottom")}
+                  />
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 44 }}>
+                <NotchHandle
+                  capsule={queueCount > 0}
+                  count={queueCount}
+                  onClick={() => cycleBottomMode()}
+                  title={t("chat.restoreBottom")}
+                />
+              </div>
+            )
           ) : (
           <div
             ref={inputRowRef}
