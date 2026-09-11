@@ -3916,7 +3916,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             </MobileIconButton>
           )}
           {/* v4 五审：× 清空钉回输入框尾部（框内右缘垂直居中）——始终跟随输入框（有内容即显，
-              不随底排上浮），点击 clearWithUndo（撤销 toast 保留）。移动端专用（桌面有键删）。 */}
+              不随底排上浮），点击 clearWithUndo（撤销 toast 保留）。移动端专用（桌面有键删）。
+              v4 十五审：样式对齐系统 type=search 原生清除钮——细 × 无底色，小触达区。 */}
           {isMobile && mobileMatrix.clear && (
             <button
               type="button"
@@ -3927,25 +3928,25 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 right: 8,
                 top: "50%",
                 transform: "translateY(-50%)",
-                width: 26,
-                height: 26,
+                width: 20,
+                height: 20,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
                 padding: 0,
-                background: "var(--border)",
+                background: "none",
                 border: "none",
                 borderRadius: 99,
-                color: "var(--text-muted)",
+                color: "var(--text-dim)",
                 cursor: "pointer",
                 zIndex: 1,
                 touchAction: "manipulation",
                 WebkitTouchCallout: "none",
                 userSelect: "none",
-                transition: "opacity 0.12s",
+                transition: "opacity 0.12s, color 0.12s",
               }}
             >
-              <svg width="12" height="12" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><line x1="3.5" y1="3.5" x2="10.5" y2="10.5" /><line x1="10.5" y1="3.5" x2="3.5" y2="10.5" /></svg>
+              <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><line x1="3.5" y1="3.5" x2="10.5" y2="10.5" /><line x1="10.5" y1="3.5" x2="3.5" y2="10.5" /></svg>
             </button>
           )}
           </div>
