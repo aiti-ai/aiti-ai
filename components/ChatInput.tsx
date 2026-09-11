@@ -3960,21 +3960,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           />
           </div>
 
-          {/* v4 右端组（§十九）：图片恒驻；条件按钮组（清空/🎤插槽/继续/
-              发送/停止/插队/排队）在「聚焦或有内容」时上浮（120ms 过渡，收起时零占位）。
-              ＋(信息面板) 左置（v4 重审「左端首位」，textarea 左侧；换行/compact 随本簇）。
-              data-composer-affix 标记随组迁移——🎤 按住说话手势不被折叠手势劫持。 */}
+          {/* v4 右端组（§十九）：条件按钮组在「聚焦或有内容」时上浮（120ms 过渡，收起零占位）。
+              v4 四审（用户拍板「＋/图片位置不要动，最后一排中间空出来」）：展开态按钮排
+              [＋ 固定左｜弹性空档｜条件组｜图片 固定右]——＋/图片两端锚定，不随条件组伸缩移动；
+              收起态单行 [＋|textarea|图片] 不变。data-composer-affix 标记随组迁移——🎤 手势不被劫持。 */}
           {isMobile && (
-            <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0, ...((isMobile && mobileExpanded) ? { flex: "1 0 auto" } : null) }}>
               {(compact || (isMobile && mobileExpanded)) && mobilePlusButton}
-              <MobileIconButton
-                label={t("chat.addImage")}
-                title={isStreaming ? t("chat.addImageRunning") : undefined}
-                disabled={isStreaming}
-                onClick={() => fileInputRef.current?.click()}
-              >
-                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" /><circle cx="8.7" cy="8.7" r="1.6" /><path d="M21 15.5l-4.5-4.5L6 21.5" /></svg>
-              </MobileIconButton>
+              {isMobile && mobileExpanded && !compact && <span aria-hidden="true" style={{ flex: 1 }} />}
               <div
                 data-composer-affix="1"
                 style={{
@@ -4078,6 +4071,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </MobileIconButton>
                 )}
               </div>
+              <MobileIconButton
+                label={t("chat.addImage")}
+                title={isStreaming ? t("chat.addImageRunning") : undefined}
+                disabled={isStreaming}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2.5" /><circle cx="8.7" cy="8.7" r="1.6" /><path d="M21 15.5l-4.5-4.5L6 21.5" /></svg>
+              </MobileIconButton>
             </div>
           )}
           {!isMobile && (isStreaming ? (
