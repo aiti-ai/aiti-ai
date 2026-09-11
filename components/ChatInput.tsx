@@ -3896,10 +3896,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           ))}
           <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, sessionId, textareaRef, setInputValue, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen, model }} />
           {/* textarea 包裹层：affix 位（框内右缘）的定位上下文；flex 契约从 textarea 移到包裹层。
-              ＋ 在包裹层内 textarea 左缘（v4 重审「左端首位」）——外层 flexWrap 不再可能把
-              ＋ 与 chatInputTop 条目排到上一行；换行态/compact 时改由右端按钮簇承接。 */}
-          <div style={{ position: "relative", flex: compact ? "none" : buttonsWrapped ? "1 1 100%" : "1 1 0", minWidth: 0, display: "flex" }}>
-          {isMobile && !compact && !buttonsWrapped && mobilePlusButton}
+              v4 三审（用户拍板：聚焦或有输入 → 输入框与最底一排**分开**）：
+              展开态（mobileExpanded=聚焦或有内容）textarea 独占整行（flex 100%），
+              全部按钮固定最底一排；收起态单行 [＋|textarea|图片]。 */}
+          <div style={{ position: "relative", flex: compact ? "none" : buttonsWrapped || (isMobile && mobileExpanded) ? "1 1 100%" : "1 1 0", minWidth: 0, display: "flex" }}>
+          {isMobile && !compact && !mobileExpanded && mobilePlusButton}
           <textarea
             ref={textareaRef}
             data-chat-input="1"
@@ -3965,7 +3966,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               data-composer-affix 标记随组迁移——🎤 按住说话手势不被折叠手势劫持。 */}
           {isMobile && (
             <div style={{ display: "flex", alignItems: "center", gap: 2, flexShrink: 0 }}>
-              {(compact || buttonsWrapped) && mobilePlusButton}
+              {(compact || (isMobile && mobileExpanded)) && mobilePlusButton}
               <MobileIconButton
                 label={t("chat.addImage")}
                 title={isStreaming ? t("chat.addImageRunning") : undefined}
