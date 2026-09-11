@@ -68,6 +68,17 @@ export function immediateEntries(graph: PiWebBootGraph): PiWebBootEntry[] {
   return graph.entries.filter(isImmediateEntry);
 }
 
+/** 启动 materialize 顺序（统一 SSE 端口方案 §3-B）：立即项按 priority 降序稳定排序
+ *  （同优先级保持图序）。调用方先单独 materialize 返回值首项（priority > 0 的基础设施
+ *  扩展，如 aiti-event-bus → window.__piEventBus 先挂槽），其余立即项并行——消费方
+ *  getEventBus 探测不再有「总线晚到」竞态窗口。 */
+export function immediateEntriesByPriority(graph: PiWebBootGraph): PiWebBootEntry[] {
+  return immediateEntries(graph)
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) => (b.e.priority ?? 0) - (a.e.priority ?? 0) || a.i - b.i)
+    .map((x) => x.e);
+}
+
 /** 清除不在 activeIds 里的 slot 声明（manifest 重拉后调用——已卸载/禁用的扩展
  *  不再出现在 manifest，其旧声明残留会让 pendingForSlot 每次渲染都徒劳触发）。 */
 export function pruneDeclaredSlots(activeIds: Iterable<string>): void {

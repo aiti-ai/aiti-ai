@@ -653,6 +653,14 @@ export interface PiWebExtension {
    */
   optionalDependsOn?: string[];
   /**
+   * 服务端 startup 优先级（统一 SSE 端口方案 §3-A）：越大越先启动（默认 0；同优先级
+   * 保持扫描原序，稳定排序）。shutdown 对称逆序（低优先先停）。用途：宿主基础设施级
+   * 扩展（如 aiti-event-bus=100）必须在消费扩展之前完成 startup——总线服务出口/路由
+   * 先就位，消费方不得因总线晚到另起炉灶。只影响 start/shutdown 顺序，不动 dependsOn
+   * 语义（它仍是声明性警告）。
+   */
+  startupPriority?: number;
+  /**
    * 提供的能力（capability，多实现）：同能力可多扩展同时声明，消费方 dependsOn
    * 可指向能力名，由平台解析出生效提供者（裁决：用户 pin > takeover 声明者 >
    * semver 最新 > 扩展 id 字典序）。约定能力名带 "cap." 前缀（不强制，id 命中优先）。

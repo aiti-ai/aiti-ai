@@ -58,7 +58,7 @@ import {
 import {
   entryOf,
   getBootGraph,
-  immediateEntries,
+  immediateEntriesByPriority,
   isImmediateEntry,
   materialize,
   materializedIds,
@@ -76,6 +76,7 @@ import {
   setBootGraph,
 } from "./ext-client-loader";
 import type { PiWebBootGraph } from "@/lib/ext/client-modules";
+import { notifyExtBootSettled as notifyBootSignal } from "@/lib/ext-boot-signal";
 
 /** The register(ctx) surface handed to a client bundle. */
 export interface ExtClientContext {
@@ -602,6 +603,9 @@ const extBootSettledListeners = new Set<() => void>();
 
 function notifyExtBootSettled(): void {
   extBootSettled = true;
+  // 统一 SSE 端口方案 §3-C1：同步置位 lib 侧信号——event-bus-client 的 getEventBus
+  // 把「总线缺席定案」锚定到本信号（而非固定 3s 超时），消除慢加载误判回退窗口。
+  notifyBootSignal();
   for (const listener of [...extBootSettledListeners]) {
     try { listener(); } catch { /* 快照通知失败不阻断 */ }
   }
@@ -619,13 +623,20 @@ async function loadExtensions(): Promise<void> {
     // （register(ctx) 调用，副作用发生）。immediately:false 的懒加载扩展既不预取也不
     // materialize——首次渲染到它声明的插槽时由 useExtSlotItems 按需触发（下载+注册）。
     // 失败隔离：单扩展失败不影响其他。
-    const immediate = immediateEntries(data.graph ?? { rev: "", entries: [] });
+    const immediate = immediateEntriesByPriority(data.graph ?? { rev: "", entries: [] });
     await Promise.allSettled(immediate.map((e) => prefetch(e.id)));
-    for (const entry of immediate) {
+    // materialize 调度（统一 SSE 端口方案 §3-B）：先单独 materialize 最高 priority 项
+    // （aiti-event-bus → window.__piEventBus 先挂槽，消费方 getEventBus 探测无竞态窗口），
+    // 其余立即项并行（register 副作用彼此独立，无互相依赖；materializing Map 互斥防重，
+    // StrictMode 双 effect 亦安全）——顺带消除 51 扩展串行 register 的启动瓶颈。
+    const matBoot = (entry: (typeof immediate)[number]) => {
       const ext = manifestCache.get(entry.id) ?? data.extensions.find((e) => e.id === entry.id);
-      if (!ext) continue; // 图里有条目但 manifest 无对应扩展——跳过，不构造 ctx
-      await materialize(entry.id, () => makeClientContext(ext));
-    }
+      if (!ext) return Promise.resolve(); // 图里有条目但 manifest 无对应扩展——跳过，不构造 ctx
+      return materialize(entry.id, () => makeClientContext(ext));
+    };
+    const [first, ...rest] = immediate;
+    if (first) await matBoot(first);
+    await Promise.allSettled(rest.map(matBoot));
   } finally {
     notifyExtBootSettled();
   }
@@ -661,13 +672,22 @@ export async function reloadExtensions(opts?: { resyncOnly?: boolean }): Promise
         .map((e) => e.id);
       // 反卷 + 新增的扩展重新 prefetch + materialize。懒加载（immediately:false）项保持
       // 懒——仅反卷清掉旧注册，新 bundle 留给插槽按需触发（与启动批量一致）。
-      for (const id of [...invalidated, ...added]) {
-        const ext = manifestCache.get(id);
-        const entry = entryOf(id);
-        if (!ext || !entry || !isImmediateEntry(entry)) continue;
+      // materialize 调度同启动批量（§3-B）：最高 priority 项（总线）先单独重挂，其余并行。
+      const reloadIds = [...invalidated, ...added]
+        .filter((id) => {
+          const entry = entryOf(id);
+          return manifestCache.has(id) && entry != null && isImmediateEntry(entry);
+        })
+        .map((id, i) => ({ id, p: entryOf(id)?.priority ?? 0, i }))
+        .sort((a, b) => b.p - a.p || a.i - b.i)
+        .map((x) => x.id);
+      const matId = async (id: string) => {
         await prefetch(id);
-        await materialize(id, () => makeClientContext(ext));
-      }
+        await materialize(id, () => makeClientContext(manifestCache.get(id)!));
+      };
+      const [firstId, ...restIds] = reloadIds;
+      if (firstId) await matId(firstId);
+      await Promise.allSettled(restIds.map(matId));
       return { invalidated };
     } catch (e) {
       console.error("[ext] reload failed:", e);

@@ -26,6 +26,10 @@ export interface PiWebBootEntry {
   inject?: string[];
   /** 阶段一 prefetch 标记：启动即拉取注册 factory；未标记的在首次 materialize 时拉取。 */
   immediately?: boolean;
+  /** 前端 materialize 优先级（统一 SSE 端口方案 §3-B）：越大越先——启动批量先单独
+   *  materialize 最高 priority 项（aiti-event-bus → window.__piEventBus 先挂槽），
+   *  其余立即项并行。缺省 = 0，与后端 startupPriority 同源透传。 */
+  priority?: number;
 }
 
 /** 注入前端的完整启动图。 */
@@ -55,6 +59,8 @@ export function buildBootGraph(
     hash: string;
     inject?: string[];
     immediately?: boolean;
+    /** 与 PiWebBootEntry.priority 同名透传（扩展 startupPriority）。 */
+    priority?: number;
   }>,
 ): PiWebBootGraph {
   const rows: PiWebBootEntry[] = entries
@@ -65,9 +71,11 @@ export function buildBootGraph(
       rev: e.hash,
       ...(e.inject?.length ? { inject: e.inject } : {}),
       ...(e.immediately === false ? { immediately: false } : {}),
+      ...(typeof e.priority === "number" && e.priority !== 0 ? { priority: e.priority } : {}),
     }));
   if (rows.length === 0) return EMPTY_BOOT_GRAPH;
-  const graphRev = hashText(JSON.stringify(rows.map((r) => ({ id: r.id, rev: r.rev, inject: r.inject }))));
+  // priority 纳入图 hash：优先级变化（如基础设施扩展调整）也要触发图 rev 变化 → 前端对账
+  const graphRev = hashText(JSON.stringify(rows.map((r) => ({ id: r.id, rev: r.rev, inject: r.inject, priority: r.priority ?? 0 }))));
   return { rev: graphRev, entries: rows };
 }
 

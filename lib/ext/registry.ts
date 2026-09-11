@@ -985,6 +985,10 @@ export class ExtRegistryImpl {
           // 懒加载：ui.clientImmediately === false → 图行标 immediately:false，
           // 启动阶段不 materialize，首次渲染到声明插槽时才加载。
           immediately: e.ext.ui?.clientImmediately === false ? false : undefined,
+          // 前端 materialize 优先级透传（统一 SSE 端口方案 §3-B）：ExtSlots 先单独
+          // materialize 最高 priority 项（aiti-event-bus 的 window.__piEventBus 先挂槽），
+          // 其余立即项并行。undefined 不进行（前端默认 0，与后端一致）。
+          priority: e.ext.startupPriority,
         })),
     );
     return this._bootGraph;
@@ -1015,7 +1019,14 @@ export class ExtRegistryImpl {
   /** Invoke all server.startup hooks (best-effort per extension). */
   async startAll(): Promise<void> {
     this.provideCoreServices();
-    for (const ext of this.extensions.values()) {
+    // 统一 SSE 端口方案 §3-A：按 startupPriority 降序稳定排序（默认 0，同优先级保持
+    // 扫描原序）——基础设施级扩展（aiti-event-bus=100）的 startup 先于一切消费扩展：
+    // __piPageEvents 访问器接管、publish/publish-local 服务出口、/subscribe /events
+    // 路由在其它扩展 startup 发布前就绪（消费方不得因总线晚到另起炉灶/撞 404）。
+    const ordered = [...this.extensions.values()].map((ext, i) => ({ ext, i }))
+      .sort((a, b) => (b.ext.ext.startupPriority ?? 0) - (a.ext.ext.startupPriority ?? 0) || a.i - b.i)
+      .map((x) => x.ext);
+    for (const ext of ordered) {
       const t0 = Date.now();
       try {
         await ext.ext.server?.startup?.(this.serverContext(ext));
@@ -1124,7 +1135,12 @@ export class ExtRegistryImpl {
 
   async shutdown(): Promise<void> {
     this.sessionAnnotators.clear();
-    for (const ext of this.extensions.values()) {
+    // 与 startAll 对称逆序（priority 低者先停，总线最后停）：reload 期间消费扩展
+    // 先退订/收尾，基础设施级扩展最后收口（统一 SSE 端口方案 §3-A）。
+    const ordered = [...this.extensions.values()].map((ext, i) => ({ ext, i }))
+      .sort((a, b) => (a.ext.ext.startupPriority ?? 0) - (b.ext.ext.startupPriority ?? 0) || b.i - a.i)
+      .map((x) => x.ext);
+    for (const ext of ordered) {
       try {
         await ext.ext.server?.shutdown?.(this.serverContext(ext));
       } catch (e) {
