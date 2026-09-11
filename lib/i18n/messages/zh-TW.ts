@@ -400,7 +400,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.clearedToast": "已清空",
     "chat.voiceHold": "按住說話",
     "chat.delayedTask": "延時任務",
-    "chat.insertCommand": "使用命令",
+    "chat.insertCommand": "命令",
     "chat.addImage": "新增圖片",
     "chat.addImageRunning": "執行中不能新增圖片",
     "chat.steerFromQueueTitle": "打斷並注入佇列首條",

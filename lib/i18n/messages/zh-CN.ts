@@ -491,7 +491,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.clearedToast": "已清空",
     "chat.voiceHold": "按住说话",
     "chat.delayedTask": "延时任务",
-    "chat.insertCommand": "使用命令",
+    "chat.insertCommand": "命令",
     "chat.addImage": "添加图片",
     "chat.addImageRunning": "运行中不能添加图片",
     "chat.steerFromQueueTitle": "打断并注入队列首条",
