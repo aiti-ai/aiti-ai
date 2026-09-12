@@ -1,13 +1,14 @@
 "use client";
 
-import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useSyncExternalStore } from "react";
+import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiUrl, inAppPathname, withBasePath } from "@/lib/base-path";
 import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
 
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { PiWebTitle } from "./PiWebTitle";
-import { ChatWindow } from "./ChatWindow";
+import { ChatWindow, type CompactControls } from "./ChatWindow";
+import { contextUrgency, CTX_BREATHE_CSS } from "@/lib/context-urgency";
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
@@ -455,6 +456,8 @@ export function AppShell() {
   const autoNameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** ChatWindow 注册的「拉取最新会话统计」回调（含 idle 会话的 contextUsage） */
   const [sessionStatsRefresh, setSessionStatsRefresh] = useState<(() => void) | null>(null);
+  /** ChatWindow 注册的压缩控制三态（compact/abort/cancelQueue + isCompacting/compactQueued）——会话信息面板压缩按钮数据源 */
+  const [compactControls, setCompactControls] = useState<CompactControls | null>(null);
   const activeSessionIdRef = useRef<string | null>(selectedSession?.id ?? null);
   activeSessionIdRef.current = selectedSession?.id ?? null;
   const handleSessionStatsChange = useCallback((stats: SessionStatsInfo | null) => {
@@ -1479,6 +1482,16 @@ export function AppShell() {
     folderName: string,
     options?: { select?: boolean },
   ) => {
+    // aiti-folder dock face 优先（文件夹统一走 dock 状态机——右栏 dock tab 带全套 ⇱
+    // 位置菜单/✕/双击拆窗；旧式 folder tab 无这些控件）。扩展未部署/未挂载时回落
+    // 旧式 tab。openFolderDocked 内部 present dock:right-panel → 宿主经
+    // piwe-float-present-change 自动展开右栏并激活该 tab（含幂等 activate）。
+    const dockApi = (window as unknown as { __aitiFolder?: { openFolderDocked?: (p: string, z: string) => void } }).__aitiFolder;
+    if (dockApi && typeof dockApi.openFolderDocked === "function") {
+      dockApi.openFolderDocked(folderPath, "right-panel");
+      recordFolder(folderPath, "add");
+      return;
+    }
     const select = options?.select !== false; // default true
     const tabId = `folder:${folderPath}`;
     setFileTabs((prev) => openFolderTab(prev, { folderName, folderPath, tabId }));
@@ -3498,12 +3511,13 @@ export function AppShell() {
             const fmt = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
             const costStr = c > 0 ? (c >= 0.01 ? fmtMoney(c, 2) : fmtMoneySmall()) : null;
 
-            let ctxColor = "var(--text-muted)";
+            // 紧迫度色阶唯一来源 lib/context-urgency.ts（顶栏是色阶基准；critical 档呼吸动画）
+            const ctxUrg = contextUrgency(contextUsage?.contextWindow ? contextUsage.percent : null);
+            const ctxColor = ctxUrg.color;
+            const ctxBreathe = ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined;
             let ctxStr: string | null = null;
             if (contextUsage?.contextWindow) {
               const pct = contextUsage.percent;
-              if (pct !== null && pct > 90) ctxColor = "#ef4444";
-              else if (pct !== null && pct > 70) ctxColor = "rgba(234,179,8,0.95)";
               ctxStr = pct !== null ? `${pct.toFixed(0)}% / ${fmt(contextUsage.contextWindow)}` : `? / ${fmt(contextUsage.contextWindow)}`;
             }
 
@@ -3569,7 +3583,7 @@ export function AppShell() {
                 {/* 手机档：电池百分比式 context 指示（dome 图标 + 颜色分档的百分比，>70% 黄 / >90% 红）。
                     只放这一个紧凑指示，完整统计（in/out/cost/cache…）不塞行内——点开弹窗查看。 */}
                 {isMobile && contextUsage?.percent != null && (
-                  <span style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0, color: ctxColor }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 3, flexShrink: 0, color: ctxColor, animation: ctxBreathe }}>
                     <svg width="11" height="11" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
                       <path d="M1 9 L1 5 Q1 1 5 1 Q9 1 9 5 L9 9" /><line x1="1" y1="9" x2="9" y2="9" />
                     </svg>
@@ -3607,7 +3621,7 @@ export function AppShell() {
                   </span>
                 )}
                 {!isMobile && ctxStr && (
-                  <span style={{ display: "flex", alignItems: "center", gap: 4, color: ctxColor }}>
+                  <span style={{ display: "flex", alignItems: "center", gap: 4, color: ctxColor, animation: ctxBreathe }}>
                     <svg width="12" height="12" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round">
                       <path d="M1 9 L1 5 Q1 1 5 1 Q9 1 9 5 L9 9" /><line x1="1" y1="9" x2="9" y2="9" />
                     </svg>
@@ -3857,9 +3871,62 @@ export function AppShell() {
                     ];
                     const ctx = contextUsage ?? sessionStats.contextUsage;
                     const formatCompact = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(0)}k` : String(n);
+                    // 上下文行：百分比按紧迫度着色 + 22px 三态压缩按钮（与大屏/弹窗按钮同矩阵，i18n 复用零新增）
+                    const ctxUrg = contextUrgency(ctx?.contextWindow ? ctx.percent : null);
+                    const compactBusyColor = compactControls?.isCompacting ? "#ef4444" : compactControls?.compactQueued ? "#d97706" : ctxUrg.color;
+                    const compactTitle = compactControls?.isCompacting
+                      ? translate("chat.stopCompaction")
+                      : compactControls?.compactQueued
+                        ? translate("chat.cancelCompactQueue")
+                        : translate("chat.compactContext");
+                    const compactBtn = (compactControls?.compact && ctx?.contextWindow) ? (
+                      <button
+                        type="button"
+                        title={compactTitle}
+                        aria-label={compactTitle}
+                        onClick={() => {
+                          if (compactControls!.isCompacting) compactControls!.abort?.();
+                          else if (compactControls!.compactQueued) compactControls!.cancelQueue?.();
+                          else void compactControls!.compact?.();
+                        }}
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          width: 22,
+                          height: 22,
+                          color: compactBusyColor,
+                          background: compactControls?.isCompacting ? "rgba(239,68,68,0.08)" : compactControls?.compactQueued ? "rgba(217,119,6,0.1)" : "transparent",
+                          border: `1px solid ${compactControls?.isCompacting ? "rgba(239,68,68,0.35)" : compactControls?.compactQueued ? "rgba(217,119,6,0.4)" : "var(--border)"}`,
+                          borderRadius: 4,
+                          cursor: "pointer",
+                          flex: "0 0 auto",
+                          animation: !compactControls?.isCompacting && !compactControls?.compactQueued && ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined,
+                          transition: "color 0.12s, border-color 0.12s, background 0.12s",
+                        }}
+                      >
+                        {compactControls?.isCompacting ? (
+                          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden="true"><rect x="2" y="2" width="6" height="6" rx="1" fill="currentColor" /></svg>
+                        ) : compactControls?.compactQueued ? (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10" /><polyline points="12 6 12 12 16 14" /></svg>
+                        ) : (
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="10" y1="14" x2="3" y2="21" /><line x1="21" y1="3" x2="14" y2="10" /></svg>
+                        )}
+                      </button>
+                    ) : null;
                     const extraTokenRows = [
                        ...(sessionStats.cost > 0 ? [[translate("session.cost"), `$${sessionStats.cost.toFixed(4)}`]] : []),
-                       ...(ctx?.contextWindow ? [[translate("session.context"), `${ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"} / ${formatCompact(ctx.contextWindow)}`]] : []),
+                       ...(ctx?.contextWindow ? [[translate("session.context"), (
+                         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                           <span style={{
+                             color: ctxUrg.color,
+                             fontVariantNumeric: "tabular-nums",
+                             animation: ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined,
+                           }}>{ctx.percent !== null ? `${ctx.percent.toFixed(1)}%` : "?"}</span>
+                           <span>/ {formatCompact(ctx.contextWindow)}</span>
+                           {compactBtn}
+                         </span>
+                       )]] : []),
                        // Cache hit rate = cache reads / (input + cache writes + cache reads) — the denominator covers all input-class tokens.
                        ...(sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite > 0 && sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input > 0
                          ? [[translate("session.cacheHitRate"), `${(sessionStats.tokens.cacheRead / (sessionStats.tokens.cacheRead + sessionStats.tokens.cacheWrite + sessionStats.tokens.input) * 100).toFixed(1)}%`]]
@@ -3869,7 +3936,7 @@ export function AppShell() {
                     // sessionStats 插槽条目里自渲染；总报表入口在 aiti-ai-usage 同插槽条目。
                     const section = (
                       title: string,
-                      sectionRows: string[][],
+                      sectionRows: ReactNode[][],
                       valueAlign: "left" | "right" = "left",
                       compact = false,
                     ) => (
@@ -4197,6 +4264,7 @@ export function AppShell() {
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
               onSessionStatsRefresherRegister={setSessionStatsRefresh}
+              onCompactControlsRegister={setCompactControls}
               onContextUsageChange={handleContextUsageChange}
               onExportQueue={(resolver) => { exportQueueDataRef.current = resolver; }}
               onOpenFile={handleOpenLinkedFile}

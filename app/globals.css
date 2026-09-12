@@ -1549,6 +1549,19 @@ span.token.table {
   50% { opacity: 0.5; }
 }
 
+/* 上下文紧迫度 critical（>97%）呼吸动画——lib/context-urgency.ts 导出的唯一动画名，
+   顶栏指示/会话信息面板/ChatInput 压缩按钮共用；仅空闲态使用（动作态红/黄不加动画）。 */
+@keyframes ctx-urgency-breathe {
+  from { opacity: 1; }
+  to { opacity: 0.5; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ctx-urgency-breathe {
+    animation: none !important;
+  }
+}
+
 @keyframes notice-shelf-in {
   from {
     opacity: 0;

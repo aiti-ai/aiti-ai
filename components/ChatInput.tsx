@@ -14,6 +14,7 @@ import {
 import { apiUrl } from "@/lib/base-path";
 import type { ExtensionStatusItem, ExtensionWidgetItem } from "@/lib/types";
 import { stripAnsi } from "@/lib/ansi";
+import { contextUrgency, CTX_BREATHE_CSS } from "@/lib/context-urgency";
 import { formatExtensionStatusLine } from "./ExtensionStatusBar";
 import { AnsiText } from "./AnsiText";
 import { ImagePreview } from "./ImagePreview";
@@ -147,6 +148,8 @@ interface Props {
   modelScopeWarnings?: string[];
   onModelChange?: (provider: string, modelId: string) => void;
   modelSwitching?: boolean;
+  /** 当前会话上下文占比（ChatWindow 透传 contextUsage?.percent）——驱动压缩按钮/弹窗圆点紧迫度着色 */
+  contextPercent?: number | null;
   onCompact?: () => void;
   onAbortCompaction?: () => void;
   isCompacting?: boolean;
@@ -1121,7 +1124,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionId,
   onSend, onAbort, aborting, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
   sessionCapabilities, onSwitchPermissionMode, permissionMode,
-  onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
+  contextPercent, onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
   onExportQueue, onImportQueue, onStageImport, onMoveQueue, onRecallOne, onRequeueAt, onRemoveQueueItem,
@@ -1139,6 +1142,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   compact = false,
 }: Props, ref) {
   const { t } = useI18n();
+  // 上下文紧迫度（lib/context-urgency.ts 唯一来源）：空闲态压缩按钮/弹窗圆点着色，
+  // critical 档呼吸动画仅空闲态生效（压缩中/排队两态红/黄动作色优先、不加动画）。
+  const ctxUrg = contextUrgency(contextPercent);
+  const idleCtxColor = ctxUrg.color;
+  const idleCtxBreathe = ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined;
   const { fontSize } = useChatAppearance();
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
@@ -4645,10 +4653,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     background: isCompacting ? "rgba(239,68,68,0.08)" : compactQueued ? "rgba(217,119,6,0.1)" : "none",
                     border: "none",
                     borderRadius: 9,
-                    color: isCompacting ? "#ef4444" : compactQueued ? "#d97706" : "var(--text-muted)",
+                    color: isCompacting ? "#ef4444" : compactQueued ? "#d97706" : idleCtxColor,
                     cursor: "pointer",
                     fontSize: 12, opacity: 1,
                     whiteSpace: "nowrap",
+                    animation: !isCompacting && !compactQueued ? idleCtxBreathe : undefined,
                     transition: "background 0.12s, color 0.12s",
                   }}
                   onMouseEnter={(e) => {
@@ -4657,7 +4666,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = isCompacting ? "rgba(239,68,68,0.08)" : compactQueued ? "rgba(217,119,6,0.1)" : "none";
-                    e.currentTarget.style.color = isCompacting ? "#ef4444" : compactQueued ? "#d97706" : "var(--text-muted)";
+                    e.currentTarget.style.color = isCompacting ? "#ef4444" : compactQueued ? "#d97706" : idleCtxColor;
                   }}
                    title={isCompacting ? t("chat.stopCompaction") : compactQueued ? t("chat.cancelCompactQueue") : t("chat.compactContext")}
                    aria-label={isCompacting ? t("chat.stopCompaction") : compactQueued ? t("chat.cancelCompactQueue") : t("chat.compactContext")}
@@ -4898,7 +4907,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {/* 压缩：三态单行（压缩中→停止；排队→取消；空闲→压缩） */}
               {onCompact && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "11px 14px", borderBottom: "1px solid color-mix(in srgb, var(--border) 60%, transparent)" }}>
-                  <span style={{ flexShrink: 0, display: "inline-flex", width: 7, height: 7, borderRadius: 99, background: "var(--accent)", opacity: 0.75 }} />
+                  <span style={{ flexShrink: 0, display: "inline-flex", width: 7, height: 7, borderRadius: 99, background: idleCtxColor, opacity: 0.75, animation: idleCtxBreathe }} />
                   <span style={{ flexShrink: 0, fontWeight: 600, fontSize: 13.5 }}>{t("chat.sheetCompact")}</span>
                   <button
                     type="button"
@@ -4916,11 +4925,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       background: isCompacting ? "rgba(239,68,68,0.08)" : compactQueued ? "rgba(217,119,6,0.1)" : "none",
                       border: `1px solid ${isCompacting ? "rgba(239,68,68,0.35)" : compactQueued ? "rgba(217,119,6,0.4)" : "var(--border)"}`,
                       borderRadius: 8,
-                      color: isCompacting ? "#ef4444" : compactQueued ? "#d97706" : "var(--text)",
+                      color: isCompacting ? "#ef4444" : compactQueued ? "#d97706" : idleCtxColor,
                       cursor: "pointer",
                       fontSize: 12,
                       fontWeight: 600,
                       whiteSpace: "nowrap",
+                      animation: !isCompacting && !compactQueued ? idleCtxBreathe : undefined,
                     }}
                   >
                     {isCompacting ? t("chat.stopCompaction") : compactQueued ? t("chat.cancelCompactQueue") : t("chat.compactContext")}

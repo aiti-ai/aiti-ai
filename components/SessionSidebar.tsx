@@ -15,6 +15,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { ExtSlot, useExtProvides } from "./ExtSlots";
 import { EXT_PROVIDES } from "@/lib/ext/types";
 import { apiUrl } from "@/lib/base-path";
+import { dedupeFetch } from "@/lib/dedupe-fetch";
 
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
@@ -23,6 +24,9 @@ import { SessionSearch } from "./SessionSearch";
 // Fixed row height for the session list. SessionItem renders at exactly this
 // height, so the list can be windowed (only the visible slice is mounted).
 const SESSION_LIST_ITEM_HEIGHT = 54;
+
+// home dir 会话内不变（重复请求分析 §3.2）：模块级缓存，跨重挂/双实例共享。
+let cachedHomeDir: string | null = null;
 
 export function getSessionListIndices(count: number, scrollTop: number, viewportHeight: number, focusedIndex = -1): number[] {
   const overscan = 8;
@@ -574,7 +578,8 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       controller?.abort();
       controller = current;
       try {
-        const res = await fetch(apiUrl("/api/agent/running"), {
+        // dedupeFetch：桌面/移动双实例 + SSE 健康时钟建立前的兜底快照同窗口合流（重复请求分析 §2.1/§3.1）
+        const res = await dedupeFetch(apiUrl("/api/agent/running"), {
           cache: "no-store",
           signal: current.signal,
         });
@@ -700,8 +705,11 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   }, [explorerRefreshKey]);
 
   useEffect(() => {
-    fetch(apiUrl("/api/home")).then((r) => r.json()).then((d: { home?: string }) => {
-      if (d.home) setHomeDir(d.home);
+    // home dir 会话内不变：模块级缓存让重挂/双实例二次挂载零请求（重复请求分析 §3.2）；
+    // dedupeFetch 兜住多实例同窗口并发首拉。
+    if (cachedHomeDir) { setHomeDir(cachedHomeDir); return; }
+    dedupeFetch(apiUrl("/api/home")).then((r) => r.json()).then((d: { home?: string }) => {
+      if (d.home) { cachedHomeDir = d.home; setHomeDir(d.home); }
     }).catch(() => {});
   }, []);
 

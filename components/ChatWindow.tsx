@@ -70,6 +70,9 @@ interface Props {
   /** Register the stats refresher so AppShell can pull fresh stats (incl.
    *  contextUsage for idle sessions) when the session panel opens. */
   onSessionStatsRefresherRegister?: (fn: (() => void) | null) => void;
+  /** 压缩控制注册（AppShell 会话信息面板三态压缩按钮）：compact 为 undefined（无会话 /
+   *  sessionCap("compact") 不通过）时面板按钮隐藏，与 ChatInput 同规则。 */
+  onCompactControlsRegister?: (controls: CompactControls | null) => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
   onOpenFile?: (filePath: string) => void;
   /** Expose the queue-export resolver to the parent (AppShell export dialog). */
@@ -120,6 +123,7 @@ function ElapsedBadge({ startedAt }: { startedAt: number }) {
 const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
+const LAST_BACKEND_KEY = "pi-web:last-session-backend";
 /** 草稿静默恢复等待输入框就绪的最大帧数（≈5s @60fps）；超时放行对话框手动处理，避免草稿被永久隐藏。 */
 function NewSessionUpdateLink({
   label,
@@ -273,7 +277,15 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, defaultExpanded = fa
   );
 }
 
-export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onContextUsageChange, onOpenFile, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export interface CompactControls {
+  compact?: () => void | Promise<void>;
+  abort?: () => void;
+  cancelQueue?: () => void;
+  isCompacting: boolean;
+  compactQueued: boolean;
+}
+
+export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onContextUsageChange, onOpenFile, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   useMoneySynced(); // 汇率异步到位时重渲染 backend usage 悬浮条（补出 ¥ 部分）
   const isMobile = useIsMobile();
@@ -282,8 +294,15 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // ── 会话后端选择（多 agent 前端）───────────────────────────────────────
   // 仅 isNew 欢迎页展示；选项来自 /api/session-backends（扩展注册的后端自动出现）。
   // null = 本地 pi（默认，不出现在列表里也无需请求）。
+  // 上次选的后端记进 localStorage，下次新建会话自动预选同一 backend。
   const [backendOptions, setBackendOptions] = useState<Array<{ type: string; label: string; agentKey?: string }>>([]);
-  const [sessionBackend, setSessionBackend] = useState<string | null>(null);
+  const [sessionBackend, setSessionBackend] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(LAST_BACKEND_KEY) || null;
+    } catch {
+      return null;
+    }
+  });
   const completionNotificationsEnabled = session?.relation?.kind !== "subagent";
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
@@ -381,6 +400,22 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     onSessionStatsRefresherRegister?.(() => { void refreshSessionStats(); });
     return () => onSessionStatsRefresherRegister?.(null);
   }, [onSessionStatsRefresherRegister, refreshSessionStats]);
+
+  // 压缩控制注册：仿 onSessionStatsRefresherRegister 先例反向注册给 AppShell（会话信息面板按钮），
+  // state 实时跟随 isCompacting / compactQueued 变化。
+  const compactControls = useMemo(() => ({
+    compact: session || isNew
+      ? (sessionCap("compact") ? handleCompact : undefined)
+      : undefined,
+    abort: handleAbortCompaction,
+    cancelQueue: cancelCompactQueue,
+    isCompacting,
+    compactQueued,
+  }), [session, isNew, sessionCap, handleCompact, handleAbortCompaction, cancelCompactQueue, isCompacting, compactQueued]);
+  useEffect(() => {
+    onCompactControlsRegister?.(compactControls);
+    return () => onCompactControlsRegister?.(null);
+  }, [onCompactControlsRegister, compactControls]);
   const sessionBusy = agentRunning || bashRunning;
   // 停止中状态复位：agent/bash 完全停下（agent_settled 到达）才取消等待态；
   // 若从未运行（sessionBusy 初始即 false）或已复位则幂等无害。
@@ -1024,7 +1059,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     fetch(apiUrl("/api/session-backends"))
       .then((r) => (r.ok ? r.json() : { providers: [] }))
       .then((d: { providers?: Array<{ type: string; label: string; agentKey?: string }> }) => {
-        if (!cancelled) setBackendOptions(d.providers ?? []);
+        if (cancelled) return;
+        setBackendOptions(d.providers ?? []);
+        // 记忆的后端已不存在（扩展卸载/改名）则回退本地 pi
+        setSessionBackend((cur) => (cur && (d.providers ?? []).some((p) => p.type === cur) ? cur : null));
       })
       .catch(() => {});
     return () => {
@@ -1128,6 +1166,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           : handleModelChange
       }
       modelSwitching={modelSwitching}
+      contextPercent={contextUsage?.percent ?? null}
       onCompact={session || isNew
         ? (sessionCap("compact") ? handleCompact : undefined)
         : undefined}
@@ -1720,7 +1759,14 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
               <span style={{ color: "var(--text-muted)" }}>Backend</span>
               <select
                 value={sessionBackend ?? ""}
-                onChange={(e) => setSessionBackend(e.target.value || null)}
+                onChange={(e) => {
+                  const v = e.target.value || null;
+                  setSessionBackend(v);
+                  try {
+                    if (v) localStorage.setItem(LAST_BACKEND_KEY, v);
+                    else localStorage.removeItem(LAST_BACKEND_KEY);
+                  } catch {}
+                }}
                 style={{
                   padding: "4px 8px",
                   background: "var(--bg-hover)",

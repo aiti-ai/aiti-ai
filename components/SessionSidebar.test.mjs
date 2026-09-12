@@ -47,7 +47,8 @@ test("does not register row-level session deletion shortcuts", () => {
 
 test("polls running sessions only while the tab is visible", () => {
   assert.doesNotMatch(source, /new EventSource\("\/api\/agent\/running\/events"\)/);
-  assert.match(source, /fetch\(apiUrl\("\/api\/agent\/running"/);
+  // 兜底快照走 dedupeFetch（重复请求分析 §3.1：双实例同窗口合流），不再是裸 fetch
+  assert.match(source, /dedupeFetch\(apiUrl\("\/api\/agent\/running"/);
   assert.match(source, /document\.visibilityState !== "visible"/);
   assert.match(source, /document\.addEventListener\("visibilitychange", onVisibilityChange\)/);
 });
