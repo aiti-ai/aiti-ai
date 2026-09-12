@@ -275,7 +275,12 @@ export type ExtAgentEndReason = "shutdown" | "fork" | "idle";
 export interface ExtAgentHooks {
   /** 注入每个 agent 会话的自定义工具（SDK ToolDefinition[]；工具 execute 闭包内直调本进程资源）。 */
   agentTools?(info: Pick<AgentSessionInfo, "sessionId" | "cwd">): ToolDefinition[];
-  /** 会话启动（wrapper 创建后；扩展在此注册 agent 身份/绑定推送 sink）。 */
+  /** 会话启动（wrapper 创建后；扩展在此注册 agent 身份/绑定推送 sink）。
+   *  ⚠️ **可能被重复调用**：同一 id 在 idle GC → wrapper 重建、以及扩展热重载
+   *  （registry reload 后对存活会话重挂）时会再次收到。实现须幂等：句柄/表项覆盖、
+   *  subscribeEvent 先退旧再订新（宿主也会在重挂前回收上一轮**经 `info.subscribeEvent`
+   *  建立**的订阅，见 ExtRegistryImpl.dispatchAgentSession 的订阅纪元账本——经此建立的
+   *  订阅扩展不主动退订也不会双发；绕过它直连 wrapper `onEvent` 的订阅不在账本内，须自行退订）。 */
   onAgentSession?(info: AgentSessionInfo): void;
   /** 会话 wrapper 销毁。注意：不等于「会话文件被删」——fork 换 wrapper、闲置 GC
    *  回收也会触发；用 reason 区分。回调需幂等。 */

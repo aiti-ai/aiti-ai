@@ -1134,10 +1134,49 @@ export class ExtRegistryImpl {
     return tools;
   }
 
-  /** 会话启动回调（wrapper 创建后）。 */
+  /**
+   * 会话订阅纪元账本：sessionId → 本纪元内扩展经 subscribeEvent 建立的退订函数。
+   * dispatchAgentSession 每次调用开启新纪元（开始前先回收上一纪元）；会话结束时清账。
+   * registry 是 globalThis 单例，跨 reload 幸存——reload 重挂（reattachAgentSessions）
+   * 依赖它做到「扩展不主动退订也不双发」。
+   */
+  private agentSessionSubs = new Map<string, Set<() => void>>();
+
+  /** 会话启动回调（wrapper 创建后）。每次调用即开启该会话的新「订阅纪元」：
+   *  先回收上一纪元由宿主记录的 subscribeEvent 退订（防 idle GC 重建 / reload 重挂
+   *  双发），再把本纪元新订阅记入账本。 */
   dispatchAgentSession(info: AgentSessionInfo): void {
+    this.releaseAgentSessionSubs(info.sessionId);
+    const subs = new Set<() => void>();
+    this.agentSessionSubs.set(info.sessionId, subs);
+    const base = info.subscribeEvent;
+    const fanout: AgentSessionInfo = typeof base === "function"
+      ? {
+          ...info,
+          subscribeEvent: (listener) => {
+            const off = base(listener);
+            if (typeof off === "function") {
+              // 仅当仍处于本闭包对应的纪元时才记账；已换代/已收（扩展异步迟到订阅）
+              // → 立即退订，避免旧纪元订阅混进新纪元造成双发。
+              if (this.agentSessionSubs.get(info.sessionId) === subs) subs.add(off);
+              else { try { off(); } catch { /* 纪元已换代/已收（会话结束）→ 迟到订阅立即退订 */ } }
+            }
+            return off;
+          },
+        }
+      : info;
     for (const ext of this.extensions.values()) {
-      try { this.agentHooks(ext)?.onAgentSession?.(info); } catch (e) { console.error(`[ext] ${ext.id}.agent.onAgentSession 失败:`, e instanceof Error ? e.message : e); }
+      try { this.agentHooks(ext)?.onAgentSession?.(fanout); } catch (e) { console.error(`[ext] ${ext.id}.agent.onAgentSession 失败:`, e instanceof Error ? e.message : e); }
+    }
+  }
+
+  /** 回收某会话当前纪元记录的扩展订阅（幂等：扩展自己已退订的条目重复调用无副作用）。 */
+  private releaseAgentSessionSubs(sessionId: string): void {
+    const subs = this.agentSessionSubs.get(sessionId);
+    if (!subs) return;
+    this.agentSessionSubs.delete(sessionId);
+    for (const off of subs) {
+      try { off(); } catch { /* 单条失败不阻断 */ }
     }
   }
 
@@ -1146,6 +1185,8 @@ export class ExtRegistryImpl {
     for (const ext of this.extensions.values()) {
       try { this.agentHooks(ext)?.onAgentSessionEnd?.({ sessionId, reason }); } catch (e) { console.error(`[ext] ${ext.id}.agent.onAgentSessionEnd 失败:`, e instanceof Error ? e.message : e); }
     }
+    // 扩展回调之后清账：回收本会话纪元订阅（即使扩展未主动退订也不残留）。
+    this.releaseAgentSessionSubs(sessionId);
   }
 
   /** agent_settled 回调（最终回答文本）。 */
@@ -1223,12 +1264,50 @@ export class ExtRegistryImpl {
       await this.shutdown();
       await this.loadAll();
       await this.startAll();
+      // 会话（wrapper）跨 reload 存活，断的是「新扩展模块 ⇄ wrapper」订阅接线：
+      // startAll 后对存活会话补发 agent 钩子，让扩展重新挂订阅（方案
+      // docs/pi-web-ext-reload-session-resubscribe-plan.md）。
+      this.reattachAgentSessions();
     })();
     try {
       await this.reloadInFlight;
     } finally {
       this.reloadInFlight = null;
     }
+  }
+
+  /**
+   * reload 完成后重挂：对存活的、曾派发过钩子的本地会话补发 dispatchAgentSession。
+   * 过滤走 wrapper 的 isAlive/hasAgentSessionHooks（子代理 wrapper 从未派发钩子，
+   * 不纳入）；dispatchAgentSession 内部先回收旧纪元订阅 → 重挂不双发。顺带覆盖
+   * reload 竞态：shutdown→startAll 之间新建的会话可能只派发到空/半加载扩展集合，
+   * 这里统一捞回。
+   */
+  private reattachAgentSessions(): void {
+    let n = 0;
+    for (const [sid, raw] of piSessionsMap()) {
+      const wrapper = raw as {
+        isAlive?(): boolean;
+        hasAgentSessionHooks?(): boolean;
+        toAgentSessionInfo?(): AgentSessionInfo | undefined;
+      } | undefined;
+      try {
+        if (wrapper?.isAlive?.() !== true) {
+          // 已销毁（destroy 同步置死，end 回调经异步 emit session_shutdown 后才到）：
+          // 顺手清账，防旧纪元订阅残留到 end 到达前（end 到达后 release 幂等无副作用）。
+          this.releaseAgentSessionSubs(sid);
+          continue;
+        }
+        if (wrapper.hasAgentSessionHooks?.() !== true) continue;
+        const info = wrapper.toAgentSessionInfo?.();
+        if (!info) continue;
+        this.dispatchAgentSession(info);
+        n++;
+      } catch (e) {
+        console.error(`[ext] reload 重挂会话钩子失败 (${sid}):`, e instanceof Error ? e.message : e);
+      }
+    }
+    if (n > 0) console.log(`[ext] reload 重挂 ${n} 个存活会话的 agent 钩子`);
   }
 
   private serverContext(ext: LoadedExtension): ExtServerContext {

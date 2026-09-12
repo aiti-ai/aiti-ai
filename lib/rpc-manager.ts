@@ -47,6 +47,7 @@ import type {
   SessionMessageEntry,
 } from "./types";
 import { getRegistry as getExtRegistry } from "./ext/registry.ts";
+import type { AgentSessionInfo } from "./ext/types.ts";
 import { listProviders } from "./session/providers.ts";
 import { BridgeOccupiedError } from "./session/types.ts";
 import { createHeadlessCustomUiTui, DEFAULT_CUSTOM_UI_COLUMNS, type HeadlessCustomUiTui } from "./custom-ui-terminal";
@@ -316,6 +317,8 @@ export class AgentSessionWrapper {
   private sessionShutdownEmitted = false;
   private forceShutdownOnIdle = false;
   private _alive = true;
+  /** 方案 M：是否已派发过扩展会话钩子（reload 重挂的过滤标记；子代理 wrapper 不派发）。 */
+  private agentSessionHooksDispatched = false;
 
   constructor(
     public readonly inner: AgentSessionLike,
@@ -924,12 +927,62 @@ export class AgentSessionWrapper {
 
   onEvent(listener: EventListener): () => void {
     this.listeners.push(listener);
-    for (const event of this.pendingUiRequests.values()) listener(event);
-    for (const event of this.activeToolEvents.values()) listener(event);
+    // 重放挂起事件：单个 listener 抛错不得破坏「已 push 必返回 off」的配对（旧实现
+    // 抛错时调用方拿不到退订函数 → listener 永久残留；reload 重挂会放大成每轮一份）。
+    // 与 emit() 主分发循环同款单点隔离。
+    for (const event of this.pendingUiRequests.values()) {
+      try { listener(event); } catch (e) { console.error("[pi-web] failed to replay pending UI request:", e instanceof Error ? e.message : e); }
+    }
+    for (const event of this.activeToolEvents.values()) {
+      try { listener(event); } catch (e) { console.error("[pi-web] failed to replay active tool event:", e instanceof Error ? e.message : e); }
+    }
     return () => {
       const i = this.listeners.indexOf(listener);
       if (i !== -1) this.listeners.splice(i, 1);
     };
+  }
+
+  /**
+   * 方案 M：构造扩展侧会话信息（steer / subscribeEvent / abortBash / getModel）。
+   * 会话创建点与 registry reload 后的重挂（reattachAgentSessions）共用这一份构造，
+   * 避免两处漂移。注意 subscribeEvent 每次调用都挂新 listener——重复派发场景由
+   * registry 的订阅纪元账本先回收旧订阅（见 lib/ext/registry.ts dispatchAgentSession）。
+   */
+  toAgentSessionInfo(): AgentSessionInfo {
+    return {
+      sessionId: this.sessionId,
+      cwd: this.cwd,
+      // 进程内事件直连：含 tool_execution_update 实时 bash 输出（agent events 的
+      // SSE 出口会过滤该类型，浏览器看不到；扩展经此拿到全量）。
+      subscribeEvent: (listener) => this.onEvent((event) => listener(event)),
+      // 只中止当前 bash 命令，不 abort 整个 turn（agent 收到错误结果后继续）。
+      abortBash: () => this.inner.abortBash(),
+      // 当前会话正在使用的模型（实时读取；运行时监测（如 aiti-model-check 大量 429 阻断标记）用它归属模型）。
+      getModel: () => {
+        const m = this.inner.model;
+        return m && m.provider && m.id ? { provider: m.provider, modelId: m.id } : null;
+      },
+      // steer: 入 pi steering 队列，在下一轮边界被消费；若入队后本轮恰在边界前结束
+      // （循环最后一次 hasQueuedMessages 已检查过），队列没人消费——因此入队后再查一次：
+      // 已不在运行则补发 continue_queue 真正起跑（compaction 期间 continue_queue 报
+      // started:false，由 compaction_end 监听投递）。防 wrapper 已销毁：sink 在
+      // onAgentSessionEnd 注销，但在飞调用可能后到。
+      steer: async (t) => {
+        if (!this.isAlive()) return;
+        await this.send({ type: "steer", message: t });
+        if (!this.isRunning()) await this.send({ type: "continue_queue" });
+      },
+    };
+  }
+
+  /** 方案 M：是否已派发过扩展会话钩子（reload 重挂的过滤标记；子代理 wrapper 不派发）。 */
+  hasAgentSessionHooks(): boolean {
+    return this.agentSessionHooksDispatched;
+  }
+
+  /** 方案 M：标记钩子已派发（创建点调用；重挂只针对标记过的 wrapper）。 */
+  markAgentSessionHooksDispatched(): void {
+    this.agentSessionHooksDispatched = true;
   }
 
   onDestroy(cb: (reason: AgentWrapperEndReason) => void): void {
@@ -3279,36 +3332,11 @@ export async function startRpcSession(
     wrapper.beginExtensionBinding({ forceEmptySystemPrompt: toolNames?.length === 0 });
 
     // 方案 M：会话启动通知扩展（aiti-devtools 注册 agent 身份 + 绑定推送 sink）。
-    // steer: enqueuing into pi's steering queue is picked up by the live agent
-    // loop at the next turn boundary. But if the run ends between the enqueue
-    // and that boundary (the loop's final hasQueuedMessages check already
-    // passed), nothing ever drains the queue — so re-check AFTER the steer
-    // and, if the agent is no longer running, follow up with continue_queue
-    // (the same runAgentContinue path as recovery / compaction delivery) to
-    // actually start the run. During compaction continue_queue reports
-    // started:false and the compaction_end listener delivers instead.
-    // Guard against a destroyed wrapper — the sink is unregistered in
-    // onAgentSessionEnd but an in-flight call may still land afterwards.
+    // 会话信息构造集中在 AgentSessionWrapper.toAgentSessionInfo（registry reload
+    // 后重挂共用同一份）；标记后 registry.reload 会把本会话纳入重挂集合。
     try {
-      getExtRegistry().dispatchAgentSession({
-        sessionId: realSessionId,
-        cwd: sessionCwd,
-        // 进程内事件直连：含 tool_execution_update 实时 bash 输出（agent events 的
-        // SSE 出口会过滤该类型，浏览器看不到；扩展经此拿到全量）。
-        subscribeEvent: (listener) => wrapper.onEvent((event) => listener(event)),
-        // 只中止当前 bash 命令，不 abort 整个 turn（agent 收到错误结果后继续）。
-        abortBash: () => wrapper.inner.abortBash(),
-        // 当前会话正在使用的模型（实时读取；运行时监测（如 aiti-model-check 大量 429 阻断标记）用它归属模型）。
-        getModel: () => {
-          const m = wrapper.inner.model;
-          return m && m.provider && m.id ? { provider: m.provider, modelId: m.id } : null;
-        },
-        steer: async (t) => {
-          if (!wrapper.isAlive()) return;
-          await wrapper.send({ type: "steer", message: t });
-          if (!wrapper.isRunning()) await wrapper.send({ type: "continue_queue" });
-        },
-      });
+      wrapper.markAgentSessionHooksDispatched();
+      getExtRegistry().dispatchAgentSession(wrapper.toAgentSessionInfo());
     } catch (e) { console.error("[pi-web] agent 会话启动分发失败:", e instanceof Error ? e.message : e); }
 
     // 全新会话创建广播（泛化页面事件帧，SSE 直达所有 tab）：跨 tab 侧栏列表
