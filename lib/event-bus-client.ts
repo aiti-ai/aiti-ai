@@ -42,6 +42,8 @@ interface PiEventBusSlot {
     handler: (frame: Record<string, unknown>) => void,
     types: string[],
     onStatus?: (status: "up" | "down" | "reconnecting") => void,
+    /** [开页方案 §7] 服务端 named heartbeat（30s）——判活用，不进帧分发 */
+    onHeartbeat?: () => void,
   ): { ready: Promise<void>; off: () => void };
 }
 
@@ -197,7 +199,13 @@ export function getEventBus(route: string, opts: GetEventBusOptions = {}): BusEv
         }
       }
       if (closed) return;
-      const sub = busSlot.subscribeTopics(handler, [topic], onStatus);
+      // [开页方案 §7] 心跳透传：把总线传输层 named heartbeat（30s）派发给本适配器的
+      // named 订阅者（running broker 监听 "heartbeat" → markFrame → 75s 帧 watchdog
+      // 不再误判半连接；session-manager 健康时钟同步恢复）。修复前该帧被总线客户端吞掉，
+      // 导致每 75s close+connect 拆除全页共享 SSE 并引发兑底轮询。
+      const sub = busSlot.subscribeTopics(handler, [topic], onStatus, () => {
+        try { emitNamed(BUS_FRAME_HEARTBEAT, "{}"); } catch { /* 订阅方异常不扩散 */ }
+      });
       off = sub.off;
       try {
         await sub.ready;

@@ -130,17 +130,33 @@ test("pendingForSlotAuto excludes immediately:false entries (lazy extensions)", 
   });
   assert.deepEqual(pendingForSlot(SLOT), ["ext-auto-imm", "ext-auto-lazy"], "原语义含懒扩展（交互时插槽用）");
   assert.deepEqual(pendingForSlotAuto(SLOT), ["ext-auto-imm"], "常挂插槽自动通道排除懒扩展");
-  // 图里没有的扩展（动态注册）不算懒 → 保留（兜底语义与 pendingForSlot 一致）
+  // [开页方案 §1 F1] 图里没有的扩展（无 client bundle）也不再放行——fail-closed：
+  // 未知 = 不放行（旧语义 `entryOf(id)?.immediately !== false` 对未知项放行，正是
+  // 「boot graph 未就绪时 13/13 懒扩展被常挂插槽自动物化」的根因）。
   registerDeclaredSlots("ext-auto-orphan", [SLOT]);
-  assert.ok(pendingForSlotAuto(SLOT).includes("ext-auto-orphan"));
+  assert.deepEqual(pendingForSlotAuto(SLOT).includes("ext-auto-orphan"), false, "未知条目不放行（fail-closed）");
+  assert.ok(pendingForSlot(SLOT).includes("ext-auto-orphan"), "交互通道仍列出（调用方可显式拉起/降级）");
+});
+
+test("pendingForSlotAuto: 图未就绪（空图）一律不放行——懒扩展竞态回归", async () => {
+  const { pendingForSlotAuto, registerDeclaredSlots, setBootGraph } = await import("../components/ext-client-loader.ts");
+  const SLOT = "test-slot-race-unique";
+  registerDeclaredSlots("ext-race-lazy", [SLOT]);
+  setBootGraph({ rev: "", entries: [] }); // 模拟 manifest 登记先于 setBootGraph 的窗口
+  assert.deepEqual(pendingForSlotAuto(SLOT), [], "空图不放行任何自动物化");
 });
 
 test("INTERACTIVE_SLOTS covers the interactive-mount slots", async () => {
   const { INTERACTIVE_SLOTS, pendingForSlotAuto } = await import("../components/ext-client-loader.ts");
-  for (const s of ["sessionStats", "fileViewer", "pathPicker", "terminalDock", "settingsModels", "settingsAgents", "settingsAgentsFeature", "rightFileDock"]) {
+  for (const s of ["sessionStats", "fileViewer", "pathPicker", "settingsModels", "settingsAgents", "settingsAgentsFeature"]) {
     assert.ok(INTERACTIVE_SLOTS.has(s), `interactive slot registered: ${s}`);
     assert.ok(!INTERACTIVE_SLOTS.has("toolbar") && !INTERACTIVE_SLOTS.has("sidebar"), "常挂插槽不在交互清单");
   }
+  // [开页方案 §1 F2/F3] 这两个槽是「伪交互」——消费点在 AppShell/TerminalPanelBridge 挂载时
+  // 即读取（前者为派生 dock tab 列表，后者为常挂隐藏容器），留在清单里会让 6 个懒扩展 +
+  // aiti-cmd 开页即被物化。真实交互时刻改由消费方显式 ensureMaterialized。
+  assert.ok(!INTERACTIVE_SLOTS.has("rightFileDock"), "rightFileDock 不再是交互插槽（AppShell 常挂消费）");
+  assert.ok(!INTERACTIVE_SLOTS.has("terminalDock"), "terminalDock 不再是交互插槽（TerminalPanelBridge 常挂）");
   // pendingForSlotAuto 对交互插槽本就含懒扩展（同 pendingForSlot）——分流点在消费方 hook
   const SLOT = "test-slot-inter-unique";
   const { registerDeclaredSlots, pendingForSlot, setBootGraph } = await import("../components/ext-client-loader.ts");

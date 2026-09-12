@@ -58,6 +58,30 @@ export function registerDeclaredSlots(extId: string, slots: string[]): void {
   else declaredSlots.delete(extId);
 }
 
+/**
+ * [开页方案 §5] SSR 下发的插槽声明种子（服务端注册表事实，早于客户端 manifest）。
+ * 首帧即可裁决「谁接管哪个槽」：TakeoverSlot 据此不挂回退组件（省一次全量列表拉取），
+ * useExtSlotSettled 类缺席裁决也能提前定案。
+ * @param decls slot → extId[]；null = 服务端未就绪（未知，不置 known 标记）
+ */
+let serverDeclarationsKnown = false;
+export function seedServerDeclarations(decls: Record<string, string[]> | null | undefined): void {
+  if (!decls) return; // 未知：保持未知态（不得用于接管裁决）
+  serverDeclarationsKnown = true;
+  for (const [slot, ids] of Object.entries(decls)) {
+    for (const id of ids) {
+      const cur = declaredSlots.get(id);
+      if (!cur) declaredSlots.set(id, [slot]);
+      else if (!cur.includes(slot)) cur.push(slot);
+    }
+  }
+}
+
+/** 服务端插槽声明是否已下发（true 时「无人声明」是权威结论）。 */
+export function isServerDeclarationsKnown(): boolean {
+  return serverDeclarationsKnown;
+}
+
 /** 图行是否为「立即加载」项（immediately:false = 懒加载，留给按需触发）。 */
 export function isImmediateEntry(entry: PiWebBootEntry): boolean {
   return entry.immediately !== false;
@@ -227,7 +251,15 @@ export function slotDeclared(slot: string): boolean {
  * 懒扩展在常挂插槽上的入口由 manifest 静态条目承担（点击经 ensureMaterialized 拉起）。
  */
 export function pendingForSlotAuto(slot: string): string[] {
-  return pendingForSlot(slot).filter((id) => entryOf(id)?.immediately !== false);
+  // [开页方案 §1 F1] fail-closed：boot graph 未就绪时 entryOf() 返回 undefined，旧判定
+  // `?.immediately !== false` 会把未知项当成即时项放行 → 懒扩展在常挂插槽（toolbar/dialogs
+  // /pages/banners）上被自动物化（实测 graphLen=0 时 13/13 懒扩展全被拉起）。
+  // 图未就绪 → 一律不自动物化；图就绪但无该行（无 client bundle）→ 也不放行。
+  if (!bootGraph.entries.length) return [];
+  return pendingForSlot(slot).filter((id) => {
+    const e = entryOf(id);
+    return !!e && e.immediately !== false;
+  });
 }
 
 /**
@@ -240,12 +272,18 @@ export const INTERACTIVE_SLOTS: ReadonlySet<string> = new Set([
   "sessionStats",
   "fileViewer",
   "pathPicker",
-  "terminalDock",
   "settingsModels",
   "settingsAgents",
   "settingsAgentsFeature",
-  "rightFileDock",
 ]);
+// ❌ 已移除（开页方案 §1 F2/F3，2026-09-12）：这两个槽**不是真交互槽**——
+//   · "rightFileDock"：AppShell 为派生 dock tab 列表而在挂载时就调用 useExtSlotItems()
+//     （components/AppShell.tsx 右栏 dock tab 段），并非“右栏打开才挂”；
+//   · "terminalDock"：TerminalPanelBridge 是 AppShell 常挂的隐藏容器（恢复的终端页签）。
+// 留在本表会让 lazy 扩展（ai-schedule/doc-center/git-review/mail/subagents/service-tunnels /
+// aiti-cmd）在开页时被无条件物化。现改由真实交互时刻显式拉起：
+//   · dock tab 激活/打开 → 扩展自身入口（toolbar 静态项点击）→ 物化后注册项自带 render；
+//   · 终端页签可见 → components/TerminalPanelBridge.tsx 内 ensureExtSlotMaterialized("terminalDock")。
 
 /**
  * [懒加载 v2] 幂等物化：确保某扩展 client 已 register(ctx)（并发安全——复用

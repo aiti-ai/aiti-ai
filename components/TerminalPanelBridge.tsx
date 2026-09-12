@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useI18n } from "@/hooks/useI18n";
-import { useExtSlotItems, ExtItemBoundary, useExtSlotSettled } from "./ExtSlots";
+import { useExtSlotItems, ExtItemBoundary, useExtSlotSettled, ensureExtSlotMaterialized } from "./ExtSlots";
 import { hasExtRender } from "@/lib/ext-ui-store";
 import { TerminalPanel } from "./TerminalPanel";
 import type { TerminalTab } from "./terminal-tab-state";
@@ -38,6 +38,13 @@ export function TerminalPanelBridge({ tab, active, onClosed, onRestart, onCloseE
   const { t } = useI18n();
   const takeover = useExtSlotItems("terminalDock").find(hasExtRender);
   const settled = useExtSlotSettled("terminalDock");
+  // [开页方案 §1 F3] terminalDock 已从 INTERACTIVE_SLOTS 除名（本桥是 AppShell 常挂的
+  // 隐藏容器，会在开页时无条件拉起 aiti-cmd 559KB）。改为**真实交互时刻**按需物化：
+  // 该终端页签可见（active）时拉起。之前?slot 声明的扩展物化到位前本组件渲染空壳占位
+  // （下方 !settled 分支），不抢先建原生 PTY——双开防护不变。
+  useEffect(() => {
+    if (active) void ensureExtSlotMaterialized("terminalDock");
+  }, [active]);
   // 页签关闭收尾分流：接管态立即本地移除；原生态由 TerminalPanel 的 closing effect
   // 走完整收尾（等创建/在途输入 → DELETE → 回调；失败 onCloseError 留页签可重试）。
   // 必须在 takeover early-return 之前调 hooks（Rules of Hooks）。

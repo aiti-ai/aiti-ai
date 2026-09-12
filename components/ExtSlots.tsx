@@ -60,10 +60,12 @@ import {
   getBootGraph,
   immediateEntriesByPriority,
   isImmediateEntry,
+  isServerDeclarationsKnown,
   materialize,
   materializedIds,
   pendingForSlot,
   pendingForSlotAuto,
+  seedServerDeclarations,
   slotDeclared,
   ensureMaterialized,
   ensureSlotMaterialized,
@@ -501,9 +503,13 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
   return ctx;
 }
 
-/** AppShell 注入的宿主能力（经 ExtSlotsProvider props；makeClientContext 包装下发）。 */
-export function ExtSlotsProvider({ children }: { children: ReactNode }) {
+/** AppShell 注入的宿主能力（经 ExtSlotsProvider props；makeClientContext 包装下发）。
+ *  serverSlotDeclarations：SSR 下发的插槽声明表（服务端注册表事实，见 §5 开页方案）——
+ *  在 children 渲染前种入 loader，使接管裁决/缺席裁决在**首帧**就拿到权威输入。 */
+export function ExtSlotsProvider({ children, serverSlotDeclarations }: { children: ReactNode; serverSlotDeclarations?: Record<string, string[]> | null }) {
   const [, force] = useState(0);
+  // 渲染体内种入（幂等、无副作用回滚需求）：必须早于 children（TakeoverSlot）执行
+  seedServerDeclarations(serverSlotDeclarations);
   // SidebarClone（@/ 宿主模块链）的 useI18n 经 host-shim 委托到这里——快照每渲染刷新
   extI18nSnapshot = useI18n();
   useEffect(() => {
@@ -556,6 +562,11 @@ async function fetchManifestData(): Promise<ManifestData | null> {
       data.extensions.some((e) => e.id === "aiti-event-bus") ||
       (data.graph?.entries ?? []).some((e) => e.id === "aiti-event-bus"),
     );
+    // [开页方案 §1 F1] 启动图必须先于下方逐扩展登记落盘：登记会 bump ui-store →
+    // useExtSlotItems 的物化 effect 重跑；若那时图还是空的，pendingForSlotAuto 的
+    // fail-closed 会把即时扩展也一并跳过（旧代码在 fetchManifestData 返回后才
+    // setBootGraph，effect 已先跑完且把懒扩展全放行了）。
+    setBootGraph(data.graph ?? { rev: "", entries: [] });
     // manifest 元数据（name/icon/provides）→ 宿主 UI 标注扩展身份（顶栏自定义面板等）、
     // 并驱动内置 UI 的能力接管开关（useExtProvides）
     const metas: Record<string, ExtMeta> = {};
@@ -1349,7 +1360,20 @@ export function TakeoverSlot({ name, fallback, extra, legacyKey, currentSession 
     }, 800);
     return () => clearTimeout(timer);
   }, [hydrated, hintCleared, name]);
+  // [§5 服务端权威] 首帧即知「该槽有没有接管者」：SSR 下发的声明种子（服务端注册表事实）
+  // 或客户端 manifest settle 后的声明。有接管者时首帧即占位、不挂 fallback——避免回退侧栏
+  // 挂载即拉一次全量会话列表（实测 1.59MB 解码）、随即又被接管替换。
+  // 注：SSR 与首帧客户端渲染输入一致（props 而非 localStorage），无 hydration mismatch。
+  const declared = slotDeclared(name);
+  const declaredDecided = isServerDeclarationsKnown() || extBootSettled;
+  const [declaredReleased, setDeclaredReleased] = useState(false);
+  useEffect(() => {
+    if (!declaredDecided || !declared || takeover || declaredReleased) return;
+    // 声明了接管者但迟迟不物化（bundle 失败/禁用竞态）→ 兑底放行 fallback
+    const timer = setTimeout(() => setDeclaredReleased(true), 1500);
+    return () => clearTimeout(timer);
+  }, [declaredDecided, declared, takeover, declaredReleased]);
   if (takeover) return <ExtSlot name={name} currentSession={currentSession} extra={extra as never} />;
-  if (hintPending) return null;
+  if ((declaredDecided && declared && !declaredReleased) || hintPending) return null;
   return <>{fallback}</>;
 }

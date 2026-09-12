@@ -977,6 +977,26 @@ export class ExtRegistryImpl {
   }
 
   /**
+   * 各 UI 插槽的声明方扩展 id（slot → extId[]）。服务端权威事实，供 SSR 首帧裁决使用：
+   * 例：`sidebarContent` 有声明方 → 首帧就渲染接管占位而非宿主回退侧栏（避免回退组件
+   * 挂载即拉一次全量会话列表、随即又被接管替换——见 docs/pi-web-load-perf-optimization-plan.md §5）。
+   * 只收非空数组的槽位键；排除元数据键（i18n/provides/clientDependsOn/clientImmediately）。
+   */
+  slotDeclarations(): Record<string, string[]> {
+    const out: Record<string, string[]> = {};
+    for (const e of this.manifest()) {
+      const ui = e.ui as Record<string, unknown> | null | undefined;
+      if (!ui) continue;
+      for (const [k, v] of Object.entries(ui)) {
+        if (k === "i18n" || k === "provides" || k === "clientDependsOn" || k === "clientImmediately") continue;
+        if (!Array.isArray(v) || v.length === 0) continue;
+        (out[k] ??= []).push(e.id);
+      }
+    }
+    return out;
+  }
+
+  /**
    * 启动图（client-modules）：前端 loader 的输入。内容不变则返回稳定对象
    * （与 clientHash 的 mtime 缓存同源，扩展 reload 后自动重算）。
    */
@@ -1389,6 +1409,20 @@ export function getRegistry(): ExtRegistryImpl {
     throw new Error("extension registry not bootstrapped (instrumentation should call ensureRegistry)");
   }
   return globalThis.__piWebExt;
+}
+
+/**
+ * SSR 用包装：插槽声明表。注册表未就绪/异常时返回 **null**（而非 {}）——调用方据此
+ * 区分「确定没有任何扩展声明该槽」与「未知」，后者不得用于接管裁决。
+ */
+export function getSlotDeclarations(): Record<string, string[]> | null {
+  try {
+    return getRegistry().slotDeclarations();
+  } catch (e) {
+    // SSR 里注册表未就绪（或渲染在无 registry 的上下文）：返回未知态，并留一次诊断。
+    console.warn("[pi-web] getSlotDeclarations 不可用（按未知处理）:", e instanceof Error ? e.message : String(e));
+    return null;
+  }
 }
 
 /** Create-or-reuse the singleton with an explicit core (instrumentation). */
