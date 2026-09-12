@@ -47,12 +47,17 @@ export interface AgentEventConnectionOptions {
 }
 
 const EVENT_SOURCE_OPEN = 1;
+const EVENT_SOURCE_CLOSED = 2;
+/** 重连退避上限：base 1s → 2s → 4s → … → 30s 封顶，避免服务不可用时高频重连风暴。 */
+const MAX_RECONNECT_DELAY_MS = 30_000;
 
 /** Owns the EventSource, agent-readiness handshake, and passive reconnect. */
 export class AgentEventConnection {
   private current: Connection | null = null;
   private retry: { sessionId: string; timer: ReturnType<typeof setTimeout> } | null = null;
   private retryGeneration = 0;
+  /** 连续重连次数（指数退避用；连接成功 / 终止重试时清零）。 */
+  private retryCount = 0;
 
   constructor(private readonly options: AgentEventConnectionOptions) {}
 
@@ -170,6 +175,19 @@ export class AgentEventConnection {
     };
     source.onerror = () => {
       this.options.onTrouble?.();
+      // EventSource readyState 语义（error 事件时）：
+      //   CONNECTING(0) = 网络层闪断（浏览器正在自动重连）——手动退避重试即可；
+      //   CLOSED(2)     = HTTP 层失败（4xx/5xx，如会话 404），浏览器不会自动重连。
+      // 对 CLOSED 以 startup_error 语义终止：会话被服务端拒绝时固定 1s 手动重连是
+      // 纯浪费（实测一个失效 session 触发 404 风暴：每秒 1 个 events + 1 个探针上报）。
+      // 会话恢复后由上层 maintain() 触发点重建（agent 开始 run / 会话切换 / starve 恢复）。
+      if (source.readyState === EVENT_SOURCE_CLOSED) {
+        this.fail(connection, new AgentEventConnectionError(
+          "startup_error",
+          "会话事件流被服务端拒绝（HTTP 层错误），已停止重连；会话恢复后自动重建",
+        ));
+        return;
+      }
       this.fail(connection, new AgentEventConnectionError("closed"));
     };
 
@@ -194,17 +212,24 @@ export class AgentEventConnection {
     if (this.retry?.sessionId === sessionId) return;
     this.clearRetry();
 
+    // 指数退避：base 1s → 2s → 4s → … → 30s 封顶（retryCount 在连接成功时清零）。
+    const delay = Math.min(
+      this.options.reconnectDelayMs * 2 ** this.retryCount,
+      MAX_RECONNECT_DELAY_MS,
+    );
+    this.retryCount += 1;
     const timer = setTimeout(() => {
       if (this.retry?.timer !== timer) return;
       this.retry = null;
       this.maintain(sessionId);
-    }, this.options.reconnectDelayMs);
+    }, delay);
     this.retry = { sessionId, timer };
   }
 
   private stopRetrying(): void {
     this.retryGeneration += 1;
     this.clearRetry();
+    this.retryCount = 0;
   }
 
   private clearRetry(): void {
