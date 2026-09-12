@@ -316,7 +316,7 @@ interface ManifestExt {
   // 还含各插槽的静态条目数组（ExtUiStaticSlots）——懒加载 v2 的零 bundle 入口数据源。
   ui: (ExtUiStaticSlots & { i18n?: Record<string, Record<string, string>>; provides?: string[]; clientImmediately?: boolean }) | null;
   icon?: string | null;
-  features?: { id: string; type?: "boolean" | "string"; label?: string; placeholder?: string; enabled: boolean; value?: string }[] | null;
+  features?: { id: string; type?: "boolean" | "string" | "textlist"; label?: string; placeholder?: string; enabled: boolean; value?: string }[] | null;
 }
 
 interface ManifestData {

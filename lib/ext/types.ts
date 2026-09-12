@@ -721,5 +721,5 @@ export interface ManifestExtension {
   /** 独占接管特性声明。 */
   takeover?: string[];
   /** 功能状态（extman 管理）：host 客户端加载时一并取，扩展只读共享 store，无独立请求。 */
-  features?: { id: string; type?: "boolean" | "string"; label?: string; placeholder?: string; enabled: boolean; value?: string }[] | null;
+  features?: { id: string; type?: "boolean" | "string" | "textlist"; label?: string; placeholder?: string; enabled: boolean; value?: string }[] | null;
 }
