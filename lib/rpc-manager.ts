@@ -306,7 +306,7 @@ export class AgentSessionWrapper {
   private queueMirror: QueueEntry[] = [];
   private queueRecovery: QueueEntry[] = [];
   private queueTrash: QueueEntry[] = [];
-  private pendingQueueHints: Record<QueueKind, QueueImage[][]> = { steer: [], followUp: [] };
+  private pendingQueueHints: Record<QueueKind, QueueImage[][]> = { steer: [], followUp: [], composer: [] };
   // 方案 M：本轮 run 是否产出过带文本的 assistant 消息。agent_settled 无条件发射
   // （finally），而 getLastAssistantText() 会跳过「aborted 且无内容」的消息并
   // 回退到上一轮的最终回答——不设此标记，立即 abort 的轮次会把上一轮回答当
@@ -657,7 +657,7 @@ export class AgentSessionWrapper {
     // already in pi's queue, otherwise the agent loop drains nothing and the
     // remainder never runs.
     this.inner.clearQueue();
-    this.pendingQueueHints = { steer: [], followUp: [] };
+    this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
     for (const e of rest) {
       this.hintQueueImages(e.kind, e.images);
       if (e.kind === "steer") {
@@ -1443,7 +1443,7 @@ export class AgentSessionWrapper {
           this.queueTrash.push(...this.queueMirror);
         }
         this.queueMirror = [];
-        this.pendingQueueHints = { steer: [], followUp: [] };
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
         this.persistQueue();
         return this.inner.clearQueue();
       }
@@ -1477,7 +1477,7 @@ export class AgentSessionWrapper {
         // new order. Image hints are pushed per entry FIFO so reconcileQueue
         // can reattach them after each queue_update event.
         this.inner.clearQueue();
-        this.pendingQueueHints = { steer: [], followUp: [] };
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
         for (const e of newSteering) {
           this.hintQueueImages("steer", e.images);
           await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
@@ -1528,7 +1528,7 @@ export class AgentSessionWrapper {
         // new order. Image hints are pushed per entry FIFO so reconcileQueue
         // can reattach them after each queue_update event.
         this.inner.clearQueue();
-        this.pendingQueueHints = { steer: [], followUp: [] };
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
         for (const e of newSteering) {
           this.hintQueueImages("steer", e.images);
           await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
@@ -1564,7 +1564,7 @@ export class AgentSessionWrapper {
         const newSteering = kind === "steer" ? entries : steeringEntries;
         const newFollowUp = kind === "followUp" ? entries : followUpEntries;
         this.inner.clearQueue();
-        this.pendingQueueHints = { steer: [], followUp: [] };
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
         for (const e of newSteering) {
           this.hintQueueImages("steer", e.images);
           await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
@@ -1611,7 +1611,7 @@ export class AgentSessionWrapper {
         const newSteering = kind === "steer" ? entries : steeringEntries;
         const newFollowUp = kind === "followUp" ? entries : followUpEntries;
         this.inner.clearQueue();
-        this.pendingQueueHints = { steer: [], followUp: [] };
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
         for (const e of newSteering) {
           this.hintQueueImages("steer", e.images);
           await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
@@ -1672,7 +1672,7 @@ export class AgentSessionWrapper {
         const newSteering = kind === "steer" ? entries : steeringEntries;
         const newFollowUp = kind === "followUp" ? entries : followUpEntries;
         this.inner.clearQueue();
-        this.pendingQueueHints = { steer: [], followUp: [] };
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
         for (const e of newSteering) {
           this.hintQueueImages("steer", e.images);
           await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
@@ -1778,7 +1778,7 @@ export class AgentSessionWrapper {
         const newSteering = entry.kind === "steer" ? entries : steeringEntries;
         const newFollowUp = entry.kind === "followUp" ? entries : followUpEntries;
         this.inner.clearQueue();
-        this.pendingQueueHints = { steer: [], followUp: [] };
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
         for (const e of newSteering) {
           this.hintQueueImages("steer", e.images);
           await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
@@ -2728,6 +2728,7 @@ declare global {
   var __piSessions: Map<string, AgentSessionWrapper> | undefined;
   var __piStartLocks: Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> | undefined;
   var __piStartingSessionCwds: Map<string, number> | undefined;
+  var __piStartingSessionIds: Set<string> | undefined;
 }
 
 function getRegistry(): Map<string, AgentSessionWrapper> {
@@ -2805,6 +2806,17 @@ function normalizeRpcCwd(cwd: string): string {
 function getStartingSessionCwds(): Map<string, number> {
   if (!globalThis.__piStartingSessionCwds) globalThis.__piStartingSessionCwds = new Map();
   return globalThis.__piStartingSessionCwds;
+}
+
+/**
+ * 启动中（starting）的会话 id 集：wrapper 尚未注册进 registry，但旧会话 resume
+ * 的启动流程已发起。getRunningRpcSessionIds 合并它 → SSE running 帧在启动瞬间
+ * 即送达前端（左侧树立刻亮运行中）；终局（成功/失败）由 startRpcSession 的
+ * finally 收尾移除并广播。globalThis 承载：dev HMR 换模块实例不丢集。
+ */
+function getStartingSessionIds(): Set<string> {
+  if (!globalThis.__piStartingSessionIds) globalThis.__piStartingSessionIds = new Set();
+  return globalThis.__piStartingSessionIds;
 }
 
 function trackStartingSession(cwd: string): () => void {
@@ -2990,6 +3002,9 @@ export function getRunningRpcSessionIds(): string[] {
   for (const [sessionId, session] of getRegistry()) {
     if (session.isRunning()) ids.add(session.sessionId || sessionId);
   }
+  // 启动中（starting）的旧会话：wrapper 尚未注册进 registry，但启动已发起，
+  // 应计入 running 集（左侧树即刻亮运行中，见 startRpcSession 前置广播）。
+  for (const id of getStartingSessionIds()) ids.add(id);
   return [...ids];
 }
 
@@ -3105,6 +3120,22 @@ export async function startRpcSession(
   const inflight = locks.get(sessionId);
   if (inflight) return inflight;
 
+  // ── running 前置广播（旧会话启动即亮运行中，2026-09-12）──
+  // startRpcSession 的启动是异步重活（createAgentSessionServices 扩展加载 +
+  // createAgentSessionFromServices agent 进程/历史/MCP 启动，旧会话秒级~十秒级），
+  // 此前 running 广播要等启动完成后 prompt 提交才发生（notifyRunningChange 在
+  // prompt 分支里）→ 左侧树「运行中」转圈迟迟不亮（用户实测「旧会话输入消息重启
+  // 后等很久才更新」）。这里在启动一开始就把 sessionId 计入 starting 集合并广播：
+  // getRunningRpcSessionIds 合并 starting 集 → SSE running 帧即刻送达前端；启动
+  // 终局（成功：wrapper 注册接管；失败：启动抛错）由下方 IIFE 的 finally 收尾
+  // 广播退出（snapshot 去重保证成功路径不重复广播）。
+  // 新会话（sessionFile 空）不在此广播：其 sessionId 是一次性 __new__ 占位 key，
+  // 列表行尚未落盘，走既有 sm:session-created + pendingDraft 草稿行通道。
+  if (!isNewSession) {
+    getStartingSessionIds().add(sessionId);
+    notifyRunningChange();
+  }
+
   let sessionManager: SessionManager;
   if (sessionFile) {
     sessionManager = SessionManager.open(sessionFile, undefined);
@@ -3141,6 +3172,16 @@ export async function startRpcSession(
   );
   const chatOnly = selectedToolNames?.length === 0 && !subagentLoadsResources;
   const finishStartingSession = trackStartingSession(sessionCwd);
+  // 新会话草稿行前置广播（2026-09-12）：sm:session-created 原在启动完成（IIFE
+  // 尾部）才 publish——左侧树草稿行要等完整个启动（扩展/agent 进程/历史加载，
+  // 秒级~十秒级）。sessionManagerId 在 SessionManager.create 预生成后同步可得
+  // （= 启动完成后 inner.sessionId，见上方 Pre-generate 注释），这里启动一开始
+  // 就广播 → 前端立刻记 pendingDraft 草稿行（左侧树即刻出现该新会话），等
+  // jsonl 落盘 + 列表刷新转正。IIFE 尾部原广播保留作 SSE 未连窗口兜底（前端
+  // onSessionCreatedFrame 幂等，重复帧无害）。
+  if (isNewSession) {
+    try { publishPageEvent("sm:session-created", { sessionId: sessionManagerId, cwd: sessionCwd }); } catch { /* 广播失败不阻断启动 */ }
+  }
   const starting = (async () => {
     // Some extensions access the SDK's global theme even outside the terminal UI.
     if (!chatOnly) initTheme();
@@ -3351,6 +3392,10 @@ export async function startRpcSession(
   })().finally(() => {
     locks.delete(sessionId);
     finishStartingSession();
+    // 启动终局收尾广播：成功时 wrapper 已注册（isRunning 接管，snapshot 去重不
+    // 重复广播）；失败时 starting 集移除 → 广播把该 id 从 running 集摘除，左侧树
+    // 转圈退出（「失败再退出」语义）。
+    if (getStartingSessionIds().delete(sessionId)) notifyRunningChange();
   });
 
   locks.set(sessionId, starting);
