@@ -39,6 +39,7 @@ import { isBuiltInSubagentsEnabled, readSubagentSettings } from "./subagent-sett
 import { SubagentQueue } from "./subagent-queue";
 import { addWorktree, removeWorktree } from "./worktree";
 import { randomUUID } from "node:crypto";
+import { notifySessionCreated } from "./session-created-notify";
 
 interface HostSession {
   readonly inner: AgentSessionLike;
@@ -217,6 +218,8 @@ export function createSubagentController(
       const sessionManager = isolatedWorktree
         ? SessionManager.create(childCwd, undefined, { parentSession: parent.sessionFile })
         : SessionManager.create(parent.cwd, undefined, { parentSession: parent.sessionFile });
+      // 创建方统一通知：子代理会话也即时出现在侧栏（此前只靠运行帧间接带动）。
+      notifySessionCreated(sessionManager.getSessionId(), sessionManager.getCwd(), "subagent");
       const createdAt = new Date().toISOString();
       const metadata: SubagentMetadata = {
         version: 1,

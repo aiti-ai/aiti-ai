@@ -23,6 +23,7 @@ import path from "node:path";
 import os from "node:os";
 import fs from "node:fs";
 import { ensurePlaceholder } from "@/lib/session/placeholder";
+import { notifySessionCreated } from "@/lib/session-created-notify";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   findProvidersForAgent,
@@ -93,6 +94,8 @@ async function lastAssistantText(handle: SessionHandle): Promise<string | undefi
 async function startPiBackend(cwd: string, parentSessionFile?: string): Promise<{ handle: SessionHandle; sessionFile: string }> {
   const sm = SessionManager.create(cwd, undefined, { id: randomUUID() });
   sm.newSession(parentSessionFile ? { parentSession: parentSessionFile } : undefined);
+  // 创建方统一通知：job provider 会话即时出现在侧栏（此前无任何广播）。
+  notifySessionCreated(sm.getSessionId(), cwd, "job-provider");
   try {
     (sm as unknown as { _rewriteFile?: () => void })._rewriteFile?.();
     (sm as unknown as { flushed?: boolean }).flushed = true;
