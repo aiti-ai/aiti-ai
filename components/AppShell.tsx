@@ -723,8 +723,26 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       if (!detail?.key) return;
       setDockPanelStates((prev) => {
         const next = new Map(prev);
-        if (detail.state === "closed") next.delete(detail.key);
-        else next.set(detail.key, detail.state);
+        if (detail.state === "closed") {
+          // ✕（TabBar ✕ 转命令事件后由状态机回发 closed）：激活位停在被关的 dock tab
+          // → 回落其余 dock:right-panel tab / 最近 file/terminal tab（performCloseFileTab
+          // 同款回落语义）。右栏已无任何可见 tab → 收栏（关掉最后一个页签即自动缩起，
+          // 不再留「没有打开的文件」空态）。
+          const wasRightPanelTab = prev.get(detail.key) === "docked:right-panel";
+          next.delete(detail.key);
+          const remainingDockIds = [...next.entries()]
+            .filter(([, state]) => state === "docked:right-panel")
+            .map(([key]) => `dock:${key}`);
+          setActiveFileTabId((cur) => {
+            if (cur !== `dock:${detail.key}`) return cur;
+            return remainingDockIds.at(-1) ?? fileTabs.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? null;
+          });
+          if (wasRightPanelTab && remainingDockIds.length === 0 && fileTabs.length === 0 && terminalTabs.length === 0) {
+            setRightPanelOpen(false);
+          }
+        } else {
+          next.set(detail.key, detail.state);
+        }
         return next;
       });
       // 打开联动（仅显式 dock 命令触发；同态幂等不派发事件 → 手动收起右栏后重复
@@ -732,13 +750,6 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       if (detail.state === "docked:right-panel") {
         setRightPanelOpen(true);
         setActiveFileTabId(`dock:${detail.key}`);
-      } else if (detail.state === "closed") {
-        // ✕（TabBar ✕ 转命令事件后由状态机回发 closed）：激活位停在该 dock tab →
-        // 回落最近 file/terminal tab（performCloseFileTab 同款回落语义）。
-        setActiveFileTabId((cur) => {
-          if (cur !== `dock:${detail.key}`) return cur;
-          return fileTabs.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? null;
-        });
       }
     };
     window.addEventListener("piwe-float-present-change", onPresent);
