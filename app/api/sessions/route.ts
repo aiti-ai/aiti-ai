@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createHash } from "crypto";
+import { jsonResponse } from "@/lib/json-response";
 import {
   attachSessionProjectInfo,
   getSessionListVersion,
@@ -70,19 +71,21 @@ export async function GET(req: Request) {
     // ETag/304：首载多触发点（running 回灌/SSE 帧/恢复流程）重复拉全量时，
     // 列表与运行集未变 → 304 空传输（客户端带 If-None-Match）。
     // sha1 对 ~250KB JSON 为毫秒级，远小于网络传输与客户端解析。
-    const body = JSON.stringify({
+    const payload = {
       sessions,
       sessionListVersion,
       // 运行中 = 本地 runtime + 存活且正在执行的后端会话 + TUI 桥（未认领也可见）
       runningSessionIds: [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds(), ...getBridgeRunningIds()])],
       completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
-    });
+    };
+    const body = JSON.stringify(payload);
     const etag = `"${createHash("sha1").update(body).digest("hex")}"`;
     if (req.headers.get("if-none-match") === etag) {
       return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-store" } });
     }
-    return new Response(body, {
-      headers: { "content-type": "application/json; charset=utf-8", ETag: etag, "Cache-Control": "no-store" },
+    // 大列表走 gzip（上游 jsonResponse）；ETag 用未压缩体计算，与客户端 If-None-Match 对齐。
+    return jsonResponse(req, payload, {
+      headers: { ETag: etag, "Cache-Control": "no-store" },
     });
   } catch (error) {
     return NextResponse.json(
