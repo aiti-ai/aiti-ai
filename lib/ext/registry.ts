@@ -90,8 +90,9 @@ export interface ExtStatusEntry {
   icon?: string | null;
   /** 代码目录（disabled/失败条目也有）。 */
   dir?: string;
-  /** 配置区（备份范围）；cacheDir=缓存区（可删重建）。dataDir 已拆分为二者（数据分层）。 */
+  /** 配置区（备份范围）；stateDir=持久数据区（不可再生）；cacheDir=缓存区（可删重建）。dataDir 已拆分为三层（数据分层）。 */
   configDir?: string;
+  stateDir?: string;
   cacheDir?: string;
   /** client bundle 文件 + 内容哈希（有 client 才有）。 */
   client?: { file: string; hash: string } | null;
@@ -642,12 +643,15 @@ export class ExtRegistryImpl {
           this.errors.set(id, `entry id "${ext.id}" does not match directory name "${id}"`);
           continue;
         }
-        // 数据分层（config/cache）：configDir = 配置区（备份范围），cacheDir = 缓存区（可整体删除重建，惰性创建）
+        // 数据分层（config/state/cache）：configDir = 配置区（备份范围），stateDir = 持久数据区（不可再生，
+        // 不得假设丢失），cacheDir = 缓存区（可整体删除重建，惰性创建）
         const configDir = join(this.dataRoot(), ext.id);
         if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
+        const stateDir = join(configDir, "state");
+        if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
         const cacheDir = join(configDir, "cache");
         if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
-        this.extensions.set(ext.id, { id: ext.id, name: ext.name, version: ext.version, dir, configDir, cacheDir, source, ext });
+        this.extensions.set(ext.id, { id: ext.id, name: ext.name, version: ext.version, dir, configDir, stateDir, cacheDir, source, ext });
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`[ext] ${id} 加载失败:`, msg);
@@ -849,6 +853,7 @@ export class ExtRegistryImpl {
         icon: ext.ext.icon ?? null,
         dir: ext.dir,
         configDir: ext.configDir,
+        stateDir: ext.stateDir,
         cacheDir: ext.cacheDir,
         client: ext.ext.client
           ? { file: ext.ext.client, hash: this.clientHash(ext) }
@@ -1208,7 +1213,7 @@ export class ExtRegistryImpl {
 
   private serverContext(ext: LoadedExtension): ExtServerContext {
     const ctx: ExtServerContext = {
-      id: ext.id, dir: ext.dir, configDir: ext.configDir, cacheDir: ext.cacheDir, core: this.core,
+      id: ext.id, dir: ext.dir, configDir: ext.configDir, stateDir: ext.stateDir, cacheDir: ext.cacheDir, core: this.core,
       // 会话后端注册 slot（多 agent 前端）：键自动加 "<extId>/"" 前缀，shutdown 时自动注销。
       // open/canOpen 委托 openExternalSession（agentKey 解析 + handle 入库）。
       sessionProviders: {
@@ -1263,8 +1268,8 @@ export class ExtRegistryImpl {
     Object.defineProperty(ctx, "dataDir", {
       get() {
         throw new Error(
-          "[pi-web] ctx.dataDir 已移除（数据分层 breaking）：配置用 ctx.configDir，缓存/可重建数据用 ctx.cacheDir" +
-          "（扩展需升级到配套版本；见 pi-web-ext authoring-reference §数据目录）"
+          "[pi-web] ctx.dataDir 已移除（数据分层 breaking）：配置用 ctx.configDir，不可再生的持久数据（归档/历史/统计/数据库）用 ctx.stateDir，缓存/可重建数据用 ctx.cacheDir" +
+          "（扩展需升级到配套版本；见 pi-web-ext authoring-reference §2.1 数据分层）"
         );
       },
     });
@@ -1288,7 +1293,7 @@ export class ExtRegistryImpl {
       get: (id: string) => {
         const e = this.extensions.get(id);
         return e
-          ? { id: e.id, name: e.name, version: e.version, dir: e.dir, configDir: e.configDir, cacheDir: e.cacheDir, source: e.source }
+          ? { id: e.id, name: e.name, version: e.version, dir: e.dir, configDir: e.configDir, stateDir: e.stateDir, cacheDir: e.cacheDir, source: e.source }
           : undefined;
       },
       ui: (id: string) => this.byId(id)?.ext?.ui ?? null,

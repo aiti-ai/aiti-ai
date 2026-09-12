@@ -194,8 +194,11 @@ export interface ExtServerContext {
   /** Absolute path of the extension code directory (read-only for assets). */
   dir: string;
   /** 配置区（~/.pi/web/data/<id>/ 根级）：只放配置与关键小状态（aiti-configs 备份范围）。
-   *  数据分层（config/cache） breaking 拆分：ctx.dataDir 已移除（ctx 上访问即抛）。 */
+   *  数据三层（config/state/cache） breaking 拆分：ctx.dataDir 已移除（ctx 上访问即抛）。 */
   configDir: string;
+  /** 持久数据区（~/.pi/web/data/<id>/state/）：不可再生的数据（归档/历史/统计/数据库/用户创作物）；
+   *  不得假设丢失（读不到=异常），不自动清理（保留策略归扩展）。 */
+  stateDir: string;
   /** 缓存区（~/.pi/web/data/<id>/cache/）：一律可删（rm -rf 后扩展下次访问自动重建）；db/venv/日志/大文件。 */
   cacheDir: string;
   core: ExtCoreApi;
@@ -695,6 +698,8 @@ export interface LoadedExtension {
   dir: string;
   /** 配置区（dataRoot/<id>/ 根级）。 */
   configDir: string;
+  /** 持久数据区（dataRoot/<id>/state/，不可再生数据；不得假设丢失）。 */
+  stateDir: string;
   /** 缓存区（dataRoot/<id>/cache/，可整体删除重建）。 */
   cacheDir: string;
   /** 实际加载的根（user / extra / bundled）——同名时高优先级根遮蔽低优先级根。 */
