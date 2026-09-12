@@ -150,6 +150,9 @@ interface Props {
   modelError?: string | null;
   /** Diagnostics from resolving `enabledModels`, e.g. a pattern that matched nothing. */
   modelScopeWarnings?: string[];
+  /** 手动刷新模型目录（新建页 + 后端支持时由 ChatWindow 传入；缺省不显示刷新行） */
+  onRefreshModels?: () => void;
+  modelsRefreshing?: boolean;
   onModelChange?: (provider: string, modelId: string) => void;
   modelSwitching?: boolean;
   /** 当前会话上下文占比（ChatWindow 透传 contextUsage?.percent）——驱动压缩按钮/弹窗圆点紧迫度着色 */
@@ -1200,7 +1203,7 @@ let pendingFocusHandoff = false;
 
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionId,
-  onSend, onAbort, aborting, onForkNew, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
+  onSend, onAbort, aborting, onForkNew, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching, onRefreshModels, modelsRefreshing,
   sessionCapabilities, onSwitchPermissionMode, permissionMode,
   contextPercent, onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
@@ -4294,6 +4297,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     busy={modelSwitching}
                     pending={modelSwitchPending != null}
                     isAutoSelection={isAutoModelSelection}
+                    onRefresh={onRefreshModels}
+                    refreshing={modelsRefreshing}
                   />
                 </div>
               )}
@@ -4634,6 +4639,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     busy={modelSwitching}
                     pending={modelSwitchPending != null}
                     isAutoSelection={isAutoModelSelection}
+                    onRefresh={onRefreshModels}
+                    refreshing={modelsRefreshing}
                   />
                 </ExtItemBoundary>
               ) : (
@@ -4645,6 +4652,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   busy={modelSwitching}
                   pending={modelSwitchPending != null}
                   isAutoSelection={isAutoModelSelection}
+                  onRefresh={onRefreshModels}
+                  refreshing={modelsRefreshing}
                 />
               )
             )}
@@ -5052,6 +5061,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       busy={modelSwitching}
                       pending={modelSwitchPending != null}
                       isAutoSelection={isAutoModelSelection}
+                      onRefresh={onRefreshModels}
+                      refreshing={modelsRefreshing}
                     />
                   </div>
                 </div>

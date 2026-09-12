@@ -27,11 +27,12 @@
  *   {"type":"session","version":3,"id":<uuid>,"timestamp":...,"cwd":...,"agent":...,"extId":...}
  *   {"type":"session_info","name":"[agent] …","importedFrom":"<agent>:<sid>","external":true,…}
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { dataRoot } from "../ext/data-dir.ts";
+import { trashFileSync } from "../session-trash.ts";
 
 export interface ExternalPlaceholder {
   /** pi 站位会话 id（= 文件名尾 uuid = header.id）。侧栏行的对外身份。 */
@@ -286,7 +287,7 @@ export function removePlaceholderByUuid(uuid: string): boolean {
   const map = loadRegistry();
   const p = placeholderByUuid(uuid);
   if (!p) return false;
-  try { unlinkSync(p.path); } catch { /* already gone */ }
+  trashFileSync(p.path); // 站位文件进回收站（不再是物理 unlink）
   for (const [key, rec] of map) {
     if (rec === p || rec.uuid === uuid) map.delete(key);
   }

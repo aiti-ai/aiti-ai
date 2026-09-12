@@ -216,23 +216,35 @@ interface Props {
   writtenFiles?: WrittenFile[];
 }
 
+/**
+ * 模型显示名：配置别名优先，`<provider>/<model>` 兜底。
+ *
+ * provider / responseModel 允许缺省——外部 agent（如 ACP 回放帧、错误消息）可能只带
+ * provider 不带 model。历史实现直接 provider.toLowerCase()，一条缺 model 的消息会把
+ * 整页渲染打崩（逃逸到 global-error，见 2026-09-12 事故）；这里一律以空串参与比较，
+ * 且只在有值时输出，绝不裸调 .toLowerCase()。
+ */
 export function getModelDisplayName(
-  provider: string,
-  responseModel: string,
+  provider: string | undefined,
+  responseModel: string | undefined,
   modelNames?: Record<string, string>,
 ): string {
-  const normalizedProvider = provider.toLowerCase();
-  const normalizedResponse = responseModel.toLowerCase();
+  const providerText = provider ?? "";
+  const responseText = responseModel ?? "";
+  const normalizedProvider = providerText.toLowerCase();
+  const normalizedResponse = responseText.toLowerCase();
   const configured = Object.entries(modelNames ?? {}).flatMap(([key, name]) => {
     const separator = key.indexOf(":");
     return separator > 0 && key.slice(0, separator).toLowerCase() === normalizedProvider
       ? [{ id: key.slice(separator + 1).toLowerCase(), name }]
       : [];
   });
-  return configured.find((model) => model.id === normalizedResponse)?.name
-    ?? configured.find((model) => normalizedResponse.endsWith(`/${model.id}`))?.name
-    ?? Object.entries(modelNames ?? {}).find(([key]) => key.toLowerCase() === normalizedResponse)?.[1]
-    ?? `${provider}/${responseModel}`;
+  return configured.find((model) => model.id === normalizedResponse && model.id !== "")?.name
+    ?? configured.find((model) => model.id !== "" && normalizedResponse.endsWith(`/${model.id}`))?.name
+    ?? (normalizedResponse !== ""
+      ? Object.entries(modelNames ?? {}).find(([key]) => key.toLowerCase() === normalizedResponse)?.[1]
+      : undefined)
+    ?? [providerText, responseText].filter(Boolean).join("/");
 }
 
 function formatTime(ts?: number): string | null {
@@ -805,7 +817,7 @@ function AssistantMessageView({
           rowGap: 2,
         }}
       >
-        {message.provider && (
+        {(message.provider || message.model) && (
           <span>{getModelDisplayName(message.provider, message.model, modelNames)}</span>
         )}
         {message.usage && !isStreaming && (() => {

@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import test from "node:test";
 import { createJiti } from "jiti";
+
+// 会话删除现在走回收站（lib/session-trash.ts）：Trash 根钉到临时目录，
+// 避免测试运行把 fixture 文件丢进真实 ~/.local/share/Trash。
+const routeTestTrashRoot = mkdtempSync(join(tmpdir(), "pi-web-route-trash-"));
+process.env.PI_WEB_TRASH_DIR = routeTestTrashRoot;
+process.once("exit", () => {
+  try { rmSync(routeTestTrashRoot, { recursive: true, force: true }); } catch { /* ignore */ }
+});
 
 const listRoute = await readFile(new URL("./route.ts", import.meta.url), "utf8");
 const detailRoute = await readFile(new URL("./[id]/route.ts", import.meta.url), "utf8");

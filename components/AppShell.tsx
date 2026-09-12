@@ -77,10 +77,16 @@ import {
 } from "@/lib/topbar-order";
 import {
   clearLastOpen,
+  clearLastOpenSessionById,
   getLastOpenSession,
   setLastOpenSession,
   workspaceKeyOf,
 } from "@/lib/workspace-memory";
+import {
+  piWebSessionService,
+  publishSessionState,
+  type PiWebSessionSource,
+} from "@/lib/pi-web-session-store";
 import {
   getDefaultRightPanelWidth,
   getRightPanelMaxWidth,
@@ -227,6 +233,11 @@ function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
     </button>
   );
 }
+
+// 统一会话状态服务（P3 方案 §4.3）：模块顶层注册——模块求值早于 effect 阶段，
+// 任何扩展 client materialize 时服务已可用（消费方仍应判空降级以兼容旧宿主）。
+// 快照发布由 AppShell 内的 session-state effect 驱动。
+registerExtClientService("pi-web", "pi-web.session", piWebSessionService);
 
 export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record<string, string[]> | null } = {}) {
   // 水合完成信号：扩展（如 aiti-draft-keeper）的启动恢复必须等水合结束后落框，
@@ -859,6 +870,9 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
 
   const initialSessionId = initialNavigation.sessionId;
   const [activeCwd, setActiveCwd] = useState<string | null>(null);
+  // 统一会话状态服务（P3）：最近一次会话状态变更的来源标记（诊断/扩展决策用，
+  // 如 url-failed = URL ?session= 无效）。
+  const sessionSourceRef = useRef<PiWebSessionSource>(initialNavigation.sessionId ? "url" : "initial");
   const activeProjectKeyRef = useRef<string | null>(null);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
@@ -871,6 +885,34 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const invalidateWorkspaceRestore = useCallback(() => {
     workspaceRestoreTokenRef.current += 1;
   }, []);
+
+  // 统一会话状态服务（P3）：派生快照并在真实变化时发布（publish 内部按
+  // phase/requestedId/sessionId/session 摘要去重，重复渲染无副作用）。
+  useEffect(() => {
+    const phase = selectedSession
+      ? "active"
+      : (initialSessionId && !initialSessionRestored)
+        ? "resolving"
+        : "none";
+    publishSessionState({
+      phase,
+      requestedId: initialSessionId ?? null,
+      sessionId: selectedSession?.id ?? null,
+      session: selectedSession
+        ? {
+            id: selectedSession.id,
+            cwd: selectedSession.cwd,
+            name: selectedSession.name,
+            firstMessage: selectedSession.firstMessage,
+          }
+        : null,
+      // source 归一化：URL ?session= 存在但尚未被任何 handler 标注时，
+      // resolving 阶段记为 "url"（initial 仅适用于无 URL session 的首帧）。
+      source: sessionSourceRef.current === "initial" && initialSessionId
+        ? "url"
+        : sessionSourceRef.current,
+    });
+  }, [selectedSession, initialSessionId, initialSessionRestored]);
 
   // Persist every active-session transition, including new and forked sessions
   // that bypass the sidebar selection handler. Transient sessions do not yet
@@ -959,6 +1001,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
           return;
         }
         activeNewSessionDraftKeyRef.current = null;
+        sessionSourceRef.current = "restore";
         // Selecting the session must remount the chat with the session
         // present: useAgentSession loads content in a mount-only effect, so
         // the null-session welcome mount from the switch would never load
@@ -1021,6 +1064,9 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     const draftKey = `new:${draftId}:${cwd}`;
     setNewSessionDraftId(draftId);
     activeNewSessionDraftKeyRef.current = draftKey;
+    // source 标注只在真正的用户项目切换时（冷启动首次同步不覆盖——否则会把
+    // URL 恢复失败标记的 url-failed 覆盖成 cwd-switch，扩展无法区分两者）。
+    if (isUserProjectSwitch) sessionSourceRef.current = "cwd-switch";
     setSelectedSession(null);
     setNewSessionCwd((prev) => {
       if (prev && prev !== cwd) return null;
@@ -1049,6 +1095,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   }, [activeCwd, activeFileTabId, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number) => {
+    sessionSourceRef.current = isRestore ? "url" : "select";
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
     // Advance the project identity to the selected session's project BEFORE the
     // sidebar cwd-sync effect fires. Otherwise handleCwdChange sees a project
@@ -1155,6 +1202,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
 
   const handleNewSession = useCallback((sessionId: string, cwd: string) => {
     invalidateWorkspaceRestore();
+    sessionSourceRef.current = "cwd-switch";
     const draftKey = `new:${sessionId}:${cwd}`;
     activeNewSessionDraftKeyRef.current = draftKey;
     setNewSessionDraftId(sessionId);
@@ -1243,22 +1291,35 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       .catch(() => {});
   }, []);
 
-  const handleOpenSession = useCallback(async (sessionId: string) => {
+  const handleOpenSession = useCallback(async (sessionId: string, options?: { initialRestore?: boolean }) => {
     try {
       const response = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { cache: "no-store" });
       const data = await response.json() as { info?: SessionInfo; error?: string };
-      if (!response.ok || !data.info) throw new Error(data.error ?? `HTTP ${response.status}`);
+      if (!response.ok || !data.info) {
+        // 初始 ?session= 恢复指向已删除会话（404）：清失效的 last-open 记录 +
+        // 立即清 URL。正常路径的 URL 由「默认项目选择 → handleCwdChange → replace」
+        // 链清理；这是失败路径的兜底（不等下一次列表更新）。仅 initialRestore
+        // 上下文生效——pi-web:open-session 事件等其它调用方不受影响。
+        if (response.status === 404 && options?.initialRestore) {
+          clearLastOpenSessionById(sessionId);
+          router.replace(inAppPathname("/"), { scroll: false });
+        }
+        throw new Error(data.error ?? `HTTP ${response.status}`);
+      }
       handleSelectSession(data.info);
+      return true;
     } catch (error) {
       console.error("[pi-web] failed to open session:", error instanceof Error ? error.message : error);
+      return false;
     }
-  }, [handleSelectSession]);
+  }, [handleSelectSession, router]);
 
   // 外部会话占位/别名 id 规范化（服务端把 zcode:new-* / 别名解析成真实复合 id）：
   // 原位迁移选中 id 与 URL，不 bump sessionKey——挂载中的聊天/SSE 继续用旧注册
   //（服务端双注册保证命中），下次进入即全量走规范 id。侧栏行身份随之统一，
   // 同一后端会话不再双行（瞬时行 + 列表行）。
   const handleSessionIdCanonicalized = useCallback((previousId: string, canonicalId: string) => {
+    sessionSourceRef.current = "canonicalized";
     setSelectedSession((s) => (s && s.id === previousId ? { ...s, id: canonicalId } : s));
     if (new URLSearchParams(window.location.search).get("session") === previousId) {
       router.replace(`?session=${encodeURIComponent(canonicalId)}`, { scroll: false });
@@ -1271,6 +1332,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
 
   // Called by ChatWindow when a new session gets its real id from pi
   const handleSessionCreated = useCallback((session: SessionInfo, sourceDraftKey: string) => {
+    sessionSourceRef.current = "created";
     setRefreshKey((k) => k + 1);
     if (activeNewSessionDraftKeyRef.current !== sourceDraftKey) return;
     invalidateWorkspaceRestore();
@@ -1399,6 +1461,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
 
   const handleSessionForked = useCallback((newSessionId: string) => {
     invalidateWorkspaceRestore();
+    sessionSourceRef.current = "fork";
     activeNewSessionDraftKeyRef.current = null;
     setRefreshKey((k) => k + 1);
     setSessionKey((k) => k + 1);
@@ -1427,8 +1490,10 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   }, [handleSessionForked, translate]);
 
   const handleInitialRestoreDone = useCallback(() => {
+    // 该回调仅 URL ?session= 恢复失败路径调用（成功走 handleSelectSession("url")）。
+    if (initialNavigation.sessionId) sessionSourceRef.current = "url-failed";
     setInitialSessionRestored(true);
-  }, []);
+  }, [initialNavigation.sessionId]);
 
   const handleSessionDeleted = useCallback((sessionId: string) => {
     // Wipe any persisted drafts (all tabs' slots) for the deleted session.
@@ -1436,6 +1501,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     invalidateWorkspaceRestore();
     setRefreshKey((k) => k + 1);
     if (selectedSession?.id === sessionId) {
+      sessionSourceRef.current = "deleted";
       const cwd = selectedSession.cwd;
       const draftId = typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()

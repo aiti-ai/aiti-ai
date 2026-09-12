@@ -344,6 +344,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const {
     loading, error, messages, activeToolResults, entryIds, historyCursor, hasEarlierMessages, streamState,
     agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
+    modelsRefreshing, modelsRefreshable, refreshModels,
     followPaused,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, displayModel: displayModelValue, sessionStats, modelSwitching,
@@ -1164,6 +1165,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       modelList={modelList}
       modelError={modelError}
       modelScopeWarnings={modelScopeWarnings}
+      onRefreshModels={isNew && modelsRefreshable ? refreshModels : undefined}
+      modelsRefreshing={modelsRefreshing}
       onModelChange={
         session && session.agent && !sessionCap("setModel")
           ? undefined

@@ -69,6 +69,8 @@ export interface ExtSessionProviderRegistration {
   maxCapabilities: import("../session/types.ts").SessionCapabilities;
   /** 静态模型目录（无会话即可取；新建页选后端时给选择器供数据）。可选，缺省回退本地清单。 */
   listModels?(): Promise<Array<{ id: string; provider: string; label?: string }>>;
+  /** 手动刷新模型目录（绕过缓存强制探测；新建页「刷新模型列表」按钮数据源）。可选，缺省不显示按钮。 */
+  refreshModels?(): Promise<Array<{ id: string; provider: string; label?: string }>>;
   createSession(options: {
     sessionFile?: string;
     cwd?: string;
@@ -425,6 +427,10 @@ export interface ModelSelectorSlotProps {
   busy: boolean;
   pending: boolean;
   isAutoSelection: boolean;
+  /** 手动刷新模型目录（新建页 + 后端支持 refreshModels 时传入；接管组件应透传给刷新入口）。 */
+  onRefresh?: () => void;
+  /** 刷新进行中（接管组件据此禁用选择交互）。 */
+  refreshing?: boolean;
 }
 
 /** settingsModels 插槽 props（设置「模型」页签接管）。 */

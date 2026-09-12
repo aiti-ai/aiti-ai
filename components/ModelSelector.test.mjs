@@ -185,3 +185,22 @@ test("computePanelGeometry: placement auto opens below when more space below", a
   assert.equal(g.top, 132 + 6);
   assert.equal(g.maxHeight, Math.max(120, Math.min(800 - 6 - 138, 800 * 0.6)));
 });
+
+test("ModelRefreshRow：idle 可点；refreshing 转圈禁用（data-model-refresh 态标记）", async () => {
+  const React = (await import("react")).default;
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { ModelRefreshRow } = await jiti.import("./ModelSelector.tsx");
+  const idle = renderToStaticMarkup(React.createElement(ModelRefreshRow, {
+    refreshing: false, label: "刷新模型列表", refreshingLabel: "刷新中…", onClick: () => {},
+  }));
+  assert.match(idle, /data-model-refresh="idle"/);
+  assert.match(idle, /刷新模型列表/);
+  assert.doesNotMatch(idle, /disabled/);
+  const busy = renderToStaticMarkup(React.createElement(ModelRefreshRow, {
+    refreshing: true, label: "刷新模型列表", refreshingLabel: "刷新中…", onClick: () => {},
+  }));
+  assert.match(busy, /data-model-refresh="busy"/);
+  assert.match(busy, /disabled/);
+  assert.match(busy, /刷新中…/);
+  assert.match(busy, /pi-refresh-spin/, "刷新中带旋转动画");
+});

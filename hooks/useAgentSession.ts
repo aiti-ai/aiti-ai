@@ -459,6 +459,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [modelList, setModelList] = useState<ModelEntry[]>([]);
   const [modelError, setModelError] = useState<string | null>(null);
   const [modelScopeWarnings, setModelScopeWarnings] = useState<string[]>([]);
+  /** 手动刷新模型目录进行中（新建页「刷新模型列表」；驱动按钮禁用/转圈）。 */
+  const [modelsRefreshing, setModelsRefreshing] = useState(false);
+  /** 当前新建页后端是否支持刷新（provider.refreshModels 契约 → 路由 refreshable）。 */
+  const [modelsRefreshable, setModelsRefreshable] = useState(false);
+  /** 刷新冷却时间戳（5s 内连点合并）。 */
+  const modelsRefreshAtRef = useRef(0);
   const [modelThinkingLevels, setModelThinkingLevels] = useState<Record<string, string[]>>({});
   const [modelThinkingLevelMaps, setModelThinkingLevelMaps] = useState<Record<string, Record<string, string | null>>>({});
   /** A model switch was made while the agent was running — applies next turn.
@@ -2464,13 +2470,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const loadModels = useCallback(async (signal?: AbortSignal) => {
     // ── 新建页 + 已选后端：模型目录来自 provider 静态 listModels（无会话即可取）。
     //    缺静态目录（models:null）或失败 → 保留本地清单回退。
+    //    （强制刷新走 refreshModels 独立路径：路由 &refresh=1，不与本函数耦合。）
     if (isNew && newSessionBackend && !sessionIdRef.current) {
       try {
         const res = await fetch(
           apiUrl(`/api/session-backends?provider=${encodeURIComponent(newSessionBackend)}`),
           signal ? { signal } : undefined,
         );
-        const d = await res.json() as { models?: Array<{ id: string; provider: string; label?: string }> | null };
+        const d = await res.json() as { models?: Array<{ id: string; provider: string; label?: string }> | null; refreshable?: boolean };
+        setModelsRefreshable(Boolean(d.refreshable));
         if (d.models && d.models.length > 0) {
           const list = d.models.map((m) => ({ id: m.id, name: m.label ?? m.id, provider: m.provider }));
           setModelList(list);
@@ -2553,6 +2561,41 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     }
   }, [isNew, newSessionCwd, session?.cwd, session?.agent, newSessionBackend]);
+
+  /**
+   * 手动刷新模型目录（新建页 + 已选支持刷新的后端）：路由 ?refresh=1 → provider
+   * refreshModels 强制真实探测。5s 冷却合并连点；只替换目录不落本地回退（刷新语义），
+   * 失败走 notice 不动现有列表。
+   */
+  const refreshModels = useCallback(async () => {
+    if (!isNew || sessionIdRef.current || !newSessionBackend || modelsRefreshing) return;
+    const now = Date.now();
+    if (now - modelsRefreshAtRef.current < 5000) return;
+    modelsRefreshAtRef.current = now;
+    setModelsRefreshing(true);
+    try {
+      const res = await fetch(apiUrl(`/api/session-backends?provider=${encodeURIComponent(newSessionBackend)}&refresh=1`));
+      const d = await res.json() as {
+        models?: Array<{ id: string; provider: string; label?: string }> | null;
+        refreshable?: boolean;
+        error?: string;
+      };
+      if (!res.ok || !d.models || d.models.length === 0) {
+        throw new Error(d.error || `HTTP ${res.status}`);
+      }
+      const list = d.models.map((m) => ({ id: m.id, name: m.label ?? m.id, provider: m.provider }));
+      setModelList(list);
+      setModelNames(Object.fromEntries(list.map((m) => [m.id, m.name])));
+      setModelsRefreshable(Boolean(d.refreshable));
+      setModelError(null);
+      setModelScopeWarnings([]);
+      setNewSessionDefaultModel({ provider: list[0].provider, modelId: list[0].id });
+    } catch (e) {
+      addNotice({ type: "error", message: `刷新模型列表失败：${e instanceof Error ? e.message : String(e)}` });
+    } finally {
+      setModelsRefreshing(false);
+    }
+  }, [isNew, newSessionBackend, modelsRefreshing, addNotice]);
 
   /**
    * Pull fresh session stats (incl. contextUsage) from the agent process.
@@ -3612,6 +3655,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // State
     data, loading, error, activeLeafId, messages, activeToolResults, entryIds, historyCursor, hasEarlierMessages, streamState,
     agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
+    modelsRefreshing, modelsRefreshable, refreshModels,
     followPaused,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, currentModel, displayModel, modelSwitching, sessionStats,

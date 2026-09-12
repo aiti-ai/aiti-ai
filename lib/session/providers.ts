@@ -62,6 +62,16 @@ export interface SessionProvider {
    */
   readonly priority?: number;
 
+  /**
+   * UI listing position (Backend 下拉等 pickers)。数字越小越靠前；缺省 = 1000
+   * （沿用注册序）。仅用于把核心后端前置（如 pi spawn 家族），扩展后端不动即
+   * 保持注册顺序，向后兼容。
+   *
+   * 注意与 {@link priority} 区分：priority 是「同一 agentKey 的认领解析优先级」
+   * （越大越优先），order 是「picker 展示位次」（越小越靠前），方向相反。
+   */
+  readonly order?: number;
+
   /** Human label for UI pickers. */
   readonly label: string;
 
@@ -95,6 +105,13 @@ export interface SessionProvider {
    * 缺省表示目录绑定会话（如 ACP 需 session/new），前端回退本地清单。
    */
   listModels?(): Promise<Array<{ id: string; provider: string; label?: string }>>;
+
+  /**
+   * 手动刷新模型目录（新建页「刷新模型列表」按钮）：绕过 TTL/缓存强制真实探测。
+   * 可选：缺省表示不支持刷新（路由响应 refreshable:false，前端不显示按钮）。
+   * 实现方自带单飞/超时（与启动探测共用），本契约不追加防抖。
+   */
+  refreshModels?(): Promise<Array<{ id: string; provider: string; label?: string }>>;
 
   /**
    * Bring up a session handle. Implementations should be idempotent per
@@ -239,7 +256,13 @@ export function findProvidersForAgent(agentKey: string): SessionProvider[] {
 }
 
 export function listProviders(): SessionProvider[] {
-  return [...providerMap().values()];
+  const all = [...providerMap().values()];
+  // Stable sort by (order ?? 1000, insertion order) — providers without an
+  // explicit `order` keep their registration sequence (backward compatible).
+  return all
+    .map((p, i) => ({ p, i, order: p.order ?? 1000 }))
+    .sort((a, b) => a.order - b.order || a.i - b.i)
+    .map((x) => x.p);
 }
 
 /**

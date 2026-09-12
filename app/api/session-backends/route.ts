@@ -33,17 +33,22 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "forbidden" }, { status: 403 });
   }
   // ?provider=<key> → 静态模型目录（新建页选后端时给选择器供数据；无静态目录 →
-  // models:null，前端保留本地清单回退）。
-  const providerKey = new URL(req.url).searchParams.get("provider");
+  // models:null，前端保留本地清单回退）。?refresh=1 → 有 refreshModels 的 provider
+  // 强制真实探测（绕过缓存/TTL）；响应带 refreshable（前端据此显隐「刷新模型列表」按钮）。
+  const url = new URL(req.url);
+  const providerKey = url.searchParams.get("provider");
   if (providerKey) {
+    const forceRefresh = url.searchParams.get("refresh") === "1";
     const provider = getProvider(providerKey);
     if (!provider) return NextResponse.json({ error: `unknown provider "${providerKey}"` }, { status: 404 });
-    if (!provider.listModels) return NextResponse.json({ ok: true, provider: providerKey, models: null });
+    const refreshable = typeof provider.refreshModels === "function";
+    const loader = forceRefresh && refreshable ? provider.refreshModels?.() : provider.listModels?.();
+    if (!loader) return NextResponse.json({ ok: true, provider: providerKey, models: null, refreshable });
     try {
-      return NextResponse.json({ ok: true, provider: providerKey, models: await provider.listModels() });
+      return NextResponse.json({ ok: true, provider: providerKey, models: await loader, refreshable });
     } catch (e) {
       return NextResponse.json(
-        { ok: false, provider: providerKey, error: e instanceof Error ? e.message : String(e) },
+        { ok: false, provider: providerKey, error: e instanceof Error ? e.message : String(e), refreshable },
         { status: 502 },
       );
     }

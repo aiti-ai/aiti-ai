@@ -133,8 +133,10 @@ interface Props {
   initialSessionId?: string | null;
   skipInitialProjectSelection?: boolean;
   onInitialRestoreDone?: () => void;
-  /** URL ?session= 在本地列表找不到（如空会话/未索引的 attach 会话）时的兜底：按 id 调 /api/sessions/<id>（socket 优先后台打开） */
-  onOpenById?: (sessionId: string) => void;
+  /** URL ?session= 在本地列表找不到（如空会话/未索引的 attach 会话）时的兜底：按 id 调 /api/sessions/<id>（socket 优先后台打开）
+   *  options.initialRestore：来源为初始 URL 恢复——宿主 404 时据此清失效 last-open 记录 + 立即清 URL；
+   *  返回 false 表示不存在/失败（旧宿主可返回 void，调用方不做失败动作）。 */
+  onOpenById?: (sessionId: string, options?: { initialRestore?: boolean }) => Promise<boolean> | void;
   refreshKey?: number;
   onSessionDeleted?: (sessionId: string) => void;
   selectedCwd?: string | null;
@@ -835,7 +837,9 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
       // placeholder, but ALSO try opening by id via the session API: it may be
       // a live-bridge session (empty/not indexed) where socket attach wins
       // (registry lookup, no file needed).
-      onOpenById?.(initialSessionId);
+      // 失败清理在宿主 404 分支（清 URL + last-open 记录）；此处不 return——
+      // 继续默认项目自动选（与接管态 sidebar-content 对齐）。
+      void onOpenById?.(initialSessionId, { initialRestore: true });
       onInitialRestoreDone?.();
     }
 

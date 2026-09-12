@@ -29,6 +29,10 @@ interface ModelSelectorProps {
   ariaLabel?: string;
   variant?: "toolbar" | "field";
   placement?: "up" | "auto";
+  /** 手动刷新模型目录（下拉头部「刷新模型列表」行；缺省不渲染——零侵入）。 */
+  onRefresh?: () => void;
+  /** 刷新进行中：刷新行转圈禁用，其余选项一并禁用避免误点。 */
+  refreshing?: boolean;
 }
 
 const MODEL_FILTER_THRESHOLD = 8;
@@ -193,6 +197,8 @@ export function ModelSelector({
   ariaLabel,
   variant = "toolbar",
   placement = "up",
+  onRefresh,
+  refreshing = false,
 }: ModelSelectorProps) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
@@ -318,6 +324,7 @@ export function ModelSelector({
       };
 
   const choose = (option: ModelSelectorOption) => {
+    if (refreshing) return; // 刷新中禁选（按钮层也已 disabled，此处兜键盘/连点）
     const active = option.modelId === value?.modelId && option.provider === value?.provider;
     rememberRecentModel(option.provider, option.modelId);
     setOpen(false);
@@ -477,8 +484,17 @@ export function ModelSelector({
               </div>
             )}
             <div style={{ minHeight: 0, overflowY: "auto", ...(isMobile ? { flex: 1 } : null) }}>
+              {onRefresh && (
+                <ModelRefreshRow
+                  refreshing={refreshing}
+                  label={t("chat.refreshModels")}
+                  refreshingLabel={t("chat.refreshingModels")}
+                  onClick={onRefresh}
+                />
+              )}
               {onClear && !filter.trim() && (
-                <ModelOptionButton active={!value} label={emptyLabel ?? "Default"} onClick={() => {
+                <ModelOptionButton active={!value} label={emptyLabel ?? "Default"} disabled={refreshing} onClick={() => {
+                  if (refreshing) return;
                   setOpen(false);
                   setFilter("");
                   onClear();
@@ -497,6 +513,7 @@ export function ModelSelector({
                       label={option.name}
                       hint={isMobile ? undefined : option.provider}
                       status={option.status}
+                      disabled={refreshing}
                       onClick={() => choose(option)}
                     />
                   ))}
@@ -523,6 +540,7 @@ export function ModelSelector({
                       label={option.name}
                       hint={isMobile ? undefined : option.provider}
                       status={option.status}
+                      disabled={refreshing}
                       onClick={() => choose(option)}
                     />
                   ))}
@@ -536,7 +554,7 @@ export function ModelSelector({
   );
 }
 
-function ModelOptionButton({ active, label, hint, status, onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; onClick: () => void }) {
+function ModelOptionButton({ active, label, hint, status, disabled = false, onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; disabled?: boolean; onClick: () => void }) {
   const statusMark = status === "rl"
     ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#b45309", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.14)" }} title="当前限流（429）——选中可能被冷却拒发，仅提示不会自动禁用">429</span>
     : status === "err"
@@ -549,8 +567,9 @@ function ModelOptionButton({ active, label, hint, status, onClick }: { active: b
       type="button"
       role="option"
       aria-selected={active}
+      disabled={disabled || undefined}
       onClick={onClick}
-      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 12px", border: "none", background: active ? "var(--bg-selected)" : "none", color: active ? "var(--text)" : "var(--text-muted)", cursor: "pointer", fontSize: 12, fontWeight: active ? 600 : 400, textAlign: "left", whiteSpace: "nowrap" }}
+      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 12px", border: "none", background: active ? "var(--bg-selected)" : "none", color: active ? "var(--text)" : "var(--text-muted)", cursor: disabled ? "default" : "pointer", fontSize: 12, fontWeight: active ? 600 : 400, textAlign: "left", whiteSpace: "nowrap", opacity: disabled && !active ? 0.55 : undefined }}
       onMouseEnter={(event) => { if (!active) event.currentTarget.style.background = "var(--bg-hover)"; }}
       onMouseLeave={(event) => { if (!active) event.currentTarget.style.background = "none"; }}
     >
@@ -562,6 +581,25 @@ function ModelOptionButton({ active, label, hint, status, onClick }: { active: b
       {hint && hint !== label ? (
         <span style={{ marginLeft: "auto", flexShrink: 0, paddingLeft: 14, fontSize: 10, fontWeight: 400, color: "var(--text-dim)", opacity: 0.8 }} title={hint}>{hint}</span>
       ) : null}
+    </button>
+  );
+}
+
+/** 下拉头部「刷新模型列表」行（导出仅供单测渲染断言）。刷新中转圈 + 禁用，点击保持面板打开。 */
+export function ModelRefreshRow({ refreshing, label, refreshingLabel, onClick }: { refreshing: boolean; label: string; refreshingLabel: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      data-model-refresh={refreshing ? "busy" : "idle"}
+      disabled={refreshing || undefined}
+      onClick={() => { if (!refreshing) onClick(); }}
+      style={{ display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "8px 12px", background: "none", border: "none", borderBottom: "1px solid var(--border)", color: refreshing ? "var(--text-dim)" : "var(--text-muted)", cursor: refreshing ? "default" : "pointer", fontSize: 12, textAlign: "left" }}
+    >
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0, ...(refreshing ? { animation: "pi-refresh-spin 1s linear infinite" } : {}) }}>
+        <path d="M21 12a9 9 0 1 1-2.64-6.36" /><polyline points="21 3 21 9 15 9" />
+      </svg>
+      {refreshing ? refreshingLabel : label}
+      {refreshing && <style>{"@keyframes pi-refresh-spin{to{transform:rotate(360deg)}}"}</style>}
     </button>
   );
 }

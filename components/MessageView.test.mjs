@@ -46,6 +46,25 @@ test("matches response model aliases and otherwise includes the provider", () =>
   assert.equal(getModelDisplayName("gateway", "unknown-model", names), "gateway/unknown-model");
 });
 
+test("tolerates a missing model or provider (external-agent replay frames)", () => {
+  const names = { "gateway:claude-sonnet-5": "Sonnet 5" };
+
+  // provider-only（ACP 回放帧/错误消息：provider 在、model 缺）曾是整页崩溃点：
+  // getModelDisplayName 内裸调 responseModel.toLowerCase() → undefined 崩溃 → global-error。
+  assert.equal(getModelDisplayName("aiti-acp-agent/codebuddy", undefined, names), "aiti-acp-agent/codebuddy");
+  assert.equal(getModelDisplayName("gateway", undefined, names), "gateway");
+  assert.equal(getModelDisplayName(undefined, "deepseek-v4.1-flash", names), "deepseek-v4.1-flash");
+  assert.equal(getModelDisplayName(undefined, undefined, names), "");
+
+  // 渲染回归：缺 model 的 assistant 消息不再把 MessageView 打崩。
+  const providerOnly = renderMessage({ role: "assistant", content: [{ type: "text", text: "replayed" }], provider: "aiti-acp-agent/codebuddy" });
+  assert.match(providerOnly, /aiti-acp-agent\/codebuddy/);
+  const modelOnly = renderMessage({ role: "assistant", content: [{ type: "text", text: "no provider" }], model: "deepseek-v4.1-flash" });
+  assert.match(modelOnly, /deepseek-v4\.1-flash/);
+  const neither = renderMessage({ role: "assistant", content: [{ type: "text", text: "no stamp" }] });
+  assert.doesNotMatch(neither, /undefined/);
+});
+
 test("previews the first thinking line and reveals the full text with the saved default", () => {
   const previousWindow = globalThis.window;
   try {

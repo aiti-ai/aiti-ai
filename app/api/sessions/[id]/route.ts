@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
@@ -22,6 +22,7 @@ import { listProviders } from "@/lib/session/providers";
 import { resolvePlaceholderSession, removeHandle } from "@/lib/session";
 import { getPlaceholder, removePlaceholderByUuid } from "@/lib/session/placeholder";
 import { removeQueue } from "@/lib/queue-store";
+import { trashFileSync } from "@/lib/session-trash";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
 import { computeSessionStats } from "@/lib/session-stats";
@@ -585,12 +586,8 @@ export async function DELETE(
     try { await abortSubagent(id); } catch { /* ordinary session */ }
     await getRpcSession(id)?.shutdown();
     for (const [deletedId, deletedPath] of deletedPaths) {
-      try {
-        unlinkSync(deletedPath);
-      } catch (error) {
-        // Unpersisted runtime sessions may already be gone (upstream #440).
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
+      // 会话文件进回收站（手滑可还原）；未落盘的 runtime 会话文件不存在时静默跳过（upstream #440）。
+      trashFileSync(deletedPath);
       removeQueue(deletedPath);
       invalidateSessionPathCache(deletedId);
     }
