@@ -129,6 +129,31 @@ const TOP_BAR_ICON_BUTTON_SIZE = 36;
 const AGENT_PANEL_WIDTH = 420;
 const SELECTION_MENU_WIDTH = 176;
 
+/** 通知文本：超长摘要截断。 */
+function truncateText(text: string, max: number): string {
+  const trimmed = text.trim();
+  return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+}
+
+/** 任务完成通知的会话标题：会话名称优先，未命名时用首条消息摘要兜底（避免笼统的「任务完成」）。 */
+function notificationSessionTitle(session: SessionInfo | null, fallback: string): string {
+  const name = session?.name?.trim();
+  if (name) return name;
+  const first = session?.firstMessage?.trim();
+  if (first) return truncateText(first, 42);
+  return fallback;
+}
+
+/** 通知里的项目上下文标签：<项目根名>(<分支>)，未知时省略。 */
+function notificationProjectLabel(session: SessionInfo | null): string {
+  const root = session?.projectRoot || session?.cwd;
+  const base = root ? root.split(/[\\/]/).filter(Boolean).pop() : null;
+  const parts: string[] = [];
+  if (base) parts.push(base);
+  if (session?.branch) parts.push(`(${session.branch})`);
+  return parts.join(" ");
+}
+
 /** 扩展条目声明式图标（meta.icon，ExtUiItemIcon）→ 标准灰度线条渲染（16px，颜色随 currentColor）。
  *  三种形态：{ svg } 内部标记（24×24 viewBox，lucide 线条风格）/ emoji / 扩展内 .svg 文件（CSS-mask）。
  *  ⋯ 菜单图标槽与声明式工具条按钮（ExtToolbarIconButton）共用。 */
@@ -203,7 +228,7 @@ function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
   );
 }
 
-export function AppShell() {
+export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record<string, string[]> | null } = {}) {
   // 水合完成信号：扩展（如 aiti-draft-keeper）的启动恢复必须等水合结束后落框，
   // 否则 dev 下 hydration 失配重渲染会按服务端 HTML（空框）抹掉恢复的文本。
   useEffect(() => {
@@ -1094,6 +1119,29 @@ export function AppShell() {
     return () => window.removeEventListener("pi-web:open-session", handler);
   }, []);
 
+  // [aiti] service worker 通知点击 → SPA 内打开会话：sw.js 不再对已开窗口
+  // client.navigate（那等于地址栏回车整页刷新），改为 postMessage 到页面，
+  // 这里转发给上方 pi-web:open-session 通道（fetch meta → selectById，零刷新）。
+  // 仅处理 service worker 来源（event.source 是 ServiceWorker 对象）；普通窗口
+  // postMessage（如 aiti-viewer composer 协议）走独立监听，互不干扰。
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    const onSwMessage = (event: MessageEvent) => {
+      if (!(event.source instanceof ServiceWorker)) return;
+      const d = event.data as { type?: string; url?: string; sessionId?: string } | null;
+      if (!d || d.type !== "pi-web:open-session") return;
+      const id = d.sessionId
+        ?? (d.url ? new URL(d.url, window.location.origin).searchParams.get("session") : null);
+      if (id) {
+        window.dispatchEvent(new CustomEvent("pi-web:open-session", { detail: { id } }));
+      } else {
+        window.focus();
+      }
+    };
+    navigator.serviceWorker.addEventListener("message", onSwMessage);
+    return () => navigator.serviceWorker.removeEventListener("message", onSwMessage);
+  }, []);
+
   const handleNewSession = useCallback((sessionId: string, cwd: string) => {
     invalidateWorkspaceRestore();
     const draftKey = `new:${sessionId}:${cwd}`;
@@ -1270,10 +1318,15 @@ export function AppShell() {
     if (selectedSession?.relation?.kind === "subagent") return;
     if (!shouldShowBrowserNotification()) return;
     const targetSession = selectedSession;
+    // 带上会话上下文：标题=任务名（名称/首条消息摘要），正文=项目(+分支)+完成文案，
+    // 让通知一眼看出「哪个项目里的什么任务完成了」，而不是笼统的「任务完成」。
+    const projectLabel = notificationProjectLabel(targetSession);
     deliverSessionNotification({
       targetSession,
-      title: targetSession?.name ?? translate("i18n.sessionComplete"),
-      body: translate("i18n.taskFinished"),
+      title: notificationSessionTitle(targetSession, translate("i18n.sessionComplete")),
+      body: projectLabel
+        ? translate("i18n.taskFinishedWithContext", { project: projectLabel })
+        : translate("i18n.taskFinished"),
       tag: targetSession ? `pi-session-complete:${targetSession.id}` : "pi-session-complete",
     });
   }, [deliverSessionNotification, hydrateSelectedSession, selectedSession, translate]);
@@ -3200,7 +3253,7 @@ export function AppShell() {
   };
 
   return (
-    <ExtSlotsProvider>
+    <ExtSlotsProvider serverSlotDeclarations={extSlotDeclarations}>
     <>
     {cwdMissingNotice && (
       <div

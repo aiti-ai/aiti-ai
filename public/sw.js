@@ -126,32 +126,63 @@ self.addEventListener("notificationclick", (event) => {
     // Keep the root URL when notification data is malformed.
   }
 
-  event.waitUntil(focusOrOpenWindow(targetUrl.href));
+  event.waitUntil(focusOrOpenWindow(targetUrl));
 });
 
+// 归一同源 URL 用于「窗口是否已位于目标地址」判断（忽略结尾斜杠差异）。
+function normalizeUrlForMatch(href) {
+  try {
+    const u = new URL(href);
+    return `${u.origin}${u.pathname.replace(/\/+$/, "")}${u.search}${u.hash}`;
+  } catch {
+    return href;
+  }
+}
+
+// 点击通知后把用户带到目标会话。规则：
+// 1) 已有同源 pi-web 窗口 → 只 focus，绝不整页 navigate（client.navigate 等于地址栏
+//    回车，会把正在看别的会话/实例的窗口硬刷新掉，丢失全部状态）。目标会话经
+//    postMessage 交给页面走 SPA 内切换（pi-web:open-session 通道，零刷新），
+//    URL 由页面自行 router.replace 同步。
+// 2) 没有任何同源窗口 → 开新窗口。
 async function focusOrOpenWindow(targetUrl) {
   const windowClients = await self.clients.matchAll({
     type: "window",
     includeUncontrolled: true,
   });
-  const exactClient = windowClients.find((client) => client.url === targetUrl);
+  // 只考虑同源窗口：跨实例（/dev /win /mac 等不同 host:port）窗口绝不触碰。
+  const sameOrigin = windowClients.filter((client) => {
+    try {
+      return new URL(client.url).origin === self.location.origin;
+    } catch {
+      return false;
+    }
+  });
+  // 已精确位于目标地址的窗口优先（其余情况同样只 focus + 广播会话切换，行为一致）。
+  const exactClient = sameOrigin.find(
+    (client) => normalizeUrlForMatch(client.url) === normalizeUrlForMatch(targetUrl.href),
+  );
   const candidates = exactClient
-    ? [exactClient, ...windowClients.filter((client) => client !== exactClient)]
-    : windowClients;
+    ? [exactClient, ...sameOrigin.filter((client) => client !== exactClient)]
+    : sameOrigin;
 
   for (const client of candidates) {
     try {
-      const targetClient = client.url === targetUrl
-        ? client
-        : (await client.navigate(targetUrl)) ?? client;
-      await targetClient.focus();
+      await client.focus();
+      // 不 navigate：把会话切换意图交给页面（SPA 内 router.replace，零刷新）。
+      // 页面端监听 navigator.serviceWorker message 后转发 pi-web:open-session。
+      client.postMessage({
+        type: "pi-web:open-session",
+        url: targetUrl.href,
+        sessionId: targetUrl.searchParams.get("session"),
+      });
       return;
     } catch {
       // The window may have closed between matchAll and focus; try the next one.
     }
   }
 
-  await self.clients.openWindow(targetUrl);
+  await self.clients.openWindow(targetUrl.href);
 }
 
 async function cacheFirst(request) {

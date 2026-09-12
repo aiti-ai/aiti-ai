@@ -1,4 +1,4 @@
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type SessionInfo } from "@earendil-works/pi-coding-agent";
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import webpush from "web-push";
@@ -27,7 +27,7 @@ interface WebPushEnvironment {
   loadState: () => PushStateFile | null;
   saveState: (state: PushStateFile) => void;
   generateVapidKeys: () => PushStateFile["vapidKeys"];
-  listSessionNames: () => Promise<Map<string, string>>;
+  listSessions: () => Promise<SessionInfo[]>;
 }
 
 export interface WebPushNotifier {
@@ -89,16 +89,13 @@ function getDefaultEnvironment(): WebPushEnvironment {
       writePrivateFileAtomicSync(path, JSON.stringify(state));
     },
     generateVapidKeys: () => webpush.generateVAPIDKeys(),
-    async listSessionNames() {
-      const names = new Map<string, string>();
+    async listSessions() {
       try {
-        for (const session of await SessionManager.listAll()) {
-          if (session.name) names.set(session.id, session.name);
-        }
+        return await SessionManager.listAll();
       } catch {
         // Session list is best-effort; fall back to the generic title.
+        return [];
       }
-      return names;
     },
   };
 }
@@ -113,13 +110,32 @@ function pushStatusCode(error: unknown): number | undefined {
  * Locale lookup for push payloads. The browser reports its UI locale when it
  * subscribes; unknown locales fall back to English.
  */
-export function localeText(locale: string, key: "sessionComplete" | "taskFinished"): string {
-  if (locale === "zh-CN") {
-    const message = zhCNLocale.messages[key === "sessionComplete" ? "i18n.sessionComplete" : "i18n.taskFinished"];
-    if (message) return message;
+export function localeText(
+  locale: string,
+  key: "sessionComplete" | "taskFinished" | "taskFinishedWithContext",
+  params?: { project?: string },
+): string {
+  const messageKey = key === "sessionComplete"
+    ? "i18n.sessionComplete"
+    : key === "taskFinished"
+      ? "i18n.taskFinished"
+      : "i18n.taskFinishedWithContext";
+  const message = locale === "zh-CN"
+    ? zhCNLocale.messages[messageKey]
+    : enLocale.messages[messageKey];
+  if (!message) {
+    return key === "sessionComplete" ? "Session complete" : "Task finished.";
   }
-  const message = enLocale.messages[key === "sessionComplete" ? "i18n.sessionComplete" : "i18n.taskFinished"];
-  return message ?? (key === "sessionComplete" ? "Session complete" : "Task finished.");
+  return params
+    ? message.replace(/\{project\}/g, params.project ?? "")
+    : message;
+}
+
+/** 会话工作目录的项目名（最后一段路径），用于通知里的项目标签。 */
+function projectBasename(cwd: string | undefined): string | null {
+  if (!cwd) return null;
+  const base = cwd.split(/[\\/]/).filter(Boolean).pop();
+  return base || null;
 }
 
 export function createWebPushNotifier(environment: WebPushEnvironment): WebPushNotifier {
@@ -146,10 +162,14 @@ export function createWebPushNotifier(environment: WebPushEnvironment): WebPushN
     },
     async notifySessionComplete(sessionId) {
       if (state.subscriptions.length === 0) return;
-      const sessionName = (await environment.listSessionNames()).get(sessionId);
+      const session = (await environment.listSessions()).find((s) => s.id === sessionId);
+      const sessionName = session?.name;
+      const projectLabel = projectBasename(session?.cwd);
       const payloadFor = (locale: string) => ({
         title: sessionName ?? localeText(locale, "sessionComplete"),
-        body: localeText(locale, "taskFinished"),
+        body: projectLabel
+          ? localeText(locale, "taskFinishedWithContext", { project: projectLabel })
+          : localeText(locale, "taskFinished"),
         url: `/?session=${encodeURIComponent(sessionId)}`,
         tag: `pi-session-complete:${sessionId}`,
       });

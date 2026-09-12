@@ -146,6 +146,7 @@ test("notification click focuses an existing client at the session URL", async (
     url: "https://pi.test/?session=session-1",
     focus: async () => { calls.push("focus"); },
     navigate: async () => assert.fail("exact client should not navigate"),
+    postMessage: (message) => { calls.push(["postMessage", message]); },
   };
   self.clients = {
     matchAll: async () => [focusedClient],
@@ -156,22 +157,20 @@ test("notification click focuses an existing client at the session URL", async (
   await event.pending;
 
   assert.equal(event.wasClosed(), true);
-  assert.deepEqual(calls, ["focus"]);
+  assert.deepEqual(calls, [
+    "focus",
+    ["postMessage", { type: "pi-web:open-session", url: "https://pi.test/?session=session-1", sessionId: "session-1" }],
+  ]);
 });
 
-test("notification click navigates an existing client to the session", async () => {
+test("notification click focuses (never navigates) an existing client on another session", async () => {
   setScope("https://pi.test/");
   const calls = [];
-  const navigatedClient = {
-    focus: async () => { calls.push("focus"); },
-  };
   const existingClient = {
     url: "https://pi.test/?session=other-session",
-    navigate: async (url) => {
-      calls.push(["navigate", url]);
-      return navigatedClient;
-    },
-    focus: async () => assert.fail("the navigated client should be focused"),
+    navigate: async () => assert.fail("must not navigate an open client (would full-reload the page)"),
+    focus: async () => { calls.push("focus"); },
+    postMessage: (message) => { calls.push(["postMessage", message]); },
   };
   self.clients = {
     matchAll: async () => [existingClient],
@@ -182,9 +181,29 @@ test("notification click navigates an existing client to the session", async () 
   await event.pending;
 
   assert.deepEqual(calls, [
-    ["navigate", "https://pi.test/?session=session-1"],
     "focus",
+    ["postMessage", { type: "pi-web:open-session", url: "https://pi.test/?session=session-1", sessionId: "session-1" }],
   ]);
+});
+
+test("notification click ignores cross-origin windows and opens a fresh one", async () => {
+  setScope("https://pi.test/");
+  const opened = [];
+  const foreignClient = {
+    url: "https://other-host.example/?session=session-1",
+    navigate: async () => assert.fail("cross-origin window must never be navigated"),
+    focus: async () => assert.fail("cross-origin window must not be focused"),
+    postMessage: async () => assert.fail("cross-origin window must not be messaged"),
+  };
+  self.clients = {
+    matchAll: async () => [foreignClient],
+    openWindow: async (url) => { opened.push(url); },
+  };
+
+  const event = dispatchNotificationClick({ url: "/?session=session-1" });
+  await event.pending;
+
+  assert.deepEqual(opened, ["https://pi.test/?session=session-1"]);
 });
 
 test("notification click opens a window and rejects cross-origin targets", async () => {

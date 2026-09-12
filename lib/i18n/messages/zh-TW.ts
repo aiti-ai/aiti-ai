@@ -711,6 +711,7 @@ export const zhTWLocale: LocalePlugin = {
     "i18n.after": "變更後",
     "i18n.sessionComplete": "工作階段已完成",
     "i18n.taskFinished": "任務已完成。",
+    "i18n.taskFinishedWithContext": "{project} · 任務已完成",
     "i18n.attentionNeeded": "Pi 需要你處理",
     "i18n.extensionInputNeeded": "擴充功能正在等待你的輸入。",
     // ── 以下键为 fork 新增功能的文案 ──
