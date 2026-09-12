@@ -87,7 +87,7 @@ test("active tab is revealed on activation and on container resize", () => {
   // 依赖稳定 tabsKey 而非 tabs 数组引用——AppShell 的 panelTabs 每次渲染都是新数组，
   // 直接依赖 tabs 会让任何父级重渲染都把用户手动滚开的激活 tab 拽回来
   assert.match(source, /const tabsKey = tabs\.map/);
-  assert.match(source, /\[activeTabId, revealActiveTab, tabsKey\]/);
+  assert.match(source, /\[activeTabId, revealActiveTab, tabsKey, revealToken\]/);
   assert.doesNotMatch(source, /\[revealActiveTab, tabs\]/);
   // 移动端面板 display:none（0 宽）时跳过测量并留标记
   assert.match(source, /container\.clientWidth <= 0/);
@@ -96,4 +96,18 @@ test("active tab is revealed on activation and on container resize", () => {
   assert.match(source, /revealActiveTab\(correctFrames - 1\)/);
   // RO 仅在 0 宽跳过后补滚，不拉回用户手动滚开的位置
   assert.match(source, /if \(needsRevealRef\.current\) revealActiveTab\(2\)/);
+});
+
+test("reveal is gated by host revealToken so background opens never scroll", () => {
+  // 令牌模式：宿主递增令牌（用户自主打开/切换）才滚；令牌未变时 activeTabId/tabsKey
+  // 变化（历史恢复 select:false 后台静默打开 + 兜底激活）一律不滚——避免后台打开的
+  // 页签把页签条拽走（用户手动滚开的位置也不被恢复流拉回）。
+  assert.match(source, /revealToken\?: number;/);
+  assert.match(source, /const prevRevealTokenRef = useRef\(revealToken\)/);
+  assert.match(
+    source,
+    /if \(revealToken !== undefined\) \{\s*\n\s*if \(revealToken === prevRevealTokenRef\.current\) return;\s*\n\s*prevRevealTokenRef\.current = revealToken;\s*\n\s*\}/,
+  );
+  // 不传令牌的调用方保持旧行为（跳过门控后仍直接 reveal）
+  assert.match(source, /if \(revealToken !== undefined\)[\s\S]{0,200}?\}\s*\n\s*revealActiveTab\(4\);/);
 });

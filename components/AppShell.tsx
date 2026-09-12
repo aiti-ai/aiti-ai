@@ -681,6 +681,12 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // Files unmount when inactive; workspace terminals stay mounted until closed.
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
+  // 页签条自动滚入视野令牌（TabBar revealToken）：仅「用户自主打开/激活」路径递增——
+  // 打开文件/文件夹（select:true）、点击页签、打开终端、dock 面板前台化、收回拆出页签。
+  // 历史恢复（session 墓碑批量 select:false 后台静默打开）与其兜底激活、关闭/拆出回落
+  // 一律不递增——后台打开的页签不切焦点、也不改页签条滚动位置。
+  const [fileTabRevealToken, setFileTabRevealToken] = useState(0);
+  const revealFileTabOnOpen = useCallback(() => setFileTabRevealToken((n) => n + 1), []);
 
   // ═══ [aiti-float tab-detach v0.6.0] tabHost 二态机（方案 §3/§5.1）═══
   // detachedTabIds 只记 window 态（缺省即 panel）；不持久化——刷新后全部回 panel
@@ -698,6 +704,8 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // 当前最后一个 tab（在恢复流里即首个恢复的历史文件；后续文件打开时 activeId 已非空，
   // 守卫保证不再换位，无时序竞争）。单关 tab 的激活位已由 performCloseFileTab 处理，
   // 此状态在恢复场景外不可达，不会抢用户焦点。E2E 实证：展开→内容渲染、无空态提示。
+  // 该激活属于后台兜底（非用户自主）→ 不递增 fileTabRevealToken：页签条不滚，用户
+  // 手动滚开的位置不被历史恢复拽回。
   useEffect(() => {
     // tab-detach：自动激活只在「panel 内可见 tabs」里挑（detached 的 tab 不占右栏激活位）
     const visibleTabs = fileTabs.filter((t) => !detachedTabIds.has(t.id));
@@ -760,6 +768,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       // open/floating 幂等不会误展开）：自动展开右栏并激活对应 dock tab。
       if (detail.state === "docked:right-panel") {
         setRightPanelOpen(true);
+        revealFileTabOnOpen(); // 用户从工具条/扩展打开 dock 面板 → 目标页签滚入视野
         setActiveFileTabId(`dock:${detail.key}`);
       }
     };
@@ -771,6 +780,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       const detail = (e as CustomEvent<{ key: string; state: string }>).detail;
       if (!detail?.key || !detail.state?.startsWith("docked:right-panel")) return;
       setRightPanelOpen(true);
+      revealFileTabOnOpen(); // 已停靠面板重复打开置前（用户操作）→ 目标页签滚入视野
       setActiveFileTabId(`dock:${detail.key}`);
     };
     window.addEventListener("piwe-float-present-activate", onActivate);
@@ -778,7 +788,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       window.removeEventListener("piwe-float-present-change", onPresent);
       window.removeEventListener("piwe-float-present-activate", onActivate);
     };
-  }, [fileTabs, terminalTabs]);
+  }, [fileTabs, terminalTabs, revealFileTabOnOpen]);
   // ═══ [aiti-float dock 批次A 重补结束] ═══
 
   const panelTabs: Tab[] = [
@@ -1539,11 +1549,12 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     }));
     if (select) {
       setActiveFileTabId(tabId);
+      revealFileTabOnOpen(); // 用户自主打开新 tab → 页签条跟随滚入视野
       setRightPanelOpen(true);
       // On mobile the file panel is full-screen; close the drawer so it shows.
       if (isMobile) setSidebarOpen(false);
     }
-  }, [isMobile]);
+  }, [isMobile, revealFileTabOnOpen]);
 
   const handleOpenLinkedFile = useCallback((filePath: string) => {
     handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null });
@@ -1585,12 +1596,13 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     setFileTabs((prev) => openFolderTab(prev, { folderName, folderPath, tabId }));
     if (select) {
       setActiveFileTabId(tabId);
+      revealFileTabOnOpen(); // 用户自主打开文件夹 → 页签条跟随滚入视野
       setRightPanelOpen(true);
       // Session restore (tombstone reopen) is owned by the rightPanelOpen effect above.
       if (isMobile) setSidebarOpen(false);
     }
     recordFolder(folderPath, "add");
-  }, [isMobile, recordFolder]);
+  }, [isMobile, recordFolder, revealFileTabOnOpen]);
 
   // 右面板空态「打开当前工作目录」：有 activeCwd 直接打开 CWD；无则取默认工作目录
   //（~/pi-cwd-YYYYMMDD，同侧栏「使用默认目录」语义）再打开——不弹目录选择器。
@@ -1694,9 +1706,12 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       const ok = await askEditorClose(cur.filePath, true);
       if (!ok) return;
     }
+    // 用户点击/键盘切换：递增令牌让页签条把目标滚进视野（点击目标通常已可见 → no-op；
+    // 键盘 Home/End 跳到溢出区页签时才实际滚动）。
+    revealFileTabOnOpen();
     // await 期间 active 可能已被其他交互改掉——只在仍停留原 tab 时才执行切换
     setActiveFileTabId((active) => (active === prevId ? tabId : active));
-  }, [activeFileTabId, fileTabs, askEditorClose]);
+  }, [activeFileTabId, fileTabs, askEditorClose, revealFileTabOnOpen]);
 
   // [aiti] T2 接管：侧栏「终端」按钮 → 建 terminal 页签（Bridge 接管优先唤起 aiti-cmd
   // shell，缺席回落原生 PTY 面板，见 TerminalPanelBridge）；不再直连 __aitiCmd（单一入口防双开）。
@@ -1705,9 +1720,10 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     const tab = existing ?? newTerminalTab(cwd);
     if (!existing) setTerminalTabs((tabs) => [...tabs, tab]);
     setActiveFileTabId(tab.id);
+    revealFileTabOnOpen(); // 用户打开终端页签 → 页签条跟随滚入视野
     setRightPanelOpen(true);
     if (isMobile) setSidebarOpen(false);
-  }, [terminalTabs, isMobile]);
+  }, [terminalTabs, isMobile, revealFileTabOnOpen]);
 
   // closing 收尾（上游 #695 语义 + 接管态本地移除）：restart 在终止完成后原地换新 id
   // （等终止再建新进程——docs/terminal.md Lifecycle）；接管态无 restart，closing 只会是
@@ -1800,10 +1816,11 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       next.delete(tabId);
       return next;
     });
-    // 回来即激活，用户立刻看到（右栏重开 + 激活该 tab）。
+    // 回来即激活，用户立刻看到（右栏重开 + 激活该 tab + 页签滚入视野）。
     setActiveFileTabId(tabId);
+    revealFileTabOnOpen();
     setRightPanelOpen(true);
-  }, []);
+  }, [revealFileTabOnOpen]);
 
   // TabBar 双击：dock tab 拆窗 = 状态机既有迁移 present(k,"float")（零新机制，方案 §5.8；
   // 命令事件通道与 handleCloseFileTab dock 分支同款，宿主不 import 扩展代码）；
@@ -4452,6 +4469,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
             <TabBar
               tabs={panelTabs}
               activeTabId={activeFileTabId ?? ""}
+              revealToken={fileTabRevealToken}
               onSelectTab={guardedSelectFileTab}
               onCloseTab={handleCloseFileTab}
               onDetachTab={handleTabDoubleClick}

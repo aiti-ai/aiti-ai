@@ -54,6 +54,11 @@ interface Props {
   /** 双击/右键 tab 拆出为窗口（aiti-float tab-detach v0.6.0/0.6.2；不传则双击无操作、
    *  无右键菜单——其他使用方零影响。mobile 由调用方决定是否传入）。 */
   onDetachTab?: (tab: Tab) => void;
+  /** 自动滚入视野令牌：宿主仅在「用户自主打开/切换」路径递增——令牌变化才把激活 tab
+   *  滚进视野。历史恢复（session 墓碑批量 select:false 后台静默打开）与其兜底激活不递
+   *  增 → 不抢页签条当前滚动位置。缺省 undefined 保持旧行为（activeTabId / tabsKey
+   *  变化即滚，供不使用令牌的调用方沿用）。 */
+  revealToken?: number;
 }
 
 /** 右键菜单项（tab-detach v0.6.2）：file/folder/terminal → 拆出为窗口；dock tab → 拆出为
@@ -65,7 +70,7 @@ interface CtxMenu {
   y: number;
 }
 
-export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab }: Props) {
+export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab, revealToken }: Props) {
   const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
@@ -170,14 +175,22 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
   }, []);
 
   // 用稳定签名而非 tabs 数组引用：AppShell 的 panelTabs 是行内新建数组、每次渲染都换引用，
-  // 直接依赖会按「每次父渲染」触发，把手动滚开的激活 tab 拽回来；id+label 恰好覆盖
-  // 「tabs 集变化 / 前序页签宽度变化把激活 tab 挤出视野」两种需要重测的场景。
+  // 直接依赖会按「每次父渲染」触发，把手动滚开的激活 tab 拽回来。
   const tabsKey = tabs.map((tab) => `${tab.id}\u0000${tab.label}`).join("\n");
 
+  // 滚动触发门控（revealToken）：宿主递增令牌 = 用户自主打开/切换 → 滚；令牌未变时
+  // activeTabId / tabsKey 变化一律不滚——历史恢复（select:false 后台静默打开）追加的
+  // 页签与它的兜底激活只更新激活位，不抢用户当前的滚动位置（也不切焦点）。
+  // 缺省 undefined 保持旧行为（activeTabId / tabsKey 变化即滚）。
+  const prevRevealTokenRef = useRef(revealToken);
   useEffect(() => {
     activeTabIdRef.current = activeTabId;
+    if (revealToken !== undefined) {
+      if (revealToken === prevRevealTokenRef.current) return;
+      prevRevealTokenRef.current = revealToken;
+    }
     revealActiveTab(4);
-  }, [activeTabId, revealActiveTab, tabsKey]);
+  }, [activeTabId, revealActiveTab, tabsKey, revealToken]);
 
   // RO 只兜一种自因场景：reveal 因 0 宽被跳过（移动端面板 display:none）→ 显示恢复后补滚。
   // 用户手动滚动 / 箭头显隐不置任何标记，故不会把滚开的位置拉回。
