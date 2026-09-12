@@ -8,6 +8,23 @@ import type { FileViewerDisplayMode, FileViewerState } from "@/lib/file-viewer-s
 /** 点击左右滚动按钮时的滚动步长（px）。 */
 const SCROLL_STEP = 240;
 
+/**
+ * 计算把目标 tab 滚进视野所需的 scrollLeft；已完全可见时返回 null（不打扰用户手动滚动）。
+ * 入参均为视口坐标的 rect（getBoundingClientRect）——只做差值换算，不依赖 offsetParent。
+ */
+export function computeTabRevealScrollLeft(metrics: {
+  containerLeft: number;
+  containerRight: number;
+  scrollLeft: number;
+  itemLeft: number;
+  itemRight: number;
+}): number | null {
+  const { containerLeft, containerRight, scrollLeft, itemLeft, itemRight } = metrics;
+  if (itemLeft < containerLeft) return Math.max(0, scrollLeft - (containerLeft - itemLeft));
+  if (itemRight > containerRight) return scrollLeft + (itemRight - containerRight);
+  return null;
+}
+
 export interface Tab {
   id: string;
   label: string;
@@ -102,6 +119,78 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
     });
   }, []);
 
+  // 激活 tab 滚进视野：打开新 tab（默认激活）/切换/恢复时自动跟随；已可见不动
+  // （避免抢用户手动滚动）。函数体只读 ref → 引用稳定，rAF 校正可直接回调自身。
+  const activeTabIdRef = useRef(activeTabId);
+  // 容器不可见（移动端 ≤640px 面板 display:none）时为 0 宽，测量无意义，跳过并留
+  // 标记——RO 在显示恢复后补滚。
+  const needsRevealRef = useRef(false);
+  const correctionFrameRef = useRef<number | null>(null);
+  /** 写入 scrollLeft 会触发左右箭头显隐，而箭头占位要到下一次 React 渲染才变；
+   *  写入后连续 correctFrames 帧无条件重测，布局稳定后每帧自然 no-op（有限帧，不会
+   *  死循环）。用户手动滚动不进入本循环，故滚开的位置不会被拉回。 */
+  const revealActiveTab = useCallback((correctFrames = 0) => {
+    const container = scrollRef.current;
+    const targetId = activeTabIdRef.current;
+    if (!container || !targetId) return;
+    if (container.clientWidth <= 0) {
+      needsRevealRef.current = true;
+      return;
+    }
+    needsRevealRef.current = false;
+    for (const child of Array.from(container.children)) {
+      const el = child as HTMLElement;
+      if (el.dataset.tabId !== targetId) continue;
+      const containerRect = container.getBoundingClientRect();
+      const itemRect = el.getBoundingClientRect();
+      const next = computeTabRevealScrollLeft({
+        containerLeft: containerRect.left,
+        containerRight: containerRect.right,
+        scrollLeft: container.scrollLeft,
+        itemLeft: itemRect.left,
+        itemRight: itemRect.right,
+      });
+      if (next !== null) container.scrollLeft = next;
+      break;
+    }
+    // 调度与是否写入解耦：帧 1 时箭头可能还没渲染（旧布局下看似可见），
+    // 若只在写入时续帧会提前终止；无条件续帧让布局更新后的那一帧能再校一次。
+    if (correctFrames > 0 && correctionFrameRef.current == null) {
+      correctionFrameRef.current = requestAnimationFrame(() => {
+        correctionFrameRef.current = null;
+        revealActiveTab(correctFrames - 1);
+      });
+    }
+  }, []);
+  useEffect(() => () => {
+    if (correctionFrameRef.current != null) {
+      cancelAnimationFrame(correctionFrameRef.current);
+      correctionFrameRef.current = null;
+    }
+  }, []);
+
+  // 用稳定签名而非 tabs 数组引用：AppShell 的 panelTabs 是行内新建数组、每次渲染都换引用，
+  // 直接依赖会按「每次父渲染」触发，把手动滚开的激活 tab 拽回来；id+label 恰好覆盖
+  // 「tabs 集变化 / 前序页签宽度变化把激活 tab 挤出视野」两种需要重测的场景。
+  const tabsKey = tabs.map((tab) => `${tab.id}\u0000${tab.label}`).join("\n");
+
+  useEffect(() => {
+    activeTabIdRef.current = activeTabId;
+    revealActiveTab(4);
+  }, [activeTabId, revealActiveTab, tabsKey]);
+
+  // RO 只兜一种自因场景：reveal 因 0 宽被跳过（移动端面板 display:none）→ 显示恢复后补滚。
+  // 用户手动滚动 / 箭头显隐不置任何标记，故不会把滚开的位置拉回。
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      if (needsRevealRef.current) revealActiveTab(2);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [revealActiveTab]);
+
   // 鼠标滚轮：垂直滚动转横向滚动（仅页签溢出时接管，不溢出时放行页面滚动）。
   // 不能用 React onWheel——它在 root 上注册为 passive，preventDefault 无效。
   useEffect(() => {
@@ -176,6 +265,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
         return (
           <div
             key={tab.id}
+            data-tab-id={tab.id}
             role="tab"
             aria-label={tab.kind === "terminal" ? t("terminal.tabLabel", { name: tab.label }) : tab.label}
             aria-selected={isActive}
