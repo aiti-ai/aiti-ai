@@ -771,12 +771,15 @@ function ensureSessionWatcher(): void {
     const dir = defaultSessionsDir();
     const watcher = watch(dir, { recursive: true }, () => {
       if (globalThis.__piSessionWatchDebounce) clearTimeout(globalThis.__piSessionWatchDebounce);
-      globalThis.__piSessionWatchDebounce = setTimeout(() => {
+      const t = setTimeout(() => {
         globalThis.__piSessionWatchDebounce = undefined;
         invalidateSessionListCache();
       }, 300);
+      t.unref?.(); // 防抖不阻止进程退出（生产有 HTTP server 保活）
+      globalThis.__piSessionWatchDebounce = t;
     });
     watcher.on("error", () => { /* watch 失效仅意味着退回兑底 TTL，不 crash */ });
+    watcher.unref?.(); // 不阻止进程退出（测试/一次性脚本）；生产由 HTTP server 句柄保活
     globalThis.__piSessionWatcher = watcher;
     sessionListCacheTtlMs = SESSION_LIST_CACHE_TTL_FALLBACK_MS;
   } catch {
