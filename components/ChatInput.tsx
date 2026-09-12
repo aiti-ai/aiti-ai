@@ -1453,16 +1453,17 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // （新建会话是内置 pi 后端，steer 可管理）。内置 pi 会话 id 是纯 UUID 无前缀。
     steerReadonly: /^(?!new:)[a-z][\w-]*:/i.test(sessionId ?? ""),
     actions: {
-      move: (kind, from, to) => onMoveQueue?.(kind, from, to) ?? Promise.resolve(false),
-      convert: (kind, index, target) => onConvertQueueItem?.(kind, index, target) ?? Promise.resolve(false),
+      move: (kind, from, to) => kind !== "composer" ? (onMoveQueue?.(kind, from, to) ?? Promise.resolve(false)) : Promise.resolve(false),
+      convert: (kind, index, target) => kind !== "composer" && target !== "composer" ? (onConvertQueueItem?.(kind, index, target) ?? Promise.resolve(false)) : Promise.resolve(false),
       // 取回进输入框（edit-intent 状态机收口 core；ext 只触发）——返回文本供展示
       recallOne: async (kind, index) => {
+        if (kind === "composer") return null; // composer 回收站条目不走队列 recall（仅 restoreToComposer）
         const text = await handleRecallOne(kind, index);
         return text ? { text } : null;
       },
-      requeueAt: (kind, index, text, images) => onRequeueAt?.(kind, index, text, images) ?? Promise.resolve(false),
+      requeueAt: (kind, index, text, images) => kind !== "composer" ? (onRequeueAt?.(kind, index, text, images) ?? Promise.resolve(false)) : Promise.resolve(false),
       // 软删（→ trash，触发 core 侧 edit-intent 不相关路径；undo toast 在 ext 内管理）
-      remove: (kind, index, opts) => handleRemoveQueueItem(kind, index, opts) ?? Promise.resolve(null),
+      remove: (kind, index, opts) => kind !== "composer" ? (handleRemoveQueueItem(kind, index, opts) ?? Promise.resolve(null)) : Promise.resolve(null),
       restore: (id, index) => onRestoreQueueItem?.(id, index) ?? Promise.resolve(false),
       // 回收站 composer（输入清除）条目 → 恢复到输入框继续编辑（core 取回完整内容回填）
       restoreToComposer: (id) => handleRestoreComposerTrash(id),
