@@ -2,7 +2,7 @@ import {
   SessionManager,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { openSync, closeSync, existsSync, fstatSync, readFileSync, readSync, readdirSync, statSync, type Dirent, type Stats } from "fs";
+import { openSync, closeSync, existsSync, fstatSync, readFileSync, readSync, readdirSync, statSync, watch, type Dirent, type Stats } from "fs";
 import { homedir } from "node:os";
 import { open as openFileAsync, readdir } from "fs/promises";
 import { dirname, isAbsolute, join, normalize as normalizePath, relative, resolve as resolvePath, sep } from "path";
@@ -692,11 +692,12 @@ function sessionInfoFromScan(s: SessionFileInfo, pathToId: Map<string, string>) 
 }
 export async function listAllSessions(options: { force?: boolean } = {}): Promise<SessionInfo[]> {
   if (options.force) invalidateSessionListCache();
+  ensureSessionWatcher();
   const generation = globalThis.__piSessionListGeneration ?? 0;
 
   // Return cached result if still fresh (avoids re-scanning session files
   // and re-spawning git processes on every page load).
-  if (globalThis.__piSessionListCache && Date.now() - globalThis.__piSessionListCache.ts < SESSION_LIST_CACHE_TTL_MS) {
+  if (globalThis.__piSessionListCache && Date.now() - globalThis.__piSessionListCache.ts < sessionListCacheTtlMs) {
     return globalThis.__piSessionListCache.data;
   }
 
@@ -738,9 +739,50 @@ declare global {
   var __piSessionListPromiseGeneration: number | undefined;
   var __piSessionListGeneration: number | undefined;
   var __piSessionListCache: { data: SessionInfo[]; ts: number } | undefined;
+  var __piSessionWatcher: { close(): void } | null | undefined;
+  var __piSessionWatcherInit: boolean | undefined;
+  var __piSessionWatchDebounce: ReturnType<typeof setTimeout> | undefined;
 }
 
-const SESSION_LIST_CACHE_TTL_MS = 5_000;
+// P1（docs/pi-web-session-list-server-triage-watch-plan.md）：缓存失效改 watch 事件驱动。
+// TTL 仅作兜底——watch 未建立 / inotify 队列溢出 / FSEvents 漏事件时，最长 10min 后
+// 强制重扫；watch 建立失败（平台不支持/权限）降级 60s TTL。
+const SESSION_LIST_CACHE_TTL_FALLBACK_MS = 10 * 60_000;
+const SESSION_LIST_CACHE_TTL_DEGRADED_MS = 60_000;
+let sessionListCacheTtlMs = SESSION_LIST_CACHE_TTL_DEGRADED_MS;
+
+/**
+ * 懒启动 sessions 目录 watcher（首次 listAllSessions 时建立，进程级常驻）。
+ * 事件 → 防抖 300ms → invalidateSessionListCache()。不区分 eventType：Linux rename/change、
+ * Win 大小写不敏感、Mac FSEvents 批量延迟——一律当「可能变化」invalidate；防抖吞掉
+ * 活跃会话流式 append / 编辑器原子写（临时文件→rename）的事件风暴。
+ * watch 仅作失效信号，重扫仍是增量（mtime/size 指纹）。
+ */
+function ensureSessionWatcher(): void {
+  if (globalThis.__piSessionWatcher) {
+    // HMR 模块重载：watcher 已在 globalThis 存活，只需把 TTL 档位设回兑底档
+    // （模块级 let 在重载后重置为降级档，不能停在 60s）。
+    sessionListCacheTtlMs = SESSION_LIST_CACHE_TTL_FALLBACK_MS;
+    return;
+  }
+  if (globalThis.__piSessionWatcherInit) return; // 建立失败过一次 → 永久 TTL 降级档
+  globalThis.__piSessionWatcherInit = true;
+  try {
+    const dir = defaultSessionsDir();
+    const watcher = watch(dir, { recursive: true }, () => {
+      if (globalThis.__piSessionWatchDebounce) clearTimeout(globalThis.__piSessionWatchDebounce);
+      globalThis.__piSessionWatchDebounce = setTimeout(() => {
+        globalThis.__piSessionWatchDebounce = undefined;
+        invalidateSessionListCache();
+      }, 300);
+    });
+    watcher.on("error", () => { /* watch 失效仅意味着退回兑底 TTL，不 crash */ });
+    globalThis.__piSessionWatcher = watcher;
+    sessionListCacheTtlMs = SESSION_LIST_CACHE_TTL_FALLBACK_MS;
+  } catch {
+    // 平台不支持 / 权限不足 → 保持降级档（60s），无 watch
+  }
+}
 const SESSION_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 
 function defaultSessionsDir(): string {

@@ -348,7 +348,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, displayModel: displayModelValue, sessionStats, modelSwitching,
     slashCommands, slashCommandsLoading, queuedMessages,
-    pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash,
+    pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash, trashComposerInput, restoreComposerTrash,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused,
     permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
     interactionRequest, respondToInteraction,
@@ -1204,6 +1204,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       queueTrash={queueTrash}
       onRestoreQueueItem={restoreQueueItem}
       onPurgeQueueTrash={purgeQueueTrash}
+      onTrashComposerInput={trashComposerInput}
+      onRestoreComposerTrash={restoreComposerTrash}
       slashCommands={slashCommands}
       slashCommandsLoading={slashCommandsLoading}
       onLoadSlashCommands={loadSlashCommands}

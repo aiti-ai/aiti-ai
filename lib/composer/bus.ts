@@ -20,6 +20,27 @@ let writer: ComposerWriter | null = null;
 let enhancersVersion = 0;
 const enhancerListeners = new Set<() => void>();
 
+/**
+ * 回收站写入执行器（core 装配，ChatInput clearWithUndo 时经 onClearToTrash 增强器
+ * 回调；对称 setComposerWriter）。扩展不直接持 RPC——接口由扩展增强器提供，
+ * 执行器由 core 经此挂载（机制留在 core）。
+ */
+let trashWriter: ((snapshot: ComposerSnapshot) => void) | null = null;
+
+/** ChatInput 装配/卸载回收站写入执行器。传 null = 卸载。 */
+export function setComposerTrashWriter(w: ((snapshot: ComposerSnapshot) => void) | null): void {
+  trashWriter = w;
+}
+
+export function getComposerTrashWriter(): ((snapshot: ComposerSnapshot) => void) | null {
+  return trashWriter;
+}
+
+/** 测试辅助：清空回收站写入执行器（生产代码勿调）。 */
+export function clearComposerTrashWriterForTests(): void {
+  trashWriter = null;
+}
+
 /** 注册增强器；返回 disposer（精确移除本次注册）。 */
 export function registerComposerEnhancement(enh: ComposerEnhancement): () => void {
   enhancers.push(enh);
@@ -81,6 +102,21 @@ export function emitComposerKeyChange(previousKey: string | undefined, nextKey: 
 }
 
 /**
+ * 输入框 × 清空分发（ChatInput 在 clearInput 之前携带快照调用）：
+ * 有增强器注册 onClearToTrash（aiti-queue-keeper）→ 交由它写入回收站并返回 true；
+ * 无 → 返回 false（清空仅保留内存 5s 撤销）。
+ */
+export function emitComposerClearToTrash(snapshot: ComposerSnapshot): boolean {
+  let handled = false;
+  for (const enh of enhancers) {
+    if (!enh.onClearToTrash) continue;
+    safeCall(enh, () => enh.onClearToTrash!(snapshot));
+    handled = true;
+  }
+  return handled;
+}
+
+/**
  * 发送前链式钩子：按注册序依次给 enhancer 替换文本的机会。
  * 任一环返回非字符串（void/undefined）= 原文放行到下一环。
  */
@@ -102,4 +138,5 @@ export function runComposerSubmit(text: string, imageCount: number): string {
 export function resetComposerBusForTests(): void {
   enhancers.length = 0;
   writer = null;
+  trashWriter = null;
 }

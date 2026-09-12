@@ -499,7 +499,7 @@ export const enLocale: LocalePlugin = {
     "chat.attachFiles": "Files",
     "chat.clearComposer": "Clear input",
     "chat.undoClear": "Undo",
-    "chat.clearedToast": "Cleared",
+    "chat.clearedToast": "Cleared · moved to trash",
     "chat.voiceHold": "Hold to talk",
     "chat.delayedTask": "Delayed task",
     "chat.insertCommand": "Commands",

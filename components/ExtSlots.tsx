@@ -16,14 +16,14 @@ import { Component, createElement, memo, forwardRef, createContext, useContext, 
 import { createPortal } from "react-dom";
 import { apiUrl } from "@/lib/base-path";
 import { getHostApi, type OpenFileOptions, type OpenFolderOptions } from "@/lib/ext/host-api";
-import { registerComposerEnhancement } from "@/lib/composer/bus";
+import { registerComposerEnhancement, getComposerTrashWriter } from "@/lib/composer/bus";
 import { useI18n } from "@/hooks/useI18n";
 /** SidebarClone（@/ 宿主模块链）的 react 全 alias 到 host-shim——其 useI18n 的
  *  context 解析走 ctx.useContext → 这里缓存的宿主 useI18n() 快照（每渲染刷新）。
  *  hook 时机：快照更新在 ExtSlotsProvider 渲染体（合法 hook 调用），
  *  materialize（effect）只读快照，不在回调里调 hook。 */
 let extI18nSnapshot: ReturnType<typeof useI18n> | null = null;
-import type { ComposerEnhancement, RecoveryItemsProvider } from "@/lib/composer/types";
+import type { ComposerEnhancement, ComposerSnapshot, RecoveryItemsProvider } from "@/lib/composer/types";
 import type { QueuePanelController } from "@/lib/composer/queue-api";
 import { registerRecoveryItemsProvider } from "@/lib/composer/recovery";
 import { registerDraftApi } from "@/lib/composer/draft-api";
@@ -175,6 +175,8 @@ export interface ExtClientContext {
   /** 注册 composer 增强器（值观测/会话 key 切换/发送前链式钩子）。
    *  返回 disposer。 */
   registerComposerEnhancement(enh: ComposerEnhancement): () => void;
+  /** 回收站写入执行器读取（输入清除增强器 onClearToTrash 实现方用）。 */
+  getComposerTrashWriter?(): ((snapshot: ComposerSnapshot) => void) | null;
   /** 程序化写值（composer 契约受控路径：state → DOM 同步 effect，tracker 同步）。
    *  返回是否真正写入（composer 未挂载时 false）。 */
   writeComposerValue?(text: string): boolean | Promise<boolean>;
@@ -488,6 +490,7 @@ function makeClientContext(ext: ManifestExt): ExtClientContext {
     closeFileTabs: (ids: string[]) => getHostApi().closeFileTabs?.(ids),
     appendText: (text) => getHostApi().appendText?.(text),
     registerComposerEnhancement: (enh: ComposerEnhancement) => registerComposerEnhancement(enh),
+    getComposerTrashWriter: () => getComposerTrashWriter(),
     writeComposerValue: (text: string) => getHostApi().writeComposerValue?.(text) ?? false,
     restoreComposerDraft: (draft) => getHostApi().restoreComposerDraft?.(draft) ?? false,
     registerRecoveryItemsProvider: (provider) => registerRecoveryItemsProvider(provider),

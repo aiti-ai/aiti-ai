@@ -32,8 +32,8 @@ import {
   type AtQueryMatch, type FileIndexEntry,
 } from "@/lib/file-fuzzy";
 import {
-  emitComposerChange, emitComposerKeyChange, runComposerSubmit,
-  setComposerWriter, subscribeComposerEnhancers, getComposerEnhancersVersion,
+  emitComposerChange, emitComposerKeyChange, emitComposerClearToTrash, runComposerSubmit,
+  setComposerWriter, setComposerTrashWriter, subscribeComposerEnhancers, getComposerEnhancersVersion,
 } from "@/lib/composer/bus";
 import type { QueuePanelActions, QueuePanelProps } from "@/lib/composer/queue-api";
 import { getQueuePanelController } from "@/lib/composer/queue-api";
@@ -195,6 +195,16 @@ interface Props {
   onRestoreQueueItem?: (id: string, index?: number) => Promise<boolean>;
   /** Permanently delete trash entries (omit ids to empty the whole trash). */
   onPurgeQueueTrash?: (ids?: string[]) => Promise<boolean>;
+  /**
+   * 输入框 × 清空专用：把清除的输入内容（文本+图片）专门直接写入回收站
+   * （trash_direct_add，不经 live 队列）。返回是否写入成功。
+   */
+  onTrashComposerInput?: (text: string, images?: ChatDraftImage[]) => Promise<boolean>;
+  /**
+   * 从回收站恢复一条 composer（输入清除）条目并返回完整内容（含图片 base64）；
+   * 由输入框回填继续编辑（不进队列）。
+   */
+  onRestoreComposerTrash?: (id: string) => Promise<{ text: string; images: ChatDraftImage[] } | null>;
   slashCommands?: SlashCommandInfo[];
   slashCommandsLoading?: boolean;
   onLoadSlashCommands?: () => Promise<SlashCommandInfo[]> | SlashCommandInfo[];
@@ -1174,7 +1184,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
   onExportQueue, onImportQueue, onStageImport, onMoveQueue, onRecallOne, onRequeueAt, onRemoveQueueItem,
-  queueTrash, onRestoreQueueItem, onPurgeQueueTrash,
+  queueTrash, onRestoreQueueItem, onPurgeQueueTrash, onTrashComposerInput, onRestoreComposerTrash,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
   onBuiltinCommand,
   soundEnabled, onSoundToggle, onAudioUnlock,
@@ -1454,6 +1464,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       // 软删（→ trash，触发 core 侧 edit-intent 不相关路径；undo toast 在 ext 内管理）
       remove: (kind, index, opts) => handleRemoveQueueItem(kind, index, opts) ?? Promise.resolve(null),
       restore: (id, index) => onRestoreQueueItem?.(id, index) ?? Promise.resolve(false),
+      // 回收站 composer（输入清除）条目 → 恢复到输入框继续编辑（core 取回完整内容回填）
+      restoreToComposer: (id) => handleRestoreComposerTrash(id),
       purge: (ids) => onPurgeQueueTrash?.(ids) ?? Promise.resolve(false),
       recallAll: () => onRecallQueue?.(),
       steerSend: (text, images) => onQueueSteerSend?.(text, images?.length ? images.map((im) => ({ data: im.data, mimeType: im.mimeType, previewUrl: `data:${im.mimeType};base64,${im.data}` })) : undefined),
@@ -1832,13 +1844,47 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     historyNavTextRef.current = "";
   }, [clearImages]);
 
-  // ── 小屏清空撤销（v3 §3.1）：× 清空前抓内存快照（零拷贝——images 元素按引用持有，
-  // clearImages 只 revoke previewUrl、data 不受影响），5s 内可整体恢复。快照纯内存、
-  // 不进 localStorage 不动 draft-keeper（防丢主链路仍是草稿机制）。仅单级：再次清空覆盖。
+  // ── 清空撤销 + 回收站（v3 §3.1 + 回收站增强）：× 清空前抓内存快照（零拷贝——
+  // images 元素按引用持有，clearImages 只 revoke previewUrl、data 不受影响），5s 内可
+  // 整体撤销；同时经 onClearToTrash 增强器（aiti-queue-keeper）把内容专门直接写入
+  // 回收站（trash_direct_add，不经 live 队列）——持久保底，误清后随时可找回。
+  // 快照纯内存、不进 localStorage 不动 draft-keeper（防丢主链路仍是草稿机制）。
+  // 仅单级：再次清空覆盖。
   const [undoSnapshot, setUndoSnapshot] = useState<{ text: string; images: AttachedImage[] } | null>(null);
   const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** 把 {text, images} 快照恢复回输入框（内存撤销 / 回收站恢复到输入框共用；
+   *  previewUrl 需重建）。程序化写值统一走 setInputValue → [value] DOM 同步 effect。 */
+  const restoreSnapshotToComposer = useCallback((text: string, images: ChatDraftImage[]) => {
+    const restored = images.map((im) => ({ ...im, previewUrl: URL.createObjectURL(base64ToBlob(im.data, im.mimeType)) }));
+    valueRef.current = text;
+    setInputValue(text);
+    setAtQuery(null);
+    setAttachedImages((prev) => {
+      prev.forEach(revokeImagePreview);
+      attachedImagesRef.current = restored;
+      return restored;
+    });
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(text.length, text.length);
+      ta.style.height = "auto";
+      ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
+    });
+  }, [setInputValue]);
+
   const clearWithUndo = useCallback(() => {
     const snapshot = { text: valueRef.current, images: attachedImagesRef.current };
+    // 交给 aiti-queue-keeper 的 onClearToTrash 增强器写入回收站（fire-and-forget；
+    // 无增强器时忽略——清空仍靠内存 5s 撤销即时保底）。
+    emitComposerClearToTrash({
+      value: snapshot.text,
+      images: snapshot.images.map(imageToDraftImage),
+      imageCount: snapshot.images.length,
+      hasInput: Boolean(snapshot.text.trim()) || snapshot.images.length > 0,
+    });
     clearInput();
     setUndoSnapshot(snapshot);
     if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
@@ -1851,24 +1897,26 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     const snap = undoSnapshot;
     setUndoSnapshot(null);
     if (!snap) return;
-    const images = snap.images.map((im) => ({ ...im, previewUrl: URL.createObjectURL(base64ToBlob(im.data, im.mimeType)) }));
-    valueRef.current = snap.text;
-    setInputValue(snap.text);
-    setAtQuery(null);
-    setAttachedImages((prev) => {
-      prev.forEach(revokeImagePreview);
-      attachedImagesRef.current = images;
-      return images;
+    restoreSnapshotToComposer(snap.text, snap.images.map((im) => ({ data: im.data, mimeType: im.mimeType })));
+  }, [undoSnapshot, restoreSnapshotToComposer]);
+
+  /** 回收站「恢复到输入框」：服务端取回 composer 条目完整内容（含图片 base64）→ 回填继续编辑。 */
+  const handleRestoreComposerTrash = useCallback(async (id: string): Promise<boolean> => {
+    if (!onRestoreComposerTrash) return false;
+    const restored = await onRestoreComposerTrash(id);
+    if (!restored) return false;
+    restoreSnapshotToComposer(restored.text, restored.images);
+    return true;
+  }, [onRestoreComposerTrash, restoreSnapshotToComposer]);
+
+  // 回收站写入执行器装配：enhancer（aiti-queue-keeper 的 onClearToTrash）经
+  // getComposerTrashWriter() 取本函数写 trash（fire-and-forget，失败静默）。
+  useEffect(() => {
+    setComposerTrashWriter((snapshot) => {
+      void onTrashComposerInput?.(snapshot.value, snapshot.images);
     });
-    requestAnimationFrame(() => {
-      const ta = textareaRef.current;
-      if (!ta) return;
-      ta.focus();
-      ta.setSelectionRange(snap.text.length, snap.text.length);
-      ta.style.height = "auto";
-      ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
-    });
-  }, [undoSnapshot, setInputValue]);
+    return () => setComposerTrashWriter(null);
+  }, [onTrashComposerInput]);
 
   /** 取回编辑中的 ↑/↓ 队列导航：把当前编辑放回队列原位，再取回相邻一条继续编辑
    * （与行内取回按钮完全同一链路）。导航范围为拍平后的队列 [steering…, followUp…]
@@ -3182,8 +3230,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           </div>
         </div>
       )}
-      {/* 清空撤销 toast（v3 §3.1）：5s 窗口，单级。position 同 swipeHint——悬在底部区上方 */}
-      {undoSnapshot && isMobile && (
+      {/* 清空撤销 toast（v3 §3.1 + 回收站）：5s 窗口，单级。大小屏通用（桌面有键删同享撤销）。
+          position 同 swipeHint——悬在底部区上方 */}
+      {undoSnapshot && (
         <div style={{
           position: "absolute",
           left: 0,

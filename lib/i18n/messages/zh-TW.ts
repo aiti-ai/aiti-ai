@@ -407,7 +407,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.attachFiles": "檔案",
     "chat.clearComposer": "清空輸入",
     "chat.undoClear": "復原",
-    "chat.clearedToast": "已清空",
+    "chat.clearedToast": "已清空 · 已入資源回收筒",
     "chat.voiceHold": "按住說話",
     "chat.delayedTask": "延時任務",
     "chat.insertCommand": "命令",

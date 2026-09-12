@@ -29,6 +29,13 @@ export interface ComposerEnhancement {
   onKeyChange?(previousKey: string | undefined, nextKey: string | undefined): void;
   /** 发送前最后一步（清空之前）。可返回替换文本（链式）；返回 void/undefined = 原文放行。 */
   onSubmit?(text: string, imageCount: number): { text: string } | void;
+  /**
+   * 输入框 × 清空时回调（core 在 clearInput 之前，携带被清除内容的快照）。
+   * 由 aiti-queue-keeper 注册：把内容专门直接写入回收站（trash_direct_add），
+   * 未注册则清空只保留内存 5s 撤销。实现方内部经 getComposerTrashWriter() 取
+   * core 挂载的写入执行器——接口在此（扩展提供），机制在 core（RPC）。
+   */
+  onClearToTrash?(snapshot: ComposerSnapshot): void;
 }
 
 /** core 提供给增强流程的受控写入口（经 bus 持有；ChatInput 装配）。 */

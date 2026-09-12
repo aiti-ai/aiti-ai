@@ -15,7 +15,13 @@ import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs"
  *   item; the user decides to re-queue, discard, or export each one.
  */
 
-export type QueueKind = "steer" | "followUp";
+export type QueueKind = "steer" | "followUp" | "composer";
+
+/**
+ * "composer" 不是队列消息：它是用户点输入框 × 清空时被专门直接写入回收站的
+ * 输入内容（文本+图片）。这类条目从不出现在 live 队列里，也不经 enqueue/steer/
+ * followUp 流程；恢复时回填输入框继续编辑（见 rpc-manager restore_trash_item）。
+ */
 
 export interface QueueImage {
   type: "image";
@@ -85,7 +91,7 @@ export function createQueueEntry(
 
 function isValidEntry(e: unknown): e is QueueEntry {
   return Boolean(e) &&
-    ((e as QueueEntry).kind === "steer" || (e as QueueEntry).kind === "followUp") &&
+    ((e as QueueEntry).kind === "steer" || (e as QueueEntry).kind === "followUp" || (e as QueueEntry).kind === "composer") &&
     typeof (e as QueueEntry).text === "string";
 }
 

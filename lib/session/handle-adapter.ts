@@ -459,6 +459,7 @@ export class HandleSessionAdapter implements WrappedSessionLike {
         }
         return null;
       case "continue_queue":
+      case "trash_direct_add":
       case "restore_trash_item":
       case "purge_trash":
       case "resolve_recovery":

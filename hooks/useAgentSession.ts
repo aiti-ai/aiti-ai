@@ -3068,6 +3068,64 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice]);
 
+  /**
+   * 输入框 × 清空专用：把清除的输入内容（文本+图片）专门直接写入回收站。
+   * 走 trash_direct_add（不碰 live 队列/不 dispatch）；返回是否写入成功。
+   * 失败静默（清空本身不依赖它——内存 5s 撤销仍是即时保底）。
+   */
+  const trashComposerInput = useCallback(async (
+    text: string,
+    images?: ChatDraftImage[],
+  ): Promise<boolean> => {
+    const sid = sessionIdRef.current;
+    if (!sid) return false;
+    try {
+      const result = await sendAgentCommand<{ queueTrash?: QueueTrashItem[] }>(sid, {
+        type: "trash_direct_add",
+        text,
+        ...(images && images.length > 0
+          ? { images: images.map((im) => ({ type: "image" as const, data: im.data, mimeType: im.mimeType })) }
+          : {}),
+      });
+      if (result?.queueTrash !== undefined) setQueueTrash(result.queueTrash);
+      return true;
+    } catch (e) {
+      console.error("Failed to write trash entry:", e);
+      return false;
+    }
+  }, [addNotice]);
+
+  /**
+   * 从回收站恢复一条 composer（输入清除）条目：服务端直接取出并返回完整内容
+   * （含图片 base64），由输入框回填继续编辑（不进队列）。此函数只负责取，
+   * 回填由 ChatInput 完成。
+   */
+  const restoreComposerTrash = useCallback(async (
+    id: string,
+  ): Promise<{ text: string; images: ChatDraftImage[] } | null> => {
+    const sid = sessionIdRef.current;
+    if (!sid) return null;
+    try {
+      const result = await sendAgentCommand<{
+        restoredComposer?: { text: string; images?: Array<{ type: "image"; data: string; mimeType: string }> };
+        queueTrash?: QueueTrashItem[];
+      }>(sid, {
+        type: "restore_trash_item",
+        id,
+      });
+      if (result?.queueTrash !== undefined) setQueueTrash(result.queueTrash);
+      if (!result?.restoredComposer) return null;
+      return {
+        text: result.restoredComposer.text,
+        images: (result.restoredComposer.images ?? []).map((im) => ({ data: im.data, mimeType: im.mimeType })),
+      };
+    } catch (e) {
+      console.error("Failed to restore composer entry:", e);
+      addNotice({ type: "error", message: e instanceof Error ? e.message : "Failed to restore input" });
+      return null;
+    }
+  }, [addNotice]);
+
   const handleThinkingLevelChange = useCallback(async (level: ThinkingLevelOption) => {
     setThinkingLevel(level);
     if (isNew && !sessionIdRef.current) {
@@ -3514,7 +3572,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, currentModel, displayModel, modelSwitching, sessionStats,
     slashCommands, slashCommandsLoading, queuedMessages,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport,
-    queueTrash, restoreQueueItem, purgeQueueTrash,
+    queueTrash, restoreQueueItem, purgeQueueTrash, trashComposerInput, restoreComposerTrash,
     moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,

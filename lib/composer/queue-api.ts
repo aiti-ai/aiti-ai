@@ -67,6 +67,8 @@ export interface QueuePanelActions {
   remove(kind: QueueKind, index: number, opts?: { permanent?: boolean }): Promise<QueueTrashItem | null>;
   /** 从回收站恢复（可选 index 放回原 kind 内位置）。 */
   restore(id: string, index?: number): Promise<boolean>;
+  /** 从回收站恢复到输入框（仅 kind="composer" 的输入清除条目；回填后继续编辑）。 */
+  restoreToComposer(id: string): Promise<boolean>;
   /** 永久删除回收站条目（省略 ids = 清空整个回收站）。 */
   purge(ids?: string[]): Promise<boolean>;
   /** 全部取回（清空 live 队列，文本合并进输入框）。 */

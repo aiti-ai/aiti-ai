@@ -499,7 +499,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.attachFiles": "文件",
     "chat.clearComposer": "清空输入",
     "chat.undoClear": "撤销",
-    "chat.clearedToast": "已清空",
+    "chat.clearedToast": "已清空 · 已入回收站",
     "chat.voiceHold": "按住说话",
     "chat.delayedTask": "延时任务",
     "chat.insertCommand": "命令",

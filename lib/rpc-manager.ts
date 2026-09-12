@@ -235,6 +235,13 @@ class PlainTextTheme extends Theme {
 const PLAIN_TEXT_THEME = new PlainTextTheme();
 const CUSTOM_UI_KEYBINDINGS = new TuiKeybindingsManager(TUI_KEYBINDINGS);
 
+/**
+ * 回收站条目数上限：输入清除条目可带图片 base64（单张可达数 MB），必须设上限
+ * 防 sidecar 文件被撑爆（同步 writeFileSync 大文件会阻塞事件循环，服务端红线）。
+ * 超出丢最老（FIFO）；对队列软删除条目同样生效（全局保护）。
+ */
+const QUEUE_TRASH_MAX_ENTRIES = 30;
+
 function withExtensionTools(session: AgentSessionLike, toolNames: string[]): string[] {
   if (toolNames.length === 0) return [];
 
@@ -1603,7 +1610,12 @@ export class AgentSessionWrapper {
           throw new Error("remove_queue_item index out of range");
         }
         const [removed] = entries.splice(index, 1);
-        if (!permanent) this.queueTrash.push(removed);
+        if (!permanent) {
+          this.queueTrash.push(removed);
+          if (this.queueTrash.length > QUEUE_TRASH_MAX_ENTRIES) {
+            this.queueTrash.splice(0, this.queueTrash.length - QUEUE_TRASH_MAX_ENTRIES);
+          }
+        }
         const newSteering = kind === "steer" ? entries : steeringEntries;
         const newFollowUp = kind === "followUp" ? entries : followUpEntries;
         this.inner.clearQueue();
@@ -1633,6 +1645,40 @@ export class AgentSessionWrapper {
         };
       }
 
+      case "trash_direct_add": {
+        // 输入框 × 清空专用：把清除的输入内容（文本+图片）专门直接写入回收站。
+        // 不走任何 live 队列机制——不 enqueue、不 dispatch、不 hint 图片、不清队列
+        // 重建（与 remove_queue_item 的软删链路完全隔离）。条目 kind="composer"，
+        // 恢复时回填输入框继续编辑（见 restore_trash_item 的 composer 分支）。
+        const text = typeof command.text === "string" ? command.text : "";
+        const rawImages = Array.isArray(command.images) ? command.images : [];
+        const images = rawImages
+          .filter((im): im is QueueImage => Boolean(im) && typeof im === "object"
+            && (im as QueueImage).type === "image"
+            && typeof (im as QueueImage).data === "string"
+            && typeof (im as QueueImage).mimeType === "string")
+          .slice(0, 4);
+        if (!text && images.length === 0) {
+          throw new Error("trash_direct_add requires text or images");
+        }
+        const entry = createQueueEntry("composer", text, images.length > 0 ? images : undefined);
+        this.queueTrash.push(entry);
+        if (this.queueTrash.length > QUEUE_TRASH_MAX_ENTRIES) {
+          this.queueTrash.splice(0, this.queueTrash.length - QUEUE_TRASH_MAX_ENTRIES);
+        }
+        this.persistQueue();
+        return {
+          entry: {
+            id: entry.id,
+            kind: entry.kind,
+            text: entry.text,
+            hasImages: Boolean(entry.images?.length),
+            queuedAt: entry.queuedAt,
+          },
+          queueTrash: this.getQueueTrashView(),
+        };
+      }
+
       case "restore_trash_item": {
         // Undo / trash-bin restore: move one soft-deleted entry back into the
         // live queue. Same clear-all + re-enqueue strategy as move_queue.
@@ -1647,6 +1693,22 @@ export class AgentSessionWrapper {
           throw new Error("restore_trash_item entry not found in trash");
         }
         const [entry] = this.queueTrash.splice(trashIdx, 1);
+
+        // composer 条目（输入清除内容）：不进 live 队列，直接从回收站取出并返回
+        // 完整内容（含图片 base64），由前端回填输入框继续编辑。
+        if (entry.kind === "composer") {
+          this.persistQueue();
+          return {
+            restoredComposer: {
+              id: entry.id,
+              kind: entry.kind,
+              text: entry.text,
+              images: entry.images ?? [],
+              queuedAt: entry.queuedAt,
+            },
+            queueTrash: this.getQueueTrashView(),
+          };
+        }
         const rawIndex = command.index === undefined ? null : Number(command.index);
         if (rawIndex !== null && !Number.isInteger(rawIndex)) {
           throw new Error("restore_trash_item requires an integer index");
