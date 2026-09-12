@@ -1905,6 +1905,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     if (!onRestoreComposerTrash) return false;
     const restored = await onRestoreComposerTrash(id);
     if (!restored) return false;
+    // 恢复会改写输入框内容：作废尚在 5s 窗口内的内存撤销快照，避免点「Undo」
+    // 把刚恢复的内容又覆盖回清空前的旧值。
+    if (undoTimerRef.current) { clearTimeout(undoTimerRef.current); undoTimerRef.current = null; }
+    setUndoSnapshot(null);
     restoreSnapshotToComposer(restored.text, restored.images);
     return true;
   }, [onRestoreComposerTrash, restoreSnapshotToComposer]);

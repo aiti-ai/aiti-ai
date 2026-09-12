@@ -3093,7 +3093,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       console.error("Failed to write trash entry:", e);
       return false;
     }
-  }, [addNotice]);
+  }, []);
 
   /**
    * 从回收站恢复一条 composer（输入清除）条目：服务端直接取出并返回完整内容
