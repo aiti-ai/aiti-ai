@@ -464,6 +464,8 @@ export const zhCNLocale: LocalePlugin = {
     "chat.modelScopeWarning": "模型范围警告",
     "chat.modelScopeWarnings": "模型范围警告",
     "chat.send": "发送",
+    "chat.forkNew": "新会话",
+    "chat.forkNewHint": "以当前完整上下文 fork 新会话，并发送输入内容",
     "chat.continue": "继续",
     "chat.continueQueueHint": "立即运行队列——按顺序投递全部排队消息",
     "chat.continueHint": "AI 停止后点击——快速发送“继续”，让 agent 继续工作",

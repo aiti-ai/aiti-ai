@@ -2232,6 +2232,48 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [addNotice, onSessionForked]);
 
+  /** fork 新会话（composer「新会话」按钮，静默后台）：从当前 leaf 复制分支（完整上下文，
+   *  运行中亦可用——fork_branch 不替换/不关闭源会话），再后台启动新会话并把输入内容作为
+   *  其首条用户消息。不切换当前选中——用户留在原会话继续；新会话经 running 广播进侧栏。
+   *  返回 false = 未创建（无可复制对话 / 后端不支持）；notice 已上浮。 */
+  const handleForkNew = useCallback(async (message: string, images?: AttachedImage[]): Promise<boolean> => {
+    const sid = sessionIdRef.current;
+    if (!sid) return false;
+    let newSessionId: string | undefined;
+    try {
+      // 不传 entryId → 服务端用当前 leaf（完整上下文）。
+      const result = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {
+        type: "fork_branch",
+      });
+      const { cancelled, newSessionId: created } = result ?? {};
+      if (cancelled || !created) {
+        addNotice({ type: "error", message: "无法 fork 新会话：当前会话还没有可复制的完整对话" });
+        return false;
+      }
+      newSessionId = created;
+    } catch (e) {
+      console.error("Fork new session failed:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      addNotice({ type: "error", message: `fork 新会话失败: ${msg}` });
+      return false;
+    }
+    // 静默后台启动：向新会话投递首条 prompt（/api/agent 路由按文件冷启动 wrapper）。
+    // 不 await——冷启动（扩展加载/agent 进程）可能数秒，不能卡住 composer；
+    // 失败仅上浮 notice（新会话已存在，可就地重发）。
+    const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
+    void sendAgentCommand(newSessionId, {
+      type: "prompt",
+      message,
+      ...(piImages?.length ? { images: piImages } : {}),
+    }).catch((e) => {
+      console.error("Fork new session: background start failed:", e);
+      const msg = e instanceof Error ? e.message : String(e);
+      addNotice({ type: "error", message: `新会话已在后台创建，但启动失败: ${msg}` });
+    });
+    addNotice({ type: "success", message: "已在后台 fork 新会话（当前会话不受影响）" });
+    return true;
+  }, [addNotice]);
+
   const handleNavigate = useCallback(async (entryId: string): Promise<boolean> => {
     if (bashRunningRef.current) return false;
     const sid = sessionIdRef.current;
@@ -3585,7 +3627,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     sessionIdRef, messagesEndRef, scrollContainerRef, runStartedAtRef,
     lastUserMsgRef, pendingScrollToUserRef, initialScrollDoneRef,
     // Actions
-    handleSend, handleAbort, handleFork, handleNavigate, handleEditFromStartSend, handleModelChange,
+    handleSend, handleAbort, handleFork, handleForkNew, handleNavigate, handleEditFromStartSend, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     handleRecallQueue,
     handleContinueQueue,

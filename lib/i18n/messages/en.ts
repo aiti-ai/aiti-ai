@@ -464,6 +464,8 @@ export const enLocale: LocalePlugin = {
     "chat.modelScopeWarning": "Model scope warning",
     "chat.modelScopeWarnings": "Model scope warnings",
     "chat.send": "Send",
+    "chat.forkNew": "Fork",
+    "chat.forkNewHint": "Fork a new session with the full context and send this input",
     "chat.continue": "Continue",
     "chat.continueQueueHint": "Runs the queued messages now — delivers the whole queue in order",
     "chat.continueHint": "Sends continue — keep the agent working after it stopped",

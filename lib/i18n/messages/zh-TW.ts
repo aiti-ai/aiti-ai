@@ -376,6 +376,8 @@ export const zhTWLocale: LocalePlugin = {
     "chat.modelScopeWarning": "模型範圍警告",
     "chat.modelScopeWarnings": "模型範圍警告",
     "chat.send": "傳送",
+    "chat.forkNew": "新會話",
+    "chat.forkNewHint": "以當前完整上下文 fork 新會話，並發送輸入內容",
     "chat.askSelection": "詢問選取的文字",
     "chat.askInCurrent": "在目前對話詢問",
     "chat.askInNewChat": "在新對話詢問",
