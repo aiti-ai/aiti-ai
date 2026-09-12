@@ -102,9 +102,19 @@ export function createAgentEventStream(
           const snapshot = (rawSnapshot !== undefined && rawSnapshot !== null)
             ? structuredClone(rawSnapshot)
             : rawSnapshot;
+          // 规范 id 回显：别名/占位 id（zcode:new-* 等）解析到的句柄已换绑真实
+          // 复合 id 时随 connected 帧告知客户端——session_backend_ready 是一次性
+          // 事件，rebind 后才（重）连的流永远错过它，客户端将一直钉在别名 id 上
+          // （侧栏同会话双行：真身行 + 草稿行）。wrapper 带 sessionId，扩展
+          // handle 带 id；取得到且与请求 id 不同才回显。
+          const asIded = session as { sessionId?: unknown; id?: unknown };
+          const canonicalId = typeof asIded.sessionId === "string" && asIded.sessionId
+            ? asIded.sessionId
+            : typeof asIded.id === "string" && asIded.id ? asIded.id : undefined;
           encode({
             type: "connected",
             sessionId,
+            ...(canonicalId && canonicalId !== sessionId ? { canonicalSessionId: canonicalId } : {}),
             isStreaming: session.isStreaming,
           });
           // 【重复首字根因修复】buffer 里的事件（listener 装好 → snapshot 发布之间到达）

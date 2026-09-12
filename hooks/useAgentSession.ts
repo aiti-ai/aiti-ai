@@ -68,6 +68,7 @@ interface LastAssistantTextResponse {
 
 type AgentStateResponse = {
   model?: { provider: string; id: string };
+  sessionId?: string;
   contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null } | null;
   systemPrompt?: string;
   thinkingLevel?: string;
@@ -1468,6 +1469,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isCompactingRef.current = isCompacting;
   }, [isCompacting]);
 
+  // 别名/占位 id → 规范 id 迁移（唯一写入口）：更新 sessionIdRef + 派发 canonicalized
+  // （AppShell 原位迁移选中 id/URL，session-manager dock 即刻清掉旧 id 的草稿行）。
+  // 消费三路：session_backend_ready（rebind 一次性事件）、connected 帧 canonicalSessionId
+  // （错过 rebind 后才连上/重连的流——SSE 维护间隙/重启后重连的常态）、agent_end
+  // 的 state 轮询（前两路全错过的兜底）。旧 id 服务端双注册仍命中，迁移不断流。
+  const canonicalizeSessionId = useCallback((canonicalId: unknown): void => {
+    if (typeof canonicalId !== "string" || !canonicalId) return;
+    const currentSid = sessionIdRef.current;
+    if (!currentSid || canonicalId === currentSid) return;
+    sessionIdRef.current = canonicalId;
+    try { onSessionIdCanonicalizedRef.current?.(currentSid, canonicalId); } catch { /* 回调异常不阻塞事件流 */ }
+  }, []);
+
   const handleAgentEvent = useCallback((event: AgentEvent) => {
     // [aiti] 子代理生命周期信号：广播给扩展 client（Fleet 面板刷新 + 左侧树刷新）。
     // 信号源：subagent 工具执行（委派开始）+ 上游 subagent-* 自定义消息（后台启动/完成通知）。
@@ -1486,6 +1500,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     switch (event.type) {
       case "connected": {
         dispatchStream({ type: "end" });
+        // 服务端把别名/占位 id 解析到了换绑后的句柄（canonicalSessionId ≠ 请求 id）：
+        // 立即迁移——本流的后续事件照常投递（同一服务端句柄），下轮 maintain 起用规范 id。
+        canonicalizeSessionId((event as { canonicalSessionId?: unknown }).canonicalSessionId);
         if (event.isStreaming === true) {
           cancelEventStreamGrace();
           sdkAgentActiveRef.current = true;
@@ -1502,12 +1519,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // sessionKey，挂载中聊天/SSE 不断），并派发 canonicalized 事件让
         // session-manager dock 即刻清掉占位 id 的草稿行——否则同会话双行要等
         // pendingDrafts 10min TTL 或下次 loadSession 规范化才收敛。
-        const newId = event.id;
-        const currentSid = sessionIdRef.current;
-        if (typeof newId === "string" && newId && currentSid && newId !== currentSid) {
-          sessionIdRef.current = newId; // 后续命令/加载直接用规范 id（旧 id 双注册仍命中）
-          try { onSessionIdCanonicalizedRef.current?.(currentSid, newId); } catch { /* 回调异常不阻塞事件流 */ }
-        }
+        canonicalizeSessionId(event.id);
         break;
       }
       case "agent_start":
@@ -1550,6 +1562,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           fetch(apiUrl(`/api/agent/${encodeURIComponent(sessionIdRef.current)}`))
             .then((r) => r.json())
             .then((d: { state?: AgentStateResponse }) => {
+              // 别名/占位 id 兜底迁移：state.sessionId 是后端句柄的规范 id——
+              // connected 帧（canonicalSessionId）与 rebind 事件都错过的 tab 在此收敛。
+              canonicalizeSessionId(d.state?.sessionId);
               syncLiveModel(d.state);
               if (d.state?.contextUsage !== undefined) setContextUsage(d.state.contextUsage ?? null);
               if (d.state?.systemPrompt !== undefined) setSystemPrompt(d.state.systemPrompt ?? null);
@@ -1820,7 +1835,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
         break;
     }
-  }, [addNotice, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
+  }, [addNotice, canonicalizeSessionId, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const respondToInteraction = useCallback(async (requestId: string, answer: {
