@@ -171,6 +171,55 @@ const GUARDS = [
     ],
   },
   {
+    name: "「新会话」静默后台 fork（composer 按钮：fork_branch 当前 leaf + 后台 prompt，不切换会话）",
+    file: "./ChatInput.tsx",
+    must: [
+      /onForkNew/,                                     // 按钮契约（仅输入框有内容时露出）
+      /fork: hasContent/,                              // 小屏矩阵：运行/空闲都按「有内容」露出
+      /function ForkNewIcon/,                          // 按钮图标（大屏/小屏共用）
+      /const handleForkNew = useCallback/,             // 失败保留输入 + 成功后清空
+    ],
+  },
+  {
+    name: "「新会话」fork 位于发送/插队/排队按钮左侧（大小屏同一契约）",
+    file: "./ChatInput.tsx",
+    must: [
+      /\{mobileMatrix\.fork && onForkNew && \(/,       // 小屏：send/stop/steer/clock 之前
+      /\{hasContent && onForkNew && \([\s\S]*?<StreamingActionButton[\s\S]*?label=\{t\("chat\.forkNew"\)\}/,  // 大屏：steer/followUp + send 之前
+    ],
+  },
+  {
+    name: "「新会话」fork 不替换/不关闭源会话（fork_branch 不传 entryId = 当前 leaf；运行中放行）",
+    file: "../lib/rpc-manager.ts",
+    must: [
+      /case "fork_branch": \{[\s\S]*?fork_branch 只读源文件 \+ 写出新分支，源会话继续跑/,   // 有意决策注释在（丢过 = 有人恢复运行中拒绝）
+      /command\.entryId[\s\S]*?: sessionManager\.getLeafId\(\)/,                          // 未传 entryId → 当前 leaf
+      /sourceManager\.getSessionId\(\)/,                                                    // 创建者实例 id（不重读文件）
+      /flag: "wx"/,                                                                          // 分支文件立即落盘兑底
+      /publishPageEventToBus\("sm:session-created"/,                                      // 侧栏草稿行即时可见（必须宽发布走总线；直调到不了 session-manager）
+    ],
+    not: [
+      /Cannot fork while the session is running/,      // 运行中拒绝回归即红灯
+    ],
+  },
+  {
+    name: "「新会话」fork 后台启动不切走当前会话（busy 等到受理；成功首个 toast，失败错误 toast）",
+    file: "../hooks/useAgentSession.ts",
+    must: [
+      /type: "fork_branch"/,
+      /await sendAgentCommand\(newSessionId,[\s\S]*?type: "prompt"/, // 等待受理（busy 覆盖到创建成功）
+      /新会话已建但后台启动失败/,                        // 启动失败 = 错误 toast + 保留输入
+      /已在后台 fork 新会话并开始运行/,                    // 成功后的单个 toast
+    ],
+  },
+  {
+    name: "ChatWindow：新会话 fork 按钮接线（新草稿会话/外部后端不接——本地 pi 会话专属）",
+    file: "./ChatWindow.tsx",
+    must: [
+      /onForkNew=\{isNew \|\| sessionCapabilities \? undefined : handleForkNew\}/,
+    ],
+  },
+  {
     name: "重试不卡死：emergency 复用会话必须带 streamingBehavior（曾致重试永远冻结）",
     file: "../app/api/emergency/route.ts",
     must: [

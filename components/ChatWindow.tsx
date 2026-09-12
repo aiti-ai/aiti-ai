@@ -358,7 +358,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     isNew,
     sessionIdRef, messagesEndRef, scrollContainerRef,
     lastUserMsgRef,
-    handleSend, handleAbort, handleFork, handleNavigate, handleEditFromStartSend, handleModelChange,
+    handleSend, handleAbort, handleFork, handleForkNew, handleNavigate, handleEditFromStartSend, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     refreshSessionStats,
     handleRecallQueue, handleContinueQueue,
@@ -1146,6 +1146,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       onSend={handleSendWrapped}
       onAbort={handleAbortRequest}
       aborting={aborting}
+      // fork 新会话仅本地 pi 会话可用（sessionCapabilities 非空 = 外部后端，handle-adapter
+      // 无 fork_branch）；新草稿会话无可复制对话同样不接。
+      onForkNew={isNew || sessionCapabilities ? undefined : handleForkNew}
       onSteer={agentRunning ? handleSteer : undefined}
       onFollowUp={agentRunning ? handleFollowUp : undefined}
       onQueueFollowUp={handleFollowUp}

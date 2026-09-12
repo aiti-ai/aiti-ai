@@ -109,6 +109,10 @@ interface ModelOption {
 
 interface Props {
   onSend: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
+  /** 「新会话」fork（静默后台）：以当前完整上下文复制一个新会话，并把输入框内容作为
+   *  其首条用户消息后台启动（不切换当前会话；运行中/空闲均可用）。返回 false = 未创建
+   *  （无可复制对话/后端不支持）——输入内容保持原样。 */
+  onForkNew?: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => Promise<boolean> | boolean | void;
   onAbort: () => void;
   /** 停止请求已发出、等 agent 收口中（后端 fire-and-forget 后仍要等 agent_settled）：
    *  stop 按钮切换为「停止中」旋转沙漏 + 禁用，防重复点击。 */
@@ -976,6 +980,8 @@ export interface MobileComposerMatrix {
   steer: boolean;
   /** 排队（运行中且有内容；带图禁用沿用 F3）。 */
   clock: boolean;
+  /** fork 新会话（有内容时；运行/空闲均露出，静默后台不切换）。 */
+  fork: boolean;
 }
 
 export function computeMobileComposerMatrix(opts: {
@@ -1005,6 +1011,7 @@ export function computeMobileComposerMatrix(opts: {
       stop: false,
       steer: false,
       clock: false,
+      fork: hasContent,
     };
   }
   return {
@@ -1021,7 +1028,22 @@ export function computeMobileComposerMatrix(opts: {
     // v4 十一审：空输入但有排队时插队仍出现——点击派发队列首条为 steer（空输路径 sendQueued 原生支持）
     steer: hasSteerCapability && (hasContent || Boolean(canSteerFromQueue)),
     clock: hasFollowUpCapability && hasContent,
+    fork: hasContent,
   };
+}
+
+/** fork 新会话图标（git-fork 线图：三节点分支汇聚）——大屏 StreamingActionButton 与小屏
+ *  MobileIconButton 共用；与“从此处编辑/分支”区分：这是从上到下汇聚到新节点。 */
+function ForkNewIcon({ size = 13 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="18" r="3" />
+      <circle cx="6" cy="6" r="3" />
+      <circle cx="18" cy="6" r="3" />
+      <path d="M18 9v2c0 .6-.4 1-1 1H7c-.6 0-1-.4-1-1V9" />
+      <path d="M12 12v3" />
+    </svg>
+  );
 }
 
 /** 小屏矩阵图标按钮：32×32 触达、无背景，入场 120ms 淡入（微信「＋↔发送」动效的
@@ -1178,7 +1200,7 @@ let pendingFocusHandoff = false;
 
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionId,
-  onSend, onAbort, aborting, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
+  onSend, onAbort, aborting, onForkNew, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
   sessionCapabilities, onSwitchPermissionMode, permissionMode,
   contextPercent, onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
@@ -2263,6 +2285,39 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
     clearInput();
   }, [value, attachedImages, attachedFiles, isStreaming, runBuiltinCommand, onSend, clearInput, onAudioUnlock, onRequeueAt, applyChatHooks]);
+
+  /** 「新会话」fork（输入框右端组按钮）：把当前输入内容作为新会话首条用户消息，
+   *  在后台 fork 出的新会话里自动运行；不切换当前会话（用户留在原会话继续）。
+   *  点击 → busy 态（图标旋转 + 禁用）直到新会话创建成功；失败保留输入原样，notice 由 hook 上浮。 */
+  const [forkingNew, setForkingNew] = useState(false);
+  const forkingNewRef = useRef(false);
+  const handleForkNew = useCallback(async () => {
+    const msg = value.trim();
+    if ((!msg && !attachedImages.length) || forkingNewRef.current) return;
+    onAudioUnlock?.();
+    forkingNewRef.current = true;
+    setForkingNew(true);
+    // 快照：fork 等受理可能持续数秒，期间用户可能继续输入/改附件——成功时只清理
+    // 本次提交的那份内容，不吞掉新输入。
+    const snapshotValue = msg;
+    const snapshotImages = attachedImages;
+    try {
+      const ok = await onForkNew?.(
+        msg,
+        attachedImages.length ? attachedImages : undefined,
+        attachedFiles.length ? attachedFiles : undefined,
+      );
+      if (ok !== false
+        && valueRef.current.trim() === snapshotValue
+        && attachedImagesRef.current === snapshotImages) {
+        setAttachedFiles([]);
+        clearInput();
+      }
+    } finally {
+      forkingNewRef.current = false;
+      setForkingNew(false);
+    }
+  }, [value, attachedImages, attachedFiles, onForkNew, clearInput, onAudioUnlock]);
 
   /** 扩展程序化发送（aiti-prompts 等）：与用户输入同链路——applyChatHooks 钩子生效；
    *  agent 流式时按 mode 插队(steer)/排队(followUp)（与 sendQueued 同分支），空闲时直接触发（等同 Enter）。
@@ -4273,6 +4328,19 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     </svg>
                   </MobileIconButton>
                 )}
+                {mobileMatrix.fork && onForkNew && (
+                  <MobileIconButton
+                    label={t("chat.forkNew")}
+                    title={forkingNew ? t("chat.forkNewBusy") : `${t("chat.forkNew")} — ${t("chat.forkNewHint")}`}
+                    disabled={forkingNew}
+                    onClick={() => { void handleForkNew(); refocusInput(); }}
+                    color={forkingNew ? "var(--text-dim)" : "rgba(37,99,235,1)"}
+                  >
+                    <span style={{ display: "inline-flex", ...(forkingNew ? { animation: "spin 1s linear infinite" } : {}) }}>
+                      <ForkNewIcon size={15} />
+                    </span>
+                  </MobileIconButton>
+                )}
                 {mobileMatrix.send && (
                   <button
                     type="button"
@@ -4330,6 +4398,23 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           )}
           {!isMobile && (isStreaming ? (
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, alignSelf: "flex-end", marginLeft: "auto" }}>
+              {/* fork 新会话（静默后台，不切换当前会话）：有内容时露在插队/排队左侧；
+                  点击后 busy（图标旋转 + 禁用）直到新会话创建成功/失败 */}
+              {hasContent && onForkNew && (
+                <StreamingActionButton
+                  label={t("chat.forkNew")}
+                  hint={forkingNew ? t("chat.forkNewBusy") : t("chat.forkNewHint")}
+                  disabled={forkingNew}
+                  onClick={() => { void handleForkNew(); refocusInput(); }}
+                  bg="rgba(37,99,235,0.12)"
+                  border="rgba(37,99,235,0.35)"
+                  fg="rgba(37,99,235,1)"
+                >
+                  <span style={{ display: "inline-flex", ...(forkingNew ? { animation: "spin 1s linear infinite" } : {}) }}>
+                    <ForkNewIcon />
+                  </span>
+                </StreamingActionButton>
+              )}
               {onSteer && (
                 <StreamingActionButton
                   label={t("chat.steer")}
@@ -4405,6 +4490,23 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                     <polyline points="1.5 2.5 5.5 6 1.5 9.5" />
                     <polyline points="6.5 2.5 10.5 6 6.5 9.5" />
                   </svg>
+                </StreamingActionButton>
+              )}
+              {/* fork 新会话（静默后台，不切换当前会话）：有内容时露在发送左侧；
+                  点击后 busy（图标旋转 + 禁用）直到新会话创建成功/失败 */}
+              {hasContent && onForkNew && (
+                <StreamingActionButton
+                  label={t("chat.forkNew")}
+                  hint={forkingNew ? t("chat.forkNewBusy") : t("chat.forkNewHint")}
+                  disabled={forkingNew}
+                  onClick={() => { void handleForkNew(); refocusInput(); }}
+                  bg="rgba(37,99,235,0.12)"
+                  border="rgba(37,99,235,0.35)"
+                  fg="rgba(37,99,235,1)"
+                >
+                  <span style={{ display: "inline-flex", ...(forkingNew ? { animation: "spin 1s linear infinite" } : {}) }}>
+                    <ForkNewIcon />
+                  </span>
                 </StreamingActionButton>
               )}
               <button

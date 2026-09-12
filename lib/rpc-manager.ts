@@ -34,7 +34,7 @@ import { cacheSessionPath, getLatestModelChange, invalidateSessionListCache, res
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { notifySessionComplete } from "./web-push";
-import { publishPageEvent } from "./agent-page-events";
+import { notifySessionCreated } from "./session-created-notify";
 import { hasActiveSessionLivenessProvider } from "./session-liveness";
 import type { SlashCommandInfo, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
@@ -1324,20 +1324,32 @@ export class AgentSessionWrapper {
           const newSessionId = forkedManager.getSessionId();
           cacheSessionPath(newSessionId, newSessionFile);
           invalidateSessionListCache();
+          // 创建方统一通知（helper 走 publishPageEventToBus 宽发布）：fork 不一定切走
+          //（分支文件已手动补写落盘，补拉链随即转正）。
+          notifySessionCreated(newSessionId, sessionManager.getCwd(), "fork");
           await this.shutdownAfterSessionReplacement("fork");
           return { cancelled: false, newSessionId };
         });
       }
 
       case "fork_branch": {
-        if (this.isSessionRunningForReplacement()) {
-          throw new Error("Cannot fork while the session is running");
-        }
-        const entryId = command.entryId as string;
+        // 背景 fork（composer「新会话」按钮 / 引用在新对话）：从指定 entry（未传时 = 当前
+        // leaf，完整上下文）复制分支文件。**不替换也不关闭源会话**——运行中同样可用（用户
+        // 明确要求「不管运行状态」；fork_branch 只读源文件 + 写出新分支，源会话继续跑）。
+        // 原 isSessionRunningForReplacement() 门卫移除：那是替换型 fork 的过度防御（fork/clone
+        // 会 shutdown 源 wrapper），分支复制无此语义；残缺尾行由 loadEntries 直接跳过，
+        // createBranchedSession 只取已完整解析 entry，无「复制半行 JSONL」风险。
         const sessionManager = this.inner.sessionManager;
         const currentSessionFile = this.inner.sessionFile;
         if (!sessionManager.isPersisted()) return { cancelled: true };
         if (!currentSessionFile) throw new Error("Persisted session is missing a session file");
+        // 源文件未落盘（无 assistant 消息的会话按 SDK 契约延迟建文件）——没有可复制的磁盘
+        // 状态，返回取消而非报错（前端提示「还没有可复制的完整对话」）。
+        if (!existsSync(currentSessionFile)) return { cancelled: true };
+        const entryId = typeof command.entryId === "string" && command.entryId
+          ? command.entryId
+          : sessionManager.getLeafId();
+        if (!entryId) return { cancelled: true };
         if (!sessionManager.getEntry(entryId)) throw new Error("Invalid entry ID for forking");
 
         const sessionDir = sessionManager.getSessionDir();
@@ -1345,9 +1357,26 @@ export class AgentSessionWrapper {
         const forkedPath = sourceManager.createBranchedSession(entryId);
         if (!forkedPath) throw new Error("Failed to create forked session");
 
-        const newSessionId = SessionManager.open(forkedPath, sessionDir).getSessionId();
+        // 分支文件可能因 no-assistant guard 未落盘（defer 到首次 _persist）——背景 fork
+        // 需要文件立即存在（调用方马上按 id 冷启动新会话，文件缺失会按新文件另生成 id
+        // 与返回值错位）。此时按创建者内存 header/entries 手动写出（wx 防并发重复创建）；
+        // newSessionId 取创建者实例，与文件头一致（同 case "fork" 的兑底）。
+        if (!existsSync(forkedPath)) {
+          const header = sourceManager.getHeader();
+          if (!header) throw new Error("Forked session is missing a session header");
+          const content = [header, ...sourceManager.getEntries()]
+            .map((entry) => JSON.stringify(entry))
+            .join("\n") + "\n";
+          writeFileSync(forkedPath, content, { encoding: "utf8", flag: "wx" });
+        }
+
+        const newSessionId = sourceManager.getSessionId();
         cacheSessionPath(newSessionId, forkedPath);
         invalidateSessionListCache();
+        // 侧栏即时可见：本路径不切换当前会话（静默后台 fork），没有宿主 refreshKey
+        // 带动；创建方统一通知（helper 走 publishPageEventToBus 宽发布）→
+        // session-manager 记 pendingDraft 草稿行（文件已落盘，补拉链随即转正）。
+        notifySessionCreated(newSessionId, sessionManager.getCwd(), "fork_branch");
         return { cancelled: false, newSessionId };
       }
 
@@ -1373,6 +1402,9 @@ export class AgentSessionWrapper {
           const newSessionId = SessionManager.open(clonedPath, sessionDir).getSessionId();
           cacheSessionPath(newSessionId, clonedPath);
           invalidateSessionListCache();
+          // 创建方统一通知：clone 通常由调用方切走（refreshKey 带动），但同一通知
+          // 保证非切换路径（脚本/扩展直调）也即时可见。
+          notifySessionCreated(newSessionId, sessionManager.getCwd(), "clone");
           await this.shutdownAfterSessionReplacement("clone");
           return { cancelled: false, newSessionId };
         });
@@ -3180,7 +3212,7 @@ export async function startRpcSession(
   // jsonl 落盘 + 列表刷新转正。IIFE 尾部原广播保留作 SSE 未连窗口兜底（前端
   // onSessionCreatedFrame 幂等，重复帧无害）。
   if (isNewSession) {
-    try { publishPageEvent("sm:session-created", { sessionId: sessionManagerId, cwd: sessionCwd }); } catch { /* 广播失败不阻断启动 */ }
+    notifySessionCreated(sessionManagerId, sessionCwd, "start");
   }
   const starting = (async () => {
     // Some extensions access the SDK's global theme even outside the terminal UI.
@@ -3386,7 +3418,9 @@ export async function startRpcSession(
     //（jsonl 未落盘 + 5s 扫描缓存窗口内两帧都拉空 → 新会话长期不出现）。客户端
     // session-manager 收帧后记 pendingDraft 草稿行，由其现有有界补拉链兜底落盘转正。
     if (isNewSession) {
-      try { publishPageEvent("sm:session-created", { sessionId: realSessionId, cwd: sessionCwd }); } catch { /* 广播失败不阻断启动 */ }
+      // 启动完成尾部兜底广播（与前置广播同 helper，前端 onSessionCreatedFrame 幂等）：
+      // 覆盖前置广播时 SSE 未连上的窗口。
+      notifySessionCreated(realSessionId, sessionCwd, "start");
     }
     return { session: wrapper, realSessionId };
   })().finally(() => {

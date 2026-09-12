@@ -2257,20 +2257,23 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       addNotice({ type: "error", message: `fork 新会话失败: ${msg}` });
       return false;
     }
-    // 静默后台启动：向新会话投递首条 prompt（/api/agent 路由按文件冷启动 wrapper）。
-    // 不 await——冷启动（扩展加载/agent 进程）可能数秒，不能卡住 composer；
-    // 失败仅上浮 notice（新会话已存在，可就地重发）。
+    // 静默后台启动：向新会话投递首条 prompt（/api/agent 路由按文件冷启动 wrapper），
+    // 不切换当前选中。**等待受理**（fork 新会话是重活：扩展加载/agent 进程，受理窗口
+    // 上限 10s）——按钮 busy 态覆盖到此时；成功才弹首个 toast，失败弹错误 toast。
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
-    void sendAgentCommand(newSessionId, {
-      type: "prompt",
-      message,
-      ...(piImages?.length ? { images: piImages } : {}),
-    }).catch((e) => {
+    try {
+      await sendAgentCommand(newSessionId, {
+        type: "prompt",
+        message,
+        ...(piImages?.length ? { images: piImages } : {}),
+      });
+    } catch (e) {
       console.error("Fork new session: background start failed:", e);
       const msg = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message: `新会话已在后台创建，但启动失败: ${msg}` });
-    });
-    addNotice({ type: "success", message: "已在后台 fork 新会话（当前会话不受影响）" });
+      addNotice({ type: "error", message: `新会话已建但后台启动失败: ${msg}` });
+      return false;
+    }
+    addNotice({ type: "success", message: "已在后台 fork 新会话并开始运行（当前会话不受影响）" });
     return true;
   }, [addNotice]);
 
