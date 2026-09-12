@@ -395,11 +395,11 @@ export class ExtRegistryImpl {
   /**
    * 功能当前是否启用（boolean 类型）：用户显式设置优先，否则取声明 default（缺省 true）。
    * 供扩展/collectAgentTools 查询；未声明或未知 feature 一律视为启用（不拦截）。
-   * string 类型功能无开关语义，恒返回 true（值用 featureValue 查）。
+   * string / textlist 类型功能无开关语义，恒返回 true（值用 featureValue 查）。
    */
   featureEnabled(extId: string, featureId: string): boolean {
     const declared = this.declaredFeature(extId, featureId);
-    if (declared && declared.type === "string") return true;
+    if (declared && this.isTextualFeature(declared)) return true;
     const explicit = this.featureFlags()[extId]?.[featureId];
     if (typeof explicit === "boolean") return explicit;
     return declared?.default !== false;
@@ -411,12 +411,17 @@ export class ExtRegistryImpl {
    */
   featureValue(extId: string, featureId: string): boolean | string {
     const declared = this.declaredFeature(extId, featureId);
-    if (declared && declared.type === "string") {
+    if (declared && this.isTextualFeature(declared)) {
       const explicit = this.featureFlags()[extId]?.[featureId];
       if (typeof explicit === "string") return explicit;
       return declared.value ?? "";
     }
     return this.featureEnabled(extId, featureId);
+  }
+
+  /** 文本类 feature（string 单行 / textlist 多行）：无开关语义，取值走 featureValue */
+  private isTextualFeature(declared: { type?: "boolean" | "string" | "textlist" }): boolean {
+    return declared.type === "string" || declared.type === "textlist";
   }
 
   /**
@@ -436,7 +441,7 @@ export class ExtRegistryImpl {
     const flags = this.featureFlags();
     const per = { ...(flags[extId] ?? {}) };
     const declared = this.declaredFeature(extId, featureId);
-    const isString = declared && declared.type === "string";
+    const isString = declared && this.isTextualFeature(declared);
     const isDefault = isString
       ? String(value) === (declared.value ?? "")
       : value === (declared ? declared.default !== false : true);
@@ -855,7 +860,7 @@ export class ExtRegistryImpl {
         serverHooks: server ? SERVER_HOOK_KEYS.filter((k) => typeof server[k] === "function") : [],
         agentHooks: server?.agent ? AGENT_HOOK_KEYS.filter((k) => typeof server.agent![k] === "function") : [],
         features: ext.ext.features?.length
-          ? ext.ext.features.map((f) => ({ ...f, enabled: this.featureEnabled(ext.id, f.id), ...(f.type === "string" ? { value: String(this.featureValue(ext.id, f.id)) } : {}) }))
+          ? ext.ext.features.map((f) => ({ ...f, enabled: this.featureEnabled(ext.id, f.id), ...(f.type === "string" || f.type === "textlist" ? { value: String(this.featureValue(ext.id, f.id)) } : {}) }))
           : undefined,
         packageInfo: readPackageInfo(ext.dir),
         ...(dependsOn ? { dependsOn } : {}),
@@ -962,7 +967,7 @@ export class ExtRegistryImpl {
       ...(e.ext.provides?.length ? { provides: [...e.ext.provides] } : {}),
       ...(e.ext.takeover?.length ? { takeover: [...e.ext.takeover] } : {}),
       // 功能状态（extman 管理）：host 客户端加载时一并取，扩展只读共享 store，无独立请求
-      features: e.ext.features?.length ? e.ext.features.map((f) => ({ id: f.id, type: f.type, label: f.label, placeholder: f.placeholder, enabled: this.featureEnabled(e.id, f.id), ...(f.type === "string" ? { value: String(this.featureValue(e.id, f.id)) } : {}) })) : null,
+      features: e.ext.features?.length ? e.ext.features.map((f) => ({ id: f.id, type: f.type, label: f.label, placeholder: f.placeholder, enabled: this.featureEnabled(e.id, f.id), ...(f.type === "string" || f.type === "textlist" ? { value: String(this.featureValue(e.id, f.id)) } : {}) })) : null,
     }));
   }
 

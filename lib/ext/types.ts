@@ -32,8 +32,9 @@ export interface ExtFeature {
   description?: string;
   /** 分组（可选，如 "页面操作" / "用户交互"；扩展管理界面按组分）。 */
   group?: string;
-  /** 值类型（缺省 "boolean" = 开关；"string" = 文本配置项，扩展管理界面画输入框）。 */
-  type?: "boolean" | "string";
+  /** 值类型（缺省 "boolean" = 开关；"string" = 文本配置项，扩展管理界面画输入框；
+   *  "textlist" = 多行文本（一行一条，如环境变量列表），管理界面画多行编辑器，取值语义同 string）。 */
+  type?: "boolean" | "string" | "textlist";
   /** 默认启用（boolean 类型用；缺省 true；false = 默认关闭，用户可手动打开）。 */
   default?: boolean;
   /** 默认值（string 类型用；缺省 ""）。 */
