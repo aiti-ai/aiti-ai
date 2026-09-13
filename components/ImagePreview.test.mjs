@@ -47,3 +47,16 @@ test("keeps the preview and Pi-style close button inside mobile safe areas", () 
   assert.match(cssSource, /@media \(pointer: coarse\) \{[\s\S]*?\.image-preview-close \{[\s\S]*?width: 44px;[\s\S]*?height: 44px;/);
   assert.match(source, /<path d="M6 6l12 12M18 6 6 18" \/>/);
 });
+
+test("clicking prefers the host image panel (right file area) over the lightbox", () => {
+  // 宿主通道：AppShell 提供的「右栏图片预览 tab」context（可多开、不遮挡消息流）
+  assert.match(source, /useOpenImagePanel\(\)/);
+  // 面板优先：click → openInPanel(src, { alt })；无宿主时回退原 lightbox dialog
+  assert.match(
+    source,
+    /const openPreview = \(\) => \{[\s\S]*?if \(openInPanel\) \{[\s\S]*?openInPanel\(src, \{ alt \}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?setOpen\(true\);/,
+  );
+  assert.match(source, /onClick=\{openPreview\}/);
+  // 回退路径（dialog）必须完整保留
+  assert.match(source, /dialog\.showModal\(\)/);
+});

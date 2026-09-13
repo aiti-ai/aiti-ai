@@ -9,6 +9,7 @@ import { markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, nor
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
 import { useI18n } from "@/hooks/useI18n";
 import { useParagraphClickHandlers } from "./ExtSlots";
+import { useOpenImagePanel } from "./image-panel-context";
 
 // 流式期间两次全量 Markdown 解析的最小间隔：200ms 内文本增量不重解析（约 5 次/s）。
 const STREAM_PARSE_INTERVAL_MS = 200;
@@ -66,6 +67,8 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
   }, [normalizedMarkdown, isStreaming]);
   // 段落点击薄扩展点：有 handler 注册（扩展加载）时语义块可点击；无扩展时段落渲染普通元素。
   const handlers = useParagraphClickHandlers();
+  // 消息图片「在文件面板打开」（AppShell 提供；无宿主时 markdown 图片保持无点击行为）
+  const openImagePanel = useOpenImagePanel();
   const hasClickHandlers = handlers.length > 0;
   // 可点击标签 = 扩展声明的并集（handler.tags；未声明默认 p/li/tr）。core 不硬编码业务——
   // 标题/引用块等新场景由扩展声明即生效，无需改 core。
@@ -135,11 +138,32 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       delete props.node;
       const filePath = typeof src === "string" ? resolveLocalFileHref(src, cwd) : null;
       if (!filePath) {
-        // eslint-disable-next-line @next/next/no-img-element
-        return <img src={src} alt={alt ?? ""} loading="lazy" {...props} />;
+        // 远程 / data URL 图片：点击 → 右栏图片预览 tab（宿主未接则保持原样无点击）。
+        const clickable = typeof src === "string" && Boolean(openImagePanel);
+        return (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={src}
+            alt={alt ?? ""}
+            loading="lazy"
+            {...props}
+            // stopPropagation：不让段落点击识别器（quote 弹层）同时触发
+            onClick={clickable ? (e) => { e.stopPropagation(); openImagePanel?.(src as string, { alt: alt ?? "" }); } : undefined}
+            style={{ ...props.style, ...(clickable ? { cursor: "zoom-in" as const } : null) }}
+          />
+        );
       }
-      // 本地图片：路径不进 URL，经短时效票据换 GET 地址
-      return <LocalImage filePath={filePath} alt={alt ?? ""} {...props} />;
+      // 本地图片：路径不进 URL，经短时效票据换 GET 地址；点击 → 右栏文件面板（同文件链接）。
+      // LocalImage 内部把 {...props} 落到 img 上，onClick/style 经此透传。
+      return (
+        <LocalImage
+          filePath={filePath}
+          alt={alt ?? ""}
+          {...props}
+          onClick={onOpenFile ? (e) => { e.stopPropagation(); onOpenFile(filePath); } : undefined}
+          style={{ ...props.style, ...(onOpenFile ? { cursor: "zoom-in" as const } : null) }}
+        />
+      );
     },
     // react-markdown 以组件方式调用这些小写渲染函数（createElement(components.p)），
     // Hook 顺序稳定；rules-of-hooks 只按函数名小写误报。候选标签统一生成渲染壳：
@@ -164,7 +188,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         </div>
       );
     },
-  }), [cwd, isStreaming, onOpenFile, messageRole, handlers, clickTags, messageId, sessionId]);
+  }), [cwd, isStreaming, onOpenFile, messageRole, handlers, clickTags, messageId, sessionId, openImagePanel]);
 
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>

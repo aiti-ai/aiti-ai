@@ -14,7 +14,8 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { TabBody, type TabBodyCtx } from "./TabBody";
 import { DetachedTabWindow } from "./DetachedTabWindow";
-import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
+import { openFileTab, openFolderTab, saveFileViewerState, openImageTab, imageTabId } from "./file-tab-state";
+import { ImagePanelContext } from "./image-panel-context";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import dynamic from "next/dynamic";
 import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService } from "./ExtSlots";
@@ -1559,6 +1560,20 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const handleOpenLinkedFile = useCallback((filePath: string) => {
     handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null });
   }, [handleOpenFile, selectedSession?.id]);
+
+  // 消息图片「在文件面板打开」（ImagePanelContext）：消息里的图片没有磁盘路径
+  // （base64 data URL / 会话工具结果图 API URL），走不了 FileViewer 票据链路——
+  // 开 kind:"image" 的预览 tab（同 src 幂等聚焦，不同图各占一 tab，可多开）。
+  const handleOpenImagePreview = useCallback((src: string, options?: { alt?: string }) => {
+    if (!src) return;
+    const label = (options?.alt ?? "").trim() || translate("files.imageTab");
+    const tabId = imageTabId(src);
+    setFileTabs((prev) => openImageTab(prev, { src, label, tabId }));
+    setActiveFileTabId(tabId);
+    revealFileTabOnOpen(); // 用户自主打开 → 页签条跟随滚入视野
+    setRightPanelOpen(true);
+    if (isMobile) setSidebarOpen(false);
+  }, [isMobile, revealFileTabOnOpen, translate]);
 
   // aiti-editor session-files endpoint (folder tabs reuse the same tombstone
   // record/restore pipeline as files — kind distinguishes them). Centralized
@@ -3348,6 +3363,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
 
   return (
     <ExtSlotsProvider serverSlotDeclarations={extSlotDeclarations}>
+    <ImagePanelContext.Provider value={handleOpenImagePreview}>
     <>
     {cwdMissingNotice && (
       <div
@@ -4641,6 +4657,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       />
     )}
     </>
+    </ImagePanelContext.Provider>
     </ExtSlotsProvider>
   );
 }

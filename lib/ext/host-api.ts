@@ -28,8 +28,9 @@ export interface HostApi {
   openFolder?: (folderPath: string, folderName: string, options?: OpenFolderOptions) => void | Promise<void>;
   /** 侧栏文件树定位目录 */
   revealDir?: (absPath: string) => void | Promise<void>;
-  /** 当前打开的标签页清单（{ id, filePath, kind, pinned }，数组序=打开序；仅读原语，无策略） */
-  getFileTabs?: () => { id: string; filePath: string; kind?: "file" | "folder" | "dock"; pinned?: boolean }[];
+  /** 当前打开的标签页清单（{ id, filePath, kind, pinned }，数组序=打开序；仅读原语，无策略。
+   *  kind "image" = 消息图片预览 tab（filePath 为空串，内容走 tab 自带 imageSrc）） */
+  getFileTabs?: () => { id: string; filePath: string; kind?: "file" | "folder" | "dock" | "image"; pinned?: boolean }[];
   /** 关闭指定 id 的标签页（原语：只从状态移除+重排激活位；脏确认/钉住等策略由调用方负责） */
   closeFileTabs?: (ids: string[]) => void;
   /** 输入框追加文本（不发送；引用回复预填用） */

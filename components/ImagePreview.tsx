@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
+import { useOpenImagePanel } from "./image-panel-context";
 
 interface ImagePreviewProps {
   src: string;
@@ -13,10 +14,21 @@ interface ImagePreviewProps {
 
 export function ImagePreview({ src, alt = "", children, className, style }: ImagePreviewProps) {
   const { t } = useI18n();
+  // 宿主接了「右栏图片预览」（AppShell）时点击开文件面板 tab（可多开、不遮挡消息）；
+  // 无宿主（独立页面等）回退全屏 lightbox dialog。
+  const openInPanel = useOpenImagePanel();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+
+  const openPreview = () => {
+    if (openInPanel) {
+      openInPanel(src, { alt });
+      return;
+    }
+    setOpen(true);
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -58,11 +70,11 @@ export function ImagePreview({ src, alt = "", children, className, style }: Imag
           cursor: "zoom-in",
           ...style,
         }}
-        onClick={() => setOpen(true)}
-        aria-label={t("chat.previewImage")}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        title={t("chat.previewImage")}
+        onClick={openPreview}
+        aria-label={openInPanel ? t("chat.openImagePanel") : t("chat.previewImage")}
+        aria-haspopup={openInPanel ? undefined : "dialog"}
+        aria-expanded={openInPanel ? undefined : open}
+        title={openInPanel ? t("chat.openImagePanel") : t("chat.previewImage")}
       >
         {children}
       </button>

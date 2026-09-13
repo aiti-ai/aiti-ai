@@ -90,3 +90,47 @@ export function openFolderTab(tabs: Tab[], input: OpenFolderTabInput): Tab[] {
     kind: "folder",
   }];
 }
+
+export interface OpenImageTabInput {
+  /** 图片 src（data URL / 会话图片 API URL / blob URL 等可直接喂给 <img> 的地址） */
+  src: string;
+  label: string;
+  tabId: string;
+}
+
+/**
+ * 图片预览 tab 的稳定 id：对 src 做 FNV-1a 散列——同一张图重复点击命中同一 tab
+ * （聚焦而非新开），不同图各占一个 tab（可多开）。src 可能是 MB 级 data URL，全量
+ * 扫一遍在点击路径上可接受；极小概率散列碰撞由 openImageTab 的 src 比对兜底（更新）。
+ */
+export function imageTabId(src: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < src.length; i++) {
+    hash ^= src.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `image:${(hash >>> 0).toString(36)}`;
+}
+
+/**
+ * Open (or update) an image preview tab. These tabs hold a direct image src
+ * (message images have no disk path — data URLs / session image API URLs), so
+ * unlike file tabs there is no FileViewer/watch machinery. Same id + different
+ * src (hash collision or refreshed URL) updates the tab in place.
+ */
+export function openImageTab(tabs: Tab[], input: OpenImageTabInput): Tab[] {
+  const existing = tabs.find((tab) => tab.id === input.tabId);
+  if (!existing) {
+    return [...tabs, {
+      id: input.tabId,
+      label: input.label,
+      filePath: "", // 非磁盘路径——关闭/切换守卫据此跳过 aiti-editor 问询
+      kind: "image",
+      imageSrc: input.src,
+    }];
+  }
+  if (existing.imageSrc === input.src && existing.label === input.label) return tabs;
+  return tabs.map((tab) => (
+    tab.id === input.tabId ? { ...tab, imageSrc: input.src, label: input.label } : tab
+  ));
+}

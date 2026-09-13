@@ -29,10 +29,13 @@ export interface Tab {
   id: string;
   label: string;
   filePath: string;
-  /** "file" (default) or "folder"/"terminal"/"dock" — folder tabs render a FolderViewer，
+  /** "file" (default) or "folder"/"terminal"/"dock"/"image" — folder tabs render a FolderViewer，
    *  terminal tabs 渲染 TerminalPanelBridge（[aiti] T2 接管：工作区终端由 aiti-cmd 承载），
-   *  dock tabs 渲染停靠的扩展面板（aiti-float dock v0.5.0：id "dock:<extId>:<itemId>"） */
-  kind?: "file" | "folder" | "terminal" | "dock";
+   *  dock tabs 渲染停靠的扩展面板（aiti-float dock v0.5.0：id "dock:<extId>:<itemId>"），
+   *  image tabs 渲染 ImageTabViewer（消息图片预览多开：src 非磁盘路径，无 FileViewer/watch） */
+  kind?: "file" | "folder" | "terminal" | "dock" | "image";
+  /** image tab 的图片 src（data URL / 会话图片 API URL 等；kind:"image" 专用） */
+  imageSrc?: string;
   /** 钉住标记（由扩展维护，core 只透传——不在 core 做逐出/关闭策略） */
   pinned?: boolean;
   /** 关闭/重启收尾中（terminal tab："close"/"restart" 原值供拆出窗口透传
@@ -344,6 +347,11 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <rect x="3" y="3" width="8" height="8" rx="1" /><rect x="13" y="3" width="8" height="8" rx="1" />
                   <rect x="3" y="13" width="8" height="8" rx="1" /><rect x="13" y="13" width="8" height="8" rx="1" />
+                </svg>
+              ) : tab.kind === "image" ? (
+                // 图片预览 tab：山与太阳图形（lucide image）
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="9" cy="9" r="2" /><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21" />
                 </svg>
               ) : getFileIcon(tab.label, 13)}
             </span>

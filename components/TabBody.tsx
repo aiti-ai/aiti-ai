@@ -1,6 +1,7 @@
 "use client";
 
 import { FileViewer } from "./FileViewer";
+import { ImageTabViewer } from "./ImageTabViewer";
 import { ExtSlot } from "./ExtSlots";
 import { TerminalPanelBridge } from "./TerminalPanelBridge";
 import type { TerminalTab } from "./terminal-tab-state";
@@ -49,6 +50,10 @@ export function TabBody({ tab, host, ctx }: { tab: Tab; host: "panel" | "window"
     // 非 docked → null，结构性防双开）。dock tab 不拆窗（双击 = present float），
     // 本分支仅 panel 宿主可达。
     return <ExtSlot name="rightFileDock" only={tab.id.slice(5)} />;
+  }
+  if (tab.kind === "image") {
+    // 图片预览 tab（消息图片多开预览）：src 直渲染，无磁盘路径/watch/编辑状态。
+    return <ImageTabViewer src={tab.imageSrc ?? ""} alt={tab.label} />;
   }
   if (tab.kind === "folder") {
     return (

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state.ts";
+import { openFileTab, openFolderTab, saveFileViewerState, openImageTab, imageTabId } from "./file-tab-state.ts";
 
 const tabA = {
   id: "file:/repo/a.ts",
@@ -116,4 +116,44 @@ test("reopening an already-open folder is a no-op (caller reselects)", () => {
   const first = openFolderTab([tabA], openFolderA);
   const second = openFolderTab(first, openFolderA);
   assert.strictEqual(second, first);
+});
+
+// ── 图片预览 tab（消息图片多开预览，src 无磁盘路径） ──
+
+test("image tab ids are stable per src and carry an image: prefix", () => {
+  assert.match(imageTabId("data:image/png;base64,AAA"), /^image:/);
+  assert.strictEqual(
+    imageTabId("data:image/png;base64,AAA"),
+    imageTabId("data:image/png;base64,AAA"),
+  );
+  assert.notEqual(
+    imageTabId("data:image/png;base64,AAA"),
+    imageTabId("data:image/png;base64,BBB"),
+  );
+});
+
+test("opening an image tab appends a kind:image tab holding the src", () => {
+  const src = "data:image/png;base64,AAA";
+  const tabs = openImageTab([tabB], { src, label: "图片", tabId: imageTabId(src) });
+  assert.equal(tabs.length, 2);
+  assert.equal(tabs[1].kind, "image");
+  assert.equal(tabs[1].imageSrc, src);
+  assert.equal(tabs[1].label, "图片");
+  assert.equal(tabs[1].filePath, "");
+});
+
+test("reopening the same image is idempotent (caller reselects)", () => {
+  const src = "data:image/png;base64,AAA";
+  const input = { src, label: "图片", tabId: imageTabId(src) };
+  const tabs = openImageTab([], input);
+  assert.strictEqual(openImageTab(tabs, input), tabs);
+});
+
+test("same tabId with a different src updates the tab in place (hash collision / refreshed URL)", () => {
+  const tabs = openImageTab([], { src: "a", label: "图片", tabId: "image:collision" });
+  const next = openImageTab(tabs, { src: "b", label: "图片2", tabId: "image:collision" });
+  assert.notStrictEqual(next, tabs);
+  assert.equal(next.length, 1);
+  assert.equal(next[0].imageSrc, "b");
+  assert.equal(next[0].label, "图片2");
 });

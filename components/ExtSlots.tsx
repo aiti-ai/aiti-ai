@@ -166,8 +166,9 @@ export interface ExtClientContext {
   openFolder?(path: string, folderName?: string, options?: OpenFolderOptions): void | Promise<void>;
   /** 侧栏文件树定位目录 */
   revealDir?(absPath: string): void | Promise<void>;
-  /** 读取当前打开 tab 清单（数组序=打开序；含 kind/pinned 透传）——批量关闭/容量控制原语 */
-  getFileTabs?(): { id: string; filePath: string; kind?: "file" | "folder" | "dock"; pinned?: boolean }[];
+  /** 读取当前打开 tab 清单（数组序=打开序；含 kind/pinned 透传）——批量关闭/容量控制原语。
+   *  kind "image" = 消息图片预览 tab（filePath 为空串，内容走宿主 imageSrc）。 */
+  getFileTabs?(): { id: string; filePath: string; kind?: "file" | "folder" | "dock" | "image"; pinned?: boolean }[];
   /** 关闭指定 tab（仅状态移除+激活位重排；脏确认/钉住保护由扩展负责） */
   closeFileTabs?(ids: string[]): void;
   /** 输入框追加文本不发送（引用回复预填用） */
