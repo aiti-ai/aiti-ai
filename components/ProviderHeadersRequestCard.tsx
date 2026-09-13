@@ -70,6 +70,8 @@ function loadCaptchaSdk(region: string, prefix: string): Promise<InitAliyunCaptc
   };
   if (w.initAliyunCaptcha) return Promise.resolve(w.initAliyunCaptcha);
   if (w.__piCaptchaSdkPromise) return w.__piCaptchaSdkPromise;
+  // V3 架构：身份标/region 必须以全局变量形式先于脚本写入（每次调用都刷新，防 config 变化不生效）
+  w.AliyunCaptchaConfig = { region, prefix };
   w.__piCaptchaSdkPromise = new Promise<InitAliyunCaptcha>((resolve, reject) => {
     const existing = document.querySelector<HTMLScriptElement>(`script[src="${CAPTCHA_SDK_URL}"]`);
     const el = existing ?? document.createElement("script");
@@ -80,8 +82,6 @@ function loadCaptchaSdk(region: string, prefix: string): Promise<InitAliyunCaptc
     el.addEventListener("load", done, { once: true });
     el.addEventListener("error", () => reject(new Error("AliyunCaptcha.js 加载失败（网络不可达 o.alicdn.com）")), { once: true });
     if (!existing) {
-      // V3 架构：身份标/region 必须以全局变量形式先于脚本写入
-      w.AliyunCaptchaConfig = { region, prefix };
       el.src = CAPTCHA_SDK_URL;
       document.head.appendChild(el);
     }
@@ -101,6 +101,7 @@ export function ProviderHeadersRequestCard({ request, onRespond }: {
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<"init" | "interactive" | "error">("init");
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   const answeredRef = useRef(false);
   const instanceRef = useRef<{ destroy?: () => void } | null>(null);
 
@@ -142,10 +143,9 @@ export function ProviderHeadersRequestCard({ request, onRespond }: {
             const param = extractCaptchaParam(p);
             if (!cancelled) void answer({ captchaVerifyParam: param, region: request.captchaConfig.region });
           },
+          // 验证不通过：SDK 会自动刷新重试（官方语义），不打断流程，只留日志
           fail: () => {
-            if (cancelled) return;
-            setPhase("error");
-            setErrorText("安全验证未通过，请点击重试；若持续失败请稍后再试。");
+            console.info("[provider-headers] 安全验证未通过，SDK 自动刷新重试");
           },
           onError: (err) => {
             if (cancelled) return;
@@ -172,7 +172,7 @@ export function ProviderHeadersRequestCard({ request, onRespond }: {
       try { instanceRef.current?.destroy?.(); } catch { /* 已销毁 */ }
       instanceRef.current = null;
     };
-  }, [request.requestId, request.captchaConfig.sceneId, request.captchaConfig.prefix, request.captchaConfig.region, answer]);
+  }, [request.requestId, request.captchaConfig.sceneId, request.captchaConfig.prefix, request.captchaConfig.region, answer, retryNonce]);
 
   return (
     <div
@@ -217,7 +217,7 @@ export function ProviderHeadersRequestCard({ request, onRespond }: {
           <button
             type="button"
             data-testid="provider-headers-retry"
-            onClick={() => { /* 重试 = 重挂 effect：翻转 key 由父层处理；此处整页重载最简单的方式是重新 init */ window.location.hash = `captcha-retry-${Date.now()}`; }}
+            onClick={() => setRetryNonce((n) => n + 1)}
             style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", cursor: "pointer", fontSize: 12 }}
           >
             重试
