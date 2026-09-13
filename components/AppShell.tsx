@@ -2582,9 +2582,9 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     const extItem = toolbarItem ?? sessionItem;
     if (!extItem) return null;
     const ExtComponent = extItem.render as React.ComponentType<ExtRenderProps>;
-    const extProps = toolbarItem
-      ? { currentSession: selectedSession }
-      : { currentSession: selectedSession, newSessionCwd: effectiveNewSessionCwd };
+    // toolbar 与 sessionTopbar 一样下发 newSessionCwd（aiti-plan-first 等扩展在新会话阶段需要 cwd：
+    // 先选方案/文档，会话创建后自动绑定）；不消费的扩展多收一个 prop 无影响。
+    const extProps = { currentSession: selectedSession, newSessionCwd: effectiveNewSessionCwd };
     // ⚠ 扩展 render 组件只在真正使用的位置挂载一次：
     //   forMeasure（离屏测量 strip）/ forPreview（定制面板预览）一概不挂载，用占位替代。
     //   （否则扩展组件同时挂载 2-3 个实例、所有 effect 跑多遍——ai-speek 跟读「自动读」effect
@@ -4631,7 +4631,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     <RestartRecoveryWizard />
     {/* 后端断连/恢复横幅：后端重启窗口提示「请刷新」（SSE broker 存活判定，无断连时渲染 null） */}
     <BackendConnBanner />
-    <ExtSlot name="dialogs" extra={{ onSelectSession: handleSelectSession }}
+    <ExtSlot name="dialogs" extra={{ onSelectSession: handleSelectSession, newSessionCwd: effectiveNewSessionCwd }}
       currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd, name: selectedSession.name, firstMessage: selectedSession.firstMessage } : null} />
     {exportDialogOpen && selectedSession && (
       <ExportDialog
