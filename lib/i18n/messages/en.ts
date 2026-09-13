@@ -856,7 +856,6 @@ export const enLocale: LocalePlugin = {
     "i18n.extensionInputNeeded": "An extension is waiting for your input.",
     "providerUsage.remainingQuota": "Remaining quota",
     "providerUsage.currentSession": "current session",
-    "providerUsage.otherProviders": "Other providers ({count})",
     "providerUsage.loading": "Loading…",
     "providerUsage.limit": "limit",
     "providerUsage.exhausted": "exhausted",

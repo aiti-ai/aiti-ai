@@ -855,7 +855,6 @@ export const zhTWLocale: LocalePlugin = {
     "i18n.editFromStartTitle": "從此處編輯：清空歷史重建本會話，發送時生效（可隨時取消）",
     "providerUsage.remainingQuota": "剩餘額度",
     "providerUsage.currentSession": "當前會話",
-    "providerUsage.otherProviders": "其他 provider（{count}）",
     "providerUsage.loading": "查詢中…",
     "providerUsage.limit": "限額",
     "providerUsage.exhausted": "已耗盡",

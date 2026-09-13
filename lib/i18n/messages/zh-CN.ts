@@ -856,7 +856,6 @@ export const zhCNLocale: LocalePlugin = {
     "i18n.extensionInputNeeded": "扩展正在等待你的输入。",
     "providerUsage.remainingQuota": "剩余额度",
     "providerUsage.currentSession": "当前会话",
-    "providerUsage.otherProviders": "其他 provider（{count}）",
     "providerUsage.loading": "查询中…",
     "providerUsage.limit": "限额",
     "providerUsage.exhausted": "已耗尽",
