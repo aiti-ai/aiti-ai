@@ -626,15 +626,23 @@ test("run elapsed badge recovers its start from the last prompt after page reope
     source.indexOf("export function useAgentSession"),
   );
   assert.match(deriveSource, /for \(let i = messages\.length - 1; i >= 0; i--\)/);
-  assert.match(deriveSource, /const timestamp = message\.timestamp/);
-  assert.match(deriveSource, /typeof timestamp === "number" && timestamp > 0 \? timestamp : null/);
+  assert.match(deriveSource, /const promptTimestamp = messages\[userIndex\]\.timestamp/);
+  assert.match(deriveSource, /typeof promptTimestamp === "number" && promptTimestamp > 0/);
+  // 外部后端（codebuddy 等）回放的 user 消息可能无时间戳：退取其后第一条带时间戳的消息
+  assert.match(deriveSource, /for \(let i = userIndex \+ 1; i < messages\.length; i\+\+\)/);
 
   const adoptSource = source.slice(
     source.indexOf("const adoptRunStartedAt = useCallback"),
     source.indexOf("const isChatScrollFrozen"),
   );
   assert.match(adoptSource, /if \(runStartedAtRef\.current !== null\) return/);
-  assert.match(adoptSource, /deriveRunStartedAt\(messagesRef\.current\) \?\? Date\.now\(\)/);
+  // 服务端 state.runStartedAt（外部后端 handle 侧权威值）优先，再退消息推导/当前时刻
+  assert.match(adoptSource, /serverStartedAt\?: number/);
+  assert.match(adoptSource, /typeof serverStartedAt === "number" && serverStartedAt > 0 \? serverStartedAt : null/);
+  assert.match(adoptSource, /deriveRunStartedAt\(messagesRef\.current\)/);
+  assert.match(source, /adoptRunStartedAt\(state\?\.runStartedAt\)/);
+  assert.match(source, /adoptRunStartedAt\(st\.runStartedAt\)/);
+  assert.match(source, /adoptRunStartedAt\(agentState\.state\.runStartedAt\)/);
   // loadSession 同步镜像：同一流程里的 running 采纳必须立即读到刚加载的消息
   assert.match(source, /messagesRef\.current = persistedMessages/);
 
@@ -650,19 +658,19 @@ test("run elapsed badge recovers its start from the last prompt after page reope
     source.indexOf("const checkServerIdle"),
     source.indexOf("const finishPromptWithoutStream"),
   );
-  assert.match(graceSource, /adoptRunStartedAt\(\)/);
+  assert.match(graceSource, /adoptRunStartedAt\(/);
   assert.doesNotMatch(graceSource, /runStartedAtRef\.current \?\?= Date\.now\(\)/);
   const remoteRunSource = source.slice(
     source.indexOf("const adoptRemoteRun = useCallback"),
     source.indexOf("const resolveRecovery"),
   );
-  assert.match(remoteRunSource, /adoptRunStartedAt\(\)/);
+  assert.match(remoteRunSource, /adoptRunStartedAt\(/);
   assert.doesNotMatch(remoteRunSource, /runStartedAtRef\.current \?\?= Date\.now\(\)/);
   const mountSource = source.slice(
     source.indexOf("// Load session on mount"),
     source.indexOf("onSystemPromptChange?.(systemPrompt)"),
   );
-  assert.match(mountSource, /adoptRunStartedAt\(\)/);
+  assert.match(mountSource, /adoptRunStartedAt\(/);
   assert.doesNotMatch(mountSource, /runStartedAtRef\.current \?\?= Date\.now\(\)/);
 
   // 只有 handleSend 的乐观发送路径保留 Date.now 起点
@@ -676,3 +684,4 @@ test("run elapsed badge recovers its start from the last prompt after page reope
   );
   assert.match(settleSource, /runStartedAtRef\.current = null/);
 });
+

@@ -69,6 +69,10 @@ export class HandleSessionAdapter implements WrappedSessionLike {
   private listeners = new Set<Listener>();
   private unsubscribe: () => void;
   private _isStreaming = false;
+  /** 本轮起始时刻（agent_start/turn_start 起算、agent_settled 清空）：页面重开后读秒
+   *  起点由 get_state 下发恢复——外部后端回放的 user 消息常不带时间戳（codebuddy 等），
+   *  仅靠消息时间戳推导会退回「打开时刻」。 */
+  private _runStartedAt: number | null = null;
   private partialText = "";
   private partialActive = false;
   private lastModel: { id: string; provider: string } | undefined;
@@ -100,7 +104,12 @@ export class HandleSessionAdapter implements WrappedSessionLike {
     const event = { ...rawEvent, ...merged } as Record<string, unknown>;
     const type = String(event.type ?? "");
     // Track streaming state for the SSE surface
-    if (type === "agent_start" || type === "turn_start") this._isStreaming = true;
+    if (type === "agent_start" || type === "turn_start") {
+      this._isStreaming = true;
+      // ??=：重放/重复的 agent_start 不回零；settled 已清空，下一轮自然起新点
+      this._runStartedAt ??= Date.now();
+    }
+    if (type === "agent_settled") this._runStartedAt = null;
     if (type === "agent_settled" || type === "agent_end") this._isStreaming = false;
 
     // Rebuild a partial assistant message from deltas (snapshot source).
@@ -262,6 +271,8 @@ export class HandleSessionAdapter implements WrappedSessionLike {
           sessionFile: undefined,
           isStreaming: this.isStreaming,
           isPromptRunning: this._isStreaming,
+          // 本轮读秒起点（页面重开后前端恢复用；空闲/未见过 agent_start 时为 undefined）
+          runStartedAt: this._runStartedAt ?? undefined,
           isBashRunning: false,
           isCompacting: false,
           autoCompactionEnabled: false,

@@ -75,6 +75,8 @@ type AgentStateResponse = {
   thinkingLevel?: string;
   isStreaming?: boolean;
   isPromptRunning?: boolean;
+  /** 本轮起始时刻（epoch ms）：外部后端 handle 侧记录，页面重开后读秒起点恢复的权威值。 */
+  runStartedAt?: number;
   isBashRunning?: boolean;
   isCompacting?: boolean;
   extensionStatuses?: ExtensionStatusItem[];
@@ -119,11 +121,18 @@ function alignQueueAttachmentFlags(prev: boolean[] | undefined, nextLen: number)
  *  页面重开/断线重连时 agent_start 已错过——起点不能取「打开时刻」（旧行为会在
  *  每次打开时把读秒清零重来），应从这条消息发出之后起算。无可用时间戳返回 null。 */
 function deriveRunStartedAt(messages: AgentMessage[]): number | null {
+  let userIndex = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    if (message.role !== "user") continue;
-    const timestamp = message.timestamp;
-    return typeof timestamp === "number" && timestamp > 0 ? timestamp : null;
+    if (messages[i].role === "user") { userIndex = i; break; }
+  }
+  if (userIndex === -1) return null;
+  const promptTimestamp = messages[userIndex].timestamp;
+  if (typeof promptTimestamp === "number" && promptTimestamp > 0) return promptTimestamp;
+  // 外部后端回放的 user 消息可能不带时间戳（codebuddy 等 liveHistory 形状）：
+  // 退取该消息之后第一条带时间戳的消息（同轮最早的已知活动时刻）。
+  for (let i = userIndex + 1; i < messages.length; i++) {
+    const timestamp = messages[i].timestamp;
+    if (typeof timestamp === "number" && timestamp > 0) return timestamp;
   }
   return null;
 }
@@ -670,11 +679,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     messagesRef.current = messages;
   }, [messages]);
 
-  /** 采纳本轮读秒起点：已知则保持（SSE 重放 agent_start 不得回零）；未知则从已加载
-   *  消息恢复（最近一条用户消息时间戳），确实取不到才退回当前时刻。 */
-  const adoptRunStartedAt = useCallback(() => {
+  /** 采纳本轮读秒起点：已知则保持（SSE 重放 agent_start 不得回零）；未知则优先用
+   *  服务端 state.runStartedAt（外部后端 handle 在本轮 agent_start 时记录），再退到已
+   *  加载消息恢复（最近一条用户消息时间戳），确实取不到才退回当前时刻。 */
+  const adoptRunStartedAt = useCallback((serverStartedAt?: number) => {
     if (runStartedAtRef.current !== null) return;
-    runStartedAtRef.current = deriveRunStartedAt(messagesRef.current) ?? Date.now();
+    runStartedAtRef.current =
+      (typeof serverStartedAt === "number" && serverStartedAt > 0 ? serverStartedAt : null)
+      ?? deriveRunStartedAt(messagesRef.current)
+      ?? Date.now();
   }, []);
 
   useLayoutEffect(() => {
@@ -1351,7 +1364,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           sdkAgentActiveRef.current = Boolean(state?.isStreaming);
           rpcPromptPendingRef.current = Boolean(state?.isPromptRunning);
           agentRunningRef.current = true;
-          adoptRunStartedAt();
+          adoptRunStartedAt(state?.runStartedAt);
           setAgentRunning(true);
           setAgentPhase(state?.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
           return;
@@ -2843,7 +2856,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           sdkAgentActiveRef.current = Boolean(st.isStreaming);
           rpcPromptPendingRef.current = Boolean(st.isPromptRunning);
           agentRunningRef.current = true;
-          adoptRunStartedAt();
+          adoptRunStartedAt(st.runStartedAt);
           setAgentRunning(true);
           setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
           dispatchStream({ type: "start" });
@@ -3399,7 +3412,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             sdkAgentActiveRef.current = Boolean(agentState.state.isStreaming);
             rpcPromptPendingRef.current = Boolean(agentState.state.isPromptRunning);
             agentRunningRef.current = true;
-            adoptRunStartedAt();
+            adoptRunStartedAt(agentState.state.runStartedAt);
             setAgentRunning(true);
             setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
             dispatchStream({ type: "resume" });
