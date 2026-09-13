@@ -1204,6 +1204,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       }
       modelSwitching={modelSwitching}
       contextPercent={contextUsage?.percent ?? null}
+      // aiti-ctx-meter 接缝：完整上下文快照 + 会话面板入口（docs/aiti-ctx-meter-plan.md §4.1）
+      contextUsage={contextUsage}
+      onSessionStatsPanelOpen={onSessionStatsPanelOpen}
       onCompact={session || isNew
         ? (sessionCap("compact") ? handleCompact : undefined)
         : undefined}

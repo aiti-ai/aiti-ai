@@ -12,6 +12,7 @@
 import type { ReactNode } from "react";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { QueuePanelProps } from "@/lib/composer/queue-api";
+import type { CtxUrgency } from "@/lib/context-urgency";
 
 /**
  * 扩展功能声明（功能管理）：扩展可把自己开放的「功能点」（如注入 agent 会话的
@@ -375,6 +376,9 @@ export type ExtSlotName =
                       //   无 items 整块不渲染；承载 = aiti-subagents 子代理任务。float 方案 §4.4.2）
   | "composerAffix" // 输入框内右缘 affix 位（小屏微信式 🎤；仅小屏输入行渲染。core 自有 × 清空
                     //   与扩展注册按「空/有内容」派生天然互斥——见 docs/pi-web-mobile-input-wechat-plan.md §3.2）
+  | "modelInfoLead" // 小屏模型信息前导位（aiti-ctx-meter 上下文电池）：展开态输入行 ModelSelector 前 +
+                    //   ⓘ InfoSheet 模型行 ModelSelector 前两处渲染；桌面 ModelSelector 不渲染。
+                    //   契约 = ModelInfoLeadSlotProps（docs/aiti-ctx-meter-plan.md §4.2）
   ;
 
 /**
@@ -478,6 +482,38 @@ export interface TerminalDockSlotProps {
   openShellTab?: (cwd: string) => void;
 }
 
+/** 上下文快照（aiti-ctx-meter 接缝）：composerTools / modelInfoLead 共用的 extra.context。
+ *  urgency 传 contextUrgency(percent) 完整结果（lib/context-urgency.ts 唯一色阶来源）。 */
+export interface ExtContextSnapshot {
+  percent: number | null;
+  contextWindow: number | null;
+  tokens: number | null;
+  urgency: CtxUrgency;
+}
+
+/** 压缩三态接缝（streamingActions 提案压缩子集，docs/pi-web-chatinput-open-extension-plan.md §3.1；
+ *  命名 = 宿主 ChatInput 现有 props，不采用提案草稿名 onAbort/onCancelCompact）。
+ *  提案落地时字段映射：onAbort→onAbortCompaction、onCancelCompact→onCancelCompactQueue。 */
+export interface ExtCompactControls {
+  onCompact?: () => void;
+  onAbortCompaction?: () => void;
+  onCancelCompactQueue?: () => void;
+  isCompacting?: boolean;
+  compactQueued?: boolean;
+}
+
+/** 小屏模型信息前导位（aiti-ctx-meter 上下文电池；桌面 composerTools 的 extra 为其超集）。 */
+export interface ModelInfoLeadSlotProps {
+  sessionId: string | null;
+  cwd: string | null;
+  /** null = 无上下文数据（外部后端 / idle 会话）→ 扩展灰态。 */
+  context: ExtContextSnapshot | null;
+  compact: ExtCompactControls;
+  /** 打开会话统计面板（AppShell openSessionStatsPanel；InfoSheet 渲染点已包「先收 sheet」）。 */
+  openSessionInfo?: () => void;
+  isMobile?: boolean;
+}
+
 export interface ExtSlotContractMap {
   /** 队列面板（去 fork 化 P3）：core → ext 的 live/trash/actions 原语。
    *  契约定义在 lib/composer/queue-api.ts（含下载导出/导入解析单实现）；
@@ -495,6 +531,8 @@ export interface ExtSlotContractMap {
   settingsAgents: { props: SettingsAgentsSlotProps };
   /** 工作区终端页签内容接管（aiti-cmd）。 */
   terminalDock: { props: TerminalDockSlotProps };
+  /** 小屏模型信息前导位（aiti-ctx-meter 上下文电池；aiti-ctx-meter-plan.md §4.2）。 */
+  modelInfoLead: { props: ModelInfoLeadSlotProps };
   // sidebarProjects：SessionSidebar 整栏接管（session-manager SidebarClone，props 全量透传）——
   // 契约即 SessionSidebarProps（不进本 map，宽松对象透传）。
 }

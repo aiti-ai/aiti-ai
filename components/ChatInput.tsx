@@ -14,7 +14,8 @@ import {
 import { apiUrl } from "@/lib/base-path";
 import type { ExtensionStatusItem, ExtensionWidgetItem } from "@/lib/types";
 import { stripAnsi } from "@/lib/ansi";
-import { contextUrgency, CTX_BREATHE_CSS } from "@/lib/context-urgency";
+import { contextUrgency, CTX_BREATHE_CSS, type CtxUrgency } from "@/lib/context-urgency";
+import type { ContextUsage } from "@/lib/pi-types";
 import { formatExtensionStatusLine } from "./ExtensionStatusBar";
 import { AnsiText } from "./AnsiText";
 import { ImagePreview } from "./ImagePreview";
@@ -157,6 +158,11 @@ interface Props {
   modelSwitching?: boolean;
   /** 当前会话上下文占比（ChatWindow 透传 contextUsage?.percent）——驱动压缩按钮/弹窗圆点紧迫度着色 */
   contextPercent?: number | null;
+  /** 完整上下文快照（ChatWindow 透传 contextUsage）——composerTools/modelInfoLead 插槽
+   *  extra.context 数据源（aiti-ctx-meter 上下文电池；docs/aiti-ctx-meter-plan.md §4.1） */
+  contextUsage?: ContextUsage | null;
+  /** 打开会话统计面板（AppShell openSessionStatsPanel）——插槽 extra.openSessionInfo */
+  onSessionStatsPanelOpen?: () => void;
   onCompact?: () => void;
   onAbortCompaction?: () => void;
   isCompacting?: boolean;
@@ -987,6 +993,22 @@ export interface MobileComposerMatrix {
   fork: boolean;
 }
 
+/** aiti-ctx-meter 接缝（docs/aiti-ctx-meter-plan.md §4）：contextUsage → 插槽 extra.context
+ *  快照；null/undefined 透传 null（扩展灰态「暂无上下文数据」）。urgency 为 contextUrgency(percent)
+ *  完整结果（level/color/bg/border，宿主唯一色阶来源——扩展不自带色表）。 */
+export function buildExtContextSnapshot(
+  contextUsage: Pick<ContextUsage, "percent" | "contextWindow" | "tokens"> | null | undefined,
+  urgency: CtxUrgency,
+): { percent: number | null; contextWindow: number | null; tokens: number | null; urgency: CtxUrgency } | null {
+  if (!contextUsage) return null;
+  return {
+    percent: contextUsage.percent ?? null,
+    contextWindow: contextUsage.contextWindow ?? null,
+    tokens: contextUsage.tokens ?? null,
+    urgency,
+  };
+}
+
 export function computeMobileComposerMatrix(opts: {
   isStreaming: boolean;
   hasInputText: boolean;
@@ -1205,7 +1227,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionId,
   onSend, onAbort, aborting, onForkNew, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching, onRefreshModels, modelsRefreshing,
   sessionCapabilities, onSwitchPermissionMode, permissionMode,
-  contextPercent, onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
+  contextPercent, contextUsage, onSessionStatsPanelOpen, onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
   onExportQueue, onImportQueue, onStageImport, onMoveQueue, onRecallOne, onRequeueAt, onRemoveQueueItem,
@@ -1228,6 +1250,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const ctxUrg = contextUrgency(contextPercent);
   const idleCtxColor = ctxUrg.color;
   const idleCtxBreathe = ctxUrg.level === "critical" ? CTX_BREATHE_CSS : undefined;
+  // ── aiti-ctx-meter 接缝（docs/aiti-ctx-meter-plan.md §4/§5）：上下文快照 + 压缩三态 +
+  //    会话面板入口透传给 composerTools / modelInfoLead——宿主零展示逻辑，展示/交互全在扩展。
+  const extSeamContext = buildExtContextSnapshot(contextUsage, ctxUrg);
+  const extSeamCompact = { onCompact, onAbortCompaction, onCancelCompactQueue, isCompacting, compactQueued };
   const { fontSize } = useChatAppearance();
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
@@ -4308,6 +4334,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               {/* 小屏展开态：模型选择直接露出（＋ 右侧）——v4 曾收进 ⓘ sheet，用户要求还原直露；
                   sheet 内同欸保留（双入口并存）。宽度馳制防长模型名挤爆按钮排；trigger 高 32 与
                   MobileIconButton 齐平，pending 徽标组件自带。compact 引用框不露（同弹性空隙条件）。 */}
+              {/* aiti-ctx-meter 电池：模型信息前导位——显示模型信息时都显示（docs/aiti-ctx-meter-plan.md §4.2） */}
+              {isMobile && mobileExpanded && !compact && onModelChange && (
+                <ExtSlot name="modelInfoLead" extra={{ sessionId, cwd, context: extSeamContext, compact: extSeamCompact, openSessionInfo: onSessionStatsPanelOpen, isMobile: true }} />
+              )}
               {isMobile && mobileExpanded && !compact && onModelChange && (
                 <div style={{ flex: "0 1 auto", minWidth: 72, maxWidth: 150, display: "flex" }}>
                   <ModelSelector
@@ -5010,6 +5040,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               // 队列 actions（P3）：composerTools 行的导入按钮经此触发 stageImport——
               // 导入入口回到底部控制行（与压缩/导入同排），队列空时不再孤零零浮在上方。
               queueActions: queuePanelExtra.actions,
+              // aiti-ctx-meter 接缝：上下文电池 + 压缩三态 + 会话面板入口（docs/aiti-ctx-meter-plan.md §4.1/§5）
+              context: extSeamContext,
+              compact: extSeamCompact,
+              openSessionInfo: onSessionStatsPanelOpen,
             }} />
             </div>
             {/* Desktop cycle: click walks the bottom
@@ -5073,7 +5107,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <span style={{ flexShrink: 0, display: "inline-flex", width: 7, height: 7, borderRadius: 99, background: "var(--accent)", opacity: 0.75 }} />
                   <span style={{ flexShrink: 0, fontWeight: 600, fontSize: 13.5 }}>{t("chat.sheetModel")}</span>
                   {modelSwitchPending && <span style={{ flexShrink: 0, width: 7, height: 7, borderRadius: 99, background: "#f59e0b" }} />}
-                  <div style={{ marginLeft: "auto", minWidth: 0, display: "flex", justifyContent: "flex-end" }}>
+                  <div style={{ marginLeft: "auto", minWidth: 0, display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
+                    {/* aiti-ctx-meter 电池：sheet 版前导位——点击先收 sheet 再开会话面板（§4.2） */}
+                    <ExtSlot name="modelInfoLead" extra={{ sessionId, cwd, context: extSeamContext, compact: extSeamCompact, openSessionInfo: () => { setInfoSheetOpen(false); onSessionStatsPanelOpen?.(); }, isMobile: true }} />
                     <ModelSelector
                       options={modelOptions}
                       value={model}
@@ -5285,7 +5321,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700 }}>/</span>
                   {t("chat.insertCommand")}
                 </button>
-                <ExtSlot name="composerTools" extra={{ sessionId, cwd, streaming: isStreaming, queueActions: queuePanelExtra.actions }} />
+                <ExtSlot name="composerTools" extra={{ sessionId, cwd, streaming: isStreaming, queueActions: queuePanelExtra.actions, context: extSeamContext, compact: extSeamCompact, openSessionInfo: onSessionStatsPanelOpen, isMobile: true }} />
               </div>
             </div>
           </>

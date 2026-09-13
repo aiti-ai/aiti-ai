@@ -11,7 +11,7 @@ const jiti = createJiti(import.meta.url, {
 });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, adjacentQueueTarget, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, mergeText, mergeSubmission, modelSupportsImageInput, replaceLinksWithMarkdown, shouldCompressImageFile } = await jiti.import("./ChatInput.tsx");
+const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, adjacentQueueTarget, buildExtContextSnapshot, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, mergeText, mergeSubmission, modelSupportsImageInput, replaceLinksWithMarkdown, shouldCompressImageFile } = await jiti.import("./ChatInput.tsx");
 const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
@@ -706,4 +706,38 @@ test("[fork] 图片警告渲染条件钉子：attachedImages>0 且模型确认�
   assert.match(source, /const showImageUnsupportedWarning = \(\n[\s\S]{0,160}?attachedImages\.length > 0[\s\S]{0,160}?!modelSupportsImageInput\(model, modelList\)[\s\S]{0,160}?!imageWarningDismissed/);
   // 手动关闭后同会话重新附图时复位（不吞后续警告）
   assert.match(source, /if \(attachedImages\.length === 0\) setImageWarningDismissed\(false\);/);
+});
+
+// ── aiti-ctx-meter 接缝（docs/aiti-ctx-meter-plan.md §4）──
+
+test("aiti-ctx-meter seam: buildExtContextSnapshot maps contextUsage and passes null through", () => {
+  const urgency = { level: "warn", color: "rgba(234,179,8,0.95)", bg: "rgba(234,179,8,0.1)", border: "rgba(234,179,8,0.4)" };
+  assert.deepEqual(
+    buildExtContextSnapshot({ percent: 72.4, contextWindow: 200000, tokens: 144800 }, urgency),
+    { percent: 72.4, contextWindow: 200000, tokens: 144800, urgency },
+  );
+  // null/undefined 透传 null（扩展灰态），字段缺失兜底 null 不抛
+  assert.equal(buildExtContextSnapshot(null, urgency), null);
+  assert.equal(buildExtContextSnapshot(undefined, urgency), null);
+  assert.deepEqual(
+    buildExtContextSnapshot({ percent: null, contextWindow: 200000, tokens: null }, urgency),
+    { percent: null, contextWindow: 200000, tokens: null, urgency },
+  );
+});
+
+test("aiti-ctx-meter seam: composerTools extra 带 context/compact/openSessionInfo；modelInfoLead 恰两处且 InfoSheet 版先收 sheet", () => {
+  const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  // 小屏模型信息前导位恰为 2 处渲染点（展开态输入行 + InfoSheet 模型行）
+  assert.equal((source.match(/name="modelInfoLead"/g) || []).length, 2, "modelInfoLead 渲染点应恰为 2 处");
+  // InfoSheet 版 openSessionInfo 先收 sheet 再开面板
+  assert.match(source, /openSessionInfo: \(\) => \{ setInfoSheetOpen\(false\); onSessionStatsPanelOpen\?\.\(\); \}/);
+  // composerTools（桌面）extra 携带三接缝字段
+  const composerIdx = source.indexOf('name="composerTools"');
+  assert.ok(composerIdx > 0, "composerTools 插槽存在");
+  const extraStart = source.indexOf("extra={{", composerIdx);
+  const extraEnd = source.indexOf("}} />", extraStart);
+  const extraBlock = source.slice(extraStart, extraEnd);
+  for (const key of ["context: extSeamContext", "compact: extSeamCompact", "openSessionInfo: onSessionStatsPanelOpen"]) {
+    assert.ok(extraBlock.includes(key), `composerTools extra 缺 ${key}`);
+  }
 });
