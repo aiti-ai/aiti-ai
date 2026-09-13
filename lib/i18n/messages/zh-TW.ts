@@ -857,6 +857,7 @@ export const zhTWLocale: LocalePlugin = {
     "providerUsage.currentSession": "當前會話",
     "providerUsage.otherProviders": "其他 provider（{count}）",
     "providerUsage.loading": "查詢中…",
+    "providerUsage.limit": "限額",
     "providerUsage.exhausted": "已耗盡",
     "providerUsage.used": "已用",
     "providerUsage.stateRateLimited": "限流",

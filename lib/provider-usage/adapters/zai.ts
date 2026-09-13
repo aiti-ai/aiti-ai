@@ -28,7 +28,8 @@ function normalizeLimit(payload: Record<string, unknown>, ctx: UsageQueryContext
     const resetsAt = number(row.nextResetTime) !== undefined ? Math.floor(number(row.nextResetTime)! / 1_000) : undefined;
     const limit = number(row.usage);
     const used = number(row.currentValue);
-    const remaining = number(row.remaining);
+    // Derive remaining when the payload omits it but carries usage + current value.
+    const remaining = number(row.remaining) ?? (limit !== undefined && used !== undefined ? Math.max(0, limit - used) : undefined);
     if (limit !== undefined && limit > 0) {
       buckets.push({
         id: `limit-${index}`,

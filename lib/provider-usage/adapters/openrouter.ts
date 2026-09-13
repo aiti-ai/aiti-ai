@@ -1,5 +1,5 @@
 import { registerJsonAdapter } from "../declarative";
-import { nonnegative, number, record, stringValue } from "../helpers";
+import { nonnegative, record, stringValue } from "../helpers";
 import type { UsageBucket, UsageReport } from "../types";
 
 // OpenRouter: /credits carries the account balance (total credits − usage);
@@ -25,23 +25,23 @@ registerJsonAdapter({
     const buckets: UsageBucket[] = [];
     const metrics: UsageReport["metrics"] = [];
 
-    // —— /credits: account-level balance ——
+    // —— /credits: account-level balance (only when the balance field is present) ——
     const totalCredits = nonnegative(data.total_credits);
-    if (totalCredits !== undefined || number(data.total_usage) !== undefined) {
-      const credits = totalCredits ?? 0;
+    if (totalCredits !== undefined) {
       const usage = nonnegative(data.total_usage) ?? 0;
-      const remaining = credits - usage;
+      const remaining = totalCredits - usage;
+      const overdrawn = remaining < 0;
       buckets.push({
         id: "credits",
         label: "Account balance",
         used: usage,
         remaining,
-        limit: credits,
+        limit: totalCredits,
         unit: "currency",
         currency: "USD",
-        status: remaining <= 0 ? "exhausted" : "ok",
+        status: overdrawn ? "exhausted" : "ok",
       });
-      metrics.push({ id: "topped-up", label: "Top-up", value: money(credits), unit: "currency", currency: "USD" });
+      metrics.push({ id: "topped-up", label: "Top-up", value: money(totalCredits), unit: "currency", currency: "USD" });
       metrics.push({ id: "spent", label: "Used", value: money(usage), unit: "currency", currency: "USD" });
       return {
         providerId: ctx.providerId,
@@ -49,7 +49,7 @@ registerJsonAdapter({
         capturedAt: Date.now(),
         buckets,
         metrics,
-        exhausted: remaining <= 0,
+        exhausted: overdrawn,
       };
     }
 

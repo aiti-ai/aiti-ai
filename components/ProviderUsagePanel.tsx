@@ -2,8 +2,9 @@
 
 // Session-info "remaining quota" block: current session provider expanded on
 // top, other configured+supported providers below (summary line each, click to
-// expand the full report). Event-driven: fetch on mount / manual refresh /
-// model change. No polling.
+// expand the full report). Event-driven: fetch on mount / manual refresh.
+// (A model change only re-selects which provider is pinned as current.)
+// No polling.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
@@ -13,7 +14,6 @@ import {
   formatBucket,
   formatMetric,
   formatUpdated,
-  isBucketAlarming,
   isReportExhausted,
   severityColor,
   type UsageBucket,
@@ -25,7 +25,7 @@ const STORAGE_KEY = "pi-web:provider-usage:overview";
 type OverviewEntry = { providerId: string; providerName: string; kind: string; status: string; report?: UsageReport; message?: string };
 type Overview = { capturedAt: number; providers: OverviewEntry[] };
 
-export function ProviderUsagePanel({ currentProviderId, expanded }: { currentProviderId?: string | null; expanded?: boolean }) {
+export function ProviderUsagePanel({ currentProviderId }: { currentProviderId?: string | null }) {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [querying, setQuerying] = useState(false);
   const [refreshDone, setRefreshDone] = useState(false);
@@ -80,7 +80,7 @@ export function ProviderUsagePanel({ currentProviderId, expanded }: { currentPro
   const others = ready.filter((entry) => entry !== current);
 
   return (
-    <section data-provider-usage-panel style={{ borderTop: "1px solid var(--border)", marginTop: 14, paddingTop: 12, display: "flex", flexDirection: "column", gap: 10, ...(expanded === false ? {} : {}) }}>
+    <section data-provider-usage-panel style={{ borderTop: "1px solid var(--border)", marginTop: 14, paddingTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)", flex: 1 }}>{t("providerUsage.remainingQuota")}</span>
         <button

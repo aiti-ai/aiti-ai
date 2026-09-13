@@ -1,7 +1,7 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import "./provider-usage/adapters";
 import { getUsageAdapter } from "./provider-usage/registry";
-import type { ProviderUsageResult, ProviderUsageStatus, UsageBucket, UsageMetric, UsageReport } from "./provider-usage/types";
+import type { ProviderUsageResult, UsageReport } from "./provider-usage/types";
 import type { ProviderUsageId } from "./provider-usage-ids";
 
 export { PROVIDER_USAGE_IDS, isProviderUsageId, type ProviderUsageId } from "./provider-usage-ids";

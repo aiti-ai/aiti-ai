@@ -6,24 +6,9 @@
 // used/limit detail are carried through from the adapter reports.
 
 import { useI18n } from "@/hooks/useI18n";
+import type { UsageBucket, UsageMetric, UsageReport } from "@/lib/provider-usage/types";
 
-export type UsageBucket = {
-  id: string;
-  label: string;
-  groupLabel?: string;
-  used?: number;
-  remaining?: number;
-  limit?: number;
-  unit: "percent" | "currency" | "count";
-  currency?: string;
-  windowMinutes?: number;
-  resetsAt?: number;
-  period?: string;
-  status?: "ok" | "rate-limited" | "exhausted";
-};
-
-export type UsageMetric = { id: string; label: string; value: number | string; unit?: string; currency?: string; groupLabel?: string };
-export type UsageReport = { capturedAt: number; buckets: UsageBucket[]; metrics: UsageMetric[]; notes?: string[]; exhausted?: boolean };
+export type { UsageBucket, UsageMetric, UsageReport } from "@/lib/provider-usage/types";
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 
@@ -71,8 +56,10 @@ export function ProviderUsageReportView({ report }: { report: UsageReport }) {
         <div key={group.key} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
           {group.group && <span style={{ fontSize: 11, fontWeight: 600, color: "var(--text-muted)" }}>{group.group}</span>}
           {group.rows.map((bucket) => {
-            const ratio = bucket.limit !== undefined && bucket.limit > 0
-              ? Math.min(100, Math.max(0, ((bucket.remaining ?? 0) / bucket.limit) * 100))
+            // Only draw a bar when the remaining amount is known; used/limit-only
+            // buckets would otherwise render a misleading empty bar.
+            const ratio = bucket.remaining !== undefined && bucket.limit !== undefined && bucket.limit > 0
+              ? Math.min(100, Math.max(0, (bucket.remaining / bucket.limit) * 100))
               : undefined;
             const alarming = isBucketAlarming(bucket);
             const color = alarming ? "#f87171" : severityColor(bucket.remaining, bucket.limit);
@@ -128,14 +115,19 @@ export function formatBucket(bucket: UsageBucket, t: Translate): string {
   }
   if (bucket.unit === "currency") {
     const symbol = bucket.currency === "CNY" ? "¥" : "$";
-    const head = bucket.remaining !== undefined && bucket.limit !== undefined
-      ? `${symbol}${formatAmount(bucket.remaining)} / ${symbol}${formatAmount(bucket.limit)}`
-      : `${symbol}${formatAmount(bucket.remaining ?? bucket.limit)}`;
-    return `${head}${state}${reset}`;
+    if (bucket.remaining !== undefined && bucket.limit !== undefined) {
+      return `${symbol}${formatAmount(bucket.remaining)} / ${symbol}${formatAmount(bucket.limit)}${state}${reset}`;
+    }
+    if (bucket.remaining !== undefined) return `${symbol}${formatAmount(bucket.remaining)}${state}${reset}`;
+    if (bucket.limit !== undefined) return `${symbol}${formatAmount(bucket.limit)} ${t("providerUsage.limit")}${state}${reset}`;
+    return `${bucket.period ?? t("providerUsage.available")}${state}${reset}`;
   }
   if (bucket.remaining !== undefined && bucket.limit !== undefined) {
     const usedPct = bucket.used !== undefined && bucket.limit > 0 ? ` · ${Math.round((bucket.used / bucket.limit) * 100)}% ${t("providerUsage.used")}` : "";
     return `${formatAmount(bucket.remaining)} / ${formatAmount(bucket.limit)}${usedPct}${state}${reset}`;
+  }
+  if (bucket.used !== undefined && bucket.limit !== undefined) {
+    return `${formatAmount(bucket.used)} / ${formatAmount(bucket.limit)} · ${t("providerUsage.used")}${state}${reset}`;
   }
   return `${bucket.period ?? t("providerUsage.available")}${state}${reset}`;
 }
@@ -149,7 +141,9 @@ function formatAmount(value: number | undefined): string {
   return value === undefined ? "-" : Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
-/** < 6h → HH:MM:SS countdown (session windows); otherwise a local date/time. */
+/** < 6h → HH:MM:SS countdown (session windows); otherwise a local date/time.
+ *  The countdown is computed at render time and advances with host re-renders
+ *  (no timer — repo no-polling rule); a long-idle panel can show a stale value. */
 export function formatReset(seconds: number): string {
   const target = seconds * 1_000;
   const delta = target - Date.now();

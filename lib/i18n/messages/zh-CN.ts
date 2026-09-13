@@ -858,6 +858,7 @@ export const zhCNLocale: LocalePlugin = {
     "providerUsage.currentSession": "当前会话",
     "providerUsage.otherProviders": "其他 provider（{count}）",
     "providerUsage.loading": "查询中…",
+    "providerUsage.limit": "限额",
     "providerUsage.exhausted": "已耗尽",
     "providerUsage.used": "已用",
     "providerUsage.stateRateLimited": "限流",
