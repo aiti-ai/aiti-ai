@@ -21,7 +21,6 @@ import {
   type QueueTrashItem,
 } from "./queue-store";
 import { invalidateModelsCache } from "./models-cache";
-import { assertSessionFileQuiescent } from "./session-run-quiescence";
 import { hasLiveDetachedRuns } from "./subagent-detached";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import {
@@ -262,11 +261,11 @@ function withExtensionTools(session: AgentSessionLike, toolNames: string[]): str
 // ============================================================================
 
 /** Why a wrapper is being torn down. "shutdown" = the session is truly over
- *  (DELETE route, global teardown); "fork" = the wrapper is discarded because
- *  the session was forked (the old file survives); "idle" = 10-min idle GC
- *  (the file survives, a fresh wrapper is created on next access). Extension
- *  end-hooks receive this so they can tell "session gone" from "wrapper
- *  recycled". */
+ *  (DELETE route, global teardown); "idle" = 10-min idle GC (the file survives,
+ *  a fresh wrapper is created on next access); "fork" = 历史保留值——旧的替换型
+ *  fork/clone 曾在此场景丢弃 wrapper，2026-09-13 起 fork/clone 均不再回收源
+ *  wrapper（运行中不得打断），当前无产生路径。Extension end-hooks receive
+ *  this so they can tell "session gone" from "wrapper recycled". */
 export type AgentWrapperEndReason = "shutdown" | "fork" | "idle";
 
 export class AgentSessionWrapper {
@@ -1044,17 +1043,6 @@ export class AgentSessionWrapper {
       || this.pendingPromptCount > 0;
   }
 
-  private async shutdownAfterSessionReplacement(replacement: "fork" | "clone"): Promise<void> {
-    try {
-      await this.shutdown();
-    } catch (error) {
-      console.error(
-        `[pi-web] ${replacement} succeeded, but source session shutdown failed:`,
-        error instanceof Error ? error.message : error,
-      );
-    }
-  }
-
   async send(command: Record<string, unknown>): Promise<unknown> {
     const type = command.type as string;
     const allowedDuringReplacement = COMMANDS_ALLOWED_DURING_SESSION_REPLACEMENT.has(type);
@@ -1281,6 +1269,10 @@ export class AgentSessionWrapper {
         // 流式写同一文件，其内存运行态对本实例不可见（孤儿 run）→ 内容复制后从当前位置续写（文件只增长，仅保留已记录行），视为可接受的 fork 行为。
         // 去掉 isSessionRunningForReplacement() 的检查：该门卫由上次合并代码时加入，用户明确指出运行中 fork 完全没有问题，且仅需要知道当前位置复制出去即可。
         // await assertSessionFileQuiescent(this.inner.sessionFile ?? "");  已去除，不再阻塞运行中 fork。
+        // 运行中 fork 还必须**不打断在跑的轮次**：完成后不再走替换型收尾（旧实现的替换型
+        // shutdown 会 destroy → inner.dispose() 把正在跑的 run 停掉，用户明确要求 fork 一个
+        // 新分支不得停掉源会话）。与 fork_branch 的「不替换也不关闭源会话」对齐；空闲 wrapper
+        // 由既有 idle GC（10 分钟）回收，不做替换型清理。
         return this.withSessionReplacement("fork", async () => {
           const entryId = command.entryId as string;
           const sessionManager = this.inner.sessionManager;
@@ -1327,7 +1319,7 @@ export class AgentSessionWrapper {
           // 创建方统一通知（helper 走 publishPageEventToBus 宽发布）：fork 不一定切走
           //（分支文件已手动补写落盘，补拉链随即转正）。
           notifySessionCreated(newSessionId, sessionManager.getCwd(), "fork");
-          await this.shutdownAfterSessionReplacement("fork");
+          // 不 shutdown 源会话（见 case 头注释）：fork 只读源文件 + 写新分支，源会话继续跑。
           return { cancelled: false, newSessionId };
         });
       }
@@ -1405,7 +1397,8 @@ export class AgentSessionWrapper {
           // 创建方统一通知：clone 通常由调用方切走（refreshKey 带动），但同一通知
           // 保证非切换路径（脚本/扩展直调）也即时可见。
           notifySessionCreated(newSessionId, sessionManager.getCwd(), "clone");
-          await this.shutdownAfterSessionReplacement("clone");
+          // 不 shutdown 源会话（同 fork，2026-09-13 拍板）：运行中 clone 不得打断在跑的
+          // 轮次；源 wrapper 继续跑/空闲时交 idle GC，不做替换型收尾。
           return { cancelled: false, newSessionId };
         });
       }
