@@ -854,5 +854,9 @@ export const enLocale: LocalePlugin = {
     "i18n.taskFinishedWithContext": "{project} · Task finished",
     "i18n.attentionNeeded": "Pi needs your attention",
     "i18n.extensionInputNeeded": "An extension is waiting for your input.",
+    "providerUsage.remainingQuota": "Remaining quota",
+    "providerUsage.currentSession": "current session",
+    "providerUsage.otherProviders": "Other providers ({count})",
+    "providerUsage.loading": "Loading…",
   },
 };

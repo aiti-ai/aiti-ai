@@ -20,7 +20,7 @@ const baseRequest = {
   captchaConfig: { sceneId: "11xygtvd", prefix: "no8xfe", region: "cn" },
 };
 
-test("ProviderHeadersRequestCard renders skeleton with cancel button and SDK mount points", () => {
+test("ProviderHeadersRequestCard renders skeleton with SDK mount points", () => {
   const html = renderToStaticMarkup(React.createElement(ProviderHeadersRequestCard, {
     request: baseRequest,
     onRespond: async () => true,
@@ -28,8 +28,8 @@ test("ProviderHeadersRequestCard renders skeleton with cancel button and SDK mou
   assert.match(html, /data-testid="provider-headers-request-card"/);
   assert.match(html, /套餐通道安全验证/);
   assert.match(html, /模型请求/);
-  assert.match(html, /data-testid="provider-headers-cancel"/);
-  assert.match(html, /取消本轮/);
+  // 取消按钮已移除（2fa0ac2：验证码只能完成（无感/滑块）或等 180s 后端兜底）
+  assert.doesNotMatch(html, /provider-headers-cancel/);
   assert.match(html, /id="pi-captcha-element"/);
   assert.match(html, /id="pi-captcha-button"/);
   assert.match(html, /正在建立安全验证/);

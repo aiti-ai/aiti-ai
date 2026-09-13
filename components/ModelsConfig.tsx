@@ -447,6 +447,8 @@ function ProviderDetail({ name, provider, onChange, onRename, onDelete, onAddMod
         </span>
       </Field>
 
+      <ProviderUsageSummary providerId={name} enabled />
+
       <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
         {discoveryState.phase !== "success" && (
           <button

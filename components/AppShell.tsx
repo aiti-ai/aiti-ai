@@ -19,6 +19,7 @@ import { ImagePanelContext } from "./image-panel-context";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import dynamic from "next/dynamic";
 import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService } from "./ExtSlots";
+import { ProviderUsagePanel } from "./ProviderUsagePanel";
 /** SessionSidebar 懒加载（统一 dock 方案 §7-2）：接管态（sidebarContent 有接管者）
  *  本组件整体不渲染，chunk 永不加载——主包瘦身；回退态首次渲染时按需拉取
  *  （本地 chunk，加载窗口毫秒级）。ssr:false：组件依赖 localStorage 两段式恢复，
@@ -531,6 +532,10 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const handleContextUsageChange = useCallback((usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => {
     setContextUsage(usage);
   }, []);
+
+  // Current display model — fed by ChatWindow, consumed by the session-info
+  // "remaining quota" block to pin the current provider on top.
+  const [currentModelInfo, setCurrentModelInfo] = useState<{ provider: string; modelId: string } | null>(null);
 
   // Single active panel — only one dropdown open at a time
   const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "language" | "theme" | null>(null);
@@ -4204,6 +4209,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
                   )}
                   {/* sessionStats 扩展点：宿主只放开插槽，条目全由扩展自行渲染——
                       aiti-ai-usage（报表入口按钮）/ aiti-ai-input（其他辅助 AI 用量统计行） */}
+                  <ProviderUsagePanel currentProviderId={currentModelInfo?.provider ?? null} />
                   <ExtSlot name="sessionStats" extra={{ locale, sessionId: selectedSession?.id ?? null }} />
                 </div>
               )}
@@ -4385,6 +4391,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               onSessionStatsRefresherRegister={setSessionStatsRefresh}
               onCompactControlsRegister={setCompactControls}
               onContextUsageChange={handleContextUsageChange}
+              onDisplayModelChange={setCurrentModelInfo}
               onExportQueue={(resolver) => { exportQueueDataRef.current = resolver; }}
               onOpenFile={handleOpenLinkedFile}
               onOpenSession={handleOpenSession}

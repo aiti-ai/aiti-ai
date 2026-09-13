@@ -76,6 +76,8 @@ interface Props {
    *  sessionCap("compact") 不通过）时面板按钮隐藏，与 ChatInput 同规则。 */
   onCompactControlsRegister?: (controls: CompactControls | null) => void;
   onContextUsageChange?: (usage: { percent: number | null; contextWindow: number; tokens: number | null } | null) => void;
+  /** 当前展示模型变化（AppShell 会话信息「剩余额度」区块据此置顶当前 provider）。 */
+  onDisplayModelChange?: (model: { provider: string; modelId: string } | null) => void;
   onOpenFile?: (filePath: string) => void;
   /** Expose the queue-export resolver to the parent (AppShell export dialog). */
   onExportQueue?: (resolver: () => Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null>) => void;
@@ -315,7 +317,7 @@ function permissionOptionLabel(o: { kind?: string; name?: string }): string {
   return map[String(o.kind ?? "")] ?? String(o.kind ?? "选择");
 }
 
-export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onContextUsageChange, onOpenFile, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onContextUsageChange, onDisplayModelChange, onOpenFile, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   useMoneySynced(); // 汇率异步到位时重渲染 backend usage 悬浮条（补出 ¥ 部分）
   const isMobile = useIsMobile();
@@ -1042,6 +1044,17 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     onContextUsageChange?.(contextUsageRef.current);
   }, [ctxKey, onContextUsageChange]);
   useEffect(() => () => { onContextUsageChange?.(null); }, [onContextUsageChange]);
+
+  const displayModelKey = displayModelValue ? `${displayModelValue.provider}:${displayModelValue.modelId}` : null;
+  useEffect(() => {
+    if (displayModelKey) {
+      const [provider, ...rest] = displayModelKey.split(":");
+      onDisplayModelChange?.({ provider, modelId: rest.join(":") });
+    } else {
+      onDisplayModelChange?.(null);
+    }
+  }, [displayModelKey, onDisplayModelChange]);
+  useEffect(() => () => { onDisplayModelChange?.(null); }, [onDisplayModelChange]);
 
   const onDrop = useCallback((files: File[]) => {
     chatInputRef?.current?.addImages(files);
