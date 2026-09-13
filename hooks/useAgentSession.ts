@@ -115,6 +115,19 @@ function alignQueueAttachmentFlags(prev: boolean[] | undefined, nextLen: number)
   return [...p, ...Array<boolean>(nextLen - p.length).fill(false)];
 }
 
+/** 本轮读秒起点兜底：最近一条用户消息的时间戳（= 发起该轮 prompt 的时刻）。
+ *  页面重开/断线重连时 agent_start 已错过——起点不能取「打开时刻」（旧行为会在
+ *  每次打开时把读秒清零重来），应从这条消息发出之后起算。无可用时间戳返回 null。 */
+function deriveRunStartedAt(messages: AgentMessage[]): number | null {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    if (message.role !== "user") continue;
+    const timestamp = message.timestamp;
+    return typeof timestamp === "number" && timestamp > 0 ? timestamp : null;
+  }
+  return null;
+}
+
 type ExtensionUiDialogRequest = Extract<ExtensionUiRequest, { method: "select" | "confirm" | "input" | "editor" }>;
 type ExtensionUiCustomRequest = Extract<ExtensionUiRequest, { method: "custom" }>;
 export type NoticeType = "info" | "success" | "warning" | "error";
@@ -657,6 +670,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     messagesRef.current = messages;
   }, [messages]);
 
+  /** 采纳本轮读秒起点：已知则保持（SSE 重放 agent_start 不得回零）；未知则从已加载
+   *  消息恢复（最近一条用户消息时间戳），确实取不到才退回当前时刻。 */
+  const adoptRunStartedAt = useCallback(() => {
+    if (runStartedAtRef.current !== null) return;
+    runStartedAtRef.current = deriveRunStartedAt(messagesRef.current) ?? Date.now();
+  }, []);
+
   useLayoutEffect(() => {
     if (!existingSessionId && (!isNew || sessionIdRef.current)) return;
     setToolPresetState(getPreferredToolPreset());
@@ -847,6 +867,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setData(d);
       setActiveLeafId(d.leafId);
       setMessages(persistedMessages);
+      // 同步镜像（不等 useEffect）：随后同一流程里的 running 采纳（mount 的
+      // agentState.then、state 拉取）必须立即用这批消息推导读秒起点。
+      messagesRef.current = persistedMessages;
       setEntryIds(d.context.entryIds ?? []);
       setHistoryCursor(d.context.oldestEntryId);
       setHasEarlierMessages(d.context.hasMore);
@@ -1275,6 +1298,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const settleUiStage = useCallback(() => {
     const wasRunning = agentRunningRef.current;
     agentRunningRef.current = false;
+    // 收口即清读秒起点：避免下轮 send 的 ??= 继续用上轮起点（并覆盖无 agent_settled 的
+    // 收口路径）——下轮会在消息时间戳/发送时刻重新起算。
+    runStartedAtRef.current = null;
     setAgentRunning(false);
     setAgentPhase(null);
     setRetryInfo(null);
@@ -1325,7 +1351,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           sdkAgentActiveRef.current = Boolean(state?.isStreaming);
           rpcPromptPendingRef.current = Boolean(state?.isPromptRunning);
           agentRunningRef.current = true;
-          runStartedAtRef.current ??= Date.now();
+          adoptRunStartedAt();
           setAgentRunning(true);
           setAgentPhase(state?.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
           return;
@@ -1352,7 +1378,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     };
 
     eventStreamGraceTimerRef.current = setTimeout(() => void checkServerIdle(), EVENT_STREAM_IDLE_GRACE_MS);
-  }, [cancelEventStreamGrace, closeEvents, syncLiveModel]);
+  }, [adoptRunStartedAt, cancelEventStreamGrace, closeEvents, syncLiveModel]);
 
   const finishPromptWithoutStream = useCallback(async (sid: string | null = sessionIdRef.current, runId = promptRunIdRef.current) => {
     // Bail out before loadSession too: a stale finish for a previous run
@@ -1561,7 +1587,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           cancelEventStreamGrace();
           sdkAgentActiveRef.current = true;
           agentRunningRef.current = true;
-          runStartedAtRef.current ??= Date.now();
+          adoptRunStartedAt();
           setAgentRunning(true);
           setAgentPhase({ kind: "waiting_model" });
         }
@@ -1580,9 +1606,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         cancelEventStreamGrace();
         sdkAgentActiveRef.current = true;
         agentRunningRef.current = true;
-        // ??=：本轮起点取最早值——SSE 重连会重放 buffer 里的 agent_start（新会话换绑后必然重连），
+        // 本轮起点取最早值——SSE 重连会重放 buffer 里的 agent_start（新会话换绑后必然重连），
         // 无条件重置会让读秒中途回零；settled 已置 null，下一轮自然起新点。
-        runStartedAtRef.current ??= Date.now();
+        adoptRunStartedAt();
         setAgentRunning(true);
         setAgentPhase({ kind: "waiting_model" });
         dispatchStream({ type: "start" });
@@ -1915,7 +1941,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
         break;
     }
-  }, [addNotice, canonicalizeSessionId, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
+  }, [addNotice, adoptRunStartedAt, canonicalizeSessionId, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const respondToInteraction = useCallback(async (requestId: string, answer: {
@@ -2817,7 +2843,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           sdkAgentActiveRef.current = Boolean(st.isStreaming);
           rpcPromptPendingRef.current = Boolean(st.isPromptRunning);
           agentRunningRef.current = true;
-          runStartedAtRef.current ??= Date.now();
+          adoptRunStartedAt();
           setAgentRunning(true);
           setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
           dispatchStream({ type: "start" });
@@ -2837,7 +2863,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       await new Promise((r) => setTimeout(r, 800));
       if (sessionIdRef.current === sid) await loadSession(sid);
     } catch { /* non-critical */ }
-  }, [ensureEventsConnected, waitForPromptSettlement, loadSession, dispatchStream]);
+  }, [adoptRunStartedAt, ensureEventsConnected, waitForPromptSettlement, loadSession, dispatchStream]);
 
   /**
    * Decide what to do with pending recovery items: keep (re-queue, optionally
@@ -3373,7 +3399,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             sdkAgentActiveRef.current = Boolean(agentState.state.isStreaming);
             rpcPromptPendingRef.current = Boolean(agentState.state.isPromptRunning);
             agentRunningRef.current = true;
-            runStartedAtRef.current ??= Date.now();
+            adoptRunStartedAt();
             setAgentRunning(true);
             setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
             dispatchStream({ type: "resume" });

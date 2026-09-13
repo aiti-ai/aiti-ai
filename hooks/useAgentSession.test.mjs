@@ -616,3 +616,63 @@ test("freezes passive chat scrolling while composing on a small screen", () => {
   assert.match(composingGuardSource, /if \(agentRunningRef\.current\) \{\s*scheduleFollowStep\(\);/);
   assert.match(composingGuardSource, /releaseTimer = window\.setTimeout\(\(\) => \{[\s\S]*?release\(\);[\s\S]*?\}, COMPOSING_ACTIVE_MS\);/);
 });
+
+test("run elapsed badge recovers its start from the last prompt after page reopen", () => {
+  // 根因：页面重开/断线重连时 agent_start 已错过，旧行为 runStartedAtRef ??= Date.now()
+  // 会把起点钉在「打开时刻」——读秒每次打开都从零重来。修复：从最近一条用户消息
+  // 时间戳（发起该轮 prompt 的时刻）恢复；消息里取不到才退回当前时刻。
+  const deriveSource = source.slice(
+    source.indexOf("function deriveRunStartedAt"),
+    source.indexOf("export function useAgentSession"),
+  );
+  assert.match(deriveSource, /for \(let i = messages\.length - 1; i >= 0; i--\)/);
+  assert.match(deriveSource, /const timestamp = message\.timestamp/);
+  assert.match(deriveSource, /typeof timestamp === "number" && timestamp > 0 \? timestamp : null/);
+
+  const adoptSource = source.slice(
+    source.indexOf("const adoptRunStartedAt = useCallback"),
+    source.indexOf("const isChatScrollFrozen"),
+  );
+  assert.match(adoptSource, /if \(runStartedAtRef\.current !== null\) return/);
+  assert.match(adoptSource, /deriveRunStartedAt\(messagesRef\.current\) \?\? Date\.now\(\)/);
+  // loadSession 同步镜像：同一流程里的 running 采纳必须立即读到刚加载的消息
+  assert.match(source, /messagesRef\.current = persistedMessages/);
+
+  // 远端采纳点（connected / agent_start / grace 对账 / adoptRemoteRun / mount）统一走
+  // adoptRunStartedAt，不得再以「打开时刻」当起点
+  const connectedSource = source.slice(
+    source.indexOf('case "connected"'),
+    source.indexOf('case "session_backend_ready"'),
+  );
+  assert.match(connectedSource, /adoptRunStartedAt\(\)/);
+  assert.doesNotMatch(connectedSource, /runStartedAtRef\.current \?\?= Date\.now\(\)/);
+  const graceSource = source.slice(
+    source.indexOf("const checkServerIdle"),
+    source.indexOf("const finishPromptWithoutStream"),
+  );
+  assert.match(graceSource, /adoptRunStartedAt\(\)/);
+  assert.doesNotMatch(graceSource, /runStartedAtRef\.current \?\?= Date\.now\(\)/);
+  const remoteRunSource = source.slice(
+    source.indexOf("const adoptRemoteRun = useCallback"),
+    source.indexOf("const resolveRecovery"),
+  );
+  assert.match(remoteRunSource, /adoptRunStartedAt\(\)/);
+  assert.doesNotMatch(remoteRunSource, /runStartedAtRef\.current \?\?= Date\.now\(\)/);
+  const mountSource = source.slice(
+    source.indexOf("// Load session on mount"),
+    source.indexOf("onSystemPromptChange?.(systemPrompt)"),
+  );
+  assert.match(mountSource, /adoptRunStartedAt\(\)/);
+  assert.doesNotMatch(mountSource, /runStartedAtRef\.current \?\?= Date\.now\(\)/);
+
+  // 只有 handleSend 的乐观发送路径保留 Date.now 起点
+  const fallbacks = source.match(/runStartedAtRef\.current \?\?= Date\.now\(\)/g) ?? [];
+  assert.equal(fallbacks.length, 1);
+
+  // 收口统一清起点（含无 agent_settled 的收口路径），下轮重新起算
+  const settleSource = source.slice(
+    source.indexOf("const settleUiStage = useCallback"),
+    source.indexOf("const notifyPromptStage"),
+  );
+  assert.match(settleSource, /runStartedAtRef\.current = null/);
+});
