@@ -196,7 +196,7 @@ const GUARDS = [
       /command\.entryId[\s\S]*?: sessionManager\.getLeafId\(\)/,                          // 未传 entryId → 当前 leaf
       /sourceManager\.getSessionId\(\)/,                                                    // 创建者实例 id（不重读文件）
       /flag: "wx"/,                                                                          // 分支文件立即落盘兑底
-      /publishPageEventToBus\("sm:session-created"/,                                      // 侧栏草稿行即时可见（必须宽发布走总线；直调到不了 session-manager）
+      /notifySessionCreated\(newSessionId, sessionManager\.getCwd\(\), "fork_branch"\)/,  // 侧栏草稿行即时可见（统一 helper；helper 内部 = publishPageEventToBus 宽发布走总线，直调到不了 session-manager）
     ],
     not: [
       /Cannot fork while the session is running/,      // 运行中拒绝回归即红灯
