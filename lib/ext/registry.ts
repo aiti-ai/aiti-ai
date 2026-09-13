@@ -26,6 +26,7 @@ import type {
 } from "./types.ts";
 import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, extraExtensionsRoots } from "./data-dir.ts";
 import { loadExtensionFromDir, scanExtensionDirs, compareExtVersions, snapshotJitiCache, countRetranspiled } from "./loader.ts";
+import { extProtocolInfo, EXT_PROTOCOL_VERSION, EXT_PROTOCOL_MIN_MAJOR, EXT_PROTOCOL_STRICT_BLOCKED, type ExtProtocolInfo } from "./protocol.ts";
 import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
 import { ExtServicesRegistry } from "./services.ts";
 import { invokeAI as aiInvokeImpl } from "../ai-invoke.ts";
@@ -110,8 +111,10 @@ export interface ExtStatusEntry {
   agentHooks?: string[];
   /** 功能管理：声明 + 当前启停状态（扩展声明了 features 才有）。 */
   features?: ExtStatusFeature[];
-  /** 目录里 package.json 的静态信息（不执行代码）。homepage = 来源/文档地址（安装时写入或作者声明）；soul = 灵魂句（extman 展示）。 */
-  packageInfo?: { name?: string; version?: string; dependencies?: string[]; homepage?: string; soul?: string };
+  /** 目录里 package.json 的静态信息（不执行代码）。homepage = 来源/文档地址（安装时写入或作者声明）；soul = 灵魂句（extman 展示）；protocol = aitiExtProtocol 声明原值。 */
+  packageInfo?: { name?: string; version?: string; dependencies?: string[]; homepage?: string; soul?: string; protocol?: string };
+  /** 协议声明与兼容状态（宿主裁决；docs/pi-web-ext-protocol.md）。 */
+  protocol?: ExtProtocolInfo;
   /** 功能级硬依赖声明（依赖与能力模型：元素 = 扩展 id 或能力名）。 */
   dependsOn?: string[];
   /** 可选依赖声明（纯声明，缺席不影响，不警告）。 */
@@ -143,8 +146,16 @@ export interface MultiSourceGroup {
   candidates: Array<{ dir: string; source: ExtensionSource; version?: string; winner: boolean }>;
 }
 
+/** 协议声明检查 warn 去重（进程级：reload 重复非 ok 不刷屏）。 */
+const protocolWarned = new Set<string>();
+
+/** strict 拒载开关（默认关；stale 不在拒载集——宿主保留兼容层）。 */
+function protocolStrict(): boolean {
+  return process.env.PI_WEB_EXT_PROTOCOL_STRICT === "1";
+}
+
 /** 不执行代码读取扩展目录的 package.json（disabled 条目也能有名字/版本/依赖/来源地址）。 */
-function readPackageInfo(dir?: string): { name?: string; version?: string; dependencies?: string[]; homepage?: string; soul?: string } {
+function readPackageInfo(dir?: string): { name?: string; version?: string; dependencies?: string[]; homepage?: string; soul?: string; protocol?: string } {
   if (!dir) return {};
   try {
     const p = join(dir, "package.json");
@@ -157,6 +168,7 @@ function readPackageInfo(dir?: string): { name?: string; version?: string; depen
       url?: unknown;
       repository?: unknown;
       soul?: unknown;
+      aitiExtProtocol?: unknown;
     };
     // homepage → url → repository（string 或 {url}），优先级递减。
     const repoUrl = typeof parsed.repository === "string"
@@ -175,6 +187,8 @@ function readPackageInfo(dir?: string): { name?: string; version?: string; depen
         : typeof parsed.url === "string" ? parsed.url
         : repoUrl,
       soul: typeof parsed.soul === "string" && parsed.soul.trim() ? parsed.soul.trim() : undefined,
+      // 协议声明原值（字符串校验留给 extProtocolInfo——数字等非法类型归 invalid）
+      protocol: parsed.aitiExtProtocol === undefined ? undefined : String(parsed.aitiExtProtocol),
     };
   } catch {
     return {};
@@ -634,6 +648,21 @@ export class ExtRegistryImpl {
       const timingT0 = timingEnabled ? performance.now() : 0;
       const cacheBefore = timingEnabled ? snapshotJitiCache() : null;
       try {
+        // 协议声明检查（docs/pi-web-ext-protocol.md）：非 ok 一条 warn（进程级去重，reload 不刷屏）；
+        // PI_WEB_EXT_PROTOCOL_STRICT=1 时拒载 incompatible/missing/invalid/too_new（stale 仍加载——宿主保留兼容层）。
+        const protoInfo = extProtocolInfo(readPackageInfo(dir).protocol);
+        if (protoInfo.state !== "ok" || protoInfo.minorAhead) {
+          const warnKey = `${id}@${protoInfo.state}@${protoInfo.declared ?? ""}@${protoInfo.current}`;
+          if (!protocolWarned.has(warnKey)) {
+            protocolWarned.add(warnKey);
+            const tip = protoInfo.needsUpgrade ? "——可用 extman「🤖 AI 升级」走 ext-protocol-upgrade skill" : "";
+            console.warn(`[ext] ${id} 协议声明 ${protoInfo.declared ?? "(未声明)"} vs 当前 ${protoInfo.current}：${protoInfo.state}${protoInfo.detail ? "（" + protoInfo.detail + "）" : ""}${tip}`);
+          }
+        }
+        if (protocolStrict() && EXT_PROTOCOL_STRICT_BLOCKED.includes(protoInfo.state)) {
+          this.errors.set(id, `协议不兼容（${protoInfo.state}：声明 ${protoInfo.declared ?? "—"} vs 当前 ${protoInfo.current}）— PI_WEB_EXT_PROTOCOL_STRICT=1`);
+          continue;
+        }
         const ext = await loadExtensionFromDir(dir);
         if (!ext) {
           this.errors.set(id, "no extension entry (index.ts / single script)");
@@ -808,6 +837,7 @@ export class ExtRegistryImpl {
             name: packageInfo.name ?? id,
             version: packageInfo.version,
             packageInfo,
+            protocol: extProtocolInfo(packageInfo.protocol),
           };
         }
       } else {
@@ -825,6 +855,7 @@ export class ExtRegistryImpl {
               name: packageInfo.name ?? id,
               version: packageInfo.version,
               packageInfo,
+              protocol: extProtocolInfo(packageInfo.protocol),
             };
           }
         }
@@ -846,6 +877,7 @@ export class ExtRegistryImpl {
         ...(dependsOn ?? []).map((n) => this.resolveDep(n, true)),
         ...(optionalDependsOn ?? []).map((n) => this.resolveDep(n, false)),
       ];
+      const packageInfo = readPackageInfo(ext.dir);
       out[ext.id] = {
         loaded: true,
         enabled: !disabled.has(ext.id),
@@ -870,7 +902,8 @@ export class ExtRegistryImpl {
         features: ext.ext.features?.length
           ? ext.ext.features.map((f) => ({ ...f, enabled: this.featureEnabled(ext.id, f.id), ...(f.type === "string" || f.type === "textlist" ? { value: String(this.featureValue(ext.id, f.id)) } : {}) }))
           : undefined,
-        packageInfo: readPackageInfo(ext.dir),
+        packageInfo,
+        protocol: extProtocolInfo(packageInfo.protocol),
         ...(dependsOn ? { dependsOn } : {}),
         ...(optionalDependsOn ? { optionalDependsOn } : {}),
         ...(capsProvides ? { capsProvides } : {}),
@@ -902,6 +935,8 @@ export class ExtRegistryImpl {
     multiSource: Record<string, MultiSourceGroup>;
     /** pin 现状（P2）：dev 优先开关 + pin 表（extman 面板回显）。 */
     pins: { devPriority: boolean; pins: Record<string, string> };
+    /** 协议版本基线（docs/pi-web-ext-protocol.md；extman/前端消费）。 */
+    protocol: { current: string; minMajor: number; minSupported: string };
   } {
     return {
       loaded: this.isLoaded(),
@@ -915,6 +950,7 @@ export class ExtRegistryImpl {
       capabilities: this.capabilitiesView(),
       multiSource: this.multiSourceView(),
       pins: { devPriority: this.devPriorityEnabled(), pins: { ...(this.extPins().pins ?? {}) } },
+      protocol: { current: EXT_PROTOCOL_VERSION, minMajor: EXT_PROTOCOL_MIN_MAJOR, minSupported: `${EXT_PROTOCOL_MIN_MAJOR}.0` },
     };
   }
 
