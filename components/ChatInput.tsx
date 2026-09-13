@@ -1719,8 +1719,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       // 同步写 DOM + tracker（不赌 React commit 与 rAF 的时序——异步 setValue 后
       // rAF 可能跑在 commit 之前，此时 DOM 还是旧值，光标会落在开头）
       const taNow = textareaRef.current;
+      // 写值前先取光标：DOM value 一被改写，浏览器就把光标推到末尾，之后就取不到了。
+      const wasFocused = !!taNow && taNow === document.activeElement;
+      const caretBefore = taNow ? taNow.selectionStart : null;
+      const lenBefore = taNow ? taNow.value.length : 0;
+      // 同值恢复（草稿与框内文本一致，如发送失败回填）不写 DOM：写同名值同样会把
+      // 光标推到末尾 —— 用户在中间打字时表现为「光标被莫名拽到后面」。
+      const sameText = !!taNow && taNow.value === draft.value;
       valueRef.current = draft.value;
-      if (taNow) writeTextareaValue(taNow, draft.value);
+      if (!sameText && taNow) writeTextareaValue(taNow, draft.value);
       setValue(draft.value);
       setAtQuery(null);
       setHistoryMenuOpen(false);
@@ -1731,10 +1738,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       requestAnimationFrame(() => {
         const ta = textareaRef.current;
         if (!ta) return;
-        ta.focus();
-        // 光标落到还原文本末尾
-        const end = ta.value.length;
-        ta.setSelectionRange(end, end);
+        if (!sameText) {
+          // 用户正在框内编辑（聚焦且光标不在末尾）→ 保留原光标位置（按新值长度裁剪）；
+          // 否则（框空/光标本就在末尾/未聚焦）光标落到还原文本末尾。
+          const pos = wasFocused && caretBefore !== null && caretBefore < lenBefore
+            ? Math.min(caretBefore, ta.value.length)
+            : ta.value.length;
+          if (ta !== document.activeElement) ta.focus();
+          ta.setSelectionRange(pos, pos);
+        }
         ta.style.height = "auto";
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
       });
@@ -2090,7 +2102,16 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     // 恢复草稿后用户全选删除时 React 认为「值没变」吞掉 onChange —— state 残留旧稿、
     // 草稿清不掉、下次加载又复活，回车还会把残留旧稿重新发出去。
     if (!isComposingRef.current && ta.value !== value) {
+      // 回写同样会把光标推到末尾：用户正在框内编辑（聚焦且光标不在末尾）时保留原光标位置
+      // （按新值长度裁剪）——否则（光标本就在末尾/未聚焦）维持「落到末尾」的旧行为。
+      const wasFocused = ta === document.activeElement;
+      const caretBefore = ta.selectionStart;
+      const lenBefore = ta.value.length;
       writeTextareaValue(ta, value);
+      if (wasFocused && caretBefore !== null && caretBefore < lenBefore) {
+        const pos = Math.min(caretBefore, ta.value.length);
+        ta.setSelectionRange(pos, pos);
+      }
     }
     // React 对 defaultValue 的提交走 textContent 路径（不经 value setter），同样绕过
     // _valueTracker —— 每次提交后强制把跟踪值对齐到真实 DOM 值，保证后续用户编辑
