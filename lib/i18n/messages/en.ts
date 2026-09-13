@@ -858,5 +858,9 @@ export const enLocale: LocalePlugin = {
     "providerUsage.currentSession": "current session",
     "providerUsage.otherProviders": "Other providers ({count})",
     "providerUsage.loading": "Loading…",
+    "providerUsage.exhausted": "exhausted",
+    "providerUsage.used": "used",
+    "providerUsage.stateRateLimited": "rate limited",
+    "providerUsage.stateExhausted": "used up",
   },
 };

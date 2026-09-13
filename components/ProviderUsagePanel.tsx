@@ -1,13 +1,24 @@
 "use client";
 
 // Session-info "remaining quota" block: current session provider expanded on
-// top, other configured+supported providers collapsed one-line summaries.
-// Event-driven: fetch on mount / manual refresh / model change. No polling.
+// top, other configured+supported providers below (summary line each, click to
+// expand the full report). Event-driven: fetch on mount / manual refresh /
+// model change. No polling.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { apiUrl } from "@/lib/base-path";
-import { ProviderUsageReportView, formatBucket, formatMetric, formatUpdated, severityColor, type UsageBucket, type UsageReport } from "./ProviderUsageReportView";
+import {
+  ProviderUsageReportView,
+  formatBucket,
+  formatMetric,
+  formatUpdated,
+  isBucketAlarming,
+  isReportExhausted,
+  severityColor,
+  type UsageBucket,
+  type UsageReport,
+} from "./ProviderUsageReportView";
 
 const STORAGE_KEY = "pi-web:provider-usage:overview";
 
@@ -94,6 +105,7 @@ export function ProviderUsagePanel({ currentProviderId, expanded }: { currentPro
           <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
             <span style={{ width: 6, height: 6, borderRadius: 3, background: "#4ade80", flexShrink: 0, alignSelf: "center" }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>{current.providerName}</span>
+            {isReportExhausted(current.report!) && <ExhaustedBadge label={t("providerUsage.exhausted")} />}
             <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("providerUsage.currentSession")}</span>
           </div>
           <div style={{ paddingLeft: 14 }}>
@@ -103,7 +115,7 @@ export function ProviderUsagePanel({ currentProviderId, expanded }: { currentPro
       )}
 
       {others.length > 0 && (
-        <details>
+        <details open>
           <summary style={{ cursor: "pointer", fontSize: 11, color: "var(--text-dim)", userSelect: "none", listStyle: "none", display: "flex", alignItems: "center", gap: 6 }}>
             <span aria-hidden="true">▸</span>
             {t("providerUsage.otherProviders", { count: others.length })}
@@ -120,17 +132,35 @@ export function ProviderUsagePanel({ currentProviderId, expanded }: { currentPro
 }
 
 function OtherProviderRow({ entry }: { entry: OverviewEntry }) {
+  const { t } = useI18n();
   const report = entry.report!;
   const worst = pickWorstBucket(report);
   const fallbackMetric = report.metrics.find((metric) => metric.unit === "currency") ?? report.metrics[0];
+  const alarming = isReportExhausted(report);
   return (
-    <div style={{ display: "grid", gridTemplateColumns: "minmax(80px, 140px) minmax(0, 1fr)", columnGap: 10, alignItems: "center", fontSize: 11.5 }}>
-      <span style={{ color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.providerName}</span>
-      <span style={{ color: severityColor(worst?.remaining, worst?.limit), fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-        {worst ? formatBucket(worst, worst.period ?? "") : fallbackMetric ? formatMetric(fallbackMetric) : ""}
-        {report.notes?.length ? ` · ${report.notes[0]}` : ""}
-      </span>
-    </div>
+    <details>
+      <summary style={{ display: "grid", gridTemplateColumns: "minmax(80px, 140px) minmax(0, 1fr)", columnGap: 10, alignItems: "center", cursor: "pointer", listStyle: "none", fontSize: 11.5 }}>
+        <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span aria-hidden="true" style={{ color: "var(--text-dim)", fontSize: 9 }}>▸</span>
+          {entry.providerName}
+          {alarming && <ExhaustedBadge label={t("providerUsage.exhausted")} />}
+        </span>
+        <span style={{ color: alarming ? "#f87171" : worst ? severityColor(worst.remaining, worst.limit) : "var(--text-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {worst ? `${worst.label} ${formatBucket(worst, t)}` : fallbackMetric ? formatMetric(fallbackMetric) : ""}
+        </span>
+      </summary>
+      <div style={{ paddingLeft: 14, paddingTop: 6 }}>
+        <ProviderUsageReportView report={report} />
+      </div>
+    </details>
+  );
+}
+
+function ExhaustedBadge({ label }: { label: string }) {
+  return (
+    <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99, color: "#ef4444", background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.35)", whiteSpace: "nowrap" }}>
+      {label}
+    </span>
   );
 }
 

@@ -7,6 +7,6 @@ import "./openrouter";
 import "./minimax";
 import "./zai";
 import "./kimi-coding";
-import "./opencode-go";
+import "./opencode";
 import "./github-copilot";
 import "./baseten";

@@ -6,6 +6,9 @@ import type { ProviderUsageId } from "@/lib/provider-usage-ids";
 
 export type UsageUnit = "percent" | "currency" | "count";
 
+/** Window state reported by the provider (OpenCode rate-limited, Z.AI used-up, …). */
+export type UsageBucketState = "ok" | "rate-limited" | "exhausted";
+
 export interface UsageBucket {
   id: string;
   label: string;
@@ -19,6 +22,7 @@ export interface UsageBucket {
   windowMinutes?: number;
   resetsAt?: number;
   period?: string;
+  status?: UsageBucketState;
 }
 
 export interface UsageMetric {
@@ -37,6 +41,8 @@ export interface UsageReport {
   buckets: UsageBucket[];
   metrics: UsageMetric[];
   notes?: string[];
+  /** True when a window/limit currently blocks usage (used up or rate limited). */
+  exhausted?: boolean;
 }
 
 export type ProviderUsageStatus = "ready" | "unsupported" | "auth-unavailable" | "query-failed";

@@ -41,6 +41,18 @@ export function clamp(value: number): number {
   return Math.min(100, Math.max(0, value));
 }
 
+/** Epoch seconds from ms/seconds numbers or ISO strings (reset timestamps). */
+export function epochSeconds(value: unknown): number | undefined {
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return Math.floor(parsed / 1_000);
+  }
+  const numeric = number(value);
+  if (numeric === undefined) return undefined;
+  // Values >= 1e12 are milliseconds; smaller values are already epoch seconds.
+  return Math.floor(numeric >= 1e12 ? numeric / 1_000 : numeric);
+}
+
 export function windowLabel(seconds: number | undefined): string {
   if (!seconds || seconds <= 0) return "Limit";
   const minutes = Math.ceil(seconds / 60);

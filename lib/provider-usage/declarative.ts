@@ -14,6 +14,8 @@ export interface JsonAdapterSpec {
   /** Extra static headers, e.g. raw-key auth styles that must not use Bearer. */
   headers?: (auth: UsageAuth) => Record<string, string> | undefined;
   url: (auth: UsageAuth) => string;
+  /** Extra endpoints tried in order when the primary fails (HTTP/network/normalize). */
+  fallbackUrls?: (auth: UsageAuth) => string[];
   normalize: UsageNormalizer;
 }
 
@@ -26,8 +28,17 @@ export function createJsonAdapter(spec: JsonAdapterSpec): UsageAdapter {
     normalize: spec.normalize,
     async query(ctx) {
       const headers = buildAuthHeaders(ctx.auth, spec.headers?.(ctx.auth));
-      const payload = await fetchOfficialJson(spec.origins, spec.url(ctx.auth), headers);
-      return spec.normalize(payload, ctx);
+      const urls = [spec.url(ctx.auth), ...(spec.fallbackUrls?.(ctx.auth) ?? [])];
+      let lastError: unknown;
+      for (const url of urls) {
+        try {
+          const payload = await fetchOfficialJson(spec.origins, url, headers);
+          return spec.normalize(payload, ctx);
+        } catch (caught) {
+          lastError = caught;
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error("The provider usage query failed.");
     },
   };
 }

@@ -2,6 +2,8 @@
 
 // Shared rendering for provider usage reports: remaining-first rows with
 // progress bars, grouped by model/plan (groupLabel), severity-colored.
+// Window state (rate-limited / used up), relative reset countdowns and
+// used/limit detail are carried through from the adapter reports.
 
 import { useI18n } from "@/hooks/useI18n";
 
@@ -17,10 +19,13 @@ export type UsageBucket = {
   windowMinutes?: number;
   resetsAt?: number;
   period?: string;
+  status?: "ok" | "rate-limited" | "exhausted";
 };
 
 export type UsageMetric = { id: string; label: string; value: number | string; unit?: string; currency?: string; groupLabel?: string };
-export type UsageReport = { capturedAt: number; buckets: UsageBucket[]; metrics: UsageMetric[]; notes?: string[] };
+export type UsageReport = { capturedAt: number; buckets: UsageBucket[]; metrics: UsageMetric[]; notes?: string[]; exhausted?: boolean };
+
+type Translate = (key: string, params?: Record<string, string | number>) => string;
 
 export function severityColor(remaining: number | undefined, limit: number | undefined): string {
   if (remaining === undefined || limit === undefined || limit <= 0) return "var(--text-muted)";
@@ -28,6 +33,16 @@ export function severityColor(remaining: number | undefined, limit: number | und
   if (ratio >= 0.5) return "#4ade80";
   if (ratio >= 0.2) return "#fbbf24";
   return "#f87171";
+}
+
+/** True when this window currently blocks usage (provider said so, or zero left). */
+export function isBucketAlarming(bucket: UsageBucket): boolean {
+  if (bucket.status === "rate-limited" || bucket.status === "exhausted") return true;
+  return bucket.limit !== undefined && bucket.limit > 0 && bucket.remaining !== undefined && bucket.remaining <= 0;
+}
+
+export function isReportExhausted(report: UsageReport): boolean {
+  return report.exhausted === true || report.buckets.some(isBucketAlarming);
 }
 
 function groupRows(buckets: UsageBucket[]): Array<{ key: string; group?: string; rows: UsageBucket[] }> {
@@ -59,7 +74,8 @@ export function ProviderUsageReportView({ report }: { report: UsageReport }) {
             const ratio = bucket.limit !== undefined && bucket.limit > 0
               ? Math.min(100, Math.max(0, ((bucket.remaining ?? 0) / bucket.limit) * 100))
               : undefined;
-            const color = severityColor(bucket.remaining, bucket.limit);
+            const alarming = isBucketAlarming(bucket);
+            const color = alarming ? "#f87171" : severityColor(bucket.remaining, bucket.limit);
             return (
               <div key={bucket.id} style={{ display: "grid", gridTemplateColumns: "minmax(64px, auto) minmax(70px, 110px) minmax(0, 1fr)", columnGap: 10, alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bucket.label}</span>
@@ -69,7 +85,7 @@ export function ProviderUsageReportView({ report }: { report: UsageReport }) {
                   </span>
                 ) : <span />}
                 <span style={{ fontSize: 12, color, fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {formatBucket(bucket, t("providerUsage.available"))}
+                  {formatBucket(bucket, t)}
                 </span>
               </div>
             );
@@ -98,14 +114,30 @@ export function ProviderUsageReportView({ report }: { report: UsageReport }) {
   );
 }
 
-export function formatBucket(bucket: UsageBucket, availableLabel: string): string {
+function bucketStateText(bucket: UsageBucket, t: Translate): string {
+  if (bucket.status === "rate-limited") return ` · ${t("providerUsage.stateRateLimited")}`;
+  if (bucket.status === "exhausted") return ` · ${t("providerUsage.stateExhausted")}`;
+  return "";
+}
+
+export function formatBucket(bucket: UsageBucket, t: Translate): string {
+  const state = bucketStateText(bucket, t);
+  const reset = bucket.resetsAt ? ` · ${formatReset(bucket.resetsAt)}` : "";
   if (bucket.unit === "percent" && bucket.remaining !== undefined) {
-    const reset = bucket.resetsAt ? ` · ${formatReset(bucket.resetsAt)}` : "";
-    return `${Math.round(bucket.remaining)}%${reset}`;
+    return `${Math.round(bucket.remaining)}%${state}${reset}`;
   }
-  if (bucket.unit === "currency") return `${bucket.currency === "CNY" ? "¥" : "$"}${formatAmount(bucket.remaining ?? bucket.limit)}`;
-  if (bucket.remaining !== undefined && bucket.limit !== undefined) return `${formatAmount(bucket.remaining)} / ${formatAmount(bucket.limit)}${bucket.resetsAt ? ` · ${formatReset(bucket.resetsAt)}` : ""}`;
-  return bucket.period ?? availableLabel;
+  if (bucket.unit === "currency") {
+    const symbol = bucket.currency === "CNY" ? "¥" : "$";
+    const head = bucket.remaining !== undefined && bucket.limit !== undefined
+      ? `${symbol}${formatAmount(bucket.remaining)} / ${symbol}${formatAmount(bucket.limit)}`
+      : `${symbol}${formatAmount(bucket.remaining ?? bucket.limit)}`;
+    return `${head}${state}${reset}`;
+  }
+  if (bucket.remaining !== undefined && bucket.limit !== undefined) {
+    const usedPct = bucket.used !== undefined && bucket.limit > 0 ? ` · ${Math.round((bucket.used / bucket.limit) * 100)}% ${t("providerUsage.used")}` : "";
+    return `${formatAmount(bucket.remaining)} / ${formatAmount(bucket.limit)}${usedPct}${state}${reset}`;
+  }
+  return `${bucket.period ?? t("providerUsage.available")}${state}${reset}`;
 }
 
 export function formatMetric(metric: UsageMetric): string {
@@ -117,8 +149,18 @@ function formatAmount(value: number | undefined): string {
   return value === undefined ? "-" : Number.isInteger(value) ? String(value) : value.toFixed(2);
 }
 
+/** < 6h → HH:MM:SS countdown (session windows); otherwise a local date/time. */
 export function formatReset(seconds: number): string {
-  return new Date(seconds * 1_000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  const target = seconds * 1_000;
+  const delta = target - Date.now();
+  if (delta > 0 && delta <= 6 * 3600_000) {
+    const total = Math.floor(delta / 1_000);
+    const h = String(Math.floor(total / 3600)).padStart(2, "0");
+    const m = String(Math.floor((total % 3600) / 60)).padStart(2, "0");
+    const s = String(total % 60).padStart(2, "0");
+    return `${h}:${m}:${s}`;
+  }
+  return new Date(target).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 export function formatUpdated(timestamp: number): string {

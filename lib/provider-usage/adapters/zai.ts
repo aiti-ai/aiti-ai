@@ -6,7 +6,7 @@ import type { UsageAdapter, UsageAuth, UsageBucket, UsageMetric, UsageQueryConte
 // (5h/week token windows, MCP monthly bucket) with per-model usage details.
 // api.z.ai expects the raw key in Authorization (no Bearer prefix).
 
-const UNIT_NAMES: Record<number, string> = { 2: "min", 3: "h", 4: "day", 5: "month", 6: "week" };
+const UNIT_NAMES: Record<number, string> = { 2: "m", 3: "h", 4: "d", 5: "mo", 6: "w" };
 
 function windowLabel(limit: Record<string, unknown>): string {
   const count = number(limit.number);
@@ -37,6 +37,7 @@ function normalizeLimit(payload: Record<string, unknown>, ctx: UsageQueryContext
         remaining,
         limit,
         unit: "count",
+        status: remaining !== undefined && remaining <= 0 ? "exhausted" : "ok",
         ...(resetsAt ? { resetsAt } : {}),
       });
       const details = Array.isArray(row.usageDetails) ? row.usageDetails : [];
@@ -50,25 +51,33 @@ function normalizeLimit(payload: Record<string, unknown>, ctx: UsageQueryContext
     }
     const percentage = number(row.percentage);
     if (percentage === undefined) continue;
+    const usedPercent = Math.min(100, Math.max(0, percentage));
     buckets.push({
       id: `limit-${index}`,
       label,
-      used: Math.min(100, Math.max(0, percentage)),
-      remaining: 100 - Math.min(100, Math.max(0, percentage)),
+      used: usedPercent,
+      remaining: 100 - usedPercent,
       limit: 100,
       unit: "percent",
+      status: usedPercent >= 100 ? "exhausted" : "ok",
       ...(resetsAt ? { resetsAt } : {}),
     });
   }
   if (!buckets.length) throw new Error("Z.AI returned no quota data.");
   const level = stringValue(data.level);
+  const exhausted = buckets.some((bucket) => bucket.status === "exhausted" || bucket.status === "rate-limited");
+  const notes = [
+    ...(level ? [`Plan level: ${level}`] : []),
+    ...(exhausted ? ["Any quota window at its limit blocks requests."] : []),
+  ];
   return {
     providerId: ctx.providerId,
     providerName: name,
     capturedAt: Date.now(),
     buckets,
     metrics,
-    ...(level ? { notes: [`Plan level: ${level}`] } : {}),
+    ...(exhausted ? { exhausted: true } : {}),
+    ...(notes.length ? { notes } : {}),
   };
 }
 
