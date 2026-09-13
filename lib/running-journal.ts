@@ -90,7 +90,7 @@ export function selfInstanceKey(): string {
 }
 
 export function runningJournalPath(): string {
-  return join(dataRoot(), "pi-web-core", `running-journal-${instanceKey()}.json`);
+  return join(dataRoot(), "pi-web-core", "cache", `running-journal-${instanceKey()}.json`);
 }
 
 export interface InstanceJournal {
@@ -110,7 +110,7 @@ function isPidAlive(pid: number): boolean {
  * 损坏/无法解析的文件跳过（原子写 + 容错，读侧永不抛）。
  */
 export function listInstanceJournals(): InstanceJournal[] {
-  const dir = join(dataRoot(), "pi-web-core");
+  const dir = join(dataRoot(), "pi-web-core", "cache");
   let names: string[] = [];
   try {
     names = readdirSync(dir).filter((n) => /^running-journal-.+\.json$/.test(n));

@@ -643,13 +643,16 @@ export class ExtRegistryImpl {
           this.errors.set(id, `entry id "${ext.id}" does not match directory name "${id}"`);
           continue;
         }
-        // 数据分层（config/state/cache）：configDir = 配置区（备份范围），stateDir = 持久数据区（不可再生，
-        // 不得假设丢失），cacheDir = 缓存区（可整体删除重建，惰性创建）
-        const configDir = join(this.dataRoot(), ext.id);
+        // 数据分层（三目录对称，2026-09-13）：config/state/cache 均为 <dataRoot>/<id>/ 子目录；
+        // configDir = 配置区（备份范围），stateDir = 持久数据区（不可再生，不得假设丢失），
+        // cacheDir = 缓存区（可整体删除重建，惰性创建）
+        const extRoot = join(this.dataRoot(), ext.id);
+        if (!existsSync(extRoot)) mkdirSync(extRoot, { recursive: true });
+        const configDir = join(extRoot, "config");
         if (!existsSync(configDir)) mkdirSync(configDir, { recursive: true });
-        const stateDir = join(configDir, "state");
+        const stateDir = join(extRoot, "state");
         if (!existsSync(stateDir)) mkdirSync(stateDir, { recursive: true });
-        const cacheDir = join(configDir, "cache");
+        const cacheDir = join(extRoot, "cache");
         if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true });
         this.extensions.set(ext.id, { id: ext.id, name: ext.name, version: ext.version, dir, configDir, stateDir, cacheDir, source, ext });
       } catch (e) {
