@@ -94,6 +94,11 @@ export interface SessionCapabilities {
    * 映射为 interaction_request 事件 + 本方法，前端渲染统一的审批卡/问题卡。
    */
   respondInteraction: boolean;
+  /**
+   * 响应 start-plan 验证码请求（provider_runtime_headers_request 事件 → respond_provider_headers 命令；
+   * zcode 套餐通道：前端跑官方 AliyunCaptcha SDK 回传 captchaVerifyParam，后端带 headers 重 upsert）。
+   */
+  respondProviderHeaders: boolean;
   /** 查询账号/模型用量与成本（cc-connect UsageReporter）。 */
   getUsage: boolean;
   /** 列出该后端可选模型（cc-connect AvailableModels；模型选择器数据源）。 */
@@ -125,6 +130,7 @@ export const FULL_CAPABILITIES: SessionCapabilities = {
   getCommands: true,
   respondPermission: false, // 本地会话无此概念（权限走 TUI/扩展 UI）
   respondInteraction: false, // 本地会话无此概念（交互走 TUI/扩展 UI）
+  respondProviderHeaders: false, // 本地会话无此概念
   getUsage: false,
   listModels: true,
   fileAttachments: false,
@@ -475,6 +481,17 @@ export interface SessionHandle {
    * @capability respondInteraction
    */
   respondInteraction?(requestId: string, answer: InteractionAnswer): Promise<boolean>;
+  /**
+   * 响应 start-plan 验证码求解请求（事件流 type="provider_runtime_headers_request"）。
+   * 成功带 captchaVerifyParam（±region）；取消/失败带 cancel/error。返回 false = 请求已失效。
+   * @capability respondProviderHeaders
+   */
+  respondProviderHeaders?(requestId: string, answer: {
+    captchaVerifyParam?: string;
+    region?: string;
+    error?: string;
+    cancel?: boolean;
+  }): Promise<boolean>;
   /** 最近一轮的用量/成本快照；账号 credits 类后端（如 qoder）走 API，允许 Promise。@capability getUsage */
   getUsage?(): UsageReport | undefined | Promise<UsageReport | undefined>;
   /** 该后端可选的模型清单。@capability listModels */

@@ -13,6 +13,7 @@ import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-fi
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { MessageView, estimateTokens } from "./MessageView";
 import { InteractionRequestCard } from "./InteractionRequestCard";
+import { ProviderHeadersRequestCard } from "./ProviderHeadersRequestCard";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type AttachedImage, type ChatInputHandle } from "./ChatInput";
 import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
@@ -381,6 +382,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused,
     permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
     interactionRequest, respondToInteraction,
+    providerHeadersRequest, respondToProviderHeaders,
     isAutoModelSelection,
     agentPhase,
     runStartedAtRef,
@@ -1402,6 +1404,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       )}
       {interactionRequest && (
         <InteractionRequestCard request={interactionRequest} onRespond={respondToInteraction} />
+      )}
+      {providerHeadersRequest && (
+        <ProviderHeadersRequestCard request={providerHeadersRequest} onRespond={respondToProviderHeaders} />
       )}
       {backendUsage && !isEmptyNew && (
         <div style={{

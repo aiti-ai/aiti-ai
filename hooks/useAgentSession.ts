@@ -547,6 +547,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     input?: unknown;
   } | null>(null);
   const interactionRespondingRef = useRef(false);
+  /**
+   * start-plan 验证码求解请求（zcode 套餐通道；provider_runtime_headers_request 事件，一次一个）。
+   * captchaConfig = 官方 AliyunCaptcha SDK init 三元组（后端从服务端 client/configs 拉取）。
+   */
+  const [providerHeadersRequest, setProviderHeadersRequest] = useState<{
+    requestId: string;
+    providerId: string;
+    modelRef?: string;
+    reason: "model-request" | "captcha-retry";
+    captchaConfig: { sceneId: string; prefix: string; region: string };
+  } | null>(null);
   const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
@@ -1949,6 +1960,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // 同步失效（后端已 resolve/清理或 turn 收口）；若正是当前展示的请求则清卡
         setInteractionRequest((current) => current?.requestId === String(event.requestId ?? "") ? null : current);
         break;
+      case "provider_runtime_headers_request":
+        // start-plan 验证码桥（zcode 套餐通道）：一次一个，后到覆盖
+        setProviderHeadersRequest({
+          requestId: String(event.requestId ?? ""),
+          providerId: String(event.providerId ?? ""),
+          ...(typeof event.modelRef === "string" ? { modelRef: event.modelRef } : {}),
+          reason: event.reason === "captcha-retry" ? "captcha-retry" : "model-request",
+          captchaConfig: (event.captchaConfig && typeof event.captchaConfig === "object"
+            ? {
+              sceneId: String((event.captchaConfig as Record<string, unknown>).sceneId ?? ""),
+              prefix: String((event.captchaConfig as Record<string, unknown>).prefix ?? ""),
+              region: String((event.captchaConfig as Record<string, unknown>).region ?? "cn"),
+            }
+            : { sceneId: "", prefix: "", region: "cn" }),
+        });
+        break;
+      case "provider_headers_expired":
+        setProviderHeadersRequest((current) => current?.requestId === String(event.requestId ?? "") ? null : current);
+        break;
       case "extension_ui_closed":
         setExtensionDialog((current) => current?.id === event.id ? null : current);
         break;
@@ -1982,6 +2012,33 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       interactionRespondingRef.current = false;
     }
   }, [sessionIdRef, session?.id]);
+
+  /**
+   * 应答 start-plan 验证码请求（respond_provider_headers 命令 → zcode handle.respondProviderHeaders）：
+   * 成功带 captchaVerifyParam；取消/失败带 cancel/error。本端立即清卡（其他端由 expired 帧同步）。
+   */
+  const respondToProviderHeaders = useCallback(async (requestId: string, answer: {
+    captchaVerifyParam?: string;
+    region?: string;
+    error?: string;
+    cancel?: boolean;
+  }): Promise<boolean> => {
+    try {
+      await sendAgentCommand(sessionIdRef.current ?? session?.id ?? "", {
+        type: "respond_provider_headers",
+        requestId,
+        ...(answer.captchaVerifyParam ? { captchaVerifyParam: answer.captchaVerifyParam } : {}),
+        ...(answer.region ? { region: answer.region } : {}),
+        ...(answer.error ? { error: answer.error } : {}),
+        ...(answer.cancel ? { cancel: true } : {}),
+      });
+      setProviderHeadersRequest((current) => current?.requestId === requestId ? null : current);
+      return true;
+    } catch (e) {
+      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      return false;
+    }
+  }, [sessionIdRef, session?.id, addNotice]);
 
   const switchPermissionMode = useCallback(async (mode: string): Promise<boolean> => {
     const sid = sessionIdRef.current ?? session?.id;
@@ -3711,6 +3768,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,
     notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
+    providerHeadersRequest, respondToProviderHeaders,
     interactionRequest, respondToInteraction,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,

@@ -685,3 +685,16 @@ test("run elapsed badge recovers its start from the last prompt after page reope
   assert.match(settleSource, /runStartedAtRef\.current = null/);
 });
 
+test("start-plan captcha bridge: event wiring, respond command, and ChatWindow mount (source contract)", async () => {
+  // hook 消费 provider_runtime_headers_request → 状态 + 应答 + 导出
+  assert.match(source, /case "provider_runtime_headers_request":/);
+  assert.match(source, /setProviderHeadersRequest\(\{[\s\S]*?captchaConfig:/);
+  assert.match(source, /case "provider_headers_expired":/);
+  assert.match(source, /const respondToProviderHeaders = useCallback/);
+  assert.match(source, /type: "respond_provider_headers"/);
+  assert.match(source, /providerHeadersRequest, respondToProviderHeaders/);
+  // ChatWindow 挂载验证卡
+  assert.match(chatWindowSource, /providerHeadersRequest, respondToProviderHeaders/);
+  assert.match(chatWindowSource, /<ProviderHeadersRequestCard request=\{providerHeadersRequest\} onRespond=\{respondToProviderHeaders\} \/>/);
+  assert.match(chatWindowSource, /import \{ ProviderHeadersRequestCard \} from "\.\/ProviderHeadersRequestCard"/);
+});

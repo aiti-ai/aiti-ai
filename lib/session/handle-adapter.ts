@@ -392,6 +392,22 @@ export class HandleSessionAdapter implements WrappedSessionLike {
         return { success: ok };
       }
 
+      case "respond_provider_headers": {
+        if (!h.respondProviderHeaders) this.fail("respond_provider_headers", "respondProviderHeaders");
+        const ok = await h.respondProviderHeaders(
+          String(command.requestId ?? ""),
+          {
+            ...(typeof command.captchaVerifyParam === "string" && command.captchaVerifyParam
+              ? { captchaVerifyParam: command.captchaVerifyParam }
+              : {}),
+            ...(typeof command.region === "string" && command.region ? { region: command.region } : {}),
+            ...(typeof command.error === "string" && command.error ? { error: command.error } : {}),
+            ...(command.cancel === true ? { cancel: true } : {}),
+          },
+        );
+        return { success: ok };
+      }
+
       case "get_usage": {
         if (!h.getUsage) this.fail("get_usage", "getUsage");
         return { usage: (await h.getUsage()) ?? null };
