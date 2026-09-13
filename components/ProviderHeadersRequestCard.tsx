@@ -166,7 +166,7 @@ export function ProviderHeadersRequestCard({ request, onRespond }: {
       </div>
       <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
         {phase === "error"
-          ? "验证组件加载失败，可重试或取消本轮。"
+          ? "验证组件加载失败，可重试。"
           : phase === "interactive"
             ? "请在下方完成安全验证（通常为滑块）。"
             : "正在建立安全验证（通常无感通过，请稍候）…"}
@@ -178,15 +178,6 @@ export function ProviderHeadersRequestCard({ request, onRespond }: {
         <div style={{ fontSize: 11, color: "#dc2626", marginBottom: 8 }}>{errorText}</div>
       )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-        <button
-          type="button"
-          data-testid="provider-headers-cancel"
-          disabled={busy}
-          onClick={() => void answer({ cancel: true })}
-          style={{ padding: "6px 14px", borderRadius: 8, border: "1px solid var(--border)", background: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 12 }}
-        >
-          取消本轮
-        </button>
         {phase === "error" && (
           <button
             type="button"
