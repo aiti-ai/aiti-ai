@@ -22,7 +22,8 @@
  *     context) fall back to file-based paths or degrade.
  */
 
-import type { AgentMessage, SessionEntry, SessionHandle } from "./types.ts";
+import type { AgentMessage, SessionEntry } from "../types.ts";
+import type { SessionHandle } from "./types.ts";
 import { UnsupportedCapabilityError } from "./types.ts";
 import { normalizeToolCalls } from "../normalize.ts";
 import { entryToUiMessage } from "../session-reader.ts";
