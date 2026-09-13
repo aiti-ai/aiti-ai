@@ -204,3 +204,22 @@ test("ModelRefreshRow：idle 可点；refreshing 转圈禁用（data-model-refre
   assert.match(busy, /刷新中…/);
   assert.match(busy, /pi-refresh-spin/, "刷新中带旋转动画");
 });
+
+// ── 小屏底排防溢出（2026-09-14）──
+test("hideIcon：触发钮前导图标可隐藏（小屏窄位省宽），默认保留（桌面不变）", async () => {
+  const React = (await import("react")).default;
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
+  const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
+  const props = { options: CATALOG, value: { provider: "zai", modelId: "glm-flash" }, onChange: () => {} };
+  const render = (p) => renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(ModelSelector, p)));
+  const withIcon = render(props);
+  assert.match(withIcon, /rect x="4" y="4"/, "默认要渲染前导图标");
+  assert.match(withIcon, /GLM-5\.3-Flash/);
+  const hidden = render({ ...props, hideIcon: true });
+  assert.doesNotMatch(hidden, /rect x="4" y="4"/, "hideIcon 后不得渲染前导图标");
+  assert.match(hidden, /GLM-5\.3-Flash/, "模型名照常显示（仍可 ellipsis 截断）");
+  // busy 切换中仍保留旋转指示（状态反馈不随 hideIcon 丢失）
+  const busy = render({ ...props, hideIcon: true, busy: true });
+  assert.match(busy, /spin 0\.8s linear infinite/, "busy 时仍渲染旋转指示");
+});

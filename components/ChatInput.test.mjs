@@ -743,3 +743,16 @@ test("aiti-ctx-meter seam: composerTools extra 带 context/compact/openSessionIn
     assert.ok(extraBlock.includes(key), `composerTools extra 缺 ${key}`);
   }
 });
+
+// ── 小屏底排防溢出（2026-09-14 用户反馈：按钮太多显示不下）──
+test("小屏底排防溢出：模型名可截断（minWidth 0）+ 前导图标隐藏 + 右端组可收缩", () => {
+  const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  // 模型包裹层原 minWidth 72 会把窄屏余量锁死（模型名不缩、右侧按钮被顶出屏幕）
+  assert.match(source, /flex: "0 1 auto", minWidth: 0, maxWidth: 150, display: "flex"/);
+  assert.doesNotMatch(source, /minWidth: 72, maxWidth: 150/, "锁死的 72px 下限不得回退");
+  // 右端组允许收缩（否则内部 flex-shrink 不生效，溢出仍到屏幕外）
+  assert.match(source, /minWidth: 0, flexShrink: 1, flexGrow: \(isMobile && mobileExpanded\)/);
+  // 小屏两处 ModelSelector（展开态输入行 + InfoSheet）都隐藏前导图标
+  const hideIconCount = (source.match(/\bhideIcon\b/g) || []).length;
+  assert.ok(hideIconCount >= 2, `小屏两处 ModelSelector 均需 hideIcon（实际 ${hideIconCount} 处）`);
+});

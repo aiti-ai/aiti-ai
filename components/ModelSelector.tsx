@@ -29,6 +29,9 @@ interface ModelSelectorProps {
   ariaLabel?: string;
   variant?: "toolbar" | "field";
   placement?: "up" | "auto";
+  /** 隐藏触发钮前导图标（v4 十六审：小屏输入条/ⓘ sheet 窄位省宽——模型名仍以
+      ellipsis 截断；busy 切换中仍显示旋转指示，避免丢失进行中反馈）。 */
+  hideIcon?: boolean;
   /** 手动刷新模型目录（下拉头部「刷新模型列表」行；缺省不渲染——零侵入）。 */
   onRefresh?: () => void;
   /** 刷新进行中：刷新行转圈禁用，其余选项一并禁用避免误点。 */
@@ -197,6 +200,7 @@ export function ModelSelector({
   ariaLabel,
   variant = "toolbar",
   placement = "up",
+  hideIcon = false,
   onRefresh,
   refreshing = false,
 }: ModelSelectorProps) {
@@ -380,7 +384,7 @@ export function ModelSelector({
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" style={{ animation: "spin 0.8s linear infinite", flexShrink: 0 }} aria-hidden="true">
             <path d="M21 12a9 9 0 1 1-2.64-6.36" />
           </svg>
-        ) : (
+        ) : hideIcon ? null : (
           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
             <rect x="4" y="4" width="16" height="16" rx="2" />
             <rect x="9" y="9" width="6" height="6" />
