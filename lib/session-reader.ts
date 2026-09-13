@@ -1197,9 +1197,15 @@ function deferToolResultBase64Images(
   return { ...message, content };
 }
 
-// Convert a session entry on the active branch into a UI message.
-// Returns null for entries that do not map to chat history (metadata, non-message types).
-function entryToUiMessage(
+/**
+ * Convert a session entry on the active branch into a UI message.
+ * Returns null for entries that do not map to chat history (metadata, non-message types).
+ *
+ * 导出供 handle 通道复用（lib/session/handle-adapter.ts）：provider 后端的
+ * getMessages（pi get_entries / omp 包装）返回同形 entries，必须走同一解包，
+ * 否则前端拿不到顶层 role、消息区渲染为空。
+ */
+export function entryToUiMessage(
   entry: SessionEntry,
   options: BuildSessionContextOptions,
 ): AgentMessage | null {

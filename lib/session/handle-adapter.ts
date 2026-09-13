@@ -22,9 +22,10 @@
  *     context) fall back to file-based paths or degrade.
  */
 
-import type { SessionHandle } from "./types.ts";
+import type { AgentMessage, SessionEntry, SessionHandle } from "./types.ts";
 import { UnsupportedCapabilityError } from "./types.ts";
-import { normalizeRawMessages } from "../normalize.ts";
+import { normalizeToolCalls } from "../normalize.ts";
+import { entryToUiMessage } from "../session-reader.ts";
 
 type WrapperCommand = Record<string, unknown>;
 
@@ -41,6 +42,33 @@ export function handleModelToClient(
   m?: { id: string; provider: string } | null,
 ): { provider: string; modelId: string } | null {
   return m && m.provider && m.id ? { provider: m.provider, modelId: m.id } : null;
+}
+
+/**
+ * provider 后端 getMessages() 返回形状的归一（历史回放消息解包）。
+ *
+ * pi 系后端（aiti-pi-agent 的 pi/omp spawn、custom-agent 委托）返回 pi 会话
+ * entries（{type:"message", message:{…}}）——message 嵌一层，直接下发会让前端
+ * 拿不到顶层 role、消息区渲染为空（spawn 会话「看不到 AI 回复」的根因）。
+ * 按 item 形状自适应：
+ *   - pi entry（有 type、无顶层 role）→ 与文件路径同一权威转换 entryToUiMessage
+ *     （message 解包；compaction/branch_summary/custom_message 转 UI 消息；
+ *      model_change/session_info 等非消息 entry 丢弃）；
+ *   - 直传消息形状（cursor/claude/codebuddy/echo 的 {role,…}）→ 原样归一。
+ */
+function normalizeHandleMessages(items: unknown[]): AgentMessage[] {
+  const out: AgentMessage[] = [];
+  for (const item of Array.isArray(items) ? items : []) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.type === "string" && !("role" in rec)) {
+      const msg = entryToUiMessage(rec as unknown as SessionEntry, {});
+      if (msg) out.push(msg);
+      continue;
+    }
+    out.push(normalizeToolCalls(rec as unknown as AgentMessage));
+  }
+  return out;
 }
 
 export interface WrappedSessionLike {
@@ -355,9 +383,9 @@ export class HandleSessionAdapter implements WrappedSessionLike {
       case "get_entries": {
         if (!h.getMessages) this.fail(type, "getMessages");
         const entries = await h.getMessages!();
-        // 桥后端（attach socket）吐 SDK 原始形状（toolCall: id/name/arguments），
-        // 与文件读取通道（session-reader 已归一化）对齐后再下发
-        return { entries: normalizeRawMessages(entries as unknown[]), leafId: undefined };
+        // 形状自适应：pi entries 解包（provider 后端）或 SDK 原始形状归一（attach 系），
+        // 与文件读取通道（session-reader 已归一化）对齐后再下发——详见 normalizeHandleMessages
+        return { entries: normalizeHandleMessages(entries as unknown[]), leafId: undefined };
       }
 
       case "get_last_assistant_text":
