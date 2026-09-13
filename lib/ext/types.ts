@@ -376,7 +376,7 @@ export type ExtSlotName =
                       //   无 items 整块不渲染；承载 = aiti-subagents 子代理任务。float 方案 §4.4.2）
   | "composerAffix" // 输入框内右缘 affix 位（小屏微信式 🎤；仅小屏输入行渲染。core 自有 × 清空
                     //   与扩展注册按「空/有内容」派生天然互斥——见 docs/pi-web-mobile-input-wechat-plan.md §3.2）
-  | "modelInfoLead" // 小屏模型信息前导位（aiti-ctx-meter 上下文电池）：展开态输入行 ModelSelector 前 +
+  | "modelInfoLead" // 小屏模型信息前导位（aiti-ctx-meter 上下文比例条）：展开态输入行 ModelSelector 前 +
                     //   ⓘ InfoSheet 模型行 ModelSelector 前两处渲染；桌面 ModelSelector 不渲染。
                     //   契约 = ModelInfoLeadSlotProps（docs/aiti-ctx-meter-plan.md §4.2）
   ;
@@ -502,7 +502,7 @@ export interface ExtCompactControls {
   compactQueued?: boolean;
 }
 
-/** 小屏模型信息前导位（aiti-ctx-meter 上下文电池；桌面 composerTools 的 extra 为其超集）。 */
+/** 小屏模型信息前导位（aiti-ctx-meter 上下文比例条；桌面 composerTools 的 extra 为其超集）。 */
 export interface ModelInfoLeadSlotProps {
   sessionId: string | null;
   cwd: string | null;
@@ -531,7 +531,7 @@ export interface ExtSlotContractMap {
   settingsAgents: { props: SettingsAgentsSlotProps };
   /** 工作区终端页签内容接管（aiti-cmd）。 */
   terminalDock: { props: TerminalDockSlotProps };
-  /** 小屏模型信息前导位（aiti-ctx-meter 上下文电池；aiti-ctx-meter-plan.md §4.2）。 */
+  /** 小屏模型信息前导位（aiti-ctx-meter 上下文比例条；aiti-ctx-meter-plan.md §4.2）。 */
   modelInfoLead: { props: ModelInfoLeadSlotProps };
   // sidebarProjects：SessionSidebar 整栏接管（session-manager SidebarClone，props 全量透传）——
   // 契约即 SessionSidebarProps（不进本 map，宽松对象透传）。

@@ -159,7 +159,7 @@ interface Props {
   /** 当前会话上下文占比（ChatWindow 透传 contextUsage?.percent）——驱动压缩按钮/弹窗圆点紧迫度着色 */
   contextPercent?: number | null;
   /** 完整上下文快照（ChatWindow 透传 contextUsage）——composerTools/modelInfoLead 插槽
-   *  extra.context 数据源（aiti-ctx-meter 上下文电池；docs/aiti-ctx-meter-plan.md §4.1） */
+   *  extra.context 数据源（aiti-ctx-meter 上下文比例条；docs/aiti-ctx-meter-plan.md §4.1） */
   contextUsage?: ContextUsage | null;
   /** 打开会话统计面板（AppShell openSessionStatsPanel）——插槽 extra.openSessionInfo */
   onSessionStatsPanelOpen?: () => void;
@@ -5040,7 +5040,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               // 队列 actions（P3）：composerTools 行的导入按钮经此触发 stageImport——
               // 导入入口回到底部控制行（与压缩/导入同排），队列空时不再孤零零浮在上方。
               queueActions: queuePanelExtra.actions,
-              // aiti-ctx-meter 接缝：上下文电池 + 压缩三态 + 会话面板入口（docs/aiti-ctx-meter-plan.md §4.1/§5）
+              // aiti-ctx-meter 接缝：上下文比例条 + 压缩三态 + 会话面板入口（docs/aiti-ctx-meter-plan.md §4.1/§5）
               context: extSeamContext,
               compact: extSeamCompact,
               openSessionInfo: onSessionStatsPanelOpen,
