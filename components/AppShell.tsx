@@ -89,6 +89,8 @@ import {
   publishSessionState,
   type PiWebSessionSource,
 } from "@/lib/pi-web-session-store";
+import { piWebToastService } from "@/lib/pi-web-toast-store";
+import { HostToastHost } from "./HostToastHost";
 import {
   getDefaultRightPanelWidth,
   getRightPanelMaxWidth,
@@ -106,10 +108,12 @@ import type { ChatInputHandle } from "./ChatInput";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { QueueEntry } from "@/lib/queue-store";
 import { ExportDialog } from "./ExportDialog";
+import { SessionNameDialog } from "./SessionNameDialog";
 import type { FileExplorerHandle } from "./FileExplorer";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import type { ToolEntry } from "@/lib/tool-presets";
 import { getSessionFamily } from "@/lib/session-family";
+import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getLastSettingsSection, type SettingsSection } from "@/lib/settings-navigation";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
@@ -240,6 +244,9 @@ function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
 // 任何扩展 client materialize 时服务已可用（消费方仍应判空降级以兼容旧宿主）。
 // 快照发布由 AppShell 内的 session-state effect 驱动。
 registerExtClientService("pi-web", "pi-web.session", piWebSessionService);
+// 统一 toast 服务（2026-09-13）：宿主持有右上角队列，扩展经 ctx.getExtService("pi-web.toast").show 消费
+// ——替代扩展各自造 toast（组件内 state+setTimeout）；渲染归 HostToastHost（AppShell 挂载）。
+registerExtClientService("pi-web", "pi-web.toast", piWebToastService);
 
 export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record<string, string[]> | null } = {}) {
   // 水合完成信号：扩展（如 aiti-draft-keeper）的启动恢复必须等水合结束后落框，
@@ -493,6 +500,8 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
   const [autoNameStatus, setAutoNameStatus] = useState<AutoNameStatus>({ kind: "idle" });
   const autoNameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** 桥占用会话的手动命名弹窗（auto-name 无法起本地 runtime 时的降级路径） */
+  const [bridgedNameDialog, setBridgedNameDialog] = useState<{ sessionId: string; defaultName: string } | null>(null);
   /** ChatWindow 注册的「拉取最新会话统计」回调（含 idle 会话的 contextUsage） */
   const [sessionStatsRefresh, setSessionStatsRefresh] = useState<(() => void) | null>(null);
   /** ChatWindow 注册的压缩控制三态（compact/abort/cancelQueue + isCompacting/compactQueued）——会话信息面板压缩按钮数据源 */
@@ -1438,6 +1447,32 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const handleAutoName = useCallback(async () => {
     const sessionId = selectedSession?.id;
     if (!sessionId || autoNameStatus.kind === "naming") return;
+
+    // 提前探测桥占用：被 TUI 桥认领的会话无法起本地 runtime 跑命名 turn
+    // （会双写 jsonl，总闸抛 BridgeOccupiedError → 409）。直接降级为手动
+    // 命名弹窗——PATCH /api/sessions/[id] 支持桥场景（set_session_name 推给桥端）。
+    try {
+      const probeRes = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/state`));
+      const probeBody = (await probeRes.json().catch(() => ({}))) as { bridged?: boolean; code?: string };
+      const bridged = (probeRes.ok && probeBody.bridged === true)
+        || (!probeRes.ok && probeBody.code === "session_bridged_unreachable");
+      if (bridged) {
+        const displayFirst = skillExpansionToCommand(selectedSession?.firstMessage ?? "")
+          ?? selectedSession?.firstMessage ?? "";
+        setBridgedNameDialog({
+          sessionId,
+          defaultName: selectedSession?.name || displayFirst.trim().slice(0, 50) || sessionId.slice(0, 12),
+        });
+        // toast 说明降级原因（弹窗内亦有完整说明——双提示，用户切换中也不错过）；
+        // 统一走宿主 pi-web.toast 服务（HostToastHost 渲染）
+        piWebToastService.show(translate("title.bridgedToast"));
+        setActiveTopPanel(null);
+        return;
+      }
+    } catch {
+      // 探测失败不阻塞：走原流程（服务端仍会在桥占用时兜底 409）
+    }
+
     if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
     setActiveTopPanel(null);
     setAutoNameStatus({ kind: "naming" });
@@ -1464,7 +1499,17 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       setAutoNameStatus({ kind: "error", message });
       autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 5000);
     }
-  }, [autoNameStatus.kind, selectedSession?.id]);
+  }, [autoNameStatus.kind, selectedSession]);
+
+  /** 桥占用会话手动命名成功后：刷新列表 + 同步顶栏标题/统计（与 auto-name 成功路径同款）。 */
+  const handleBridgedNameSaved = useCallback((sessionId: string, title: string) => {
+    setRefreshKey((key) => key + 1);
+    if (activeSessionIdRef.current !== sessionId) return;
+    setSelectedSession((current) => current?.id === sessionId ? { ...current, name: title } : current);
+    setSessionStats((current) => current?.sessionId === sessionId ? { ...current, sessionName: title } : current);
+    setAutoNameStatus({ kind: "success" });
+    autoNameTimerRef.current = setTimeout(() => setAutoNameStatus({ kind: "idle" }), 1800);
+  }, []);
 
   useEffect(() => {
     if (autoNameTimerRef.current) clearTimeout(autoNameTimerRef.current);
@@ -4663,6 +4708,16 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         onClose={() => setExportDialogOpen(false)}
       />
     )}
+    {bridgedNameDialog && (
+      <SessionNameDialog
+        sessionId={bridgedNameDialog.sessionId}
+        defaultName={bridgedNameDialog.defaultName}
+        onClose={() => setBridgedNameDialog(null)}
+        onSaved={(name) => handleBridgedNameSaved(bridgedNameDialog.sessionId, name)}
+      />
+    )}
+    {/* 宿主统一 toast 渲染（pi-web.toast 服务队列；右上角，自动消失） */}
+    <HostToastHost />
     </>
     </ImagePanelContext.Provider>
     </ExtSlotsProvider>
