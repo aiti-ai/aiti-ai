@@ -4905,6 +4905,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             )}
 
+            {/* aiti-ctx-meter 比例条：压缩按钮左邻位（docs/aiti-ctx-meter-plan.md §4.3；无扩展注册时零占位） */}
+            <ExtSlot name="compactLead" extra={{ sessionId, cwd, context: extSeamContext, compact: extSeamCompact, openSessionInfo: onSessionStatsPanelOpen }} />
+
             {onCompact && (
               <div>
                 <button

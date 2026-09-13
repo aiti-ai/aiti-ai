@@ -729,6 +729,8 @@ test("aiti-ctx-meter seam: composerTools extra 带 context/compact/openSessionIn
   const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
   // 小屏模型信息前导位恰为 2 处渲染点（展开态输入行 + InfoSheet 模型行）
   assert.equal((source.match(/name="modelInfoLead"/g) || []).length, 2, "modelInfoLead 渲染点应恰为 2 处");
+  // 桌面压缩按钮左邻位恰为 1 处渲染点（v0.1.2 自 composerTools 行尾迁此）
+  assert.equal((source.match(/name="compactLead"/g) || []).length, 1, "compactLead 渲染点应恰为 1 处");
   // InfoSheet 版 openSessionInfo 先收 sheet 再开面板
   assert.match(source, /openSessionInfo: \(\) => \{ setInfoSheetOpen\(false\); onSessionStatsPanelOpen\?\.\(\); \}/);
   // composerTools（桌面）extra 携带三接缝字段

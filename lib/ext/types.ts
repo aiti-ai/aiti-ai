@@ -379,6 +379,8 @@ export type ExtSlotName =
   | "modelInfoLead" // 小屏模型信息前导位（aiti-ctx-meter 上下文比例条）：展开态输入行 ModelSelector 前 +
                     //   ⓘ InfoSheet 模型行 ModelSelector 前两处渲染；桌面 ModelSelector 不渲染。
                     //   契约 = ModelInfoLeadSlotProps（docs/aiti-ctx-meter-plan.md §4.2）
+  | "compactLead"   // 桌面压缩按钮左邻位（aiti-ctx-meter 上下文比例条；v0.1.2 自 composerTools 行尾迁此）。
+                    //   契约复用 ModelInfoLeadSlotProps（isMobile 恒缺省）；仅桌面渲染，无扩展注册时零占位
   ;
 
 /**
@@ -502,10 +504,10 @@ export interface ExtCompactControls {
   compactQueued?: boolean;
 }
 
-/** 小屏模型信息前导位（aiti-ctx-meter 上下文比例条；桌面 composerTools 的 extra 为其超集）。 */
+/** 模型信息前导位 / 压缩按钮左邻位（aiti-ctx-meter；桌面 composerTools 的 extra 为其超集）。 */
 export interface ModelInfoLeadSlotProps {
-  sessionId: string | null;
-  cwd: string | null;
+  sessionId?: string | null;
+  cwd?: string | null;
   /** null = 无上下文数据（外部后端 / idle 会话）→ 扩展灰态。 */
   context: ExtContextSnapshot | null;
   compact: ExtCompactControls;
@@ -533,6 +535,8 @@ export interface ExtSlotContractMap {
   terminalDock: { props: TerminalDockSlotProps };
   /** 小屏模型信息前导位（aiti-ctx-meter 上下文比例条；aiti-ctx-meter-plan.md §4.2）。 */
   modelInfoLead: { props: ModelInfoLeadSlotProps };
+  /** 桌面压缩按钮左邻位（aiti-ctx-meter；契约同 ModelInfoLeadSlotProps，isMobile 恒缺省=桌面）。 */
+  compactLead: { props: ModelInfoLeadSlotProps };
   // sidebarProjects：SessionSidebar 整栏接管（session-manager SidebarClone，props 全量透传）——
   // 契约即 SessionSidebarProps（不进本 map，宽松对象透传）。
 }
