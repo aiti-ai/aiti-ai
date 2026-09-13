@@ -184,6 +184,11 @@ export type PermissionDecision = {
   updatedInput?: Record<string, unknown>;
   /** deny 时的理由。 */
   message?: string;
+  /**
+   * 按宿主选项表精确应答（permission_request 事件 options[].optionId，如 ACP 的
+   * allow_always=「总是允许」）。有 optionId 时 handle 以它为准，behavior 仅作回退语义。
+   */
+  optionId?: string;
 };
 
 /**

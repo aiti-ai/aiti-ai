@@ -502,6 +502,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     requestId: string;
     toolName?: string;
     input?: unknown;
+    /** 宿主选项表（ACP 等：optionId/kind/name）——有则按钮由 options 生成（含「总是允许」），无则默认 Allow/Deny。 */
+    options?: Array<{ optionId?: string; kind?: string; name?: string }>;
   } | null>(null);
   const permissionRespondingRef = useRef(false);
   /**
@@ -1867,6 +1869,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           requestId: String(event.requestId ?? ""),
           toolName: typeof event.toolName === "string" ? event.toolName : undefined,
           input: event.input,
+          ...(Array.isArray(event.options) && event.options.length
+            ? { options: (event.options as Array<{ optionId?: string; kind?: string; name?: string }>)
+              .filter((o) => o && typeof o === "object") }
+            : {}),
         });
         addNotice({ type: "error", message: "工具需要授权：" + (typeof event.toolName === "string" ? event.toolName : "unknown") });
         break;
@@ -1950,7 +1956,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [sessionIdRef, session?.id]);
 
-  const respondToPermission = useCallback(async (behavior: "allow" | "deny") => {
+  const respondToPermission = useCallback(async (behavior: "allow" | "deny", optionId?: string) => {
     const req = permissionRequest;
     if (!req || permissionRespondingRef.current) return;
     permissionRespondingRef.current = true;
@@ -1959,6 +1965,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         type: "permission_response",
         requestId: req.requestId,
         behavior,
+        ...(optionId ? { optionId } : {}),
         message: behavior === "deny" ? "denied in web ui" : undefined,
       });
       setPermissionRequest(null);

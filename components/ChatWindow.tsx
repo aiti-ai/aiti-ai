@@ -286,6 +286,34 @@ export interface CompactControls {
   compactQueued: boolean;
 }
 
+/**
+ * 权限卡入参摘要（权限 UI 契约，agent 规范 §6.1）：优选 command/path/url 等关键字段
+ * 拼单行可读摘要；对象入参完整 JSON 折叠进「详情」。
+ */
+function permissionInputSummary(input: unknown): string {
+  if (input == null) return "";
+  if (typeof input === "string") return input;
+  try {
+    const rec = input as Record<string, unknown>;
+    const parts = ["command", "path", "file_path", "url", "pattern", "query", "description"]
+      .filter((k) => typeof rec[k] === "string" && rec[k])
+      .map((k) => `${k}: ${String(rec[k])}`);
+    return parts.join("  ");
+  } catch {
+    return "";
+  }
+}
+
+/** 宿主选项按钮文案（kind → 中文标签；name 优先）。 */
+function permissionOptionLabel(o: { kind?: string; name?: string }): string {
+  if (o.name) return o.name;
+  const map: Record<string, string> = {
+    allow_once: "本次允许", allow_always: "总是允许",
+    reject_once: "本次拒绝", reject_always: "总是拒绝",
+  };
+  return map[String(o.kind ?? "")] ?? String(o.kind ?? "选择");
+}
+
 export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onContextUsageChange, onOpenFile, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   useMoneySynced(); // 汇率异步到位时重渲染 backend usage 悬浮条（补出 ¥ 部分）
@@ -1324,23 +1352,51 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             <strong style={{ fontSize: 13, color: "var(--text)" }}>工具授权请求</strong>
             <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--accent)" }}>{permissionRequest.toolName}</span>
           </div>
+          {/* 结构化渲染（权限 UI 契约）：摘要单行 + 完整入参折叠详情，替代裸 JSON */}
+          {(() => {
+            const summary = permissionInputSummary(permissionRequest.input);
+            return summary ? (
+              <div style={{ fontSize: 12, color: "var(--text)", background: "var(--bg)", borderRadius: 6,
+                padding: "6px 8px", margin: "0 0 6px", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{summary}</div>
+            ) : null;
+          })()}
           {permissionRequest.input != null && (
-            <pre style={{ maxHeight: 120, overflowY: "auto", fontSize: 11, background: "var(--bg)", borderRadius: 6,
-              padding: "6px 8px", margin: "0 0 8px", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--text-muted)" }}>
-              {typeof permissionRequest.input === "string" ? permissionRequest.input : JSON.stringify(permissionRequest.input, null, 2)}
-            </pre>
+            <details style={{ margin: "0 0 8px" }}>
+              <summary style={{ fontSize: 11, color: "var(--text-muted)", cursor: "pointer", userSelect: "none" }}>详情（完整入参）</summary>
+              <pre style={{ maxHeight: 160, overflowY: "auto", fontSize: 11, background: "var(--bg)", borderRadius: 6,
+                padding: "6px 8px", margin: "6px 0 0", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--text-muted)" }}>
+                {typeof permissionRequest.input === "string" ? permissionRequest.input : JSON.stringify(permissionRequest.input, null, 2)}
+              </pre>
+            </details>
           )}
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-            <button onClick={() => void respondToPermission("deny")}
-              style={{ padding: "5px 14px", borderRadius: 7, border: "1px solid #ef444466",
-                background: "none", color: "#ef4444", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-              Deny
-            </button>
-            <button onClick={() => void respondToPermission("allow")}
-              style={{ padding: "5px 14px", borderRadius: 7, border: "none",
-                background: "#22c55e", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-              Allow
-            </button>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
+            {/* 按钮集来自宿主 options（optionId 透传——「总是允许」等协议语义）；无 options 回退 Allow/Deny */}
+            {(permissionRequest.options?.length
+              ? permissionRequest.options.map((o) => {
+                const behavior: "allow" | "deny" = String(o.kind ?? "").startsWith("reject") ? "deny" : "allow";
+                const deny = behavior === "deny";
+                return (
+                  <button key={String(o.optionId ?? o.kind ?? o.name)}
+                    onClick={() => void respondToPermission(behavior, o.optionId)}
+                    style={{ padding: "5px 14px", borderRadius: 7, border: deny ? "1px solid #ef444466" : "none",
+                      background: deny ? "none" : "#22c55e", color: deny ? "#ef4444" : "#fff",
+                      cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                    {permissionOptionLabel(o)}
+                  </button>
+                );
+              })
+              : [
+                <button key="deny" onClick={() => void respondToPermission("deny")}
+                  style={{ padding: "5px 14px", borderRadius: 7, border: "1px solid #ef444466",
+                    background: "none", color: "#ef4444", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                  Deny
+                </button>,
+                <button key="allow" onClick={() => void respondToPermission("allow")}
+                  style={{ padding: "5px 14px", borderRadius: 7, border: "none",
+                    background: "#22c55e", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                  Allow
+                </button>,
+              ])}
           </div>
         </div>
       )}

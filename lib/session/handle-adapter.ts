@@ -360,6 +360,7 @@ export class HandleSessionAdapter implements WrappedSessionLike {
             behavior: command.behavior === "allow" ? "allow" : "deny",
             ...(command.updatedInput ? { updatedInput: command.updatedInput as Record<string, unknown> } : {}),
             ...(typeof command.message === "string" ? { message: command.message } : {}),
+            ...(typeof command.optionId === "string" && command.optionId ? { optionId: command.optionId } : {}),
           },
         );
         return { success: ok };
