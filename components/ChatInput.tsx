@@ -4330,9 +4330,10 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           {isMobile && (
             <div
               onPointerDown={suppressComposerBlurOnPress}
-              /* v4 十六审（小屏防溢出）：整组允许收缩（minWidth 0 + flexShrink 1）——
-                 宽模型名不再把右侧按钮顶出屏幕；收缩压力优先由模型名省略号吸收
-                 （模型包裹层 minWidth 0），按钮恒 flexShrink 0 完整可见。 */
+              /* v4 十七审（用户拍板：两端钉住、中间自适应）：左组（＋/ctx）贴左、
+                 右组（语音/图片/发送…）贴右——模型包裹层 flex:1 1 0 吃掉全部中间剩余空间，
+                 模型名长短只影响自身 ellipsis 截断，不再推动右侧按钮（也不会被顶出屏幕）；
+                 弹性空隙 span 随之退休。整组保留 minWidth 0/flexShrink 1 兼容极窄屏。 */
               style={{ display: "flex", alignItems: "center", gap: 2, minWidth: 0, flexShrink: 1, flexGrow: (isMobile && mobileExpanded) ? 1 : 0 }}
             >
               {(compact || (isMobile && mobileExpanded)) && mobilePlusButton}
@@ -4344,9 +4345,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 <ExtSlot name="modelInfoLead" extra={{ sessionId, cwd, context: extSeamContext, compact: extSeamCompact, openSessionInfo: onSessionStatsPanelOpen, isMobile: true }} />
               )}
               {isMobile && mobileExpanded && !compact && onModelChange && (
-                /* v4 十六审：minWidth 原 72 会把窄屏余量锁死（模型名不缩、按钮溢出）——
-                   放开到 0 交给 ellipsis 自截断；隐藏前导图标再省 ~17px。 */
-                <div style={{ flex: "0 1 auto", minWidth: 0, maxWidth: 150, display: "flex" }}>
+                /* v4 十七审：占满中间剩余空间（flex 1 1 0 / minWidth 0），名字长即 ellipsis 截断——
+                   右侧按钮位置恒定，不受模型名长短影响。 */
+                <div style={{ flex: "1 1 0", minWidth: 0, display: "flex" }}>
                   <ModelSelector
                     options={modelOptions}
                     value={model}
@@ -4361,7 +4362,6 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   />
                 </div>
               )}
-              {isMobile && mobileExpanded && !compact && <span aria-hidden="true" style={{ flex: 1 }} />}
               <div
                 data-composer-affix="1"
                 style={{
