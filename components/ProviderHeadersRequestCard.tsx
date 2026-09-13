@@ -32,7 +32,10 @@ export interface ProviderHeadersRequestInfo {
   captchaConfig: { sceneId: string; prefix: string; region: string };
 }
 
-/** 官方 SDK 的全局 init 函数（脚本加载后出现）。 */
+/** 官方 SDK 的全局 init 函数（脚本加载后出现）。
+ * 注意：官方 V3 架构验证通过回调参数名是 `success`（入参 = captchaVerifyParam 字符串，可直接回传）；
+ * 另兼容历史 `captchaVerifyCallback` 别名（对象/字符串双形态）。
+ */
 type InitAliyunCaptcha = (config: {
   SceneId: string;
   prefix: string;
@@ -40,15 +43,29 @@ type InitAliyunCaptcha = (config: {
   mode: "popup";
   element: string;
   button: string;
-  captchaVerifyCallback: (params: { captchaVerifyParam: string }) => void;
-  onBizResultCallback: () => void;
+  success: (captchaVerifyParam: string) => void;
+  captchaVerifyCallback: (param: unknown) => void;
+  fail: () => void;
+  onError: (err: unknown) => void;
   getInstance: (instance: { destroy?: () => void }) => void;
 }) => void;
 
-/** 挂载 SDK 脚本（单例；document 无则注入，加载完成 resolve init 函数）。 */
-function loadCaptchaSdk(): Promise<InitAliyunCaptcha> {
+/** 从 SDK 回调提取 captchaVerifyParam（官方 success 直传字符串；对象形态兜底兼容大小写字段）。 */
+function extractCaptchaParam(p: unknown): string {
+  if (typeof p === "string") return p.trim();
+  if (p && typeof p === "object") {
+    const o = p as Record<string, unknown>;
+    const v = o.captchaVerifyParam ?? o.CaptchaVerifyParam ?? o.verifyParam;
+    return typeof v === "string" ? v.trim() : "";
+  }
+  return "";
+}
+
+/** 挂载 SDK 脚本（单例；加载前先写全局 AliyunCaptchaConfig，V3 架构要求先于脚本设置 region/prefix）。 */
+function loadCaptchaSdk(region: string, prefix: string): Promise<InitAliyunCaptcha> {
   const w = window as unknown as {
     initAliyunCaptcha?: InitAliyunCaptcha;
+    AliyunCaptchaConfig?: { region: string; prefix: string };
     __piCaptchaSdkPromise?: Promise<InitAliyunCaptcha>;
   };
   if (w.initAliyunCaptcha) return Promise.resolve(w.initAliyunCaptcha);
@@ -63,6 +80,8 @@ function loadCaptchaSdk(): Promise<InitAliyunCaptcha> {
     el.addEventListener("load", done, { once: true });
     el.addEventListener("error", () => reject(new Error("AliyunCaptcha.js 加载失败（网络不可达 o.alicdn.com）")), { once: true });
     if (!existing) {
+      // V3 架构：身份标/region 必须以全局变量形式先于脚本写入
+      w.AliyunCaptchaConfig = { region, prefix };
       el.src = CAPTCHA_SDK_URL;
       document.head.appendChild(el);
     }
@@ -101,7 +120,7 @@ export function ProviderHeadersRequestCard({ request, onRespond }: {
     setPhase("init");
     setErrorText(null);
     answeredRef.current = false;
-    loadCaptchaSdk()
+    loadCaptchaSdk(request.captchaConfig.region, request.captchaConfig.prefix)
       .then((init) => {
         if (cancelled) return;
         instanceRef.current?.destroy?.();
@@ -113,10 +132,26 @@ export function ProviderHeadersRequestCard({ request, onRespond }: {
           // SDK 弹层锚点：隐藏按钮 + 卡片内容器（interactive 时 SDK 自己弹 popup）
           element: "#pi-captcha-element",
           button: "#pi-captcha-button",
-          captchaVerifyCallback: (params) => {
-            if (!cancelled) void answer({ captchaVerifyParam: params.captchaVerifyParam, region: request.captchaConfig.region });
+          // 官方 success 回调入参即 captchaVerifyParam 字符串（V3 架构）；直接回传
+          success: (captchaVerifyParam) => {
+            const param = (captchaVerifyParam ?? "").trim();
+            if (!cancelled) void answer({ captchaVerifyParam: param, region: request.captchaConfig.region });
           },
-          onBizResultCallback: () => {},
+          // 兼容历史 captchaVerifyCallback 别名（对象/字符串双形态）
+          captchaVerifyCallback: (p) => {
+            const param = extractCaptchaParam(p);
+            if (!cancelled) void answer({ captchaVerifyParam: param, region: request.captchaConfig.region });
+          },
+          fail: () => {
+            if (cancelled) return;
+            setPhase("error");
+            setErrorText("安全验证未通过，请点击重试；若持续失败请稍后再试。");
+          },
+          onError: (err) => {
+            if (cancelled) return;
+            setPhase("error");
+            setErrorText(err instanceof Error ? err.message : String(err));
+          },
           getInstance: (instance) => {
             instanceRef.current = instance;
             // popup 模式由按钮点击触发验证流：程序化触发一次——无感（智能验证）即自动回传
