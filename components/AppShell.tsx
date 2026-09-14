@@ -2038,6 +2038,10 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // 扩展槽条目（拍平进顶栏条目列表，id 沿用 ext-ui-store 的 extId:itemId）
   const toolbarExtItems = useExtSlotItems("toolbar");
   const sessionTopbarExtItems = useExtSlotItems("sessionTopbar");
+  // 懒扩展在 sidebarFooter 的声明式静态条目（无 render）：宿主渲染标准底部按钮，
+  // 点击经 meta.onClick（staticClickForwarder → 物化 → 转发注册条目行为）。
+  // 与 toolbar 声明式条目同规则；物化后注册条目同 id 覆盖、自然退场。
+  const sidebarFooterStaticItems = useExtSlotItems("sidebarFooter").filter((it) => it.static && !hasExtRender(it));
   // 扩展级元数据（manifest name/icon）——面板中标注扩展身份用
   const extMetas = useExtMetas();
 
@@ -2902,6 +2906,36 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         <SettingsSectionIcon section="general" size={14} strokeWidth={2} />
         <span>{translate("common.settings")}</span>
       </button>
+      {/* 懒扩展声明式入口（无 render 的静态条目）——与内置按钮同排、同风格；
+          点击经 meta.onClick 拉起扩展并执行原行为（如 extman 打开管理面板）。 */}
+      {sidebarFooterStaticItems.map((it) => {
+        const label = it.meta?.label ?? it.meta?.title ?? it.extId ?? "?";
+        return (
+          <button
+            key={it.id}
+            type="button"
+            onClick={(event) => it.meta?.onClick?.(event)}
+            disabled={it.pending === true}
+            title={it.meta?.title ?? label}
+            aria-label={label}
+            style={{
+              flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              height: 32, padding: 0, background: "none", border: "none",
+              borderRadius: 9, color: "var(--text-muted)", cursor: it.pending ? "default" : "pointer",
+              fontSize: 12, opacity: it.pending ? 0.5 : 1, transition: "background 0.12s, color 0.12s",
+            }}
+            onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; event.currentTarget.style.color = "var(--text)"; }}
+            onMouseLeave={(event) => { event.currentTarget.style.background = "none"; event.currentTarget.style.color = "var(--text-muted)"; }}
+          >
+            {renderExtItemIcon(it.meta?.icon, it.extId) ?? (
+              <span aria-hidden style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 14, height: 14, fontSize: 12, fontWeight: 600 }}>
+                {label.slice(0, 1)}
+              </span>
+            )}
+            <span>{label}</span>
+          </button>
+        );
+      })}
       {/* 扩展点：侧栏底部快捷操作行（与内置 模型/技能/插件 同一排；aiti-extman：扩展管理入口） */}
       <ExtSlot name="sidebarFooter" />
     </div>
