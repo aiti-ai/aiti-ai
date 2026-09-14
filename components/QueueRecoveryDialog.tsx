@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useOverlayBack } from "@/hooks/useOverlayBack";
 import type { PendingRecoveryItem, QueueEntry, QueueEntryInput } from "@/lib/queue-store";
 import {
   downloadQueueExport,
@@ -34,6 +35,8 @@ export function QueueRecoveryDialog({
 }) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
+  // 小屏系统返回 = 关闭弹窗（等同「稍后处理」，不做任何勾选决议）
+  useOverlayBack(isMobile, onDismiss);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(items.map((item) => item.id)));
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<{ text: string; ok: boolean } | null>(null);

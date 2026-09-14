@@ -3,6 +3,8 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/hooks/useI18n";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { useOverlayBack } from "@/hooks/useOverlayBack";
 import { apiUrl } from "@/lib/base-path";
 
 
@@ -103,6 +105,9 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
   const hasUncommittedPath = pathInput.trim() !== currentPath;
   const canSelect = Boolean(currentPath) && !hasUncommittedPath && !busy;
   const canNavigateUp = Boolean(parentDirectory) || isWindowsDriveRoot(currentPath);
+  const isMobile = useIsMobile();
+  // 小屏系统返回 = 取消选择（busy 中不关；本层若嵌在侧栏/设置之上，LIFO 先关本层）
+  useOverlayBack(isMobile, () => { if (!busy) onCancel(); });
 
   if (!portalTarget) return null;
 

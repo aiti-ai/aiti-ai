@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useOverlayBack } from "@/hooks/useOverlayBack";
 import { apiUrl } from "@/lib/base-path";
 import { dedupeFetch } from "@/lib/dedupe-fetch";
 import type { PendingRecoveryItem } from "@/lib/queue-store";
@@ -133,6 +134,10 @@ export function RestartRecoveryWizard() {
 
   const pendingItems = (report?.items ?? []).filter((i) => i.state === "pending");
   const visible = Boolean(active) || pendingItems.length > 0;
+  // 小屏系统返回 = 关闭向导（等同「忽略」；busy 中不关，避免打断恢复动作）
+  useOverlayBack(isMobile && visible, () => {
+    if (!busy) void doResolve({ dismiss: true });
+  });
   if (!visible) return null;
 
   const selectedIds = items.filter((i) => selected.has(i.id)).map((i) => i.id);

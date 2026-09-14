@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useOverlayBack } from "@/hooks/useOverlayBack";
 import { apiUrl } from "@/lib/base-path";
 
 import { useI18n } from "@/hooks/useI18n";
@@ -1751,6 +1752,9 @@ function AddProviderPicker({
   const [search, setSearch] = useState("");
   const { t } = useI18n();
   const inputRef = useRef<HTMLInputElement>(null);
+  const isMobile = useIsMobile();
+  // 小屏系统返回 = 关闭选择器（外层设置面板的返回层仍在其下，LIFO 先关本层）
+  useOverlayBack(isMobile, onClose);
 
   useEffect(() => { setTimeout(() => inputRef.current?.focus(), 30); }, []);
 
