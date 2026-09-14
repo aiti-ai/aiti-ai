@@ -136,7 +136,10 @@ export function RestartRecoveryWizard() {
   const visible = Boolean(active) || pendingItems.length > 0;
   // 小屏系统返回 = 关闭向导（等同「忽略」；busy 中不关，避免打断恢复动作）
   useOverlayBack(isMobile && visible, () => {
-    if (!busy) void doResolve({ dismiss: true });
+    if (busy) return;
+    // 向导两步语义不同：选中会话（active）时 back=忽略；第一步（会话列表）与第一步 ✕ 同款——本地关闭
+    if (active) void doResolve({ dismiss: true });
+    else setReport({ items: [], pendingCount: 0, totalQueued: 0 });
   });
   if (!visible) return null;
 
