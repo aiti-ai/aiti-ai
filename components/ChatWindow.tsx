@@ -7,6 +7,7 @@ import type { AttachedFile } from "@/hooks/useAgentSession";
 import { normalizeCustomPanelLines } from "@/lib/ansi";
 import { apiUrl } from "@/lib/base-path";
 import { fmtMoney, useMoneySynced } from "@/lib/money";
+import { dedupeFetch } from "@/lib/dedupe-fetch";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, isMessageGroupAnchor, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
@@ -1098,7 +1099,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   useEffect(() => {
     if (!isNew || backendOptions.length > 0) return;
     let cancelled = false;
-    fetch(apiUrl("/api/session-backends"))
+    // dedupeFetch：StrictMode 双 effect / 重挂共享同一次请求（后端清单稳定，微缓存 2.5s）。
+    dedupeFetch(apiUrl("/api/session-backends"))
       .then((r) => (r.ok ? r.json() : { providers: [] }))
       .then((d: { providers?: Array<{ type: string; label: string; agentKey?: string }> }) => {
         if (cancelled) return;

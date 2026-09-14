@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { apiUrl } from "@/lib/base-path";
+import { dedupeFetch } from "@/lib/dedupe-fetch";
 import type { PendingRecoveryItem } from "@/lib/queue-store";
 
 /**
@@ -50,7 +51,9 @@ export function RestartRecoveryWizard() {
 
   const refresh = useCallback(async (): Promise<InterruptedReport | null> => {
     try {
-      const res = await fetch(apiUrl("/api/agent/recovery/interrupted"), { cache: "no-store" });
+      // dedupeFetch(ttl=0)：纯 in-flight 合流（StrictMode 双 effect / 重挂不会打两次；
+      // 用户动作后的 refresh 立即真拉，不缓存）。
+      const res = await dedupeFetch(apiUrl("/api/agent/recovery/interrupted"), { cache: "no-store", ttlMs: 0 });
       if (!res.ok) return null;
       const data = await res.json() as InterruptedReport;
       setReport(data);
