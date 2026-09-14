@@ -51,6 +51,8 @@ import { ThemeIcon } from "./ThemeIcon";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsCompact, useIsMobile, useIsNarrowMobile } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
+import { useOverlayBack } from "@/hooks/useOverlayBack";
+import { acquireOverlayBack } from "@/lib/overlay-back";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
@@ -251,6 +253,13 @@ registerExtClientService("pi-web", "pi-web.home", homeDirService);
 // 统一 toast 服务（2026-09-13）：宿主持有右上角队列，扩展经 ctx.getExtService("pi-web.toast").show 消费
 // ——替代扩展各自造 toast（组件内 state+setTimeout）；渲染归 HostToastHost（AppShell 挂载）。
 registerExtClientService("pi-web", "pi-web.toast", piWebToastService);
+// 小屏「系统返回」关闭浮层服务（2026-09-15）：历史退栈是进程内唯一写入口，扩展不许各自
+// 监听 popstate。扩展浮窗（aiti-float）经 ctx.getExtService("pi-web.overlayBack").acquire(close)
+// 参与；是否仅小屏启用由消费方自判（宿主内建浮层走 useOverlayBack(isMobile && open, close)）。
+registerExtClientService("pi-web", "pi-web.overlayBack", {
+  /** 注册一个返回时关闭的层；返回 { release }。调用方负责小屏门控。 */
+  acquire: (close: () => void) => acquireOverlayBack(close),
+});
 
 export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record<string, string[]> | null } = {}) {
   // 水合完成信号：扩展（如 aiti-draft-keeper）的启动恢复必须等水合结束后落框，
@@ -3448,6 +3457,23 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       </button>
     );
   };
+
+  // ── 小屏系统返回 = 关闭最上层浮层（不直接退站/退 PWA）────────────────────────
+  // 历史退栈唯一写入口 lib/overlay-back.ts（服务 pi-web.overlayBack 同源）；
+  // 每条 open 状态一个退栈层，close 即原关闭动作。桌面（≥641px）不接：
+  // 浏览器返回语义保持原样。声明顺序即同 commit 内 effect 顺序，关旧开新两种序均安（见方案 §3.1）。
+  useOverlayBack(isMobile && sidebarOpen, () => setSidebarOpen(false));
+  useOverlayBack(isMobile && rightPanelOpen, () => setRightPanelOpen(false));
+  useOverlayBack(isMobile && settingsSection !== null, () => setSettingsSection(null));
+  useOverlayBack(isMobile && projectTrustDialogOpen, () => setProjectTrustDialogOpen(false));
+  useOverlayBack(isMobile && exportDialogOpen, () => setExportDialogOpen(false));
+  useOverlayBack(isMobile && mobileToolbarMoreOpen, () => setMobileToolbarMoreOpen(false));
+  useOverlayBack(isMobile && (moreOpen || customizeOpen), () => {
+    setMoreOpen(false);
+    setCustomizeOpen(false);
+  });
+  useOverlayBack(isMobile && activeTopPanel !== null, () => setActiveTopPanel(null));
+  useOverlayBack(isMobile && bridgedNameDialog !== null, () => setBridgedNameDialog(null));
 
   return (
     <ExtSlotsProvider serverSlotDeclarations={extSlotDeclarations}>
