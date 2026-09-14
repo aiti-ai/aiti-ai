@@ -8,6 +8,8 @@
  *   - plan_approval：方案审批（zcode ExitPlanMode 适配）——方案全文 markdown + 批准/反馈后拒绝/拒绝。
  *     「带反馈提交」在 zcode 语义里是 deny+reason=反馈 → agent 收到反馈继续修改方案（不是直接终止）。
  *   - ask_user：问题询问（zcode AskUserQuestion 适配）——每组问题选项按钮（单选/多选）+ 提交/跳过。
+ *   - open_url：OAuth 登录链接（omp login 适配）——完整 URL + 打开登录页/复制短链/关闭；单向无需作答
+ *     （agent 轮询授权完成自动继续，关闭仅清本卡）。
  *   - generic / permission：自由形态兜底——prompt + input JSON + 接受/拒绝。
  *
  * 回答经 respond_interaction 命令 → SessionHandle.respondInteraction（capability: respondInteraction）。
@@ -26,10 +28,14 @@ export interface InteractionQuestion {
 
 export interface InteractionRequestInfo {
   requestId: string;
-  kind: "plan_approval" | "ask_user" | "permission" | "generic";
+  kind: "plan_approval" | "ask_user" | "permission" | "open_url" | "generic";
   toolName?: string;
   prompt?: string;
   plan?: string;
+  /** open_url：登录授权完整 URL（打开登录页用它）。 */
+  url?: string;
+  /** open_url：本机短链（长 OAuth URL 的代理/重定向壳；复制粘贴优先用它）。 */
+  launchUrl?: string;
   questions?: InteractionQuestion[];
   input?: unknown;
 }
@@ -46,9 +52,15 @@ export function InteractionRequestCard({ request, onRespond }: {
   const [planFeedback, setPlanFeedback] = useState<string | null>(null);
   /** 每题选中：单选存 label，多选存 label 集合（question 文本为键）。 */
   const [picks, setPicks] = useState<Record<string, string | string[]>>({});
+  /** open_url 复制成功的瞬时反馈。 */
+  const [copied, setCopied] = useState(false);
 
   const isPlan = request.kind === "plan_approval";
   const isAsk = request.kind === "ask_user";
+  const isOpenUrl = request.kind === "open_url";
+  /** 打开登录页用完整 URL；复制优先本机短链（长 OAuth URL 手抄易截断）。 */
+  const openUrlTarget = request.url ?? request.launchUrl;
+  const copyUrlTarget = request.launchUrl ?? request.url;
   const questions = useMemo(() => request.questions ?? [], [request.questions]);
   /** ask_user 是否已答完所有题（多选至少一项；单选必选其一）。 */
   const allAnswered = questions.length === 0 || questions.every((q) => {
@@ -98,9 +110,9 @@ export function InteractionRequestCard({ request, onRespond }: {
     >
       {/* 标题行 */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 14 }}>{isPlan ? "📋" : isAsk ? "❓" : "💬"}</span>
+        <span style={{ fontSize: 14 }}>{isPlan ? "📋" : isAsk ? "❓" : isOpenUrl ? "🔐" : "💬"}</span>
         <strong style={{ fontSize: 13, color: "var(--text)" }}>
-          {isPlan ? "方案审批" : isAsk ? "需要你的输入" : "交互请求"}
+          {isPlan ? "方案审批" : isAsk ? "需要你的输入" : isOpenUrl ? "登录授权" : "交互请求"}
         </strong>
         {request.toolName && (
           <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--accent)" }}>{request.toolName}</span>
@@ -172,6 +184,32 @@ export function InteractionRequestCard({ request, onRespond }: {
           </div>
         </div>
       ))}
+
+      {/* open_url：登录授权链接（单向卡——打开/复制链接，无需作答） */}
+      {isOpenUrl && (openUrlTarget ?? copyUrlTarget) && (
+        <div style={{ marginBottom: 8 }}>
+          <div style={{
+            background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8,
+            padding: "8px 10px", fontSize: 11, color: "var(--text-muted)",
+            wordBreak: "break-all", maxHeight: 80, overflowY: "auto",
+          }}>
+            {openUrlTarget ?? copyUrlTarget}
+          </div>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>
+            点击「打开登录页」在浏览器完成授权，agent 检测到授权后会自动继续；弹窗被拦截时复制链接手动打开。
+          </div>
+        </div>
+      )}
+
+      {/* open_url 无 url/launchUrl 时的原始负载兜底 */}
+      {isOpenUrl && !(openUrlTarget ?? copyUrlTarget) && request.input != null && (
+        <pre style={{
+          maxHeight: 160, overflowY: "auto", fontSize: 11, background: "var(--bg)", borderRadius: 6,
+          padding: "6px 8px", margin: "0 0 8px", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--text-muted)",
+        }}>
+          {typeof request.input === "string" ? request.input : JSON.stringify(request.input, null, 2)}
+        </pre>
+      )}
 
       {/* generic 兜底：原始 input */}
       {request.kind === "generic" && request.input != null && (
@@ -248,6 +286,42 @@ export function InteractionRequestCard({ request, onRespond }: {
           >
             批准方案
           </button>
+        )}
+        {isOpenUrl && (
+          <>
+            <button
+              type="button"
+              disabled={busy || !copyUrlTarget}
+              title="复制授权链接（优先本机短链，避免长 URL 截断）"
+              onClick={() => {
+                if (!copyUrlTarget) return;
+                void navigator.clipboard?.writeText(copyUrlTarget).catch(() => {});
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              }}
+              className={`${buttonBase} border-[var(--border)] text-[var(--text-muted)] hover:bg-[#3b82f611]`}
+            >
+              {copied ? "已复制 ✓" : "复制链接"}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              title="仅清掉本卡；agent 检测到授权完成会自动继续"
+              onClick={() => void respond("accept")}
+              className={`${buttonBase} border-[var(--border)] text-[var(--text-muted)] hover:bg-[#3b82f611]`}
+            >
+              关闭
+            </button>
+            <button
+              type="button"
+              disabled={busy || !openUrlTarget}
+              title={openUrlTarget ?? undefined}
+              onClick={() => openUrlTarget && window.open(openUrlTarget, "_blank", "noopener,noreferrer")}
+              className={`${buttonBase} border-transparent bg-[#22c55e] text-white hover:bg-[#16a34a]`}
+            >
+              打开登录页
+            </button>
+          </>
         )}
         {request.kind === "generic" && (
           <>

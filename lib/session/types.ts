@@ -204,6 +204,7 @@ export type PermissionDecision = {
  *   - kind="plan_approval"：方案审批（如 zcode ExitPlanMode；plan 字段=方案全文）
  *   - kind="ask_user"：问题询问（如 zcode AskUserQuestion；questions=问题+选项组）
  *   - kind="permission"：工具授权（预留；与 permission_request 互为冗余视图）
+ *   - kind="open_url"：OAuth 登录链接（如 omp login；url/launchUrl 字段，单向无需作答）
  *   - kind="generic"：其他自由形态（仅 prompt + input）
  * 后端把自有协议映射到这里（未知类型优雅忽略的约定让旧前端安全）。
  */
@@ -211,13 +212,17 @@ export type InteractionRequestEvent = {
   type: "interaction_request";
   /** 请求唯一 id（respondInteraction 的寻址键）。 */
   requestId: string;
-  kind: "plan_approval" | "ask_user" | "permission" | "generic";
+  kind: "plan_approval" | "ask_user" | "permission" | "open_url" | "generic";
   /** 来源工具名（如 "ExitPlanMode" / "AskUserQuestion"）。 */
   toolName?: string;
   /** 请求说明（agent 给出的一句话理由/上下文）。 */
   prompt?: string;
   /** plan_approval：方案全文（markdown）。 */
   plan?: string;
+  /** open_url：登录授权完整 URL（浏览器打开用）。 */
+  url?: string;
+  /** open_url：本机短链（长 OAuth URL 的代理/重定向壳；复制粘贴优先用它）。 */
+  launchUrl?: string;
   /** ask_user：问题组（question 为寻址键——answers 按它回填）。 */
   questions?: Array<{
     header?: string;

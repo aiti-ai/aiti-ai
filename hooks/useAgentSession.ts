@@ -564,14 +564,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const permissionRespondingRef = useRef(false);
   /**
    * 后端会话的交互元语请求（interaction_request 事件；一次一个，后到覆盖）。
-   * plan_approval = 方案审批卡（zcode ExitPlanMode）；ask_user = 问题选项卡（zcode AskUserQuestion）。
+   * plan_approval = 方案审批卡（zcode ExitPlanMode）；ask_user = 问题选项卡（zcode AskUserQuestion）；
+   * open_url = OAuth 登录卡（omp login，单向无需作答）。
    */
   const [interactionRequest, setInteractionRequest] = useState<{
     requestId: string;
-    kind: "plan_approval" | "ask_user" | "permission" | "generic";
+    kind: "plan_approval" | "ask_user" | "permission" | "open_url" | "generic";
     toolName?: string;
     prompt?: string;
     plan?: string;
+    url?: string;
+    launchUrl?: string;
     questions?: Array<{
       header?: string;
       question: string;
@@ -1967,12 +1970,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // 交互元语（zcode plan 审批/问题询问；一次一个，后到覆盖旧未决）
         setInteractionRequest({
           requestId: String(event.requestId ?? ""),
-          kind: event.kind === "plan_approval" || event.kind === "ask_user" || event.kind === "permission" || event.kind === "generic"
+          kind: event.kind === "plan_approval" || event.kind === "ask_user" || event.kind === "permission" || event.kind === "open_url" || event.kind === "generic"
             ? event.kind
             : "generic",
           toolName: typeof event.toolName === "string" ? event.toolName : undefined,
           prompt: typeof event.prompt === "string" ? event.prompt : undefined,
           plan: typeof event.plan === "string" ? event.plan : undefined,
+          url: typeof event.url === "string" ? event.url : undefined,
+          launchUrl: typeof event.launchUrl === "string" ? event.launchUrl : undefined,
           questions: Array.isArray(event.questions)
             ? (event.questions as Array<Record<string, unknown>>).flatMap((q) => {
               if (!q || typeof q.question !== "string") return [];
