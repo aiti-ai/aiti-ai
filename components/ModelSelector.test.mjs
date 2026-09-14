@@ -14,6 +14,7 @@ const {
   readRecentModels,
   rememberRecentModel,
   pickRecentOptions,
+  excludeRecentOptions,
 } = await jiti.import("./ModelSelector.tsx");
 
 /** 每个 case 独立的 localStorage stub（Node 无 window.localStorage） */
@@ -134,6 +135,19 @@ test("pickRecentOptions hidden while panel closed or filtering", () => {
   assert.deepEqual(pickRecentOptions(recent, CATALOG, { open: false, filter: "" }), []);
   assert.deepEqual(pickRecentOptions(recent, CATALOG, { open: true, filter: "glm" }), []);
   assert.deepEqual(pickRecentOptions(recent, CATALOG, { open: true, filter: "  " }).length, 1); // whitespace-only filter = no filter
+});
+
+test("excludeRecentOptions：最近使用段已展示的条目从主列表剔除（每模型只出现一次）", () => {
+  const recent = [CATALOG[0], CATALOG[2]];
+  assert.deepEqual(excludeRecentOptions(CATALOG, recent), [CATALOG[1]]);
+  assert.deepEqual(excludeRecentOptions(CATALOG, []), CATALOG, "无最近段时主列表原样");
+  assert.deepEqual(excludeRecentOptions(CATALOG, [opt("gone", "x")]), CATALOG, "无交集时原样");
+  // 同名不同 provider 不得误删（key = provider/modelId）
+  const twin = [...CATALOG, opt("other", "glm-flash", "GLM-5.3-Flash")];
+  assert.deepEqual(
+    excludeRecentOptions(twin, [CATALOG[0]]).map((o) => `${o.provider}/${o.modelId}`),
+    ["deepseek/v4-flash", "modelscope/ZhipuAI/GLM-5.2", "other/glm-flash"],
+  );
 });
 
 test("filterModelOptions matches provider name as well as display name and id", async () => {

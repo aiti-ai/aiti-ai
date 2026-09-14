@@ -186,6 +186,21 @@ export function filterModelOptions(options: ModelSelectorOption[], query: string
   ));
 }
 
+/**
+ * 主列表剔除「最近使用」段已展示的条目——同一个模型不再在面板里出现两次
+ * （2026-09-14 用户反馈：zcode 列表出现相邻两条一模一样、最近使用段与下方分组
+ * 重复。只有非过滤态才剔除：搜索时要能命中全部模型，含最近使用里的）。
+ * provider/modelId 分字段拼接作 key；未命中/空段原样返回。
+ */
+export function excludeRecentOptions(
+  options: ModelSelectorOption[],
+  recentOptions: ModelSelectorOption[],
+): ModelSelectorOption[] {
+  if (recentOptions.length === 0) return options;
+  const recentKeys = new Set(recentOptions.map((option) => `${option.provider}/${option.modelId}`));
+  return options.filter((option) => !recentKeys.has(`${option.provider}/${option.modelId}`));
+}
+
 export function ModelSelector({
   options,
   value,
@@ -257,9 +272,14 @@ export function ModelSelector({
     () => pickRecentOptions(recentList, sortedOptions, { open, filter }),
     [open, filter, sortedOptions, recentList],
   );
+  // 最近使用段已展示的条目从主列表剔除（每模型只出现一次；过滤态 recentOptions=[] 不剔除）
+  const mainOptions = useMemo(
+    () => excludeRecentOptions(filteredOptions, recentOptions),
+    [filteredOptions, recentOptions],
+  );
   const modelsByProvider: { provider: string; options: ModelSelectorOption[] }[] = [];
 
-  for (const option of filteredOptions) {
+  for (const option of mainOptions) {
     const group = modelsByProvider.find((item) => item.provider === option.provider);
     if (group) group.options.push(option);
     else modelsByProvider.push({ provider: option.provider, options: [option] });
@@ -523,7 +543,7 @@ export function ModelSelector({
                   ))}
                 </div>
               )}
-              {modelsByProvider.length === 0 ? (
+              {filteredOptions.length === 0 ? (
                 <div style={{ padding: "8px 12px", color: "var(--text-dim)", fontSize: 12, whiteSpace: "nowrap" }}>
                   {filter.trim() ? t("chat.noMatchingModels") : "No available models"}
                 </div>
