@@ -642,7 +642,7 @@ test("run elapsed badge recovers its start from the last prompt after page reope
   assert.match(adoptSource, /deriveRunStartedAt\(messagesRef\.current\)/);
   assert.match(source, /adoptRunStartedAt\(state\?\.runStartedAt\)/);
   assert.match(source, /adoptRunStartedAt\(st\.runStartedAt\)/);
-  assert.match(source, /adoptRunStartedAt\(agentState\.state\.runStartedAt\)/);
+  assert.match(source, /adoptRunStartedAt\(st\?\.runStartedAt\)/);
   // loadSession 同步镜像：同一流程里的 running 采纳必须立即读到刚加载的消息
   assert.match(source, /messagesRef\.current = persistedMessages/);
 
@@ -697,4 +697,42 @@ test("start-plan captcha bridge: event wiring, respond command, and ChatWindow m
   assert.match(chatWindowSource, /providerHeadersRequest, respondToProviderHeaders/);
   assert.match(chatWindowSource, /<ProviderHeadersRequestCard request=\{providerHeadersRequest\} onRespond=\{respondToProviderHeaders\} \/>/);
   assert.match(chatWindowSource, /import \{ ProviderHeadersRequestCard \} from "\.\/ProviderHeadersRequestCard"/);
+});
+
+test("busy-state adoption covers compaction windows (state / connected / events)", () => {
+  // 根因（2026-09-14 实测）：manual compact 先 abort 当前 run（isStreaming=false）而会话仍忙
+  // （wrapper.isRunning 含 isCompacting）——侧栏 running 亮而聊天窗显示空闲。契约：忙态判定
+  // 统一走服务端权威 isRunning（get_state / connected 帧下发），mount 采纳与收口都不得漏。
+  assert.match(source, /function stateIsActive\(state\?: AgentStateResponse \| null\): boolean/);
+  assert.match(source, /state\.isRunning \|\| state\.isStreaming \|\| state\.isPromptRunning \|\| state\.isCompacting/);
+
+  // mount 采纳：isRunning（压缩/续轮等）也算运行中
+  const mountSource = source.slice(
+    source.indexOf("// Load session on mount"),
+    source.indexOf("onSystemPromptChange?.(systemPrompt)"),
+  );
+  assert.match(mountSource, /if \(stateIsActive\(agentState\.state\)\)/);
+  assert.match(mountSource, /st\.isCompacting \? \{ kind: "compacting" \}/);
+
+  // connected 帧：服务端 isRunning 置位；服务端判闲且本地仍挂运行中 → 兜底收口
+  const connectedSource = source.slice(
+    source.indexOf('case "connected"'),
+    source.indexOf('case "session_backend_ready"'),
+  );
+  assert.match(connectedSource, /\.isRunning === true/);
+  assert.match(connectedSource, /\.isRunning === false/);
+  assert.match(connectedSource, /settleUiStage\(\)/);
+
+  // 压缩开始置忙（manual compact 的 abort 已先收口）、结束且无活跃 run 时收口
+  const compactionSource = source.slice(
+    source.indexOf('case "auto_compaction_start"'),
+    source.indexOf('case "extension_ui_request"'),
+  );
+  assert.match(compactionSource, /agentRunningRef\.current = true/);
+  assert.match(compactionSource, /setAgentPhase\(\{ kind: "compacting" \}\)/);
+  assert.match(compactionSource, /if \(!sdkAgentActiveRef\.current && !rpcPromptPendingRef\.current\) \{\s*settleUiStage\(\);/);
+
+  // 守护轮询 / 对账 / 落定轮询统一忙态口径
+  assert.match(source, /if \(!data\.running \|\| !state \|\| !stateIsActive\(state\)\) \{/);
+  assert.match(source, /const busy = data\.running && !!state && stateIsActive\(state\)/);
 });

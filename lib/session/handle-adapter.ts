@@ -299,6 +299,9 @@ export class HandleSessionAdapter implements WrappedSessionLike {
           sessionId: h.id,
           sessionFile: undefined,
           isStreaming: this.isStreaming,
+          // 忙态权威字段（与 /api/agent/running 的 handle 口径对齐）：handle 自身忙标志，
+          // 外加 adapter 已从事件流观察到 agent_start（handle 标志未跟上的容错）。
+          isRunning: this.isRunning() || this._isStreaming,
           isPromptRunning: this._isStreaming,
           // 本轮读秒起点（页面重开后前端恢复用；空闲/未见过 agent_start 时为 undefined）
           runStartedAt: this._runStartedAt ?? undefined,

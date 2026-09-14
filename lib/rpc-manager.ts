@@ -1222,6 +1222,10 @@ export class AgentSessionWrapper {
           sessionId: this.inner.sessionId,
           sessionFile: this.inner.sessionFile ?? "",
           isStreaming: this.inner.isStreaming,
+          // 忙态权威字段：与 /api/agent/running 的 wrapper.isRunning() 同口径（含 compaction/
+          // promptRunning/bash 等 isStreaming 之外的忙态）——前端「打开会话即恢复运行中」用它，
+          // 避免手动压缩/队列续轮窗口里左侧亮、右侧显示空闲（2026-09-14 修复）。
+          isRunning: this.isRunning(),
           isPromptRunning: this.pendingPromptCount > 0,
           isBashRunning: this.inner.isBashRunning,
           isCompacting: this.inner.isCompacting,

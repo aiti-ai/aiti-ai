@@ -74,6 +74,9 @@ type AgentStateResponse = {
   systemPrompt?: string;
   thinkingLevel?: string;
   isStreaming?: boolean;
+  /** 忙态权威字段（服务端 get_state / connected 帧下发，口径与侧栏 running 集一致）：
+   *  覆盖 isStreaming 之外的忙态（manual compaction 先 abort 当前 run、队列续轮派发等）。 */
+  isRunning?: boolean;
   isPromptRunning?: boolean;
   /** 本轮起始时刻（epoch ms）：外部后端 handle 侧记录，页面重开后读秒起点恢复的权威值。 */
   runStartedAt?: number;
@@ -89,6 +92,14 @@ type AgentStateResponse = {
   /** 后端来源标签（如 "aiti-claude-code-agent/claude-code"） */
   backendSource?: string;
 };
+
+/** 会话「忙」判定（服务端权威口径优先）：打开会话采纳 / 对账 / 守护轮询统一走它。
+ *  isRunning 覆盖 isStreaming 之外的忙态（manual compaction、promptRunning 等）；
+ *  旧服务端无该字段时回退原有三态，绝不因字段缺失误判空闲。 */
+function stateIsActive(state?: AgentStateResponse | null): boolean {
+  if (!state) return false;
+  return Boolean(state.isRunning || state.isStreaming || state.isPromptRunning || state.isCompacting);
+}
 
 export interface QueuedMessages {
   steering: string[];
@@ -162,6 +173,7 @@ export type AgentPhase =
   | { kind: "waiting_model" }
   | { kind: "running_command" }
   | { kind: "running_tools"; tools: { id: string; name: string; progress?: string }[] }
+  | { kind: "compacting" }
   | null;
 
 export interface CompactResultInfo {
@@ -1420,6 +1432,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
         if (data.running && state?.isCompacting) {
           setIsCompacting(true);
+          // 压缩中也是忙：guard 期间保持/恢复运行中显示（manual compact 已先 abort、agent_settled 收口过）
+          agentRunningRef.current = true;
+          setAgentRunning(true);
+          setAgentPhase({ kind: "compacting" });
           eventStreamGraceTimerRef.current = setTimeout(() => void checkServerIdle(), PROMPT_SETTLE_POLL_MS);
           return;
         }
@@ -1476,7 +1492,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const data = await res.json() as { running?: boolean; state?: AgentStateResponse };
           const state = data.state;
           syncLiveModel(state);
-          if (!data.running || !state || (!state.isStreaming && !state.isPromptRunning)) {
+          if (!data.running || !state || !stateIsActive(state)) {
             await finishPromptWithoutStream(sid, runId);
             return;
           }
@@ -1542,8 +1558,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages));
       setPendingRecovery(state?.pendingRecovery ?? []);
       setQueueTrash(state?.queueTrash ?? []);
-      const busy = data.running && state
-        && (state.isStreaming || state.isPromptRunning || state.isCompacting);
+      const busy = data.running && !!state && stateIsActive(state);
       if (busy) {
         sdkAgentActiveRef.current = Boolean(state.isStreaming);
         rpcPromptPendingRef.current = Boolean(state.isPromptRunning);
@@ -1644,13 +1659,31 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // 服务端把别名/占位 id 解析到了换绑后的句柄（canonicalSessionId ≠ 请求 id）：
         // 立即迁移——本流的后续事件照常投递（同一服务端句柄），下轮 maintain 起用规范 id。
         canonicalizeSessionId((event as { canonicalSessionId?: unknown }).canonicalSessionId);
-        if (event.isStreaming === true) {
+        // isRunning = 服务端下发的忙态权威字段（口径同侧栏 running 集）：覆盖 manual compaction
+        // 等 isStreaming=false 的忙态——只认 isStreaming 时，重连/新开页面会一直显示空闲。
+        const streamActive = event.isStreaming === true;
+        const runActive = streamActive || (event as { isRunning?: boolean }).isRunning === true;
+        if (runActive) {
           cancelEventStreamGrace();
-          sdkAgentActiveRef.current = true;
+          sdkAgentActiveRef.current = streamActive;
           agentRunningRef.current = true;
           adoptRunStartedAt();
           setAgentRunning(true);
-          setAgentPhase({ kind: "waiting_model" });
+          setAgentPhase(streamActive ? { kind: "waiting_model" } : { kind: "compacting" });
+        } else if (
+          event.isStreaming === false
+          && (event as { isRunning?: boolean }).isRunning === false
+          && agentRunningRef.current
+        ) {
+          // 服务端权威判闲且本地仍挂「运行中」：（重）连时纠正丢失的 agent_settled/
+          // compaction_end（SSE 断连窗口错过收口帧 → 运行中状态冻结到下次刷新）。
+          sdkAgentActiveRef.current = false;
+          rpcPromptPendingRef.current = false;
+          optimisticUserMessageKeyRef.current = null;
+          setIsCompacting(false);
+          bashRunningRef.current = false;
+          setBashRunning(false);
+          settleUiStage();
         }
         break;
       }
@@ -1936,6 +1969,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setIsCompacting(true);
         setCompactError(null);
         setCompactResult(null);
+        // 压缩也是「忙」：manual compact 会先 abort 当前 run（agent_settled 已收口），
+        // 不在此置位则压缩期间聊天窗显示空闲（无 Stop/运行中标签），与侧栏 running 不一致。
+        agentRunningRef.current = true;
+        setAgentRunning(true);
+        setAgentPhase({ kind: "compacting" });
         break;
       case "auto_compaction_end":
       case "compaction_end":
@@ -1946,6 +1984,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         } else if (!event.aborted) {
           setCompactResult(readCompactResult(event.result, (event.reason as string | undefined) ?? "auto"));
           if (sessionIdRef.current) loadSession(sessionIdRef.current);
+        }
+        // 忙态收口：压缩结束且没有活跃 run / 待处理 prompt（manual compaction 不在 run 循环内，
+        // 结束后不会有 agent_settled）。不收口会让运行中状态永久停留；若有队列续轮，其
+        // agent_start 会重新置位。auto_compaction_end 时 run 仍活跃，此处不触发。
+        if (!sdkAgentActiveRef.current && !rpcPromptPendingRef.current) {
+          settleUiStage();
         }
         break;
       case "extension_ui_request":
@@ -2932,13 +2976,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (stateRes.ok) {
         const agentState = await stateRes.json() as { running?: boolean; state?: AgentStateResponse };
         const st = agentState.state;
-        if (agentState.running && st && (st.isStreaming || st.isPromptRunning)) {
-          sdkAgentActiveRef.current = Boolean(st.isStreaming);
-          rpcPromptPendingRef.current = Boolean(st.isPromptRunning);
+        if (agentState.running && st && stateIsActive(st)) {
+          sdkAgentActiveRef.current = Boolean(st?.isStreaming);
+          rpcPromptPendingRef.current = Boolean(st?.isPromptRunning);
           agentRunningRef.current = true;
-          adoptRunStartedAt(st.runStartedAt);
+          adoptRunStartedAt(st?.runStartedAt);
           setAgentRunning(true);
-          setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
+          setAgentPhase(st?.isStreaming ? { kind: "waiting_model" } : st?.isCompacting ? { kind: "compacting" } : { kind: "running_command" });
           dispatchStream({ type: "start" });
           // ensureConnected is a no-op when a live SSE stream for this
           // session is already open, so restored-queue events are not lost.
@@ -3488,16 +3532,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       loadSession(session.id, true, true).then((agentState) => {
         if (agentState?.running) {
           loadTools(session.id);
-          if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
-            sdkAgentActiveRef.current = Boolean(agentState.state.isStreaming);
-            rpcPromptPendingRef.current = Boolean(agentState.state.isPromptRunning);
+          if (stateIsActive(agentState.state)) {
+            const st = agentState.state!;
+            sdkAgentActiveRef.current = Boolean(st.isStreaming);
+            rpcPromptPendingRef.current = Boolean(st.isPromptRunning);
             agentRunningRef.current = true;
-            adoptRunStartedAt(agentState.state.runStartedAt);
+            adoptRunStartedAt(st.runStartedAt);
             setAgentRunning(true);
-            setAgentPhase(agentState.state.isStreaming ? { kind: "waiting_model" } : { kind: "running_command" });
+            // 压缩中 run 已 abort（isStreaming=false）但会话仍忙——原先漏采纳 → 打开会话显示空闲
+            setAgentPhase(st.isStreaming ? { kind: "waiting_model" } : st.isCompacting ? { kind: "compacting" } : { kind: "running_command" });
             dispatchStream({ type: "resume" });
             void maintainEventsConnected(session.id);
-            if (!agentState.state.isStreaming && agentState.state.isPromptRunning) {
+            if (!st.isStreaming && st.isPromptRunning) {
               void waitForPromptSettlement(session.id);
             }
           }

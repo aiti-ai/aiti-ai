@@ -108,6 +108,7 @@ function phaseLabel(phase: AgentPhase, t: (key: string, params?: Record<string, 
   }
   if (phase?.kind === "waiting_model") return t("chat.waitingModel");
   if (phase?.kind === "running_command") return t("chat.runningCommand");
+  if (phase?.kind === "compacting") return t("chat.compacting");
   return null;
 }
 

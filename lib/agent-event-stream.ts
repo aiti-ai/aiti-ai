@@ -9,6 +9,9 @@ export interface AgentEventStreamSession {
   readonly isStreaming: boolean;
   readonly streamingMessage: unknown;
   onEvent(listener: (event: AgentEventLike) => void): () => void;
+  /** 忙态（与 /api/agent/running 集同口径，含 compaction/队列续轮等 isStreaming 之外的忙态）。
+   *  可选：不提供时 connected 帧回退 isStreaming。 */
+  isRunning?(): boolean;
 }
 
 const HEARTBEAT_INTERVAL_MS = 30_000;
@@ -121,6 +124,9 @@ export function createAgentEventStream(
             sessionId,
             ...(canonicalId && canonicalId !== sessionId ? { canonicalSessionId: canonicalId } : {}),
             isStreaming: session.isStreaming,
+            // 重连/新开页面时前端据此立即恢复「运行中」——isStreaming 会漏掉压缩中
+            // （manual compact 先 abort，run 已不活跃）等忙态，前端表现为「显示没运行」。
+            isRunning: session.isRunning?.() ?? session.isStreaming,
           });
           // 【重复首字根因修复】buffer 里的事件（listener 装好 → snapshot 发布之间到达）
           // 其效果已全部体现在 snapshot（live partialMessage 的克隆）里：pi 在 emit
