@@ -3,8 +3,9 @@
  *
  * 规则：界面语言为中文 → `$xx（¥yy）` 双显；其他语言 → `$xx`（现状不变）。
  * 记账单位始终是 USD（目录价计算落库），¥ 纯展示层换算，汇率来自 /api/fx
- * （24h 服务端缓存，见 lib/fx.ts）。模块首次在浏览器加载时自举拉取一次汇率，
- * 之后任意组件 re-render 都能同步读到最新值——无需各组件挂 hook/订阅。
+ * （24h 服务端缓存，见 lib/fx.ts）。**用时而拉**：首次有金额展示组件挂载（
+ * useMoneySynced(enabled=true) 或 ensureFx()）才发请求——没有 ¥ 展示需求的
+ * 页面/时机（欢迎页、无 cost 的会话）不占开页请求窗口。
  */
 import { apiUrl } from "./base-path";
 import { useSyncExternalStore } from "react";
@@ -16,7 +17,7 @@ let inflight: Promise<void> | null = null;
 let version = 0;
 const subs = new Set<() => void>();
 
-/** 拉一次汇率（模块级去重；失败静默——保持纯 USD 显示）。 */
+/** 拉一次汇率（模块级去重；失败静默——保持纯 USD 显示）。首次调用触发网络。 */
 export function ensureFx(): Promise<void> {
   if (typeof window === "undefined") return Promise.resolve();
   if (fx || inflight) return inflight ?? Promise.resolve();
@@ -33,20 +34,26 @@ export function ensureFx(): Promise<void> {
     .finally(() => { inflight = null; });
   return inflight;
 }
-// 浏览器加载即自举（一次/页面）
-void ensureFx();
-
 function subscribeMoney(cb: () => void): () => void {
   subs.add(cb);
+  // 首个订阅者 = 首个真的会渲染金额的组件 → 此刻才拉汇率（用时而拉）。
+  void ensureFx();
   return () => { subs.delete(cb); };
+}
+
+function subscribeNothing(): () => void {
+  return () => {};
 }
 
 /**
  * 挂在含金额显示的组件里：汇率异步到位时触发本组件重渲染（此前渲染的纯 USD
  * 补出 ¥ 部分）。SSR/首帧返回 0 与客户端初始值一致，无 hydration 风险。
+ *
+ * @param enabled 本组件当前是否真的有金额要显示（无金额时传 false：不订阅、
+ *   不触发汇率拉取；等金额出现再翻 true，汇率到位后照常补出 ¥）。
  */
-export function useMoneySynced(): boolean {
-  useSyncExternalStore(subscribeMoney, () => version, () => 0);
+export function useMoneySynced(enabled = true): boolean {
+  useSyncExternalStore(enabled ? subscribeMoney : subscribeNothing, () => version, () => 0);
   return Boolean(fx);
 }
 

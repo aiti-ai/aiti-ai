@@ -670,7 +670,8 @@ function AssistantMessageView({
   writtenFiles?: WrittenFile[];
 }) {
   const { t } = useI18n();
-  useMoneySynced(); // 汇率异步到位时重渲染 usage 行（补出 ¥ 部分）
+  // 该条消息真的带 USD cost 时才订阅汇率（用到才拉 /api/fx；无 cost 的消息不占开页请求）
+  useMoneySynced((message.usage?.cost?.total ?? 0) > 0);
   const time = showTimestamp ? formatTime(message.timestamp) : null;
   const blockItems = useMemo(() => (message.content ?? [])
     .map((block, originalIndex) => ({ block, originalIndex }))

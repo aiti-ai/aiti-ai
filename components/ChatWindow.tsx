@@ -319,7 +319,6 @@ function permissionOptionLabel(o: { kind?: string; name?: string }): string {
 
 export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onContextUsageChange, onDisplayModelChange, onOpenFile, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
-  useMoneySynced(); // 汇率异步到位时重渲染 backend usage 悬浮条（补出 ¥ 部分）
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
 
@@ -405,6 +404,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     bottomComposerHeightRef,
     deferInitialScroll: Boolean(pendingScrollRestore),
   });
+
+  // 汇率：悬浮条真的有 USD cost 要显示时才订阅/拉取（用到才拉 /api/fx）。
+  useMoneySynced((backendUsage?.costUsd ?? 0) > 0);
 
   // ── Stop 等待状态：点击后立即反馈（zcode session/stop 曾最长挂 23s，后端已改 fire-and-forget，
   // 但仍要等 agent_settled 才收口）——按钮显示「停止中」+ 旋转沙漏，sessionBusy 结束自动复位。 ──

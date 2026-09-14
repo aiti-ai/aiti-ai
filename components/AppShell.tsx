@@ -283,7 +283,6 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const { preference, setThemePreference } = useTheme();
   const themeLabelKey = `theme.${preference}`;
   const { locale, setLocale, t: translate, supportedLocales } = useI18n();
-  useMoneySynced(); // 汇率异步到位时重渲染顶栏（补出 ¥ 部分）
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
   // 图标按钮宽度统一 36px（与扩展按钮一致）；图标大小也固定 16px（renderTopbarItem 内 iconDim）
@@ -511,6 +510,9 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
 
   // Session stats (tokens + cost) — populated by ChatWindow, displayed in top bar
   const [sessionStats, setSessionStats] = useState<SessionStatsInfo | null>(null);
+  // 顶栏金额展示：只有真的有 cost 才订阅汇率（否那么开页不拉 /api/fx；cost 到位后
+  // 再翻 true，汇率到时重渲染补出 ¥ 部分）。
+  useMoneySynced((sessionStats?.cost ?? 0) > 0);
   const [autoNameStatus, setAutoNameStatus] = useState<AutoNameStatus>({ kind: "idle" });
   const autoNameTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** 桥占用会话的手动命名弹窗（auto-name 无法起本地 runtime 时的降级路径） */
