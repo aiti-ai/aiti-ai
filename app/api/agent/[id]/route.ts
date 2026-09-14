@@ -160,7 +160,22 @@ export async function GET(
     // attach 必须压过本地 wrapper（getRpcSession 优先会把竞态窗口起的本地双胞胎
     // 永久钉在返回值上——桥登记后状态仍走本地，用户看到「连不上」）；且
     // attachIfBridged 会顺手关闭双胞胎，下一轮询即回到桥状态（无需刷新页面）。
-    const session = (await resolveAttachBySessionId(id))
+    // 嵌套 worker（fork 子代理 .../<childUuid>/run-0/session.jsonl）的桥注册键是完整
+    // 文件路径，resolveAttachBySessionId 的 `_<uuid>.jsonl` 后缀推导命中不了——先按
+    // id→文件路径 attach（与 /api/sessions/[id]/state、events 同口径）。否则运行中的
+    // worker 在对账（?light=1）里被误判空闲 → 前端把「运行中」收口。
+    let bridgedByPath: Awaited<ReturnType<typeof attachIfBridged>> = undefined;
+    const bridgedFile = await resolveSessionPath(id).catch(() => null);
+    if (bridgedFile) {
+      try {
+        const bridged = await attachIfBridged(bridgedFile);
+        if (bridged?.isAlive()) bridgedByPath = bridged;
+      } catch {
+        // 桥认领但附着失败（socket 不可达）→ 回退其余解析路径，与 resolveAttachBySessionId 的容错一致
+      }
+    }
+    const session = bridgedByPath
+      ?? (await resolveAttachBySessionId(id))
       ?? (getRpcSession(id)?.isAlive() ? getRpcSession(id) : resolveAnySession(id));
     if (!session || !session.isAlive()) {
       return NextResponse.json({ running: false });
