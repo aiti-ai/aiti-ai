@@ -793,3 +793,26 @@ test("backend subprocess death settles the frontend running state", () => {
   assert.match(deadSource, /void loadSession\(sid\)/);
   assert.match(deadSource, /if \(wasRunning\) onAgentEnd\?\.\(\)/);
 });
+
+test("agent_settled 被 rpcPromptPending 拦截时按服务端空闲兜底收尾（spawn 无 prompt_done）", () => {
+  // 根因（2026-09-14）：spawn 后端（pi 子进程）不发 prompt_done → rpcPromptPendingRef 残留 true，
+  // agent_settled 是一次性事件，被守卫拦下后永不收尾（pi fork 回复完成仍挂运行中，实测复现）。
+  // 修复①：agent_end 拉取 state 时以服务端 isPromptRunning 对齐 rpcPromptPending；
+  // 修复②：agent_settled 守卫 break 前后台核对服务端，空闲则清标记 + 补收尾。
+  const agentEndSource = source.slice(
+    source.indexOf('case "agent_end"'),
+    source.indexOf('case "agent_settled"'),
+  );
+  assert.match(agentEndSource, /if \(d\.state\?\.isPromptRunning !== undefined\) \{\s*rpcPromptPendingRef\.current = Boolean\(d\.state\.isPromptRunning\);/);
+  const settledSource = source.slice(
+    source.indexOf('case "agent_settled"'),
+    source.indexOf('case "prompt_done"'),
+  );
+  assert.match(settledSource, /\) \|\| rpcPromptPendingRef\.current\) \{/);
+  assert.match(settledSource, /settledSid && rpcPromptPendingRef\.current && agentRunningRef\.current/);
+  assert.match(settledSource, /if \(d\.state\?\.isPromptRunning\) return;/);
+  assert.match(settledSource, /rpcPromptPendingRef\.current = false;/);
+  assert.match(settledSource, /const wasRunning = settleUiStage\(\);/);
+  assert.match(settledSource, /void loadSession\(settledSid\);/);
+  assert.match(settledSource, /if \(wasRunning\) onAgentEnd\?\.\(\);/);
+});

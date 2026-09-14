@@ -1758,6 +1758,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               // 别名/占位 id 兜底迁移：state.sessionId 是后端句柄的规范 id——
               // connected 帧（canonicalSessionId）与 rebind 事件都错过的 tab 在此收敛。
               canonicalizeSessionId(d.state?.sessionId);
+              // spawn 等外部后端无 prompt_done 事件：agent_end 后以服务端权威
+              // isPromptRunning 对齐 rpcPromptPending，避免残留 true 挡住紧随其后的
+              // agent_settled 收尾（pi fork 「回复完成仍挂运行中」根因，2026-09-14）。
+              if (d.state?.isPromptRunning !== undefined) {
+                rpcPromptPendingRef.current = Boolean(d.state.isPromptRunning);
+              }
               syncLiveModel(d.state);
               if (d.state?.contextUsage !== undefined) setContextUsage(d.state.contextUsage ?? null);
               if (d.state?.systemPrompt !== undefined) setSystemPrompt(d.state.systemPrompt ?? null);
@@ -1776,11 +1782,31 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const agentWasActive = sdkAgentActiveRef.current;
         sdkAgentActiveRef.current = false;
         runStartedAtRef.current = null;
-        // agentRunningRef 也算有效运行证据：外部后端（zcode 等）「受理即发 agent_start」，
+        // agentRunningRef 也算有效运行证据：外部后端（zcode 等）「受理即发 agent_start」,
         // 页面事件流接入晚于该帧且 connected 重放时 isStreaming 尚为 false → sdkAgentActive
         // 恒 false，但 send 路径已乐观置 agentRunningRef——此时 settled 必须照常收尾，
         // 否则 spinner 永挂（实测 2026-09-10：zcode 停止/自然结束均卡「正在等待模型」）。
-        if ((!agentWasActive && !agentRunningRef.current) || rpcPromptPendingRef.current) break;
+        if ((!agentWasActive && !agentRunningRef.current) || rpcPromptPendingRef.current) {
+          // 守卫兜底（2026-09-14）：spawn 等外部后端无 prompt_done 事件 → rpcPromptPending
+          // 可能残留 true，而 agent_settled 是一次性事件——被守卫拦下后若无后续触发，前端
+          // 永不收尾（pi fork 「回复完成仍挂运行中」实测）。后台核对服务端权威 isPromptRunning：
+          // 已空闲则清残留标记并补一轮收尾；确认仍有 prompt 在跑（真实多轮）则尊重守卫。
+          const settledSid = sessionIdRef.current;
+          if (settledSid && rpcPromptPendingRef.current && agentRunningRef.current) {
+            void fetch(apiUrl(`/api/agent/${encodeURIComponent(settledSid)}`))
+              .then((r) => r.json())
+              .then((d: { state?: AgentStateResponse }) => {
+                if (d.state?.isPromptRunning) return;
+                if (!rpcPromptPendingRef.current || !agentRunningRef.current) return;
+                rpcPromptPendingRef.current = false;
+                const wasRunning = settleUiStage();
+                void loadSession(settledSid);
+                if (wasRunning) onAgentEnd?.();
+              })
+              .catch(() => {});
+          }
+          break;
+        }
 
         const sid = sessionIdRef.current;
         // 后端会话：拉取本轮用量
