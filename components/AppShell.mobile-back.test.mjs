@@ -18,7 +18,7 @@ test("exposes the overlay-back primitive to extension clients via pi-web.overlay
 test("wires every host overlay to the back stack on small screens only", () => {
   assert.match(hookSource, /export function useOverlayBack\(active: boolean, close: \(\) => void\): void/);
   const expected = [
-    /useOverlayBack\(isMobile && sidebarOpen, \(\) => setSidebarOpen\(false\)\);/,
+    /useOverlayBack\(isMobile && mobileSidebarReady && sidebarOpen, \(\) => setSidebarOpen\(false\)\);/,
     /useOverlayBack\(isMobile && rightPanelOpen, \(\) => setRightPanelOpen\(false\)\);/,
     /useOverlayBack\(isMobile && settingsSection !== null, \(\) => setSettingsSection\(null\)\);/,
     /useOverlayBack\(isMobile && projectTrustDialogOpen, \(\) => setProjectTrustDialogOpen\(false\)\);/,
@@ -33,13 +33,15 @@ test("wires every host overlay to the back stack on small screens only", () => {
   }
 });
 
-test("session info dropdown has a top-right close button wired to the panel state", () => {
+test("session info dropdown has a sticky top-right close button wired to the panel state", () => {
   assert.match(appShell, /<div className="session-info-popover" style=\{\{/);
-  // 右上角关闭：sticky 零高容器（滚动时保持可点）+ ✕ → setActiveTopPanel(null)
+  // 顶栏行：sticky 标题 + 右上角 ✕ → setActiveTopPanel(null)
   assert.match(
     appShell,
-    /position: "sticky", top: 0, height: 0, display: "flex", justifyContent: "flex-end", zIndex: 3[\s\S]{0,700}?title=\{translate\("i18n\.close"\)\}[\s\S]{0,300}?onClick=\{\(\) => setActiveTopPanel\(null\)\}/,
+    /position: "sticky",\s*top: 0,\s*zIndex: 3,[\s\S]{0,900}?title=\{translate\("i18n\.close"\)\}[\s\S]{0,300}?onClick=\{\(\) => setActiveTopPanel\(null\)\}/,
   );
+  // overflow: clip 不产生滚动容器——否则面板自身成为 sticky 的滚动容器，顶栏滚不走也不粘住
+  assert.match(appShell, /\.session-info-popover \{[\s\S]*?overflow: hidden;[\s\S]*?overflow: clip;/);
 });
 
 test("the back stack keeps Next router state and pushes same-URL entries", () => {

@@ -14,7 +14,10 @@ import { acquireOverlayBack } from "@/lib/overlay-back";
  */
 export function useOverlayBack(active: boolean, close: () => void): void {
   const closeRef = useRef(close);
-  closeRef.current = close;
+  // 渲染期不写 ref（React 约定）：关闭闭包经 effect 刷新，注册句柄始终调用最新值
+  useEffect(() => {
+    closeRef.current = close;
+  }, [close]);
   useEffect(() => {
     if (!active) return;
     const handle = acquireOverlayBack(() => closeRef.current());

@@ -278,7 +278,7 @@ registerExtClientService("pi-web", "pi-web.home", homeDirService);
 // 统一 toast 服务（2026-09-13）：宿主持有右上角队列，扩展经 ctx.getExtService("pi-web.toast").show 消费
 // ——替代扩展各自造 toast（组件内 state+setTimeout）；渲染归 HostToastHost（AppShell 挂载）。
 registerExtClientService("pi-web", "pi-web.toast", piWebToastService);
-// 小屏「系统返回」关闭浮层服务（2026-09-15）：历史退栈是进程内唯一写入口，扩展不许各自
+// 小屏「系统返回」关闭浮层服务（2026-09-14）：历史退栈是进程内唯一写入口，扩展不许各自
 // 监听 popstate。扩展浮窗（aiti-float）经 ctx.getExtService("pi-web.overlayBack").acquire(close)
 // 参与；是否仅小屏启用由消费方自判（宿主内建浮层走 useOverlayBack(isMobile && open, close)）。
 registerExtClientService("pi-web", "pi-web.overlayBack", {
@@ -3505,7 +3505,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // 历史退栈唯一写入口 lib/overlay-back.ts（服务 pi-web.overlayBack 同源）；
   // 每条 open 状态一个退栈层，close 即原关闭动作。桌面（≥641px）不接：
   // 浏览器返回语义保持原样。声明顺序即同 commit 内 effect 顺序，关旧开新两种序均安（见方案 §3.1）。
-  useOverlayBack(isMobile && sidebarOpen, () => setSidebarOpen(false));
+  useOverlayBack(isMobile && mobileSidebarReady && sidebarOpen, () => setSidebarOpen(false));
   useOverlayBack(isMobile && rightPanelOpen, () => setRightPanelOpen(false));
   useOverlayBack(isMobile && settingsSection !== null, () => setSettingsSection(null));
   useOverlayBack(isMobile && projectTrustDialogOpen, () => setProjectTrustDialogOpen(false));
@@ -3587,6 +3587,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       .session-info-popover {
         position: relative;
         overflow: hidden;
+        overflow: clip; /* clip 不产生滚动容器：内部 sticky 顶栏的相对滚动容器才是外层下拉（隐藏时 sticky 恒不动） */
         transform-origin: top right;
         animation: session-info-pop 360ms ease-out both;
         will-change: transform, opacity, filter, background, box-shadow;
@@ -4107,16 +4108,28 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
                   flexDirection: "column",
                   gap: 10,
                 }}>
-                  {/* 右上角关闭（sticky：面板内容超屏滚动时保持可点；等价于再点一次会话信息按钮） */}
-                  <div style={{ position: "sticky", top: 0, height: 0, display: "flex", justifyContent: "flex-end", zIndex: 3 }}>
+                  {/* 顶栏：标题 + 右上角关闭（sticky + 面板 overflow:clip——外层下拉才是滚动容器，
+                      内容超屏滚动时本行保持可见可点；关闭等价再点一次会话信息按钮） */}
+                  <div style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 8,
+                    position: "sticky",
+                    top: 0,
+                    zIndex: 3,
+                    margin: "-12px -16px 0",
+                    padding: "8px 16px 7px",
+                    background: "var(--bg-panel)",
+                    borderBottom: "1px solid var(--border)",
+                  }}>
+                    <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text)" }}>{translate("session.infoSection")}</span>
                     <button
                       type="button"
                       title={translate("i18n.close")}
                       aria-label={translate("i18n.close")}
                       onClick={() => setActiveTopPanel(null)}
                       style={{
-                        marginTop: -6,
-                        marginRight: -8,
                         display: "inline-flex",
                         alignItems: "center",
                         justifyContent: "center",
@@ -4335,7 +4348,6 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
                     };
                     const sessionInfoSection = (
                       <div style={{ minWidth: 0 }}>
-                         <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>{translate("session.infoSection")}</div>
                         <div style={{ display: "grid", gridTemplateColumns: "auto minmax(0, 1fr) auto", columnGap: 12, rowGap: 8, alignItems: "start" }}>
                           {sessionRows.map((row) => (
                             <div key={`session-info:${row.label}`} style={{ display: "contents" }}>
