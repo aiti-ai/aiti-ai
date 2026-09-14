@@ -16,6 +16,7 @@ import { ExtSlot, useExtProvides } from "./ExtSlots";
 import { EXT_PROVIDES } from "@/lib/ext/types";
 import { apiUrl } from "@/lib/base-path";
 import { dedupeFetch } from "@/lib/dedupe-fetch";
+import { ensureHomeDir, getHomeDir } from "@/lib/home-dir";
 
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
@@ -707,12 +708,13 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   }, [explorerRefreshKey]);
 
   useEffect(() => {
-    // home dir 会话内不变：模块级缓存让重挂/双实例二次挂载零请求（重复请求分析 §3.2）；
-    // dedupeFetch 兜住多实例同窗口并发首拉。
-    if (cachedHomeDir) { setHomeDir(cachedHomeDir); return; }
-    dedupeFetch(apiUrl("/api/home")).then((r) => r.json()).then((d: { home?: string }) => {
-      if (d.home) { cachedHomeDir = d.home; setHomeDir(d.home); }
-    }).catch(() => {});
+    // home dir 会话内不变：lib/home-dir 共享单例（宿主 + 扩展统一收口，一次请求；
+    // 重挂/双实例零请求）。
+    const cached = cachedHomeDir ?? getHomeDir();
+    if (cached) { cachedHomeDir = cached; setHomeDir(cached); return; }
+    void ensureHomeDir().then((dir) => {
+      if (dir) { cachedHomeDir = dir; setHomeDir(dir); }
+    });
   }, []);
 
   const restoredRef = useRef(false);

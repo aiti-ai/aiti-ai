@@ -4,6 +4,7 @@ import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, use
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiUrl, inAppPathname, withBasePath } from "@/lib/base-path";
 import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
+import { homeDirService } from "@/lib/home-dir";
 
 import { useGlobalKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { PiWebTitle } from "./PiWebTitle";
@@ -244,6 +245,9 @@ function ExtToolbarIconButton({ item }: { item: ExtUiItemRegistered }) {
 // 任何扩展 client materialize 时服务已可用（消费方仍应判空降级以兼容旧宿主）。
 // 快照发布由 AppShell 内的 session-state effect 驱动。
 registerExtClientService("pi-web", "pi-web.session", piWebSessionService);
+// home 目录共享单例（开页 /api/home 去重）：扩展经 ctx.getExtService("pi-web.home")
+// 消费 ensure()，不再各自 fetch。
+registerExtClientService("pi-web", "pi-web.home", homeDirService);
 // 统一 toast 服务（2026-09-13）：宿主持有右上角队列，扩展经 ctx.getExtService("pi-web.toast").show 消费
 // ——替代扩展各自造 toast（组件内 state+setTimeout）；渲染归 HostToastHost（AppShell 挂载）。
 registerExtClientService("pi-web", "pi-web.toast", piWebToastService);
