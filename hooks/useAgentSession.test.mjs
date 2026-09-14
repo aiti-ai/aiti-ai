@@ -371,6 +371,32 @@ test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", ()
   assert.doesNotMatch(messageEndSource, /streamState\.streamingMessage/);
 });
 
+test("does not double-append the first user message when the optimistic key was cleared early", () => {
+  const messageEndSource = source.slice(
+    source.indexOf('case "message_end"'),
+    source.indexOf('case "tool_execution_start"'),
+  );
+  // 首发消息重复根因（2026-09-16）：新会话确保连接时 SSE connected 帧先于 prompt 送达
+  // 后端，服务端 isRunning=false → 客户端「判闲纠正」收口分支清空 optimisticUserMessageKeyRef；
+  // 随后 agent_start 恢复运行，message_end(user) 到达时 optimisticKey 已丢 → 盲目追加 →
+  // 首发 user 气泡显示两次。修复：user 分支加幂等兜底 —— 尾部最后一条是同 key user 消息时
+  // 直接跳过，不依赖 ref 是否存活。
+  const dedicatedSource = messageEndSource.slice(
+    messageEndSource.indexOf("const delivered = normalizeToolCalls(completed)"),
+    messageEndSource.indexOf("dispatchStream({ type: \"end\" })"),
+  );
+  // 原始去重路径仍保留（optimisticKey 存活时消化乐观气泡）。
+  assert.match(dedicatedSource, /optimisticKey && last\?\.role === "user" && userMessageKey\(last\) === optimisticKey/);
+  // 幂等兜底：optimisticKey 丢失但尾部同 key user 消息仍在原位 → return prev 跳过。
+  assert.match(dedicatedSource, /userMessageKey\(last\) === deliveredKey/);
+  assert.match(dedicatedSource, /幂等兜底/);
+  assert.ok(
+    dedicatedSource.indexOf("userMessageKey(last) === deliveredKey") > dedicatedSource.indexOf("userMessageKey(last) === optimisticKey"),
+    "幂等兜底必须置于原始 optimisticKey 去重路径之后",
+  );
+  assert.match(dedicatedSource, /if \(last\?\.role === "user" && userMessageKey\(last\) === deliveredKey\) \{\s*return prev;\s*\}/);
+});
+
 test("restoring a running session does not clear an SSE snapshot", () => {
   const mountSource = source.slice(
     source.indexOf("// Load session on mount"),

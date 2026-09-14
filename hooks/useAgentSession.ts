@@ -1860,6 +1860,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
                 ? prev
                 : [...prev.slice(0, -1), delivered];
             }
+            // 幂等兜底：optimisticKey 可能已被提前清空——新会话首发时 connected 判闲纠正
+            // （SSE connected 帧先于 prompt 送达，服务端 isRunning=false → 收口分支清 key，
+            // 实测首发消息 user 气泡重复显示）以及 finishPromptWithoutStream 等收口路径。
+            // 此时乐观气泡仍留在列表尾部：若尾部最后一条正是同 key 的 user 消息，它就是
+            // 本轮回执的对应气泡 —— 直接跳过，绝不追加第二条一模一样的 user 消息。
+            if (last?.role === "user" && userMessageKey(last) === deliveredKey) {
+              return prev;
+            }
             return [...prev, delivered];
           });
         } else if (completed) {
