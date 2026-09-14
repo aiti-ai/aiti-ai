@@ -13,7 +13,7 @@ import {
   getRpcSessionInfos,
   getRunningRpcSessionIds,
 } from "@/lib/rpc-manager";
-import { getHandleSessionInfos, getRunningHandleIds, getHandle } from "@/lib/session";
+import { getHandleSessionInfos, getRunningHandleIds, getHandle, warmHandleFirstMessages } from "@/lib/session";
 import { getBridgeRunningIds } from "@/lib/session/bridge-running";
 import { getRegistry } from "@/lib/ext/registry";
 import { stampExternalSessions } from "@/lib/session/placeholder";
@@ -38,6 +38,9 @@ export async function GET(req: Request) {
     ]);
     // Live backend sessions (attach/spawn/extension handles) — transient rows
     // so the sidebar lists them and ?session=<composite-id> restore works.
+    // 先预热 firstMessage 缓存（omp 等无占位文件后端）：首载即真实首条用户消息，
+    // 与 pi 磁盘会话同语义（无 name 时侧栏显示 firstMessage）。
+    await warmHandleFirstMessages();
     const backendRows = await attachSessionProjectInfo(getHandleSessionInfos());
 
     const pathKeyedHandles = backendRows.filter((r) => !r.id.startsWith("/"));

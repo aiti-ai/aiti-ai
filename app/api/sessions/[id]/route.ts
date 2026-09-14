@@ -16,7 +16,7 @@ import {
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
 import { abortSubagent, getRpcSession, getRpcSessionInfos, getAliveRpcSessionIds, stopIdleRpcSession } from "@/lib/rpc-manager";
-import { resolveAnySession, attachIfBridged, handleModelToClient } from "@/lib/session";
+import { resolveAnySession, attachIfBridged, handleModelToClient, extractFirstUserText } from "@/lib/session";
 import { normalizeRawMessages } from "@/lib/normalize";
 import { listProviders } from "@/lib/session/providers";
 import { resolvePlaceholderSession, removeHandle } from "@/lib/session";
@@ -98,13 +98,7 @@ export async function GET(
           const r = (await ph.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
           messages = normalizeRawMessages(r?.entries ?? []);
         } catch { /* get_messages 缺省 → 空 */ }
-        const first = messages.find((m) => (m as { role?: string }).role === "user");
-        const firstText = first
-          ? (() => {
-              const c = (first as { content?: unknown }).content;
-              return typeof c === "string" ? c : "(backend session)";
-            })()
-          : "(backend session)";
+        const firstText = extractFirstUserText(messages) || "(backend session)";
         const phHeader = readSessionHeader(fpEarly) as unknown as { agent?: string; extId?: string } | null;
         // 站位真实标题（注册表 extId → name；open-live/回放时写入）
         const phName = phHeader?.extId ? getPlaceholder(phHeader.extId)?.name : undefined;
@@ -151,13 +145,7 @@ export async function GET(
         } catch (e) {
           console.error("[sessions/[id]] backend get_messages failed:", e instanceof Error ? e.message : e);
         }
-        const first = messages.find((m) => (m as { role?: string }).role === "user");
-        const firstText = first
-          ? (() => {
-              const c = (first as { content?: unknown }).content;
-              return typeof c === "string" ? c : "(backend session)";
-            })()
-          : "(backend session)";
+        const firstText = extractFirstUserText(messages) || "(backend session)";
         const cid = canonicalExternalId(id, wrapped.sessionId);
         return NextResponse.json({
           sessionId: cid,

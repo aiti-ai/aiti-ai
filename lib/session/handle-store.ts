@@ -13,6 +13,88 @@
 import type { SessionHandle } from "./types";
 import { hasPlaceholder } from "./placeholder.ts";
 
+// ============================================================================
+// firstMessage 惰性缓存（2026-09-14）
+//
+// 后端 handle 的瞬态行此前 firstMessage 硬编码 "(backend session)"——pi 磁盘会话
+// 会显示真实首条用户消息（session.name 为空时），spawn 类后端（omp 等，无站位文件、
+// 无 agentKey）只能拿到占位文本。这里按 handle 实例惰性缓存真实首条 user 消息：
+// 首次 /api/sessions 预热（getMessages capability，超时保护）后，后续请求同步命中。
+// ============================================================================
+
+/** handle 实例级 firstMessage 缓存（WeakMap：handle 出库自动回收）。 */
+const firstMessageCache = new WeakMap<SessionHandle, string>();
+/** 预热 in-flight 去重（同一 handle 并发 GET 只拉一次 getMessages）。 */
+const firstMessageWarming = new WeakSet<SessionHandle>();
+
+/** content（string | 文本块数组）→ 文本。 */
+function textFromContent(c: unknown): string {
+  if (typeof c === "string") return c.trim();
+  if (Array.isArray(c)) {
+    const t = (c as Array<{ type?: unknown; text?: unknown }>).find((b) => b?.type === "text")?.text;
+    if (typeof t === "string" && t.trim()) return t.trim();
+  }
+  return "";
+}
+
+/**
+ * 从后端 getMessages 结果提取首条 user 消息文本（跨形状自适应，与
+ * normalizeHandleMessages 同款判定）：pi entry（{type,message} 嵌层）解包；
+ * 直传消息形状（{role,content}）直接用。取不到 → ""。
+ */
+export function extractFirstUserText(entries: unknown[]): string {
+  for (const item of Array.isArray(entries) ? entries : []) {
+    if (!item || typeof item !== "object") continue;
+    const rec = item as Record<string, unknown>;
+    let msg: Record<string, unknown> | undefined;
+    if (typeof rec.type === "string" && !("role" in rec)) {
+      const m = (rec as { message?: unknown }).message;
+      if (m && typeof m === "object") msg = m as Record<string, unknown>;
+      else continue;
+    } else {
+      msg = rec;
+    }
+    if (msg.role !== "user") continue;
+    const text = textFromContent(msg.content);
+    if (text) return text;
+  }
+  return "";
+}
+
+/** 预热单个 handle（超时保护，失败静默保持占位）。 */
+async function warmOne(h: SessionHandle, timeoutMs: number): Promise<void> {
+  firstMessageWarming.add(h);
+  try {
+    const entries = await Promise.race([
+      h.getMessages!(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error("firstMessage warm timeout")), timeoutMs);
+      }),
+    ]);
+    const text = extractFirstUserText(entries as unknown[]);
+    if (text) firstMessageCache.set(h, text);
+  } catch {
+    // 读取失败/超时：保持占位，下轮 GET 再试
+  } finally {
+    firstMessageWarming.delete(h);
+  }
+}
+
+/**
+ * 为缺缓存的存活 handle 并行预热 firstMessage（有 getMessages 能力者）。
+ * 缓存命中的同步返回；in-flight 去重防并发 GET 重复拉取。
+ * 列表/详情路由在组装行前 await 一次，保证首载即真实首条消息。
+ */
+export async function warmHandleFirstMessages(timeoutMs = 2000): Promise<void> {
+  const targets: SessionHandle[] = [];
+  for (const h of store().values()) {
+    if (h.alive() && typeof h.getMessages === "function" && !firstMessageCache.has(h) && !firstMessageWarming.has(h)) {
+      targets.push(h);
+    }
+  }
+  await Promise.all(targets.map((h) => warmOne(h, timeoutMs)));
+}
+
 declare global {
   var __sessionHandles: Map<string, SessionHandle> | undefined;
 }
@@ -155,7 +237,9 @@ export function getHandleSessionInfos(): Array<{
       created: new Date().toISOString(),
       modified: new Date().toISOString(),
       messageCount: 0,
-      firstMessage: `(backend session)`,
+      // 有真实首条用户消息（缓存命中）→ 与 pi 磁盘会话同语义：无 name 时显示首条
+      // 消息文本；未预热/无消息 → 保持占位
+      firstMessage: firstMessageCache.get(h) ?? `(backend session)`,
       transient: true,
       agent,
     });
