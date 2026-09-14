@@ -793,7 +793,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const [dockPanelStates, setDockPanelStates] = useState<Map<string, string>>(new Map());
   useEffect(() => {
     const onPresent = (e: Event) => {
-      const detail = (e as CustomEvent<{ key: string; state: string }>).detail;
+      const detail = (e as CustomEvent<{ key: string; state: string; auto?: boolean }>).detail;
       if (!detail?.key) return;
       setDockPanelStates((prev) => {
         const next = new Map(prev);
@@ -826,6 +826,15 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         revealFileTabOnOpen(); // 用户从工具条/扩展打开 dock 面板 → 目标页签滚入视野
         setActiveFileTabId(`dock:${detail.key}`);
       }
+      // 左栏 dock 联动（右栏同款语义补左）：面板停靠到左栏区块（docked:sidebar:*）时
+      // 主动展开侧栏——小屏侧栏默认隐藏为 overlay 抽屉（移动端加载即收起），不展开则
+      // 用户点击计划/任务等按钮把面板停靠进左栏后完全看不到；桌面端侧栏常开，
+      // setSidebarOpen(true) 幂等无副作用。旧值 sidebar-explorer 一并兼容。
+      // auto 标记 = 非用户主动的恢复性入栈（刷新后 autoDock 常驻区块恢复）→ 不展开
+      // （否则小屏加载完抽屉被恢复入栈误拉起，破坏「移动端加载即收起」设计）。
+      if (!detail.auto && (detail.state === "docked:sidebar-explorer" || detail.state.startsWith("docked:sidebar:"))) {
+        setSidebarOpen(true);
+      }
     };
     window.addEventListener("piwe-float-present-change", onPresent);
     // v3.1 激活联动：已 docked 面板重复 open/dock:同区（无状态迁移，change 不发）→ 状态机
@@ -833,7 +842,14 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     // 仅 docked 态触发；floating 幂等不发事件，「手动收起右栏后重复 open 浮窗不误展开」不变。
     const onActivate = (e: Event) => {
       const detail = (e as CustomEvent<{ key: string; state: string }>).detail;
-      if (!detail?.key || !detail.state?.startsWith("docked:right-panel")) return;
+      if (!detail?.key || !detail.state?.startsWith("docked:")) return;
+      // 左栏 dock 同态再激活（面板已停靠侧栏，重复 open/切回）：展开侧栏把小屏
+      // overlay 抽屉拉起——与下方右栏激活联动同语义（侧栏无 tab 位，只需展开）。
+      if (detail.state === "docked:sidebar-explorer" || detail.state.startsWith("docked:sidebar:")) {
+        setSidebarOpen(true);
+        return;
+      }
+      if (!detail.state.startsWith("docked:right-panel")) return;
       setRightPanelOpen(true);
       revealFileTabOnOpen(); // 已停靠面板重复打开置前（用户操作）→ 目标页签滚入视野
       setActiveFileTabId(`dock:${detail.key}`);
