@@ -384,6 +384,40 @@ type SlashCommandsResponse = {
   commands?: SlashCommandInfo[];
 };
 
+/** POST /api/models 的加载窗口合流（同 cwd 并发共享一次请求；成功结果微缓存 2.5s）。
+ *  与 dedupeFetch 同思路，但请求体是 POST cwd，缓存键按 cwd 区分。*/
+const modelsShared = new Map<string, { at: number; promise: Promise<ModelsResponse> }>();
+const MODELS_SHARED_TTL_MS = 2_500;
+function fetchModelsShared(cwd: string): Promise<ModelsResponse> {
+  const key = cwd || "";
+  const hit = modelsShared.get(key);
+  if (hit && Date.now() - hit.at < MODELS_SHARED_TTL_MS) return hit.promise;
+  const promise = fetch(apiUrl("/api/models"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(key ? { cwd: key } : {}),
+  }).then(async (res) => {
+    if (!res.ok) {
+      let detail = "";
+      try {
+        const body: unknown = await res.json();
+        if (body && typeof body === "object" && "error" in body && typeof body.error === "string") {
+          detail = body.error;
+        }
+      } catch {
+        // Non-JSON error responses fall back to the HTTP status.
+      }
+      throw new Error(detail || `Failed to load models (HTTP ${res.status})`);
+    }
+    return await res.json() as ModelsResponse;
+  }).catch((e) => {
+    if (modelsShared.get(key)?.promise === promise) modelsShared.delete(key);
+    throw e;
+  });
+  modelsShared.set(key, { at: Date.now(), promise });
+  return promise;
+}
+
 export function useAgentSession(opts: UseAgentSessionOptions) {
   const {
     session, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
@@ -2614,26 +2648,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
     let d: ModelsResponse;
     try {
-      const res = await fetch(apiUrl("/api/models"), {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(modelCwd ? { cwd: modelCwd } : {}),
-        ...(signal ? { signal } : {}),
-      });
-      if (!res.ok) {
-        let detail = "";
-        try {
-          const body: unknown = await res.json();
-          if (body && typeof body === "object" && "error" in body && typeof body.error === "string") {
-            detail = body.error;
-          }
-        } catch (e) {
-          if (e instanceof DOMException && e.name === "AbortError") throw e;
-          // Non-JSON error responses fall back to the HTTP status.
-        }
-        throw new Error(detail || `Failed to load models (HTTP ${res.status})`);
-      }
-      d = await res.json() as ModelsResponse;
+      // 加载窗口合流：同 cwd 的并发/秒级重复挂载（StrictMode 双 effect、会话窗口重挂）
+      // 共享一次 POST；调用方自己的 abort 只影响本调用方拿结果，不拆共享请求
+      // （触发者卸载不应让另一个还在等模型列表的调用方一起失败）。
+      d = await fetchModelsShared(modelCwd);
       signal?.throwIfAborted();
     } catch (e) {
       if (!signal?.aborted && !(e instanceof DOMException && e.name === "AbortError")) {

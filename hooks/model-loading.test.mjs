@@ -18,6 +18,11 @@ function visit(node) {
 visit(source);
 const loader = nodes.find((node) => ts.isVariableDeclaration(node) && node.name.getText(source) === "loadModels");
 const schedule = nodes.find((node) => ts.isVariableDeclaration(node) && node.name.getText(source) === "MODELS_RETRY_DELAYS_MS");
+// loadModels 现在经模块级 fetchModelsShared（加载窗口合流）发请求——
+// 沙箱需要连同其依赖（缓存 Map / TTL）一起注入（每个 setup 一份新 Map，测试间隔离）。
+const sharedFn = nodes.find((node) => ts.isFunctionDeclaration(node) && node.name?.getText(source) === "fetchModelsShared");
+const sharedMapDecl = nodes.find((node) => ts.isVariableDeclaration(node) && node.name.getText(source) === "modelsShared");
+const sharedTtlDecl = nodes.find((node) => ts.isVariableDeclaration(node) && node.name.getText(source) === "MODELS_SHARED_TTL_MS");
 const effect = nodes.find((node) => ts.isCallExpression(node)
   && node.expression.getText(source) === "useEffect"
   && node.arguments[1]?.getText(source) === "[loadModels, modelsRefreshKey]");
@@ -39,9 +44,14 @@ function setup(fetchImpl) {
     // fork 用 apiUrl() 包装子路径部署（/dev 前缀）的 API 地址；沙盒内直通。
     apiUrl: (path) => path,
     fetch: fetchImpl,
-    MODELS_RETRY_DELAYS_MS: script(schedule.initializer.getText(source)).runInNewContext(),
     delay: async (ms) => { delays.push(ms); },
   };
+  // 这些片段必须在**同一个 context 对象**上求值：函数闭包的自由变量按创建时的
+  // context 解析——换成空 context 求值会报 “modelsShared is not defined”。
+  context.MODELS_RETRY_DELAYS_MS = script(schedule.initializer.getText(source)).runInNewContext(context);
+  context.modelsShared = script(`(${sharedMapDecl.initializer.getText(source)})`).runInNewContext(context);
+  context.MODELS_SHARED_TTL_MS = script(`(${sharedTtlDecl.initializer.getText(source)})`).runInNewContext(context);
+  context.fetchModelsShared = script(`(${sharedFn.getText(source)})`).runInNewContext(context);
   for (const name of ["ModelError", "ModelNames", "ModelScopeWarnings", "ModelThinkingLevels", "ModelThinkingLevelMaps", "ModelList", "NewSessionDefaultModel", "ThinkingLevel"]) {
     context[`set${name}`] = (value) => writes.push([name, value]);
   }
@@ -82,28 +92,29 @@ test("model-load failures stay visible through bounded retries and clear on reco
 });
 
 test("cancelling model loads prevents state writes and further retries", async () => {
+  // 共享请求不再透传调用方 signal（否则先卸载的调用方会拆掉其他调用方的共享请求）；
+  // 调用方中止语义由 loadModels 在结果返回后 throwIfAborted 保证——故这里让共享请求
+  // 照常返回，断言调用方零写入/零重试。
   for (const status of [200, 403]) {
     const reading = Promise.withResolvers();
-    const state = setup(async (_url, { signal }) => ({
+    const release = Promise.withResolvers();
+    const state = setup(async () => ({
       ok: status === 200, status,
-      json: () => new Promise((_resolve, reject) => {
-        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-        reading.resolve();
-      }),
+      json: async () => { reading.resolve(); await release.promise; return { models: {}, modelList: [] }; },
     }));
     const completed = state.run();
-    await reading.promise;
+    await reading.promise; // 请求已在飞
     state.context.controller.abort();
+    release.resolve(); // 放行共享请求
     await completed;
     assert.deepEqual(state.writes, []);
     assert.deepEqual(state.delays, []);
   }
 
-  const late = setup(async (_url, { signal }) => ({
+  const late = setup(async () => ({
     ok: true,
     json: async () => {
       late.context.controller.abort();
-      assert.equal(signal.aborted, true);
       return { models: {}, modelList: [] };
     },
   }));
