@@ -10,6 +10,26 @@ import type { ModelsData } from "./models-cache";
 /** aiti-model-check 探测/运行期状态归一化：ok=可用 / rl=限流429 / err=其它错误 / unprobed=未测。 */
 export type AvailKind = "ok" | "rl" | "err" | "unprobed";
 
+/**
+ * aiti-model-check state.json 原始内容 → provider/model 可用性 Map（纯函数）。
+ * 容忍缺字段/损坏条目（静默跳过），返回空 Map = 无状态可展示。
+ * 字段语义与 aiti-model-check/core.cjs 的 stateFile 一致：
+ *   lastProbedAt 缺省 → unprobed；lastOk → ok；rateLimited → rl；其余 → err。
+ */
+export function parseModelCheckState(raw: unknown): Map<string, AvailKind> {
+  const out = new Map<string, AvailKind>();
+  const models = (raw as { models?: Record<string, { lastProbedAt?: number; lastOk?: boolean; rateLimited?: boolean }> } | null)?.models;
+  if (!models || typeof models !== "object") return out;
+  for (const [key, m] of Object.entries(models)) {
+    if (!m || typeof m !== "object") continue;
+    if (!m.lastProbedAt) out.set(key, "unprobed");
+    else if (m.lastOk) out.set(key, "ok");
+    else if (m.rateLimited) out.set(key, "rl");
+    else out.set(key, "err");
+  }
+  return out;
+}
+
 export interface AnnotatedModelEntry {
   id: string;
   name: string;

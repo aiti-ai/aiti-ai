@@ -515,7 +515,7 @@ export function ModelSelector({
                       key={`recent:${option.provider}:${option.modelId}`}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
-                      hint={isMobile ? undefined : option.provider}
+                      hint={option.provider}
                       status={option.status}
                       disabled={refreshing}
                       onClick={() => choose(option)}
@@ -542,7 +542,7 @@ export function ModelSelector({
                       key={`${option.provider}:${option.modelId}`}
                       active={option.modelId === value?.modelId && option.provider === value?.provider}
                       label={option.name}
-                      hint={isMobile ? undefined : option.provider}
+                      hint={option.provider}
                       status={option.status}
                       disabled={refreshing}
                       onClick={() => choose(option)}
@@ -558,7 +558,8 @@ export function ModelSelector({
   );
 }
 
-function ModelOptionButton({ active, label, hint, status, disabled = false, onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; disabled?: boolean; onClick: () => void }) {
+/** 选项行（导出仅供单测渲染断言）：名字 + provider 后缀 + 可用性状态，桌面/小屏同一份信息。 */
+export function ModelOptionButton({ active, label, hint, status, disabled = false, onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; disabled?: boolean; onClick: () => void }) {
   const statusMark = status === "rl"
     ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#b45309", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.14)" }} title="当前限流（429）——选中可能被冷却拒发，仅提示不会自动禁用">429</span>
     : status === "err"
@@ -583,7 +584,10 @@ function ModelOptionButton({ active, label, hint, status, disabled = false, onCl
       <span title={label} style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>{label}</span>
       {statusMark}
       {hint && hint !== label ? (
-        <span style={{ marginLeft: "auto", flexShrink: 0, paddingLeft: 14, fontSize: 10, fontWeight: 400, color: "var(--text-dim)", opacity: 0.8 }} title={hint}>{hint}</span>
+        // 小屏不再隐藏 provider 后缀（2026-09-13）：桌面/小屏同一份信息——小屏面板早已
+        // 全屏全高（宽度充足），且「最近使用」段没有分组头，隐藏后跨 provider 同名模型
+        // 无法区分。maxWidth 兜底防超长 provider 挤没模型名（两端一致）。
+        <span style={{ marginLeft: "auto", flexShrink: 0, paddingLeft: 14, maxWidth: "45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10, fontWeight: 400, color: "var(--text-dim)", opacity: 0.8 }} title={hint}>{hint}</span>
       ) : null}
     </button>
   );

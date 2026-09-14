@@ -13,7 +13,7 @@ import { resolveVisibleModels, selectInitialModelScope } from "@/lib/model-scope
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { projectTrustReloadOptions } from "@/lib/project-trust";
 import { readModelsConfig } from "@/lib/models-config-store";
-import { annotateVisibleModels, type AvailKind } from "@/lib/model-visibility";
+import { annotateVisibleModels, parseModelCheckState, type AvailKind } from "@/lib/model-visibility";
 
 export const dynamic = "force-dynamic";
 
@@ -32,24 +32,18 @@ function compareModelEntries(
  *  仅展示提示（429/错误），绝不据此自动禁用——禁用是用户的显式操作。
  *  文件不存在/不可解析 → 空 Map（无状态可展示，静默降级）。 */
 function readModelCheckAvail(): Map<string, AvailKind> {
-  const out = new Map<string, AvailKind>();
   try {
-    const statePath = join(getAgentDir(), "..", "web", "data", "aiti-model-check", "state.json");
-    if (!existsSync(statePath)) return out;
-    const raw = JSON.parse(readFileSync(statePath, "utf8")) as {
-      models?: Record<string, { lastProbedAt?: number; lastOk?: boolean; rateLimited?: boolean }>;
-    };
-    for (const [key, m] of Object.entries(raw.models ?? {})) {
-      if (!m || typeof m !== "object") continue;
-      if (!m.lastProbedAt) out.set(key, "unprobed");
-      else if (m.lastOk) out.set(key, "ok");
-      else if (m.rateLimited) out.set(key, "rl");
-      else out.set(key, "err");
-    }
+    // 2026-09-13 扩展数据分层（三目录对称）：state.json 落在 cache/ 子目录；
+    // 旧根路径保留回退（未迁移/旧版扩展的部署仍可读）。
+    const root = join(getAgentDir(), "..", "web", "data", "aiti-model-check");
+    const statePath = [join(root, "cache", "state.json"), join(root, "state.json")]
+      .find((candidate) => existsSync(candidate));
+    if (!statePath) return new Map();
+    return parseModelCheckState(JSON.parse(readFileSync(statePath, "utf8")));
   } catch {
     /* 状态文件损坏/不可读 → 无状态展示 */
+    return new Map();
   }
-  return out;
 }
 
 async function loadModels(cwd: string): Promise<ModelsData> {

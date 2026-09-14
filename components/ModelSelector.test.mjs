@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { createJiti } from "jiti";
 
@@ -203,6 +204,41 @@ test("ModelRefreshRow：idle 可点；refreshing 转圈禁用（data-model-refre
   assert.match(busy, /disabled/);
   assert.match(busy, /刷新中…/);
   assert.match(busy, /pi-refresh-spin/, "刷新中带旋转动画");
+});
+
+// ── 小屏与桌面同款信息（2026-09-13 用户拍板：小屏模型面板不再"乞丐版"）──
+// 列表主体自 v4 七审（92dfb4f）起已是同一组件；此前残留的唯一信息差异 = 小屏隐藏
+// provider 后缀（2016da9，当时的理由是窄屏挤压）。小屏面板现为全屏全高，宽度充足——
+// 恢复后缀，并让「最近使用」段（无分组头）能区分跨 provider 同名模型。
+const modelSelectorSource = await readFile(new URL("./ModelSelector.tsx", import.meta.url), "utf8");
+
+test("选项行在桌面/小屏一致展示 provider 后缀（不得回退移动端隐藏）", () => {
+  assert.doesNotMatch(
+    modelSelectorSource,
+    /isMobile\s*\?\s*undefined\s*:\s*option\.provider/,
+    "小屏隐藏 provider 后缀的分支必须保持删除",
+  );
+  const providerHints = modelSelectorSource.match(/hint=\{option\.provider\}/g) ?? [];
+  assert.ok(
+    providerHints.length >= 2,
+    `最近使用 + provider 分组两处都要传 provider 后缀（实际 ${providerHints.length} 处）`,
+  );
+});
+
+test("ModelOptionButton：名称 + provider 后缀 + 可用性状态三者同显", async () => {
+  const React = (await import("react")).default;
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { ModelOptionButton } = await jiti.import("./ModelSelector.tsx");
+  const html = renderToStaticMarkup(React.createElement(ModelOptionButton, {
+    active: true,
+    label: "deepseek-v4-flash",
+    hint: "qoder-local",
+    status: "rl",
+    onClick: () => {},
+  }));
+  assert.match(html, /deepseek-v4-flash/);
+  assert.match(html, /qoder-local/, "provider 后缀要显示（小屏同款）");
+  assert.match(html, /429/, "限流状态徽标要显示");
 });
 
 // ── 小屏底排防溢出（2026-09-14）──
