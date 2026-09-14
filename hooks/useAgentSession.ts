@@ -1674,6 +1674,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           event.isStreaming === false
           && (event as { isRunning?: boolean }).isRunning === false
           && agentRunningRef.current
+          // 判闲纠正守卫（2026-09-14）：prompt 已发未回 / 乐观气泡未消化时，服务端
+          // isRunning=false 是「后端尚未受理 prompt」的正常窗口（pi fork 子进程冷启动
+          // 慢；spawn 会话 ensureEventsConnected 的 connected 帧先于 prompt 送达）。
+          // 此时收口会误清 agentRunning → 发送后长时间不显示「运行中」；乐观气泡也会
+          // 因 optimisticUserMessageKeyRef 被清而在 message_end 时重复追加。
+          // 守卫：本地还有待受理的 prompt / 未消化的乐观气泡 → 跳过纠正，
+          // 等 agent_start 自然接管；真正空闲会话的重连仍正常纠正。
+          && !rpcPromptPendingRef.current
+          && !optimisticUserMessageKeyRef.current
         ) {
           // 服务端权威判闲且本地仍挂「运行中」：（重）连时纠正丢失的 agent_settled/
           // compaction_end（SSE 断连窗口错过收口帧 → 运行中状态冻结到下次刷新）。
@@ -1685,6 +1694,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setBashRunning(false);
           settleUiStage();
         }
+        break;
+      }
+      case "session_backend_dead": {
+        // spawn/attach 后端子进程退出（异常/被 kill/主动 dispose）。前端必须收尾
+        // agentRunning——否则「运行中」永挂（实测 pi fork 子进程退出后 UI 一直显示
+        // 运行中，而服务端早已判闲）。loadSession 刷新会话真实状态。
+        const wasRunning = settleUiStage();
+        const sid = sessionIdRef.current;
+        if (sid) void loadSession(sid);
+        if (wasRunning) onAgentEnd?.();
         break;
       }
       case "session_backend_ready": {

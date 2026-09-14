@@ -762,3 +762,34 @@ test("busy-state adoption covers compaction windows (state / connected / events)
   assert.match(source, /if \(!data\.running \|\| !state \|\| !stateIsActive\(state\)\) \{/);
   assert.match(source, /const busy = data\.running && !!state && stateIsActive\(state\)/);
 });
+
+test("idle-correction on connected skips while a prompt is pending or optimistic bubble undigested", () => {
+  // 根因（2026-09-14）：新会话首发时 SSE connected 帧先于 prompt 送达（服务端 isRunning=false），
+  // 旧的「判闲纠正」分支无条件 settleUiStage 会误清 agentRunning → 发送后长时间不显示运行中；
+  // 同时清 optimisticUserMessageKeyRef → message_end(user) 重复追加（首发消息显示两次）。
+  // 修复：纠正分支加守卫——本地有待受理 prompt / 未消化乐观气泡时跳过纠正。
+  const connectedSource = source.slice(
+    source.indexOf('case "connected"'),
+    source.indexOf('case "session_backend_dead"'),
+  );
+  assert.match(connectedSource, /\.isRunning === false/);
+  assert.match(connectedSource, /!rpcPromptPendingRef\.current/);
+  assert.match(connectedSource, /!optimisticUserMessageKeyRef\.current/);
+  // 守卫必须在 settleUiStage 之前（同一条件链内）
+  assert.ok(
+    connectedSource.indexOf("!rpcPromptPendingRef.current") < connectedSource.indexOf("settleUiStage()"),
+    "守卫应出现在 settleUiStage 调用之前",
+  );
+});
+
+test("backend subprocess death settles the frontend running state", () => {
+  // 根因（2026-09-14）：PCliSpawnHandle.markDead 只发 session_backend_dead，前端无此 case →
+  // agentRunning 永挂（pi 子进程退出后 UI 一直「运行中」，服务端早已判闲）。
+  const deadSource = source.slice(
+    source.indexOf('case "session_backend_dead"'),
+    source.indexOf('case "session_backend_ready"'),
+  );
+  assert.match(deadSource, /const wasRunning = settleUiStage\(\)/);
+  assert.match(deadSource, /void loadSession\(sid\)/);
+  assert.match(deadSource, /if \(wasRunning\) onAgentEnd\?\.\(\)/);
+});
