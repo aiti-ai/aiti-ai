@@ -2193,6 +2193,21 @@ export class AgentSessionWrapper {
     return Array.from(this.extensionWidgets.values());
   }
 
+  /** 同一 widget 内容 + placement 未变时不重复推送——上游沿 TUI 动画/轮询
+   *  （0.5–1s 一帧）会反复 requestRender，内容常与上次相同；旧实现在此每次都
+   *  emit，前端跟着无谓刷新。 */
+  private isExtensionWidgetUnchanged(
+    key: string,
+    lines: readonly string[],
+    placement: "aboveEditor" | "belowEditor",
+  ): boolean {
+    const previous = this.extensionWidgets.get(key);
+    return previous !== undefined
+      && previous.placement === placement
+      && previous.lines.length === lines.length
+      && previous.lines.every((line, index) => line === lines[index]);
+  }
+
   private nextExtensionWidgetGeneration(key: string): number {
     const generation = (this.extensionWidgetGenerations.get(key) ?? 0) + 1;
     this.extensionWidgetGenerations.set(key, generation);
@@ -2321,6 +2336,9 @@ export class AgentSessionWrapper {
     ) return;
 
     const widgetLines = lines as string[];
+    if (active.rendered && this.isExtensionWidgetUnchanged(active.key, widgetLines, active.placement)) {
+      return;
+    }
     this.extensionWidgets.set(active.key, {
       key: active.key,
       lines: widgetLines,
@@ -2654,10 +2672,12 @@ export class AgentSessionWrapper {
           ? this.clearExtensionWidget(key)
           : this.nextExtensionWidgetGeneration(key);
         if (this.extensionWidgetGenerations.get(key) !== generation) return;
+        const placement = options?.placement ?? "aboveEditor";
+        if (this.isExtensionWidgetUnchanged(key, content, placement)) return;
         this.extensionWidgets.set(key, {
           key,
           lines: content,
-          placement: options?.placement ?? "aboveEditor",
+          placement,
         });
         this.emit({
           type: "extension_ui_request",

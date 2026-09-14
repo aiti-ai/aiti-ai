@@ -571,7 +571,9 @@ html.dark .web-login-error {
 }
 
 .extension-widget-trigger.is-updating .extension-widget-update-pulse::before {
-  animation: extension-widget-update-pulse 900ms ease-in-out infinite alternate;
+  /* 单次播放（时长与 ExtensionWidgets 的 WIDGET_UPDATE_PULSE_MS 一致）：
+     不再 infinite 闪烁；高频更新由 JS 侧按最小间隔降频。 */
+  animation: extension-widget-update-pulse 900ms ease-in-out 1;
 }
 
 @keyframes extension-widget-update-pulse {

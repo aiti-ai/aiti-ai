@@ -6,7 +6,12 @@ import { AnsiText } from "@/components/AnsiText";
 import type { ExtensionWidgetItem } from "@/lib/types";
 
 export const DEFAULT_EXPANDED_WIDGET_LINES = 3;
-export const WIDGET_UPDATE_IDLE_MS = 1100;
+/** 更新脉冲单次点亮时长（与 globals.css 中 extension-widget-update-pulse 动画时长一致）。 */
+export const WIDGET_UPDATE_PULSE_MS = 900;
+/** 同一 widget 两次更新脉冲的最小间隔——上游 widget 运行期 0.5–1s 一刷，
+ *  旧实现按 1.1s idle 窗口续期会让脉冲无限闪烁；此处把「更新提示」降频，
+ *  内容照常更新，只是通知不再高频闪。 */
+export const WIDGET_UPDATE_PULSE_MIN_INTERVAL_MS = 5000;
 
 export function formatExtensionWidgetContent(lines: string[]): string {
   return lines.join("\n");
@@ -32,6 +37,20 @@ export function getUpdatedExtensionWidgetKeys(
   }).filter((key): key is string => key !== null);
 }
 
+/** 从内容变化的 widget 中挑出本次可以点亮脉冲的 key：同一 key 距上次脉冲
+ *  不足 minIntervalMs 时跳过（通知降频，避免运行期持续闪烁）。 */
+export function selectPulseWidgetKeys(
+  updatedKeys: readonly string[],
+  lastPulseAt: ReadonlyMap<string, number>,
+  now: number,
+  minIntervalMs: number = WIDGET_UPDATE_PULSE_MIN_INTERVAL_MS,
+): string[] {
+  return updatedKeys.filter((key) => {
+    const last = lastPulseAt.get(key);
+    return last === undefined || now - last >= minIntervalMs;
+  });
+}
+
 function getDefaultExpandedWidgetKey(widgets: ExtensionWidgetItem[]): string | null {
   return widgets.find((widget) => {
     const lineCount = widget.lines.length;
@@ -51,6 +70,7 @@ export function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }
   const idPrefix = useId();
   const previousContentsRef = useRef<Map<string, string[]> | null>(null);
   const updateClearTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const lastPulseAtRef = useRef(new Map<string, number>());
   const [expandedWidgetKey, setExpandedWidgetKey] = useState<string | null>(
     () => getDefaultExpandedWidgetKey(widgets),
   );
@@ -71,10 +91,20 @@ export function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }
       clearTimeout(timer);
       updateClearTimersRef.current.delete(key);
     }
+    for (const key of lastPulseAtRef.current.keys()) {
+      if (!nextContents.has(key)) lastPulseAtRef.current.delete(key);
+    }
+
+    // 脉冲只做「有更新」的低频提示：距上次脉冲不足 WIDGET_UPDATE_PULSE_MIN_INTERVAL_MS
+    // 的更新不再点亮（内容照常刷新），每次点亮固定 WIDGET_UPDATE_PULSE_MS 后熄灭
+    // （CSS 单次动画，不再 infinite 闪烁）。
+    const now = Date.now();
+    const pulsingKeys = selectPulseWidgetKeys(updatedKeys, lastPulseAtRef.current, now);
+    for (const key of pulsingKeys) lastPulseAtRef.current.set(key, now);
 
     setUpdatingWidgetKeys((current) => {
       const next = new Set(Array.from(current).filter((key) => nextContents.has(key)));
-      for (const key of updatedKeys) next.add(key);
+      for (const key of pulsingKeys) next.add(key);
       if (
         next.size === current.size
         && Array.from(next).every((key) => current.has(key))
@@ -82,7 +112,7 @@ export function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }
       return next;
     });
 
-    for (const key of updatedKeys) {
+    for (const key of pulsingKeys) {
       const currentTimer = updateClearTimersRef.current.get(key);
       if (currentTimer) clearTimeout(currentTimer);
       updateClearTimersRef.current.set(key, setTimeout(() => {
@@ -93,7 +123,7 @@ export function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }
           next.delete(key);
           return next;
         });
-      }, WIDGET_UPDATE_IDLE_MS));
+      }, WIDGET_UPDATE_PULSE_MS));
     }
   }, [widgets]);
 

@@ -26,7 +26,6 @@ import { ExtensionStatusBar, ExtensionStatusToast } from "./ExtensionStatusBar";
 import { AnsiText } from "./AnsiText";
 import { useI18n } from "@/hooks/useI18n";
 import { useAgentSession, type AgentPhase, type NoticeItem } from "@/hooks/useAgentSession";
-import { ExtensionWidgets } from "./ExtensionWidgets";
 import { useDragDrop } from "@/hooks/useDragDrop";
 import { useIsMobile, useIsCompact } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -126,7 +125,6 @@ function ElapsedBadge({ startedAt }: { startedAt: number }) {
 
 const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
-const CHAT_INPUT_RIGHT_PADDING = CHAT_COLUMN_PADDING + CHAT_MINIMAP_WIDTH;
 const LAST_BACKEND_KEY = "pi-web:last-session-backend";
 /** 草稿静默恢复等待输入框就绪的最大帧数（≈5s @60fps）；超时放行对话框手动处理，避免草稿被永久隐藏。 */
 function NewSessionUpdateLink({
@@ -421,9 +419,6 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const sessionCap = useCallback(<K extends string>(k: K, fallback = true): boolean =>
     sessionCapabilities ? (sessionCapabilities[k] ?? false) : fallback,
   [sessionCapabilities]);
-
-  const aboveEditorWidgets = extensionWidgets.filter((widget) => widget.placement !== "belowEditor");
-  const belowEditorWidgets = extensionWidgets.filter((widget) => widget.placement === "belowEditor");
 
   // Expose the queue-export resolver to the parent (AppShell export dialog).
   useEffect(() => {
@@ -1885,27 +1880,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </div>
           </div>
         )}
-        <div
-          style={{
-            padding: `0 ${CHAT_COLUMN_PADDING}px`,
-            paddingRight: isMobile || isCompact ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
-          }}
-        >
-          <div style={{ maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
-            <ExtensionWidgets widgets={aboveEditorWidgets} />
-          </div>
-        </div>
+        {/* 扩展 widget 只在两处出现：桌面底部状态架（下方 ExtensionStatusBar）、
+            小屏 ⓘ/＋ InfoSheet（ChatInput）。原先按 placement 又在输入框上/下各渲染一份，
+            与状态架重复（同一 widget 出现两次、位置一上一下）——已收敛，placement 仅保留
+            在状态架 trigger 的方向图标上。 */}
         {chatInputElement}
-        <div
-          style={{
-            padding: `0 ${CHAT_COLUMN_PADDING}px`,
-            paddingRight: isMobile || isCompact ? CHAT_COLUMN_PADDING : CHAT_INPUT_RIGHT_PADDING,
-          }}
-        >
-          <div style={{ maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
-            <ExtensionWidgets widgets={belowEditorWidgets} />
-          </div>
-        </div>
         {/* 小屏：状态架整架不常驻（输入条=最底常驻元素），变化走 toast；详情收进
             ChatInput 的 ⓘ sheet。桌面状态架照旧。docs/pi-web-mobile-input-wechat-plan.md §六 */}
         {isMobile
