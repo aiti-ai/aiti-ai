@@ -28,6 +28,7 @@ import { dataRoot, extensionsRoot, bundledExtensionsRoot, devExtensionsRoot, ext
 import { loadExtensionFromDir, scanExtensionDirs, compareExtVersions, snapshotJitiCache, countRetranspiled } from "./loader.ts";
 import { extProtocolInfo, EXT_PROTOCOL_VERSION, EXT_PROTOCOL_MIN_MAJOR, EXT_PROTOCOL_STRICT_BLOCKED, type ExtProtocolInfo } from "./protocol.ts";
 import { buildBootGraph, type PiWebBootGraph } from "./client-modules.ts";
+import { buildClientBundle, emptyClientBundleCode, usesImportMeta, type ClientBundleEntry } from "./client-bundle.ts";
 import { ExtServicesRegistry } from "./services.ts";
 import { invokeAI as aiInvokeImpl } from "../ai-invoke.ts";
 import { registerExtensionProvider, removeProvider as removeProviderFromRegistry, cleanupAllExtensionProviders, findProvidersForAgent } from "../session/providers.ts";
@@ -1049,6 +1050,11 @@ export class ExtRegistryImpl {
           id: e.id,
           assetUrl: `/api/extensions/${e.id}/assets/${e.ext.client}`,
           hash: this.clientHash(e),
+          // eager 批量包排除项（见 lib/ext/client-bundle.ts 头注释）：
+          // 仅 import.meta 使用者（资产基址依赖入口 URL，打包后路径漂移）。
+          // 拆包扩展（薄壳 + 懒 chunk）不排除——由批量包构建器把其静态相对 import
+          // 外置为文件 URL，保证共享 chunk 运行时单实例。
+          bundleExcluded: usesImportMeta(join(e.dir, e.ext.client!)),
           // inject 边预留：扩展可在 ui 里声明 clientDependsOn（DSH inject 边）。
           inject: e.ext.ui?.clientDependsOn,
           // 懒加载：ui.clientImmediately === false → 图行标 immediately:false，
@@ -1066,6 +1072,51 @@ export class ExtRegistryImpl {
   /** 使启动图失效（reload/loadAll 后调用），下次访问重算。 */
   private invalidateBootGraph(): void {
     this._bootGraph = null;
+    this._clientBundleCache = null;
+  }
+
+  private _clientBundleCache: { rev: string; code: string; ids: string[] } | null = null;
+  private _clientBundleInFlight: Promise<{ rev: string; code: string; ids: string[] }> | null = null;
+
+  /**
+   * eager 扩展批量 client bundle（按图 rev 缓存；首建 ~0.3-1s，之后零成本）。
+   * 内容寻址：调用方 URL 带 ?rev=，可 immutable 缓存；扩展 reload → 图 rev 变 → 重打。
+   * 构建期发现 import.meta 漏网项会自动剔除并重打（offenders 记日志）。
+   */
+  async clientBundle(): Promise<{ rev: string; code: string; ids: string[] }> {
+    const graph = this.bootGraph();
+    const bundle = graph.bundle;
+    if (!bundle || bundle.ids.length === 0) {
+      return { rev: "empty", code: emptyClientBundleCode(), ids: [] };
+    }
+    if (this._clientBundleCache?.rev === bundle.rev) return this._clientBundleCache;
+    if (this._clientBundleInFlight) return this._clientBundleInFlight;
+    const rev = bundle.rev;
+    const entries: ClientBundleEntry[] = [];
+    bundle.ids.forEach((id, order) => {
+      const loaded = this.extensions.get(id);
+      if (!loaded?.ext.client) return;
+      const file = this.assetPath(id, loaded.ext.client);
+      const row = graph.entries.find((r) => r.id === id);
+      if (!file || !row) return;
+      entries.push({ id, dir: loaded.dir, file, rev: row.rev, priority: row.priority, order });
+    });
+    const run = buildClientBundle(entries).then((built) => {
+      if (built.offenders.length) {
+        console.warn(`[ext] client bundle: import.meta 漏网扩展已剔除: ${built.offenders.join(", ")}`);
+      }
+      if (built.chunked.length) {
+        // 拆包扩展：静态共享 chunk 外置（懒 chunk 运行时与包内引用同一文件实例）
+        console.info(`[ext] client bundle: 拆包扩展静态依赖外置: ${built.chunked.join(", ")}`);
+      }
+      const value = { rev, code: built.code, ids: built.ids };
+      if (this.bootGraph().bundle?.rev === rev) this._clientBundleCache = value;
+      return value;
+    }).finally(() => {
+      this._clientBundleInFlight = null;
+    });
+    this._clientBundleInFlight = run;
+    return run;
   }
 
   /** 扩展 client 文件内容哈希（按 mtime 缓存：文件变化才重算）——clientUrl?v=<hash> 强制浏览器重新拉取 */
@@ -1085,6 +1136,13 @@ export class ExtRegistryImpl {
     }
   }
 
+  /** 预热 eager 批量包（启动/重载后台构建，首个页面请求零等待）。允许失败。 */
+  warmClientBundle(): void {
+    void this.clientBundle().catch((e) => {
+      console.warn("[ext] client bundle warmup failed:", e);
+    });
+  }
+
   /** Invoke all server.startup hooks (best-effort per extension). */
   async startAll(): Promise<void> {
     this.provideCoreServices();
@@ -1099,6 +1157,8 @@ export class ExtRegistryImpl {
       if (this.startedIds.has(ext.id)) continue; // 已被 startupById 单开先行启动：不重复
       await this.startupOne(ext);
     }
+    // eager 批量包后台预热（首个页面请求零等待；允许失败，前端有逐扩展回退）。
+    this.warmClientBundle();
   }
 
   /** 已执行 startup 的扩展 id（startupById/startAll 共账；shutdown 周期清空）。 */

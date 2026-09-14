@@ -87,6 +87,9 @@ const nextConfig: NextConfig = {
     "@earendil-works/pi-tui",
     // Extensions are transpiled at runtime with jiti — must not be bundled.
     "jiti",
+    // eager 扩展 client bundle 批量打包（lib/ext/client-bundle.ts）运行时需要 esbuild
+    // 原生二进制（不得被 Server Components 打包改写）。
+    "esbuild",
   ],
   // Next dev cross-origin guard (allowedDevOrigins): 16.3+ rejects dev
   // resources (_next/static chunks) whose Origin is not allow-listed. Beyond

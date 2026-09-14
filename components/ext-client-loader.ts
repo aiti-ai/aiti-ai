@@ -40,6 +40,47 @@ interface ClientModule {
 const modules = new Map<string, ClientModule>();
 /** 进行中的 materialize（防并发重复注册：启动循环与按需触发可能同时到达）。 */
 const materializing = new Map<string, Promise<boolean>>();
+
+/**
+ * eager 批量包（lib/ext/client-bundle.ts 的服务端产物）加载态：
+ * 一次 import 拿到 { registry: { [extId]: registerFn } }，供全部 eager 扩展 prefetch。
+ * import 失败/缺项 → 返回 null，prefetch 回退逐扩展 URL（批量包是纯优化，不是单点）。
+ */
+let bundleLoad: { url: string; promise: Promise<Map<string, (ctx: unknown) => unknown> | null> } | null = null;
+
+/** 图行对应的模块来源 URL：批量包成员走包，其余走单扩展 URL。 */
+function moduleSourceUrl(entry: PiWebBootEntry): string {
+  const bundle = bootGraph.bundle;
+  return bundle && bundle.ids.includes(entry.id) ? bundle.url : entry.url;
+}
+
+/** 导入批量包并对账出 id → register 入口；失败返回 null（调用方走单扩展回退）。 */
+async function loadBundleRegistry(): Promise<Map<string, (ctx: unknown) => unknown> | null> {
+  const bundle = bootGraph.bundle;
+  if (!bundle) return null;
+  if (bundleLoad && bundleLoad.url === bundle.url) return bundleLoad.promise;
+  const url = bundle.url;
+  const promise = (async () => {
+    try {
+      const mod: unknown = await import(/* webpackIgnore: true */ apiUrl(url));
+      const registry = (mod as { registry?: Record<string, unknown> }).registry;
+      const map = new Map<string, (ctx: unknown) => unknown>();
+      if (registry && typeof registry === "object") {
+        for (const [id, fn] of Object.entries(registry)) {
+          if (typeof fn === "function") map.set(id, fn as (ctx: unknown) => unknown);
+        }
+      }
+      return map;
+    } catch (e) {
+      console.error("[ext] client bundle import failed — falling back to per-extension bundles:", e);
+      // 失败不粘死：下一次 prefetch 重试（其余扩展已走各自回退，不受影响）。
+      if (bundleLoad?.url === url) bundleLoad = null;
+      return null;
+    }
+  })();
+  bundleLoad = { url, promise };
+  return promise;
+}
 /** 已 warn 过「无 register 导出」的扩展（防重复刷屏）。 */
 const warnedNullRegister = new Set<string>();
 let bootGraph: PiWebBootGraph = { rev: "", entries: [] };
@@ -130,9 +171,20 @@ export function entryOf(id: string): PiWebBootEntry | undefined {
 export async function prefetch(id: string): Promise<void> {
   const entry = entryOf(id);
   if (!entry) return;
+  const sourceUrl = moduleSourceUrl(entry);
   const existing = modules.get(id);
-  if (existing && existing.url === entry.url) return; // 同 rev 已在表
+  if (existing && existing.url === sourceUrl && existing.rev === entry.rev) return; // 同源同 rev 已在表
   try {
+    // 阶段 1：批量包成员优先（eager 扩展共享同一条请求）。
+    if (bootGraph.bundle?.ids.includes(id)) {
+      const registry = await loadBundleRegistry();
+      const bundled = registry?.get(id);
+      if (typeof bundled === "function") {
+        modules.set(id, { id, url: sourceUrl, rev: entry.rev, registerFn: bundled, disposeFn: null, materialized: false });
+        return;
+      }
+      // 缺项（构建侧剔除/漂移）→ 继续走单扩展 import 回退。
+    }
     // webpackIgnore: keep the native dynamic import (Next would otherwise
     // rewrite it into a bundled context stub). apiUrl 补 basePath（graph 的
     // assetUrl 是裸 /api/...，部署在子路径下必须带 /dev 前缀）。
@@ -160,7 +212,7 @@ export async function prefetch(id: string): Promise<void> {
         : typeof ns.register === "function"
           ? ns.register
           : null;
-    modules.set(id, { id, url: entry.url, rev: entry.rev, registerFn, disposeFn: null, materialized: false });
+    modules.set(id, { id, url: sourceUrl, rev: entry.rev, registerFn, disposeFn: null, materialized: false });
   } catch (e) {
     console.error(`[ext] failed to fetch client bundle for ${id}:`, e);
     modules.delete(id);
@@ -330,19 +382,22 @@ export function reconcileGraph(
 ): string[] {
   const oldById = new Map(bootGraph.entries.map((e) => [e.id, e]));
   const newById = new Map(newGraph.entries.map((e) => [e.id, e]));
+  const oldBundleIds = new Set(bootGraph.bundle?.ids ?? []);
+  const newBundleIds = new Set(newGraph.bundle?.ids ?? []);
   const invalidated: string[] = [];
   for (const [id, oldEntry] of oldById) {
     const newEntry = newById.get(id);
-    if (!newEntry) {
-      // 扩展被移除 → 反卷
-      invalidate(id, removeItems);
-      invalidated.push(id);
-    } else if (newEntry.rev !== oldEntry.rev) {
-      // bundle 内容变化 → 反卷后重载
+    // 模块来源变化（批量包成员关系翻转）也必须反卷——否则 prefetch 会重设模块
+    // 但不会重新 register（materialized 状态丢失、UI 项残留）。
+    const membershipChanged = oldBundleIds.has(id) !== newBundleIds.has(id);
+    if (!newEntry || newEntry.rev !== oldEntry.rev || membershipChanged) {
       invalidate(id, removeItems);
       invalidated.push(id);
     }
   }
+  // 批量包 rev 变化（成员集相同但某成员内容变了）时，未变化成员的模块条目保留
+  // （registerFn 闭包仍指向旧包，行为正确）；变化成员已由上面的 rev 差集反卷，
+  // 下次 prefetch 会因 bundle.url 变化而重新 import 新包。
   bootGraph = newGraph;
   return invalidated;
 }

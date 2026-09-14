@@ -32,12 +32,29 @@ export interface PiWebBootEntry {
   priority?: number;
 }
 
+/** 单个图行的输入（buildBootGraph 参数行）。 */
+export interface PiWebBootGraphInput {
+  id: string;
+  /** 相对 client bundle 的 asset 路径（不含 hash query），如 /api/extensions/demo/assets/client/demo.mjs */
+  assetUrl: string;
+  /** bundle 内容哈希（12 位 hex） */
+  hash: string;
+  inject?: string[];
+  immediately?: boolean;
+  /** 与 PiWebBootEntry.priority 同名透传（扩展 startupPriority）。 */
+  priority?: number;
+  /** 不参与 eager 批量包（入口使用 import.meta 等对加载路径敏感的场景）。 */
+  bundleExcluded?: boolean;
+}
+
 /** 注入前端的完整启动图。 */
 export interface PiWebBootGraph {
   /** 全图一致性锚：hash(组合后的 entries)。任一行变化 → 图 rev 变化。 */
   rev: string;
   /** 组合后的 entries；顺序不承载语义（激活序由前端按需 materialize）。 */
   entries: PiWebBootEntry[];
+  /** eager 扩展批量包（无 eager 行时缺省）。 */
+  bundle?: PiWebClientBundle;
 }
 
 /** 空图（无任何 client 扩展时前端 loader 的初始值）。 */
@@ -50,33 +67,36 @@ export const EMPTY_BOOT_GRAPH: PiWebBootGraph = { rev: "", entries: [] };
  * @param entries 扫描出的 (id, clientUrl, hash, inject, immediately) 行
  * @returns 组合后的图；无 bundle 时返回 EMPTY_BOOT_GRAPH
  */
-export function buildBootGraph(
-  entries: Array<{
-    id: string;
-    /** 相对 client bundle 的 asset 路径（不含 hash query），如 /api/extensions/demo/assets/client/demo.mjs */
-    assetUrl: string;
-    /** bundle 内容哈希（12 位 hex） */
-    hash: string;
-    inject?: string[];
-    immediately?: boolean;
-    /** 与 PiWebBootEntry.priority 同名透传（扩展 startupPriority）。 */
-    priority?: number;
-  }>,
-): PiWebBootGraph {
-  const rows: PiWebBootEntry[] = entries
-    .filter((e) => e.hash) // 无 client 或不可读的扩展不进图
-    .map((e) => ({
-      id: e.id,
-      url: `${e.assetUrl}?rev=${e.hash}`,
-      rev: e.hash,
-      ...(e.inject?.length ? { inject: e.inject } : {}),
-      ...(e.immediately === false ? { immediately: false } : {}),
-      ...(typeof e.priority === "number" && e.priority !== 0 ? { priority: e.priority } : {}),
-    }));
+export function buildBootGraph(entries: PiWebBootGraphInput[]): PiWebBootGraph {
+  const valid = entries.filter((e) => e.hash); // 无 client 或不可读的扩展不进图
+  const rows: PiWebBootEntry[] = valid.map((e) => ({
+    id: e.id,
+    url: `${e.assetUrl}?rev=${e.hash}`,
+    rev: e.hash,
+    ...(e.inject?.length ? { inject: e.inject } : {}),
+    ...(e.immediately === false ? { immediately: false } : {}),
+    ...(typeof e.priority === "number" && e.priority !== 0 ? { priority: e.priority } : {}),
+  }));
   if (rows.length === 0) return EMPTY_BOOT_GRAPH;
+  // eager 批量包：immediately !== false 且未排除的行（顺序 = priority 降序 + 图序，
+  // 与前端 immediateEntriesByPriority 一致；包内模块顶层执行顺序因此稳定）。
+  const bundleRows = valid
+    .map((e, i) => ({ e, i }))
+    .filter(({ e }) => e.immediately !== false && !e.bundleExcluded)
+    .sort((a, b) => (b.e.priority ?? 0) - (a.e.priority ?? 0) || a.i - b.i)
+    .map(({ e }) => ({ id: e.id, rev: e.hash }));
+  const bundle: PiWebClientBundle | undefined = bundleRows.length
+    ? (() => {
+        const rev = clientBundleRev(bundleRows);
+        return { url: clientBundleUrl(rev), rev, ids: bundleRows.map((r) => r.id) };
+      })()
+    : undefined;
   // priority 纳入图 hash：优先级变化（如基础设施扩展调整）也要触发图 rev 变化 → 前端对账
-  const graphRev = hashText(JSON.stringify(rows.map((r) => ({ id: r.id, rev: r.rev, inject: r.inject, priority: r.priority ?? 0 }))));
-  return { rev: graphRev, entries: rows };
+  const graphRev = hashText(JSON.stringify({
+    rows: rows.map((r) => ({ id: r.id, rev: r.rev, inject: r.inject, priority: r.priority ?? 0 })),
+    bundle: bundle?.rev ?? "",
+  }));
+  return { rev: graphRev, entries: rows, ...(bundle ? { bundle } : {}) };
 }
 
 /** 内容哈希（与 registry.clientHash 一致的 sha256 前 12 位）。 */
@@ -84,4 +104,39 @@ import { createHash } from "node:crypto";
 
 export function hashText(text: string): string {
   return createHash("sha256").update(text).digest("hex").slice(0, 12);
+}
+
+/* ------------------------------------------------------------------ *
+ * eager 批量包（client-bundle）——请求数治理：
+ * 首屏必然加载的扩展不必逐扩展发请求；registry.computeBundle() 把 eager 行
+ * （immediately !== false 且未标注 bundleExcluded）合成一条 bundle 行，前端
+ * loader 一次 import 后按图 materialize。包的构建/服务端逻辑在 client-bundle.ts
+ * （本文件保持纯函数、零 fs/esbuild 依赖，可被客户端安全引用）。
+ * ------------------------------------------------------------------ */
+
+/** 批量包 URL 路径（客户端 apiUrl() 会补 basePath）。 */
+export const CLIENT_BUNDLE_PATH = "/api/extensions/client-bundle";
+
+/** 批量打包版本（算法/包装形状变化时 bump，强制所有客户端重新拉包）。
+ *  v4：拆包扩展（usesLazyChunks）静态相对 import 外置——共享 chunk 文件单实例。 */
+export const CLIENT_BUNDLE_VERSION = 4;
+
+/** 批量包描述（挂在 boot graph 上；entries 的 rev/url 仍保留单扩展语义）。 */
+export interface PiWebClientBundle {
+  url: string;
+  rev: string;
+  /** 打进包的扩展 id（前端 prefetch 只对这些 id 走包加载；缺项自动回退单扩展 URL）。 */
+  ids: string[];
+}
+
+export function clientBundleUrl(rev: string): string {
+  return `${CLIENT_BUNDLE_PATH}?rev=${rev}`;
+}
+
+/** 批量包内容寻址 rev（参与扩展集合 + 版本号）。 */
+export function clientBundleRev(entries: Array<{ id: string; rev: string }>): string {
+  return hashText(JSON.stringify({
+    v: CLIENT_BUNDLE_VERSION,
+    rows: entries.map((e) => [e.id, e.rev]).sort((a, b) => (a[0] < b[0] ? -1 : 1)),
+  }));
 }
