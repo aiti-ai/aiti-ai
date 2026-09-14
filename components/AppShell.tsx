@@ -4107,6 +4107,45 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
                   flexDirection: "column",
                   gap: 10,
                 }}>
+                  {/* 右上角关闭（sticky：面板内容超屏滚动时保持可点；等价于再点一次会话信息按钮） */}
+                  <div style={{ position: "sticky", top: 0, height: 0, display: "flex", justifyContent: "flex-end", zIndex: 3 }}>
+                    <button
+                      type="button"
+                      title={translate("i18n.close")}
+                      aria-label={translate("i18n.close")}
+                      onClick={() => setActiveTopPanel(null)}
+                      style={{
+                        marginTop: -6,
+                        marginRight: -8,
+                        display: "inline-flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        width: 22,
+                        height: 22,
+                        padding: 0,
+                        color: "var(--text-muted)",
+                        background: "var(--bg-panel)",
+                        border: "1px solid var(--border)",
+                        borderRadius: 4,
+                        cursor: "pointer",
+                        flex: "0 0 auto",
+                        transition: "color 0.12s, border-color 0.12s",
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.color = "var(--accent)";
+                        e.currentTarget.style.borderColor = "var(--accent)";
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.color = "var(--text-muted)";
+                        e.currentTarget.style.borderColor = "var(--border)";
+                      }}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
                   {sessionStats ? (() => {
                     const formatDuration = (ms: number) => {
                       if (ms <= 0) return "0s";

@@ -33,6 +33,15 @@ test("wires every host overlay to the back stack on small screens only", () => {
   }
 });
 
+test("session info dropdown has a top-right close button wired to the panel state", () => {
+  assert.match(appShell, /<div className="session-info-popover" style=\{\{/);
+  // 右上角关闭：sticky 零高容器（滚动时保持可点）+ ✕ → setActiveTopPanel(null)
+  assert.match(
+    appShell,
+    /position: "sticky", top: 0, height: 0, display: "flex", justifyContent: "flex-end", zIndex: 3[\s\S]{0,700}?title=\{translate\("i18n\.close"\)\}[\s\S]{0,300}?onClick=\{\(\) => setActiveTopPanel\(null\)\}/,
+  );
+});
+
 test("the back stack keeps Next router state and pushes same-URL entries", () => {
   // 展开 history.state（保留 __NA/内部树）；URL 传空串不做地址变化
   assert.match(libSource, /\[KEY\]: token, \[POS_KEY\]: pos \}, ""\)/);
