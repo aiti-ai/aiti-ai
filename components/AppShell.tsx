@@ -35,6 +35,31 @@ import { getExtUiItems, subscribeExtUi } from "@/lib/ext-ui-store";
 
 /** pathPicker 槽 SSR 稳定空快照（getServerSnapshot 必须返回缓存引用，否则无限循环）。 */
 const NO_PATH_PICKER_ITEMS: ExtUiItemRegistered[] = [];
+
+/**
+ * 同 URL 的 router.replace 会触发 App Router 的 RSC 重新拉取（实测开页多出 3 个
+ * 请求：/?_rsc=… + manifest.webmanifest + icons/icon-192.png——软导航重渲 metadata）。
+ * 目标位置与当前地址一致时直接跳过（URL 已经是目标状态，replace 无任何语义增益）。
+ * 查询串比较保留：「清掉 ?session= 回首页」这类真实变更照常 replace。
+ */
+function replaceLocationIfChanged(
+  router: ReturnType<typeof useRouter>,
+  href: string,
+  options?: { scroll?: boolean },
+): void {
+  if (typeof window !== "undefined") {
+    const queryOnly = href.startsWith("?");
+    const [rawPath, targetQuery = ""] = href.split("?");
+    const normalize = (p: string) => p.replace(/\/+$/, "") || "/";
+    // router.replace 的 href 是 app 相对路径（Next 自行补 basePath）——比较前
+    // 先还原成浏览器实际地址（/dev 部署下 "/" ↔ 当前 "/dev/" 应判等）。
+    const targetPath = queryOnly ? window.location.pathname : withBasePath(rawPath);
+    const samePath = normalize(window.location.pathname) === normalize(targetPath);
+    const sameQuery = !targetQuery || `?${targetQuery}` === window.location.search;
+    if (samePath && sameQuery) return;
+  }
+  router.replace(href, options);
+}
 import { registerHostApi } from "@/lib/ext/host-api";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { RestartRecoveryWizard } from "./RestartRecoveryWizard";
@@ -1049,7 +1074,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         setSelectedSession(s);
         setSessionKey((k) => k + 1);
         if (new URLSearchParams(window.location.search).get("session") !== s.id) {
-          router.replace(`?session=${encodeURIComponent(s.id)}`, { scroll: false });
+          replaceLocationIfChanged(router, `?session=${encodeURIComponent(s.id)}`, { scroll: false });
         }
       })
       .catch(() => {
@@ -1131,7 +1156,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       // the default welcome page when none is remembered.
       restoreWorkspaceContext(newProject, cwd);
     }
-    router.replace(inAppPathname("/"), { scroll: false });
+    replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
   }, [activeCwd, activeFileTabId, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number) => {
@@ -1188,7 +1213,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     // Skip router.replace when restoring from URL — the param is already correct
     // and calling replace in production Next.js triggers a Suspense remount loop
     if (!isRestore) {
-      router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
+      replaceLocationIfChanged(router, `?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
   }, [activeCwd, activeFileTabId, invalidateWorkspaceRestore, router, isMobile, newSessionCwd, selectedSession]);
 
@@ -1256,7 +1281,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     setSystemInfoLoading(false);
     setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
-    router.replace(inAppPathname("/"), { scroll: false });
+    replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
   }, [invalidateWorkspaceRestore, router, isMobile]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
@@ -1342,7 +1367,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         // 上下文生效——pi-web:open-session 事件等其它调用方不受影响。
         if (response.status === 404 && options?.initialRestore) {
           clearLastOpenSessionById(sessionId);
-          router.replace(inAppPathname("/"), { scroll: false });
+          replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
         }
         throw new Error(data.error ?? `HTTP ${response.status}`);
       }
@@ -1362,7 +1387,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     sessionSourceRef.current = "canonicalized";
     setSelectedSession((s) => (s && s.id === previousId ? { ...s, id: canonicalId } : s));
     if (new URLSearchParams(window.location.search).get("session") === previousId) {
-      router.replace(`?session=${encodeURIComponent(canonicalId)}`, { scroll: false });
+      replaceLocationIfChanged(router, `?session=${encodeURIComponent(canonicalId)}`, { scroll: false });
     }
     // 通知 session-manager dock：旧 id 的未落盘草稿行已被规范行取代（同会话），可移除
     try {
@@ -1380,7 +1405,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     setNewSessionCwd(null);
     setSelectedSession(session);
     hydrateSelectedSession(session.id);
-    router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
+    replaceLocationIfChanged(router, `?session=${encodeURIComponent(session.id)}`, { scroll: false });
   }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
   const deliverSessionNotification = useCallback(({
@@ -1548,7 +1573,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       transient: false,
     }));
     hydrateSelectedSession(newSessionId);
-    router.replace(`?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
+    replaceLocationIfChanged(router, `?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
   }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
   const handleAskInNewChat = useCallback(async (
@@ -1593,7 +1618,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       setSystemTools(null);
       setSystemInfoLoading(false);
       setActiveTopPanel(null);
-      router.replace(inAppPathname("/"), { scroll: false });
+      replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
     }
   }, [invalidateWorkspaceRestore, selectedSession, router]);
 
