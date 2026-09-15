@@ -820,6 +820,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.minimizeInput": "摺疊輸入面板",
     "chat.restoreBottom": "全部展開",
     "chat.bottomInputCollapsed": "輸入已摺疊，點選右側直條展開",
+    "chat.collapsedPullUpHint": "輸入已摺疊，從底部上滑拉出輸入框",
     "chat.swipeExpand": "繼續上滑展開",
     "chat.swipeCollapse": "繼續下滑摺疊",
     "chat.compactQueued": "已排隊",

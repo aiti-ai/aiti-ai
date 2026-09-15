@@ -541,6 +541,7 @@ export const zhCNLocale: LocalePlugin = {
     "chat.minimizeInput": "折叠输入面板",
     "chat.restoreBottom": "全部展开",
     "chat.bottomInputCollapsed": "输入已折叠，点击右侧竖条展开",
+    "chat.collapsedPullUpHint": "输入已折叠，从底部上划拉出输入框",
     "chat.swipeExpand": "继续上滑展开",
     "chat.swipeCollapse": "继续下滑折叠",
     "chat.shell": "Shell",

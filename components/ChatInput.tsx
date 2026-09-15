@@ -1333,6 +1333,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   type BottomMode = "full" | "queueHidden" | "minimal";
   const [bottomMode, setBottomMode] = useState<BottomMode>(() => {
     if (typeof window === "undefined") return "full";
+    // 小屏新建会话（欢迎页）：空间足够不折叠——无视持久化的 minimal/queueHidden。
+    if (isMobile && sessionId == null) return "full";
     try {
       const v = window.localStorage.getItem("pi-chat-bottom-mode");
       return v === "queueHidden" || v === "minimal" ? v : "full";
@@ -1340,9 +1342,27 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   });
   const bottomModeRef = useRef(bottomMode);
   useEffect(() => { bottomModeRef.current = bottomMode; }, [bottomMode]);
+  // 小屏新建会话（欢迎页无会话 id）：输入框折叠整体禁用——把手不渲染、滑动手势
+  // 不响应、底部模式恒为 full。此时只有居中输入条、没有消息流可让位，折叠只剩
+  // 坏处；首条消息发出后 sessionId 落值 → 自动恢复三档折叠。
+  const foldDisabled = isMobile && sessionId == null;
+  const effectiveBottomMode: BottomMode = foldDisabled ? "full" : bottomMode;
+  // 小屏折叠成 minimal：弹一次「从底部上划拉出输入框」提示（自动消失）+ 抓手低频闪动。
+  // 每次进入 minimal 触发；展开后清除（timer 未到点也被 effect cleanup 取消）。
+  const [collapseHintVisible, setCollapseHintVisible] = useState(false);
+  const prevEffectiveModeRef = useRef<BottomMode>(effectiveBottomMode);
+  useEffect(() => {
+    const prev = prevEffectiveModeRef.current;
+    prevEffectiveModeRef.current = effectiveBottomMode;
+    if (!isMobile || effectiveBottomMode !== "minimal" || prev === "minimal") return;
+    setCollapseHintVisible(true);
+    const timer = window.setTimeout(() => setCollapseHintVisible(false), 4000);
+    return () => window.clearTimeout(timer);
+  }, [isMobile, effectiveBottomMode]);
   // Mirrors the live queue count for cycleBottomMode (defined before queueCount).
   const queueCountRef = useRef(0);
   const cycleBottomMode = useCallback((dir: 1 | -1 = 1, wrap = true) => {
+    if (foldDisabled) return;
     const prev = bottomModeRef.current;
     // With no queued messages the "queue hidden" level is pointless, so both
     // swipes and click-cycles skip it: full ↔ minimal directly.
@@ -1367,7 +1387,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       setModelDropdownOpen(false);
     }
     setBottomMode(next);
-  }, []);
+  }, [foldDisabled]);
 
   // Swipe gestures on the bottom panels: swipe down collapses one level
   // (full → queueHidden → minimal), swipe up expands one level back.
@@ -1376,6 +1396,11 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const [swipeHint, setSwipeHint] = useState<"up" | "down" | null>(null);
   const handleTouchStart = useCallback((e: React.TouchEvent) => {
     if (!isMobile) return;
+    if (foldDisabled) {
+      // 小屏新建会话（欢迎页）：折叠整体禁用，滑动手势不注册
+      touchStartRef.current = null;
+      return;
+    }
     // ⓘ sheet 打开时手势禁用（防遮罩上的滑动误折叠底部区）
     if (infoSheetOpen) {
       touchStartRef.current = null;
@@ -1401,7 +1426,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     }
     const t = e.touches[0];
     touchStartRef.current = { y: t.clientY, x: t.clientX, active: true };
-  }, [isMobile, infoSheetOpen]);
+  }, [isMobile, infoSheetOpen, foldDisabled]);
   const handleTouchMove = useCallback((e: React.TouchEvent) => {
     const s = touchStartRef.current;
     if (!s || !s.active || !isMobile) return;
@@ -3480,8 +3505,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             与 core bottomMode 三态语义一致——计划 §4-④ 留核）。外层 ref 容器承载
             v4 队列 pulse 动画（queue-banner-pulse，globals.css）。 */}
         <div ref={queueBannerRef}>
-        {bottomMode === "full" && <ExtSlot name="queuePanel" extra={queuePanelExtra} />}
-        {!extOwnsQueuePanel && bottomMode === "full" && (queueCount > 0 || trashCount > 0) && (
+        {effectiveBottomMode === "full" && <ExtSlot name="queuePanel" extra={queuePanelExtra} />}
+        {!extOwnsQueuePanel && effectiveBottomMode === "full" && (queueCount > 0 || trashCount > 0) && (
           <div style={{
             position: "relative",
             marginBottom: 8,
@@ -4007,7 +4032,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </div>
             );
           })()}
-          {bottomMode !== "minimal" && recalledVisible && recalledRef.current && (
+          {effectiveBottomMode !== "minimal" && recalledVisible && recalledRef.current && (
             <div style={{
               display: "flex",
               alignItems: "center",
@@ -4069,7 +4094,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               </button>
             </div>
           )}
-          {bottomMode === "minimal" ? (
+          {effectiveBottomMode === "minimal" ? (
             /* v4 十三审：minimal 折叠态 = 纯抓手（与 notch 同款）——无 queue 细横杠、
                 有 queue 嵌数字胶囊 ⎯ N ⎯，点按展开回 full；原「已排队 N」文字条退休。
                 小屏悬浮化：44px 占位条会把消息流顶开、透出壳底白色空带（用户反馈）——
@@ -4090,13 +4115,41 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   zIndex: 5,
                 }}
               >
-                <div style={{ pointerEvents: "auto" }}>
-                  <NotchHandle
-                    capsule={queueCount > 0}
-                    count={queueCount}
-                    onClick={() => cycleBottomMode()}
-                    title={t("chat.restoreBottom")}
-                  />
+                <div style={{ pointerEvents: "auto", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                  {collapseHintVisible && (
+                    <div
+                      onClick={() => cycleBottomMode()}
+                      title={t("chat.restoreBottom")}
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        padding: "5px 11px",
+                        borderRadius: 999,
+                        background: "color-mix(in srgb, var(--bg-panel) 94%, var(--bg))",
+                        border: "1px solid var(--border)",
+                        boxShadow: "0 4px 14px rgba(0,0,0,0.14)",
+                        fontSize: 11.5,
+                        color: "var(--text)",
+                        whiteSpace: "nowrap",
+                        marginBottom: 2,
+                        cursor: "pointer",
+                      }}
+                    >
+                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="6 15 12 9 18 15" />
+                      </svg>
+                      {t("chat.collapsedPullUpHint")}
+                    </div>
+                  )}
+                  <div className="chat-collapse-handle-breathe">
+                    <NotchHandle
+                      capsule={queueCount > 0}
+                      count={queueCount}
+                      onClick={() => cycleBottomMode()}
+                      title={t("chat.restoreBottom")}
+                    />
+                  </div>
                 </div>
               </div>
             ) : (
@@ -4132,13 +4185,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           >
           {/* notch 把手（v3 并入输入条上缘；手势区=输入条整体）。v4：非 full 档且有队列时
               放大为嵌数字小胶囊（⎯ 3 ⎯），点按仍循环三档折叠——队列藏起来时留一个可见锚点。 */}
-          {isMobile && (bottomMode !== "full" && queueCount > 0 ? (
+          {isMobile && !foldDisabled && (effectiveBottomMode !== "full" && queueCount > 0 ? (
             <div style={{ position: "absolute", top: 3, left: "50%", transform: "translateX(-50%)", zIndex: 1 }}>
               <NotchHandle capsule count={queueCount} onClick={() => cycleBottomMode()} title={t("chat.restoreBottom")} />
             </div>
           ) : (
             <div style={{ position: "absolute", top: 4, left: "50%", transform: "translateX(-50%)", zIndex: 1 }}>
-              <NotchHandle capsule={false} count={0} onClick={() => cycleBottomMode()} title={t(bottomMode === "full" ? (queueCount > 0 ? "chat.minimizeQueue" : "chat.minimizeInput") : "chat.restoreBottom")} />
+              <NotchHandle capsule={false} count={0} onClick={() => cycleBottomMode()} title={t(effectiveBottomMode === "full" ? (queueCount > 0 ? "chat.minimizeQueue" : "chat.minimizeInput") : "chat.restoreBottom")} />
             </div>
           ))}
           <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, sessionId, textareaRef, setInputValue, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen, model }} />
@@ -4607,7 +4660,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         </div>
 
         {/* Bash mode status label（v3：小屏删行——信息内嵌 placeholder（P5/P5b），桌面照旧） */}
-        {bottomMode !== "minimal" && bashMode && !isMobile && (
+        {effectiveBottomMode !== "minimal" && bashMode && !isMobile && (
           <div className="text-xs px-2 py-1" style={{ color: bashExcluded ? "var(--text-muted)" : "var(--accent)", marginTop: 4 }}>
              {t("chat.shell")} · {bashExcluded ? t("chat.outputLocal") : t("chat.outputModel")}
           </div>
@@ -4616,7 +4669,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         {/* Bottom bar: left | center (context) | right
             v3：小屏整行删除（附件/模型/思考/工具/压缩/声音/队列操作收进 ⓘ InfoSheet，
             BottomModeBar 并入输入条上缘 notch）——输入条成为小屏最底常驻元素。 */}
-        {!compact && !isMobile && bottomMode !== "minimal" && (
+        {!compact && !isMobile && effectiveBottomMode !== "minimal" && (
         <div style={{
           marginTop: 8,
           display: isMobile ? "grid" : "flex",
@@ -5063,7 +5116,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 stays on the queue header chevron button. 小屏：BottomModeBar 并入
                 输入条上缘 notch（v3），本行整行不渲染。 */}
             <BottomModeBar
-              mode={bottomMode}
+              mode={effectiveBottomMode}
               onClick={() => cycleBottomMode()}
               count={queueCount}
             />

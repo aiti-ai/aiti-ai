@@ -541,6 +541,7 @@ export const enLocale: LocalePlugin = {
     "chat.minimizeInput": "Collapse input panel",
     "chat.restoreBottom": "Expand all",
     "chat.bottomInputCollapsed": "Input collapsed, tap the bar on the right to expand",
+    "chat.collapsedPullUpHint": "Input collapsed — swipe up from the bottom to bring it back",
     "chat.swipeExpand": "Keep swiping up to expand",
     "chat.swipeCollapse": "Keep swiping down to collapse",
     "chat.shell": "Shell",

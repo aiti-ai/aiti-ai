@@ -744,6 +744,42 @@ test("aiti-ctx-meter seam: composerTools extra 带 context/compact/openSessionIn
   }
 });
 
+// ── 小屏新建会话不折叠（2026-09 用户拍板：欢迎页空间足够，无需折叠输入框）──
+test("小屏新建会话折叠整体禁用：foldDisabled 派生 + 初始化回退 full + 把手/手势/循环全守卫", () => {
+  const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  // 派生：小屏且无会话 id（欢迎页）→ 折叠禁用；渲染层统一走 effectiveBottomMode（恒 full）
+  assert.match(source, /const foldDisabled = isMobile && sessionId == null;/);
+  assert.match(source, /const effectiveBottomMode: BottomMode = foldDisabled \? "full" : bottomMode;/);
+  // 初始化：无视持久化的 minimal/queueHidden，欢迎页首挂载即为 full
+  assert.match(source, /if \(isMobile && sessionId == null\) return "full";/);
+  // 循环/手势/把手三入口全部加守卫，保证 foldDisabled 期间无法进入 minimal
+  assert.match(source, /const cycleBottomMode = useCallback\(\(dir: 1 \| -1 = 1, wrap = true\) => \{\n    if \(foldDisabled\) return;/);
+  assert.match(source, /if \(foldDisabled\) \{\n      \/\/ 小屏新建会话（欢迎页）：折叠整体禁用，滑动手势不注册/);
+  assert.match(source, /isMobile && !foldDisabled && \(effectiveBottomMode !== "full"/);
+  // 渲染层三处 bottomMode 判定均走 effectiveBottomMode（minimal 分支/队列面板/引用条/桌面折叠栏）
+  assert.doesNotMatch(source, /\{[a-zA-Z ]*bottomMode === "full" && <ExtSlot name="queuePanel"/);
+  assert.match(source, /effectiveBottomMode === "minimal" \? \(/);
+  assert.ok((source.match(/effectiveBottomMode/g) || []).length >= 7, "渲染与派生应全部走 effectiveBottomMode");
+});
+
+// ── 小屏折叠提示（2026-09 用户拍板：折叠后弹 toast 引导上滑拉出 + 抓手低频闪动）──
+test("小屏 minimal 折叠引导：进入时弹「上滑拉出」toast（可点击展开）+ 悬浮把手低频闪动", () => {
+  const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  // 每次进入 minimal（且小屏）触发 toast，4s 自动消失；cleanup 取消 timer
+  assert.match(source, /if \(!isMobile \|\| effectiveBottomMode !== "minimal" \|\| prev === "minimal"\) return;/);
+  assert.match(source, /setCollapseHintVisible\(true\);/);
+  assert.match(source, /window\.setTimeout\(\(\) => setCollapseHintVisible\(false\), 4000\);/);
+  // toast 文案 key + 点击即可展开
+  assert.match(source, /chat\.collapsedPullUpHint/);
+  assert.match(source, /onClick=\{\(\) => cycleBottomMode\(\)\}\n\s+title=\{t\("chat\.restoreBottom"\)\}/);
+  // 闪动 class 只挂在 minimal 悬浮把手本体（toast 不闪），且带 reduced-motion 兜底
+  assert.match(source, /<div className="chat-collapse-handle-breathe">/);
+  const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /@keyframes collapse-handle-breathe/);
+  assert.match(css, /chat-collapse-handle-breathe \{\n\s+animation: collapse-handle-breathe 2\.4s ease-in-out infinite;/);
+  assert.match(css, /\.chat-collapse-handle-breathe \{\n\s+animation: none !important;/);
+});
+
 // ── 小屏底排防溢出（2026-09-14 用户反馈：按钮太多显示不下）──
 test("小屏底排两端钉住：模型占满中间剩余空间（flex 1 1 0），右侧按钮不受模型名长短影响", () => {
   const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");

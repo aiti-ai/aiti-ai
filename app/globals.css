@@ -1860,3 +1860,19 @@ span.token.table {
   animation: queue-banner-pulse 0.9s ease-out 1;
   border-radius: 8px;
 }
+
+/* 小屏折叠态抓手低频闪动（提醒「从底部上划拉出输入框」）：2.4s 呼吸，不刺眼；
+   折叠后输入条只剩这一根悬浮横杠，一闪一暗引用户注意。 */
+@keyframes collapse-handle-breathe {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.32; }
+}
+.chat-collapse-handle-breathe {
+  animation: collapse-handle-breathe 2.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-collapse-handle-breathe {
+    animation: none !important;
+  }
+}
