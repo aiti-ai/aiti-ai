@@ -6,10 +6,13 @@ const agentEventsSource = await readFile(new URL("./[id]/events/route.ts", impor
 const agentEventStreamSource = await readFile(new URL("../../../lib/agent-event-stream.ts", import.meta.url), "utf8");
 const agentPostSource = await readFile(new URL("./[id]/route.ts", import.meta.url), "utf8");
 
-test("agent SSE starts sessions asynchronously and disables response buffering", () => {
+test("agent SSE 惰性建 runtime：打开会话不冷启动，wrapper 出现后经广播附着", () => {
   assert.match(agentEventsSource, /createAgentEventStream\(req, id, sessionPromise\)/);
-  assert.match(agentEventsSource, /sessionPromise = startRpcSession\([\s\S]*?\.then\(\(result\) => result\.session\)/);
-  assert.doesNotMatch(agentEventsSource, /await startRpcSession\(/);
+  // 本地会话无 wrapper 时不得 startRpcSession（打开会话只为查看不拉 runtime）；
+  // 改挂惰性句柄，真 wrapper 由后续真实交互带起后经 running 广播唤醒附着。
+  assert.doesNotMatch(agentEventsSource, /startRpcSession\(/);
+  assert.match(agentEventsSource, /sessionPromise = Promise\.resolve\(createPendingAgentSessionHandle\(/);
+  assert.match(agentEventsSource, /waitForRpcSession\(id, \(wrapper\) => onReady\(wrapper\)\)/);
   assert.match(agentEventsSource, /if \(req\.signal\.aborted\) return new Response\(null, \{ status: 204 \}\)/);
   assert.match(agentEventsSource, /"Cache-Control": "no-cache, no-transform"/);
   assert.match(agentEventsSource, /"X-Accel-Buffering": "no"/);

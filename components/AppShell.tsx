@@ -654,6 +654,20 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     setActiveTopPanel("session");
   }, [isMobile, sessionStatsRefresh]);
 
+  /** ChatWindow 的「拉取最新会话统计」注册通道（onSessionStatsRefresherRegister）。
+   *  ⚠️ 不能把 setSessionStatsRefresh 直接当注册函数传：ChatWindow 注册的是一个
+   *  函数，React 会把函数参数当作函数式更新交给 basicStateReducer 立即执行——
+   *  打开会话就会意外发出 get_session_stats（无 wrapper 时更会冷启动整个 runtime，
+   *  实测 prod 空闲 wrapper 就这样诞生），且回调本身永远存不进 state（存的是其
+   *  返回值 undefined）。这里用 updater 返回回调本体，把「函数」当值存。 */
+  const handleSessionStatsRefresherRegister = useCallback((refresher: (() => void) | null) => {
+    if (!refresher) {
+      setSessionStatsRefresh(null);
+      return;
+    }
+    setSessionStatsRefresh(() => refresher);
+  }, []);
+
   const handleSidebarToggle = useCallback(() => {
     if (isMobile) {
       setActiveTopPanel(null);
@@ -4591,7 +4605,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               onSystemInfoLoaderChange={handleSystemInfoLoaderChange}
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
-              onSessionStatsRefresherRegister={setSessionStatsRefresh}
+              onSessionStatsRefresherRegister={handleSessionStatsRefresherRegister}
               onCompactControlsRegister={setCompactControls}
               onContextUsageChange={handleContextUsageChange}
               onDisplayModelChange={setCurrentModelInfo}

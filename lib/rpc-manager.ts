@@ -30,6 +30,8 @@ import {
 } from "./project-command-env";
 import { disableConflictingExtensions } from "./ext-conflicts";
 import { cacheSessionPath, getLatestModelChange, invalidateSessionListCache, resolveSessionPath } from "./session-reader";
+import { computeSessionStats } from "./session-stats";
+import { computeSessionTotalActiveMs } from "./session-timing";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { notifySessionComplete } from "./web-push";
@@ -3118,6 +3120,26 @@ export function getCompletionNotificationSuppressedRpcSessionIds(): string[] {
 }
 
 /**
+ * 离线会话统计（2026-09-15）：无 wrapper 时的只读应答——直接读会话文件聚合，
+ * 绝不启动 runtime。get_session_stats 惰性化用：打开会话页/点开统计面板只为看
+ * 一眼，不该冷启动完整 agent（连扩展/MCP/子进程），也不该在本实例造出陈旧内存
+ * wrapper 遮住其他端的推进。与联机版同源口径（computeSessionStats），仅缺
+ * runtime 专属的 contextUsage。会话文件打开统一收敛在本模块（勿在其他 route 里
+ * 重复 SessionManager.open——避免多份读打开漂移）。
+ */
+export function getOfflineSessionStats(sessionId: string, sessionFile: string): Record<string, unknown> {
+  const sm = SessionManager.open(sessionFile);
+  const entries = sm.getEntries();
+  return {
+    ...computeSessionStats(entries as unknown as SessionEntry[]),
+    sessionId,
+    sessionFile,
+    sessionName: sm.getSessionName(),
+    totalActiveMs: computeSessionTotalActiveMs(entries),
+  };
+}
+
+/**
  * Get or create an AgentSession for the given session.
  * For new sessions (sessionFile === ""), pi generates its own id.
  * New sessions resolve enabledModels before construction so the initial model,
@@ -3488,6 +3510,39 @@ export function subscribeRunningSessions(listener: (ids: string[]) => void): () 
   return () => { listeners.delete(listener); };
 }
 
+/**
+ * 等待（且绝不启动）指定会话的 rpc wrapper：惰性 SSE（打开会话页不冷启动
+ * runtime，2026-09-15）在 wrapper 不存在时挂起，真实交互（发送/steer 等）触发
+ * startRpcSession 后经 running 广播唤醒并附着。事件驱动（subscribeRunningSessions
+ * + notifyRunningChange），无轮询。
+ *
+ * 返回停止等待的退订函数；wrapper 出现时同步调用一次 onReady。
+ */
+export function waitForRpcSession(
+  sessionId: string,
+  onReady: (wrapper: AgentSessionWrapper) => void,
+): () => void {
+  let stopped = false;
+  let unsubscribe: (() => void) | null = null;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    unsubscribe?.();
+    unsubscribe = null;
+  };
+  const check = () => {
+    if (stopped) return;
+    const wrapper = getRpcSession(sessionId);
+    if (!wrapper?.isAlive()) return;
+    stop();
+    onReady(wrapper);
+  };
+  unsubscribe = subscribeRunningSessions(() => check());
+  // 补齐「首查 → 订阅」窗口：wrapper 可能已存在，或刚在两步之间完成注册。
+  check();
+  return stop;
+}
+
 
 /**
  * Recompute the running-session-id set and, if it changed since the last
@@ -3501,7 +3556,13 @@ export function notifyRunningChange(): void {
     // its first state transition cannot match stale state from an old listener.
     lastRunningSnapshot = "";
   } else {
-    const snapshot = JSON.stringify([...ids].sort());
+    // snapshot 需区分「starting 中」与「已注册」两种形态（2026-09-15）：单看
+    // id 集合时启动完成（starting 移除 + wrapper 注册）值相同会被去重吞掉，而
+    // 它正是 waitForRpcSession（惰性 SSE 附着）等待的信号。
+    const snapshot = JSON.stringify({
+      ids: [...ids].sort(),
+      starting: [...getStartingSessionIds()].sort(),
+    });
     if (snapshot !== lastRunningSnapshot) {
       lastRunningSnapshot = snapshot;
       for (const listener of listeners) {

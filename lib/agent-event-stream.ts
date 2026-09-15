@@ -21,6 +21,62 @@ function errorMessage(error: unknown): string {
 }
 
 /**
+ * 惰性（待启动）会话句柄（2026-09-15）：
+ *
+ * 打开会话页不再冷启动完整 runtime（只为查看不该拉起 agent）；wrapper 不存在时
+ * 由本句柄先以「空闲」形态就绪——SSE 立即发 connected（否则客户端 60s 就绪超时
+ * 会误判会话被拒），真实 wrapper 由后续真实交互（发送/steer 等）带起来后经
+ * waitForSession 回调附着，其事件经本句柄转发给流。
+ *
+ * 生命周期：createAgentEventStream 在流 cleanup 时会调用 onEvent 返回的退订，
+ * 本句柄据此同时停掉等待与真实订阅。
+ */
+export function createPendingAgentSessionHandle(
+  waitForSession: (onReady: (session: AgentEventStreamSession) => void) => () => void,
+): AgentEventStreamSession {
+  const listeners = new Set<(event: AgentEventLike) => void>();
+  let stopWaiting: (() => void) | null = null;
+  let detach: (() => void) | null = null;
+  let released = false;
+
+  const release = () => {
+    if (released) return;
+    released = true;
+    stopWaiting?.();
+    stopWaiting = null;
+    detach?.();
+    detach = null;
+    listeners.clear();
+  };
+
+  const attach = (session: AgentEventStreamSession) => {
+    if (released) return;
+    detach = session.onEvent((event) => {
+      for (const listener of listeners) {
+        try { listener(event); } catch { /* 单个监听器异常不影响其他监听器 */ }
+      }
+    });
+  };
+
+  return {
+    isStreaming: false,
+    streamingMessage: undefined,
+    // connected 帧就绪时真没在跑（打开会话只为查看）；wrapper 出现后的事件流
+    // 会自带 agent_start/agent_settled 等状态帧，无需这里再合成。
+    isRunning: () => false,
+    onEvent(listener) {
+      if (released) return () => {};
+      listeners.add(listener);
+      if (!stopWaiting) stopWaiting = waitForSession(attach);
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) release();
+      };
+    },
+  };
+}
+
+/**
  * Open the SSE transport immediately, then publish the session snapshot only
  * after the agent is ready and its event listener has been installed.
  */

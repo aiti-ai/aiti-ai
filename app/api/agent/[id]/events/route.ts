@@ -1,6 +1,6 @@
-import { createAgentEventStream } from "@/lib/agent-event-stream";
+import { createAgentEventStream, createPendingAgentSessionHandle } from "@/lib/agent-event-stream";
 import { resolveSessionPath } from "@/lib/session-reader";
-import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
+import { getRpcSession, waitForRpcSession } from "@/lib/rpc-manager";
 import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -58,9 +58,13 @@ export async function GET(
     if (ph?.isAlive()) {
       sessionPromise = Promise.resolve(ph);
     } else {
-      // startRpcSession 内部仍有 ownsFile 总闸兜底
-      if (req.signal.aborted) return new Response(null, { status: 204 });
-      sessionPromise = startRpcSession(id, filePath, undefined).then((result) => result.session);
+      // 惰性建 runtime（2026-09-15）：打开会话页不再冷启动完整 agent——只读浏览/
+      // 统计面板（get_session_stats 已可离线应答）无需 runtime；真实交互（发送/
+      // steer 等）触发 startRpcSession 后，经 running 广播唤醒本流自动附着。
+      // 先以「空闲」形态就绪发 connected，避免客户端 60s 就绪超时误判。
+      sessionPromise = Promise.resolve(createPendingAgentSessionHandle(
+        (onReady) => waitForRpcSession(id, (wrapper) => onReady(wrapper)),
+      ));
     }
   } else if (/^[a-z][\w-]*:/.test(id) && !id.startsWith("pi:")) {
     // 复合外部 id（zcode:sess_x 等）无站位文件可查：进程重启/扩展 reload 后

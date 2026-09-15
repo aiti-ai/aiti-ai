@@ -3603,7 +3603,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       sessionIdRef.current = session.id;
       loadSession(session.id, true, true).then((agentState) => {
         if (agentState?.running) {
-          loadTools(session.id);
+          // 不在这里自动 loadTools（get_tools）：打开/恢复会话只为查看时，应由
+          // 真实意图触发——工具列表在用户点开 system/tools 面板时经 loadSystemInfo
+          // 拉取（AppShell handleSystemInfoToggle）。预设状态已有 loadSession 的
+          // toolNames（loadSession 内 setToolPresetState），无需为显示再打 runtime。
           if (stateIsActive(agentState.state)) {
             const st = agentState.state!;
             sdkAgentActiveRef.current = Boolean(st.isStreaming);

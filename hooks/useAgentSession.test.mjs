@@ -134,7 +134,10 @@ test("fresh sessions use the preference while persisted and live sessions restor
     preferenceSource,
     /const existingSessionId = session\?\.id;[\s\S]*?useLayoutEffect\(\(\) => \{\s*if \(!existingSessionId && \(!isNew \|\| sessionIdRef\.current\)\) return;\s*setToolPresetState\(getPreferredToolPreset\(\)\)/,
   );
-  assert.match(source, /if \(agentState\?\.running\) \{\s*loadTools\(session\.id\)/);
+  // 打开/恢复会话不再自动拉 get_tools（2026-09-15 惰性化：只为查看不触发 runtime）；
+  // 工具列表改为用户点开 system/tools 面板时经 loadSystemInfo 拉取。
+  assert.doesNotMatch(source, /if \(agentState\?\.running\) \{\s*loadTools\(session\.id\)/);
+  assert.match(source, /const loadSystemInfo = useCallback\(async \(\) => \{[\s\S]*?loadTools\(sid\)/);
   assert.match(source, /d\.toolNames !== undefined \? getPresetFromToolNames\(d\.toolNames\) : "default"/);
   assert.match(changeSource, /setPreferredToolPreset\(preset\)/);
   assert.match(changeSource, /\(sid, \{ type: "set_tools", toolNames \}\)/);

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
-import { startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
+import { getOfflineSessionStats, startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
 import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession } from "@/lib/session";
 import { sendWithAcceptWindow } from "@/lib/agent-command-accept";
 
@@ -119,6 +119,16 @@ export async function POST(
           ? { code: "prompt_rejected", accepted: false }
           : {}),
       }, { status: 404 });
+    }
+
+    // 只读命令离线应答（2026-09-15）：无 wrapper 时 get_session_stats 不再冷启动
+    // 整个 runtime——打开会话页/点开统计面板就会发本命令，只为“看一眼”而拉起
+    // agent（连扩展/MCP/子进程）代价大，且在本实例不执行该会话时还会造出陈旧内存
+    // wrapper（遮住其他端的推进，2026-09-15 刷新生效前的真实事故）。这里直接读
+    // 会话文件聚合（与联机版同源口径），仅缺 runtime 专属的 contextUsage；
+    // 有 wrapper 时上面已 return 联机路径，不受影响。
+    if (body.type === "get_session_stats") {
+      return NextResponse.json({ success: true, data: getOfflineSessionStats(id, filePath) });
     }
 
     const { session } = await startRpcSession(id, filePath, undefined, {
