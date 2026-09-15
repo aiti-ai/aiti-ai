@@ -77,6 +77,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const fresh = new URL(req.url).searchParams.has("fresh");
   try {
     // 桥占用识别最先（TUI 是文件所有者；即使有陈旧本地 wrapper 也让位）
     const fpEarly = await resolveSessionPath(id);
@@ -125,6 +126,18 @@ export async function GET(
           context: { messages, entryIds: [], thinkingLevel: "off", model: handleModelToClient(ph.getModel?.()) },
           totalActiveMs: 0,
         });
+      }
+    }
+
+    // 用户显式刷新（?fresh=1，2026-09-15）：回收本进程「alive 但空闲」的 rpc
+    // wrapper，让后续自然走磁盘分支重读。场景：会话被本实例以外的端续写（另一个
+    // pi-web 实例 / zcode 桌面端 / CLI），而空闲 wrapper 仍持有旧内存 SessionManager
+    // ——只重发 GET 会继续从内存返回旧历史，「刷新」形同虚设；且此后发送会接在
+    // 旧叶上（与磁盘分叉）。running 会话不碰（在跑的内存才是权威）。
+    if (fresh) {
+      const staleRpc = getRpcSession(id);
+      if (staleRpc?.isAlive() && !staleRpc.isRunning()) {
+        await stopIdleRpcSession(id);
       }
     }
 

@@ -816,3 +816,22 @@ test("agent_settled 被 rpcPromptPending 拦截时按服务端空闲兜底收尾
   assert.match(settledSource, /void loadSession\(settledSid\);/);
   assert.match(settledSource, /if \(wasRunning\) onAgentEnd\?\.\(\);/);
 });
+
+test("manual refresh cuts the stale SSE stream, reloads with ?fresh=1 and reconnects", () => {
+  const loadSource = source.slice(
+    source.indexOf("const loadSession = useCallback"),
+    source.indexOf("const reloadCurrentSession = useCallback"),
+  );
+  assert.match(loadSource, /const loadSession = useCallback\(async \(sid: string, showLoading = false, includeState = false, fresh = false\) => \{/);
+  assert.match(loadSource, /if \(fresh\) params\.set\("fresh", "1"\);/);
+
+  // 刷新必须断开旧流再重连：服务端 ?fresh=1 会回收空闲 wrapper，旧 EventSource 绑在
+  // 死 wrapper 上，不断流则此后新 wrapper 的事件永远收不到（发消息无流式）。
+  const reloadSource = source.slice(
+    source.indexOf("const reloadCurrentSession = useCallback"),
+    source.indexOf("const loadContext = useCallback"),
+  );
+  assert.match(reloadSource, /eventConnectionRef\.current\?\.close\(\);/);
+  assert.match(reloadSource, /await loadSession\(sid, false, true, true\);/);
+  assert.match(reloadSource, /eventConnectionRef\.current\?\.maintain\(sid\);/);
+});

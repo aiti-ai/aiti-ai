@@ -910,11 +910,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } satisfies SessionStatsInfo;
   }, [messages, sessionStatsOverride, contextUsage, data?.context.messages, data?.filePath, data?.totalActiveMs, data?.stats, session?.id, session?.name]);
 
-  const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false) => {
+  const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false, fresh = false) => {
     let messagesLoaded = false;
     try {
       if (showLoading) setLoading(true);
       const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
+      // ?fresh=1：服务端回收空闲 wrapper 后从磁盘重读（外部推进对齐，见 reloadCurrentSession）
+      if (fresh) params.set("fresh", "1");
       const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sid)}?${params}`));
       if (res.status === 404) {
         if (showLoading) {
@@ -995,11 +997,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   /** 用户主动刷新当前会话（2026-09-15）：重新从服务端拉取完整消息 + 状态（includeState）。
    *  用于「已停止会话可能被外部推进」的场景（zcode 桌面端/CLI 在 pi-web 之外续写同一
-   *  会话；或 handle 复用后内存历史旧）——刷一次即对齐源，无需重建会话。 */
+   *  会话；或 handle 复用后内存历史旧）——刷一次即对齐源，无需重建会话。
+   *  fresh=1 让服务端回收本实例空闲 wrapper 后从磁盘重读；旧 SSE 流绑在旧 wrapper 上，
+   *  必须断开重连，否则此后新 wrapper 的事件收不到（发消息无流式）。 */
   const reloadCurrentSession = useCallback(async () => {
     const sid = sessionIdRef.current;
     if (!sid) return;
-    await loadSession(sid, false, true);
+    eventConnectionRef.current?.close();
+    try {
+      await loadSession(sid, false, true, true);
+    } finally {
+      // shouldMaintain 为假（饥饿让路/非当前会话）时静默跳过，与既有维护语义一致
+      eventConnectionRef.current?.maintain(sid);
+    }
   }, [loadSession]);
 
   const loadContext = useCallback(async (sid: string, leafId: string | null, before?: string | null, options?: { tail?: number; signal?: AbortSignal }) => {
