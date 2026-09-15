@@ -993,6 +993,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [setToolPresetState, syncLiveModel]);
 
+  /** 用户主动刷新当前会话（2026-09-15）：重新从服务端拉取完整消息 + 状态（includeState）。
+   *  用于「已停止会话可能被外部推进」的场景（zcode 桌面端/CLI 在 pi-web 之外续写同一
+   *  会话；或 handle 复用后内存历史旧）——刷一次即对齐源，无需重建会话。 */
+  const reloadCurrentSession = useCallback(async () => {
+    const sid = sessionIdRef.current;
+    if (!sid) return;
+    await loadSession(sid, false, true);
+  }, [loadSession]);
+
   const loadContext = useCallback(async (sid: string, leafId: string | null, before?: string | null, options?: { tail?: number; signal?: AbortSignal }) => {
     try {
       const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1" });
@@ -3908,6 +3917,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setNoticePaused: setPausedNoticeId,
     refreshSessionStats,
     handleToolPresetChange, handleThinkingLevelChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages, loadContext,
+    reloadCurrentSession,
     scrollToBottom, scrollUserMsgToTop, scrollToMessage,
     dispatch, setAgentRunning, setForkingEntryId,
     bashRunning, pendingBash,

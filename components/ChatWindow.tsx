@@ -396,7 +396,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     handleRecallQueue, handleContinueQueue,
     handleBuiltinSlashCommand,
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom, scrollUserMsgToTop,
-    loadContext, activeLeafId, scrollToMessage,
+    loadContext, activeLeafId, scrollToMessage, reloadCurrentSession,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, newSessionBackend: sessionBackend, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
@@ -455,6 +455,16 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   useEffect(() => {
     if (!sessionBusy) setAborting(false);
   }, [sessionBusy]);
+
+  // ── 已停止会话的手动刷新（2026-09-15）：消息流最底部一行低调「刷新」入口。
+  // 场景：会话已停止但可能被外部推进（zcode 桌面端/CLI 在 pi-web 之外续写同一
+  // 会话；handle 复用后内存历史旧）——用户点一下即重新拉取消息 + 状态对齐源。 ──
+  const [refreshing, setRefreshing] = useState(false);
+  const handleManualRefresh = useCallback(() => {
+    if (refreshing) return;
+    setRefreshing(true);
+    void reloadCurrentSession().finally(() => setRefreshing(false));
+  }, [refreshing, reloadCurrentSession]);
   const [quotedSelection, setQuotedSelection] = useState<{
     text: string;
     top: number;
@@ -1705,6 +1715,21 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 sessionId={session?.id ?? sessionIdRef.current ?? undefined}
                 onOpenSession={onOpenSession}
               />
+            )}
+
+            {/* 已停止会话：消息流最底部一行低调「刷新」入口（外部推进/内存历史旧时手动对齐）。
+                所有 agent 通用；运行时/新会话不显示（新会话刷新会破坏草稿语义）。 */}
+            {!sessionBusy && !isNew && messages.length > 0 && (
+              <div className="flex justify-center py-1.5">
+                <button
+                  onClick={handleManualRefresh}
+                  disabled={refreshing}
+                  title={t("chat.refreshSessionHint")}
+                  className="text-[11px] leading-none text-text-muted/55 transition-colors hover:text-text-muted hover:underline disabled:opacity-60"
+                >
+                  {refreshing ? t("chat.refreshing") : `↻ ${t("chat.refreshSession")}`}
+                </button>
+              </div>
             )}
 
             {/* 底部输入区高度占位（保持尾钉）；step-follow spacer 已移除（恒 0） */}
