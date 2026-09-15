@@ -6,6 +6,7 @@ import {
 } from "@/lib/rpc-manager";
 import { getRunningHandleIds } from "@/lib/session/handle-store";
 import { getBridgeRunningIds } from "@/lib/session/bridge-running";
+import { ensureRunningBroadcast } from "@/lib/running-broadcast";
 
 export const dynamic = "force-dynamic";
 
@@ -18,6 +19,9 @@ function runningSessionIds(): string[] {
 
 // GET /api/agent/running - Lightweight snapshot for visible-tab polling.
 export async function GET() {
+  // 保底激活运行集广播（三路变化 → 总线 running 帧；正常由 instrumentation 启动段
+  // 完成注册，此处防部署形态差异——幂等 O(1)。见 lib/running-broadcast.ts）
+  ensureRunningBroadcast();
   return NextResponse.json(
     {
       sessionListVersion: getSessionListVersion(),

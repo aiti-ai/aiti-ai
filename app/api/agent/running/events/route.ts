@@ -7,7 +7,7 @@ import { getBridgeRunningIds, subscribeBridgeRunning } from "@/lib/session/bridg
 // （2026-09-09，155 /win）：SSE 只有心跳、running 帧（含连接初始快照）全丢，
 // 心跳又喂活了客户端全部判活兜底 → 侧栏运行中状态冻结到下次刷新。
 // 直接 import 与下方 addPageEventSink 同模块实例，sink 集合必然一致。
-import { addPageEventSink, publishPageEventToBus } from "@/lib/agent-page-events";
+import { addPageEventSink, publishPageEvent } from "@/lib/agent-page-events";
 
 export const dynamic = "force-dynamic";
 
@@ -41,13 +41,12 @@ export async function GET(req: Request) {
       const onRunningChange = () => {
         publishRunning();
       };
-      // running 帧走宽发布（2026-09-12）：直调 publishPageEvent 只进本 realm 模块
-      // sinks——到不了 aiti-event-bus（总线接管的是 globalThis 槽，不是模块 sinks），
-      // 而侧栏 session-manager 的运行态帧源是总线 → 运行中状态只剩兜底轮询。
-      // publishPageEventToBus = 直调（本 route 自身 SSE 消费方，行为不变）+ 总线槽
-      //（在场时）；宽发布内已防双发。见 aiti-ai docs/todo-session-created-sidebar-notify.md §1.1。
+      // running 帧：直调 publishPageEvent——只进本模块图的 core sinks，服务直连
+      // 本 route 的 SSE 客户端（兼容保留）。跨端主通道（总线）的 running 帧由
+      // lib/running-broadcast.ts 统一供给（与连接生命周期解绑，2026-09-15）；
+      // 此处若再宽发布会与广播器双发到总线，故不宽发布。
       const publishRunning = () => {
-        publishPageEventToBus("running", { runningSessionIds: mergedRunningIds() });
+        publishPageEvent("running", { runningSessionIds: mergedRunningIds() });
       };
       const unsubRpc = subscribeRunningSessions(onRunningChange);
       const unsubHandle = subscribeRunningHandles(onRunningChange);

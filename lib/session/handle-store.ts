@@ -277,11 +277,15 @@ export function getRunningHandleIds(): string[] {
 
 // ── handle 侧 running 广播（对 /api/agent/running[events] 合并用）─────────────
 type RunningListener = (ids: string[]) => void;
-const runningListeners = new Set<RunningListener>();
+// globalThis 承载（2026-09-15）：运行集广播器（lib/running-broadcast.ts，由
+// instrumentation / running 快照 route 入口激活）与 handle 变化（notifyHandleRunningChange）
+// 可能不在同一模块图 realm——订阅集合必须进程级共享，否则跨 realm 的通知到不了广播器。
+const runningListeners = (): Set<RunningListener> =>
+  ((globalThis as { __piHandleRunningListeners?: Set<RunningListener> }).__piHandleRunningListeners ??= new Set());
 
 export function subscribeRunningHandles(listener: RunningListener): () => void {
-  runningListeners.add(listener);
-  return () => runningListeners.delete(listener);
+  runningListeners().add(listener);
+  return () => runningListeners().delete(listener);
 }
 
 /** 重建 handle 运行集并广播（与 rpc-manager.notifyRunningChange 同构，广播合并后完整集）。 */
@@ -290,7 +294,7 @@ export function notifyHandleRunningChange(): void {
   const snapshot = JSON.stringify(ids);
   if (snapshot === lastRunningSnapshot) return;
   lastRunningSnapshot = snapshot;
-  for (const l of runningListeners) l(ids);
+  for (const l of runningListeners()) l(ids);
 }
 let lastRunningSnapshot = "";
 

@@ -60,6 +60,13 @@ export async function register(): Promise<void> {
   await extRegistry.startupById("aiti-event-bus");
   await extRegistry.startAll();
 
+  // 运行集广播：与 /api/agent/running/events 的连接生命周期解绑（页面事件收敛到
+  // 总线后无人直连该 route，running 帧生产断链 → 全端 30s 兜底轮询）。必须放在
+  // 总线 startup 之后：首帧快照经 __piPageEvents 访问器进总线，早于接管会只进
+  // 无人消费的 core sinks。见 lib/running-broadcast.ts。
+  const { ensureRunningBroadcast } = await import("@/lib/running-broadcast");
+  ensureRunningBroadcast();
+
   // 重启恢复 P0：boot 扫描 —— 上一进程的运行集迁入 interrupted 集 + 滚动 bootId。
   // 之后 GET /api/agent/recovery/interrupted 消费该集（文件级校验在 GET 时做）。
   const { bootRollRunningJournal } = await import("@/lib/running-journal");
