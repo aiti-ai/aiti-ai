@@ -1,6 +1,6 @@
 "use client";
 import { registerAbortHandler } from "@/hooks/useKeyboardShortcuts";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecutionMessage, BlockingExtensionUiRequest, CustomMessage, ExtensionUiRequest, SessionInfo, SessionTreeNode, ToolResultMessage, UserMessage } from "@/lib/types";
 import type { AttachedFile } from "@/hooks/useAgentSession";
@@ -19,7 +19,7 @@ import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type AttachedImage, type ChatInputHandle } from "./ChatInput";
 import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
-import { ExtSlot } from "./ExtSlots";
+import { ExtSlot, useExtSlotItems } from "./ExtSlots";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
 import { useRecoveryProviderItems, routeRecoveryResolve } from "@/lib/composer/recovery";
 import { runSessionForkGates } from "@/lib/ext/fork-gates";
@@ -32,6 +32,7 @@ import { useIsMobile, useIsCompact } from "@/hooks/useIsMobile";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { AppUpdateResponse } from "@/lib/api-types";
 import type { ToolEntry } from "@/lib/tool-presets";
+import { getHomeDir, subscribeHomeDir } from "@/lib/home-dir";
 import { findChatScrollAnchor, type ChatScrollPosition } from "@/lib/chat-scroll-position";
 import {
   captureScrollDistance,
@@ -54,6 +55,12 @@ interface Props {
   onScrollPositionChange?: (sessionId: string, position: ChatScrollPosition) => void;
   sessionRunning?: boolean;
   newSessionCwd: string | null;
+  /** 新会话页工作区选择（AppShell 暂存的目标 cwd；null = 使用当前工作区）。
+   *  选择不立即切换应用工作区——会话创建成功后 AppShell 才切入（见 handleSessionCreated）。 */
+  newSessionWorkspace?: string | null;
+  /** 新会话页工作区下拉候选（最近项目 + 当前 cwd；AppShell 供）。 */
+  workspaceOptions?: Array<{ key: string; root: string }>;
+  onNewSessionWorkspaceChange?: (cwd: string | null) => void;
   newSessionDraftKey: string | null;
   onAgentEnd?: () => void;
   onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
@@ -128,6 +135,20 @@ function ElapsedBadge({ startedAt }: { startedAt: number }) {
 const CHAT_MINIMAP_WIDTH = 36;
 const CHAT_COLUMN_PADDING = 16;
 const LAST_BACKEND_KEY = "pi-web:last-session-backend";
+/** 新会话页 Backend 下拉里扩展条目（newSessionBackendOptions）的 option value 前缀。
+ *  选中即执行条目动作（如打开 ACP agent 管理），不改变当前 backend 选择。 */
+const BACKEND_EXT_OPTION_PREFIX = "__ext_opt__:";
+/** 新会话页 Workspace / Backend 两枚下拉的统一外观。 */
+const NEW_SESSION_SELECT_STYLE: CSSProperties = {
+  padding: "4px 8px",
+  background: "var(--bg-hover)",
+  border: "1px solid var(--border)",
+  borderRadius: 8,
+  color: "var(--text)",
+  fontFamily: "inherit",
+  fontSize: 12,
+  cursor: "pointer",
+};
 /** 草稿静默恢复等待输入框就绪的最大帧数（≈5s @60fps）；超时放行对话框手动处理，避免草稿被永久隐藏。 */
 function NewSessionUpdateLink({
   label,
@@ -317,7 +338,7 @@ function permissionOptionLabel(o: { kind?: string; name?: string }): string {
   return map[String(o.kind ?? "")] ?? String(o.kind ?? "选择");
 }
 
-export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onContextUsageChange, onDisplayModelChange, onOpenFile, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
+export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionWorkspace = null, workspaceOptions = [], onNewSessionWorkspaceChange, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onContextUsageChange, onDisplayModelChange, onOpenFile, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
@@ -327,6 +348,18 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // null = 本地 pi（默认，不出现在列表里也无需请求）。
   // 上次选的后端记进 localStorage，下次新建会话自动预选同一 backend。
   const [backendOptions, setBackendOptions] = useState<Array<{ type: string; label: string; agentKey?: string }>>([]);
+  // 新会话页 Backend 下拉内的扩展条目（newSessionBackendOptions）：如 ACP agent 管理入口。
+  // 声明式静态条目 meta.onClick 由宿主转发器物化后回调；无 onClick 的条目不渲染（下拉里不可点）。
+  const backendExtraOptions = useExtSlotItems("newSessionBackendOptions")
+    .filter((it) => typeof it.meta?.onClick === "function");
+  // 工作区路径展示：home 目录缩写为 ~（被动订阅，不主动发请求——别的消费面拉到时自动缩短）。
+  const [homeDir, setHomeDir] = useState<string | null>(() => getHomeDir());
+  useEffect(() => {
+    setHomeDir(getHomeDir());
+    return subscribeHomeDir(setHomeDir);
+  }, []);
+  const workspaceLabel = (root: string) =>
+    homeDir && root.startsWith(homeDir) ? `~${root.slice(homeDir.length)}` : root;
   const [sessionBackend, setSessionBackend] = useState<string | null>(() => {
     try {
       return localStorage.getItem(LAST_BACKEND_KEY) || null;
@@ -1864,42 +1897,68 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </div>
           </div>
         )}
-        {isEmptyNew && backendOptions.length > 0 && (
+        {isEmptyNew && (workspaceOptions.length > 0 || backendOptions.length > 0 || backendExtraOptions.length > 0) && (
           <div className="mx-auto mb-3 w-full" style={{ maxWidth: "var(--chat-content-max-width, 820px)", paddingLeft: 32, paddingRight: isMobile ? 32 : 68 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontFamily: "var(--font-mono)", fontSize: 12 }}>
-              <span style={{ color: "var(--text-muted)" }}>Backend</span>
-              <select
-                value={sessionBackend ?? ""}
-                onChange={(e) => {
-                  const v = e.target.value || null;
-                  setSessionBackend(v);
-                  try {
-                    if (v) localStorage.setItem(LAST_BACKEND_KEY, v);
-                    else localStorage.removeItem(LAST_BACKEND_KEY);
-                  } catch {}
-                }}
-                style={{
-                  padding: "4px 8px",
-                  background: "var(--bg-hover)",
-                  border: "1px solid var(--border)",
-                  borderRadius: 8,
-                  color: "var(--text)",
-                  fontFamily: "inherit",
-                  fontSize: 12,
-                  cursor: "pointer",
-                }}
-              >
-                <option value="">Pi (local)</option>
-                {backendOptions.map((b) => (
-                  <option key={b.type} value={b.type}>
-                    {b.label}
-                  </option>
-                ))}
-              </select>
-              {/* 后端管理入口是扩展点：各后端扩展经 newSessionBackendBar 插槽
-                  自行渲染管理按钮/面板（如 aiti-acp-agent 的 agent 管理），
-                  core 不感知任何具体后端。 */}
-              <ExtSlot name="newSessionBackendBar" />
+              {/* 工作区选择（Backend 之前）：默认当前 cwd；选择只暂存目标，不立即切换工作区——
+                  发送创建会话成功后由 AppShell 切入目标工作区并打开新会话。 */}
+              {workspaceOptions.length > 0 && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
+                  <span style={{ color: "var(--text-muted)" }}>Workspace</span>
+                  <select
+                    value={newSessionWorkspace ?? newSessionCwd ?? ""}
+                    onChange={(e) => onNewSessionWorkspaceChange?.(e.target.value || null)}
+                    title={newSessionWorkspace ?? newSessionCwd ?? undefined}
+                    style={{ ...NEW_SESSION_SELECT_STYLE, maxWidth: "min(52vw, 360px)", minWidth: 0 }}
+                  >
+                    {workspaceOptions.map((p) => (
+                      <option key={p.key} value={p.root}>
+                        {workspaceLabel(p.root)}
+                      </option>
+                    ))}
+                  </select>
+                </span>
+              )}
+              {(backendOptions.length > 0 || backendExtraOptions.length > 0) && (
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>
+                  <span style={{ color: "var(--text-muted)" }}>Backend</span>
+                  <select
+                    value={sessionBackend ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value;
+                      // 扩展条目（如「Manage ACP Agents…」）：不是后端选项——执行动作后
+                      // 把下拉复位，当前 backend 选择不变。
+                      if (raw.startsWith(BACKEND_EXT_OPTION_PREFIX)) {
+                        e.target.value = sessionBackend ?? "";
+                        backendExtraOptions.find((it) => `${BACKEND_EXT_OPTION_PREFIX}${it.id}` === raw)?.meta?.onClick?.();
+                        return;
+                      }
+                      const v = raw || null;
+                      setSessionBackend(v);
+                      try {
+                        if (v) localStorage.setItem(LAST_BACKEND_KEY, v);
+                        else localStorage.removeItem(LAST_BACKEND_KEY);
+                      } catch {}
+                    }}
+                    style={NEW_SESSION_SELECT_STYLE}
+                  >
+                    <option value="">Pi (local)</option>
+                    {backendOptions.map((b) => (
+                      <option key={b.type} value={b.type}>
+                        {b.label}
+                      </option>
+                    ))}
+                    {/* 后端管理入口是扩展点：各后端扩展经 newSessionBackendOptions 插槽
+                        将自己的入口作为下拉最后若干项（如 aiti-acp-agent 的 agent 管理），
+                        core 不感知任何具体后端。 */}
+                    {backendExtraOptions.map((item) => (
+                      <option key={item.id} value={`${BACKEND_EXT_OPTION_PREFIX}${item.id}`}>
+                        {item.meta?.label ?? item.id}
+                      </option>
+                    ))}
+                  </select>
+                </span>
+              )}
               {sessionBackend && (
                 <span style={{ color: "var(--text-dim)", fontSize: 11 }}>
                   session runs via: {sessionBackend}

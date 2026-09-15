@@ -349,7 +349,8 @@ export type ExtSlotName =
   | "assistantMessageActions" // assistant 消息底部 hover 操作区（aiti-ai-speek：🔊 朗读这条/⏹ 停止朗读）
   | "fileViewer"     // 文件查看/编辑接管（aiti-editor：文本文件编辑；aiti-folder：文件夹浏览器；未接管时核心原查看器兑底）
   | "pathPicker"    // 目录选择器能力（aiti-folder：FolderSwitcher 同款；顶栏「打开文件夹」等消费）
-  | "newSessionBackendBar" // 新会话欢迎页 Backend 选择器旁（各后端扩展自行渲染管理入口，如 ACP agent 管理）
+  | "newSessionBackendOptions" // 新会话欢迎页 Backend 下拉内的扩展条目（每项一个 <option>；选中执行 meta.onClick，
+                     //   如 ACP agent 管理入口——不再在选择器外渲染按钮。声明式静态条目经宿主转发器物化后回调）
   | "sessionStats"   // 会话统计下拉内扩展条目行（aiti-ai-usage：报表入口；aiti-ai-input：其他辅助 AI 用量统计行）
   | "composerTools"  // 输入框下方控制行（压缩/停止/导入 queue 同排；aiti-git-trace：时间线主入口等）
   | "queuePanel"    // 队列面板插槽（去 fork 化 P3：aiti-queue-keeper 完整队列 UI 接管；

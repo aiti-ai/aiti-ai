@@ -141,6 +141,7 @@ import type { FileExplorerHandle } from "./FileExplorer";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import type { ToolEntry } from "@/lib/tool-presets";
 import { getSessionFamily } from "@/lib/session-family";
+import { getRecentProjects } from "@/lib/project-groups";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getLastSettingsSection, type SettingsSection } from "@/lib/settings-navigation";
 
@@ -372,6 +373,9 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   }, []);
   // The temporary id distinguishes consecutive fresh composers in one cwd.
   const [newSessionCwd, setNewSessionCwd] = useState<string | null>(null);
+  // 新会话页「工作区」选择的目标 cwd（null = 当前工作区）：选择后不立即切工作区，
+  // 会话创建成功（handleSessionCreated）才正式切入。
+  const [newSessionWorkspace, setNewSessionWorkspace] = useState<string | null>(null);
   const [newSessionDraftId, setNewSessionDraftId] = useState("initial");
   const activeNewSessionDraftKeyRef = useRef<string | null>(null);
   const [initialCwdStatus, setInitialCwdStatus] = useState<"idle" | "validating" | "ready" | "error">(
@@ -855,8 +859,11 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     // 发 activate——右栏展开并置前对应 tab（工具条重复打开后台 dock 的「不置前」修复）。
     // 仅 docked 态触发；floating 幂等不发事件，「手动收起右栏后重复 open 浮窗不误展开」不变。
     const onActivate = (e: Event) => {
-      const detail = (e as CustomEvent<{ key: string; state: string }>).detail;
+      const detail = (e as CustomEvent<{ key: string; state: string; auto?: boolean }>).detail;
       if (!detail?.key || !detail.state?.startsWith("docked:")) return;
+      // 恢复性激活（auto：刷新后 autoDock/项目联动重放）不展开任何面板：小屏右栏/侧栏
+      // overlay 不被加载过程拉起（与上 onPresent 的 auto 门控同语义）。
+      if (detail.auto) return;
       // 左栏 dock 同态再激活（面板已停靠侧栏，重复 open/切回）：展开侧栏把小屏
       // overlay 抽屉拉起——与下方右栏激活联动同语义（侧栏无 tab 位，只需展开）。
       if (detail.state === "docked:sidebar-explorer" || detail.state.startsWith("docked:sidebar:")) {
@@ -1150,6 +1157,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     // remembered session here would yank a fresh composer (and its just
     // recovered draft) away to a historical session on every reload, so the
     // restore only fires when the user actually moves between projects.
+    setNewSessionWorkspace(null); // 真实工作区切换（不是同 cwd 身份水合）→ 暂存目标作废
     const isUserProjectSwitch = currentProject !== null && currentProject !== newProject;
     // Close any session that belongs to a different project — it no longer
     // matches the selected project directory.
@@ -1191,6 +1199,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number) => {
     sessionSourceRef.current = isRestore ? "url" : "select";
+    setNewSessionWorkspace(null); // 选择已有会话 → 新会话页的暂存目标作废
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
     // Advance the project identity to the selected session's project BEFORE the
     // sidebar cwd-sync effect fires. Otherwise handleCwdChange sees a project
@@ -1298,6 +1307,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const handleNewSession = useCallback((sessionId: string, cwd: string) => {
     invalidateWorkspaceRestore();
     sessionSourceRef.current = "cwd-switch";
+    setNewSessionWorkspace(null); // 显式新建 → 回到当前工作区，不继承旧暂存目标
     const draftKey = `new:${sessionId}:${cwd}`;
     activeNewSessionDraftKeyRef.current = draftKey;
     setNewSessionDraftId(sessionId);
@@ -1433,10 +1443,23 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     invalidateWorkspaceRestore();
     activeNewSessionDraftKeyRef.current = null;
     setNewSessionCwd(null);
+    setNewSessionWorkspace(null);
+    // 新会话页「工作区」选择：会话在所选工作区创建成功后，应用上下文（左栏/文件区/URL）
+    // 才正式切入该工作区。必须先于 sidebar 的 selectedCwd（=session.cwd）同步改写项目身份，
+    // 否则 handleCwdChange 会把它当成跨项目切换、拆掉刚创建的会话。
+    if (session.cwd && session.cwd !== activeCwd) {
+      setActiveCwd(session.cwd);
+      activeProjectKeyRef.current = workspaceKeyOf(session);
+      setFileTabs([]);
+      if (!activeFileTabId || activeFileTabId.startsWith("file:")) {
+        setActiveFileTabId(null);
+        setRightPanelOpen(false);
+      }
+    }
     setSelectedSession(session);
     hydrateSelectedSession(session.id);
     replaceLocationIfChanged(router, `?session=${encodeURIComponent(session.id)}`, { scroll: false });
-  }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
+  }, [activeCwd, activeFileTabId, invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
   const deliverSessionNotification = useCallback(({
     targetSession,
@@ -1597,6 +1620,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     setRefreshKey((k) => k + 1);
     setSessionKey((k) => k + 1);
     setNewSessionCwd(null);
+    setNewSessionWorkspace(null);
     setSelectedSession((prev) => ({
       ...(prev ?? { path: "", cwd: "", created: "", modified: "", messageCount: 0, firstMessage: "" }),
       id: newSessionId,
@@ -1641,6 +1665,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       activeNewSessionDraftKeyRef.current = cwd ? `new:${draftId}:${cwd}` : null;
       setSelectedSession(null);
       setNewSessionCwd(cwd ?? null);
+      setNewSessionWorkspace(null);
       setSessionKey((k) => k + 1);
       setBranchTree([]);
       setBranchActiveLeafId(null);
@@ -2006,6 +2031,29 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
 
   // Show chat area if a session is selected, or if we have a cwd to start a new session in
   const effectiveNewSessionCwd = newSessionCwd ?? (selectedSession === null && activeCwd ? activeCwd : null);
+  // 新会话页选择的目标工作区（未选 = 当前）。仅作会话创建/模型/信任检查的目标，
+  // 不参与 sidebar 的 selectedCwd 同步——所以选择后应用工作区不立即切换。
+  const targetNewSessionCwd = newSessionWorkspace ?? effectiveNewSessionCwd;
+  // 工作区下拉候选：最近项目（按活跃度） + 当前 cwd（保证总在）；暂存目标缺席时补上。
+  const newSessionWorkspaceOptions = useMemo(() => {
+    const options = getRecentProjects(sessionCatalog).map((p) => ({ key: p.key, root: p.root }));
+    if (effectiveNewSessionCwd && !options.some((p) => p.root === effectiveNewSessionCwd)) {
+      options.unshift({ key: effectiveNewSessionCwd, root: effectiveNewSessionCwd });
+    }
+    if (newSessionWorkspace && !options.some((p) => p.root === newSessionWorkspace)) {
+      options.push({ key: newSessionWorkspace, root: newSessionWorkspace });
+    }
+    return options;
+  }, [sessionCatalog, effectiveNewSessionCwd, newSessionWorkspace]);
+  // 切换目标工作区：重挂 composer（sessionKey）——若旧 cwd 的 runtime 已 ensure（如打开过
+  // 系统提示面板/斜杠命令列表），不能让它接住发往新工作区的消息；草稿由 draft-keeper
+  // 跨挂载恢复（同 draftKey 挂载时 keeper 走 keyChange(first)+scan 回填）。
+  const handleNewSessionWorkspaceChange = useCallback((cwd: string | null) => {
+    const next = cwd && cwd !== (newSessionCwd ?? activeCwd) ? cwd : null;
+    if (next === newSessionWorkspace) return;
+    setNewSessionWorkspace(next);
+    setSessionKey((k) => k + 1);
+  }, [activeCwd, newSessionCwd, newSessionWorkspace]);
   const newSessionDraftKey = selectedSession === null && effectiveNewSessionCwd
     ? `new:${newSessionDraftId}:${effectiveNewSessionCwd}`
     : null;
@@ -2013,7 +2061,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     activeNewSessionDraftKeyRef.current = newSessionDraftKey;
   }, [newSessionDraftKey]);
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
-  const projectTrustCwd = selectedSession?.cwd ?? effectiveNewSessionCwd;
+  const projectTrustCwd = selectedSession?.cwd ?? targetNewSessionCwd;
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
 
@@ -4590,7 +4638,10 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               initialScrollPosition={selectedSession ? sessionScrollPositionsRef.current.get(selectedSession.id) ?? null : null}
               onScrollPositionChange={handleSessionScrollPositionChange}
               sessionRunning={Boolean(selectedSession && runningSessionIds.has(selectedSession.id))}
-              newSessionCwd={effectiveNewSessionCwd}
+              newSessionCwd={targetNewSessionCwd}
+              newSessionWorkspace={newSessionWorkspace}
+              workspaceOptions={newSessionWorkspaceOptions}
+              onNewSessionWorkspaceChange={handleNewSessionWorkspaceChange}
               newSessionDraftKey={newSessionDraftKey}
               onAgentEnd={handleAgentEnd}
               onAttentionNeeded={handleAttentionNeeded}

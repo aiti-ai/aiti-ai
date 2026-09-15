@@ -145,7 +145,7 @@ const GUARDS = [
       /onExportQueue\?\./,                                           // 队列导出到 AppShell
       /scrollToBottom/,                                              // 我方滚动钉底（与上游 scrollToMessage 并存）
       /scrollToMessage/,                                             // 上游搜索跳转（合并并集样本）
-      /newSessionBackendBar/,                                        // 多后端管理入口插槽（沉底区迁移后仍在）
+      /newSessionBackendOptions/,                                    // 多后端管理入口插槽（Backend 下拉内扩展条目）
       /sessionBackend/,                                              // 多后端会话状态
     ],
   },
