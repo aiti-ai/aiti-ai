@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect, useLayoutEffect, useMemo, useSyncExternalStore, type ReactNode } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiUrl, inAppPathname, withBasePath } from "@/lib/base-path";
+import { openViewerWindowHost } from "@/lib/open-viewer-window-host";
 import { fmtMoney, fmtMoneySmall, fxNote, useMoneySynced } from "@/lib/money";
 import { homeDirService } from "@/lib/home-dir";
 
@@ -4801,6 +4802,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               onSelectTab={guardedSelectFileTab}
               onCloseTab={handleCloseFileTab}
               onDetachTab={handleTabDoubleClick}
+              onOpenViewerWindow={(tab) => { openViewerWindowHost(tab.filePath, activeCwd); }}
             />
           </div>
           {(() => {

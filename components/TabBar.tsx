@@ -57,6 +57,9 @@ interface Props {
   /** 双击/右键 tab 拆出为窗口（aiti-float tab-detach v0.6.0/0.6.2；不传则双击无操作、
    *  无右键菜单——其他使用方零影响。mobile 由调用方决定是否传入）。 */
   onDetachTab?: (tab: Tab) => void;
+  /** 文件 tab ⇱「新窗口（独立查看器）」：换票 + aiti-viewer 握手打开 /viewer。
+   *  缺省不传则 ⇱ 菜单只含「浮窗」一项（onDetachTab 也不传则整个 ⇱ 不渲染）。 */
+  onOpenViewerWindow?: (tab: Tab) => void;
   /** 自动滚入视野令牌：宿主仅在「用户自主打开/切换」路径递增——令牌变化才把激活 tab
    *  滚进视野。历史恢复（session 墓碑批量 select:false 后台静默打开）与其兜底激活不递
    *  增 → 不抢页签条当前滚动位置。缺省 undefined 保持旧行为（activeTabId / tabsKey
@@ -73,10 +76,14 @@ interface CtxMenu {
   y: number;
 }
 
-export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab, revealToken }: Props) {
+export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab, onOpenViewerWindow, revealToken }: Props) {
   const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
+  /** 文件 tab ⇱ 位置菜单（2026-09-16）：dock tab 的 ⇱ 走 aiti-float；文件 tab 不是
+   *  dock face，没有可换的停靠位——菜单只列实际可用的形态：浮窗（=既有 detach 链路）
+   *  + 新窗口（独立查看器 /viewer）。 */
+  const [posMenu, setPosMenu] = useState<{ tab: Tab; x: number; y: number } | null>(null);
 
   // 右键菜单关闭：点外/ Escape/滚动（fixed 定位菜单不跟随滚动，收掉最稳）
   useEffect(() => {
@@ -92,6 +99,21 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
       window.removeEventListener("keydown", onKey);
     };
   }, [ctxMenu]);
+
+  // 文件 tab ⇱ 位置菜单关闭：同右键菜单（点外/Escape/resize）
+  useEffect(() => {
+    if (!posMenu) return;
+    const close = () => setPosMenu(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setPosMenu(null); };
+    window.addEventListener("click", close);
+    window.addEventListener("resize", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [posMenu]);
 
   // 横向滚动：tabs 溢出时两端显示左右滚动按钮。
   const scrollRef = useRef<HTMLDivElement | null>(null);
@@ -399,6 +421,34 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
                 ⇱
               </button>
             )}
+            {tab.kind === "file" && (onDetachTab || onOpenViewerWindow) && (
+              /* 文件 tab ⇱（2026-09-16）：非 dock face，菜单由宿主自渲染——浮窗（detach）/
+                 新窗口（/viewer）；与 dock tab 的 ⇱ 同锚位同外观，交互预期一致。 */
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const r = e.currentTarget.getBoundingClientRect();
+                  setPosMenu({ tab, x: Math.min(r.left, window.innerWidth - 180), y: r.bottom + 4 });
+                }}
+                style={{
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  width: 20, height: 20,
+                  background: "transparent",
+                  border: "none",
+                  borderRadius: 4,
+                  color: isActive ? "var(--text-muted)" : "var(--text-dim)",
+                  cursor: "pointer",
+                  padding: 0,
+                  fontSize: 11,
+                  lineHeight: 1,
+                  flexShrink: 0,
+                }}
+                title={t("files.posTitle")}
+                aria-label={`${t("files.posTitle")} ${tab.label}`}
+              >
+                ⇱
+              </button>
+            )}
             <button
               disabled={Boolean(tab.closing)}
               onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
@@ -442,6 +492,59 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
             <polyline points="9 18 15 12 9 6" />
           </svg>
         </button>
+      )}
+      {/* 文件 tab ⇱ 位置菜单（宿主自渲染；dock tab 的 ⇱ 走 aiti-float 不进这里） */}
+      {posMenu && (
+        <div
+          role="menu"
+          style={{
+            position: "fixed",
+            left: posMenu.x,
+            top: posMenu.y,
+            zIndex: 3200,
+            minWidth: 170,
+            background: "var(--bg-panel)",
+            border: "1px solid var(--border)",
+            borderRadius: 8,
+            boxShadow: "0 8px 24px rgba(0,0,0,.28)",
+            padding: 4,
+            fontSize: 12,
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {onDetachTab && (
+            <button
+              type="button"
+              role="menuitem"
+              style={{
+                display: "flex", alignItems: "center", gap: 8, width: "100%",
+                padding: "7px 10px", border: "none", borderRadius: 6, cursor: "pointer",
+                background: "transparent", color: "var(--text)", textAlign: "left",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              onClick={() => { const tab = posMenu.tab; setPosMenu(null); onDetachTab(tab); }}
+            >
+              {t("files.posDetach")}
+            </button>
+          )}
+          {onOpenViewerWindow && (
+            <button
+              type="button"
+              role="menuitem"
+              style={{
+                display: "flex", alignItems: "center", gap: 8, width: "100%",
+                padding: "7px 10px", border: "none", borderRadius: 6, cursor: "pointer",
+                background: "transparent", color: "var(--text)", textAlign: "left",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+              onClick={() => { const tab = posMenu.tab; setPosMenu(null); onOpenViewerWindow(tab); }}
+            >
+              {t("files.posNewWindow")}
+            </button>
+          )}
+        </div>
       )}
       {/* 右键菜单（tab-detach v0.6.2）：fixed 定位；点外/Escape 关闭（effect 挂窗级监听） */}
       {ctxMenu && onDetachTab && (
