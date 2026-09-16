@@ -11,6 +11,17 @@ export async function register(): Promise<void> {
   const { stampChildMarker } = await import("@/lib/child-marker");
   stampChildMarker();
 
+  // 文件访问沙箱（系统级总体限制，默认关闭）：PI_WEB_FILE_SANDBOX=1 启用时，
+  // PI_WEB_ALLOWED_ROOTS（分号分隔）追加允许根（会话 cwd/projectRoot 始终允许）。
+  // 默认沙箱关闭时此注册无效（isFilePathAllowed 直接放行），仅在启用时生效。
+  {
+    const rootsEnv = process.env.PI_WEB_ALLOWED_ROOTS;
+    if (rootsEnv) {
+      const { allowFileRoot } = await import("@/lib/file-access");
+      for (const r of rootsEnv.split(/[;:]/).filter(Boolean)) allowFileRoot(r);
+    }
+  }
+
   const { configureHttpDispatcher } = await import("@/lib/http-dispatcher");
   configureHttpDispatcher();
 

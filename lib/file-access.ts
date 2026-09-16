@@ -48,12 +48,26 @@ export async function getAllowedFileRoots(): Promise<Set<string>> {
   return roots;
 }
 
+/**
+ * 文件访问沙箱开关。默认关闭:前端已提供任意路径入口(自定义路径/文件浏览器可手动输入
+ * 任意系统路径打开),后端 /api/files 的会话 cwd 沙箱与前端矛盾且形同虚设——前端能选任意
+ * 路径、后端却挡 AI 识别出的同一路径,不合理。默认放行所有路径,与前端一致。
+ * 需要限制时设 env PI_WEB_FILE_SANDBOX=1 启用系统级总体限制(仅允许会话 cwd/projectRoot
+ * + ~/pi-cwd-* + PI_WEB_ALLOWED_ROOTS 指定根);instrumentation 启动时注册额外根。
+ */
+export function isFileSandboxEnabled(): boolean {
+  const v = process.env.PI_WEB_FILE_SANDBOX;
+  return v === "1" || v === "true";
+}
+
 /** Authorize a path lexically, without touching the filesystem. */
 export function isFilePathAllowed(target: string, allowedRoots: Set<string>): boolean {
+  if (!isFileSandboxEnabled()) return true; // 默认关闭沙箱:放行所有路径
   return isPathWithinRoots(target, allowedRoots);
 }
 
 /** Authorize an existing path after resolving symbolic links. */
 export function isExistingFilePathAllowed(target: string, allowedRoots: Set<string>): boolean {
+  if (!isFileSandboxEnabled()) return true;
   return isExistingPathWithinRoots(target, allowedRoots);
 }
