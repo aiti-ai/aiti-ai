@@ -62,6 +62,7 @@ function replaceLocationIfChanged(
   router.replace(href, options);
 }
 import { registerHostApi } from "@/lib/ext/host-api";
+import { HOST_UI_SERVICE } from "@/lib/ext/host-ui-contract";
 import { ProjectTrustDialog } from "./ProjectTrustDialog";
 import { RestartRecoveryWizard } from "./RestartRecoveryWizard";
 import { BackendConnBanner } from "./BackendConnBanner";
@@ -3146,9 +3147,9 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   //    impl 经 ref 委托最新渲染闭包（AppShell 每渲染刷新 ref，服务注册仅挂载一次），
   //    避免注册 stale closure；卸载时反注册。 ──
   const hostUiRef = useRef<Record<string, unknown>>({});
-  hostUiRef.current = { ...sidebarContentExtra, sidebarFooterRow };
+  hostUiRef.current = { ...sidebarContentExtra, sidebarFooterRow, onLineMention: handleFileLineMention };
   useEffect(() => {
-    return registerExtClientService("pi-web", "pi-web.ui", {
+    return registerExtClientService(HOST_UI_SERVICE.provider, HOST_UI_SERVICE.name, {
       /** 按名取宿主工厂（renderTitle/renderSidebarFooter/回调……与 sidebarContent extra 同集）。 */
       get: (name: string) => hostUiRef.current[name],
       /** 工厂名清单。 */

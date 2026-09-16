@@ -725,13 +725,15 @@ test("aiti-ctx-meter seam: buildExtContextSnapshot maps contextUsage and passes 
   );
 });
 
-test("aiti-ctx-meter seam: composerTools extra 带 context/compact/openSessionInfo；modelInfoLead 恰两处且 InfoSheet 版先收 sheet", () => {
+test("aiti-ctx-meter seam: composerTools extra 带纯数据 context/compact；回调走 pi-web.composer 服务（slot extra 回调解耦，2026-09-16）", () => {
   const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
-  // 小屏模型信息前导位恰为 2 处渲染点（展开态输入行 + InfoSheet 模型行）
+  // 小屏模型信息前导位恰为 2 处渲染点（展开态输入行 + InfoSheet 模型行），共用同一 memo extra
   assert.equal((source.match(/name="modelInfoLead"/g) || []).length, 2, "modelInfoLead 渲染点应恰为 2 处");
+  assert.equal((source.match(/extra=\{modelInfoLeadExtra\}/g) || []).length, 2, "modelInfoLead 两处应共用 modelInfoLeadExtra（拼法漂移已收敛）");
   // 桌面压缩按钮左邻位恰为 1 处渲染点（v0.1.2 自 composerTools 行尾迁此）
   assert.equal((source.match(/name="compactLead"/g) || []).length, 1, "compactLead 渲染点应恰为 1 处");
-  // InfoSheet 版 openSessionInfo 先收 sheet 再开面板
+  // 回调已服务化：pi-web.composer 注册 + openSessionInfo（先收 sheet 再开面板）在服务集里
+  assert.match(source, /registerExtClientService\(HOST_COMPOSER_SERVICE\.provider, HOST_COMPOSER_SERVICE\.name/);
   assert.match(source, /openSessionInfo: \(\) => \{ setInfoSheetOpen\(false\); onSessionStatsPanelOpen\?\.\(\); \}/);
   // composerTools（桌面）extra 携带三接缝字段
   const composerIdx = source.indexOf('name="composerTools"');
@@ -739,9 +741,11 @@ test("aiti-ctx-meter seam: composerTools extra 带 context/compact/openSessionIn
   const extraStart = source.indexOf("extra={{", composerIdx);
   const extraEnd = source.indexOf("}} />", extraStart);
   const extraBlock = source.slice(extraStart, extraEnd);
-  for (const key of ["context: extSeamContext", "compact: extSeamCompact", "openSessionInfo: onSessionStatsPanelOpen"]) {
+  for (const key of ["context: extSeamContext", "compact: extSeamCompact"]) {
     assert.ok(extraBlock.includes(key), `composerTools extra 缺 ${key}`);
   }
+  assert.ok(!extraBlock.includes("openSessionInfo"), "composerTools extra 不应再含 openSessionInfo（已服务化）");
+  assert.ok(!extraBlock.includes("queueActions"), "composerTools extra 不应再含 queueActions（已服务化）");
 });
 
 // ── 小屏新建会话不折叠（2026-09 用户拍板：欢迎页空间足够，无需折叠输入框）──

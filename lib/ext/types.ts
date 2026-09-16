@@ -512,7 +512,9 @@ export interface ModelInfoLeadSlotProps {
   /** null = 无上下文数据（外部后端 / idle 会话）→ 扩展灰态。 */
   context: ExtContextSnapshot | null;
   compact: ExtCompactControls;
-  /** 打开会话统计面板（AppShell openSessionStatsPanel；InfoSheet 渲染点已包「先收 sheet」）。 */
+  /** 打开会话统计面板（AppShell openSessionStatsPanel；InfoSheet 渲染点已包「先收 sheet」）。
+   *  已服务化（slot extra 回调解耦方案，2026-09-16）：宿主 extra 不再喂，消费方经
+   *  "pi-web.composer" 服务兜底（rp 优先）；字段保留供旧宿主/显式透传兼容。 */
   openSessionInfo?: () => void;
   isMobile?: boolean;
 }

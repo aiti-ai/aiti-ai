@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, useSyncExternalStore, KeyboardEvent } from "react";
+import React, { useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, useSyncExternalStore, useMemo, KeyboardEvent } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import type { QueueTrashItem } from "@/lib/queue-store";
 import type { QueueEntry, QueueEntryInput } from "@/lib/composer/queue-api";
@@ -20,8 +20,9 @@ import { formatExtensionStatusLine } from "./ExtensionStatusBar";
 import { AnsiText } from "./AnsiText";
 import { ImagePreview } from "./ImagePreview";
 import { ExtensionWidgets } from "./ExtensionWidgets";
-import { useChatHooks, ExtSlot, registerChatSend, useExtSlotItems, ExtItemBoundary } from "@/components/ExtSlots";
+import { useChatHooks, ExtSlot, registerChatSend, useExtSlotItems, ExtItemBoundary, registerExtClientService } from "@/components/ExtSlots";
 import { hasExtRender } from "@/lib/ext-ui-store";
+import { HOST_COMPOSER_SERVICE } from "@/lib/ext/host-ui-contract";
 
 import {
   MAX_ATTACHED_IMAGE_BYTES,
@@ -2764,6 +2765,39 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     requestAnimationFrame(() => textareaRef.current?.focus());
   }, []);
 
+  // ── 宿主能力服务 "pi-web.composer"（slot extra 回调解耦方案批次 B，2026-09-16）：
+  //    引用稳定回调/ref 注册为只读服务向全部扩展开放；插槽渲染点的 extra 收敛到纯数据
+  //    （值随渲染变的字段一律留插槽 props——服务 get 是命令式快照）。消费方解析链：
+  //    rp 优先 → getExtService("pi-web.composer") 兜底（范式 aiti-folder resolveHostFace）。
+  //    impl 经 ref 委托最新渲染闭包（hostUiRef 同款），注册仅挂载一次，卸载反注册。 ──
+  const composerUiRef = useRef<Record<string, unknown>>({});
+  composerUiRef.current = {
+    setInputValue,
+    focusComposer: refocusInput,
+    textareaRef,
+    // 小屏 InfoSheet 内的入口要先收起面板再打开统计（对桌面无副作用——InfoSheet 是小屏态）
+    openSessionInfo: () => { setInfoSheetOpen(false); onSessionStatsPanelOpen?.(); },
+    // 队列面板 actions 原语（与 queuePanel extra.actions 同集；composerTools 导入入口等消费）
+    queueActions: queuePanelExtra.actions,
+  };
+  useEffect(() => {
+    return registerExtClientService(HOST_COMPOSER_SERVICE.provider, HOST_COMPOSER_SERVICE.name, {
+      /** 按名取 composer 能力（字段契约见 lib/ext/host-ui-contract.ts）。 */
+      get: (name: string) => composerUiRef.current[name],
+      /** 字段名清单。 */
+      names: () => Object.keys(composerUiRef.current),
+    });
+  }, []);
+
+  // composerAffix 三处渲染点共用的纯数据 extra（此前 3 处手拼重复，且含回调——已服务化）
+  const composerAffixExtra = useMemo(() => ({
+    hasContent, hasInputText, isStreaming, focused: inputFocused, inputValue: value,
+  }), [hasContent, hasInputText, isStreaming, inputFocused, value]);
+  // modelInfoLead 两处渲染点共用的纯数据 extra（此前 5176/4398 拼法漂移，统一）
+  const modelInfoLeadExtra = useMemo(() => ({
+    sessionId, cwd, context: extSeamContext, compact: extSeamCompact, isMobile: true,
+  }), [sessionId, cwd, extSeamContext, extSeamCompact]);
+
   const sendQueued = useCallback((mode: "steer" | "followup") => {
     const msg = value.trim();
     // No typed text: the steer button dispatches the first queued follow-up
@@ -4194,7 +4228,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               <NotchHandle capsule={false} count={0} onClick={() => cycleBottomMode()} title={t(effectiveBottomMode === "full" ? (queueCount > 0 ? "chat.minimizeQueue" : "chat.minimizeInput") : "chat.restoreBottom")} />
             </div>
           ))}
-          <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, sessionId, textareaRef, setInputValue, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen, model }} />
+          <ExtSlot name="chatInputTop" extra={{ inputValue: value, cwd, sessionId, isStreaming, menuOpen: historyMenuOpen || slashMenuOpen || atMenuOpen, model }} />
           {/* textarea 包裹层：affix 位（框内右缘）的定位上下文；flex 契约从 textarea 移到包裹层。
               v4 三审（用户拍板：聚焦或有输入 → 输入框与最底一排**分开**）：
               展开态（mobileExpanded=聚焦或有内容）textarea 独占整行（flex 100%），
@@ -4264,7 +4298,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               null 零占位；按钮自带 data-composer-affix（长按手势不被折叠手势劫持）。
               展开态由条件组内位承接，两处互斥渲染不重复（图片同范式） */}
           {isMobile && !compact && !mobileExpanded && (
-            <ExtSlot name="composerAffix" extra={{ hasContent, hasInputText, isStreaming, focused: inputFocused, inputValue: value, textareaRef, setInputValue, focusComposer: refocusInput }} />
+            <ExtSlot name="composerAffix" extra={composerAffixExtra} />
           )}
           {/* v4 八审：图片恒驻的收起态位（textarea 右缘，未聚焦+空输入单行态）；
               展开态由条件组内位承接（语音之后），两处互斥渲染不重复 */}
@@ -4371,7 +4405,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <svg width="11" height="11" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><line x1="3.5" y1="3.5" x2="10.5" y2="10.5" /><line x1="10.5" y1="3.5" x2="3.5" y2="10.5" /></svg>
                 </button>
               )}
-              <ExtSlot name="composerAffix" extra={{ hasContent, hasInputText, isStreaming, focused: inputFocused, inputValue: value, textareaRef, setInputValue, focusComposer: refocusInput }} />
+              <ExtSlot name="composerAffix" extra={composerAffixExtra} />
             </div>
           )}
           </div>
@@ -4395,7 +4429,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   MobileIconButton 齐平，pending 徽标组件自带。compact 引用框不露（同弹性空隙条件）。 */}
               {/* aiti-ctx-meter 电池：模型信息前导位——显示模型信息时都显示（docs/aiti-ctx-meter-plan.md §4.2） */}
               {isMobile && mobileExpanded && !compact && onModelChange && (
-                <ExtSlot name="modelInfoLead" extra={{ sessionId, cwd, context: extSeamContext, compact: extSeamCompact, openSessionInfo: onSessionStatsPanelOpen, isMobile: true }} />
+                <ExtSlot name="modelInfoLead" extra={modelInfoLeadExtra} />
               )}
               {isMobile && mobileExpanded && !compact && onModelChange && (
                 /* v4 十七审：占满中间剩余空间（flex 1 1 0 / minWidth 0），名字长即 ellipsis 截断——
@@ -4427,7 +4461,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               >
                 {/* 十六/十七审：composerAffix（🎤）仅展开态挂载——收起态由包裹层内收起位承接，
                     双位互斥挂载（任意时刻一个实例），与图片同范式 */}
-                {mobileExpanded && <ExtSlot name="composerAffix" extra={{ hasContent, hasInputText, isStreaming, focused: inputFocused, inputValue: value, textareaRef, setInputValue, focusComposer: refocusInput }} />}
+                {mobileExpanded && <ExtSlot name="composerAffix" extra={composerAffixExtra} />}
                 {/* v4 六/八审：图片在🎤语音之后、其余按钮之前；仅展开态渲染（收起态由 wrapper 右缘位承接，恒驻不重复） */}
                 {mobileExpanded && (
                 <MobileIconButton
@@ -4967,7 +5001,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             )}
 
             {/* aiti-ctx-meter 比例条：压缩按钮左邻位（docs/aiti-ctx-meter-plan.md §4.3；无扩展注册时零占位） */}
-            <ExtSlot name="compactLead" extra={{ sessionId, cwd, context: extSeamContext, compact: extSeamCompact, openSessionInfo: onSessionStatsPanelOpen }} />
+            <ExtSlot name="compactLead" extra={{ sessionId, cwd, context: extSeamContext, compact: extSeamCompact }} />
 
             {onCompact && (
               <div>
@@ -5098,16 +5132,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 )}
               </button>
             )}
-            {/* 扩展入口（composerTools slot）：与压缩/导入同排的 32×32 图标按钮（aiti-git-trace：时间线主入口）；streaming 供 plan chip 等 turn 末刷新状态 */}
+            {/* 扩展入口（composerTools slot）：与压缩/导入同排的 32×32 图标按钮（aiti-git-trace：时间线主入口）；streaming 供 plan chip 等 turn 末刷新状态。
+                回调已服务化（pi-web.composer：queueActions/openSessionInfo），extra 只剩数据 */}
             <ExtSlot name="composerTools" extra={{
               sessionId, cwd, streaming: isStreaming,
-              // 队列 actions（P3）：composerTools 行的导入按钮经此触发 stageImport——
-              // 导入入口回到底部控制行（与压缩/导入同排），队列空时不再孤零零浮在上方。
-              queueActions: queuePanelExtra.actions,
               // aiti-ctx-meter 接缝：上下文比例条 + 压缩三态 + 会话面板入口（docs/aiti-ctx-meter-plan.md §4.1/§5）
               context: extSeamContext,
               compact: extSeamCompact,
-              openSessionInfo: onSessionStatsPanelOpen,
             }} />
             </div>
             {/* Desktop cycle: click walks the bottom
@@ -5173,7 +5204,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   {modelSwitchPending && <span style={{ flexShrink: 0, width: 7, height: 7, borderRadius: 99, background: "#f59e0b" }} />}
                   <div style={{ marginLeft: "auto", minWidth: 0, display: "flex", alignItems: "center", gap: 6, justifyContent: "flex-end" }}>
                     {/* aiti-ctx-meter 电池：sheet 版前导位——点击先收 sheet 再开会话面板（§4.2） */}
-                    <ExtSlot name="modelInfoLead" extra={{ sessionId, cwd, context: extSeamContext, compact: extSeamCompact, openSessionInfo: () => { setInfoSheetOpen(false); onSessionStatsPanelOpen?.(); }, isMobile: true }} />
+                    <ExtSlot name="modelInfoLead" extra={modelInfoLeadExtra} />
                     <ModelSelector
                       options={modelOptions}
                       value={model}
@@ -5386,7 +5417,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   <span style={{ fontFamily: "var(--font-mono)", fontWeight: 700 }}>/</span>
                   {t("chat.insertCommand")}
                 </button>
-                <ExtSlot name="composerTools" extra={{ sessionId, cwd, streaming: isStreaming, queueActions: queuePanelExtra.actions, context: extSeamContext, compact: extSeamCompact, openSessionInfo: onSessionStatsPanelOpen, isMobile: true }} />
+                <ExtSlot name="composerTools" extra={{ sessionId, cwd, streaming: isStreaming, context: extSeamContext, compact: extSeamCompact, isMobile: true }} />
               </div>
             </div>
           </>
