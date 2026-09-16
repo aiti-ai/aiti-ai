@@ -207,6 +207,15 @@ pi keeps steer/follow-up queues in memory only — a server restart would lose t
 - Sessions whose cwd points at a removed worktree are inferred back into the main project instead of becoming a phantom project row.
 - git prints POSIX-style absolute paths even on Windows, so every path read out of git goes through `toNativePath()` (`lib/paths.ts`) before it is compared or returned. Compare paths with `samePath()`, never `===` — raw equality made `isTopLevel` permanently false on Windows and hid the worktree switcher entirely. Branch names are not paths and must keep their forward slashes. Browser code cannot apply Node path rules, so `/api/worktrees` resolves `currentWorktreePath` server-side; the sidebar must use that identity for highlighting and removal fallback.
 
+### pi-ai streaming-parse hotfix — re-apply after every install（issue #9265）
+- node_modules 里的 `@earendil-works/pi-ai@0.85.1` 打有本地热修：6 个 api adapter 流式 chunk 循环里的 `block.arguments = parseStreamingJson(累积串)` 改为 `{}`（每 delta 全量 re-parse 是 O(n²)，大参数流式会饿死事件循环——2026-09-16 生产 20341 卡死 7 分钟的根因；消费端已审计零读者，收尾 finalize 的 parse 保留）。
+- **任何 `bun install` / `npm install` / 上游 merge 刷新 node_modules 都会把它冲掉且无提示** → merge/install 后必跑：
+  ```bash
+  bash ~/.pi/agent/patches/apply-pi-ai-9265-hotfix.sh
+  ```
+  幂等、自动发现安装位（pi-prod / pi-web / 也可传额外路径）、打完自动 import 验证；打完需重启对应实例（模块已加载进内存；20341 生产重启需用户确认）。
+- 原理/消费端审计/复发排查见 `~/.pi/agent/known-issues.md`；上游 [#9265](https://github.com/earendil-works/pi/issues/9265) / PR [#9461](https://github.com/earendil-works/pi/pull/9461) 发版（pi-ai > 0.85.1 含修复）后升级依赖即自然卸补丁，本节作废。
+
 ### File access allow-list
 - `/api/files` is intentionally not a general filesystem browser. Allowed roots come from session cwds, their resolved project roots, `~/pi-cwd-*`, and roots explicitly added with `allowFileRoot()`.
 - `/api/cwd/validate`, `/api/default-cwd`, and `/api/worktrees` call `allowFileRoot()` when they make a new location browsable.
