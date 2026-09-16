@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import webpush from "web-push";
 import { writePrivateFileAtomicSync } from "./atomic-file";
+import { runOutcomeNotifies, truncateRunError, type SessionLastRun } from "./run-outcome";
 import { enLocale } from "./i18n/messages/en";
 import { zhCNLocale } from "./i18n/messages/zh-CN";
 import { getAgentDir } from "./session-reader";
@@ -33,7 +34,7 @@ interface WebPushEnvironment {
 export interface WebPushNotifier {
   getVapidPublicKey: () => string;
   addSubscription: (subscription: PushSubscriptionRecord) => void;
-  notifySessionComplete: (sessionId: string) => Promise<void>;
+  notifySessionComplete: (sessionId: string, outcome?: SessionLastRun) => Promise<void>;
 }
 
 function stateFilePath(): string {
@@ -110,25 +111,45 @@ function pushStatusCode(error: unknown): number | undefined {
  * Locale lookup for push payloads. The browser reports its UI locale when it
  * subscribes; unknown locales fall back to English.
  */
+const NOTIFICATION_I18N_KEYS = {
+  sessionComplete: "i18n.sessionComplete",
+  taskFinished: "i18n.taskFinished",
+  taskFinishedWithContext: "i18n.taskFinishedWithContext",
+  sessionFailed: "i18n.sessionFailed",
+  taskFailed: "i18n.taskFailed",
+  taskFailedWithContext: "i18n.taskFailedWithContext",
+  taskFailedWithError: "i18n.taskFailedWithError",
+  taskFailedWithContextAndError: "i18n.taskFailedWithContextAndError",
+} as const;
+
+export type NotificationTextKey = keyof typeof NOTIFICATION_I18N_KEYS;
+
+export const NOTIFICATION_FALLBACKS: Record<NotificationTextKey, string> = {
+  sessionComplete: "Session complete",
+  taskFinished: "Task finished.",
+  taskFinishedWithContext: "{project} · Task finished",
+  sessionFailed: "Session failed",
+  taskFailed: "Task failed.",
+  taskFailedWithContext: "{project} · Task failed",
+  taskFailedWithError: "Task failed: {error}",
+  taskFailedWithContextAndError: "{project} · Task failed: {error}",
+};
+
 export function localeText(
   locale: string,
-  key: "sessionComplete" | "taskFinished" | "taskFinishedWithContext",
-  params?: { project?: string },
+  key: NotificationTextKey,
+  params?: { project?: string; error?: string },
 ): string {
-  const messageKey = key === "sessionComplete"
-    ? "i18n.sessionComplete"
-    : key === "taskFinished"
-      ? "i18n.taskFinished"
-      : "i18n.taskFinishedWithContext";
+  const messageKey = NOTIFICATION_I18N_KEYS[key];
   const message = locale === "zh-CN"
     ? zhCNLocale.messages[messageKey]
     : enLocale.messages[messageKey];
-  if (!message) {
-    return key === "sessionComplete" ? "Session complete" : "Task finished.";
-  }
+  const template = message ?? NOTIFICATION_FALLBACKS[key];
   return params
-    ? message.replace(/\{project\}/g, params.project ?? "")
-    : message;
+    ? template
+      .replace(/\{project\}/g, params.project ?? "")
+      .replace(/\{error\}/g, params.error ?? "")
+    : template;
 }
 
 /** 会话工作目录的项目名（最后一段路径），用于通知里的项目标签。 */
@@ -160,16 +181,28 @@ export function createWebPushNotifier(environment: WebPushEnvironment): WebPushN
       ];
       saveState();
     },
-    async notifySessionComplete(sessionId) {
+    async notifySessionComplete(sessionId, outcome) {
       if (state.subscriptions.length === 0) return;
+      // 终态分流：用户主动停止（aborted）不发；interrupted 无明确结束时刻（无通知时点）。
+      if (outcome && !runOutcomeNotifies(outcome.status)) return;
       const session = (await environment.listSessions()).find((s) => s.id === sessionId);
       const sessionName = session?.name;
       const projectLabel = projectBasename(session?.cwd);
+      const failed = outcome?.status === "failed";
+      const errorSummary = failed ? truncateRunError(outcome?.error, 120) : "";
       const payloadFor = (locale: string) => ({
-        title: sessionName ?? localeText(locale, "sessionComplete"),
-        body: projectLabel
-          ? localeText(locale, "taskFinishedWithContext", { project: projectLabel })
-          : localeText(locale, "taskFinished"),
+        title: sessionName ?? localeText(locale, failed ? "sessionFailed" : "sessionComplete"),
+        body: failed
+          ? (projectLabel
+              ? errorSummary
+                ? localeText(locale, "taskFailedWithContextAndError", { project: projectLabel, error: errorSummary })
+                : localeText(locale, "taskFailedWithContext", { project: projectLabel })
+              : errorSummary
+                ? localeText(locale, "taskFailedWithError", { error: errorSummary })
+                : localeText(locale, "taskFailed"))
+          : projectLabel
+            ? localeText(locale, "taskFinishedWithContext", { project: projectLabel })
+            : localeText(locale, "taskFinished"),
         url: `/?session=${encodeURIComponent(sessionId)}`,
         tag: `pi-session-complete:${sessionId}`,
       });
@@ -214,7 +247,7 @@ export function addSubscription(subscription: PushSubscriptionRecord): Promise<v
   return getNotifier().then((notifier) => notifier.addSubscription(subscription));
 }
 
-export async function notifySessionComplete(sessionId: string): Promise<void> {
+export async function notifySessionComplete(sessionId: string, outcome?: SessionLastRun): Promise<void> {
   const notifier = await getNotifier();
-  await notifier.notifySessionComplete(sessionId);
+  await notifier.notifySessionComplete(sessionId, outcome);
 }

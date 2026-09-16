@@ -727,6 +727,13 @@ export const zhTWLocale: LocalePlugin = {
     "i18n.sessionComplete": "工作階段已完成",
     "i18n.taskFinished": "任務已完成。",
     "i18n.taskFinishedWithContext": "{project} · 任務已完成",
+    "i18n.sessionFailed": "任務失敗",
+    "i18n.sessionAborted": "已停止",
+    "i18n.sessionInterrupted": "已中斷（未正常結束）",
+    "i18n.taskFailed": "任務失敗。",
+    "i18n.taskFailedWithContext": "{project} · 任務失敗",
+    "i18n.taskFailedWithError": "任務失敗：{error}",
+    "i18n.taskFailedWithContextAndError": "{project} · 任務失敗：{error}",
     "i18n.attentionNeeded": "Pi 需要你處理",
     "i18n.extensionInputNeeded": "擴充功能正在等待你的輸入。",
     // ── 以下键为 fork 新增功能的文案 ──

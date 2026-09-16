@@ -5,6 +5,7 @@ import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@e
 import { randomUUID } from "crypto";
 import type { JournalEntry } from "./running-journal.ts";
 import { recordRunningEntries } from "./running-journal.ts";
+import { deriveRunOutcome, type SessionLastRun } from "./run-outcome.ts";
 import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { validateAgentImages } from "./image-attachments";
@@ -82,7 +83,7 @@ export interface AgentEvent {
 }
 
 type EventListener = (event: AgentEvent) => void;
-type AgentRunCompleteListener = (sessionId: string) => void;
+type AgentRunCompleteListener = (sessionId: string, outcome?: SessionLastRun) => void;
 
 type PendingUiResponse = {
   resolve: (response: ExtensionUiResponse) => void;
@@ -361,16 +362,14 @@ export class AgentSessionWrapper {
     return this._alive && (this.pendingPromptCount > 0 || this.promptRunning || this.inner.isStreaming || this.inner.isCompacting || this.inner.isBashRunning);
   }
 
-  /** 方案 M：最后一条 assistant 消息的 stopReason（无 assistant 消息时 undefined）。
- * AgentSessionLike 未声明 messages，这里局部窄化读取（底层 SDK 有该 getter）。 */
-  private lastAssistantStopReason(): string | undefined {
-    const messages = (this.inner as { messages?: Array<{ role?: string; stopReason?: string }> }).messages;
-    if (!messages) return undefined;
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m?.role === "assistant") return m.stopReason;
-    }
-    return undefined;
+  /** 本轮 run 的终态（最后一条 assistant 消息，内存判定）——agent_settled 文本判定与
+   * 完成通知分流共用同一规则（lib/run-outcome.ts，与文件推导同源）。
+   * AgentSessionLike 未声明 messages，这里局部窄化读取（底层 SDK 有该 getter）。 */
+  private lastRunOutcome(): SessionLastRun | undefined {
+    const messages = (this.inner as {
+      messages?: Array<{ role?: string; stopReason?: string; errorMessage?: string; timestamp?: number }>;
+    }).messages;
+    return deriveRunOutcome(messages, new Date().toISOString());
   }
 
   isChatOnly(): boolean {
@@ -422,7 +421,7 @@ export class AgentSessionWrapper {
         // and the text shown so far is what the agent actually said. Settled
         // fires only after the whole loop (retries included), so a pending
         // retry never races this check.
-        const failed = this.lastAssistantStopReason() === "error";
+        const failed = this.lastRunOutcome()?.status === "failed";
         const text = produced && !failed ? this.inner.getLastAssistantText() ?? "" : "";
         if (text) {
           try { getExtRegistry().dispatchAgentSettled(this.sessionId, text); } catch (e) { console.error("[pi-web] agent_settled 分发失败:", e instanceof Error ? e.message : e); }
@@ -724,7 +723,7 @@ export class AgentSessionWrapper {
     this.agentRunNeedsCompletion = false;
     if (this.suppressCompletionNotifications) return;
     try {
-      this.onAgentRunComplete?.(this.sessionId);
+      this.onAgentRunComplete?.(this.sessionId, this.lastRunOutcome());
     } catch (error) {
       console.error("[pi-web] completion listener failed:", error instanceof Error ? error.message : error);
     }
@@ -3408,8 +3407,8 @@ export async function startRpcSession(
     const wrapper = new AgentSessionWrapper(inner, {
       exactSystemPrompt,
       chatOnly,
-      onAgentRunComplete: (completedSessionId) => {
-        void notifySessionComplete(completedSessionId).catch((error) => {
+      onAgentRunComplete: (completedSessionId, outcome) => {
+        void notifySessionComplete(completedSessionId, outcome).catch((error) => {
           console.error("[pi-web] failed to send completion push:", error instanceof Error ? error.message : error);
         });
       },
