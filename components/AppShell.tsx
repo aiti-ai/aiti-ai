@@ -4959,20 +4959,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     <RestartRecoveryWizard />
     {/* 后端断连/恢复横幅：后端重启窗口提示「请刷新」（SSE broker 存活判定，无断连时渲染 null） */}
     <BackendConnBanner />
-    {/* extra 补 folder 浮窗 face 字段（2026-09-16）：aiti-folder FolderFloatFace（双击 tab
-        拆窗）经 rp 取宿主回调——缺 onAtMention 则浮窗态整组 @ 能力静默消失；onOpenFile 兜底
-        lastSeg（0ea18e37 同款白屏教训）。纯增量字段，弹窗类消费者按需取用 */}
-    <ExtSlot
-      name="dialogs"
-      extra={{
-        onSelectSession: handleSelectSession,
-        newSessionCwd: effectiveNewSessionCwd,
-        cwd: activeCwd ?? undefined,
-        gitRefreshKey: explorerRefreshKey,
-        onOpenFile: (p: string) => handleOpenFile(p, p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p),
-        onOpenFolder: (p: string, name?: string) => handleOpenFolder(p, name || p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p),
-        onAtMention: handleAtMention,
-      }}
+    <ExtSlot name="dialogs" extra={{ onSelectSession: handleSelectSession, newSessionCwd: effectiveNewSessionCwd }}
       currentSession={selectedSession ? { id: selectedSession.id, cwd: selectedSession.cwd, name: selectedSession.name, firstMessage: selectedSession.firstMessage } : null} />
     {exportDialogOpen && selectedSession && (
       <ExportDialog
