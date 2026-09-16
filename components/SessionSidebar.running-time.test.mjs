@@ -10,7 +10,7 @@ const source = await readFile(new URL("./SessionSidebar.tsx", import.meta.url), 
 const sessionItemSource = source.slice(source.indexOf("function SessionItem("));
 
 test("运行中 session 同时显示转圈指示器 AND 相对时间（并列而非互斥）", () => {
-  assert.match(sessionItemSource, /{isRunning && <RunningSessionIndicator \/>}\s*\n\s*{!isRunning && isUnread && <UnreadSessionIndicator \/>}\s*\n\s*<span title=\{session\.modified\}>/);
+  assert.match(sessionItemSource, /{isRunning && <RunningSessionIndicator \/>}\s*\n\s*{!isRunning && isUnread && <UnreadSessionIndicator \/>}\s*\n\s*{\/\*[^\n]*\*\/}\s*\n\s*{!isRunning && session\.lastRun[\s\S]*?}\s*\n\s*<span title=\{session\.modified\}>/);
 });
 
 test("运行/未读指示器不影响相对时间始终渲染", () => {

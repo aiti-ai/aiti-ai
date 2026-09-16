@@ -91,6 +91,7 @@ import {
   showBrowserNotification,
 } from "@/lib/browser-notifications";
 import { setupPushSubscription } from "@/lib/push-client";
+import { runOutcomeNotifies, truncateRunError } from "@/lib/run-outcome";
 import { getInitialNavigation, type InitialNavigation } from "@/lib/initial-navigation";
 import {
   SEPARATOR,
@@ -1507,12 +1508,11 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     if (selectedSession) hydrateSelectedSession(selectedSession.id);
 
     if (selectedSession?.relation?.kind === "subagent") return;
-    if (!shouldShowBrowserNotification()) return;
     const targetSession = selectedSession;
-    // 带上会话上下文：标题=任务名（名称/首条消息摘要），正文=项目(+分支)+完成文案，
-    // 让通知一眼看出「哪个项目里的什么任务完成了」，而不是笼统的「任务完成」。
+    // 带上会话上下文：标题=任务名（名称/首条消息摘要），正文=项目(+分支)+状态文案，
+    // 让通知一眼看出「哪个项目里的什么任务」以及结果。
     const projectLabel = notificationProjectLabel(targetSession);
-    deliverSessionNotification({
+    const deliverCompleted = () => deliverSessionNotification({
       targetSession,
       title: notificationSessionTitle(targetSession, translate("i18n.sessionComplete")),
       body: projectLabel
@@ -1520,6 +1520,43 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         : translate("i18n.taskFinished"),
       tag: targetSession ? `pi-session-complete:${targetSession.id}` : "pi-session-complete",
     });
+
+    // 完成状态分流（2026-09-15）：run 终态从会话文件推导（/meta 轻量单条）——
+    // 失败 → 「任务失败：<错误摘要>」；用户主动停止（aborted）/ 中断（interrupted）→
+    // 不发；成功/未知 → 维持原「任务完成」。读不到终态（桥/外部会话/请求失败）时
+    // 保守按完成发，不让通知整体消失。
+    if (!targetSession) {
+      if (shouldShowBrowserNotification()) deliverCompleted();
+      return;
+    }
+    void fetch(apiUrl(`/api/sessions/${encodeURIComponent(targetSession.id)}/meta`), { cache: "no-store" })
+      .then((r) => (r.ok ? (r.json() as Promise<{ session?: SessionInfo }>) : null))
+      .then((d) => {
+        if (!shouldShowBrowserNotification()) return;
+        const lastRun = d?.session?.lastRun;
+        if (lastRun && !runOutcomeNotifies(lastRun.status)) return;
+        if (lastRun?.status === "failed") {
+          const error = truncateRunError(lastRun.error, 120);
+          deliverSessionNotification({
+            targetSession,
+            title: notificationSessionTitle(targetSession, translate("i18n.sessionFailed")),
+            body: projectLabel
+              ? (error
+                ? translate("i18n.taskFailedWithContextAndError", { project: projectLabel, error })
+                : translate("i18n.taskFailedWithContext", { project: projectLabel }))
+              : (error
+                ? translate("i18n.taskFailedWithError", { error })
+                : translate("i18n.taskFailed")),
+            tag: `pi-session-complete:${targetSession.id}`,
+          });
+          return;
+        }
+        deliverCompleted();
+      })
+      .catch(() => {
+        // 读终态失败：维持旧行为（完成通知）
+        if (shouldShowBrowserNotification()) deliverCompleted();
+      });
   }, [deliverSessionNotification, hydrateSelectedSession, selectedSession, translate]);
 
   const handleAttentionNeeded = useCallback((request: BlockingExtensionUiRequest) => {

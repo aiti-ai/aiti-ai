@@ -15,6 +15,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { ExtSlot, useExtProvides } from "./ExtSlots";
 import { EXT_PROVIDES } from "@/lib/ext/types";
 import { apiUrl } from "@/lib/base-path";
+import { truncateRunError } from "@/lib/run-outcome";
 import { dedupeFetch } from "@/lib/dedupe-fetch";
 import { ensureHomeDir, getHomeDir } from "@/lib/home-dir";
 
@@ -2214,6 +2215,47 @@ function UnreadSessionIndicator() {
 }
 
 /**
+ * 会话运行终态标记（异常才显示；completed 不占位，与 session-manager dock 同语义）：
+ * failed 红圈叹号（title 带错误摘要）/ aborted 灰方块 / interrupted 橙暂停。
+ * 运行中优先（调用方 !isRunning 时才渲染）。
+ */
+function RunOutcomeIndicator({ lastRun }: { lastRun: NonNullable<SessionInfo["lastRun"]> }) {
+  const { t } = useI18n();
+  const failed = lastRun.status === "failed";
+  const aborted = lastRun.status === "aborted";
+  const label = failed
+    ? (lastRun.error ? t("i18n.taskFailedWithError", { error: truncateRunError(lastRun.error, 80) }) : t("i18n.sessionFailed"))
+    : aborted
+      ? t("i18n.sessionAborted")
+      : t("i18n.sessionInterrupted");
+  const color = failed ? "#ef4444" : aborted ? "var(--text-dim)" : "#f59e0b";
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      style={{ width: 14, height: 14, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color }}
+    >
+      {failed ? (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true" style={{ display: "block" }}>
+          <circle cx="12" cy="12" r="9" />
+          <line x1="12" y1="7.5" x2="12" y2="13" />
+          <line x1="12" y1="16.5" x2="12.01" y2="16.5" />
+        </svg>
+      ) : aborted ? (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ display: "block" }}>
+          <rect x="6" y="6" width="12" height="12" rx="2" />
+        </svg>
+      ) : (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ display: "block" }}>
+          <rect x="6" y="5" width="4" height="14" rx="1" />
+          <rect x="14" y="5" width="4" height="14" rx="1" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
+/**
  * Compact per-project activity badges for the workspace selector dropdown items:
  * a spinning running icon + count and an unread dot + count. Renders nothing
  * when the project has no activity. Counts share the accent / unread colors of
@@ -2602,6 +2644,10 @@ function SessionItem({
               {/* 运行中/未读也有指示器，但相对时间（刚刚/xxx前）始终显示，与不活动 session 一致 */}
               {isRunning && <RunningSessionIndicator />}
               {!isRunning && isUnread && <UnreadSessionIndicator />}
+              {/* 运行终态异常标记（failed/aborted/interrupted；completed 不显示） */}
+              {!isRunning && session.lastRun && session.lastRun.status !== "completed" && (
+                <RunOutcomeIndicator lastRun={session.lastRun} />
+              )}
               <span title={session.modified}>{formatRelativeTime(session.modified, locale)}</span>
               <span>{t("sidebar.messagesCount", { count: session.messageCount })}</span>
               {/* 行内 meta 扩展点（转圈/消息数所在第二行末尾）：如 aiti-plan-first 方案绑定标 + front-matter tags */}
