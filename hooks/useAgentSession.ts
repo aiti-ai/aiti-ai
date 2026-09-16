@@ -3029,7 +3029,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // clearQueue also emits an empty queue_update, but that only reaches us
       // while SSE is connected — clear locally so idle recalls update the UI.
       setQueuedMessages({ steering: [], followUp: [] });
-      const texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])];
+      let texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])];
+      if (texts.length === 0) {
+        // Defensive fallback: the server cleared the queue but did not report the
+        // cleared texts (older ext-agent backends) — use the locally known queue
+        // so a "recall all" never silently drops messages.
+        texts = [...queuedMessages.steering, ...queuedMessages.followUp];
+      }
       if (texts.length > 0) {
         opts.chatInputRef?.current?.prependText(texts.join("\n\n"));
       }
@@ -3037,7 +3043,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       console.error("Failed to recall queued messages:", e);
       addNotice({ type: "error", message: "Failed to recall queued messages" });
     }
-  }, [opts.chatInputRef, addNotice]);
+  }, [opts.chatInputRef, addNotice, queuedMessages]);
 
   /** Pick up a run that was started server-side (queue delivery, recovery
    * continue) — possibly before any SSE was connected (e.g. right after a
