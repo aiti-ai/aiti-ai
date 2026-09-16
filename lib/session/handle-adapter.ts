@@ -92,16 +92,19 @@ export interface WrappedSessionLike {
   shutdown(): Promise<void>;
 }
 
+/** 本轮起始时刻（agent_start/turn_start 起算、agent_settled 清空）——按 handle 记在
+ *  模块级 WeakMap：adapter 是逐请求临时对象（resolveAnySession/attachIfBridged 每次
+ *  new），记在实例上则页面重开后的新实例永远错过本轮 agent_start，get_state 下发
+ *  undefined、前端读秒回零重计（2026-09-16 实证）。handle 在 handle-store 跨请求
+ *  存活，WeakMap 与其同生命周期，任何实例记录/清除全局可见。 */
+const runStartedAtByHandle = new WeakMap<SessionHandle, number>();
+
 export class HandleSessionAdapter implements WrappedSessionLike {
   readonly handle: SessionHandle;
 
   private listeners = new Set<Listener>();
   private unsubscribe: () => void;
   private _isStreaming = false;
-  /** 本轮起始时刻（agent_start/turn_start 起算、agent_settled 清空）：页面重开后读秒
-   *  起点由 get_state 下发恢复——外部后端回放的 user 消息常不带时间戳（codebuddy 等），
-   *  仅靠消息时间戳推导会退回「打开时刻」。 */
-  private _runStartedAt: number | null = null;
   private partialText = "";
   private partialActive = false;
   private lastModel: { id: string; provider: string } | undefined;
@@ -135,10 +138,10 @@ export class HandleSessionAdapter implements WrappedSessionLike {
     // Track streaming state for the SSE surface
     if (type === "agent_start" || type === "turn_start") {
       this._isStreaming = true;
-      // ??=：重放/重复的 agent_start 不回零；settled 已清空，下一轮自然起新点
-      this._runStartedAt ??= Date.now();
+      // ??= 语义：重放/重复的 agent_start 不回零；settled 已清空，下一轮自然起新点
+      if (!runStartedAtByHandle.has(this.handle)) runStartedAtByHandle.set(this.handle, Date.now());
     }
-    if (type === "agent_settled") this._runStartedAt = null;
+    if (type === "agent_settled") runStartedAtByHandle.delete(this.handle);
     if (type === "agent_settled" || type === "agent_end") this._isStreaming = false;
 
     // Rebuild a partial assistant message from deltas (snapshot source).
@@ -304,7 +307,7 @@ export class HandleSessionAdapter implements WrappedSessionLike {
           isRunning: this.isRunning() || this._isStreaming,
           isPromptRunning: this._isStreaming,
           // 本轮读秒起点（页面重开后前端恢复用；空闲/未见过 agent_start 时为 undefined）
-          runStartedAt: this._runStartedAt ?? undefined,
+          runStartedAt: runStartedAtByHandle.get(h),
           isBashRunning: false,
           isCompacting: false,
           autoCompactionEnabled: false,
