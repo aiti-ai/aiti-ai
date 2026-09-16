@@ -1,5 +1,9 @@
 // Types mirrored from pi-mono coding-agent session-manager
 
+import type { SessionLastRun } from "./run-outcome.ts";
+
+export type { SessionLastRun };
+
 export interface SessionHeader {
   type: "session";
   version?: number;
@@ -348,6 +352,10 @@ export interface SessionInfo {
   /** Backend/agent tag for non-local sessions (e.g. "claude-code", "spawn").
    *  Absent (= "pi") for host-native local sessions. Rendered as a sidebar badge. */
   agent?: string;
+  /** 最近一次运行终态（见 lib/run-outcome.ts）。undefined = 未知/无 assistant 消息；
+   *  会话运行时 UI 以 running 指示优先。failed/aborted/interrupted 驱动列表异常标记与
+   *  完成通知分流（失败带 error 摘要）。 */
+  lastRun?: SessionLastRun;
 }
 
 export interface SessionContext {

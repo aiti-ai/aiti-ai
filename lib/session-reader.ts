@@ -10,6 +10,7 @@ import { writePrivateFileAtomicSync } from "./atomic-file.ts";
 import type { AgentMessage, ImageContent, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types.ts";
 import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
 import { normalizeToolCalls } from "./normalize.ts";
+import { deriveRunOutcome, type SessionLastRun } from "./run-outcome.ts";
 import { getThinkingPreview } from "./message-display.ts";
 import { projectIdentityKey } from "./project-identity.ts";
 import { sessionPathKey } from "./session-path.ts";
@@ -39,6 +40,12 @@ export interface SessionFileInfo {
   firstMessage: string;
   parentSessionPath?: string;
   /**
+   * 最近一次运行终态（从最后一条 assistant 消息的 stopReason/errorMessage 推导，
+   * 见 lib/run-outcome.ts）：failed/aborted/interrupted 用于列表异常标记与
+   * 完成通知分流。无 assistant 消息 = 无此字段。会话运行中时 UI 以 running 优先。
+   */
+  lastRun?: SessionLastRun;
+  /**
    * 外部子代理（pi-subagents 生态工件）：spawn 模式的子代理 session 落在
    *   <sessions>/<cwdDir>/<parentDirName>/<runUuid>/run-N/session.jsonl
    * header 无 parentSession 标记（它走环境变量传父子关系），由落盘路径推断。
@@ -64,7 +71,7 @@ interface ListCacheFile {
   files: Record<string, ListCacheEntry>;
 }
 
-const LIST_CACHE_VERSION = 2; // v2: derive 新增 pi-subagents 嵌套工件路径推断（externalSubagent）；条目 offset 为向后兼容新增（旧缓存缺 offset → 变更时全量解析一次补记）
+const LIST_CACHE_VERSION = 3; // v2: derive 新增 pi-subagents 嵌套工件路径推断（externalSubagent）；条目 offset 为向后兼容新增（旧缓存缺 offset → 变更时全量解析一次补记）；v3: 新增 lastRun（会话运行终态推导，旧缓存缺字段 → 全量重扫一次）
 const LIST_CACHE_FILENAME = "session_list_cache.json";
 
 function isMessageWithContent(message: AgentMessage): boolean {
@@ -114,6 +121,7 @@ function deriveSessionFileInfoFull(filePath: string): { info: SessionFileInfo; p
   let messageCount = 0;
   let firstMessage = "";
   let lastActivity: number | undefined;
+  let lastAssistant: { stopReason?: string; errorMessage?: string; timestamp?: number } | undefined;
   for (const e of getSessionEntries(filePath)) {
     if (e.type === "session_info") {
       name = e.name?.trim() || undefined;
@@ -125,6 +133,14 @@ function deriveSessionFileInfoFull(filePath: string): { info: SessionFileInfo; p
     if (typeof ts === "number") lastActivity = Math.max(lastActivity ?? 0, ts);
     const msg = (e as { message?: AgentMessage }).message;
     if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
+    if (msg.role === "assistant") {
+      // 持续覆盖 → 会话文件里最后一条 assistant 消息（含空 content 的错误消息）
+      lastAssistant = {
+        stopReason: (msg as { stopReason?: string }).stopReason,
+        errorMessage: (msg as { errorMessage?: string }).errorMessage,
+        timestamp: typeof ts === "number" ? ts : undefined,
+      };
+    }
     const text = extractTextContent(msg);
     if (!text) continue;
     if (!firstMessage && msg.role === "user") firstMessage = text;
@@ -169,6 +185,9 @@ function deriveSessionFileInfoFull(filePath: string): { info: SessionFileInfo; p
   } catch {
     return null; // file vanished mid-parse
   }
+  const lastRun = lastAssistant
+    ? deriveRunOutcome([{ role: "assistant", ...lastAssistant }], modified.toISOString())
+    : undefined;
   return {
     info: {
       path: filePath,
@@ -181,6 +200,7 @@ function deriveSessionFileInfoFull(filePath: string): { info: SessionFileInfo; p
       firstMessage: firstMessage || "(no messages)",
       parentSessionPath: parentSessionPath || undefined,
       ...(externalSubagent ? { externalSubagent } : {}),
+      ...(lastRun ? { lastRun } : {}),
     },
     parsedEnd,
   };
@@ -220,6 +240,8 @@ async function deriveSessionFileInfoAppended(
   let messageCount = prev.info.messageCount;
   let firstMessage = prev.info.firstMessage;
   let lastActivityMs = prev.info.modified.getTime();
+  // 本增量段里出现的最后一条 assistant（无则沿用 prev 的 lastRun——旧段推导结果）
+  let appendedLastAssistant: { stopReason?: string; errorMessage?: string; timestamp?: number } | undefined;
   // \n 不会是多字节 UTF-8 序列的一部分（自同步编码），字符串级切行安全。
   let end = start;
   let lineStart = 0;
@@ -237,8 +259,15 @@ async function deriveSessionFileInfoAppended(
         messageCount++;
         const ts = getMessageActivityTime(entry as SessionEntry & { message?: AgentMessage });
         if (typeof ts === "number" && ts > lastActivityMs) lastActivityMs = ts;
+        const msg = (entry as { message?: AgentMessage }).message;
+        if (msg?.role === "assistant") {
+          appendedLastAssistant = {
+            stopReason: (msg as { stopReason?: string }).stopReason,
+            errorMessage: (msg as { errorMessage?: string }).errorMessage,
+            timestamp: typeof ts === "number" ? ts : undefined,
+          };
+        }
         if (!firstMessage || firstMessage === "(no messages)") {
-          const msg = (entry as { message?: AgentMessage }).message;
           if (msg?.role === "user") {
             const text = extractTextContent(msg);
             if (text) firstMessage = text;
@@ -254,6 +283,9 @@ async function deriveSessionFileInfoAppended(
     lineStart = nl + 1;
   }
 
+  const lastRun = appendedLastAssistant
+    ? deriveRunOutcome([{ role: "assistant", ...appendedLastAssistant }], new Date(lastActivityMs).toISOString())
+    : prev.info.lastRun;
   return {
     info: {
       ...prev.info,
@@ -261,6 +293,7 @@ async function deriveSessionFileInfoAppended(
       messageCount,
       firstMessage,
       modified: new Date(lastActivityMs),
+      ...(lastRun ? { lastRun } : {}),
     },
     parsedEnd: end,
   };
@@ -681,6 +714,7 @@ function sessionInfoFromScan(s: SessionFileInfo, pathToId: Map<string, string>) 
       messageCount: s.messageCount,
       firstMessage: s.firstMessage || "(no messages)",
       parentSessionId: originSessionId,
+      ...(s.lastRun ? { lastRun: s.lastRun } : {}),
       ...(subagent
         ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description, status: subagent.status } }
         : s.parentSessionPath
