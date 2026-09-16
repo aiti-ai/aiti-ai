@@ -307,6 +307,13 @@ export function watchHandleRunning(handle: { id: string; subscribe(listener: (e:
     const t = event.type;
     if (t === "agent_start" || t === "agent_end" || t === "agent_settled" || t === "turn_start" || t === "turn_end") {
       notifyHandleRunningChange();
+      // 后端扩展普遍时序（zcode/codex/claude-code/cursor/opencode/qoder 实证）：先发
+      // settled/end 事件、后由 prompt() finally 清 running 标志——同步重算时 isRunning()
+      // 仍 true，快照与上次相同被去重吞掉，标志清零后再无事件 → 运行集滞留、侧栏转圈
+      // 不消失（2026-09-16 实测复现）。延迟一拍再重算兜住事件后的标志翻转；快照去重
+      // 保证无多余广播。
+      const timer = setTimeout(() => notifyHandleRunningChange(), 0);
+      timer.unref?.();
     }
   });
 }
