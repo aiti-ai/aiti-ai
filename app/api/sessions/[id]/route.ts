@@ -18,6 +18,7 @@ import { sessionPathKey } from "@/lib/session-path";
 import { abortSubagent, getRpcSession, getRpcSessionInfos, getAliveRpcSessionIds, stopIdleRpcSession } from "@/lib/rpc-manager";
 import { resolveAnySession, attachIfBridged, handleModelToClient, extractFirstUserText } from "@/lib/session";
 import { normalizeRawMessages } from "@/lib/normalize";
+import { buildExternalPagedContext, clampTailParam } from "@/lib/external-session-paging";
 import { listProviders } from "@/lib/session/providers";
 import { resolvePlaceholderSession, removeHandle } from "@/lib/session";
 import { getPlaceholder, removePlaceholderByUuid } from "@/lib/session/placeholder";
@@ -41,13 +42,18 @@ function canonicalExternalId(requested: string, handleSessionId?: string): strin
 }
 
 /** 桥会话的固定响应（attach 判定以 socket/registry 为准，文件仅历史回放）。 */
-function bridgedOk(id: string, bridged: { isAlive(): boolean; send(c: unknown): Promise<unknown>; cwd?: string; getModel?(): { id: string; provider: string } | undefined }) {
+function bridgedOk(
+  id: string,
+  bridged: { isAlive(): boolean; send(c: unknown): Promise<unknown>; cwd?: string; getModel?(): { id: string; provider: string } | undefined },
+  page: { tail: number; before?: string | null } = { tail: 0 },
+) {
   return bridged.send({ type: "get_messages" }).catch(() => null)
     .then((r) => {
       // 桥端（TUI sessionManager）吐的是 SDK 原始形状（toolCall 用 id/name/arguments），
       // 与本地文件读取（session-reader entryToUiMessage）不同步归一化会导致
       // ToolCallBlock 名字/预览全空、结果无法配对（attach 会话「命令执行消息为空」根因）
-      const messages = normalizeRawMessages(((r as { entries?: unknown[] } | null)?.entries ?? []) as unknown[]);
+      const paged = buildExternalPagedContext(((r as { entries?: unknown[] } | null)?.entries ?? []) as unknown[], page.tail > 0 ? page : undefined);
+      const messages = paged.messages as unknown[];
       return NextResponse.json({
         sessionId: id,
         filePath: "",
@@ -58,7 +64,7 @@ function bridgedOk(id: string, bridged: { isAlive(): boolean; send(c: unknown): 
           name: undefined,
           created: new Date().toISOString(),
           modified: new Date().toISOString(),
-          messageCount: messages.length,
+          messageCount: paged.totalCount,
           firstMessage: "(bridged session)",
           transient: true,
           agent: "tui-bridge",
@@ -66,7 +72,7 @@ function bridgedOk(id: string, bridged: { isAlive(): boolean; send(c: unknown): 
         leafId: null,
         tree: [],
         // HandleModel 是 {id,…}，客户端契约是 {modelId,…}——不归一化则选择器当前名渲染为空
-        context: { messages, entryIds: [], thinkingLevel: "off", model: handleModelToClient(bridged.getModel?.()) },
+        context: { messages, entryIds: paged.entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(bridged.getModel?.()) },
         totalActiveMs: 0,
       });
     });
@@ -78,13 +84,17 @@ export async function GET(
 ) {
   const { id } = await params;
   const fresh = new URL(req.url).searchParams.has("fresh");
+  // 外部后端/桥会话的分页参数（与本地 pi 会话同语义；不传 = 尾部 50 条起拉）
+  const extParams = new URL(req.url).searchParams;
+  const extTail = clampTailParam(extParams.get("tail"));
+  const extBefore = extParams.get("before");
   try {
     // 桥占用识别最先（TUI 是文件所有者；即使有陈旧本地 wrapper 也让位）
     const fpEarly = await resolveSessionPath(id);
     if (fpEarly) {
       const bridged = await attachIfBridged(fpEarly);
       if (bridged?.isAlive()) {
-        return await bridgedOk(id, bridged);
+        return await bridgedOk(id, bridged, { tail: extTail, before: extBefore });
       }
     }
 
@@ -94,11 +104,12 @@ export async function GET(
     if (fpEarly) {
       const ph = await resolvePlaceholderSession(id).catch(() => undefined);
       if (ph?.isAlive()) {
-        let messages: unknown[] = [];
+        let paged = { messages: [] as unknown[], entryIds: [] as string[], oldestEntryId: null as string | null, hasMore: false, totalCount: 0 };
         try {
           const r = (await ph.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
-          messages = normalizeRawMessages(r?.entries ?? []);
+          paged = buildExternalPagedContext(r?.entries ?? [], { tail: extTail, before: extBefore });
         } catch { /* get_messages 缺省 → 空 */ }
+        const { messages } = paged;
         const firstText = extractFirstUserText(messages) || "(backend session)";
         const phHeader = readSessionHeader(fpEarly) as unknown as { agent?: string; extId?: string } | null;
         // 站位真实标题（注册表 extId → name；open-live/回放时写入）
@@ -116,14 +127,14 @@ export async function GET(
             name: phName,
             created: new Date().toISOString(),
             modified: new Date().toISOString(),
-            messageCount: messages.length,
+            messageCount: paged.totalCount,
             firstMessage: firstText.slice(0, 80) || "(backend session)",
             transient: true,
             agent: phHeader?.agent ?? undefined,
           },
           leafId: null,
           tree: [],
-          context: { messages, entryIds: [], thinkingLevel: "off", model: handleModelToClient(ph.getModel?.()) },
+          context: { messages, entryIds: paged.entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(ph.getModel?.()) },
           totalActiveMs: 0,
         });
       }
@@ -151,13 +162,14 @@ export async function GET(
         // History replay: pull entries through the handle's get_messages
         // (capability-gated; backends without it serve an empty context and
         // the live SSE stream covers new turns).
-        let messages: unknown[] = [];
+        let paged = { messages: [] as unknown[], entryIds: [] as string[], oldestEntryId: null as string | null, hasMore: false, totalCount: 0 };
         try {
           const r = (await wrapped.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
-          messages = normalizeRawMessages(r?.entries ?? []);
+          paged = buildExternalPagedContext(r?.entries ?? [], { tail: extTail, before: extBefore });
         } catch (e) {
           console.error("[sessions/[id]] backend get_messages failed:", e instanceof Error ? e.message : e);
         }
+        const { messages } = paged;
         const firstText = extractFirstUserText(messages) || "(backend session)";
         const cid = canonicalExternalId(id, wrapped.sessionId);
         return NextResponse.json({
@@ -170,7 +182,7 @@ export async function GET(
             name: undefined,
             created: new Date().toISOString(),
             modified: new Date().toISOString(),
-            messageCount: messages.length,
+            messageCount: paged.totalCount,
             firstMessage: firstText.slice(0, 80) || "(backend session)",
             transient: true,
             // 站位真实标题（外部后端回放/接管时写入注册表）
@@ -181,7 +193,7 @@ export async function GET(
           },
           leafId: null,
           tree: [],
-          context: { messages, entryIds: [], thinkingLevel: "off", model: handleModelToClient(wrapped.getModel?.()) },
+          context: { messages, entryIds: paged.entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(wrapped.getModel?.()) },
           totalActiveMs: 0,
         });
       }
@@ -198,7 +210,7 @@ export async function GET(
             if (e?.name === "BridgeOccupiedError") throw e;
             return undefined;
           });
-          if (bridgedById?.isAlive()) return await bridgedOk(id, bridgedById);
+          if (bridgedById?.isAlive()) return await bridgedOk(id, bridgedById, { tail: extTail, before: extBefore });
         } catch (e) {
           throw e;
         }
@@ -214,11 +226,12 @@ export async function GET(
           const wrappedAfterOpen = handle?.alive() ? resolveHandle(id) : undefined;
           if (handle && wrappedAfterOpen?.isAlive()) {
             const cid = canonicalExternalId(id, handle.id);
-            let messages: unknown[] = [];
+            let paged = { messages: [] as unknown[], entryIds: [] as string[], oldestEntryId: null as string | null, hasMore: false, totalCount: 0 };
             try {
               const r = (await wrappedAfterOpen.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
-              messages = normalizeRawMessages(r?.entries ?? []);
+              paged = buildExternalPagedContext(r?.entries ?? [], { tail: extTail, before: extBefore });
             } catch { /* get_messages 缺省 → 空 */ }
+            const { messages } = paged;
             return NextResponse.json({
               sessionId: cid,
               filePath: "",
@@ -229,7 +242,7 @@ export async function GET(
                 ...(getPlaceholder(id)?.name ? { name: getPlaceholder(id)!.name } : {}),
                 created: new Date().toISOString(),
                 modified: new Date().toISOString(),
-                messageCount: messages.length,
+                messageCount: paged.totalCount,
                 firstMessage: "(backend session)",
                 transient: true,
                 // agent 标签（复合 id 前缀）：前端 loadModels 靠它走外部模型目录
@@ -237,7 +250,7 @@ export async function GET(
               },
               leafId: null,
               tree: [],
-              context: { messages, entryIds: [], thinkingLevel: "off", model: handleModelToClient(wrappedAfterOpen.getModel?.()) },
+              context: { messages, entryIds: paged.entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(wrappedAfterOpen.getModel?.()) },
               totalActiveMs: 0,
             });
           }

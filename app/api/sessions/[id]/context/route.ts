@@ -2,8 +2,32 @@ import { NextResponse } from "next/server";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveSessionPath, buildSessionContext } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
-import { resolveAttachBySessionId, attachIfBridged, handleModelToClient } from "@/lib/session";
-import { normalizeRawMessages } from "@/lib/normalize";
+import { resolveAttachBySessionId, attachIfBridged, handleModelToClient, resolveAnySession, resolveExternalCompositeSession } from "@/lib/session";
+import { buildExternalPagedContext } from "@/lib/external-session-paging";
+
+type MsgHandle = { send(c: unknown): Promise<unknown>; getModel?(): { id: string; provider: string } | undefined };
+
+/** 外部后端/桥 handle 的分页上下文响应（ext-i 合成 id + tail/before 游标，语义见
+ *  lib/external-session-paging.ts；此前这些通道全量返回且 hasMore 恒 false——
+ *  千条级外部会话向上翻页 404/不可用）。 */
+function externalContextOk(handle: MsgHandle, tail: number, before: string | null) {
+  return handle.send({ type: "get_messages" }).catch(() => null)
+    .then((r) => {
+      const paged = buildExternalPagedContext(((r as { entries?: unknown[] } | null)?.entries ?? []) as unknown[], { tail, before });
+      return NextResponse.json({
+        context: {
+          messages: paged.messages as never[],
+          entryIds: paged.entryIds,
+          oldestEntryId: paged.oldestEntryId,
+          hasMore: paged.hasMore,
+          model: handleModelToClient(handle.getModel?.()),
+          thinkingLevel: "off",
+        },
+        tail,
+        before: before ?? null,
+      });
+    });
+}
 
 export async function GET(
   req: Request,
@@ -38,19 +62,7 @@ export async function GET(
           throw e;
         }
         if (bridgedEarly?.isAlive()) {
-          const r = (await bridgedEarly.send({ type: "get_messages" }).catch(() => null)) as { entries?: unknown[] } | null;
-          return NextResponse.json({
-            context: {
-              messages: normalizeRawMessages(r?.entries ?? []) as never[],
-              entryIds: [],
-              oldestEntryId: null,
-              hasMore: false,
-              model: handleModelToClient(bridgedEarly.getModel?.()),
-              thinkingLevel: "off",
-            },
-            tail,
-            before: before ?? null,
-          });
+          return await externalContextOk(bridgedEarly, tail, before ?? null);
         }
       }
     }
@@ -58,29 +70,24 @@ export async function GET(
     const liveRpc = rpc?.isAlive() ? rpc : undefined;
     const filePath = liveRpc ? null : await resolveSessionPath(id);
     // attach 会话（含空会话/文件未落盘）：socket 优先——上下文经桥 get_messages +
-    // 连接时快照的 model 返回；否则（local 索引外）404。
-    let attachHandle: { send(c: unknown): Promise<unknown>; getModel?(): { id: string; provider: string } | undefined } | undefined;
+    // 连接时快照的 model 返回；否则（local 索引外）走外部后端 handle / 404。
+    let attachHandle: MsgHandle | undefined;
     if (!liveRpc && !filePath) {
       attachHandle = await resolveAttachBySessionId(id);
-      if (!attachHandle) {
-        return NextResponse.json({ error: "Session not found" }, { status: 404 });
-      }
     }
     if (attachHandle) {
-      const r = (await attachHandle.send({ type: "get_messages" }).catch(() => null)) as { entries?: unknown[] } | null;
-      return NextResponse.json({
-        context: {
-          // 桥端 SDK 原始形状 → 归一化（同 sessions/[id] 桥路径；否则 toolCall 块渲染为空）
-          messages: normalizeRawMessages(r?.entries ?? []) as never[],
-          entryIds: [],
-          oldestEntryId: null,
-          hasMore: false,
-          model: handleModelToClient(attachHandle.getModel?.()),
-          thinkingLevel: "off",
-        },
-        tail,
-        before: before ?? null,
-      });
+      return await externalContextOk(attachHandle, tail, before ?? null);
+    }
+
+    // 外部后端会话（zcode:… 等 provider handle / 复合 id 冷恢复）：无本地文件、无
+    // 桥 attach——此前直接 404，前端 loadContext 的向上翻页对外部会话不可用。
+    if (!liveRpc && !filePath) {
+      const wrapped = resolveAnySession(id)?.isAlive() ? resolveAnySession(id)
+        : await resolveExternalCompositeSession(id).catch(() => undefined);
+      if (wrapped?.isAlive()) {
+        return await externalContextOk(wrapped, tail, before ?? null);
+      }
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
     const sm = liveRpc?.inner.sessionManager ?? SessionManager.open(filePath!);
@@ -111,4 +118,3 @@ export async function GET(
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
-
