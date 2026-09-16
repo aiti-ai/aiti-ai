@@ -212,6 +212,8 @@ export const zhTWLocale: LocalePlugin = {
     "files.posDetach": "浮動視窗",
     "files.posNewWindow": "新視窗（獨立檢視器）",
     "files.posTitle": "位置",
+    "files.posSidebar": "左欄 · 區塊",
+    "files.posPanel": "右欄 · 面板",
     "files.scrollLeft": "向左捲動頁籤",
     "files.scrollRight": "向右捲動頁籤",
     "files.showPanel": "顯示檔案面板",

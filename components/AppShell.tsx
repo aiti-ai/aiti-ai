@@ -165,6 +165,11 @@ declare global {
     __aitiEditor?: {
       confirmClose?: (p: string, opts?: { isSwitch?: boolean }) => boolean | Promise<boolean>;
       _restoreSession?: () => void;
+      /** 文件 dock face（aiti-editor file-dock，2026-09-16）：可选——扩展未部署时缺席，
+       *  宿主守卫/菜单项自动降级。语义见 aiti-work/docs/file-dock-face-plan.md。 */
+      hasFileFace?: (p: string) => boolean;
+      openFileFace?: (p: string, opts?: { auto?: boolean }) => void;
+      dockFile?: (p: string, zone: "sidebar" | "right-panel") => void;
     };
   }
 }
@@ -1721,6 +1726,15 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     fileName: string,
     options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean },
   ) => {
+    // 文件 dock face 守卫（aiti-editor file-dock，2026-09-16）：该 path 正以 dock face
+    // 形态存续（浮窗/左栏区块/右栏 dock tab）→ 带到面前（present open 走 dockpref 落位/
+    // 同态激活），不建宿主 tab。auto = 恢复性打开（select:false）不拉小屏抽屉。扩展缺席
+    // 时 hasFileFace 缺席 → 走普通宿主 tab。
+    const ed = window.__aitiEditor;
+    if (typeof ed?.hasFileFace === "function" && typeof ed.openFileFace === "function" && ed.hasFileFace(filePath)) {
+      ed.openFileFace(filePath, { auto: options?.select === false });
+      return;
+    }
     const sourceSessionId = options?.sourceSessionId;
     const modeHint = options?.modeHint;
     const select = options?.select !== false; // default true
@@ -1974,7 +1988,19 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     // dock tab（aiti-float dock v0.5.0）：✕ = 状态机 close（命令事件，零宿主状态清理——
     // dock tabs 本就不进 fileTabs/terminalTabs state；激活位回落由 present-change closed 分支处理）
     if (tabId.startsWith("dock:")) {
-      try { window.dispatchEvent(new CustomEvent("piwe-float-present-command", { detail: { key: tabId.slice(5), mode: "close" } })); } catch { /* ignore */ }
+      const key = tabId.slice(5);
+      // 文件 dock face（aiti-editor file-dock，2026-09-16）：✕ = 关文件——先走编辑器
+      // 脏确认（confirmClose 真关语义，脏文件弹自绘确认），放行才发 close 命令；
+      // 实例移除/dockPref 清理由扩展 closed 监听收尾。其余 dock tab 照旧直发。
+      if (key.startsWith("aiti-editor:file:")) {
+        const facePath = key.slice("aiti-editor:file:".length);
+        void askEditorClose(facePath).then((ok) => {
+          if (!ok) return;
+          try { window.dispatchEvent(new CustomEvent("piwe-float-present-command", { detail: { key, mode: "close" } })); } catch { /* ignore */ }
+        });
+        return;
+      }
+      try { window.dispatchEvent(new CustomEvent("piwe-float-present-command", { detail: { key, mode: "close" } })); } catch { /* ignore */ }
       return;
     }
     // terminal tab 走 closing 收尾（Bridge 本地移除，见 handleTerminalClosed）
@@ -2032,6 +2058,15 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     if (isMobile || tab.closing) return;
     detachTab(tab.id);
   }, [detachTab, isMobile]);
+
+  // 文件 tab ⇱「左栏 · 区块 / 右栏 · 面板」（文件 dock face，2026-09-16）：显式停靠——
+  // 转交扩展 dockFile（加实例 → 关宿主 tab → present dock:zone）。扩展缺席时 TabBar
+  // 不渲染这两项（prop 恒传，缺席即 no-op）。
+  const handleDockFileTab = useCallback((tab: Tab, zone: "sidebar" | "right-panel") => {
+    const dock = window.__aitiEditor?.dockFile;
+    if (typeof dock !== "function" || !tab.filePath) return;
+    dock(tab.filePath, zone);
+  }, []);
   // ═══ [tab-detach 处理结束] ═══
 
   // TabBody 宿主上下文（右栏与拆出窗口共用同一份；handler 原样透传，无策略差异）。
@@ -4804,6 +4839,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               onCloseTab={handleCloseFileTab}
               onDetachTab={handleTabDoubleClick}
               onOpenViewerWindow={(tab) => { openViewerWindowHost(tab.filePath, activeCwd); }}
+              onDockFileTab={handleDockFileTab}
             />
           </div>
           {(() => {

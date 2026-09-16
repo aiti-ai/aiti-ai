@@ -60,6 +60,10 @@ interface Props {
   /** 文件 tab ⇱「新窗口（独立查看器）」：换票 + aiti-viewer 握手打开 /viewer。
    *  缺省不传则 ⇱ 菜单只含「浮窗」一项（onDetachTab 也不传则整个 ⇱ 不渲染）。 */
   onOpenViewerWindow?: (tab: Tab) => void;
+  /** 文件 tab ⇱「左栏 · 区块 / 右栏 · 面板」（文件 dock face，2026-09-16）：显式停靠——
+   *  宿主 tab 转 dock face（aiti-editor dockFile：关宿主 tab + present dock:zone）。
+   *  缺省（扩展缺席）不渲染这两项，⇱ 菜单回落 浮窗/新窗口。 */
+  onDockFileTab?: (tab: Tab, zone: "sidebar" | "right-panel") => void;
   /** 自动滚入视野令牌：宿主仅在「用户自主打开/切换」路径递增——令牌变化才把激活 tab
    *  滚进视野。历史恢复（session 墓碑批量 select:false 后台静默打开）与其兜底激活不递
    *  增 → 不抢页签条当前滚动位置。缺省 undefined 保持旧行为（activeTabId / tabsKey
@@ -76,7 +80,7 @@ interface CtxMenu {
   y: number;
 }
 
-export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab, onOpenViewerWindow, revealToken }: Props) {
+export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab, onOpenViewerWindow, onDockFileTab, revealToken }: Props) {
   const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
@@ -421,9 +425,11 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
                 ⇱
               </button>
             )}
-            {tab.kind === "file" && (onDetachTab || onOpenViewerWindow) && (
+            {(tab.kind ?? "file") === "file" && (onDetachTab || onOpenViewerWindow || onDockFileTab) && (
               /* 文件 tab ⇱（2026-09-16）：非 dock face，菜单由宿主自渲染——浮窗（detach）/
-                 新窗口（/viewer）；与 dock tab 的 ⇱ 同锚位同外观，交互预期一致。 */
+                 新窗口（/viewer）/ 左栏·区块、右栏·面板（dock face 化）；与 dock tab 的 ⇱
+                 同锚位同外观，交互预期一致。⚠ kind 缺省即 file（openFileTab 不设 kind），
+                 必须归一比较——严格 === "file" 会让普通文件页签 ⇱ 永不渲染（§7 实测踩坑）。 */
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -543,6 +549,42 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
             >
               {t("files.posNewWindow")}
             </button>
+          )}
+          {onDockFileTab && posMenu.tab.filePath && (
+            /* 文件 dock face（2026-09-16）：显式停靠两项——宿主 tab 转 dock face
+               （aiti-editor dockFile：关宿主 tab + present dock:zone，⇱ 四连齐全）。
+               分隔线区分「窗口形态」与「停靠形态」两组。 */
+            <>
+              <div style={{ height: 1, background: "var(--border)", margin: "4px 6px", opacity: 0.7 }} />
+              <button
+                type="button"
+                role="menuitem"
+                style={{
+                  display: "flex", alignItems: "center", gap: 8, width: "100%",
+                  padding: "7px 10px", border: "none", borderRadius: 6, cursor: "pointer",
+                  background: "transparent", color: "var(--text)", textAlign: "left",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                onClick={() => { const tab = posMenu.tab; setPosMenu(null); onDockFileTab(tab, "sidebar"); }}
+              >
+                {t("files.posSidebar")}
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                style={{
+                  display: "flex", alignItems: "center", gap: 8, width: "100%",
+                  padding: "7px 10px", border: "none", borderRadius: 6, cursor: "pointer",
+                  background: "transparent", color: "var(--text)", textAlign: "left",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+                onClick={() => { const tab = posMenu.tab; setPosMenu(null); onDockFileTab(tab, "right-panel"); }}
+              >
+                {t("files.posPanel")}
+              </button>
+            </>
           )}
         </div>
       )}
