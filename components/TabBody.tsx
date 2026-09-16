@@ -49,7 +49,25 @@ export function TabBody({ tab, host, ctx }: { tab: Tab; host: "panel" | "window"
     // 停靠 tab：ExtSlot only 只挂载激活的 dock item（item render 内经状态机 gate，
     // 非 docked → null，结构性防双开）。dock tab 不拆窗（双击 = present float），
     // 本分支仅 panel 宿主可达。
-    return <ExtSlot name="rightFileDock" only={tab.id.slice(5)} />;
+    // extra 透传（2026-09-16 修复）：folder 右栏 face（FolderDockRightFace）经 rp 取
+    // 宿主回调——此前不传 extra，rp.onAtMention 恒 undefined → 右栏文件夹面板整组
+    // @ 能力（插入路径/@到新会话）静默消失。onOpenFile/onOpenFolder 的 fileName 兜底
+    // lastSeg（缺省致宿主 FileIcons.getFileIcon(undefined) 白屏，0ea18e37 同款教训，
+    // 与 session-manager slotExtra 同口径）。
+    const fileNameOf = (p: string) => p.replace(/[\\/]+$/, "").split(/[\\/]/).pop() || p;
+    return (
+      <ExtSlot
+        name="rightFileDock"
+        only={tab.id.slice(5)}
+        extra={{
+          cwd: ctx.cwd ?? undefined,
+          gitRefreshKey: ctx.gitRefreshKey,
+          onOpenFile: (p: string) => ctx.openFile(p, fileNameOf(p)),
+          onOpenFolder: (p: string, name?: string) => ctx.openFolder(p, name || fileNameOf(p)),
+          onAtMention: (relativePath: string, isDir: boolean) => ctx.onAtMention(relativePath, isDir),
+        }}
+      />
+    );
   }
   if (tab.kind === "image") {
     // 图片预览 tab（消息图片多开预览）：src 直渲染，无磁盘路径/watch/编辑状态。
