@@ -211,6 +211,11 @@ function deriveSessionFileInfoFull(filePath: string): { info: SessionFileInfo; p
  * （message 计数、user/assistant 活动时间戳、首条 user 消息、session_info 改名后者覆盖）。
  * 返回 null = 基准无效（无偏移/文件截断重写/读失败），调用方回退全量解析。
  * IO 走 fs.promises 异步读，不阻塞事件循环（服务端红线）。
+ *
+ * header 行每次增量都重读（有界单行，开销可忽略）：header 是可变元数据，会被
+ * move（cwd 改写，等长替换时 size 不变、绕过 mtime/size 失效判定）等就地重写——
+ * 只看 size>=offset 会把重写误判为「零追加」沿用旧 info.cwd，缓存条目从此永久
+ * 卡死。基准身份以 header.id 校验，cwd 以 header 为准。
  */
 async function deriveSessionFileInfoAppended(
   filePath: string,
@@ -220,7 +225,10 @@ async function deriveSessionFileInfoAppended(
   const start = prev.offset;
   if (typeof start !== "number" || !Number.isFinite(start) || start < 0) return null;
   if (st.size < start) return null; // truncated / rewritten — full re-parse
-  if (st.size === start) return { info: prev.info, parsedEnd: start }; // mtime-only change, no appended bytes
+  const header = readSessionHeader(filePath);
+  if (!header?.id || header.id !== prev.info.id) return null; // rewritten with different session — full re-parse
+  const liveCwd = header.cwd ?? prev.info.cwd;
+  if (st.size === start) return { info: { ...prev.info, cwd: liveCwd }, parsedEnd: start }; // mtime-only change, no appended bytes
 
   let chunk: string;
   try {
@@ -289,6 +297,7 @@ async function deriveSessionFileInfoAppended(
   return {
     info: {
       ...prev.info,
+      cwd: liveCwd, // header 可能被 move 就地重写（等长替换绕过 mtime/size 判定），以 header 为准
       name,
       messageCount,
       firstMessage,
