@@ -50,6 +50,8 @@ export function InteractionRequestCard({ request, onRespond }: {
 }) {
   const [busy, setBusy] = useState(false);
   const [planFeedback, setPlanFeedback] = useState<string | null>(null);
+  /** ask_user 附加说明（可选）——随回答经 respond message → zcode annotations.notes 回给 agent。 */
+  const [note, setNote] = useState("");
   /** 每题选中：单选存 label，多选存 label 集合（question 文本为键）。 */
   const [picks, setPicks] = useState<Record<string, string | string[]>>({});
   /** open_url 复制成功的瞬时反馈。 */
@@ -93,13 +95,25 @@ export function InteractionRequestCard({ request, onRespond }: {
   return (
     <div
       data-testid="interaction-request-card"
+      // aiti-float 浮窗契约：装了 aiti-float 即可拖拽/置前/位置持久化（未装时下面样式兜底居中）。
+      // 居中必须用 left/right+margin（无 transform）——float 接管 left/top 但不清 transform，
+      // translateX(-50%) 会把接管后的面板持续偏移半个宽度。
+      // autoh：问题数不定高度随内容；pos=asis：首次浮窗化保持当前渲染位（不跳屏幕中心）。
+      data-ext-float="1"
+      data-ext-float-key="piweb-interaction-card"
+      data-ext-float-autoh="1"
+      data-ext-float-pos="asis"
+      data-ext-float-full="small"
       style={{
         position: "fixed",
         bottom: 140,
-        left: "50%",
-        transform: "translateX(-50%)",
+        left: 0,
+        right: 0,
+        margin: "0 auto",
         zIndex: 260,
         width: isPlan ? "min(680px, 94vw)" : "min(560px, 92vw)",
+        maxHeight: "86vh",
+        overflowY: "auto",
         background: "var(--bg-panel)",
         border: `1px solid ${isPlan ? "#8b5cf688" : "#3b82f688"}`,
         borderRadius: 12,
@@ -148,16 +162,24 @@ export function InteractionRequestCard({ request, onRespond }: {
         />
       )}
 
-      {/* ask_user：问题 + 选项 */}
-      {isAsk && questions.map((q, qi) => (
+      {/* ask_user：问题 + 选项（可滚容器——float 接管后根节点 overflow:hidden，长问卷在此滚动）。
+       * 视觉对齐 aiti-user-* 问答面板契约：问题区左强调条 + 高对比、选项全宽 + 数字徽标、主操作绿。 */}
+      {isAsk && (
+        <div style={{ maxHeight: "44vh", overflowY: "auto" }}>
+          {questions.map((q, qi) => (
         <div key={`${qi}-${q.question.slice(0, 24)}`} style={{ marginBottom: 10 }}>
-          <div style={{ fontSize: 12, color: "var(--text)", marginBottom: 6 }}>
+          <div style={{
+            fontSize: 13, fontWeight: 600, color: "var(--text)", marginBottom: 6, lineHeight: 1.6,
+            whiteSpace: "pre-wrap", wordBreak: "break-word",
+            background: "color-mix(in srgb, var(--accent) 8%, transparent)",
+            borderLeft: "3px solid var(--accent)", borderRadius: 6, padding: "8px 10px",
+          }}>
             {q.header && <span style={{ color: "var(--text-muted)", marginRight: 6 }}>[{q.header}]</span>}
             {q.question}
             {q.multiSelect && <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: 6 }}>（多选）</span>}
           </div>
           <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-            {q.options.map((opt) => {
+            {q.options.map((opt, oi) => {
               const cur = picks[q.question];
               const selected = Array.isArray(cur) ? cur.includes(opt.label) : cur === opt.label;
               return (
@@ -166,12 +188,22 @@ export function InteractionRequestCard({ request, onRespond }: {
                   type="button"
                   onClick={() => pickOption(q, opt.label)}
                   style={{
-                    textAlign: "left", cursor: "pointer", borderRadius: 8, padding: "6px 10px",
-                    border: `1px solid ${selected ? "#3b82f6" : "var(--border)"}`,
-                    background: selected ? "rgba(59,130,246,0.12)" : "var(--bg)",
+                    display: "flex", alignItems: "center", gap: 8, textAlign: "left", width: "100%",
+                    cursor: "pointer", borderRadius: 8, padding: "6px 10px",
+                    border: `1px solid ${selected ? "var(--accent)" : "var(--border)"}`,
+                    background: selected ? "color-mix(in srgb, var(--accent) 12%, transparent)" : "var(--bg)",
                     color: "var(--text)",
                   }}
                 >
+                  <span style={{
+                    flex: "0 0 auto", minWidth: 18, height: 18, padding: "0 4px", borderRadius: 5,
+                    display: "inline-flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 11, fontWeight: 700, boxSizing: "border-box",
+                    background: selected ? "var(--accent)" : "color-mix(in srgb, var(--accent) 18%, transparent)",
+                    color: selected ? "#fff" : "var(--text-muted)",
+                  }}>
+                    {oi + 1}
+                  </span>
                   <span style={{ fontSize: 12, fontWeight: 600, marginRight: 8 }}>
                     {selected ? "◉" : q.multiSelect ? "○" : "◯"} {opt.label}
                   </span>
@@ -183,7 +215,23 @@ export function InteractionRequestCard({ request, onRespond }: {
             })}
           </div>
         </div>
-      ))}
+          ))}
+        </div>
+      )}
+
+      {/* ask_user 附加说明（可选）：补充上下文/自定义回答，经 message → annotations.notes 回给 agent */}
+      {isAsk && (
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          placeholder="附加说明（可选）：补充上下文、修正选项含义，或写出选项之外的回答…"
+          rows={2}
+          style={{
+            width: "100%", marginBottom: 8, borderRadius: 8, border: "1px solid var(--border)",
+            background: "var(--bg)", color: "var(--text)", fontSize: 12, padding: "7px 10px", resize: "vertical",
+          }}
+        />
+      )}
 
       {/* open_url：登录授权链接（单向卡——打开/复制链接，无需作答） */}
       {isOpenUrl && (openUrlTarget ?? copyUrlTarget) && (
@@ -261,7 +309,7 @@ export function InteractionRequestCard({ request, onRespond }: {
             type="button"
             disabled={busy || !allAnswered}
             title={!allAnswered ? "请先完成所有问题的选择" : undefined}
-            onClick={() => void respond("accept", { answers: picks })}
+            onClick={() => void respond("accept", { answers: picks, message: note.trim() || undefined })}
             className={`${buttonBase} border-transparent bg-[#22c55e] text-white hover:bg-[#16a34a]`}
           >
             提交回答
