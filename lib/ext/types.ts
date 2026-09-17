@@ -385,6 +385,12 @@ export type ExtSlotName =
   | "sessionRequestCard" // 会话请求卡（agent 能力 UI 去核化，docs/pi-web-agent-capability-ui-ext-plan.md §2.1）：
                     //   交互元语/工具授权/验证码三类「请求-作答」浮卡的接管缝。宿主按 request.kind +
                     //   注册 meta.kinds/backend 路由到唯一 item，未命中落 core 极简兜底卡（capability 不裸奔）。
+  | "newSessionSelectors" // 新会话欢迎页 Workspace×Backend 之间的扩展选择器（分支/Worktree picker 等）。
+                    //   extra 只喂数据 { cwd, isMobile }（插槽 extra 只喂数据红线）；全部写操作统一走
+                    //   newSessionPreparers 发送时管道（方案 docs/pi-web-new-session-branch-worktree-plan.md §3）
+  | "newSessionPreparers" // 新会话创建前 preparer 管道（注册面，无渲染）：items meta.prepare({cwd}) =>
+                    //   { cwd? } 改写目标目录 / { abort } 中止创建——ensureNewSession 在 POST 前依序 await；
+                    //   错误走既有 throw→notice 通道，草稿由 draft-keeper 保留（同方案 §3）
   ;
 
 /**
@@ -586,6 +592,18 @@ export interface SessionRequestCardSlotProps {
   backendSource?: string;
 }
 
+/** newSessionSelectors 插槽 props（新会话欢迎页 Workspace×Backend 之间的扩展选择器行）。
+ *  extra 只喂数据：选择副作用一律经 newSessionPreparers 注册面在发送首条消息时执行。 */
+export interface NewSessionSelectorSlotProps {
+  /** 新会话目标 cwd（AppShell targetNewSessionCwd；null = 未确定，扩展不渲染）。 */
+  cwd: string | null;
+  isMobile: boolean;
+}
+
+/** newSessionPreparers 注册面的 prepare 返回值：{cwd} 改写目标目录（链式，后手看到先手结果）；
+ *  {abort} 中止创建（文案原样进既有 throw→notice 错误通道；草稿由 draft-keeper 保留）。 */
+export type NewSessionPrepareResult = { cwd?: string; abort?: string } | void;
+
 export interface ExtSlotContractMap {
   /** 队列面板（去 fork 化 P3）：core → ext 的 live/trash/actions 原语。
    *  契约定义在 lib/composer/queue-api.ts（含下载导出/导入解析单实现）；
@@ -610,6 +628,8 @@ export interface ExtSlotContractMap {
   /** 会话请求卡（agent 能力 UI 去核化）：交互元语/工具授权/验证码浮卡接管缝（aiti-session-cards、
    *  aiti-zcode-agent client 等）。路由/兜底见 docs/pi-web-agent-capability-ui-ext-plan.md §2.1。 */
   sessionRequestCard: { props: SessionRequestCardSlotProps };
+  /** 新会话欢迎页扩展选择器行（session-manager 分支/Worktree picker）。 */
+  newSessionSelectors: { props: NewSessionSelectorSlotProps };
   // sidebarProjects：SessionSidebar 整栏接管（session-manager SidebarClone，props 全量透传）——
   // 契约即 SessionSidebarProps（不进本 map，宽松对象透传）。
 }
@@ -739,6 +759,10 @@ export interface ExtUiDefinition {
   sidebarTasks?: ExtUiItem[];
   modelSelector?: ExtUiItem[];  // 聊天输入框模型按钮接管项（核心 ChatInput 跳板渲染；注册后替换原生 ModelSelector）
   settingsModels?: ExtUiItem[]; // 设置面板「模型」页签接管项（核心 SettingsPanel 跳板渲染；注册后替换原生 ModelsConfig）
+  /** 新会话欢迎页 Workspace×Backend 之间的扩展选择器（渲染型；extra = NewSessionSelectorSlotProps）。 */
+  newSessionSelectors?: ExtUiItem[];
+  /** 新会话创建前 preparer 管道（注册型；meta.prepare({cwd}) => NewSessionPrepareResult）。 */
+  newSessionPreparers?: ExtUiItem[];
   /** 接管内置能力（见 EXT_PROVIDES）：如 ["session-delete"] 让 core 隐藏侧栏内置删除按钮。 */
   provides?: string[];
   /** client bundle 依赖的其他扩展 id（启动图 inject 边：并行预取/加载顺序提示，

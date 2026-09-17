@@ -13,7 +13,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import type { ExtSlotName, ExtUiItem, ExtUiItemIcon } from "@/lib/ext/types";
+import type { ExtSlotName, ExtUiItem, ExtUiItemIcon, NewSessionPrepareResult } from "@/lib/ext/types";
 
 export interface ExtRenderProps {
   /** Current selected session (null for a fresh new-session composer). */
@@ -59,6 +59,10 @@ export interface ExtUiItemRegistered {
     kinds?: string[];
     backend?: string | "*";
     priority?: number;
+    /** newSessionPreparers 注册面（分支/Worktree picker 等）：新会话创建前管道回调——
+     *  ensureNewSession 在 POST 前依序 await meta.prepare({cwd})：{cwd} 改写目标目录 /
+     *  {abort} 中止创建（走既有 throw→notice 通道；docs/pi-web-new-session-branch-worktree-plan.md §3）。 */
+    prepare?: (ctx: { cwd: string }) => Promise<NewSessionPrepareResult>;
   };
 }
 

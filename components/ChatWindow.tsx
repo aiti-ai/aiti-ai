@@ -19,6 +19,8 @@ import { ChatInput, type AttachedImage, type ChatInputHandle } from "./ChatInput
 import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtSlot, useExtSlotItems } from "./ExtSlots";
+import { hasExtRender } from "@/lib/ext-ui-store";
+import type { NewSessionPreparer } from "@/hooks/new-session-preparers";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
 import { useRecoveryProviderItems, routeRecoveryResolve } from "@/lib/composer/recovery";
 import { runSessionForkGates } from "@/lib/ext/fork-gates";
@@ -328,6 +330,13 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // 声明式静态条目 meta.onClick 由宿主转发器物化后回调；无 onClick 的条目不渲染（下拉里不可点）。
   const backendExtraOptions = useExtSlotItems("newSessionBackendOptions")
     .filter((it) => typeof it.meta?.onClick === "function");
+  // 新会话欢迎页扩展选择器（newSessionSelectors，Workspace×Backend 之间渲染）与
+  // 创建前 preparer 管道（newSessionPreparers，发送首条消息时在 ensureNewSession 内依序
+  // await——worktree 创建/checkout 等全部写操作都发生在那一刻，选择阶段零副作用）。
+  const hasNewSessionSelectors = useExtSlotItems("newSessionSelectors").some(hasExtRender);
+  const newSessionPreparers: NewSessionPreparer[] = useExtSlotItems("newSessionPreparers")
+    .filter((it) => typeof it.meta?.prepare === "function")
+    .map((it) => ({ id: it.id, prepare: it.meta!.prepare as NewSessionPreparer["prepare"] }));
   // 工作区路径展示：home 目录缩写为 ~（被动订阅，不主动发请求——别的消费面拉到时自动缩短）。
   const [homeDir, setHomeDir] = useState<string | null>(() => getHomeDir());
   useEffect(() => {
@@ -406,7 +415,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     handleToolPresetChange, handleThinkingLevelChange, loadSlashCommands, scrollToBottom, scrollUserMsgToTop,
     loadContext, activeLeafId, scrollToMessage, reloadCurrentSession,
   } = useAgentSession({
-    session, sessionRunning, newSessionCwd, newSessionDraftKey, newSessionBackend: sessionBackend, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized,
+    session, sessionRunning, newSessionCwd, newSessionDraftKey, newSessionBackend: sessionBackend, newSessionPreparers, onAgentEnd: wrappedOnAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized,
     modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
     promptAnchorSpacerHeightRef,
     bottomComposerHeightRef,
@@ -1787,7 +1796,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </div>
           </div>
         )}
-        {isEmptyNew && (workspaceOptions.length > 0 || backendOptions.length > 0 || backendExtraOptions.length > 0) && (
+        {isEmptyNew && (workspaceOptions.length > 0 || backendOptions.length > 0 || backendExtraOptions.length > 0 || hasNewSessionSelectors) && (
           <div className="mx-auto mb-3 w-full" style={{ maxWidth: "var(--chat-content-max-width, 820px)", paddingLeft: 32, paddingRight: isMobile ? 32 : 68 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontFamily: "var(--font-mono)", fontSize: 12 }}>
               {/* 工作区选择（Backend 之前）：默认当前 cwd；选择只暂存目标，不立即切换工作区——
@@ -1808,6 +1817,12 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     ))}
                   </select>
                 </span>
+              )}
+              {/* 扩展选择器（分支/Worktree picker 等）：插槽渲染不包盒子（fragment 直出，
+                  picker 自身是 flex 子项），flexWrap 布局不变；意图条经 flexBasis:100% 折行到本行下方。
+                  extra 只喂数据 {cwd,isMobile}（插槽 extra 红线）；写操作全在 newSessionPreparers。 */}
+              {hasNewSessionSelectors && (
+                <ExtSlot name="newSessionSelectors" extra={{ cwd: newSessionCwd, isMobile }} />
               )}
               {(backendOptions.length > 0 || backendExtraOptions.length > 0) && (
                 <span style={{ display: "inline-flex", alignItems: "center", gap: 8, minWidth: 0, maxWidth: "100%" }}>

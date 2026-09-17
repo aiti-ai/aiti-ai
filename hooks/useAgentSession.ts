@@ -27,6 +27,7 @@ import type { SessionStatsInfo } from "@/lib/pi-types";
 import { mergeSessionStats, type SessionFileStats } from "@/lib/session-stats";
 import { userMessageKey } from "@/lib/prompt-recovery";
 import type { SessionRequestAnswer, SessionRequestPayload } from "@/lib/ext/types";
+import { runNewSessionPreparers, type NewSessionPreparer } from "@/hooks/new-session-preparers";
 import { AgentEventConnection } from "@/lib/agent-event-connection";
 import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
 import {
@@ -208,6 +209,10 @@ export interface UseAgentSessionOptions {
   newSessionDraftKey: string | null;
   /** Session backend for NEW sessions (providerType from /api/session-backends). null/undefined = local pi. */
   newSessionBackend?: string | null;
+  /** 新会话创建前 preparer 管道（扩展经 newSessionPreparers 注册面注册；ChatWindow 收集透传）。
+   *  ensureNewSession 在 POST 前依序 await：{cwd} 改写目标目录（分支/Worktree 选择器的
+   *  worktree 复用/创建即此），{abort} 中止创建（throw→notice 既有通道）。 */
+  newSessionPreparers?: NewSessionPreparer[];
   onAgentEnd?: () => void;
   onAttentionNeeded?: (request: BlockingExtensionUiRequest) => void;
   onSessionCreated?: (session: SessionInfo, sourceDraftKey: string) => void;
@@ -457,6 +462,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // New-session backend (providerType)：ref 镜像保证 ensureNewSession 回调稳定。
   const newSessionBackendRef = useRef<string | null | undefined>(opts.newSessionBackend);
   newSessionBackendRef.current = opts.newSessionBackend;
+
+  // 新会话 preparer 管道（分支/Worktree 意图等）：ref 镜像（插槽 items 身份随 store bump
+  // 变化，回调稳定性靠 ref）；resolved cwd 记录管道改写后的目标目录，供 promoteNewSession
+  // 上报 onSessionCreated（AppShell 据 session.cwd 切活动工作区到 worktree 路径）。
+  const newSessionPreparersRef = useRef<NewSessionPreparer[] | undefined>(opts.newSessionPreparers);
+  newSessionPreparersRef.current = opts.newSessionPreparers;
+  const newSessionResolvedCwdRef = useRef<string | null>(null);
 
   // 规范 id 回调：ref 镜像保证 loadSession 依赖稳定。
   const onSessionIdCanonicalizedRef = useRef(opts.onSessionIdCanonicalized);
@@ -1096,7 +1108,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     onSessionCreated?.({
       id: sid,
       path: "",
-      cwd: newSessionCwd,
+      // preparer 管道改写后的目标 cwd（如分支/Worktree 选择器指向的 worktree 路径）；
+      // 无改写回落原 newSessionCwd。AppShell handleSessionCreated 据此切活动工作区。
+      cwd: newSessionResolvedCwdRef.current ?? newSessionCwd,
       name: undefined,
       created: new Date().toISOString(),
       modified: new Date().toISOString(),
@@ -1112,6 +1126,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (ensuringNewSessionRef.current) return ensuringNewSessionRef.current;
 
     const promise = (async () => {
+      // 新会话 preparer 管道（分支/Worktree 选择器等扩展）：POST 前依序 await——
+      // {cwd} 链式改写目标目录；{abort} 中止创建（throw→handleSend catch→notice 既有
+      // 通道，restoreSubmission 保留草稿；顺带覆盖「worktree 中途被删」类目录缺失文案）。
+      // resolved cwd 先落 ref 再 POST：成功后 promoteNewSession 据此上报真实创建位置。
+      const prepared = await runNewSessionPreparers(newSessionPreparersRef.current, newSessionCwd);
+      newSessionResolvedCwdRef.current = prepared.cwd;
       // Only send explicit user overrides. The server resolves the current
       // enabledModels scope atomically with AgentSession construction.
       const selectedModel = newSessionModelOverrideRef.current;
@@ -1123,7 +1143,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          cwd: newSessionCwd,
+          cwd: prepared.cwd,
           type: "ensure_session",
           toolNames,
           ...(backend ? { providerType: backend } : {}),
