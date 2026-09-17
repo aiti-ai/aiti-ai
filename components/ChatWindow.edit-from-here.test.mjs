@@ -67,7 +67,9 @@ test("wires the edit-from-here mark into the MessageView render", () => {
   // 合并 plan-a-upstream 时曾把消息渲染改回上游 onNavigate+onEditContent，
   // 丢掉了把这套 pending 标记机制接线到 MessageView 的三行——内部机制完好却成死代码。
   // 这里盯住接线：只要合并丢任何一行，立即红灯。
-  assert.match(source, /onEditFromHere=\{sessionBusy \|\| isNew \? undefined : handleEditFromHereMark\}/);
+  // 2026-09-18：新增 capability 门控（外部后端须 navigateTree 或 fork 之一；zcode 走
+  // session/fork 语义，其余外部后端隐藏按钮=标示不支持）——本地会话无 caps 全通不变。
+  assert.match(source, /onEditFromHere=\{sessionBusy \|\| isNew \|\| !\(sessionCap\("navigateTree"\) \|\| sessionCap\("fork"\)\) \? undefined : handleEditFromHereMark\}/);
   assert.match(source, /editingFromStart=\{editFromHerePending\?\.entryId === entryIds\[idx\]\}/);
   assert.match(source, /onCancelEditFromStart=\{handleCancelEditFromHere\}/);
 });
@@ -77,14 +79,15 @@ test("新会话按钮不受 sessionBusy/首条消息门控（运行中/首条都
   // 首条消息 fork = 复制会话前奏开新分支，同样合法。
   // v0.9.0 合并（test-upstream-0831）曾把上游的 sessionBusy || isNew || idx===0 门卫带回来，
   // 导致运行中所有用户消息的「新会话」消失。钉死表达式，合并再顶掉即红灯。
-  assert.match(source, /onFork=\{isNew \? undefined : handleFork\}/);
+  // 2026-09-18：新增 fork capability 门控（本地会话无 caps 不变；不支持 fork 的外部后端隐藏）。
+  assert.match(source, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : handleFork\}/);
   assert.doesNotMatch(source, /onFork=\{sessionBusy/);
   assert.doesNotMatch(source, /idx === 0 && msg\.role === "user" \? undefined : handleFork/);
 });
 
 test("「从此处编辑」收 sessionBusy 门控（运行中隐藏，2026-09-08 拍板）", () => {
   // 从此处编辑发送时会回退会话——运行中标记/回退会与正在跑的轮次冲突，运行中隐藏。
-  assert.match(source, /onEditFromHere=\{sessionBusy \|\| isNew \? undefined : handleEditFromHereMark\}/);
+  assert.match(source, /onEditFromHere=\{sessionBusy \|\| isNew \|\| !\(sessionCap\("navigateTree"\) \|\| sessionCap\("fork"\)\) \? undefined : handleEditFromHereMark\}/);
 });
 
 test("never falls back to the superseded upstream navigate+editContent path", () => {

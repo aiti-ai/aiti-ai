@@ -155,7 +155,8 @@ test("first user messages expose both branch actions and edit before their own e
 
   // fork 拍板（a4aaff0）：运行中/首条消息 fork 均合法——onFork 不带 sessionBusy 门控
   // （上游 sessionBusy || isNew 版本被 ChatWindow.edit-from-here 红灯测试禁止）。
-  assert.match(chatWindowSource, /onFork=\{isNew \? undefined : handleFork\}/);
+  // 2026-09-18：新增 fork capability 门控（本地会话无 caps 不变；不支持 fork 的外部后端隐藏）。
+  assert.match(chatWindowSource, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : handleFork\}/);
   assert.doesNotMatch(chatWindowSource, /idx === 0 && msg\.role === "user" \? undefined : handleFork/);
   // fork 的「从此处编辑」依赖 prevAssistantEntryId 定分支点（上游无此机制，原 doesNotMatch 不适用）。
   assert.match(navigateSource, /type: "navigate_tree",\s*targetId: entryId/);

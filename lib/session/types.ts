@@ -433,7 +433,7 @@ export interface SessionHandle {
   /** @capability setThinkingLevel */
   setThinkingLevel?(level: string): void;
   /** @capability fork */
-  fork?(entryId: string): Promise<{ cancelled: boolean; newSessionFile?: string }>;
+  fork?(entryId: string, opts?: { reset?: boolean }): Promise<{ cancelled: boolean; newSessionFile?: string }>;
   /** @capability renameSession */
   setSessionName?(name: string): void;
   /** @capability compact */

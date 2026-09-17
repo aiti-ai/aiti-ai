@@ -1472,11 +1472,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     onOpenSession={onOpenSession}
                     entryId={entryIds[idx]}
                     searchBlock={entryIds[idx] === pendingSearchScroll?.entryId ? searchBlock : undefined}
-                    onFork={isNew ? undefined : handleFork}
+                    onFork={isNew || !sessionCap("fork") ? undefined : handleFork}
                     forking={forkingEntryId === entryIds[idx]}
                     onNavigate={isNew ? undefined : handleNavigate}
                     prevAssistantEntryId={isNew ? undefined : prevAssistantEntryId}
-                    onEditFromHere={sessionBusy || isNew ? undefined : handleEditFromHereMark}
+                    onEditFromHere={sessionBusy || isNew || !(sessionCap("navigateTree") || sessionCap("fork")) ? undefined : handleEditFromHereMark}
                     editingFromStart={editFromHerePending?.entryId === entryIds[idx]}
                     onCancelEditFromStart={handleCancelEditFromHere}
                     showTimestamp={showTimestamp}

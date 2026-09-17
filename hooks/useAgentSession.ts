@@ -2675,6 +2675,25 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   ) => {
     const sid = sessionIdRef.current;
     if (sid) {
+      // 外部后端 fork 语义（zcode）：无会话树可回退，走 session/fork —— handle 换绑到
+      // fork 子会话就地续跑（reset），子会话历史 = 分支点之前 + 自带 zcode checkpoint
+      // 文件回滚。leafId 为空 = 根重建（编辑首条消息，后端丢弃旧通道下轮全新建会话）。
+      // navigate_tree 仅 pi 会话树可用；其余外部后端（无 fork 无树）按钮已隐藏，不会到达。
+      const extFork = sessionCapabilities != null && !sessionCapabilities.navigateTree && !!sessionCapabilities.fork;
+      if (extFork) {
+        try {
+          await sendAgentCommand(sid, { type: "fork", entryId: leafId ?? "", reset: true });
+        } catch (e) {
+          // fork 失败继续发送会把消息追加到未回退的完整历史尾部（用户以为已回退）——
+          // 中止本次发送并提示，pending 标记与输入内容保留，用户可重试。
+          console.error("Edit-from-here: fork failed:", e);
+          addNotice({ type: "error", message: `编辑从此处失败：${describeAgentCommandError(e)}` });
+          return;
+        }
+        await loadContext(sid, null);
+        await handleSend(message, images);
+        return;
+      }
       try {
         await sendAgentCommand(sid, { type: "navigate_tree", targetId });
       } catch (e) {
@@ -2688,7 +2707,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       await loadContext(sid, leafId);
     }
     await handleSend(message, images);
-  }, [handleSend, loadContext, addNotice]);
+  }, [handleSend, loadContext, addNotice, sessionCapabilities]);
 
   const handleLeafChange = useCallback(async (leafId: string | null) => {
     if (bashRunningRef.current) return;

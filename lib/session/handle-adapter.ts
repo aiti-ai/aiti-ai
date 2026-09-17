@@ -352,8 +352,10 @@ export class HandleSessionAdapter implements WrappedSessionLike {
 
       case "fork": {
         cap("fork");
-        const r = await h.fork!(String(command.entryId ?? ""));
-        return { text: undefined, cancelled: r.cancelled };
+        // opts.reset：外部后端「编辑从此处」语义（fork 后 handle 换绑子会话就地续跑，
+        // zcode 专用）；缺省 = 纯 fork（消息「分支」按钮，当前会话不动）。
+        const r = await h.fork!(String(command.entryId ?? ""), { reset: command.reset === true });
+        return { text: undefined, cancelled: r.cancelled, newSessionId: r.newSessionFile };
       }
 
       case "bash": {

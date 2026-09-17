@@ -131,7 +131,7 @@ const GUARDS = [
     file: "./ChatWindow.tsx",
     must: [
       /data-entry-id=\{entryIds\[idx\]\}/,                           // msg-smart/锚点扩展的 DOM 契约
-      /onEditFromHere=\{sessionBusy \|\| isNew \? undefined : handleEditFromHereMark\}/,  // 运行中隐藏（2026-09-08 拍板：发送时回退与在跑轮次冲突）
+      /onEditFromHere=\{sessionBusy \|\| isNew \|\| !\(sessionCap\("navigateTree"\) \|\| sessionCap\("fork"\)\) \? undefined : handleEditFromHereMark\}/,  // 运行中隐藏（2026-09-08 拍板：发送时回退与在跑轮次冲突）+ capability 门控（2026-09-18：外部后端须 navigateTree 或 fork 之一，zcode 走 session/fork 语义，其余外部后端隐藏按钮=标示不支持）
       /name="chatOverlay"/,                                          // 消息导航条/锚点横幅插槽
     ],
   },
