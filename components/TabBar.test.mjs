@@ -12,7 +12,7 @@ const jiti = createJiti(import.meta.url, {
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
-const { TabBar, computeTabRevealScrollLeft } = await jiti.import("./TabBar.tsx");
+const { TabBar, computeTabRevealScrollLeft, filePosMenuItems } = await jiti.import("./TabBar.tsx");
 
 function metrics(overrides) {
   return {
@@ -96,6 +96,39 @@ test("active tab is revealed on activation and on container resize", () => {
   assert.match(source, /revealActiveTab\(correctFrames - 1\)/);
   // RO 仅在 0 宽跳过后补滚，不拉回用户手动滚开的位置
   assert.match(source, /if \(needsRevealRef\.current\) revealActiveTab\(2\)/);
+});
+
+test("file tab ⇱ menu mirrors the dock position menu (停靠方位 icon row)", () => {
+  const tab = { id: "file:/a.ts", label: "a.ts", filePath: "/a.ts" };
+  // 顺序/图标键与 aiti-ai ext-float-dock「停靠方位」图标排一致（新窗口 → 浮窗 → 左栏 → 右栏）
+  const items = filePosMenuItems(tab, (k) => k, {
+    onDetachTab() {}, onOpenViewerWindow() {}, onDockFileTab() {},
+  });
+  assert.deepEqual(items.map((i) => [i.key, i.icon]), [
+    ["new-window", "new-window"],
+    ["float", "float"],
+    ["sidebar-explorer", "panel-left"],
+    ["right-panel", "panel-right"],
+  ]);
+  // 能力回调缺席 / 无 filePath 自动省略（扩展缺席降级语义不变）
+  assert.deepEqual(filePosMenuItems(tab, (k) => k, { onDetachTab() {} }).map((i) => i.key), ["float"]);
+  assert.deepEqual(
+    filePosMenuItems({ id: "x", label: "x", filePath: "" }, (k) => k, { onDockFileTab() {} }).map((i) => i.key),
+    [],
+  );
+  // run 接线：各自回宿主回调（zone 原值透传）
+  const calls = [];
+  const wired = filePosMenuItems(tab, (k) => k, {
+    onDetachTab: (t2) => calls.push(["detach", t2.id]),
+    onOpenViewerWindow: (t2) => calls.push(["viewer", t2.id]),
+    onDockFileTab: (t2, zone) => calls.push(["dock", zone]),
+  });
+  wired[0].run(); wired[1].run(); wired[3].run();
+  assert.deepEqual(calls, [["viewer", "file:/a.ts"], ["detach", "file:/a.ts"], ["dock", "right-panel"]]);
+  // 渲染锚：图标排结构 + 行标题 key（与 dock 菜单同纹；文字项/分隔线已退役）
+  assert.match(source, /data-ext-dock-icon-row="1"/);
+  assert.match(source, /t\("files\.posDockRow"\)/);
+  assert.doesNotMatch(source, /t\("files\.posDetach"\)\}/);
 });
 
 test("reveal is gated by host revealToken so background opens never scroll", () => {

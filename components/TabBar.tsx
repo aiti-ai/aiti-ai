@@ -25,6 +25,108 @@ export function computeTabRevealScrollLeft(metrics: {
   return null;
 }
 
+/* ── 文件 tab ⇱ 位置菜单「停靠方位」图标排（宿主侧，2026-09-17）────────────────
+ * 与 dock 位置菜单（aiti-ai `_shared/ext-float-dock` 图标排 + `_shared/dock-icons.ts`）
+ * 同图形 / 同款式 / 同序：新窗口 → 浮窗 → 左栏 → 右栏（文字收进 tooltip）。
+ * 跨仓不引依赖：这里内联同一份 lucide 线稿 path（手工同步——改图标两边一起改）。 */
+export type FilePosIconName = "new-window" | "float" | "panel-left" | "panel-right";
+
+/** 方位图标（viewBox 24 / stroke 2 / round；与 aiti-ai dock-icons 同 data）。 */
+function DockPosIcon({ name }: { name: FilePosIconName }) {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {name === "new-window" ? (
+        <>
+          {/* square-arrow-out-up-right（新窗口打开） */}
+          <path d="M21 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h6" />
+          <path d="m21 3-9 9" />
+          <path d="M15 3h6v6" />
+        </>
+      ) : name === "float" ? (
+        <>
+          {/* app-window（浮窗；用户 2026-09-15 定稿） */}
+          <rect x="2" y="4" width="20" height="16" rx="2" />
+          <path d="M10 4v4" />
+          <path d="M2 8h20" />
+          <path d="M6 4v4" />
+        </>
+      ) : name === "panel-left" ? (
+        <>
+          {/* panel-left（左栏） */}
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path d="M9 3v18" />
+        </>
+      ) : (
+        <>
+          {/* panel-right（右栏） */}
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path d="M15 3v18" />
+        </>
+      )}
+    </svg>
+  );
+}
+
+/** 文件 tab ⇱ 位置菜单项（纯数据模型；渲染与测试断言共用——顺序契约钉在这里）。
+ *  key 与 ext-float-dock 的 `data-ext-dock-icon` 契约同值（sidebar 族折叠为 sidebar-explorer）。 */
+export interface FilePosMenuItem {
+  key: "new-window" | "float" | "sidebar-explorer" | "right-panel";
+  icon: FilePosIconName;
+  label: string;
+  run: () => void;
+}
+
+/** 构建文件 tab 位置菜单项：与 dock 位置菜单同序（新窗口 → 浮窗 → 左栏 → 右栏），
+ *  能力回调缺席 / 无 filePath 时对应项自动省略（扩展缺席降级语义不变）。 */
+export function filePosMenuItems(
+  tab: Tab,
+  t: (key: string) => string,
+  handlers: {
+    onDetachTab?: (tab: Tab) => void;
+    onOpenViewerWindow?: (tab: Tab) => void;
+    onDockFileTab?: (tab: Tab, zone: "sidebar" | "right-panel") => void;
+  },
+): FilePosMenuItem[] {
+  const items: FilePosMenuItem[] = [];
+  if (handlers.onOpenViewerWindow) {
+    const fn = handlers.onOpenViewerWindow;
+    items.push({ key: "new-window", icon: "new-window", label: t("files.posNewWindow"), run: () => fn(tab) });
+  }
+  if (handlers.onDetachTab) {
+    const fn = handlers.onDetachTab;
+    items.push({ key: "float", icon: "float", label: t("files.posDetach"), run: () => fn(tab) });
+  }
+  if (handlers.onDockFileTab && tab.filePath) {
+    const fn = handlers.onDockFileTab;
+    items.push({ key: "sidebar-explorer", icon: "panel-left", label: t("files.posSidebar"), run: () => fn(tab, "sidebar") });
+    items.push({ key: "right-panel", icon: "panel-right", label: t("files.posPanel"), run: () => fn(tab, "right-panel") });
+  }
+  return items;
+}
+
+/** 图标按钮（同 ext-float-dock 图标排规格：28×28 / 6px 圆角 / hover 提亮 / tooltip=label）。 */
+function PosIconButton({ item, onPick }: { item: FilePosMenuItem; onPick: () => void }) {
+  return (
+    <button
+      type="button"
+      role="menuitem"
+      title={item.label}
+      aria-label={item.label}
+      data-ext-dock-icon={item.key}
+      style={{
+        position: "relative", width: 28, height: 28, display: "inline-flex", alignItems: "center", justifyContent: "center",
+        border: "none", borderRadius: 6, padding: 0, background: "none",
+        color: "var(--text-muted)", cursor: "pointer", fontFamily: "inherit",
+      }}
+      onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; }}
+      onMouseLeave={(e) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted)"; }}
+      onClick={onPick}
+    >
+      <DockPosIcon name={item.icon} />
+    </button>
+  );
+}
+
 export interface Tab {
   id: string;
   label: string;
@@ -499,7 +601,9 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
           </svg>
         </button>
       )}
-      {/* 文件 tab ⇱ 位置菜单（宿主自渲染；dock tab 的 ⇱ 走 aiti-float 不进这里） */}
+      {/* 文件 tab ⇱ 位置菜单（宿主自渲染；dock tab 的 ⇱ 走 aiti-float 不进这里）。
+          与 dock 位置菜单（ext-float-dock「停靠方位」图标排）同款同序：新窗口 → 浮窗 →
+          左栏 → 右栏；文字收进 tooltip（跨仓图标 data 手工同步，见上方 filePosMenuItems）。 */}
       {posMenu && (
         <div
           role="menu"
@@ -508,7 +612,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
             left: posMenu.x,
             top: posMenu.y,
             zIndex: 3200,
-            minWidth: 170,
+            minWidth: 190,
             background: "var(--bg-panel)",
             border: "1px solid var(--border)",
             borderRadius: 8,
@@ -518,74 +622,27 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
           }}
           onClick={(e) => e.stopPropagation()}
         >
-          {onDetachTab && (
-            <button
-              type="button"
-              role="menuitem"
-              style={{
-                display: "flex", alignItems: "center", gap: 8, width: "100%",
-                padding: "7px 10px", border: "none", borderRadius: 6, cursor: "pointer",
-                background: "transparent", color: "var(--text)", textAlign: "left",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-              onClick={() => { const tab = posMenu.tab; setPosMenu(null); onDetachTab(tab); }}
+          <div
+            data-ext-dock-icon-row="1"
+            role="group"
+            style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16, padding: "5px 10px" }}
+          >
+            <span
+              data-ext-dock-icon-row-label="1"
+              style={{ fontSize: 12, color: "var(--text-dim)", flexShrink: 0, userSelect: "none", whiteSpace: "nowrap" }}
             >
-              {t("files.posDetach")}
-            </button>
-          )}
-          {onOpenViewerWindow && (
-            <button
-              type="button"
-              role="menuitem"
-              style={{
-                display: "flex", alignItems: "center", gap: 8, width: "100%",
-                padding: "7px 10px", border: "none", borderRadius: 6, cursor: "pointer",
-                background: "transparent", color: "var(--text)", textAlign: "left",
-              }}
-              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-              onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-              onClick={() => { const tab = posMenu.tab; setPosMenu(null); onOpenViewerWindow(tab); }}
-            >
-              {t("files.posNewWindow")}
-            </button>
-          )}
-          {onDockFileTab && posMenu.tab.filePath && (
-            /* 文件 dock face（2026-09-16）：显式停靠两项——宿主 tab 转 dock face
-               （aiti-editor dockFile：关宿主 tab + present dock:zone，⇱ 四连齐全）。
-               分隔线区分「窗口形态」与「停靠形态」两组。 */
-            <>
-              <div style={{ height: 1, background: "var(--border)", margin: "4px 6px", opacity: 0.7 }} />
-              <button
-                type="button"
-                role="menuitem"
-                style={{
-                  display: "flex", alignItems: "center", gap: 8, width: "100%",
-                  padding: "7px 10px", border: "none", borderRadius: 6, cursor: "pointer",
-                  background: "transparent", color: "var(--text)", textAlign: "left",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                onClick={() => { const tab = posMenu.tab; setPosMenu(null); onDockFileTab(tab, "sidebar"); }}
-              >
-                {t("files.posSidebar")}
-              </button>
-              <button
-                type="button"
-                role="menuitem"
-                style={{
-                  display: "flex", alignItems: "center", gap: 8, width: "100%",
-                  padding: "7px 10px", border: "none", borderRadius: 6, cursor: "pointer",
-                  background: "transparent", color: "var(--text)", textAlign: "left",
-                }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
-                onClick={() => { const tab = posMenu.tab; setPosMenu(null); onDockFileTab(tab, "right-panel"); }}
-              >
-                {t("files.posPanel")}
-              </button>
-            </>
-          )}
+              {t("files.posDockRow")}
+            </span>
+            <div data-ext-dock-icon-group="1" style={{ display: "flex", gap: 6, marginLeft: "auto", flexShrink: 0 }}>
+              {filePosMenuItems(posMenu.tab, t, { onDetachTab, onOpenViewerWindow, onDockFileTab }).map((item) => (
+                <PosIconButton
+                  key={item.key}
+                  item={item}
+                  onPick={() => { setPosMenu(null); item.run(); }}
+                />
+              ))}
+            </div>
+          </div>
         </div>
       )}
       {/* 右键菜单（tab-detach v0.6.2）：fixed 定位；点外/Escape 关闭（effect 挂窗级监听） */}

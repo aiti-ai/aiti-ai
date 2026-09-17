@@ -229,6 +229,7 @@ export const zhCNLocale: LocalePlugin = {
     "files.posDetach": "浮窗",
     "files.posNewWindow": "新窗口（独立查看器）",
     "files.posTitle": "位置",
+    "files.posDockRow": "停靠方位",
     "files.posSidebar": "左栏 · 区块",
     "files.posPanel": "右栏 · 面板",
     "files.showPanel": "显示文件面板",

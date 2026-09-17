@@ -229,6 +229,7 @@ export const enLocale: LocalePlugin = {
     "files.posDetach": "Floating window",
     "files.posNewWindow": "New viewer window",
     "files.posTitle": "Position",
+    "files.posDockRow": "Dock position",
     "files.posSidebar": "Left sidebar · block",
     "files.posPanel": "Right panel · tab",
     "files.showPanel": "Show file panel",
