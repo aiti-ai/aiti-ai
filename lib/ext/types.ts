@@ -382,6 +382,9 @@ export type ExtSlotName =
                     //   契约 = ModelInfoLeadSlotProps（docs/aiti-ctx-meter-plan.md §4.2）
   | "compactLead"   // 桌面压缩按钮左邻位（aiti-ctx-meter 上下文比例条；v0.1.2 自 composerTools 行尾迁此）。
                     //   契约复用 ModelInfoLeadSlotProps（isMobile 恒缺省）；仅桌面渲染，无扩展注册时零占位
+  | "sessionRequestCard" // 会话请求卡（agent 能力 UI 去核化，docs/pi-web-agent-capability-ui-ext-plan.md §2.1）：
+                    //   交互元语/工具授权/验证码三类「请求-作答」浮卡的接管缝。宿主按 request.kind +
+                    //   注册 meta.kinds/backend 路由到唯一 item，未命中落 core 极简兜底卡（capability 不裸奔）。
   ;
 
 /**
@@ -519,6 +522,70 @@ export interface ModelInfoLeadSlotProps {
   isMobile?: boolean;
 }
 
+/** 交互问题（sessionRequestCard ask_user 形态；与原 core 卡组件同形）。 */
+export interface SessionRequestQuestion {
+  header?: string;
+  question: string;
+  multiSelect?: boolean;
+  options: Array<{ label: string; description?: string }>;
+}
+
+/** 会话请求载荷（sessionRequestCard 插槽；三协议事件家族归一视图）。
+ *  kind = 路由键：`interaction:plan_approval` / `interaction:ask_user` / `interaction:open_url` /
+ *  `interaction:generic` / `permission` / `provider_headers`（后端适配器新增 kind 无需改核——
+ *  扩展按 kinds 认领，未命中落宿主兜底卡）。 */
+export interface SessionRequestPayload {
+  requestId: string;
+  kind: string;
+  /** 协议事件家族（respond 分派键）。 */
+  family: "interaction" | "permission" | "provider_headers";
+  /** 来源 capability 名（元数据：respondInteraction / respondPermission / respondProviderHeaders）。 */
+  capability: string;
+  toolName?: string;
+  prompt?: string;
+  /** interaction:plan_approval：方案全文 markdown。 */
+  plan?: string;
+  /** interaction:open_url：登录授权完整 URL。 */
+  url?: string;
+  /** interaction:open_url：本机短链（复制优先）。 */
+  launchUrl?: string;
+  questions?: SessionRequestQuestion[];
+  input?: unknown;
+  /** permission 家族：宿主选项表（ACP optionId/kind/name；无则扩展自绘 Allow/Deny）。 */
+  options?: Array<{ optionId?: string; kind?: string; name?: string }>;
+  /** provider_headers 家族：验证码 init 三元组 + 请求缘由。 */
+  captchaConfig?: { sceneId: string; prefix: string; region: string };
+  providerId?: string;
+  modelRef?: string;
+  reason?: "model-request" | "captcha-retry";
+}
+
+/** 统一作答入参（sessionRequestCard.respond；core 按 request.family 分派到对应协议命令）。 */
+export interface SessionRequestAnswer {
+  action: "accept" | "decline";
+  /** interaction:ask_user：每题选中（单选 label / 多选 label 集合，question 文本为键）。 */
+  answers?: Record<string, string | string[]>;
+  /** 附加说明（interaction：plan 反馈 / ask_user note → annotations.notes）。 */
+  message?: string;
+  /** permission 家族：宿主选项 id（「总是允许」等协议语义）。 */
+  optionId?: string;
+  /** provider_headers 家族：验证码回传参。 */
+  captchaVerifyParam?: string;
+  /** provider_headers 家族：验证码回传 region（→ x-aliyun-captcha-verify-region）。 */
+  region?: string;
+  /** provider_headers 家族：失败原因。 */
+  error?: string;
+}
+
+/** sessionRequestCard 插槽 props（会话请求卡接管缝）。 */
+export interface SessionRequestCardSlotProps {
+  currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
+  request: SessionRequestPayload;
+  respond: (answer: SessionRequestAnswer) => Promise<boolean>;
+  /** 会话后端来源（zcode/cursor/…；注册 meta.backend 匹配用，undefined = 本地会话）。 */
+  backendSource?: string;
+}
+
 export interface ExtSlotContractMap {
   /** 队列面板（去 fork 化 P3）：core → ext 的 live/trash/actions 原语。
    *  契约定义在 lib/composer/queue-api.ts（含下载导出/导入解析单实现）；
@@ -540,6 +607,9 @@ export interface ExtSlotContractMap {
   modelInfoLead: { props: ModelInfoLeadSlotProps };
   /** 桌面压缩按钮左邻位（aiti-ctx-meter；契约同 ModelInfoLeadSlotProps，isMobile 恒缺省=桌面）。 */
   compactLead: { props: ModelInfoLeadSlotProps };
+  /** 会话请求卡（agent 能力 UI 去核化）：交互元语/工具授权/验证码浮卡接管缝（aiti-session-cards、
+   *  aiti-zcode-agent client 等）。路由/兜底见 docs/pi-web-agent-capability-ui-ext-plan.md §2.1。 */
+  sessionRequestCard: { props: SessionRequestCardSlotProps };
   // sidebarProjects：SessionSidebar 整栏接管（session-manager SidebarClone，props 全量透传）——
   // 契约即 SessionSidebarProps（不进本 map，宽松对象透传）。
 }

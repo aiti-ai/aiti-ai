@@ -52,6 +52,13 @@ export interface ExtUiItemRegistered {
     /** fileViewer 接管判定（aiti-editor）：核心 FileViewer 跳板调用——
      *  文件是否交给该扩展渲染（缺省视为不接管 → 核心原查看器兜底，零回归）。 */
     match?: (filePath: string, opts: { cwd?: string; kind?: "file" | "folder" }) => boolean;
+    /** sessionRequestCard 路由（agent 能力 UI 去核化）：本条目认领的请求 kind 集合
+     *  （`interaction:plan_approval` / `permission` / `provider_headers` / 后端自定义…）。
+     *  宿主按 request.kind ∈ kinds && (backend 未声明 | "*" | == 会话 backendSource) 过滤，
+     *  priority 最高者接管；未命中落宿主兜底卡。 */
+    kinds?: string[];
+    backend?: string | "*";
+    priority?: number;
   };
 }
 
