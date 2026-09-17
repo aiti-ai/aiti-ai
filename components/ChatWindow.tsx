@@ -1437,7 +1437,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 if (idx === lastUserIdx) { (lastUserMsgRef as { current: HTMLDivElement | null }).current = el; }
               };
 
-              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[] } = {}): ReactNode => {
+              const renderMessage = (idx: number, options: { attachRef?: boolean; keyPrefix?: string; messageOverride?: AgentMessage; showTimestamp?: boolean; writtenFiles?: WrittenFile[]; turnAssistantEntryIds?: string[]; suppressMessageFooter?: boolean } = {}): ReactNode => {
                 const msg = options.messageOverride ?? messages[idx];
                 const prevAssistantEntryId =
                   msg.role === "user" && idx > 0 && messages[idx - 1].role === "assistant"
@@ -1483,6 +1483,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
                     writtenFiles={options.writtenFiles}
+                    turnAssistantEntryIds={options.turnAssistantEntryIds}
+                    suppressMessageFooter={options.suppressMessageFooter}
                   />
                 );
                 if (!isVisible || currentRefIdx === undefined) return view;
@@ -1563,6 +1565,11 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     keyPrefix: "process",
                     messageOverride: message,
                     showTimestamp: false,
+                    // 整轮变更文件已由最终回答处的 turn 级 footer 聚合（assistantEntryIds），
+                    // 过程消息的消息级 footer 在此关闭，避免展开分组时同一文件出现两次。
+                    // 仅当该轮确有最终回答时抑制——中断轮（无 answer blocks）没有最终回答
+                    // 渲染点，过程消息的消息级 footer 是唯一展示位，必须保留。
+                    suppressMessageFooter: Boolean(finalAnswerMessage),
                   }));
                 }
 
@@ -1585,9 +1592,12 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   // Gather the turn's assistant blocks and derive the file list
                   // from the write/edit calls among them.
                   const turnContent: AssistantContentBlock[] = [];
+                  const turnAssistantEntryIds: string[] = [];
                   for (let i = userIdx + 1; i <= finalAssistantIdx; i++) {
                     const m = messages[i];
                     if (m?.role === "assistant") {
+                      const turnEntryId = entryIds[i];
+                      if (turnEntryId) turnAssistantEntryIds.push(turnEntryId);
                       for (const b of (m as AssistantMessage).content ?? []) turnContent.push(b);
                     }
                   }
@@ -1595,6 +1605,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                   rendered.push(renderMessage(finalAssistantIdx, {
                     messageOverride: finalAnswerMessage,
                     writtenFiles,
+                    turnAssistantEntryIds,
                   }));
                 }
                 for (let renderIdx = finalAssistantIdx + 1; renderIdx < endIdx; renderIdx++) {

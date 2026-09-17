@@ -214,6 +214,21 @@ interface Props {
    * final answer text-only.
    */
   writtenFiles?: WrittenFile[];
+  /**
+   * Entry ids of every assistant message in this turn (final answer included).
+   * Only provided at the turn-final-answer render point, alongside
+   * `writtenFiles` — extensions use it to aggregate out-of-band per-entry data
+   * (e.g. aiti-git-trace ledger rows) for the whole turn.
+   */
+  turnAssistantEntryIds?: string[];
+  /**
+   * Suppress the assistantMessageFooter extension slot at this render point —
+   * set for process messages inside a grouped turn whose files the final
+   * answer's turn-level footer already aggregates (avoids double display
+   * when the group is expanded). The message-level fallback (own entryId
+   * only) stays on everywhere else.
+   */
+  suppressMessageFooter?: boolean;
 }
 
 /**
@@ -293,12 +308,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, searchBlock, onFork, forking, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, showTimestamp, prevTimestamp, sessionId, writtenFiles }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, searchBlock, onFork, forking, onNavigate, prevAssistantEntryId, onEditFromHere, editingFromStart, onCancelEditFromStart, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnAssistantEntryIds, suppressMessageFooter }: Props) {
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onNavigate={onNavigate} prevAssistantEntryId={prevAssistantEntryId} onEditFromHere={onEditFromHere} editingFromStart={editingFromStart} onCancelEditFromStart={onCancelEditFromStart} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} turnAssistantEntryIds={turnAssistantEntryIds} suppressMessageFooter={suppressMessageFooter} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -334,6 +349,8 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
     && prev.writtenFiles === next.writtenFiles
+    && prev.turnAssistantEntryIds === next.turnAssistantEntryIds
+    && prev.suppressMessageFooter === next.suppressMessageFooter
     && prev.sessionId === next.sessionId;
 });
 
@@ -654,6 +671,8 @@ function AssistantMessageView({
   entryId,
   searchBlock,
   writtenFiles,
+  turnAssistantEntryIds,
+  suppressMessageFooter,
 }: {
   message: AssistantMessage;
   isStreaming?: boolean;
@@ -668,6 +687,8 @@ function AssistantMessageView({
   entryId?: string;
   searchBlock?: AssistantContentBlock;
   writtenFiles?: WrittenFile[];
+  turnAssistantEntryIds?: string[];
+  suppressMessageFooter?: boolean;
 }) {
   const { t } = useI18n();
   // 该条消息真的带 USD cost 时才订阅汇率（用到才拉 /api/fx；无 cost 的消息不占开页请求）
@@ -930,6 +951,19 @@ function AssistantMessageView({
 
       {writtenFiles && writtenFiles.length > 0 && (
         <TurnWrittenFiles files={writtenFiles} onOpenFile={onOpenFile} />
+      )}
+
+      {/* 消息底部扩展插槽（aiti-git-trace：trace 捕捉、write/edit 口径之外的变更文件行）。
+          turn 最终回答渲染点由 ChatWindow 传整轮 assistantEntryIds + writtenFiles（扩展
+          求差集免重复）；分组 turn 内的过程消息被抑制（变更已由最终回答的 turn 级 footer
+          聚合，防展开分组时重复）；其余 assistant 消息渲染点只有自身 entryId（消息级兜底）。
+          流式 tail 无 entryId 不挂（live 阶段 trace 台账也未落定）。 */}
+      {entryId && !suppressMessageFooter && (
+        <ExtSlot
+          name="assistantMessageFooter"
+          currentSession={null}
+          extra={{ entryId, sessionId, cwd, assistantEntryIds: turnAssistantEntryIds, writtenFiles: writtenFiles?.map((f) => f.filePath) }}
+        />
       )}
 
     </div>

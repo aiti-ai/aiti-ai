@@ -347,6 +347,10 @@ export type ExtSlotName =
                      //   在消息列右侧渲染 absolute 悬浮工具栏）
   | "userMessageActions" // user 消息底部 hover 操作区（aiti-prompts：📌 收藏为 prompt 等）
   | "assistantMessageActions" // assistant 消息底部 hover 操作区（aiti-ai-speek：🔊 朗读这条/⏹ 停止朗读）
+  | "assistantMessageFooter" // assistant 消息内容区末尾（「改动的文件」chips 之后；aiti-git-trace：
+                    //   trace 捕捉、write/edit 口径之外的变更文件行。turn 最终回答渲染点由
+                    //   ChatWindow 传整轮 assistantEntryIds + writtenFiles，契约 =
+                    //   AssistantMessageFooterSlotProps）
   | "fileViewer"     // 文件查看/编辑接管（aiti-editor：文本文件编辑；aiti-folder：文件夹浏览器；未接管时核心原查看器兑底）
   | "pathPicker"    // 目录选择器能力（aiti-folder：FolderSwitcher 同款；顶栏「打开文件夹」等消费）
   | "newSessionBackendOptions" // 新会话欢迎页 Backend 下拉内的扩展条目（每项一个 <option>；选中执行 meta.onClick，
@@ -604,6 +608,26 @@ export interface NewSessionSelectorSlotProps {
  *  {abort} 中止创建（文案原样进既有 throw→notice 错误通道；草稿由 draft-keeper 保留）。 */
 export type NewSessionPrepareResult = { cwd?: string; abort?: string } | void;
 
+/** assistantMessageFooter 插槽 props（assistant 消息内容区末尾，「改动的文件」之后）。
+ *  turn 最终回答渲染点由 ChatWindow 传整轮聚合数据；其余 assistant 消息渲染点
+ *  只有 entryId/sessionId/cwd（assistantEntryIds/writtenFiles 缺省，消息级兜底）。
+ *  分组 turn 内的过程消息在「该轮确有最终回答」时整点不挂（防重复，见
+ *  MessageView suppressMessageFooter）；中断轮无最终回答 → 过程消息照常兜底。 */
+export interface AssistantMessageFooterSlotProps {
+  /** 该 assistant 消息自身 entry id（流式 tail 等未落盘场景缺省——渲染点此时不挂）。 */
+  entryId?: string;
+  /** 会话 id（新会话欢迎页等无会话场景缺省）。 */
+  sessionId?: string;
+  /** 会话 cwd（相对路径解析用）。 */
+  cwd?: string;
+  /** 仅 turn 最终回答渲染点：整轮 assistant entry id 集合（含最终回答自身，与
+   *  writtenFiles 同源收集）。扩展按它到带外台账（aiti-git-trace ops）聚合本轮变更。 */
+  assistantEntryIds?: string[];
+  /** 仅 turn 最终回答渲染点：宿主已推导的「改动的文件」绝对路径（write/edit 口径）。
+   *  扩展求差集后只补台账多出来的文件，避免重复展示。 */
+  writtenFiles?: string[];
+}
+
 export interface ExtSlotContractMap {
   /** 队列面板（去 fork 化 P3）：core → ext 的 live/trash/actions 原语。
    *  契约定义在 lib/composer/queue-api.ts（含下载导出/导入解析单实现）；
@@ -630,6 +654,9 @@ export interface ExtSlotContractMap {
   sessionRequestCard: { props: SessionRequestCardSlotProps };
   /** 新会话欢迎页扩展选择器行（session-manager 分支/Worktree picker）。 */
   newSessionSelectors: { props: NewSessionSelectorSlotProps };
+  /** assistant 消息内容区末尾（aiti-git-trace：trace 捕捉的变更文件行；方案
+   *  docs/aiti-git-trace-message-files-ext-plan.md §3.2）。 */
+  assistantMessageFooter: { props: AssistantMessageFooterSlotProps };
   // sidebarProjects：SessionSidebar 整栏接管（session-manager SidebarClone，props 全量透传）——
   // 契约即 SessionSidebarProps（不进本 map，宽松对象透传）。
 }
