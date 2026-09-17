@@ -1,6 +1,7 @@
 allowBuilds:
   '@google/genai': true
   esbuild: true
+  node-pty: true
   protobufjs: true
   unrs-resolver: true
 overrides:
