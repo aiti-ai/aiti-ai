@@ -40,7 +40,7 @@ test("chatOverlay slot stays wired for the nav toolbar extension", () => {
   // revealHistory（2026-09-06）供「到最早/上一条」跳转目标在渲染窗口外时全量展开
   // （与 ChatMinimap 的 onRevealHistory 同源，一次性 setVisibleCount(messages.length*2)）。
   assert.match(source, /<ExtSlot\n\s+name="chatOverlay"/);
-  assert.match(source, /extra=\{\{ agentRunning, isMobile, revealHistory: revealHistoryForMinimap \}\}/);
+  assert.match(source, /extra=\{\{ agentRunning, isMobile, revealHistory: revealHistoryForMinimap,[\s\S]*?backendSource \}\}/); // P3 去核化：用量徽标数据随槽透传（展示归 aiti-provider-usage）
 });
 
 test("chatOverlay slot keeps passing currentSession for the anchor banner", () => {

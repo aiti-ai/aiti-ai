@@ -6,15 +6,14 @@ import type { AgentMessage, AssistantContentBlock, AssistantMessage, BashExecuti
 import type { AttachedFile } from "@/hooks/useAgentSession";
 import { normalizeCustomPanelLines } from "@/lib/ansi";
 import { apiUrl } from "@/lib/base-path";
-import { fmtMoney, useMoneySynced } from "@/lib/money";
+import { useMoneySynced } from "@/lib/money";
 import { dedupeFetch } from "@/lib/dedupe-fetch";
 import { asBracketedPaste, toTerminalKeyData } from "@/lib/terminal-input";
 import { countToolCallBlocks, getAssistantErrorMessage, getDisplayableAssistantBlocks, isMessageGroupAnchor, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-files";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { MessageView, estimateTokens } from "./MessageView";
-import { InteractionRequestCard } from "./InteractionRequestCard";
-import { ProviderHeadersRequestCard } from "./ProviderHeadersRequestCard";
+import { SessionRequestCardHost } from "./SessionRequestSlot";
 import { MarkdownBody } from "./MarkdownBody";
 import { ChatInput, type AttachedImage, type ChatInputHandle } from "./ChatInput";
 import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
@@ -314,29 +313,6 @@ export interface CompactControls {
  * 权限卡入参摘要（权限 UI 契约，agent 规范 §6.1）：优选 command/path/url 等关键字段
  * 拼单行可读摘要；对象入参完整 JSON 折叠进「详情」。
  */
-function permissionInputSummary(input: unknown): string {
-  if (input == null) return "";
-  if (typeof input === "string") return input;
-  try {
-    const rec = input as Record<string, unknown>;
-    const parts = ["command", "path", "file_path", "url", "pattern", "query", "description"]
-      .filter((k) => typeof rec[k] === "string" && rec[k])
-      .map((k) => `${k}: ${String(rec[k])}`);
-    return parts.join("  ");
-  } catch {
-    return "";
-  }
-}
-
-/** 宿主选项按钮文案（kind → 中文标签；name 优先）。 */
-function permissionOptionLabel(o: { kind?: string; name?: string }): string {
-  if (o.name) return o.name;
-  const map: Record<string, string> = {
-    allow_once: "本次允许", allow_always: "总是允许",
-    reject_once: "本次拒绝", reject_always: "总是拒绝",
-  };
-  return map[String(o.kind ?? "")] ?? String(o.kind ?? "选择");
-}
 
 export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionWorkspace = null, workspaceOptions = [], onNewSessionWorkspaceChange, newSessionDraftKey, onAgentEnd, onAttentionNeeded, onSessionCreated, onSessionForked, onSessionIdCanonicalized, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onSessionStatsRefresherRegister, onCompactControlsRegister, onContextUsageChange, onDisplayModelChange, onOpenFile, onExportQueue, onOpenSession, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio }: Props) {
   const { t } = useI18n();
@@ -414,9 +390,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     slashCommands, slashCommandsLoading, queuedMessages,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash, trashComposerInput, restoreComposerTrash,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused,
-    permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
-    interactionRequest, respondToInteraction,
-    providerHeadersRequest, respondToProviderHeaders,
+    switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
+    sessionRequest, respondToSessionRequest,
     isAutoModelSelection,
     agentPhase,
     runStartedAtRef,
@@ -1404,106 +1379,18 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} />
       </div>
 
-      {permissionRequest && (
-        <div style={{ position: "fixed", bottom: 140, left: "50%", transform: "translateX(-50%)", zIndex: 260,
-          width: "min(480px, 92vw)", background: "var(--bg-panel)", border: "1px solid #f59e0b88",
-          borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.35)", padding: "12px 14px", fontFamily: "var(--font-mono)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-            <span style={{ fontSize: 14 }}>🔐</span>
-            <strong style={{ fontSize: 13, color: "var(--text)" }}>工具授权请求</strong>
-            <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--accent)" }}>{permissionRequest.toolName}</span>
-          </div>
-          {/* 结构化渲染（权限 UI 契约）：摘要单行 + 完整入参折叠详情，替代裸 JSON */}
-          {(() => {
-            const summary = permissionInputSummary(permissionRequest.input);
-            return summary ? (
-              <div style={{ fontSize: 12, color: "var(--text)", background: "var(--bg)", borderRadius: 6,
-                padding: "6px 8px", margin: "0 0 6px", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{summary}</div>
-            ) : null;
-          })()}
-          {permissionRequest.input != null && (
-            <details style={{ margin: "0 0 8px" }}>
-              <summary style={{ fontSize: 11, color: "var(--text-muted)", cursor: "pointer", userSelect: "none" }}>详情（完整入参）</summary>
-              <pre style={{ maxHeight: 160, overflowY: "auto", fontSize: 11, background: "var(--bg)", borderRadius: 6,
-                padding: "6px 8px", margin: "6px 0 0", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--text-muted)" }}>
-                {typeof permissionRequest.input === "string" ? permissionRequest.input : JSON.stringify(permissionRequest.input, null, 2)}
-              </pre>
-            </details>
-          )}
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-            {/* 按钮集来自宿主 options（optionId 透传——「总是允许」等协议语义）；无 options 回退 Allow/Deny */}
-            {(permissionRequest.options?.length
-              ? permissionRequest.options.map((o) => {
-                const behavior: "allow" | "deny" = String(o.kind ?? "").startsWith("reject") ? "deny" : "allow";
-                const deny = behavior === "deny";
-                return (
-                  <button key={String(o.optionId ?? o.kind ?? o.name)}
-                    onClick={() => void respondToPermission(behavior, o.optionId)}
-                    style={{ padding: "5px 14px", borderRadius: 7, border: deny ? "1px solid #ef444466" : "none",
-                      background: deny ? "none" : "#22c55e", color: deny ? "#ef4444" : "#fff",
-                      cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-                    {permissionOptionLabel(o)}
-                  </button>
-                );
-              })
-              : [
-                <button key="deny" onClick={() => void respondToPermission("deny")}
-                  style={{ padding: "5px 14px", borderRadius: 7, border: "1px solid #ef444466",
-                    background: "none", color: "#ef4444", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-                  Deny
-                </button>,
-                <button key="allow" onClick={() => void respondToPermission("allow")}
-                  style={{ padding: "5px 14px", borderRadius: 7, border: "none",
-                    background: "#22c55e", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
-                  Allow
-                </button>,
-              ])}
-          </div>
-        </div>
+      {/* 会话请求卡接管缝（agent 能力 UI 去核化）：扩展路由优先（aiti-session-cards /
+        aiti-zcode-agent client），未命中落 core 极简兜底卡（capability 不裸奔）。
+        方案 docs/pi-web-agent-capability-ui-ext-plan.md §2.1。 */}
+      {sessionRequest && (
+        <SessionRequestCardHost
+          request={sessionRequest}
+          respond={(answer) => respondToSessionRequest(sessionRequest.requestId, answer)}
+          backendSource={backendSource}
+          currentSession={session ? { id: session.id, cwd: session.cwd, name: session.name, firstMessage: session.firstMessage } : null}
+        />
       )}
-      {interactionRequest && (
-        <InteractionRequestCard request={interactionRequest} onRespond={respondToInteraction} />
-      )}
-      {providerHeadersRequest && (
-        <ProviderHeadersRequestCard request={providerHeadersRequest} onRespond={respondToProviderHeaders} />
-      )}
-      {backendUsage && !isEmptyNew && (
-        <div style={{
-          position: "fixed", top: 52, right: 16, zIndex: 200,
-          display: "flex", alignItems: "center", gap: 6,
-          padding: "3px 10px", borderRadius: 12,
-          background: "var(--bg-panel)", border: "1px solid var(--border)",
-          fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)",
-        }}>
-          <span title="Backend usage (last turn)" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-            {backendUsage.inputTokens != null && <span>↑{backendUsage.inputTokens >= 1000 ? `${(backendUsage.inputTokens / 1000).toFixed(1)}k` : backendUsage.inputTokens} </span>}
-            {backendUsage.outputTokens != null && <span>↓{backendUsage.outputTokens} </span>}
-            {backendUsage.costUsd != null && backendUsage.costUsd > 0 && <span>{fmtMoney(backendUsage.costUsd, 4)}</span>}
-            {backendUsage.credits && (backendUsage.credits.remaining != null || backendUsage.quotaExceeded) && (
-              <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
-                <span style={{
-                  fontWeight: 600,
-                  color: backendUsage.quotaExceeded && (backendUsage.credits.remaining == null || backendUsage.credits.remaining <= 0) ? "#ef4444" : "var(--text)",
-                }}>
-                  {backendUsage.quotaExceeded && (backendUsage.credits.remaining == null || backendUsage.credits.remaining <= 0)
-                    ? "⊘ 配额耗尽"
-                    : `◈ ${backendUsage.credits.remaining != null ? backendUsage.credits.remaining : "?"}${backendUsage.credits.usedPercent != null ? ` (${backendUsage.credits.usedPercent}%)` : ""}${backendUsage.credits.unit ? ` ${backendUsage.credits.unit}` : ""}`}
-                </span>
-                {backendUsage.buckets && backendUsage.buckets.length > 0 && (
-                  <span style={{ color: "var(--text-muted)", fontSize: 10 }}>
-                    {backendUsage.buckets.map((b: { name: string; remaining?: number; total?: number }, i: number) => (
-                      <span key={b.name}>
-                        {i > 0 && " · "}
-                        {({ user_quota: "基础", add_on_quota: "扩展", org_resource_package: "组织" } as Record<string, string>)[b.name] ?? b.name} {b.remaining ?? 0}/{b.total ?? "?"}
-                      </span>
-                    ))}
-                  </span>
-                )}
-              </span>
-            )}
-          </span>
-        </div>
-      )}
+
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {extensionDialog && (
           <ExtensionDialog key={extensionDialog.id} request={extensionDialog} onRespond={respondToExtensionUi} />
@@ -1781,7 +1668,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         <ExtSlot
           name="chatOverlay"
           currentSession={session ? { id: session.id, cwd: session.cwd, name: session.name, firstMessage: session.firstMessage } : null}
-          extra={{ agentRunning, isMobile, revealHistory: revealHistoryForMinimap }}
+          extra={{ agentRunning, isMobile, revealHistory: revealHistoryForMinimap,
+            /* 用量徽标接缝（P3 去核化）：数据仍在 core（get_usage 协议），展示归 aiti-provider-usage。
+               isEmptyNew 语义保留——新建空会话不透传（与原 core 徽标渲染条件一致）。 */
+            backendUsage: isEmptyNew ? null : backendUsage, backendSource }}
         />
 
         {isMobile || isCompact ? null : (

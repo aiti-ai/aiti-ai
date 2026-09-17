@@ -136,11 +136,11 @@ const GUARDS = [
     ],
   },
   {
-    name: "ChatWindow：权限浮条 + 后端用量浮条 + 队列恢复对话框 + 队列导出（auto-merge 高危区）",
+    name: "ChatWindow：会话请求卡接缝 + 用量徽标透传 + 队列恢复对话框 + 队列导出（auto-merge 高危区）",
     file: "./ChatWindow.tsx",
     must: [
-      /\{permissionRequest && \(/,                                   // 工具授权浮层（本地方案）
-      /backendUsage && !isEmptyNew/,                                 // backend usage 悬浮条
+      /<SessionRequestCardHost/,                                     // 会话请求卡接缝（guard 2026-09-16：卡 UI 外迁扩展，接缝+兜底必须在核）
+      /backendUsage: isEmptyNew \? null : backendUsage/,             // 用量徽标透传 chatOverlay（展示归 aiti-provider-usage）
       /<QueueRecoveryDialog/,                                        // 队列恢复/导入
       /onExportQueue\?\./,                                           // 队列导出到 AppShell
       /scrollToBottom/,                                              // 我方滚动钉底（与上游 scrollToMessage 并存）
@@ -150,11 +150,23 @@ const GUARDS = [
     ],
   },
   {
+    name: "会话请求卡接缝：sessionRequestCard 插槽路由 + core 兜底卡（卡 UI 外迁扩展后 capability 不得裸奔）",
+    file: "./SessionRequestSlot.tsx",
+    must: [
+      /name="sessionRequestCard"/,                                   // 接缝插槽本体（ExtSlot only 单 item 渲染）
+      /function pickSessionRequestCard/,                             // kind/backend/priority 路由
+      /function MinimalRequestCard/,                                 // 扩展缺席时的兜底卡（fail-open 到 core）
+      /testId="session-request-fallback-card"/,                      // 兜底卡 DOM 契约（CardShell data-testid={testId}）
+    ],
+  },
+  {
     name: "useAgentSession：权限/过期/扩展对话框关闭三态事件 + basePath 包装（并集样本）",
     file: "../hooks/useAgentSession.ts",
     must: [
       /case "permission_request":/,
       /case "permission_expired":/,
+      /const sessionRequest = useMemo/,                              // 请求卡统一视图（去核化接缝）
+      /const respondToSessionRequest = useCallback/,                 // 统一作答分派（扩展卡+兜底卡共用）
       /case "extension_ui_closed":/,                                 // 上游 #612 可收起对话框的关闭事件
       /apiUrl\(`\/api\/sessions\/\$\{encodeURIComponent\(sid\)\}\/context/, // 子路径部署 basePath 包装
     ],
