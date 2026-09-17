@@ -36,8 +36,10 @@ test("new-session startup adopts server state only while explicit overrides are 
 });
 
 test("model-list refresh does not overwrite a live session or explicit thinking override", () => {
+  // pinned thinking 的应用已抽到 applyModelsResponse（缓存回放与网络结果共用同一映射），
+  // 契约断言覆盖 applyModelsResponse → loadModels 的整段。
   const loadModelsSource = source.slice(
-    source.indexOf("const loadModels = useCallback"),
+    source.indexOf("const applyModelsResponse = useCallback"),
     source.indexOf("const handleBuiltinSlashCommand"),
   );
 

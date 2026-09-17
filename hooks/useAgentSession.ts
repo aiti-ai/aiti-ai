@@ -20,6 +20,7 @@ import { describeAgentCommandError, isPromptRejectedError, sendAgentCommand } fr
 import type { ChatDraftImage } from "@/lib/composer/draft-api";
 import { applyDraftIntent } from "@/lib/composer/draft-api";
 import type { PendingRecoveryItem, QueueEntry, QueueEntryInput, QueueTrashItem } from "@/lib/queue-store";
+import { readCachedModels, writeCachedModels } from "@/lib/models-client-cache";
 import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-preset-preference";
 import { getPresetFromToolNames, getToolNamesForPreset, type ToolEntry, type ToolPreset } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -428,6 +429,19 @@ function fetchModelsShared(cwd: string): Promise<ModelsResponse> {
   });
   modelsShared.set(key, { at: Date.now(), promise });
   return promise;
+}
+
+/**
+ * 模型列表预取（AppShell 在真实 cwd 就绪前调用，预热「最近使用的 cwd」）：
+ * 命中/共享 modelsShared（同 cwd 的 loadModels 会复用进行中的请求），成功后写回
+ * 客户端缓存——ChatWindow 挂载回放缓存时不必再等一次网络往返。
+ * best-effort：失败静默（真正的加载由 loadModels 负责重试与错误提示）。
+ */
+export function prefetchModels(cwd: string): void {
+  if (!cwd) return;
+  void fetchModelsShared(cwd)
+    .then((d) => writeCachedModels(cwd, d))
+    .catch(() => {});
 }
 
 export function useAgentSession(opts: UseAgentSessionOptions) {
@@ -2725,6 +2739,32 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setCompactQueued(false);
   }, []);
 
+  /** /api/models 的响应 → 组件状态（本地缓存回放与网络结果共用同一套映射）。 */
+  const applyModelsResponse = useCallback((d: ModelsResponse) => {
+    setModelNames(d.models);
+    setModelError(d.modelError ?? null);
+    setModelScopeWarnings(d.modelScopeWarnings ?? []);
+    setModelThinkingLevels(d.thinkingLevels ?? {});
+    setModelThinkingLevelMaps(d.thinkingLevelMaps ?? {});
+    const nextModelList = d.modelList ?? [];
+    setModelList(nextModelList);
+    const displayDefaultModel = d.defaultModel
+      ? nextModelList.find((m) => m.id === d.defaultModel?.modelId && m.provider === d.defaultModel?.provider)
+      : undefined;
+    setNewSessionDefaultModel(displayDefaultModel
+      ? { provider: displayDefaultModel.provider, modelId: displayDefaultModel.id }
+      : null);
+    if (isNew && !sessionIdRef.current) {
+      // The first listed model is not necessarily the runtime's automatic choice.
+      // An `enabledModels` pattern may pin a thinking level (`anthropic/*:high`).
+      // Like pi, apply it to the model a new session starts with.
+      const pinned = displayDefaultModel && d.thinkingLevelPins?.[`${displayDefaultModel.provider}/${displayDefaultModel.id}`];
+      if (thinkingLevelOverrideRef.current === null) {
+        setThinkingLevel((pinned as ThinkingLevelOption | undefined) ?? "auto");
+      }
+    }
+  }, [isNew]);
+
   const loadModels = useCallback(async (signal?: AbortSignal) => {
     // ── 新建页 + 已选后端：模型目录来自 provider 静态 listModels（无会话即可取）。
     //    缺静态目录（models:null）或失败 → 保留本地清单回退。
@@ -2767,6 +2807,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     }
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
+    // 先回放本地缓存（stale-while-revalidate）：外网/冷启动下请求发出与到达
+    // 常被主线程与网络往返拖到数秒，模型名/默认模型不必等网络回来才显示。
+    // 网络结果到达后覆盖刷新；失败时缓存保持可见（不再回到空白）。
+    const cachedModels = readCachedModels<ModelsResponse>(modelCwd);
+    if (cachedModels) applyModelsResponse(cachedModels);
     let d: ModelsResponse;
     try {
       // 加载窗口合流：同 cwd 的并发/秒级重复挂载（StrictMode 双 effect、会话窗口重挂）
@@ -2780,29 +2825,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       throw e;
     }
-    setModelNames(d.models);
-    setModelError(d.modelError ?? null);
-    setModelScopeWarnings(d.modelScopeWarnings ?? []);
-    setModelThinkingLevels(d.thinkingLevels ?? {});
-    setModelThinkingLevelMaps(d.thinkingLevelMaps ?? {});
-    const nextModelList = d.modelList ?? [];
-    setModelList(nextModelList);
-    const displayDefaultModel = d.defaultModel
-      ? nextModelList.find((m) => m.id === d.defaultModel?.modelId && m.provider === d.defaultModel?.provider)
-      : undefined;
-    setNewSessionDefaultModel(displayDefaultModel
-      ? { provider: displayDefaultModel.provider, modelId: displayDefaultModel.id }
-      : null);
-    if (isNew && !sessionIdRef.current) {
-      // The first listed model is not necessarily the runtime's automatic choice.
-      // An `enabledModels` pattern may pin a thinking level (`anthropic/*:high`).
-      // Like pi, apply it to the model a new session starts with.
-      const pinned = displayDefaultModel && d.thinkingLevelPins?.[`${displayDefaultModel.provider}/${displayDefaultModel.id}`];
-      if (thinkingLevelOverrideRef.current === null) {
-        setThinkingLevel((pinned as ThinkingLevelOption | undefined) ?? "auto");
-      }
-    }
-  }, [isNew, newSessionCwd, session?.cwd, session?.agent, newSessionBackend]);
+    applyModelsResponse(d);
+    writeCachedModels(modelCwd, d);
+  }, [isNew, newSessionCwd, session?.cwd, session?.agent, newSessionBackend, applyModelsResponse]);
 
   /**
    * 手动刷新模型目录（新建页 + 已选支持刷新的后端）：路由 ?refresh=1 → provider

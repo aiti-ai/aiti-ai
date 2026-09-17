@@ -115,6 +115,8 @@ import {
   setLastOpenSession,
   workspaceKeyOf,
 } from "@/lib/workspace-memory";
+import { clearCachedModels, readMostRecentCachedCwd } from "@/lib/models-client-cache";
+import { prefetchModels } from "@/hooks/useAgentSession";
 import {
   piWebSessionService,
   publishSessionState,
@@ -580,10 +582,23 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     };
   }, []);
 
-  // 模型配置变更广播：aiti-model-wizard（聚合/多key 保存）dispatch `pi-web:models-changed`
-  // → 刷新模型列表（useAgentSession 重新拉 /api/models），无需等待 60s 服务器缓存或手动刷新
+  // 模型列表预热：真实 cwd（会话恢复/默认项目选择）就绪前，先用「最近使用」的 cwd
+  // 发一次 /api/models（命中/共享进行中的请求；成功后写客户端缓存）——首次访问某
+  // cwd 时把网络往返提前到挂载之前，模型名在 ChatWindow 回放缓存时即到。
+  // 仅挂载时一次；真实 cwd 的加载与刷新仍由 useAgentSession 负责。
   useEffect(() => {
-    const onModelsChanged = () => setModelsRefreshKey((key) => key + 1);
+    const recentCwd = readMostRecentCachedCwd();
+    if (recentCwd) prefetchModels(recentCwd);
+  }, []);
+
+  // 模型配置变更广播：aiti-model-wizard（聚合/多key 保存）dispatch `pi-web:models-changed`
+  // → 刷新模型列表（useAgentSession 重新拉 /api/models），无需等待 60s 服务器缓存或手动刷新。
+  // 同时清客户端缓存：下一次 loadModels 回放到的必须是新配置下的列表。
+  useEffect(() => {
+    const onModelsChanged = () => {
+      clearCachedModels();
+      setModelsRefreshKey((key) => key + 1);
+    };
     window.addEventListener("pi-web:models-changed", onModelsChanged);
     return () => window.removeEventListener("pi-web:models-changed", onModelsChanged);
   }, []);
