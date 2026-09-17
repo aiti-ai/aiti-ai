@@ -1,14 +1,22 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useI18n } from "@/hooks/useI18n";
+import { ExtItemBoundary, ensureExtSlotMaterialized } from "./ExtSlots";
+import { getExtUiItems, hasExtRender, subscribeExtUi, type ExtUiItemRegistered } from "@/lib/ext-ui-store";
 
 /**
  * 右栏图片预览 tab 内容（Tab.kind:"image"）。消息里的图片（用户发送图 base64、
- * 会话工具结果图 API URL 等）没有磁盘路径，走不了 FileViewer 的票据/watch 链路，
- * 这里直接渲染传入的 src：棋盘格透明底 + 自然尺寸 + 下载。磁盘图片文件仍走
- * FileViewer 的 ImageViewer（LocalImage 点击 → openFile），两者互不替代。
+ * 会话工具结果图 API URL 等）没有磁盘路径，走不了 FileViewer 的票据/watch 链路。
+ *
+ * 渲染分两层（fileViewer 同款接管跳板范式）：
+ *  - imageViewer slot 扩展项（aiti-editor）meta.match(src) 命中 → 交给扩展的全功能
+ *    查看器（缩放/平移/旋转/信息面板等，与磁盘图片共用同一套查看器 UI）——图片预览合一；
+ *  - 无命中（未注册/未物化）→ 核心简版兜底：棋盘格透明底 + 自然尺寸 + 下载，行为零回归。
  */
+
+/** imageViewer 接管槽稳定空快照（SSR/未接管时不接管，避免 useSyncExternalStore 重渲染循环）。 */
+const IMAGE_VIEWER_NO_ITEMS: ExtUiItemRegistered[] = [];
 
 function guessExtension(src: string): string {
   if (src.startsWith("data:")) {
@@ -24,13 +32,44 @@ function guessExtension(src: string): string {
 
 export function ImageTabViewer({ src, alt }: { src: string; alt?: string }) {
   const { t } = useI18n();
+  // —— 扩展接管跳板（aiti-editor）：imageViewer slot 项的 meta.match(src, {alt}) 命中 →
+  //    交给扩展渲染（与文件图片共用同一查看器）；无命中 → 核心简版兜底。
+  const takeoverItems = useSyncExternalStore(
+    subscribeExtUi,
+    () => getExtUiItems("imageViewer"),
+    () => IMAGE_VIEWER_NO_ITEMS, // 服务端稳定空快照（SSR 不接管；hydration 后接管项生效）
+  );
+  // [懒加载 v2] 接管跳板补触发：消息图片 tab 打开 = 用户可感知的交互时刻——声明
+  // imageViewer 的懒扩展（aiti-editor）在首次接管判定前一次性物化；未到位时核心简版
+  // 兜底，物化完成 store bump → 重渲染 → 下一次渲染接管生效。
+  useEffect(() => {
+    void ensureExtSlotMaterialized("imageViewer");
+  }, []);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [failed, setFailed] = useState(false);
 
+  // 空 src（正常入口已拦截；防御恢复链异常态）：核心空态提示，不派发接管判定
   if (!src) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
         {t("files.imageTabEmpty")}
+      </div>
+    );
+  }
+
+  const takeover = takeoverItems.find((item) => {
+    if (!hasExtRender(item)) return false;
+    const match = item.meta?.match;
+    return typeof match === "function" && match(src, { alt });
+  });
+
+  if (takeover && hasExtRender(takeover)) {
+    // 容器给 position:relative（接管查看器为 absolute inset:0 自占满）
+    return (
+      <div style={{ height: "100%", position: "relative", overflow: "hidden" }}>
+        <ExtItemBoundary extId={takeover.extId} slot="imageViewer" itemId={takeover.id}>
+          <takeover.render src={src} alt={alt} />
+        </ExtItemBoundary>
       </div>
     );
   }

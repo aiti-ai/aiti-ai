@@ -323,6 +323,7 @@ export function pendingForSlotAuto(slot: string): string[] {
 export const INTERACTIVE_SLOTS: ReadonlySet<string> = new Set([
   "sessionStats",
   "fileViewer",
+  "imageViewer",
   "pathPicker",
   "settingsModels",
   "settingsAgents",
