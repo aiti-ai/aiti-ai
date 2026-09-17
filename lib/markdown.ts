@@ -107,12 +107,24 @@ const markdownSanitizeSchema = {
   protocols: {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), "file"],
+    // data: 仅进 src（媒体源在 <img>/<video> 等上下文脚本不执行）；data:image 的
+    // 细粒度门禁（仅 <img>、仅 image/*）在 markdownDataImageUrlTransform 先行拦截。
+    src: [...(defaultSchema.protocols?.src ?? []), "data"],
   },
   strip: [...(defaultSchema.strip || []), "iframe", "object", "style", "form"],
 };
 
-export function markdownUrlTransform(value: string): string {
-  return /^file:/i.test(value) ? value : defaultUrlTransform(value);
+/**
+ * data:image/<*> 仅放行给 <img src>（消息/markdown 图片 → aiti-editor 统一查看器）；
+ * 其余属性（如 <a href>）仍走默认消毒——data:text/html 在同源导航下可执行脚本，不可放行。
+ */
+export function markdownDataImageUrlTransform(value: string, key?: string, node?: { tagName?: string }): string {
+  if (key === "src" && node?.tagName === "img" && /^data:image\//i.test(value)) return value;
+  return defaultUrlTransform(value);
+}
+
+export function markdownUrlTransform(value: string, key?: string, node?: { tagName?: string }): string {
+  return /^file:/i.test(value) ? value : markdownDataImageUrlTransform(value, key, node);
 }
 
 const escapedInlineCodePattern = /(?<![\\`])`((?:[^`\n]|\\`)+?)(?<![\\`])`(?!`)/g;

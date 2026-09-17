@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
 import { buildTicketUrl } from "@/lib/file-tickets";
-import { markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
+import { markdownDataImageUrlTransform, markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
 import { useI18n } from "@/hooks/useI18n";
 import { useParagraphClickHandlers } from "./ExtSlots";
@@ -193,7 +193,8 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       <MemoizedMarkdown
         remarkPlugins={markdownRemarkPlugins}
         rehypePlugins={markdownRehypePlugins}
-        urlTransform={onOpenFile ? markdownUrlTransform : undefined}
+        // 两种分支都放行 data:image（img src → aiti-editor 查看器）；file: 仅在应用内文件处理器存在时放行
+        urlTransform={onOpenFile ? markdownUrlTransform : markdownDataImageUrlTransform}
         components={components}
       >
         {renderText}

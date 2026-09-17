@@ -144,3 +144,19 @@ test("keeps Mermaid source visible while the response is streaming", () => {
   assert.match(html, />Preview</);
   assert.match(html, /A --&gt; B/);
 });
+
+test("renders data: image markdown with src intact (aiti-editor viewer entry)", () => {
+  const gif = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  const html = renderMarkdown(`![dot](${gif})`);
+  assert.match(html, new RegExp(`<img src="${gif}"`));
+
+  // 无应用内文件处理器时同样放行（welcome/无 cwd 场景）
+  const htmlNoHandler = renderMarkdown(`![dot](${gif})`, { onOpenFile: undefined });
+  assert.match(htmlNoHandler, new RegExp(`<img src="${gif}"`));
+});
+
+test("still strips non-image data: URLs from markdown img src", () => {
+  const html = renderMarkdown("![x](data:text/html;base64,PGI+aGk8L2I+)");
+  assert.match(html, /<img alt="x"[^>]*>/);
+  assert.doesNotMatch(html, /<img[^>]+src=/);
+});
