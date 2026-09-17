@@ -714,18 +714,23 @@ test("run elapsed badge recovers its start from the last prompt after page reope
   assert.match(settleSource, /runStartedAtRef\.current = null/);
 });
 
-test("start-plan captcha bridge: event wiring, respond command, and ChatWindow mount (source contract)", async () => {
-  // hook 消费 provider_runtime_headers_request → 状态 + 应答 + 导出
+test("start-plan captcha bridge: event wiring, respond command, and sessionRequestCard seam (source contract)", async () => {
+  // hook 消费 provider_runtime_headers_request → 状态 + 应答 + 导出（协议层留核）
   assert.match(source, /case "provider_runtime_headers_request":/);
   assert.match(source, /setProviderHeadersRequest\(\{[\s\S]*?captchaConfig:/);
   assert.match(source, /case "provider_headers_expired":/);
   assert.match(source, /const respondToProviderHeaders = useCallback/);
   assert.match(source, /type: "respond_provider_headers"/);
   assert.match(source, /providerHeadersRequest, respondToProviderHeaders/);
-  // ChatWindow 挂载验证卡
-  assert.match(chatWindowSource, /providerHeadersRequest, respondToProviderHeaders/);
-  assert.match(chatWindowSource, /<ProviderHeadersRequestCard request=\{providerHeadersRequest\} onRespond=\{respondToProviderHeaders\} \/>/);
-  assert.match(chatWindowSource, /import \{ ProviderHeadersRequestCard \} from "\.\/ProviderHeadersRequestCard"/);
+  // 会话请求卡接缝（agent 能力 UI 去核化）：三家族派生单状态 + 统一作答分派 + ChatWindow 单点挂载；
+  // 卡 UI 本体在扩展（aiti-session-cards / aiti-zcode-agent client）——见 SessionRequestSlot.test.mjs。
+  assert.match(source, /const sessionRequest = useMemo<SessionRequestPayload \| null>/);
+  assert.match(source, /kind: `interaction:\$\{interactionRequest\.kind\}`/);
+  assert.match(source, /const respondToSessionRequest = useCallback/);
+  assert.match(source, /sessionRequest, respondToSessionRequest,/);
+  assert.match(chatWindowSource, /sessionRequest, respondToSessionRequest/);
+  assert.match(chatWindowSource, /<SessionRequestCardHost/);
+  assert.match(chatWindowSource, /import \{ SessionRequestCardHost \} from "\.\/SessionRequestSlot"/);
 });
 
 test("busy-state adoption covers compaction windows (state / connected / events)", () => {

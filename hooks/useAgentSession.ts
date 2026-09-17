@@ -26,6 +26,7 @@ import { getPresetFromToolNames, getToolNamesForPreset, type ToolEntry, type Too
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import { mergeSessionStats, type SessionFileStats } from "@/lib/session-stats";
 import { userMessageKey } from "@/lib/prompt-recovery";
+import type { SessionRequestAnswer, SessionRequestPayload } from "@/lib/ext/types";
 import { AgentEventConnection } from "@/lib/agent-event-connection";
 import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
 import {
@@ -2241,6 +2242,75 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
   }, [permissionRequest, session?.id]);
 
+  /**
+   * 会话请求统一视图（sessionRequestCard 插槽路由数据源，agent 能力 UI 去核化 §2.3）：
+   * 三协议家族归一为单请求（同一时刻至多一个未决；「后到覆盖」已在各家族 state 保证）。
+   * kind = 扩展路由键（interaction:<form> / permission / provider_headers）。
+   */
+  const sessionRequest = useMemo<SessionRequestPayload | null>(() => {
+    if (interactionRequest) {
+      return {
+        requestId: interactionRequest.requestId,
+        kind: `interaction:${interactionRequest.kind}`,
+        family: "interaction",
+        capability: "respondInteraction",
+        toolName: interactionRequest.toolName,
+        prompt: interactionRequest.prompt,
+        plan: interactionRequest.plan,
+        url: interactionRequest.url,
+        launchUrl: interactionRequest.launchUrl,
+        questions: interactionRequest.questions,
+        input: interactionRequest.input,
+      };
+    }
+    if (permissionRequest) {
+      return {
+        requestId: permissionRequest.requestId,
+        kind: "permission",
+        family: "permission",
+        capability: "respondPermission",
+        toolName: permissionRequest.toolName,
+        input: permissionRequest.input,
+        options: permissionRequest.options,
+      };
+    }
+    if (providerHeadersRequest) {
+      return {
+        requestId: providerHeadersRequest.requestId,
+        kind: "provider_headers",
+        family: "provider_headers",
+        capability: "respondProviderHeaders",
+        providerId: providerHeadersRequest.providerId,
+        modelRef: providerHeadersRequest.modelRef,
+        reason: providerHeadersRequest.reason,
+        captchaConfig: providerHeadersRequest.captchaConfig,
+      };
+    }
+    return null;
+  }, [interactionRequest, permissionRequest, providerHeadersRequest]);
+
+  /**
+   * 统一作答分派（扩展卡 + 宿主兜底卡共用入口）：按当前未决家族分派到对应协议命令。
+   * requestId 不匹配当前家族（过期/竞态）→ 幂等返回 false。
+   */
+  const respondToSessionRequest = useCallback(async (requestId: string, answer: SessionRequestAnswer): Promise<boolean> => {
+    if (interactionRequest && interactionRequest.requestId === requestId) {
+      return respondToInteraction(requestId, { action: answer.action, answers: answer.answers, message: answer.message });
+    }
+    if (providerHeadersRequest && providerHeadersRequest.requestId === requestId) {
+      if (answer.error) return respondToProviderHeaders(requestId, { error: answer.error });
+      if (answer.action === "decline") return respondToProviderHeaders(requestId, { cancel: true });
+      return respondToProviderHeaders(requestId, answer.captchaVerifyParam
+        ? { captchaVerifyParam: answer.captchaVerifyParam, ...(answer.region ? { region: answer.region } : {}) }
+        : { cancel: true });
+    }
+    if (permissionRequest && permissionRequest.requestId === requestId) {
+      await respondToPermission(answer.action === "accept" ? "allow" : "deny", answer.optionId);
+      return true;
+    }
+    return false;
+  }, [interactionRequest, providerHeadersRequest, permissionRequest, respondToInteraction, respondToProviderHeaders, respondToPermission]);
+
   const handleSend = useCallback(async (message: string, images?: AttachedImage[], files?: AttachedFile[]) => {
     const trimmedMessage = message.trim();
     if (!trimmedMessage && !images?.length) return;
@@ -3945,6 +4015,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     permissionRequest, respondToPermission, switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
     providerHeadersRequest, respondToProviderHeaders,
     interactionRequest, respondToInteraction,
+    sessionRequest, respondToSessionRequest,
     isAutoModelSelection: isNew && newSessionModel === null,
     agentPhase,
     isNew,
