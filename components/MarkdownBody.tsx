@@ -9,7 +9,7 @@ import { markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, nor
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
 import { useI18n } from "@/hooks/useI18n";
 import { useParagraphClickHandlers } from "./ExtSlots";
-import { useOpenImagePanel } from "./image-panel-context";
+import { openImageInEditorViewer } from "./editor-image-preview";
 
 // 流式期间两次全量 Markdown 解析的最小间隔：200ms 内文本增量不重解析（约 5 次/s）。
 const STREAM_PARSE_INTERVAL_MS = 200;
@@ -67,8 +67,6 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
   }, [normalizedMarkdown, isStreaming]);
   // 段落点击薄扩展点：有 handler 注册（扩展加载）时语义块可点击；无扩展时段落渲染普通元素。
   const handlers = useParagraphClickHandlers();
-  // 消息图片「在文件面板打开」（AppShell 提供；无宿主时 markdown 图片保持无点击行为）
-  const openImagePanel = useOpenImagePanel();
   const hasClickHandlers = handlers.length > 0;
   // 可点击标签 = 扩展声明的并集（handler.tags；未声明默认 p/li/tr）。core 不硬编码业务——
   // 标题/引用块等新场景由扩展声明即生效，无需改 core。
@@ -138,8 +136,8 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       delete props.node;
       const filePath = typeof src === "string" ? resolveLocalFileHref(src, cwd) : null;
       if (!filePath) {
-        // 远程 / data URL 图片：点击 → 右栏图片预览 tab（宿主未接则保持原样无点击）。
-        const clickable = typeof src === "string" && Boolean(openImagePanel);
+        // 远程 / data URL 图片：点击 → aiti-editor 统一查看器（扩展不可用/未实现时保持无动作）。
+        const previewable = typeof src === "string";
         return (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -148,8 +146,8 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
             loading="lazy"
             {...props}
             // stopPropagation：不让段落点击识别器（quote 弹层）同时触发
-            onClick={clickable ? (e) => { e.stopPropagation(); openImagePanel?.(src as string, { alt: alt ?? "" }); } : undefined}
-            style={{ ...props.style, ...(clickable ? { cursor: "zoom-in" as const } : null) }}
+            onClick={previewable ? (e) => { e.stopPropagation(); void openImageInEditorViewer(src as string, { alt: alt ?? "" }); } : undefined}
+            style={{ ...props.style, ...(previewable ? { cursor: "zoom-in" as const } : null) }}
           />
         );
       }
@@ -188,7 +186,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         </div>
       );
     },
-  }), [cwd, isStreaming, onOpenFile, messageRole, handlers, clickTags, messageId, sessionId, openImagePanel]);
+  }), [cwd, isStreaming, onOpenFile, messageRole, handlers, clickTags, messageId, sessionId]);
 
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>

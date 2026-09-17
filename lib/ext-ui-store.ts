@@ -49,10 +49,9 @@ export interface ExtUiItemRegistered {
     /** 声明式条目点击回调（toolbar，与 meta.icon 配套；仅客户端注册可带，服务端 ui: 意图声明不可序列化）：
      *  ⋯ 菜单行点击 / 标准条按钮点击都会回调（参数为点击事件）。 */
     onClick?: (e?: unknown) => void;
-    /** 接管判定（fileViewer / imageViewer 跳板调用）——subject 按插槽而定：
-     *  fileViewer 传文件路径（opts: {cwd,kind}）；imageViewer 传图片 src（opts: {alt}）。
-     *  返回 false/缺省视为不接管 → 核心原查看器/简版预览兜底，零回归。 */
-    match?: (subject: string, opts: { cwd?: string; kind?: "file" | "folder"; alt?: string }) => boolean;
+    /** fileViewer 接管判定（aiti-editor）：核心 FileViewer 跳板调用——
+     *  文件是否交给该扩展渲染（缺省视为不接管 → 核心原查看器兜底，零回归）。 */
+    match?: (filePath: string, opts: { cwd?: string; kind?: "file" | "folder" }) => boolean;
   };
 }
 

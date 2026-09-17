@@ -348,9 +348,6 @@ export type ExtSlotName =
   | "userMessageActions" // user 消息底部 hover 操作区（aiti-prompts：📌 收藏为 prompt 等）
   | "assistantMessageActions" // assistant 消息底部 hover 操作区（aiti-ai-speek：🔊 朗读这条/⏹ 停止朗读）
   | "fileViewer"     // 文件查看/编辑接管（aiti-editor：文本文件编辑；aiti-folder：文件夹浏览器；未接管时核心原查看器兑底）
-  | "imageViewer"    // 消息/输入框图片预览接管（src 非磁盘路径：base64 data URL / 会话 API URL）。
-                     //   核心 ImageTabViewer（右栏 kind:"image" tab）跳板渲染；项需带 match(src,{alt})
-                     //   判定才生效；未接管时核心简版预览兜底（尺寸+下载）。磁盘图片仍走 fileViewer。
   | "pathPicker"    // 目录选择器能力（aiti-folder：FolderSwitcher 同款；顶栏「打开文件夹」等消费）
   | "newSessionBackendOptions" // 新会话欢迎页 Backend 下拉内的扩展条目（每项一个 <option>；选中执行 meta.onClick，
                      //   如 ACP agent 管理入口——不再在选择器外渲染按钮。声明式静态条目经宿主转发器物化后回调）
@@ -522,15 +519,6 @@ export interface ModelInfoLeadSlotProps {
   isMobile?: boolean;
 }
 
-/** imageViewer 插槽 render props（核心 ImageTabViewer 跳板传递）：消息/输入框图片无磁盘路径，
- *  直接给 src（base64 data URL / 会话 API URL），接管方渲染统一查看器（aiti-editor）。 */
-export interface ImageViewerSlotProps {
-  /** 图片地址（base64 data URL / 会话 API URL）。 */
-  src: string;
-  /** 展示名（消息图 alt：文件名或通用文案；可能缺省）。 */
-  alt?: string;
-}
-
 export interface ExtSlotContractMap {
   /** 队列面板（去 fork 化 P3）：core → ext 的 live/trash/actions 原语。
    *  契约定义在 lib/composer/queue-api.ts（含下载导出/导入解析单实现）；
@@ -552,8 +540,6 @@ export interface ExtSlotContractMap {
   modelInfoLead: { props: ModelInfoLeadSlotProps };
   /** 桌面压缩按钮左邻位（aiti-ctx-meter；契约同 ModelInfoLeadSlotProps，isMobile 恒缺省=桌面）。 */
   compactLead: { props: ModelInfoLeadSlotProps };
-  /** 消息图片预览接管（aiti-editor 统一查看器；跳板 props = src/alt）。 */
-  imageViewer: { props: ImageViewerSlotProps };
   // sidebarProjects：SessionSidebar 整栏接管（session-manager SidebarClone，props 全量透传）——
   // 契约即 SessionSidebarProps（不进本 map，宽松对象透传）。
 }
@@ -673,7 +659,6 @@ export interface ExtUiDefinition {
   banners?: ExtUiItem[];
   pages?: ExtUiItem[];
   fileViewer?: ExtUiItem[];   // 文件查看/编辑接管项（核心 FileViewer 跳板渲染；项需带 match 判定才生效）
-  imageViewer?: ExtUiItem[];  // 消息图片预览接管项（核心 ImageTabViewer 跳板渲染；项需带 match(src,{alt}) 判定才生效）
   pathPicker?: ExtUiItem[];   // 目录选择器能力项（核心顶栏「打开文件夹」跳板渲染；项带 render({path,onSelect})）
   chatInputTop?: ExtUiItem[];
   /** aiti-float dock v0.5.0：侧栏文件区下方停靠块（宿主 DockSection 折叠容器；float 方案 §4.2）。 */

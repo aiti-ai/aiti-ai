@@ -48,15 +48,14 @@ test("keeps the preview and Pi-style close button inside mobile safe areas", () 
   assert.match(source, /<path d="M6 6l12 12M18 6 6 18" \/>/);
 });
 
-test("clicking prefers the host image panel (right file area) over the lightbox", () => {
-  // 宿主通道：AppShell 提供的「右栏图片预览 tab」context（可多开、不遮挡消息流）
-  assert.match(source, /useOpenImagePanel\(\)/);
-  // 面板优先：click → openInPanel(src, { alt })；无宿主时回退原 lightbox dialog
+test("clicking delegates to the aiti-editor viewer, falling back to the upstream lightbox", () => {
+  // 入口桥：aiti-editor 统一查看器（浮窗；懒扩展先物化）；image tab 机制已删除
+  assert.match(source, /import \{ openImageInEditorViewer \} from "\.\/editor-image-preview"/);
   assert.match(
     source,
-    /const openPreview = \(\) => \{[\s\S]*?if \(openInPanel\) \{[\s\S]*?openInPanel\(src, \{ alt \}\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?setOpen\(true\);/,
+    /const openPreview = \(\) => \{[\s\S]*?void openImageInEditorViewer\(src, \{ alt \}\)\.then\(\(handled\) => \{[\s\S]*?if \(!handled\) setOpen\(true\);[\s\S]*?\}\);\s*\};/,
   );
   assert.match(source, /onClick=\{openPreview\}/);
-  // 回退路径（dialog）必须完整保留
+  // 回退路径（上游原生 lightbox dialog）必须完整保留
   assert.match(source, /dialog\.showModal\(\)/);
 });
