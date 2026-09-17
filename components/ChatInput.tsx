@@ -3665,9 +3665,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
             {attachedImages.map((img, i) => (
               <div key={i} style={{ position: "relative", flexShrink: 0 }}>
-                {/* v4 十二审：点击缩略图预览（复用消息图片同款 ImagePreview）——v5 起点击开右栏
-                    图片预览 tab（ImagePanelContext），src 传稳定 data URL：blob previewUrl 会被
-                    revokeImagePreview 释放（移除附件/发送清空），tab 里会失效 */}
+                {/* v4 十二审：点击缩略图预览（复用消息图片同款 ImagePreview）——src 传稳定
+                    data URL：blob previewUrl 会被 revokeImagePreview 释放（移除附件/发送清空），
+                    aiti-editor 浮窗查看器里会失效（image tab 机制已删，见 pi-web-image-preview-unify-plan） */}
                 <ImagePreview src={`data:${img.mimeType};base64,${img.data}`} style={{ borderRadius: 6 }}>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
