@@ -60,21 +60,27 @@ function dispatchNotificationClick(data) {
 }
 
 
-function dispatchPush(payload, clients) {
+function dispatchPush(payload, clients, { existing = [] } = {}) {
   let pending;
   const shown = [];
+  const closed = [];
   self.clients = {
     matchAll: async () => clients,
     openWindow: async () => assert.fail("push must not open windows"),
   };
   self.registration = {
     showNotification: async (title, options) => { shown.push({ title, options }); },
+    getNotifications: async () => existing.map((n, i) => ({
+      tag: n.tag,
+      timestamp: n.timestamp,
+      close: () => { closed.push(n.tag ?? `#${i}`); },
+    })),
   };
   listeners.get("push")({
     data: { json: () => payload },
     waitUntil: (promise) => { pending = promise; },
   });
-  return { pending, shown };
+  return { pending, shown, closed };
 }
 
 test("root scope: API and sw.js requests bypass the cache", async () => {
@@ -271,5 +277,61 @@ test("push ignores malformed payloads", async () => {
   await event.pending;
 
   assert.deepEqual(event.shown, []);
+});
+
+test("push caps session-complete notifications at three by closing the oldest", async () => {
+  const event = dispatchPush(
+    { title: "Session complete", body: "Task finished.", url: "/?session=new", tag: "pi-session-complete:new" },
+    [],
+    {
+      existing: [
+        { tag: "pi-session-complete", timestamp: 0 },
+        { tag: "pi-session-complete:old-1", timestamp: 1 },
+        { tag: "pi-session-complete:old-2", timestamp: 2 },
+        { tag: "pi-extension-ui:ask-1", timestamp: 3 },
+        { tag: "pi-session-complete:old-3", timestamp: 3 },
+        { tag: "pi-session-complete:old-4", timestamp: 4 },
+      ],
+    },
+  );
+  await event.pending;
+
+  // 5 条完成类既有（含无会话兜底基名）+ 1 条新增 → 只留 2 条旧通知，关闭最旧的 3 条；
+  // 扩展输入提示不计入也不被关闭。
+  assert.deepEqual(event.closed, [
+    "pi-session-complete",
+    "pi-session-complete:old-1",
+    "pi-session-complete:old-2",
+  ]);
+  assert.equal(event.shown.length, 1);
+});
+
+test("push replaces its own tag instead of counting it as a new notification", async () => {
+  const event = dispatchPush(
+    { title: "Session complete", body: "Task finished.", url: "/?session=a", tag: "pi-session-complete:a" },
+    [],
+    {
+      existing: [
+        { tag: "pi-session-complete:a", timestamp: 1 },
+        { tag: "pi-session-complete:b", timestamp: 2 },
+        { tag: "pi-session-complete:c", timestamp: 3 },
+      ],
+    },
+  );
+  await event.pending;
+
+  // 同 tag 替换不新增条目：3 条既存在限额内，无需关闭。
+  assert.deepEqual(event.closed, []);
+  assert.equal(event.shown.length, 1);
+});
+
+test("service worker session-notification limit mirrors lib/browser-notifications.ts", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const [{ SESSION_NOTIFICATION_TAG_PREFIX, SESSION_NOTIFICATION_LIMIT }, source] = await Promise.all([
+    import("../lib/browser-notifications.ts"),
+    readFile(new URL("./sw.js", import.meta.url), "utf8"),
+  ]);
+  assert.match(source, new RegExp(`const SESSION_NOTIFICATION_TAG_PREFIX = "${SESSION_NOTIFICATION_TAG_PREFIX}"`));
+  assert.match(source, new RegExp(`const SESSION_NOTIFICATION_LIMIT = ${SESSION_NOTIFICATION_LIMIT}\\b`));
 });
 

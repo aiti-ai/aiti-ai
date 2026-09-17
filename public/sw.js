@@ -87,6 +87,57 @@ self.addEventListener("fetch", (event) => {
   }
 });
 
+// 完成类通知限流：同屏最多 SESSION_NOTIFICATION_LIMIT 条，超出时新通知替换最旧的。
+// 与 lib/browser-notifications.ts 的同名常量/算法保持一致（页面通知链路同款清理）。
+const SESSION_NOTIFICATION_TAG_PREFIX = "pi-session-complete";
+const SESSION_NOTIFICATION_LIMIT = 3;
+
+// 判定 tag 是否属于完成类通知池（基名本身，或基名:<sessionId>）。
+function isSessionNotificationTag(tag) {
+  return typeof tag === "string"
+    && (tag === SESSION_NOTIFICATION_TAG_PREFIX || tag.startsWith(`${SESSION_NOTIFICATION_TAG_PREFIX}:`));
+}
+
+// 计算显示 incomingTag 之前应关闭的旧完成类通知，使显示后不超过 limit 条。
+// - incomingTag 已存在（同一会话重复通知会被浏览器替换而非新增）→ 压回 limit；
+// - incomingTag 不存在（新增一条）→ 旧通知最多保留 limit - 1 条；
+// - 最旧优先关闭（无时间戳视为最旧，稳定排序保持原顺序）。
+function sessionNotificationsToClose(existing, incomingTag) {
+  const limit = SESSION_NOTIFICATION_LIMIT;
+  if (!isSessionNotificationTag(incomingTag)) return [];
+  const open = existing
+    .filter((n) => isSessionNotificationTag(n.tag))
+    .slice()
+    .sort((a, b) => (a.timestamp ?? 0) - (b.timestamp ?? 0));
+  const replacesExisting = open.some((n) => n.tag === incomingTag);
+  const keep = Math.max(0, replacesExisting ? limit : limit - 1);
+  const overflow = open.length - keep;
+  return overflow > 0 ? open.slice(0, overflow) : [];
+}
+
+// 关闭溢出的完成类通知后展示（best-effort：枚举不可用/失败时不阻塞展示）。
+async function showNotificationWithSessionLimit(title, options) {
+  const tag = options.tag;
+  if (isSessionNotificationTag(tag)) {
+    try {
+      const open = await self.registration.getNotifications();
+      for (const stale of sessionNotificationsToClose(open, tag)) {
+        try {
+          stale.close();
+        } catch (closeError) {
+          void closeError;
+        }
+      }
+    } catch (listError) {
+      void listError;
+    }
+  }
+  await self.registration.showNotification(title, options);
+}
+
+// push 事件可能并发到达（多会话同时完成）——串行展示，避免清理判断相互竞争。
+let pushDisplayQueue = Promise.resolve();
+
 self.addEventListener("push", (event) => {
   let payload = {};
   try {
@@ -101,15 +152,16 @@ self.addEventListener("push", (event) => {
   // when a service worker handles a push without showing a notification, so
   // suppressing the notification while a window is visible poisons the
   // subscription in the background-delivery case. Notifications sharing a tag
-  // replace each other instead of stacking, so a visible window merely sees
-  // the completion notification re-appear.
-  event.waitUntil(
-    self.registration.showNotification(title, {
+  // replace each other instead of stacking, and multi-session completions are
+  // capped by showNotificationWithSessionLimit (newest replaces the oldest).
+  pushDisplayQueue = pushDisplayQueue
+    .catch(() => {})
+    .then(() => showNotificationWithSessionLimit(title, {
       body,
       data: { url: typeof url === "string" && url ? url : "/" },
       ...(typeof tag === "string" && tag ? { tag, renotify: true } : {}),
-    }),
-  );
+    }));
+  event.waitUntil(pushDisplayQueue.catch(() => {}));
 });
 
 self.addEventListener("notificationclick", (event) => {
