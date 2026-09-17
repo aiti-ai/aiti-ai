@@ -227,7 +227,7 @@ export const enLocale: LocalePlugin = {
     "files.ctxDetach": "Detach into window",
     "files.ctxFloat": "Detach into floating panel",
     "files.posDetach": "Floating window",
-    "files.posNewWindow": "New viewer window",
+    "files.posNewWindow": "Open in new window",
     "files.posTitle": "Position",
     "files.posDockRow": "Dock position",
     "files.posSidebar": "Left sidebar · block",

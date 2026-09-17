@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { getFileIcon, FolderIcon } from "./FileIcons";
 import { useI18n } from "@/hooks/useI18n";
 import type { FileViewerDisplayMode, FileViewerState } from "@/lib/file-viewer-state";
@@ -603,8 +604,9 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
       )}
       {/* 文件 tab ⇱ 位置菜单（宿主自渲染；dock tab 的 ⇱ 走 aiti-float 不进这里）。
           与 dock 位置菜单（ext-float-dock「停靠方位」图标排）同款同序：新窗口 → 浮窗 →
-          左栏 → 右栏；文字收进 tooltip（跨仓图标 data 手工同步，见上方 filePosMenuItems）。 */}
-      {posMenu && (
+          左栏 → 右栏；文字收进 tooltip（跨仓图标 data 手工同步，见上方 filePosMenuItems）。
+          portal 挂 body：右栏 overlay 模式容器带 transform，原地 fixed 会被包含块偏移。 */}
+      {posMenu && createPortal(
         <div
           role="menu"
           style={{
@@ -643,10 +645,12 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
               ))}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
-      {/* 右键菜单（tab-detach v0.6.2）：fixed 定位；点外/Escape 关闭（effect 挂窗级监听） */}
-      {ctxMenu && onDetachTab && (
+      {/* 右键菜单（tab-detach v0.6.2）：fixed 定位（portal 挂 body——右栏 overlay 容器带
+          transform，原地 fixed 会被包含块偏移）；点外/Escape 关闭（effect 挂窗级监听） */}
+      {ctxMenu && onDetachTab && createPortal(
         <div
           role="menu"
           style={{
@@ -678,7 +682,8 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
           >
             {ctxMenu.tab.kind === "dock" ? t("files.ctxFloat") : t("files.ctxDetach")}
           </button>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );

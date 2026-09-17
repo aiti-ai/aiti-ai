@@ -227,7 +227,7 @@ export const zhCNLocale: LocalePlugin = {
     "files.ctxDetach": "拆出为窗口",
     "files.ctxFloat": "拆出为浮窗",
     "files.posDetach": "浮窗",
-    "files.posNewWindow": "新窗口（独立查看器）",
+    "files.posNewWindow": "新窗口打开",
     "files.posTitle": "位置",
     "files.posDockRow": "停靠方位",
     "files.posSidebar": "左栏 · 区块",

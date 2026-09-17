@@ -98,7 +98,7 @@ test("active tab is revealed on activation and on container resize", () => {
   assert.match(source, /if \(needsRevealRef\.current\) revealActiveTab\(2\)/);
 });
 
-test("file tab ⇱ menu mirrors the dock position menu (停靠方位 icon row)", () => {
+test("file tab ⇱ menu mirrors the dock position menu (停靠方位 icon row)", async () => {
   const tab = { id: "file:/a.ts", label: "a.ts", filePath: "/a.ts" };
   // 顺序/图标键与 aiti-ai ext-float-dock「停靠方位」图标排一致（新窗口 → 浮窗 → 左栏 → 右栏）
   const items = filePosMenuItems(tab, (k) => k, {
@@ -129,6 +129,13 @@ test("file tab ⇱ menu mirrors the dock position menu (停靠方位 icon row)",
   assert.match(source, /data-ext-dock-icon-row="1"/);
   assert.match(source, /t\("files\.posDockRow"\)/);
   assert.doesNotMatch(source, /t\("files\.posDetach"\)\}/);
+  // 定位修复：两个 fixed 菜单都经 portal 挂 body——右栏 overlay 模式容器带 transform，
+  // 原地渲染时 fixed 以容器为包含块会整体偏移
+  assert.match(source, /import \{ createPortal \} from "react-dom"/);
+  assert.equal((source.match(/createPortal\(/g) || []).length, 2);
+  // tooltip 与 dock 菜单完全一致（dock 菜单 new-window 文案 = 「新窗口打开」）
+  const zhCN = await readFile(new URL("../lib/i18n/messages/zh-CN.ts", import.meta.url), "utf8");
+  assert.match(zhCN, /"files\.posNewWindow": "新窗口打开"/);
 });
 
 test("reveal is gated by host revealToken so background opens never scroll", () => {

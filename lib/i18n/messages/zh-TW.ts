@@ -210,7 +210,7 @@ export const zhTWLocale: LocalePlugin = {
     "files.ctxDetach": "拆出為視窗",
     "files.ctxFloat": "拆出為浮動視窗",
     "files.posDetach": "浮動視窗",
-    "files.posNewWindow": "新視窗（獨立檢視器）",
+    "files.posNewWindow": "開新視窗",
     "files.posTitle": "位置",
     "files.posDockRow": "停靠方位",
     "files.posSidebar": "左欄 · 區塊",
