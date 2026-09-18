@@ -165,3 +165,12 @@ test("[fork] 主题/语言双入口并存：顶栏保留（fork 拍板）+ 设�
   assert.match(settingsPanelSource, /setThemePreference\(option\.id\)/);
   assert.match(settingsPanelSource, /setLocale\(plugin\.id as typeof locale\)/);
 });
+
+test("closes top-bar dropdowns when the file panel expands to full width", () => {
+  assert.match(
+    source,
+    /const handleRightPanelExpandToggle = useCallback\(\(\) => \{\s*setActiveTopPanel\(null\);\s*setRightPanelExpanded\(\(expanded\) => !expanded\);/,
+  );
+  assert.match(source, /onClick=\{handleRightPanelExpandToggle\}/);
+  assert.match(source, /if \(rightPanelFullWidth\) setActiveTopPanel\(null\);/);
+});

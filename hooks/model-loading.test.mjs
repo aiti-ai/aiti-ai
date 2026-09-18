@@ -47,6 +47,8 @@ function setup(fetchImpl, opts = {}) {
     sessionIdRef: { current: null }, thinkingLevelOverrideRef: { current: null },
     // fork 用 apiUrl() 包装子路径部署（/dev 前缀）的 API 地址；沙盒内直通。
     apiUrl: (path) => path,
+    thinkingLevelPinsRef: { current: {} }, defaultThinkingLevelRef: { current: null },
+    asConcreteThinkingLevel: (value) => (!value || value === "auto" ? null : value),
     fetch: fetchImpl,
     delay: async (ms) => { delays.push(ms); },
   };
@@ -56,7 +58,7 @@ function setup(fetchImpl, opts = {}) {
   context.modelsShared = script(`(${sharedMapDecl.initializer.getText(source)})`).runInNewContext(context);
   context.MODELS_SHARED_TTL_MS = script(`(${sharedTtlDecl.initializer.getText(source)})`).runInNewContext(context);
   context.fetchModelsShared = script(`(${sharedFn.getText(source)})`).runInNewContext(context);
-  for (const name of ["ModelError", "ModelNames", "ModelScopeWarnings", "ModelThinkingLevels", "ModelThinkingLevelMaps", "ModelList", "NewSessionDefaultModel", "ThinkingLevel"]) {
+  for (const name of ["ModelError", "ModelNames", "ModelScopeWarnings", "ModelThinkingLevels", "ModelThinkingLevelMaps", "ModelList", "NewSessionDefaultModel", "NewSessionDefaultThinkingLevel", "ThinkingLevel"]) {
     context[`set${name}`] = (value) => writes.push([name, value]);
   }
   // 客户端缓存层：默认无缓存/不写入（现有用例不受影响）；用例可注入命中/写入探针。
@@ -135,7 +137,7 @@ test("model-load failures stay visible through bounded retries and clear on reco
   assert.deepEqual(recovered.writes.filter(([name]) => name === "ModelError"), [["ModelError", "Failed to fetch"], ["ModelError", null]]);
   assert.ok(recovered.writes.some(([name, value]) => name === "ModelList" && value[0].id === "test"));
   assert.ok(recovered.writes.some(([name, value]) => name === "NewSessionDefaultModel" && value.modelId === "test"));
-  assert.ok(recovered.writes.some(([name, value]) => name === "ThinkingLevel" && value === "high"));
+  assert.ok(recovered.writes.some(([name, value]) => name === "NewSessionDefaultThinkingLevel" && value === "high"));
 });
 
 test("cancelling model loads prevents state writes and further retries", async () => {

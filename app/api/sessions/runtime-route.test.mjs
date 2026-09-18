@@ -185,6 +185,12 @@ test("session reads use the live SessionManager before requiring a JSONL path", 
   assert.match(detailRoute, /resolveAnySession\(id\)/);
 });
 
+test("detail reads probe disk only on force/mount and evict a stale idle wrapper", () => {
+  assert.match(detailRoute, /searchParams\.get\("force"\) === "1"/);
+  assert.match(detailRoute, /force && liveWrapper\?\.evictIfDiskAhead\(\)/);
+  assert.doesNotMatch(contextRoute, /evictIfDiskAhead|readLatestSessionEntryId/);
+});
+
 test("live agent state is available before the session file is persisted", () => {
   // Live sources (local registry / TUI bridge / provider handles) must all be
   // consulted before falling back to a JSONL path.

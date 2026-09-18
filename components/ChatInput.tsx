@@ -179,6 +179,8 @@ interface Props {
   toolPreset?: ToolPreset;
   onToolPresetChange?: (preset: ToolPreset) => void;
   thinkingLevel?: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+  /** New session has not committed a thinking level; the button still shows the resolved default. */
+  isAutoThinkingSelection?: boolean;
   onThinkingLevelChange?: (level: "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max") => void;
   availableThinkingLevels?: string[] | null;
   thinkingLevelMap?: Record<string, string | null> | null;
@@ -1232,7 +1234,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   onSend, onAbort, aborting, onForkNew, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching, onRefreshModels, modelsRefreshing,
   sessionCapabilities, onSwitchPermissionMode, permissionMode,
   contextPercent, contextUsage, onSessionStatsPanelOpen, onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
-  thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
+  thinkingLevel, isAutoThinkingSelection = false, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, tasks, inputHistory = [], onRecallQueue,
   onExportQueue, onImportQueue, onStageImport, onMoveQueue, onRecallOne, onRequeueAt, onRemoveQueueItem,
   queueTrash, onRestoreQueueItem, onPurgeQueueTrash, onTrashComposerInput, onRestoreComposerTrash,
@@ -3322,8 +3324,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const compactResultText = compactResult
     ? `${compactResult.reason && compactResult.reason !== "manual" ? `${compactResult.reason[0].toUpperCase()}${compactResult.reason.slice(1)} ` : t("chat.compacted")} ${formatTokenCount(compactResult.tokensBefore)} -> ${formatTokenCount(compactResult.estimatedTokensAfter)} tokens (${t("chat.tokensSaved", { saved: formatTokenCount(compactSavedTokens) })})`
     : null;
+  const resolvedThinkingLevel = thinkingLevel && thinkingLevel !== "auto" ? thinkingLevel : null;
   const thinkingDisplayLabel = (() => {
-    const lvl = thinkingLevel ?? "auto";
+    const lvl = resolvedThinkingLevel ?? "auto";
     if (lvl === "auto" || !thinkingLevelMap) return lvl;
     return thinkingLevelMap[lvl] ?? lvl;
   })();
@@ -3346,6 +3349,14 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
+
+  // 上游 #743 配套：换轮 streaming 开始时收起悬停下拉，避免展开态跨轮残留
+  useEffect(() => {
+    if (!isStreaming) return;
+    setThinkingDropdownOpen(false);
+    setToolDropdownOpen(false);
+  }, [isStreaming]);
+
 
 
 
@@ -3683,6 +3694,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   />
                 </ImagePreview>
                 <button
+                  type="button"
                   onClick={() => removeImage(i)}
                   style={{
                     position: "absolute", top: -4, right: -4,
@@ -4828,13 +4840,15 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               alignItems: "center",
               gap: 2,
             }}>
-            {!isStreaming && onThinkingLevelChange && (
+            {onThinkingLevelChange && (
               <div ref={thinkingDropdownRef} style={{ position: "relative" }}>
                 <button
                   onClick={() => !isStreaming && setThinkingDropdownOpen((v) => !v)}
                   disabled={isStreaming}
-                   title={t("chat.changeReasoning", { level: thinkingDisplayLabel })}
-                   aria-label={t("chat.changeReasoningLabel")}
+                  title={isStreaming
+                    ? t("chat.currentReasoning", { level: thinkingDisplayLabel })
+                    : t("chat.changeReasoning", { level: thinkingDisplayLabel })}
+                  aria-label={t("chat.changeReasoningLabel")}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
                     padding: isMobile ? "0 6px" : "8px 12px",
@@ -4879,15 +4893,24 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                       if (lvl === "auto") return true;
                       return availableThinkingLevels.includes(lvl);
                     }).map((lvl) => {
-                      const isActive = (thinkingLevel ?? "auto") === lvl;
-                       const desc = t(THINKING_LEVEL_DESC_KEYS[lvl]);
+                      const isActive = lvl === "auto"
+                        ? isAutoThinkingSelection
+                        : !isAutoThinkingSelection && resolvedThinkingLevel === lvl;
+                      const desc = t(THINKING_LEVEL_DESC_KEYS[lvl]);
                       const mappedVal = (lvl !== "auto" && thinkingLevelMap) ? thinkingLevelMap[lvl] : undefined;
                       const displayLabel = (mappedVal != null && mappedVal !== lvl) ? mappedVal : lvl;
                       const showOriginal = mappedVal != null && mappedVal !== lvl;
                       return (
                         <button
                           key={lvl}
-                          onClick={() => { setThinkingDropdownOpen(false); if (!isActive) onThinkingLevelChange(lvl); }}
+                          onClick={() => {
+                            setThinkingDropdownOpen(false);
+                            if (lvl === "auto") {
+                              if (!isAutoThinkingSelection) onThinkingLevelChange("auto");
+                              return;
+                            }
+                            if (!isActive || isAutoThinkingSelection) onThinkingLevelChange(lvl);
+                          }}
                           style={{
                             display: "flex", alignItems: "center", gap: 8,
                             width: "100%", padding: "7px 12px",

@@ -403,6 +403,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
     sessionRequest, respondToSessionRequest,
     isAutoModelSelection,
+    isAutoThinkingSelection,
     agentPhase,
     runStartedAtRef,
     isNew,
@@ -1262,6 +1263,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       sessionCapabilities={sessionCapabilities}
       onSwitchPermissionMode={switchPermissionMode}
       thinkingLevel={thinkingLevel}
+      isAutoThinkingSelection={isAutoThinkingSelection}
       onThinkingLevelChange={session || isNew
         ? (sessionCap("setThinkingLevel") ? handleThinkingLevelChange : undefined)
         : undefined}

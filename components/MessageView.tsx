@@ -12,8 +12,10 @@ import { fmtMoney, useMoneySynced } from "@/lib/money";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, getThinkingPreview, getThinkingTailPreview, isEmptyThinkingBlock } from "@/lib/message-display";
-import { parseUnifiedPatch, type SplitDiffCell } from "@/lib/patch";
-import { isEditToolName } from "@/lib/tool-names";
+import { parseUnifiedPatch, type SplitDiffCell, type SplitDiffFile } from "@/lib/patch";
+import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
+import { isApplyPatchToolName, isEditToolName } from "@/lib/tool-names";
+import { isToolCallExpanded, setToolCallExpanded } from "@/lib/tool-call-expansion";
 import { isThinkingExpandedByDefault, THINKING_EXPANDED_EVENT } from "@/lib/thinking-expansion-preference";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
 import { ExtSlot } from "./ExtSlots";
@@ -1185,11 +1187,20 @@ function isSubagentToolDetails(value: unknown): value is SubagentToolDetails {
 
 function ToolCallBlock({ block, result, duration, onOpenSession }: { block: ToolCallContent; result?: ToolResultMessage; duration?: number; onOpenSession?: (sessionId: string) => void }) {
   const { t } = useI18n();
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(() => isToolCallExpanded(block.toolCallId));
+  const toggleExpanded = () => {
+    const next = !expanded;
+    setToolCallExpanded(block.toolCallId, next);
+    setExpanded(next);
+  };
   const inputStr = getToolCallInputText(block);
   const isStreamingInput = block.rawInput !== undefined;
   const isEditTool = isEditToolName(block.toolName);
   const resultDiff = result && !result.isError ? getResultDiff(result) : null;
+  const patchFiles = getApplyPatchFiles(block, result);
+  const patchLabel = isApplyPatchToolName(block.toolName)
+    ? summarizeApplyPatchInput(block)
+    : null;
 
   // Result display
   const resultText = result
@@ -1197,7 +1208,8 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
     : null;
   const resultImages = getMessageImages(result?.content ?? []);
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
-  const isError = result?.isError ?? false;
+  const isError = (result?.isError ?? false)
+    || (isApplyPatchToolName(block.toolName) && applyPatchResultHasFailures(result?.details));
   const subagent = isSubagentToolDetails(result?.details) ? result.details : null;
 
   return (
@@ -1213,7 +1225,7 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
       {/* ── Tool call header ── */}
       <div style={{ display: "flex", alignItems: "stretch", minWidth: 0 }}>
         <button
-          onClick={() => setExpanded((v) => !v)}
+          onClick={toggleExpanded}
           style={{
             display: "flex",
             alignItems: "center",
@@ -1233,7 +1245,7 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
             {block.toolName}
           </span>
           <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
-            {isStreamingInput ? t("chat.generatingToolInput") : getToolPreview(block)}
+            {isStreamingInput ? t("chat.generatingToolInput") : (patchLabel ?? getToolPreview(block))}
           </span>
           {duration !== undefined && (
             <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
@@ -1255,8 +1267,9 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
         )}
       </div>
 
-      {/* ── Expanded: input args（交互元语工具特殊渲染：方案全文/问题选项可读化；其余 JSON 兑底） ── */}
-      {expanded && isStreamingInput && (
+      {/* ── Expanded: input args（streaming 期裸 JSON；settled 非编辑工具走下方
+           InteractionToolCallDetails（fallback 同为裸 JSON），patchFiles 出现后让位 split diff） ── */}
+      {expanded && isStreamingInput && !patchFiles && (
         <pre
           style={{
             margin: 0,
@@ -1278,8 +1291,23 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
         <InteractionToolCallDetails toolName={block.toolName} input={block.input} fallback={inputStr} isError={isError} />
       )}
 
+      {/* ── Expanded: applied-patch split diff ── */}
+      {expanded && patchFiles && (
+        <div style={{ borderTop: "1px solid rgba(34,197,94,0.15)", background: "var(--bg)" }}>
+          <SplitFilesView files={patchFiles} />
+        </div>
+      )}
+
       {/* ── Paired result — only shown when expanded ── */}
-      {expanded && result && (
+      {expanded && result && patchFiles && isError && (
+        <PairedResult
+          text={resultText ?? ""}
+          images={resultImages}
+          isEmpty={resultIsEmpty}
+          isError={isError}
+        />
+      )}
+      {expanded && result && !patchFiles && (
         resultDiff ? (
           <PairedDiffResult
             diff={resultDiff}
@@ -1317,9 +1345,13 @@ function PairedDiffResult({ diff }: {
 }
 
 function SplitPatchView({ text }: { text: string }) {
-  const { t } = useI18n();
   const files = useMemo(() => parseUnifiedPatch(text), [text]);
   if (!files) return <PatchTextView text={text} />;
+  return <SplitFilesView files={files} />;
+}
+
+function SplitFilesView({ files }: { files: SplitDiffFile[] }) {
+  const { t } = useI18n();
   const showFileHeaders = files.length > 1;
 
   return (
@@ -1517,6 +1549,37 @@ function PatchTextView({ text }: { text: string }) {
       })}
     </div>
   );
+}
+
+/**
+ * Split diff rows for an apply_patch-style tool call.
+ *
+ * Prefers parsing the V4A patch document from the call input. The extension's
+ * applied result preview contains the complete old/new file with unchanged
+ * lines, so it is only used as a fallback when the call input is unavailable.
+ * A single call may contain several file operations — each becomes its own
+ * file section.
+ */
+function getApplyPatchFiles(block: ToolCallContent, result?: ToolResultMessage): SplitDiffFile[] | null {
+  if (!isApplyPatchToolName(block.toolName)) return null;
+
+  const fromInput = parseApplyPatchInput(getApplyPatchInputText(block.input, block.rawInput));
+  if (fromInput) return fromInput;
+
+  const details = result && !result.isError ? (result as ToolResultMessage & { details?: unknown }).details : undefined;
+  if (isRecord(details)) {
+    const fromPreview = applyPatchPreviewToFiles(details.preview);
+    if (fromPreview) return fromPreview;
+  }
+
+  return null;
+}
+
+/** Header label listing the files targeted by an apply_patch call. */
+function summarizeApplyPatchInput(block: ToolCallContent): string | null {
+  const paths = extractApplyPatchPaths(getApplyPatchInputText(block.input, block.rawInput));
+  if (paths.length === 0) return null;
+  return paths.join(", ").slice(0, 120);
 }
 
 function getResultDiff(result: ToolResultMessage): ResultDiff | null {
