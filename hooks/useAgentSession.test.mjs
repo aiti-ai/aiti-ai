@@ -156,12 +156,14 @@ test("only the session-mount load probes disk for external appends", () => {
     source.indexOf("// Load session on mount"),
     source.indexOf("sessionHookMountedRef.current = false"),
   );
-  assert.match(loadSessionSource, /options\?: \{ force\?: boolean \}/);
+  assert.match(loadSessionSource, /options\?: \{ force\?: boolean; fresh\?: boolean \}/);
   assert.match(loadSessionSource, /if \(options\?\.force\) params\.set\("force", "1"\)/);
   assert.match(loadSessionSource, /d\.wrapperRebuilt[\s\S]*?eventConnectionRef\.current\?\.close\(\)[\s\S]*?maintain\(sid\)/);
   assert.match(mountSource, /loadSession\(session\.id, true, true, \{ force: true \}\)/);
   assert.match(source, /await loadSession\(sid\)/);
-  assert.equal([...source.matchAll(/\{ force: true \}/g)].length, 1);
+  // fork：计数收窄到 loadSession 调用形态——scrollToBottom("instant", { force: true })
+  // 是 fork 滚动代码的同形字面量，不属于「挂载才探测磁盘」的守卫范围
+  assert.equal([...source.matchAll(/loadSession\([^)]*\{ force: true \}\)/g)].length, 1);
 });
 
 test("first user messages expose both branch actions and edit before their own entry", () => {
@@ -848,8 +850,8 @@ test("manual refresh cuts the stale SSE stream, reloads with ?fresh=1 and reconn
     source.indexOf("const loadSession = useCallback"),
     source.indexOf("const reloadCurrentSession = useCallback"),
   );
-  assert.match(loadSource, /const loadSession = useCallback\(async \(sid: string, showLoading = false, includeState = false, fresh = false\) => \{/);
-  assert.match(loadSource, /if \(fresh\) params\.set\("fresh", "1"\);/);
+  assert.match(loadSource, /const loadSession = useCallback\(async \(sid: string, showLoading = false, includeState = false, options\?: \{ force\?: boolean; fresh\?: boolean \}\) => \{/);
+  assert.match(loadSource, /if \(options\?\.fresh\) params\.set\("fresh", "1"\);/);
 
   // 刷新必须断开旧流再重连：服务端 ?fresh=1 会回收空闲 wrapper，旧 EventSource 绑在
   // 死 wrapper 上，不断流则此后新 wrapper 的事件永远收不到（发消息无流式）。
@@ -858,7 +860,7 @@ test("manual refresh cuts the stale SSE stream, reloads with ?fresh=1 and reconn
     source.indexOf("const loadContext = useCallback"),
   );
   assert.match(reloadSource, /eventConnectionRef\.current\?\.close\(\);/);
-  assert.match(reloadSource, /await loadSession\(sid, false, true, true\);/);
+  assert.match(reloadSource, /await loadSession\(sid, false, true, \{ fresh: true \}\);/);
   assert.match(reloadSource, /eventConnectionRef\.current\?\.maintain\(sid\);/);
 });
 
