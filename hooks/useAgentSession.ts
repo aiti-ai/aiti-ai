@@ -112,7 +112,9 @@ type AgentStateResponse = {
   isCompacting?: boolean;
   extensionStatuses?: ExtensionStatusItem[];
   extensionWidgets?: ExtensionWidgetItem[];
-  queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
+  /** ext-agent 后端带队列单调版本号 rev（queue_update 事件与 get_state 快照同轴）；
+   *  pi 本地会话无该字段（守卫自动退化为原行为）。 */
+  queuedMessages?: { steering?: string[]; followUp?: string[]; rev?: number } | null;
   /** 任务列表快照（task_update 事件同源；get_state 真实化，页面刷新后种子恢复） */
   tasks?: SessionTask[] | null;
   pendingRecovery?: PendingRecoveryItem[] | null;
@@ -669,6 +671,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
+  /** 队列版本轴游标（ext-agent rev；2026-09-18「排队条目不显示直到手动刷新」根修）：
+   *  queue_update 事件与异步 get_state/queueManage 快照同轴携带 rev，迟到旧快照
+   *  整块覆盖实时状态后无自愈（SSE 活跃期对账被跳过）——应用前 rev 只进不退。 */
+  const queueRevRef = useRef(0);
+  /** 状态快照入口（全部 get_state 形态的 queuedMessages 应用点走它）：
+   *  快照带 rev 且 ≤ 已应用版本 → 判定为与实时事件竞态的迟到快照，丢弃；
+   *  无 rev（pi 本地会话/旧后端）→ 原行为无条件应用。 */
+  const applyQueuedSnapshot = useCallback((q: AgentStateResponse["queuedMessages"]) => {
+    const rev = q?.rev;
+    if (typeof rev === "number") {
+      if (rev <= queueRevRef.current) return;
+      queueRevRef.current = rev;
+    }
+    setQueuedMessages(normalizeQueuedMessages(q));
+  }, []);
   /** 任务列表（agent working plan；task_update 事件 + get_state 种子，会话切换随 liveState 复位）。 */
   const [sessionTasks, setSessionTasks] = useState<SessionTask[]>([]);
   /** 后端会话能力（从 state 端点透传；本地会话无此状态） */
@@ -1035,7 +1052,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.thinkingLevel !== undefined) setThinkingLevel((liveState.thinkingLevel as ThinkingLevelOption) ?? "auto");
           if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
-          if (liveState.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages));
+          if (liveState.queuedMessages !== undefined) applyQueuedSnapshot(liveState.queuedMessages);
           if (liveState.tasks !== undefined) setSessionTasks(normalizeTasks(liveState.tasks));
           if (liveState.pendingRecovery !== undefined) setPendingRecovery(liveState.pendingRecovery ?? []);
           if (liveState.queueTrash !== undefined) setQueueTrash(liveState.queueTrash ?? []);
@@ -1056,7 +1073,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       if (showLoading && !messagesLoaded) setLoading(false);
     }
-  }, [setToolPresetState, syncLiveModel]);
+  }, [applyQueuedSnapshot, setToolPresetState, syncLiveModel]);
 
   /** 用户主动刷新当前会话（2026-09-15）：重新从服务端拉取完整消息 + 状态（includeState）。
    *  用于「已停止会话可能被外部推进」的场景（zcode 桌面端/CLI 在 pi-web 之外续写同一
@@ -1205,6 +1222,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       const realId = result.sessionId;
       sessionIdRef.current = realId;
+      // 新会话 = 新 handle = 新 rev 轴：清游标（否则上一会话的大 rev 拦住新会话的队列更新）
+      queueRevRef.current = 0;
       if (result.model && newSessionModelOverrideRef.current === selectedModel) {
         setPendingModel(result.model);
         if (!selectedModel) setNewSessionDefaultModel(result.model);
@@ -1649,7 +1668,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // would otherwise leave the "Stop compaction" UI stuck. No state
       // (wrapper destroyed) means nothing is compacting.
       setIsCompacting(state?.isCompacting ?? false);
-      setQueuedMessages(normalizeQueuedMessages(state?.queuedMessages));
+      applyQueuedSnapshot(state?.queuedMessages);
       setPendingRecovery(state?.pendingRecovery ?? []);
       setQueueTrash(state?.queueTrash ?? []);
       const busy = data.running && !!state && stateIsActive(state);
@@ -1669,7 +1688,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch {
       // Network still down — the next poll / visibility / online tick retries.
     }
-  }, [finishPromptWithoutStream, syncLiveModel]);
+  }, [applyQueuedSnapshot, finishPromptWithoutStream, syncLiveModel]);
 
   // Recovery net for missed SSE events: while the agent is running, verify
   // against the server periodically and whenever the tab returns to the
@@ -1788,6 +1807,20 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setBashRunning(false);
           settleUiStage();
         }
+        // 断线窗口丢帧重同步：connected 即（重）连成功，期间可能有 queue_update 丢失
+        // （扩展热重载/nginx 抖动/休眠唤醒）——无条件拉一次队列快照，rev 守卫保证
+        // 在途迟到帧不会回退此处结果（pi 本地会话无 rev，等价原行为）。
+        {
+          const connectedSid = sessionIdRef.current;
+          if (connectedSid) {
+            void fetch(apiUrl(`/api/agent/${encodeURIComponent(connectedSid)}?light=1`))
+              .then((r) => (r.ok ? r.json() : null))
+              .then((d: { state?: AgentStateResponse } | null) => {
+                if (d?.state && sessionIdRef.current === connectedSid) applyQueuedSnapshot(d.state.queuedMessages);
+              })
+              .catch(() => { /* 重连快照失败不阻塞：15s 对账兜底 */ });
+          }
+        }
         break;
       }
       case "session_backend_dead": {
@@ -1869,7 +1902,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               if (d.state?.extensionWidgets !== undefined) setExtensionWidgets(d.state.extensionWidgets ?? []);
               // Aborted turns can leave messages queued in pi (delivered with the
               // next turn); dead wrapper (no state) means the queue is gone.
-              setQueuedMessages(normalizeQueuedMessages(d.state?.queuedMessages));
+              applyQueuedSnapshot(d.state?.queuedMessages);
               setPendingRecovery(d.state?.pendingRecovery ?? []);
               setQueueTrash(d.state?.queueTrash ?? []);
             })
@@ -2096,7 +2129,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         });
         break;
       }
-      case "queue_update":
+      case "queue_update": {
+        // rev 守卫：迟到/重复帧（对账竞态、SSE 重放）不得回退已应用状态；
+        // 无 rev（pi 本地会话）保持原行为。
+        const qRev = typeof event.rev === "number" ? event.rev : null;
+        if (qRev !== null) {
+          if (qRev <= queueRevRef.current) break;
+          queueRevRef.current = qRev;
+        }
         setQueuedMessages((prev) => {
           const steering = [...((event.steering as string[] | undefined) ?? [])];
           const followUp = [...((event.followUp as string[] | undefined) ?? [])];
@@ -2109,6 +2149,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           };
         });
         break;
+      }
       case "task_update":
         setSessionTasks(normalizeTasks(event.todos));
         break;
@@ -2221,7 +2262,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
         break;
     }
-  }, [addNotice, adoptRunStartedAt, canonicalizeSessionId, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
+  }, [addNotice, adoptRunStartedAt, applyQueuedSnapshot, canonicalizeSessionId, cancelEventStreamGrace, dispatchStream, enqueueDelta, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const respondToInteraction = useCallback(async (requestId: string, answer: {
@@ -3210,9 +3251,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const sid = sessionIdRef.current;
     if (!sid) return;
     try {
-      const result = await sendAgentCommand<{ steering?: string[]; followUp?: string[] }>(sid, { type: "clear_queue" });
+      const result = await sendAgentCommand<{ steering?: string[]; followUp?: string[]; rev?: number }>(sid, { type: "clear_queue" });
       // clearQueue also emits an empty queue_update, but that only reaches us
       // while SSE is connected — clear locally so idle recalls update the UI.
+      // rev 同步推进到清空后版本：在途旧快照不得复活已清条目（ext-agent 带 rev）。
+      if (typeof result?.rev === "number") queueRevRef.current = Math.max(queueRevRef.current, result.rev);
       setQueuedMessages({ steering: [], followUp: [] });
       let texts = [...(result?.steering ?? []), ...(result?.followUp ?? [])];
       if (texts.length === 0) {
@@ -3301,7 +3344,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (!stateRes.ok) return;
           const agentState = await stateRes.json() as { running?: boolean; state?: AgentStateResponse };
           if (agentState.state?.queuedMessages !== undefined) {
-            setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
+            applyQueuedSnapshot(agentState.state.queuedMessages);
           }
         } catch { /* non-critical */ }
       })();
@@ -3318,7 +3361,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       addNotice({ type: "error", message: "Failed to resolve queued message recovery" });
       return pendingRecovery;
     }
-  }, [pendingRecovery, addNotice, adoptRemoteRun, opts.chatInputRef]);
+  }, [applyQueuedSnapshot, pendingRecovery, addNotice, adoptRemoteRun, opts.chatInputRef]);
 
   /** Deliver the queued messages now — the 「继续」 button on an idle queue
    * (e.g. queue recovered after a restart but only re-queued, never
@@ -3675,6 +3718,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         cancelEventStreamGrace();
         closeEvents();
         sessionIdRef.current = activeSessionId;
+        // 重建 = 新 handle = 新 rev 轴：清游标
+        queueRevRef.current = 0;
         if (result?.recreated && sessionPropIdRef.current === activeSessionId) {
           maintainEventsConnected(activeSessionId);
         }
@@ -3826,7 +3871,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (agentState.state.thinkingLevel !== undefined) setThinkingLevel((agentState.state.thinkingLevel as ThinkingLevelOption) ?? "auto");
           if (agentState.state.extensionStatuses !== undefined) setExtensionStatuses(agentState.state.extensionStatuses ?? []);
           if (agentState.state.extensionWidgets !== undefined) setExtensionWidgets(agentState.state.extensionWidgets ?? []);
-          if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
+          if (agentState.state.queuedMessages !== undefined) applyQueuedSnapshot(agentState.state.queuedMessages);
           if (agentState.state.pendingRecovery !== undefined) setPendingRecovery(agentState.state.pendingRecovery ?? []);
           if (agentState.state.queueTrash !== undefined) setQueueTrash(agentState.state.queueTrash ?? []);
         }
