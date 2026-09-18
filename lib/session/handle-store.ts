@@ -134,6 +134,22 @@ export function putHandleAt(key: string, handle: SessionHandle): void {
   store().set(key, handle);
 }
 
+/**
+ * A03/B4：后端会话 id 换绑——omp 等进程生成 id 的后端，真实落盘 id 读回后为 handle
+ * 增挂别名键（旧占位键保留：draft 行与既有引用继续可用）。
+ * 幂等：newId 已挂在同一 handle → true；被其它 handle 占用 → false（防覆盖）；
+ * oldId 不可用 → false。core 经 ctx.core.rebindSessionBackend 暴露给扩展。
+ */
+export function rebindHandle(oldId: string, newId: string): boolean {
+  if (!oldId || !newId || oldId === newId) return false;
+  const h = getHandle(oldId);
+  if (!h) return false;
+  if (getHandle(newId) === h) return true; // 已换绑过
+  if (getHandle(newId)) return false;      // newId 被其它 handle 占用 → 防覆盖
+  putHandleAt(newId, h);
+  return true;
+}
+
 /** All live handles as [key, handle] pairs (identity scans). */
 export function listAllHandles(): Array<[string, SessionHandle]> {
   return [...store()];

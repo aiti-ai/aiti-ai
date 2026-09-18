@@ -12,6 +12,7 @@ import { getRunningRpcSessionIds, getAliveRpcSessionIds, stopIdleRpcSession } fr
 import { allowFileRoot, getAllowedFileRoots, isFilePathAllowed } from "../file-access.ts";
 import { readModelsConfig, writeModelsConfig } from "../models-config-store.ts";
 import { readLiveHandleSession } from "./core-live-session.ts";
+import { getHandle, putHandleAt, rebindHandle } from "../session/handle-store.ts";
 import type { ExtCoreApi } from "./types.ts";
 
 export { readLiveHandleSession };
@@ -53,6 +54,19 @@ export function makeExtCore(): ExtCoreApi {
     },
     async writeModelsConfig(data) {
       writeModelsConfig(data);
+    },
+    rebindSessionBackend(oldId: string, newId: string): boolean {
+      return rebindHandle(oldId, newId);
+    },
+    rebindSessionBackend(oldId: string, newId: string): boolean {
+      // A03/B4：真实 id 读回后为 handle 增挂别名键（旧占位键保留——draft 行与既有引用
+      // 继续可用）。newId 已被其它 handle 占用 → 拒绝（防覆盖）；oldId 不可用 → false。
+      if (!oldId || !newId || oldId === newId) return false;
+      const h = getHandle(oldId);
+      if (!h) return false;
+      if (getHandle(newId)) return false;
+      putHandleAt(newId, h);
+      return true;
     },
     fileAccess: {
       allowRoot(root) {

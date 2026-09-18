@@ -156,6 +156,10 @@ export interface ExtCoreApi {
   readModelsConfig(): Promise<Record<string, unknown>>;
   /** 写 models.json（规范化 + invalidateModelsCache 缓存失效，改动立即生效）。 */
   writeModelsConfig(data: Record<string, unknown>): Promise<void>;
+  /** A03/B4：后端会话 id 换绑（omp 等进程生成 id 的后端——真实 id 读回后为 handle
+   *  增挂别名键；旧占位键保留，draft 行/既有引用继续可用）。newId 已被占用或
+   *  oldId 不可用 → false（幂等安全）。 */
+  rebindSessionBackend?(oldId: string, newId: string): boolean;
   /** File-access helpers bound to pi-web's allowed-roots security (session cwds etc.). */
   fileAccess: {
     allowRoot(root: string): void;
