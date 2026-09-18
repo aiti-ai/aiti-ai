@@ -55,7 +55,12 @@ function replaceLocationIfChanged(
     // 先还原成浏览器实际地址（/dev 部署下 "/" ↔ 当前 "/dev/" 应判等）。
     const targetPath = queryOnly ? window.location.pathname : withBasePath(rawPath);
     const samePath = normalize(window.location.pathname) === normalize(targetPath);
-    const sameQuery = !targetQuery || `?${targetQuery}` === window.location.search;
+    // 目标 href 不带查询串 = 主动清参数（如「清掉 ?session= 回首页」）：仅当
+    // 当前地址确实无查询串才可跳过。曾写成 `!targetQuery ||` 恒真——所有清参
+    // 替换被静默吞掉，地址栏残留旧 ?session=，刷新永远恢复那个旧会话。
+    const sameQuery = targetQuery
+      ? `?${targetQuery}` === window.location.search
+      : !window.location.search;
     if (samePath && sameQuery) return;
   }
   router.replace(href, options);
@@ -1002,9 +1007,25 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
   // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
   const suppressCwdBumpRef = useRef(false);
+  // The session restored from ?session= is the authoritative pick for this page
+  // load: the last-open memory (shared localStorage, possibly rewritten by
+  // another window) must not yank it afterwards. The fallback sidebar → dock
+  // takeover handoff re-notifies the same cwd, and an identity mismatch in
+  // handleCwdChange misreads that as a project switch, firing
+  // restoreWorkspaceContext — on refresh this surfaced as "every session URL
+  // lands on the same fixed session". Cleared by a real user session pick or a
+  // genuine cross-project switch (different cwd).
+  const urlRestoredSessionRef = useRef<{ id: string; cwd: string | null } | null>(
+    initialSessionId ? { id: initialSessionId, cwd: null } : null,
+  );
   // Guards the async workspace restore so a slow response from an earlier
   // switch cannot resurrect a session into a project the user already left.
   const workspaceRestoreTokenRef = useRef(0);
+  // Latest pending ?session= id for the 404 cleanup inside handleOpenSession:
+  // some restore callers race past the initialRestore flag, so the failed id
+  // matching the URL param is the reliable signal.
+  const initialSessionIdRef = useRef<string | null>(initialSessionId);
+  initialSessionIdRef.current = initialSessionId;
 
   const invalidateWorkspaceRestore = useCallback(() => {
     workspaceRestoreTokenRef.current += 1;
@@ -1104,6 +1125,12 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // is looked up against the live list so a deleted or drifted session falls
   // back to the default welcome page instead of erroring.
   const restoreWorkspaceContext = useCallback((projectKey: string, cwd: string) => {
+    // While a ?session= restore is authoritative for this page load, the
+    // last-open memory must not override it: that memory is shared across
+    // windows and usually points at whichever session another window has
+    // open — overriding it is exactly the "refresh ignores my session URL"
+    // bug. A genuine user switch clears the guard first (see handleCwdChange).
+    if (urlRestoredSessionRef.current) return;
     const token = ++workspaceRestoreTokenRef.current;
     const lastOpenSessionId = getLastOpenSession(projectKey);
     if (!lastOpenSessionId) return;
@@ -1212,15 +1239,36 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         setActiveFileTabId(null);
         setRightPanelOpen(false);
       }
+      // A genuinely different cwd is a real user project move: from here on
+      // the last-open restore of the new workspace applies again.
+      if (urlRestoredSessionRef.current?.cwd && cwd !== urlRestoredSessionRef.current.cwd) {
+        urlRestoredSessionRef.current = null;
+      }
       // Restore the workspace we switched to: its last open session, or keep
       // the default welcome page when none is remembered.
       restoreWorkspaceContext(newProject, cwd);
     }
-    replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
-  }, [activeCwd, activeFileTabId, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
+    // Do not erase a pending ?session= param here: the takeover/fallback
+    // sidebar handoff can route a cold-start cwd notification through this
+    // handler before the URL restore consumed the id (store channels arrive
+    // in batches). Rewriting to "/" at that point destroys the restore input
+    // and refresh silently ignores the session URL. Once restore is resolved,
+    // clear only a param that no longer matches the selected session — the
+    // param of the session the user is actually viewing must survive so a
+    // later refresh restores the same conversation.
+    if (initialSessionRestored || !initialSessionId) {
+      const urlSession = new URLSearchParams(window.location.search).get("session");
+      if (!urlSession || urlSession !== selectedSession?.id) {
+        replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
+      }
+    }
+  }, [activeCwd, activeFileTabId, initialSessionId, initialSessionRestored, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number) => {
     sessionSourceRef.current = isRestore ? "url" : "select";
+    // URL restore wins for this page load; a user pick hands authority back
+    // to explicit selections (last-open restores apply again afterwards).
+    urlRestoredSessionRef.current = isRestore ? { id: session.id, cwd: session.cwd } : null;
     setNewSessionWorkspace(null); // 选择已有会话 → 新会话页的暂存目标作废
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
     // Advance the project identity to the selected session's project BEFORE the
@@ -1425,15 +1473,26 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       if (!response.ok || !data.info) {
         // 初始 ?session= 恢复指向已删除会话（404）：清失效的 last-open 记录 +
         // 立即清 URL。正常路径的 URL 由「默认项目选择 → handleCwdChange → replace」
-        // 链清理；这是失败路径的兜底（不等下一次列表更新）。仅 initialRestore
-        // 上下文生效——pi-web:open-session 事件等其它调用方不受影响。
-        if (response.status === 404 && options?.initialRestore) {
+        // 链清理；这是失败路径的兜底（不等下一次列表更新）。判定用「请求 id ===
+        // 待恢复 URL id」而非仅 initialRestore 标记——个别恢复调用方会丢标记，
+        // 而清错的代价（把别人的 URL 会话参数抹掉）远大于漏清。
+        if (response.status === 404 && (options?.initialRestore || sessionId === initialSessionIdRef.current)) {
           clearLastOpenSessionById(sessionId);
+          // Restore failed: release the authority guard so the normal
+          // last-open behavior applies for the rest of this page load.
+          urlRestoredSessionRef.current = null;
           replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
         }
         throw new Error(data.error ?? `HTTP ${response.status}`);
       }
       handleSelectSession(data.info);
+      // The by-id fallback of the initial ?session= restore (id not in the
+      // sidebar list) is part of the URL restore: anchor the guard AFTER
+      // handleSelectSession — it selects with isRestore=false and would
+      // otherwise clear the anchor set here.
+      if (options?.initialRestore) {
+        urlRestoredSessionRef.current = { id: data.info.id, cwd: data.info.cwd };
+      }
       return true;
     } catch (error) {
       console.error("[pi-web] failed to open session:", error instanceof Error ? error.message : error);
