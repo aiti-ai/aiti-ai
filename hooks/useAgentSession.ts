@@ -70,6 +70,31 @@ interface LastAssistantTextResponse {
   text?: string;
 }
 
+/** 任务条目（agent working plan 只读镜像；zcode TodoWrite wire 同构，task_update/get_state 共用）。 */
+type SessionTask = {
+  content: string;
+  status: "pending" | "in_progress" | "completed";
+  priority?: string;
+};
+
+/** task_update 载荷防御归一（后端不可信面：非法条目丢弃）。 */
+function normalizeTasks(raw: unknown): SessionTask[] {
+  if (!Array.isArray(raw)) return [];
+  const out: SessionTask[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const o = item as Record<string, unknown>;
+    if (typeof o.content !== "string" || !o.content) continue;
+    if (o.status !== "pending" && o.status !== "in_progress" && o.status !== "completed") continue;
+    out.push({
+      content: o.content,
+      status: o.status,
+      ...(typeof o.priority === "string" && o.priority ? { priority: o.priority } : {}),
+    });
+  }
+  return out;
+}
+
 type AgentStateResponse = {
   model?: { provider: string; id: string };
   sessionId?: string;
@@ -88,6 +113,8 @@ type AgentStateResponse = {
   extensionStatuses?: ExtensionStatusItem[];
   extensionWidgets?: ExtensionWidgetItem[];
   queuedMessages?: { steering?: string[]; followUp?: string[] } | null;
+  /** 任务列表快照（task_update 事件同源；get_state 真实化，页面刷新后种子恢复） */
+  tasks?: SessionTask[] | null;
   pendingRecovery?: PendingRecoveryItem[] | null;
   queueTrash?: QueueTrashItem[] | null;
   /** 后端会话能力声明（capability-aware 控件渲染） */
@@ -638,6 +665,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
+  /** 任务列表（agent working plan；task_update 事件 + get_state 种子，会话切换随 liveState 复位）。 */
+  const [sessionTasks, setSessionTasks] = useState<SessionTask[]>([]);
   /** 后端会话能力（从 state 端点透传；本地会话无此状态） */
   const [sessionCapabilities, setSessionCapabilities] = useState<Record<string, boolean> | null>(null);
   /** 后端会话最近一轮用量（get_usage 能力时从 API 拉取） */
@@ -1003,10 +1032,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
           if (liveState.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(liveState.queuedMessages));
+          if (liveState.tasks !== undefined) setSessionTasks(normalizeTasks(liveState.tasks));
           if (liveState.pendingRecovery !== undefined) setPendingRecovery(liveState.pendingRecovery ?? []);
           if (liveState.queueTrash !== undefined) setQueueTrash(liveState.queueTrash ?? []);
         } else if (!agentState.running) {
           setQueuedMessages({ steering: [], followUp: [] });
+          // 休眠兜底：state 路由经扩展 sessionDormantState 服务带回最近任务快照（无则空）
+          setSessionTasks(normalizeTasks(agentState.state?.tasks));
           setQueueTrash([]);
         }
         return agentState;
@@ -2064,6 +2096,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             followUpHasImages: alignQueueAttachmentFlags(prev.followUpHasImages, followUp.length),
           };
         });
+        break;
+      case "task_update":
+        setSessionTasks(normalizeTasks(event.todos));
         break;
       case "auto_retry_start":
         setRetryInfo({ attempt: event.attempt as number, maxAttempts: event.maxAttempts as number, errorMessage: event.errorMessage as string | undefined });
@@ -4046,7 +4081,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     followPaused,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, currentModel, displayModel, modelSwitching, sessionStats,
-    slashCommands, slashCommandsLoading, queuedMessages,
+    slashCommands, slashCommandsLoading, queuedMessages, sessionTasks,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport,
     queueTrash, restoreQueueItem, purgeQueueTrash, trashComposerInput, restoreComposerTrash,
     moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage,

@@ -390,6 +390,8 @@ export const enLocale: LocalePlugin = {
     "chat.extensionWidgetLines": "{count} lines",
     "chat.close": "Close",
     "chat.queued": "Queued · {count}",
+    "chat.tasksProgress": "Tasks · {done}/{total}",
+    "chat.tasksToggle": "Expand/collapse task list",
     "chat.recall": "Edit",
     "chat.recallTitle": "Remove all queued messages and put them back into the input box for editing",
     "chat.queueHasImages": "Queued message with image attachment(s)",

@@ -40,6 +40,7 @@ import {
 import type { QueuePanelActions, QueuePanelProps } from "@/lib/composer/queue-api";
 import { getQueuePanelController } from "@/lib/composer/queue-api";
 import { FolderIcon, getFileIcon } from "./FileIcons";
+import { TaskListPanel, type SessionTask } from "./TaskListPanel";
 import { useIsMobile, useIsCompact, useIsCoarsePointer } from "@/hooks/useIsMobile";
 import { useI18n } from "@/hooks/useI18n";
 import { useChatAppearance } from "@/hooks/useChatAppearance";
@@ -183,6 +184,8 @@ interface Props {
   thinkingLevelMap?: Record<string, string | null> | null;
   retryInfo?: { attempt: number; maxAttempts: number; errorMessage?: string } | null;
   queuedMessages?: QueuedMessages | null;
+  /** 任务列表（agent working plan 只读镜像；空数组不渲染，见 TaskListPanel） */
+  tasks?: SessionTask[] | null;
   inputHistory?: string[];
   onRecallQueue?: () => void;
   /** Fetch full queue entries (live + recovery) for export. */
@@ -1230,7 +1233,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionCapabilities, onSwitchPermissionMode, permissionMode,
   contextPercent, contextUsage, onSessionStatsPanelOpen, onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,
   thinkingLevel, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
-  retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
+  retryInfo, queuedMessages, tasks, inputHistory = [], onRecallQueue,
   onExportQueue, onImportQueue, onStageImport, onMoveQueue, onRecallOne, onRequeueAt, onRemoveQueueItem,
   queueTrash, onRestoreQueueItem, onPurgeQueueTrash, onTrashComposerInput, onRestoreComposerTrash,
   slashCommands, slashCommandsLoading, onLoadSlashCommands,
@@ -3535,6 +3538,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
             </span>
           </div>
         )}
+        {/* 任务列表（agent working plan 只读镜像；queuePanel 同区，空列表不渲染；
+            bottomMode 展开态同款可见性——收起态连队列一起隐藏时不单独占位） */}
+        {effectiveBottomMode === "full" && tasks && tasks.length > 0 && <TaskListPanel tasks={tasks} />}
         {/* 队列面板仅在 bottomMode 展开态渲染（queueHidden/minimal 时连同扩展面板一起隐藏，
             与 core bottomMode 三态语义一致——计划 §4-④ 留核）。外层 ref 容器承载
             v4 队列 pulse 动画（queue-banner-pulse，globals.css）。 */}

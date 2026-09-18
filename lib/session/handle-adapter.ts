@@ -320,6 +320,8 @@ export class HandleSessionAdapter implements WrappedSessionLike {
           queuedMessages: h.queueManage
             ? await h.queueManage({ action: "list" })
             : { steering: [], followUp: [] },
+          // 任务列表快照（task_update 事件的同源权威面：页面刷新后由 get_state 种子恢复）
+          tasks: h.taskList ? (await h.taskList()).todos : [],
           systemPrompt: "",
           thinkingLevel: "off",
         };

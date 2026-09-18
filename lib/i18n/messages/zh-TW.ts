@@ -360,6 +360,8 @@ export const zhTWLocale: LocalePlugin = {
     "chat.extensionWidgetLines": "{count} 行",
     "chat.close": "關閉",
     "chat.queued": "已排入佇列 · {count}",
+    "chat.tasksProgress": "任務 · {done}/{total}",
+    "chat.tasksToggle": "展開/收合任務清單",
     "chat.recall": "移回輸入框",
     "chat.recallTitle": "將所有佇列中的訊息移回輸入框以便編輯",
     "chat.queueHasImages": "佇列訊息帶圖片附件",

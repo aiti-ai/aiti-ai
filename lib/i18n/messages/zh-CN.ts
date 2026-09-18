@@ -391,6 +391,8 @@ export const zhCNLocale: LocalePlugin = {
     "chat.extensionWidgetLines": "{count} 行",
     "chat.close": "关闭",
     "chat.queued": "已排队 · {count}",
+    "chat.tasksProgress": "任务 · {done}/{total}",
+    "chat.tasksToggle": "展开/收起任务列表",
     "chat.recall": "编辑",
     "chat.recallTitle": "移除所有排队消息并将其放回输入框编辑",
     "chat.queueHasImages": "排队消息带图片附件",

@@ -476,6 +476,14 @@ export interface SessionHandle {
     removed?: { id: string; kind: string; text: string; hasImages: boolean; queuedAt: number };
   }>;
   /**
+   * 任务列表快照（agent 会话 working plan 只读镜像；get_state 真实化数据源，
+   * 方法存在性探测，同 queueManage 范式。协议无写方法 → 无操作原语）。
+   * @capability taskList
+   */
+  taskList?(): Promise<{
+    todos: Array<{ content: string; status: "pending" | "in_progress" | "completed"; priority?: string }>;
+  }>;
+  /**
    * 响应一个待决的工具授权请求（事件流里 type="permission_request" 的 request）。
    * @capability respondPermission
    */

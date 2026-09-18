@@ -397,7 +397,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     followPaused,
     retryInfo, contextUsage, forkingEntryId,
     isCompacting, compactError, compactResult, compactQueued, cancelCompactQueue, modelSwitchPending, displayModel: displayModelValue, sessionStats, modelSwitching,
-    slashCommands, slashCommandsLoading, queuedMessages,
+    slashCommands, slashCommandsLoading, queuedMessages, sessionTasks,
     pendingRecovery, recoveryIsImport, resolveRecovery, exportQueueData, importQueueData, stageImport, moveQueuedMessage, convertQueuedMessage, recallQueuedMessage, requeueAt, removeQueuedMessage, queueTrash, restoreQueueItem, purgeQueueTrash, trashComposerInput, restoreComposerTrash,
     notices, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput, setNoticePaused,
     switchPermissionMode, sessionCapabilities, backendSource, backendUsage,
@@ -1272,6 +1272,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       thinkingLevelMap={currentThinkingLevelMap}
       retryInfo={retryInfo}
       queuedMessages={queuedMessages}
+      tasks={sessionTasks}
       inputHistory={inputHistory}
       onRecallQueue={handleRecallQueue}
       onExportQueue={exportQueueData}
