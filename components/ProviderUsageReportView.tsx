@@ -12,12 +12,14 @@ export type { UsageBucket, UsageMetric, UsageReport } from "@/lib/provider-usage
 
 type Translate = (key: string, params?: Record<string, string | number>) => string;
 
+/** 额度色阶：与消息区工具名同色的绿色（#16a34a，非 #4ade80 亮绿——用户反馈刺眼）、
+ *  amber-600 / red-500 同族深色；不变的是“颜色只在告警时出现”的语义。 */
 export function severityColor(remaining: number | undefined, limit: number | undefined): string {
   if (remaining === undefined || limit === undefined || limit <= 0) return "var(--text-muted)";
   const ratio = remaining / limit;
-  if (ratio >= 0.5) return "#4ade80";
-  if (ratio >= 0.2) return "#fbbf24";
-  return "#f87171";
+  if (ratio >= 0.5) return "#16a34a";
+  if (ratio >= 0.2) return "#d97706";
+  return "#ef4444";
 }
 
 /** True when this window currently blocks usage (provider said so, or zero left). */
@@ -62,7 +64,7 @@ export function ProviderUsageReportView({ report }: { report: UsageReport }) {
               ? Math.min(100, Math.max(0, (bucket.remaining / bucket.limit) * 100))
               : undefined;
             const alarming = isBucketAlarming(bucket);
-            const color = alarming ? "#f87171" : severityColor(bucket.remaining, bucket.limit);
+            const color = alarming ? "#ef4444" : severityColor(bucket.remaining, bucket.limit);
             return (
               <div key={bucket.id} style={{ display: "grid", gridTemplateColumns: "minmax(64px, auto) minmax(70px, 110px) minmax(0, 1fr)", columnGap: 10, alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bucket.label}</span>

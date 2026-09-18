@@ -91,10 +91,10 @@ export function ProviderUsagePanel({ currentProviderId }: { currentProviderId?: 
           disabled={querying}
           title={t(querying ? "providerUsage.refreshing" : "providerUsage.refresh")}
           aria-label={t(querying ? "providerUsage.refreshing" : "providerUsage.refresh")}
-          style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 24, padding: 0, background: "none", border: "none", color: refreshDone ? "#4ade80" : "var(--text-dim)", cursor: "pointer", borderRadius: 5, transition: "color 0.3s" }}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 24, padding: 0, background: "none", border: "none", color: refreshDone ? "#16a34a" : "var(--text-dim)", cursor: "pointer", borderRadius: 5, transition: "color 0.3s" }}
         >
           {refreshDone ? (
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><polyline points="20 6 9 17 4 12" /></svg>
           ) : (
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={querying ? { animation: "spin 0.8s linear infinite" } : undefined} aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg>
           )}
@@ -120,7 +120,7 @@ function ProviderRow({ entry, isCurrent }: { entry: OverviewEntry; isCurrent: bo
       <summary style={{ display: "grid", gridTemplateColumns: "minmax(80px, 180px) minmax(0, 1fr)", columnGap: 10, alignItems: "center", cursor: "pointer", listStyle: "none", fontSize: 11.5 }}>
         <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {isCurrent ? (
-            <span style={{ width: 6, height: 6, borderRadius: 3, background: "#4ade80", flexShrink: 0, alignSelf: "center" }} />
+            <span style={{ width: 6, height: 6, borderRadius: 3, background: "#16a34a", flexShrink: 0, alignSelf: "center" }} />
           ) : (
             <span aria-hidden="true" style={{ color: "var(--text-dim)", fontSize: 9 }}>▸</span>
           )}
@@ -128,7 +128,7 @@ function ProviderRow({ entry, isCurrent }: { entry: OverviewEntry; isCurrent: bo
           {alarming && <ExhaustedBadge label={t("providerUsage.exhausted")} />}
           {isCurrent && <span style={{ fontSize: 10, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{t("providerUsage.currentSession")}</span>}
         </span>
-        <span style={{ color: alarming ? "#f87171" : worst ? severityColor(worst.remaining, worst.limit) : "var(--text-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span style={{ color: alarming ? "#ef4444" : worst ? severityColor(worst.remaining, worst.limit) : "var(--text-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {worst ? `${worst.label} ${formatBucket(worst, t)}` : fallbackMetric ? formatMetric(fallbackMetric) : ""}
         </span>
       </summary>
