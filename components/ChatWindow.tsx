@@ -392,7 +392,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
   const {
     loading, error, messages, activeToolResults, entryIds, historyCursor, hasEarlierMessages, streamState,
-    agentRunning, bashRunning, pendingBash, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
+    agentRunning, bashRunning, pendingBash, aborting, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
     modelsRefreshing, modelsRefreshable, refreshModels,
     followPaused,
     retryInfo, contextUsage, forkingEntryId,
@@ -426,12 +426,12 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   // 汇率：悬浮条真的有 USD cost 要显示时才订阅/拉取（用到才拉 /api/fx）。
   useMoneySynced((backendUsage?.costUsd ?? 0) > 0);
 
-  // ── Stop 等待状态：点击后立即反馈（zcode session/stop 曾最长挂 23s，后端已改 fire-and-forget，
-  // 但仍要等 agent_settled 才收口）——按钮显示「停止中」+ 旋转沙漏，sessionBusy 结束自动复位。 ──
-  const [aborting, setAborting] = useState(false);
+  // ── Stop 等待状态：点击后立即反馈（zcode session/stop 曾最长挂 23s，后端已改 fire-and-forget）。
+  // 「停止中」由 useAgentSession 持有并在当前 turn 收口（agent_end / 完全 settle / bash 停止）时
+  // 自动复位——不复位绑定 agentRunning：abort 后队列续轮会立即重新置 running（停止只停当前
+  // 消息、队列下一条继续跑），若等「完全空闲」才复位会一直卡「停止中」（2026-09 实测）。 ──
   const handleAbortRequest = useCallback(() => {
-    setAborting(true);
-    void handleAbort(); // handleAbort 内部已吞错记日志，不抛
+    void handleAbort(); // handleAbort 内部已置 aborting=true 且吞错记日志，不抛
   }, [handleAbort]);
 
   // ── capability-aware 控件门控 ──────────────────────────────────────
@@ -468,11 +468,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     return () => onCompactControlsRegister?.(null);
   }, [onCompactControlsRegister, compactControls]);
   const sessionBusy = agentRunning || bashRunning;
-  // 停止中状态复位：agent/bash 完全停下（agent_settled 到达）才取消等待态；
-  // 若从未运行（sessionBusy 初始即 false）或已复位则幂等无害。
-  useEffect(() => {
-    if (!sessionBusy) setAborting(false);
-  }, [sessionBusy]);
+  // 停止中状态复位已下沉到 useAgentSession（agent_end / settle / bash 收口时复位），
+  // 见 handleAbort 与各收口点——此处不再依赖 sessionBusy（队列续轮时它恒为 true）。
 
   // ── 已停止会话的手动刷新（2026-09-15）：消息流最底部一行低调「刷新」入口。
   // 场景：会话已停止但可能被外部推进（zcode 桌面端/CLI 在 pi-web 之外续写同一

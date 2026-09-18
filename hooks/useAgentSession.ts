@@ -576,6 +576,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
   const [agentRunning, setAgentRunning] = useState(false);
   const [bashRunning, setBashRunning] = useState(false);
+  /** 「停止中」等待态：点击停止后置位，当前 turn 真正收口（agent_end / 完全 settle / bash 停止）即复位。
+   *  复位不绑定 agentRunning——abort 后队列续轮会让 agentRunning 立即重新置 true，
+   *  若依赖「完全空闲」复位会卡死「停止中」（2026-09 实测：停止后一直停止中不恢复）。 */
+  const [aborting, setAborting] = useState(false);
   const [pendingBash, setPendingBash] = useState<{ command: string; excludeFromContext: boolean } | null>(null);
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
   const [modelList, setModelList] = useState<ModelEntry[]>([]);
@@ -1457,6 +1461,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const settleUiStage = useCallback(() => {
     const wasRunning = agentRunningRef.current;
     agentRunningRef.current = false;
+    // 完全收口（agent_settled / prompt_done / session_backend_dead / 重连判闲纠正）时，
+    // 「停止中」等待态一并复位——即使紧接着队列续轮重新置 running，也不该再显示停止中。
+    setAborting(false);
     // 收口即清读秒起点：避免下轮 send 的 ??= 继续用上轮起点（并覆盖无 agent_settled 的
     // 收口路径）——下轮会在消息时间戳/发送时刻重新起算。
     runStartedAtRef.current = null;
@@ -1611,6 +1618,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (bashRecoveryIdRef.current !== recoveryId || sessionIdRef.current !== sid) return;
         bashRunningRef.current = false;
         setBashRunning(false);
+        setAborting(false);
         setPendingBash(null);
         return;
       } catch {
@@ -1829,6 +1837,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       }
       case "agent_end":
+        // 当前 turn 结束（自然结束或用户停止）即复位「停止中」——不等待 agent 完全空闲。
+        // abort 后队列续轮会紧接着发 agent_start（agentRunning 重新置 true），若等
+        // sessionBusy 变 false 才复位，会卡「停止中」直到队列跑完（bug 根因）。
+        setAborting(false);
         // One logical prompt can emit multiple agent_end events before retrying,
         // compacting, or continuing messages queued by extension handlers.
         // Keep the stream open until prompt_done/agent_settled and the idle grace.
@@ -2588,6 +2600,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       bashRunningRef.current = false;
       setPendingBash(null);
       setBashRunning(false);
+      // bash 结束（含被 abort_bash 中止）后，若正处于「停止中」等待态则复位。
+      setAborting(false);
     }
   }, [addNotice, composerDraftKey, ensureNewSession, loadSession, promoteNewSession, restoreSubmission, session]);
   executeBashRef.current = executeBash;
@@ -2595,6 +2609,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const handleAbort = useCallback(async () => {
     const sid = sessionIdRef.current;
     if (!sid) return;
+    // 点击即进入「停止中」等待态（按钮转沙漏 + 禁用，防重复点击）。
+    setAborting(true);
     if (bashRunningRef.current) {
       try {
         await sendAgentCommand(sid, { type: "abort_bash" });
@@ -4109,6 +4125,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     reloadCurrentSession,
     scrollToBottom, scrollUserMsgToTop, scrollToMessage,
     dispatch, setAgentRunning, setForkingEntryId,
+    aborting,
     bashRunning, pendingBash,
     // Subscriptions
     handleAgentEventRef,

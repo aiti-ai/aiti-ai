@@ -844,3 +844,59 @@ test("manual refresh cuts the stale SSE stream, reloads with ?fresh=1 and reconn
   assert.match(reloadSource, /await loadSession\(sid, false, true, true\);/);
   assert.match(reloadSource, /eventConnectionRef\.current\?\.maintain\(sid\);/);
 });
+
+test("停止后队列续轮不卡「停止中」：aborting 提升到 hook 并按当前 turn 收口复位", () => {
+  // 根因（2026-09 实测）：点停止后 aborting 依赖 sessionBusy（agentRunning||bashRunning）变 false 才复位，
+  // 但 abort 只停当前 turn，queue 下一条立即 agent_start 续跑 → agentRunning 一直 true → UI 永卡「停止中」，
+  // 刷新后可见当前消息已停止、agent 在处理 queue 下一条。
+  // 修复：aborting 移入 useAgentSession，复位绑定「当前 turn 收口」（agent_end / settleUiStage / bash 收口），
+  // 而非「agent 完全空闲」。
+  assert.match(source, /const \[aborting, setAborting\] = useState\(false\);/);
+  // hook 返回值必须暴露 aborting（ChatWindow 消费同名 prop）
+  const retSource = source.slice(source.indexOf("    dispatch, setAgentRunning, setForkingEntryId,"));
+  assert.match(retSource, /aborting,/);
+
+  // 点击停止 → handleAbort 置位（bash 与 agent 两条路径之前）
+  const abortSource = source.slice(
+    source.indexOf("  const handleAbort = useCallback"),
+    source.indexOf("  const handleFork = useCallback"),
+  );
+  assert.ok(
+    abortSource.indexOf("setAborting(true);") < abortSource.indexOf('if (bashRunningRef.current)'),
+    "setAborting(true) 必须先于 bash/agent 分支（两种停止都进入等待态）",
+  );
+
+  // 复位点①：agent_end（当前 turn 结束，即使队列续轮紧随其后）
+  const agentEndSource = source.slice(
+    source.indexOf('case "agent_end"'),
+    source.indexOf('case "agent_settled"'),
+  );
+  assert.match(agentEndSource, /setAborting\(false\);/);
+
+  // 复位点②：settleUiStage（agent_settled / prompt_done / session_backend_dead / 重连判闲纠正共路）
+  const settleSource = source.slice(
+    source.indexOf("  const settleUiStage = useCallback"),
+    source.indexOf("  }, [dispatchStream]);"),
+  );
+  assert.match(settleSource, /setAborting\(false\);/);
+
+  // 复位点③：bash 收口（executeBash finally 与 waitForBashSettlement 轮询两路）
+  const bashSettlementSource = source.slice(
+    source.indexOf("  const waitForBashSettlement = useCallback"),
+    source.indexOf("  // Reconcile client streaming state"),
+  );
+  assert.match(bashSettlementSource, /setBashRunning\(false\);\s*setAborting\(false\);/);
+  const executeBashSource = source.slice(
+    source.indexOf("  const executeBash = useCallback"),
+    source.indexOf("  executeBashRef.current = executeBash;"),
+  );
+  assert.match(executeBashSource, /setBashRunning\(false\);\s*\/\/ bash 结束（含被 abort_bash 中止）/);
+
+  // ChatWindow 不再持有本地 aborting state / sessionBusy 复位 effect（旧实现）
+  assert.doesNotMatch(chatWindowSource, /const \[aborting, setAborting\] = useState\(false\);/);
+  assert.doesNotMatch(chatWindowSource, /if \(!sessionBusy\) setAborting\(false\);/);
+  // ChatWindow 从 hook 解构 aborting 并透传 ChatInput
+  assert.match(chatWindowSource, /agentRunning, bashRunning, pendingBash, aborting,/);
+  assert.match(chatWindowSource, /aborting=\{aborting\}/);
+  assert.doesNotMatch(chatWindowSource, /setAborting\(true\);/);
+});
