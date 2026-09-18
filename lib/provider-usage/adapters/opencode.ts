@@ -2,32 +2,26 @@ import { registerJsonAdapter } from "../declarative";
 import { clamp, epochSeconds, nonnegative, record } from "../helpers";
 import type { UsageBucket, UsageBucketState, UsageReport } from "../types";
 
-// OpenCode plan windows (rolling/weekly/monthly): {status, percent, resetsAt}.
-// One endpoint serves opencode / opencode-go / opencode-zen — which plan a key
-// can see is decided by its subscription (403 EntitlementError otherwise).
-// All three ids are registered; the shared origin is exact-id only.
-// NOTE: this endpoint is the OpenCode **Go** plan quota API (without a Go
-// subscription it answers 403). Zen is a different product with no public usage
-// endpoint, so a Zen id that has a Go-entitled key will report Go-plan windows
-// under its own name; the OpenCode Go provider stays the canonical row.
+// OpenCode Go plan windows (rolling/weekly/monthly): {status, percent, resetsAt}.
+// `/zen/go/v1/usage` is the only usage endpoint OpenCode exposes to API keys
+// (it reports the Go plan; 403 EntitlementError without a Go subscription).
+// Zen (pay-per-use balance) has no API at all — its balance lives in the web
+// console behind a login session — so `opencode` / `opencode-zen` ids are
+// deliberately NOT adapted: no row beats attributing Go-plan windows to a Zen
+// provider. Only `opencode-go` is registered, exact-id (shared origin).
 
 const USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
 const WINDOW_LABELS: Record<string, string> = { rolling: "Rolling", weekly: "Weekly", monthly: "Monthly" };
+const DISPLAY_NAME = "OpenCode Go";
 
-for (const [id, name] of [
-  ["opencode", "OpenCode Zen"],
-  ["opencode-go", "OpenCode Go"],
-  ["opencode-zen", "OpenCode Zen"],
-] as const) {
-  registerJsonAdapter({
-    id,
-    displayName: name,
-    origins: ["https://opencode.ai"],
-    exactIdOnly: true,
-    url: () => USAGE_URL,
-    normalize: (payload, ctx) => normalizeOpenCode(payload, ctx, name),
-  });
-}
+registerJsonAdapter({
+  id: "opencode-go",
+  displayName: DISPLAY_NAME,
+  origins: ["https://opencode.ai"],
+  exactIdOnly: true,
+  url: () => USAGE_URL,
+  normalize: (payload, ctx) => normalizeOpenCode(payload, ctx, DISPLAY_NAME),
+});
 
 function normalizeOpenCode(payload: Record<string, unknown>, ctx: { providerId: UsageReport["providerId"] }, name: string): UsageReport {
   const usage = record(payload.usage) ?? record(record(payload.data)?.usage) ?? payload;
@@ -70,7 +64,7 @@ function normalizeOpenCode(payload: Record<string, unknown>, ctx: { providerId: 
       ...(resetsAt ? { resetsAt } : {}),
     });
   }
-  if (!buckets.length) throw new Error("OpenCode returned no usage data.");
+  if (!buckets.length) throw new Error("OpenCode Go returned no usage data.");
   const exhausted = buckets.some((bucket) => bucket.status === "rate-limited" || bucket.status === "exhausted");
   return {
     providerId: ctx.providerId,
