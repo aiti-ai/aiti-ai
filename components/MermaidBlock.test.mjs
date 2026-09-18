@@ -9,6 +9,7 @@ const jiti = createJiti(import.meta.url, {
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { MermaidBlock, CodeBlock, downloadMermaidSvg } = await jiti.import("./MermaidBlock.tsx");
+const { default: SyntaxHighlighterLite } = await jiti.import("./SyntaxHighlighterLite.tsx");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
 // Simple sequenceDiagram for testing
@@ -68,8 +69,26 @@ function renderCode(props) {
   );
 }
 
-test("CodeBlock highlights code when not streaming", () => {
+function renderLite(props) {
+  return renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(SyntaxHighlighterLite, props),
+    ),
+  );
+}
+test("CodeBlock renders code content when not streaming (highlighter lazy, P1.1)", () => {
   const html = renderCode({ code: "const x = 1;", lang: "javascript" });
+
+  // 高亮器经 React.lazy 拆出首屏 chunk；SSR（React 19）会解析 lazy 渲染完整高亮（token span），
+  // 客户端 chunk 未就绪时渲染 Suspense 纯文本兜底——两种形态剥标签后都必须含完整代码文本。
+  assert.match(html, /markdown-code-block/);
+  assert.match(html.replace(/<[^>]+>/g, ""), /const x = 1;/);
+});
+
+test("SyntaxHighlighterLite highlights code (lazy chunk target)", () => {
+  const html = renderLite({ language: "javascript", showLineNumbers: false, children: "const x = 1;" });
 
   assert.match(html, /class="token/);
   assert.match(html, /const/);

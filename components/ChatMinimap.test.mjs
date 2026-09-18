@@ -21,8 +21,10 @@ const jiti = createJiti(import.meta.url, {
   tsconfigPaths: true,
 });
 const { AssistantOutline } = await jiti.import("./ChatMinimap.tsx");
+const { loadMathPlugins } = await jiti.import("../lib/markdown.ts");
 
-test("renders math in headings without disabling heading navigation", () => {
+test("renders math in headings without disabling heading navigation", async () => {
+  await loadMathPlugins(); // P1.2：数学插件按需加载——测试先预载（hook 初始值读已加载快照）
   const html = renderToStaticMarkup(
     React.createElement(AssistantOutline, {
       markdown: String.raw`# Inline $f_{k,t+1}$

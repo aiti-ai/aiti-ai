@@ -6,6 +6,7 @@ import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
 import { buildTicketUrl } from "@/lib/file-tickets";
 import { markdownDataImageUrlTransform, markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
+import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
 import { useI18n } from "@/hooks/useI18n";
 import { useParagraphClickHandlers } from "./ExtSlots";
@@ -67,6 +68,12 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
   }, [normalizedMarkdown, isStreaming]);
   // 段落点击薄扩展点：有 handler 注册（扩展加载）时语义块可点击；无扩展时段落渲染普通元素。
   const handlers = useParagraphClickHandlers();
+  // 数学插件按需加载（P1.2）：正文无数学标记时不拉 katex/remark-math（首屏 -~300KB）
+  const { remark: activeRemarkPlugins, rehype: activeRehypePlugins } = useMathMarkdownPlugins(
+    renderText,
+    markdownRemarkPlugins,
+    markdownRehypePlugins,
+  );
   const hasClickHandlers = handlers.length > 0;
   // 可点击标签 = 扩展声明的并集（handler.tags；未声明默认 p/li/tr）。core 不硬编码业务——
   // 标题/引用块等新场景由扩展声明即生效，无需改 core。
@@ -191,8 +198,8 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>
       <MemoizedMarkdown
-        remarkPlugins={markdownRemarkPlugins}
-        rehypePlugins={markdownRehypePlugins}
+        remarkPlugins={activeRemarkPlugins}
+        rehypePlugins={activeRehypePlugins}
         // 两种分支都放行 data:image（img src → aiti-editor 查看器）；file: 仅在应用内文件处理器存在时放行
         urlTransform={onOpenFile ? markdownUrlTransform : markdownDataImageUrlTransform}
         components={components}

@@ -2,11 +2,11 @@
 
 import { memo, useEffect, useRef, useState, useCallback, useMemo, type RefObject } from "react";
 import ReactMarkdown, { type Options as ReactMarkdownOptions } from "react-markdown";
-import rehypeKatex from "rehype-katex";
 import {
   markdownPreviewRemarkPlugins,
   normalizeDisplayMath,
 } from "@/lib/markdown";
+import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
 import { isMessageGroupAnchor, splitFinalAssistantBlocks } from "@/lib/message-display";
 import type { AgentMessage, AssistantMessage, CustomMessage, TextContent, UserMessage } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
@@ -126,9 +126,8 @@ const previewRemarkPlugins = [
   ...(markdownPreviewRemarkPlugins ?? []),
   remarkPreviewOutline,
 ];
-const previewRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
-  [rehypeKatex, { throwOnError: false, strict: false }],
-];
+// 大纲预览的基础 rehype 为空（原仅 katex）——数学插件经 useMathMarkdownPlugins 按需追加（P1.2）
+const previewRehypePluginsBase: ReactMarkdownOptions["rehypePlugins"] = [];
 
 function getPreviewHeadingIndex(node: unknown): number | null {
   const properties = (node as { properties?: Record<string, unknown> } | undefined)?.properties;
@@ -148,12 +147,18 @@ export const AssistantOutline = memo(function AssistantOutline({
   onAnswerClick?: () => void;
 }) {
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(markdown), [markdown]);
+  // 数学插件按需加载（P1.2）——须在 `if (!markdown) return null` 之前（hooks 顺序）
+  const { remark: outlineRemarkPlugins, rehype: outlineRehypePlugins } = useMathMarkdownPlugins(
+    normalizedMarkdown,
+    previewRemarkPlugins,
+    previewRehypePluginsBase,
+  );
   if (!markdown) return null;
   return (
     <div className={styles.outline}>
       <ReactMarkdown
-        remarkPlugins={previewRemarkPlugins}
-        rehypePlugins={previewRehypePlugins}
+        remarkPlugins={outlineRemarkPlugins}
+        rehypePlugins={outlineRehypePlugins}
         components={{
           h1: ({ children, node }) => <PreviewHeading level={1} headingIndex={getPreviewHeadingIndex(node)} onClick={onHeadingClick}>{children}</PreviewHeading>,
           h2: ({ children, node }) => <PreviewHeading level={2} headingIndex={getPreviewHeadingIndex(node)} onClick={onHeadingClick}>{children}</PreviewHeading>,

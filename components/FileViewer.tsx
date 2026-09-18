@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useMemo, useSyncExternalStore, type CSSProperties, type MouseEvent } from "react";
+import { lazy, Suspense, useEffect, useState, useRef, useCallback, useMemo, useSyncExternalStore, type CSSProperties, type MouseEvent } from "react";
 import { apiUrl } from "@/lib/base-path";
 
-import {
-  Prism as SyntaxHighlighter,
-  createElement as renderSyntaxNode,
-  type SyntaxHighlighterProps,
-} from "react-syntax-highlighter";
+// 子路径直引（不走主入口）：主入口 re-export 全量 Prism（~1.24MB），CJS 兼容面不可摇树；
+// type-only import 会被编译擦除，无运行时代价。高亮器经 React.lazy 拆出首屏（P1.1）。
+import renderSyntaxNode from "react-syntax-highlighter/dist/esm/create-element";
+import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
+
+const SyntaxHighlighter = lazy(() => import("./SyntaxHighlighterLite"));
 import ReactMarkdown from "react-markdown";
 import { useTheme } from "@/hooks/useTheme";
 import {
@@ -26,6 +27,7 @@ import { getExtUiItems, subscribeExtUi, hasExtRender, type ExtUiItemRegistered }
 import { ExtItemBoundary, ensureExtSlotMaterialized } from "./ExtSlots";
 import { parseFrontmatter } from "@/lib/frontmatter";
 import { markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, markdownUrlTransform, normalizeDisplayMath } from "@/lib/markdown";
+import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
 import { CodeBlock, MermaidBlock } from "./MermaidBlock";
 import { FrontmatterCard } from "./FrontmatterCard";
 import { parseUnifiedPatch } from "@/lib/patch";
@@ -1526,6 +1528,12 @@ function TextFileViewer({
     () => (data?.language === "markdown" ? normalizeDisplayMath(data.content) : ""),
     [data],
   );
+  // md 预览的数学插件按需加载（P1.2）：无数学标记不拉 katex/remark-math
+  const { remark: previewRemarkPlugins, rehype: previewRehypePlugins } = useMathMarkdownPlugins(
+    markdownPreview,
+    markdownPreviewRemarkPlugins,
+    markdownPreviewRehypePlugins,
+  );
 
   const frontmatter = useMemo(
     () => (data?.language === "markdown" ? parseFrontmatter(data.content) : null),
@@ -1547,7 +1555,14 @@ function TextFileViewer({
   // unrelated re-renders (panel open/close, selection changes) reuse them as-is.
   const highlightedSource = useMemo(
     () => (
-      <SyntaxHighlighter
+      <Suspense
+        fallback={
+          <pre className="file-source-view" style={{ ...FILE_CODE_STYLE, margin: 0 }}>
+            {viewerContent}
+          </pre>
+        }
+      >
+        <SyntaxHighlighter
         className={wrapLines ? "file-source-view is-wrapped" : "file-source-view"}
         language={language === "text" ? "plaintext" : language}
         style={isDark ? vscDarkPlus : vs}
@@ -1578,7 +1593,8 @@ function TextFileViewer({
         wrapLongLines={wrapLines}
       >
         {viewerContent}
-      </SyntaxHighlighter>
+        </SyntaxHighlighter>
+      </Suspense>
     ),
     [isDark, language, viewerContent, wrapLines],
   );
@@ -1907,8 +1923,8 @@ function TextFileViewer({
           >
             {frontmatter?.data && <FrontmatterCard data={frontmatter.data} />}
             <ReactMarkdown
-              remarkPlugins={markdownPreviewRemarkPlugins}
-              rehypePlugins={markdownPreviewRehypePlugins}
+              remarkPlugins={previewRemarkPlugins}
+              rehypePlugins={previewRehypePlugins}
               urlTransform={onOpenFile ? markdownUrlTransform : undefined}
               components={{
                 code({ className, children, ...props }) {

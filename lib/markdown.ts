@@ -1,10 +1,14 @@
 import { defaultUrlTransform, type Options as ReactMarkdownOptions } from "react-markdown";
-import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
+
+/**
+ * 数学插件（remark-math / rehype-katex，连带 katex）不在此静态导入——它们随
+ * `@/lib/markdown-math`（仅被下方 loadMathPlugins 动态 import）按需加载，
+ * 见 hasMathMarker / loadMathPlugins 与 `@/lib/use-math-plugins`（hydration 专项 P1.2）。
+ */
 
 /**
  * Escape raw HTML tags that would otherwise be parsed by rehype-raw into
@@ -468,22 +472,51 @@ const remarkGfmOptions = { singleTilde: false } as const;
 export const markdownRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [
   [remarkFrontmatter, ["yaml"]],
   [remarkGfm, remarkGfmOptions],
-  remarkMath,
 ];
 export const markdownPreviewRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [
   [remarkFrontmatter, ["yaml"]],
   [remarkGfm, remarkGfmOptions],
-  remarkMath,
 ];
 
 export const markdownRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
   rehypeRaw,
   [rehypeSanitize, markdownSanitizeSchema],
-  [rehypeKatex, { throwOnError: false, strict: false }],
 ];
 
 export const markdownPreviewRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
   rehypeRaw,
   [rehypeSanitize, markdownSanitizeSchema],
-  [rehypeKatex, { throwOnError: false, strict: false }],
 ];
+
+// ---------- 数学插件按需加载（P1.2） ----------
+
+const MATH_MARKER_RE = /\$\$|\$[^$\s$][^$\n]*\$|\\\(|\\\[/;
+
+/** 正文是否含数学标记（$$ / 行内 $…$ / \(…\) / \[…\]）——不含则无需加载数学插件 */
+export function hasMathMarker(text: string): boolean {
+  return MATH_MARKER_RE.test(text);
+}
+
+export type MathPlugins = {
+  remark: ReactMarkdownOptions["remarkPlugins"];
+  rehype: ReactMarkdownOptions["rehypePlugins"];
+};
+
+let mathPluginsPromise: Promise<MathPlugins> | null = null;
+let loadedMathPlugins: MathPlugins | null = null;
+
+/** 已就绪的数学插件（无则 null）——hook 以此作初始值，保证「先加载后渲染」的场景（如单测/SSR 预载）同步生效 */
+export function getLoadedMathPlugins(): MathPlugins | null {
+  return loadedMathPlugins;
+}
+
+/** 动态加载数学插件（模块级缓存；仅 hasMathMarker 为 true 时调用） */
+export function loadMathPlugins(): Promise<MathPlugins> {
+  if (!mathPluginsPromise) {
+    mathPluginsPromise = import("@/lib/markdown-math").then((m) => {
+      loadedMathPlugins = { remark: m.mathRemarkPlugins, rehype: m.mathRehypePlugins };
+      return loadedMathPlugins;
+    });
+  }
+  return mathPluginsPromise;
+}

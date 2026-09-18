@@ -1,7 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useTheme } from "@/hooks/useTheme";
@@ -17,6 +16,18 @@ interface MermaidBlockProps {
 const ZOOM_STEP = 0.25;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;
+
+// 全量 Prism（~1.24MB）经 React.lazy 拆出首屏（SyntaxHighlighterLite 只注册常用语言）；
+// chunk 就绪前以纯文本兜底，样式与流式分支一致（hydration 专项 P1.1）。
+const SyntaxHighlighter = lazy(() => import("./SyntaxHighlighterLite"));
+const PLAIN_CODE_PRE_STYLE: CSSProperties = {
+  margin: 0,
+  padding: "11px 13px",
+  fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
+  lineHeight: 1.62,
+  overflowX: "auto",
+  background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+};
 
 export function downloadMermaidSvg(svg: SVGSVGElement): void {
   // Mermaid's HTML serialization can leave void tags such as <br> unclosed.
@@ -298,36 +309,35 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
         </div>
       </div>
       {isStreaming ? (
-        <pre
-          style={{
-            margin: 0,
-            padding: "11px 13px",
-            fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
-            lineHeight: 1.62,
-            overflowX: "auto",
-            background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
-          }}
-        >
+        <pre style={PLAIN_CODE_PRE_STYLE}>
           <code style={{ fontFamily: "var(--font-mono)" }}>{code}</code>
         </pre>
       ) : (
-        <SyntaxHighlighter
-          language={lang || "text"}
-          style={isDark ? vscDarkPlus : vs}
-          showLineNumbers
-          lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal" }}
-          customStyle={{
-            margin: 0,
-            padding: "11px 13px",
-            fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
-            lineHeight: 1.62,
-            borderRadius: 0,
-            background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
-          }}
-          codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
+        <Suspense
+          fallback={
+            <pre style={PLAIN_CODE_PRE_STYLE}>
+              <code style={{ fontFamily: "var(--font-mono)" }}>{code}</code>
+            </pre>
+          }
         >
-          {code}
-        </SyntaxHighlighter>
+          <SyntaxHighlighter
+            language={lang || "text"}
+            style={isDark ? vscDarkPlus : vs}
+            showLineNumbers
+            lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal" }}
+            customStyle={{
+              margin: 0,
+              padding: "11px 13px",
+              fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
+              lineHeight: 1.62,
+              borderRadius: 0,
+              background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+            }}
+            codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
+          >
+            {code}
+          </SyntaxHighlighter>
+        </Suspense>
       )}
     </div>
   );

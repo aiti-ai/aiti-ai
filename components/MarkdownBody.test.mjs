@@ -9,7 +9,7 @@ const jiti = createJiti(import.meta.url, {
   tsconfigPaths: true,
 });
 const { MarkdownBody } = await jiti.import("./MarkdownBody.tsx");
-const { normalizeDisplayMath } = await jiti.import("../lib/markdown.ts");
+const { normalizeDisplayMath, loadMathPlugins } = await jiti.import("../lib/markdown.ts");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
 function renderMarkdown(markdown, props = {}) {
@@ -73,14 +73,16 @@ test("renders backslash-escaped backticks inside inline code", () => {
   assert.doesNotMatch(html, /<\/code>1\.cs`/);
 });
 
-test("renders LaTeX parenthesis delimiters as inline math", () => {
+test("renders LaTeX parenthesis delimiters as inline math", async () => {
+  await loadMathPlugins(); // P1.2：数学插件按需加载——测试先预载（hook 初始值读已加载快照）
   const html = renderMarkdown(String.raw`射线为 \(r_c = K^{-1}p\)。`);
 
   assert.match(html, /class="katex"/);
   assert.match(html, /r_c/);
 });
 
-test("renders paired LaTeX bracket delimiters as display math", () => {
+test("renders paired LaTeX bracket delimiters as display math", async () => {
+  await loadMathPlugins();
   const html = renderMarkdown(String.raw`\[
 P(\lambda)=o_b+\lambda r_b
 \]`);
@@ -91,7 +93,8 @@ P(\lambda)=o_b+\lambda r_b
   assert.match(oneLineHtml, /class="katex-display"/);
 });
 
-test("renders model-emitted bracket-only formula lines as display math", () => {
+test("renders model-emitted bracket-only formula lines as display math", async () => {
+  await loadMathPlugins();
   const html = renderMarkdown(String.raw`平均一致性：
 
 [ C(x) = \frac{2}{T(T-1)} \sum_{i<j} S(\hat{y}^{(i)}, \hat{y}^{(j)}) ]`);
