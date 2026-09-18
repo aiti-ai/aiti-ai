@@ -5,7 +5,9 @@ import test from "node:test";
 // tab-detach v0.6.0：右栏内容分派抽 TabBody（components/TabBody.tsx），右栏与拆出窗口
 // 共用同一分派（host 差异仅 watchEnabled/onMentionLines/terminal active 三处 prop）。
 // 本文件原钉 AppShell 内联 JSX 的不变式，随之迁移：不变式本身不变——
-//   ① 只挂激活 tab 的 viewer（互斥分支，绝不每 tab 一个）
+//   ① 经 TabBody 单点分派（不内联 FileViewer、不逐 tab 直挂）；keep-alive 池（方案
+//      docs/aiti-editor-right-dock-keepalive-plan.md）后语义：非 terminal tab 最近 N 个
+//      常挂载（hidden 隐藏非激活），池外仅当前激活挂载——仍是单点分派，不逐 tab 直挂
 //   ② viewerState 快照恢复闭环（key 带 viewerRevision + initialState + onStateChange 回存）
 //   ③ 面板关→watch 暂停（panel host 的 watchEnabled 走 ctx.panelOpen）
 const appShell = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
@@ -19,10 +21,11 @@ function fileContentBlock() {
   return appShell.slice(start, end);
 }
 
-test("only the active file tab mounts a FileViewer", () => {
+test("right panel mounts tabs through TabBody single dispatch (keep-alive pool)", () => {
   const block = fileContentBlock();
-  // AppShell 侧：只经 TabBody 单点分派（不再内联 FileViewer、不逐 tab 挂载）
-  assert.match(block, /<TabBody tab=\{activeTabForBody\} host="panel" ctx=\{tabBodyCtx\} \/>/);
+  // AppShell 侧：非 terminal tab 走 keep-alive 池（最近 N 个常挂载，hidden 隐藏非激活；
+  // 池外仅当前激活挂载）——仍只经 TabBody 单点分派（不内联 FileViewer、不逐 tab 直挂）
+  assert.match(block, /\.map\(\(tab\) => \(\n\s*<div key=\{tab\.id\} hidden=\{tab\.id !== activeFileTabId\}/);
   assert.equal(block.match(/<FileViewer/g)?.length ?? 0, 0, "AppShell 不应再内联 FileViewer（分派归 TabBody）");
   // TabBody 侧：两条互斥分支（folder kind | file path）——运行时恰好一个 viewer
   assert.equal(tabBody.match(/<FileViewer/g)?.length, 2);

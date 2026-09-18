@@ -183,6 +183,10 @@ declare global {
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
 const AGENT_PANEL_WIDTH = 420;
 const SELECTION_MENU_WIDTH = 176;
+/** 右栏 tab keep-alive 池上限（方案 docs/aiti-editor-right-dock-keepalive-plan.md）；
+ *  localStorage 覆盖 0 = 全部逐出（退回纯墓碑语义）。 */
+const RIGHT_PANEL_ALIVE_MAX = 5;
+const RIGHT_PANEL_ALIVE_KEY = "pi-web:right-panel:alive-max";
 
 /** 通知文本：超长摘要截断。 */
 function truncateText(text: string, max: number): string {
@@ -941,6 +945,39 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       restored: tab.restored,
     })),
   ].filter((t) => detachedTabIds.has(t.id));
+
+  // ── [右栏 tab keep-alive 池] file/folder/dock 三类 tab FIFO 保活（方案
+  //   docs/aiti-editor-right-dock-keepalive-plan.md）。墓碑制根源 = 右栏内容区只挂载
+  //   active tab 的 TabBody（切换即完整卸载重挂 Monaco）。池语义：最近激活的非 terminal
+  //   tab 常挂载（hidden 隐藏非激活），超上限逐出最老（FIFO）；被逐出 tab 下次切回落回
+  //   重载语义（EditorApp 卸载清理照旧写缓存 + dispose）。上限默认 5，localStorage 可覆盖。
+  const [panelKeepAlive, setPanelKeepAlive] = useState<string[]>([]);
+  // 最新 panelTabs 快照（每渲染同步；keep-alive effect 内读最新 id 集合而不把
+  // 每帧新引用的 panelTabs 列入 deps——ref 读取不触发 exhaustive-deps，React 标准模式）
+  const panelTabsRef = useRef(panelTabs);
+  panelTabsRef.current = panelTabs;
+  useEffect(() => {
+    if (!activeFileTabId) return;
+    if (terminalTabs.some((t) => t.id === activeFileTabId)) return; // terminal 独立常挂载容器，不入池
+    setPanelKeepAlive((prev) => {
+      // 先剔除当前 active（随后置尾）+ 剔除已关闭/已拆窗 tab 的失效 id（不在 panelTabs；
+      // 渲染层本已过滤，这里防死 id 占池子。关闭非 active tab 时 active 不变、本 effect
+      // 不重跑，则死 id 留待下一次激活切换清理——无可见影响）。
+      const ids = new Set(panelTabsRef.current.map((t) => t.id));
+      const next = prev.filter((id) => id !== activeFileTabId && ids.has(id));
+      next.push(activeFileTabId); // 置尾 = 最近使用
+      let max = RIGHT_PANEL_ALIVE_MAX;
+      try {
+        const n = parseInt(localStorage.getItem(RIGHT_PANEL_ALIVE_KEY) ?? "", 10);
+        if (Number.isFinite(n) && n >= 0) max = n;
+      } catch { /* ignore */ }
+      while (next.length > max) {
+        const oldest = next.shift();
+        if (oldest === activeFileTabId) break; // 绝不逐出当前激活
+      }
+      return next;
+    });
+  }, [activeFileTabId, terminalTabs]);
 
   useEffect(() => {
     try {
@@ -4962,13 +4999,21 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
           </button>
         </div>
 
-        {/* Only the active viewer is mounted. Lightweight per-tab state is restored on activation. */}
+        {/* [右栏 keep-alive 池] 非 terminal tab（file/folder/dock）常挂载最近 N 个，
+            hidden 隐藏非激活——切换零重建；FIFO 逐出后回落重载语义（方案
+            docs/aiti-editor-right-dock-keepalive-plan.md）。terminal 走下方常挂载容器。 */}
         <div ref={rightPanelContentRef} style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
           {/* [aiti-float tab-detach v0.6.0] 内容分派抽 TabBody（file/folder/dock 三分支，
               与拆出窗口完全同构——行为等价重构，渲染语义改动前对照本注释回归基线） */}
-          {activeTabForBody ? (
-            <TabBody tab={activeTabForBody} host="panel" ctx={tabBodyCtx} />
-          ) : !terminalTabs.some((tab) => tab.id === activeFileTabId) ? (
+          {panelTabs
+            .filter((t) => t.kind !== "terminal")
+            .filter((t) => t.id === activeFileTabId || panelKeepAlive.includes(t.id))
+            .map((tab) => (
+              <div key={tab.id} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%" }}>
+                <TabBody tab={tab} host="panel" ctx={tabBodyCtx} />
+              </div>
+            ))}
+          {!activeTabForBody && !terminalTabs.some((tab) => tab.id === activeFileTabId) ? (
             <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12 }}>
                {fileTabs.length > 0
                  ? translate("files.clickTabToOpen")
