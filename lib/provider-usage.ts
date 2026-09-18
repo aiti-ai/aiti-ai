@@ -1,5 +1,6 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import "./provider-usage/adapters";
+import { queryUsageTargets, resolveUsageTargets } from "./provider-usage/key-pool";
 import { getUsageAdapter } from "./provider-usage/registry";
 import type { ProviderUsageResult, UsageReport } from "./provider-usage/types";
 import type { ProviderUsageId } from "./provider-usage-ids";
@@ -28,17 +29,14 @@ export async function queryProviderUsage(providerId: ProviderUsageId): Promise<P
   if (!provider) {
     return { providerId, status: "query-failed", message: "The provider usage query failed." };
   }
-  let resolved;
-  try {
-    resolved = await runtime.getAuth(providerId);
-  } catch {
-    return { providerId, status: "auth-unavailable", message: "Provider authentication is unavailable." };
-  }
-  if (!resolved) {
+  // Runtime credential, or the models.json rotation pool for proxied multi-key
+  // providers (pi-models-combo hands out dummy tokens; see key-pool.ts).
+  const targets = await resolveUsageTargets(runtime, providerId);
+  if (!targets) {
     return { providerId, status: "auth-unavailable", message: "Connect this provider before querying usage." };
   }
   try {
-    const report = await adapter.query({ providerId, auth: resolved.auth });
+    const report = await queryUsageTargets(adapter, targets);
     return { providerId, status: "ready", report };
   } catch (caught) {
     return { providerId, status: "query-failed", message: caught instanceof Error ? caught.message : "The provider usage query failed." };

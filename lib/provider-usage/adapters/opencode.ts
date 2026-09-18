@@ -6,6 +6,10 @@ import type { UsageBucket, UsageBucketState, UsageReport } from "../types";
 // One endpoint serves opencode / opencode-go / opencode-zen — which plan a key
 // can see is decided by its subscription (403 EntitlementError otherwise).
 // All three ids are registered; the shared origin is exact-id only.
+// NOTE: this endpoint is the OpenCode **Go** plan quota API (without a Go
+// subscription it answers 403). Zen is a different product with no public usage
+// endpoint, so a Zen id that has a Go-entitled key will report Go-plan windows
+// under its own name; the OpenCode Go provider stays the canonical row.
 
 const USAGE_URL = "https://opencode.ai/zen/go/v1/usage";
 const WINDOW_LABELS: Record<string, string> = { rolling: "Rolling", weekly: "Weekly", monthly: "Monthly" };

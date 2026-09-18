@@ -1,5 +1,6 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import "./adapters";
+import { queryUsageTargets, resolveUsageTargets } from "./key-pool";
 import { getUsageAdapter, listUsageAdapters } from "./registry";
 import type { ProviderUsageResult, UsageReport } from "./types";
 
@@ -67,19 +68,14 @@ async function aggregate(): Promise<UsageOverview> {
 async function queryOne(runtime: ModelRuntime, providerId: string, meta: { displayName: string; baseUrl?: string }): Promise<OverviewEntry> {
   const adapter = getUsageAdapter(providerId, meta.baseUrl);
   if (!adapter) return { providerId, providerName: meta.displayName, kind: "usage", status: "query-failed", message: "No usage adapter." };
-  let auth;
-  try {
-    auth = await runtime.getAuth(providerId);
-  } catch {
-    return { providerId, providerName: adapter.displayName, kind: "usage", status: "auth-unavailable", message: "Provider authentication is unavailable." };
-  }
-  if (!auth) return { providerId, providerName: adapter.displayName, kind: "usage", status: "auth-unavailable", message: "Connect this provider before querying usage." };
-  const status = runtime.getProviderAuthStatus(providerId);
-  if (!status.configured) {
+  // Runtime credential, or the models.json rotation pool when the provider sits
+  // behind the pi-models-combo proxy (see key-pool.ts).
+  const targets = await resolveUsageTargets(runtime, providerId);
+  if (!targets) {
     return { providerId, providerName: adapter.displayName, kind: "usage", status: "auth-unavailable", message: "Connect this provider before querying usage." };
   }
   try {
-    const report = await adapter.query({ providerId: adapter.id, auth: auth.auth });
+    const report = await queryUsageTargets(adapter, targets);
     return { providerId, providerName: adapter.displayName, kind: "usage", status: "ready", report };
   } catch (caught) {
     return {
