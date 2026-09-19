@@ -1,4 +1,4 @@
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { getModelRuntimeWithExtensions } from "@/lib/model-runtime-ext";
 import { NextResponse } from "next/server";
 import { invalidateModelsCache } from "@/lib/models-cache";
 import { removeStoredCredentialIfType, storeProviderCredential } from "@/lib/provider-credential-store";
@@ -6,6 +6,16 @@ import { removeStoredCredentialIfType, storeProviderCredential } from "@/lib/pro
 export const dynamic = "force-dynamic";
 
 type Params = { params: Promise<{ provider: string }> };
+
+// GET /api/auth/api-key/[provider] — returns auth status (never returns the actual key)
+export async function GET(_req: Request, { params }: Params) {
+  const { provider } = await params;
+  const modelRuntime = await getModelRuntimeWithExtensions();
+  const status = modelRuntime.getProviderAuthStatus(provider);
+  const displayName = modelRuntime.getProvider(provider)?.name ?? provider;
+  const models = modelRuntime.getModels(provider).length;
+  return NextResponse.json({ provider, displayName, configured: status.configured, source: status.source, models });
+}
 
 // POST /api/auth/api-key/[provider]  body: { apiKey: string }
 export async function POST(req: Request, { params }: Params) {
@@ -15,7 +25,7 @@ export async function POST(req: Request, { params }: Params) {
     if (!apiKey || typeof apiKey !== "string" || !apiKey.trim()) {
       return NextResponse.json({ error: "apiKey is required" }, { status: 400 });
     }
-    const modelRuntime = await ModelRuntime.create();
+    const modelRuntime = await getModelRuntimeWithExtensions();
     const apiKeyAuth = modelRuntime.getProvider(provider)?.auth.apiKey;
     if (!apiKeyAuth?.login) {
       throw new Error(`${provider} does not support API key login`);
