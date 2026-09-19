@@ -234,7 +234,10 @@ async function exportSession(filePath: string, outputPath: string): Promise<void
   if (!packageDir) throw new Error("pi CLI not found");
 
   const exporterUrl = pathToFileURL(join(packageDir, "dist", "core", "export-html", "index.js")).href;
-  const { exportFromFile } = (await import(exporterUrl)) as ExportHtmlModule;
+  // webpackIgnore: exporterUrl is a runtime-computed file URL into an already
+  // externalized package. Without the comment, webpack replaces the dynamic
+  // import with a context stub that always throws MODULE_NOT_FOUND at runtime.
+  const { exportFromFile } = (await import(/* webpackIgnore: true */ exporterUrl)) as ExportHtmlModule;
   await exportFromFile(filePath, outputPath);
 }
 
