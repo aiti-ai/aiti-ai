@@ -3,6 +3,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useTheme } from "@/hooks/useTheme";
+import { apiUrl, withBasePath } from "@/lib/base-path";
 import { THEME_OPTIONS } from "@/lib/theme";
 import { ThemeIcon } from "./ThemeIcon";
 import {
@@ -30,6 +31,8 @@ import { SkillsConfig } from "./SkillsConfig";
 import { AgentsConfig } from "./AgentsConfig";
 import { PluginsConfig } from "./PluginsConfig";
 import { ConfigButton, ConfigSwitch } from "./SettingsUi";
+import { useExtSlotItems, ExtItemBoundary } from "./ExtSlots";
+import { hasExtRender } from "@/lib/ext-ui-store";
 
 interface Props {
   cwd: string | null;
@@ -78,7 +81,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
 
   useEffect(() => {
     setThinkingExpanded(isThinkingExpandedByDefault());
-    void fetch("/api/web-auth")
+    void fetch(apiUrl("/api/web-auth"))
       .then((response) => response.ok ? response.json() : null)
       .then((data: { enabled?: boolean } | null) => setWebAuthEnabled(data?.enabled === true))
       .catch(() => {});
@@ -88,9 +91,9 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
     setLoggingOut(true);
     setLogoutError("");
     try {
-      const response = await fetch("/api/web-auth", { method: "DELETE" });
+      const response = await fetch(apiUrl("/api/web-auth"), { method: "DELETE" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      window.location.replace("/login");
+      window.location.replace(withBasePath("/login"));
     } catch {
       setLogoutError(t("auth.logoutFailed"));
     } finally {
@@ -100,7 +103,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("/api/tools/settings")
+    void fetch(apiUrl("/api/tools/settings"))
       .then(async (response) => {
         const data = await response.json() as ShellToolSettingsResponse & { error?: string };
         if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
@@ -116,7 +119,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
     setShellSaving(true);
     setShellError(null);
     try {
-      const response = await fetch("/api/tools/settings", {
+      const response = await fetch(apiUrl("/api/tools/settings"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -356,6 +359,17 @@ export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessi
   const [mountedSections, setMountedSections] = useState<ReadonlySet<SettingsSection>>(
     () => new Set([section]),
   );
+  // "Models" tab takeover (model-wizard extension): when the settingsModels slot
+  // has an item with render, render the extension component in place of the
+  // native ModelsConfig (clicks open the wizard overlay from the extension side);
+  // when unregistered, the native two-pane view is the fallback with zero regression.
+  const settingsModelsTakeover = useExtSlotItems("settingsModels").find(hasExtRender);
+  // "Agents" (subagents) tab full takeover (subagents extension): same springboard
+  // pattern via the settingsAgents slot — once the extension registers, its agent
+  // management UI replaces the native AgentsConfig (under fork semantics native
+  // profiles never take effect); when unregistered, the native AgentsConfig is
+  // the fallback (its internal settingsAgentsFeature banner mechanism is kept).
+  const settingsAgentsTakeover = useExtSlotItems("settingsAgents").find(hasExtRender);
   const sections: { id: SettingsSection; label: string; requiresProject: boolean }[] = [
     { id: "general", label: t("settings.general"), requiresProject: false },
     { id: "models", label: t("common.models"), requiresProject: false },
@@ -447,9 +461,21 @@ export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessi
 
         <main className="settings-dialog-main">
           {sectionHost("general", <GeneralSettings sessionId={sessionId} onSessionReloaded={onSessionReloaded} quoteSelectionEnabled={quoteSelectionEnabled} onQuoteSelectionChange={onQuoteSelectionChange} />)}
-          {sectionHost("models", <ModelsConfig embedded onClose={onClose} />)}
+          {sectionHost("models", settingsModelsTakeover ? (
+            <ExtItemBoundary extId={settingsModelsTakeover.extId} slot="settingsModels" itemId={settingsModelsTakeover.id}>
+              <settingsModelsTakeover.render currentSession={null} onClose={onClose} />
+            </ExtItemBoundary>
+          ) : (
+            <ModelsConfig embedded onClose={onClose} />
+          ))}
           {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
-          {cwd && sectionHost("agents", <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />)}
+          {cwd && sectionHost("agents", settingsAgentsTakeover ? (
+            <ExtItemBoundary extId={settingsAgentsTakeover.extId} slot="settingsAgents" itemId={settingsAgentsTakeover.id}>
+              <settingsAgentsTakeover.render currentSession={null} cwd={cwd} sessionId={sessionId} onClose={onClose} />
+            </ExtItemBoundary>
+          ) : (
+            <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />
+          ))}
           {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />)}
         </main>
       </div>

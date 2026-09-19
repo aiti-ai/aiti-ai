@@ -20,6 +20,10 @@ interface Props {
   hasSession?: boolean;
   /** When inline, render icon-only (no text label) to save horizontal space */
   compact?: boolean;
+  /** When inline, suppress the button and render only the dropdown (used when
+   *  the button lives inside an overflow menu but the dropdown must anchor to
+   *  the top bar). Requires `inline` + `open` + `containerRef`. */
+  buttonHidden?: boolean;
   /** Keep the inline dropdown mounted while another control supplies its trigger */
   hideInlineButton?: boolean;
 }
@@ -253,7 +257,7 @@ function TreeNodeView({ node, activePathIds, depth, isLast, parentLines, onSelec
   );
 }
 
-export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession, compact, hideInlineButton }: Props) {
+export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, containerRef, open: openProp, onToggle, hasSession, compact, buttonHidden, hideInlineButton }: Props) {
   const { t } = useI18n();
   const [openInternal, setOpenInternal] = useState(false);
   const open = openProp !== undefined ? openProp : openInternal;
@@ -273,6 +277,22 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
     ro.observe(anchor);
     return () => ro.disconnect();
   }, [open, inline, containerRef]);
+
+  // Close on outside click (keyboard-unfriendly on mobile): in uncontrolled mode
+  // (openInternal), collapse the dropdown when clicking outside the button/tree
+  // panel. In controlled mode (openProp+onToggle) the parent manages it, so we
+  // do not overstep here.
+  useEffect(() => {
+    if (!open || openProp !== undefined) return;
+    const onPointerDown = (e: Event) => {
+      const root = containerRef?.current ?? btnRef.current;
+      if (root && !root.contains(e.target as Node)) {
+        setOpenInternal(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [open, openProp, containerRef]);
 
   const activePathIds = useMemo(
     () => buildActivePath(tree, activeLeafId),
@@ -311,8 +331,9 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
   if (inline) {
     return (
       <div style={{ height: "100%", display: "flex", alignItems: "stretch" }}>
-        <button
-          ref={btnRef}
+        {!buttonHidden && (
+          <button
+            ref={btnRef}
           onClick={() => onToggle ? onToggle() : setOpenInternal((v) => !v)}
           style={{
             display: hideInlineButton ? "none" : "flex",
@@ -321,8 +342,9 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
             height: "100%",
             padding: "0 12px",
             background: open ? "var(--bg-selected)" : "none",
-            border: "none",
-            borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
+            borderLeft: "none",
+            borderBottom: "none",
+            borderTop: "none",
             borderRight: "1px solid var(--border)",
             cursor: "pointer",
             color: open ? "var(--text)" : "var(--text-muted)",
@@ -339,6 +361,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
           {branchIcon}
            {!compact && <span>{t("i18n.branches")}</span>}
         </button>
+        )}
         {open && dropdownPos && (
           <div style={{
             position: "fixed",
@@ -347,7 +370,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
             width: dropdownPos.width,
             background: "var(--bg-panel)",
             borderBottom: "1px solid var(--border)",
-            zIndex: 500,
+            zIndex: 30,  // Below toolbar dialogs (50-120) so the "more" menu stays visible; still above page content
           }}>
             {hasContent ? (
               <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>
@@ -408,7 +431,7 @@ export function BranchNavigator({ tree, activeLeafId, onLeafChange, inline, cont
           background: "var(--bg)",
           borderBottom: "1px solid var(--border)",
           boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
-          zIndex: 100,
+          zIndex: 30,  // Same as above: above content, below dialogs
         }}>
           {hasContent ? (
             <div style={{ padding: "4px 12px 8px 12px", maxHeight: 260, overflowY: "auto" }}>

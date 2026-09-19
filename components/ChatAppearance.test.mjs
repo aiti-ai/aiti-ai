@@ -14,7 +14,10 @@ const { clampChatContentWidth, clampChatContentFontSize } = await jiti.import(".
 const widthVariable = /var\(--chat-content-max-width, 820px\)/g;
 
 test("chat content keeps the existing 820px default behind one shared variable", () => {
-  assert.equal((chatWindow.match(widthVariable) ?? []).length, 2);
+  // One more occurrence than upstream: the new-session Backend dropdown container
+  // (the top/bottom extension widgets containers were removed; widgets now live
+  // in the bottom status shelf + the mobile InfoSheet)
+  assert.equal((chatWindow.match(widthVariable) ?? []).length, 3);
   assert.equal((chatInput.match(widthVariable) ?? []).length, 1);
   assert.match(globals, /--chat-content-max-width: 820px;/);
   assert.doesNotMatch(chatWindow, /max-w-\[820px\]|maxWidth: 820/);

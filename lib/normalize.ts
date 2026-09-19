@@ -1,4 +1,4 @@
-import type { AgentMessage, AssistantMessage, ToolCallContent } from "./types";
+import type { AgentMessage, AssistantMessage, ToolCallContent } from "./types.ts";
 
 function isObject(val: unknown): val is Record<string, unknown> {
   return typeof val === "object" && val !== null && !Array.isArray(val);
@@ -56,6 +56,21 @@ function normalizeAssistantToolCalls(
 
 export function normalizeToolCalls(msg: AgentMessage): AgentMessage {
   return normalizeAssistantToolCalls(msg);
+}
+
+/**
+ * Normalize raw SDK-shaped messages coming from non-file channels (bridged/
+ * attach `get_messages`, provider handles) into pi-web render shape.
+ *
+ * Session-file reads already normalize server-side (session-reader
+ * entryToUiMessage); the bridged paths historically served raw SDK messages,
+ * whose toolCall blocks use {id,name,arguments} — ToolCallBlock then rendered
+ * an empty name/preview and could not pair tool results ("command execution
+ * message is empty").
+ * Idempotent: already-normalized messages pass through unchanged.
+ */
+export function normalizeRawMessages(messages: unknown[]): AgentMessage[] {
+  return (Array.isArray(messages) ? messages : []).map((m) => normalizeToolCalls(m as AgentMessage));
 }
 
 export function normalizeStreamingToolCalls(msg: AgentMessage): AgentMessage {
