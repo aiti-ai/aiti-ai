@@ -6,6 +6,8 @@ import { useIsMobile } from "@/hooks/useIsMobile";
 import type { SubagentProfilesResponse, SubagentSettingsResponse } from "@/lib/api-types";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type { ModelsData } from "@/lib/models-cache";
+import { ExtItemBoundary, useExtSlotItems } from "./ExtSlots";
+import { hasExtRender } from "@/lib/ext-ui-store";
 import { isSubagentProfileOverridden } from "@/lib/subagent-profile-precedence";
 import type { SubagentProfile, SubagentScope, SubagentWritableScope } from "@/lib/subagents";
 import {
@@ -171,6 +173,8 @@ export function AgentsConfig({
   const [settingsError, setSettingsError] = useState<string | null>(null);
   const [reloadNeeded, setReloadNeeded] = useState(false);
   const [reloading, setReloading] = useState(false);
+  // settingsAgentsFeature takeover item (replaces the native toggle section once the subagents extension registers)
+  const agentsFeatureTakeover = useExtSlotItems("settingsAgentsFeature").find(hasExtRender);
 
   const selected = useMemo(
     () => profiles.find((profile) => profileKey(profile) === selectedKey) ?? null,
@@ -186,7 +190,12 @@ export function AgentsConfig({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/subagents/profiles?cwd=${encodeURIComponent(cwd)}`, { cache: "no-store" });
+      const response = await fetch(`/api/subagents/profiles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd }),
+        cache: "no-store",
+      });
       const data = await response.json() as Partial<SubagentProfilesResponse> & { error?: string };
       if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
       const next = data.profiles ?? [];
@@ -250,7 +259,12 @@ export function AgentsConfig({
     setModelsError(null);
     void (async () => {
       try {
-        const response = await fetch(`/api/models?cwd=${encodeURIComponent(cwd)}`, { signal: controller.signal });
+        const response = await fetch(`/api/models`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cwd }),
+          signal: controller.signal,
+        });
         const data = await response.json() as Partial<ModelsData> & { error?: string };
         if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
         setModelOptions(data.modelList ?? []);
@@ -448,39 +462,52 @@ export function AgentsConfig({
 
   return (
     <ConfigPanelShell embedded={embedded} title={t("common.agents")} subtitle={shortenPath(cwd)} closeLabel={t("agents.close")} onClose={onClose}>
+      {/* Top feature-block takeover (settingsAgentsFeature slot, following the settingsModels springboard pattern):
+          once an extension (e.g. the subagents extension) registers, it replaces the native "built-in
+          subagents" toggle section; the original renders as fallback when nothing is registered.
+          Fork semantics: the engine gate isBuiltInSubagentsEnabled is always false (guarded by tests);
+          the toggle only persists to files. */}
       <div className="agents-feature-setting">
-        <div className="agents-feature-copy">
-          <strong>{t("agents.builtInTitle")}</strong>
-          <span>{t("agents.builtInDescription")}</span>
-          {reloadNeeded && <span role="status" className="agents-feature-reload-notice">{t("agents.reloadRequired")}</span>}
-        </div>
-        <div className="agents-feature-actions">
-          {reloadNeeded && sessionId && (
-            <ConfigButton size="small" onClick={() => void reloadSession()} disabled={reloading || settingsSaving}>
-              {reloading ? t("agents.reloading") : t("agents.reloadSession")}
-            </ConfigButton>
-          )}
-          <label className="agents-concurrency-control" title={t("agents.maxConcurrentDescription")}>
-            <span>{t("agents.maxConcurrent")}</span>
-            <input
-              aria-label={t("agents.maxConcurrent")}
-              type="number"
-              min={1}
-              max={32}
-              value={maxConcurrent}
-              disabled={settingsLoading || settingsSaving}
-              onChange={(event) => setMaxConcurrent(Number(event.target.value))}
-              onBlur={() => void updateMaxConcurrent(maxConcurrent)}
-            />
-          </label>
-          <ConfigSwitch
-            checked={builtInEnabled}
-            disabled={settingsLoading || reloading}
-            loading={settingsSaving}
-            label={t("agents.builtInTitle")}
-            onChange={(enabled) => void toggleBuiltInSubagents(enabled)}
-          />
-        </div>
+        {agentsFeatureTakeover ? (
+          <ExtItemBoundary extId={agentsFeatureTakeover.extId} slot="settingsAgentsFeature" itemId={agentsFeatureTakeover.id}>
+            <agentsFeatureTakeover.render currentSession={null} cwd={cwd} sessionId={sessionId ?? null} />
+          </ExtItemBoundary>
+        ) : (
+          <>
+            <div className="agents-feature-copy">
+              <strong>{t("agents.builtInTitle")}</strong>
+              <span>{t("agents.builtInDescription")}</span>
+              {reloadNeeded && <span role="status" className="agents-feature-reload-notice">{t("agents.reloadRequired")}</span>}
+            </div>
+            <div className="agents-feature-actions">
+              {reloadNeeded && sessionId && (
+                <ConfigButton size="small" onClick={() => void reloadSession()} disabled={reloading || settingsSaving}>
+                  {reloading ? t("agents.reloading") : t("agents.reloadSession")}
+                </ConfigButton>
+              )}
+              <label className="agents-concurrency-control" title={t("agents.maxConcurrentDescription")}>
+                <span>{t("agents.maxConcurrent")}</span>
+                <input
+                  aria-label={t("agents.maxConcurrent")}
+                  type="number"
+                  min={1}
+                  max={32}
+                  value={maxConcurrent}
+                  disabled={settingsLoading || settingsSaving}
+                  onChange={(event) => setMaxConcurrent(Number(event.target.value))}
+                  onBlur={() => void updateMaxConcurrent(maxConcurrent)}
+                />
+              </label>
+              <ConfigSwitch
+                checked={builtInEnabled}
+                disabled={settingsLoading || reloading}
+                loading={settingsSaving}
+                label={t("agents.builtInTitle")}
+                onChange={(enabled) => void toggleBuiltInSubagents(enabled)}
+              />
+            </div>
+          </>
+        )}
       </div>
       <ConfigSplitView>
         <ConfigSidebar>
