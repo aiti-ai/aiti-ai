@@ -36,9 +36,10 @@ export interface WorktreeInfo {
 
 declare global {
   var __piProjectCache: Map<string, { info: ProjectInfo; expiresAt: number }> | undefined;
+  var __piProjectRefreshInFlight: Set<string> | undefined;
 }
 
-const PROJECT_CACHE_TTL_MS = 60_000;
+const PROJECT_CACHE_TTL_MS = 300_000; // stale-while-revalidate: serve the old value past expiry + refresh in the background; the TTL bounds maximum staleness
 
 function getProjectCache(): Map<string, { info: ProjectInfo; expiresAt: number }> {
   if (!globalThis.__piProjectCache) globalThis.__piProjectCache = new Map();
@@ -87,6 +88,41 @@ export async function resolveProject(cwd: string): Promise<ProjectInfo> {
   const cached = cache.get(cwd);
   if (cached && cached.expiresAt > Date.now()) return cached.info;
 
+  // stale-while-revalidate: an expired value exists → return it immediately + refresh in the
+  // background. One full resolveProject sweep on the session-list path is ~68 git spawns, which
+  // can queue for 4s+ on a busy event loop (dev with multiple agents/SSE concurrency) — a leading
+  // cause of "first open freezes". Requests must never wait on it; project/branch info may lag
+  // by at most one TTL.
+  if (cached) {
+    kickProjectRefresh(cwd);
+    return cached.info;
+  }
+  const info = await computeProjectInfo(cwd);
+  cache.set(cwd, { info, expiresAt: Date.now() + PROJECT_CACHE_TTL_MS });
+  return info;
+}
+
+function getProjectRefreshInFlight(): Set<string> {
+  if (!globalThis.__piProjectRefreshInFlight) globalThis.__piProjectRefreshInFlight = new Set();
+  return globalThis.__piProjectRefreshInFlight;
+}
+
+function kickProjectRefresh(cwd: string): void {
+  const inFlight = getProjectRefreshInFlight();
+  if (inFlight.has(cwd)) return; // already refreshing, no duplicate kick
+  inFlight.add(cwd);
+  void computeProjectInfo(cwd)
+    .then((info) => {
+      getProjectCache().set(cwd, { info, expiresAt: Date.now() + PROJECT_CACHE_TTL_MS });
+    })
+    .catch(() => { /* keep stale value */ })
+    .finally(() => {
+      inFlight.delete(cwd);
+    });
+}
+
+async function computeProjectInfo(cwd: string): Promise<ProjectInfo> {
+  const cache = getProjectCache();
   let info: ProjectInfo;
   try {
     if (!existsSync(cwd)) {

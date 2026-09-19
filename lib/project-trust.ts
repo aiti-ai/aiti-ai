@@ -1,5 +1,29 @@
+import { stat } from "fs/promises";
+import { resolve } from "path";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { getAllowedFileRoots, isExistingFilePathAllowed } from "./file-access.ts";
 import type { ProjectTrustStatus } from "./api-types";
+
+/** Validates the cwd parameter for /api/project-trust (and its /status subpath): non-empty string, an existing
+ *  directory, within the allowed roots. HTTP-agnostic (the route layer turns error/status into responses). */
+export async function checkTrustCwd(value: unknown): Promise<{ cwd: string } | { error: string; status: number }> {
+  if (typeof value !== "string" || !value.trim()) {
+    return { error: "cwd required", status: 400 };
+  }
+  const cwd = resolve(value);
+  try {
+    if (!(await stat(cwd)).isDirectory()) {
+      return { error: "cwd must be a directory", status: 400 };
+    }
+  } catch {
+    return { error: "Directory does not exist", status: 400 };
+  }
+  const allowedRoots = await getAllowedFileRoots();
+  if (!isExistingFilePathAllowed(cwd, allowedRoots)) {
+    return { error: "Access denied", status: 403 };
+  }
+  return { cwd };
+}
 
 export function getProjectTrustStatus(cwd: string, agentDir: string): ProjectTrustStatus {
   const requiresTrust = Boolean(cwd) && hasTrustRequiringProjectResources(cwd);
