@@ -12,11 +12,12 @@ import { isBashOutputPathReferencedBySession } from "@/lib/session-file-referenc
 // GET /api/agent/[id]/bash-output?path=<absPath>
 // Reads a bash output temp file referenced by this session. Inline display is
 // size-limited; download responses stream the file without buffering it.
+// GET ?path=<absPath>[&download=1] — the query-string form is kept for existing callers;
+// new code must use POST (path goes in the JSON body, so it never lands in URLs/access logs).
 export async function GET(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
   let path: string | null = null;
   let download = false;
   try {
@@ -26,7 +27,29 @@ export async function GET(
   } catch {
     return NextResponse.json({ error: "invalid url" }, { status: 400 });
   }
+  const { id } = await params;
+  return handleBashOutput(id, path, download);
+}
 
+// POST body: { path, download? } — same semantics.
+export async function POST(
+  req: Request,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  let path: string | null = null;
+  let download = false;
+  try {
+    const body = (await req.json()) as { path?: unknown; download?: unknown };
+    if (typeof body.path === "string") path = body.path;
+    download = body.download === true;
+  } catch {
+    return NextResponse.json({ error: "invalid body" }, { status: 400 });
+  }
+  return handleBashOutput(id, path, download);
+}
+
+async function handleBashOutput(id: string, path: string | null, download: boolean): Promise<Response> {
   if (!path) {
     return NextResponse.json({ error: "path required" }, { status: 400 });
   }

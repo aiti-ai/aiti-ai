@@ -2,20 +2,556 @@ import {
   SessionManager,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { closeSync, type Dirent, fstatSync, openSync, readSync } from "fs";
-import { readdir } from "fs/promises";
-import { isAbsolute, join, normalize as normalizePath, relative, resolve as resolvePath, sep } from "path";
-import type { AgentMessage, ImageContent, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types";
-import { normalizeToolCalls } from "./normalize";
-import { getThinkingPreview } from "./message-display";
-import { projectIdentityKey } from "./project-identity";
-import { sessionPathKey } from "./session-path";
-import { MAX_TOOL_RESULT_IMAGE_BYTES, TOOL_RESULT_IMAGE_MIMES } from "./tool-result-images";
-import { resolveProject, type ProjectInfo } from "./worktree";
-import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents";
-import { listSessionsIncremental } from "./session-list-scanner";
+import { openSync, closeSync, existsSync, fstatSync, readFileSync, readSync, readdirSync, statSync, watch, type Dirent, type Stats } from "fs";
+import { homedir } from "node:os";
+import { open as openFileAsync, readdir } from "fs/promises";
+import { dirname, isAbsolute, join, normalize as normalizePath, relative, resolve as resolvePath, sep } from "path";
+import { writePrivateFileAtomicSync } from "./atomic-file.ts";
+import type { AgentMessage, ImageContent, SessionEntry, SessionHeader, SessionInfo, SessionContext } from "./types.ts";
+import type { SessionEntry as PiSessionEntry, SessionInfo as PiSessionInfo } from "@earendil-works/pi-coding-agent";
+import { normalizeToolCalls } from "./normalize.ts";
+import { deriveRunOutcome, type SessionLastRun } from "./run-outcome.ts";
+import { getThinkingPreview } from "./message-display.ts";
+import { projectIdentityKey } from "./project-identity.ts";
+import { sessionPathKey } from "./session-path.ts";
+import { MAX_TOOL_RESULT_IMAGE_BYTES, TOOL_RESULT_IMAGE_MIMES } from "./tool-result-images.ts";
+import type { ProjectInfo } from "./worktree.ts";
+import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents.ts";
 
 export { getAgentDir };
+
+// Incremental session-list scanning (§5.4 of docs/all-sessions-panel.zh-CN.md)
+//
+// SessionManager.listAll() re-parses EVERY line of EVERY session file on each
+// call (including allMessagesText, which pi-web does not use). For long-running
+// installs (thousands of sessions) that is wasteful. Instead we keep a disk
+// cache keyed by (mtimeMs, size); unchanged files reuse cached metadata and only
+// changed files are re-parsed (stat-only scans are cheap).
+// ============================================================================
+
+export interface SessionFileInfo {
+  path: string;
+  id: string;
+  cwd: string;
+  name?: string;
+  created: Date;
+  modified: Date;
+  messageCount: number;
+  firstMessage: string;
+  parentSessionPath?: string;
+  /**
+   * Outcome of the most recent run (derived from the last assistant message's
+   * stopReason/errorMessage, see lib/run-outcome.ts): failed/aborted/interrupted
+   * drive list anomaly markers and completion-notice routing. No assistant
+   * message = field absent. While the session is running, the UI prioritizes `running`.
+   */
+  lastRun?: SessionLastRun;
+  /**
+   * External subagent (pi-subagents ecosystem artifact): spawn-mode subagent
+   * sessions land at
+   *   <sessions>/<cwdDir>/<parentDirName>/<runUuid>/run-N/session.jsonl
+   * The header carries no parentSession marker (the parent/child relation is
+   * conveyed via env vars), so it is inferred from the on-disk path.
+   * parentId = the last segment of parentDirName (parent session uuid);
+   * profile is a best-effort read from the run artifact name.
+   */
+  externalSubagent?: { profile?: string; parentId: string };
+}
+
+interface ListCacheEntry {
+  mtimeMs: number;
+  size: number;
+  /**
+   * Byte offset parsed so far (baseline for append-only incremental parsing):
+   * the next scan only parses lines appended after it. Missing = the entry has
+   * no offset baseline yet (cache written by an older version); once its file
+   * changes, a full parse runs and the offset is recorded.
+   */
+  offset?: number;
+  info: SessionFileInfo;
+}
+
+interface ListCacheFile {
+  version: number;
+  updatedAt: string;
+  files: Record<string, ListCacheEntry>;
+}
+
+const LIST_CACHE_VERSION = 3; // v2: derive adds pi-subagents nested artifact path inference (externalSubagent); entry offset added for backward compat (old caches lack offset → one full parse on change backfills it); v3: added lastRun (session run-outcome derivation; old caches lack the field → one full rescan)
+const LIST_CACHE_FILENAME = "session_list_cache.json";
+
+function isMessageWithContent(message: AgentMessage): boolean {
+  return typeof message.role === "string" && "content" in message;
+}
+
+/** Mirrors the SDK's extractTextContent so firstMessage matches pi exactly. */
+function extractTextContent(message: AgentMessage): string {
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return (content as Array<{ type?: string; text?: string }>)
+    .filter((b) => b.type === "text")
+    .map((b) => b.text ?? "")
+    .join(" ");
+}
+
+/** Mirrors the SDK's getMessageActivityTime (entry-level timestamp semantics). */
+function getMessageActivityTime(entry: SessionEntry & { message?: AgentMessage }): number | undefined {
+  const message = entry.message;
+  if (!message || !isMessageWithContent(message)) return undefined;
+  if (message.role !== "user" && message.role !== "assistant") return undefined;
+  const msgTimestamp = message.timestamp;
+  if (typeof msgTimestamp === "number") return msgTimestamp;
+  const t = Date.parse(entry.timestamp);
+  return Number.isNaN(t) ? undefined : t;
+}
+
+/**
+ * Parse one session file into the same fields SessionManager.listAll() derives
+ * (id/cwd/name/created/modified/messageCount/firstMessage/parentSessionPath),
+ * reusing the SDK's entry parser. null when the file is not a session.
+ */
+export function deriveSessionFileInfo(filePath: string): SessionFileInfo | null {
+  return deriveSessionFileInfoFull(filePath)?.info ?? null;
+}
+
+/**
+ * Full parse + record the parse end (byte offset, the baseline for subsequent
+ * incremental parsing). ⚠ Reads the whole file synchronously and JSON.parses
+ * line by line — large sessions (10-20MB) take seconds, so use only for a
+ * first parse or an invalidated baseline (truncation, missing offset); routine
+ * appends go through deriveSessionFileInfoAppended.
+ */
+function deriveSessionFileInfoFull(filePath: string): { info: SessionFileInfo; parsedEnd: number } | null {
+  const header = readSessionHeader(filePath);
+  if (!header) return null;
+  let name: string | undefined;
+  let messageCount = 0;
+  let firstMessage = "";
+  let lastActivity: number | undefined;
+  let lastAssistant: { stopReason?: string; errorMessage?: string; timestamp?: number } | undefined;
+  for (const e of getSessionEntries(filePath)) {
+    if (e.type === "session_info") {
+      name = e.name?.trim() || undefined;
+      continue;
+    }
+    if (e.type !== "message") continue;
+    messageCount++;
+    const ts = getMessageActivityTime(e as SessionEntry & { message?: AgentMessage });
+    if (typeof ts === "number") lastActivity = Math.max(lastActivity ?? 0, ts);
+    const msg = (e as { message?: AgentMessage }).message;
+    if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
+    if (msg.role === "assistant") {
+      // Overwritten each time → ends up as the last assistant message in the session file (including error messages with empty content)
+      lastAssistant = {
+        stopReason: (msg as { stopReason?: string }).stopReason,
+        errorMessage: (msg as { errorMessage?: string }).errorMessage,
+        timestamp: typeof ts === "number" ? ts : undefined,
+      };
+    }
+    const text = extractTextContent(msg);
+    if (!text) continue;
+    if (!firstMessage && msg.role === "user") firstMessage = text;
+  }
+  const headerTime = Date.parse(header.timestamp);
+  const modified = typeof lastActivity === "number" && lastActivity > 0
+    ? new Date(lastActivity)
+    : !Number.isNaN(headerTime)
+      ? new Date(headerTime)
+      : statSync(filePath).mtime;
+  // pi-subagents artifact adaptation: spawn-mode subagent sessions land at
+  //   <sessions>/<cwdDir>/<parentDirName>/<runUuid>/run-N/session.jsonl
+  // The header has no parentSession (it conveys the parent/child relation via
+  // env vars), so the parent session file is inferred from the on-disk path;
+  // profile is extracted best-effort from sibling subagent-artifacts/<runUuid>_<profile>_transcript.jsonl.
+  let parentSessionPath = header.parentSession;
+  let externalSubagent: SessionFileInfo["externalSubagent"];
+  if (!parentSessionPath) {
+    const m = filePath.match(/\/([^/]+)\/([^/]+)\/run-\d+\/session\.jsonl$/);
+    if (m) {
+      const candidate = `${filePath.slice(0, m.index)}/${m[1]}.jsonl`;
+      if (existsSync(candidate)) {
+        parentSessionPath = candidate;
+        // pi session filenames are <timestamp>_<uuid>; the last segment is the parent session id (still resolvable after the parent file is archived)
+        const parentId = m[1].includes("_") ? m[1].split("_").pop()! : m[1];
+        let profile: string | undefined;
+        try {
+          const artsDir = join(dirname(dirname(filePath)), "subagent-artifacts");
+          const hit = readdirSync(artsDir).find(
+            (f) => f.startsWith(`${m[2]}_`) && f.endsWith("_transcript.jsonl"),
+          );
+          if (hit) profile = hit.slice(m[2].length + 1, -"_transcript.jsonl".length) || undefined;
+        } catch {
+          // no artifacts dir (cleaned up / older version) — leave profile empty
+        }
+        externalSubagent = { profile, parentId };
+      }
+    }
+  }
+  let parsedEnd: number;
+  try {
+    parsedEnd = statSync(filePath).size;
+  } catch {
+    return null; // file vanished mid-parse
+  }
+  const lastRun = lastAssistant
+    ? deriveRunOutcome([{ role: "assistant", ...lastAssistant }], modified.toISOString())
+    : undefined;
+  return {
+    info: {
+      path: filePath,
+      id: header.id,
+      cwd: header.cwd ?? "",
+      name,
+      created: new Date(header.timestamp),
+      modified,
+      messageCount,
+      firstMessage: firstMessage || "(no messages)",
+      parentSessionPath: parentSessionPath || undefined,
+      ...(externalSubagent ? { externalSubagent } : {}),
+      ...(lastRun ? { lastRun } : {}),
+    },
+    parsedEnd,
+  };
+}
+
+/**
+ * Append-only incremental parse: only the bytes appended after prev.offset are
+ * parsed, with accumulation semantics mirroring the full parse entry by entry
+ * (message count, user/assistant activity timestamps, first user message,
+ * session_info renames with last-writer-wins). Returns null = baseline invalid
+ * (no offset / truncated rewrite / read failure); the caller falls back to a
+ * full parse. IO goes through fs.promises async reads so the event loop is
+ * never blocked (server hard rule).
+ *
+ * The header line is re-read on every increment (bounded single line,
+ * negligible cost): the header is mutable metadata and can be rewritten in
+ * place — move rewrites cwd as a same-length replacement, leaving size
+ * unchanged and bypassing the mtime/size invalidation check. Judging by
+ * size>=offset alone would mistake such a rewrite for "zero appends" and keep
+ * the stale info.cwd, permanently wedging the cache entry. Baseline identity
+ * is verified via header.id; cwd always comes from the header.
+ */
+async function deriveSessionFileInfoAppended(
+  filePath: string,
+  prev: ListCacheEntry,
+  st: Pick<Stats, "size">,
+): Promise<{ info: SessionFileInfo; parsedEnd: number } | null> {
+  const start = prev.offset;
+  if (typeof start !== "number" || !Number.isFinite(start) || start < 0) return null;
+  if (st.size < start) return null; // truncated / rewritten — full re-parse
+  const header = readSessionHeader(filePath);
+  if (!header?.id || header.id !== prev.info.id) return null; // rewritten with different session — full re-parse
+  const liveCwd = header.cwd ?? prev.info.cwd;
+  if (st.size === start) return { info: { ...prev.info, cwd: liveCwd }, parsedEnd: start }; // mtime-only change, no appended bytes
+
+  let chunk: string;
+  try {
+    const fh = await openFileAsync(filePath, "r");
+    try {
+      const buf = Buffer.allocUnsafe(st.size - start);
+      const { bytesRead } = await fh.read(buf, 0, buf.length, start);
+      chunk = buf.toString("utf8", 0, bytesRead);
+    } finally {
+      await fh.close();
+    }
+  } catch {
+    return null;
+  }
+
+  let name = prev.info.name;
+  let messageCount = prev.info.messageCount;
+  let firstMessage = prev.info.firstMessage;
+  let lastActivityMs = prev.info.modified.getTime();
+  // Last assistant message within this appended segment (if none, keep prev's lastRun — derived from the older segment)
+  let appendedLastAssistant: { stopReason?: string; errorMessage?: string; timestamp?: number } | undefined;
+  // \n is never part of a multi-byte UTF-8 sequence (self-synchronizing encoding), so splitting lines at the string level is safe.
+  let end = start;
+  let lineStart = 0;
+  for (;;) {
+    const nl = chunk.indexOf("\n", lineStart);
+    const isTail = nl === -1;
+    const line = isTail ? chunk.slice(lineStart) : chunk.slice(lineStart, nl);
+    // Same semantics as the SDK's parseSessionEntryLine: blank/malformed lines
+    // are skipped; a fully parseable trailing line without a newline also counts
+    // (the writer's window before appending \n); a torn half line waits for the
+    // next round (end does not advance past it).
+    const entry = line.trim() ? tryParseEntryLine(line) : null;
+    if (entry) {
+      if (entry.type === "session_info") {
+        name = (entry as { name?: string }).name?.trim() || undefined;
+      } else if (entry.type === "message") {
+        messageCount++;
+        const ts = getMessageActivityTime(entry as SessionEntry & { message?: AgentMessage });
+        if (typeof ts === "number" && ts > lastActivityMs) lastActivityMs = ts;
+        const msg = (entry as { message?: AgentMessage }).message;
+        if (msg?.role === "assistant") {
+          appendedLastAssistant = {
+            stopReason: (msg as { stopReason?: string }).stopReason,
+            errorMessage: (msg as { errorMessage?: string }).errorMessage,
+            timestamp: typeof ts === "number" ? ts : undefined,
+          };
+        }
+        if (!firstMessage || firstMessage === "(no messages)") {
+          if (msg?.role === "user") {
+            const text = extractTextContent(msg);
+            if (text) firstMessage = text;
+          }
+        }
+      }
+    }
+    if (isTail) {
+      if (entry) end = start + Buffer.byteLength(chunk, "utf8");
+      break;
+    }
+    end = start + nl + 1;
+    lineStart = nl + 1;
+  }
+
+  const lastRun = appendedLastAssistant
+    ? deriveRunOutcome([{ role: "assistant", ...appendedLastAssistant }], new Date(lastActivityMs).toISOString())
+    : prev.info.lastRun;
+  return {
+    info: {
+      ...prev.info,
+      cwd: liveCwd, // the header may be rewritten in place by move (same-length replacement bypasses the mtime/size check); header wins
+      name,
+      messageCount,
+      firstMessage,
+      modified: new Date(lastActivityMs),
+      ...(lastRun ? { lastRun } : {}),
+    },
+    parsedEnd: end,
+  };
+}
+
+function tryParseEntryLine(line: string): SessionEntry | null {
+  try {
+    return JSON.parse(line) as SessionEntry;
+  } catch {
+    return null;
+  }
+}
+
+function readListCache(root: string): ListCacheFile | null {
+  const p = join(root, LIST_CACHE_FILENAME);
+  try {
+    let diskMtimeMs: number;
+    try {
+      diskMtimeMs = statSync(p).mtimeMs;
+    } catch {
+      memListCache = null;
+      return null;
+    }
+    // In-memory layer: synchronously parsing a 1.5MB+ JSON on every scan is
+    // costly (when dev/prod instances share the sessions dir, the other side's
+    // writes change the mtime → automatic invalidation and re-read, which is
+    // semantically safe).
+    if (memListCache?.root === root && memListCache.diskMtimeMs === diskMtimeMs) {
+      return memListCache.cache;
+    }
+    const raw = JSON.parse(readFileSync(p, "utf8")) as ListCacheFile;
+    if (raw?.version !== LIST_CACHE_VERSION) return null;
+    // JSON round-trip turns Dates into strings — restore them.
+    for (const entry of Object.values(raw.files)) {
+      entry.info.created = new Date(entry.info.created);
+      entry.info.modified = new Date(entry.info.modified);
+    }
+    memListCache = { root, cache: raw, diskMtimeMs };
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+let memListCache: { root: string; cache: ListCacheFile; diskMtimeMs: number } | null = null;
+
+function writeListCache(root: string, cache: ListCacheFile): void {
+  try {
+    writePrivateFileAtomicSync(join(root, LIST_CACHE_FILENAME), JSON.stringify(cache));
+    // Synchronously point the in-memory layer at the version just written (avoids a disk re-read next scan from the mtime change).
+    try {
+      memListCache = { root, cache, diskMtimeMs: statSync(join(root, LIST_CACHE_FILENAME)).mtimeMs };
+    } catch {
+      memListCache = null;
+    }
+  } catch {
+    // Non-fatal: the in-memory result is still correct; next scan rebuilds.
+  }
+}
+
+/**
+ * Changed-file parsing: incremental first (append-only segments, KB-scale per
+ * pass), falling back to a full parse when the baseline is missing or invalid.
+ * Yields the event loop in batches by parsed bytes (setImmediate) — a cold
+ * scan of a large store (1500+ files, active sessions 10-20MB) no longer
+ * freezes other dev-server requests (server hard rule: no long blocking).
+ */
+async function parseChangedEntries(
+  items: Array<{ path: string; st: Stats; prev: ListCacheEntry | null }>,
+): Promise<Array<{ info: SessionFileInfo; mtimeMs: number; size: number; offset?: number }>> {
+  const out: Array<{ info: SessionFileInfo; mtimeMs: number; size: number; offset?: number }> = [];
+  let parsedBytesSinceYield = 0;
+  let filesSinceYield = 0;
+  for (const item of items) {
+    const appended = item.prev ? await deriveSessionFileInfoAppended(item.path, item.prev, item.st) : null;
+    const full = appended ?? deriveSessionFileInfoFull(item.path);
+    if (full) {
+      out.push({ info: full.info, mtimeMs: item.st.mtimeMs, size: item.st.size, offset: full.parsedEnd });
+    }
+    // Yield budget: incremental segments count only the bytes actually parsed; full parses count the whole file (one synchronous block).
+    parsedBytesSinceYield += appended
+      ? Math.max(0, item.st.size - (item.prev?.offset ?? 0))
+      : item.st.size;
+    if (++filesSinceYield >= 16 || parsedBytesSinceYield >= 1_000_000) {
+      filesSinceYield = 0;
+      parsedBytesSinceYield = 0;
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
+  return out;
+}
+
+/**
+ * List session files under a sessions root (same layout the SDK scans:
+ * <root>/<encoded-cwd>/*.jsonl). Additionally discovers pi-subagents nested
+ * run artifacts: <root>/<cwdDir>/<parentDir>/<runUuid>/run-N/session.jsonl
+ * (bounded depth + fixed names — no arbitrary recursion).
+ */
+export function listSessionFiles(root: string): string[] {
+  const files: string[] = [];
+  let dirs: string[] = [];
+  try {
+    dirs = readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() || e.isSymbolicLink())
+      .map((e) => join(root, e.name));
+  } catch {
+    return files;
+  }
+  for (const dir of dirs) {
+    try {
+      for (const f of readdirSync(dir)) {
+        if (f.endsWith(".jsonl")) files.push(join(dir, f));
+      }
+    } catch {
+      // unreadable dir — skip
+    }
+    // pi-subagents nested artifacts: the parent dir name matches the parent
+    // session file, and the next two levels are fixed as
+    // <runUuid>/run-N/session.jsonl. Only fixed names are probed — no arbitrary recursion.
+    try {
+      for (const sub of readdirSync(dir, { withFileTypes: true })) {
+        if (!sub.isDirectory() && !sub.isSymbolicLink()) continue;
+        const subDir = join(dir, sub.name);
+        // pi fork subagents (forked in-process, persisted to disk):
+        // <parentDir>/forks/<date>_<id>.jsonl, one flat layer with names shaped
+        // like top-level sessions (<date>_<uuid>.jsonl); the parent/child
+        // relation is derived at parse time from header parentSession (the
+        // parent session file path) — here we only scan the files into the list.
+        // Orthogonal to the run-N artifact probe above (the forks dir only
+        // exists under fork parent dirs).
+        try {
+          const forksDir = join(subDir, "forks");
+          if (statSync(forksDir).isDirectory()) {
+            for (const f of readdirSync(forksDir)) {
+              if (f.endsWith(".jsonl")) files.push(join(forksDir, f));
+            }
+          }
+        } catch {
+          // no forks dir — skip
+        }
+        let runDirs: Dirent[];
+        try {
+          runDirs = readdirSync(subDir, { withFileTypes: true }).filter((e) => e.isDirectory());
+        } catch {
+          continue;
+        }
+        for (const run of runDirs) {
+          const runDir = join(subDir, run.name);
+          let ns: Dirent[];
+          try {
+            ns = readdirSync(runDir, { withFileTypes: true }).filter((e) => e.isDirectory() && /^run-\d+$/.test(e.name));
+          } catch {
+            continue;
+          }
+          for (const n of ns) {
+            const f = join(runDir, n.name, "session.jsonl");
+            try {
+              if (statSync(f).isFile()) files.push(f);
+            } catch {
+              // no session.jsonl here — skip
+            }
+          }
+        }
+      }
+    } catch {
+      // dir unreadable — skip nested probe
+    }
+  }
+  return files;
+}
+
+/**
+ * Incremental scan: stat-compare against the disk cache, re-parse only changed
+ * files, drop entries for deleted files, persist the cache when anything
+ * changed. Sorted by modified desc (same as SessionManager.listAll).
+ */
+export async function scanSessionsFromRoot(root: string): Promise<SessionFileInfo[]> {
+  const files = listSessionFiles(root);
+  const cache = readListCache(root);
+  const knownKeys = new Set<string>();
+  const changed: Array<{ path: string; st: Stats; prev: ListCacheEntry | null }> = [];
+  const merged: Array<{ info: SessionFileInfo; entry: { mtimeMs: number; size: number; offset?: number } }> = [];
+
+  for (const f of files) {
+    const key = sessionPathKey(f);
+    knownKeys.add(key);
+    let st;
+    try {
+      st = statSync(f);
+    } catch {
+      continue;
+    }
+    const hit = cache?.files[key];
+    if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
+      merged.push({ info: hit.info, entry: hit });
+    } else {
+      changed.push({ path: f, st, prev: hit ?? null });
+    }
+  }
+
+  const fresh = changed.length > 0 ? await parseChangedEntries(changed) : [];
+  merged.push(...fresh.map((x) => ({ info: x.info, entry: x })));
+
+  // Rebuild cache: reused entries + freshly parsed ones; drop deleted paths.
+  // (Assembled directly from this round's stat/parse results; no second statSync across all files.)
+  const stale = cache ? Object.keys(cache.files).filter((k) => !knownKeys.has(k)).length : 0;
+  if (changed.length > 0 || stale > 0) {
+    const files2: ListCacheFile = { version: LIST_CACHE_VERSION, updatedAt: new Date().toISOString(), files: {} };
+    for (const m of merged) {
+      files2.files[sessionPathKey(m.info.path)] = { mtimeMs: m.entry.mtimeMs, size: m.entry.size, offset: m.entry.offset, info: m.info };
+    }
+    writeListCache(root, files2);
+  }
+
+  return merged
+    .map((m) => m.info)
+    .sort((a, b) => b.modified.getTime() - a.modified.getTime());
+}
+
+/** Production entry: scan ~/.pi/agent/sessions incrementally. */
+type SessionScanFn = () => Promise<SessionFileInfo[]>;
+const productionSessionScan: SessionScanFn = () => scanSessionsFromRoot(join(getAgentDir(), "sessions"));
+let activeSessionScan: SessionScanFn = productionSessionScan;
+
+/** Test seam: replace the incremental disk scan; returns a restore function. */
+export function __stubSessionScanForTests(stub: SessionScanFn | null): () => void {
+  const previous = activeSessionScan;
+  activeSessionScan = stub ?? productionSessionScan;
+  return () => {
+    activeSessionScan = previous;
+  };
+}
 
 const SESSION_HEADER_MAX_BYTES = 64 * 1024;
 const SESSION_RELATION_MAX_BYTES = 256 * 1024;
@@ -151,13 +687,37 @@ function readSessionRelationEntries(filePath: string): SessionEntry[] {
     ...parseSessionEntries(readBoundedTailLines(filePath, SESSION_RESULT_MAX_BYTES)),
   ];
 }
+/** Single SessionInfo (used by the P0-A lightweight meta endpoint): goes
+ *  through the same incremental scan cache (mtime/size — a cache hit costs zero
+ *  disk IO), assembled from exactly the same source as the list (relation /
+ *  project info / extension annotations are attached by the outer layer). */
+export async function getSessionMeta(id: string): Promise<SessionInfo | null> {
+  const scanned: SessionFileInfo[] = await activeSessionScan();
+  const s = scanned.find((x) => x.id === id);
+  if (!s) return null;
+  const pathToId = new Map<string, string>();
+  for (const x of scanned) pathToId.set(sessionPathKey(x.path), x.id);
+  const [info] = await attachSessionProjectInfo([sessionInfoFromScan(s, pathToId)]);
+  return info ?? null;
+}
 
 export async function attachSessionProjectInfo(sessions: SessionInfo[]): Promise<SessionInfo[]> {
+  // Lazy import: keeps session-reader importable without the git/worktree
+  // chain in node tests (same rationale as loadAllSessions above).
+  const { resolveProject } = await import("./worktree.ts");
   const uniqueCwds = [...new Set(sessions.map((s) => s.cwd).filter(Boolean))];
   const projectByCwd = new Map<string, ProjectInfo>();
-  await Promise.all(uniqueCwds.map(async (cwd) => {
-    projectByCwd.set(cwd, await resolveProject(cwd));
-  }));
+  // Batched concurrency: on a cold start a wave of dozens of git spawns would queue for seconds on a busy event loop; yield between batches.
+  const RESOLVE_BATCH = 8;
+  for (let i = 0; i < uniqueCwds.length; i += RESOLVE_BATCH) {
+    const batch = uniqueCwds.slice(i, i + RESOLVE_BATCH);
+    await Promise.all(batch.map(async (cwd) => {
+      projectByCwd.set(cwd, await resolveProject(cwd));
+    }));
+    if (i + RESOLVE_BATCH < uniqueCwds.length) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  }
 
   return sessions.map((session) => {
     const project = session.cwd ? projectByCwd.get(session.cwd) : undefined;
@@ -184,11 +744,20 @@ export function mergeSessionLists(
 }
 
 async function loadAllSessions(): Promise<SessionInfo[]> {
-  const scanned = await listSessionsIncremental();
+  // Our incremental disk scan (mtime/size cache, only changed files re-parsed)
+  // replaces SessionManager.listAll()'s full line-by-line re-parse; the
+  // enrichment logic matches upstream.
+  const scanned: SessionFileInfo[] = await activeSessionScan();
   const pathToId = new Map<string, string>();
   for (const s of scanned) pathToId.set(sessionPathKey(s.path), s.id);
 
-  const sessions = scanned.map((s) => {
+  const sessions = scanned.map((s) => sessionInfoFromScan(s, pathToId));
+  return attachSessionProjectInfo(sessions);
+}
+
+/** One scan record → SessionInfo (shared assembly for loadAllSessions / getSessionMeta). */
+function sessionInfoFromScan(s: SessionFileInfo, pathToId: Map<string, string>) {
+  {
     cacheSessionPath(s.id, s.path);
     const originSessionId = s.parentSessionPath ? pathToId.get(sessionPathKey(s.parentSessionPath)) : undefined;
     let subagent = null;
@@ -196,6 +765,27 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
       try {
         subagent = readSubagentRun(readSessionRelationEntries(s.path), s.id, s.path);
       } catch { /* malformed or concurrently removed session */ }
+      // External subagent (pi-subagents ecosystem artifact): the header has no
+      // parentSession and no SUBAGENT_META_TYPE entry; the parentSessionPath /
+      // externalSubagent inferred from the on-disk path is the source of truth
+      // for the parent/child relation. An equivalent subagent relation is
+      // synthesized so the frontend badge / parent-child tree / Agents panel
+      // treat it identically.
+      if (!subagent && s.externalSubagent) {
+        subagent = {
+          sessionId: s.id,
+          sessionPath: s.path,
+          parentSessionId: originSessionId ?? s.externalSubagent.parentId,
+          parentToolCallId: "",
+          profile: s.externalSubagent.profile || "external",
+          description: s.name || (s.firstMessage !== "(no messages)" ? s.firstMessage.slice(0, 80) : "external subagent"),
+          task: "",
+          runInBackground: true,
+          // Spawn-mode subagents are frozen once on disk: with real conversation content treat as completed, otherwise interrupted
+          status: s.messageCount > 1 ? "completed" as const : "interrupted" as const,
+          createdAt: s.created instanceof Date ? s.created.toISOString() : String(s.created),
+        };
+      }
     }
     return {
       path: s.path,
@@ -207,6 +797,7 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
       messageCount: s.messageCount,
       firstMessage: s.firstMessage || "(no messages)",
       parentSessionId: originSessionId,
+      ...(s.lastRun ? { lastRun: s.lastRun } : {}),
       ...(subagent
         ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description, status: subagent.status } }
         : s.parentSessionPath
@@ -214,17 +805,16 @@ async function loadAllSessions(): Promise<SessionInfo[]> {
           : {}),
       transient: false,
     };
-  });
-  return attachSessionProjectInfo(sessions);
+  }
 }
-
 export async function listAllSessions(options: { force?: boolean } = {}): Promise<SessionInfo[]> {
   if (options.force) invalidateSessionListCache();
+  ensureSessionWatcher();
   const generation = globalThis.__piSessionListGeneration ?? 0;
 
   // Return cached result if still fresh (avoids re-scanning session files
   // and re-spawning git processes on every page load).
-  if (globalThis.__piSessionListCache && Date.now() - globalThis.__piSessionListCache.ts < SESSION_LIST_CACHE_TTL_MS) {
+  if (globalThis.__piSessionListCache && Date.now() - globalThis.__piSessionListCache.ts < sessionListCacheTtlMs) {
     return globalThis.__piSessionListCache.data;
   }
 
@@ -266,9 +856,59 @@ declare global {
   var __piSessionListPromiseGeneration: number | undefined;
   var __piSessionListGeneration: number | undefined;
   var __piSessionListCache: { data: SessionInfo[]; ts: number } | undefined;
+  var __piSessionWatcher: { close(): void } | null | undefined;
+  var __piSessionWatcherInit: boolean | undefined;
+  var __piSessionWatchDebounce: ReturnType<typeof setTimeout> | undefined;
 }
 
-const SESSION_LIST_CACHE_TTL_MS = 30_000;
+// P1 (session-list server triage/watch plan doc): cache invalidation switched
+// to watch-event driven. The TTL is only a fallback — when no watch is
+// established / the inotify queue overflows / FSEvents drops events, a forced
+// rescan happens after at most 10min; if the watch cannot be established
+// (unsupported platform / permissions), degrade to a 60s TTL.
+const SESSION_LIST_CACHE_TTL_FALLBACK_MS = 10 * 60_000;
+const SESSION_LIST_CACHE_TTL_DEGRADED_MS = 60_000;
+let sessionListCacheTtlMs = SESSION_LIST_CACHE_TTL_DEGRADED_MS;
+
+/**
+ * Lazily starts the sessions-dir watcher (established on the first
+ * listAllSessions, lives for the whole process). Event → 300ms debounce →
+ * invalidateSessionListCache(). eventType is not distinguished: Linux
+ * rename/change, Windows case-insensitivity, macOS FSEvents batch delays — all
+ * treated as "possibly changed" and invalidated; the debounce absorbs the
+ * event storms of active-session streaming appends and editor atomic writes
+ * (temp file → rename). The watch is only an invalidation signal; rescans stay
+ * incremental (mtime/size fingerprints).
+ */
+function ensureSessionWatcher(): void {
+  if (globalThis.__piSessionWatcher) {
+    // HMR module reload: the watcher survived in globalThis, so just reset the
+    // TTL tier to the fallback tier (module-level let resets to the degraded
+    // tier on reload; it must not stay at 60s).
+    sessionListCacheTtlMs = SESSION_LIST_CACHE_TTL_FALLBACK_MS;
+    return;
+  }
+  if (globalThis.__piSessionWatcherInit) return; // failed to establish once → TTL stays on the degraded tier permanently
+  globalThis.__piSessionWatcherInit = true;
+  try {
+    const dir = defaultSessionsDir();
+    const watcher = watch(dir, { recursive: true }, () => {
+      if (globalThis.__piSessionWatchDebounce) clearTimeout(globalThis.__piSessionWatchDebounce);
+      const t = setTimeout(() => {
+        globalThis.__piSessionWatchDebounce = undefined;
+        invalidateSessionListCache();
+      }, 300);
+      t.unref?.(); // keep the debounce from holding the process open (prod is kept alive by the HTTP server)
+      globalThis.__piSessionWatchDebounce = t;
+    });
+    watcher.on("error", () => { /* watch dying just means falling back to the fallback TTL, not a crash */ });
+    watcher.unref?.(); // keep the watcher from holding the process open (tests / one-off scripts); prod stays alive via the HTTP server handle
+    globalThis.__piSessionWatcher = watcher;
+    sessionListCacheTtlMs = SESSION_LIST_CACHE_TTL_FALLBACK_MS;
+  } catch {
+    // unsupported platform / insufficient permissions → stay on the degraded tier (60s), no watch
+  }
+}
 const SESSION_ID_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 
 function defaultSessionsDir(): string {
@@ -390,6 +1030,31 @@ export async function resolveSessionPath(sessionId: string): Promise<string | nu
   return getPathCache().get(sessionId) ?? null;
 }
 
+/**
+ * For empty sessions (file lazily not yet written), look up the TUI bridge
+ * registry by id and return the registry key (= sessionFile path). Attach
+ * detection prioritizes the socket (bridge-registry.json); the file is only
+ * for history replay. A live bridge is enough to attach — no need to wait for
+ * the file to appear on disk.
+ */
+export async function findBridgeSessionFileById(sessionId: string): Promise<string | null> {
+  if (!/^[0-9a-f-]{36}$/.test(sessionId)) return null;
+  const registryPath =
+    process.env.PI_BRIDGE_REGISTRY
+    ?? join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "bridge-registry.json");
+  try {
+    const raw = readFileSync(registryPath, "utf8");
+    const reg = JSON.parse(raw) as Record<string, unknown>;
+    const suffix = `_${sessionId}.jsonl`;
+    for (const key of Object.keys(reg)) {
+      if (key.endsWith(suffix)) return key;
+    }
+  } catch {
+    // no registry / parse failure → no bridge
+  }
+  return null;
+}
+
 export async function resolveSessionIdByPath(filePath: string): Promise<string | undefined> {
   const pathKey = sessionPathKey(filePath);
   const cached = getPathToIdCache().get(pathKey);
@@ -465,27 +1130,57 @@ export function getLatestModelChange(entries: SessionEntry[]): SessionContext["m
 
 function getSessionSettings(entries: SessionEntry[], leafId?: string | null): Pick<SessionContext, "thinkingLevel" | "model"> {
   if (leafId === null) return { thinkingLevel: "off", model: null };
-  const branch = sliceActiveBranch(entries, leafId ?? null, entries.length);
+  const byId = new Map(entries.map((entry) => [entry.id, entry]));
+  let current = leafId ? byId.get(leafId) : undefined;
+  current ??= entries[entries.length - 1];
   let thinkingLevel: string | undefined;
-  let responseModel: SessionContext["model"] | undefined;
+  // Our semantics: model_change wins first (a stale model stamp that abort
+  // persisted after a runtime set_model can sit closer to the leaf than
+  // model_change, and a pure "closest wins" rule would roll back to the old
+  // model), but with a branch correction: after "edit from here" / branch
+  // navigation returns to an earlier node, the new chain's ancestors carry no
+  // model_change (it stayed on the old branch), while the new chain's assistant
+  // message stamp reflects the model the engine actually ran (the engine's
+  // in-memory branch state is not reset). The two shapes differ: an abort
+  // residual stamp immediately follows model_change (no user message in
+  // between); a new-branch stamp is necessarily separated from the old
+  // model_change by a newly sent user message → only when "stamp closer +
+  // user in between + different model" does the stamp win; otherwise
+  // model_change stays first.
+  let model: SessionContext["model"] | undefined;
+  let sawModelChange = false;
+  let assistantStamp: SessionContext["model"] | undefined;
+  // assistant stamp encountered before model_change (= stamp closer to the leaf), with a user message in between
+  let stampOnNewBranch = false;
 
-  for (let i = branch.length - 1; i >= 0 && (thinkingLevel === undefined || responseModel === undefined); i--) {
-    const entry = branch[i];
-    if (thinkingLevel === undefined && entry.type === "thinking_level_change") {
-      thinkingLevel = entry.thinkingLevel;
+  while (current && (thinkingLevel === undefined || !(sawModelChange && assistantStamp !== undefined))) {
+    if (thinkingLevel === undefined && current.type === "thinking_level_change") {
+      thinkingLevel = current.thinkingLevel;
     }
-    if (responseModel === undefined && entry.type === "message" && entry.message.role === "assistant") {
-      const message = entry.message as { provider?: unknown; model?: unknown };
+    if (!sawModelChange && current.type === "model_change") {
+      model = { provider: current.provider, modelId: current.modelId };
+      sawModelChange = true;
+    } else if (assistantStamp === undefined && current.type === "message" && current.message.role === "assistant") {
+      const message = current.message as { provider?: unknown; model?: unknown };
       if (typeof message.provider === "string" && typeof message.model === "string") {
-        responseModel = { provider: message.provider, modelId: message.model };
+        assistantStamp = { provider: message.provider, modelId: message.model };
+        stampOnNewBranch = false;
       }
+    } else if (assistantStamp !== undefined && !sawModelChange && current.type === "message" && current.message.role === "user") {
+      stampOnNewBranch = true;
     }
+    current = current.parentId ? byId.get(current.parentId) : undefined;
   }
 
-  return {
-    thinkingLevel: thinkingLevel ?? "off",
-    model: getLatestModelChange(branch) ?? responseModel ?? null,
-  };
+  // Branch correction (see above): stamp closer + user in between + different
+  // model → the model actually run on the new branch is the stamped one.
+  // With the same model both choices agree, so model_change stands; without a
+  // stamp / when the stamp lacks provider, keep the status quo.
+  if (model && assistantStamp && stampOnNewBranch &&
+      (assistantStamp.provider !== model.provider || assistantStamp.modelId !== model.modelId)) {
+    return { thinkingLevel: thinkingLevel ?? "off", model: assistantStamp };
+  }
+  return { thinkingLevel: thinkingLevel ?? "off", model: model ?? assistantStamp ?? null };
 }
 
 export interface BuildSessionContextOptions {
@@ -662,9 +1357,16 @@ function deferToolResultBase64Images(
   return { ...message, content };
 }
 
-// Convert a session entry on the active branch into a UI message.
-// Returns null for entries that do not map to chat history (metadata, non-message types).
-function entryToUiMessage(
+/**
+ * Convert a session entry on the active branch into a UI message.
+ * Returns null for entries that do not map to chat history (metadata, non-message types).
+ *
+ * Exported for reuse by the handle channel (lib/session/handle-adapter.ts):
+ * provider backends' getMessages (pi get_entries / omp wrapper) return entries
+ * of the same shape and must go through the same unwrapping, otherwise the
+ * frontend gets no top-level role and the message area renders empty.
+ */
+export function entryToUiMessage(
   entry: SessionEntry,
   options: BuildSessionContextOptions,
 ): AgentMessage | null {
@@ -675,9 +1377,17 @@ function entryToUiMessage(
   // normalizeToolCalls is a secondary guard (returns non-assistant messages as-is).
   switch (entry.type) {
     case "message": {
+      // Session files are parsed without validation; old versions, forks, or
+      // hand-edited files can contain messages with null/missing content.
+      // Mirror the SDK's sessionEntryToContextMessages guard so the
+      // deferThinking content.map() below cannot throw on null.
+      const raw = entry.message;
+      const safe = (raw as { content?: unknown }).content == null
+        ? { ...raw, content: [] }
+        : raw;
       let message = options.deferToolResultImages
-        ? deferToolResultBase64Images(normalizeToolCalls(entry.message), options.sessionId, entry.id)
-        : normalizeToolCalls(entry.message);
+        ? deferToolResultBase64Images(normalizeToolCalls(safe), options.sessionId, entry.id)
+        : normalizeToolCalls(safe);
       const legacyContent = message.role === "assistant" ? (message as { content: unknown }).content : undefined;
       if (typeof legacyContent === "string") {
         message = { ...message, content: [{ type: "text", text: legacyContent }] } as AgentMessage;
@@ -716,7 +1426,7 @@ function entryToUiMessage(
       return {
         role: "custom",
         customType: entry.customType,
-        content: entry.content,
+        content: entry.content ?? [],
         display: entry.display,
         details: entry.details,
         timestamp: parseEntryTimestamp(entry.timestamp),
