@@ -5,6 +5,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useI18n } from "@/hooks/useI18n";
 import { createTerminalWriter, terminalRequest } from "@/lib/terminal-client";
+import { onConnStarvation } from "@/lib/conn-guard";
+import { getEventBus, type BusEventSource } from "@/lib/event-bus-client";
 import type { TerminalEvent } from "@/lib/terminal-manager";
 import type { TerminalTab } from "./terminal-tab-state";
 
@@ -34,7 +36,7 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
     const container = containerRef.current;
     if (!container) return;
     let disposed = false;
-    let events: EventSource | null = null;
+    let events: EventSource | BusEventSource | null = null;
     let offset: number | undefined;
     let connected = false;
     let exited = false;
@@ -97,9 +99,12 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
     const connect = () => {
       if (disposed || exited || !navigator.onLine) return;
       events?.close();
-      events = new EventSource(`/api/terminal/${encodeURIComponent(id)}/events${offset === undefined ? "" : `?after=${offset}`}`);
-      events.onmessage = (message) => {
-        const event = JSON.parse(message.data) as TerminalEvent;
+      // Event handler (shared by the bus and the legacy SSE channel): output
+      // frames are deduplicated by offset (this also covers the race where the
+      // buffered snapshot fills the gap after the bus subscription becomes
+      // ready: stale snapshots with an older offset are dropped outright, and
+      // reset only applies when the snapshot is not behind)
+      const handleEvent = (event: TerminalEvent) => {
         if (event.type === "output") {
           if (event.reset) terminal.reset();
           else if (offset !== undefined && event.offset <= offset) return;
@@ -113,6 +118,56 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
           setExitCode(event.type === "exit" ? event.exitCode : null);
           setStatus("exited");
         }
+      };
+      // Single SSE convergence point for page events: if the bus is available,
+      // subscribe to terminal-<id> (the command extension's pattern: after
+      // ready, fetch the /buffered snapshot to fill the gap and dedupe by
+      // seq(offset)); if not, fall back to a plain EventSource.
+      const bus = getEventBus(`/api/terminal/${encodeURIComponent(id)}/events`, {
+        topic: `terminal-${id}`,
+      });
+      if (bus) {
+        events = bus;
+        bus.onmessage = (message) => handleEvent(JSON.parse(message.data) as TerminalEvent);
+        bus.onopen = () => {
+          connected = true;
+          if (!inputFailed) {
+            terminal.options.disableStdin = false;
+            setStatus("ready");
+            fitAndResize();
+            writer.resize(terminal.cols, terminal.rows);
+            if (container.offsetWidth && container.offsetHeight) terminal.focus();
+          }
+          // Subscribe first, then snapshot: fetch on both reconnect and first
+          // connect (snapshot ⊇ the ready moment; live frames and the snapshot
+          // are deduplicated by offset and join seamlessly; snapshots that are
+          // behind are dropped to prevent regressions)
+          const snapCursor = offset;
+          fetch(`/api/terminal/${encodeURIComponent(id)}/buffered${snapCursor === undefined ? "" : `?after=${snapCursor}`}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .then((snap: { output?: TerminalEvent & { type: "output" }; exited?: boolean; exitCode?: number | null } | null) => {
+              if (disposed || exited || !snap?.output) return;
+              if (snapCursor !== undefined && snap.output.offset <= (offset ?? snapCursor)) return;
+              handleEvent(snap.output);
+              if (snap.exited) handleEvent({ type: "exit", exitCode: snap.exitCode ?? 0 });
+            })
+            .catch(() => { /* Snapshot failure is not fatal: the next live frame or a reconnect fills the gap */ });
+        };
+        bus.onerror = () => {
+          if (disposed || exited) return;
+          connected = false;
+          terminal.options.disableStdin = true;
+          if (events && events.readyState === 2 /* CLOSED: bus absence is final (one-shot onerror) */) {
+            connect(); // Re-run the decision: getEventBus returns null from now on → falls through to the plain EventSource below
+            return;
+          }
+          setStatus("connecting");
+        };
+        return;
+      }
+      events = new EventSource(`/api/terminal/${encodeURIComponent(id)}/events${offset === undefined ? "" : `?after=${offset}`}`);
+      events.onmessage = (message) => {
+        handleEvent(JSON.parse(message.data) as TerminalEvent);
       };
       events.onopen = () => {
         connected = true;
@@ -161,8 +216,14 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
     window.addEventListener("pageshow", pageShow);
     window.addEventListener("offline", pageHide);
     window.addEventListener("online", connect);
+    // Connection-pool starvation yield (anti-deadlock, lib/conn-guard): when
+    // starved, the terminal SSE and other long-lived connections together fill
+    // up the same-host socket pool, so yield proactively; pageHide/connect
+    // already implement the yield/recover semantics, so reuse them directly.
+    const unstarve = onConnStarvation((starved) => { if (starved) pageHide(); else connect(); });
     return () => {
       disposed = true;
+      unstarve();
       events?.close();
       void writer.stop();
       resizeObserver.disconnect();
