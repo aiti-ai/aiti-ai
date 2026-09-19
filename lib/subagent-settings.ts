@@ -51,14 +51,20 @@ export function readSubagentSettings(
   return settingsValue(stored.builtInEnabled === true, readMaxConcurrent(stored.maxConcurrent));
 }
 
-export function isBuiltInSubagentsEnabled(
-  settingsPath = getSubagentSettingsPath(),
-): boolean {
-  try {
-    return readSubagentSettings(settingsPath).builtInEnabled;
-  } catch {
-    return false;
-  }
+// aiti fork guard: the upstream built-in subagents are permanently disabled — the fork's
+// pi-subagents (@aiti-ai/pi-subagents) is the sole subagent engine; upstream 237d0ca once
+// reverted to reading the file for enabling, and the two engines coexisting would conflict.
+// Restore the permanent false.
+// lib/subagent-settings.test.mjs has a guard test pinning this implementation (regex
+// does not tolerate comments inserted inside the function body — read it before changing).
+// aiti fork guard: the upstream built-in subagents are permanently disabled — the fork's
+// pi-subagents (@aiti-ai/pi-subagents) is the sole subagent engine; upstream 237d0ca once
+// reverted to reading the file for enabling, and the two engines coexisting would conflict.
+// Restore the permanent false.
+// lib/subagent-settings.test.mjs has a guard test pinning this implementation (no-arg
+// signature + first-line return false — read it before changing).
+export function isBuiltInSubagentsEnabled(): boolean {
+  return false;
 }
 
 export function writeBuiltInSubagentsEnabled(

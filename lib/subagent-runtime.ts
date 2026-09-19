@@ -39,6 +39,7 @@ import { isBuiltInSubagentsEnabled, readSubagentSettings } from "./subagent-sett
 import { SubagentQueue } from "./subagent-queue";
 import { addWorktree, removeWorktree } from "./worktree";
 import { randomUUID } from "node:crypto";
+import { notifySessionCreated } from "./session-created-notify";
 
 interface HostSession {
   readonly inner: AgentSessionLike;
@@ -217,6 +218,10 @@ export function createSubagentController(
       const sessionManager = isolatedWorktree
         ? SessionManager.create(childCwd, undefined, { parentSession: parent.sessionFile })
         : SessionManager.create(parent.cwd, undefined, { parentSession: parent.sessionFile });
+      // Notify from the creator for all sessions: subagent sessions show up in
+      // the sidebar immediately too (previously they only appeared indirectly
+      // via the run frame).
+      notifySessionCreated(sessionManager.getSessionId(), sessionManager.getCwd(), "subagent");
       const createdAt = new Date().toISOString();
       const metadata: SubagentMetadata = {
         version: 1,
