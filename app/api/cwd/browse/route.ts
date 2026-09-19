@@ -9,10 +9,12 @@ import {
   shouldShowWindowsDrivePicker,
 } from "@/lib/directory-browser";
 
-// GET /api/cwd/browse?path=...：列出文件系统中的可读子目录。
-export async function GET(request: NextRequest) {
+// POST /api/cwd/browse { path? }: lists readable subdirectories in the filesystem.
+// path goes in the body, not the URL — keeps local paths out of tunnel/proxy access logs.
+export async function POST(request: NextRequest) {
   try {
-    const requested = request.nextUrl.searchParams.get("path")?.trim();
+    const body = await request.json().catch(() => null) as { path?: unknown } | null;
+    const requested = typeof body?.path === "string" ? body.path.trim() : "";
 
     if (shouldShowWindowsDrivePicker(requested)) {
       return NextResponse.json({
