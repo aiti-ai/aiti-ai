@@ -72,6 +72,10 @@ export function configureHttpDispatcher(
       headersTimeout: normalizedTimeoutMs,
       clientFactory: createUndiciClient,
       factory: createUndiciOriginDispatcher,
+      connect: {
+        autoSelectFamily: true,
+        autoSelectFamilyAttemptTimeout: 500,
+      },
     }),
   );
   undici.setGlobalDispatcher(dispatcher);
