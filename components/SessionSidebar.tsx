@@ -2,14 +2,23 @@
 
 import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type ReactNode } from "react";
 import type { SessionInfo } from "@/lib/types";
-import { listSessionFamilies } from "@/lib/session-family";
 import { loadExplorerOpen, saveExplorerOpen } from "@/lib/file-explorer-state";
+import { PiWebTitle } from "./PiWebTitle";
+import { subscribeRunningEvents, reconnectRunningEvents } from "@/lib/agent-running-events";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getProjectActivity, getRecentProjects, sessionsForProject } from "@/lib/project-groups";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
+import { loadHiddenWorkspaces, WORKSPACES_CHANGED_EVENT } from "@/lib/workspace-hide";
 import { formatRelativeTime } from "@/lib/i18n/format";
 import { useI18n } from "@/hooks/useI18n";
+import { ExtSlot, useExtProvides } from "./ExtSlots";
+import { EXT_PROVIDES } from "@/lib/ext/types";
+import { apiUrl } from "@/lib/base-path";
+import { truncateRunError } from "@/lib/run-outcome";
+import { dedupeFetch } from "@/lib/dedupe-fetch";
+import { ensureHomeDir, getHomeDir } from "@/lib/home-dir";
+
 import { DirectoryPicker } from "./DirectoryPicker";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { SessionSearch } from "./SessionSearch";
@@ -17,6 +26,9 @@ import { SessionSearch } from "./SessionSearch";
 // Fixed row height for the session list. SessionItem renders at exactly this
 // height, so the list can be windowed (only the visible slice is mounted).
 const SESSION_LIST_ITEM_HEIGHT = 54;
+
+// home dir is invariant within a session (duplicate-request analysis §3.2): module-level cache, shared across remounts / dual instances.
+let cachedHomeDir: string | null = null;
 
 export function getSessionListIndices(count: number, scrollTop: number, viewportHeight: number, focusedIndex = -1): number[] {
   const overscan = 8;
@@ -28,6 +40,20 @@ export function getSessionListIndices(count: number, scrollTop: number, viewport
   if (focusedIndex >= 0 && focusedIndex < start) indices.unshift(focusedIndex);
   if (focusedIndex >= end && focusedIndex < count) indices.push(focusedIndex);
   return indices;
+}
+
+interface FlatTreeRow { node: SessionTreeNode; depth: number; }
+
+/** Tree → visible row array (flattened via DFS, keeping depth indentation; collapsed subtrees are not expanded).
+ *  Virtualization prerequisite: fixed row height SESSION_LIST_ITEM_HEIGHT (SessionItem 54px). */
+function flattenSessionTree(nodes: SessionTreeNode[], depth: number, collapsedIds: Set<string>, out: FlatTreeRow[] = []): FlatTreeRow[] {
+  for (const node of nodes) {
+    out.push({ node, depth });
+    if (node.children.length > 0 && !collapsedIds.has(node.session.id)) {
+      flattenSessionTree(node.children, depth + 1, collapsedIds, out);
+    }
+  }
+  return out;
 }
 
 declare global {
@@ -99,11 +125,20 @@ function ToolbarIconButton({
 
 interface Props {
   selectedSessionId: string | null;
+  /** Full selected session object — used to render a client-side draft row when
+   *  its id isn't on disk yet. pi only persists the .jsonl on the first assistant
+   *  reply (SessionManager._persist returns early without an assistant message),
+   *  so /api/sessions can't list it during that window. */
+  selectedSession?: SessionInfo | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean, entryId?: string, blockIndex?: number) => void;
   onNewSession?: (sessionId: string, cwd: string) => void;
   initialSessionId?: string | null;
   skipInitialProjectSelection?: boolean;
   onInitialRestoreDone?: () => void;
+  /** Fallback when the URL ?session= id is not found in the local list (e.g. an empty session / an unindexed attach session): calls /api/sessions/<id> by id (socket-first, opened in the background)
+   *  options.initialRestore: the call originates from initial URL restore — on a host 404 it is used to clear the stale last-open record + immediately clear the URL;
+   *  returning false means not found/failed (older hosts may return void; the caller then takes no failure action). */
+  onOpenById?: (sessionId: string, options?: { initialRestore?: boolean }) => Promise<boolean> | void;
   refreshKey?: number;
   onSessionDeleted?: (sessionId: string) => void;
   selectedCwd?: string | null;
@@ -113,11 +148,14 @@ interface Props {
     projectKey?: string | null,
   ) => void;
   onOpenFile?: (filePath: string, fileName: string, options?: { sourceSessionId?: string | null; modeHint?: "diff" }) => void;
+  onOpenFolder?: (folderPath: string, folderName: string) => void;
   onOpenTerminal?: (cwd: string) => void;
   explorerRefreshKey?: number;
   onExplorerRefresh?: () => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onAtMentions?: (relativePaths: string[]) => void;
+  /** AppShell-owned ref bound to the FileExplorer (reveal folders). */
+  fileExplorerRef?: React.Ref<FileExplorerHandle>;
   /** Fired when a session that is not currently selected finishes running.
    *  Lets the app play a cross-workspace completion tone. */
   onBackgroundTaskDone?: () => void;
@@ -159,7 +197,46 @@ interface ValidatedProject {
 
 const UNREAD_SESSIONS_STORAGE_KEY = "pi-web:unread-session-ids";
 const LAST_CUSTOM_CWD_STORAGE_KEY = "pi-web:last-custom-cwd";
-const RUNNING_SESSIONS_POLL_MS = 2500;
+const RUNNING_SESSIONS_POLL_MS = 15000; // slow fallback polling for the SSE main channel (only actually requests when the SSE heartbeat goes silent)
+const RUNNING_SSE_FRESH_MS = 45_000; // heartbeat is 30s; any frame seen within 45s = SSE healthy, skip the fallback poll
+
+/** Full-list response shape (loadSessions network layer). */
+interface SessionsListPayload {
+  sessions: SessionInfo[];
+  sessionListVersion: number;
+  runningSessionIds?: string[];
+  completionNotificationSuppressedSessionIds?: string[];
+}
+// Module-level coalescing + short TTL + ETag/304: loadSessions trigger points are scattered
+// (running snapshot rehydration, SSE change frames, fallback-mode callbacks), and the first load
+// can concurrently fire multiple full /api/sessions within the same second (measured 257KB×5).
+// Concurrent triggers at the same moment share one fetch; repeated triggers within 3s reuse the
+// last result (the server also has a 5s scan cache, so data barely changes within the window);
+// non-forced requests send If-None-Match, and an unchanged list/running set → 304 empty transfer.
+const SESSIONS_LIST_TTL_MS = 3000;
+let slInFlight: Promise<SessionsListPayload> | null = null;
+let slLastAt = 0;
+let slEtag = "";
+let slLastData: SessionsListPayload | null = null;
+async function fetchSessionsList(forceRefresh = false): Promise<SessionsListPayload> {
+  if (slInFlight) return slInFlight;
+  if (!forceRefresh && slLastData && Date.now() - slLastAt < SESSIONS_LIST_TTL_MS) return slLastData;
+  const req = (async (): Promise<SessionsListPayload> => {
+    const res = await fetch(apiUrl(`/api/sessions${forceRefresh ? "?refresh=1" : ""}`), {
+      headers: slEtag && !forceRefresh ? { "if-none-match": slEtag } : undefined,
+      cache: "no-store",
+    });
+    if (res.status === 304 && slLastData) { slLastAt = Date.now(); return slLastData; }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json() as SessionsListPayload;
+    slEtag = res.headers.get("etag") ?? "";
+    slLastData = data;
+    slLastAt = Date.now();
+    return data;
+  })();
+  slInFlight = req;
+  try { return await req; } finally { slInFlight = null; }
+}
 
 function loadLastCustomCwd(): string {
   if (typeof window === "undefined") return "";
@@ -268,7 +345,11 @@ function AnimatedDropdown({ open, children, style }: { open: boolean; children: 
       style={{
         ...style,
         opacity: visible ? 1 : 0,
-        transform: visible ? "translateY(0) scale(1)" : "translateY(-8px) scale(0.96)",
+        // Fully-open state must have NO transform: a transform ancestor creates a
+        // containing block that traps position:fixed children (modals rendered
+        // from within the dropdown, e.g. the workspace manage dialog). When the
+        // animation settles, drop it so fixed overlays resolve to the viewport.
+        transform: visible ? "none" : "translateY(-8px) scale(0.96)",
         transformOrigin: "top center",
         transition: `opacity ${DROPDOWN_ANIMATION_MS}ms ease, transform ${DROPDOWN_ANIMATION_MS}ms ease`,
         pointerEvents: open ? "auto" : "none",
@@ -281,97 +362,11 @@ function AnimatedDropdown({ open, children, style }: { open: boolean; children: 
 
 
 
-const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
-
-function useScramble(target: string, running: boolean): string {
-  const [display, setDisplay] = useState(target);
-  const frameRef = useRef<number | null>(null);
-  const iterRef = useRef(0);
-
-  useEffect(() => {
-    if (!running) {
-      setDisplay(target);
-      return;
-    }
-    iterRef.current = 0;
-    const totalFrames = target.length * 4;
-
-    const step = () => {
-      iterRef.current += 1;
-      const progress = iterRef.current / totalFrames;
-      const resolved = Math.floor(progress * target.length);
-
-      setDisplay(
-        target
-          .split("")
-          .map((char, i) => {
-            if (char === " ") return " ";
-            if (i < resolved) return char;
-            return SCRAMBLE_CHARS[Math.floor(Math.random() * SCRAMBLE_CHARS.length)];
-          })
-          .join("")
-      );
-
-      if (iterRef.current < totalFrames) {
-        frameRef.current = requestAnimationFrame(step);
-      } else {
-        setDisplay(target);
-      }
-    };
-
-    frameRef.current = requestAnimationFrame(step);
-    return () => { if (frameRef.current) cancelAnimationFrame(frameRef.current); };
-  }, [target, running]);
-
-  return display;
-}
-
-function PiWebTitle() {
-  const [showVersion, setShowVersion] = useState(false);
-  const [scrambling, setScrambling] = useState(false);
-  const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const target = showVersion ? `${process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0"}p${process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0"}` : "Pi Web";
-  const display = useScramble(target, scrambling);
-
-  const triggerScramble = useCallback((toVersion: boolean) => {
-    setShowVersion(toVersion);
-    setScrambling(true);
-    setTimeout(() => setScrambling(false), (toVersion ? 6 : 8) * 4 * (1000 / 60) + 100);
-  }, []);
-
-  const handleClick = useCallback(() => {
-    if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
-
-    const next = !showVersion;
-    triggerScramble(next);
-
-    if (next) {
-      revertTimerRef.current = setTimeout(() => triggerScramble(false), 3000);
-    }
-  }, [showVersion, triggerScramble]);
-
-  useEffect(() => () => { if (revertTimerRef.current) clearTimeout(revertTimerRef.current); }, []);
-
-  return (
-    <button
-      onClick={handleClick}
-      style={{
-        background: "none", border: "none", padding: 0, cursor: "default",
-        fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em",
-        color: showVersion ? "var(--accent)" : "var(--text)",
-        fontFamily: "var(--font-mono)",
-        minWidth: "6ch",
-      }}
-    >
-      {display}
-    </button>
-  );
-}
-
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
+export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, onOpenById, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenFolder, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, fileExplorerRef: fileExplorerRefProp, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
   const { t } = useI18n();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
+  const [sessionRefreshDone, setSessionRefreshDone] = useState(false);
+  const sessionRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [sessionListVersion, setSessionListVersion] = useState<number | null>(null);
   const sessionListVersionRef = useRef<number | null>(null);
   const sessionLoadIdRef = useRef(0);
@@ -381,6 +376,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [homeDir, setHomeDir] = useState<string>("");
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [projectFilter, setProjectFilter] = useState("");
+  const [hiddenWorkspaces, setHiddenWorkspaces] = useState<ReadonlySet<string>>(() => loadHiddenWorkspaces());
   const [wtFilter, setWtFilter] = useState("");
   const [customPathOpen, setCustomPathOpen] = useState(false);
   const [customPathValue, setCustomPathValue] = useState(loadLastCustomCwd);
@@ -400,6 +396,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const wtDropdownRef = useRef<HTMLDivElement>(null);
   const wtNewInputRef = useRef<HTMLInputElement>(null);
   const [explorerOpen, setExplorerOpen] = useState(true);
+  const [projectsCollapsed, setProjectsCollapsed] = useState(false);
   const [explorerKey, setExplorerKey] = useState(0);
   const [explorerUploadBusy, setExplorerUploadBusy] = useState(false);
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
@@ -425,6 +422,15 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [listViewportH, setListViewportH] = useState(0);
   const [listScrollTop, setListScrollTop] = useState(0);
   const [focusedSessionId, setFocusedSessionId] = useState<string | null>(null);
+  // Collapse state lifted to the list layer: the flattened virtual window needs to know which subtrees are not expanded
+  const [collapsedIds, setCollapsedIds] = useState<Set<string>>(() => new Set());
+  const toggleSessionCollapsed = useCallback((id: string) => {
+    setCollapsedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
   const listScrollRafRef = useRef<number | null>(null);
   const handleListScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const top = e.currentTarget.scrollTop;
@@ -446,20 +452,17 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     return () => ro.disconnect();
   }, [sessionSearchActive]);
 
-  const loadSessions = useCallback(async (showLoading = false, force = false) => {
+  // [fallback-mode only] Manual path used only when the session-manager extension is
+  // disabled/unregistered (non-takeover): in takeover mode the list data belongs to the
+  // extension (store incremental sync) and this function has no automatic trigger left (payload
+  // plan §8).
+  // The network layer goes through module-level fetchSessionsList: concurrent triggers from
+  // multiple points/timings send only one real request.
+  const loadSessions = useCallback(async (showLoading = false, forceRefresh = false): Promise<SessionInfo[] | undefined> => {
     const loadId = ++sessionLoadIdRef.current;
     try {
       if (showLoading) setLoading(true);
-      const res = await fetch(force ? "/api/sessions?force=1" : "/api/sessions", {
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as {
-        sessions: SessionInfo[];
-        sessionListVersion: number;
-        runningSessionIds?: string[];
-        completionNotificationSuppressedSessionIds?: string[];
-      };
+      const data = await fetchSessionsList(forceRefresh);
       if (loadId !== sessionLoadIdRef.current) return;
       sessionListVersionRef.current = data.sessionListVersion;
       setSessionListVersion(data.sessionListVersion);
@@ -485,24 +488,48 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         return next.size === prev.size ? prev : next;
       });
       setError(null);
+      if (!showLoading) {
+        setSessionRefreshDone(true);
+        if (sessionRefreshTimerRef.current) clearTimeout(sessionRefreshTimerRef.current);
+        sessionRefreshTimerRef.current = setTimeout(() => setSessionRefreshDone(false), 2000);
+      }
+      return data.sessions;
     } catch (e) {
       if (loadId === sessionLoadIdRef.current) setError(String(e));
+      return undefined;
     } finally {
       if (loadId === sessionLoadIdRef.current) setLoading(false);
     }
   }, []);
-
-  const initialLoadDone = useRef(false);
+  // First list load: this component now only renders as the sidebarContent fallback (unified
+  // dock plan §7-1 purification); the host list is the single source of truth — fetch on mount
+  // (fetchSessionsList coalesces/dedupes, ETag 304).
   useEffect(() => {
-    const isFirst = !initialLoadDone.current;
-    initialLoadDone.current = true;
-    loadSessions(isFirst, !isFirst);
-  }, [loadSessions, refreshKey]);
+    void loadSessions();
+  }, [loadSessions]);
+
+
+  // Re-filter the workspace picker when the hidden list changes (written by the
+  // session-manager extension; dispatched on the same window or across tabs).
+  useEffect(() => {
+    const syncHidden = () => setHiddenWorkspaces(loadHiddenWorkspaces());
+    window.addEventListener(WORKSPACES_CHANGED_EVENT, syncHidden);
+    window.addEventListener("storage", syncHidden);
+    return () => {
+      window.removeEventListener(WORKSPACES_CHANGED_EVENT, syncHidden);
+      window.removeEventListener("storage", syncHidden);
+    };
+  }, []);
 
   // Browser storage is unavailable during server rendering. Restore the panel
   // preference after hydration so a collapsed explorer stays collapsed on reload.
   useEffect(() => {
     setExplorerOpen(loadExplorerOpen());
+    // Projects collapse preference restored in the same two-step way as explorerOpen. The
+    // tasks/dock-area containers are retired (unified dock plan §3.8): the block stack is taken
+    // over by the session-manager extension's SidebarContentDock + the floating-dock extension's
+    // DockStack; collapse memory lives in pi:sidebar-dock:collapsed:* (old keys migrated by the extension).
+    try { setProjectsCollapsed(localStorage.getItem("pi-sidebar-projects-collapsed") === "true"); } catch { /* optional */ }
   }, []);
 
   // Persist unread markers so they survive a browser refresh before the user
@@ -515,10 +542,39 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
     let controller: AbortController | null = null;
+    let es: (() => void) | null = null; // broker unsubscribe function (page-level singleton connection)
+    let lastSseFrameAt = 0; // time of the last SSE frame (data/heartbeat); 0 = never received
 
     const clearTimer = () => {
       if (timer) clearTimeout(timer);
       timer = null;
+    };
+
+    // SSE main channel: running/events pushes running-state changes (the server broadcasts only
+    // on change; no more polling every 2.5s). Any received event is treated as an authoritative
+    // snapshot.
+    // The connection is a page-level singleton (subscribeRunningEvents) — this component has
+    // multiple instances under desktop/mobile dual rendering, and per-instance connections once
+    // exhausted the HTTP/1.1 per-host pool of 6 (all media requests pended).
+    const connectSSE = () => {
+      if (stopped || es) return;
+      es = subscribeRunningEvents((kind, data) => {
+        if (stopped) return;
+        if (kind === "heartbeat") { lastSseFrameAt = Date.now(); return; }
+        if (kind === "error") {
+          // HTTP non-2xx (4xx/5xx, e.g. a 502 right as the bridge restarts): EventSource enters
+          // CLOSED and stops auto-retrying — an explicit rebuild is needed (3s delay inside the
+          // broker, avoiding a high-frequency 4xx loop).
+          reconnectRunningEvents();
+          return;
+        }
+        // Data frame: any frame is proof of liveness
+        lastSseFrameAt = Date.now();
+        if (data && data.type === "running" && Array.isArray(data.runningSessionIds)) {
+          runningPollAuthoritativeRef.current = true;
+          setRunningSessionIds(new Set(data.runningSessionIds));
+        }
+      });
     };
 
     const schedule = () => {
@@ -527,13 +583,17 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       timer = setTimeout(() => void poll(), RUNNING_SESSIONS_POLL_MS);
     };
 
+    // Fallback snapshot: only actually fetches when the SSE heartbeat goes silent (disconnected/half-open/4xx) or to align on return to foreground.
     const poll = async () => {
       if (stopped || document.visibilityState !== "visible") return;
+      // SSE healthy (heartbeat/data frame within 45s) → skip the fallback snapshot, just reschedule the timer
+      if (Date.now() - lastSseFrameAt < RUNNING_SSE_FRESH_MS) { schedule(); return; }
       const current = new AbortController();
       controller?.abort();
       controller = current;
       try {
-        const res = await fetch("/api/agent/running", {
+        // dedupeFetch: desktop/mobile dual instances + fallback snapshots before the SSE health clock is established coalesce within the same window (duplicate-request analysis §2.1/§3.1)
+        const res = await dedupeFetch(apiUrl("/api/agent/running"), {
           cache: "no-store",
           signal: current.signal,
         });
@@ -549,10 +609,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           data.completionNotificationSuppressedSessionIds ?? [],
         );
         setRunningSessionIds(new Set(data.runningSessionIds ?? []));
-        if (data.sessionListVersion !== sessionListVersionRef.current) {
-          // Reuse the invalidated cache; forcing a scan would change the version again.
-          await loadSessions();
-        }
+        // After takeover, list data belongs to the session-manager extension (store incremental sync); the host no longer fetches alongside.
       } catch {
         // Keep the last known state; the next visible-tab poll retries.
       } finally {
@@ -563,20 +620,24 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
-        void poll();
+        connectSSE();
+        void poll(); // align once immediately on return to foreground (SSE events may be dropped while backgrounded)
         return;
       }
+      // Background: disconnect SSE (save connections); the slow poll remains but is gated paused by visibility
+      if (es) { es(); es = null; }
       clearTimer();
       controller?.abort();
       controller = null;
     };
 
-    void poll();
+    connectSSE();
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
       stopped = true;
       clearTimer();
       controller?.abort();
+      if (es) { es(); es = null; }
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [loadSessions]);
@@ -601,6 +662,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       (id) => !previousSuppressedCompletionSessionIdsRef.current.has(id) && !knownSubagentIds.has(id),
     );
     const newlyRunning = [...runningSessionIds].filter((id) => !previous.has(id));
+    // The selected session completing also needs a list refresh — the .jsonl
+    // is now persisted, so /api/sessions?refresh=1 will include it as a real
+    // (non-transient) row, replacing the client-side draft row. This is
+    // independent of handleAgentEnd→setRefreshKey so it works even when the
+    // agent_end / prompt_done event chain has timing gaps.
+    const selectedSessionCompleted =
+      selectedSessionId !== null && previous.has(selectedSessionId) && !runningSessionIds.has(selectedSessionId);
 
     if (completedWithNotifications.length > 0 || newlyRunning.length > 0) {
       setUnreadSessionIds((prev) => {
@@ -613,9 +681,23 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     const hasUnlistedRunningSession = newlyRunning.some(
       (id) => !allSessions.some((session) => session.id === id),
     );
-    if (completedInBackground.length > 0 || hasUnlistedRunningSession) {
-      loadSessions(false, true);
+    // In non-takeover mode, session start/finish (running set changes) requires a list refetch so
+    // placeholder/transient rows' modified tracks activity (external agent sessions are covered
+    // by /api/sessions' getLastActivity).
+    // The comment block already said "the selected session completing also needs a list refresh",
+    // but loadSessions was previously not actually triggered.
+    // Takeover mode skips: the list belongs to the extension store (rehydrated into allSessions)
+    // and the extension refreshes event-driven on its own — the first-load running snapshot
+    // rehydration + SSE frames would trigger here twice in a row, and a full host fetch for each
+    // is pure waste.
+    // hint = the previous session's takeover memory (the basis for deciding when first-frame items
+    // are not registered).
+    if (newlyRunning.length > 0 || selectedSessionCompleted || completedInBackground.length > 0) {
+      void loadSessions();
     }
+    // After takeover, list data belongs to the session-manager extension (it refreshes itself when
+    // its SSE running set changes); the host no longer derives fetches; the completion
+    // notification (onBackgroundTaskDone) stays.
     if (completedWithNotifications.length > 0) {
       onBackgroundTaskDone?.();
     }
@@ -643,9 +725,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, [explorerRefreshKey]);
 
   useEffect(() => {
-    fetch("/api/home").then((r) => r.json()).then((d: { home?: string }) => {
-      if (d.home) setHomeDir(d.home);
-    }).catch(() => {});
+    // home dir is invariant within a session: lib/home-dir shared singleton (host + extensions go
+    // through one place, one request; remounts/dual instances cost zero requests).
+    const cached = cachedHomeDir ?? getHomeDir();
+    if (cached) { cachedHomeDir = cached; setHomeDir(cached); return; }
+    void ensureHomeDir().then((dir) => {
+      if (dir) { cachedHomeDir = dir; setHomeDir(dir); }
+    });
   }, []);
 
   const restoredRef = useRef(false);
@@ -717,7 +803,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
     let cancelled = false;
     setWorktreeLoadingCwd(selectedCwd);
-    fetch(`/api/worktrees?cwd=${encodeURIComponent(selectedCwd)}`)
+    fetch(apiUrl("/api/worktrees/query"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: selectedCwd }),
+    })
       .then((r) => r.json())
       .then((d: { projectRoot?: string; projectKey?: string; isGit?: boolean; isTopLevel?: boolean; currentWorktreePath?: string | null; worktrees?: WorktreeEntry[]; error?: string }) => {
         if (cancelled) return;
@@ -749,23 +839,35 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   useEffect(() => {
     if (allSessions.length === 0 || skipInitialProjectSelection) return;
 
-    if (selectedCwd === null) {
-      // If restoring a session, set cwd to match that session
-      if (initialSessionId && !restoredRef.current) {
-        restoredRef.current = true;
-        const target = allSessions.find((s) => s.id === initialSessionId);
-        if (target) {
-          setSelectedCwd(target.cwd);
-          onSelectSession(target, true);
-          return;
-        }
-        // Session not found — notify parent so it can show the placeholder
-        onInitialRestoreDone?.();
+    // URL restore is checked OUTSIDE the selectedCwd gate: the parent derives
+    // initialSessionId from the location in a post-hydration effect, so on the
+    // first effect run it is still null and the fallback below may already
+    // have pinned a cwd. The restore must still win once the id arrives —
+    // falling through to a project fallback would silently drop the session.
+    if (initialSessionId && !restoredRef.current) {
+      restoredRef.current = true;
+      const target = allSessions.find((s) => s.id === initialSessionId);
+      if (target) {
+        setSelectedCwd(target.cwd);
+        onSelectSession(target, true);
+        return;
       }
+      // Session not found in local list — notify parent so it can show the
+      // placeholder, but ALSO try opening by id via the session API: it may be
+      // a live-bridge session (empty/not indexed) where socket attach wins
+      // (registry lookup, no file needed).
+      // Failure cleanup lives in the host's 404 branch (clear URL + last-open record); no return
+      // here — fall through to default project auto-selection (aligned with takeover-mode
+      // sidebar-content).
+      void onOpenById?.(initialSessionId, { initialRestore: true });
+      onInitialRestoreDone?.();
+    }
+
+    if (selectedCwd === null) {
       const projects = getRecentProjects(allSessions);
       if (projects.length > 0) setSelectedCwd(projects[0].root);
     }
-  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone]);
+  }, [allSessions, selectedCwd, initialSessionId, skipInitialProjectSelection, onSelectSession, onInitialRestoreDone, onOpenById]);
 
   // Prefer an exact UI selection while a refetch is in flight. Once the
   // response catches up, the server-resolved path handles Windows case and
@@ -786,7 +888,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     setCustomPathValidating(true);
     setCustomPathError(null);
     try {
-      const res = await fetch("/api/cwd/validate", {
+      const res = await fetch(apiUrl("/api/cwd/validate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: path }),
@@ -825,7 +927,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   }, []);
   const handleDefaultCwd = useCallback(async () => {
     try {
-      const res = await fetch("/api/default-cwd", { method: "POST" });
+      const res = await fetch(apiUrl("/api/default-cwd"), { method: "POST" });
       const data = await res.json() as { cwd?: string; error?: string };
       if (data.cwd) {
         setSelectedCwd(data.cwd);
@@ -844,7 +946,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     setWtBusy(true);
     setWtError(null);
     try {
-      const res = await fetch("/api/worktrees", {
+      const res = await fetch(apiUrl("/api/worktrees"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: worktreeState.projectRoot, branch }),
@@ -880,7 +982,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     setWtBusy(true);
     setWtError(null);
     try {
-      const res = await fetch("/api/worktrees", {
+      const res = await fetch(apiUrl("/api/worktrees"), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: worktreeState.projectRoot, path, force }),
@@ -947,12 +1049,19 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   const recentProjects = getRecentProjects(allSessions);
   const showProjectFilter = recentProjects.length > 8;
-  const visibleProjects = projectFilter.trim()
-    ? recentProjects.filter((project) => project.root.toLowerCase().includes(projectFilter.trim().toLowerCase()))
-    : recentProjects;
 
   // Sessions of every worktree in the selected project are shown together
   const selectedProject = projectFor(selectedCwd);
+  // The hidden list filters only "switchable-to" projects: the currently selected project always
+  // stays in the list — after switching away it disappears from the dropdown (hide in effect),
+  // but the in-use context is not lost and can be switched back to anytime, avoiding the
+  // "hid my current workspace and now can't find it" deadlock.
+  const isCurrentProject = (root: string) => selectedProject?.root === root;
+  const visibleProjects = projectFilter.trim()
+    ? recentProjects.filter((project) =>
+        (isCurrentProject(project.root) || !hiddenWorkspaces.has(project.root))
+        && project.root.toLowerCase().includes(projectFilter.trim().toLowerCase()))
+    : recentProjects.filter((project) => isCurrentProject(project.root) || !hiddenWorkspaces.has(project.root));
 
   // Per-project activity counts (running / unread) for the workspace selector.
   // Uses the same stable server key as the project list and filtering.
@@ -1003,104 +1112,67 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         }
       : null);
 
-  const sessionFamilies = listSessionFamilies(filteredSessions);
+  // Client-side draft row: the active session whose id isn't persisted yet.
+  // pi writes the .jsonl only on the first assistant reply (SessionManager._persist
+  // returns early while there's no assistant message), so /api/sessions cannot
+  // list it during that window. Surface a draft row keyed by the in-memory session
+  // so the sidebar reflects it immediately; it is dropped automatically once the
+  // file lands and the next list refresh includes the real entry.
+  const draftSession = (!loading
+    && selectedSession?.id
+    && selectedSession.cwd
+    && projectFor(selectedSession.cwd)?.key === selectedProject?.key
+    && !allSessions.some((s) => s.id === selectedSession.id))
+    ? selectedSession
+    : null;
+  const sessionsForTree = draftSession ? [draftSession, ...filteredSessions] : filteredSessions;
 
-  const virtualIndices = getSessionListIndices(
-    sessionFamilies.length,
-    listScrollTop,
-    listViewportH,
-    sessionFamilies.findIndex((family) => family.root.id === focusedSessionId),
-  );
+  // Build parent-child tree within the filtered set
+  const sessionTree = buildSessionTree(sessionsForTree);
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
-      {customPathOpen && (
-        <DirectoryPicker
-          initialPath={customPathValue}
-          busy={customPathValidating}
-          error={customPathError}
-          onCancel={() => {
-            setCustomPathOpen(false);
-            setCustomPathError(null);
-          }}
-          onSelect={(path) => void commitCustomPath(path)}
-        />
-      )}
-      {/* Header */}
-      <div
-        style={{
-          padding: "12px 10px 10px",
-          borderBottom: "1px solid var(--border)",
-          flexShrink: 0,
-        }}
-      >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
-          <PiWebTitle />
-          <div style={{ display: "flex", gap: 6 }}>
-            <button
-              onClick={handleNewSession}
-              disabled={!selectedCwd}
-              style={{
-                display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                background: "var(--bg-hover)",
-                border: "1px solid var(--border)",
-                color: selectedCwd ? "var(--text-muted)" : "var(--text-dim)",
-                cursor: selectedCwd ? "pointer" : "not-allowed",
-                height: 32,
-                paddingLeft: 10,
-                paddingRight: 12,
-                borderRadius: 7,
-                fontSize: 12,
-                fontWeight: 500,
-                letterSpacing: "-0.01em",
-                flexShrink: 0,
-                transition: "background 0.12s, color 0.12s, border-color 0.12s",
-              }}
-             title={selectedCwd ? t("sidebar.newSessionTitle", { path: selectedCwd }) : t("sidebar.selectProject")}
-              onMouseEnter={(e) => {
-                if (!selectedCwd) return;
-                e.currentTarget.style.background = "var(--bg-selected)";
-                e.currentTarget.style.color = "var(--accent)";
-                e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.background = "var(--bg-hover)";
-                e.currentTarget.style.color = selectedCwd ? "var(--text-muted)" : "var(--text-dim)";
-                e.currentTarget.style.borderColor = "var(--border)";
-              }}
+  // ── Project section (extracted verbatim from the original JSX, only relocated): shared by the
+  // "Projects" takeover dispatch ──
+  // The session-manager extension's SidebarDock registering sidebarProjects takes over the
+  // collapse header + picker + worktree + list (data passed via extra);
+  // without takeover → the picker block inside the Header + the list render as-is (fallback).
+  // The file area/Header are always rendered by the host.
+  const projectPickerBlock = (
+    <>
+        {/* CWD picker — floating-dock extension dock v0.5.1 §4.4.1: upgraded to a "Projects" collapse
+            header row (▾ collapses/expands the session list,
+            clicking the project name still opens the project dropdown, switching behavior unchanged;
+            collapse persisted in pi-sidebar-projects-collapsed) */}
+        <div ref={dropdownRef} style={{ position: "relative", display: "flex", alignItems: "center", gap: 4, padding: "0 10px" }}>
+          <button
+            type="button"
+            onClick={() => setProjectsCollapsed((v) => {
+              const next = !v;
+              try { window.localStorage.setItem("pi-sidebar-projects-collapsed", String(next)); } catch { /* optional */ }
+              return next;
+            })}
+            aria-expanded={!projectsCollapsed}
+            title={projectsCollapsed ? "Expand session list" : "Collapse session list"}
+            aria-label={projectsCollapsed ? "Expand session list" : "Collapse session list"}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center",
+              width: 22, height: 26, padding: 0, flexShrink: 0,
+              background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer",
+            }}
+          >
+            <svg
+              width="9" height="9" viewBox="0 0 10 10" fill="none"
+              stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+              style={{ transform: projectsCollapsed ? "none" : "rotate(90deg)", transition: "transform 0.15s", flexShrink: 0 }}
             >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
-                <line x1="6" y1="1" x2="6" y2="11" />
-                <line x1="1" y1="6" x2="11" y2="6" />
-              </svg>
-              {t("sidebar.new")}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSessionSearchOpen((open) => !open);
-                setWtDropdownOpen(false);
-              }}
-              title={t("sidebar.toggleSessionSearch")}
-              aria-label={t("sidebar.toggleSessionSearch")}
-              aria-expanded={sessionSearchOpen}
-              aria-controls="session-search-input"
-              className={`flex h-[32px] w-[32px] shrink-0 cursor-pointer items-center justify-center rounded-[7px] border border-border hover:bg-bg-selected focus-visible:outline-2 focus-visible:outline-accent ${sessionSearchOpen ? "bg-bg-selected text-accent" : "bg-bg-hover text-text-muted"}`}
-            >
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" />
-              </svg>
-            </button>
-          </div>
-        </div>
-
-        {/* CWD picker */}
-        <div ref={dropdownRef} style={{ position: "relative" }}>
+              <polyline points="3 2 7 5 3 8" />
+            </svg>
+          </button>
           <button
             onClick={() => setDropdownOpen((v) => !v)}
             title={selectedProject?.root ?? selectedCwd ?? ""}
             style={{
-              width: "100%",
+              flex: 1,
+              minWidth: 0,
               display: "flex",
               alignItems: "center",
               padding: "6px 10px",
@@ -1216,7 +1288,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                       width: "100%",
                       padding: "8px 10px",
                       background: "var(--bg)",
-                      border: "none",
+                      borderLeft: "none", borderRight: "none", borderTop: "none",
                       borderBottom: "1px solid var(--border)",
                       color: project.key === selectedProject?.key ? "var(--text)" : "var(--text-muted)",
                       cursor: "pointer",
@@ -1255,7 +1327,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                     width: "100%",
                     padding: "8px 10px",
                     background: "none",
-                    border: "none",
+                    borderLeft: "none",
+                    borderBottom: "none",
                     borderTop: visibleProjects.length > 0 ? "1px solid var(--border)" : "none",
                     color: "var(--text-muted)",
                     cursor: "pointer",
@@ -1296,9 +1369,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 </svg>
                 <span>{t("sidebar.customPath")}</span>
               </button>
+
+              {/* Workspace management actions (session-manager extension: manage the workspace list) */}
+              <ExtSlot
+                name="workspacePickerActions"
+                extra={{
+                  projects: visibleProjects.map((p) => ({ key: p.key, root: p.root })),
+                  allProjects: recentProjects.map((p) => ({ key: p.key, root: p.root })),
+                  selectedCwd,
+                  hiddenWorkspaces,
+                  onSelect: (root) => { setSelectedCwd(root); setProjectFilter(""); setCustomPathOpen(false); setCustomPathError(null); setDropdownOpen(false); },
+                  onClose: () => setDropdownOpen(false),
+                }}
+              />
           </AnimatedDropdown>
         </div>
-
         {sessionSearchOpen && (
           <input
             id="session-search-input"
@@ -1318,7 +1403,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             className="mt-[6px] block h-[29px] w-full min-w-0 rounded-[7px] border border-border bg-bg px-[10px] text-xs text-text focus:outline-2 focus:outline-accent"
           />
         )}
-
         {/* Worktree switcher — shown only for git projects at a checkout top
             level (repo subdirs keep their own project identity, so switching
             from them would jump projects). Rendered whenever the selected cwd
@@ -1670,8 +1754,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{inactiveWorktreeSelector.label}</span>
           </button>
         )}
-      </div>
-
+    </>
+  );
+  const projectList = (
+    <>
       {/* Session list */}
       <SessionSearch open={sessionSearchOpen} query={sessionSearchQuery} refreshKey={sessionListVersion} selectedSessionId={selectedSessionId} onSelectSession={handleSelectSessionFromList}>
       <div
@@ -1689,53 +1775,200 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             {error}
           </div>
         )}
-        {!loading && !error && sessionFamilies.length === 0 && (
+        {!loading && !error && filteredSessions.length === 0 && !draftSession && (
           <div style={{ padding: "16px 14px", color: "var(--text-muted)", fontSize: 12 }}>
             {t("sidebar.noSessions")}
           </div>
         )}
-        {sessionFamilies.length > 0 && (
-          <div
-            style={{
-              position: "relative",
-              height: sessionFamilies.length * SESSION_LIST_ITEM_HEIGHT,
-            }}
-          >
-            {virtualIndices.map((index) => {
-              const family = sessionFamilies[index];
-              const familySessions = [family.root, ...family.subagents];
-              const displaySession = family.latestModified === family.root.modified
-                ? family.root
-                : { ...family.root, modified: family.latestModified };
-              // Bubble blur after the input's save handler before unpinning the row.
-              return (
-                <div
-                  key={family.root.id}
-                  onFocus={() => setFocusedSessionId(family.root.id)}
-                  onBlur={() => setFocusedSessionId(null)}
-                  style={{ position: "absolute", top: index * SESSION_LIST_ITEM_HEIGHT, left: 0, right: 0 }}
-                >
-                  <SessionItem
-                    session={displaySession}
-                    isSelected={familySessions.some((session) => session.id === selectedSessionId)}
-                    isRunning={familySessions.some((session) => runningSessionIds.has(session.id))}
-                    isUnread={familySessions.some((session) => unreadSessionIds.has(session.id))}
-                    onClick={() => handleSelectSessionFromList(family.root)}
-                    onRenamed={loadSessions}
-                    onDeleted={(id) => {
-                      onSessionDeleted?.(id);
-                      loadSessions();
-                    }}
-                  />
-                </div>
-              );
-            })}
-          </div>
-        )}
+        {(() => {
+          // Tree virtualization: DFS-flattened into a visible row array (collapsed subtrees not
+          // expanded); the window mounts only the visible ± overscan rows.
+          // Fixed row height SESSION_LIST_ITEM_HEIGHT; the window math is the same as upstream
+          // #626 (getSessionListIndices).
+          const flatRows = flattenSessionTree(sessionTree, 0, collapsedIds);
+          const indices = getSessionListIndices(
+            flatRows.length,
+            listScrollTop,
+            listViewportH,
+            flatRows.findIndex((row) => row.node.session.id === focusedSessionId),
+          );
+          return (
+            <div style={{ position: "relative", height: flatRows.length * SESSION_LIST_ITEM_HEIGHT }}>
+              {indices.map((index) => {
+                const row = flatRows[index];
+                return (
+                  <div
+                    key={row.node.session.id}
+                    onFocus={() => setFocusedSessionId(row.node.session.id)}
+                    onBlur={() => setFocusedSessionId(null)}
+                    style={{ position: "absolute", top: index * SESSION_LIST_ITEM_HEIGHT, left: 0, right: 0 }}
+                  >
+                    <SessionTreeItem
+                      node={row.node}
+                      depth={row.depth}
+                      selectedSessionId={selectedSessionId}
+                      runningSessionIds={runningSessionIds}
+                      unreadSessionIds={unreadSessionIds}
+                      onSelectSession={handleSelectSessionFromList}
+                      onRenamed={loadSessions}
+                      onSessionDeleted={(id) => {
+                        onSessionDeleted?.(id);
+                        loadSessions();
+                      }}
+                      isDraft={row.node.session.id === draftSession?.id}
+                      collapsed={collapsedIds.has(row.node.session.id)}
+                      onToggleCollapse={() => toggleSessionCollapsed(row.node.session.id)}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
       </div>
       </SessionSearch>
+    </>
+  );
 
-      {/* File Explorer section */}
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {customPathOpen && (
+        <DirectoryPicker
+          initialPath={customPathValue}
+          busy={customPathValidating}
+          error={customPathError}
+          onCancel={() => {
+            setCustomPathOpen(false);
+            setCustomPathError(null);
+          }}
+          onSelect={(path) => void commitCustomPath(path)}
+        />
+      )}
+      {/* Header */}
+      <div
+        style={{
+          padding: "12px 10px 10px",
+          borderBottom: "1px solid var(--border)",
+          flexShrink: 0,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+          <PiWebTitle />
+          <div style={{ display: "flex", gap: 6 }}>
+            <button
+              onClick={handleNewSession}
+              disabled={!selectedCwd}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
+                background: "var(--bg-hover)",
+                border: "1px solid var(--border)",
+                color: selectedCwd ? "var(--text-muted)" : "var(--text-dim)",
+                cursor: selectedCwd ? "pointer" : "not-allowed",
+                height: 32,
+                paddingLeft: 10,
+                paddingRight: 12,
+                borderRadius: 7,
+                fontSize: 12,
+                fontWeight: 500,
+                letterSpacing: "-0.01em",
+                flexShrink: 0,
+                transition: "background 0.12s, color 0.12s, border-color 0.12s",
+              }}
+             title={selectedCwd ? t("sidebar.newSessionTitle", { path: selectedCwd }) : t("sidebar.selectProject")}
+              onMouseEnter={(e) => {
+                if (!selectedCwd) return;
+                e.currentTarget.style.background = "var(--bg-selected)";
+                e.currentTarget.style.color = "var(--accent)";
+                e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = "var(--bg-hover)";
+                e.currentTarget.style.color = selectedCwd ? "var(--text-muted)" : "var(--text-dim)";
+                e.currentTarget.style.borderColor = "var(--border)";
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+                <line x1="6" y1="1" x2="6" y2="11" />
+                <line x1="1" y1="6" x2="11" y2="6" />
+              </svg>
+              {t("sidebar.new")}
+            </button>
+            <button
+              onClick={() => { void loadSessions(false, true); }}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center",
+                background: sessionRefreshDone ? "rgba(74,222,128,0.18)" : "var(--bg-hover)",
+                border: `1px solid ${sessionRefreshDone ? "rgba(74,222,128,0.4)" : "var(--border)"}`,
+                color: sessionRefreshDone ? "#4ade80" : "var(--text-muted)",
+                cursor: "pointer",
+                width: 32, height: 32,
+                borderRadius: 7,
+                padding: 0,
+                flexShrink: 0,
+                transition: "background 0.3s, color 0.3s, border-color 0.3s",
+              }}
+              onMouseEnter={(e) => {
+                if (sessionRefreshDone) return;
+                e.currentTarget.style.background = "var(--bg-selected)";
+                e.currentTarget.style.color = "var(--accent)";
+                e.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+              }}
+              onMouseLeave={(e) => {
+                if (sessionRefreshDone) return;
+                e.currentTarget.style.background = "var(--bg-hover)";
+                e.currentTarget.style.color = "var(--text-muted)";
+                e.currentTarget.style.borderColor = "var(--border)";
+              }}
+              title={t("sidebar.refresh")}
+            >
+              {sessionRefreshDone ? (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              ) : (
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                </svg>
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSessionSearchOpen((open) => !open);
+                setWtDropdownOpen(false);
+              }}
+              title={t("sidebar.toggleSessionSearch")}
+              aria-label={t("sidebar.toggleSessionSearch")}
+              aria-expanded={sessionSearchOpen}
+              aria-controls="session-search-input"
+              className={`flex h-[32px] w-[32px] shrink-0 cursor-pointer items-center justify-center rounded-[7px] border border-border hover:bg-bg-selected focus-visible:outline-2 focus-visible:outline-accent ${sessionSearchOpen ? "bg-bg-selected text-accent" : "bg-bg-hover text-text-muted"}`}
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" />
+              </svg>
+            </button>
+          </div>
+          <ExtSlot name="sidebar" />
+        </div>
+
+        {projectPickerBlock}
+      </div>
+
+      {/* Project list (pure host original): the old sidebarProjects takeover branch is deleted —
+          new-host left-panel takeover always goes through sidebarContent (the whole
+          SessionContentDock block); old hosts roll back with the old code. */}
+      {!projectsCollapsed ? projectList : null}
+
+      {/* The "Tasks" section / sidebarExplorerDock dock-area containers are retired (unified dock
+          plan §3.8): the block stack is taken over by the session-manager extension's
+          SidebarContentDock + the floating-dock extension's DockStack;
+          fallback mode (no takeover) renders neither section — with the extension disabled the
+          host's original sidebar remains fully usable (§2.2). */}
+
+      {/* File Explorer section: pure fallback component, always rendered (in takeover mode this
+          component is not mounted — file blocks belong to the folder extension's multi-instance
+          blocks, unified dock plan §3.5/§7-1) */}
       {(selectedCwdProp || selectedCwd) && (
         <div
           style={{
@@ -1864,9 +2097,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           {explorerOpen && (
             <div style={{ flex: 1, overflowY: "auto", overflowX: "hidden" }}>
               <FileExplorer
-                ref={fileExplorerRef}
+                ref={fileExplorerRefProp ?? fileExplorerRef}
                 cwd={selectedCwd ?? selectedCwdProp!}
                 onOpenFile={onOpenFile ?? (() => {})}
+                onOpenFolder={onOpenFolder}
                 refreshKey={explorerKey}
                 onAtMention={onAtMention}
                 onAtMentions={onAtMentions}
@@ -1880,6 +2114,66 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           )}
         </div>
       )}
+
+    </div>
+  );
+}
+
+function SessionTreeItem({
+  node,
+  selectedSessionId,
+  runningSessionIds,
+  unreadSessionIds,
+  onSelectSession,
+  onRenamed,
+  onSessionDeleted,
+  depth,
+  isDraft,
+  collapsed,
+  onToggleCollapse,
+}: {
+  node: SessionTreeNode;
+  selectedSessionId: string | null;
+  runningSessionIds: Set<string>;
+  unreadSessionIds: Set<string>;
+  onSelectSession: (s: SessionInfo) => void;
+  onRenamed?: () => void;
+  onSessionDeleted?: (id: string) => void;
+  depth: number;
+  isDraft?: boolean;
+  /** Collapse state held by the list layer (the flattened virtual window needs it); single-row rendering no longer recurses into subtrees */
+  collapsed: boolean;
+  onToggleCollapse: () => void;
+}) {
+  const hasChildren = node.children.length > 0;
+
+  return (
+    <div style={{ position: "relative" }}>
+      {/* Indent line for child sessions */}
+      {depth > 0 && (
+        <div style={{
+          position: "absolute",
+          left: depth * 12 + 6,
+          top: 0, bottom: 0,
+          width: 1,
+          background: "var(--border)",
+          pointerEvents: "none",
+        }} />
+      )}
+      <SessionItem
+        session={node.session}
+        isSelected={node.session.id === selectedSessionId}
+        isRunning={runningSessionIds.has(node.session.id)}
+        isUnread={unreadSessionIds.has(node.session.id)}
+        onClick={() => onSelectSession(node.session)}
+        onRenamed={onRenamed}
+        onDeleted={(id) => onSessionDeleted?.(id)}
+        depth={depth}
+        isDraft={isDraft}
+        hasChildren={hasChildren}
+        collapsed={collapsed}
+        onToggleCollapse={onToggleCollapse}
+      />
     </div>
   );
 }
@@ -1950,6 +2244,49 @@ function UnreadSessionIndicator() {
 }
 
 /**
+ * Session run-outcome marker (shown only for anomalies; completed takes no slot — same semantics
+ * as the session-manager dock):
+ * failed = red circle exclamation (title carries the error summary) / aborted = gray square /
+ * interrupted = orange pause.
+ * Running takes precedence (the caller renders it only when !isRunning).
+ */
+function RunOutcomeIndicator({ lastRun }: { lastRun: NonNullable<SessionInfo["lastRun"]> }) {
+  const { t } = useI18n();
+  const failed = lastRun.status === "failed";
+  const aborted = lastRun.status === "aborted";
+  const label = failed
+    ? (lastRun.error ? t("i18n.taskFailedWithError", { error: truncateRunError(lastRun.error, 80) }) : t("i18n.sessionFailed"))
+    : aborted
+      ? t("i18n.sessionAborted")
+      : t("i18n.sessionInterrupted");
+  const color = failed ? "#ef4444" : aborted ? "var(--text-dim)" : "#f59e0b";
+  return (
+    <span
+      title={label}
+      aria-label={label}
+      style={{ width: 14, height: 14, display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, color }}
+    >
+      {failed ? (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true" style={{ display: "block" }}>
+          <circle cx="12" cy="12" r="9" />
+          <line x1="12" y1="7.5" x2="12" y2="13" />
+          <line x1="12" y1="16.5" x2="12.01" y2="16.5" />
+        </svg>
+      ) : aborted ? (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ display: "block" }}>
+          <rect x="6" y="6" width="12" height="12" rx="2" />
+        </svg>
+      ) : (
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" style={{ display: "block" }}>
+          <rect x="6" y="5" width="4" height="14" rx="1" />
+          <rect x="14" y="5" width="4" height="14" rx="1" />
+        </svg>
+      )}
+    </span>
+  );
+}
+
+/**
  * Compact per-project activity badges for the workspace selector dropdown items:
  * a spinning running icon + count and an unread dot + count. Renders nothing
  * when the project has no activity. Counts share the accent / unread colors of
@@ -1991,6 +2328,55 @@ function showProjectActivity(
   );
 }
 
+interface SessionTreeNode {
+  session: SessionInfo;
+  children: SessionTreeNode[];
+}
+
+function buildSessionTree(sessions: SessionInfo[]): SessionTreeNode[] {
+  const byId = new Map<string, SessionTreeNode>();
+  for (const s of sessions) {
+    byId.set(s.id, { session: s, children: [] });
+  }
+
+  // Build a map of parentSessionId chains so we can resolve missing ancestors
+  const parentOf = new Map<string, string>();
+  for (const s of sessions) {
+    if (s.parentSessionId) parentOf.set(s.id, s.parentSessionId);
+  }
+
+  // Walk up the parentSessionId chain to find the nearest ancestor that exists in byId
+  function resolveAncestor(id: string): string | null {
+    let cur = parentOf.get(id);
+    const visited = new Set<string>();
+    while (cur) {
+      if (visited.has(cur)) return null; // cycle guard
+      visited.add(cur);
+      if (byId.has(cur)) return cur;
+      cur = parentOf.get(cur);
+    }
+    return null;
+  }
+
+  const roots: SessionTreeNode[] = [];
+  for (const node of byId.values()) {
+    const ancestor = resolveAncestor(node.session.id);
+    if (ancestor) {
+      byId.get(ancestor)!.children.push(node);
+    } else {
+      roots.push(node);
+    }
+  }
+
+  // Sort each level by modified desc
+  const sort = (nodes: SessionTreeNode[]) => {
+    nodes.sort((a, b) => b.session.modified.localeCompare(a.session.modified));
+    nodes.forEach((n) => sort(n.children));
+  };
+  sort(roots);
+  return roots;
+}
+
 function SessionItem({
   session,
   isSelected,
@@ -2003,6 +2389,7 @@ function SessionItem({
   hasChildren = false,
   collapsed = false,
   onToggleCollapse,
+  isDraft,
 }: {
   session: SessionInfo;
   isSelected: boolean;
@@ -2015,8 +2402,13 @@ function SessionItem({
   hasChildren?: boolean;
   collapsed?: boolean;
   onToggleCollapse?: () => void;
+  isDraft?: boolean;
 }) {
   const { locale, t } = useI18n();
+  // Capability takeover: when an extension declares session-delete, hide the built-in delete
+  // entry (the deletion flow is owned by the extension, e.g. the session-manager extension's
+  // archive-first-delete-later); with no one taking over, the built-in button shows as usual.
+  const extOwnsDelete = useExtProvides().has(EXT_PROVIDES.sessionDelete);
   const [hovered, setHovered] = useState(false);
   const [renaming, setRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState("");
@@ -2055,7 +2447,7 @@ function SessionItem({
     // a skill-invoked session stays a no-op instead of persisting raw XML.)
     if (renameValue === title || name === (session.name ?? "")) return;
     try {
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
+      await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -2066,12 +2458,17 @@ function SessionItem({
     }
   }, [renameValue, session.id, session.name, onRenamed, title]);
 
+  // Live-file deletion from the sidebar. Hidden when an extension has taken
+  // over the session-delete capability (ui.provides: ["session-delete"]) —
+  // that extension owns the deletion flow (e.g. archive first, delete only
+  // on the archived record); archived sessions vanish from the list via the
+  // "sm:sessions-changed" listener → onSessionDeleted.
   const performDelete = useCallback(async () => {
     if (session.transient) return;
     setConfirmDelete(false);
     setDeleting(true);
     try {
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+      await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), { method: "DELETE" });
       onDeleted?.(session.id);
     } catch {
       setDeleting(false);
@@ -2206,13 +2603,22 @@ function SessionItem({
       ) : (
         /* ── Normal view ── */
         <>
-          {/* Subagent indicator for child sessions */}
-          {depth > 0 && (
+          {/* Row-leading extension point: extensions render persistent status icons (e.g. the plan-first extension's plan-binding badge) */}
+          <ExtSlot name="sessionRowLeading" currentSession={session} />
+          {/* Child session indicator — distinguished by relation type: subagent = robot, fork = branch (same icon as the system branch feature) */}
+          {depth > 0 && (session.relation?.kind === "subagent" ? (
             <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
               <rect x="5" y="7" width="14" height="11" rx="2" />
               <path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
             </svg>
-          )}
+          ) : (
+            <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" />
+              <circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+          ))}
           <div style={{ flex: 1, minWidth: 0 }}>
             <div
               style={{
@@ -2230,16 +2636,54 @@ function SessionItem({
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>
                 {title}
               </span>
+              {isDraft && (
+                <span
+                  title={t("sidebar.draftTitle")}
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 9,
+                    fontWeight: 600,
+                    fontStyle: "italic",
+                    color: "var(--text-dim)",
+                    border: "1px solid var(--border)",
+                    borderRadius: 4,
+                    padding: "0 4px",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {t("sidebar.draft")}
+                </span>
+              )}
+              {session.agent && (
+                <span
+                  title={`Backend: ${session.agent}`}
+                  style={{
+                    flexShrink: 0,
+                    fontSize: 9,
+                    fontWeight: 600,
+                    color: "#a78bfa",
+                    border: "1px solid #a78bfa66",
+                    borderRadius: 4,
+                    padding: "0 4px",
+                    lineHeight: 1.5,
+                  }}
+                >
+                  {session.agent}
+                </span>
+              )}
             </div>
             <div style={{ marginTop: 2, display: "flex", alignItems: "center", gap: 8, color: "var(--text-dim)", fontSize: 11, minWidth: 0 }}>
-              {isRunning ? (
-                <RunningSessionIndicator />
-              ) : isUnread ? (
-                <UnreadSessionIndicator />
-              ) : (
-                <span title={session.modified}>{formatRelativeTime(session.modified, locale)}</span>
+              {/* Running/unread also get indicators, but the relative time (just now / xxx ago) always shows, consistent with inactive sessions */}
+              {isRunning && <RunningSessionIndicator />}
+              {!isRunning && isUnread && <UnreadSessionIndicator />}
+              {/* Run-outcome anomaly marker (failed/aborted/interrupted; completed shows nothing) */}
+              {!isRunning && session.lastRun && session.lastRun.status !== "completed" && (
+                <RunOutcomeIndicator lastRun={session.lastRun} />
               )}
+              <span title={session.modified}>{formatRelativeTime(session.modified, locale)}</span>
               <span>{t("sidebar.messagesCount", { count: session.messageCount })}</span>
+              {/* Inline meta extension point (end of the second line holding the spinner/message count): e.g. the plan-first extension's plan-binding badge + front-matter tags */}
+              <ExtSlot name="sessionRowMeta" currentSession={session} />
               {session.isWorktree && session.branch && (
                 <span
                   title={`Worktree: ${session.cwd}`}
@@ -2261,7 +2705,11 @@ function SessionItem({
           {hasChildren && (
             <button
               onClick={(e) => { e.stopPropagation(); onToggleCollapse?.(); }}
-              title={t(collapsed ? "sidebar.expandSubagents" : "sidebar.collapseSubagents")}
+              title={t(
+                collapsed
+                  ? (session.relation?.kind === "subagent" ? "sidebar.expandSubagents" : "sidebar.expandBranches")
+                  : (session.relation?.kind === "subagent" ? "sidebar.collapseSubagents" : "sidebar.collapseBranches"),
+              )}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
                 width: 20, height: 20, padding: 0, flexShrink: 0,
@@ -2277,9 +2725,10 @@ function SessionItem({
             </button>
           )}
 
-          {/* Action buttons — shown on hover */}
-          {hovered && !session.transient && (
+          {/* Action buttons — shown on hover (hidden for unsaved drafts) */}
+          {hovered && !isDraft && (
             <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+              <ExtSlot name="sessionRowActions" currentSession={session} />
               <button
                 onClick={startRename}
                 title={t("sidebar.rename")}
@@ -2306,35 +2755,37 @@ function SessionItem({
                   <path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                 </svg>
               </button>
-              <button
-                onClick={handleDeleteClick}
-                title={t("sidebar.deleteWithShiftClick")}
-                style={{
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  width: 32, height: 32, padding: 0,
-                  background: "var(--bg-hover)", border: "1px solid var(--border)",
-                  borderRadius: 7, color: "var(--text-muted)",
-                  cursor: "pointer", flexShrink: 0,
-                  transition: "background 0.12s, color 0.12s, border-color 0.12s",
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.background = "rgba(239,68,68,0.08)";
-                  e.currentTarget.style.color = "#ef4444";
-                  e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.background = "var(--bg-hover)";
-                  e.currentTarget.style.color = "var(--text-muted)";
-                  e.currentTarget.style.borderColor = "var(--border)";
-                }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                  <path d="M10 11v6M14 11v6" />
-                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                </svg>
-              </button>
+              {!extOwnsDelete && (
+                <button
+                  onClick={handleDeleteClick}
+                  title={t("sidebar.deleteWithShiftClick")}
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    width: 32, height: 32, padding: 0,
+                    background: "var(--bg-hover)", border: "1px solid var(--border)",
+                    borderRadius: 7, color: "var(--text-muted)",
+                    cursor: "pointer", flexShrink: 0,
+                    transition: "background 0.12s, color 0.12s, border-color 0.12s",
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = "rgba(239,68,68,0.08)";
+                    e.currentTarget.style.color = "#ef4444";
+                    e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = "var(--bg-hover)";
+                    e.currentTarget.style.color = "var(--text-muted)";
+                    e.currentTarget.style.borderColor = "var(--border)";
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6M14 11v6" />
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  </svg>
+                </button>
+              )}
             </div>
           )}
         </>
