@@ -9,6 +9,12 @@ interface OpenFileTabInput {
   tabId: string;
 }
 
+interface OpenFolderTabInput {
+  folderName: string;
+  folderPath: string;
+  tabId: string;
+}
+
 export function openFileTab(tabs: Tab[], input: OpenFileTabInput): Tab[] {
   const existing = tabs.find((tab) => tab.id === input.tabId);
   if (!existing) {
@@ -66,4 +72,47 @@ export function saveFileViewerState(
   const next = [...tabs];
   next[index] = { ...next[index], viewerState };
   return next;
+}
+
+/**
+ * Open (or reselect) a folder tab. Folder tabs are first-class: clicking an
+ * already-open folder just reselects it (no state change needed). The root
+ * path is mutable from inside the FolderViewer ("switch folder"), so a reopen
+ * of the same path is a no-op.
+ */
+export function openFolderTab(tabs: Tab[], input: OpenFolderTabInput): Tab[] {
+  const existing = tabs.find((tab) => tab.id === input.tabId);
+  if (existing) return tabs; // already open — caller just selects it
+  return [...tabs, {
+    id: input.tabId,
+    label: input.folderName,
+    filePath: input.folderPath,
+    kind: "folder",
+  }];
+}
+
+/**
+ * [Guard for the file-editor extension's lazy-materialization window] Whether this path is
+ * currently alive as a dock face (the file-editor extension's file-dock instance list).
+ * The file-editor extension is lazily loaded (clientImmediately:false): after a refresh
+ * `window.__aitiEditor` is not mounted, but the face instance list is persistent localStorage —
+ * while the file is still in the list, openFile must route to the face instead (openFileFace
+ * after materialization) and must not land in a host tab, otherwise the editor materializes
+ * and auto-presents its floating window before the host tab → the same file opens twice.
+ *
+ * Returns the instance path from the list (openFileFace uses it to build the face key, so it
+ * exactly matches the existing face); null when no face is alive. The extension key shares its
+ * name with INSTANCES_KEY in the file-editor extension's file-dock.tsx.
+ */
+export function findDormantFileFacePath(filePath: string): string | null {
+  if (typeof localStorage === "undefined") return null;
+  const norm = (p: string) => p.replaceAll("\\", "/").replace(/\/+$/, "");
+  const target = norm(filePath || "");
+  if (!target) return null;
+  let list: string[] = [];
+  try {
+    const raw = JSON.parse(localStorage.getItem("pi:sidebar-dock:files") ?? "[]");
+    if (Array.isArray(raw)) list = raw.filter((x): x is string => typeof x === "string");
+  } catch { return null; }
+  return list.find((p) => norm(p) === target) ?? null;
 }
