@@ -1,23 +1,44 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { createAgentSessionFromServices, createAgentSessionServices, getAgentDir, initTheme, SessionManager, SettingsManager, Theme } from "@earendil-works/pi-coding-agent";
+import { bundledPiPluginPaths } from "./pi-plugins";
 import { KeybindingsManager as TuiKeybindingsManager, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { randomUUID } from "crypto";
+import type { JournalEntry } from "./running-journal.ts";
+import { recordRunningEntries } from "./running-journal.ts";
+import { deriveRunOutcome, type SessionLastRun } from "./run-outcome.ts";
 import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { validateAgentImages } from "./image-attachments";
+import {
+  createQueueEntry,
+  loadQueueFile,
+  removeQueue,
+  saveQueue,
+  type PendingRecoveryItem,
+  type QueueEntry,
+  type QueueEntryInput,
+  type QueueImage,
+  type QueueKind,
+  type QueueTrashItem,
+} from "./queue-store";
 import { invalidateModelsCache } from "./models-cache";
+import { hasLiveDetachedRuns } from "./subagent-detached";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import {
   createProjectCommandBashExtension,
   createProjectCommandBashOperations,
   preferUserBashExtension,
 } from "./project-command-env";
+import { disableConflictingExtensions } from "./ext-conflicts";
 import { cacheSessionPath, getLatestModelChange, invalidateSessionListCache, readLatestSessionEntryId, resolveSessionPath } from "./session-reader";
+import { computeSessionStats } from "./session-stats";
+import { computeSessionTotalActiveMs } from "./session-timing";
 import { getProjectTrustStatus, projectTrustReloadOptions } from "./project-trust";
 import { persistExplicitStartupPreferences } from "./startup-preferences";
 import { notifySessionComplete } from "./web-push";
+import { notifySessionCreated } from "./session-created-notify";
 import { hasActiveSessionLivenessProvider } from "./session-liveness";
-import type { SlashCommandInfo } from "@earendil-works/pi-coding-agent";
+import type { SlashCommandInfo, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { AgentSessionLike, ExtensionUiContextLike, ToolInfo } from "./pi-types";
 import type {
   ExtensionUiRequest,
@@ -27,6 +48,10 @@ import type {
   SessionInfo,
   SessionMessageEntry,
 } from "./types";
+import { getRegistry as getExtRegistry } from "./ext/registry.ts";
+import type { AgentSessionInfo } from "./ext/types.ts";
+import { listProviders } from "./session/providers.ts";
+import { BridgeOccupiedError } from "./session/types.ts";
 import { createHeadlessCustomUiTui, DEFAULT_CUSTOM_UI_COLUMNS, type HeadlessCustomUiTui } from "./custom-ui-terminal";
 import {
   createSubagentExtension,
@@ -58,7 +83,7 @@ export interface AgentEvent {
 }
 
 type EventListener = (event: AgentEvent) => void;
-type AgentRunCompleteListener = (sessionId: string) => void;
+type AgentRunCompleteListener = (sessionId: string, outcome?: SessionLastRun) => void;
 
 type PendingUiResponse = {
   resolve: (response: ExtensionUiResponse) => void;
@@ -163,6 +188,28 @@ export interface RpcSessionStartOptions {
   initialModel?: { provider: string; modelId: string };
   allowInitialModelFallback?: boolean;
   thinkingLevel?: ThinkingLevel;
+  /** Skips the single-writer red-line master gate (the ownsFile bridge-occupancy check). Files forked out by subagents are always local — use this for them. */
+  skipBridgeCheck?: boolean;
+  /**
+   * Subagent mode: after creation, inject the agent definition's systemPrompt
+   * and narrow tools on demand (excludeTools).
+   * A subagent session reuses the full session-creation flow
+   * (persistence/indexing/stats/extension notifications), just carrying a
+   * parent marker.
+   */
+  subagent?: {
+    /** The subagent agent definition's system prompt (overrides the default systemPrompt) */
+    systemPrompt?: string;
+    /** Tool blocklist (default all on = inherit all system/extension tools) */
+    excludeTools?: string[];
+  };
+  /**
+   * Per-session force-enabled extension agent tools: at session creation these
+   * extensions are let through **ignoring feature gating** entirely.
+   * For "enable on demand" (e.g. AI-helper help points) — no dependence on
+   * mutating global feature state (no races, no leftovers).
+   */
+  enableExtTools?: string[];
 }
 
 const CODING_TOOL_NAMES = ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"];
@@ -196,6 +243,16 @@ class PlainTextTheme extends Theme {
 const PLAIN_TEXT_THEME = new PlainTextTheme();
 const CUSTOM_UI_KEYBINDINGS = new TuiKeybindingsManager(TUI_KEYBINDINGS);
 
+/**
+ * Trash entry count cap: input-clear entries can carry image base64 (a
+ * single image can reach several MB), so a cap is required to keep the
+ * sidecar file from ballooning (synchronously writeFileSync-ing large files
+ * would block the event loop — a server-side red line).
+ * Past the cap the oldest entries are dropped (FIFO); also applies to
+ * soft-deleted queue entries (global protection).
+ */
+const QUEUE_TRASH_MAX_ENTRIES = 30;
+
 function withExtensionTools(session: AgentSessionLike, toolNames: string[]): string[] {
   if (toolNames.length === 0) return [];
 
@@ -214,6 +271,16 @@ function withExtensionTools(session: AgentSessionLike, toolNames: string[]): str
 // Wraps AgentSession with the same interface the rest of the app expects
 // ============================================================================
 
+/** Why a wrapper is being torn down. "shutdown" = the session is truly over
+ *  (DELETE route, global teardown); "idle" = 10-min idle GC (the file survives,
+ *  a fresh wrapper is created on next access); "fork" = legacy value kept for
+ *  compatibility — the old replacement-style fork/clone used to drop the
+ *  wrapper in this scenario; since 2026-09-13 fork/clone no longer recycle
+ *  the source wrapper (a running turn must not be interrupted), so nothing
+ *  produces it today. Extension end-hooks receive this so they can tell
+ *  "session gone" from "wrapper recycled". */
+export type AgentWrapperEndReason = "shutdown" | "fork" | "idle";
+
 export class AgentSessionWrapper {
   private listeners: EventListener[] = [];
   private activeToolEvents = new Map<string, AgentEvent>();
@@ -227,6 +294,8 @@ export class AgentSessionWrapper {
   private extensionWidgetGenerations = new Map<string, number>();
   private extensionWidgetsResetting = false;
   private pendingPromptCount = 0;
+  /** True while runAgentContinue is delivering a queued follow-up as a prompt. */
+  private promptRunning = false;
   private activeMutatingCommands = 0;
   private sessionReplacement: "fork" | "clone" | null = null;
   private agentRunNeedsCompletion = false;
@@ -240,11 +309,30 @@ export class AgentSessionWrapper {
   private readonly suppressCompletionNotifications: boolean;
   private unsubscribe: (() => void) | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
-  private onDestroyCallback: (() => void) | null = null;
+  // Queue persistence & crash recovery — see lib/queue-store.ts.
+  // queueMirror mirrors pi's live steer/follow-up queue (with images).
+  // queueRecovery holds sidecar entries orphaned by a previous wrapper
+  // lifetime; they are surfaced to the UI and never auto-delivered.
+  // queueTrash holds soft-deleted entries (recoverable from the trash bin
+  // until the user purges them permanently).
+  private queueMirror: QueueEntry[] = [];
+  private queueRecovery: QueueEntry[] = [];
+  private queueTrash: QueueEntry[] = [];
+  private pendingQueueHints: Record<QueueKind, QueueImage[][]> = { steer: [], followUp: [], composer: [] };
+  // Plan M: whether this run produced an assistant message carrying text.
+  // agent_settled fires unconditionally (finally), while
+  // getLastAssistantText() skips "aborted with no content" messages and falls
+  // back to the previous turn's final answer — without this flag, a turn
+  // aborted immediately would push the previous turn's answer to extensions
+  // as this turn's answer.
+  private runProducedAssistantText = false;
+  private onDestroyCallback: ((reason: AgentWrapperEndReason) => void) | null = null;
   private shutdownPromise: Promise<void> | null = null;
   private sessionShutdownEmitted = false;
   private forceShutdownOnIdle = false;
   private _alive = true;
+  /** Plan M: whether extension session hooks have been dispatched (filter marker for reload re-attachment; subagent wrappers do not dispatch). */
+  private agentSessionHooksDispatched = false;
 
   constructor(
     public readonly inner: AgentSessionLike,
@@ -283,7 +371,19 @@ export class AgentSessionWrapper {
   }
 
   isRunning(): boolean {
-    return this._alive && (this.pendingPromptCount > 0 || this.inner.isStreaming || this.inner.isCompacting || this.inner.isBashRunning);
+    return this._alive && (this.pendingPromptCount > 0 || this.promptRunning || this.inner.isStreaming || this.inner.isCompacting || this.inner.isBashRunning);
+  }
+
+  /** This run's final state (last assistant message, judged in memory) —
+   * agent_settled text gating and completion-notice routing share the same
+   * rule (lib/run-outcome.ts, same source as the file-based derivation).
+   * AgentSessionLike does not declare messages; narrowed locally here (the
+   * underlying SDK has that getter). */
+  private lastRunOutcome(): SessionLastRun | undefined {
+    const messages = (this.inner as {
+      messages?: Array<{ role?: string; stopReason?: string; errorMessage?: string; timestamp?: number }>;
+    }).messages;
+    return deriveRunOutcome(messages, new Date().toISOString());
   }
 
   /**
@@ -315,6 +415,12 @@ export class AgentSessionWrapper {
       if (event.type === "agent_end") {
         invalidateSessionListCache();
       }
+      if (event.type === "queue_update") {
+        this.reconcileQueue(
+          (event as { steering?: string[] }).steering,
+          (event as { followUp?: string[] }).followUp,
+        );
+      }
       const toolCallId = event.toolCallId;
       if (typeof toolCallId === "string") {
         if (event.type === "tool_execution_start" || event.type === "tool_execution_update") {
@@ -323,6 +429,46 @@ export class AgentSessionWrapper {
           this.activeToolEvents.delete(toolCallId);
         }
       }
+      // Plan M: record whether this run produced an assistant message carrying
+      // text (see the field comment). Event-driven (not
+      // prompt-command-driven) — extension-initiated runs go through the same
+      // subscription.
+      if (event.type === "message_end") {
+        const m = (event as { message?: { role?: string; content?: Array<{ type?: string; text?: string }> } }).message;
+        if (m?.role === "assistant" && (m.content ?? []).some((c) => c.type === "text" && (c.text ?? "").trim().length > 0)) {
+          this.runProducedAssistantText = true;
+        }
+      }
+      // Plan M: an agent turn finished → dispatch the final answer to
+      // extensions (e.g. the devtools extension relaying it back to its AI
+      // window). Dispatch only if this turn actually produced assistant text;
+      // zero-output turns (immediate abort, error with no output) must not
+      // push the previous turn's answer as this turn's.
+      if (event.type === "agent_settled") {
+        const produced = this.runProducedAssistantText;
+        this.runProducedAssistantText = false;
+        // A run whose last assistant message ended in "error" (API failure
+        // mid-stream, retries exhausted, …) did not produce a usable answer —
+        // its partial stream text must not be dispatched as the final one.
+        // "aborted" partial text stays dispatchable: the user chose to stop,
+        // and the text shown so far is what the agent actually said. Settled
+        // fires only after the whole loop (retries included), so a pending
+        // retry never races this check.
+        const failed = this.lastRunOutcome()?.status === "failed";
+        const text = produced && !failed ? this.inner.getLastAssistantText() ?? "" : "";
+        if (text) {
+          try { getExtRegistry().dispatchAgentSettled(this.sessionId, text); } catch (e) { console.error("[pi-web] agent_settled dispatch failed:", e instanceof Error ? e.message : e); }
+        }
+      }
+      if (event.type === "compaction_end") {
+        // Prompts submitted while compaction was running were queued as
+        // follow-ups (pi rejects prompts during compaction). Compaction is
+        // over — kick off a run so they are delivered instead of sitting in
+        // the queue. When compaction ran inside an active run loop
+        // (auto-compaction), runAgentContinue's guards skip this and pi
+        // continues on its own (it already checks hasQueuedMessages()).
+        void this.runAgentContinue();
+      }
       if (IDLE_RESET_EVENT_TYPES.has(event.type)) this.resetIdleTimer();
       this.emit(event);
       if (event.type === "agent_settled") this.notifyAgentRunCompleteIfIdle();
@@ -330,18 +476,298 @@ export class AgentSessionWrapper {
     this.resetIdleTimer();
   }
 
+  // ==========================================================================
+  // Queue persistence & crash recovery
+  //
+  // pi keeps its steering/follow-up queues in memory only. We mirror every
+  // queue mutation to a per-session sidecar file so that after a server
+  // restart the messages can be offered for manual recovery instead of being
+  // lost. Recovery is NEVER automatic: sidecar entries are surfaced to the UI
+  // (pendingRecovery) and the user decides to re-queue, discard, or export.
+  // ==========================================================================
+
+  /**
+   * Load entries the sidecar inherited from a previous process (or a previous
+   * wrapper lifetime after the 10-minute idle timeout).
+   */
+  loadQueueRecovery(): void {
+    const file = this.sessionFile;
+    if (!file) return;
+    const { entries, trash } = loadQueueFile(file);
+    // Trash is independent of pi's live queue — always restore it so entries
+    // soft-deleted before a restart (or a hot reload) stay recoverable.
+    this.queueTrash = trash;
+    // Defensive consistency check: pi's steering/follow-up queues live in the
+    // same process as this wrapper, and a brand-new AgentSession always starts
+    // with empty queues. If pi already has queued messages here, the queue
+    // survived (hot reload reused the runtime, future architecture change, …)
+    // and the sidecar is just an older mirror. In that case skip recovery and
+    // resync the mirror from pi instead of offering duplicate entries.
+    const liveSteering = this.inner.getSteeringMessages();
+    const liveFollowUp = this.inner.getFollowUpMessages();
+    if (liveSteering.length > 0 || liveFollowUp.length > 0) {
+      this.queueRecovery = [];
+      this.reconcileQueue([...liveSteering], [...liveFollowUp]);
+      return;
+    }
+    if (entries.length > 0) {
+      this.queueRecovery = entries;
+      console.log(
+        `[pi-web] ${entries.length} queued message(s) pending recovery for session ${this.sessionId}`,
+      );
+    }
+  }
+
+  private getSidecarEntries(): QueueEntry[] {
+    return [...this.queueRecovery, ...this.queueMirror];
+  }
+
+  private persistQueue(): void {
+    const file = this.sessionFile;
+    if (!file) return;
+    const entries = this.getSidecarEntries();
+    if (entries.length === 0 && this.queueTrash.length === 0) {
+      removeQueue(file);
+      return;
+    }
+    saveQueue(file, entries, this.queueTrash);
+  }
+
+  private getQueueTrashView(): QueueTrashItem[] {
+    return this.queueTrash.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      hasImages: Boolean(entry.images?.length),
+      queuedAt: entry.queuedAt,
+    }));
+  }
+
+  /** Parallel queue attachment markers (same indexes as the steering/followUp
+   *  arrays): used for queue-row attachment icons.
+   *  pi's queue_update/queue reads report text only; attachments live solely
+   *  in the local queueMirror — when the text projection reads pi's live
+   *  queue, attachment markers come from the mirror (lengths can briefly
+   *  mismatch in a race; the frontend reads by index and treats out-of-range
+   *  as false, which is safe). */
+  private getQueueAttachmentView(): { steeringHasImages: boolean[]; followUpHasImages: boolean[] } {
+    return {
+      steeringHasImages: this.queueMirror.filter((e) => e.kind === "steer").map((e) => Boolean(e.images?.length)),
+      followUpHasImages: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => Boolean(e.images?.length)),
+    };
+  }
+
+  private getPendingRecoveryView(): PendingRecoveryItem[] {
+    return this.queueRecovery.map((entry) => ({
+      id: entry.id,
+      kind: entry.kind,
+      text: entry.text,
+      hasImages: Boolean(entry.images?.length),
+      queuedAt: entry.queuedAt,
+    }));
+  }
+
+  /**
+   * Record an incoming queueable message so its image attachments survive
+   * mirroring. pi reports queued messages by text only and template expansion
+   * may rewrite the text, so hints are consumed FIFO per kind.
+   */
+  private hintQueueImages(kind: QueueKind, images: QueueImage[] | undefined): void {
+    this.pendingQueueHints[kind].push(images && images.length > 0 ? images : []);
+  }
+
+  /**
+   * True when the text is a registered extension command (`/name ...`). Used
+   * to route slash commands during compaction: extension commands execute
+   * immediately via prompt(), everything else is queued as a follow-up.
+   */
+  private isRegisteredExtensionCommand(text: string): boolean {
+    if (!text.startsWith("/")) return false;
+    const name = text.slice(1).split(/\s/)[0];
+    try {
+      return this.inner.extensionRunner.getRegisteredCommands().some((c) => c.invocationName === name);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Sync the mirror with pi's authoritative queue (text-only). Bare entries pi
+   * reports that we have never mirrored consume image hints FIFO.
+   */
+  private reconcileQueue(steering: string[] | undefined, followUp: string[] | undefined): void {
+    const rebuild = (kind: QueueKind, texts: string[] | undefined): QueueEntry[] => {
+      if (!texts) return this.queueMirror.filter((entry) => entry.kind === kind);
+      const used = new Set<QueueEntry>();
+      return texts.map((text) => {
+        const match = this.queueMirror.find(
+          (entry) => entry.kind === kind && entry.text === text && !used.has(entry),
+        );
+        if (match) {
+          used.add(match);
+          return match;
+        }
+        const entry = createQueueEntry(kind, text, this.pendingQueueHints[kind].shift());
+        used.add(entry);
+        return entry;
+      });
+    };
+    this.queueMirror = [
+      ...rebuild("steer", steering),
+      ...rebuild("followUp", followUp),
+    ];
+    this.persistQueue();
+  }
+
+  /** Re-queue a recovered or imported entry into the live queue. */
+  private async requeueEntry(entry: QueueEntry): Promise<void> {
+    this.hintQueueImages(entry.kind, entry.images);
+    try {
+      if (entry.kind === "steer") {
+        await this.inner.steer(entry.text, entry.images);
+      } else {
+        await this.inner.followUp(entry.text, entry.images);
+      }
+    } catch (error) {
+      console.error(
+        `[pi-web] requeueEntry failed kind=${entry.kind} text=${JSON.stringify(entry.text?.slice(0, 80))}:`,
+        error,
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Ensure the entry is present in the mirror (queue_update may race). Called
+   * after requeue/import so the sidecar is never missing a re-queued message.
+   */
+  private ensureMirrored(entry: QueueEntry): void {
+    const existing = this.queueMirror.find(
+      (e) => e.kind === entry.kind && e.text === entry.text,
+    );
+    if (existing) return;
+    this.queueMirror.push({ ...entry });
+    // No queue_update consumed the image hint (yet) — drop the one we pushed in
+    // requeueEntry so it cannot attach to an unrelated future entry.
+    this.pendingQueueHints[entry.kind].pop();
+  }
+
+  /**
+   * Kick off processing of the live queue when the agent is idle.
+   *
+   * Used by two triggers: (1) the recovery dialog's "re-queue & continue"
+   * and (2) the compaction_end listener — prompts submitted while compaction
+   * ran were queued as follow-ups and must be delivered now that compaction
+   * finished (pi rejects prompts during compaction, so the message would
+   * otherwise sit idle forever after a manual compaction).
+   *
+   * Re-queuing/import only enqueues entries into pi's steer/followUp queues
+   * (exactly like the steer/followUp commands do) — it never starts a run.
+   * When the user asks to "re-queue & continue" we need to start a run so
+   * pi's own agent loop drains the queue.
+   *
+   * pi's agent loop (agent-loop runLoop) checks getFollowUpMessages() after
+   * every turn and its PendingMessageQueue drains one-at-a-time by default,
+   * so queued entries run sequentially after the first prompt finishes. We
+   * only fire ONE prompt with the first queued entry; the rest are re-queued
+   * into pi and pi processes them in order. queue_update events fire as each
+   * entry is drained so the frontend count ticks down.
+   */
+  private async runAgentContinue(): Promise<void> {
+    if (this.inner.isStreaming || this.inner.isBashRunning || this.promptRunning) return;
+    // pi rejects prompt() while compaction runs. If a caller races in during
+    // compaction, leave the queue alone — the compaction_end listener calls
+    // this again once pi can accept prompts.
+    if (this.inner.isCompacting) return;
+    const all = [...this.queueMirror];
+    if (all.length === 0) return;
+    const first = all[0];
+    const rest = all.slice(1);
+    // Send the first entry as a prompt, then re-queue the rest into pi's
+    // followUp/steer queues. pi's queue mode is one-at-a-time, so its agent
+    // loop drains the remaining entries one by one after the first turn —
+    // exactly the "run one, queue the rest, pi continues them" behavior the
+    // user expects. queue_update events fire as each entry is drained so the
+    // frontend count ticks down.
+    // IMPORTANT: await each steer/followUp call — they are async internally
+    // (they emit queue_update) and prompt(first) below must see the rest
+    // already in pi's queue, otherwise the agent loop drains nothing and the
+    // remainder never runs.
+    this.inner.clearQueue();
+    this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
+    for (const e of rest) {
+      this.hintQueueImages(e.kind, e.images);
+      if (e.kind === "steer") {
+        await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
+      } else {
+        await this.inner.followUp(e.text, e.images?.length ? e.images : undefined);
+      }
+    }
+    this.queueMirror = [...rest];
+    this.persistQueue();
+    this.promptRunning = true;
+    notifyRunningChange();
+    void this.bootstrapQueuedRun(first);
+  }
+
+  private async bootstrapQueuedRun(first: QueueEntry): Promise<void> {
+    // Send the first queued entry as a prompt. pi's _runAgentPrompt then runs
+    // `while (_handlePostAgentRun()) continue();` which drains any remaining
+    // followUp/steer entries from pi's queue automatically — same as a normal
+    // prompt that had messages queued during it. We do NOT iterate ourselves.
+    try {
+      await this.inner.prompt(
+        first.text,
+        first.images?.length ? { images: first.images } : undefined,
+      );
+    } catch (error: unknown) {
+      this.promptRunning = false;
+      this.resetIdleTimer();
+      invalidateSessionListCache();
+      // Restore the failed entry to the mirror so the user can retry instead
+      // of losing it.
+      this.queueMirror = [first, ...this.queueMirror];
+      this.persistQueue();
+      this.emit({
+        type: "prompt_error",
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      this.emit({ type: "prompt_done" });
+      notifyRunningChange();
+      return;
+    }
+    this.promptRunning = false;
+    this.resetIdleTimer();
+    this.emit({ type: "prompt_done" });
+    notifyRunningChange();
+  }
+
+  private forceEmptySystemPrompt = false;
+
+  setForceEmptySystemPrompt(force: boolean): void {
+    this.forceEmptySystemPrompt = force;
+    this.applyForcedEmptySystemPrompt();
+  }
+
+  private applyForcedEmptySystemPrompt(): void {
+    if (this.forceEmptySystemPrompt && this.inner.agent.state) {
+      this.inner.agent.state.systemPrompt = "";
+    }
+  }
+
   private notifyAgentRunCompleteIfIdle(): void {
     if (!this.agentRunNeedsCompletion || this.isRunning()) return;
     this.agentRunNeedsCompletion = false;
     if (this.suppressCompletionNotifications) return;
     try {
-      this.onAgentRunComplete?.(this.sessionId);
+      this.onAgentRunComplete?.(this.sessionId, this.lastRunOutcome());
     } catch (error) {
       console.error("[pi-web] completion listener failed:", error instanceof Error ? error.message : error);
     }
   }
 
-  beginExtensionBinding(): void {
+  beginExtensionBinding(options?: { forceEmptySystemPrompt?: boolean }): void {
+    if (options?.forceEmptySystemPrompt) this.setForceEmptySystemPrompt(true);
     void this.ensureExtensionsBound().catch((err) => {
       console.error("[pi-web] failed to dispatch session_start to extensions:", err instanceof Error ? err.message : err);
     });
@@ -456,7 +882,8 @@ export class AgentSessionWrapper {
     this.applyExactSystemPrompt();
   }
 
-  private emit(event: AgentEvent): void {
+  // public: acceptance-style sends (lib/agent-command-accept) re-emit prompt_error here for failures arriving after the 202
+  emit(event: AgentEvent): void {
     for (const listener of this.listeners) {
       try {
         listener(event);
@@ -493,7 +920,27 @@ export class AgentSessionWrapper {
         this.resetIdleTimer();
         return;
       }
-      void this.shutdown().catch((error) => {
+      // Upstream pi-subagents detached-run liveness: when the parent session
+      // is idle but a background subagent is still running, the wrapper must
+      // not be recycled — the completion watcher / wait subscriptions die
+      // with the wrapper and the subagent would "never report back" (the
+      // upstream extension-api.md host warning). On liveness-check errors,
+      // conservatively keep it alive.
+      // Without a sessionManager (no session) do not be conservative —
+      // otherwise a purely idle session would never be recycled.
+      let hasDetached = false;
+      const detachedSessionFile = this.inner.sessionManager?.getSessionFile?.() ?? "";
+      const detachedSessionId = this.inner.sessionManager?.getSessionId?.() ?? "";
+      if (detachedSessionFile || detachedSessionId) {
+        try {
+          hasDetached = hasLiveDetachedRuns(detachedSessionFile, detachedSessionId);
+        } catch { /* conservatively keep alive */ hasDetached = true; }
+      }
+      if (hasDetached) {
+        this.resetIdleTimer();
+        return;
+      }
+      void this.shutdown("idle").catch((error) => {
         console.error("[pi-web] failed to shut down idle session:", error instanceof Error ? error.message : error);
       });
     }, SESSION_IDLE_TIMEOUT_MS);
@@ -521,16 +968,118 @@ export class AgentSessionWrapper {
 
   onEvent(listener: EventListener): () => void {
     this.listeners.push(listener);
-    for (const event of this.pendingUiRequests.values()) listener(event);
-    for (const event of this.activeToolEvents.values()) listener(event);
+    // Replay pending events: a single listener throwing must not break the
+    // "pushed ⇒ returns an off function" pairing (the old implementation left
+    // the caller without an unsubscribe function on throw → the listener
+    // leaked forever; reload re-attachment would amplify it into one copy per
+    // reload). Same single-point isolation as emit()'s main dispatch loop.
+    for (const event of this.pendingUiRequests.values()) {
+      try { listener(event); } catch (e) { console.error("[pi-web] failed to replay pending UI request:", e instanceof Error ? e.message : e); }
+    }
+    for (const event of this.activeToolEvents.values()) {
+      try { listener(event); } catch (e) { console.error("[pi-web] failed to replay active tool event:", e instanceof Error ? e.message : e); }
+    }
     return () => {
       const i = this.listeners.indexOf(listener);
       if (i !== -1) this.listeners.splice(i, 1);
     };
   }
 
-  onDestroy(cb: () => void): void {
+  /**
+   * Plan M: builds the extension-side session info (steer / subscribeEvent /
+   * abortBash / getModel).
+   * The session-creation point and the re-attachment after a registry reload
+   * (reattachAgentSessions) share this one builder to avoid drift. Note
+   * subscribeEvent attaches a new listener on every call — for repeated
+   * dispatches, the registry's subscription-epoch ledger reclaims old
+   * subscriptions first (see lib/ext/registry.ts dispatchAgentSession).
+   */
+  toAgentSessionInfo(): AgentSessionInfo {
+    return {
+      sessionId: this.sessionId,
+      cwd: this.cwd,
+      // In-process event tap: includes tool_execution_update live bash output
+      // (the agent-events SSE outlet filters that type, so the browser never
+      // sees it; extensions get the full stream here).
+      subscribeEvent: (listener) => this.onEvent((event) => listener(event)),
+      // Aborts only the current bash command, not the whole turn (the agent continues after receiving the error result).
+      abortBash: () => this.inner.abortBash(),
+      // The model currently in use by this session (read live; runtime monitors — e.g. the model-check extension's mass-429 block marking — use it to attribute the model).
+      getModel: () => {
+        const m = this.inner.model;
+        return m && m.provider && m.id ? { provider: m.provider, modelId: m.id } : null;
+      },
+      // steer: enters pi's steering queue, consumed at the next turn boundary;
+      // if the turn ends right after enqueueing but before that boundary (the
+      // loop's final hasQueuedMessages check already ran), nothing consumes
+      // the queue — so check once more after enqueueing: if no longer running,
+      // send continue_queue to actually get going (during compaction
+      // continue_queue reports started:false; delivery is handled by the
+      // compaction_end listener). Guard against an already-destroyed wrapper:
+      // the sink is unregistered in onAgentSessionEnd, but in-flight calls
+      // may still arrive.
+      steer: async (t) => {
+        if (!this.isAlive()) return;
+        await this.send({ type: "steer", message: t });
+        if (!this.isRunning()) await this.send({ type: "continue_queue" });
+      },
+    };
+  }
+
+  /** Plan M: whether extension session hooks have been dispatched (filter marker for reload re-attachment; subagent wrappers do not dispatch). */
+  hasAgentSessionHooks(): boolean {
+    return this.agentSessionHooksDispatched;
+  }
+
+  /** Plan M: marks the hooks as dispatched (called at the creation point; re-attachment only targets wrappers marked this way). */
+  markAgentSessionHooksDispatched(): void {
+    this.agentSessionHooksDispatched = true;
+  }
+
+  onDestroy(cb: (reason: AgentWrapperEndReason) => void): void {
     this.onDestroyCallback = cb;
+  }
+
+  /**
+   * After navigate/branch, explicitly land the currently effective
+   * model/thinking onto the new chain (appended only when it differs from
+   * what the new chain already records).
+   * Background: set_model's model_change append lands on the branch
+   * containing "the leaf at the moment of the switch"; when a later "edit
+   * from here" / branch navigation branches back to an earlier node, the new
+   * chain's ancestors lack that model_change → the frontend, displaying "the
+   * last model_change on the leaf path", would regress to the old model
+   * while the engine's in-memory state keeps the new one (display ≠ runtime).
+   * Writing it back keeps the tree self-consistent and the read side needs
+   * no guessing. Written only on difference, to avoid piling redundant
+   * records on every branch switch.
+   */
+  private syncSessionSettingsAfterBranch(): void {
+    try {
+      const sm = this.inner.sessionManager;
+      const leafId = sm.getLeafId();
+      const branch = leafId ? sm.getBranch(leafId) : sm.getBranch();
+      let lastModel: { provider: string; modelId: string } | undefined;
+      let lastThinking: string | undefined;
+      for (let i = branch.length - 1; i >= 0; i--) {
+        const e = branch[i] as { type?: string; provider?: string; modelId?: string; thinkingLevel?: string };
+        if (!lastModel && e.type === "model_change") lastModel = { provider: e.provider ?? "", modelId: e.modelId ?? "" };
+        if (lastThinking === undefined && e.type === "thinking_level_change") lastThinking = e.thinkingLevel;
+        if (lastModel && lastThinking !== undefined) break;
+      }
+      const model = this.inner.model;
+      if (model && (!lastModel || lastModel.provider !== model.provider || lastModel.modelId !== model.id)) {
+        sm.appendModelChange(model.provider, model.id);
+      }
+      const thinking = this.inner.agent.state?.thinkingLevel;
+      if (thinking && thinking !== lastThinking) {
+        sm.appendThinkingLevelChange(thinking);
+      }
+      invalidateSessionListCache();
+    } catch (e) {
+      // A failed write-back does not block the navigate result (engine state is already in place; only the display layer may regress to the old record).
+      console.error("navigate_tree: sync model/thinking after branch failed:", e);
+    }
   }
 
   private async withSessionReplacement<T>(
@@ -551,17 +1100,6 @@ export class AgentSessionWrapper {
       || this.inner.isStreaming
       || this.inner.isCompacting
       || this.pendingPromptCount > 0;
-  }
-
-  private async shutdownAfterSessionReplacement(replacement: "fork" | "clone"): Promise<void> {
-    try {
-      await this.shutdown();
-    } catch (error) {
-      console.error(
-        `[pi-web] ${replacement} succeeded, but source session shutdown failed:`,
-        error instanceof Error ? error.message : error,
-      );
-    }
   }
 
   async send(command: Record<string, unknown>): Promise<unknown> {
@@ -605,6 +1143,41 @@ export class AgentSessionWrapper {
           }
           const promptImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
           const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
+          const text = command.message as string;
+
+          // pi rejects plain prompts while compaction runs. Queue the message as
+          // a follow-up so it is delivered once compaction finishes (the
+          // compaction_end listener kicks off delivery via runAgentContinue).
+          // Extension commands still go through inner.prompt() so they execute
+          // immediately, matching pi's own behavior during compaction.
+          const queueAsFollowUp = this.inner.isCompacting && !this.isRegisteredExtensionCommand(text);
+          if (queueAsFollowUp) {
+            // Record image attachments so they survive queue mirroring.
+            this.hintQueueImages("followUp", promptImages);
+            this.pendingPromptCount += 1;
+            notifyRunningChange();
+            void this.inner.followUp(text, promptImages?.length ? promptImages : undefined)
+              .catch((error) => {
+                invalidateSessionListCache();
+                this.emit({
+                  type: "prompt_error",
+                  errorMessage: error instanceof Error ? error.message : String(error),
+                });
+              })
+              .finally(() => {
+                this.pendingPromptCount = Math.max(0, this.pendingPromptCount - 1);
+                this.resetIdleTimer();
+                notifyRunningChange();
+              });
+            return null;
+          }
+
+          const queuesMessage = Boolean(streamingBehavior) && this.inner.isStreaming;
+          if (queuesMessage) {
+            // Record image attachments so they survive queue mirroring.
+            this.hintQueueImages(streamingBehavior === "followUp" ? "followUp" : "steer", promptImages);
+          }
+
           let preflightAccepted = false;
           let preflightSettled = false;
           let promptSettled = false;
@@ -630,9 +1203,13 @@ export class AgentSessionWrapper {
             this.pendingPromptCount = Math.max(0, this.pendingPromptCount - 1);
             this.resetIdleTimer();
             this.notifyAgentRunCompleteIfIdle();
+            // Running state changed (possibly running → idle): broadcast to SSE so the sidebar running marker clears.
+            notifyRunningChange();
           };
 
           this.pendingPromptCount += 1;
+          // Execution starts (isRunning flips true): broadcast the running set so the sidebar shows the running marker right away.
+          notifyRunningChange();
           let prompt: Promise<void>;
           try {
             prompt = this.inner.prompt(command.message as string, {
@@ -704,6 +1281,13 @@ export class AgentSessionWrapper {
           sessionId: this.inner.sessionId,
           sessionFile: this.inner.sessionFile ?? "",
           isStreaming: this.inner.isStreaming,
+          // Authoritative busy field: same semantics as /api/agent/running's
+          // wrapper.isRunning() (covers compaction/promptRunning/bash and
+          // other busy states beyond isStreaming) — the frontend's "restore
+          // running state on open" uses it, avoiding the left side lit while
+          // the right side shows idle during manual-compaction /
+          // queue-continuation windows (fixed 2026-09-14).
+          isRunning: this.isRunning(),
           isPromptRunning: this.pendingPromptCount > 0,
           isBashRunning: this.inner.isBashRunning,
           isCompacting: this.inner.isCompacting,
@@ -713,9 +1297,17 @@ export class AgentSessionWrapper {
           messageCount: 0,
           pendingMessageCount: this.inner.pendingMessageCount,
           queuedMessages: {
-            steering: [...this.inner.getSteeringMessages()],
-            followUp: [...this.inner.getFollowUpMessages()],
+            steering: this.queueMirror.filter((e) => e.kind === "steer").map((e) => e.text),
+            followUp: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => e.text),
+            // Parallel attachment markers (same indexes as steering/followUp):
+            // for queue-row icons — pi's queue_update reports text only; the
+            // real attachment info lives only in the local queueMirror and is
+            // delivered with the state projection.
+            steeringHasImages: this.queueMirror.filter((e) => e.kind === "steer").map((e) => Boolean(e.images?.length)),
+            followUpHasImages: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => Boolean(e.images?.length)),
           },
+          pendingRecovery: this.getPendingRecoveryView(),
+          queueTrash: this.getQueueTrashView(),
           contextUsage: contextUsage
             ? { percent: contextUsage.percent, contextWindow: contextUsage.contextWindow, tokens: contextUsage.tokens }
             : null,
@@ -741,9 +1333,25 @@ export class AgentSessionWrapper {
       }
 
       case "fork": {
-        if (this.isSessionRunningForReplacement()) {
-          throw new Error("Cannot fork while the session is running");
-        }
+        // Cross-instance single-writer fallback: another pi-web instance
+        // (prod/dev dual-open) may be streaming to the same file from a child
+        // process; its in-memory running state is invisible to this instance
+        // (an orphan run) → copy the content and continue appending from the
+        // current position (the file only grows; only fully parsed lines are
+        // kept) — treated as acceptable fork behavior.
+        // The isSessionRunningForReplacement() check was removed: that guard
+        // was added in an earlier merge; the user explicitly confirmed that
+        // forking while running is perfectly fine — the fork only needs to
+        // copy up to the current position.
+        // await assertSessionFileQuiescent(this.inner.sessionFile ?? "");  removed; no longer blocks a running fork.
+        // A running fork must also **not interrupt the in-flight turn**:
+        // completion no longer takes the replacement-style teardown (the old
+        // implementation's replacement shutdown would destroy →
+        // inner.dispose(), killing the running run; the user explicitly
+        // required that forking a new branch must not stop the source
+        // session). Aligned with fork_branch's "no replacement, no closing of
+        // the source session"; idle wrappers are left to the existing idle GC
+        // (10 minutes), with no replacement-style cleanup.
         return this.withSessionReplacement("fork", async () => {
           const entryId = command.entryId as string;
           const sessionManager = this.inner.sessionManager;
@@ -773,6 +1381,11 @@ export class AgentSessionWrapper {
             newSessionFile = forkedPath;
           }
 
+          // The branch file may not be on disk yet due to the no-assistant
+          // guard — in that case write it out manually from the in-memory
+          // header/entries (wx guards against concurrent duplicate creation);
+          // newSessionId comes from the creator instance, consistent with the
+          // file header.
           if (!existsSync(newSessionFile)) {
             const header = forkedManager.getHeader();
             if (!header) throw new Error("Forked session is missing a session header");
@@ -785,20 +1398,39 @@ export class AgentSessionWrapper {
           const newSessionId = forkedManager.getSessionId();
           cacheSessionPath(newSessionId, newSessionFile);
           invalidateSessionListCache();
-          await this.shutdownAfterSessionReplacement("fork");
+          // Unified creator-side notification (the helper goes through
+          // publishPageEventToBus for a wide publish): a fork does not
+          // necessarily switch away (the branch file has been manually
+          // written to disk; the follow-up fetch chain promotes it shortly).
+          notifySessionCreated(newSessionId, sessionManager.getCwd(), "fork");
+          // Do not shut down the source session (see the case header comment): a fork only reads the source file + writes the new branch; the source session keeps running.
           return { cancelled: false, newSessionId };
         });
       }
 
       case "fork_branch": {
-        if (this.isSessionRunningForReplacement()) {
-          throw new Error("Cannot fork while the session is running");
-        }
-        const entryId = command.entryId as string;
+        // Background fork (the composer "new session" button / reference in a new conversation): copies a
+        // branch file from the given entry (when omitted = the current leaf, full context). **Never replaces
+        // or closes the source session** — also allowed while running (the user explicitly required "ignore
+        // running state"; fork_branch only reads the source file + writes the new branch, and the source
+        // session keeps running). The old isSessionRunningForReplacement() guard was removed: it was
+        // over-defensive for replacement-style forks (fork/clone shut down the source wrapper); branch
+        // copying has no such semantics — a torn tail line is skipped outright by loadEntries and
+        // createBranchedSession only takes fully parsed entries, so there is no "copying half a JSONL line"
+        // risk.
         const sessionManager = this.inner.sessionManager;
         const currentSessionFile = this.inner.sessionFile;
         if (!sessionManager.isPersisted()) return { cancelled: true };
         if (!currentSessionFile) throw new Error("Persisted session is missing a session file");
+        // Source file not on disk yet (sessions with no assistant message
+        // defer file creation per the SDK contract) — there is no disk state
+        // to copy, so return cancelled rather than erroring (the frontend
+        // shows "no full conversation to copy yet").
+        if (!existsSync(currentSessionFile)) return { cancelled: true };
+        const entryId = typeof command.entryId === "string" && command.entryId
+          ? command.entryId
+          : sessionManager.getLeafId();
+        if (!entryId) return { cancelled: true };
         if (!sessionManager.getEntry(entryId)) throw new Error("Invalid entry ID for forking");
 
         const sessionDir = sessionManager.getSessionDir();
@@ -806,16 +1438,39 @@ export class AgentSessionWrapper {
         const forkedPath = sourceManager.createBranchedSession(entryId);
         if (!forkedPath) throw new Error("Failed to create forked session");
 
-        const newSessionId = SessionManager.open(forkedPath, sessionDir).getSessionId();
+        // The branch file may not be on disk yet due to the no-assistant guard
+        // (deferred to the first _persist) — a background fork needs the file
+        // to exist immediately (the caller cold-starts a new session by id
+        // right away; a missing file would generate a different id and
+        // mismatch the return value). Write it out manually from the creator's
+        // in-memory header/entries (wx guards against concurrent duplicate
+        // creation); newSessionId comes from the creator instance, consistent
+        // with the file header (same fallback as case "fork").
+        if (!existsSync(forkedPath)) {
+          const header = sourceManager.getHeader();
+          if (!header) throw new Error("Forked session is missing a session header");
+          const content = [header, ...sourceManager.getEntries()]
+            .map((entry) => JSON.stringify(entry))
+            .join("\n") + "\n";
+          writeFileSync(forkedPath, content, { encoding: "utf8", flag: "wx" });
+        }
+
+        const newSessionId = sourceManager.getSessionId();
         cacheSessionPath(newSessionId, forkedPath);
         invalidateSessionListCache();
+        // Immediately visible in the sidebar: this path does not switch the
+        // current session (a silent background fork) and no host refreshKey
+        // drives it; the unified creator-side notification (the helper goes
+        // through publishPageEventToBus for a wide publish) → session-manager
+        // records a pendingDraft draft row (the file is on disk; the
+        // follow-up fetch chain promotes it shortly).
+        notifySessionCreated(newSessionId, sessionManager.getCwd(), "fork_branch");
         return { cancelled: false, newSessionId };
       }
 
       case "clone": {
-        if (this.isSessionRunningForReplacement()) {
-          throw new Error("Cannot clone while the session is running");
-        }
+        // Like fork, clone supports running-state operation. createBranchedSession takes entries from the in-memory byId Map bounded by leafId (only fully parsed JSON objects), so there is no "copying half a JSONL line" risk.
+        // Removed isSessionRunningForReplacement() and assertSessionFileQuiescent() (over-defense introduced in an earlier merge that would always reject while running).
         const sessionManager = this.inner.sessionManager;
         const currentSessionFile = this.inner.sessionFile;
         const leafId = typeof command.leafId === "string" ? command.leafId : sessionManager.getLeafId();
@@ -835,16 +1490,24 @@ export class AgentSessionWrapper {
           const newSessionId = SessionManager.open(clonedPath, sessionDir).getSessionId();
           cacheSessionPath(newSessionId, clonedPath);
           invalidateSessionListCache();
-          await this.shutdownAfterSessionReplacement("clone");
+          // Unified creator-side notification: the caller usually switches
+          // away on clone (driven by refreshKey), but the same notification
+          // guarantees non-switching paths (scripts/extension direct calls)
+          // are immediately visible too.
+          notifySessionCreated(newSessionId, sessionManager.getCwd(), "clone");
+          // Do not shut down the source session (same as fork, decided
+          // 2026-09-13): a running clone must not interrupt the in-flight
+          // turn; the source wrapper keeps running / is left to the idle GC
+          // when idle, with no replacement-style teardown.
           return { cancelled: false, newSessionId };
         });
       }
 
       case "navigate_tree": {
-        if (this.inner.isBashRunning) {
-          throw new Error("Cannot navigate while a shell command is running");
-        }
+        // Allow navigate while running: like fork, it does not interrupt the agent.
         const result = await this.inner.navigateTree(command.targetId as string, {});
+        // After a branch, explicitly land the currently effective model/thinking onto the new chain (shared by "edit from here" / branch navigation).
+        if (!result.cancelled) this.syncSessionSettingsAfterBranch();
         return { cancelled: result.cancelled };
       }
 
@@ -897,20 +1560,529 @@ export class AgentSessionWrapper {
 
       case "clear_queue": {
         // Full clear only: pi has no single-item dequeue, and clear+requeue
-        // races against the agent loop pulling messages mid-flight.
+        // races against the agent loop pulling messages mid-flight. This is a
+        // user-initiated destructive action, so it is a SOFT delete: the
+        // cleared entries move to the trash and stay recoverable until the
+        // user purges them.
+        if (this.queueMirror.length > 0) {
+          this.queueTrash.push(...this.queueMirror);
+        }
+        this.queueMirror = [];
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
+        this.persistQueue();
         return this.inner.clearQueue();
+      }
+
+      case "move_queue": {
+        // pi has no reorder/single-dequeue API, so reordering is implemented
+        // as clear-all + re-enqueue in the target order. Like pi's own
+        // clearQueue(), this is allowed while the agent runs: the loop only
+        // pulls entries between turns, and clear+requeue within one request is
+        // atomic enough that the queue is repopulated before the next pull.
+        const kind = command.kind as QueueKind | undefined;
+        if (kind !== "steer" && kind !== "followUp") {
+          throw new Error("move_queue requires kind \"steer\" or \"followUp\"");
+        }
+        const fromIndex = Number(command.fromIndex);
+        const toIndex = Number(command.toIndex);
+        if (!Number.isInteger(fromIndex) || !Number.isInteger(toIndex)) {
+          throw new Error("move_queue requires integer indexes");
+        }
+        const steeringEntries = this.queueMirror.filter((e) => e.kind === "steer");
+        const followUpEntries = this.queueMirror.filter((e) => e.kind === "followUp");
+        const moving = kind === "steer" ? steeringEntries : followUpEntries;
+        if (fromIndex < 0 || fromIndex >= moving.length || toIndex < 0 || toIndex >= moving.length) {
+          throw new Error("move_queue index out of range");
+        }
+        const [entry] = moving.splice(fromIndex, 1);
+        moving.splice(toIndex, 0, entry);
+        const newSteering = kind === "steer" ? moving : steeringEntries;
+        const newFollowUp = kind === "followUp" ? moving : followUpEntries;
+        // Clear the live pi queue entirely, then re-enqueue both queues in the
+        // new order. Image hints are pushed per entry FIFO so reconcileQueue
+        // can reattach them after each queue_update event.
+        this.inner.clearQueue();
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
+        for (const e of newSteering) {
+          this.hintQueueImages("steer", e.images);
+          await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
+        }
+        for (const e of newFollowUp) {
+          this.hintQueueImages("followUp", e.images);
+          await this.inner.followUp(e.text, e.images?.length ? e.images : undefined);
+        }
+        this.queueMirror = [...newSteering, ...newFollowUp];
+        this.persistQueue();
+        return { ...this.getQueueAttachmentView(), steering: [...this.inner.getSteeringMessages()], followUp: [...this.inner.getFollowUpMessages()] };
+      }
+
+      case "convert_queue_item": {
+        // Change one queued entry's kind (steer ↔ followUp) WITHOUT dispatching
+        // it — e.g. a steer sent by mistake becomes a plain follow-up that
+        // waits for the next turn. Same clear-all + re-enqueue strategy as
+        // move_queue, so ordering and image hints survive. Unlike the
+        // steer-send action (which consumes the entry), the converted entry
+        // stays queued under its new kind.
+        const kind = command.kind as QueueKind | undefined;
+        if (kind !== "steer" && kind !== "followUp") {
+          throw new Error("convert_queue_item requires kind \"steer\" or \"followUp\"");
+        }
+        const index = Number(command.index);
+        if (!Number.isInteger(index)) {
+          throw new Error("convert_queue_item requires integer index");
+        }
+        const targetKind = command.targetKind as QueueKind | undefined;
+        if (targetKind !== "steer" && targetKind !== "followUp") {
+          throw new Error("convert_queue_item requires targetKind \"steer\" or \"followUp\"");
+        }
+        if (targetKind === kind) {
+          throw new Error("convert_queue_item requires a targetKind different from kind");
+        }
+        const steeringEntries = this.queueMirror.filter((e) => e.kind === "steer");
+        const followUpEntries = this.queueMirror.filter((e) => e.kind === "followUp");
+        const entries = kind === "steer" ? steeringEntries : followUpEntries;
+        if (index < 0 || index >= entries.length) {
+          throw new Error("convert_queue_item index out of range");
+        }
+        const [converted] = entries.splice(index, 1);
+        converted.kind = targetKind;
+        (targetKind === "steer" ? steeringEntries : followUpEntries).push(converted);
+        const newSteering = kind === "steer" ? entries : steeringEntries;
+        const newFollowUp = kind === "followUp" ? entries : followUpEntries;
+        // Clear the live pi queue entirely, then re-enqueue both queues in the
+        // new order. Image hints are pushed per entry FIFO so reconcileQueue
+        // can reattach them after each queue_update event.
+        this.inner.clearQueue();
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
+        for (const e of newSteering) {
+          this.hintQueueImages("steer", e.images);
+          await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
+        }
+        for (const e of newFollowUp) {
+          this.hintQueueImages("followUp", e.images);
+          await this.inner.followUp(e.text, e.images?.length ? e.images : undefined);
+        }
+        this.queueMirror = [...newSteering, ...newFollowUp];
+        this.persistQueue();
+        return { ...this.getQueueAttachmentView(), steering: [...this.inner.getSteeringMessages()], followUp: [...this.inner.getFollowUpMessages()] };
+      }
+
+      case "recall_queue_item": {
+        // pi has no single-item dequeue — same clear-all + re-enqueue strategy
+        // as move_queue, minus the recalled entry. Allowed while running, like
+        // pi's own clearQueue().
+        const kind = command.kind as QueueKind | undefined;
+        if (kind !== "steer" && kind !== "followUp") {
+          throw new Error("recall_queue_item requires kind \"steer\" or \"followUp\"");
+        }
+        const index = Number(command.index);
+        if (!Number.isInteger(index)) {
+          throw new Error("recall_queue_item requires an integer index");
+        }
+        const steeringEntries = this.queueMirror.filter((e) => e.kind === "steer");
+        const followUpEntries = this.queueMirror.filter((e) => e.kind === "followUp");
+        const entries = kind === "steer" ? steeringEntries : followUpEntries;
+        if (index < 0 || index >= entries.length) {
+          throw new Error("recall_queue_item index out of range");
+        }
+        const [removed] = entries.splice(index, 1);
+        const newSteering = kind === "steer" ? entries : steeringEntries;
+        const newFollowUp = kind === "followUp" ? entries : followUpEntries;
+        this.inner.clearQueue();
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
+        for (const e of newSteering) {
+          this.hintQueueImages("steer", e.images);
+          await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
+        }
+        for (const e of newFollowUp) {
+          this.hintQueueImages("followUp", e.images);
+          await this.inner.followUp(e.text, e.images?.length ? e.images : undefined);
+        }
+        this.queueMirror = [...newSteering, ...newFollowUp];
+        this.persistQueue();
+        return {
+          entry: { text: removed.text, images: removed.images ?? [] },
+          steering: [...this.inner.getSteeringMessages()],
+          followUp: [...this.inner.getFollowUpMessages()],
+          ...this.getQueueAttachmentView(),
+        };
+      }
+
+      case "requeue_at": {
+        // Put an edited message back into the queue at its original position.
+        // Same clear-all + re-enqueue strategy; the edited entry is inserted at
+        // the given index. Allowed while running, like pi's own clearQueue().
+        const kind = command.kind as QueueKind | undefined;
+        if (kind !== "steer" && kind !== "followUp") {
+          throw new Error("requeue_at requires kind \"steer\" or \"followUp\"");
+        }
+        const index = Number(command.index);
+        if (!Number.isInteger(index)) {
+          throw new Error("requeue_at requires an integer index");
+        }
+        const text = command.text as string | undefined;
+        if (typeof text !== "string" || !text.trim()) {
+          throw new Error("requeue_at requires text");
+        }
+        const rawImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
+        const steeringEntries = this.queueMirror.filter((e) => e.kind === "steer");
+        const followUpEntries = this.queueMirror.filter((e) => e.kind === "followUp");
+        const entries = kind === "steer" ? steeringEntries : followUpEntries;
+        if (index < 0 || index > entries.length) {
+          throw new Error("requeue_at index out of range");
+        }
+        const edited = createQueueEntry(kind, text, rawImages);
+        entries.splice(index, 0, edited);
+        const newSteering = kind === "steer" ? entries : steeringEntries;
+        const newFollowUp = kind === "followUp" ? entries : followUpEntries;
+        this.inner.clearQueue();
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
+        for (const e of newSteering) {
+          this.hintQueueImages("steer", e.images);
+          await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
+        }
+        for (const e of newFollowUp) {
+          this.hintQueueImages("followUp", e.images);
+          await this.inner.followUp(e.text, e.images?.length ? e.images : undefined);
+        }
+        this.queueMirror = [...newSteering, ...newFollowUp];
+        this.persistQueue();
+        return {
+          steering: [...this.inner.getSteeringMessages()],
+          followUp: [...this.inner.getFollowUpMessages()],
+          ...this.getQueueAttachmentView(),
+        };
+      }
+
+      case "remove_queue_item": {
+        // pi has no single-dequeue API either; drop the entry from the mirror
+        // and rebuild the live queue via clear-all + re-enqueue (same strategy
+        // as move_queue). Deletion is SOFT by default: the entry moves to the
+        // trash so a mistake can be undone. permanent=true (used when an entry
+        // was consumed by being dispatched, e.g. steer-send) drops it for real.
+        const kind = command.kind as QueueKind | undefined;
+        if (kind !== "steer" && kind !== "followUp") {
+          throw new Error("remove_queue_item requires kind \"steer\" or \"followUp\"");
+        }
+        const index = Number(command.index);
+        if (!Number.isInteger(index)) {
+          throw new Error("remove_queue_item requires integer index");
+        }
+        const steeringEntries = this.queueMirror.filter((e) => e.kind === "steer");
+        const followUpEntries = this.queueMirror.filter((e) => e.kind === "followUp");
+        const entries = kind === "steer" ? steeringEntries : followUpEntries;
+        const permanent = command.permanent === true;
+        if (index < 0 || index >= entries.length) {
+          // Idempotent consumption: after the target entry was consumed by
+          // dispatch (e.g. taken away by steer-send), a late/concurrent remove
+          // arriving with a stale index is a benign no-op — the target state
+          // (the entry no longer in the queue) already holds. Throwing here
+          // would race the consumption path and surface a false error in the
+          // client (observed on mac 2026-09-10).
+          // Non-permanent (user-initiated delete) still errors strictly,
+          // keeping the logic-defect tripwire.
+          if (permanent) {
+            return {
+              queueTrash: this.getQueueTrashView(),
+              steering: [...this.inner.getSteeringMessages()],
+              followUp: [...this.inner.getFollowUpMessages()],
+              ...this.getQueueAttachmentView(),
+            };
+          }
+          throw new Error("remove_queue_item index out of range");
+        }
+        const [removed] = entries.splice(index, 1);
+        if (!permanent) {
+          this.queueTrash.push(removed);
+          if (this.queueTrash.length > QUEUE_TRASH_MAX_ENTRIES) {
+            this.queueTrash.splice(0, this.queueTrash.length - QUEUE_TRASH_MAX_ENTRIES);
+          }
+        }
+        const newSteering = kind === "steer" ? entries : steeringEntries;
+        const newFollowUp = kind === "followUp" ? entries : followUpEntries;
+        this.inner.clearQueue();
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
+        for (const e of newSteering) {
+          this.hintQueueImages("steer", e.images);
+          await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
+        }
+        for (const e of newFollowUp) {
+          this.hintQueueImages("followUp", e.images);
+          await this.inner.followUp(e.text, e.images?.length ? e.images : undefined);
+        }
+        this.queueMirror = [...newSteering, ...newFollowUp];
+        this.persistQueue();
+        return {
+          removed: {
+            id: removed.id,
+            kind: removed.kind,
+            text: removed.text,
+            hasImages: Boolean(removed.images?.length),
+            queuedAt: removed.queuedAt,
+          },
+          queueTrash: this.getQueueTrashView(),
+          steering: [...this.inner.getSteeringMessages()],
+          followUp: [...this.inner.getFollowUpMessages()],
+          ...this.getQueueAttachmentView(),
+        };
+      }
+
+      case "trash_direct_add": {
+        // Dedicated to the composer's × clear button: writes the cleared input
+        // content (text + images) straight into the trash.
+        // Bypasses all live-queue mechanics — no enqueue, no dispatch, no
+        // image hints, no clear-and-rebuild (fully isolated from
+        // remove_queue_item's soft-delete path). The entry's kind is
+        // "composer"; on restore it refills the composer for continued
+        // editing (see restore_trash_item's composer branch).
+        const text = typeof command.text === "string" ? command.text : "";
+        const rawImages = Array.isArray(command.images) ? command.images : [];
+        const images = rawImages
+          .filter((im): im is QueueImage => Boolean(im) && typeof im === "object"
+            && (im as QueueImage).type === "image"
+            && typeof (im as QueueImage).data === "string"
+            && typeof (im as QueueImage).mimeType === "string")
+          .slice(0, 4);
+        if (!text && images.length === 0) {
+          throw new Error("trash_direct_add requires text or images");
+        }
+        const entry = createQueueEntry("composer", text, images.length > 0 ? images : undefined);
+        this.queueTrash.push(entry);
+        if (this.queueTrash.length > QUEUE_TRASH_MAX_ENTRIES) {
+          this.queueTrash.splice(0, this.queueTrash.length - QUEUE_TRASH_MAX_ENTRIES);
+        }
+        this.persistQueue();
+        return {
+          entry: {
+            id: entry.id,
+            kind: entry.kind,
+            text: entry.text,
+            hasImages: Boolean(entry.images?.length),
+            queuedAt: entry.queuedAt,
+          },
+          queueTrash: this.getQueueTrashView(),
+        };
+      }
+
+      case "restore_trash_item": {
+        // Undo / trash-bin restore: move one soft-deleted entry back into the
+        // live queue. Same clear-all + re-enqueue strategy as move_queue.
+        // Optional index places it within its kind (used by the undo toast,
+        // where the queue hasn't changed yet); default appends to its kind.
+        const id = command.id as string | undefined;
+        if (typeof id !== "string" || !id) {
+          throw new Error("restore_trash_item requires id");
+        }
+        const trashIdx = this.queueTrash.findIndex((e) => e.id === id);
+        if (trashIdx < 0) {
+          throw new Error("restore_trash_item entry not found in trash");
+        }
+        const [entry] = this.queueTrash.splice(trashIdx, 1);
+
+        // composer entries (cleared input content): do not enter the live
+        // queue; take them straight out of the trash and return the full
+        // content (including image base64) for the frontend to refill the
+        // composer for continued editing.
+        if (entry.kind === "composer") {
+          this.persistQueue();
+          return {
+            restoredComposer: {
+              id: entry.id,
+              kind: entry.kind,
+              text: entry.text,
+              images: entry.images ?? [],
+              queuedAt: entry.queuedAt,
+            },
+            queueTrash: this.getQueueTrashView(),
+          };
+        }
+        const rawIndex = command.index === undefined ? null : Number(command.index);
+        if (rawIndex !== null && !Number.isInteger(rawIndex)) {
+          throw new Error("restore_trash_item requires an integer index");
+        }
+        const steeringEntries = this.queueMirror.filter((e) => e.kind === "steer");
+        const followUpEntries = this.queueMirror.filter((e) => e.kind === "followUp");
+        const entries = entry.kind === "steer" ? steeringEntries : followUpEntries;
+        if (rawIndex !== null && rawIndex >= 0 && rawIndex <= entries.length) {
+          entries.splice(rawIndex, 0, entry);
+        } else {
+          // Original slot is gone (queue changed while trashed) — append.
+          entries.push(entry);
+        }
+        const newSteering = entry.kind === "steer" ? entries : steeringEntries;
+        const newFollowUp = entry.kind === "followUp" ? entries : followUpEntries;
+        this.inner.clearQueue();
+        this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
+        for (const e of newSteering) {
+          this.hintQueueImages("steer", e.images);
+          await this.inner.steer(e.text, e.images?.length ? e.images : undefined);
+        }
+        for (const e of newFollowUp) {
+          this.hintQueueImages("followUp", e.images);
+          await this.inner.followUp(e.text, e.images?.length ? e.images : undefined);
+        }
+        this.queueMirror = [...newSteering, ...newFollowUp];
+        this.persistQueue();
+        return {
+          steering: [...this.inner.getSteeringMessages()],
+          followUp: [...this.inner.getFollowUpMessages()],
+          ...this.getQueueAttachmentView(),
+          queueTrash: this.getQueueTrashView(),
+        };
+      }
+
+      case "purge_trash": {
+        // Permanent delete — no undo from here on. ids optional: omit to empty
+        // the whole trash, pass ids to purge a selection. Confirmation lives in
+        // the UI; the server just does what it's told.
+        const ids = command.ids as string[] | undefined;
+        if (Array.isArray(ids) && ids.length > 0) {
+          const idSet = new Set(ids);
+          this.queueTrash = this.queueTrash.filter((e) => !idSet.has(e.id));
+        } else {
+          this.queueTrash = [];
+        }
+        this.persistQueue();
+        return { queueTrash: this.getQueueTrashView() };
+      }
+
+      case "resolve_recovery": {
+        const keptIds = new Set((command.keep as string[] | undefined) ?? []);
+        const discardIds = new Set((command.discard as string[] | undefined) ?? []);
+        const continueRun = command.continueRun === true;
+        let keptCount = 0;
+        const failedIds = new Set<string>();
+        const failedTexts: string[] = [];
+        for (const entry of this.queueRecovery) {
+          if (!keptIds.has(entry.id)) continue;
+          try {
+            await this.requeueEntry(entry);
+            this.ensureMirrored(entry);
+            keptCount += 1;
+          } catch (error) {
+            failedIds.add(entry.id);
+            failedTexts.push(entry.text?.slice(0, 60) ?? entry.id);
+            console.error(`[pi-web] resolve_recovery: keeping entry failed (${entry.kind}):`, error);
+          }
+        }
+        // Successful keeps and discards leave recovery; failed keeps stay in
+        // recovery so the user can retry or export them instead of losing them.
+        const remaining = this.queueRecovery.filter(
+          (entry) =>
+            !(keptIds.has(entry.id) && !failedIds.has(entry.id))
+            && !discardIds.has(entry.id),
+        );
+        const resolved = this.queueRecovery.length - remaining.length;
+        this.queueRecovery = remaining;
+        this.persistQueue();
+        if (continueRun && keptCount > 0) {
+          void this.runAgentContinue().catch((error) => {
+            console.error("[pi-web] runAgentContinue failed:", error);
+            this.emit({ type: "prompt_error", errorMessage: error instanceof Error ? error.message : String(error) });
+          });
+        }
+        if (failedIds.size > 0) {
+          console.error(`[pi-web] resolve_recovery: kept=${keptCount} failed=${failedIds.size} keptInRecovery=${remaining.length} texts=${JSON.stringify(failedTexts)}`);
+        }
+        return {
+          resolved,
+          kept: keptCount,
+          remaining: this.getPendingRecoveryView(),
+          failed: failedTexts,
+        };
+      }
+
+      case "export_queue": {
+        return {
+          live: this.queueMirror.map((entry) => ({ ...entry })),
+          recovery: this.queueRecovery.map((entry) => ({ ...entry })),
+        };
+      }
+
+      case "import_queue": {
+        const rawEntries = command.entries as QueueEntryInput[] | undefined;
+        if (!Array.isArray(rawEntries)) throw new Error("import_queue requires entries[]");
+        let imported = 0;
+        for (const input of rawEntries) {
+          if (
+            (input.kind !== "steer" && input.kind !== "followUp")
+            || typeof input.text !== "string"
+          ) {
+            continue;
+          }
+          const entry = createQueueEntry(input.kind, input.text, input.images);
+          await this.requeueEntry(entry);
+          this.ensureMirrored(entry);
+          imported += 1;
+        }
+        this.persistQueue();
+        // Return the mirror view (not pi's live arrays) so the frontend sees
+        // every imported entry even when the agent is mid-run and has already
+        // drained some/all of pi's followUpMessages. The mirror is kept in
+        // sync with pi via queue_update events from the agent loop.
+        return {
+          imported,
+          steering: this.queueMirror.filter((e) => e.kind === "steer").map((e) => e.text),
+          followUp: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => e.text),
+          ...this.getQueueAttachmentView(),
+        };
+      }
+
+      case "stage_recovery": {
+        // Stage imported entries as pending recovery (NOT into the live pi
+        // queue) so the QueueRecoveryDialog pops up and the user can choose:
+        // re-queue / re-queue & continue / discard — same flow as crash
+        // recovery. Lets the user decide whether to run an imported queue
+        // instead of auto-executing it.
+        const rawEntries = command.entries as QueueEntryInput[] | undefined;
+        if (!Array.isArray(rawEntries)) throw new Error("stage_recovery requires entries[]");
+        let staged = 0;
+        for (const input of rawEntries) {
+          if (
+            (input.kind !== "steer" && input.kind !== "followUp")
+            || typeof input.text !== "string"
+          ) {
+            continue;
+          }
+          const entry = createQueueEntry(input.kind, input.text, input.images);
+          this.queueRecovery.push(entry);
+          staged += 1;
+        }
+        this.persistQueue();
+        return {
+          staged,
+          pendingRecovery: this.getPendingRecoveryView(),
+        };
       }
 
       case "steer": {
         const steerImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
+        this.hintQueueImages("steer", steerImages);
         await this.inner.steer(command.message as string, steerImages?.length ? steerImages : undefined);
         return null;
       }
 
       case "follow_up": {
         const followImages = command.images as Array<{ type: "image"; data: string; mimeType: string }> | undefined;
+        this.hintQueueImages("followUp", followImages);
         await this.inner.followUp(command.message as string, followImages?.length ? followImages : undefined);
         return null;
+      }
+
+      case "continue_queue": {
+        // Deliver the live queue when the agent is completely idle — the same
+        // runAgentContinue path as recovery's "re-queue & continue" and the
+        // compaction_end listener. Covers the "queue recovered after a
+        // restart but only re-queued, no continue" case, imports, etc.
+        if (this.queueMirror.length === 0) return { started: false, empty: true };
+        // During compaction pi rejects prompt(); runAgentContinue would no-op
+        // (its own isCompacting guard) and the compaction_end listener delivers
+        // the queue anyway. Report accurately instead of a phantom "started".
+        if (this.inner.isStreaming || this.inner.isBashRunning || this.promptRunning || this.inner.isCompacting) {
+          return { started: false };
+        }
+        void this.runAgentContinue();
+        return { started: true };
       }
 
       case "get_tools": {
@@ -1000,6 +2172,8 @@ export class AgentSessionWrapper {
         if (this.pendingPromptCount > 0 || this.inner.isStreaming || this.inner.isCompacting || this.inner.isBashRunning) {
           throw new Error("Cannot run a shell command while the session is busy");
         }
+        // A bash run flips isRunning to true: broadcast before starting so the sidebar shows the running badge immediately.
+        notifyRunningChange();
         const execution = this.inner.executeBash(
           command.command as string,
           undefined,
@@ -1017,6 +2191,8 @@ export class AgentSessionWrapper {
         } finally {
           this.resetIdleTimer();
           invalidateSessionListCache();
+          // bash finished (isRunning may drop back): broadcast so the sidebar running marker clears.
+          notifyRunningChange();
         }
       }
 
@@ -1034,7 +2210,7 @@ export class AgentSessionWrapper {
     }
   }
 
-  destroy(): void {
+  destroy(reason: AgentWrapperEndReason = "shutdown"): void {
     if (!this._alive) return;
     this._alive = false;
     // Tell attached SSE listeners to drop this instance so the browser
@@ -1054,7 +2230,11 @@ export class AgentSessionWrapper {
       try {
         this.inner.dispose();
       } finally {
-        this.onDestroyCallback?.();
+        try {
+          this.onDestroyCallback?.(reason);
+        } finally {
+          notifyRunningChange();
+        }
       }
     };
 
@@ -1086,7 +2266,7 @@ export class AgentSessionWrapper {
       .finally(finishDispose);
   }
 
-  async shutdown(): Promise<void> {
+  async shutdown(reason: AgentWrapperEndReason = "shutdown"): Promise<void> {
     if (this.shutdownPromise) return this.shutdownPromise;
     if (!this._alive) return;
 
@@ -1105,7 +2285,7 @@ export class AgentSessionWrapper {
           await this.inner.extensionRunner.emit?.({ type: "session_shutdown", reason: "quit" });
         }
       } finally {
-        this.destroy();
+        this.destroy(reason);
       }
     })();
     return this.shutdownPromise;
@@ -1123,6 +2303,23 @@ export class AgentSessionWrapper {
 
   private getExtensionWidgets(): ExtensionWidgetItem[] {
     return Array.from(this.extensionWidgets.values());
+  }
+
+  /** Skips re-pushing when a widget's content + placement are unchanged —
+   *  upstream TUI animation/polling (a frame every 0.5–1s) calls
+   *  requestRender repeatedly with content usually identical to the last;
+   *  the old implementation emitted every time, dragging the frontend into
+   *  pointless refreshes. */
+  private isExtensionWidgetUnchanged(
+    key: string,
+    lines: readonly string[],
+    placement: "aboveEditor" | "belowEditor",
+  ): boolean {
+    const previous = this.extensionWidgets.get(key);
+    return previous !== undefined
+      && previous.placement === placement
+      && previous.lines.length === lines.length
+      && previous.lines.every((line, index) => line === lines[index]);
   }
 
   private nextExtensionWidgetGeneration(key: string): number {
@@ -1253,6 +2450,9 @@ export class AgentSessionWrapper {
     ) return;
 
     const widgetLines = lines as string[];
+    if (active.rendered && this.isExtensionWidgetUnchanged(active.key, widgetLines, active.placement)) {
+      return;
+    }
     this.extensionWidgets.set(active.key, {
       key: active.key,
       lines: widgetLines,
@@ -1586,10 +2786,12 @@ export class AgentSessionWrapper {
           ? this.clearExtensionWidget(key)
           : this.nextExtensionWidgetGeneration(key);
         if (this.extensionWidgetGenerations.get(key) !== generation) return;
+        const placement = options?.placement ?? "aboveEditor";
+        if (this.isExtensionWidgetUnchanged(key, content, placement)) return;
         this.extensionWidgets.set(key, {
           key,
           lines: content,
-          placement: options?.placement ?? "aboveEditor",
+          placement,
         });
         this.emit({
           type: "extension_ui_request",
@@ -1650,6 +2852,8 @@ export class AgentSessionWrapper {
       fork: async () => ({ cancelled: true }),
       navigateTree: async (targetId, options) => {
         const result = await this.inner.navigateTree(targetId, { summarize: options?.summarize });
+        // Same semantics as the navigate_tree command: after a branch, land the current model/thinking onto the new chain to prevent display regression.
+        if (!result.cancelled) this.syncSessionSettingsAfterBranch();
         return { cancelled: result.cancelled };
       },
       switchSession: async () => ({ cancelled: true }),
@@ -1678,9 +2882,12 @@ export class AgentSessionWrapper {
 // ============================================================================
 
 declare global {
+  var __piRunningListeners: Set<(ids: string[]) => void> | undefined;
+  var __piRunningSnapshot: string | undefined;
   var __piSessions: Map<string, AgentSessionWrapper> | undefined;
   var __piStartLocks: Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> | undefined;
   var __piStartingSessionCwds: Map<string, number> | undefined;
+  var __piStartingSessionIds: Set<string> | undefined;
 }
 
 function getRegistry(): Map<string, AgentSessionWrapper> {
@@ -1758,6 +2965,20 @@ function normalizeRpcCwd(cwd: string): string {
 function getStartingSessionCwds(): Map<string, number> {
   if (!globalThis.__piStartingSessionCwds) globalThis.__piStartingSessionCwds = new Map();
   return globalThis.__piStartingSessionCwds;
+}
+
+/**
+ * The set of starting session ids: the wrapper is not yet registered in the
+ * registry, but an old session's resume startup has begun.
+ * getRunningRpcSessionIds merges it → the SSE running frame reaches the
+ * frontend the instant startup begins (the sidebar tree lights up "running"
+ * immediately); the outcome (success/failure) removes it and broadcasts in
+ * startRpcSession's finally. Carried on globalThis: dev HMR swapping module
+ * instances must not lose the set.
+ */
+function getStartingSessionIds(): Set<string> {
+  if (!globalThis.__piStartingSessionIds) globalThis.__piStartingSessionIds = new Set();
+  return globalThis.__piStartingSessionIds;
 }
 
 function trackStartingSession(cwd: string): () => void {
@@ -1943,7 +3164,65 @@ export function getRunningRpcSessionIds(): string[] {
   for (const [sessionId, session] of getRegistry()) {
     if (session.isRunning()) ids.add(session.sessionId || sessionId);
   }
+  // Starting (not yet registered) old sessions: the wrapper is not in the
+  // registry yet but startup has begun — count them in the running set (the
+  // sidebar tree lights up immediately; see startRpcSession's pre-broadcast).
+  for (const id of getStartingSessionIds()) ids.add(id);
   return [...ids];
+}
+
+/**
+ * Attached (alive) rpc session ids — includes idle sessions. Guards for
+ * disk-mutating operations (archive/move/delete) must use this, not the
+ * running-only list: an idle-but-open session keeps its SessionManager in
+ * memory and will silently recreate its JSONL on the next turn after the
+ * file is moved away (archived snapshot + resurrected live file, both stale).
+ */
+export function getAliveRpcSessionIds(): string[] {
+  const ids = new Set<string>();
+  for (const [sessionId, session] of getRegistry()) {
+    // duck-typing tolerance: the registry may hold non-standard handles (e.g.
+    // the upstream #440 test mock carries only isRunning/shutdown); real
+    // wrappers with isAlive keep the original semantics, otherwise degrade to
+    // an isRunning probe.
+    const alive = typeof session.isAlive === "function"
+      ? session.isAlive()
+      : typeof (session as { isRunning?: unknown }).isRunning === "function"
+        && (session as { isRunning: () => boolean }).isRunning();
+    if (alive) ids.add(session.sessionId || sessionId);
+  }
+  return [...ids];
+}
+
+/**
+ * Actively releases an "alive but not running" rpc session.
+ *
+ * Called when the user explicitly archives/deletes: the conversation ended
+ * long ago and only the handle remains attached (idle-but-open); demanding
+ * the user close the page first is unreasonable — this clears the handle on
+ * the user's behalf (shutdown flushes to disk), making the subsequent disk
+ * operation safe. Sessions truly running are left untouched.
+ *
+ * Returns a verdict for the caller on whether to proceed with disk changes:
+ *  - "stopped":     shutdown finished and the wrapper left the registry; safe to archive/delete
+ *  - "running":     truly running (isRunning); untouched — the caller must refuse the operation
+ *  - "not-alive":   the session is no longer in the registry (never a guard target)
+ *  - "missing":     not this process's rpc session (held externally, e.g. a TUI bridge); the caller decides
+ *  - "still-alive": still alive after shutdown (rare: destroy stuck); the caller should conservatively skip
+ */
+export async function stopIdleRpcSession(
+  sessionId: string,
+): Promise<"stopped" | "running" | "not-alive" | "missing" | "still-alive"> {
+  const wrapper = getRpcSession(sessionId);
+  if (!wrapper) return "missing";
+  if (!wrapper.isAlive()) return "not-alive";
+  if (wrapper.isRunning()) return "running";
+  try {
+    await wrapper.shutdown("shutdown");
+  } catch (error) {
+    console.error("[pi-web] stopIdleRpcSession shutdown failed:", error instanceof Error ? error.message : error);
+  }
+  return wrapper.isAlive() ? "still-alive" : "stopped";
 }
 
 export function getCompletionNotificationSuppressedRpcSessionIds(): string[] {
@@ -1954,6 +3233,29 @@ export function getCompletionNotificationSuppressedRpcSessionIds(): string[] {
     }
   }
   return [...ids];
+}
+
+/**
+ * Offline session stats (2026-09-15): a read-only answer when no wrapper
+ * exists — aggregates directly from the session file and never starts a
+ * runtime. Serves the lazy get_session_stats: opening a session page / stats
+ * panel is often just a glance; it should not cold-start a full agent (with
+ * extensions/MCP/child processes), nor should this instance fabricate a
+ * stale in-memory wrapper masking other ends' progress. Same semantics as
+ * the online version (computeSessionStats), only missing the runtime-only
+ * contextUsage. Session-file opening is consolidated in this module (do not
+ * repeat SessionManager.open in other routes — avoids divergent read opens).
+ */
+export function getOfflineSessionStats(sessionId: string, sessionFile: string): Record<string, unknown> {
+  const sm = SessionManager.open(sessionFile);
+  const entries = sm.getEntries();
+  return {
+    ...computeSessionStats(entries as unknown as SessionEntry[]),
+    sessionId,
+    sessionFile,
+    sessionName: sm.getSessionName(),
+    totalActiveMs: computeSessionTotalActiveMs(entries),
+  };
 }
 
 /**
@@ -1969,7 +3271,38 @@ export async function startRpcSession(
   cwd: string | undefined,
   options: RpcSessionStartOptions = {},
 ): Promise<{ session: AgentSessionWrapper; realSessionId: string }> {
-  const { initialModel, allowInitialModelFallback, thinkingLevel } = options;
+  const { toolNames, initialModel, allowInitialModelFallback, thinkingLevel } = options;
+  // Brand-new creation (empty sessionFile = the SessionManager.create branch)
+  // vs opening/resuming an existing session.
+  // Only the former broadcasts sm:session-created after a successful startup
+  // (cross-tab sidebar lists gain the row immediately).
+  const isNewSession = !sessionFile;
+
+  // ── Single-writer red-line master gate: a session file claimed by a TUI
+  //    bridge never gets a local runtime ──
+  // Every caller that creates sessions through here (queue-recovery,
+  // context, auto-name, etc.) is protected by this gate; routes that need
+  // bridged behavior should attachIfBridged before calling.
+  // Files forked out by subagents are brand-new local files (the parent
+  // marker is only a header reference) and belong to no bridge session —
+  // callers pass skipBridgeCheck to skip explicitly.
+  if (!options.skipBridgeCheck) {
+    for (const p of listProviders()) {
+      if (!p.ownsFile) continue;
+      try {
+        if (sessionFile && (await p.ownsFile(sessionFile))) {
+          throw new BridgeOccupiedError(
+            sessionFile,
+            `claimed by backend "${p.type}"`,
+          );
+        }
+      } catch (e) {
+        if (e instanceof BridgeOccupiedError) throw e;
+        console.error(`[rpc] ${p.type}.ownsFile failed:`, e instanceof Error ? e.message : e);
+      }
+    }
+  }
+
   const requestedToolNames = options.toolNames === undefined
     ? undefined
     : validateSessionToolSelection(options.toolNames);
@@ -1982,13 +3315,48 @@ export async function startRpcSession(
   const inflight = locks.get(sessionId);
   if (inflight) return inflight;
 
+  // ── Pre-broadcast running (old sessions light up "running" the moment
+  //    startup begins, 2026-09-12) ──
+  // startRpcSession's startup is heavy async work (createAgentSessionServices
+  // extension loading + createAgentSessionFromServices agent process/history/
+  // MCP startup; seconds to tens of seconds for an old session). Previously
+  // the running broadcast only happened after startup finished and a prompt
+  // was submitted (notifyRunningChange lives in the prompt branch) → the
+  // sidebar tree's "running" spinner stayed dark for a long time (user
+  // report: "after restarting, sending a message to an old session took ages
+  // to reflect"). Here the sessionId enters the starting set and broadcasts
+  // at the very start: getRunningRpcSessionIds merges the starting set → the
+  // SSE running frame reaches the frontend immediately; the startup outcome
+  // (success: wrapper registered and takes over; failure: startup throws) is
+  // finalized by the IIFE's finally below, which broadcasts the exit
+  // (snapshot dedup prevents duplicate broadcasts on the success path).
+  // New sessions (empty sessionFile) do not broadcast here: their sessionId
+  // is a one-shot __new__ placeholder key and the list row is not on disk
+  // yet; they go through the existing sm:session-created + pendingDraft
+  // draft-row channel.
+  if (!isNewSession) {
+    getStartingSessionIds().add(sessionId);
+    notifyRunningChange();
+  }
+
   let sessionManager: SessionManager;
   if (sessionFile) {
     sessionManager = SessionManager.open(sessionFile, undefined);
   } else {
     if (!cwd) throw new Error("cwd is required for a new session");
-    sessionManager = SessionManager.create(cwd, undefined);
+    // Pre-generate the session id instead of letting pi assign one AFTER the
+    // AgentSession exists. Extension-facing hooks (collectAgentTools →
+    // agentTools, dispatchAgentSession) need one consistent id, but for new
+    // sessions the caller passes a one-time key (`__new__<uuid>`) that pi
+    // never adopts — the id only becomes real after createAgentSessionFromServices.
+    // Pre-generating it here means every hook sees the same id before and
+    // after creation. randomUUID (v4) is fine: file names sort by their
+    // timestamp prefix; the id is only a same-timestamp tiebreaker.
+    sessionManager = SessionManager.create(cwd, undefined, { id: randomUUID() });
   }
+  // The file's header id is authoritative for every hook below (the caller's
+  // key may be a temp `__new__…` key), so read the id back from the manager.
+  const sessionManagerId = sessionManager.getSessionId();
   const sessionCwd = sessionManager.getCwd();
   const subagentResources = sessionFile
     ? readSubagentSessionResources(
@@ -2007,6 +3375,21 @@ export async function startRpcSession(
   );
   const chatOnly = selectedToolNames?.length === 0 && !subagentLoadsResources;
   const finishStartingSession = trackStartingSession(sessionCwd);
+  // New-session draft-row pre-broadcast (2026-09-12): sm:session-created used
+  // to publish only after startup completed (the IIFE tail) — the sidebar
+  // tree's draft row waited for the whole startup (extensions/agent process/
+  // history loading; seconds to tens of seconds). sessionManagerId is
+  // available synchronously once pre-generated by SessionManager.create
+  // (= inner.sessionId after startup; see the Pre-generate comment above), so
+  // broadcasting at the very start → the frontend records the pendingDraft
+  // draft row immediately (the new session appears in the sidebar tree at
+  // once), then promotes once the jsonl lands and the list refreshes. The
+  // original IIFE-tail broadcast stays as a fallback for the SSE-not-yet-
+  // connected window (the frontend's onSessionCreatedFrame is idempotent;
+  // duplicate frames are harmless).
+  if (isNewSession) {
+    notifySessionCreated(sessionManagerId, sessionCwd, "start");
+  }
   const starting = (async () => {
     // Some extensions access the SDK's global theme even outside the terminal UI.
     if (!chatOnly) initTheme();
@@ -2060,6 +3443,7 @@ export async function startRpcSession(
         : chatOnly
           ? CHAT_ONLY_RESOURCE_LOADER_OPTIONS
         : {
+            additionalExtensionPaths: bundledPiPluginPaths(),
             extensionFactories: [
               createProjectCommandBashExtension({
                 cwd: sessionCwd,
@@ -2071,10 +3455,22 @@ export async function startRpcSession(
                 isBuiltInSubagentsEnabled,
               ),
             ],
-            extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(base)),
+            // [fork] Conflict-plugin mechanism: packages declared in pi-web
+            // extension manifests' conflicts (e.g. the original pi-subagents)
+            // are disabled entirely when assembling the SDK load result
+            // (duplicate tool registration conflicts).
+            extensionsOverride: (base) => preferUserBashExtension(preferPiWebSubagentExtension(disableConflictingExtensions(base, getExtRegistry()))),
           },
       ...(trustReloadOptions ? { resourceLoaderReloadOptions: trustReloadOptions } : {}),
     });
+    // Plan M: collect extension-injected agent tools (in-process direct, zero config).
+    // Use the manager's real id (see above): for new sessions the caller's
+    // key is a temp `__new__…` value the extensions would otherwise snapshot
+    // into tool-closure identities (agentKey) that never match the id later
+    // used by dispatchAgentSession/onAgentSettled.
+    const extAgentTools: ToolDefinition[] = (() => {
+      try { return getExtRegistry().collectAgentToolsWith({ sessionId: sessionManagerId, cwd: sessionCwd }, options.enableExtTools); } catch (e) { console.error("[pi-web] collectAgentTools failed:", e instanceof Error ? e.message : e); return []; }
+    })();
     const scope = await resolveVisibleModels(
       services.modelRuntime,
       services.settingsManager.getEnabledModels(),
@@ -2112,6 +3508,9 @@ export async function startRpcSession(
       ...(initial?.thinkingLevel ? { thinkingLevel: initial.thinkingLevel } : {}),
       ...(scope.scopedModels.length > 0 ? { scopedModels: [...scope.scopedModels] } : {}),
       ...(toolsOption !== undefined ? { tools: toolsOption } : {}),
+      ...(options.subagent?.excludeTools?.length ? { excludeTools: options.subagent.excludeTools } : {}),
+      // Plan M: extension-injected agent tools (in-process direct, zero config)
+      ...(extAgentTools.length > 0 ? { customTools: extAgentTools } : {}),
       ...(subagentResources ? { excludeTools: [...SUBAGENT_CONTROL_TOOL_NAMES] } : {}),
     });
 
@@ -2148,22 +3547,217 @@ export async function startRpcSession(
     const wrapper = new AgentSessionWrapper(inner, {
       exactSystemPrompt,
       chatOnly,
-      onAgentRunComplete: (completedSessionId) => {
-        void notifySessionComplete(completedSessionId).catch((error) => {
+      onAgentRunComplete: (completedSessionId, outcome) => {
+        void notifySessionComplete(completedSessionId, outcome).catch((error) => {
           console.error("[pi-web] failed to send completion push:", error instanceof Error ? error.message : error);
         });
       },
       suppressCompletionNotifications: Boolean(subagentResources),
     });
+    // Subagent: inject the agent definition's systemPrompt (reorganized
+    // context).
+    // Must come after setActiveToolsByName — setActiveToolsByName rebuilds
+    // systemPrompt (_systemPromptOverride ?? _baseSystemPrompt), so an
+    // earlier injection would be overwritten.
+    // Same mechanism as setForceEmptySystemPrompt (writes agent.state
+    // directly).
+    if (options.subagent?.systemPrompt && inner.agent?.state) {
+      inner.agent.state.systemPrompt = options.subagent.systemPrompt;
+    }
     const realSessionId = inner.sessionId as string;
-    registerRpcWrapper(wrapper);
+    const realSessionFile = inner.sessionFile as string | undefined;
+    if (realSessionFile) cacheSessionPath(realSessionId, realSessionFile);
+    wrapper.onDestroy((reason) => {
+      registry.delete(realSessionId);
+      // Plan M: notify extensions of session destruction. destroy ≠ the
+      // session truly ending — a fork swapping wrappers and idle-GC recycling
+      // both pass through here; pass the reason through as-is so extensions
+      // can tell "session gone" from "wrapper recycled (the file remains and
+      // will be rebuilt on next access)".
+      try { getExtRegistry().dispatchAgentSessionEnd(realSessionId, reason); } catch (e) { console.error("[pi-web] agent session end dispatch failed:", e instanceof Error ? e.message : e); }
+    });
+    registry.set(realSessionId, wrapper);
+    // When all tools are disabled, clear the system prompt entirely.
+    // pi's buildSystemPrompt always produces a non-empty prompt even with no tools;
+    // keep this forced after extension resource discovery and reloads as well.
+    if (toolNames?.length === 0) {
+      wrapper.setForceEmptySystemPrompt(true);
+    }
+    wrapper.loadQueueRecovery();
+    wrapper.start();
+    wrapper.beginExtensionBinding({ forceEmptySystemPrompt: toolNames?.length === 0 });
 
+    // Plan M: notify extensions of session startup (the devtools extension
+    // registers agent identity + binds the push sink).
+    // Session-info construction is centralized in
+    // AgentSessionWrapper.toAgentSessionInfo (shared by re-attachment after a
+    // registry reload); once marked, registry.reload includes this session in
+    // the re-attach set.
+    try {
+      wrapper.markAgentSessionHooksDispatched();
+      getExtRegistry().dispatchAgentSession(wrapper.toAgentSessionInfo());
+    } catch (e) { console.error("[pi-web] agent session start dispatch failed:", e instanceof Error ? e.message : e); }
+
+    // Brand-new session creation broadcast (generalized page-event frame, SSE
+    // straight to all tabs): cross-tab sidebar lists (session-manager
+    // dock/panel) rely on it to immediately show sessions created by other
+    // tabs or server-side (AI-helper invokes / emergency AI / scheduled tasks
+    // / the ACP bridge), no longer relying only on the running frame's
+    // indirect nudge (within the jsonl-not-yet-on-disk + 5s scan-cache window
+    // both frames come up empty → the new session would stay invisible for a
+    // long time). The client session-manager records a pendingDraft draft row
+    // on receiving the frame; its existing bounded follow-up fetch chain
+    // promotes it to a real row once on disk.
+    if (isNewSession) {
+      // Startup-completion tail fallback broadcast (same helper as the early broadcast; the client's
+      // onSessionCreatedFrame is idempotent): covers the window where SSE wasn't connected yet when
+      // the early broadcast fired.
+      notifySessionCreated(realSessionId, sessionCwd, "start");
+    }
     return { session: wrapper, realSessionId };
   })().finally(() => {
     locks.delete(sessionId);
     finishStartingSession();
+    // Startup-outcome finalizing broadcast: on success the wrapper is
+    // registered (isRunning takes over; snapshot dedup prevents a duplicate
+    // broadcast); on failure the starting-set removal → the broadcast drops
+    // the id from the running set and the sidebar spinner exits
+    // ("fail-then-exit" semantics).
+    if (getStartingSessionIds().delete(sessionId)) notifyRunningChange();
   });
 
   locks.set(sessionId, starting);
   return starting;
+}
+
+// ── Fork-local: running-state SSE primary channel infrastructure (upstream v0.8.11 removed this channel; our sidebar relies on it with slow polling as fallback, hence restored) ──
+let lastRunningSnapshot = "";
+
+function getRunningListeners(): Set<(ids: string[]) => void> {
+  if (!globalThis.__piRunningListeners) globalThis.__piRunningListeners = new Set();
+  return globalThis.__piRunningListeners;
+}
+
+/**
+ * In-process local session factory (a globalThis seam, same pattern as
+ * __piSubagentFactory).
+ *
+ * Extensions (loaded via jiti, unable to import "@/lib/rpc-manager") create/
+ * open real pi sessions in this process via
+ * `globalThis.__piLocalSessionFactory.start(...)`:
+ * used by cc-connect bridging (the channels extension's ACP server → pi-web
+ * sessions) and similar scenarios.
+ * start's parameters and return value match startRpcSession — pass a one-shot
+ * key (`__acp__<uuid>`) for new sessions, the real session id for reopening
+ * (a registry hit reuses the wrapper already open in the UI).
+ */
+export function installLocalSessionFactory(): void {
+  const g = globalThis as Record<string, unknown>;
+  if (!g.__piLocalSessionFactory) g.__piLocalSessionFactory = { start: startRpcSession };
+}
+
+// Installed at module load (idempotent): loading this module in any realm
+// sets globalThis.
+// Do not rely on instrumentation.ts alone — under Next turbopack,
+// instrumentation may run in a separate realm whose globalThis ≠ the main
+// app realm; routes/extensions all load this module in the main realm, so
+// setting it here guarantees the main realm has the seam too (extensions
+// such as the channels ACP bridge create sessions through it).
+installLocalSessionFactory();
+
+/** Subscribe to running-session-id changes. Returns an unsubscribe function. */
+export function subscribeRunningSessions(listener: (ids: string[]) => void): () => void {
+  const listeners = getRunningListeners();
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+/**
+ * Waits for (and never starts) a session's rpc wrapper: lazy SSE (opening a
+ * session page does not cold-start the runtime, 2026-09-15) suspends while
+ * the wrapper does not exist; a real interaction (send/steer etc.) triggers
+ * startRpcSession and the running broadcast then wakes and attaches it.
+ * Event-driven (subscribeRunningSessions + notifyRunningChange), no polling.
+ *
+ * Returns an unsubscribe function that stops waiting; calls onReady exactly
+ * once, synchronously, when the wrapper appears.
+ */
+export function waitForRpcSession(
+  sessionId: string,
+  onReady: (wrapper: AgentSessionWrapper) => void,
+): () => void {
+  let stopped = false;
+  let unsubscribe: (() => void) | null = null;
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    unsubscribe?.();
+    unsubscribe = null;
+  };
+  const check = () => {
+    if (stopped) return;
+    const wrapper = getRpcSession(sessionId);
+    if (!wrapper?.isAlive()) return;
+    stop();
+    onReady(wrapper);
+  };
+  unsubscribe = subscribeRunningSessions(() => check());
+  // Closes the "first check → subscribe" window: the wrapper may already exist, or may have registered between the two steps.
+  check();
+  return stop;
+}
+
+
+/**
+ * Recompute the running-session-id set and, if it changed since the last
+ * notification, broadcast it to subscribers.
+ */
+export function notifyRunningChange(): void {
+  const listeners = getRunningListeners();
+  const ids = getRunningRpcSessionIds();
+  if (listeners.size === 0) {
+    // A future subscriber receives its own initial snapshot. Clear this one so
+    // its first state transition cannot match stale state from an old listener.
+    lastRunningSnapshot = "";
+  } else {
+    // The snapshot must distinguish "starting" from "registered" (2026-09-15):
+    // judging by the id set alone, startup completion (starting removal +
+    // wrapper registration) yields the same value and would be swallowed by
+    // dedup — yet it is exactly the signal waitForRpcSession (lazy SSE
+    // attachment) waits for.
+    const snapshot = JSON.stringify({
+      ids: [...ids].sort(),
+      starting: [...getStartingSessionIds()].sort(),
+    });
+    if (snapshot !== lastRunningSnapshot) {
+      lastRunningSnapshot = snapshot;
+      for (const listener of listeners) {
+        try { listener(ids); } catch { /* ignore listener errors */ }
+      }
+    }
+  }
+  // Restart-recovery P0: mirror the running set to disk (running-journal).
+  // Reached only when the set truly changed (snapshot dedup); write failures
+  // degrade silently. With no listeners the set may be unchanged — repeated
+  // full writes are harmless.
+  try {
+    recordRunningEntries(collectRpcJournalEntries());
+  } catch { /* the journal must never block the main path */ }
+}
+
+/** Currently running local sessions → journal snapshot (with sessionFile/cwd metadata). */
+function collectRpcJournalEntries(): JournalEntry[] {
+  const now = Date.now();
+  const out: JournalEntry[] = [];
+  for (const [key, session] of getRegistry()) {
+    if (!session.isRunning()) continue;
+    out.push({
+      id: session.sessionId || key,
+      sessionFile: session.sessionFile,
+      cwd: session.cwd,
+      kind: "local",
+      updatedAt: now,
+    });
+  }
+  return out;
 }
