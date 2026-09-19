@@ -1,3 +1,4 @@
+import { apiUrl } from "./base-path";
 // Client-side helper for POST /api/agent/[id].
 //
 // Every /api/agent/[id] route returns one of:
@@ -25,11 +26,29 @@ export function isPromptRejectedError(error: unknown): error is AgentCommandErro
     && error.accepted === false;
 }
 
+/** Bare status codes within the backend-restart window (nginx 502): add a "refresh" hint beyond
+ *  them (users explicitly reported the missing guidance). Only applies to gateway errors without a
+ *  JSON body; when the upstream app provides its own error field the semantics are unchanged. */
+function backendDownHint(status: number): string {
+  if (status === 502 || status === 503 || status === 504) return " (the backend may be restarting; refresh the page and retry shortly)";
+  return "";
+}
+
+/** User-facing error message: transport failures (fetch throws TypeError — backend restarting and
+ *  refusing connections / network down) get the refresh hint appended here; AgentCommandError's
+ *  message already contains the hint on the bare gateway status code path and is returned as-is. */
+export function describeAgentCommandError(error: unknown): string {
+  if (error instanceof AgentCommandError) return error.message;
+  return "Network request failed — the backend may be restarting; refresh the page and retry shortly";
+}
+
 export async function sendAgentCommand<T = unknown>(
   sessionId: string,
   command: Record<string, unknown>,
 ): Promise<T> {
-  const res = await fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+  // Transport failures pass through untouched (existing contract: distinguishable from
+  // HTTP semantic errors, see agent-client.test.mjs)
+  const res = await fetch(apiUrl(`/api/agent/${encodeURIComponent(sessionId)}`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(command),
@@ -43,7 +62,7 @@ export async function sendAgentCommand<T = unknown>(
   };
   if (!res.ok || body.error) {
     throw new AgentCommandError(
-      body.error ?? `HTTP ${res.status}`,
+      body.error ?? `HTTP ${res.status}${backendDownHint(res.status)}`,
       res.status,
       body.code,
       body.accepted,
