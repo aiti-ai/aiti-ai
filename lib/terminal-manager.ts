@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { homedir } from "os";
 import type { IPty } from "node-pty";
 import { samePath } from "./paths";
+import { publishPageEventToBus } from "./agent-page-events";
 
 export type TerminalEvent =
   | { type: "output"; data: string; offset: number; reset?: boolean }
@@ -57,6 +58,19 @@ function shellEnvironment(): Record<string, string> {
 
 function emit(record: TerminalRecord, event: TerminalEvent): void {
   for (const listener of record.listeners) listener(event);
+}
+
+/** Terminal event bus publishing (the single SSE convergence point for page events): publishes
+ *  whenever the terminal exists, frame protocol
+ *  { type: "terminal-<id>", evt: <TerminalEvent.type>, ...payload } (see the reassembly
+ *  convention in lib/event-bus-client.ts — after reassembly, field-for-field identical to the
+ *  original SSE frame). Wide publish (publishPageEventToBus: core sinks + bus slot); the bus
+ *  filters by allowlist, so with no subscribers it is only an in-process function call with zero
+ *  connection overhead; fallback clients keep using the original SSE (not routed through
+ *  publish) — the two channels coexist without interference. */
+function publishTerminalBusEvent(id: string, event: TerminalEvent): void {
+  const { type, ...payload } = event;
+  publishPageEventToBus(`terminal-${id}`, { evt: type, ...payload });
 }
 
 function scheduleCleanup(id: string, record: TerminalRecord): void {
@@ -118,14 +132,18 @@ export function createTerminal(cwd: string, cols: number, rows: number, id: stri
   pty.onData((data) => {
     record.backlog = (record.backlog + data).slice(-MAX_BACKLOG);
     record.offset += data.length;
-    emit(record, { type: "output", data, offset: record.offset });
+    const event: TerminalEvent = { type: "output", data, offset: record.offset };
+    emit(record, event);
+    publishTerminalBusEvent(id, event);
   });
   pty.onExit(({ exitCode }) => {
     if (record.cleanupTimer) clearTimeout(record.cleanupTimer);
     record.cleanupTimer = null;
     record.exited = true;
     record.exitCode = exitCode;
-    emit(record, { type: "exit", exitCode });
+    const event: TerminalEvent = { type: "exit", exitCode };
+    emit(record, event);
+    publishTerminalBusEvent(id, event);
     scheduleCleanup(id, record);
   });
   return id;
@@ -197,6 +215,7 @@ export function killTerminal(id: string, force = false): boolean {
     }
   }
   emit(record, { type: "closed" });
+  publishTerminalBusEvent(id, { type: "closed" });
   record.listeners.clear();
   return true;
 }
