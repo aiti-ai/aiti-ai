@@ -1,11 +1,11 @@
 import { readdirSync } from "fs";
 import { homedir } from "os";
 import path from "path";
-import { getAdditionalAllowedRoots, normalizeSlashes } from "./allowed-roots";
-import { isExistingPathWithinRoots, isPathWithinRoots } from "./path-security";
-import { listAllSessions } from "./session-reader";
-export { allowFileRoot, normalizeSlashes } from "./allowed-roots";
-export { isWindowsAbsolutePath } from "./paths";
+import { getAdditionalAllowedRoots, normalizeSlashes } from "./allowed-roots.ts";
+import { isExistingPathWithinRoots, isPathWithinRoots } from "./path-security.ts";
+import { listAllSessions } from "./session-reader.ts";
+export { allowFileRoot, normalizeSlashes } from "./allowed-roots.ts";
+export { isWindowsAbsolutePath } from "./paths.ts";
 
 // Short-TTL cache for the allowed-roots set. Without this, every file list/read
 // request re-scans every pi session on disk just to check access. 5s is short
@@ -48,12 +48,31 @@ export async function getAllowedFileRoots(): Promise<Set<string>> {
   return roots;
 }
 
+/**
+ * File-access sandbox switch. Off by default: the frontend already offers
+ * arbitrary-path entry points (custom path input / the file browser accepts any
+ * system path), so the backend /api/files session-cwd sandbox contradicts the
+ * frontend and is effectively useless — the frontend can pick any path while the
+ * backend blocks the very same path recognized by the AI, which makes no sense.
+ * All paths are allowed by default, matching the frontend. To restrict access,
+ * set env PI_WEB_FILE_SANDBOX=1 to enable the system-wide overall restriction
+ * (only session cwd/projectRoot + ~/pi-cwd-* + roots listed in
+ * PI_WEB_ALLOWED_ROOTS are allowed); instrumentation registers extra roots at
+ * startup.
+ */
+export function isFileSandboxEnabled(): boolean {
+  const v = process.env.PI_WEB_FILE_SANDBOX;
+  return v === "1" || v === "true";
+}
+
 /** Authorize a path lexically, without touching the filesystem. */
 export function isFilePathAllowed(target: string, allowedRoots: Set<string>): boolean {
+  if (!isFileSandboxEnabled()) return true; // sandbox off by default: allow all paths
   return isPathWithinRoots(target, allowedRoots);
 }
 
 /** Authorize an existing path after resolving symbolic links. */
 export function isExistingFilePathAllowed(target: string, allowedRoots: Set<string>): boolean {
+  if (!isFileSandboxEnabled()) return true;
   return isExistingPathWithinRoots(target, allowedRoots);
 }
