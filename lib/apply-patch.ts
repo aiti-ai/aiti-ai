@@ -37,10 +37,17 @@ export interface ApplyPatchPreviewFile {
   diff?: string;
 }
 
-/** Extract the file paths targeted by a V4A patch document, in order. */
+/**
+ * Extract the file paths targeted by a V4A patch document, in order. Includes
+ * `*** Move to:` targets (rename destinations are also touched files).
+ */
 export function extractApplyPatchPaths(patchText: string): string[] {
   const paths: string[] = [];
-  for (const match of patchText.matchAll(/^\*\*\* (?:Add|Delete|Update) File: (.+)$/gm)) {
+  for (const line of patchText.split(/\r?\n/)) {
+    const match =
+      line.match(/^\*\*\* (?:Add|Delete|Update) File: (.+)$/) ??
+      line.match(/^\*\*\* Move to: (.+)$/);
+    if (!match) continue;
     const filePath = (match[1] ?? "").trim();
     if (filePath && !paths.includes(filePath)) paths.push(filePath);
   }
@@ -79,6 +86,22 @@ export function getApplyPatchAppliedFiles(details: unknown): string[] | null {
   const applied = details.result.appliedFiles;
   if (!Array.isArray(applied)) return null;
   return applied.filter((filePath): filePath is string => typeof filePath === "string" && filePath.length > 0);
+}
+
+/**
+ * Paths the extension reported as failed (`details.result.failures[].filePath`).
+ * These files did not land, so they must not render as an applied diff.
+ */
+export function getApplyPatchFailurePaths(details: unknown): string[] {
+  if (!isRecord(details) || !isRecord(details.result)) return [];
+  const failures = details.result.failures;
+  if (!Array.isArray(failures)) return [];
+  const paths: string[] = [];
+  for (const entry of failures) {
+    if (!isRecord(entry) || typeof entry.filePath !== "string" || entry.filePath.length === 0) continue;
+    if (!paths.includes(entry.filePath)) paths.push(entry.filePath);
+  }
+  return paths;
 }
 
 // ── Shared row building ──────────────────────────────────────────────────────

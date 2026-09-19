@@ -9,7 +9,7 @@ const jiti = createJiti(import.meta.url, {
   tsconfigPaths: true,
 });
 const { MarkdownBody } = await jiti.import("./MarkdownBody.tsx");
-const { normalizeDisplayMath } = await jiti.import("../lib/markdown.ts");
+const { normalizeDisplayMath, loadMathPlugins } = await jiti.import("../lib/markdown.ts");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
 function renderMarkdown(markdown, props = {}) {
@@ -73,14 +73,16 @@ test("renders backslash-escaped backticks inside inline code", () => {
   assert.doesNotMatch(html, /<\/code>1\.cs`/);
 });
 
-test("renders LaTeX parenthesis delimiters as inline math", () => {
+test("renders LaTeX parenthesis delimiters as inline math", async () => {
+  await loadMathPlugins(); // P1.2: math plugins load lazily — preload in tests (the hook's initial value reads the loaded snapshot)
   const html = renderMarkdown(String.raw`射线为 \(r_c = K^{-1}p\)。`);
 
   assert.match(html, /class="katex"/);
   assert.match(html, /r_c/);
 });
 
-test("renders paired LaTeX bracket delimiters as display math", () => {
+test("renders paired LaTeX bracket delimiters as display math", async () => {
+  await loadMathPlugins();
   const html = renderMarkdown(String.raw`\[
 P(\lambda)=o_b+\lambda r_b
 \]`);
@@ -91,7 +93,8 @@ P(\lambda)=o_b+\lambda r_b
   assert.match(oneLineHtml, /class="katex-display"/);
 });
 
-test("renders model-emitted bracket-only formula lines as display math", () => {
+test("renders model-emitted bracket-only formula lines as display math", async () => {
+  await loadMathPlugins();
   const html = renderMarkdown(String.raw`平均一致性：
 
 [ C(x) = \frac{2}{T(T-1)} \sum_{i<j} S(\hat{y}^{(i)}, \hat{y}^{(j)}) ]`);
@@ -143,4 +146,20 @@ test("keeps Mermaid source visible while the response is streaming", () => {
   assert.doesNotMatch(html, /mermaid-block-loading/);
   assert.match(html, />Preview</);
   assert.match(html, /A --&gt; B/);
+});
+
+test("renders data: image markdown with src intact (file-editor extension viewer entry)", () => {
+  const gif = "data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
+  const html = renderMarkdown(`![dot](${gif})`);
+  assert.match(html, new RegExp(`<img src="${gif}"`));
+
+  // also allowed when there is no in-app file handler (welcome / no-cwd scenarios)
+  const htmlNoHandler = renderMarkdown(`![dot](${gif})`, { onOpenFile: undefined });
+  assert.match(htmlNoHandler, new RegExp(`<img src="${gif}"`));
+});
+
+test("still strips non-image data: URLs from markdown img src", () => {
+  const html = renderMarkdown("![x](data:text/html;base64,PGI+aGk8L2I+)");
+  assert.match(html, /<img alt="x"[^>]*>/);
+  assert.doesNotMatch(html, /<img[^>]+src=/);
 });

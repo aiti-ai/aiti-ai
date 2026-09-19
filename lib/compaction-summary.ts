@@ -28,7 +28,14 @@ export function parseCompactionSummary(summary: string): ParsedCompactionSummary
 
   return {
     body: body.trim(),
-    readFiles,
-    modifiedFiles,
+    // Dedupe per list while preserving order: a compaction summary can list the
+    // same path more than once (e.g. a file read multiple times), which would
+    // otherwise produce duplicate React keys in the file list UI.
+    readFiles: dedupe(readFiles),
+    modifiedFiles: dedupe(modifiedFiles),
   };
+}
+
+function dedupe(items: string[]): string[] {
+  return [...new Set(items)];
 }

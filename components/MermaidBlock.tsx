@@ -1,7 +1,6 @@
 "use client";
 
-import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { lazy, memo, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useTheme } from "@/hooks/useTheme";
@@ -17,6 +16,20 @@ interface MermaidBlockProps {
 const ZOOM_STEP = 0.25;
 const ZOOM_MIN = 0.5;
 const ZOOM_MAX = 3;
+
+// Full Prism (~1.24MB) is split out of the first-load chunk via React.lazy
+// (SyntaxHighlighterLite only registers common languages); plain text is the
+// fallback until the chunk is ready, styled to match the streaming branch
+// (hydration focus P1.1).
+const SyntaxHighlighter = lazy(() => import("./SyntaxHighlighterLite"));
+const PLAIN_CODE_PRE_STYLE: CSSProperties = {
+  margin: 0,
+  padding: "11px 13px",
+  fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
+  lineHeight: 1.62,
+  overflowX: "auto",
+  background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+};
 
 export function downloadMermaidSvg(svg: SVGSVGElement): void {
   // Mermaid's HTML serialization can leave void tags such as <br> unclosed.
@@ -254,6 +267,11 @@ interface CodeBlockProps {
   lang: string;
   headerAction?: ReactNode;
   isStreaming?: boolean;
+  /** Paragraph-click context (passed through from markdown): used for line-level click broadcasts */
+  messageRole?: string;
+  cwd?: string;
+  sessionId?: string;
+  messageId?: string;
 }
 
 /**
@@ -266,7 +284,7 @@ interface CodeBlockProps {
  * monospace text — highlighting a growing block re-tokenizes all of it on
  * every chunk, which is the single most expensive part of streamed rendering.
  */
-export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isStreaming }: CodeBlockProps) {
+export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isStreaming, messageRole, cwd, sessionId, messageId }: CodeBlockProps) {
   const { isDark } = useTheme();
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -293,36 +311,35 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
         </div>
       </div>
       {isStreaming ? (
-        <pre
-          style={{
-            margin: 0,
-            padding: "11px 13px",
-            fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
-            lineHeight: 1.62,
-            overflowX: "auto",
-            background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
-          }}
-        >
+        <pre style={PLAIN_CODE_PRE_STYLE}>
           <code style={{ fontFamily: "var(--font-mono)" }}>{code}</code>
         </pre>
       ) : (
-        <SyntaxHighlighter
-          language={lang || "text"}
-          style={isDark ? vscDarkPlus : vs}
-          showLineNumbers
-          lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal" }}
-          customStyle={{
-            margin: 0,
-            padding: "11px 13px",
-            fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
-            lineHeight: 1.62,
-            borderRadius: 0,
-            background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
-          }}
-          codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
+        <Suspense
+          fallback={
+            <pre style={PLAIN_CODE_PRE_STYLE}>
+              <code style={{ fontFamily: "var(--font-mono)" }}>{code}</code>
+            </pre>
+          }
         >
-          {code}
-        </SyntaxHighlighter>
+          <SyntaxHighlighter
+            language={lang || "text"}
+            style={isDark ? vscDarkPlus : vs}
+            showLineNumbers
+            lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal" }}
+            customStyle={{
+              margin: 0,
+              padding: "11px 13px",
+              fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
+              lineHeight: 1.62,
+              borderRadius: 0,
+              background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+            }}
+            codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
+          >
+            {code}
+          </SyntaxHighlighter>
+        </Suspense>
       )}
     </div>
   );

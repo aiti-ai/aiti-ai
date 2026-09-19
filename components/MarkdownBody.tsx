@@ -1,22 +1,90 @@
 "use client";
 
-import { useMemo, type MouseEvent } from "react";
-import ReactMarkdown, { type Components } from "react-markdown";
+import { memo, useEffect, useId, useMemo, useRef, useState, type JSX, type MouseEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
-import { encodeFilePathForApi } from "@/lib/file-paths";
-import { markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, normalizeDisplayMath } from "@/lib/markdown";
+import { buildTicketUrl } from "@/lib/file-tickets";
+import { markdownDataImageUrlTransform, markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
+import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
+import { useI18n } from "@/hooks/useI18n";
+import { useParagraphClickHandlers } from "./ExtSlots";
+import { openImageInEditorViewer } from "./editor-image-preview";
+
+// Minimum interval between two full Markdown parses while streaming: text deltas within
+// 200ms are not re-parsed (about 5 times/s).
+const STREAM_PARSE_INTERVAL_MS = 200;
 
 interface MarkdownBodyProps {
   children: string;
   className?: string;
   isStreaming?: boolean;
   cwd?: string;
-  onOpenFile?: (filePath: string) => void;
+  onOpenFile?: (filePath: string, fileName?: string) => void;
+  /** Message role ("user" / "assistant" / undefined) — consumed by the paragraph-click recognizer (e.g. show actions only for user input) */
+  messageRole?: string;
+  /** Session/message the paragraph belongs to (optional passthrough; filled into ParagraphClickInfo when the extension needs it) */
+  sessionId?: string;
+  messageId?: string;
 }
 
-export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile }: MarkdownBodyProps) {
-  const normalizedMarkdown = useMemo(() => normalizeDisplayMath(children), [children]);
+/** Click candidates among semantic blocks (core only provides the render shell; which tags are clickable is declared via extension handler.tags) */
+const CLICKABLE_TAGS = ["p", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"] as const;
+type ClickableTag = (typeof CLICKABLE_TAGS)[number];
+
+export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, messageRole, sessionId, messageId }: MarkdownBodyProps) {
+  const normalizedMarkdown = useMemo(() => {
+    const normalized = normalizeDisplayMath(children);
+    // User chat text can start with / embed raw HTML tags as paste artifacts
+    // (e.g. aiti-devtools pick-element payloads like `<div> …` / `<button> …`).
+    // rehype-raw would nest block/interactive elements inside the paragraph
+    // (p > p / p > div) — invalid HTML that React flags as a hydration error.
+    // Escape them so rehype-raw becomes a no-op; `&lt;` still renders as `<`.
+    return messageRole === "user" ? escapeRawHtmlTags(normalized) : normalized;
+  }, [children, messageRole]);
+  // Throttled parsing while streaming: during streaming children grow every frame (rAF-coalesced
+  // deltas); handing them straight to ReactMarkdown would re-parse the accumulated text every
+  // frame (O(n²); long streams = main-thread spikes). Here the latest text is handed to
+  // ReactMarkdown at most every 200ms (it caches parse results per children internally) —
+  // intermediate frames skip parsing entirely and the tail text is caught up shortly after.
+  // Non-streaming (history messages / stream finished) always parses the final text immediately.
+  const [renderText, setRenderText] = useState(normalizedMarkdown);
+  const lastParseTs = useRef(0);
+  useEffect(() => {
+    if (!isStreaming) {
+      setRenderText(normalizedMarkdown);
+      return;
+    }
+    const now = performance.now();
+    if (now - lastParseTs.current >= STREAM_PARSE_INTERVAL_MS) {
+      lastParseTs.current = now;
+      setRenderText(normalizedMarkdown);
+    } else {
+      // Throttle window not yet elapsed: schedule one re-check to catch up with the latest text (also picks up parsing after deltas stop).
+      const t = setTimeout(() => {
+        lastParseTs.current = performance.now();
+        setRenderText(normalizedMarkdown);
+      }, STREAM_PARSE_INTERVAL_MS - (now - lastParseTs.current));
+      return () => clearTimeout(t);
+    }
+  }, [normalizedMarkdown, isStreaming]);
+  // Thin extension point for paragraph clicks: when handlers are registered (extensions loaded) semantic blocks become clickable; without extensions paragraphs render as plain elements.
+  const handlers = useParagraphClickHandlers();
+  // Math plugins loaded on demand (P1.2): katex/remark-math are not pulled in when the body has no math markers (saves ~300KB on first paint)
+  const { remark: activeRemarkPlugins, rehype: activeRehypePlugins } = useMathMarkdownPlugins(
+    renderText,
+    markdownRemarkPlugins,
+    markdownRehypePlugins,
+  );
+  const hasClickHandlers = handlers.length > 0;
+  // Clickable tags = union of what extensions declare (handler.tags; defaults to p/li/tr when undeclared). Core hardcodes no business rules —
+  // new cases like headings/quote blocks take effect as soon as an extension declares them, no core change needed.
+  const clickTags = useMemo(() => {
+    const set = new Set<string>();
+    for (const h of handlers) for (const t of h.tags ?? ["p", "li", "tr"]) set.add(t);
+    return set;
+  }, [handlers]);
   // Stable renderer identities keep stateful blocks mounted across message hover updates.
   const components = useMemo<Components>(() => ({
     code({ className, children, ...props }) {
@@ -33,7 +101,7 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
             />
           );
         }
-        return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} />;
+        return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId} />;
       }
       return (
         <code
@@ -77,13 +145,51 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     img({ src, alt, ...props }) {
       delete props.node;
       const filePath = typeof src === "string" ? resolveLocalFileHref(src, cwd) : null;
-      const imageSrc = filePath
-        ? `/api/files/${encodeFilePathForApi(filePath)}?type=read`
-        : src;
-      // Dynamic local paths are served directly by the file API.
-      // eslint-disable-next-line @next/next/no-img-element
-      return <img src={imageSrc} alt={alt ?? ""} loading="lazy" {...props} />;
+      if (!filePath) {
+        // Remote / data URL images: click → the file-editor extension's unified viewer (no action when the extension is unavailable / not implemented).
+        const previewable = typeof src === "string";
+        return (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={src}
+            alt={alt ?? ""}
+            loading="lazy"
+            {...props}
+            // stopPropagation: keep the paragraph-click recognizer (quote popup) from firing at the same time
+            onClick={previewable ? (e) => { e.stopPropagation(); void openImageInEditorViewer(src as string, { alt: alt ?? "" }); } : undefined}
+            style={{ ...props.style, ...(previewable ? { cursor: "zoom-in" as const } : null) }}
+          />
+        );
+      }
+      // Local images: the path never enters a URL; a short-lived ticket is exchanged for a GET address; click → right-side file panel (same as file links).
+      // LocalImage spreads {...props} onto the img, so onClick/style pass through here.
+      return (
+        <LocalImage
+          filePath={filePath}
+          alt={alt ?? ""}
+          {...props}
+          onClick={onOpenFile ? (e) => { e.stopPropagation(); onOpenFile(filePath); } : undefined}
+          style={{ ...props.style, ...(onOpenFile ? { cursor: "zoom-in" as const } : null) }}
+        />
+      );
     },
+    // react-markdown invokes these lowercase render functions as components (createElement(components.p)),
+    // so hook order stays stable; rules-of-hooks false-positives purely on the lowercase function name.
+    // Candidate tags uniformly get a render shell: whether to wrap in ClickableParagraph is decided by
+    // the clickTags extensions declare (core holds no business judgment).
+    // eslint-disable-next-line react-hooks/rules-of-hooks
+    ...CLICKABLE_TAGS.reduce((acc, tag) => {
+      acc[tag] = ({ children, ...props }) => {
+        delete props.node;
+        const enabled = hasClickHandlers && clickTags.has(tag) && messageRole !== "user";
+        if (!enabled) {
+          const Tag = tag as keyof JSX.IntrinsicElements;
+          return <Tag {...props}>{children}</Tag>;
+        }
+        return <ClickableParagraph as={tag} messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId}>{children}</ClickableParagraph>;
+      };
+      return acc;
+    }, {} as Record<string, (p: { children?: ReactNode; [k: string]: unknown }) => ReactNode>),
     table({ children }) {
       return (
         <div className="markdown-table-wrap">
@@ -91,18 +197,147 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         </div>
       );
     },
-  }), [cwd, isStreaming, onOpenFile]);
+  }), [cwd, isStreaming, onOpenFile, messageRole, handlers, clickTags, messageId, sessionId]);
 
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>
-      <ReactMarkdown
-        remarkPlugins={markdownRemarkPlugins}
-        rehypePlugins={markdownRehypePlugins}
-        urlTransform={onOpenFile ? markdownUrlTransform : undefined}
+      <MemoizedMarkdown
+        remarkPlugins={activeRemarkPlugins}
+        rehypePlugins={activeRehypePlugins}
+        // Both branches allow data:image (img src → the file-editor extension's viewer); file: only when an in-app file handler exists
+        urlTransform={onOpenFile ? markdownUrlTransform : markdownDataImageUrlTransform}
         components={components}
       >
-        {normalizedMarkdown}
-      </ReactMarkdown>
+        {renderText}
+      </MemoizedMarkdown>
     </div>
+  );
+}
+
+// react-markdown v9's Markdown component re-runs parse+runSync on every render (no internal cache) —
+// while streaming, MarkdownBody re-renders every frame (even when renderText is unchanged) and would
+// fully re-parse each time. Wrap it in memo: skip parsing entirely when children (renderText) and the
+// plugins/components references are stable.
+const MemoizedMarkdown = memo(function MemoizedMarkdown({ children, ...props }: Options & { children: string }) {
+  return <ReactMarkdown {...props}>{children}</ReactMarkdown>;
+});
+
+/**
+ * Thin extension point for paragraph clicks (clickable p/li/tr + click event broadcast +
+ * setInline mount point + hover hint). Recognition / popup rendering / actions / dismissal all
+ * live on the extension side; core only provides: clickable paragraphs, handing the full context
+ * to the handler, and in-paragraph inline mounting (in-flow; tr auto-portals to body).
+ * Positioning and scroll-following belong to the extension.
+ */
+function LocalImage({ filePath, alt, ...props }: { filePath: string; alt: string } & React.ImgHTMLAttributes<HTMLImageElement>) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    buildTicketUrl(filePath, "read")
+      .then((u) => { if (alive) setSrc(u); })
+      .catch(() => { if (alive) setSrc(null); });
+    return () => { alive = false; };
+  }, [filePath]);
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src={src ?? undefined} alt={alt} loading="lazy" {...props} />;
+}
+
+function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, messageId }: { children: ReactNode; as?: ClickableTag; messageRole?: string; cwd?: string; sessionId?: string; messageId?: string }) {
+  const handlers = useParagraphClickHandlers();
+  const pid = useId(); // stable paragraph id: stays stable across renders while the React tree structure is unchanged (used by extensions for toggle/dedupe)
+  const ref = useRef<HTMLElement>(null);
+  // Inline expansion node injected into the paragraph by extensions via info.setInline (recognition result / action bar; null = not expanded).
+  const [inlineNode, setInlineNode] = useState<ReactNode | null>(null);
+  const [showTip, setShowTip] = useState(false);
+  const tipRef = useRef<HTMLSpanElement>(null);
+  // Tip text comes from the hint of the handler registered by the extension (core holds no quote-reply copy)
+  const tipText = handlers.map((h) => h.hint).find(Boolean) ?? "";
+  // Detect touch capability lazily (same approach as useIsMobile but local).
+  const [coarse] = useState(() => typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches);
+
+  const handleClick = () => {
+    // Paragraph plain text (table row = cells joined with " | "); the clone excludes transient UI children (the tip).
+    const el = ref.current;
+    const text = as === "tr" && el
+      ? Array.from(el.querySelectorAll("td, th")).map((c) => (c.textContent ?? "").trim()).join(" | ")
+      : (() => {
+        if (!el) return "";
+        const clone = el.cloneNode(true) as HTMLElement;
+        clone.querySelectorAll("[data-quote-tip]").forEach((n) => n.remove());
+        return clone.textContent ?? "";
+      })();
+    if (!text.trim()) return;
+    const r = el?.getBoundingClientRect();
+    const info = {
+      text,
+      cwd,
+      messageRole,
+      rect: r ? { top: r.top, left: r.left, bottom: r.bottom, width: r.width } : { top: 0, left: 0, bottom: 0, width: 0 },
+      element: el ?? undefined,
+      paragraphId: pid,
+      sessionId,
+      messageId,
+      setInline: setInlineNode,
+      close: () => setInlineNode(null),
+    };
+    for (const h of handlers) {
+      try { h(info); } catch { /* a single failing handler doesn't affect other extensions */ }
+    }
+  };
+
+  // Mouse-following tip (the visual contract for clickable paragraphs); not shown for coarse pointers (touch).
+  const moveTip = (x: number, y: number) => {
+    if (tipRef.current) { tipRef.current.style.left = `${x + 12}px`; tipRef.current.style.top = `${y + 14}px`; }
+  };
+  const showTooltip = (e: MouseEvent<HTMLElement>) => {
+    if (coarse) return;
+    setShowTip(true);
+    requestAnimationFrame(() => moveTip(e.clientX, e.clientY));
+  };
+
+  const Tag = as as React.ElementType;
+  const tip = showTip && !inlineNode && tipText && (
+    <span
+      ref={tipRef}
+      data-quote-tip
+      style={{
+        position: "fixed", left: -9999, top: -9999,
+        fontSize: 11, color: "var(--text-dim)", background: "var(--bg-panel)",
+        border: "1px solid var(--border)", borderRadius: 4, padding: "2px 6px",
+        pointerEvents: "none", zIndex: 50, whiteSpace: "nowrap",
+      }}
+    >
+      {tipText}
+    </span>
+  );
+  // For p/li the inline expansion renders after the paragraph (as a sibling, avoiding invalid <p><div> HTML / hydration errors);
+  // rendering a div in-flow inside a tr would break the table structure → portal to body (positioning managed by the extension itself).
+  const inline = as === "tr" && typeof document !== "undefined"
+    ? createPortal(inlineNode, document.body)
+    : inlineNode;
+  // The tip is always portaled to body (position: fixed is out of flow anyway): inserting it as a DOM sibling
+  // of p/li inside markdown-body/blockquote would break the original :last-child — `.markdown-body p:last-child
+  // { margin-bottom: 0 }` stops matching, the paragraph's 8px bottom margin returns → content shifts 8px on hover (reproduced in testing).
+  // Attached to body, the markdown DOM tree stays intact, the :last-child rule is unaffected, and the fixed positioning looks identical.
+  const tipOut = tip && typeof document !== "undefined"
+    ? createPortal(tip, document.body)
+    : tip;
+
+  return (
+    <>
+      <Tag
+        ref={ref}
+        onMouseEnter={showTooltip}
+        onMouseMove={coarse ? undefined : (e: MouseEvent<HTMLElement>) => moveTip(e.clientX, e.clientY)}
+        onMouseLeave={() => setShowTip(false)}
+        onMouseDown={() => setShowTip(false)}
+        onClick={handleClick}
+        style={{ position: "relative", cursor: "pointer" }}
+      >
+        {children}
+      </Tag>
+      {tipOut}
+      {inline}
+    </>
   );
 }
