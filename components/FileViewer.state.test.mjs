@@ -39,7 +39,8 @@ for (const [name, nextName] of [
 
 test("FileViewer forwards watcher state to every viewer implementation", () => {
   const block = functionBlock("FileViewer", "TextFileViewer");
-  assert.equal(block.match(/watchEnabled=\{watchEnabled\}/g)?.length, 5);
+  // 6 = Text/Image/Audio/Video/Document + the extension-takeover trampoline (the file-editor extension's takeover render also receives watchEnabled)
+  assert.equal(block.match(/watchEnabled=\{watchEnabled\}/g)?.length, 6);
 });
 
 test("TextFileViewer snapshots and restores lightweight tab state", () => {
