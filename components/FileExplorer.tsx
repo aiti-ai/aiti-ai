@@ -2,8 +2,9 @@
 
 import { forwardRef, useState, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import { getFileIcon, FolderIcon } from "./FileIcons";
+import { apiUrl } from "@/lib/base-path";
+
 import {
-  encodeFilePathForApi,
   getFileDirectory,
   getFileName,
   getRelativeFilePath,
@@ -35,6 +36,7 @@ interface FileNode {
 interface Props {
   cwd: string;
   onOpenFile: (filePath: string, fileName: string, options?: OpenFileOptions) => void;
+  onOpenFolder?: (folderPath: string, folderName: string) => void;
   refreshKey?: number;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onAtMentions?: (relativePaths: string[]) => void;
@@ -47,6 +49,8 @@ interface Props {
 
 export interface FileExplorerHandle {
   openUploadPicker: () => void;
+  /** Expand to (and highlight + scroll into view) a directory/file path. */
+  revealPath: (absPath: string) => void;
 }
 
 type UploadPhase = "idle" | "checking" | "uploading";
@@ -79,8 +83,11 @@ interface PendingConflict {
 }
 
 async function fetchEntries(dirPath: string): Promise<FileNode[]> {
-  const encoded = encodeFilePathForApi(dirPath);
-  const res = await fetch(`/api/files/${encoded}?type=list`);
+  const res = await fetch(apiUrl("/api/files/get"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: dirPath, type: "list" }),
+  });
   if (!res.ok) {
     let message = `Failed to load files (HTTP ${res.status})`;
     try {
@@ -103,10 +110,31 @@ async function fetchEntries(dirPath: string): Promise<FileNode[]> {
 }
 
 async function fetchGitStatus(cwd: string): Promise<GitStatusResponse> {
-  const params = new URLSearchParams({ cwd });
-  const res = await fetch(`/api/git/status?${params.toString()}`);
+  const res = await fetch(apiUrl("/api/git/status"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ cwd }),
+  });
   if (!res.ok) throw new Error(`Failed to load Git status (HTTP ${res.status})`);
   return res.json() as Promise<GitStatusResponse>;
+}
+
+/** Two-step download: POST exchanges the path for a ticket (the path never goes in the URL, keeping it
+ *  out of tunnel/proxy access logs) → streaming GET with the ticket */
+async function downloadViaTicket(fullPath: string): Promise<void> {
+  const res = await fetch(apiUrl("/api/files/ticket"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: fullPath }),
+  });
+  const data = await res.json().catch(() => ({})) as { ticket?: string; error?: string };
+  if (!res.ok || !data.ticket) throw new Error(data.error ?? `HTTP ${res.status}`);
+  const a = document.createElement("a");
+  a.href = apiUrl(`/api/files/_t/${encodeURIComponent(data.ticket)}`);
+  a.download = "";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 const GIT_STATUS_KEYS: Record<GitFileStatusKind, string> = {
@@ -158,12 +186,13 @@ function uploadFiles(
 ): Promise<{ status: number; data: UploadResponse }> {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
+    formData.append("directory", targetDirectory);
     files.forEach((file) => formData.append("files", file, file.name));
 
     const xhr = new XMLHttpRequest();
     xhr.open(
       "POST",
-      `/api/files/${encodeFilePathForApi(targetDirectory)}?type=upload&conflict=${strategy}`,
+      apiUrl(`/api/files/upload?conflict=${strategy}`),
     );
     xhr.upload.onprogress = (event) => {
       if (event.lengthComputable && event.total > 0) {
@@ -218,6 +247,7 @@ function TreeNode({
   depth,
   cwd,
   onOpenFile,
+  onOpenFolder,
   onAtMention,
   expandedPaths,
   onToggleExpanded,
@@ -231,6 +261,7 @@ function TreeNode({
   depth: number;
   cwd: string;
   onOpenFile: (filePath: string, fileName: string, options?: OpenFileOptions) => void;
+  onOpenFolder?: (folderPath: string, folderName: string) => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   expandedPaths: Set<string>;
   onToggleExpanded: (fullPath: string, open: boolean) => void;
@@ -274,6 +305,14 @@ function TreeNode({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshToken]);
 
+  // Load children when the directory becomes open (covers both user clicks and
+  // programmatic expansion via revealPath).
+  useEffect(() => {
+    if (open && !loaded) {
+      void loadChildren();
+    }
+  }, [open, loaded, loadChildren]);
+
   const handleClick = useCallback(() => {
     if (node.isDir) {
       const next = !open;
@@ -287,6 +326,7 @@ function TreeNode({
   return (
     <div>
       <div
+        data-file-node={node.fullPath}
         onClick={handleClick}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -363,6 +403,34 @@ function TreeNode({
             <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4" />
           </svg>
         )}
+        {node.isDir && onOpenFolder && hovered && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onOpenFolder(node.fullPath, node.name); }}
+            title={t("files.openInPanel")}
+            style={{
+              position: "absolute",
+              right: 4,
+              top: "50%",
+              transform: "translateY(-50%)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 4,
+              padding: "0 8px",
+              height: 20,
+              background: "var(--bg-panel)",
+              border: "1px solid var(--border)",
+              borderRadius: 4,
+              color: "var(--accent)",
+              cursor: "pointer",
+              fontSize: 11,
+              fontWeight: 600,
+              whiteSpace: "nowrap",
+            }}
+          >
+            {t("files.open")}
+          </button>
+        )}
         {onAtMention && hovered && (
           <button
             onClick={(e) => {
@@ -372,7 +440,7 @@ function TreeNode({
             title={t("files.insertPath")}
             style={{
               position: "absolute",
-              right: !node.isDir ? 28 : 4,
+              right: !node.isDir ? 28 : 34,
               top: "50%",
               transform: "translateY(-50%)",
               display: "flex",
@@ -397,9 +465,13 @@ function TreeNode({
         )}
         {hovered && !node.isDir && (
           <a
-            href={`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`}
+            href="#"
             download
-            onClick={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              downloadViaTicket(node.fullPath).catch((err) => console.error("Download failed:", err));
+            }}
             title={t("files.download")}
             style={{
               position: "absolute",
@@ -440,6 +512,7 @@ function TreeNode({
               depth={depth + 1}
               cwd={cwd}
               onOpenFile={onOpenFile}
+              onOpenFolder={onOpenFolder}
               onAtMention={onAtMention}
               expandedPaths={expandedPaths}
               onToggleExpanded={onToggleExpanded}
@@ -521,6 +594,7 @@ function ChangeRow({
 export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileExplorer({
   cwd,
   onOpenFile,
+  onOpenFolder,
   refreshKey,
   onAtMention,
   onAtMentions,
@@ -570,7 +644,13 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     setSearchLoading(true);
     setSearchError(false);
     const timer = setTimeout(() => {
-      fetch(`/api/file-index?cwd=${encodeURIComponent(cwd)}&q=${encodeURIComponent(query)}`, { signal: controller.signal })
+      // POST: cwd stays out of the URL (access-log safe); apiUrl adds the basePath (subpath deployments)
+      fetch(apiUrl("/api/file-index"), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ cwd, q: query }),
+        signal: controller.signal,
+      })
         .then((response) => response.ok ? response.json() as Promise<{ matches?: FileIndexEntry[] }> : Promise.reject(new Error("Search failed")))
         .then((data) => setSearchPaths((data.matches ?? []).filter((entry) => !entry.isDir).map((entry) => entry.path)))
         .catch(() => {
@@ -706,11 +786,11 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
 
     try {
       const res = await fetch(
-        `/api/files/${encodeFilePathForApi(cwd)}?type=upload-check`,
+        apiUrl("/api/files/upload-check"),
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ fileNames: files.map((file) => file.name) }),
+          body: JSON.stringify({ directory: cwd, fileNames: files.map((file) => file.name) }),
         },
       );
       const data = await res.json().catch(() => ({})) as UploadResponse;
@@ -743,7 +823,34 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     openUploadPicker() {
       if (!uploadBusy) uploadInputRef.current?.click();
     },
-  }), [uploadBusy]);
+    revealPath(absPath) {
+      // Expand the target itself plus every ancestor directory, then highlight
+      // and scroll it into view once it's rendered (expansion loads children
+      // asynchronously, so poll briefly for the node).
+      const toExpand: string[] = [absPath];
+      let cur = getFileDirectory(absPath);
+      while (cur && (!cwd || cur.length >= cwd.length)) {
+        toExpand.push(cur);
+        if (cur === cwd) break;
+        const parent = getFileDirectory(cur);
+        if (!parent || parent === cur) break;
+        cur = parent;
+      }
+      setExpandedPaths((prev) => new Set([...prev, ...toExpand]));
+      setHighlightedPaths(new Set([absPath]));
+      const find = () => document.querySelector(`[data-file-node="${absPath.replace(/"/g, "&quot;")}"]`);
+      const started = Date.now();
+      const poll = () => {
+        const el = find();
+        if (el) {
+          el.scrollIntoView({ block: "center", behavior: "smooth" });
+          return;
+        }
+        if (Date.now() - started < 3000) setTimeout(poll, 120);
+      };
+      setTimeout(poll, 60);
+    },
+  }), [uploadBusy, cwd]);
 
   useEffect(() => {
     onUploadBusyChange?.(uploadBusy);
@@ -1031,6 +1138,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 depth={0}
                 cwd={cwd}
                 onOpenFile={onOpenFile}
+                onOpenFolder={onOpenFolder}
                 onAtMention={onAtMention}
                 expandedPaths={expandedPaths}
                 onToggleExpanded={handleToggleExpanded}

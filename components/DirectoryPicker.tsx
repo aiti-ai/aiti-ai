@@ -3,6 +3,10 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/hooks/useI18n";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { useOverlayBack } from "@/hooks/useOverlayBack";
+import { apiUrl } from "@/lib/base-path";
+
 
 interface DirectoryEntry {
   name: string;
@@ -18,8 +22,12 @@ interface BrowseResponse {
 }
 
 async function loadDirectories(directory?: string): Promise<BrowseResponse> {
-  const query = directory ? `?path=${encodeURIComponent(directory)}` : "";
-  const response = await fetch(`/api/cwd/browse${query}`);
+  // path goes in the request body, not the URL (keeps it out of tunnel/proxy access logs)
+  const response = await fetch(apiUrl("/api/cwd/browse"), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ path: directory ?? undefined }),
+  });
   const data = await response.json() as BrowseResponse;
   if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
   return data;
@@ -97,6 +105,10 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
   const hasUncommittedPath = pathInput.trim() !== currentPath;
   const canSelect = Boolean(currentPath) && !hasUncommittedPath && !busy;
   const canNavigateUp = Boolean(parentDirectory) || isWindowsDriveRoot(currentPath);
+  const isMobile = useIsMobile();
+  // Mobile system back = cancel selection (ignored while busy; when this layer sits above the
+  // sidebar/settings, LIFO order closes this layer first)
+  useOverlayBack(isMobile, () => { if (!busy) onCancel(); });
 
   if (!portalTarget) return null;
 

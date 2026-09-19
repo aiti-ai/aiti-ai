@@ -1,3 +1,5 @@
+import { getBasePath } from "./base-path";
+
 interface LocalFileClickEvent {
   defaultPrevented: boolean;
   button: number;
@@ -109,10 +111,23 @@ export function resolveLocalFileHref(
   const normalizedHref = normalizeFilePathSlashes(decodedHref);
   const lowerHref = normalizedHref.toLowerCase();
 
-  if (lowerHref.startsWith("/api/") || lowerHref.startsWith("/_next/")) return null;
+  // Links to the app's own API/static assets are not local files. Under a
+  // sub-path deployment they are prefixed with the base path, so strip it
+  // before the check.
+  const basePath = getBasePath();
+  const strippedHref = basePath && normalizedHref.startsWith(basePath) ? normalizedHref.slice(basePath.length) : normalizedHref;
+  const lowerStripped = strippedHref.toLowerCase();
+  if (lowerStripped.startsWith("/api/") || lowerStripped.startsWith("/_next/")) return null;
   if (!isBackslashUncPath && normalizedHref.startsWith("//")) return null;
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/i.test(normalizedHref) && !lowerHref.startsWith("file:") && !/^[a-zA-Z]:\//.test(normalizedHref)) {
     return null;
+  }
+
+  // A leading ~ means a home-relative path (~/x): the browser has no homedir, so do not join it
+  // with baseDir — pass it through verbatim and let the server expand it
+  // (core /api/files filePathFromSegments, the file-editor extension's resolveAllowedWrite)
+  if (normalizedHref === "~" || normalizedHref.startsWith("~/") || normalizedHref.startsWith("~\\")) {
+    return stripLineSuffix(normalizeLocalPath(normalizedHref));
   }
 
   if (lowerHref.startsWith("file:")) {
@@ -147,6 +162,12 @@ export function resolveLocalFilePath(filePath: string | undefined, baseDir?: str
   const normalizeSlashes = (value: string) => windowsStyle ? value.replace(/\\/g, "/") : value;
   const normalizedPath = normalizeSlashes(filePath);
   const normalizedBase = baseDir ? normalizeSlashes(baseDir).replace(/\/+$/, "") : undefined;
+
+  // A leading ~ means a home-relative path (~/x): the browser has no homedir, so do not join it
+  // with baseDir — pass it through verbatim (the server expands it)
+  if (normalizedPath === "~" || normalizedPath.startsWith("~/") || normalizedPath.startsWith("~\\")) {
+    return normalizeLocalPath(normalizedPath);
+  }
 
   const isDriveAbsolute = /^[a-zA-Z]:\//.test(normalizedPath);
   const isUncAbsolute = normalizedPath.startsWith("//");
