@@ -124,6 +124,7 @@ import { prefetchModels } from "@/hooks/useAgentSession";
 import {
   piWebSessionService,
   publishSessionState,
+  setSessionOpener,
   type PiWebSessionSource,
 } from "@/lib/pi-web-session-store";
 import { piWebToastService } from "@/lib/pi-web-toast-store";
@@ -683,6 +684,11 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     sessionStatsRefresh?.();
     setActiveTopPanel("session");
   }, [isMobile, sessionStatsRefresh]);
+
+  /** 收回全部顶栏下拉面板（pi-web.ui 服务成员 closeTopPanels）——顶栏面板内的扩展条目
+   *  调起别的全屏表面（如 aiti-ai-usage 报表 dock）前调用：面板不收会在小屏盖住新表面
+   *  （实测只剩 tab 头可见）。与面板 ✕ 按钮同语义（setActiveTopPanel(null)）。 */
+  const closeTopPanels = useCallback(() => setActiveTopPanel(null), []);
 
   /** ChatWindow 的「拉取最新会话统计」注册通道（onSessionStatsRefresherRegister）。
    *  ⚠️ 不能把 setSessionStatsRefresh 直接当注册函数传：ChatWindow 注册的是一个
@@ -1552,6 +1558,11 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       return false;
     }
   }, [handleSelectSession, router]);
+
+  // pi-web.session.open(id) 委托回填（hostUiRef 同款：每次渲染刷新，避免 stale closure）。
+  // 扩展（如欢迎页小组件）经 ctx 服务消费；宿主内置走 openSessionById 直呼。
+  setSessionOpener(handleOpenSession);
+  useEffect(() => () => setSessionOpener(null), []);
 
   // 外部会话占位/别名 id 规范化（服务端把 zcode:new-* / 别名解析成真实复合 id）：
   // 原位迁移选中 id 与 URL，不 bump sessionKey——挂载中的聊天/SSE 继续用旧注册
@@ -3325,7 +3336,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   //    impl 经 ref 委托最新渲染闭包（AppShell 每渲染刷新 ref，服务注册仅挂载一次），
   //    避免注册 stale closure；卸载时反注册。 ──
   const hostUiRef = useRef<Record<string, unknown>>({});
-  hostUiRef.current = { ...sidebarContentExtra, sidebarFooterRow, onLineMention: handleFileLineMention };
+  hostUiRef.current = { ...sidebarContentExtra, sidebarFooterRow, onLineMention: handleFileLineMention, closeTopPanels };
   useEffect(() => {
     return registerExtClientService(HOST_UI_SERVICE.provider, HOST_UI_SERVICE.name, {
       /** 按名取宿主工厂（renderTitle/renderSidebarFooter/回调……与 sidebarContent extra 同集）。 */

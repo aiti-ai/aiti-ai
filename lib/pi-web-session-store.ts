@@ -53,6 +53,24 @@ export interface PiWebSessionService {
   get(): PiWebSessionSnapshot;
   /** 订阅状态变化；订阅时立即回调一次当前快照。返回退订函数。 */
   subscribe(cb: (snapshot: PiWebSessionSnapshot) => void): () => void;
+  /**
+   * 按 id 打开会话（AppShell 回填 handleOpenSession 委托）。可选成员——旧宿主
+   * 服务对象上不存在，消费方必须 `svc?.open?.(id)` 判空降级（扩展服务红线）。
+   */
+  open?(id: string): void;
+}
+
+// open(id) 委托槽：AppShell 每次渲染回填最新闭包（hostUiRef 同款，避免 stale closure）。
+let openDelegate: ((id: string) => void) | null = null;
+
+/** AppShell 渲染体调用：回填/清除打开会话委托（组件卸载时传 null）。 */
+export function setSessionOpener(fn: ((id: string) => void) | null): void {
+  openDelegate = fn;
+}
+
+/** 按宿主委托打开会话（宿主内部直呼入口——内置最近会话 widget 用；委托未设时 no-op）。 */
+export function openSessionById(id: string): void {
+  openDelegate?.(id);
 }
 
 const INITIAL_SNAPSHOT: PiWebSessionSnapshot = Object.freeze({
@@ -129,4 +147,5 @@ export function subscribeSessionState(cb: (snapshot: PiWebSessionSnapshot) => vo
 export const piWebSessionService: PiWebSessionService = {
   get: getSessionSnapshot,
   subscribe: subscribeSessionState,
+  open: (id: string) => openSessionById(id),
 };

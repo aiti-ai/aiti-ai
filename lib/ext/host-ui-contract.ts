@@ -20,6 +20,9 @@ export const HOST_COMPOSER_SERVICE = { provider: "pi-web", name: "pi-web.compose
 export const HOST_UI_FIELDS = {
   /** 回调：文件查看器 行引用插入（@ file:line；宿主 TabBodyCtx.onLineMention 同源）。 */
   onLineMention: "callback",
+  /** 回调：收回全部顶栏下拉面板（会话信息/工具/分支…，setActiveTopPanel(null)）——
+   *  顶栏面板内的扩展条目调起别的全屏表面前调用，避免小屏旧面板盖住新表面。 */
+  closeTopPanels: "callback",
   /** 回调：其余导航/提及回调与 sidebarContent extra 同集（onSelectSession/onOpenFile/onAtMention…，分类见 AppShell sidebarContentExtra）。 */
   sidebarContentExtra: "callback-or-factory",
 } as const;

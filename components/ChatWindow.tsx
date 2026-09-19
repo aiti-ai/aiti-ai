@@ -20,6 +20,7 @@ import { ChatInput, type AttachedImage, type ChatInputHandle } from "./ChatInput
 import { QueueRecoveryDialog } from "./QueueRecoveryDialog";
 import { ChatMinimap, useMessageRefs } from "./ChatMinimap";
 import { ExtSlot, useExtSlotItems } from "./ExtSlots";
+import { NewSessionWidgetZone, NewSessionWidgetsCustomize } from "./NewSessionWidgets";
 import { hasExtRender } from "@/lib/ext-ui-store";
 import type { NewSessionPreparer } from "@/hooks/new-session-preparers";
 import type { PendingRecoveryItem, QueueEntry } from "@/lib/queue-store";
@@ -338,6 +339,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
   const newSessionPreparers: NewSessionPreparer[] = useExtSlotItems("newSessionPreparers")
     .filter((it) => typeof it.meta?.prepare === "function")
     .map((it) => ({ id: it.id, prepare: it.meta!.prepare as NewSessionPreparer["prepare"] }));
+  // 新会话欢迎页小组件区（newSessionWidgets，顶部/底部两个渲染点）+ 自定义面板开关。
+  // Zone 内部消费插槽与偏好（lib/new-session-widgets.ts），这里只持面板显隐。
+  const [nswCustomizeOpen, setNswCustomizeOpen] = useState(false);
   // 工作区路径展示：home 目录缩写为 ~（被动订阅，不主动发请求——别的消费面拉到时自动缩短）。
   const [homeDir, setHomeDir] = useState<string | null>(() => getHomeDir());
   useEffect(() => {
@@ -1401,6 +1405,17 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         />
       )}
 
+      {/* 新会话欢迎页小组件区·顶部（newSessionWidgets；仅 isEmptyNew 渲染，空态零占位）。
+          Zone 自带限高滚动（TOP_ZONE_MAX_HEIGHT），shrink-0 不挤压消息区/composer。
+          extra 只喂数据 {cwd,isMobile,area}；面板 state 在本组件（nswCustomizeOpen）。 */}
+      {isEmptyNew && (
+        <NewSessionWidgetZone
+          area="top"
+          cwd={newSessionCwd}
+          onEdit={() => setNswCustomizeOpen(true)}
+        />
+      )}
+
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
         {extensionDialog && (
           <ExtensionDialog key={extensionDialog.id} request={extensionDialog} onRespond={respondToExtensionUi} />
@@ -1895,7 +1910,18 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           ? <ExtensionStatusToast statuses={extensionStatuses} />
           : <ExtensionStatusBar statuses={extensionStatuses} widgets={extensionWidgets} />}
       </div>
-      {isEmptyNew && <div className="min-h-0 flex-1" />}
+      {/* 新会话欢迎页小组件区·底部（composer 下方原 filler 位；无可见条目时返回等价
+          filler div，布局逐字节不变）+ 自定义面板单例（portal 到 body）。 */}
+      {isEmptyNew && (
+        <NewSessionWidgetZone
+          area="bottom"
+          cwd={newSessionCwd}
+          onEdit={() => setNswCustomizeOpen(true)}
+        />
+      )}
+      {isEmptyNew && nswCustomizeOpen && (
+        <NewSessionWidgetsCustomize onClose={() => setNswCustomizeOpen(false)} />
+      )}
     </div>
   );
 }

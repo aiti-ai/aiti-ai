@@ -367,6 +367,10 @@ export type ExtSlotName =
                     //   选择/隐藏/删除；核心只渲染下拉列表，管理 UI 全在扩展侧）
   | "modelSelector"  // 聊天输入框模型按钮接管（如 aiti-model-wizard）：扩展注册后替换原生 ModelSelector；
                       //   未注册时核心原生下拉兜底（fileViewer 同款跳板范式）
+  | "modelSelectorFooter" // 模型选择器下拉底部动作区（aiti-model-wizard：管理模型入口——
+                      //   打开模型向导；核心只渲染插槽，管理 UI 全在扩展侧，未注册零渲染
+                      //   零回归。workspacePickerActions 同款范式；共享组件内渲染，全部
+                      //   ModelSelector 实例（工具条/ⓘ sheet/AgentsConfig）一致带此入口）
   | "settingsModels" // 设置面板「模型」页签接管（如 aiti-model-wizard）：扩展注册后替换原生 ModelsConfig；
                       //   未注册时核心原生双栏兜底
   | "settingsAgentsFeature" // 设置 Agents 页顶部 feature 区块接管（aiti-subagents：pi-subagents 引擎横幅 +
@@ -399,6 +403,11 @@ export type ExtSlotName =
   | "newSessionPreparers" // 新会话创建前 preparer 管道（注册面，无渲染）：items meta.prepare({cwd}) =>
                     //   { cwd? } 改写目标目录 / { abort } 中止创建——ensureNewSession 在 POST 前依序 await；
                     //   错误走既有 throw→notice 通道，草稿由 draft-keeper 保留（同方案 §3）
+  | "newSessionWidgets" // 新会话欢迎页顶部/底部小组件区（手机桌面 widget 语义）：一个注册口两个渲染点（top/bottom），
+                    //   注册 meta 标注允许区域（NewSessionWidgetMeta.areas）与栅格尺寸（w 1-8 / h 1-3；
+                    //   手机 4 列 / 桌面 8 列）——用户可在「自定义小组件」面板排序/跨区移动/显隐。
+                    //   extra 只喂数据 { cwd, isMobile, area }（插槽 extra 红线）；动作走服务
+                    //   （如 pi-web.session.open）。方案 docs/pi-web-new-session-widgets-plan.md
   ;
 
 /**
@@ -455,6 +464,14 @@ export interface ModelSelectorSlotProps {
   onRefresh?: () => void;
   /** 刷新进行中（接管组件据此禁用选择交互）。 */
   refreshing?: boolean;
+}
+
+/** modelSelectorFooter 插槽 props（模型选择器下拉底部动作区）：扩展渲染整行动作行
+ *  （如 aiti-model-wizard「管理模型」）。宿主只交付收起回调——打开向导等自有浮层前
+ *  先调 onClose 收下拉，避免两层浮层叠放。 */
+export interface ModelSelectorFooterSlotProps {
+  /** 收起模型下拉并清空筛选（打开扩展自有浮层前调用）。 */
+  onClose: () => void;
 }
 
 /** settingsModels 插槽 props（设置「模型」页签接管）。 */
@@ -608,6 +625,33 @@ export interface NewSessionSelectorSlotProps {
   isMobile: boolean;
 }
 
+/** newSessionWidgets 插槽 props——extra 只喂数据（插槽 extra 红线）：widget 按数据渲染，
+ *  动作一律走服务（如 `pi-web.session.open(id)` / `ctx.openFile`），不塞回调。 */
+export interface NewSessionWidgetSlotProps {
+  /** 新会话目标 cwd（AppShell targetNewSessionCwd；null = 未确定，扩展自行降级）。 */
+  cwd: string | null;
+  isMobile: boolean;
+  /** 本次实际渲染的区域（同一 widget 可被用户在面板里跨区移动）。 */
+  area: "top" | "bottom";
+}
+
+/** newSessionWidgets 注册 meta：允许区域 + 栅格尺寸（注册时标注，宿主布局解析器读取）。
+ *  用户定制只覆盖「排序 / 区域归属 / 显隐」，尺寸由注册方声明。 */
+export interface NewSessionWidgetMeta {
+  /** 允许出现的区域集合；缺省 ["top","bottom"]（both）。 */
+  areas?: ("top" | "bottom")[];
+  /** 缺省归属区域；缺省取 areas[0]。 */
+  defaultArea?: "top" | "bottom";
+  /** 栅格列宽 1..8，缺省 4——手机 4 列满行 / 桌面 8 列半行（「1×4」）。 */
+  w?: number;
+  /** 栅格行高 1..3，缺省 1（行高基准见 NewSessionWidgets 组件）。 */
+  h?: number;
+  /** 显示名（自定义面板 / 空内容占位）。 */
+  title?: string;
+  /** 默认序权重（升序；未入偏好的新条目按它稳定补尾），缺省按注册序。 */
+  priority?: number;
+}
+
 /** newSessionPreparers 注册面的 prepare 返回值：{cwd} 改写目标目录（链式，后手看到先手结果）；
  *  {abort} 中止创建（文案原样进既有 throw→notice 错误通道；草稿由 draft-keeper 保留）。 */
 export type NewSessionPrepareResult = { cwd?: string; abort?: string } | void;
@@ -641,6 +685,8 @@ export interface ExtSlotContractMap {
   workspacePickerActions: { props: WorkspacePickerActionsProps };
   /** 聊天输入框模型按钮接管（aiti-model-wizard）。 */
   modelSelector: { props: ModelSelectorSlotProps };
+  /** 模型选择器下拉底部动作区（aiti-model-wizard 管理模型入口）。 */
+  modelSelectorFooter: { props: ModelSelectorFooterSlotProps };
   /** 设置「模型」页签接管（aiti-model-wizard）。 */
   settingsModels: { props: SettingsModelsSlotProps };
   /** 设置 Agents 页顶部 feature 区块接管（aiti-subagents）。 */
@@ -658,6 +704,8 @@ export interface ExtSlotContractMap {
   sessionRequestCard: { props: SessionRequestCardSlotProps };
   /** 新会话欢迎页扩展选择器行（session-manager 分支/Worktree picker）。 */
   newSessionSelectors: { props: NewSessionSelectorSlotProps };
+  /** 新会话欢迎页顶部/底部小组件区（内置最近会话 / 扩展 widget；手机桌面 widget 语义）。 */
+  newSessionWidgets: { props: NewSessionWidgetSlotProps };
   /** assistant 消息内容区末尾（aiti-git-trace：trace 捕捉的变更文件行；方案
    *  docs/aiti-git-trace-message-files-ext-plan.md §3.2）。 */
   assistantMessageFooter: { props: AssistantMessageFooterSlotProps };
@@ -794,6 +842,8 @@ export interface ExtUiDefinition {
   newSessionSelectors?: ExtUiItem[];
   /** 新会话创建前 preparer 管道（注册型；meta.prepare({cwd}) => NewSessionPrepareResult）。 */
   newSessionPreparers?: ExtUiItem[];
+  /** 新会话欢迎页顶部/底部小组件区（渲染型；meta = NewSessionWidgetMeta 标注区域/尺寸）。 */
+  newSessionWidgets?: ExtUiItem[];
   /** 接管内置能力（见 EXT_PROVIDES）：如 ["session-delete"] 让 core 隐藏侧栏内置删除按钮。 */
   provides?: string[];
   /** client bundle 依赖的其他扩展 id（启动图 inject 边：并行预取/加载顺序提示，

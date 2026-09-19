@@ -327,6 +327,10 @@ export const INTERACTIVE_SLOTS: ReadonlySet<string> = new Set([
   "settingsModels",
   "settingsAgents",
   "settingsAgentsFeature",
+  // 欢迎页小组件区：Zone 仅在 isEmptyNew 欢迎页挂载——那正是「要看 widget」的
+  // 交互时刻；会话页 Zone 不挂载零请求。声明了该槽的懒扩展在欢迎页物化
+  // （widget 需要真 render，静态条目只能进面板），属扩展显式 opt-in。
+  "newSessionWidgets",
 ]);
 // ❌ 已移除（开页方案 §1 F2/F3，2026-09-12）：这两个槽**不是真交互槽**——
 //   · "rightFileDock"：AppShell 为派生 dock tab 列表而在挂载时就调用 useExtSlotItems()

@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { ExtSlot } from "./ExtSlots";
 
 export interface ModelSelectorOption {
   provider: string;
@@ -570,6 +571,12 @@ export function ModelSelector({
                   ))}
                 </div>
               ))}
+              {/* 下拉底部动作区（aiti-model-wizard「管理模型」入口）：管理 UI 全在扩展侧，
+                  未注册时零渲染零回归；核心只交付收起回调（打开向导浮层前先收下拉）。 */}
+              <ExtSlot
+                name="modelSelectorFooter"
+                extra={{ onClose: () => { setOpen(false); setFilter(""); } }}
+              />
             </div>
           </div>
         );
