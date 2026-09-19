@@ -19,6 +19,12 @@ const otherWorkspace = join(artifacts, "workspace-b");
 mkdirSync(join(agentDir, "sessions", "test"), { recursive: true });
 mkdirSync(workspace);
 mkdirSync(otherWorkspace);
+// Extension isolation: point the host extension root at an empty directory — this check targets the
+// native PTY panel baseline (docs/terminal.md); the command extension's terminalDock takeover is
+// extension-side behavior and would flip the tab to the extension view on machines where it is
+// installed, causing false failures.
+const emptyExtensions = join(artifacts, "empty-extensions");
+mkdirSync(emptyExtensions);
 writeFileSync(join(workspace, "note.txt"), "File viewer fixture\n");
 const timestamp = "2026-09-05T00:00:00.000Z";
 for (const [id, cwd, name] of [
@@ -42,7 +48,7 @@ const base = `http://127.0.0.1:${port}`;
 const log = createWriteStream(join(artifacts, "server.log"));
 const server = spawn(process.execPath, [join(root, "node_modules/next/dist/bin/next"), "dev", "-H", "127.0.0.1", "-p", String(port)], {
   cwd: root,
-  env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_WEB_PASSWORD: "", NEXT_TELEMETRY_DISABLED: "1", HISTFILE: process.platform === "win32" ? "NUL" : "/dev/null", BASH_SILENCE_DEPRECATION_WARNING: "1", SHELL: process.platform === "win32" ? process.env.SHELL : "/bin/bash" },
+  env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_WEB_EXTENSIONS_DIR: emptyExtensions, PI_WEB_PASSWORD: "", NEXT_TELEMETRY_DISABLED: "1", HISTFILE: process.platform === "win32" ? "NUL" : "/dev/null", BASH_SILENCE_DEPRECATION_WARNING: "1", SHELL: process.platform === "win32" ? process.env.SHELL : "/bin/bash" },
   stdio: ["ignore", "pipe", "pipe"],
 });
 server.stdout.pipe(log, { end: false });

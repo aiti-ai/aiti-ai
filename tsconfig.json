@@ -26,14 +26,38 @@
         "./*"
       ]
     },
-    "target": "ES2017"
+    "target": "ES2017",
+    "allowImportingTsExtensions": true
   },
   "include": [
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
     ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
+    ".next/dev/types/**/*.ts",
+    ".next-dev/types/**/*.ts",
+    ".next-dev/dev/types/**/*.ts",
+    ".next-dev/dev/dev/types/**/*.ts",
+    ".next/dev/dev/types/**/*.ts",
+    ".next-aiti/dev/types/**/*.ts",
+    ".next-aiti/dev/dev/types/**/*.ts",
+    ".next-merge-test/dev/types/**/*.ts",
+    ".next-merge-test/dev/dev/types/**/*.ts",
+    ".next-dsh2/dev/types/**/*.ts",
+    ".next-dsh2/dev/dev/types/**/*.ts",
+    ".next-dsh3/dev/types/**/*.ts",
+    ".next-dsh3/dev/dev/types/**/*.ts",
+    ".next-prod-test/types/**/*.ts",
+    ".next-prod-test/dev/types/**/*.ts",
+    ".next-31142/types/**/*.ts",
+    ".next-31142/dev/types/**/*.ts",
+    ".next-e2e/dev/types/**/*.ts",
+    ".next-e2e/dev/dev/types/**/*.ts",
+    ".next-prod/types/**/*.ts",
+    ".next-prod/dev/types/**/*.ts",
+    ".next-prod/dev/dev/types/**/*.ts",
+    ".next-termdebug/types/**/*.ts",
+    ".next-termdebug/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"
