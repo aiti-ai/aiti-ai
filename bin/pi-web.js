@@ -81,10 +81,17 @@ nextArgs.push("-H", hostname);
 
 // Always run next's JS entry with node directly — avoids .bin symlink issues
 // and path-with-spaces problems on Windows when shell: true is used.
+// PI_WEB_HOSTNAME is the LISTEN address only (next start -H); deployment
+// domains are configured separately via PI_WEB_BASE_DOMAIN so overriding it
+// here is safe (IP literals are never treated as virtual-host suffixes).
 const child = spawn(process.execPath, [nextBin, ...nextArgs], {
   cwd: pkgDir,
   stdio: ["inherit", "pipe", "inherit"],
-  env: { ...process.env, PI_WEB_HOSTNAME: hostname },
+  // PI_WEB_PKG_DIR: root for the bundled extensions (<pkgDir>/extensions) when
+  // resolving dependencies — the next process cwd can be changed by systemd or
+  // other launch methods, so injecting it explicitly is safer than relying on
+  // cwd semantics.
+  env: { ...process.env, PI_WEB_HOSTNAME: hostname, PI_WEB_PKG_DIR: pkgDir },
 });
 wireChildProcessLifecycle(child);
 

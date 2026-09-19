@@ -1,4 +1,7 @@
-export const VISIBLE_PAGE_SIZE = 50;
+// Per-page render count: the mainstream approach is virtualization (resident DOM = 2-3x viewport).
+// A narrow viewport shows roughly 6-10 messages, so 30 messages ≈ 3-4 screens (including overscan
+// buffer); 50 would render twice the DOM, which gets costly when paging back through history.
+export const VISIBLE_PAGE_SIZE = 30;
 export const CHAT_SCROLL_TAIL_TOLERANCE = 8;
 export const CHAT_SCROLL_REATTACH_TOLERANCE = 96;
 
