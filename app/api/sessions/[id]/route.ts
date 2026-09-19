@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
@@ -12,9 +12,18 @@ import {
   invalidateSessionListCache,
   buildSessionContext,
   readSessionHeader,
+  findBridgeSessionFileById,
 } from "@/lib/session-reader";
 import { sessionPathKey } from "@/lib/session-path";
-import { abortSubagent, getRpcSession, getRpcSessionInfos } from "@/lib/rpc-manager";
+import { abortSubagent, getRpcSession, getRpcSessionInfos, getAliveRpcSessionIds, stopIdleRpcSession } from "@/lib/rpc-manager";
+import { resolveAnySession, attachIfBridged, handleModelToClient, extractFirstUserText } from "@/lib/session";
+import { normalizeRawMessages } from "@/lib/normalize";
+import { buildExternalPagedContext, clampTailParam } from "@/lib/external-session-paging";
+import { listProviders } from "@/lib/session/providers";
+import { resolvePlaceholderSession, removeHandle } from "@/lib/session";
+import { getPlaceholder, removePlaceholderByUuid } from "@/lib/session/placeholder";
+import { removeQueue } from "@/lib/queue-store";
+import { trashFileSync } from "@/lib/session-trash";
 import { projectTreeForResponse } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
 import { computeSessionStats } from "@/lib/session-stats";
@@ -23,17 +32,185 @@ import { readSubagentRun, readSubagentSessionResources, SUBAGENT_META_TYPE } fro
 import { readSessionToolSelection } from "@/lib/session-tool-selection";
 import { jsonResponse } from "@/lib/json-response";
 
+/**
+ * External composite id → canonical id: the real composite id resolved from a lazy-init
+ * placeholder (agent:new-*). In sidebar takeover mode, list rows are identified by the
+ * composite id (the session-manager source), so the selected id must match it — otherwise the
+ * same backend session gets pinned as a second row (a Draft row). Returns the input unchanged
+ * when there is no resolution.
+ */
+function canonicalExternalId(requested: string, handleSessionId?: string): string {
+  return handleSessionId || requested;
+}
+
+/** Fixed response for bridged sessions (attach detection goes by socket/registry; the file is only for history replay). */
+function bridgedOk(
+  id: string,
+  bridged: { isAlive(): boolean; send(c: unknown): Promise<unknown>; cwd?: string; getModel?(): { id: string; provider: string } | undefined },
+  page: { tail: number; before?: string | null } = { tail: 0 },
+) {
+  return bridged.send({ type: "get_messages" }).catch(() => null)
+    .then((r) => {
+      // The bridge side (TUI sessionManager) emits the raw SDK shape (toolCall uses id/name/
+      // arguments); without normalizing it to match the local file reader (session-reader
+      // entryToUiMessage), ToolCallBlock names/previews come out empty and results can't be
+      // paired (root cause of "command execution messages are empty" on attached sessions)
+      const paged = buildExternalPagedContext(((r as { entries?: unknown[] } | null)?.entries ?? []) as unknown[], page.tail > 0 ? page : undefined);
+      const messages = paged.messages as unknown[];
+      return NextResponse.json({
+        sessionId: id,
+        filePath: "",
+        info: {
+          path: "",
+          id,
+          cwd: bridged.cwd ?? "",
+          name: undefined,
+          created: new Date().toISOString(),
+          modified: new Date().toISOString(),
+          messageCount: paged.totalCount,
+          firstMessage: "(bridged session)",
+          transient: true,
+          agent: "tui-bridge",
+        },
+        leafId: null,
+        tree: [],
+        // HandleModel is {id,…} while the client contract is {modelId,…} — without normalization the selector renders an empty current name
+        context: { messages, entryIds: paged.entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(bridged.getModel?.()) },
+        totalActiveMs: 0,
+      });
+    });
+}
+
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const fresh = new URL(req.url).searchParams.has("fresh");
+  // paging params for external backend/bridged sessions (same semantics as local pi sessions; omitted = start from the tail 50)
+  const extParams = new URL(req.url).searchParams;
+  const extTail = clampTailParam(extParams.get("tail"));
+  const extBefore = extParams.get("before");
   try {
+    // bridge-occupancy detection comes first (the TUI owns the file; even a stale local wrapper yields)
+    const fpEarly = await resolveSessionPath(id);
+    if (fpEarly) {
+      const bridged = await attachIfBridged(fpEarly);
+      if (bridged?.isAlive()) {
+        return await bridgedOk(id, bridged, { tail: extTail, before: extBefore });
+      }
+    }
+
+    // Placeholder file (the pi persistence anchor for external agent sessions): a header with
+    // extId → never opened as a local session, always routed to the real backend
+    // (openExternalSession), with the handle dual-registered under the placeholder uuid.
+    // Only on failure (backend extension absent / external source unavailable) fall back to the
+    // local path so at least the placeholder metadata is visible.
+    if (fpEarly) {
+      const ph = await resolvePlaceholderSession(id).catch(() => undefined);
+      if (ph?.isAlive()) {
+        let paged = { messages: [] as unknown[], entryIds: [] as string[], oldestEntryId: null as string | null, hasMore: false, totalCount: 0 };
+        try {
+          const r = (await ph.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
+          paged = buildExternalPagedContext(r?.entries ?? [], { tail: extTail, before: extBefore });
+        } catch { /* get_messages unavailable → empty */ }
+        const { messages } = paged;
+        const firstText = extractFirstUserText(messages) || "(backend session)";
+        const phHeader = readSessionHeader(fpEarly) as unknown as { agent?: string; extId?: string } | null;
+        // real placeholder title (registry extId → name; written at open-live/replay)
+        const phName = phHeader?.extId ? getPlaceholder(phHeader.extId)?.name : undefined;
+        // placeholder-uuid requests are canonicalized to the real composite id too: in takeover
+        // mode, list rows are identified by the composite id, and selecting the uuid would pin an
+        // extra Draft row in the dock (the same backend session appearing twice).
+        const cid = phHeader?.extId && phHeader.extId.includes(":") ? phHeader.extId : id;
+        return NextResponse.json({
+          sessionId: cid,
+          filePath: "",
+          info: {
+            path: "",
+            id: cid,
+            cwd: ph.cwd ?? "",
+            name: phName,
+            created: new Date().toISOString(),
+            modified: new Date().toISOString(),
+            messageCount: paged.totalCount,
+            firstMessage: firstText.slice(0, 80) || "(backend session)",
+            transient: true,
+            agent: phHeader?.agent ?? undefined,
+          },
+          leafId: null,
+          tree: [],
+          context: { messages, entryIds: paged.entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(ph.getModel?.()) },
+          totalActiveMs: 0,
+        });
+      }
+    }
+
+    // Explicit user refresh (?fresh=1, 2026-09-15): reclaim this process's "alive but idle" rpc
+    // wrapper so the flow naturally falls through to the disk branch and re-reads. Scenario: the
+    // session was continued by a client outside this instance (another app instance / the zcode
+    // desktop app / CLI) while the idle wrapper still holds the old in-memory SessionManager —
+    // re-issuing GET would keep returning stale history from memory, making "refresh" a no-op;
+    // and subsequent sends would append on the old leaf (diverging from disk). Running sessions
+    // are untouched (the in-memory state of a running session is authoritative).
+    if (fresh) {
+      const staleRpc = getRpcSession(id);
+      if (staleRpc?.isAlive() && !staleRpc.isRunning()) {
+        await stopIdleRpcSession(id);
+      }
+    }
+
+    // Backend (provider-handle) sessions: no local file exists — serve a
+    // minimal SessionData so the chat view loads instead of bouncing off a
+    // 404. History replay depends on the backend's getMessages capability.
     const rpc = getRpcSession(id);
+    if (!(rpc?.isAlive())) {
+      const wrapped = resolveAnySession(id);
+      if (wrapped?.isAlive()) {
+        // History replay: pull entries through the handle's get_messages
+        // (capability-gated; backends without it serve an empty context and
+        // the live SSE stream covers new turns).
+        let paged = { messages: [] as unknown[], entryIds: [] as string[], oldestEntryId: null as string | null, hasMore: false, totalCount: 0 };
+        try {
+          const r = (await wrapped.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
+          paged = buildExternalPagedContext(r?.entries ?? [], { tail: extTail, before: extBefore });
+        } catch (e) {
+          console.error("[sessions/[id]] backend get_messages failed:", e instanceof Error ? e.message : e);
+        }
+        const { messages } = paged;
+        const firstText = extractFirstUserText(messages) || "(backend session)";
+        const cid = canonicalExternalId(id, wrapped.sessionId);
+        return NextResponse.json({
+          sessionId: cid,
+          filePath: "",
+          info: {
+            path: "",
+            id: cid,
+            cwd: wrapped.cwd ?? "",
+            name: undefined,
+            created: new Date().toISOString(),
+            modified: new Date().toISOString(),
+            messageCount: paged.totalCount,
+            firstMessage: firstText.slice(0, 80) || "(backend session)",
+            transient: true,
+            // real placeholder title (written to the registry on external backend replay/takeover)
+            ...(getPlaceholder(wrapped.sessionId)?.name ? { name: getPlaceholder(wrapped.sessionId)?.name } : {}),
+            // backend/agent tag (same projection as getHandleSessionInfos): the frontend
+            // loadModels relies on it to fetch the external model catalog via list_models —
+            // without it the selector silently falls back to the local list.
+            agent: wrapped.source.includes("/") ? wrapped.source.split("/")[1] : wrapped.source,
+          },
+          leafId: null,
+          tree: [],
+          context: { messages, entryIds: paged.entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(wrapped.getModel?.()) },
+          totalActiveMs: 0,
+        });
+      }
+    }
     const searchParams = new URL(req.url).searchParams;
     const force = searchParams.get("force") === "1";
 
-    // A live wrapper only reflects the appends pi-web itself made. When another
+    // A live wrapper only reflects the appends the app itself made. When another
     // pi process (the TUI) writes the same session file, the in-memory index
     // stays stale. Only probe on ?force=1 (session mount / page refresh): two
     // processes writing one JSONL is unsupported, so post-turn reads must not
@@ -47,7 +224,98 @@ export async function GET(
     const liveRpc = liveWrapper;
     const resolvedPath = liveRpc ? null : await resolveSessionPath(id);
     if (!liveRpc && !resolvedPath) {
+      // An empty session (file lazily not yet written) may still have a live bridge: attach
+      // prefers the socket (registry) — reading the file is only history replay. Reverse-look-up
+      // the registry by id to get the sessionFile, then attach (independent of file existence)
+      const bridgeFile = await findBridgeSessionFileById(id);
+      if (bridgeFile) {
+        try {
+          const bridgedById = await attachIfBridged(bridgeFile).catch((e: { name?: string }) => {
+            if (e?.name === "BridgeOccupiedError") throw e;
+            return undefined;
+          });
+          if (bridgedById?.isAlive()) return await bridgedOk(id, bridgedById, { tail: extTail, before: extBefore });
+        } catch (e) {
+          throw e;
+        }
+      }
+      // Composite id ("<agentKey>:<sid>", multi-agent backend history) — on handle-store miss
+      // (e.g. after a service restart) recover via openExternalSession by id (provider --resume),
+      // then return through the wrapped branch; only a failed recovery 404s. Local pi session ids
+      // have no ":", so this is skipped at zero cost.
+      if (id.includes(":")) {
+        try {
+          const { openExternalSession, resolveAnySession: resolveHandle } = await import("@/lib/session");
+          const sid = id.slice(id.indexOf(":") + 1);
+          const handle = await openExternalSession(id, { sessionId: sid || undefined }).catch(() => undefined);
+          const wrappedAfterOpen = handle?.alive() ? resolveHandle(id) : undefined;
+          if (handle && wrappedAfterOpen?.isAlive()) {
+            const cid = canonicalExternalId(id, handle.id);
+            let paged = { messages: [] as unknown[], entryIds: [] as string[], oldestEntryId: null as string | null, hasMore: false, totalCount: 0 };
+            try {
+              const r = (await wrappedAfterOpen.send({ type: "get_messages" })) as { entries?: unknown[] } | null;
+              paged = buildExternalPagedContext(r?.entries ?? [], { tail: extTail, before: extBefore });
+            } catch { /* get_messages unavailable → empty */ }
+            const { messages } = paged;
+            return NextResponse.json({
+              sessionId: cid,
+              filePath: "",
+              info: {
+                path: "",
+                id: cid,
+                cwd: wrappedAfterOpen.cwd ?? "",
+                ...(getPlaceholder(id)?.name ? { name: getPlaceholder(id)!.name } : {}),
+                created: new Date().toISOString(),
+                modified: new Date().toISOString(),
+                messageCount: paged.totalCount,
+                firstMessage: "(backend session)",
+                transient: true,
+                // agent tag (composite id prefix): the frontend loadModels relies on it to reach the external model catalog
+                agent: id.slice(0, id.indexOf(":")) || undefined,
+              },
+              leafId: null,
+              tree: [],
+              context: { messages, entryIds: paged.entryIds, oldestEntryId: paged.oldestEntryId, hasMore: paged.hasMore, thinkingLevel: "off", model: handleModelToClient(wrappedAfterOpen.getModel?.()) },
+              totalActiveMs: 0,
+            });
+          }
+        } catch { /* recovery failed → fall through to 404 */ }
+      }
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+    // bridge-occupancy detection: the file is held by a TUI bridge → history comes back via the bridge's get_messages (no local open)
+    if (!liveRpc && resolvedPath) {
+      try {
+        const bridged = await attachIfBridged(resolvedPath).catch((e: { name?: string }) => {
+          if (e?.name === "BridgeOccupiedError") throw e;
+          return undefined;
+        });
+        if (bridged?.isAlive()) {
+          const r = (await bridged.send({ type: "get_messages" }).catch(() => null)) as { entries?: unknown[] } | null;
+          const messages = normalizeRawMessages(r?.entries ?? []);
+          const firstUser = messages.find((m) => (m as { role?: string }).role === "user");
+          return NextResponse.json({
+            sessionId: id,
+            filePath: "",
+            info: {
+              path: "",
+              id,
+              cwd: bridged.cwd ?? "",
+              name: undefined,
+              created: new Date().toISOString(),
+              modified: new Date().toISOString(),
+              messageCount: messages.length,
+              firstMessage: firstUser ? "(bridged session)" : "(bridged session)",
+              transient: true,
+              agent: "tui-bridge",
+            },
+            leafId: null,
+            tree: [],
+            context: { messages, entryIds: [], thinkingLevel: "off", model: handleModelToClient(bridged.getModel?.()) },
+            totalActiveMs: 0,
+          });
+        }
+      } catch { /* fall through to local */ }
     }
 
     const sm = liveRpc?.inner.sessionManager ?? SessionManager.open(resolvedPath!);
@@ -65,6 +333,20 @@ export async function GET(
       tail,
       sessionId: id, // local: lazy URLs for historical tool-result images
     });
+    // Display-consistency overlay: while the wrapper is alive, model/thinkingLevel come from the
+    // real in-process state. Reason: a mid-run set_model appends model_change to whatever message
+    // was in flight at the time; a later abort + resend opens a new branch, leaving those entries
+    // on an abandoned branch — resolving along the leaf path then falls back to a very old value,
+    // so the page would display a model different from the one actually running. Live state is
+    // the authoritative value.
+    if (liveRpc) {
+      const liveModel = liveRpc.inner.model;
+      if (liveModel && liveModel.provider && liveModel.id) {
+        context.model = { provider: liveModel.provider, modelId: liveModel.id };
+      }
+      const liveThinking = (liveRpc.inner.agent?.state as { thinkingLevel?: string } | undefined)?.thinkingLevel;
+      if (liveThinking) context.thinkingLevel = liveThinking;
+    }
     const totalActiveMs = computeSessionTotalActiveMs(entries);
     // Cumulative usage over ALL entries, including history compacted away —
     // the same aggregation the SDK's getSessionStats() uses. Lets the client
@@ -124,6 +406,9 @@ export async function GET(
       },
     );
   } catch (error) {
+    if ((error as { name?: string }).name === "BridgeOccupiedError") {
+      return NextResponse.json({ error: String(error), code: "session_bridged_unreachable" }, { status: 409 });
+    }
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
 }
@@ -142,6 +427,15 @@ export async function PATCH(
     const filePath = await resolveSessionPath(id);
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
+    // single-writer red line: when a TUI bridge holds the file, refuse local rewrites (rename from the TUI instead)
+    {
+      const bridged = await attachIfBridged(filePath);
+      if (bridged?.isAlive()) {
+        const r = (await bridged.send({ type: "set_session_name", name: name.trim() }).catch(() => null)) as { success?: boolean } | null;
+        if (r?.success) return NextResponse.json({ ok: true, via: "bridge" });
+        return NextResponse.json({ error: "Session is owned by a TUI bridge; rename not supported by its backend" }, { status: 409 });
+      }
     }
     const sm = SessionManager.open(filePath);
     sm.appendSessionInfo(name.trim());
@@ -163,15 +457,48 @@ export async function DELETE(
     if (!filePath) {
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
+    // single-writer red line: sessions held by a TUI bridge must not be deleted from the web (it would blow up the TUI mid-write)
+    for (const p of listProviders()) {
+      if (!p.ownsFile) continue;
+      try {
+        if (await p.ownsFile(filePath)) {
+          return NextResponse.json({ error: "Session is owned by a running agent bridge; close it there first" }, { status: 409 });
+        }
+      } catch { /* probe failure → treat as not-owned */ }
+    }
+    // A still-alive rpc session in this process: refuse while running; already finished (only the
+    // handle lingers) → explicit user delete releases the handle first (shutdown flushes to disk,
+    // wrapper leaves the registry) before deleting the file — no longer requires closing the page
+    // first.
+    if (getAliveRpcSessionIds().includes(id)) {
+      const stopResult = await stopIdleRpcSession(id);
+      if (stopResult === "running") {
+        return NextResponse.json({ error: "Session is running — stop it before deleting" }, { status: 409 });
+      }
+      if (stopResult !== "stopped") {
+        return NextResponse.json({ error: "Session is still open in this workspace — close it first" }, { status: 409 });
+      }
+    }
 
     // Read only the bounded header before deleting.
-    let parentSessionPath: string | undefined;
+    let deleteHeader: { parentSession?: string; extId?: string } | null = null;
     try {
-      parentSessionPath = readSessionHeader(filePath)?.parentSession;
+      deleteHeader = readSessionHeader(filePath) as unknown as { parentSession?: string; extId?: string } | null;
     } catch (error) {
-      // Empty runtime sessions have a cached path before their first disk write.
+      // Empty runtime sessions have a cached path before their first disk write (upstream #440).
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
+    // Placeholder file: delete only the anchor (file + registry entry + live handle); the external
+    // raw data (cursor store.db etc.) is never touched; no child sessions hang off a placeholder —
+    // skip the re-parent cascade.
+    if (deleteHeader?.extId) {
+      removePlaceholderByUuid(id); // includes unlinking the placeholder file
+      removeHandle(id); // retire the live handle (prevents a zombie transient row)
+      invalidateSessionPathCache(id);
+      invalidateSessionListCache();
+      return NextResponse.json({ ok: true });
+    }
+    const parentSessionPath = deleteHeader?.parentSession;
     let parentSessionId: string | undefined;
     if (parentSessionPath) {
       try {
@@ -303,11 +630,9 @@ export async function DELETE(
     try { await abortSubagent(id); } catch { /* ordinary session */ }
     await getRpcSession(id)?.shutdown();
     for (const [deletedId, deletedPath] of deletedPaths) {
-      try {
-        unlinkSync(deletedPath);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      }
+      // session files go to the trash (recoverable after a slip); runtime session files that were never flushed (and thus don't exist) are silently skipped (upstream #440).
+      trashFileSync(deletedPath);
+      removeQueue(deletedPath);
       invalidateSessionPathCache(deletedId);
     }
     invalidateSessionListCache();

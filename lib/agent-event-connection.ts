@@ -13,8 +13,8 @@ export class AgentEventConnectionError extends Error {
   constructor(public readonly status: AgentEventConnectionStatus, message?: string) {
     super(message ?? (
       status === "ready_timeout"
-        ? "Timed out starting the agent session. Please try again."
-        : "Failed to connect to the agent event stream. Please try again."
+        ? "Session backend startup timed out (the service may have just restarted and is cold-recovering); please retry shortly"
+        : "Session event stream connection failed (the service may have just restarted or the network is flaky); please retry shortly"
     ));
     this.name = "AgentEventConnectionError";
   }
@@ -40,15 +40,24 @@ export interface AgentEventConnectionOptions {
   readinessTimeoutMs: number;
   reconnectDelayMs: number;
   onUnexpectedError?(error: unknown): void;
+  /** Called when any data event (including the server heartbeat ping) arrives -- a channel-alive signal. */
+  onActivity?(): void;
+  /** Called on connection errors (onerror -> enters reconnect scheduling) -- a channel-suspicious signal. */
+  onTrouble?(): void;
 }
 
 const EVENT_SOURCE_OPEN = 1;
+const EVENT_SOURCE_CLOSED = 2;
+/** Reconnect backoff cap: base 1s -> 2s -> 4s -> ... capped at 30s to avoid a reconnect storm while the service is down. */
+const MAX_RECONNECT_DELAY_MS = 30_000;
 
 /** Owns the EventSource, agent-readiness handshake, and passive reconnect. */
 export class AgentEventConnection {
   private current: Connection | null = null;
   private retry: { sessionId: string; timer: ReturnType<typeof setTimeout> } | null = null;
   private retryGeneration = 0;
+  /** Consecutive reconnect count (drives exponential backoff; reset on successful connect / when retrying stops). */
+  private retryCount = 0;
 
   constructor(private readonly options: AgentEventConnectionOptions) {}
 
@@ -146,6 +155,13 @@ export class AgentEventConnection {
         return;
       }
 
+      // Heartbeat pings only refresh liveness and are not delivered to the business layer (callers need not handle them).
+      if (event.type === "ping") {
+        this.options.onActivity?.();
+        return;
+      }
+      this.options.onActivity?.();
+
       if (event.type === "connected") {
         attempt.ready = true;
         attempt.succeed();
@@ -158,6 +174,24 @@ export class AgentEventConnection {
       this.options.onEvent(event);
     };
     source.onerror = () => {
+      this.options.onTrouble?.();
+      // EventSource readyState semantics (at error-event time):
+      //   CONNECTING(0) = transient network drop (the browser is auto-reconnecting) --
+      //                   manual backoff retry is enough;
+      //   CLOSED(2)     = HTTP-level failure (4xx/5xx, e.g. session 404); the browser will
+      //                   not auto-reconnect.
+      // Treat CLOSED with startup_error semantics: when the server rejects the session,
+      // fixed 1s manual retries are pure waste (a dead session was measured to cause a
+      // 404 storm: 1 events request + 1 probe report per second). Once the session
+      // recovers, the upper layer's maintain() trigger points rebuild the connection
+      // (agent starts a run / session switch / starvation recovery).
+      if (source.readyState === EVENT_SOURCE_CLOSED) {
+        this.fail(connection, new AgentEventConnectionError(
+          "startup_error",
+          "Session event stream rejected by the server (HTTP-level error); reconnection stopped — it rebuilds automatically once the session recovers",
+        ));
+        return;
+      }
       this.fail(connection, new AgentEventConnectionError("closed"));
     };
 
@@ -182,17 +216,24 @@ export class AgentEventConnection {
     if (this.retry?.sessionId === sessionId) return;
     this.clearRetry();
 
+    // Exponential backoff: base 1s -> 2s -> 4s -> ... capped at 30s (retryCount resets on successful connect).
+    const delay = Math.min(
+      this.options.reconnectDelayMs * 2 ** this.retryCount,
+      MAX_RECONNECT_DELAY_MS,
+    );
+    this.retryCount += 1;
     const timer = setTimeout(() => {
       if (this.retry?.timer !== timer) return;
       this.retry = null;
       this.maintain(sessionId);
-    }, this.options.reconnectDelayMs);
+    }, delay);
     this.retry = { sessionId, timer };
   }
 
   private stopRetrying(): void {
     this.retryGeneration += 1;
     this.clearRetry();
+    this.retryCount = 0;
   }
 
   private clearRetry(): void {
