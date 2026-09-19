@@ -1,5 +1,5 @@
 import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { getModelRuntimeWithExtensions } from "@/lib/model-runtime-ext";
 import { randomUUID } from "node:crypto";
 import { invalidateModelsCache } from "@/lib/models-cache";
 
@@ -23,7 +23,8 @@ export async function POST(
   const { provider } = await params;
   const { token, code } = (await req.json()) as { token?: string; code?: string };
 
-  if (!token || !code) {
+  // code may be an empty string: e.g. the qoder global-edition login PAT prompt hints "submit empty = browser device-code login"
+  if (!token || code === undefined) {
     return Response.json({ error: "token and code required" }, { status: 400 });
   }
 
@@ -60,7 +61,7 @@ export async function GET(
 
   const stream = new ReadableStream({
     async start(controller) {
-      const modelRuntime = await ModelRuntime.create();
+      const modelRuntime = await getModelRuntimeWithExtensions();
       if (!modelRuntime.getProvider(provider)?.auth.oauth) {
         send(controller, { type: "error", message: `Unknown provider: ${provider}` });
         controller.close();

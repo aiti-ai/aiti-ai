@@ -1,5 +1,5 @@
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
-import { buildApiKeyProviderList, buildOAuthProviderList } from "@/lib/provider-listing";
+import { getModelRuntimeWithExtensions } from "@/lib/model-runtime-ext";
+import { buildOAuthProviderList } from "@/lib/provider-listing";
 import { collectProviderListingInputs } from "@/lib/provider-listing-runtime";
 
 export const dynamic = "force-dynamic";
@@ -7,9 +7,7 @@ export const dynamic = "force-dynamic";
 // Providers that declare an OAuth login method, including anthropic
 // (Claude Pro/Max) — see lib/provider-listing.ts (#309).
 export async function GET() {
-  const modelRuntime = await ModelRuntime.create();
-  const inputs = await collectProviderListingInputs(modelRuntime);
-  const oauthProviders = buildOAuthProviderList(inputs);
-  const apiKeyProviders = buildApiKeyProviderList(inputs);
-  return Response.json({ providers: oauthProviders, oauthProviders, apiKeyProviders });
+  const modelRuntime = await getModelRuntimeWithExtensions();
+  const providers = buildOAuthProviderList(await collectProviderListingInputs(modelRuntime));
+  return Response.json({ providers });
 }
