@@ -273,3 +273,13 @@ test("hideIcon：触发钮前导图标可隐藏（小屏窄位省宽），默认
   const busy = render({ ...props, hideIcon: true, busy: true });
   assert.match(busy, /spin 0\.8s linear infinite/, "busy 时仍渲染旋转指示");
 });
+
+// ── 下拉底部动作区（2026-09-19）：「管理模型」入口由扩展注册（aiti-model-wizard）──
+// 插槽行经 ExtSlot 渲染（依赖 ext store，SSR 静态渲染为空），故此处源级断言接线不被误删。
+test("下拉底部动作区插槽（modelSelectorFooter）必须在面板内渲染", () => {
+  assert.match(
+    modelSelectorSource,
+    /name="modelSelectorFooter"/,
+    "ModelSelector 面板底部要渲染 modelSelectorFooter 插槽（workspacePickerActions 同款范式；未注册零渲染零回归）",
+  );
+});
