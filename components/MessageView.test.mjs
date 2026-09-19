@@ -18,6 +18,7 @@ const {
 } = await jiti.import("./MessageView.tsx");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 const { splitFinalAssistantBlocks } = await jiti.import("@/lib/message-display");
+const { setToolCallExpanded, clearExpandedToolCalls } = await jiti.import("@/lib/tool-call-expansion");
 
 function renderMessage(message, props = {}) {
   return renderToStaticMarkup(
@@ -44,6 +45,25 @@ test("matches response model aliases and otherwise includes the provider", () =>
   assert.equal(getModelDisplayName("gateway", "anthropic/claude-sonnet-5", names), "Sonnet 5");
   assert.equal(getModelDisplayName("CUSTOM-API", "glm-5.3", names), "GLM 5.3");
   assert.equal(getModelDisplayName("gateway", "unknown-model", names), "gateway/unknown-model");
+});
+
+test("tolerates a missing model or provider (external-agent replay frames)", () => {
+  const names = { "gateway:claude-sonnet-5": "Sonnet 5" };
+
+  // provider-only (ACP replay frames / error messages: provider present, model missing) used to crash the whole page:
+  // getModelDisplayName called responseModel.toLowerCase() unguarded → crash on undefined → global-error.
+  assert.equal(getModelDisplayName("aiti-acp-agent/codebuddy", undefined, names), "aiti-acp-agent/codebuddy");
+  assert.equal(getModelDisplayName("gateway", undefined, names), "gateway");
+  assert.equal(getModelDisplayName(undefined, "deepseek-v4.1-flash", names), "deepseek-v4.1-flash");
+  assert.equal(getModelDisplayName(undefined, undefined, names), "");
+
+  // Render regression: assistant messages missing a model no longer take down MessageView.
+  const providerOnly = renderMessage({ role: "assistant", content: [{ type: "text", text: "replayed" }], provider: "aiti-acp-agent/codebuddy" });
+  assert.match(providerOnly, /aiti-acp-agent\/codebuddy/);
+  const modelOnly = renderMessage({ role: "assistant", content: [{ type: "text", text: "no provider" }], model: "deepseek-v4.1-flash" });
+  assert.match(modelOnly, /deepseek-v4\.1-flash/);
+  const neither = renderMessage({ role: "assistant", content: [{ type: "text", text: "no stamp" }] });
+  assert.doesNotMatch(neither, /undefined/);
 });
 
 test("previews the first thinking line and reveals the full text with the saved default", () => {
@@ -269,6 +289,20 @@ test("keeps attached images when restoring a compact command for editing", () =>
   ]);
 });
 
+const USER_MSG = {
+  role: "user",
+  content: "普通用户消息",
+  timestamp: 1787000000000,
+};
+
+// "Edit from here" pending-send marker: regular message (has a previous assistant entry) → mark button;
+// first message (no branch point) → same button; once pending the button becomes "Cancel" and is highlighted.
+test("hides the edit-from-here button when no handler is provided", () => {
+  const html = renderMessage(USER_MSG, { entryId: "entry-1" });
+  assert.doesNotMatch(html, /Edit from here/);
+  assert.doesNotMatch(html, /Cancel edit from here/);
+});
+
 test("renders user-message images as buttons that open a larger preview", () => {
   const html = renderMessage({
     role: "user",
@@ -310,6 +344,102 @@ test("marks apply_patch returned failures as errors even when isError is unset",
   assert.match(html, /border:1px solid rgba\(248,113,113,0\.45\)/);
   assert.match(html, />apply_patch</);
   assert.doesNotMatch(html, /border:1px solid rgba\(34,197,94,0\.25\)/);
+});
+
+test("apply_patch failures render the applied preview instead of the requested input", () => {
+  clearExpandedToolCalls();
+  setToolCallExpanded("call-patch-2", true);
+  // input requests two files, but the preview (actual result) only contains the successful one — failed files must not appear with the applied style.
+  const block = {
+    type: "toolCall",
+    toolCallId: "call-patch-2",
+    toolName: "apply_patch",
+    input: {
+      input: [
+        "*** Begin Patch",
+        "*** Update File: src/ok.ts",
+        "-  a = 1",
+        "+  a = 2",
+        "*** Update File: src/bad.ts",
+        "-  b = 1",
+        "+  b = 2",
+        "*** End Patch",
+      ].join("\n"),
+    },
+  };
+  const result = {
+    role: "toolResult",
+    toolCallId: block.toolCallId,
+    content: [{ type: "text", text: "apply_patch failed.\nRecovery: MUST read src/bad.ts before retrying." }],
+    details: {
+      result: { appliedFiles: ["src/ok.ts"], failures: [{ filePath: "src/bad.ts", message: "context mismatch" }] },
+      preview: { files: [{ filePath: "src/ok.ts", operation: "update", diff: "-  1 a = 1\n+  1 a = 2" }] },
+    },
+  };
+  const html = renderMessage({
+    role: "assistant",
+    provider: "openai",
+    model: "gpt-test",
+    content: [block],
+  }, { toolResults: new Map([[block.toolCallId, result]]) });
+
+  // Successful file comes from the preview (with real line numbers) rather than the input request (preview text has no leading spaces).
+  assert.match(html, />a = 2</);
+  assert.match(html, />a = 1</);
+  // Diffs for the failed file b = 1 / b = 2 must not render.
+  assert.doesNotMatch(html, />b = 1</);
+  assert.doesNotMatch(html, />b = 2</);
+});
+
+test("apply_patch failures without preview exclude failed paths from the input parse", () => {
+  clearExpandedToolCalls();
+  setToolCallExpanded("call-patch-3", true);
+  // Without a preview fall back to the input, dropping failed paths file by file and keeping only successful ones.
+  const block = {
+    type: "toolCall",
+    toolCallId: "call-patch-3",
+    toolName: "apply_patch",
+    input: {
+      input: [
+        "*** Begin Patch",
+        "*** Update File: src/ok.ts",
+        "-  a = 1",
+        "+  a = 2",
+        "*** Update File: src/bad.ts",
+        "-  b = 1",
+        "+  b = 2",
+        "*** Update File: src/moved.ts",
+        "*** Move to: src/renamed.ts",
+        "-  m = 1",
+        "+  m = 2",
+        "*** End Patch",
+      ].join("\n"),
+    },
+  };
+  const result = {
+    role: "toolResult",
+    toolCallId: block.toolCallId,
+    content: [{ type: "text", text: "apply_patch failed." }],
+    details: {
+      result: { failures: [{ filePath: "src/bad.ts", message: "context mismatch" }, { filePath: "src/moved.ts", message: "move source unreadable" }] },
+    },
+  };
+  const html = renderMessage({
+    role: "assistant",
+    provider: "openai",
+    model: "gpt-test",
+    content: [block],
+  }, { toolResults: new Map([[block.toolCallId, result]]) });
+
+  // Successful files render as usual (kept after being dropped from the input).
+  assert.match(html, />  a = 2</);
+  // Diffs of failed files (including the move source name) must not render.
+  assert.doesNotMatch(html, />  b = 1</);
+  assert.doesNotMatch(html, />  b = 2</);
+  assert.doesNotMatch(html, />  m = 1</);
+  assert.doesNotMatch(html, />  m = 2</);
+  // Overall it is still framed red.
+  assert.match(html, /border:1px solid rgba\(248,113,113,0\.45\)/);
 });
 
 test("renders custom-message images as buttons that open a larger preview", () => {
