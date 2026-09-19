@@ -19,14 +19,18 @@ test("configures iOS standalone mode to use the full screen", () => {
 
 test("tracks the visual viewport while the software keyboard is open", () => {
   assert.match(appShellSource, /useViewportHeight\(\)/);
+  // Left/right safe-area padding lives on .app-shell-row (globals.css): kept
+  // on <641px single-column, zeroed on ≥641px multi-column — a tablet's 38px
+  // right gesture inset would pad out the whole three-column row otherwise.
+  assert.match(appShellSource, /className="app-shell-row"/);
+  assert.match(cssSource, /\.app-shell-row \{[\s\S]*?padding-left: env\(safe-area-inset-left\)[\s\S]*?padding-right: env\(safe-area-inset-right\)/);
+  assert.match(cssSource, /@media \(min-width: 641px\) \{[\s\S]*?\.app-shell-row \{[\s\S]*?padding-left: 0;[\s\S]*?padding-right: 0;/);
+  // Top/bottom insets stay inline (top bars + panel bottom).
   assert.match(appShellSource, /paddingTop: "env\(safe-area-inset-top\)"/);
   assert.match(appShellSource, /paddingBottom: "env\(safe-area-inset-bottom\)"/);
-  assert.match(appShellSource, /paddingLeft: "env\(safe-area-inset-left\)"/);
-  assert.match(appShellSource, /paddingRight: "env\(safe-area-inset-right\)"/);
   assert.match(appShellSource, /height: "calc\(36px \+ env\(safe-area-inset-top\)\)"/);
-  assert.match(appShellSource, /\/\* Right panel tab bar \*\/[\s\S]*?height: "calc\(36px \+ env\(safe-area-inset-top\)\)"/);
+  assert.match(appShellSource, /\/\* Right panel tab bar[\s\S]*?height: "calc\(36px \+ env\(safe-area-inset-top\)\)"/);
   assert.match(appShellSource, /height: "var\(--app-viewport-height, 100dvh\)"/);
-  assert.match(appShellSource, /data-mobile-toolbar-file=\{mobile \? "true" : undefined\}/);
   assert.match(viewportHookSource, /window\.visualViewport/);
   assert.match(viewportHookSource, /window\.requestAnimationFrame\(update\)/);
   assert.match(viewportHookSource, /window\.addEventListener\("resize", scheduleUpdate\)/);
@@ -42,8 +46,12 @@ test("contains chat content and inputs within the mobile viewport", () => {
   assert.match(cssSource, /\.markdown-body \{[\s\S]*?min-width: 0;[\s\S]*?max-width: 100%;[\s\S]*?overflow-x: hidden;/);
   assert.match(cssSource, /\.markdown-code-block \{[\s\S]*?min-width: 0;[\s\S]*?max-width: 100%;/);
   assert.match(chatWindowSource, /overflow-x-hidden overflow-y-auto/);
+  assert.match(chatInputSource, /flex: compact \? "none" : buttonsWrapped \|\| \(isMobile && mobileExpanded\) \? "1 1 100%" : "1 1 0",\s*minWidth: 0,/);
   assert.match(chatWindowSource, /maxHeight: "min\(760px, 100%\)"/);
-  assert.match(chatInputSource, /flex: compact \? "none" : 1,\s*minWidth: 0,\s*width: "100%",/);
+  // Our submit-button row wraps (textarea takes the whole line): buttonsWrapped (buttons on
+  // their own line) or the mobile-expanded state mobileExpanded (focused / has content /
+  // streaming, per v4 review) both take 1 1 100%; otherwise share the row with buttons at
+  // 1 1 0 (covered by the previous assertion). No upstream fixed width:"100%" style.
 });
 
 test("prevents iOS focus zoom from widening the layout", () => {
