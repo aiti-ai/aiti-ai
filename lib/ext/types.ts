@@ -42,6 +42,8 @@ export interface ExtFeature {
   value?: string;
   /** 输入框占位提示（string 类型用，可选）。 */
   placeholder?: string;
+  /** 应用中心分类标注（aiti-app-center 消费，可选；缺席继承扩展级 category → other）。 */
+  category?: string;
 }
 
 /** status 接口里的功能条目 = 声明 + 当前生效状态。 */
@@ -329,7 +331,7 @@ export type ExtUiItemIcon = string | { svg: string };
  */
 export type ExtUiStaticSlots = Omit<
   ExtUiDefinition,
-  "provides" | "i18n" | "clientDependsOn" | "clientImmediately"
+  "provides" | "i18n" | "clientDependsOn" | "clientImmediately" | "clientLazyVia"
 >;
 
 export type ExtSlotName =
@@ -852,6 +854,11 @@ export interface ExtUiDefinition {
   /** 懒加载声明：false 时该扩展的 client bundle 不在启动阶段 materialize——
    *  首次渲染到它声明的 UI 插槽时才拉取并注册（按需加载，DSH immediately 反哺）。 */
   clientImmediately?: boolean;
+  /** 懒触发凭证（与 clientImmediately:false 配套）：扩展无 ui[slot][] 静态条目、
+   *  渲染面经 client service 交付给消费方扩展（如 aiti-app-center → session-manager
+   *  编排器），消费方在常挂挂载点确定性 ensureMaterialized——「标懒无效」静态诊断
+   *  对其豁免（豁免的是诊断不是机制：无凭证的服务触发型懒扩展才会被误报）。 */
+  clientLazyVia?: "service";
   /** Per-locale message table looked up via the client ctx.t(key, params). */
   i18n?: Record<string, Record<string, string>>;
 }
@@ -866,6 +873,13 @@ export interface PiWebExtension {
   client?: string;
   /** 短图标/emoji（如 "🧰"）或相对扩展目录的图标文件路径（如 "icon.svg"，lucide 线条风格），可选。 */
   icon?: string;
+  /**
+   * 应用中心分类标注（aiti-app-center 消费；tag 式单值）。值为应用中心内部分类 id
+   * （session/code/ai/auto/debug/ui/system/other）时出多语标签，其他值按自定义分类
+   * 原样展示；缺席落默认分类 other。条目级（meta.category / ui 条目 category）与
+   * feature 级标注优先于本值。
+   */
+  category?: string;
   /** 功能管理声明：扩展开放的、可被用户启用/禁用的功能清单（见 ExtFeature）。 */
   features?: ExtFeature[];
   /**
@@ -956,6 +970,8 @@ export interface ManifestExtension {
   provides?: string[];
   /** 独占接管特性声明。 */
   takeover?: string[];
+  /** 应用中心分类标注（透传自 PiWebExtension.category；缺席 = 未标注）。 */
+  category?: string;
   /** 功能状态（extman 管理）：host 客户端加载时一并取，扩展只读共享 store，无独立请求。 */
-  features?: { id: string; type?: "boolean" | "string" | "textlist"; label?: string; placeholder?: string; enabled: boolean; value?: string }[] | null;
+  features?: { id: string; type?: "boolean" | "string" | "textlist"; label?: string; placeholder?: string; category?: string; enabled: boolean; value?: string }[] | null;
 }

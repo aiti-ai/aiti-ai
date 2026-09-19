@@ -697,14 +697,17 @@ export class ExtRegistryImpl {
     }
     // [懒加载 v2] 标懒静态诊断（不拦截）：clientImmediately:false 却没有任何
     // ui[slot][] 条目声明 → 首插槽渲染即物化（常挂插槽）或永不物化（静默失效）。
-    // 有条目声明的交给客户端静态入口/交互插槽机制（dev 断言在 ext-ui-store 合并层）。
+    // 有条目声明的交给客户端静态入口/交互插槽机制（dev 断言在 ext-ui-store 合并层）；
+    // clientLazyVia:"service" = 服务交付型懒扩展（渲染面经 client service 交付、
+    // 消费方在常挂挂载点确定性 ensureMaterialized，如 aiti-app-center）→ 有触发凭证，豁免。
     for (const ext of this.extensions.values()) {
       if (ext.ext.ui?.clientImmediately !== false) continue;
+      if (ext.ext.ui?.clientLazyVia === "service") continue;
       const hasStaticEntry = Object.entries(ext.ext.ui).some(
-        ([k, v]) => !["i18n", "provides", "clientDependsOn", "clientImmediately"].includes(k) && Array.isArray(v) && v.length > 0,
+        ([k, v]) => !["i18n", "provides", "clientDependsOn", "clientImmediately", "clientLazyVia"].includes(k) && Array.isArray(v) && v.length > 0,
       );
       if (!hasStaticEntry) {
-        this.errors.set(ext.id, "标懒无效：无任何 ui[slot][] 静态入口（常挂插槽首渲染即物化，或永不物化静默失效）——补静态条目或去掉 clientImmediately:false");
+        this.errors.set(ext.id, "标懒无效：无任何 ui[slot][] 静态入口（常挂插槽首渲染即物化，或永不物化静默失效）——补静态条目、声明 ui.clientLazyVia:\"service\"（消费方确定性 ensureMaterialized）或去掉 clientImmediately:false");
       }
     }
     this.buildCapabilityIndex();
@@ -1005,6 +1008,8 @@ export class ExtRegistryImpl {
       ui: e.ext.ui ?? null,
       source: e.source,
       icon: e.ext.icon ?? null,
+      // 应用中心分类标注（aiti-app-center 消费；不声明则字段缺席，客户端落默认分类）
+      ...(e.ext.category ? { category: e.ext.category } : {}),
       // 依赖与能力模型（§4 透传）：运行时可探测——扩展 client 拿全量 manifest 后
       // 可判断依赖的能力是否有生效提供者 / 某可选扩展在不在，决定是否启用附加功能。
       ...(e.ext.dependsOn?.length ? { dependsOn: [...e.ext.dependsOn] } : {}),
@@ -1012,7 +1017,7 @@ export class ExtRegistryImpl {
       ...(e.ext.provides?.length ? { provides: [...e.ext.provides] } : {}),
       ...(e.ext.takeover?.length ? { takeover: [...e.ext.takeover] } : {}),
       // 功能状态（extman 管理）：host 客户端加载时一并取，扩展只读共享 store，无独立请求
-      features: e.ext.features?.length ? e.ext.features.map((f) => ({ id: f.id, type: f.type, label: f.label, placeholder: f.placeholder, enabled: this.featureEnabled(e.id, f.id), ...(f.type === "string" || f.type === "textlist" ? { value: String(this.featureValue(e.id, f.id)) } : {}) })) : null,
+      features: e.ext.features?.length ? e.ext.features.map((f) => ({ id: f.id, type: f.type, label: f.label, placeholder: f.placeholder, ...(f.category ? { category: f.category } : {}), enabled: this.featureEnabled(e.id, f.id), ...(f.type === "string" || f.type === "textlist" ? { value: String(this.featureValue(e.id, f.id)) } : {}) })) : null,
     }));
   }
 
