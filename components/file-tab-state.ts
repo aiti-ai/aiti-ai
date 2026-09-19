@@ -90,3 +90,26 @@ export function openFolderTab(tabs: Tab[], input: OpenFolderTabInput): Tab[] {
     kind: "folder",
   }];
 }
+
+/**
+ * [aiti-editor 懒物化窗口期守卫] 该 path 是否正以 dock face 形态存续（aiti-editor
+ * file-dock 实例清单）。aiti-editor 是懒加载扩展（clientImmediately:false）：刷新后
+ * `window.__aitiEditor` 未挂载，但 face 实例清单是持久 localStorage——清单里还有
+ * 这个文件时，openFile 必须改道 face（物化后 openFileFace），不能落宿主 tab，
+ * 否则编辑器物化 auto-present 面前浮窗 → 同一文件双开。
+ *
+ * 返回清单里的实例 path（openFileFace 用它构造 face key，保证与现存 face 精确相等）；
+ * 无 face 存续返回 null。扩展键名与 aiti-editor file-dock.tsx 的 INSTANCES_KEY 同源。
+ */
+export function findDormantFileFacePath(filePath: string): string | null {
+  if (typeof localStorage === "undefined") return null;
+  const norm = (p: string) => p.replaceAll("\\", "/").replace(/\/+$/, "");
+  const target = norm(filePath || "");
+  if (!target) return null;
+  let list: string[] = [];
+  try {
+    const raw = JSON.parse(localStorage.getItem("pi:sidebar-dock:files") ?? "[]");
+    if (Array.isArray(raw)) list = raw.filter((x): x is string => typeof x === "string");
+  } catch { return null; }
+  return list.find((p) => norm(p) === target) ?? null;
+}

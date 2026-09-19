@@ -16,10 +16,10 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { TabBody, type TabBodyCtx } from "./TabBody";
 import { DetachedTabWindow } from "./DetachedTabWindow";
-import { openFileTab, openFolderTab, saveFileViewerState } from "./file-tab-state";
+import { openFileTab, openFolderTab, saveFileViewerState, findDormantFileFacePath } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import dynamic from "next/dynamic";
-import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService } from "./ExtSlots";
+import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService, ensureExtMaterialized } from "./ExtSlots";
 import { ProviderUsagePanel } from "./ProviderUsagePanel";
 /** SessionSidebar 懒加载（统一 dock 方案 §7-2）：接管态（sidebarContent 有接管者）
  *  本组件整体不渲染，chunk 永不加载——主包瘦身；回退态首次渲染时按需拉取
@@ -1847,20 +1847,11 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     }
   }, [invalidateWorkspaceRestore, selectedSession, router]);
 
-  const handleOpenFile = useCallback((
+  const openHostFileTab = useCallback((
     filePath: string,
     fileName: string,
     options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean },
   ) => {
-    // 文件 dock face 守卫（aiti-editor file-dock，2026-09-16）：该 path 正以 dock face
-    // 形态存续（浮窗/左栏区块/右栏 dock tab）→ 带到面前（present open 走 dockpref 落位/
-    // 同态激活），不建宿主 tab。auto = 恢复性打开（select:false）不拉小屏抽屉。扩展缺席
-    // 时 hasFileFace 缺席 → 走普通宿主 tab。
-    const ed = window.__aitiEditor;
-    if (typeof ed?.hasFileFace === "function" && typeof ed.openFileFace === "function" && ed.hasFileFace(filePath)) {
-      ed.openFileFace(filePath, { auto: options?.select === false });
-      return;
-    }
     const sourceSessionId = options?.sourceSessionId;
     const modeHint = options?.modeHint;
     const select = options?.select !== false; // default true
@@ -1880,6 +1871,43 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       if (isMobile) setSidebarOpen(false);
     }
   }, [isMobile, revealFileTabOnOpen]);
+
+
+  const handleOpenFile = useCallback((
+    filePath: string,
+    fileName: string,
+    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean },
+  ) => {
+    // 文件 dock face 守卫（aiti-editor file-dock，2026-09-16）：该 path 正以 dock face
+    // 形态存续（浮窗/左栏区块/右栏 dock tab）→ 带到面前（present open 走 dockpref 落位/
+    // 同态激活），不建宿主 tab。auto = 恢复性打开（select:false）不拉小屏抽屉。扩展缺席
+    // 时 hasFileFace 缺席 → 走普通宿主 tab。
+    const ed = window.__aitiEditor;
+    if (typeof ed?.hasFileFace === "function" && typeof ed.openFileFace === "function" && ed.hasFileFace(filePath)) {
+      ed.openFileFace(filePath, { auto: options?.select === false });
+      return;
+    }
+    // [懒物化窗口期守卫 2026-09-19] aiti-editor 懒加载（clientImmediately:false）：刷新后
+    // face API 未挂载而实例清单（持久 localStorage）仍在。此时直落宿主 tab，编辑器随后
+    // 物化会 auto-present 面前浮窗 → 同一文件双开（宿主 tab + 浮窗叠在消息区上，移动端
+    // 表现为「打开了没切过去/内容混显」）。命中休眠 face → 先物化扩展再走 openFileFace；
+    // 物化失败（扩展已删/禁用）回落宿主 tab。
+    if (typeof ed?.hasFileFace !== "function" || typeof ed?.openFileFace !== "function") {
+      const facePath = findDormantFileFacePath(filePath);
+      if (facePath) {
+        void ensureExtMaterialized("aiti-editor").then((ok) => {
+          const api = window.__aitiEditor;
+          if (ok && typeof api?.hasFileFace === "function" && typeof api?.openFileFace === "function" && api.hasFileFace(facePath)) {
+            api.openFileFace(facePath, { auto: options?.select === false });
+          } else {
+            openHostFileTab(facePath, fileName, options);
+          }
+        }).catch(() => { openHostFileTab(filePath, fileName, options); });
+        return;
+      }
+    }
+    openHostFileTab(filePath, fileName, options);
+  }, [isMobile, revealFileTabOnOpen, openHostFileTab]);
 
   const handleOpenLinkedFile = useCallback((filePath: string) => {
     handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null });

@@ -25,8 +25,9 @@ test("TabBar 由宿主令牌驱动（revealToken={fileTabRevealToken}）", () =>
 });
 
 test("用户自主打开路径递增令牌：文件/文件夹（select:true）、点击页签、终端、dock、收回", () => {
+  // 2026-09-19 拆分：openHostFileTab 承载宿主 tab 落位（handleOpenFile 只做 face 守卫分流）
   assert.match(
-    blockOf("const handleOpenFile = useCallback"),
+    blockOf("const openHostFileTab = useCallback"),
     /if \(select\) \{\s*\n\s*setActiveFileTabId\(tabId\);\s*\n\s*revealFileTabOnOpen\(\)/,
   );
   assert.match(
@@ -39,6 +40,16 @@ test("用户自主打开路径递增令牌：文件/文件夹（select:true）�
   // dock 打开 / 已停靠面板重复打开置前（两类事件各一处）
   assert.equal((source.match(/revealFileTabOnOpen\(\); \/\/ 用户从工具条\/扩展打开 dock 面板/g) || []).length, 1);
   assert.equal((source.match(/revealFileTabOnOpen\(\); \/\/ 已停靠面板重复打开置前/g) || []).length, 1);
+});
+
+test("懒物化窗口期守卫：休眠 face 改道 openFileFace（不落宿主 tab）", () => {
+  const b = blockOf("const handleOpenFile = useCallback");
+  // 命中休眠 face → 物化 aiti-editor 后走 openFileFace（auto 透传 select:false）；
+  // 用户点击（select:true）的置前/令牌语义由 dock activate 事件联动承担（AppShell onActivate）。
+  assert.match(b, /findDormantFileFacePath\(filePath\)/);
+  assert.match(b, /ensureExtMaterialized\("aiti-editor"\)/);
+  assert.match(b, /api\.openFileFace\(facePath, \{ auto: options\?\.select === false \}\)/);
+  assert.match(b, /openHostFileTab\(facePath, fileName, options\)/);
 });
 
 test("后台恢复与回落路径不递增令牌：恢复兜底激活 / 布局恢复 / 关闭 / 拆窗", () => {

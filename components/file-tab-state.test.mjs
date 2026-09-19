@@ -117,3 +117,49 @@ test("reopening an already-open folder is a no-op (caller reselects)", () => {
   const second = openFolderTab(first, openFolderA);
   assert.strictEqual(second, first);
 });
+
+// ── findDormantFileFacePath（aiti-editor 懒物化窗口期守卫）──
+import { findDormantFileFacePath } from "./file-tab-state.ts";
+
+// 极简 localStorage 桩（node:test 环境无 window）
+function withFakeLocalStorage(entries, run) {
+  const store = new Map(Object.entries(entries));
+  const fake = {
+    getItem: (k) => (store.has(k) ? store.get(k) : null),
+    setItem: (k, v) => { store.set(k, String(v)); },
+    removeItem: (k) => { store.delete(k); },
+    clear: () => { store.clear(); },
+  };
+  const g = globalThis;
+  const had = "localStorage" in g;
+  const prev = had ? g.localStorage : undefined;
+  Object.defineProperty(g, "localStorage", { value: fake, configurable: true });
+  try { run(); } finally {
+    if (had) Object.defineProperty(g, "localStorage", { value: prev, configurable: true });
+    else delete g.localStorage;
+  }
+}
+
+test("findDormantFileFacePath returns the stored instance path on exact match", () => {
+  withFakeLocalStorage({ "pi:sidebar-dock:files": JSON.stringify(["/repo/docs/plan.md"]) }, () => {
+    assert.equal(findDormantFileFacePath("/repo/docs/plan.md"), "/repo/docs/plan.md");
+  });
+});
+
+test("findDormantFileFacePath matches ignoring trailing slashes and backslash form", () => {
+  withFakeLocalStorage({ "pi:sidebar-dock:files": JSON.stringify(["C:/repo/docs/plan.md"]) }, () => {
+    assert.equal(findDormantFileFacePath("C:\\repo\\docs\\plan.md\\"), "C:/repo/docs/plan.md");
+  });
+});
+
+test("findDormantFileFacePath returns null when the list is empty or malformed", () => {
+  withFakeLocalStorage({ "pi:sidebar-dock:files": "not-json" }, () => {
+    assert.equal(findDormantFileFacePath("/repo/docs/plan.md"), null);
+  });
+  withFakeLocalStorage({}, () => {
+    assert.equal(findDormantFileFacePath("/repo/docs/plan.md"), null);
+  });
+  withFakeLocalStorage({ "pi:sidebar-dock:files": JSON.stringify(["/repo/other.md"]) }, () => {
+    assert.equal(findDormantFileFacePath("/repo/docs/plan.md"), null);
+  });
+});
