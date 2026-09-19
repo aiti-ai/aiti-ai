@@ -4,21 +4,21 @@ import test from "node:test";
 
 const source = fs.readFileSync(new URL("./AppShell.tsx", import.meta.url), "utf8");
 
-test("压缩后的会话仍可根据持久化消息数生成标题", () => {
+test("compacted sessions still get a title from the persisted message count", () => {
   assert.match(
     source,
     /\(sessionStats\?\.userMessages \?\? 0\) > 0 \|\| selectedSession\.messageCount > 0/,
   );
 });
 
-test("尚未落盘的会话不会触发依赖 JSONL 的自动命名", () => {
+test("sessions not yet persisted do not trigger JSONL-dependent auto naming", () => {
   assert.match(
     source,
     /const disabled = !selectedSession \|\| selectedSession\.transient \|\| !hasMessages/,
   );
 });
 
-test("会话落盘后会用服务端记录清除临时状态", () => {
+test("once persisted, the session clears transient state via the server record", () => {
   assert.match(source, /\{ \.\.\.prev, \.\.\.full, transient: full\.transient \?\? false \}/);
   assert.match(source, /if \(selectedSession\) hydrateSelectedSession\(selectedSession\.id\)/);
 });

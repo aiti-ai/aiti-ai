@@ -6,12 +6,14 @@ const source = await readFile(new URL("./ChatWindow.tsx", import.meta.url), "utf
 const hookSource = await readFile(new URL("../hooks/useAgentSession.ts", import.meta.url), "utf8");
 
 test("renders temporary notices once at the top right of the chat column", () => {
-  const noticeShelfUsages = source.match(/<NoticeShelf notices=\{notices\}/g) ?? [];
+  // The fork additionally renders a right-aligned NoticeShelf on the empty
+  // new-session page — count the floating chat-column shelf specifically.
+  const floatingChatShelves = source.match(/<NoticeShelf notices=\{notices\} floating onPauseChange=\{setNoticePaused\}/g) ?? [];
 
-  assert.equal(noticeShelfUsages.length, 1);
+  assert.equal(floatingChatShelves.length, 1);
   assert.match(
     source,
-    /position: "absolute",\s*top: 12,\s*left: 0,\s*right: isMobile \? 0 : CHAT_MINIMAP_WIDTH,[\s\S]*?justifyContent: "flex-end",[\s\S]*?<NoticeShelf notices=\{notices\} floating onPauseChange=\{setNoticePaused\} \/>/,
+    /position: "absolute",\s*top: 12,\s*left: 0,\s*right: isMobile(?: \|\| isCompact)? \? 0 : CHAT_MINIMAP_WIDTH,[\s\S]*?justifyContent: "flex-end",[\s\S]*?<NoticeShelf notices=\{notices\} floating onPauseChange=\{setNoticePaused\} \/>/,
   );
 });
 
