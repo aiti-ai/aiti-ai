@@ -73,7 +73,7 @@ app/api/
   extensions/manifest/route.ts    GET client manifest（ui 元数据 + clientUrl + i18n）
   extensions/status/route.ts      GET 全量状态（含禁用/失败条目 + 插入点/钩子/依赖）；管理操作在 aiti-extman 扩展
   extensions/reload/route.ts      POST hot reload（shutdown→loadAll→startAll）
-  （扩展管理 UI/安装/在线注册表已迁出 core → aiti-ai pi-web-ext/aiti-extman 扩展：
+  （扩展管理 UI/安装/在线注册表已迁出 core → 外部 aiti-extman 扩展：
     /api/extensions/aiti-extman/{status,registry,ops}）
   skills/route.ts                 GET/PATCH loaded skills and disable-model-invocation
   skills/install/route.ts         POST install skills through npx skills add
@@ -226,15 +226,6 @@ pi keeps steer/follow-up queues in memory only — a server restart would lose t
 - Sessions whose cwd points at a removed worktree are inferred back into the main project instead of becoming a phantom project row.
 - git prints POSIX-style absolute paths even on Windows, so every path read out of git goes through `toNativePath()` (`lib/paths.ts`) before it is compared or returned. Compare paths with `samePath()`, never `===` — raw equality made `isTopLevel` permanently false on Windows and hid the worktree switcher entirely. Branch names are not paths and must keep their forward slashes. Browser code cannot apply Node path rules, so `/api/worktrees` resolves `currentWorktreePath` server-side; the sidebar must use that identity for highlighting and removal fallback.
 
-### pi-ai streaming-parse hotfix — re-apply after every install（issue #9265）
-- node_modules 里的 `@earendil-works/pi-ai@0.85.1` 打有本地热修：6 个 api adapter 流式 chunk 循环里的 `block.arguments = parseStreamingJson(累积串)` 改为 `{}`（每 delta 全量 re-parse 是 O(n²)，大参数流式会饿死事件循环——2026-09-16 生产 20341 卡死 7 分钟的根因；消费端已审计零读者，收尾 finalize 的 parse 保留）。
-- **任何 `bun install` / `npm install` / 上游 merge 刷新 node_modules 都会把它冲掉且无提示** → merge/install 后必跑：
-  ```bash
-  bash ~/.pi/agent/patches/apply-pi-ai-9265-hotfix.sh
-  ```
-  幂等、自动发现安装位（pi-prod / pi-web / 也可传额外路径）、打完自动 import 验证；打完需重启对应实例（模块已加载进内存；20341 生产重启需用户确认）。
-- 原理/消费端审计/复发排查见 `~/.pi/agent/known-issues.md`；上游 [#9265](https://github.com/earendil-works/pi/issues/9265) / PR [#9461](https://github.com/earendil-works/pi/pull/9461) 发版（pi-ai > 0.85.1 含修复）后升级依赖即自然卸补丁，本节作废。
-
 ### File access allow-list
 - `/api/files` is intentionally not a general filesystem browser. Allowed roots come from session cwds, their resolved project roots, `~/pi-cwd-*`, and roots explicitly added with `allowFileRoot()`.
 - `/api/cwd/validate`, `/api/default-cwd`, and `/api/worktrees` call `allowFileRoot()` when they make a new location browsable.
@@ -307,15 +298,16 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 ## Service port proxy & expose（已抽离为 service-tunnels 扩展）
 
 服务端口发现 / 虚拟主机代理 / 隧道 / 认证 / 自暴露已全部迁出 core，由
-`service-tunnels` 扩展承载（源码：aiti-ai `pi-web-ext/service-tunnels/`；部署到
-`~/.pi/web/extensions/service-tunnels/`）：
+`service-tunnels` 扩展承载（源码在外部私有工作区，不入本仓库；部署到
+`~/.pi/web/extensions/service-tunnels/`；私有源地址与升级流程属部署环境配置，
+见内部工作区文档）：
 
 - 扩展 `server.startup` 创建库单例（`globalThis.__piServiceTunnels`）；`server.middleware`
   在核心门禁前处理服务 vhost（`st.proxy.parseHost/resolve`）与 allowlocal 直连门禁；
   `server.api` 提供 `/api/extensions/service-tunnels/*`（发现/暴露/隧道/用户/TOTP/自暴露）。
-- 依赖标准 npm：扩展 `node_modules/service-tunnels`（私有源 registry.npmjs.org，deploy 时
-  `npm install --omit=dev`）；加载器按扩展目录解析裸说明符（`lib/ext/loader.ts`
-  jiti id = 扩展入口），扩展可带标准 node_modules。
+- 扩展依赖走标准 npm（`node_modules` 随扩展目录）；加载器按扩展目录解析裸说明符
+  （`lib/ext/loader.ts` jiti id = 扩展入口），扩展可带标准 node_modules。
+  私有源地址属部署环境配置，不入仓库。
 - core 只保留通用安全门禁（DNS-rebinding + `PI_WEB_PASSWORD`）；`request-security.ts`
   仍读扩展写入的 `globalThis.__piWebExposeConfig`/`__piWebAllowHostsOverride` 做 allowHost 例外。
 - 测试服务虚拟主机 `<port><suffix>`（默认 `.pi.localhost`）行为与迁移前一致；扩展未
@@ -324,62 +316,6 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 - `GET /api/services?refresh=1` lists discovered ports + `serviceHostSuffixes`; `GET /api/service-tunnels` returns exposes/status/provider order/default provider/user managers/tool status/allow-download. The top-toolbar globe opens `ServicesDialog` (10s auto-refresh): **Ports** tab = per-port access methods (direct + virtual-host URLs, `window.open` with `noopener,noreferrer`), protocol auto-detect (http/https/tcp), expose form (tunnel type + auth provider, schema-driven), active exposes (stop, nginx logs), allow-tool-download toggle; **Users** tab = provider user management + TOTP 2FA enroll/activate.
 - **Provider knowledge lives in the library**: pi-web consumes `providerOrder`/`defaultProvider`/`userManagers`/`tunnelSchemas`/`tunnelTcpSupport` — no provider names hardcoded in pi-web (tcp exposes carry no auth: the library's tcp path ignores the provider).
 - Tests: `node --test lib/service-ports.test.mjs lib/request-security.test.mjs lib/web-auth.test.mjs` (middleware-safe helpers, discovery cache, gates).
-
-## pi-web-dev service 运维（重要：避免重复踩坑）
-
-- **重启 pi-web-dev 用 `sudo systemctl restart pi-web-dev`**——不要手动
-  `kill` + `nohup next dev`：手动进程会占住 30142，systemd 的
-  auto-restart 一直起不来（`activating auto-restart`），且手动带的 env
-  与 service 配置不一致（行为漂移）。
-- **编译目录**：service 用 `PI_WEB_DEV_DIST=1` → distDir = **`.next-dev`**
-  （next.config 的 `distDir: PI_WEB_DEV_DIST ? ".next-dev" : ".next"`）。
-  **不要乱清/乱动 `.next-dev`**（service 正在用；清了会导致编译异常/404）。
-  `.next` 与 `.next-aiti` 是其他用途（生产构建 / 隔离测试），清前先确认归属。
-- **隔离测试实例**：另起 dev 时用 **`PI_WEB_DIST_DIR=<自定义目录>`**（如
-  `.next-aiti`）——多个实例共享同一编译目录会互相覆盖（曾导致 middleware
-  运行旧编译）。**端口**也要避开 30142（service）与生产端口。
-- **service 的部署 env 在 drop-in**（`/etc/systemd/system/pi-web-dev.service.d/*.conf`：
-  aiti/basepath/base-domain 等）——`systemctl restart` 自动加载，无需手动传。
-- 改动 pi-web 代码（proxy.ts / components / lib）后 **`systemctl restart pi-web-dev`**
-  生效；浏览器验证注意 **强制刷新**（`ignoreCache`）绕过 client bundle 缓存。
-
-## service-tunnels 依赖
-
-- pi-web 依赖**本地镜像**（registry.npmjs.org / 127.0.0.1:4873）的 service-tunnels
-  内部构建；升级用 **`bun install`**（勿用 `npm i` —— 会破坏 node_modules，
-  曾导致 enhanced-resolve / jiti 缺失）。
-- **service-tunnels 是自维护仓库**（本地工作区 `~/workspace/service-tunnels`）：
-  - 需要库能力时**直接改它的源码**（`src/` → `npm run build` → commit →
-    `npm publish --registry=https://registry.npmjs.org` 升版本）→ pi-web 再
-    `bun add service-tunnels@<新版本>` 升级；**不要 patch node_modules**。
-  - 已内置 **`transformResponse`**（0.3.34+）通用响应注入：text/html 响应
-    `</head>` 前（head）或响应开头（`{ position: "prepend" }`，不缓冲流式、
-    最早执行）。aiti-devtools 的 launcher 注入用它（prepend）。
-  - library mode：pi-web 转发在 `proxy.ts`（Next rewrite）——注入执行用
-    **同一回调**（`__aitiInject.scriptFor`），与库内自托管 proxy 语义一致。
-  - **注入开关 UI**（服务端口界面）：Ports 页每个端口卡的展开区 + Pi-web 页
-    各有「注入 JS（AITI 调试器）」开关（`ServicesDialog.tsx` 的 `InjectJsSection`），
-    读写 aiti-devtools 扩展的 `inject-ports` API（GET/PUT
-    `/api/extensions/aiti-devtools/inject-ports`，按端口开关）。执行侧：
-    **proxy 模式已生效**（service vhost）；**tunnel 模式**（nginx 网关响应）
-    由 service-tunnels 开发中，UI 先就绪。
-  - 注入配置（`inject-ports.json`）在 aiti-devtools 扩展 dataDir（不在本仓库）；
-    PUT 不带 `baseUrl` 时扩展保留已存值（服务端口界面只改 ports）。
-  - **aiti-devtools 扩展的 open enroll 跳过 pi-web 自身端口**：`enrollPort` 对
-     `port === (globalThis.__piWebPort ?? PORT ?? 30141)` 只跳过 open binding——
-     否则给 pi-web 端口注册 `{label:"",provider:""}` 等于无认证 vhost 直达
-     管理界面。注入仍生效（自暴露的 labeled binding / 隧道通道）。
-  - **exposeSelf 幂等短路按“同模式通道”判断**：tunnel/both 请求撞上运行中的
-    自暴露隧道（记录带 url）才短路；proxy 请求重入 `st.auth.expose(mode=proxy)`
-    （binding/记录覆盖写，天然幂等）→ 已有 tunnel 再点 proxy 会真正建出
-    vhost 通道，不再静默吞掉（否则 UI“点了没反应、无错误”）。
-  - **登录跳转 scheme 跟随公网协议（0.3.36+）**：https 隧道
-    （localtunnel/ngrok/cloudflared 等）边缘 TLS 终结、公网 URL 是 https——
-    loginRedirect 不能按本地端口协议判断（pi-web 本地 http + localtunnel 公网
-    https → 登录页跳成 http → 浏览器混合内容拦截）。tunnel/网关路径在
-    `expose.ts` 从公网 URL 推导 publicScheme（本地后端 scheme 仍按端口探测）；
-    middleware 路径（`proxy.ts` renderLoginRedirectReq）按请求实际协议
-    （forwardedProto）把 http 跳转模板升级为 https。
 
 ## 代码中禁止出现内部地址
 
