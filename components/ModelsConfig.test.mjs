@@ -172,6 +172,30 @@ test("per-model settings use one primary divider before advanced settings", () =
   assert.doesNotMatch(modelDetail, /borderBottom: "1px solid var\(--border\)"/);
 });
 
+test("brand-new discovered models get one minimal cap probe", () => {
+  // Metadata is the source of truth; the wizard seeds discovered maxTokens
+  // into the model entry, then verifies brand-new unknown models' caps with
+  // one minimal request against the real API.
+  assert.match(source, /probe-cap/);
+  assert.match(source, /MIN_PROBE_MAX_TOKENS/);
+  assert.match(source, /probeModelCap\(providerName, provider, model\)/);
+  assert.match(source, /applyProbeResult\(providerName, modelId, d\.confirmedMaxTokens\)/);
+  // Only completely-new models are probed; known corrections and small caps skip.
+  assert.match(source, /\.filter\(\(discoveredModel\) => !existingIds\.has\(discoveredModel\.id\)\)/);
+  assert.match(source, /model\.maxTokens > MIN_PROBE_MAX_TOKENS/);
+});
+
+test("max output tokens come from provider metadata; only known mismatches are corrected", () => {
+  // Metadata is the source of truth; the wizard seeds discovered maxTokens
+  // into the model entry, clamped only by a tiny verified-corrections map.
+  assert.match(source, /MODEL_MAX_OUTPUT_TOKEN_CORRECTIONS/);
+  assert.match(source, /"glm-5-2-260617": 128000/);
+  assert.match(source, /maxTokens: capMaxOutputTokens\(providerName, discoveredModel\.id, discoveredModel\.maxTokens\)/);
+  // Catalog preset fill and the central model update path apply the same rule.
+  assert.match(source, /capMaxOutputTokens\(providerName, model\.id, preset\.maxTokens\)/);
+  assert.match(source, /capMaxOutputTokens\(providerName, m\.id, m\.maxTokens\)/);
+});
+
 test("thinking level overrides keep explicit default, disabled, and custom controls", () => {
   const editor = source.slice(
     source.indexOf("function ThinkingLevelMapEditor"),

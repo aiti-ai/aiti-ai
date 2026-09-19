@@ -37,8 +37,10 @@ test("new-session startup adopts server state only while explicit overrides are 
 });
 
 test("model-list refresh does not overwrite a live session or explicit thinking override", () => {
+  // Applying the pinned thinking level has been extracted into applyModelsResponse (cache replay and
+  // network results share the same mapping); the contract assertions cover the whole applyModelsResponse → loadModels span.
   const loadModelsSource = source.slice(
-    source.indexOf("const loadModels = useCallback"),
+    source.indexOf("const applyModelsResponse = useCallback"),
     source.indexOf("const handleBuiltinSlashCommand"),
   );
 
