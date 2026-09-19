@@ -13,7 +13,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, getThinkingPreview, getThinkingTailPreview, isEmptyThinkingBlock } from "@/lib/message-display";
 import { parseUnifiedPatch, type SplitDiffCell, type SplitDiffFile } from "@/lib/patch";
-import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
+import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchFailurePaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
 import { isApplyPatchToolName, isEditToolName } from "@/lib/tool-names";
 import { isToolCallExpanded, setToolCallExpanded } from "@/lib/tool-call-expansion";
 import { isThinkingExpandedByDefault, THINKING_EXPANDED_EVENT } from "@/lib/thinking-expansion-preference";
@@ -1559,14 +1559,42 @@ function PatchTextView({ text }: { text: string }) {
  * lines, so it is only used as a fallback when the call input is unavailable.
  * A single call may contain several file operations — each becomes its own
  * file section.
+ *
+ * When the extension reports per-file failures on a normal result (`failures`
+ * on `details.result`, not `isError`), the failed files did not land, so they
+ * must not render as an applied diff. In that case the preview (which only
+ * contains actually-applied files) is preferred, and the input parse excludes
+ * the failed paths when no preview exists.
  */
 function getApplyPatchFiles(block: ToolCallContent, result?: ToolResultMessage): SplitDiffFile[] | null {
   if (!isApplyPatchToolName(block.toolName)) return null;
 
+  const details = result && !result.isError ? (result as ToolResultMessage & { details?: unknown }).details : undefined;
+
+  if (isRecord(details) && applyPatchResultHasFailures(details)) {
+    const fromPreview = applyPatchPreviewToFiles(details.preview);
+    if (fromPreview) return fromPreview;
+
+    const failedPaths = new Set(getApplyPatchFailurePaths(details));
+    if (failedPaths.size > 0) {
+      const fromInput = parseApplyPatchInput(getApplyPatchInputText(block.input, block.rawInput));
+      if (fromInput) {
+        const kept = fromInput.filter((file) => {
+          // 失败路径可能报 move 源名或目标名，两侧都查。
+          const failed =
+            (file.newPath !== undefined && failedPaths.has(file.newPath)) ||
+            (file.oldPath !== undefined && failedPaths.has(file.oldPath));
+          return !failed;
+        });
+        if (kept.length > 0) return kept;
+      }
+    }
+    return null;
+  }
+
   const fromInput = parseApplyPatchInput(getApplyPatchInputText(block.input, block.rawInput));
   if (fromInput) return fromInput;
 
-  const details = result && !result.isError ? (result as ToolResultMessage & { details?: unknown }).details : undefined;
   if (isRecord(details)) {
     const fromPreview = applyPatchPreviewToFiles(details.preview);
     if (fromPreview) return fromPreview;

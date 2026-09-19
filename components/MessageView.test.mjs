@@ -18,6 +18,7 @@ const {
 } = await jiti.import("./MessageView.tsx");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 const { splitFinalAssistantBlocks } = await jiti.import("@/lib/message-display");
+const { setToolCallExpanded, clearExpandedToolCalls } = await jiti.import("@/lib/tool-call-expansion");
 
 function renderMessage(message, props = {}) {
   return renderToStaticMarkup(
@@ -343,6 +344,102 @@ test("marks apply_patch returned failures as errors even when isError is unset",
   assert.match(html, /border:1px solid rgba\(248,113,113,0\.45\)/);
   assert.match(html, />apply_patch</);
   assert.doesNotMatch(html, /border:1px solid rgba\(34,197,94,0\.25\)/);
+});
+
+test("apply_patch failures render the applied preview instead of the requested input", () => {
+  clearExpandedToolCalls();
+  setToolCallExpanded("call-patch-2", true);
+  // input 请求两个文件，但 preview（实际结果）只含成功文件——失败文件不得以已应用样式出现。
+  const block = {
+    type: "toolCall",
+    toolCallId: "call-patch-2",
+    toolName: "apply_patch",
+    input: {
+      input: [
+        "*** Begin Patch",
+        "*** Update File: src/ok.ts",
+        "-  a = 1",
+        "+  a = 2",
+        "*** Update File: src/bad.ts",
+        "-  b = 1",
+        "+  b = 2",
+        "*** End Patch",
+      ].join("\n"),
+    },
+  };
+  const result = {
+    role: "toolResult",
+    toolCallId: block.toolCallId,
+    content: [{ type: "text", text: "apply_patch failed.\nRecovery: MUST read src/bad.ts before retrying." }],
+    details: {
+      result: { appliedFiles: ["src/ok.ts"], failures: [{ filePath: "src/bad.ts", message: "context mismatch" }] },
+      preview: { files: [{ filePath: "src/ok.ts", operation: "update", diff: "-  1 a = 1\n+  1 a = 2" }] },
+    },
+  };
+  const html = renderMessage({
+    role: "assistant",
+    provider: "openai",
+    model: "gpt-test",
+    content: [block],
+  }, { toolResults: new Map([[block.toolCallId, result]]) });
+
+  // 成功文件来自 preview（带真实行号）而非 input 请求（preview 文本无前导空格）。
+  assert.match(html, />a = 2</);
+  assert.match(html, />a = 1</);
+  // 失败文件 b = 1 / b = 2 的 diff 不得渲染。
+  assert.doesNotMatch(html, />b = 1</);
+  assert.doesNotMatch(html, />b = 2</);
+});
+
+test("apply_patch failures without preview exclude failed paths from the input parse", () => {
+  clearExpandedToolCalls();
+  setToolCallExpanded("call-patch-3", true);
+  // 无 preview 时退到 input，但逐文件剔除失败路径，仅保留成功文件。
+  const block = {
+    type: "toolCall",
+    toolCallId: "call-patch-3",
+    toolName: "apply_patch",
+    input: {
+      input: [
+        "*** Begin Patch",
+        "*** Update File: src/ok.ts",
+        "-  a = 1",
+        "+  a = 2",
+        "*** Update File: src/bad.ts",
+        "-  b = 1",
+        "+  b = 2",
+        "*** Update File: src/moved.ts",
+        "*** Move to: src/renamed.ts",
+        "-  m = 1",
+        "+  m = 2",
+        "*** End Patch",
+      ].join("\n"),
+    },
+  };
+  const result = {
+    role: "toolResult",
+    toolCallId: block.toolCallId,
+    content: [{ type: "text", text: "apply_patch failed." }],
+    details: {
+      result: { failures: [{ filePath: "src/bad.ts", message: "context mismatch" }, { filePath: "src/moved.ts", message: "move source unreadable" }] },
+    },
+  };
+  const html = renderMessage({
+    role: "assistant",
+    provider: "openai",
+    model: "gpt-test",
+    content: [block],
+  }, { toolResults: new Map([[block.toolCallId, result]]) });
+
+  // 成功文件照常渲染（input 剔除后保留）。
+  assert.match(html, />  a = 2</);
+  // 失败文件（含 move 源名）的 diff 不得渲染。
+  assert.doesNotMatch(html, />  b = 1</);
+  assert.doesNotMatch(html, />  b = 2</);
+  assert.doesNotMatch(html, />  m = 1</);
+  assert.doesNotMatch(html, />  m = 2</);
+  // 整体仍是红框。
+  assert.match(html, /border:1px solid rgba\(248,113,113,0\.45\)/);
 });
 
 test("renders custom-message images as buttons that open a larger preview", () => {
