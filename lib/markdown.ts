@@ -1,10 +1,107 @@
 import { defaultUrlTransform, type Options as ReactMarkdownOptions } from "react-markdown";
-import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import remarkFrontmatter from "remark-frontmatter";
 import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
+
+/**
+ * The math plugins (remark-math / rehype-katex, plus katex) are not statically imported here —
+ * they load on demand together with `@/lib/markdown-math` (dynamically imported only by
+ * loadMathPlugins below); see hasMathMarker / loadMathPlugins and `@/lib/use-math-plugins`
+ * (hydration-specific work P1.2).
+ */
+
+/**
+ * Escape raw HTML tags that would otherwise be parsed by rehype-raw into
+ * invalid DOM nesting inside markdown paragraphs (e.g. a `<button>` at line
+ * start is *inline* raw HTML per CommonMark, so rehype-raw nests block or
+ * interactive elements — even a second `<p>` — inside the wrapping `<p>`,
+ * which React flags as a hydration error).
+ *
+ * Chat user text can contain such tags as paste artifacts (pick-element payloads
+ * from the in-page devtools extension, like `<div> …` / `<button> …`). Escaping keeps the
+ * text readable (`&lt;` renders as `<`) while making rehype-raw a no-op.
+ * Fenced code blocks and inline code spans are preserved verbatim, and
+ * GFM autolinks (`<https://…>` / `<user@host>`) stay untouched.
+ */
+export function escapeRawHtmlTags(markdown: string): string {
+  const lineBreak = markdown.includes("\r\n") ? "\r\n" : "\n";
+  const lines = markdown.split(/\r?\n/);
+  const out: string[] = [];
+  let fence: { marker: string; size: number } | null = null;
+  let inlineCodeMarkerSize = 0;
+
+  for (const line of lines) {
+    const fenceMatch = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    if (fence) {
+      if (fenceMatch && fenceMatch[1][0] === fence.marker && fenceMatch[1].length >= fence.size) {
+        fence = null;
+      }
+      out.push(line);
+      continue;
+    }
+    if (fenceMatch) {
+      fence = { marker: fenceMatch[1][0], size: fenceMatch[1].length };
+      out.push(line);
+      continue;
+    }
+
+    // Indented code blocks and blank lines contain no raw HTML; blank lines
+    // also reset an unterminated inline-code run (mirrors normalizeDisplayMath).
+    if (/^(?: {4}|\t)/.test(line) || line.trim() === "") {
+      inlineCodeMarkerSize = 0;
+      out.push(line);
+      continue;
+    }
+
+    if (inlineCodeMarkerSize || line.includes("`")) {
+      const escaped = escapeLineOutsideCodeSpans(line, inlineCodeMarkerSize);
+      inlineCodeMarkerSize = escaped.markerSize;
+      out.push(escaped.line);
+      continue;
+    }
+    out.push(escapeRawHtmlInText(line));
+  }
+  return out.join(lineBreak);
+}
+
+/**
+ * Replace `<tag`/`</tag` with `&lt;tag`/`&lt;/tag`. The tag name must be
+ * followed by `>` / whitespace / `/` / EOL so GFM autolinks (`<https://…>`,
+ * `<mailto:…>`, `<user@host>`) and comparisons (`a < b`, `<3`) stay intact.
+ */
+function escapeRawHtmlInText(text: string): string {
+  return text.replace(/<(\/?[a-zA-Z][a-zA-Z0-9-]*)(?=>|\s|\/|$)/g, "&lt;$1");
+}
+
+/** Escape raw HTML outside inline-code backtick spans (marker state carried across lines). */
+function escapeLineOutsideCodeSpans(line: string, initialMarkerSize: number): { line: string; markerSize: number } {
+  let markerSize = initialMarkerSize;
+  let inCode = markerSize !== 0;
+  let result = "";
+  let cursor = 0;
+  while (cursor < line.length) {
+    const backtick = line.indexOf("`", cursor);
+    if (backtick === -1) {
+      result += inCode ? line.slice(cursor) : escapeRawHtmlInText(line.slice(cursor));
+      break;
+    }
+    result += inCode ? line.slice(cursor, backtick) : escapeRawHtmlInText(line.slice(cursor, backtick));
+    let end = backtick + 1;
+    while (end < line.length && line[end] === "`") end++;
+    const runSize = end - backtick;
+    result += "`".repeat(runSize);
+    if (markerSize === 0) {
+      markerSize = runSize;
+      inCode = true;
+    } else if (runSize === markerSize) {
+      markerSize = 0;
+      inCode = false;
+    }
+    cursor = end;
+  }
+  return { line: result, markerSize };
+}
 
 const markdownSanitizeSchema = {
   ...defaultSchema,
@@ -15,12 +112,25 @@ const markdownSanitizeSchema = {
   protocols: {
     ...defaultSchema.protocols,
     href: [...(defaultSchema.protocols?.href ?? []), "file"],
+    // data: only allowed into src (media sources live in <img>/<video> etc. — contexts where scripts don't run); the
+    // fine-grained data:image gate (only <img>, only image/*) is intercepted earlier by markdownDataImageUrlTransform.
+    src: [...(defaultSchema.protocols?.src ?? []), "data"],
   },
   strip: [...(defaultSchema.strip || []), "iframe", "object", "style", "form"],
 };
 
-export function markdownUrlTransform(value: string): string {
-  return /^file:/i.test(value) ? value : defaultUrlTransform(value);
+/**
+ * data:image/<*> is allowed only for <img src> (message/markdown images → the file-editor
+ * extension's unified viewer); other attributes (e.g. <a href>) still go through the default
+ * sanitizer — data:text/html can execute scripts under same-origin navigation and must not pass.
+ */
+export function markdownDataImageUrlTransform(value: string, key?: string, node?: { tagName?: string }): string {
+  if (key === "src" && node?.tagName === "img" && /^data:image\//i.test(value)) return value;
+  return defaultUrlTransform(value);
+}
+
+export function markdownUrlTransform(value: string, key?: string, node?: { tagName?: string }): string {
+  return /^file:/i.test(value) ? value : markdownDataImageUrlTransform(value, key, node);
 }
 
 const escapedInlineCodePattern = /(?<![\\`])`((?:[^`\n]|\\`)+?)(?<![\\`])`(?!`)/g;
@@ -364,22 +474,51 @@ const remarkGfmOptions = { singleTilde: false } as const;
 export const markdownRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [
   [remarkFrontmatter, ["yaml"]],
   [remarkGfm, remarkGfmOptions],
-  remarkMath,
 ];
 export const markdownPreviewRemarkPlugins: ReactMarkdownOptions["remarkPlugins"] = [
   [remarkFrontmatter, ["yaml"]],
   [remarkGfm, remarkGfmOptions],
-  remarkMath,
 ];
 
 export const markdownRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
   rehypeRaw,
   [rehypeSanitize, markdownSanitizeSchema],
-  [rehypeKatex, { throwOnError: false, strict: false }],
 ];
 
 export const markdownPreviewRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
   rehypeRaw,
   [rehypeSanitize, markdownSanitizeSchema],
-  [rehypeKatex, { throwOnError: false, strict: false }],
 ];
+
+// ---------- Math plugins loaded on demand (P1.2) ----------
+
+const MATH_MARKER_RE = /\$\$|\$[^$\s$][^$\n]*\$|\\\(|\\\[/;
+
+/** Whether the body contains a math marker ($$ / inline $…$ / \(…\) / \[…\]) — when not, the math plugins need not load */
+export function hasMathMarker(text: string): boolean {
+  return MATH_MARKER_RE.test(text);
+}
+
+export type MathPlugins = {
+  remark: ReactMarkdownOptions["remarkPlugins"];
+  rehype: ReactMarkdownOptions["rehypePlugins"];
+};
+
+let mathPluginsPromise: Promise<MathPlugins> | null = null;
+let loadedMathPlugins: MathPlugins | null = null;
+
+/** Math plugins already loaded (null when not) — hooks use this as the initial value so "load first, render later" scenarios (e.g. unit tests / SSR preload) take effect synchronously */
+export function getLoadedMathPlugins(): MathPlugins | null {
+  return loadedMathPlugins;
+}
+
+/** Dynamically load the math plugins (module-level cache; call only when hasMathMarker is true) */
+export function loadMathPlugins(): Promise<MathPlugins> {
+  if (!mathPluginsPromise) {
+    mathPluginsPromise = import("@/lib/markdown-math").then((m) => {
+      loadedMathPlugins = { remark: m.mathRemarkPlugins, rehype: m.mathRehypePlugins };
+      return loadedMathPlugins;
+    });
+  }
+  return mathPluginsPromise;
+}

@@ -2,11 +2,11 @@
 
 import { memo, useEffect, useRef, useState, useCallback, useMemo, type RefObject } from "react";
 import ReactMarkdown, { type Options as ReactMarkdownOptions } from "react-markdown";
-import rehypeKatex from "rehype-katex";
 import {
   markdownPreviewRemarkPlugins,
   normalizeDisplayMath,
 } from "@/lib/markdown";
+import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
 import { isMessageGroupAnchor, splitFinalAssistantBlocks } from "@/lib/message-display";
 import type { AgentMessage, AssistantMessage, CustomMessage, TextContent, UserMessage } from "@/lib/types";
 import { useI18n } from "@/hooks/useI18n";
@@ -126,9 +126,9 @@ const previewRemarkPlugins = [
   ...(markdownPreviewRemarkPlugins ?? []),
   remarkPreviewOutline,
 ];
-const previewRehypePlugins: ReactMarkdownOptions["rehypePlugins"] = [
-  [rehypeKatex, { throwOnError: false, strict: false }],
-];
+// The outline preview's base rehype plugin list is empty (previously just katex) — math plugins are
+// appended on demand via useMathMarkdownPlugins (P1.2)
+const previewRehypePluginsBase: ReactMarkdownOptions["rehypePlugins"] = [];
 
 function getPreviewHeadingIndex(node: unknown): number | null {
   const properties = (node as { properties?: Record<string, unknown> } | undefined)?.properties;
@@ -148,12 +148,18 @@ export const AssistantOutline = memo(function AssistantOutline({
   onAnswerClick?: () => void;
 }) {
   const normalizedMarkdown = useMemo(() => normalizeDisplayMath(markdown), [markdown]);
+  // Math plugins load on demand (P1.2) — must come before `if (!markdown) return null` (hook ordering)
+  const { remark: outlineRemarkPlugins, rehype: outlineRehypePlugins } = useMathMarkdownPlugins(
+    normalizedMarkdown,
+    previewRemarkPlugins,
+    previewRehypePluginsBase,
+  );
   if (!markdown) return null;
   return (
     <div className={styles.outline}>
       <ReactMarkdown
-        remarkPlugins={previewRemarkPlugins}
-        rehypePlugins={previewRehypePlugins}
+        remarkPlugins={outlineRemarkPlugins}
+        rehypePlugins={outlineRehypePlugins}
         components={{
           h1: ({ children, node }) => <PreviewHeading level={1} headingIndex={getPreviewHeadingIndex(node)} onClick={onHeadingClick}>{children}</PreviewHeading>,
           h2: ({ children, node }) => <PreviewHeading level={2} headingIndex={getPreviewHeadingIndex(node)} onClick={onHeadingClick}>{children}</PreviewHeading>,
