@@ -5,6 +5,8 @@ import {
   getAllowedFileRoots,
   isExistingFilePathAllowed,
   isFilePathAllowed,
+  isWindowsAbsolutePath,
+  normalizeSlashes,
 } from "@/lib/file-access";
 import {
   DOCX_PREVIEW_MAX_BYTES,
@@ -19,6 +21,7 @@ import {
 import { resolveDirentIsDirectory } from "@/lib/file-dirent";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
 import { isApiRequestAllowed } from "@/lib/request-security";
+import { getParentDirectory } from "@/lib/directory-browser";
 import {
   inspectUploadTargets,
   parseUploadConflictStrategy,
@@ -26,7 +29,9 @@ import {
 } from "@/lib/file-upload";
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
 import { filePathFromApiSegments, samePath } from "@/lib/paths";
+import { issueFileTicket, redeemFileTicket } from "@/lib/file-ticket";
 import { readTextPreviewChunk } from "@/lib/text-preview";
+import { startFileWatch, stopFileWatch } from "@/lib/file-watch-registry";
 
 const IGNORED_NAMES = new Set([
   "node_modules", ".git", ".next", "dist", "build", "__pycache__",
@@ -73,10 +78,30 @@ function parseFileRequestType(value: string): FileRequestType | null {
   return FILE_REQUEST_TYPE_SET.has(value) ? (value as FileRequestType) : null;
 }
 
-async function getUploadDirectory(segments: string[]): Promise<
+/** Normalize a path from the POST body: expand a leading ~ to home, and assert it is absolute. */
+function resolveBodyPath(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const homeDir = process.env.HOME || process.env.USERPROFILE;
+  const p = raw === "~" || raw.startsWith("~/")
+    ? (homeDir ? normalizeSlashes(path.join(homeDir, raw === "~" ? "" : raw.slice(2))) : raw)
+    : raw;
+  if (!p || (!p.startsWith("/") && !isWindowsAbsolutePath(p))) return null;
+  return p;
+}
+
+/** Parse and validate the upload directory from the POST body (JSON field or FormData field; includes symlink-escape protection). */
+async function resolveUploadDirectory(raw: unknown): Promise<
   { directory: string } | { response: NextResponse }
 > {
-  const directory = filePathFromApiSegments(segments);
+  const directory = resolveBodyPath(raw);
+  if (!directory) return { response: NextResponse.json({ error: "path must be absolute" }, { status: 400 }) };
+
+  return validateUploadDirectory(directory);
+}
+
+async function validateUploadDirectory(directory: string): Promise<
+  { directory: string } | { response: NextResponse }
+> {
   const allowedRoots = await getAllowedFileRoots();
   if (!isFilePathAllowed(directory, allowedRoots)) {
     return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
@@ -125,13 +150,98 @@ export async function POST(
 
   try {
     const { path: segments } = await params;
-    const uploadDirectory = await getUploadDirectory(segments);
-    if ("response" in uploadDirectory) return uploadDirectory.response;
-    const { directory } = uploadDirectory;
-    const type = request.nextUrl.searchParams.get("type") ?? "upload";
+    // POST /api/files/ticket → two modes:
+    //   { ticket } → redeem: return the ticket payload (for the /viewer handshake; not consumed, reusable within TTL)
+    //   { path, type?, kind?, cwd? } → issue a short-lived ticket (5-minute TTL, random and irreversible).
+    //     type defaults to "download"; read/watch/preview/list/meta also work — for consumers that can only use
+    //     GET URLs such as <img>/<video> src or EventSource: exchange for a ticket first, then GET
+    //     /api/files/_t/<ticket>; the path never enters a URL.
+    //     (An older design used steady-state _e tokens, but a permanently valid token leaks forever once it
+    //     lands in an access log, hence the switch to short tickets.)
+    if (segments[0] === "ticket") {
+      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; kind?: unknown; cwd?: unknown; ticket?: unknown; wantWatch?: unknown } | null;
+      if (typeof body?.ticket === "string" && body.ticket) {
+        const t = redeemFileTicket(body.ticket);
+        if (!t) {
+          return NextResponse.json({ error: "Ticket invalid or expired" }, { status: 403 });
+        }
+        return NextResponse.json({ ok: true, path: t.path, type: t.type, kind: t.kind ?? null, cwd: t.cwd ?? null });
+      }
+      const p = resolveBodyPath(body?.path);
+      if (!p) return NextResponse.json({ error: "path must be absolute" }, { status: 400 });
+      const allowedRoots = await getAllowedFileRoots();
+      if (!isFilePathAllowed(p, allowedRoots)) {
+        return NextResponse.json({ error: "Access denied" }, { status: 403 });
+      }
+      // type validation: only file request types allowed; watch/list may target something that doesn't exist yet (watch listens for creation, list the parent directory)
+      const rawType = typeof body?.type === "string" ? body.type : "download";
+      const type = parseFileRequestType(rawType);
+      if (!type) {
+        return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
+      }
+      if (type !== "watch" && type !== "list") {
+        // read/download/meta/preview require the target to be a file (read's image/audio/document streaming and text content all need a file)
+        let st: fs.Stats;
+        try { st = fs.statSync(p); } catch {
+          return NextResponse.json({ error: "Not found" }, { status: 404 });
+        }
+        if (!st.isFile()) {
+          return NextResponse.json({ error: "Not a file" }, { status: 400 });
+        }
+        if (!isExistingFilePathAllowed(p, allowedRoots)) {
+          return NextResponse.json({ error: "Access denied" }, { status: 403 });
+        }
+      }
+      const kind = body?.kind === "folder" || body?.kind === "file" ? body.kind : undefined;
+      const cwd = typeof body?.cwd === "string" && body.cwd ? body.cwd : undefined;
+      const ticket = issueFileTicket(p, type, { kind, cwd });
+      // Bus watch registration (lib/file-watch-registry): type=watch + wantWatch → the ticket response
+      // inlines a watchId (the server starts fs.watch right away; changes are dispatched as bus "file-watch"
+      // frames; stopped explicitly via /api/files/watch-stop or automatically after 30min idle). Bus
+      // subscribers only; fallback clients still use the original watch SSE (buildTicketUrl → _t/<ticket>).
+      let watchId: string | undefined;
+      if (type === "watch" && body?.wantWatch === true) {
+        watchId = `fw-${ticket.ticket}`;
+        startFileWatch(watchId, p);
+      }
+      return NextResponse.json({ ...ticket, ...(watchId ? { watchId } : {}) });
+    }
 
-    if (type === "upload-check") {
-      const body = await request.json().catch(() => null) as { fileNames?: unknown } | null;
+    // POST /api/files/watch-stop { watchId } — stop a bus watch (explicit unsubscribe; 30min-idle fallback)
+    if (segments[0] === "watch-stop") {
+      const body = await request.json().catch(() => null) as { watchId?: unknown } | null;
+      if (typeof body?.watchId === "string" && body.watchId) stopFileWatch(body.watchId);
+      return NextResponse.json({ ok: true });
+    }
+
+    // Paths always travel in the body, never in the URL. The POST channels come in four kinds:
+    //   /get         → the main file-request pipeline (list/read/meta/preview/download); body { path, type?, sessionId?, probe? }
+    //   /token       → issue a steady-state path token (for consumers limited to GET URLs like <img>/<video>/EventSource); body { path } → { token }
+    //   /upload-check→ upload conflict check; body { directory, fileNames }
+    //   /upload      → upload; multipart FormData(files..., directory); the conflict query param stays (not a path)
+    if (segments[0] === "get") {
+      const body = await request.json().catch(() => null) as { path?: unknown; type?: unknown; sessionId?: unknown; probe?: unknown } | null;
+      const p = resolveBodyPath(body?.path);
+      if (!p) return NextResponse.json({ error: "path must be absolute" }, { status: 400 });
+      const rawType = typeof body?.type === "string" ? body.type : "read";
+      const type = parseFileRequestType(rawType);
+      // watch is SSE/EventSource and must be GET → exchange via /token and use the _e channel; POST not accepted
+      if (!type || type === "watch") {
+        return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
+      }
+      const sessionId = typeof body?.sessionId === "string" && body.sessionId ? body.sessionId : null;
+      // probe=true: existence probing — a miss returns 200 { exists:false } instead of 404,
+      // for consumers that "probe whether a path exists" such as message file recognition (removes
+      // the browser's console noise over 4xx). Permission checks still apply (probing must not
+      // enable unauthorized enumeration).
+      const probe = body?.probe === true;
+      return handleFileRequest(request, p, type, sessionId, probe);
+    }
+
+    if (segments[0] === "upload-check") {
+      const body = await request.json().catch(() => null) as { directory?: unknown; fileNames?: unknown } | null;
+      const vd = await resolveUploadDirectory(body?.directory);
+      if ("response" in vd) return vd.response;
       const fileNames = parseUploadFileNames(body?.fileNames);
       if (!fileNames) {
         return NextResponse.json({ error: "fileNames must be an array of strings" }, { status: 400 });
@@ -140,95 +250,97 @@ export async function POST(
       if (validationError) {
         return NextResponse.json({ error: validationError }, { status: 400 });
       }
-      return NextResponse.json(inspectUploadTargets(directory, fileNames));
+      return NextResponse.json(inspectUploadTargets(vd.directory, fileNames));
     }
 
-    if (type !== "upload") {
-      return NextResponse.json({ error: "Invalid upload request type" }, { status: 400 });
-    }
-
-    const strategy = parseUploadConflictStrategy(request.nextUrl.searchParams.get("conflict"));
-    if (!strategy) {
-      return NextResponse.json({ error: "Invalid conflict strategy" }, { status: 400 });
-    }
-
-    let formData: FormData;
-    try {
-      formData = await parseFormDataWithinLimit(request, MAX_UPLOAD_REQUEST_BYTES);
-    } catch (error) {
-      if (error instanceof RequestBodyTooLargeError) {
+    if (segments[0] === "upload") {
+      const strategy = parseUploadConflictStrategy(request.nextUrl.searchParams.get("conflict"));
+      if (!strategy) {
+        return NextResponse.json({ error: "Invalid conflict strategy" }, { status: 400 });
+      }
+      let formData: FormData;
+      try {
+        formData = await parseFormDataWithinLimit(request, MAX_UPLOAD_REQUEST_BYTES);
+      } catch (error) {
+        if (error instanceof RequestBodyTooLargeError) {
+          return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
+        }
+        throw error;
+      }
+      const vd = await resolveUploadDirectory(formData.get("directory"));
+      if ("response" in vd) return vd.response;
+      const { directory } = vd;
+      const files = formData.getAll("files").filter((entry): entry is File => typeof entry !== "string");
+      if (files.some((file) => file.size > MAX_UPLOAD_FILE_BYTES)) {
+        return NextResponse.json({ error: "Each upload must be 25MB or smaller" }, { status: 413 });
+      }
+      if (files.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_TOTAL_BYTES) {
         return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
       }
-      throw error;
-    }
-    const files = formData.getAll("files").filter((entry): entry is File => typeof entry !== "string");
-    if (files.some((file) => file.size > MAX_UPLOAD_FILE_BYTES)) {
-      return NextResponse.json({ error: "Each upload must be 25MB or smaller" }, { status: 413 });
-    }
-    if (files.reduce((total, file) => total + file.size, 0) > MAX_UPLOAD_TOTAL_BYTES) {
-      return NextResponse.json({ error: "Uploads must total 100MB or less" }, { status: 413 });
-    }
-    const fileNames = files.map((file) => file.name);
-    const validationError = validateUploadFileNames(fileNames);
-    if (validationError) {
-      return NextResponse.json({ error: validationError }, { status: 400 });
-    }
-
-    const inspection = inspectUploadTargets(directory, fileNames);
-    if (strategy === "error" && inspection.conflicts.length > 0) {
-      return NextResponse.json({
-        error: "One or more files already exist",
-        conflicts: inspection.conflicts,
-        nonReplaceable: inspection.nonReplaceable,
-      }, { status: 409 });
-    }
-
-    const conflictSet = new Set(inspection.conflicts);
-    const nonReplaceableSet = new Set(inspection.nonReplaceable);
-    const uploaded: string[] = [];
-    const skipped: string[] = [];
-    const errors: Array<{ name: string; error: string }> = [];
-
-    for (const file of files) {
-      const destination = path.join(directory, file.name);
-      if (conflictSet.has(file.name) && strategy === "skip") {
-        skipped.push(file.name);
-        continue;
-      }
-      if (conflictSet.has(file.name) && nonReplaceableSet.has(file.name)) {
-        errors.push({ name: file.name, error: "Cannot replace a directory or symbolic link" });
-        continue;
+      const fileNames = files.map((file) => file.name);
+      const validationError = validateUploadFileNames(fileNames);
+      if (validationError) {
+        return NextResponse.json({ error: validationError }, { status: 400 });
       }
 
-      let bytes: Buffer;
-      try {
-        bytes = Buffer.from(await file.arrayBuffer());
-      } catch (error) {
-        errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
-        continue;
+      const inspection = inspectUploadTargets(directory, fileNames);
+      if (strategy === "error" && inspection.conflicts.length > 0) {
+        return NextResponse.json({
+          error: "One or more files already exist",
+          conflicts: inspection.conflicts,
+          nonReplaceable: inspection.nonReplaceable,
+        }, { status: 409 });
       }
 
-      if (conflictSet.has(file.name)) {
+      const conflictSet = new Set(inspection.conflicts);
+      const nonReplaceableSet = new Set(inspection.nonReplaceable);
+      const uploaded: string[] = [];
+      const skipped: string[] = [];
+      const errors: Array<{ name: string; error: string }> = [];
+
+      for (const file of files) {
+        const destination = path.join(directory, file.name);
+        if (conflictSet.has(file.name) && strategy === "skip") {
+          skipped.push(file.name);
+          continue;
+        }
+        if (conflictSet.has(file.name) && nonReplaceableSet.has(file.name)) {
+          errors.push({ name: file.name, error: "Cannot replace a directory or symbolic link" });
+          continue;
+        }
+
+        let bytes: Buffer;
         try {
-          fs.unlinkSync(destination);
+          bytes = Buffer.from(await file.arrayBuffer());
         } catch (error) {
           errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
           continue;
         }
+
+        if (conflictSet.has(file.name)) {
+          try {
+            fs.unlinkSync(destination);
+          } catch (error) {
+            errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
+            continue;
+          }
+        }
+
+        try {
+          fs.writeFileSync(destination, bytes, { flag: "wx" });
+          uploaded.push(file.name);
+        } catch (error) {
+          errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
+        }
       }
 
-      try {
-        fs.writeFileSync(destination, bytes, { flag: "wx" });
-        uploaded.push(file.name);
-      } catch (error) {
-        errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
-      }
+      return NextResponse.json(
+        { uploaded, skipped, errors },
+        { status: errors.length > 0 ? 207 : 200 },
+      );
     }
 
-    return NextResponse.json(
-      { uploaded, skipped, errors },
-      { status: errors.length > 0 ? 207 : 200 },
-    );
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
   }
@@ -421,14 +533,44 @@ export async function GET(
 ) {
   try {
     const { path: segments } = await params;
-    const filePath = filePathFromApiSegments(segments);
-    const rawType = request.nextUrl.searchParams.get("type") ?? "list";
+    // Ticket channel: GET /api/files/_t/<ticket> — the path never enters a URL (keeps it out of tunnel/proxy access logs).
+    // Exchange POST /api/files/ticket { path } for a ticket first (5-minute TTL, reusable); see lib/file-ticket.ts.
+    let filePath: string;
+    let rawType: string;
+    if (segments[0] === "_t" && segments.length === 2) {
+      const t = redeemFileTicket(segments[1]);
+      if (!t) {
+        return NextResponse.json({ error: "Ticket invalid or expired" }, { status: 403 });
+      }
+      filePath = t.path;
+      rawType = t.type;
+    } else {
+      // Design contract: file paths never enter URLs. GET keeps only the ticket (_t) opaque channel;
+      // all other reads/writes go through POST /api/files/get (path in the body). Bare path-segment access is rejected outright.
+      return NextResponse.json(
+        { error: "Path in URL is not allowed; use POST /api/files/get or POST /api/files/ticket" },
+        { status: 404 },
+      );
+    }
     const type = parseFileRequestType(rawType);
     if (!type) {
       return NextResponse.json({ error: "Invalid file request type" }, { status: 400 });
     }
-    const sessionId = request.nextUrl.searchParams.get("sessionId");
+    return handleFileRequest(request, filePath, type, request.nextUrl.searchParams.get("sessionId"));
+  } catch (error) {
+    return NextResponse.json({ error: String(error) }, { status: 500 });
+  }
+}
 
+/** The main file-request pipeline, shared by GET (ticket _t / steady-state token _e) and POST /api/files/get. */
+async function handleFileRequest(
+  request: NextRequest,
+  filePath: string,
+  type: FileRequestType,
+  sessionId: string | null,
+  probe = false,
+): Promise<Response> {
+  try {
     const allowedRoots = await getAllowedFileRoots();
     const allowedByRoot = isFilePathAllowed(filePath, allowedRoots);
     const allowedBySessionReference =
@@ -443,9 +585,20 @@ export async function GET(
     try {
       stat = fs.statSync(filePath);
     } catch {
+      if (probe) {
+        return NextResponse.json({ exists: false, path: filePath });
+      }
       if (type !== "watch") {
         return NextResponse.json({ error: "Not found" }, { status: 404 });
       }
+    }
+
+    if (probe && stat) {
+      return NextResponse.json({
+        exists: true,
+        isDir: stat.isDirectory(),
+        path: filePath,
+      });
     }
 
     const existingAuthorizationPath = stat ? filePath : path.dirname(filePath);
@@ -646,7 +799,15 @@ export async function GET(
         return a.name.localeCompare(b.name);
       });
 
-    return NextResponse.json({ entries, path: filePath });
+    // The ascendable parent directory (present only within allowed file roots, otherwise null) — the boundary
+    // reference for the folder browser's "parent directory" button: when the parent itself is outside the
+    // allowed set (e.g. above the project root into workspace/home), treat it as non-ascendable.
+    const parentPath = (() => {
+      const parent = getParentDirectory(filePath);
+      return parent && isFilePathAllowed(parent, allowedRoots) ? parent : null;
+    })();
+
+    return NextResponse.json({ entries, path: filePath, parentPath });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
