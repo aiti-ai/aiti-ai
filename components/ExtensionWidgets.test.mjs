@@ -14,6 +14,7 @@ const {
   formatExtensionWidgetContent,
   getNextExpandedWidgetKey,
   getUpdatedExtensionWidgetKeys,
+  selectPulseWidgetKeys,
   snapshotExtensionWidgetContents,
 } = await jiti.import("./ExtensionWidgets.tsx");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
@@ -124,6 +125,22 @@ test("compares widget lines without delimiter collisions", () => {
   const next = new Map([["status", ["one\ntwo"]]]);
 
   assert.deepEqual(getUpdatedExtensionWidgetKeys(previous, next), ["status"]);
+});
+
+test("throttles update pulses per widget with a minimum interval", () => {
+  const lastPulseAt = new Map([["busy", 10_000]]);
+
+  // Within the window: no repeated pulse; first-time/unrecorded widgets still pulse.
+  assert.deepEqual(
+    selectPulseWidgetKeys(["busy", "fresh"], lastPulseAt, 12_000, 5_000),
+    ["fresh"],
+  );
+  // Minimum interval reached: the widget may pulse again.
+  assert.deepEqual(
+    selectPulseWidgetKeys(["busy"], lastPulseAt, 15_000, 5_000),
+    ["busy"],
+  );
+  assert.deepEqual(selectPulseWidgetKeys([], lastPulseAt, 20_000, 5_000), []);
 });
 
 test("keeps one-line widgets compact but expandable", () => {
