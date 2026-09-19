@@ -6,7 +6,14 @@ import { AnsiText } from "@/components/AnsiText";
 import type { ExtensionWidgetItem } from "@/lib/types";
 
 export const DEFAULT_EXPANDED_WIDGET_LINES = 3;
-export const WIDGET_UPDATE_IDLE_MS = 1100;
+/** How long a single update pulse stays lit (matches the extension-widget-update-pulse animation duration in globals.css). */
+export const WIDGET_UPDATE_PULSE_MS = 900;
+/** Minimum interval between two update pulses for the same widget — upstream widgets
+ *  refresh every 0.5–1s while running, and the old implementation renewed on a 1.1s
+ *  idle window, making the pulse blink endlessly; this throttles the "update" notice.
+ *  Content keeps updating as usual; only the notification stops flashing at high
+ *  frequency. */
+export const WIDGET_UPDATE_PULSE_MIN_INTERVAL_MS = 5000;
 
 export function formatExtensionWidgetContent(lines: string[]): string {
   return lines.join("\n");
@@ -32,6 +39,21 @@ export function getUpdatedExtensionWidgetKeys(
   }).filter((key): key is string => key !== null);
 }
 
+/** Picks the keys of content-changed widgets that may light a pulse this round: the same
+ *  key is skipped when less than minIntervalMs has passed since its last pulse
+ *  (throttled notification, avoiding continuous flicker while running). */
+export function selectPulseWidgetKeys(
+  updatedKeys: readonly string[],
+  lastPulseAt: ReadonlyMap<string, number>,
+  now: number,
+  minIntervalMs: number = WIDGET_UPDATE_PULSE_MIN_INTERVAL_MS,
+): string[] {
+  return updatedKeys.filter((key) => {
+    const last = lastPulseAt.get(key);
+    return last === undefined || now - last >= minIntervalMs;
+  });
+}
+
 function getDefaultExpandedWidgetKey(widgets: ExtensionWidgetItem[]): string | null {
   return widgets.find((widget) => {
     const lineCount = widget.lines.length;
@@ -51,6 +73,7 @@ export function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }
   const idPrefix = useId();
   const previousContentsRef = useRef<Map<string, string[]> | null>(null);
   const updateClearTimersRef = useRef(new Map<string, ReturnType<typeof setTimeout>>());
+  const lastPulseAtRef = useRef(new Map<string, number>());
   const [expandedWidgetKey, setExpandedWidgetKey] = useState<string | null>(
     () => getDefaultExpandedWidgetKey(widgets),
   );
@@ -71,10 +94,21 @@ export function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }
       clearTimeout(timer);
       updateClearTimersRef.current.delete(key);
     }
+    for (const key of lastPulseAtRef.current.keys()) {
+      if (!nextContents.has(key)) lastPulseAtRef.current.delete(key);
+    }
+
+    // The pulse is only a low-frequency "there was an update" notice: updates less than
+    // WIDGET_UPDATE_PULSE_MIN_INTERVAL_MS after the last pulse no longer light it (content
+    // keeps refreshing as usual), and each lighting turns off after a fixed
+    // WIDGET_UPDATE_PULSE_MS (single-shot CSS animation, no more infinite blinking).
+    const now = Date.now();
+    const pulsingKeys = selectPulseWidgetKeys(updatedKeys, lastPulseAtRef.current, now);
+    for (const key of pulsingKeys) lastPulseAtRef.current.set(key, now);
 
     setUpdatingWidgetKeys((current) => {
       const next = new Set(Array.from(current).filter((key) => nextContents.has(key)));
-      for (const key of updatedKeys) next.add(key);
+      for (const key of pulsingKeys) next.add(key);
       if (
         next.size === current.size
         && Array.from(next).every((key) => current.has(key))
@@ -82,7 +116,7 @@ export function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }
       return next;
     });
 
-    for (const key of updatedKeys) {
+    for (const key of pulsingKeys) {
       const currentTimer = updateClearTimersRef.current.get(key);
       if (currentTimer) clearTimeout(currentTimer);
       updateClearTimersRef.current.set(key, setTimeout(() => {
@@ -93,7 +127,7 @@ export function ExtensionWidgets({ widgets }: { widgets: ExtensionWidgetItem[] }
           next.delete(key);
           return next;
         });
-      }, WIDGET_UPDATE_IDLE_MS));
+      }, WIDGET_UPDATE_PULSE_MS));
     }
   }, [widgets]);
 
