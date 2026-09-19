@@ -61,4 +61,32 @@ Run `npm test` for native PTY, lease, output cursor, input queue, and storage
 checks. `npm run test:terminal` starts an isolated development server and runs
 desktop/mobile browser checks using generated session fixtures. Install the
 Playwright Chromium browser first with `npx playwright install chromium`.
-The browser check prints the temporary location of its screenshots and log.
+The browser check points `PI_WEB_EXTENSIONS_DIR` at an empty directory so the
+native baseline is what the browser checks exercise, and prints the temporary
+location of its screenshots and log.
+
+## Fork implementation status (aiti)
+
+The terminal tab surface is tiered in this fork. The slot decision is made once
+from the extension manifest snapshot (`useExtSlotSettled` — boot settled and
+nothing declares `terminalDock`), never from materialization timing:
+
+- **Takeover priority** — when an extension declares the `terminalDock` slot
+  (aiti-cmd), that extension renders its own xterm view and owns the shell
+  lifecycle. Closing removes the tab locally; restart is the extension's own
+  control.
+- **Placeholder while undecided** — until the manifest settles, the tab renders
+  an empty shell. Creating a native PTY before a late takeover arrives would
+  run two shells for one tab; a declared-but-broken extension also never
+  triggers the native fallback (the slot error indicator explains why).
+- **Native fallback** — when nothing declares the slot, the tab mounts this
+  native PTY panel: everything above is live, including restart (fresh id after
+  termination), close-error retry, and restored tabs checking the server
+  instance before ever spawning a shell.
+
+Transport notes that diverge from upstream (page-event SSE convergence,
+`lib/event-bus-client.ts`): `getEventBus` returns `null` once the bus is proven
+absent so callers' raw `EventSource` fallbacks actually engage; the adapter
+wires the `onmessage` property handle into frame dispatch; and reassembled
+frames are `{type: evt, ...payload}` with the topic type replaced. With no
+aiti-event-bus deployed the terminal runs on the raw SSE exactly as upstream.

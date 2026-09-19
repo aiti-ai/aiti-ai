@@ -16,6 +16,8 @@
 
 # next.js
 /.next/
+/.next-dev/
+/.next-*/
 /out/
 
 # production
@@ -43,4 +45,13 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 .factory
+
+# Playwright MCP test artifacts
+.playwright-mcp/
+
+# test server runtime log (scripts/test-server.mjs)
+test-server.log
+
+# local e2e scratch scripts
 e2e_*.mjs
+
