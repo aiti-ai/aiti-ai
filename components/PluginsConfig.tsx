@@ -2,6 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { sendAgentCommand } from "@/lib/agent-client";
+import { apiUrl } from "@/lib/base-path";
+
+import { useIsMobile } from "@/hooks/useIsMobile";
+
 import type { PluginPackageInfo, PluginStandaloneExtensionInfo, PluginUpdateResult, PluginsResponse } from "@/lib/api-types";
 import { useI18n } from "@/hooks/useI18n";
 import {
@@ -234,7 +238,7 @@ function SegmentedScope({
             title={disabled ? t("trust.projectScopeUnavailable") : undefined}
             style={{
               width: 76,
-              border: "none",
+              borderLeft: "none", borderTop: "none", borderBottom: "none",
               borderRight: scope === "global" ? "1px solid var(--border)" : "none",
               background: active ? "var(--bg-selected)" : "none",
               color: active ? "var(--text)" : "var(--text-muted)",
@@ -696,7 +700,11 @@ export function PluginsConfig({
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`/api/plugins?cwd=${encodeURIComponent(cwd)}`);
+      const res = await fetch(apiUrl("/api/plugins"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd }),
+      });
       const next = (await res.json()) as PluginsResponse & { error?: string };
       if (!res.ok || next.error) throw new Error(next.error ?? `HTTP ${res.status}`);
       setData(next);
@@ -803,7 +811,7 @@ export function PluginsConfig({
     setActionError(null);
     setActionMessage(null);
     try {
-      const res = await fetch("/api/plugins", {
+      const res = await fetch(apiUrl("/api/plugins"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, source: pkg.source, scope: pkg.scope, cwd }),
@@ -856,7 +864,7 @@ export function PluginsConfig({
     setActionError(null);
     setActionMessage(null);
     try {
-      const res = await fetch("/api/plugins", {
+      const res = await fetch(apiUrl("/api/plugins"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "install", source, scope: installScope, cwd }),

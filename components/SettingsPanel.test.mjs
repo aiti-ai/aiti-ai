@@ -142,7 +142,8 @@ test("keeps password authentication to one login field and one settings action",
   assert.doesNotMatch(loginSource, /type="(?:text|email)"/);
   assert.match(loginSource, /autoComplete="current-password"/);
   assert.match(loginSource, /!destination\.startsWith\("\/\/"\)/);
-  assert.match(panelSource, /fetch\("\/api\/web-auth", \{ method: "DELETE" \}\)/);
+  // This fork wraps it in apiUrl() to work under basePath deployments (apiUrl is identity for root deployments)
+  assert.match(panelSource, /fetch\(apiUrl\("\/api\/web-auth"\), \{ method: "DELETE" \}\)/);
   assert.match(panelSource, /t\("auth\.logOut"\)/);
   assert.match(loginSource, /className="web-login-composer"[\s\S]*?type="password"[\s\S]*?<button type="submit"/);
   assert.match(globalCssSource, /\.web-login-composer \{[\s\S]*?display: flex;[\s\S]*?border-radius: 14px/);

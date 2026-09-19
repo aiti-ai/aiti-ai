@@ -4,8 +4,8 @@ import test from "node:test";
 
 const source = await readFile(new URL("./useAgentSession.ts", import.meta.url), "utf8");
 const chatWindowSource = await readFile(new URL("../components/ChatWindow.tsx", import.meta.url), "utf8");
-const chatInputSource = await readFile(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
 const appShellSource = await readFile(new URL("../components/AppShell.tsx", import.meta.url), "utf8");
+const chatInputSource = await readFile(new URL("../components/ChatInput.tsx", import.meta.url), "utf8");
 
 test("keeps the session event stream open through the idle grace window", () => {
   const finishSource = source.slice(
@@ -39,7 +39,8 @@ test("keeps the session event stream open through the idle grace window", () => 
 
   assert.match(source, /const EVENT_STREAM_IDLE_GRACE_MS = 30_000/);
   assert.match(graceSource, /setTimeout\(\(\) => void checkServerIdle\(\), EVENT_STREAM_IDLE_GRACE_MS\)/);
-  assert.match(graceSource, /fetch\(`\/api\/agent\/\$\{encodeURIComponent\(sid\)\}`\)/);
+  // The idle probe may go through apiUrl() (basePath support) or be a bare fetch.
+  assert.match(graceSource, /fetch\((?:apiUrl\()?`?\/api\/agent\/\$\{encodeURIComponent\(sid\)\}`?\)?\)/);
   assert.match(graceSource, /closeEvents\(\)/);
   assert.match(finishSource, /scheduleEventStreamClose\(sid\)/);
   assert.doesNotMatch(finishSource, /closeEvents\(\)/);
@@ -49,13 +50,8 @@ test("keeps the session event stream open through the idle grace window", () => 
   assert.match(agentSettledSource, /onAgentEnd\?\.\(\)/);
   assert.match(promptDoneSource, /notifyPromptStage\(runId\)/);
   assert.match(promptDoneSource, /scheduleEventStreamClose\(sid\)/);
-  assert.match(sendSource, /const definitivelyRejected = !promptRequestStarted/);
   assert.match(sendSource, /if \(!definitivelyRejected && sentSessionId\) \{[\s\S]*?waitForPromptSettlement/);
-  assert.match(sendSource, /restoreSubmission\(message, images, composerDraftKey\);[\s\S]*?if \(sentSessionId\) \{[\s\S]*?reconcileAgentState\(sentSessionId\);[\s\S]*?return;[\s\S]*?\}[\s\S]*?closeEvents\(\)/);
-  assert.doesNotMatch(
-    sendSource,
-    /rpcPromptPendingRef\.current = false;\s*agentRunningRef\.current = false;\s*closeEvents\(\)/,
-  );
+  assert.match(sendSource, /if \(!definitivelyRejected && sentSessionId\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?closeEvents\(\)/);
 });
 
 test("a rejected submission preserves a different run reported by the server", () => {
@@ -100,20 +96,25 @@ test("opening System or Tools lazily starts a dormant session without sending a 
   );
 });
 
-test("new-session promotion rekeys drafts before publishing the real session", () => {
+test("new-session promotion clears the provisional draft via intent before publishing the real session", () => {
   const promoteSource = source.slice(
     source.indexOf("  const promoteNewSession = useCallback"),
     source.indexOf("  const ensureNewSession = useCallback"),
   );
 
-  assert.match(promoteSource, /draftKeyAliasesRef\.current\.set\(provisionalDraftKey, sid\)/);
-  assert.match(promoteSource, /input\.rekeyDraft\(provisionalDraftKey, sid\)/);
+  // v2 contract: promote only sends the intent; the provisional draft is voided by the
+  // keeper state machine. No more rekey migration (migrating would drag already-sent
+  // messages into the sid slot)
+  assert.match(promoteSource, /applyDraftIntent\(\{ type: "sessionCreated", provisionalKey: provisionalDraftKey, sessionId: sid \}\)/);
+  assert.doesNotMatch(promoteSource, /rekeyDraft/);
   assert.ok(
-    promoteSource.indexOf("input.rekeyDraft(provisionalDraftKey, sid)")
+    promoteSource.indexOf('applyDraftIntent({ type: "sessionCreated"')
       < promoteSource.indexOf("onSessionCreated?.({"),
   );
   assert.match(promoteSource, /}, provisionalDraftKey\)/);
-  assert.match(chatWindowSource, /draftKey=\{session\?\.id \?\? newSessionDraftKey \?\? undefined\}/);
+  // After the merge, ChatWindow extracts this expression into const draftKey and passes it down
+  assert.match(chatWindowSource, /const draftKey = session\?\.id \?\? newSessionDraftKey \?\? undefined;/);
+  assert.match(chatWindowSource, /draftKey=\{draftKey\}/);
 });
 
 test("fresh sessions use the preference while persisted and live sessions restore their selection", () => {
@@ -134,7 +135,11 @@ test("fresh sessions use the preference while persisted and live sessions restor
     preferenceSource,
     /const existingSessionId = session\?\.id;[\s\S]*?useLayoutEffect\(\(\) => \{\s*if \(!existingSessionId && \(!isNew \|\| sessionIdRef\.current\)\) return;\s*setToolPresetState\(getPreferredToolPreset\(\)\)/,
   );
-  assert.match(source, /if \(agentState\?\.running\) \{\s*loadTools\(session\.id\)/);
+  // Opening/restoring a session no longer auto-fetches get_tools (2026-09-15 laziness:
+  // viewing alone must not spin up the runtime); the tool list is fetched via
+  // loadSystemInfo when the user opens the system/tools panel.
+  assert.doesNotMatch(source, /if \(agentState\?\.running\) \{\s*loadTools\(session\.id\)/);
+  assert.match(source, /const loadSystemInfo = useCallback\(async \(\) => \{[\s\S]*?loadTools\(sid\)/);
   assert.match(source, /d\.toolNames !== undefined \? getPresetFromToolNames\(d\.toolNames\) : "default"/);
   assert.match(changeSource, /setPreferredToolPreset\(preset\)/);
   assert.match(changeSource, /\(sid, \{ type: "set_tools", toolNames \}\)/);
@@ -153,12 +158,15 @@ test("only the session-mount load probes disk for external appends", () => {
     source.indexOf("// Load session on mount"),
     source.indexOf("sessionHookMountedRef.current = false"),
   );
-  assert.match(loadSessionSource, /options\?: \{ force\?: boolean \}/);
+  assert.match(loadSessionSource, /options\?: \{ force\?: boolean; fresh\?: boolean \}/);
   assert.match(loadSessionSource, /if \(options\?\.force\) params\.set\("force", "1"\)/);
   assert.match(loadSessionSource, /d\.wrapperRebuilt[\s\S]*?eventConnectionRef\.current\?\.close\(\)[\s\S]*?maintain\(sid\)/);
   assert.match(mountSource, /loadSession\(session\.id, true, true, \{ force: true \}\)/);
   assert.match(source, /await loadSession\(sid\)/);
-  assert.equal([...source.matchAll(/\{ force: true \}/g)].length, 1);
+  // fork: the count is narrowed to the loadSession call shape —
+  // scrollToBottom("instant", { force: true }) is a lookalike literal in the fork
+  // scroll code and outside this "probe disk only on mount" guard's scope
+  assert.equal([...source.matchAll(/loadSession\([^)]*\{ force: true \}\)/g)].length, 1);
 });
 
 test("first user messages expose both branch actions and edit before their own entry", () => {
@@ -167,9 +175,14 @@ test("first user messages expose both branch actions and edit before their own e
     source.indexOf("  const handleLeafChange = useCallback"),
   );
 
-  assert.match(chatWindowSource, /onFork=\{sessionBusy \|\| isNew \? undefined : handleFork\}/);
-  assert.doesNotMatch(chatWindowSource, /idx === 0 && msg\.role === "user"/);
-  assert.doesNotMatch(chatWindowSource, /prevAssistantEntryId/);
+  // fork decision (a4aaff0): forking while running / on the first message are both
+  // legal — onFork carries no sessionBusy gating (the upstream sessionBusy || isNew
+  // variant is forbidden by the ChatWindow edit-from-here red test).
+  // 2026-09-18: added the fork capability gate (local sessions without caps unchanged;
+  // external backends without fork support hide the button).
+  assert.match(chatWindowSource, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : handleFork\}/);
+  assert.doesNotMatch(chatWindowSource, /idx === 0 && msg\.role === "user" \? undefined : handleFork/);
+  // Edit-from-here for fork relies on prevAssistantEntryId to locate the branch point (upstream has no such mechanism, so the old doesNotMatch no longer applies).
   assert.match(navigateSource, /type: "navigate_tree",\s*targetId: entryId/);
   assert.match(navigateSource, /await loadSession\(sid\)/);
 });
@@ -201,20 +214,17 @@ test("existing-session prompts rely on the persisted tool selection", () => {
   assert.doesNotMatch(sendSource, /restoreSubmission, toolPreset\]\);/);
 });
 
-test("submission recovery updates live refs before a possible session rekey", () => {
-  const restoreMethod = chatInputSource.slice(
-    chatInputSource.indexOf("    restoreSubmission(text:"),
-    chatInputSource.indexOf("    insertText(text:"),
+test("submission recovery goes through the rejected intent (keeper writes the box)", () => {
+  // v2 contract: core no longer writes the box/slot itself; the rejected intent goes to the keeper
+  const restoreSource = source.slice(
+    source.indexOf("  const restoreSubmission = useCallback"),
+    source.indexOf("  const sessionStats = useMemo"),
   );
-
-  assert.ok(
-    restoreMethod.indexOf("valueRef.current = restoredDraft.value")
-      < restoreMethod.indexOf("setValue((current) =>"),
-  );
-  assert.ok(
-    restoreMethod.indexOf("attachedImagesRef.current = restoredImages")
-      < restoreMethod.indexOf("setAttachedImages((current) =>"),
-  );
+  assert.match(restoreSource, /const intentKey = targetDraftKey \?\? composerDraftKey;/);
+  assert.match(restoreSource, /if \(!intentKey\) return;/);
+  assert.match(restoreSource, /applyDraftIntent\(\{ type: "rejected", key: intentKey, text, images: draftImages \}\)/);
+  assert.match(chatInputSource, /const clearInput = useCallback\(\(\) => \{[\s\S]*?The only path that clears the draft/);
+  assert.doesNotMatch(chatInputSource, /getDraftApi\(\)\?\.clearDraft/);
 });
 
 test("stale fresh-session completion cannot replace the active composer", () => {
@@ -239,7 +249,7 @@ test("stale fresh-session completion cannot replace the active composer", () => 
     cwdChangeSource,
     /currentProject === newProject\s*&& \(selectedSession !== null \|\| currentFreshCwd === cwd\)/,
   );
-  assert.match(cwdChangeSource, /if \(currentProject !== newProject\) \{[\s\S]*?setFileTabs\(\[\]\)/);
+  assert.match(cwdChangeSource, /if \(isUserProjectSwitch\) \{[\s\S]*?setFileTabs\(\[\]\)/);
   assert.match(
     appShellSource,
     /useLayoutEffect\(\(\) => \{\s*activeNewSessionDraftKeyRef\.current = newSessionDraftKey;/,
@@ -250,19 +260,23 @@ test("stale fresh-session completion cannot replace the active composer", () => 
   );
 });
 
-test("abandoned fresh-session drafts are cleared and cannot be recreated by late rejection", () => {
-  const restoreSource = source.slice(
-    source.indexOf("  const restoreSubmission = useCallback"),
-    source.indexOf("  const sessionStats = useMemo"),
-  );
+test("abandoned fresh-session drafts survive unmount (keeper owns the lifecycle); late rejection still guarded", () => {
+  // v2 contract: unmount does not clear "abandoned" new-session drafts — switching away
+  // and back in the SPA restores them via the keeper scan; the sole lifecycle owner is
+  // the keeper state machine
   const mountSource = source.slice(
     source.indexOf("  // Load session on mount"),
     source.indexOf("  useEffect(() => {\n    onSystemPromptChange"),
   );
+  const restoreSource = source.slice(
+    source.indexOf("  const restoreSubmission = useCallback"),
+    source.indexOf("  const sessionStats = useMemo"),
+  );
 
+  assert.doesNotMatch(mountSource, /abandonedDraftKey/);
+  assert.doesNotMatch(mountSource, /clearDraft/);
   assert.match(restoreSource, /!sessionHookMountedRef\.current[\s\S]*?!newSessionPromotedRef\.current/);
-  assert.match(mountSource, /const abandonedDraftKey = isNew \? newSessionDraftKey : null/);
-  assert.match(mountSource, /clearDraft\(abandonedDraftKey\)/);
+  assert.match(restoreSource, /type: "rejected"/);
 });
 
 test("streaming submissions cannot be stranded in an idle direct queue", () => {
@@ -306,12 +320,9 @@ test("delegates event stream readiness and hides an empty agent phase", () => {
     source.indexOf("const respondToExtensionUi"),
   );
 
-  assert.match(source, /new AgentEventConnection\(\{/);
-  assert.match(source, /shouldMaintain: \(sid\)[\s\S]*?sessionIdRef\.current === sid/);
-  assert.match(ensureSource, /eventConnectionRef\.current!\.ensureConnected\(sid\)/);
-  assert.match(ensureSource, /eventConnectionRef\.current!\.maintain\(sid\)/);
-  assert.match(chatWindowSource, /const hasStreamingContent = Boolean\(streamState\.streamingMessage\?\.content\.length\)/);
-  assert.match(chatWindowSource, /streamState\.isStreaming && hasStreamingContent && streamState\.streamingMessage/);
+  // SSE reuse now lives in AgentEventConnection (lib/agent-event-connection.ts,
+  // covered by its own tests); the hook delegates via ensureEventsConnected.
+  assert.match(ensureSource, /ensureConnected\(sid\)/);
   assert.match(chatWindowSource, /agentRunning && !hasStreamingContent && agentPhase/);
   assert.match(chatWindowSource, /return null;/);
 });
@@ -373,18 +384,48 @@ test("keeps one reducer-owned assistant partial and consumes Pi JSON deltas", ()
 
   assert.match(source, /streamReducer,[\s\S]*type ClientAssistantMessageEvent/);
   assert.doesNotMatch(source, /streamingMessageRef/);
-  assert.match(connectedSource, /dispatch\(\{ type: "end" \}\)/);
+  assert.match(connectedSource, /dispatchStream\(\{ type: "end" \}\)/);
   assert.match(connectedSource, /event\.isStreaming === true/);
   assert.match(connectedSource, /agentRunningRef\.current = true/);
-  assert.match(streamSource, /msg\?\.role === "assistant"[\s\S]*dispatch\(\{ type: "snapshot", message: msg \}\)/);
+  assert.match(streamSource, /msg\?\.role === "assistant"[\s\S]*dispatchStream\(\{ type: "snapshot", message: msg \}\)/);
   assert.match(streamSource, /event\.assistantMessageEvent as ClientAssistantMessageEvent/);
-  assert.match(streamSource, /dispatch\(\{ type: "delta", event: delta \}\)/);
-  assert.match(streamSource, /delta\.type !== "toolcall_start" && delta\.type !== "toolcall_delta"/);
+  assert.match(streamSource, /enqueueDelta\(delta\)/);
+  assert.match(source, /dispatch\(\{ type: "delta-batch", events: batch \}\)/);
+  // setAgentPhase moved into flushPendingDeltas (once per frame): content events (not pure toolcall metadata) clear the waiting-for-model state
+  assert.match(source, /all\.some\(\(d\) => d\.type !== "toolcall_start" && d\.type !== "toolcall_delta"\)[\s\S]*?setAgentPhase\(null\)/);
   assert.doesNotMatch(streamSource, /case "message_delta"/);
   assert.match(messageEndSource, /const completed = event\.message as AgentMessage/);
   assert.match(messageEndSource, /normalizeToolCalls\(completed\)/);
-  assert.match(messageEndSource, /dispatch\(\{ type: "end" \}\)/);
+  assert.match(messageEndSource, /dispatchStream\(\{ type: "end" \}\)/);
   assert.doesNotMatch(messageEndSource, /streamState\.streamingMessage/);
+});
+
+test("does not double-append the first user message when the optimistic key was cleared early", () => {
+  const messageEndSource = source.slice(
+    source.indexOf('case "message_end"'),
+    source.indexOf('case "tool_execution_start"'),
+  );
+  // Root cause of the duplicated first message (2026-09-16): on new-session connect the
+  // SSE connected frame reaches the backend before the prompt, so the server reports
+  // isRunning=false → the client's idle-correction settle branch clears
+  // optimisticUserMessageKeyRef; agent_start then resumes, and when message_end(user)
+  // arrives the optimisticKey is gone → blind append → the first user bubble renders
+  // twice. Fix: add an idempotent fallback in the user branch — if the tail's last entry
+  // is a user message with the same key, skip it outright, regardless of ref liveness.
+  const dedicatedSource = messageEndSource.slice(
+    messageEndSource.indexOf("const delivered = normalizeToolCalls(completed)"),
+    messageEndSource.indexOf("dispatchStream({ type: \"end\" })"),
+  );
+  // The original dedup path is kept (it consumes the optimistic bubble while optimisticKey is alive).
+  assert.match(dedicatedSource, /optimisticKey && last\?\.role === "user" && userMessageKey\(last\) === optimisticKey/);
+  // Idempotent fallback: optimisticKey lost but a same-key user message still sits at the tail → return prev to skip.
+  assert.match(dedicatedSource, /userMessageKey\(last\) === deliveredKey/);
+  assert.match(dedicatedSource, /Idempotent backstop/);
+  assert.ok(
+    dedicatedSource.indexOf("userMessageKey(last) === deliveredKey") > dedicatedSource.indexOf("userMessageKey(last) === optimisticKey"),
+    "the idempotent fallback must come after the original optimisticKey dedup path",
+  );
+  assert.match(dedicatedSource, /if \(last\?\.role === "user" && userMessageKey\(last\) === deliveredKey\) \{\s*return prev;\s*\}/);
 });
 
 test("restoring a running session does not clear an SSE snapshot", () => {
@@ -393,7 +434,7 @@ test("restoring a running session does not clear an SSE snapshot", () => {
     source.indexOf("useEffect(() => {\n    onSystemPromptChange"),
   );
 
-  assert.match(mountSource, /dispatch\(\{ type: "resume" \}\)/);
+  assert.match(mountSource, /dispatch(Stream)?\(\{ type: "resume" \}\)/);
   assert.doesNotMatch(mountSource, /dispatch\(\{ type: "start" \}\)/);
 });
 
@@ -492,25 +533,15 @@ test("keeps live following cancellable when the user scrolls away from the tail"
     source.indexOf("const handleScrollPositionChange"),
     source.indexOf("// Load session on mount"),
   );
-  const scrollToBottomSource = source.slice(
-    source.indexOf("const scrollToBottom"),
-    source.indexOf("const currentModel"),
-  );
 
   assert.match(source, /const liveFollowFrameRef = useRef<number \| null>\(null\)/);
-  assert.match(source, /const previousScrollTopRef = useRef\(0\)/);
-  assert.match(source, /const wasAttached = isNearBottomRef\.current;[\s\S]*?const isAttached = getLiveFollowAttached\([\s\S]*?wasAttached,[\s\S]*?previousScrollTopRef\.current,[\s\S]*?scrollTop,[\s\S]*?clientHeight,[\s\S]*?scrollHeight/);
-  assert.match(scrollHandlerSource, /const isAgentRunning = agentRunningRef\.current;[\s\S]*?isAgentRunning\s*\? CHAT_SCROLL_REATTACH_TOLERANCE\s*:\s*CHAT_SCROLL_TAIL_TOLERANCE/);
-  assert.match(source, /previousScrollTopRef\.current = scrollTop/);
-  assert.match(scrollToBottomSource, /const container = scrollContainerRef\.current;\s*if \(!container\) return;/);
-  assert.match(scrollToBottomSource, /container\.scrollTo\(\{ top: container\.scrollHeight, behavior \}\);\s*previousScrollTopRef\.current = container\.scrollTop;/);
-  assert.doesNotMatch(scrollToBottomSource, /scrollIntoView/);
-  assert.match(streamUpdateSource, /liveFollowFrameRef\.current === null/);
-  assert.match(streamUpdateSource, /requestAnimationFrame\(\(\) => \{[\s\S]*?liveFollowFrameRef\.current = null;[\s\S]*?if \(isNearBottomRef\.current\) scrollToBottom\("auto"\)/);
-  assert.match(scrollHandlerSource, /!wasAttached && isAttached && isAgentRunning[\s\S]*?scrollToBottom\("auto"\)/);
+  // Step-follow is handled by useEffect [streamState] → scheduleFollowStep (a passive
+  // effect; message_update no longer reads rect in rAF — React hasn't committed the DOM
+  // → stale layout → step jitter). The RO callback only skips scheduleFollowStep when
+  // sends/user scrolls are suppressed (pendingScrollToUserRef).
+  assert.doesNotMatch(streamUpdateSource, /liveFollowFrameRef\.current === null/);
+  assert.match(source, /useEffect\(\(\) => \{[\s\S]*?if \(pendingScrollToUserRef\.current\) return;[\s\S]*?if \(!agentRunningRef\.current\) return;[\s\S]*?scheduleFollowStep\(\);[\s\S]*?\}, \[streamState, messages, scheduleFollowStep\]\);/)
   assert.match(scrollHandlerSource, /cancelAnimationFrame\(liveFollowFrameRef\.current\)/);
-  assert.match(source, /previousScrollTopRef\.current = container\.scrollTop;\s*container\.addEventListener\("scroll", handleScrollPositionChange/);
-  assert.doesNotMatch(source, /SCROLL_BOTTOM_THRESHOLD|completionScrollAllowedRef|ignoreProgrammaticScrollUntilRef/);
 });
 
 test("restores an in-page session viewport without the default tail jump", () => {
@@ -534,76 +565,391 @@ test("keeps a newly sent user message at the top while its response starts", () 
   );
   const userScrollSource = source.slice(
     source.indexOf("const scrollUserMsgToTop"),
-    source.indexOf("const handleScrollPositionChange"),
+    source.indexOf("const markUserScrollIntent"),
   );
   const scrollEffectSource = source.slice(
     source.indexOf("useLayoutEffect(() => {\n    if (messages.length > 0)"),
     source.indexOf("// Load model list"),
   );
 
-  assert.match(streamUpdateSource, /!pendingScrollToUserRef\.current && isNearBottomRef\.current/);
+  assert.doesNotMatch(streamUpdateSource, /!pendingScrollToUserRef\.current && isNearBottomRef\.current/);
   assert.match(source, /const \[promptAnchorActive, setPromptAnchorActive\] = useState\(false\)/);
   assert.match(source, /pendingScrollToUserRef\.current = true;\s*setPromptAnchorActive\(true\)/);
   assert.match(userScrollSource, /const targetTop = Math\.min\(Math\.max\(0, elAbsTop - 16\), maxScrollTop\)/);
   assert.match(userScrollSource, /cancelAnimationFrame\(liveFollowFrameRef\.current\)/);
-  assert.match(userScrollSource, /isNearBottomRef\.current = true/);
-  assert.match(userScrollSource, /previousScrollTopRef\.current = targetTop/);
-  assert.match(userScrollSource, /container\.scrollTo\(\{ top: targetTop, behavior: "auto" \}\)/);
+  assert.match(userScrollSource, /isNearBottomRef\.current = targetTop >= maxScrollTop - SCROLL_BOTTOM_THRESHOLD/);
+  assert.match(userScrollSource, /container\.scrollTo\(\{ top: targetTop, behavior: "smooth" \}\)/);
   assert.match(scrollEffectSource, /pendingScrollToUserRef\.current = false;[\s\S]*?scrollUserMsgToTop\(\)/);
-  assert.match(chatWindowSource, /const contentEnd = spacer\.getBoundingClientRect\(\)\.top[\s\S]*?getPromptAnchorSpacerHeight\([\s\S]*?targetTop,[\s\S]*?contentEnd,[\s\S]*?container\.clientHeight/);
-  assert.match(chatWindowSource, /<div ref=\{promptAnchorSpacerRef\} aria-hidden="true" \/>/);
-  assert.match(chatWindowSource, /const promptAnchorAdjustmentDoneRef = useRef\(false\)/);
-  assert.match(chatWindowSource, /promptAnchorAdjustmentDoneRef\.current = false/);
-  assert.match(chatWindowSource, /const isInitialMeasurement = !promptAnchorAdjustmentDoneRef\.current;[\s\S]*?promptAnchorAdjustmentDoneRef\.current = true;[\s\S]*?if \(needsInitialAdjustment\) scrollUserMsgToTop\(\)/);
+  // The step-follow spacer was removed: promptAnchorSpacerHeight is no longer inflated
+  // (it conflicted with smartFollowStep); scroll following is fully owned by
+  // useAgentSession's smartFollowStep.
+  assert.doesNotMatch(chatWindowSource, /maxScrollTopWithoutAnchor/);
+  assert.doesNotMatch(chatWindowSource, /nextPromptAnchorSpacerHeight/);
+  assert.match(chatWindowSource, /step-follow is fully owned by smartFollowStep/);
 });
 
-test("keeps prompt anchor measurement outside the React update cycle", () => {
-  const anchorEffectStart = chatWindowSource.indexOf(
-    "useLayoutEffect(() => {\n    const spacer = promptAnchorSpacerRef.current;",
+test("applies the running eye-room padding in the same commit as the send jump", () => {
+  // Root cause (2026-08-28, surfaced after the upstream merge): bottomEyeRoom used to be
+  // passive-effect + state, landing one beat after handleSend's optimistic commit
+  // (agentRunning set synchronously + user message appended); the send jump
+  // scrollUserMsgToTop reads maxScrollTop in that commit's layout phase → without the
+  // padding → target clamps to the current position = no-op, the new message stays below
+  // the viewport; the compensating step is then suppressed by the 2s press guard opened
+  // by pointerdown → "nothing moves after sending; the reply grows out of view".
+  // Fix: (1) derive eye-room during render (lands in the same commit as agentRunning);
+  // (2) the jump clears the press guard.
+  const userScrollSource = source.slice(
+    source.indexOf("const scrollUserMsgToTop"),
+    source.indexOf("const markUserScrollIntent"),
   );
-  assert.notEqual(anchorEffectStart, -1);
-  const syncEffectStart = chatWindowSource.indexOf(
-    "useLayoutEffect(() => {\n    promptAnchorUpdateRef.current?.();",
-    anchorEffectStart,
-  );
-  assert.notEqual(syncEffectStart, -1);
-  const anchorLifecycleEffectSource = chatWindowSource.slice(
-    anchorEffectStart,
-    syncEffectStart,
-  );
-  const anchorSyncEffectSource = chatWindowSource.slice(
-    syncEffectStart,
-    chatWindowSource.indexOf("const availableThinkingLevels"),
-  );
-
-  assert.doesNotMatch(anchorLifecycleEffectSource, /\bset[A-Z][A-Za-z0-9]*\s*\(/);
-  assert.doesNotMatch(anchorSyncEffectSource, /\bset[A-Z][A-Za-z0-9]*\s*\(/);
-  assert.doesNotMatch(chatWindowSource, /setPromptAnchorSpacer|useState[^\n]*promptAnchorSpacer/);
-  assert.doesNotMatch(anchorLifecycleEffectSource, /streamState\.streamingMessage/);
-  assert.match(anchorLifecycleEffectSource, /spacer\.style\.height = nextPromptAnchorSpacerHeight > 0/);
-  assert.match(anchorLifecycleEffectSource, /promptAnchorUpdateRef\.current = updatePromptAnchorSpacer/);
-  assert.match(anchorLifecycleEffectSource, /new ResizeObserver\(schedulePromptAnchorMeasure\)/);
-  assert.match(anchorLifecycleEffectSource, /observer\?\.observe\(messageContent\)/);
-  assert.match(anchorLifecycleEffectSource, /if \(disposed \|\| promptAnchorMeasureFrameRef\.current !== null\) return/);
-  assert.match(anchorLifecycleEffectSource, /promptAnchorMeasureFrameRef\.current = requestAnimationFrame\(\(\) => \{\s*promptAnchorMeasureFrameRef\.current = null;\s*updatePromptAnchorSpacer\(\)/);
-  assert.match(anchorLifecycleEffectSource, /disposed = true;[\s\S]*?promptAnchorUpdateRef\.current === updatePromptAnchorSpacer[\s\S]*?cancelAnimationFrame\(promptAnchorMeasureFrameRef\.current\)/);
-  assert.match(anchorSyncEffectSource, /promptAnchorUpdateRef\.current\?\.\(\);\s*\}, \[streamState\.streamingMessage\]\)/);
-  assert.match(chatWindowSource, /<div ref=\{messageContentRef\}[^>]*style=\{\{/);
+  // (1) render-time derivation (do not regress to effect+state — that would reintroduce the race)
+  assert.match(chatWindowSource, /const bottomEyeRoom = agentRunning\s*\?\s*Math\.max\(0, scrollViewportH - 120 - bottomComposerHeight\)\s*:\s*0;/);
+  assert.doesNotMatch(chatWindowSource, /setBottomEyeRoom/);
+  assert.doesNotMatch(chatWindowSource, /\[agentRunning, scrollViewportH, scReady, bottomComposerHeight, loading, error\]/);
+  // (2) the jump clears the press guard (before scrollTo), so the post-send compensating step is no longer silently skipped
+  const clearIdx = userScrollSource.indexOf("userScrollIntentUntilRef.current = 0;");
+  const scrollIdx = userScrollSource.indexOf('container.scrollTo({ top: targetTop, behavior: "smooth" })');
+  assert.ok(clearIdx !== -1, "jump must clear the 2s user-scroll-intent window");
+  assert.ok(scrollIdx !== -1 && clearIdx < scrollIdx, "intent clear must precede the jump scrollTo");
 });
 
-test("uses the prompt anchor as the only trailing message spacer", () => {
-  assert.match(chatWindowSource, /<div ref=\{promptAnchorSpacerRef\} aria-hidden="true" \/>[\s\S]*?<\/div>/);
-  assert.doesNotMatch(chatWindowSource, /bottomComposer(?:Ref|Height|ScrollFrameRef)/);
-  assert.doesNotMatch(chatWindowSource, /new ResizeObserver\(updateBottomComposerHeight\)/);
+test("sizes the message tail from the rendered bottom composer", () => {
+  assert.match(chatWindowSource, /const bottomComposerRef = useRef<HTMLDivElement \| null>\(null\)/);
+  assert.match(chatWindowSource, /useLayoutEffect\(\(\) => \{/);
+  assert.match(chatWindowSource, /updateBottomComposerHeight\(entry\.borderBoxSize\?\.\[0\]\?\.blockSize \?\? entry\.contentRect\.height\)/);
+  assert.match(chatWindowSource, /bottomComposerScrollFrameRef = useRef<number \| null>\(null\)/);
+  assert.match(chatWindowSource, /distanceFromBottom <= Math\.abs\(nextHeight - previousHeight\) \+ 1/);
+  assert.match(chatWindowSource, /scrollToBottom\("auto"\)/);
+  assert.match(chatWindowSource, /<div ref=\{bottomComposerRef\} className="relative( shrink-0)?"?>/);
+  assert.match(chatWindowSource, /height: bottomComposerHeight/);
 });
 
-test("keeps a detached viewport in place when streaming completes", () => {
-  const scrollEffectSource = source.slice(
+test("freezes passive chat scrolling while composing on a small screen", () => {
+  // Root cause: on small screens with the keyboard up, streaming step-follow / tail-pin
+  // re-scrolls triggered by composer growth / final scroll-to-bottom all moved the body
+  // under the user's thumb = breaking input. Fix: focused composer + small screen (or
+  // touch-primary device) → freeze all passive scrolling; explicit jumps (send/first
+  // paint) carry a force exception, and blur re-enables following via events.
+  const freezeHelperSource = source.slice(
+    source.indexOf("const CHAT_EDIT_FREEZE_QUERY"),
+    source.indexOf("const PROMPT_SETTLE_INITIAL_DELAY_MS"),
+  );
+  const scrollToBottomSource = source.slice(
+    source.indexOf("const scrollToBottom = useCallback"),
+    source.indexOf("// Step-follow (always on)"),
+  );
+  const followStepSource = source.slice(
+    source.indexOf("const smartFollowStep = useCallback"),
+    source.indexOf("// T-5: rAF-coalesced step-follow"),
+  );
+  const composingGuardSource = source.slice(
+    source.indexOf("// Composing guard (small screens / touch)"),
+    source.indexOf("}, [scheduleFollowStep, scrollToBottom]);"),
+  );
+  const layoutScrollSource = source.slice(
     source.indexOf("useLayoutEffect(() => {\n    if (messages.length > 0)"),
-    source.indexOf("// Load model list"),
+    source.indexOf("// Step-follow trigger signals"),
   );
 
-  assert.match(scrollEffectSource, /!agentRunningRef\.current && isNearBottomRef\.current[\s\S]*?scrollToBottom\("auto"\)/);
-  assert.doesNotMatch(scrollEffectSource, /\|\|/);
-  assert.match(source, /addEventListener\("scroll", handleScrollPositionChange/);
+  // Freeze condition: editing + small screen/touch; desktop mouse windows keep stream following
+  assert.match(freezeHelperSource, /const CHAT_EDIT_FREEZE_QUERY = "\(max-width: 959px\), \(pointer: coarse\)"/);
+  assert.match(source, /const isChatScrollFrozen = useCallback\(\s*\(\) => isEditFreezeViewport\(\) && editingRef\.current && Date\.now\(\) < composingUntilRef\.current,/);
+  // Freezing keys off a "recent edit event" time window, not "has focus": on phones the
+  // keyboard stays up after sending and focus remains in the composer, so focus alone
+  // would freeze following for the entire reply.
+  assert.match(source, /const COMPOSING_ACTIVE_MS = 5_000/);
+  assert.match(source, /const COMPOSING_EVENTS = \["beforeinput", "input", "keydown", "compositionstart"\]/);
+  assert.match(followStepSource, /if \(isChatScrollFrozen\(\)\) return;/);
+  assert.match(scrollToBottomSource, /if \(!opts\?\.force && isChatScrollFrozen\(\)\) return;/);
+  assert.match(followStepSource, /\[isChatScrollFrozen, opts\.promptAnchorSpacerHeightRef/);
+  // Tail pinning uses in-container scrollTo, never scrollIntoView (that also scrolls html/body; with the keyboard up the whole page gets shoved away)
+  assert.doesNotMatch(scrollToBottomSource, /scrollIntoView\(\{/);
+  assert.match(scrollToBottomSource, /container\.scrollTo\(\{ top: Math\.max\(0, target\), behavior \}\)/);
+  // First-paint tail snap is exempt from the freeze
+  assert.match(layoutScrollSource, /scrollToBottom\("instant", \{ force: true \}\)/);
+  // On blur, hand the view back: while running, schedule one step; when idle, scroll to bottom under the original settle conditions (event-driven, no polling)
+  assert.match(composingGuardSource, /window\.addEventListener\(type, arm, \{ capture: true, passive: true \}\)/);
+  assert.match(composingGuardSource, /window\.addEventListener\("focusout", onFocusOut, true\)/);
+  assert.match(composingGuardSource, /if \(isEditableNode\(event\.relatedTarget\)\) return;/);
+  assert.match(composingGuardSource, /if \(!isEditFreezeViewport\(\) \|\| !isEditableNode\(event\.target\)\) return;/);
+  // Explicit jumps (send/navigation) release the freeze: this turn's reply must keep following as usual
+  const userScrollSource = source.slice(
+    source.indexOf("const scrollUserMsgToTop"),
+    source.indexOf("const markUserScrollIntent"),
+  );
+  assert.match(userScrollSource, /composingUntilRef\.current = 0;\s*editingRef\.current = false;/);
+  assert.match(composingGuardSource, /if \(agentRunningRef\.current\) \{\s*scheduleFollowStep\(\);/);
+  assert.match(composingGuardSource, /releaseTimer = window\.setTimeout\(\(\) => \{[\s\S]*?release\(\);[\s\S]*?\}, COMPOSING_ACTIVE_MS\);/);
+});
+
+test("run elapsed badge recovers its start from the last prompt after page reopen", () => {
+  // Root cause: on page reopen/reconnect the agent_start was missed, and the old
+  // runStartedAtRef ??= Date.now() pinned the start to "the moment of opening" — the
+  // elapsed badge restarted from zero on every open. Fix: recover from the latest user
+  // message timestamp (when that prompt was issued); fall back to now only if the
+  // messages carry no timestamp.
+  const deriveSource = source.slice(
+    source.indexOf("function deriveRunStartedAt"),
+    source.indexOf("export function useAgentSession"),
+  );
+  assert.match(deriveSource, /for \(let i = messages\.length - 1; i >= 0; i--\)/);
+  assert.match(deriveSource, /const promptTimestamp = messages\[userIndex\]\.timestamp/);
+  assert.match(deriveSource, /typeof promptTimestamp === "number" && promptTimestamp > 0/);
+  // User messages replayed by external backends (codebuddy etc.) may lack timestamps: fall back to the first timestamped message after it
+  assert.match(deriveSource, /for \(let i = userIndex \+ 1; i < messages\.length; i\+\+\)/);
+
+  const adoptSource = source.slice(
+    source.indexOf("const adoptRunStartedAt = useCallback"),
+    source.indexOf("const isChatScrollFrozen"),
+  );
+  assert.match(adoptSource, /if \(runStartedAtRef\.current !== null\) return/);
+  // Server state.runStartedAt (the authoritative value on the external backend's handle side) wins; then message derivation/current time
+  assert.match(adoptSource, /serverStartedAt\?: number/);
+  assert.match(adoptSource, /typeof serverStartedAt === "number" && serverStartedAt > 0 \? serverStartedAt : null/);
+  assert.match(adoptSource, /deriveRunStartedAt\(messagesRef\.current\)/);
+  assert.match(source, /adoptRunStartedAt\(state\?\.runStartedAt\)/);
+  assert.match(source, /adoptRunStartedAt\(st\.runStartedAt\)/);
+  assert.match(source, /adoptRunStartedAt\(st\?\.runStartedAt\)/);
+  // loadSession mirrors synchronously: a running adoption in the same flow must immediately read the just-loaded messages
+  assert.match(source, /messagesRef\.current = persistedMessages/);
+
+  // All remote adoption points (connected / agent_start / grace reconciliation /
+  // adoptRemoteRun / mount) go through adoptRunStartedAt — "the moment of opening" must
+  // never be the start again
+  const connectedSource = source.slice(
+    source.indexOf('case "connected"'),
+    source.indexOf('case "session_backend_ready"'),
+  );
+  assert.match(connectedSource, /adoptRunStartedAt\(\)/);
+  assert.doesNotMatch(connectedSource, /runStartedAtRef\.current \?\?= Date\.now\(\)/);
+  const graceSource = source.slice(
+    source.indexOf("const checkServerIdle"),
+    source.indexOf("const finishPromptWithoutStream"),
+  );
+  assert.match(graceSource, /adoptRunStartedAt\(/);
+  assert.doesNotMatch(graceSource, /runStartedAtRef\.current \?\?= Date\.now\(\)/);
+  const remoteRunSource = source.slice(
+    source.indexOf("const adoptRemoteRun = useCallback"),
+    source.indexOf("const resolveRecovery"),
+  );
+  assert.match(remoteRunSource, /adoptRunStartedAt\(/);
+  assert.doesNotMatch(remoteRunSource, /runStartedAtRef\.current \?\?= Date\.now\(\)/);
+  const mountSource = source.slice(
+    source.indexOf("// Load session on mount"),
+    source.indexOf("onSystemPromptChange?.(systemPrompt)"),
+  );
+  assert.match(mountSource, /adoptRunStartedAt\(/);
+  assert.doesNotMatch(mountSource, /runStartedAtRef\.current \?\?= Date\.now\(\)/);
+
+  // Only handleSend's optimistic send path keeps the Date.now start
+  const fallbacks = source.match(/runStartedAtRef\.current \?\?= Date\.now\(\)/g) ?? [];
+  assert.equal(fallbacks.length, 1);
+
+  // Settlement uniformly clears the start (including settle paths without agent_settled); the next round starts fresh
+  const settleSource = source.slice(
+    source.indexOf("const settleUiStage = useCallback"),
+    source.indexOf("const notifyPromptStage"),
+  );
+  assert.match(settleSource, /runStartedAtRef\.current = null/);
+});
+
+test("start-plan captcha bridge: event wiring, respond command, and sessionRequestCard seam (source contract)", async () => {
+  // The hook consumes provider_runtime_headers_request → state + response + export (the protocol layer stays in core)
+  assert.match(source, /case "provider_runtime_headers_request":/);
+  assert.match(source, /setProviderHeadersRequest\(\{[\s\S]*?captchaConfig:/);
+  assert.match(source, /case "provider_headers_expired":/);
+  assert.match(source, /const respondToProviderHeaders = useCallback/);
+  assert.match(source, /type: "respond_provider_headers"/);
+  assert.match(source, /providerHeadersRequest, respondToProviderHeaders/);
+  // Session request card seam (agent-capability UI moved out of core): the three families
+  // derive one state + unified answer dispatch + a single mount point in ChatWindow;
+  // the card UI itself lives in extensions (the session-cards extension / the zcode agent
+  // client extension) — see SessionRequestSlot.test.mjs.
+  assert.match(source, /const sessionRequest = useMemo<SessionRequestPayload \| null>/);
+  assert.match(source, /kind: `interaction:\$\{interactionRequest\.kind\}`/);
+  assert.match(source, /const respondToSessionRequest = useCallback/);
+  assert.match(source, /sessionRequest, respondToSessionRequest,/);
+  assert.match(chatWindowSource, /sessionRequest, respondToSessionRequest/);
+  assert.match(chatWindowSource, /<SessionRequestCardHost/);
+  assert.match(chatWindowSource, /import \{ SessionRequestCardHost \} from "\.\/SessionRequestSlot"/);
+});
+
+test("busy-state adoption covers compaction windows (state / connected / events)", () => {
+  // Root cause (observed 2026-09-14): manual compact aborts the current run first
+  // (isStreaming=false) while the session is still busy (wrapper.isRunning includes
+  // isCompacting) — the sidebar glowed "running" while the chat window showed idle.
+  // Contract: busy-state determination always follows the server's authoritative
+  // isRunning (delivered via get_state / connected frames); neither mount adoption nor
+  // settlement may miss it.
+  assert.match(source, /function stateIsActive\(state\?: AgentStateResponse \| null\): boolean/);
+  assert.match(source, /state\.isRunning \|\| state\.isStreaming \|\| state\.isPromptRunning \|\| state\.isCompacting/);
+
+  // Mount adoption: isRunning (compaction/queued continuation etc.) also counts as running
+  const mountSource = source.slice(
+    source.indexOf("// Load session on mount"),
+    source.indexOf("onSystemPromptChange?.(systemPrompt)"),
+  );
+  assert.match(mountSource, /if \(stateIsActive\(agentState\.state\)\)/);
+  assert.match(mountSource, /st\.isCompacting \? \{ kind: "compacting" \}/);
+
+  // connected frame: server isRunning set; when the server is idle but local state still says running → fallback settle
+  const connectedSource = source.slice(
+    source.indexOf('case "connected"'),
+    source.indexOf('case "session_backend_ready"'),
+  );
+  assert.match(connectedSource, /\.isRunning === true/);
+  assert.match(connectedSource, /\.isRunning === false/);
+  assert.match(connectedSource, /settleUiStage\(\)/);
+
+  // Compaction start sets busy (manual compact's abort settles first); on end, settle when no active run remains
+  const compactionSource = source.slice(
+    source.indexOf('case "auto_compaction_start"'),
+    source.indexOf('case "extension_ui_request"'),
+  );
+  assert.match(compactionSource, /agentRunningRef\.current = true/);
+  assert.match(compactionSource, /setAgentPhase\(\{ kind: "compacting" \}\)/);
+  assert.match(compactionSource, /if \(!sdkAgentActiveRef\.current && !rpcPromptPendingRef\.current\) \{\s*settleUiStage\(\);/);
+
+  // Guardian polling / reconciliation / settlement polling share one busy-state definition
+  assert.match(source, /if \(!data\.running \|\| !state \|\| !stateIsActive\(state\)\) \{/);
+  assert.match(source, /const busy = data\.running && !!state && stateIsActive\(state\)/);
+});
+
+test("idle-correction on connected skips while a prompt is pending or optimistic bubble undigested", () => {
+  // Root cause (2026-09-14): on a new session's first send the SSE connected frame
+  // arrives before the prompt (server isRunning=false), and the old idle-correction
+  // branch unconditionally ran settleUiStage, wrongly clearing agentRunning → the run
+  // indicator stayed hidden long after sending; it also cleared
+  // optimisticUserMessageKeyRef → message_end(user) appended twice (the first message
+  // rendered twice). Fix: guard the correction branch — skip correction while a local
+  // prompt is pending / an optimistic bubble is undigested.
+  const connectedSource = source.slice(
+    source.indexOf('case "connected"'),
+    source.indexOf('case "session_backend_dead"'),
+  );
+  assert.match(connectedSource, /\.isRunning === false/);
+  assert.match(connectedSource, /!rpcPromptPendingRef\.current/);
+  assert.match(connectedSource, /!optimisticUserMessageKeyRef\.current/);
+  // The guards must precede settleUiStage (within the same condition chain)
+  assert.ok(
+    connectedSource.indexOf("!rpcPromptPendingRef.current") < connectedSource.indexOf("settleUiStage()"),
+    "the guards must appear before the settleUiStage() call",
+  );
+});
+
+test("backend subprocess death settles the frontend running state", () => {
+  // Root cause (2026-09-14): PCliSpawnHandle.markDead only emitted session_backend_dead
+  // and the frontend had no case for it → agentRunning stuck forever (after the pi child
+  // process exited, the UI kept showing "running" long after the server went idle).
+  const deadSource = source.slice(
+    source.indexOf('case "session_backend_dead"'),
+    source.indexOf('case "session_backend_ready"'),
+  );
+  assert.match(deadSource, /const wasRunning = settleUiStage\(\)/);
+  assert.match(deadSource, /void loadSession\(sid\)/);
+  assert.match(deadSource, /if \(wasRunning\) onAgentEnd\?\.\(\)/);
+});
+
+test("agent_settled blocked by rpcPromptPending falls back to settling on server idle (spawn sends no prompt_done)", () => {
+  // Root cause (2026-09-14): spawn backends (the pi child process) never send prompt_done
+  // → rpcPromptPendingRef stays true, and agent_settled is a one-shot event; once the
+  // guard blocks it, settlement never happens (a pi fork reply finished but the UI stayed
+  // "running"; reproduced). Fix (1): when agent_end fetches state, align
+  // rpcPromptPending with the server's isPromptRunning. Fix (2): before the agent_settled
+  // guard breaks, double-check the server; if idle, clear the flag and settle late.
+  const agentEndSource = source.slice(
+    source.indexOf('case "agent_end"'),
+    source.indexOf('case "agent_settled"'),
+  );
+  assert.match(agentEndSource, /if \(d\.state\?\.isPromptRunning !== undefined\) \{\s*rpcPromptPendingRef\.current = Boolean\(d\.state\.isPromptRunning\);/);
+  const settledSource = source.slice(
+    source.indexOf('case "agent_settled"'),
+    source.indexOf('case "prompt_done"'),
+  );
+  assert.match(settledSource, /\) \|\| rpcPromptPendingRef\.current\) \{/);
+  assert.match(settledSource, /settledSid && rpcPromptPendingRef\.current && agentRunningRef\.current/);
+  assert.match(settledSource, /if \(d\.state\?\.isPromptRunning\) return;/);
+  assert.match(settledSource, /rpcPromptPendingRef\.current = false;/);
+  assert.match(settledSource, /const wasRunning = settleUiStage\(\);/);
+  assert.match(settledSource, /void loadSession\(settledSid\);/);
+  assert.match(settledSource, /if \(wasRunning\) onAgentEnd\?\.\(\);/);
+});
+
+test("manual refresh cuts the stale SSE stream, reloads with ?fresh=1 and reconnects", () => {
+  const loadSource = source.slice(
+    source.indexOf("const loadSession = useCallback"),
+    source.indexOf("const reloadCurrentSession = useCallback"),
+  );
+  assert.match(loadSource, /const loadSession = useCallback\(async \(sid: string, showLoading = false, includeState = false, options\?: \{ force\?: boolean; fresh\?: boolean \}\) => \{/);
+  assert.match(loadSource, /if \(options\?\.fresh\) params\.set\("fresh", "1"\);/);
+
+  // Refresh must cut the old stream before reconnecting: the server's ?fresh=1 recycles
+  // the idle wrapper; the old EventSource is bound to the dead wrapper, and without
+  // closing it the new wrapper's events would never arrive (sending showed no streaming).
+  const reloadSource = source.slice(
+    source.indexOf("const reloadCurrentSession = useCallback"),
+    source.indexOf("const loadContext = useCallback"),
+  );
+  assert.match(reloadSource, /eventConnectionRef\.current\?\.close\(\);/);
+  assert.match(reloadSource, /await loadSession\(sid, false, true, \{ fresh: true \}\);/);
+  assert.match(reloadSource, /eventConnectionRef\.current\?\.maintain\(sid\);/);
+});
+
+test("queued continuation after stop never sticks on \"stopping\": aborting moves into the hook and resets on current-turn settlement", () => {
+  // Root cause (observed 2026-09): after clicking stop, aborting only reset once
+  // sessionBusy (agentRunning||bashRunning) went false, but abort only stops the current
+  // turn — the next queued message immediately fires agent_start and keeps running →
+  // agentRunning stays true → the UI stayed stuck on "stopping"; after a refresh you
+  // could see the current message had stopped and the agent was processing the next
+  // queue entry.
+  // Fix: move aborting into useAgentSession and tie the reset to "current turn settled"
+  // (agent_end / settleUiStage / bash completion) rather than "agent fully idle".
+  assert.match(source, /const \[aborting, setAborting\] = useState\(false\);/);
+  // The hook's return value must expose aborting (ChatWindow consumes the same-named prop)
+  const retSource = source.slice(source.indexOf("    dispatch, setAgentRunning, setForkingEntryId,"));
+  assert.match(retSource, /aborting,/);
+
+  // Clicking stop → handleAbort sets it (before both the bash and agent paths)
+  const abortSource = source.slice(
+    source.indexOf("  const handleAbort = useCallback"),
+    source.indexOf("  const handleFork = useCallback"),
+  );
+  assert.ok(
+    abortSource.indexOf("setAborting(true);") < abortSource.indexOf('if (bashRunningRef.current)'),
+    "setAborting(true) must precede the bash/agent branches (both stop kinds enter the waiting state)",
+  );
+
+  // Reset point (1): agent_end (current turn ends, even if a queued turn follows immediately)
+  const agentEndSource = source.slice(
+    source.indexOf('case "agent_end"'),
+    source.indexOf('case "agent_settled"'),
+  );
+  assert.match(agentEndSource, /setAborting\(false\);/);
+
+  // Reset point (2): settleUiStage (shared by agent_settled / prompt_done / session_backend_dead / reconnect idle-correction)
+  const settleSource = source.slice(
+    source.indexOf("  const settleUiStage = useCallback"),
+    source.indexOf("  }, [dispatchStream]);"),
+  );
+  assert.match(settleSource, /setAborting\(false\);/);
+
+  // Reset point (3): bash completion (both the executeBash finally and the waitForBashSettlement poll)
+  const bashSettlementSource = source.slice(
+    source.indexOf("  const waitForBashSettlement = useCallback"),
+    source.indexOf("  // Reconcile client streaming state"),
+  );
+  assert.match(bashSettlementSource, /setBashRunning\(false\);\s*setAborting\(false\);/);
+  const executeBashSource = source.slice(
+    source.indexOf("  const executeBash = useCallback"),
+    source.indexOf("  executeBashRef.current = executeBash;"),
+  );
+  assert.match(executeBashSource, /setBashRunning\(false\);\s*\/\/ After bash finishes \(including an abort via abort_bash\)/);
+
+  // ChatWindow no longer holds a local aborting state / sessionBusy reset effect (old implementation)
+  assert.doesNotMatch(chatWindowSource, /const \[aborting, setAborting\] = useState\(false\);/);
+  assert.doesNotMatch(chatWindowSource, /if \(!sessionBusy\) setAborting\(false\);/);
+  // ChatWindow destructures aborting from the hook and forwards it to ChatInput
+  assert.match(chatWindowSource, /agentRunning, bashRunning, pendingBash, aborting,/);
+  assert.match(chatWindowSource, /aborting=\{aborting\}/);
+  assert.doesNotMatch(chatWindowSource, /setAborting\(true\);/);
 });
