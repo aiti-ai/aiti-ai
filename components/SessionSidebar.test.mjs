@@ -47,7 +47,8 @@ test("does not register row-level session deletion shortcuts", () => {
 
 test("polls running sessions only while the tab is visible", () => {
   assert.doesNotMatch(source, /new EventSource\("\/api\/agent\/running\/events"\)/);
-  assert.match(source, /fetch\("\/api\/agent\/running"/);
+  // The fallback snapshot goes through dedupeFetch (repeat-request analysis §3.1: coalesce across dual instances in the same window), no longer a bare fetch
+  assert.match(source, /dedupeFetch\(apiUrl\("\/api\/agent\/running"/);
   assert.match(source, /document\.visibilityState !== "visible"/);
   assert.match(source, /document\.addEventListener\("visibilitychange", onVisibilityChange\)/);
 });
@@ -108,23 +109,29 @@ test("offers the downstream context-menu hook only on a normal session row", () 
   );
 });
 
-test("lifecycle refreshes bypass the cache while cross-window polling reuses it", () => {
-  assert.match(source, /force \? "\/api\/sessions\?force=1" : "\/api\/sessions"/);
-  assert.match(source, /cache: "no-store"/);
-  assert.match(source, /loadSessions\(isFirst, !isFirst\)/);
-  assert.match(source, /data\.sessionListVersion !== sessionListVersionRef\.current[\s\S]*?await loadSessions\(\)/);
-  assert.doesNotMatch(source, /sessionRefreshDone|sessionRefreshTimerRef|title=\{t\("sidebar\.refresh"\)\}/);
-  assert.match(source, /loadSessions\(false, true\);[\s\S]*?onBackgroundTaskDone/);
+test("manual and lifecycle refreshes bypass the server session-list cache", () => {
+  assert.match(source, /\/api\/sessions\$\{forceRefresh \? "\?refresh=1" : ""\}/);
+  // First-load shape evolved after the P1-B refactor (takeover hint + supplemental fetch + coalesced dedupe);
+  // the bypass-cache semantics are carried by forceRefresh
+  assert.match(source, /loadSessions\(false, true\)/);
+  // The manual refresh button (green-flash feedback) is back in the header after the experiment merge
+  assert.match(source, /sessionRefreshDone/); // P1-B: green-flash feedback retained (onClick branched over multiple lines)
+  // P1-B: lifecycle refresh uses the non-forced ETag path (skipped in takeover state); the completion notification is retained
+  assert.match(source, /void loadSessions\(\);[\s\S]*?onBackgroundTaskDone/);
 });
 
 test("does not expose disk-backed actions for transient sessions", () => {
   assert.match(sessionItemSource, /if \(session\.transient\) return;/);
-  assert.match(sessionItemSource, /\{hovered && !session\.transient && \(/);
+  // The fork hides row actions for unsaved draft sessions (isDraft) —
+  // transient sessions additionally early-return in the action renderers.
+  assert.match(sessionItemSource, /\{hovered && !isDraft && \(/);
 });
 
-test("hides subagent rows and aggregates their state into the main session row", () => {
-  assert.match(source, /const sessionFamilies = listSessionFamilies\(filteredSessions\)/);
-  assert.match(source, /familySessions\.some\(\(session\) => session\.id === selectedSessionId\)/);
-  assert.match(source, /familySessions\.some\(\(session\) => runningSessionIds\.has\(session\.id\)\)/);
-  assert.doesNotMatch(source, /function SessionTreeItem/);
+test("subagent sessions nest under their parent in the sidebar tree", () => {
+  // Plan A: keep our own tree sidebar (fork tree + worktree grouping); the upstream families
+  // concept is naturally covered by buildSessionTree's parentSessionId chain — subagent
+  // sessions hang under their parent node.
+  assert.match(source, /function buildSessionTree/);
+  assert.match(source, /const parentOf = new Map<string, string>\(\);/);
+  assert.match(source, /if \(s\.parentSessionId\) parentOf\.set\(s\.id, s\.parentSessionId\);/);
 });
