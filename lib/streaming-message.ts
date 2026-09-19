@@ -18,6 +18,7 @@ export type StreamAction =
   | { type: "resume" }
   | { type: "snapshot"; message: AgentMessage }
   | { type: "delta"; event: ClientAssistantMessageEvent }
+  | { type: "delta-batch"; events: ClientAssistantMessageEvent[] }
   | { type: "end" };
 
 export const INITIAL_STREAMING_STATE: StreamingState = {
@@ -139,6 +140,13 @@ export function streamReducer(
     }
     case "delta":
       return applyDelta(state, action.event);
+    case "delta-batch": {
+      // Events merged into the same frame are applied as one batch
+      // (one dispatch per chunk → one render per frame).
+      let next = state;
+      for (const event of action.events) next = applyDelta(next, event);
+      return next;
+    }
     case "end":
       return INITIAL_STREAMING_STATE;
     default:
