@@ -324,6 +324,10 @@ export class HandleSessionAdapter implements WrappedSessionLike {
           tasks: h.taskList ? (await h.taskList()).todos : [],
           systemPrompt: "",
           thinkingLevel: "off",
+          // 上下文用量（presence-based：有 getContextUsage 就投影，不依赖 capability 布尔
+          // —— ACP/codebuddy/omp 早已实现却从未被读取、ctx-meter/底栏 chip 因此恒空的根因）。
+          // 前端 useAgentSession 各更新点对 undefined 视为「本次不带」、null 视为「确认无数据」。
+          contextUsage: h.getContextUsage?.() ?? null,
         };
       }
 
@@ -463,18 +467,36 @@ export class HandleSessionAdapter implements WrappedSessionLike {
         return { success: ok };
       }
 
-      case "get_session_stats":
+      case "get_session_stats": {
+        // 外部后端真实口径（此前硬编码全 0）：getUsageTotals（handle 进程存活期内
+        // 逐轮累加，重启归零）+ contextUsage（统计面板的 context % 行——手机端唯一
+        // 查看入口）。未实现的 handle 保持全 0（行为不变）。
+        const totals = h.getUsageTotals?.() ?? undefined;
+        const cu = h.getContextUsage?.() ?? undefined;
+        const tokens = {
+          input: totals?.inputTokens ?? 0,
+          output: totals?.outputTokens ?? 0,
+          cacheRead: totals?.cacheReadTokens ?? 0,
+          cacheWrite: totals?.cacheWriteTokens ?? 0,
+          total:
+            (totals?.inputTokens ?? 0) +
+            (totals?.outputTokens ?? 0) +
+            (totals?.cacheReadTokens ?? 0) +
+            (totals?.cacheWriteTokens ?? 0),
+        };
         return {
           sessionFile: undefined,
           sessionId: h.id,
           userMessages: 0,
-          assistantMessages: 0,
+          assistantMessages: totals?.turns ?? 0,
           toolCalls: 0,
           toolResults: 0,
-          totalMessages: 0,
-          tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-          cost: 0,
+          totalMessages: totals?.turns ?? 0,
+          tokens,
+          cost: totals?.costUsd ?? 0,
+          ...(cu ? { contextUsage: cu } : {}),
         };
+      }
 
       // ---- backend-owned queues -------------------------------------------------
       // The remote process owns its steering/follow-up queues. Handles that

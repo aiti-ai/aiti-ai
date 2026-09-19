@@ -507,6 +507,19 @@ export interface SessionHandle {
   }): Promise<boolean>;
   /** 最近一轮的用量/成本快照；账号 credits 类后端（如 qoder）走 API，允许 Promise。@capability getUsage */
   getUsage?(): UsageReport | undefined | Promise<UsageReport | undefined>;
+  /**
+   * 会话累计用量（handle 进程存活期内逐轮累加；进程重启归零，非持久口径）。
+   * get_session_stats 对外部后端从硬编码全 0 → 真实累计的数据源。未实现时统计
+   * 面板维持全 0（行为不变）。
+   */
+  getUsageTotals?(): {
+    inputTokens?: number;
+    outputTokens?: number;
+    cacheReadTokens?: number;
+    cacheWriteTokens?: number;
+    costUsd?: number;
+    turns?: number;
+  } | undefined;
   /** 该后端可选的模型清单。@capability listModels */
   getAvailableModels?(): Promise<HandleModelOption[]>;
   /**
