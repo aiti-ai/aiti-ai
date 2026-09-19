@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>🚑 Rescue mode — Pi Web</title>
+<!--
+  Static rescue page (crash-rescue scenario 3: compile-time errors / Build Error).
+  Key property: served statically from public/, NOT part of the Turbopack compile graph —
+  when the app module graph is broken (e.g. "Export doesn't exist in target module") this page
+  is still reachable as long as the app process is alive. global-error.tsx is a React boundary
+  and can only catch render-time errors; compile errors happen before the React tree exists,
+  so even global-error fails to load and only this page remains.
+  Functionality mirrors global-error.tsx: POST /api/emergency multi-round rescue + streaming
+  display + permanent reconnect on network interruption (1s) + model switching + error copy.
+  Pure vanilla, zero dependencies.
+  Entry: rescue-hook.js (dev overlay Build Error banner; ?err= carries the error text).
+-->
+<style>
+  * { box-sizing: border-box; }
+  html, body { overflow: auto !important; height: auto; min-height: 100vh; overflow-x: hidden; }
+  body { margin: 0; background: #1a1a1a; color: #e8e8e8; font: 14px/1.5 system-ui, sans-serif; }
+  .wrap { max-width: 640px; width: 100%; margin: 0 auto; padding: 32px 20px 64px; }
+  h1 { margin: 0 0 8px; font-size: 20px; }
+  .sub { margin: 0 0 8px; font-size: 13px; color: #9ca3af; flex: 1; }
+  .row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  button { cursor: pointer; border-radius: 6px; font-size: 12px; padding: 4px 10px; }
+  .btn-dark { background: #333; color: #e8e8e8; border: 1px solid #444; }
+  .btn-amber { background: #f59e0b; color: #1a1a1a; border: none; font-weight: 600; }
+  .btn-amber:disabled { opacity: 0.5; cursor: default; }
+  pre { margin: 0; white-space: pre-wrap; word-break: break-all; overflow-wrap: break-word; max-width: 100%; font-size: 12px; line-height: 1.5; font-family: monospace; }
+  .errbox { margin: 0 0 16px; padding: 10px; background: rgba(245,158,11,0.08); border: 1px solid rgba(245,158,11,0.4); border-radius: 8px; color: #f59e0b; max-height: 160px; overflow: auto; }
+  #log { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; max-height: 50vh; overflow-y: auto; }
+  .msg { padding: 6px 8px; border-radius: 6px; }
+  .msg-u { border-left: 3px solid #444; background: rgba(255,255,255,0.03); }
+  .msg-a { border-left: 3px solid #f59e0b; background: rgba(245,158,11,0.05); }
+  .bar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+  .hint { font-size: 12px; color: #9ca3af; flex-shrink: 0; }
+  select, input[type=text] { padding: 5px 8px; font-size: 12px; background: #242424; color: #e8e8e8; border: 1px solid #444; border-radius: 6px; outline: none; }
+  #modelManual { flex: 1; min-width: 150px; }
+  #input { flex: 1; min-width: 0; padding: 8px 10px; font-size: 13px; background: #242424; color: #e8e8e8; border: 1px solid #444; border-radius: 6px; outline: none; }
+  .sid { font-size: 11px; color: #666; margin-left: 8px; font-family: monospace; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🚑 Rescue mode (build error / page crash)</h1>
+  <div class="row">
+    <p class="sub">The app failed to compile or render; this page does not depend on app code. Send instructions below to the background AI (independent session, with backup helper tools) to locate / roll back / fix.</p>
+    <button class="btn-dark" id="copyErr">Copy error</button>
+  </div>
+  <pre class="errbox" id="errbox">(no error details attached)</pre>
+  <div id="log"></div>
+  <div class="bar">
+    <span class="hint">Model:</span>
+    <span id="modelSel" style="display:flex;flex:1;gap:8px;align-items:center;min-width:0;">
+      <select id="modelSelect" style="flex:1;min-width:150px;"><option value="">Default</option></select>
+      <button class="btn-dark" id="modelToggle" style="padding:4px 8px;font-size:11px;white-space:nowrap;">Manual</button>
+    </span>
+    <input type="text" id="modelManual" placeholder="provider|modelId (e.g. openai|gpt-4o)" style="display:none;">
+    <span class="sid" id="sid">sid: none</span>
+  </div>
+  <div class="row">
+    <input type="text" id="input" placeholder="Rescue instruction (Enter to send, multi-turn)…">
+    <button class="btn-amber" id="send" style="padding:8px 16px;font-size:13px;">Send</button>
+    <button class="btn-dark" id="back" style="padding:8px 16px;font-size:13px;">Back to app</button>
+  </div>
+</div>
+<script>
+(function () {
+  "use strict";
+  // base computation: /dev/rescue.html → /dev; /rescue.html → "" (works the same in prod without a basePath)
+  var BASE = location.pathname.replace(/\/+$/, "").replace(/\/rescue\.html$/, "");
+
+  // ---- rescue backend (same-origin, this instance) ----
+  // Note: the rescue backend is this very instance (BASE + /api/emergency). When the instance
+  // is dead (e.g. the whole server 500s during a dev compile error) rescue goes down with it —
+  // this page does not fall back across instances (that would depend on a specific deployment
+  // topology, not a general architecture). Instead it degrades honestly: state clearly that the
+  // backend is unavailable; the user copies the error / recovers manually.
+  var emgUrl = function () { return BASE + "/api/emergency"; };
+
+  var $ = function (id) { return document.getElementById(id); };
+  var errbox = $("errbox"), log = $("log"), input = $("input"), sendBtn = $("send");
+  var sid = null, cur = "", abortCtrl = null;
+
+  // ---- error details (?err= is passed along by rescue-hook on redirect) ----
+  var errText = "";
+  try { errText = new URLSearchParams(location.search).get("err") || ""; } catch (e) { /* ignore */ }
+  if (errText) errbox.textContent = errText;
+  $("copyErr").onclick = async function () {
+    try { await navigator.clipboard.writeText(errText); } catch (e) {
+      var ta = document.createElement("textarea"); ta.value = errText; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch (e2) {} document.body.removeChild(ta);
+    }
+    $("copyErr").textContent = "Copied ✓";
+    setTimeout(function () { $("copyErr").textContent = "Copy error"; }, 1600);
+  };
+
+  // ---- model selection (mirrors global-error: /api/models dropdown, manual input fallback on failure) ----
+  var mods = [], modelsFailed = false, mOpen = false;
+  var modelSelect = $("modelSelect"), modelManual = $("modelManual"), modelToggle = $("modelToggle");
+  fetch(BASE + "/api/models").then(function (r) {
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return r.json();
+  }).then(function (d) {
+    mods = Array.isArray(d && d.modelList) ? d.modelList : [];
+    var dm = d && d.defaultModel;
+    if (mods.length === 0) { modelsFailed = true; }
+    mods.forEach(function (m) {
+      var o = document.createElement("option");
+      o.value = m.provider + "|" + m.id;
+      o.textContent = (m.name || m.id) + " (" + m.provider + ")";
+      if (dm && dm.provider === m.provider && dm.modelId === m.id) o.selected = true;
+      modelSelect.appendChild(o);
+    });
+    if (modelsFailed) syncModelUi();
+  }).catch(function () { modelsFailed = true; syncModelUi(); });
+  function parseModel(s) {
+    var i = s.indexOf("|"); if (i < 0) return null;
+    var p = s.slice(0, i).trim(), m = s.slice(i + 1).trim();
+    return p && m ? { provider: p, modelId: m } : null;
+  }
+  function selModel() { return (mOpen || modelsFailed) ? parseModel(modelManual.value) : parseModel(modelSelect.value); }
+  function syncModelUi() {
+    modelSelect.style.display = (modelsFailed || mOpen) ? "none" : "";
+    modelManual.style.display = (modelsFailed || mOpen) ? "" : "none";
+    modelToggle.textContent = mOpen ? "List" : "Manual";
+  }
+  modelToggle.onclick = function () { mOpen = !mOpen; syncModelUi(); };
+
+  // ---- rescue messages (POST /api/emergency, streamed append; permanent 1s reconnect on network interruption, mirroring global-error) ----
+  function addMsg(role, text) {
+    var p = document.createElement("pre");
+    p.className = "msg " + (role === "u" ? "msg-u" : "msg-a");
+    p.textContent = text;
+    log.appendChild(p);
+    log.scrollTop = log.scrollHeight;
+  }
+  function showCur(text) {
+    var old = document.getElementById("curStream");
+    if (!text) { if (old) old.remove(); return; }
+    if (!old) { old = document.createElement("pre"); old.id = "curStream"; old.className = "msg msg-a"; log.appendChild(old); }
+    old.textContent = text;
+    log.scrollTop = log.scrollHeight;
+  }
+  function isRetriableNetworkErr(e) {
+    var m = (e instanceof Error ? e.message : String(e)).toLowerCase();
+    if (/^\d{3}\s|quota exceeded|invalid .*model|authentication ?failed|unauthorized|forbidden|not found|deprecated|rate limit|429/.test(m)) return false;
+    return /network\s*error|failed to fetch|abort|err_http2|err_internet|err_connection|err_incomplete|connection ?(lost|closed|reset)|socket ?error|empty ?response|timeout|timed out|disconnect/.test(m);
+  }
+  function attempt(text, tryNo) {
+    var body = { message: text };
+    if (sid) body.sessionId = sid;
+    else {
+      body.errors = [{ message: errText || "(build/runtime error, see page for details)", stack: "", extId: "rescue.html" }];
+      var m = selModel(); if (m) body.model = m;
+    }
+    return fetch(emgUrl(), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: abortCtrl.signal,
+    }).then(function (r) {
+      var s = r.headers.get("x-session-id");
+      if (s) { sid = s; $("sid").textContent = "sid: " + s; }
+      if (!r.ok) {
+        // 5xx/HTML error pages (the whole server behaves this way when the instance is dead or
+        // the build is broken) → degrade honestly: state clearly that the backend is
+        // unavailable instead of pretending to help; 4xx business errors are reported as usual
+        if (r.status >= 500) {
+          addMsg("a", "[Rescue backend unavailable (this instance is dead or fully 500-ing) — this page cannot send instructions on your behalf. Copy the error and recover manually (terminal/git), or use a standalone rescue entry (if deployed).]");
+          return;
+        }
+        return r.json().catch(function () { return {}; }).then(function (j) {
+          throw new Error(j && j.error ? j.error : "HTTP " + r.status);
+        });
+      }
+      var reader = r.body.getReader(), dec = new TextDecoder(), acc = "";
+      function pump() {
+        return reader.read().then(function (chunk) {
+          if (chunk.done) {
+            acc += dec.decode();
+            addMsg("a", acc || "(no output)");
+            showCur("");
+            return;
+          }
+          acc += dec.decode(chunk.value, { stream: true });
+          showCur(acc);
+          return pump();
+        });
+      }
+      return pump();
+    }).catch(function (e) {
+      if (abortCtrl && abortCtrl.signal.aborted) return;
+      if (isRetriableNetworkErr(e)) {
+        showCur((cur || "") + "… connection lost, reconnecting indefinitely (1s interval)");
+        return new Promise(function (res) { setTimeout(res, 1000); }).then(function () {
+          if (abortCtrl && abortCtrl.signal.aborted) return;
+          return attempt(text, tryNo + 1);
+        });
+      }
+      var msg = e instanceof Error ? e.message : String(e);
+      addMsg("a", "[Error] " + msg.substring(0, 80) + (msg.length > 80 ? "..." : ""));
+    });
+  }
+  function send() {
+    var text = input.value.trim();
+    if (!text) return;
+    if (abortCtrl) { try { abortCtrl.abort(); } catch (e) {} }
+    abortCtrl = new AbortController();
+    addMsg("u", text);
+    input.value = "";
+    cur = ""; showCur("");
+    attempt(text, 0);
+  }
+  sendBtn.onclick = send;
+  input.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+  });
+
+  // ---- back to the app (after the fix; if not fixed you'll land back on the overlay and the hook will guide you here again) ----
+  $("back").onclick = function () { location.href = BASE + "/"; };
+})();
+</script>
+</body>
+</html>
