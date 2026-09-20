@@ -44,31 +44,99 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>🚑 Rescue mode (build error / page crash)</h1>
+  <h1 data-i18n="heading">🚑 Rescue mode (build error / page crash)</h1>
   <div class="row">
-    <p class="sub">The app failed to compile or render; this page does not depend on app code. Send instructions below to the background AI (independent session, with backup helper tools) to locate / roll back / fix.</p>
-    <button class="btn-dark" id="copyErr">Copy error</button>
+    <p class="sub" data-i18n="intro">The app failed to compile or render; this page does not depend on app code. Send instructions below to the background AI (independent session, with backup helper tools) to locate / roll back / fix.</p>
+    <button class="btn-dark" id="copyErr" data-i18n="copyError">Copy error</button>
   </div>
-  <pre class="errbox" id="errbox">(no error details attached)</pre>
+  <pre class="errbox" id="errbox" data-i18n="noErrorDetails">(no error details attached)</pre>
   <div id="log"></div>
   <div class="bar">
-    <span class="hint">Model:</span>
+    <span class="hint" data-i18n="modelLabel">Model:</span>
     <span id="modelSel" style="display:flex;flex:1;gap:8px;align-items:center;min-width:0;">
-      <select id="modelSelect" style="flex:1;min-width:150px;"><option value="">Default</option></select>
-      <button class="btn-dark" id="modelToggle" style="padding:4px 8px;font-size:11px;white-space:nowrap;">Manual</button>
+      <select id="modelSelect" style="flex:1;min-width:150px;"><option value="" data-i18n="defaultModel">Default</option></select>
+      <button class="btn-dark" id="modelToggle" data-i18n="manualMode" style="padding:4px 8px;font-size:11px;white-space:nowrap;">Manual</button>
     </span>
-    <input type="text" id="modelManual" placeholder="provider|modelId (e.g. openai|gpt-4o)" style="display:none;">
-    <span class="sid" id="sid">sid: none</span>
+    <input type="text" id="modelManual" data-i18n-placeholder="modelPlaceholder" placeholder="provider|modelId (e.g. openai|gpt-4o)" style="display:none;">
+    <span class="sid" id="sid">sid: <span data-i18n="sidNone">none</span></span>
   </div>
   <div class="row">
-    <input type="text" id="input" placeholder="Rescue instruction (Enter to send, multi-turn)…">
-    <button class="btn-amber" id="send" style="padding:8px 16px;font-size:13px;">Send</button>
-    <button class="btn-dark" id="back" style="padding:8px 16px;font-size:13px;">Back to app</button>
+    <input type="text" id="input" data-i18n-placeholder="inputPlaceholder" placeholder="Rescue instruction (Enter to send, multi-turn)…">
+    <button class="btn-amber" id="send" data-i18n="send" style="padding:8px 16px;font-size:13px;">Send</button>
+    <button class="btn-dark" id="back" data-i18n="backToApp" style="padding:8px 16px;font-size:13px;">Back to app</button>
   </div>
 </div>
 <script>
 (function () {
   "use strict";
+  // ---- self-contained i18n (en / zh-CN) ----
+  // This page must render when the app is broken, so it carries an inline string table +
+  // local locale detection (no external i18n assets). Locale pick: navigator.language only
+  // (any zh-* → zh-CN copy); static markup above keeps English as the JS-disabled fallback.
+  // data-i18n → textContent, data-i18n-placeholder → placeholder attribute.
+  var STRINGS = {
+    en: {
+      title: "🚑 Rescue mode — Pi Web",
+      heading: "🚑 Rescue mode (build error / page crash)",
+      intro: "The app failed to compile or render; this page does not depend on app code. Send instructions below to the background AI (independent session, with backup helper tools) to locate / roll back / fix.",
+      copyError: "Copy error",
+      copied: "Copied ✓",
+      noErrorDetails: "(no error details attached)",
+      modelLabel: "Model:",
+      defaultModel: "Default",
+      listMode: "List",
+      manualMode: "Manual",
+      modelPlaceholder: "provider|modelId (e.g. openai|gpt-4o)",
+      sidNone: "none",
+      inputPlaceholder: "Rescue instruction (Enter to send, multi-turn)…",
+      send: "Send",
+      backToApp: "Back to app",
+      errFallback: "(build/runtime error, see page for details)",
+      backendUnavailable: "[Rescue backend unavailable (this instance is dead or fully 500-ing) — this page cannot send instructions on your behalf. Copy the error and recover manually (terminal/git), or use a standalone rescue entry (if deployed).]",
+      noOutput: "(no output)",
+      reconnecting: "… connection lost, reconnecting indefinitely (1s interval)",
+      errorPrefix: "[Error] ",
+    },
+    "zh-CN": {
+      title: "🚑 急救模式 — Pi Web",
+      heading: "🚑 急救模式（编译错误 / 页面崩溃）",
+      intro: "应用编译或渲染已崩，此页面不依赖应用代码。下面发指令给后台 AI（独立会话，含备用辅助工具），让它定位 / 回滚 / 修复。",
+      copyError: "复制错误",
+      copied: "已复制 ✓",
+      noErrorDetails: "（未携带错误详情）",
+      modelLabel: "模型:",
+      defaultModel: "默认",
+      listMode: "列表",
+      manualMode: "手动",
+      modelPlaceholder: "provider|modelId（如 openai|gpt-4o）",
+      sidNone: "无",
+      inputPlaceholder: "急救指令（Enter 发送，可多轮）…",
+      send: "发送",
+      backToApp: "返回应用",
+      errFallback: "(编译/运行时错误，详情见页面)",
+      backendUnavailable: "[急救后端不可用（本实例已死或整体 500）— 本页无法代发指令。请复制错误后手动恢复（终端/git），或使用独立急救入口（如已部署）。]",
+      noOutput: "(无输出)",
+      reconnecting: "… 连接中断，永久重连中（间隔 1s）",
+      errorPrefix: "[错误] ",
+    },
+  };
+  var lang = (navigator.language || "en").toLowerCase().startsWith("zh") ? "zh-CN" : "en";
+  var T = STRINGS[lang] || STRINGS.en;
+  document.documentElement.lang = lang;
+  document.title = T.title;
+  (function applyI18n() {
+    var nodes = document.querySelectorAll("[data-i18n]");
+    for (var i = 0; i < nodes.length; i++) {
+      var k = nodes[i].getAttribute("data-i18n");
+      if (T[k]) nodes[i].textContent = T[k];
+    }
+    var phs = document.querySelectorAll("[data-i18n-placeholder]");
+    for (var j = 0; j < phs.length; j++) {
+      var k2 = phs[j].getAttribute("data-i18n-placeholder");
+      if (T[k2]) phs[j].setAttribute("placeholder", T[k2]);
+    }
+  })();
+
   // base computation: /dev/rescue.html → /dev; /rescue.html → "" (works the same in prod without a basePath)
   var BASE = location.pathname.replace(/\/+$/, "").replace(/\/rescue\.html$/, "");
 
@@ -93,8 +161,8 @@
       var ta = document.createElement("textarea"); ta.value = errText; ta.style.position = "fixed"; ta.style.opacity = "0";
       document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch (e2) {} document.body.removeChild(ta);
     }
-    $("copyErr").textContent = "Copied ✓";
-    setTimeout(function () { $("copyErr").textContent = "Copy error"; }, 1600);
+    $("copyErr").textContent = T.copied;
+    setTimeout(function () { $("copyErr").textContent = T.copyError; }, 1600);
   };
 
   // ---- model selection (mirrors global-error: /api/models dropdown, manual input fallback on failure) ----
@@ -125,7 +193,7 @@
   function syncModelUi() {
     modelSelect.style.display = (modelsFailed || mOpen) ? "none" : "";
     modelManual.style.display = (modelsFailed || mOpen) ? "" : "none";
-    modelToggle.textContent = mOpen ? "List" : "Manual";
+    modelToggle.textContent = mOpen ? T.listMode : T.manualMode;
   }
   modelToggle.onclick = function () { mOpen = !mOpen; syncModelUi(); };
 
@@ -153,7 +221,7 @@
     var body = { message: text };
     if (sid) body.sessionId = sid;
     else {
-      body.errors = [{ message: errText || "(build/runtime error, see page for details)", stack: "", extId: "rescue.html" }];
+      body.errors = [{ message: errText || T.errFallback, stack: "", extId: "rescue.html" }];
       var m = selModel(); if (m) body.model = m;
     }
     return fetch(emgUrl(), {
@@ -169,7 +237,7 @@
         // the build is broken) → degrade honestly: state clearly that the backend is
         // unavailable instead of pretending to help; 4xx business errors are reported as usual
         if (r.status >= 500) {
-          addMsg("a", "[Rescue backend unavailable (this instance is dead or fully 500-ing) — this page cannot send instructions on your behalf. Copy the error and recover manually (terminal/git), or use a standalone rescue entry (if deployed).]");
+          addMsg("a", T.backendUnavailable);
           return;
         }
         return r.json().catch(function () { return {}; }).then(function (j) {
@@ -181,7 +249,7 @@
         return reader.read().then(function (chunk) {
           if (chunk.done) {
             acc += dec.decode();
-            addMsg("a", acc || "(no output)");
+            addMsg("a", acc || T.noOutput);
             showCur("");
             return;
           }
@@ -194,14 +262,14 @@
     }).catch(function (e) {
       if (abortCtrl && abortCtrl.signal.aborted) return;
       if (isRetriableNetworkErr(e)) {
-        showCur((cur || "") + "… connection lost, reconnecting indefinitely (1s interval)");
+        showCur((cur || "") + T.reconnecting);
         return new Promise(function (res) { setTimeout(res, 1000); }).then(function () {
           if (abortCtrl && abortCtrl.signal.aborted) return;
           return attempt(text, tryNo + 1);
         });
       }
       var msg = e instanceof Error ? e.message : String(e);
-      addMsg("a", "[Error] " + msg.substring(0, 80) + (msg.length > 80 ? "..." : ""));
+      addMsg("a", T.errorPrefix + msg.substring(0, 80) + (msg.length > 80 ? "..." : ""));
     });
   }
   function send() {
