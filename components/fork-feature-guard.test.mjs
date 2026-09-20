@@ -224,8 +224,8 @@ const GUARDS = [
     must: [
       /type: "fork_branch"/,
       /await sendAgentCommand\(newSessionId,[\s\S]*?type: "prompt"/, // wait for acceptance (busy covers through successful creation)
-      /Session created but background start failed/,     // startup failure = error toast + keep input
-      /Forked session created and running in the background/, // the single toast on success
+      /t\("session\.forkStartFailed", \{ error: msg \}\)/,   // startup failure = error toast + keep input
+      /t\("session\.forkBackgroundOk"\)/,                    // the single toast on success
     ],
   },
   {

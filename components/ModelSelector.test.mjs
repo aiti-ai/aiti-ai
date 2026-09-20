@@ -245,13 +245,14 @@ test("ModelOptionButton shows name + provider suffix + availability status toget
   const React = (await import("react")).default;
   const { renderToStaticMarkup } = await import("react-dom/server");
   const { ModelOptionButton } = await jiti.import("./ModelSelector.tsx");
-  const html = renderToStaticMarkup(React.createElement(ModelOptionButton, {
+  const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
+  const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(ModelOptionButton, {
     active: true,
     label: "deepseek-v4-flash",
     hint: "qoder-local",
     status: "rl",
     onClick: () => {},
-  }));
+  })));
   assert.match(html, /deepseek-v4-flash/);
   assert.match(html, /qoder-local/, "provider suffix must render (same on mobile)");
   assert.match(html, /429/, "rate-limit badge must render");
