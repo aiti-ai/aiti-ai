@@ -1779,7 +1779,7 @@ function TextFileViewer({
             dependency) */}
         <button
           type="button"
-          title="⎇ File timeline: view change history for this file"
+          title={t("files.timelineTitle")}
           onClick={() => {
             try {
               window.dispatchEvent(new CustomEvent("aiti-git-trace-open", {

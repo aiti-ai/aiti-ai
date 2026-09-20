@@ -4067,13 +4067,13 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       >
         <span style={{ fontSize: 14 }}>📂</span>
         <span style={{ minWidth: 0, wordBreak: "break-all" }}>
-          <strong>Directory does not exist: </strong>{cwdMissingNotice}
-          <span style={{ color: "var(--text-muted)" }}>— it may have been moved or deleted (sessions from it are kept). Switch to a valid directory in the sidebar before creating a new session.</span>
+          <strong>{translate("chat.cwdMissingTitle")}</strong>{cwdMissingNotice}
+          <span style={{ color: "var(--text-muted)" }}>{translate("chat.cwdMissingBody")}</span>
         </span>
         <button
           type="button"
           onClick={() => setCwdMissingNotice(null)}
-          title="Close"
+          title={translate("common.close")}
           style={{ flexShrink: 0, background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 14, lineHeight: 1, padding: "0 2px" }}
         >
           ×

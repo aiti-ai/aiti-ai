@@ -36,6 +36,8 @@ import type {
   ThinkingContent,
 } from "@/lib/types";
 
+type Translate = ReturnType<typeof useI18n>["t"];
+
 // CJK chars ~1 token each (GLM/DeepSeek/GPT-o200k); other chars ~4 chars/token.
 const CJK_PATTERN = /[\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\u{20000}-\u{2fa1f}\uac00-\ud7af]/u;
 export function estimateTokens(text: string): number {
@@ -1257,7 +1259,7 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
             {block.toolName}
           </span>
           <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
-            {isStreamingInput ? t("chat.generatingToolInput") : (patchLabel ?? getToolPreview(block))}
+            {isStreamingInput ? t("chat.generatingToolInput") : (patchLabel ?? getToolPreview(block, t))}
           </span>
           {duration !== undefined && (
             <span style={{ fontSize: 11, color: "var(--text-dim)", flexShrink: 0, fontVariantNumeric: "tabular-nums" }}>{duration}s</span>
@@ -2006,6 +2008,7 @@ function InteractionToolCallDetails({ toolName, input, fallback, isError }: {
   fallback: string;
   isError: boolean;
 }) {
+  const { t } = useI18n();
   const preStyle: React.CSSProperties = {
     margin: 0,
     padding: "3px 10px",
@@ -2041,7 +2044,7 @@ function InteractionToolCallDetails({ toolName, input, fallback, isError }: {
                   <span style={{ color: "var(--text-dim)", marginRight: 6 }}>[{q.header}]</span>
                 )}
                 {q.question}
-                {q.multiSelect === true && <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: 6 }}>(multiple)</span>}
+                {q.multiSelect === true && <span style={{ fontSize: 10, color: "var(--text-dim)", marginLeft: 6 }}>{t("chat.multiSelect")}</span>}
               </div>
               {options.map((o, oi) =>
                 typeof o?.label === "string" ? (
@@ -2075,18 +2078,18 @@ function previewText(text: string): string {
 }
 
 
-function getToolPreview(block: ToolCallContent): string {
+function getToolPreview(block: ToolCallContent, t: Translate): string {
   const input = block.input;
   if (!input || typeof input !== "object") return "";
   const keys = Object.keys(input);
   if (keys.length === 0) return "";
 
   // Common tool input patterns
-  if (block.toolName === "ExitPlanMode") return input.plan ? "Submit plan for approval" : "Exit plan mode";
+  if (block.toolName === "ExitPlanMode") return input.plan ? t("chat.submitPlan") : t("chat.exitPlan");
   if (block.toolName === "AskUserQuestion") {
     const qs = Array.isArray(input.questions) ? input.questions as Array<Record<string, unknown>> : [];
     const firstQ = qs.find((q) => typeof q?.question === "string")?.question as string | undefined;
-    return firstQ ? firstQ.slice(0, 120) : "Ask the user";
+    return firstQ ? firstQ.slice(0, 120) : t("chat.askUser");
   }
   if ("command" in input) return String(input.command).slice(0, 120);
   if ("path" in input) return String(input.path).slice(0, 120);

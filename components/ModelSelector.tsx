@@ -571,7 +571,7 @@ export function ModelSelector({
                     <div style={{ padding: "6px 12px 4px", borderTop: index > 0 || onClear || recentOptions.length > 0 ? "1px solid var(--border)" : "none", color: "var(--text-dim)", fontSize: 10, fontWeight: 600, letterSpacing: 0, textTransform: "uppercase", display: "flex", alignItems: "center", gap: 6 }}>
                       {group.provider}
                       {group.options.some((o) => o.providerRL) && (
-                        <span style={{ color: "#d97706", fontSize: 9, fontWeight: 700, textTransform: "none", letterSpacing: 0, padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.12)", whiteSpace: "nowrap" }} title="All models for this provider are currently rate-limited (429) — informational only, nothing is auto-disabled">⛔ provider-wide 429</span>
+                        <span style={{ color: "#d97706", fontSize: 9, fontWeight: 700, textTransform: "none", letterSpacing: 0, padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.12)", whiteSpace: "nowrap" }} title={t("modelSel.providerRLTitle")}>{t("modelSel.providerRLBadge")}</span>
                       )}
                     </div>
                   )}
@@ -608,12 +608,13 @@ export function ModelSelector({
 
 /** Option row (exported solely for unit-test render assertions): name + provider suffix + availability status; the same information on desktop and small screens. */
 export function ModelOptionButton({ active, label, hint, status, disabled = false, onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; disabled?: boolean; onClick: () => void }) {
+  const { t } = useI18n();
   const statusMark = status === "rl"
-    ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#b45309", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.14)" }} title="Currently rate-limited (429) — selecting it may be rejected by cooldown; informational only, nothing is auto-disabled">429</span>
+    ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#b45309", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.14)" }} title={t("modelSel.rlTitle")}>429</span>
     : status === "err"
-      ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#dc2626", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(239,68,68,.5)", background: "rgba(239,68,68,.1)" }} title="Current probe error (non-rate-limit failure) — informational only, nothing is auto-disabled">✗ error</span>
+      ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#dc2626", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(239,68,68,.5)", background: "rgba(239,68,68,.1)" }} title={t("modelSel.errTitle")}>{t("modelSel.errBadge")}</span>
       : status === "unprobed"
-        ? <span style={{ flexShrink: 0, fontSize: 9, color: "var(--text-dim)", padding: "0 6px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--bg-subtle,#f5f5f5)" }} title="Availability not probed yet (model check has not run)">untested</span>
+        ? <span style={{ flexShrink: 0, fontSize: 9, color: "var(--text-dim)", padding: "0 6px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--bg-subtle,#f5f5f5)" }} title={t("modelSel.unprobedTitle")}>{t("modelSel.unprobedBadge")}</span>
         : null;
   return (
     <button
