@@ -40,13 +40,39 @@
   // note: the original top-level RE_BUILD_ERROR variable declaration was removed — it was never
   // referenced by the check flow (matchLine's patterns are what actually gets used)
 
+  // ---- self-contained i18n (en / zh-CN) ----
+  // Injected script that must work when the app is broken: inline string table + local locale
+  // detection (navigator.language, any zh-* → zh-CN copy); no external i18n assets. T() picks
+  // from the dict at call time.
+  var STRINGS = {
+    en: {
+      bannerTitle: "🚑 dev build error — rescue page available",
+      stayTooltip: "Stay on this page (this error will not warn again)",
+      goRescueBtn: "Go to rescue page",
+      stayPage: "Stay on this page",
+      countdownSuffix: "s until auto-enter",
+      buildErrorFallback: "Build Error (see dev overlay)",
+    },
+    "zh-CN": {
+      bannerTitle: "🚑 dev 编译错误 — 急救页可用",
+      stayTooltip: "留在本页（同一条错误不再提醒）",
+      goRescueBtn: "进入急救页",
+      stayPage: "留在本页",
+      countdownSuffix: "s 后自动进入",
+      buildErrorFallback: "Build Error（详情见 dev overlay）",
+    },
+  };
+  function T() {
+    return STRINGS[(navigator.language || "en").toLowerCase().startsWith("zh") ? "zh-CN" : "en"];
+  }
+
   function removeBanner() {
     if (timer) { clearInterval(timer); timer = null; }
     if (banner) { banner.remove(); banner = null; }
   }
 
   function goRescue(errText) {
-    location.replace(BASE + "/rescue.html?err=" + encodeURIComponent(errText || "Build Error (see dev overlay)"));
+    location.replace(BASE + "/rescue.html?err=" + encodeURIComponent(errText || T().buildErrorFallback));
   }
 
   function showBanner(errText) {
@@ -67,7 +93,7 @@
       "padding:12px 14px;font:13px/1.5 system-ui,sans-serif;box-shadow:0 12px 40px rgba(0,0,0,.5);";
     var title = document.createElement("div");
     title.style.cssText = "font-weight:700;color:#f59e0b;margin-bottom:4px;cursor:move;user-select:none;display:flex;align-items:center;";
-    title.textContent = "🚑 dev build error — rescue page available";
+    title.textContent = T().bannerTitle;
     // Title-bar dragging (title bar = drag handle; after dragging, position via top/left and stop following the right anchor)
     title.onmousedown = function (e) {
       if (e.button !== 0) return;
@@ -90,7 +116,7 @@
     };
     var close = document.createElement("button");
     close.textContent = "✕";
-    close.title = "Stay on this page (this error will not warn again)";
+    close.title = T().stayTooltip;
     close.style.cssText = "margin-left:auto;background:transparent;color:#9ca3af;border:none;font-size:14px;cursor:pointer;line-height:1;";
     close.onclick = function () { dismissedErr = banner._err.textContent; removeBanner(); };
     title.appendChild(close);
@@ -101,24 +127,24 @@
     var row = document.createElement("div");
     row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;align-items:center;";
     var go = document.createElement("button");
-    go.textContent = "Go to rescue page";
+    go.textContent = T().goRescueBtn;
     go.style.cssText = "background:#f59e0b;color:#1a1a1a;border:none;border-radius:6px;padding:6px 14px;font-weight:600;cursor:pointer;";
     go.onclick = function () { removeBanner(); goRescue(errText); };
     var cd = document.createElement("span");
     cd.style.cssText = "color:#9ca3af;font-size:12px;";
     var stay = document.createElement("button");
-    stay.textContent = "Stay on this page";
+    stay.textContent = T().stayPage;
     stay.style.cssText = "background:#333;color:#e8e8e8;border:1px solid #444;border-radius:6px;padding:6px 12px;cursor:pointer;";
     stay.onclick = function () { dismissedErr = errText; removeBanner(); };
     row.appendChild(go); row.appendChild(stay); row.appendChild(cd);
     banner.appendChild(title); banner.appendChild(err); banner.appendChild(row);
     document.documentElement.appendChild(banner);
     left = COUNTDOWN;
-    cd.textContent = left + "s until auto-enter";
+    cd.textContent = left + T().countdownSuffix;
     timer = setInterval(function () {
       left -= 1;
       if (left <= 0) { removeBanner(); goRescue(errText); return; }
-      cd.textContent = left + "s until auto-enter";
+      cd.textContent = left + T().countdownSuffix;
     }, 1000);
   }
 

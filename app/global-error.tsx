@@ -8,6 +8,70 @@ import { useEffect, useRef, useState, type CSSProperties } from "react";
 
 const BASE_PATH = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/+$/, "");
 
+// ---- Self-contained i18n (en / zh-CN) ----
+// This page renders OUTSIDE the app provider tree (the crashed module may be the provider
+// itself), so it cannot use the React i18n provider or import the TS catalogs: an inline
+// string table + local locale detection instead. Locale pick order: pi-locale cookie
+// (zh-CN|zh-TW|en) wins, else navigator.language; neither exists during SSR → "en".
+// zh-TW (and any other zh-*) reuses the zh-CN copy.
+const STRINGS = {
+  en: {
+    title: "🚑 Page crash — rescue mode",
+    intro: "The app hit an error and can no longer render. Send instructions below to the background AI (independent session, with backup helper tools) to locate / roll back / fix recent extension or config changes.",
+    copyError: "Copy error",
+    copied: "Copied ✓",
+    unknownError: "unknown error",
+    noStack: "(no stack)",
+    thinking: "Thinking…",
+    modelLabel: "Model:",
+    defaultModel: "Default",
+    listMode: "List",
+    manualMode: "Manual",
+    modelPlaceholder: "provider|modelId (e.g. openai|gpt-4o)",
+    sidNone: "none",
+    inputPlaceholder: "Rescue instruction (Enter to send, multi-turn)…",
+    send: "Send",
+    reloadPage: "Reload page",
+    reconnecting: "… connection lost, reconnecting indefinitely (1s interval)",
+    errorPrefix: "[Error] ",
+    noOutput: "(no output)",
+  },
+  "zh-CN": {
+    title: "🚑 页面崩溃 — 急救模式",
+    intro: "系统遇到错误，已无法正常渲染界面。下面发指令给后台 AI（独立会话，含备用辅助工具），让它定位/回滚/修复最近的扩展或配置变更。",
+    copyError: "复制错误",
+    copied: "已复制 ✓",
+    unknownError: "未知错误",
+    noStack: "(无堆栈)",
+    thinking: "思考中…",
+    modelLabel: "模型:",
+    defaultModel: "默认",
+    listMode: "列表",
+    manualMode: "手动",
+    modelPlaceholder: "provider|modelId（如 openai|gpt-4o）",
+    sidNone: "无",
+    inputPlaceholder: "急救指令（Enter 发送，可多轮）…",
+    send: "发送",
+    reloadPage: "刷新页面",
+    reconnecting: "… 连接中断，永久重连中（间隔 1s）",
+    errorPrefix: "[错误] ",
+    noOutput: "(无输出)",
+  },
+} as const;
+
+type Locale = keyof typeof STRINGS;
+
+function detectLocale(): Locale {
+  try {
+    if (typeof document !== "undefined") {
+      const m = /(?:^|;\s*)pi-locale=(zh-CN|zh-TW|en)(?:;|$)/.exec(document.cookie || "");
+      if (m) return m[1] === "en" ? "en" : "zh-CN";
+    }
+  } catch { /* ignore */ }
+  if (typeof navigator !== "undefined" && (navigator.language || "").toLowerCase().startsWith("zh")) return "zh-CN";
+  return "en";
+}
+
 export default function GlobalError({
   error,
 }: {
@@ -27,6 +91,11 @@ export default function GlobalError({
   const [mOpen, setMOpen] = useState(false);
   // AbortController ref: lets the reconnect loop detect that the user issued a new instruction → proactively cancel the old request
   const abortCtrlRef = useRef<AbortController | null>(null);
+  // Locale picked once per mount (SSR renders "en"; on the client detectLocale sees the real
+  // cookie/navigator — a zh-CN client may hydrate-mismatch and re-render client-side, which is
+  // acceptable for a crash page). `lang` is applied directly on the <html> element below.
+  const [lang] = useState(detectLocale);
+  const T = STRINGS[lang];
 
   useEffect(() => {
     fetch(BASE_PATH + "/api/models")
@@ -45,8 +114,8 @@ export default function GlobalError({
   // manual mode (mOpen or fetch failure) uses mManual; otherwise the dropdown mSel (default = the default model)
   const selModel = (mOpen || modelsFailed) ? parseModel(mManual) : parseModel(mSel);
 
-  const errFull = `[${error?.message || String(error || "unknown error")}]
-${error?.stack || "(no stack)"}`;
+  const errFull = `[${error?.message || String(error || T.unknownError)}]
+${error?.stack || T.noStack}`;
   const copyErr = async () => {
     try { await navigator.clipboard.writeText(errFull); } catch {
       const ta = document.createElement("textarea"); ta.value = errFull; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); try { document.execCommand("copy"); } catch {} document.body.removeChild(ta);
@@ -155,7 +224,7 @@ ${error?.stack || "(no stack)"}`;
           acc += dec.decode();
           setCur(acc);
         }
-        setLog((l) => [...l, { role: "a", text: acc || "(no output)" }]);
+        setLog((l) => [...l, { role: "a", text: acc || T.noOutput }]);
         setCur("");
       } catch (e) {
         // the user issued a new instruction and aborted → exit silently, no reconnect, no error
@@ -164,7 +233,7 @@ ${error?.stack || "(no stack)"}`;
         if (retriable) {
           // reconnect forever: 1s interval, best-effort recovery (crash-recovery mode)
           const wait = 1000;
-          setCur((prev) => prev + (prev && !prev.endsWith("\n") ? "\n" : "") + `… connection lost, reconnecting indefinitely (1s interval)`);
+          setCur((prev) => prev + (prev && !prev.endsWith("\n") ? "\n" : "") + T.reconnecting);
           await new Promise((resolve) => setTimeout(resolve, wait));
           // check once more before reconnecting whether a new instruction took over
           if (ctrl.signal.aborted) return;
@@ -172,7 +241,7 @@ ${error?.stack || "(no stack)"}`;
         }
         // non-retriable error: record it but keep the current input so the message doesn't just stall
         const errMsg = e instanceof Error ? e.message : String(e);
-        setLog((l) => [...l, { role: "a", text: `[Error] ${errMsg.substring(0, 80)}${errMsg.length > 80 ? "..." : ""}` }]);
+        setLog((l) => [...l, { role: "a", text: `${T.errorPrefix}${errMsg.substring(0, 80)}${errMsg.length > 80 ? "..." : ""}` }]);
         // don't clear cur; keep the entered instruction so the user can retry or adjust manually
       }
     };
@@ -191,7 +260,7 @@ ${error?.stack || "(no stack)"}`;
   };
 
   return (
-    <html lang="en" style={{ overflowY: "auto", overflowX: "hidden", height: "auto" }}>
+    <html lang={lang} style={{ overflowY: "auto", overflowX: "hidden", height: "auto" }}>
       <body style={{ margin: 0, background: "#1a1a1a", color: "#e8e8e8", fontFamily: "system-ui, sans-serif", minHeight: "100vh" }}>
         {/* Force html/body to scroll as a full page (globals.css sets overflow:hidden on html,body
             for AppShell-managed scrolling; the global error page must be scrollable, otherwise on
@@ -200,13 +269,13 @@ ${error?.stack || "(no stack)"}`;
             overrides both globals.css and the Next error page inline styles. */}
         <style>{`html, body { overflow: auto !important; height: auto !important; min-height: 100vh !important; overflow-x: hidden !important; }`}</style>
         <div style={{ maxWidth: 640, width: "100%", boxSizing: "border-box", margin: "0 auto", padding: "32px 20px 64px" }}>
-          <h1 style={{ margin: "0 0 8px", fontSize: 20 }}>🚑 Page crash — rescue mode</h1>
+          <h1 style={{ margin: "0 0 8px", fontSize: 20 }}>{T.title}</h1>
           <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "0 0 8px", flexWrap: "wrap" }}>
-            <p style={{ margin: 0, fontSize: 13, color: "#9ca3af", flex: 1 }}>The app hit an error and can no longer render. Send instructions below to the background AI (independent session, with backup helper tools) to locate / roll back / fix recent extension or config changes.</p>
-            <button onClick={copyErr} style={{ padding: "4px 10px", fontSize: 12, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer", flexShrink: 0 }}>{copied ? "Copied ✓" : "Copy error"}</button>
+            <p style={{ margin: 0, fontSize: 13, color: "#9ca3af", flex: 1 }}>{T.intro}</p>
+            <button onClick={copyErr} style={{ padding: "4px 10px", fontSize: 12, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer", flexShrink: 0 }}>{copied ? T.copied : T.copyError}</button>
           </div>
           <pre style={{ ...pre, margin: "0 0 16px", padding: 10, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 8, color: "#f59e0b", maxHeight: 160, overflow: "auto" }}>
-            {error?.message || String(error || "unknown error")}
+            {error?.message || String(error || T.unknownError)}
             {error?.stack ? `\n\n${error.stack}` : ""}
           </pre>
 
@@ -218,46 +287,46 @@ ${error?.stack || "(no stack)"}`;
             ))}
             {(cur) && (
               <pre style={{ ...pre, padding: "6px 8px", borderRadius: 6, borderLeft: "3px solid #f59e0b", background: "rgba(245,158,11,0.05)" }}>
-                {cur || "Thinking…"}
+                {cur || T.thinking}
               </pre>
             )}
           </div>
 
           <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 12, color: "#9ca3af", flexShrink: 0 }}>Model:</span>
+            <span style={{ fontSize: 12, color: "#9ca3af", flexShrink: 0 }}>{T.modelLabel}</span>
             {!modelsFailed ? (
               <>
                 <select value={mSel} onChange={(e) => setMSel(e.target.value)} style={{ flex: 1, minWidth: 150, padding: "5px 8px", fontSize: 12, background: "#242424", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, outline: "none" }}>
-                  <option value="">Default</option>
+                  <option value="">{T.defaultModel}</option>
                   {mods.map((m) => <option key={m.provider + "|" + m.id} value={m.provider + "|" + m.id}>{m.name || m.id} ({m.provider})</option>)}
                 </select>
-                <button onClick={() => setMOpen((v) => !v)} style={{ padding: "4px 8px", fontSize: 11, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>{mOpen ? "List" : "Manual"}</button>
+                <button onClick={() => setMOpen((v) => !v)} style={{ padding: "4px 8px", fontSize: 11, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>{mOpen ? T.listMode : T.manualMode}</button>
               </>
             ) : null}
             {(modelsFailed || mOpen) && (
               <input
                 value={mManual}
                 onChange={(e) => setMManual(e.target.value)}
-                placeholder="provider|modelId (e.g. openai|gpt-4o)"
+                placeholder={T.modelPlaceholder}
                 style={{ flex: 1, minWidth: 150, padding: "5px 8px", fontSize: 12, background: "#242424", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, outline: "none" }}
               />
             )}
             {/* session id display */}
-            <span style={{ fontSize: 11, color: "#666", marginLeft: 8, fontFamily: "monospace" }}>sid: {sid || "none"}</span>
+            <span style={{ fontSize: 11, color: "#666", marginLeft: 8, fontFamily: "monospace" }}>sid: {sid || T.sidNone}</span>
           </div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <input
               value={msg}
               onChange={(e) => setMsg(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-              placeholder="Rescue instruction (Enter to send, multi-turn)…"
+              placeholder={T.inputPlaceholder}
               style={{ flex: 1, minWidth: 0, padding: "8px 10px", fontSize: 13, background: "#242424", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, outline: "none" }}
             />
             <button onClick={send} disabled={!msg.trim()} style={{ padding: "8px 16px", fontSize: 13, background: "#f59e0b", color: "#1a1a1a", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>
-              Send
+              {T.send}
             </button>
             <button onClick={() => window.location.reload()} style={{ padding: "8px 16px", fontSize: 13, background: "#333", color: "#e8e8e8", border: "1px solid #444", borderRadius: 6, cursor: "pointer" }}>
-              Reload page
+              {T.reloadPage}
             </button>
           </div>
         </div>
