@@ -549,8 +549,8 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
                   lineHeight: 1,
                   flexShrink: 0,
                 }}
-                title="Position (floating window / left dock / right dock)"
-                aria-label={`Position ${tab.label}`}
+                title={t("tabbar.posDock")}
+                aria-label={`${t("files.posTitle")} ${tab.label}`}
               >
                 ⇱
               </button>

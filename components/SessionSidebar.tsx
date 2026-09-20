@@ -1151,8 +1151,8 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
               return next;
             })}
             aria-expanded={!projectsCollapsed}
-            title={projectsCollapsed ? "Expand session list" : "Collapse session list"}
-            aria-label={projectsCollapsed ? "Expand session list" : "Collapse session list"}
+            title={projectsCollapsed ? t("sidebar.expandList") : t("sidebar.collapseList")}
+            aria-label={projectsCollapsed ? t("sidebar.expandList") : t("sidebar.collapseList")}
             style={{
               display: "flex", alignItems: "center", justifyContent: "center",
               width: 22, height: 26, padding: 0, flexShrink: 0,

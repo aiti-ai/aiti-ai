@@ -7,6 +7,7 @@
  * SessionSidebar/FileExplorer back into the main bundle.
  */
 import { useState, useEffect, useRef, useCallback } from "react";
+import { useI18n } from "@/hooks/useI18n";
 
 const SCRAMBLE_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*";
 
@@ -57,6 +58,7 @@ function useScramble(target: string, running: boolean): string {
  *  passed through to the extension Header via the sidebarContent extra's renderTitle
  *  factory (unified dock design §3.4 component factory contract). */
 export function PiWebTitle() {
+  const { t } = useI18n();
   const [showVersion, setShowVersion] = useState(false);
   const [scrambling, setScrambling] = useState(false);
   const revertTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -102,8 +104,8 @@ export function PiWebTitle() {
           href={process.env.NEXT_PUBLIC_DOCS_URL}
           target="_blank"
           rel="noopener noreferrer"
-          title="Docs"
-          aria-label="Docs"
+          title={t("topbar.docsLink")}
+          aria-label={t("topbar.docsLink")}
           style={{
             fontSize: 12, lineHeight: 1, padding: "0 1px",
             color: "var(--text-muted)", textDecoration: "none", cursor: "pointer",

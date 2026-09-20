@@ -28,6 +28,7 @@ import { mergeSessionStats, type SessionFileStats } from "@/lib/session-stats";
 import { userMessageKey } from "@/lib/prompt-recovery";
 import type { SessionRequestAnswer, SessionRequestPayload } from "@/lib/ext/types";
 import { runNewSessionPreparers, type NewSessionPreparer } from "@/hooks/new-session-preparers";
+import { useI18n } from "@/hooks/useI18n";
 import { AgentEventConnection } from "@/lib/agent-event-connection";
 import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
 import {
@@ -498,6 +499,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     modelsRefreshKey, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onSessionStatsPanelOpen,
     newSessionBackend,
   } = opts;
+
+  const { t } = useI18n();
 
   const isNew = session === null && newSessionCwd !== null;
 
@@ -1272,7 +1275,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // Directory missing (session directory moved/deleted, external-session placeholder path, etc.): give an actionable hint instead of a bare HTTP code
         const missing = /Directory does not exist:\s*(.+)$/i.exec(raw);
         throw new Error(missing
-          ? `Directory does not exist: ${missing[1].trim()} — it may have been moved or deleted; switch to a valid directory in the sidebar and retry`
+          ? t("session.cwdMissing", { path: missing[1].trim() })
           : raw);
       }
       const realId = result.sessionId;
@@ -2281,7 +2284,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               .filter((o) => o && typeof o === "object") }
             : {}),
         });
-        addNotice({ type: "error", message: "Tool requires authorization: " + (typeof event.toolName === "string" ? event.toolName : "unknown") });
+        addNotice({ type: "error", message: t("session.toolAuth", { tool: typeof event.toolName === "string" ? event.toolName : "unknown" }) });
         break;
       case "permission_expired":
         setPermissionRequest(null);
@@ -2525,7 +2528,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const targetId = spaceIdx > 0 ? rest.slice(0, spaceIdx) : "";
       const relayMsg = spaceIdx > 0 ? rest.slice(spaceIdx + 1).trim() : "";
       if (!targetId || !relayMsg) {
-        addNotice({ type: "error", message: "Usage: /relay <session-id> <message> (target must be a live backend session)" });
+        addNotice({ type: "error", message: t("session.relayUsage") });
         return;
       }
 
@@ -2776,7 +2779,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       console.error("Fork failed:", e);
       // Silent failures made "a fork rejected mid-run" look like a hang (unclickable button) — surface a notice.
       const msg = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message: `Fork failed: ${msg}` });
+      addNotice({ type: "error", message: t("session.forkFailed", { error: msg }) });
     } finally {
       setForkingEntryId(null);
     }
@@ -2801,7 +2804,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       });
       const { cancelled, newSessionId: created } = result ?? {};
       if (cancelled || !created) {
-        addNotice({ type: "error", message: "Cannot fork: the current session has no full conversation to copy yet" });
+        addNotice({ type: "error", message: t("session.forkNoHistory") });
         return false;
       }
       newSessionId = created;
@@ -2825,10 +2828,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (e) {
       console.error("Fork new session: background start failed:", e);
       const msg = e instanceof Error ? e.message : String(e);
-      addNotice({ type: "error", message: `Session created but background start failed: ${msg}` });
+      addNotice({ type: "error", message: t("session.forkStartFailed", { error: msg }) });
       return false;
     }
-    addNotice({ type: "success", message: "Forked session created and running in the background (current session unaffected)" });
+    addNotice({ type: "success", message: t("session.forkBackgroundOk") });
     return true;
   }, [addNotice]);
 
@@ -2878,7 +2881,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           // Sending after a failed fork would append the message to the tail of the un-rewound full history (the
           // user believes it was rewound) — abort this send and notify; the pending mark and input are kept for a retry.
           console.error("Edit-from-here: fork failed:", e);
-          addNotice({ type: "error", message: `Edit-from-here failed: ${describeAgentCommandError(e)}` });
+          addNotice({ type: "error", message: t("session.editHereFailed", { error: describeAgentCommandError(e) }) });
           return;
         }
         await loadContext(sid, null);
@@ -2891,7 +2894,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // Sending after a failed rewind would post the message to the wrong branch (the user believes it was
         // rewound) — abort this send and notify; the pending mark and input are kept for a retry.
         console.error("Edit-from-here: navigate failed:", e);
-        addNotice({ type: "error", message: "Edit-from-here: session rollback failed, please retry" });
+        addNotice({ type: "error", message: t("session.editHereRollbackFailed") });
         return;
       }
       setActiveLeafId(leafId);
@@ -3174,7 +3177,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setModelScopeWarnings([]);
       setNewSessionDefaultModel({ provider: list[0].provider, modelId: list[0].id });
     } catch (e) {
-      addNotice({ type: "error", message: `Failed to refresh model list: ${e instanceof Error ? e.message : String(e)}` });
+      addNotice({ type: "error", message: t("session.modelRefreshFailed", { error: e instanceof Error ? e.message : String(e) }) });
     } finally {
       setModelsRefreshing(false);
     }
