@@ -13,6 +13,7 @@ const jiti = createJiti(import.meta.url, {
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { pickSessionRequestCard, MinimalRequestCard } = await jiti.import("./SessionRequestSlot.tsx");
+const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
 test("pickSessionRequestCard: kind match + backend filter + highest priority wins", () => {
   const item = (id, kinds, backend, priority) => ({ id, meta: { kinds, backend, priority }, render: () => null });
@@ -47,7 +48,7 @@ test("pickSessionRequestCard: kind match + backend filter + highest priority win
 
 test("MinimalRequestCard: permission family — buttons generated from the options table + input summary (SSR)", () => {
   const respond = async () => true;
-  const html = renderToStaticMarkup(React.createElement(MinimalRequestCard, {
+  const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(MinimalRequestCard, {
     request: {
       requestId: "p1", kind: "permission", family: "permission", capability: "respondPermission",
       toolName: "Bash",
@@ -58,7 +59,7 @@ test("MinimalRequestCard: permission family — buttons generated from the optio
       ],
     },
     onRespond: respond,
-  }));
+  })));
   assert.match(html, /Tool authorization request/);
   assert.match(html, /Bash/);
   assert.match(html, /command: ls -la \/tmp/);
@@ -69,20 +70,20 @@ test("MinimalRequestCard: permission family — buttons generated from the optio
 
 test("MinimalRequestCard: permission without options → allow/reject fallback; open_url → open the login page (SSR)", () => {
   const respond = async () => true;
-  const permHtml = renderToStaticMarkup(React.createElement(MinimalRequestCard, {
+  const permHtml = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(MinimalRequestCard, {
     request: { requestId: "p2", kind: "permission", family: "permission", capability: "respondPermission", toolName: "Read" },
     onRespond: respond,
-  }));
+  })));
   assert.match(permHtml, /Allow/);
   assert.match(permHtml, /Deny/);
 
-  const urlHtml = renderToStaticMarkup(React.createElement(MinimalRequestCard, {
+  const urlHtml = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(MinimalRequestCard, {
     request: {
       requestId: "o1", kind: "interaction:open_url", family: "interaction", capability: "respondInteraction",
       url: "https://example.com/oauth?x=1", launchUrl: "http://127.0.0.1:8777/login/o1",
     },
     onRespond: respond,
-  }));
+  })));
   assert.match(urlHtml, /Login authorization/);
   assert.match(urlHtml, /Open login page/);
   assert.match(urlHtml, /Copy link/);
@@ -94,34 +95,34 @@ test("MinimalRequestCard: permission without options → allow/reject fallback; 
 
 test("MinimalRequestCard: plan_approval renders markdown text directly + ask_user lists options + provider_headers without SDK offers only cancel", () => {
   const respond = async () => true;
-  const planHtml = renderToStaticMarkup(React.createElement(MinimalRequestCard, {
+  const planHtml = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(MinimalRequestCard, {
     request: {
       requestId: "pl1", kind: "interaction:plan_approval", family: "interaction", capability: "respondInteraction",
       plan: "# 方案\n- 第一步\n- 第二步",
     },
     onRespond: respond,
-  }));
+  })));
   assert.match(planHtml, /Plan approval/);
   assert.match(planHtml, /第一步/);
   assert.match(planHtml, /Approve plan/);
 
-  const askHtml = renderToStaticMarkup(React.createElement(MinimalRequestCard, {
+  const askHtml = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(MinimalRequestCard, {
     request: {
       requestId: "a1", kind: "interaction:ask_user", family: "interaction", capability: "respondInteraction",
       questions: [{ question: "选一个", options: [{ label: "甲" }, { label: "乙" }] }],
     },
     onRespond: respond,
-  }));
+  })));
   assert.match(askHtml, /选一个/);
   assert.match(askHtml, /甲 \/ 乙/);
 
-  const capHtml = renderToStaticMarkup(React.createElement(MinimalRequestCard, {
+  const capHtml = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(MinimalRequestCard, {
     request: {
       requestId: "c1", kind: "provider_headers", family: "provider_headers", capability: "respondProviderHeaders",
       reason: "captcha-retry", captchaConfig: { sceneId: "s", prefix: "p", region: "cn" },
     },
     onRespond: respond,
-  }));
+  })));
   assert.match(capHtml, /Provider security verification/);
   assert.match(capHtml, /Retry verification/);
   assert.match(capHtml, /Cancel turn/);

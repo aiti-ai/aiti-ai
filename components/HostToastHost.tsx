@@ -2,6 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { getToasts, subscribeToasts, dismissToast } from "@/lib/pi-web-toast-store";
+import { useI18n } from "@/hooks/useI18n";
 
 /**
  * Host-level toast rendering (top-right queue, non-modal, auto-dismiss).
@@ -12,6 +13,7 @@ import { getToasts, subscribeToasts, dismissToast } from "@/lib/pi-web-toast-sto
  */
 export function HostToastHost() {
   const toasts = useSyncExternalStore(subscribeToasts, getToasts, getToasts);
+  const { t } = useI18n();
   if (toasts.length === 0) return null;
   return (
     <div style={{ position: "fixed", top: 14, right: 14, zIndex: 120, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -32,8 +34,8 @@ export function HostToastHost() {
           <span style={{ minWidth: 0 }}>{toast.text}</span>
           <button
             type="button"
-            aria-label="close"
-            title="Close"
+            aria-label={t("common.close")}
+            title={t("common.close")}
             onClick={() => dismissToast(toast.id)}
             style={{ background: "none", border: "none", color: "rgba(255,255,255,0.6)", cursor: "pointer", fontSize: 13, lineHeight: 1, padding: "2px 4px", flexShrink: 0 }}
           >✕</button>

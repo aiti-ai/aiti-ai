@@ -10,6 +10,8 @@
  * page-load request budget.
  */
 import { apiUrl } from "./base-path";
+import { getLocalePlugin, getSupportedLocales } from "./i18n/registry";
+import { interpolateMessage } from "./i18n/format";
 import { useSyncExternalStore } from "react";
 
 export interface FxData { rate: number; source: string; fetchedAt: number }
@@ -75,6 +77,14 @@ export function isZh(locale: string): boolean {
   return locale === "zh-CN" || locale === "zh" || locale.startsWith("zh");
 }
 
+/** Catalog lookup for this module's copy, resolved for the active locale (en fallback). */
+function tr(key: string, params?: Record<string, string>): string {
+  const id = currentLocale();
+  const plugin = getSupportedLocales().includes(id) ? getLocalePlugin(id) : undefined;
+  const template = plugin?.messages[key] ?? getLocalePlugin("en")?.messages[key] ?? key;
+  return interpolateMessage(template, params);
+}
+
 /**
  * Money formatting: zh with a rate available → `$xx（¥yy）`; otherwise `$xx`.
  * Without a rate (not yet loaded/SSR) both languages render plain USD first; the ¥ part is
@@ -84,19 +94,19 @@ export function fmtMoney(usd: number | null | undefined, prec = 2): string {
   const v = Number(usd ?? 0);
   const usdStr = `$${v.toFixed(prec)}`;
   if (!isZh(currentLocale()) || !fx) return usdStr;
-  return `${usdStr} (¥${(v * fx.rate).toFixed(prec)})`;
+  return usdStr + tr("money.dualSuffix", { v: (v * fx.rate).toFixed(prec) });
 }
 
 /** Header small-amount case: `<$0.01` / `<$0.01（<¥0.07）` in zh. */
 export function fmtMoneySmall(threshold = 0.01, prec = 2): string {
   const usdStr = `<$${threshold.toFixed(2)}`;
   if (!isZh(currentLocale()) || !fx) return usdStr;
-  return `${usdStr} (<¥${(threshold * fx.rate).toFixed(prec)})`;
+  return usdStr + tr("money.dualSmallSuffix", { v: (threshold * fx.rate).toFixed(prec) });
 }
 
 /** Exchange-rate annotation (for tooltips): `FX rate 7.14 · er-api`; returns an empty string when no rate is available. */
 export function fxNote(): string {
   if (!fx) return "";
   const d = fx.fetchedAt ? new Date(fx.fetchedAt).toISOString().slice(0, 10) : "";
-  return `FX rate ${fx.rate.toFixed(2)} · ${fx.source}${d ? ` · ${d}` : ""}`;
+  return tr("money.fxNote", { rate: fx.rate.toFixed(2), source: fx.source }) + (d ? ` · ${d}` : "");
 }

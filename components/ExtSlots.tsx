@@ -386,7 +386,8 @@ function syncLoadErrors(failed: { id: string; error: string }[] | undefined): vo
     const key = `ext-load-${f.id}`;
     next.add(key);
     // startup/shutdown prefixes (startAll/shutdown catch) → more accurate labels; anything else is an entry load failure
-    const label = f.error.startsWith("startup: ") ? "Startup failed" : f.error.startsWith("shutdown: ") ? "Shutdown failed" : "Load failed";
+    // (not inside a component: t comes from the module-level host useI18n() snapshot refreshed every ExtSlotsProvider render)
+    const label = f.error.startsWith("startup: ") ? extI18nSnapshot?.t("extPanel.startupFailed") ?? "Startup failed" : f.error.startsWith("shutdown: ") ? extI18nSnapshot?.t("extPanel.shutdownFailed") ?? "Shutdown failed" : extI18nSnapshot?.t("extPanel.loadFailed") ?? "Load failed";
     registerExtSlotError({
       id: key, extId: f.id, slot: "(load)", itemId: label,
       message: f.error, kind: "load", reset: () => {},
@@ -1045,6 +1046,7 @@ function useExtSlotErrors(): ExtSlotError[] {
 /** Persistent bottom-left error indicator: shows a small button when slot render errors exist; clicking it lists the errors (copy/dismiss/close); hidden when there are none. */
 function ExtErrorIndicator() {
   const errors = useExtSlotErrors();
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1139,7 +1141,7 @@ function ExtErrorIndicator() {
     setOpen((v) => !v);
   };
   const copy = (e: ExtSlotError) => {
-    const kindLabel = e.kind === "load" ? "Load failed" : e.kind === "uncaught" ? "Uncaught error" : "Render failed";
+    const kindLabel = e.kind === "load" ? t("extPanel.loadFailed") : e.kind === "uncaught" ? t("extPanel.kindUncaught") : t("extPanel.kindRender");
     const text = `[ext] ${e.extId ?? "?"} ${e.kind === "load" ? kindLabel : `${e.slot}/${e.itemId} ${kindLabel}`}\n${e.message}\n\n${e.stack || ""}`;
     navigator.clipboard?.writeText(text).finally(() => {
       setCopiedId(e.id);
@@ -1179,9 +1181,9 @@ function ExtErrorIndicator() {
         acc += dec.decode();
         setLastAi(() => acc);
       }
-      if (!acc) setLastAi(() => "(no output)");
+      if (!acc) setLastAi(() => t("extPanel.noOutput"));
     } catch (e) {
-      setLastAi((t) => `${t}${t ? "\n" : ""}[Network error] ${e instanceof Error ? e.message : String(e)}`);
+      setLastAi((prev) => `${prev}${prev ? "\n" : ""}${t("extPanel.networkError")} ${e instanceof Error ? e.message : String(e)}`);
     } finally { setAiBusy(false); }
   };
   const btn: Record<string, string | number> = {
@@ -1195,7 +1197,7 @@ function ExtErrorIndicator() {
         ref={btnRef}
         onPointerDown={onPointerDown}
         onClick={onToggle}
-        title={`Extension errors (${errors.length}) — click to view / draggable`}
+        title={t("extPanel.title", { count: errors.length })}
         style={{
           position: "fixed",
           left: pos ? pos.left : 12,
@@ -1242,21 +1244,21 @@ function ExtErrorIndicator() {
               (the dialog auto-expands when the AI panel opens, scrolling
               internally past 85vh). */}
           <div style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-muted, #aaa)", flexWrap: "wrap" }}>
-            <span style={{ fontWeight: 600 }}>Extension errors</span>
+            <span style={{ fontWeight: 600 }}>{t("extPanel.panelTitle")}</span>
             {errors.length > 1 ? (
               <>
-                <button onClick={() => setIdx((i) => Math.max(0, i - 1))} disabled={ci === 0} title="Previous" style={{ ...btn, opacity: ci === 0 ? 0.4 : 1 }}>‹</button>
+                <button onClick={() => setIdx((i) => Math.max(0, i - 1))} disabled={ci === 0} title={t("extPanel.prev")} style={{ ...btn, opacity: ci === 0 ? 0.4 : 1 }}>‹</button>
                 <span style={{ fontVariantNumeric: "tabular-nums" }}>{ci + 1}/{errors.length}</span>
-                <button onClick={() => setIdx((i) => Math.min(errors.length - 1, i + 1))} disabled={ci === errors.length - 1} title="Next" style={{ ...btn, opacity: ci === errors.length - 1 ? 0.4 : 1 }}>›</button>
+                <button onClick={() => setIdx((i) => Math.min(errors.length - 1, i + 1))} disabled={ci === errors.length - 1} title={t("extPanel.next")} style={{ ...btn, opacity: ci === errors.length - 1 ? 0.4 : 1 }}>›</button>
               </>
             ) : null}
             <span style={{ marginLeft: "auto" }} />
-            <button onClick={() => copy(cur)} title="Copy full error (with stack)" style={btn}>{copiedId === cur.id ? "Copied ✓" : "Copy"}</button>
+            <button onClick={() => copy(cur)} title={t("extPanel.copyTitle")} style={btn}>{copiedId === cur.id ? t("extPanel.copied") : t("extPanel.copy")}</button>
             {cur.kind === "render" && (
-              <button onClick={() => { unregisterExtSlotError(cur.id); cur.reset(); }} title="Dismiss: retry the render (recaptured if the error persists)" style={btn}>Dismiss</button>
+              <button onClick={() => { unregisterExtSlotError(cur.id); cur.reset(); }} title={t("extPanel.dismissTitle")} style={btn}>{t("extPanel.dismiss")}</button>
             )}
-            <button onClick={() => setAiOpen(v => !v)} title="Emergency AI: fix this error in an independent session (with backup helper tools)" style={btn}>🚑</button>
-            <button onClick={() => setOpen(false)} title="Close: collapse the panel (errors are kept)" style={btn}>✕</button>
+            <button onClick={() => setAiOpen(v => !v)} title={t("extPanel.aiTitle")} style={btn}>🚑</button>
+            <button onClick={() => setOpen(false)} title={t("extPanel.closeTitle")} style={btn}>✕</button>
           </div>
           {/* Content area: flex:1 + minHeight:0 + overflowY auto (the
               floating-dialog extension's convention: title bar at natural
@@ -1275,7 +1277,7 @@ function ExtErrorIndicator() {
               }}
             >
               <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", lineHeight: 1.5 }} title={cur.stack || cur.message}>
-                <strong style={{ fontWeight: 700, color: "#f59e0b" }}>{cur.extId ?? "?"}</strong>{cur.kind === "uncaught" ? " · uncaught" : cur.kind === "load" ? ` · ${cur.itemId}` : `/${cur.itemId}`}: {cur.message}
+                <strong style={{ fontWeight: 700, color: "#f59e0b" }}>{cur.extId ?? "?"}</strong>{cur.kind === "uncaught" ? t("extPanel.uncaughtTag") : cur.kind === "load" ? ` · ${cur.itemId}` : `/${cur.itemId}`}: {cur.message}
               </div>
               {cur.stack && (
                 <pre style={{ margin: 0, maxHeight: 140, overflow: "auto", fontSize: 11, lineHeight: 1.45, color: "var(--text, #e8e8e8)", whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", background: "rgba(0,0,0,0.06)", border: "1px solid var(--border, #444)", padding: "5px 7px", borderRadius: 5 }}>
@@ -1287,15 +1289,15 @@ function ExtErrorIndicator() {
                 <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", gap: 4, marginTop: 2 }}>
                   {/* AI output area: flex:1 grows with height (minHeight 160, ≥10 lines); shows a placeholder hint before sending */}
                   <div style={{ flex: 1, minHeight: 160, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4, padding: "2px 0" }}>
-                    {aiLog.length === 0 && !aiBusy ? <span style={{ fontSize: 10, color: "var(--text-dim, #6b7280)", lineHeight: 1.5 }}>AI output appears here as-is after sending (multi-turn supported). The first round automatically includes the error context.</span> : null}
+                    {aiLog.length === 0 && !aiBusy ? <span style={{ fontSize: 10, color: "var(--text-dim, #6b7280)", lineHeight: 1.5 }}>{t("extPanel.aiHint")}</span> : null}
                     {aiLog.map((m, i) => (
                       <div key={i} style={{ fontSize: 10, whiteSpace: "pre-wrap", wordBreak: "break-word", userSelect: "text", lineHeight: 1.4, color: m.role === "user" ? "var(--text-muted, #888)" : "var(--text, #eee)", borderLeft: `2px solid ${m.role === "user" ? "var(--border, #444)" : "#f59e0b"}`, paddingLeft: 5 }}>{m.text}</div>
                     ))}
-                    {aiBusy && <div style={{ fontSize: 10, color: "var(--text-muted, #888)" }}>Thinking…</div>}
+                    {aiBusy && <div style={{ fontSize: 10, color: "var(--text-muted, #888)" }}>{t("extPanel.thinking")}</div>}
                   </div>
                   <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                    <input value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendAi(); } }} placeholder="Emergency instruction (Enter to send)…" disabled={aiBusy} style={{ flex: 1, fontSize: 11, padding: "3px 6px", background: "var(--bg, #1a1a1a)", color: "var(--text, #eee)", border: "1px solid var(--border, #444)", borderRadius: 4, outline: "none" }} />
-                    <button onClick={sendAi} disabled={aiBusy || !aiInput.trim()} style={btn}>{aiBusy ? "…" : "Send"}</button>
+                    <input value={aiInput} onChange={(e) => setAiInput(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendAi(); } }} placeholder={t("extPanel.aiPlaceholder")} disabled={aiBusy} style={{ flex: 1, fontSize: 11, padding: "3px 6px", background: "var(--bg, #1a1a1a)", color: "var(--text, #eee)", border: "1px solid var(--border, #444)", borderRadius: 4, outline: "none" }} />
+                    <button onClick={sendAi} disabled={aiBusy || !aiInput.trim()} style={btn}>{aiBusy ? "…" : t("extPanel.send")}</button>
                   </div>
                 </div>
               )}

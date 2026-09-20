@@ -23,8 +23,11 @@ import { useMemo } from "react";
 import type { ReactNode } from "react";
 import { ExtSlot, useExtSlotItems } from "./ExtSlots";
 import { MarkdownBody } from "./MarkdownBody";
+import { useI18n } from "@/hooks/useI18n";
 import type { SessionRequestAnswer, SessionRequestCardSlotProps, SessionRequestPayload } from "@/lib/ext/types";
 import { hasExtRender, type ExtUiItemRegistered } from "@/lib/ext-ui-store";
+
+type Translate = ReturnType<typeof useI18n>["t"];
 
 /** Routing: among entries whose meta.kinds contains request.kind and whose backend matches (undeclared or /* wildcard), take the highest priority. */
 export function pickSessionRequestCard(
@@ -67,13 +70,14 @@ function permissionInputSummary(input: unknown): string {
   }
 }
 
-function permissionOptionLabel(o: { kind?: string; name?: string }): string {
+function permissionOptionLabel(o: { kind?: string; name?: string }, t: Translate): string {
   if (o.name) return o.name;
   const map: Record<string, string> = {
-    allow_once: "Allow once", allow_always: "Always allow",
-    reject_once: "Deny once", reject_always: "Always deny",
+    allow_once: "sessionReq.allowOnce", allow_always: "sessionReq.allowAlways",
+    reject_once: "sessionReq.rejectOnce", reject_always: "sessionReq.rejectAlways",
   };
-  return map[String(o.kind ?? "")] ?? String(o.kind ?? "Select");
+  const key = map[String(o.kind ?? "")];
+  return key ? t(key) : String(o.kind ?? t("sessionReq.select"));
 }
 
 const buttonBase = "cursor-pointer rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-50";
@@ -139,13 +143,14 @@ export function MinimalRequestCard({ request, onRespond }: {
   const isOpenUrl = request.kind === "interaction:open_url";
   const openUrlTarget = request.url ?? request.launchUrl;
   const copyUrlTarget = request.launchUrl ?? request.url;
+  const { t } = useI18n();
 
   if (request.family === "permission") {
     const summary = permissionInputSummary(request.input);
     const options = request.options?.length ? request.options : null;
     return (
       <CardShell width="min(480px, 92vw)" borderColor="#f59e0b88" testId="session-request-fallback-card">
-        <CardHeader icon="🔐" title="Tool authorization request" toolName={request.toolName} />
+        <CardHeader icon="🔐" title={t("sessionReq.toolAuth")} toolName={request.toolName} />
         {summary && (
           <div style={{ fontSize: 12, color: "var(--text)", background: "var(--bg)", borderRadius: 6, padding: "6px 8px", margin: "0 0 6px", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{summary}</div>
         )}
@@ -160,13 +165,13 @@ export function MinimalRequestCard({ request, onRespond }: {
                 <button key={String(o.optionId ?? o.kind ?? o.name)} type="button"
                   className={deny ? dangerButton : primaryButton}
                   onClick={() => void onRespond({ action: deny ? "decline" : "accept", optionId: o.optionId })}>
-                  {permissionOptionLabel(o)}
+                  {permissionOptionLabel(o, t)}
                 </button>
               );
             })
             : (<>
-              <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>Deny</button>
-              <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>Allow</button>
+              <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>{t("sessionReq.deny")}</button>
+              <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>{t("sessionReq.allow")}</button>
             </>)}
         </div>
       </CardShell>
@@ -178,12 +183,12 @@ export function MinimalRequestCard({ request, onRespond }: {
     // close out the turn; the full card lives in the zcode-agent extension client.
     return (
       <CardShell width="min(480px, 92vw)" borderColor="#f59e0b88" testId="session-request-fallback-card">
-        <CardHeader icon="🔐" title="Provider security verification" meta={request.reason === "captcha-retry" ? "Retry verification" : "Model request"} />
+        <CardHeader icon="🔐" title={t("sessionReq.providerVerify")} meta={request.reason === "captcha-retry" ? t("sessionReq.retryVerify") : t("sessionReq.modelRequest")} />
         <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8 }}>
-          A captcha component is required (extension client not loaded). You can cancel this turn, or enable the zcode agent extension in the extension manager and retry.
+          {t("sessionReq.captchaRequired")}
         </div>
         <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
-          <button type="button" className={neutralButton} onClick={() => void onRespond({ action: "decline" })}>Cancel turn</button>
+          <button type="button" className={neutralButton} onClick={() => void onRespond({ action: "decline" })}>{t("sessionReq.cancelTurn")}</button>
         </div>
       </CardShell>
     );
@@ -193,7 +198,7 @@ export function MinimalRequestCard({ request, onRespond }: {
   return (
     <CardShell width={isPlan ? "min(680px, 94vw)" : "min(560px, 92vw)"} borderColor={isPlan ? "#8b5cf688" : "#3b82f688"} testId="session-request-fallback-card" floatKey="piweb-interaction-card">
       <CardHeader icon={isPlan ? "📋" : isAsk ? "❓" : isOpenUrl ? "🔐" : "💬"}
-        title={isPlan ? "Plan approval" : isAsk ? "Your input needed" : isOpenUrl ? "Login authorization" : "Interaction request"}
+        title={isPlan ? t("sessionReq.planApproval") : isAsk ? t("sessionReq.needInput") : isOpenUrl ? t("sessionReq.loginAuth") : t("sessionReq.interaction")}
         toolName={request.toolName} />
       {request.prompt && (
         <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8, whiteSpace: "pre-wrap" }}>{request.prompt}</div>
@@ -211,7 +216,7 @@ export function MinimalRequestCard({ request, onRespond }: {
               {q.question}
               {q.options.length > 0 && (
                 <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 2 }}>
-                  Options: {q.options.map((o) => o.label).join(" / ")} (enable the session request cards extension for the full option interactions)
+                  {t("sessionReq.options", { options: q.options.map((o) => o.label).join(" / ") })}
                 </div>
               )}
             </div>
@@ -233,26 +238,26 @@ export function MinimalRequestCard({ request, onRespond }: {
           <>
             <button type="button" className={neutralButton}
               onClick={() => { void navigator.clipboard?.writeText(copyUrlTarget ?? "").catch(() => {}); }}>
-              Copy link
+              {t("sessionReq.copyLink")}
             </button>
-            <button type="button" className={neutralButton} onClick={() => void onRespond({ action: "accept" })}>Close</button>
+            <button type="button" className={neutralButton} onClick={() => void onRespond({ action: "accept" })}>{t("sessionReq.close")}</button>
             <button type="button" className={primaryButton} disabled={!openUrlTarget}
               onClick={() => openUrlTarget && window.open(openUrlTarget, "_blank", "noopener,noreferrer")}>
-              Open login page
+              {t("sessionReq.openLoginPage")}
             </button>
           </>
         )}
         {isPlan && (<>
-          <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>Deny</button>
-          <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>Approve plan</button>
+          <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>{t("sessionReq.deny")}</button>
+          <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>{t("sessionReq.approvePlan")}</button>
         </>)}
         {isAsk && (<>
-          <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>Skip</button>
-          <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>Submit</button>
+          <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>{t("sessionReq.skip")}</button>
+          <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>{t("sessionReq.submit")}</button>
         </>)}
         {request.kind === "interaction:generic" && (<>
-          <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>Deny</button>
-          <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>Accept</button>
+          <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>{t("sessionReq.deny")}</button>
+          <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>{t("sessionReq.accept")}</button>
         </>)}
       </div>
     </CardShell>
