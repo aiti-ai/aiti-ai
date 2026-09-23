@@ -6,7 +6,7 @@
  */
 import { TEXT_PREVIEW_MAX_BYTES, documentPreviewKind, getAudioMime, getDocumentMime, getImageMime, getVideoMime } from "@/lib/file-types";
 import { demoAssetPath } from "./base-path";
-import { PROJECT_ROOT, SCRATCH_ROOT, WORKTREE_ROOT } from "./paths";
+import { PROJECT_ROOT, SCRATCH_ROOT, WORKTREE_ROOT, relativeToProject } from "./paths";
 import { getRealFetch } from "./runtime";
 import { PROJECT_FILE_EDITS, PROJECT_FILE_OVERRIDES, SCRATCH_FILES } from "./data/project-files";
 
@@ -252,8 +252,10 @@ export function textChunk(text: string, offset: number) {
 
 /**
  * Map a Pi Web `/api/files/...?type=read|download` URL for a binary project
- * file to its static snapshot, for <img>/<audio>/<iframe> elements that never
- * go through fetch(). Text files keep the API URL.
+ * file to its static snapshot, for <img>/<audio>/<iframe> elements and download
+ * links that never go through fetch(). Text files keep the API URL for reads;
+ * downloads of in-memory files become data URLs, since GitHub Pages has no
+ * /api/files endpoint to answer them.
  */
 export function staticFileUrlForApi(apiUrl: string): string {
   // Resolved lazily from the manifest cache; see router-side lookups for fetch().
@@ -262,8 +264,21 @@ export function staticFileUrlForApi(apiUrl: string): string {
   if (type !== "read" && type !== "download") return apiUrl;
   const filePath = "/" + parsed.pathname.replace(/^\/api\/files\//, "").split("/").map(decodeURIComponent).join("/");
   if (type === "read" && !isBinaryPath(filePath)) return apiUrl;
+  const content = inlineContent(filePath);
+  if (content !== undefined) {
+    return type === "download" ? `data:text/plain;charset=utf-8,${encodeURIComponent(content)}` : apiUrl;
+  }
   const asset = knownAssets.get(filePath);
   return asset ? demoAssetPath(`/demo-files/f/${asset}`) : apiUrl;
+}
+
+/** Text of a file that lives in memory (tutorial edits, scratch project), if any. */
+function inlineContent(filePath: string): string | undefined {
+  const projectRelative = relativeToProject(filePath, PROJECT_ROOT);
+  if (projectRelative) return overrides.get(projectRelative)?.content;
+  const scratchRelative = relativeToProject(filePath, SCRATCH_ROOT);
+  if (scratchRelative && Object.hasOwn(SCRATCH_FILES, scratchRelative)) return SCRATCH_FILES[scratchRelative];
+  return undefined;
 }
 
 /** Absolute path -> asset name, filled once the manifest loads. */
@@ -272,7 +287,11 @@ const knownAssets = new Map<string, string>();
 export function primeAssetLookup(): Promise<void> {
   return loadRepositorySnapshot().then((files) => {
     for (const file of files) {
-      if (file.asset && !overrides.has(file.path)) knownAssets.set(`${PROJECT_ROOT}/${file.path}`, file.asset);
+      if (!file.asset) continue;
+      // The worktree is a clean checkout, so it maps every snapshot file;
+      // edited project files are answered by inlineContent() first.
+      knownAssets.set(`${PROJECT_ROOT}/${file.path}`, file.asset);
+      knownAssets.set(`${WORKTREE_ROOT}/${file.path}`, file.asset);
     }
   }).catch(() => {});
 }
