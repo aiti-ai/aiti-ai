@@ -1,5 +1,5 @@
 // The demo only ships Pi Web's browser code. A few copied modules keep
-// type-only (or server-only) imports from the pi SDK and node-pty; declare the
+// type-only (or server-only) imports from the pi SDK; declare the
 // names they use loosely so the demo typechecks without the agent runtime.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 declare module "@earendil-works/pi-coding-agent" {
@@ -20,8 +20,4 @@ declare module "@earendil-works/pi-agent-core" {
 declare module "@earendil-works/pi-ai" {
   export type ImageContent = any;
   export type TextContent = any;
-}
-declare module "node-pty" {
-  export type IPty = any;
-  export const spawn: (...args: any[]) => IPty;
 }

@@ -62,6 +62,7 @@ import type { FileViewerState } from "@/lib/file-viewer-state";
 import type { ToolEntry } from "@/lib/tool-presets";
 import { getSessionFamily } from "@/lib/session-family";
 import { demoRouterPath } from "@/mock/base-path";
+import { PROJECT_ROOT as DEMO_PROJECT_ROOT } from "@/mock/paths";
 import { openDemoHistory } from "@/mock/export";
 import { getLastSettingsSection, type SettingsSection } from "@/lib/settings-navigation";
 
@@ -1056,12 +1057,15 @@ export function AppShell() {
   }, [isMobile]);
 
   // Demo: show the project README (rendered) next to the first session, the way
-  // a visitor would open it themselves. Phones keep the chat in front.
+  // a visitor would open it themselves. Phones keep the chat in front, and a
+  // reload into the scratch project keeps it too: that folder has no README.
   const demoReadmeOpenedRef = useRef(false);
   useEffect(() => {
     if (demoReadmeOpenedRef.current || isMobile || !selectedSession || !activeCwd) return;
     demoReadmeOpenedRef.current = true;
-    const filePath = `${selectedSession.projectRoot ?? activeCwd}/README.md`;
+    const projectRoot = selectedSession.projectRoot ?? activeCwd;
+    if (projectRoot !== DEMO_PROJECT_ROOT) return;
+    const filePath = `${projectRoot}/README.md`;
     const tabId = `file:${filePath}`;
     setFileTabs((prev) => prev.some((tab) => tab.id === tabId) ? prev : [...prev, {
       id: tabId,

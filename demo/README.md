@@ -45,7 +45,7 @@ differ from their originals:
 | `components/AppShell.tsx` | Open the README preview by default, base-path-safe `router.replace`, in-browser "Full history" |
 | `components/ChatWindow.tsx`, `FileIcons.tsx`, `ProviderIcon.tsx` | Prefix static assets with the Pages base path |
 | `components/FileViewer.tsx`, `FileExplorer.tsx`, `MarkdownBody.tsx` | Load images, media and downloads from the static snapshot |
-| `lib/subagent-extension.ts` | Types only; the original is server code |
+| `lib/subagent-extension.ts`, `lib/terminal-manager.ts` | Types only; the originals are server code |
 
 To pick up UI changes from the main project, copy the updated files over and
 re-apply the changes above (search for `demo` / `@/mock` in those files).
