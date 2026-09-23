@@ -399,7 +399,7 @@ function TreeNode({
         {hovered && !node.isDir && (
           <a
             href={staticFileUrlForApi(`/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`)}
-            download
+            download={node.name}
             onClick={(e) => e.stopPropagation()}
             title={t("files.download")}
             style={{
