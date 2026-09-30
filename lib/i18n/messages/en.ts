@@ -377,7 +377,7 @@ export const enLocale: LocalePlugin = {
     "chat.messagePlaceholder": "Message… Type / for commands, @ for files",
     "chat.steer": "Steer",
     "chat.followUp": "Follow-up",
-    "chat.steerHint": "Interrupt the current run and inject this message now",
+    "chat.steerHint": "Deliver after the current response and its tool calls finish (Stop interrupts them)",
     "chat.followUpHint": "Queue this message after the agent finishes",
     "chat.inputHistory": "Input history",
     "chat.modelError": "Model error",
