@@ -118,6 +118,42 @@
   overflow-y: auto;
 }
 
+/* Bulk switches above the list, mirroring .config-list-action below it. */
+.config-sidebar-bulk-actions {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  gap: 6px;
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--border);
+}
+
+.config-sidebar-bulk-buttons {
+  display: flex;
+  gap: 6px;
+}
+
+.config-sidebar-bulk-buttons > .config-button {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Three lines, then scroll: the phone layout gives the whole sidebar 190px. */
+.config-sidebar-bulk-error,
+.config-sidebar-bulk-note {
+  max-height: 4.2em;
+  overflow-y: auto;
+  color: #ef4444;
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.config-sidebar-bulk-note {
+  color: var(--text-muted);
+}
+
 .config-sidebar-group {
   margin-bottom: 6px;
 }
