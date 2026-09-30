@@ -265,3 +265,62 @@ test("leaves explicit markdown links, CJK paths and query strings intact", () =>
   assert.match(query, /href="https:\/\/a\.com\/p\?a=1&amp;b=2"/);
   assert.match(query, /<\/a>，后面/);
 });
+
+test("turns line endings into <br> only when asked to keep line breaks", () => {
+  assert.match(renderMarkdown("one\ntwo"), /<p>one\ntwo<\/p>/);
+  assert.doesNotMatch(renderMarkdown("one\ntwo"), /<br/);
+
+  for (const markdown of ["one\ntwo", "one\r\ntwo", "one\rtwo", "one   \t\n   two"]) {
+    assert.match(renderMarkdown(markdown, { keepLineBreaks: true }), /<p>one<br\/>two<\/p>/);
+  }
+});
+
+test("keeps typed line breaks in tight list items and headings", () => {
+  const ordered = renderMarkdown("1. 看门狗的原理是（ ）\nA. 监控温度\nB. 计数器\n2. 下一题", { keepLineBreaks: true });
+  const nested = renderMarkdown("- outer\n  more\n  - inner\n- next", { keepLineBreaks: true });
+  const heading = renderMarkdown("Heading one\nheading two\n===", { keepLineBreaks: true });
+
+  assert.match(ordered, /<li>看门狗的原理是（ ）<br\/>A\. 监控温度<br\/>B\. 计数器<\/li>/);
+  assert.match(ordered, /<li>下一题<\/li>/);
+  // The newline before a nested list separates blocks, so it must not become a <br>.
+  assert.match(nested, /<li>outer<br\/>more\n<ul>\n<li>inner<\/li>/);
+  assert.match(heading, /<h1>Heading one<br\/>heading two<\/h1>/);
+  assert.doesNotMatch(renderMarkdown("- alpha\n\n- beta", { keepLineBreaks: true }), /<br/);
+});
+
+test("renders a hard break once when keeping line breaks", () => {
+  // remark-rehype writes an mdast break as <br> plus "\n", which the user
+  // bubble's pre-wrap paragraphs would show as a blank line.
+  const html = renderMarkdown("trailing spaces  \nbackslash\\\nend", { keepLineBreaks: true });
+
+  assert.match(html, /<p>trailing spaces<br\/>backslash<br\/>end<\/p>/);
+});
+
+test("leaves code and math line endings alone when keeping line breaks", () => {
+  const code = renderMarkdown("```\nfirst\nsecond\n```", { keepLineBreaks: true });
+  const math = renderMarkdown("$$\nx = 1\ny = 2\n$$", { keepLineBreaks: true });
+  const emphasis = renderMarkdown("*one\ntwo* `a b`", { keepLineBreaks: true });
+
+  assert.doesNotMatch(code, /<br/);
+  assert.match(code, /first[\s\S]*\n[\s\S]*second/);
+  assert.doesNotMatch(math, /<br/);
+  assert.match(math, /<annotation encoding="application\/x-tex">x = 1\ny = 2<\/annotation>/);
+  assert.match(emphasis, /<em>one<br\/>two<\/em>/);
+});
+
+test("keeps a block that opens a raw-text tag as it renders without line breaks", () => {
+  // A <br> after an unclosed <textarea> or <script> ends rehype-raw's raw-text
+  // state, which glued the lines together or dropped the rest of the block.
+  for (const markdown of [
+    "Use a <textarea> here\nand a button\nplease",
+    "Set <title>My\nPage</title> first\nthen deploy",
+    "add <script>a()\nb()</script> to the page\nthen reload",
+    "some *<style>x\ny</style>* then\nnext",
+  ]) {
+    assert.equal(renderMarkdown(markdown, { keepLineBreaks: true }), renderMarkdown(markdown));
+  }
+
+  assert.match(renderMarkdown("normal <kbd>Ctrl</kbd>\nline two", { keepLineBreaks: true }), /<\/kbd><br\/>line two/);
+  const list = renderMarkdown("- item <textarea>\n  more\n- two\n  lines", { keepLineBreaks: true });
+  assert.match(list, /<li>two<br\/>lines<\/li>/);
+});
