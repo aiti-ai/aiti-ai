@@ -299,6 +299,46 @@ test("does not collapse incomplete skill-looking user text", () => {
   assert.doesNotMatch(html, /aria-expanded/);
 });
 
+test("shows every line of pasted plain text in a user message (#680)", () => {
+  const lines = [
+    "第1题（看门狗）",
+    "嵌入式系统中，看门狗（WatchDog）的基本工作原理是（ ）",
+    "A. 监控系统温度，过热时自动降频",
+    "B. 计数器自动计数，程序定期将其重置；若程序跑飞计数器溢出，则系统复位重启",
+  ];
+  const expected = `<p>${lines.join("<br/>")}</p>`;
+
+  for (const lineEnding of ["\n", "\r\n", "\r"]) {
+    const html = renderMessage({ role: "user", content: lines.join(lineEnding) });
+    assert.ok(html.includes(expected), JSON.stringify(lineEnding));
+    assert.doesNotMatch(html, /\r/);
+  }
+
+  const listHtml = renderMessage({
+    role: "user",
+    content: [{ type: "text", text: "1. 看门狗的原理是（ ）\nA. 监控温度\nB. 计数器" }],
+  });
+  assert.match(listHtml, /<li>看门狗的原理是（ ）<br\/>A\. 监控温度<br\/>B\. 计数器<\/li>/);
+});
+
+test("keeps assistant soft line breaks as Markdown paragraphs", () => {
+  const html = renderMessage({ role: "assistant", content: [{ type: "text", text: "one\ntwo" }] });
+
+  assert.match(html, /<p>one\ntwo<\/p>/);
+  assert.doesNotMatch(html, /<br/);
+});
+
+test("renders lone carriage returns in compact command arguments as line breaks", () => {
+  const html = renderMessage({
+    role: "user",
+    content: COMPLETE_SKILL_EXPANSION.replace("src/main.ts", "src/main.ts\rsrc/app.ts"),
+  });
+
+  assert.match(html, /\/skill:review/);
+  assert.match(html, /src\/main\.ts\nsrc\/app\.ts/);
+  assert.doesNotMatch(html, /\r/);
+});
+
 test("keeps attached images when restoring a compact command for editing", () => {
   const image = {
     type: "image",
