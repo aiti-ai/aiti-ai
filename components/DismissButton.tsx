@@ -1,6 +1,6 @@
 "use client";
 
-/** 行内错误/结果提示上的关闭按钮。 */
+/** Close button for an inline error or result notice. */
 export function DismissButton({ onClick, title }: { onClick: () => void; title: string }) {
   return (
     <button
