@@ -7,16 +7,16 @@ const FILE_MANAGER_BY_PLATFORM = new Map<string, string>([
   ["linux", "xdg-open"],
 ]);
 
-/** 该平台是否有可用的文件管理器命令。 */
+/** Whether the platform has a file manager command. */
 export function isFileManagerSupported(platform: string): boolean {
   return FILE_MANAGER_BY_PLATFORM.has(platform);
 }
 
 /**
- * 构造在系统文件管理器中打开目录的命令。
- * @param platform Node 的 process.platform 取值
- * @param target 要打开的目标路径
- * @returns 命令与参数，平台不支持时返回 null
+ * Builds the command that opens a directory in the OS file manager.
+ * @param platform A Node `process.platform` value
+ * @param target The directory to open
+ * @returns The command and its arguments, or null on an unsupported platform
  */
 export function fileManagerCommand(
   platform: string,
@@ -27,14 +27,15 @@ export function fileManagerCommand(
 }
 
 /**
- * 请求的 Host 是否指向本机。
+ * Whether the request's Host header points at this machine.
  *
- * 注意：Host 头由客户端提供、可以伪造，所以这不是访问控制，只是可用性护栏，
- * 挡的是“手机等远程访问时点了按钮，却弹出服务器上的窗口”这种困惑。
- * 真实防线是服务默认只绑 127.0.0.1（`dev:lan` / `start:lan` 才会对外暴露）
- * 以及调用方的路径白名单。缺少 Host 头时按不可信处理。
- * @param host Host 头
- * @returns 是否为回环地址
+ * `Host` is client-controlled, so this is a usability guard rather than access
+ * control: it keeps a phone or another computer on the LAN from raising a
+ * window on the server. The real boundaries are the default 127.0.0.1 bind
+ * (only `dev:lan` / `start:lan` listen publicly) and the caller's path
+ * allow-list. A missing Host header is treated as remote.
+ * @param host The Host header
+ * @returns Whether it names a loopback address
  */
 export function isLoopbackHost(host: string | null | undefined): boolean {
   if (!host) return false;
@@ -49,10 +50,13 @@ export function isLoopbackHost(host: string | null | undefined): boolean {
 }
 
 /**
- * 让系统文件管理器打开目录。
- * @param target 要打开的目录（调用方负责校验权限）
- * @param platform Node 的 process.platform 取值
- * @returns 命令成功启动后 resolve
+ * Opens a directory in the OS file manager.
+ *
+ * On macOS, `open` launches an `.app` bundle instead of showing it, so callers
+ * should only pass project directories such as the explorer root.
+ * @param target The directory to open (the caller checks access)
+ * @param platform A Node `process.platform` value
+ * @returns Resolves once the command has started
  */
 export function launchFileManager(
   target: string,
@@ -62,7 +66,7 @@ export function launchFileManager(
   if (!spec) return Promise.reject(new Error(`Unsupported platform: ${platform}`));
   return new Promise((resolve, reject) => {
     const child = spawn(spec.command, spec.args, { detached: true, stdio: "ignore" });
-    // explorer.exe 打开成功时也可能返回退出码 1，因此只以能否启动为准。
+    // explorer.exe can exit with code 1 even on success, so only a failed spawn counts.
     child.once("error", reject);
     child.once("spawn", () => {
       child.unref();
