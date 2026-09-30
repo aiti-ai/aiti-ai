@@ -377,7 +377,7 @@ export const zhTWLocale: LocalePlugin = {
     "chat.messagePlaceholder": "訊息…輸入 / 使用命令，輸入 @ 搜尋檔案",
     "chat.steer": "引導",
     "chat.followUp": "後續訊息",
-    "chat.steerHint": "中斷目前的執行並立即注入此訊息",
+    "chat.steerHint": "在目前的回覆及其工具呼叫完成後送達（按「停止」可中斷）",
     "chat.followUpHint": "在 Agent 完成後排入此訊息",
     "chat.inputHistory": "輸入紀錄",
     "chat.modelError": "模型錯誤",
