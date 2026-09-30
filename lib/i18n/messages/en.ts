@@ -238,7 +238,7 @@ export const enLocale: LocalePlugin = {
     "sidebar.switchWorktree": "Switch worktree",
     "sidebar.switchWorktreeTitle": "Switch worktree: {path}",
     "sidebar.main": "main",
-    "sidebar.forceRemoveCheckout": "Uncommitted changes. Force remove checkout?",
+    "sidebar.forceRemoveCheckout": "Has changes or submodules. Force remove checkout?",
     "sidebar.force": "Force",
     "sidebar.createWorktreeTitle": "Create a worktree checkout for a branch",
     "sidebar.newWorktree": "New worktree…",
