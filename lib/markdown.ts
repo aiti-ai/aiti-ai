@@ -26,10 +26,41 @@ export function markdownUrlTransform(value: string): string {
   return /^file:/i.test(value) ? value : defaultUrlTransform(value);
 }
 
-const escapedInlineCodePattern = /(?<![\\`])`((?:[^`\n]|\\`)+?)(?<![\\`])`(?!`)/g;
+/**
+ * `value.replace(pattern, replace)` as if `pattern` began with the lookbehind
+ * `(?<![notAfter])`: a match starts with `opener` and must not follow any
+ * character of `notAfter`. Safari only parses lookbehind from 16.4, and one
+ * regex literal it cannot parse fails the whole script chunk, which left iOS
+ * 16.2 on a blank page (#753). The sticky `pattern` is tried at each `opener`
+ * in turn, the order in which the lookbehind version tries start positions.
+ */
+function replaceNotPrecededBy(
+  value: string,
+  opener: string,
+  notAfter: string,
+  pattern: RegExp,
+  replace: (match: RegExpExecArray) => string,
+): string {
+  let result = "";
+  let copied = 0;
+  for (let index = value.indexOf(opener); index !== -1; index = value.indexOf(opener, index + 1)) {
+    if (index > 0 && notAfter.includes(value[index - 1])) continue;
+    pattern.lastIndex = index;
+    const match = pattern.exec(value);
+    if (!match) continue;
+    result += value.slice(copied, index) + replace(match);
+    copied = pattern.lastIndex;
+    index = copied - 1;
+  }
+  return result + value.slice(copied);
+}
+
+// The closing backtick must not follow `\` or another backtick, so the content
+// ends with a character that is neither.
+const escapedInlineCodePattern = /`((?:[^`\n]|\\`)*?[^\\`\n])`(?!`)/y;
 
 function rewriteEscapedInlineCodeBackticks(line: string): string {
-  return line.replace(escapedInlineCodePattern, (match, content: string) => {
+  return replaceNotPrecededBy(line, "`", "\\`", escapedInlineCodePattern, ([match, content]) => {
     const code = content.replace(/\\`/g, "`");
     if (code === content) return match;
     const marker = "`".repeat(Math.max(...(code.match(/`+/g)?.map((run) => run.length) ?? [0])) + 1);
@@ -335,6 +366,9 @@ function updateInlineCodeMarker(line: string, initialMarkerSize: number): number
   return markerSize;
 }
 
+// `\(` … `\)` whose closing backslash is not itself escaped.
+const inlineLatexMathPattern = /\\\(([^`\r\n$]*?[^`\r\n$\\])\\\)/y;
+
 function normalizeInlineLatexMath(line: string): string {
   if (
     /^\s{0,3}\[[^\]]+\]:/.test(line) ||
@@ -346,9 +380,8 @@ function normalizeInlineLatexMath(line: string): string {
     return line;
   }
 
-  return line.replace(
-    /(?<!\\)\\\(([^`\r\n$]+?)(?<!\\)\\\)/g,
-    (match, math: string) => (math.trim() ? `$${math}$` : match),
+  return replaceNotPrecededBy(line, "\\(", "\\", inlineLatexMathPattern, ([match, math]) =>
+    math.trim() ? `$${math}$` : match,
   );
 }
 
