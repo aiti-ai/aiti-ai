@@ -27,7 +27,7 @@ interface FileManagerAvailability {
   platform: string;
 }
 
-// 服务端错误码 → 可翻译文案；未收录的错误码按原文显示。
+// Server error codes with a translation; any other code is shown verbatim.
 const FILE_MANAGER_ERROR_KEYS: Record<string, string> = {
   remote: "sidebar.openInExplorerRemoteOnly",
   "unsupported-platform": "sidebar.openInExplorerUnsupported",

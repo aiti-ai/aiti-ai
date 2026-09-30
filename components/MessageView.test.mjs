@@ -215,7 +215,7 @@ test("renders a truncation notice for stopReason length", () => {
   });
 
   assert.match(html, /role="alert"/);
-  assert.match(html, /used up by thinking/i);
+  assert.match(html, /output limit was reached before an answer/i);
   assert.doesNotMatch(html, /follow-up/i);
 });
 
@@ -396,4 +396,20 @@ test("shows tool-result images while the tool details stay collapsed", () => {
   assert.match(html, /<img[^>]+src="data:image\/png;base64,YWJj"/);
   assert.doesNotMatch(html, /captured-1280x720/);
   assert.doesNotMatch(html, /"tabId"/);
+});
+
+test("uses the unanswered truncation notice for an empty length reply", () => {
+  // A nearly full context can clamp the output so far that nothing, not even
+  // thinking, comes back; the notice must not blame thinking alone.
+  const html = renderMessage({
+    role: "assistant",
+    provider: "anthropic",
+    model: "claude-test",
+    content: [],
+    stopReason: "length",
+  });
+
+  assert.match(html, /output limit was reached before an answer/i);
+  assert.match(html, /nearly full context/i);
+  assert.doesNotMatch(html, /follow-up/i);
 });

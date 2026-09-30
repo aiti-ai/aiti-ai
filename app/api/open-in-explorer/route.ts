@@ -7,20 +7,20 @@ import { isFileManagerSupported, isLoopbackHost, launchFileManager } from "@/lib
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-/** 当前请求是否可以在服务端拉起文件管理器。 */
+/** Whether this request may raise a file-manager window on the server. */
 function availabilityFor(request: Request): { supported: boolean; reason: string | null } {
   if (!isLoopbackHost(request.headers.get("host"))) return { supported: false, reason: "remote" };
   if (!isFileManagerSupported(process.platform)) return { supported: false, reason: "unsupported-platform" };
   return { supported: true, reason: null };
 }
 
-/** 供前端选择按钮文案并在不支持时禁用。 */
+/** Lets the sidebar pick the button label and disable it when unavailable. */
 export async function GET(request: Request) {
   const { supported, reason } = availabilityFor(request);
   return NextResponse.json({ supported, reason, platform: process.platform });
 }
 
-/** 在系统文件管理器中打开会话工作目录。 */
+/** Opens the session workspace in the OS file manager. */
 export async function POST(request: Request) {
   try {
     const { supported, reason } = availabilityFor(request);
@@ -33,12 +33,14 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "cwd-required" }, { status: 400 });
     }
     const target = resolve(body.cwd);
-    if (!(await stat(target)).isDirectory()) {
-      return NextResponse.json({ error: "not-a-directory" }, { status: 400 });
-    }
+    // Authorize before touching the path, so a location outside the allowed
+    // roots answers 403 whether or not it exists.
     const roots = await getAllowedFileRoots();
     if (!isExistingFilePathAllowed(target, roots)) {
       return NextResponse.json({ error: "access-denied" }, { status: 403 });
+    }
+    if (!(await stat(target)).isDirectory()) {
+      return NextResponse.json({ error: "not-a-directory" }, { status: 400 });
     }
 
     await launchFileManager(target);
