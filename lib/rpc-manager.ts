@@ -248,6 +248,8 @@ export class AgentSessionWrapper {
   private shutdownPromise: Promise<void> | null = null;
   private sessionShutdownEmitted = false;
   private forceShutdownOnIdle = false;
+  // The armed idle timer is the forced cleanup Stop scheduled.
+  private forcedIdleTimerArmed = false;
   private _alive = true;
 
   constructor(
@@ -457,11 +459,23 @@ export class AgentSessionWrapper {
   }
 
   private resetIdleTimer(): void {
-    if (this.idleTimer) clearTimeout(this.idleTimer);
-    if (!this._alive) return;
-    // A resolved timeout of 0 disables idle shutdown entirely.
-    if (SESSION_IDLE_TIMEOUT_MS === 0) return;
+    if (!this._alive) {
+      if (this.idleTimer) clearTimeout(this.idleTimer);
+      return;
+    }
     if (!this.isRunning()) this.forceShutdownOnIdle = false;
+    // A stuck user reloads, reopens the session or presses Stop again, and
+    // each of those commands lands here. Moving the forced deadline for them
+    // would keep a run that Stop cannot unwind alive indefinitely.
+    if (this.forceShutdownOnIdle && this.forcedIdleTimerArmed) return;
+    if (this.idleTimer) clearTimeout(this.idleTimer);
+    // A resolved timeout of 0 disables idle shutdown, but a run that Stop could
+    // not unwind is still reaped after the default delay; otherwise it stays
+    // running until the server restarts (#656).
+    const timeoutMs = SESSION_IDLE_TIMEOUT_MS
+      || (this.forceShutdownOnIdle ? DEFAULT_SESSION_IDLE_TIMEOUT_MS : 0);
+    this.forcedIdleTimerArmed = timeoutMs !== 0 && this.forceShutdownOnIdle;
+    if (timeoutMs === 0) return;
     this.idleTimer = setTimeout(() => {
       if (!this.forceShutdownOnIdle && (this.isRunning() || hasActiveSessionLivenessProvider({
         sessionId: this.sessionId,
@@ -473,7 +487,7 @@ export class AgentSessionWrapper {
       void this.shutdown().catch((error) => {
         console.error("[pi-web] failed to shut down idle session:", error instanceof Error ? error.message : error);
       });
-    }, SESSION_IDLE_TIMEOUT_MS);
+    }, timeoutMs);
   }
 
   private persistBashOnlySession(): void {
@@ -661,6 +675,9 @@ export class AgentSessionWrapper {
 
       case "abort":
         this.forceShutdownOnIdle = true;
+        // Arm the forced cleanup now: the reset above ran before this flag,
+        // and the final reset only runs once the SDK run has unwound.
+        this.resetIdleTimer();
         // Stop must unwind extension commands that have not started the agent yet.
         this.extensionUiAbortController.abort(new DOMException("Extension UI cancelled by Stop", "AbortError"));
         try {
@@ -1001,6 +1018,7 @@ export class AgentSessionWrapper {
 
       case "abort_bash": {
         this.forceShutdownOnIdle = true;
+        this.resetIdleTimer();
         this.inner.abortBash();
         return null;
       }
