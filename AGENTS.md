@@ -106,6 +106,7 @@ lib/
   enabled-models.ts    pure minimal-edit engine for the `enabledModels` pattern list
   enabled-models-runtime.ts  SDK adapter: per-pattern resolution, provider kinds, settings IO
   markdown.ts          shared markdown helpers
+  gfm-autolink-email-loader.cjs  bundler loader: remark-gfm's email regex without a lookbehind literal (#753)
   node-cli.ts          locate bundled npm-cli.js / npx-cli.js so npm/npx spawn without a shell (Windows npm.cmd)
   npx.ts               npx runner used by skill install
   plugin-updates.ts    npm view update checks for /api/plugins/check
@@ -274,6 +275,10 @@ Newer pi emits `compaction_start` / `compaction_end`; older versions emitted `au
 
 ### Exported session HTML
 - `/api/sessions/[id]/export` delegates to pi's export helper, then patches recursive tree helpers in the generated HTML to iterative versions so very deep linear sessions do not overflow the browser call stack.
+
+### Old Safari (iOS 16.2)
+- `/` renders entirely on the client, so one script chunk the browser cannot *parse* is a blank page, not a broken feature (#753). Next 16 compiles for Safari 16.4+ by default; the `browserslist` in `package.json` lowers Safari and iOS to 16.2 so SWC turns class `static {}` blocks into private static fields. That reaches Next's own client runtime, but other node_modules keep the syntax they ship unless they are in `transpilePackages`; mermaid and `@mermaid-js/parser` are listed there because their lazy diagram chunks are full of static blocks. Keep the other browserslist entries at Next's defaults.
+- SWC cannot downlevel a RegExp **lookbehind** (`(?<=`, `(?<!`), which Safari parses only from 16.4. Do not write one in client code: `lib/markdown.ts` emulates its leading lookbehinds with `replaceNotPrecededBy()`. A lookbehind built at runtime (`new RegExp("(?<=…)")` inside `try`) only fails when it runs, which is how `lib/gfm-autolink-email-loader.cjs` fixes the email regex in `mdast-util-gfm-autolink-literal`; the loader is registered for both webpack and Turbopack in `next.config.ts` and fails the build if that regex changes upstream.
 
 ## Pi Session File Format
 
