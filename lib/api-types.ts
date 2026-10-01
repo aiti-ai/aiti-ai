@@ -219,8 +219,9 @@ export interface McpServerInfo {
   /** The project entry that replaces a global entry of its name while the project is trusted; the counterpart of `shadowedByProject`. */
   replacesGlobal?: boolean;
   /**
-   * The last known connection state (`lib/mcp-status.ts`): only while it was
-   * recorded for this entry as the file holds it now (same `configKey`).
+   * The last known connection state, from a test or an open session
+   * (`lib/mcp-status.ts`): only while it was recorded for this entry as the
+   * file holds it now (same `configKey`).
    */
   status?: McpServerStatus;
 }
@@ -272,8 +273,72 @@ export interface McpTestResult {
   testedAt: number;
 }
 
-/** A server's last known connection state; a test records `origin: "test"`. */
-export type McpServerStatus = { origin: "test" } & McpTestResult;
+/**
+ * What an open session's MCP host last saw of a server (`lib/mcp-host.ts`):
+ * - `connecting`: the session opened a connection that has not finished;
+ * - `connected`: its tools are registered in the session;
+ * - `needs-auth`: the server asked for an OAuth sign-in;
+ * - `failed`: the connection ended before the server was ready;
+ * - `disconnected`: a connection that was ready dropped (a stdio server
+ *   exited); the session connects again at the next call to one of its tools;
+ * - `conflict`: another extension of the session registered an MCP server of
+ *   that name first, so the session does not connect this entry;
+ * - `not-trusted`: the project's `.pi/mcp.json` declares it, and the session
+ *   did not read the file because no decision trusted the project.
+ */
+export type McpSessionState =
+  | "connecting"
+  | "connected"
+  | "needs-auth"
+  | "failed"
+  | "disconnected"
+  | "conflict"
+  | "not-trusted";
+
+/**
+ * A server's state as a session's MCP host recorded it. Sessions report what
+ * they see as it happens, and the latest report wins, whichever session made
+ * it: a global stdio server runs once per session, each in its own folder,
+ * so `cwd` says which one this is. Masked like a test's messages.
+ */
+export interface McpSessionStatus {
+  origin: "session";
+  state: McpSessionState;
+  sessionId: string;
+  /** The session's folder: a stdio server runs relative to it, and it is the MCP root the server is sent. */
+  cwd: string;
+  /** When the session saw it, in milliseconds since the epoch. */
+  updatedAt: number;
+  /** `failed`: why, as far as the transport says; at most 2,000 characters. */
+  error?: string;
+  /** `failed` / `disconnected`, stdio: the last 2,000 characters the server wrote to stderr. */
+  stderr?: string;
+  /** `conflict`: the extension whose server of that name the session kept. */
+  conflict?: string;
+  /**
+   * `connected`: when the session closed that connection itself (it went
+   * idle, ended, or reloaded), so the record says what it saw, not that it
+   * still holds one. A closed report reads like an untested entry's row.
+   */
+  closedAt?: number;
+}
+
+/** A server's last known connection state: the newest of a test (`origin: "test"`) and an open session's report. */
+export type McpServerStatus = ({ origin: "test" } & McpTestResult) | McpSessionStatus;
+
+/**
+ * An open session whose MCP host hands no server to the SDK, because the
+ * session's `/mcp` command comes from another extension than Pi's built-in
+ * MCP extension (which may then connect them its own way). Only a session can
+ * tell: it takes loading the extensions.
+ */
+export interface McpHostInactiveInfo {
+  /** The extension the `/mcp` command comes from. */
+  owner: string;
+  /** The session's folder. */
+  cwd: string;
+  updatedAt: number;
+}
 
 /** `POST /api/mcp/test`: which entry was tested, as the file held it, and what the test found. */
 export interface McpTestResponse extends McpServerRef {
@@ -348,6 +413,11 @@ export interface McpResponse {
   /** Global entries, then project entries, each in file order. */
   servers: McpServerInfo[];
   project?: McpProjectInfo;
+  /**
+   * An open session that connects none of these servers through Pi Web: the
+   * one in the panel's project when there is one, else the latest reported.
+   */
+  hostInactive?: McpHostInactiveInfo;
 }
 
 /** Why `/api/mcp`, `/api/mcp/test`, `/api/project-trust` or `/api/tools/settings` refused a request; later routes add their own codes. */

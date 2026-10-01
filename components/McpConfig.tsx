@@ -10,6 +10,7 @@ import type {
   McpScope,
   McpServerInfo,
   McpServerStatus,
+  McpSessionStatus,
   ProjectTrustStatus,
 } from "@/lib/api-types";
 import { useI18n } from "@/hooks/useI18n";
@@ -64,7 +65,6 @@ import {
   MCP_EXPOSURE_SHORT_KEYS,
   MCP_READ_ONLY_KEYS,
   MCP_ROW_STATE_BADGE_KEYS,
-  MCP_ROW_STATE_LABEL_KEYS,
   MCP_TEST_BLOCK_KEYS,
   MCP_TEST_REFUSAL_KEYS,
   MCP_TEST_SERIAL_KEY,
@@ -86,12 +86,17 @@ import {
   mcpGroupSwitchTargets,
   mcpProjectTrustable,
   mcpRowContext,
+  mcpRowStateDetailKey,
+  mcpRowStateLabelKey,
   mcpRowStateTone,
   mcpServerGroups,
   mcpSeconds,
   mcpServerKey,
   mcpServerRowState,
+  mcpSessionStateView,
+  mcpSessionSummaryKey,
   mcpStatusDot,
+  mcpStatusTimeText,
   mcpTestAnswerOutdates,
   mcpTestBlock,
   mcpTestExplainKey,
@@ -572,6 +577,8 @@ export function McpConfigView({
   const servers = groups.flatMap((group) => group.servers);
   const selectedServer = servers.find((server) => mcpServerKey(server) === selected);
   const unavailable = data ? mcpUnavailableNotice(data.mcp) : undefined;
+  // MCP off says more: no session connects anything then.
+  const hostInactive = unavailable ? undefined : data?.hostInactive;
   const projectFile = data?.files.find((file) => file.scope === "project");
   const trustNotice = data ? mcpTrustNotice(data.project, projectFile) : undefined;
   // Trust only where the dialog would offer it: the folder requires trust and is not trusted.
@@ -653,6 +660,9 @@ export function McpConfigView({
             <> <code className="mcp-config-chip">{revealHiddenCharacters(data.mcp.detail)}</code></>
           )}
         </ConfigNotice>
+      )}
+      {hostInactive && (
+        <ConfigNotice>{t("mcp.hostInactive", { path: displayPath(hostInactive.cwd), owner: displayPath(hostInactive.owner) })}</ConfigNotice>
       )}
       {load.state === "loaded" && load.projectError && (
         <ConfigNotice>{t("mcp.projectNotListed", { reason: failureText(load.projectError, t) })}</ConfigNotice>
@@ -896,7 +906,7 @@ function McpServerGroupList({
             ref={selected === key ? selectedRowRef : undefined}
             active={selected === key}
             // The dot is aria-hidden, so the state is part of the row's name.
-            aria-label={t("mcp.rowLabel", { name, state: t(MCP_ROW_STATE_LABEL_KEYS[state]) })}
+            aria-label={t("mcp.rowLabel", { name, state: t(mcpRowStateLabelKey(state, server.status)) })}
             onClick={() => onSelect(key)}
           >
             <ConfigStatusDot {...mcpStatusDot(tone)} />
@@ -949,19 +959,9 @@ function McpStateDetail({ server, state }: { server: McpServerInfo; state: Retur
       </span>
     );
   }
-  // Said by the PI_WEB_PASSWORD line, which every state shows.
-  if (state === "web-password") return null;
-  const key = {
-    disabled: "mcp.server.disabled",
-    "not-trusted": "mcp.stateDetail.not-trusted",
-    replaced: "mcp.server.shadowedByProject",
-    "mcp-off": "mcp.stateDetail.mcp-off",
-    connected: "mcp.stateDetail.connected",
-    "needs-auth": "mcp.stateDetail.needs-auth",
-    failed: "mcp.stateDetail.failed",
-    on: "mcp.stateDetail.on",
-  }[state];
-  return <span className="mcp-config-line">{t(key)}</span>;
+  // None for web-password: the PI_WEB_PASSWORD line, which every state shows, says it.
+  const key = mcpRowStateDetailKey(state, server.status);
+  return key ? <span className="mcp-config-line">{t(key)}</span> : null;
 }
 
 function McpServerDetail({
@@ -1066,7 +1066,7 @@ function McpServerDetail({
       <ConfigDetailGrid>
         <ConfigDetailGridRow label={t("i18n.status")} tone="plain">
           <span className="mcp-config-lines">
-            <span className={`mcp-config-state is-${tone}`}>{t(MCP_ROW_STATE_LABEL_KEYS[state])}</span>
+            <span className={`mcp-config-state is-${tone}`}>{t(mcpRowStateLabelKey(state, server.status))}</span>
             <McpStateDetail server={server} state={state} />
             {server.webPasswordField && (
               <span className="mcp-config-line is-warning">
@@ -1179,11 +1179,36 @@ function testFailureText(failure: McpActionFailure, t: Translate): string {
   return key ? t(key) : failureText(failure, t);
 }
 
-/** What the last test found: its state with when and how long, the error and stderr, and what the server said about itself. */
+/** A status's error and the stderr tail it kept, as the server's text with its hidden characters escaped. */
+function McpStatusOutput({ error, stderr }: { error?: string; stderr?: string }) {
+  const { t } = useI18n();
+  return (
+    <>
+      {error && (
+        <span className="mcp-config-line is-error">
+          {t("mcp.test.error")} <code className="mcp-config-chip">{revealHiddenCharacters(error)}</code>
+        </span>
+      )}
+      {stderr && (
+        <>
+          <span className="mcp-config-line is-dim">{t("mcp.test.stderr")}</span>
+          <pre className="mcp-test-output">{revealLines(stderr)}</pre>
+        </>
+      )}
+    </>
+  );
+}
+
+/** The last known status: a test's or an open session's. */
 function McpStatusLines({ status }: { status: McpServerStatus }) {
+  return status.origin === "session" ? <McpSessionStatusLines status={status} /> : <McpTestStatusLines status={status} />;
+}
+
+/** What the last test found: its state with when and how long, the error and stderr, and what the server said about itself. */
+function McpTestStatusLines({ status }: { status: McpServerStatus & { origin: "test" } }) {
   const { t, locale } = useI18n();
   const view = mcpTestStateView(status);
-  const time = new Date(status.testedAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+  const time = mcpStatusTimeText(status.testedAt, locale);
   const info = status.serverInfo;
   return (
     <>
@@ -1191,17 +1216,7 @@ function McpStatusLines({ status }: { status: McpServerStatus }) {
         <span className={`mcp-config-state is-${view.tone}`}>{t(view.key)}</span>{" "}
         {t(mcpTestSummaryKey(status), { count: status.toolCount, seconds: mcpSeconds(status.durationMs), time })}
       </span>
-      {status.error && (
-        <span className="mcp-config-line is-error">
-          {t("mcp.test.error")} <code className="mcp-config-chip">{revealHiddenCharacters(status.error)}</code>
-        </span>
-      )}
-      {status.stderr && (
-        <>
-          <span className="mcp-config-line is-dim">{t("mcp.test.stderr")}</span>
-          <pre className="mcp-test-output">{revealLines(status.stderr)}</pre>
-        </>
-      )}
+      <McpStatusOutput error={status.error} stderr={status.stderr} />
       {info && (
         <span className="mcp-config-line is-dim">
           {t("mcp.test.serverInfo", { name: revealHiddenCharacters(info.title ?? info.name), version: revealHiddenCharacters(info.version) })}
@@ -1220,8 +1235,35 @@ function McpStatusLines({ status }: { status: McpServerStatus }) {
   );
 }
 
+/**
+ * What an open session last saw: its state, the folder of the session that
+ * reported it (a global stdio server runs in each session's own), when, and
+ * why where it says: the error and stderr, or the extension that holds the
+ * name. A connection the session has closed since says when it closed.
+ */
+function McpSessionStatusLines({ status }: { status: McpSessionStatus }) {
+  const { t, locale } = useI18n();
+  const view = mcpSessionStateView(status);
+  const time = mcpStatusTimeText(status.updatedAt, locale);
+  const closedTime = status.closedAt === undefined ? undefined : mcpStatusTimeText(status.closedAt, locale);
+  return (
+    <>
+      <span className="mcp-config-line">
+        <span className={`mcp-config-state is-${view.tone}`}>{t(view.key)}</span>{" "}
+        {t(mcpSessionSummaryKey(status), { path: displayPath(status.cwd), time, ...(closedTime === undefined ? {} : { closedTime }) })}
+      </span>
+      {status.conflict !== undefined && (
+        <span className="mcp-config-line is-error">
+          {t("mcp.session.conflictOwner")} <code className="mcp-config-chip">{displayPath(status.conflict)}</code>
+        </span>
+      )}
+      <McpStatusOutput error={status.error} stderr={status.stderr} />
+    </>
+  );
+}
+
 /** The tools a connected test listed, read-only: name, whether the server marks it read-only, an exposure of its own, and its description's first line. */
-function McpTestToolList({ status, serverExposure }: { status: McpServerStatus; serverExposure: McpServerInfo["exposure"] }) {
+function McpTestToolList({ status, serverExposure }: { status: McpServerStatus & { origin: "test" }; serverExposure: McpServerInfo["exposure"] }) {
   const { t } = useI18n();
   const notShown = status.toolCount - status.tools.length;
   return (
@@ -1246,9 +1288,10 @@ function McpTestToolList({ status, serverExposure }: { status: McpServerStatus; 
 }
 
 /**
- * The Connection row: the server's last known status (from a Test) and what
- * it found, the Test button, and why it cannot be used, which the button
- * points at; then, when it connected, the tools it listed.
+ * The Connection row: the server's last known status (from a Test or an
+ * open session) and what it found, the Test button, and why it cannot be
+ * used, which the button points at; then, when a test connected, the tools it
+ * listed.
  */
 function McpConnectionRows({
   server,
@@ -1303,7 +1346,7 @@ function McpConnectionRows({
           {!testBlock && server.commandFields.length > 0 && <span className="mcp-config-line is-dim">{t(MCP_TEST_SERIAL_KEY)}</span>}
         </span>
       </ConfigDetailGridRow>
-      {status?.state === "connected" && status.toolCount > 0 && (
+      {status?.origin === "test" && status.state === "connected" && status.toolCount > 0 && (
         <ConfigDetailGridRow label={t("mcp.detail.listedTools")} tone="plain">
           <McpTestToolList status={status} serverExposure={server.exposure} />
         </ConfigDetailGridRow>

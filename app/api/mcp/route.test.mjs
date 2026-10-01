@@ -260,3 +260,27 @@ test("a trusted project whose own defaultTools decides Code mode there is report
   store.set(cwd, false);
   assert.equal((await codemode()).projectOverride, undefined);
 });
+
+test("what an open session reported is listed with its entry, and a session whose /mcp is another extension's is named", async (t) => {
+  const { mcpConfigKey } = await jiti.import("../../../lib/mcp-config-key.ts");
+  const { clearMcpStatuses, recordMcpHostInactive, recordMcpStatus } = await jiti.import("../../../lib/mcp-status.ts");
+  t.after(clearMcpStatuses);
+  const reported = { origin: "session", state: "conflict", conflict: "/ext/docs.ts", sessionId: "s1", cwd, updatedAt: 5 };
+  recordMcpStatus({ scope: "global", sourcePath: globalPath, name: "docs" }, mcpConfigKey({ url: "https://docs.example.com/mcp" }), reported);
+  const elsewhere = { owner: "/ext/elsewhere-mcp.ts", cwd: outside, updatedAt: 9 };
+  recordMcpHostInactive("s2", elsewhere);
+
+  const { body } = await get();
+  assert.deepEqual(body.servers.find((server) => server.name === "docs").status, reported);
+  // Without a project, the latest such session, which names its folder.
+  assert.deepEqual(body.hostInactive, elsewhere);
+  // With one, the session in that folder comes first.
+  const here = { owner: "/ext/here-mcp.ts", cwd, updatedAt: 1 };
+  recordMcpHostInactive("s3", here);
+  assert.deepEqual((await get(forCwd())).body.hostInactive, here);
+
+  clearMcpStatuses();
+  const { body: cleared } = await get();
+  assert.equal(cleared.hostInactive, undefined);
+  assert.equal(cleared.servers.find((server) => server.name === "docs").status, undefined);
+});

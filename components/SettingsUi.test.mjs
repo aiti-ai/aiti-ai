@@ -260,8 +260,9 @@ test("the MCP panel's words come from the locale files, and its reasons are visi
   }
   assert.match(mcp, /\{scopeLabel\(group\.scope, t\)\}/);
   assert.match(mcp, /<ConfigScopeTag scope=\{server\.scope\}>\{scopeLabel\(server\.scope, t\)\}<\/ConfigScopeTag>/);
-  // Why a server does not connect is text on its row and in its accessible name, not only the dot.
-  assert.match(mcp, /aria-label=\{t\("mcp\.rowLabel", \{ name, state: t\(MCP_ROW_STATE_LABEL_KEYS\[state\]\) \}\)\}/);
+  // Why a server does not connect is text on its row and in its accessible name, not only the dot, in the
+  // words of whoever saw the state (a test, or an open session).
+  assert.match(mcp, /aria-label=\{t\("mcp\.rowLabel", \{ name, state: t\(mcpRowStateLabelKey\(state, server\.status\)\) \}\)\}/);
   assert.match(mcp, /\{badgeKey && <span className=\{`mcp-sidebar-badge is-\$\{tone\}`\}>\{t\(badgeKey\)\}<\/span>\}/);
   // The panel's own title is the only one: no reason hides in a tooltip.
   assert.deepEqual(mcp.match(/\btitle=\{[^}]*\}/g), ['title={t("settings.mcp")}']);
