@@ -21,6 +21,7 @@ import {
   mcpVariableReferencesKey,
   revealHiddenCharacters,
 } from "@/lib/mcp-server-display";
+import { openStackedDialog } from "@/lib/stacked-dialog";
 
 /** How long the dialog waits for the listing before it stops holding Trust back. */
 export const MCP_LISTING_TIMEOUT_MS = 10_000;
@@ -101,7 +102,8 @@ function settledTrustNotice(status: ProjectTrustStatus | undefined): string | un
  * listing that fails or takes too long stops holding Trust back. The same
  * answer carries the folder's trust as it is now, which goes to `onStatus`;
  * a folder trusted meanwhile, or no longer needing trust, is no longer offered
- * Trust.
+ * Trust. It opens from the page's restricted-mode banner and from Settings ›
+ * MCP's trust notice, above Settings, so Escape closes it alone.
  */
 export function ProjectTrustDialog({
   cwd,
@@ -186,6 +188,22 @@ export function ProjectTrustDialogView({
   const { t } = useI18n();
   const loading = listing.state === "loading";
   const notice = listing.state === "loaded" ? settledTrustNotice(listing.status) : undefined;
+  const dialogRef = useRef<HTMLDivElement>(null);
+  // Read through refs, so the Escape listener registered once sees the current props.
+  const busyRef = useRef(busy);
+  const onCancelRef = useRef(onCancel);
+  useEffect(() => {
+    busyRef.current = busy;
+    onCancelRef.current = onCancel;
+  }, [busy, onCancel]);
+
+  // The dialog can open above Settings › MCP: Escape closes it alone (taken in
+  // the capture phase, before Settings' own handler), focus moves into it, and
+  // goes back to what had it once it closes. Escape is ignored while trusting,
+  // like Cancel and the backdrop, but still never reaches Settings.
+  useEffect(() => openStackedDialog(document, dialogRef.current, () => {
+    if (!busyRef.current) onCancelRef.current();
+  }), []);
 
   return (
     <div
@@ -196,10 +214,12 @@ export function ProjectTrustDialogView({
       }}
     >
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="project-trust-title"
         aria-describedby="project-trust-description"
+        tabIndex={-1}
         className="project-trust-dialog"
       >
         <div className="project-trust-body">

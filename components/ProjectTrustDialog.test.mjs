@@ -220,7 +220,7 @@ test("an empty file, a missing one, and an unchecked listing", () => {
 
 test("while the listing loads it says so, and Trust waits for it", () => {
   const html = render(h(ProjectTrustDialog, { cwd: "/repo", busy: false, error: null, onCancel() {}, onConfirm() {} }));
-  assert.match(html, /role="dialog" aria-modal="true" aria-labelledby="project-trust-title" aria-describedby="project-trust-description" class="project-trust-dialog"/);
+  assert.match(html, /role="dialog" aria-modal="true" aria-labelledby="project-trust-title" aria-describedby="project-trust-description" tabindex="-1" class="project-trust-dialog"/);
   assert.match(html, /<p id="project-trust-mcp-status" role="status" class="project-trust-mcp-status">Reading \.pi\/mcp\.json…<\/p>/);
   assert.match(html, /<button type="button" class="project-trust-button is-primary" disabled="" aria-describedby="project-trust-mcp-status">Trust project<\/button>/);
   assert.match(html, /<button type="button" class="project-trust-button">Cancel<\/button>/);
@@ -326,6 +326,22 @@ test("the dialog fetches the listing when it opens, and gives up after a timeout
   assert.match(source, /disabled=\{busy \|\| loading\}/);
   // The fresh status goes to the page, so its restricted-mode banner follows it.
   assert.match(effect, /if \(next\.state === "loaded" && next\.status\) onStatusRef\.current\?\.\(next\.status\);/);
+});
+
+test("the dialog takes focus when it opens and Escape closes it alone, even above Settings", () => {
+  const html = view();
+  // Focus goes to the dialog itself: a screen reader reads its title, and no stray Enter trusts the folder.
+  assert.match(html, /<div role="dialog" aria-modal="true" aria-labelledby="project-trust-title" aria-describedby="project-trust-description" tabindex="-1" class="project-trust-dialog">/);
+  assert.match(source, /ref=\{dialogRef\}/);
+  assert.match(settingsCss, /\.project-trust-dialog:focus \{\s*outline: none;\s*\}/);
+  // One listener for the dialog's life, in the capture phase (lib/stacked-dialog.ts), which
+  // also hands focus back on close. While trusting, Escape is ignored like Cancel and the
+  // backdrop, yet still stopped before Settings could close under the dialog.
+  const view_ = source.slice(source.indexOf("export function ProjectTrustDialogView"));
+  assert.match(view_, /useEffect\(\(\) => openStackedDialog\(document, dialogRef\.current, \(\) => \{\n\s*if \(!busyRef\.current\) onCancelRef\.current\(\);\n\s*\}\), \[\]\);/);
+  assert.match(view_, /useEffect\(\(\) => \{\n\s*busyRef\.current = busy;\n\s*onCancelRef\.current = onCancel;\n\s*\}, \[busy, onCancel\]\);/);
+  assert.match(source, /import \{ openStackedDialog \} from "@\/lib\/stacked-dialog";/);
+  assert.doesNotMatch(source, /addEventListener\("keydown"/);
 });
 
 test("every string the dialog shows is translated", async () => {
