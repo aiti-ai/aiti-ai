@@ -8,7 +8,10 @@
 // saved in the global file.
 //
 // It is pure (no Node APIs), so the browser-side importer can use it too.
-// Masked strings are for display only; nothing parses them back.
+// Masked strings are for display only; nothing parses them back. What a mask
+// hid can be listed (`urlSecretParts()`, `commandSecretParts()`,
+// `argSecretParts()`), for code that must find those values again in other
+// text, such as a connection test's error message.
 
 export const SECRET_MASK = "•••";
 
@@ -199,9 +202,19 @@ export interface MaskedValue {
   masked: boolean;
 }
 
+/** Where the maskers note the raw text each mask replaced, and its percent-decoded form when that differs. */
+type HiddenParts = string[] | undefined;
+
+function hide(hidden: HiddenParts, raw: string): void {
+  if (!hidden || raw === "") return;
+  hidden.push(raw);
+  const decoded = safeDecode(raw);
+  if (decoded !== raw) hidden.push(decoded);
+}
+
 const URL_AUTHORITY = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/?#]*)/;
 
-function maskUrlWith(url: string, isReference: ReferenceTest): MaskedValue {
+function maskUrlWith(url: string, isReference: ReferenceTest, hidden?: HiddenParts): MaskedValue {
   let masked = false;
   let rest = url;
   let prefix = "";
@@ -212,6 +225,11 @@ function maskUrlWith(url: string, isReference: ReferenceTest): MaskedValue {
     if (at >= 0 && !isReference(safeDecode(host.slice(0, at)))) {
       prefix = `${scheme}${SECRET_MASK}${host.slice(at)}`;
       masked = true;
+      const userinfo = host.slice(0, at);
+      hide(hidden, userinfo);
+      // The password alone, as a server may quote it.
+      const colon = userinfo.indexOf(":");
+      if (colon >= 0) hide(hidden, userinfo.slice(colon + 1));
     } else {
       prefix = whole;
     }
@@ -225,6 +243,7 @@ function maskUrlWith(url: string, isReference: ReferenceTest): MaskedValue {
     .map((segment) => {
       if (!looksLikeSecretValue(safeDecode(segment))) return segment;
       masked = true;
+      hide(hidden, segment);
       return SECRET_MASK;
     })
     .join("/");
@@ -235,6 +254,7 @@ function maskUrlWith(url: string, isReference: ReferenceTest): MaskedValue {
       const decoded = safeDecode(part);
       if (!looksLikeSecretValue(decoded) || isReference(decoded)) return match;
       masked = true;
+      hide(hidden, part);
       return `${separator}${SECRET_MASK}`;
     }
     const name = part.slice(0, equals);
@@ -242,6 +262,7 @@ function maskUrlWith(url: string, isReference: ReferenceTest): MaskedValue {
     if (decoded === "" || isReference(decoded)) return match;
     if (!isSecretParameterName(name) && !looksLikeSecretValue(decoded)) return match;
     masked = true;
+    hide(hidden, part.slice(equals + 1));
     return `${separator}${name}=${SECRET_MASK}`;
   });
   return { value: `${prefix}${maskedPath}${query}`, masked };
@@ -256,6 +277,17 @@ function maskUrlWith(url: string, isReference: ReferenceTest): MaskedValue {
  */
 export function maskUrl(url: string): MaskedValue {
   return maskUrlWith(url, isPlaceholderOnly);
+}
+
+/**
+ * The raw parts `maskUrl()` hides (userinfo, its password alone, secret query
+ * values and bare parts, token-like path segments), each also percent-decoded,
+ * for finding them where a message quotes them on their own.
+ */
+export function urlSecretParts(url: string): string[] {
+  const hidden: string[] = [];
+  maskUrlWith(url, isPlaceholderOnly, hidden);
+  return [...new Set(hidden)];
 }
 
 function safeDecode(value: string): string {
@@ -273,7 +305,7 @@ function isUrl(value: string): boolean {
 /** `Name=value;Name=value`, as ADO.NET and Azure write connection strings. */
 const CONNECTION_STRING_SEGMENT = /^(\s*[A-Za-z][A-Za-z0-9 _.-]*=)([\s\S]*)$/;
 
-function maskConnectionString(value: string, isReference: ReferenceTest): MaskedValue | undefined {
+function maskConnectionString(value: string, isReference: ReferenceTest, hidden?: HiddenParts): MaskedValue | undefined {
   const segments = value.split(";");
   if (segments.length < 2 || !segments.every((segment) => segment.trim() === "" || CONNECTION_STRING_SEGMENT.test(segment))) {
     return undefined;
@@ -286,9 +318,10 @@ function maskConnectionString(value: string, isReference: ReferenceTest): Masked
     if (segmentValue.trim() === "" || isReference(segmentValue)) return segment;
     if (isSecretName(key.slice(0, -1).trim())) {
       masked = true;
+      hide(hidden, segmentValue.trim());
       return `${key}${SECRET_MASK}`;
     }
-    const inner = maskValue(segmentValue, isReference);
+    const inner = maskValue(segmentValue, isReference, hidden);
     masked ||= inner.masked;
     return `${key}${inner.value}`;
   });
@@ -300,27 +333,32 @@ function maskConnectionString(value: string, isReference: ReferenceTest): Masked
  * `NAME=value` pair, a phrase of several words (`Bearer …`, a whole command
  * line), a URL, or a bare token.
  */
-function maskValue(value: string, isReference: ReferenceTest): MaskedValue {
+function maskValue(value: string, isReference: ReferenceTest, hidden?: HiddenParts): MaskedValue {
   const header = /^([A-Za-z0-9_-]+):(\s*)([\s\S]*)$/.exec(value);
   if (header && header[3] !== "" && !header[3].startsWith("//") && isSecretName(header[1])) {
     const [, name, space, headerValue] = header;
     if (isReference(headerValue)) return { value, masked: false };
+    hide(hidden, headerValue.trim());
     return { value: `${name}:${space}${SECRET_MASK}`, masked: true };
   }
-  const connectionString = value.includes(";") ? maskConnectionString(value, isReference) : undefined;
+  const connectionString = value.includes(";") ? maskConnectionString(value, isReference, hidden) : undefined;
   if (connectionString) return connectionString;
   const pair = /^([A-Za-z_][A-Za-z0-9_]*)=([\s\S]*)$/.exec(value);
   if (pair && pair[2] !== "" && isSecretName(pair[1])) {
     if (isReference(pair[2])) return { value, masked: false };
+    hide(hidden, pair[2]);
     return { value: `${pair[1]}=${SECRET_MASK}`, masked: true };
   }
-  if (/\s/.test(value)) return maskPhrase(value, isReference);
-  if (isUrl(value)) return maskUrlWith(value, isReference);
+  if (/\s/.test(value)) return maskPhrase(value, isReference, hidden);
+  if (isUrl(value)) return maskUrlWith(value, isReference, hidden);
   if (pair && pair[2] !== "") {
-    const inner = maskValue(pair[2], isReference);
+    const inner = maskValue(pair[2], isReference, hidden);
     return { value: `${pair[1]}=${inner.value}`, masked: inner.masked };
   }
-  if (looksLikeSecretValue(value) && !isReference(value)) return { value: SECRET_MASK, masked: true };
+  if (looksLikeSecretValue(value) && !isReference(value)) {
+    hide(hidden, value);
+    return { value: SECRET_MASK, masked: true };
+  }
   return { value, masked: false };
 }
 
@@ -331,10 +369,10 @@ function maskValue(value: string, isReference: ReferenceTest): MaskedValue {
  * (`Bearer`, `Basic`, `Token`) or a `Name:` that names a credential makes the
  * next word a secret.
  */
-function maskPhrase(value: string, isReference: ReferenceTest): MaskedValue {
+function maskPhrase(value: string, isReference: ReferenceTest, hidden?: HiddenParts): MaskedValue {
   const parts = value.split(/(\s+)/);
   const words = parts.filter((_, index) => index % 2 === 0);
-  const result = maskSequence(words, isReference, true);
+  const result = maskSequence(words, isReference, true, hidden);
   return {
     value: parts.map((part, index) => (index % 2 === 0 ? result.values[index / 2] : part)).join(""),
     masked: result.masked,
@@ -344,6 +382,13 @@ function maskPhrase(value: string, isReference: ReferenceTest): MaskedValue {
 /** A command, masked like a single argument: a key passed as the executable, or a whole command line, still holds a key. */
 export function maskCommand(command: string): MaskedValue {
   return maskValue(command, isPlaceholderOnly);
+}
+
+/** The raw parts `maskCommand()` hides, as `urlSecretParts()` lists a URL's. */
+export function commandSecretParts(command: string): string[] {
+  const hidden: string[] = [];
+  maskValue(command, isPlaceholderOnly, hidden);
+  return [...new Set(hidden)];
 }
 
 function flagTakesSecret(flag: string): boolean {
@@ -360,6 +405,7 @@ function maskSequence(
   items: readonly string[],
   isReference: ReferenceTest,
   phrase: boolean,
+  hidden?: HiddenParts,
 ): { values: string[]; masked: boolean } {
   let masked = false;
   let secretNext = false;
@@ -372,6 +418,7 @@ function maskSequence(
       if (!/^-[A-Za-z-]/.test(item)) {
         if (isReference(item)) return item;
         masked = true;
+        hide(hidden, item);
         return SECRET_MASK;
       }
     }
@@ -380,9 +427,10 @@ function maskSequence(
       const [, name, value] = flag;
       if (value !== "" && flagTakesSecret(name) && !isReference(value)) {
         masked = true;
+        hide(hidden, value);
         return `${name}=${SECRET_MASK}`;
       }
-      const inner = maskValue(value, isReference);
+      const inner = maskValue(value, isReference, hidden);
       masked ||= inner.masked;
       return `${name}=${inner.value}`;
     }
@@ -397,7 +445,7 @@ function maskSequence(
         return item;
       }
     }
-    const inner = maskValue(item, isReference);
+    const inner = maskValue(item, isReference, hidden);
     masked ||= inner.masked;
     return inner.value;
   });
@@ -415,6 +463,13 @@ function maskSequence(
 export function maskArgs(args: readonly string[]): { args: string[]; masked: boolean } {
   const { values, masked } = maskSequence(args, isPlaceholderOnly, false);
   return { args: values, masked };
+}
+
+/** The raw parts `maskArgs()` hides (a flag's value, the argument after a secret flag, …), as `urlSecretParts()` lists a URL's. */
+export function argSecretParts(args: readonly string[]): string[] {
+  const hidden: string[] = [];
+  maskSequence(args, isPlaceholderOnly, false, hidden);
+  return [...new Set(hidden)];
 }
 
 export type LiteralSecretField =
