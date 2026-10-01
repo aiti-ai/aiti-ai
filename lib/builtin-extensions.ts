@@ -9,6 +9,7 @@ import {
   type LoadedMcpConfig,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
+import { McpHost, type McpHostOptions } from "./mcp-host";
 import { createPiWebMcpTransportFactory } from "./mcp-transport";
 import { loadPiSdkInternals, type PiSdkInternals, type PiSdkInternalsResult } from "./pi-sdk-internals";
 
@@ -204,22 +205,39 @@ function builtin(name: string, factory: ExtensionFactory): InlineExtension {
 
 export interface PiWebBuiltinExtensionsOptions {
   agentDir: string;
+  /** Timing overrides for tests. */
+  mcpHost?: Pick<McpHostOptions, "idleMs" | "promptWaitMs">;
 }
 
-/** The built-in extensions of a normal session, in the CLI's order. */
+export interface PiWebBuiltinExtensions {
+  /** For the resource loader's `extensionFactories`, in the CLI's order, then the MCP host. */
+  extensions: InlineExtension[];
+  /** Decides which MCP servers the session connects; undefined while MCP is off. */
+  mcpHost: McpHost | undefined;
+}
+
+/** The built-in extensions of a normal session and the host that feeds the MCP one. */
 export async function createPiWebBuiltinExtensions(
   options: PiWebBuiltinExtensionsOptions,
-): Promise<InlineExtension[]> {
+): Promise<PiWebBuiltinExtensions> {
   const [sandbox, mcp] = await Promise.all([checkCodemodeSandbox(), loadMcpRuntime()]);
-  return [
+  const mcpHost = mcp.available
+    ? new McpHost({
+        ...options.mcpHost,
+        agentDir: options.agentDir,
+        internals: mcp.internals,
+        codemodeAvailable: () => sandbox.available,
+      })
+    : undefined;
+  const extensions = [
     builtin("codemode", sandbox.available ? createCodemodeExtension() : unavailableExtension),
     builtin("tool-search", createToolSearchExtension()),
     builtin(
       "mcp",
-      mcp.available
+      mcp.available && mcpHost
         ? createMcpExtension({
             loadConfig: createMcpExtensionConfigLoader(mcp.internals, options.agentDir),
-            createTransport: createPiWebMcpTransportFactory(mcp.internals),
+            createTransport: mcpHost.wrapTransportFactory(createPiWebMcpTransportFactory(mcp.internals)),
             // `/mcp login` already shows the address in the chat; a browser
             // opened on the server host is one a remote user never sees.
             openUrl: () => {},
@@ -227,4 +245,6 @@ export async function createPiWebBuiltinExtensions(
         : unavailableExtension,
     ),
   ];
+  if (mcpHost) extensions.push(mcpHost.extension());
+  return { extensions, mcpHost };
 }
