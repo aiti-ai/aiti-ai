@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef } from "react";
-import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes, ReactNode } from "react";
+import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes, ReactNode, Ref } from "react";
 
 type ConfigButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 type ConfigButtonSize = "small" | "default";
@@ -138,12 +138,13 @@ export function ConfigSidebarGroupStatus({ error, note }: { error?: string | nul
   );
 }
 
+/** A sidebar row; `ref` reaches its button (a prop since React 19), so a panel can move focus to it. */
 export function ConfigSidebarItem({
   active = false,
   className,
   children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean; ref?: Ref<HTMLButtonElement> }) {
   return (
     <button
       type="button"

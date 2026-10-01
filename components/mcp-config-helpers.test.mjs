@@ -30,6 +30,7 @@ const {
   mcpGroupEmptyKey,
   mcpOverviewUrl,
   mcpProjectServersLoad,
+  mcpProjectTrustable,
   mcpRowContext,
   mcpRowStateTone,
   mcpServerGroups,
@@ -237,6 +238,22 @@ test("trust is reported only for a project with a .pi/mcp.json, and inherited tr
   }
   assert.match(messages["mcp.trust.trustedThrough"], /\{path\}/);
   assert.match(messages["mcp.trust.untrustedThrough"], /\{path\}/);
+});
+
+test("Trust is offered only for a folder that requires trust and is not trusted", () => {
+  const cwd = "/repo/app";
+  const status = (overrides) => ({ requiresTrust: true, trusted: false, decision: null, inherited: false, ...overrides });
+  assert.equal(mcpProjectTrustable({ cwd, trust: status() }), true);
+  // An ancestor's explicit false: trusting records this folder's own decision, which wins.
+  assert.equal(mcpProjectTrustable({ cwd, trust: status({ decision: false, decisionPath: "/repo", inherited: true }) }), true);
+  assert.equal(mcpProjectTrustable({ cwd, trust: status({ decision: false, decisionPath: cwd }) }), true);
+  assert.equal(mcpProjectTrustable({ cwd, trust: status({ trusted: true, decision: true, decisionPath: cwd }) }), false);
+  assert.equal(mcpProjectTrustable({ cwd, trust: status({ trusted: true, decision: true, decisionPath: "/repo", inherited: true }) }), false);
+  // Requires no trust (a dangling .pi/mcp.json link), even under an explicit false: POST answers trust-not-required.
+  assert.equal(mcpProjectTrustable({ cwd, trust: { requiresTrust: false, trusted: true, decision: false, decisionPath: cwd, inherited: false } }), false);
+  // trust.json unreadable: whether the folder needs trust is unknown, and trusting would fail the same way.
+  assert.equal(mcpProjectTrustable({ cwd, trustError: "locked" }), false);
+  assert.equal(mcpProjectTrustable(undefined), false);
 });
 
 test("file problems are listed for the footer, the global file's first", () => {

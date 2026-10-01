@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type Ref } from "react";
 import type {
   McpCodemodeInfo,
   McpCodemodePreference,
@@ -8,6 +8,7 @@ import type {
   McpResponse,
   McpScope,
   McpServerInfo,
+  ProjectTrustStatus,
 } from "@/lib/api-types";
 import { useI18n } from "@/hooks/useI18n";
 import { shortenPath } from "@/lib/display-path";
@@ -24,6 +25,7 @@ import {
   getLastSettingsSelection,
   setLastSettingsSelection,
 } from "@/lib/settings-navigation";
+import { focusIfLost } from "@/lib/stacked-dialog";
 import {
   ConfigButton,
   ConfigDetail,
@@ -69,6 +71,7 @@ import {
   mcpFileProblems,
   mcpGroupCounts,
   mcpGroupEmptyKey,
+  mcpProjectTrustable,
   mcpRowContext,
   mcpRowStateTone,
   mcpServerGroups,
@@ -86,6 +89,7 @@ import {
   type McpRowContext,
   type McpServerGroup,
 } from "./mcp-config-helpers";
+import { projectTrustReloadKey } from "./settings-ui-helpers";
 
 type Translate = ReturnType<typeof useI18n>["t"];
 
@@ -128,15 +132,24 @@ export interface McpCodemodeSaveState {
  * files and nothing else: no server is started or contacted to show this.
  * Works without a project; the Project group appears only with one. The one
  * thing it writes is the Code mode choice, through `PUT /api/tools/settings`.
+ * An untrusted project's notice offers Trust, which opens the page's trust
+ * dialog (AppShell owns trust), and the panel reloads once the page's status
+ * for the folder changes.
  */
 export function McpConfig({
   cwd,
   onClose,
   embedded = false,
+  trust,
+  onTrustProject,
 }: {
   cwd: string | null;
   onClose: () => void;
   embedded?: boolean;
+  /** The page's trust status for `cwd`; a change reloads the panel. */
+  trust?: ProjectTrustStatus | null;
+  /** Opens the page's trust dialog for `cwd`; without it the trust notice has no button. */
+  onTrustProject?: () => void;
 }) {
   const [load, setLoad] = useState<McpConfigLoad>({ state: "loading" });
   const [refreshing, setRefreshing] = useState(false);
@@ -164,13 +177,17 @@ export function McpConfig({
     setSelected((current) => pickMcpSelection(mcpServerGroups(result.data, Boolean(cwd)), current));
   }, [cwd]);
 
+  // A new trust decision for the folder (the trust dialog trusted it, or read
+  // one made elsewhere) loads the panel again, in place, so the project's
+  // servers and notices follow while the selection stays.
+  const trustKey = projectTrustReloadKey(trust);
   useEffect(() => {
     void refresh();
     return () => {
       requestRef.current += 1;
       controllerRef.current?.abort();
     };
-  }, [refresh]);
+  }, [refresh, trustKey]);
 
   // The switch is disabled while a save runs, so only one is ever on its way.
   const saveCodemode = useCallback(async (preference: McpCodemodePreference) => {
@@ -212,6 +229,7 @@ export function McpConfig({
       onSelect={setSelected}
       onRefresh={() => void refresh()}
       onCodemodeChange={(preference) => void saveCodemode(preference)}
+      onTrustProject={onTrustProject}
       onClose={onClose}
     />
   );
@@ -228,6 +246,7 @@ export function McpConfigView({
   onSelect,
   onRefresh,
   onCodemodeChange,
+  onTrustProject,
   onClose,
 }: {
   cwd: string | null;
@@ -239,6 +258,7 @@ export function McpConfigView({
   onSelect: (key: string) => void;
   onRefresh: () => void;
   onCodemodeChange: (preference: McpCodemodePreference) => void;
+  onTrustProject?: () => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -250,6 +270,20 @@ export function McpConfigView({
   const unavailable = data ? mcpUnavailableNotice(data.mcp) : undefined;
   const projectFile = data?.files.find((file) => file.scope === "project");
   const trustNotice = data ? mcpTrustNotice(data.project, projectFile) : undefined;
+  // Trust only where the dialog would offer it: the folder requires trust and is not trusted.
+  const onTrust = onTrustProject && mcpProjectTrustable(data?.project) ? onTrustProject : undefined;
+  const offersTrust = trustNotice?.kind === "untrusted" && onTrust !== undefined;
+  // The trust dialog hands focus back to Trust… when it closes, and after a
+  // successful trust the reload removes that button with its notice: focus
+  // would fall to the page behind Settings. It goes to the selected row
+  // instead, which the reload keeps; focus anywhere else stays where it is.
+  const selectedRowRef = useRef<HTMLButtonElement>(null);
+  const offeredTrustRef = useRef(offersTrust);
+  useEffect(() => {
+    const offeredTrust = offeredTrustRef.current;
+    offeredTrustRef.current = offersTrust;
+    if (offeredTrust && !offersTrust) focusIfLost(document, selectedRowRef.current);
+  }, [offersTrust]);
   const problems = data ? mcpFileProblems(data.files) : [];
   const counts = mcpGroupCounts(servers);
   const globalFile = data?.files.find((file) => file.scope === "global");
@@ -275,7 +309,9 @@ export function McpConfigView({
       {load.state === "loaded" && load.projectError && (
         <ConfigNotice>{t("mcp.projectNotListed", { reason: failureText(load.projectError, t) })}</ConfigNotice>
       )}
-      {trustNotice?.kind === "untrusted" && <ConfigTrustNotice message={noticeText(trustNotice, t)} />}
+      {trustNotice?.kind === "untrusted" && (
+        <ConfigTrustNotice message={noticeText(trustNotice, t)} trustLabel={t("mcp.trust.trustButton")} onTrust={onTrust} />
+      )}
       {trustNotice?.kind === "inherited" && <ConfigNotice>{noticeText(trustNotice, t)}</ConfigNotice>}
 
       <ConfigSplitView>
@@ -291,7 +327,12 @@ export function McpConfigView({
               <>
                 {/* First, so the 190px phone sidebar always shows it, however many servers follow. */}
                 <div className="config-sidebar-group">
-                  <McpCodemodeRow codemode={data.codemode} active={selected === MCP_CODEMODE_SELECTION} onSelect={onSelect} />
+                  <McpCodemodeRow
+                    codemode={data.codemode}
+                    active={selected === MCP_CODEMODE_SELECTION}
+                    rowRef={selectedRowRef}
+                    onSelect={onSelect}
+                  />
                 </div>
                 {groups.map((group) => (
                   <McpServerGroupList
@@ -299,6 +340,7 @@ export function McpConfigView({
                     group={group}
                     context={context}
                     selected={selected}
+                    selectedRowRef={selectedRowRef}
                     onSelect={onSelect}
                   />
                 ))}
@@ -367,10 +409,13 @@ export function McpConfigView({
 function McpCodemodeRow({
   codemode,
   active,
+  rowRef,
   onSelect,
 }: {
   codemode: McpCodemodeInfo;
   active: boolean;
+  /** Set to this row's button while it is the selected one. */
+  rowRef: Ref<HTMLButtonElement>;
   onSelect: (key: string) => void;
 }) {
   const { t } = useI18n();
@@ -378,6 +423,7 @@ function McpCodemodeRow({
   const stateText = t(MCP_CODEMODE_STATE_KEYS[state]);
   return (
     <ConfigSidebarItem
+      ref={active ? rowRef : undefined}
       active={active}
       aria-label={t("mcp.codemode.rowLabel", { state: stateText })}
       onClick={() => onSelect(MCP_CODEMODE_SELECTION)}
@@ -393,11 +439,14 @@ function McpServerGroupList({
   group,
   context,
   selected,
+  selectedRowRef,
   onSelect,
 }: {
   group: McpServerGroup;
   context: McpRowContext;
   selected: string | null;
+  /** Set to the selected row's button, when it is in this group. */
+  selectedRowRef: Ref<HTMLButtonElement>;
   onSelect: (key: string) => void;
 }) {
   const { t } = useI18n();
@@ -425,6 +474,7 @@ function McpServerGroupList({
         return (
           <ConfigSidebarItem
             key={key}
+            ref={selected === key ? selectedRowRef : undefined}
             active={selected === key}
             // The dot is aria-hidden, so the state is part of the row's name.
             aria-label={t("mcp.rowLabel", { name, state: t(MCP_ROW_STATE_LABEL_KEYS[state]) })}

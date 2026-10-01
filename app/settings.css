@@ -1929,6 +1929,11 @@
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.24);
 }
 
+/* Focus moves to the dialog itself when it opens (tabIndex -1); it is not a control, so no ring. */
+.project-trust-dialog:focus {
+  outline: none;
+}
+
 .project-trust-body {
   display: flex;
   flex: 1 1 auto;
