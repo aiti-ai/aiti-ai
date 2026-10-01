@@ -13,6 +13,8 @@ import type {
   McpServerInfo,
   McpServerRef,
   McpServerStatus,
+  McpSessionState,
+  McpSessionStatus,
   McpTestResponse,
   McpTestResult,
 } from "@/lib/api-types";
@@ -21,8 +23,8 @@ import { itemsToSwitch } from "./settings-ui-helpers";
 // Pure helpers for Settings › MCP (components/McpConfig.tsx): what each row
 // shows, how the groups are built, and how the overview is loaded. Client-safe:
 // types and fetch only. Every state here is derived from the files GET /api/mcp
-// read, refined by a server's last known status (`status`, from a Test) where
-// the file lets it connect.
+// read, refined by a server's last known status (`status`, from a Test or an
+// open session) where the file lets it connect.
 
 /** The sidebar selection of the Code mode row; a server's key always holds a NUL. */
 export const MCP_CODEMODE_SELECTION = "codemode";
@@ -38,9 +40,12 @@ export function mcpServerKey(server: Pick<McpServerInfo, "scope" | "name">): str
  * one turned off in the file, a project entry of a project whose servers may
  * not be read, a global entry the trusted project's entry of the same name
  * replaces, and MCP being off on this server. Only an entry the file lets
- * connect then shows its last known status: `connected`, `needs-auth` or
- * `failed`, from the last Test of the entry as the file holds it now. `on`
- * means only that a session would connect it; nothing says whether one did.
+ * connect then shows its last known status (`mcpStatusRowState()`), from the
+ * last Test of the entry as the file holds it now or from what an open
+ * session reported since: `connected`, `needs-auth`, `failed`, and from a
+ * session also `connecting`, `disconnected` (a connection that was ready
+ * dropped) and `conflict` (another extension holds the name). `on` means only
+ * that a session would connect it; nothing says whether one did.
  */
 export type McpServerRowState =
   | "invalid"
@@ -52,6 +57,9 @@ export type McpServerRowState =
   | "connected"
   | "needs-auth"
   | "failed"
+  | "connecting"
+  | "disconnected"
+  | "conflict"
   | "on";
 
 export const MCP_SERVER_ROW_STATES: readonly McpServerRowState[] = [
@@ -64,6 +72,9 @@ export const MCP_SERVER_ROW_STATES: readonly McpServerRowState[] = [
   "connected",
   "needs-auth",
   "failed",
+  "connecting",
+  "disconnected",
+  "conflict",
   "on",
 ];
 
@@ -90,6 +101,18 @@ export function mcpRowContext(data: Pick<McpResponse, "mcp" | "project">): McpRo
   return { mcpAvailable: data.mcp.available, projectServersLoad: mcpProjectServersLoad(data.project) };
 }
 
+/**
+ * The row state a last known status gives an entry the file lets connect. Two
+ * session reports say nothing about now, so the entry reads `on` and its
+ * Connection row says what that session saw: a connection the session closed
+ * since (it went idle or ended), and a project the session found untrusted,
+ * an older trust than the listing, which says sessions read the project now.
+ */
+export function mcpStatusRowState(status: McpServerStatus): McpServerRowState {
+  if (status.origin === "test") return status.state;
+  return status.closedAt !== undefined || status.state === "not-trusted" ? "on" : status.state;
+}
+
 export function mcpServerRowState(server: McpServerInfo, context: McpRowContext): McpServerRowState {
   if (server.invalidError !== undefined) return "invalid";
   if (server.webPasswordField) return "web-password";
@@ -98,7 +121,7 @@ export function mcpServerRowState(server: McpServerInfo, context: McpRowContext)
   // The project's entry replaces this one only where it is read.
   if (server.scope === "global" && server.shadowedByProject && context.projectServersLoad) return "replaced";
   if (!context.mcpAvailable) return "mcp-off";
-  return server.status?.state ?? "on";
+  return server.status ? mcpStatusRowState(server.status) : "on";
 }
 
 /** The full state text, for the row's accessible name and the detail pane. */
@@ -112,8 +135,52 @@ export const MCP_ROW_STATE_LABEL_KEYS: Record<McpServerRowState, string> = {
   connected: "mcp.state.connected",
   "needs-auth": "mcp.state.needs-auth",
   failed: "mcp.state.failed",
+  connecting: "mcp.state.connecting",
+  disconnected: "mcp.state.disconnected",
+  conflict: "mcp.state.conflict",
   on: "mcp.state.on",
 };
+
+/** The labels that say where a state was seen, for a state an open session reported rather than a test. */
+export const MCP_SESSION_ROW_STATE_LABEL_KEYS: Partial<Record<McpServerRowState, string>> = {
+  connected: "mcp.state.session.connected",
+  failed: "mcp.state.session.failed",
+};
+
+/** A row's full state text: in a session's words when an open session reported it. */
+export function mcpRowStateLabelKey(state: McpServerRowState, status: McpServerStatus | undefined): string {
+  return (status?.origin === "session" ? MCP_SESSION_ROW_STATE_LABEL_KEYS[state] : undefined) ?? MCP_ROW_STATE_LABEL_KEYS[state];
+}
+
+/**
+ * The sentence under a server's state in its pane: why it does or does not
+ * connect. None for `invalid` and `web-password`, which the pane words with
+ * the reason itself.
+ */
+export const MCP_ROW_STATE_DETAIL_KEYS: Partial<Record<McpServerRowState, string>> = {
+  disabled: "mcp.server.disabled",
+  "not-trusted": "mcp.stateDetail.not-trusted",
+  replaced: "mcp.server.shadowedByProject",
+  "mcp-off": "mcp.stateDetail.mcp-off",
+  connected: "mcp.stateDetail.connected",
+  "needs-auth": "mcp.stateDetail.needs-auth",
+  failed: "mcp.stateDetail.failed",
+  connecting: "mcp.stateDetail.connecting",
+  disconnected: "mcp.stateDetail.disconnected",
+  conflict: "mcp.stateDetail.conflict",
+  on: "mcp.stateDetail.on",
+};
+
+/** The same sentences where an open session, not a test, saw the state. */
+export const MCP_SESSION_ROW_STATE_DETAIL_KEYS: Partial<Record<McpServerRowState, string>> = {
+  connected: "mcp.stateDetail.session.connected",
+  "needs-auth": "mcp.stateDetail.session.needs-auth",
+  failed: "mcp.stateDetail.session.failed",
+};
+
+export function mcpRowStateDetailKey(state: McpServerRowState, status: McpServerStatus | undefined): string | undefined {
+  return (status?.origin === "session" ? MCP_SESSION_ROW_STATE_DETAIL_KEYS[state] : undefined) ?? MCP_ROW_STATE_DETAIL_KEYS[state];
+}
 
 /**
  * The short text a row shows beside the name, so a state is never told by the
@@ -129,6 +196,9 @@ export const MCP_ROW_STATE_BADGE_KEYS: Partial<Record<McpServerRowState, string>
   replaced: "mcp.stateShort.replaced",
   "needs-auth": "mcp.stateShort.needs-auth",
   failed: "mcp.stateShort.failed",
+  connecting: "mcp.stateShort.connecting",
+  disconnected: "mcp.stateShort.disconnected",
+  conflict: "mcp.stateShort.conflict",
 };
 
 export type McpStateTone = "on" | "off" | "warning" | "error";
@@ -136,8 +206,8 @@ export type McpStateTone = "on" | "off" | "warning" | "error";
 /** How a state is colored: the dot, and the state text in the detail pane. */
 export function mcpRowStateTone(state: McpServerRowState): McpStateTone {
   if (state === "on" || state === "connected") return "on";
-  if (state === "invalid" || state === "web-password" || state === "failed") return "error";
-  if (state === "not-trusted" || state === "needs-auth") return "warning";
+  if (state === "invalid" || state === "web-password" || state === "failed" || state === "conflict") return "error";
+  if (state === "not-trusted" || state === "needs-auth" || state === "disconnected") return "warning";
   return "off";
 }
 
@@ -146,6 +216,70 @@ export function mcpStatusDot(tone: McpStateTone): { active?: boolean; color?: st
   if (tone === "on") return { active: true };
   if (tone === "off") return { active: false };
   return { color: tone === "error" ? "#ef4444" : "#f59e0b" };
+}
+
+/** When a status was written: a test's end, or a session's report, or its closing of that connection. */
+export function mcpStatusTime(status: McpServerStatus): number {
+  return status.origin === "test" ? status.testedAt : status.closedAt ?? status.updatedAt;
+}
+
+/**
+ * A status's time in the Connection row: the time of day, with the date when
+ * it was not today. Records last as long as the server process, and a session
+ * that connected a server yesterday must not read like one that did a minute ago.
+ */
+export function mcpStatusTimeText(time: number, locale: string, now: number = Date.now()): string {
+  const date = new Date(time);
+  const today = new Date(now);
+  const sameDay = date.getFullYear() === today.getFullYear()
+    && date.getMonth() === today.getMonth()
+    && date.getDate() === today.getDate();
+  return sameDay
+    ? date.toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" })
+    : date.toLocaleString(locale, { dateStyle: "medium", timeStyle: "short" });
+}
+
+/** The state word of a session's report in the Connection row. */
+export const MCP_SESSION_STATE_KEYS: Record<McpSessionState, string> = {
+  connecting: "mcp.session.state.connecting",
+  connected: "mcp.session.state.connected",
+  "needs-auth": "mcp.session.state.needs-auth",
+  failed: "mcp.session.state.failed",
+  disconnected: "mcp.session.state.disconnected",
+  conflict: "mcp.session.state.conflict",
+  "not-trusted": "mcp.session.state.not-trusted",
+};
+
+/** The sentence after it: which session (by its folder) saw what, and when. */
+export const MCP_SESSION_SUMMARY_KEYS: Record<McpSessionState, string> = {
+  connecting: "mcp.session.summary.connecting",
+  connected: "mcp.session.summary.connected",
+  "needs-auth": "mcp.session.summary.needs-auth",
+  failed: "mcp.session.summary.failed",
+  disconnected: "mcp.session.summary.disconnected",
+  conflict: "mcp.session.summary.conflict",
+  "not-trusted": "mcp.session.summary.not-trusted",
+};
+
+const SESSION_STATE_TONES: Record<McpSessionState, McpStateTone> = {
+  connecting: "off",
+  connected: "on",
+  "needs-auth": "warning",
+  failed: "error",
+  disconnected: "warning",
+  conflict: "error",
+  "not-trusted": "warning",
+};
+
+/** The state line of a session's report: its word and tone; a connection the session closed since is neutral. */
+export function mcpSessionStateView(status: Pick<McpSessionStatus, "state" | "closedAt">): { key: string; tone: McpStateTone } {
+  if (status.closedAt !== undefined) return { key: "mcp.session.state.closed", tone: "off" };
+  return { key: MCP_SESSION_STATE_KEYS[status.state], tone: SESSION_STATE_TONES[status.state] };
+}
+
+/** The sentence after the state word: `{path}` and `{time}`, and `{closedTime}` for a connection closed since. */
+export function mcpSessionSummaryKey(status: Pick<McpSessionStatus, "state" | "closedAt">): string {
+  return status.closedAt !== undefined ? "mcp.session.summary.closed" : MCP_SESSION_SUMMARY_KEYS[status.state];
 }
 
 /** How a validated entry's tools reach the model (the SDK's `exposure`, `codemode` by default). */
@@ -949,7 +1083,7 @@ export function mcpWithTestResults(data: McpResponse, runs: Readonly<Record<stri
   const servers = data.servers.map((server) => {
     const response = runs[mcpServerKey(server)]?.response;
     if (!response || response.configKey !== server.configKey) return server;
-    if (server.status && server.status.testedAt >= response.result.testedAt) return server;
+    if (server.status && mcpStatusTime(server.status) >= response.result.testedAt) return server;
     changed = true;
     const status: McpServerStatus = { ...response.result, origin: "test" };
     return { ...server, status };

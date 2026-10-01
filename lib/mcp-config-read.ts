@@ -1,4 +1,3 @@
-import { createHmac, randomBytes } from "node:crypto";
 import { closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readSync, realpathSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { CONFIG_DIR_NAME, type McpServerConfig } from "@earendil-works/pi-coding-agent";
@@ -26,9 +25,9 @@ import {
 } from "./builtin-extensions";
 import { readCodemodePreference, readProjectCodemodeOverride } from "./codemode-settings";
 import { getGlobalSettingsPath } from "./global-settings-file";
-import { canonicalJson } from "./mcp-host";
+import { mcpConfigKey } from "./mcp-config-key";
 import { maskArgs, maskCommand, maskUrl } from "./mcp-secrets";
-import { withMcpStatuses } from "./mcp-status";
+import { readMcpHostInactive, withMcpStatuses } from "./mcp-status";
 import { findWebPasswordField, resolvedConfigValues, WEB_PASSWORD_VARIABLE } from "./mcp-transport";
 import { samePath } from "./paths";
 import { hasParentDirectorySegment, isPathWithinRoots, resolveRealRoots } from "./path-security";
@@ -60,23 +59,9 @@ export function projectMcpConfigPath(cwd: string): string {
   return join(cwd, CONFIG_DIR_NAME, "mcp.json");
 }
 
-// One key per server process: hot reload re-evaluates this module, globalThis keeps it.
-const CONFIG_KEY_SECRET: symbol = Symbol.for("pi-web:mcp-config-key-secret");
-
-/**
- * What identifies an entry's content, so a status recorded for it can be
- * dropped once the entry changes: an HMAC of its canonical JSON (sorted keys)
- * under a key this process picked at random. Never the JSON itself, which
- * would carry every literal env and header value to the browser, and not a
- * plain hash either, which a weak password in an otherwise visible entry
- * would not survive. Stable for the life of the process, like the statuses
- * it is compared with.
- */
-export function mcpConfigKey(value: unknown): string {
-  const store = globalThis as Record<symbol, Buffer | undefined>;
-  const secret = (store[CONFIG_KEY_SECRET] ??= randomBytes(32));
-  return createHmac("sha256", secret).update(canonicalJson(value)).digest("base64url");
-}
+// `configKey`, which statuses are compared against: an HMAC of the entry's
+// canonical JSON, never the JSON (`lib/mcp-config-key.ts`).
+export { mcpConfigKey };
 
 /** The largest project file that is parsed; it comes from a repository nobody may have trusted. */
 export const PROJECT_MCP_CONFIG_MAX_BYTES = 1024 * 1024;
@@ -706,6 +691,11 @@ async function codemodeInfo(
   return info;
 }
 
+function withHostInactive(cwd: string | undefined): Pick<McpResponse, "hostInactive"> {
+  const hostInactive = readMcpHostInactive(cwd);
+  return hostInactive ? { hostInactive } : {};
+}
+
 export interface McpOverviewOptions {
   agentDir: string;
   project?: { cwd: string; allowedRoots: Set<string> };
@@ -716,9 +706,10 @@ export interface McpOverviewOptions {
  * Everything Settings › MCP shows, from files and process state only: whether
  * MCP and Code mode can run, the servers of both files with the last known
  * status of each (`lib/mcp-status.ts`, for the entry as the file holds it
- * now), and the project's trust, read fresh. A project that is not trusted is listed too, with the
- * command each entry would run, which is the point: it can be checked before
- * anyone trusts it.
+ * now, from a test or an open session), an open session whose `/mcp` is
+ * another extension's, and the project's trust, read fresh. A project that is
+ * not trusted is listed too, with the command each entry would run, which is
+ * the point: it can be checked before anyone trusts it.
  */
 export async function readMcpOverview(options: McpOverviewOptions): Promise<McpResponse> {
   const { agentDir, project, environment = process.env } = options;
@@ -760,5 +751,6 @@ export async function readMcpOverview(options: McpOverviewOptions): Promise<McpR
     files,
     servers: withMcpStatuses(servers, listedFiles),
     ...(projectInfo ? { project: projectInfo } : {}),
+    ...withHostInactive(project?.cwd),
   };
 }

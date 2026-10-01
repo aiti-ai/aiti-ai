@@ -900,8 +900,11 @@ function connection(html) {
   return { value, text: text(value), button: { attributes: button[1], label: button[2] } };
 }
 
+/** Today at 10:42, local time: the Connection row then shows the time alone (a date only when it is not today). */
+const TODAY_10_42 = new Date().setHours(10, 42, 0, 0);
+
 function testedStatus(state, extra = {}) {
-  return { origin: "test", state, tools: [], toolCount: 0, durationMs: 420, testedAt: Date.UTC(2026, 9, 2, 10, 42), ...extra };
+  return { origin: "test", state, tools: [], toolCount: 0, durationMs: 420, testedAt: TODAY_10_42, ...extra };
 }
 
 function testView(serverOverrides = {}, props = {}) {
@@ -1095,4 +1098,107 @@ test("the container tests one server at a time each, beside any change, and give
   assert.match(source, /test=\{mcpTestRunFor\(tests\[mcpServerKey\(selectedServer\)\], selectedServer\)\}/);
   // Test is disabled while it runs, which drops focus to the page; it gets it back from there only.
   assert.match(source, /if \(wasRunning && !running\) focusIfLost\(document, buttonRef\.current\);/);
+});
+
+// ---------------------------------------------------------------------------
+// What open sessions report
+// ---------------------------------------------------------------------------
+
+function sessionStatus(state, extra = {}) {
+  return { origin: "session", state, sessionId: "s1", cwd: "/Users/me/repo", updatedAt: TODAY_10_42, ...extra };
+}
+
+test("a session's report names the state in the row and says which session saw it, and when", () => {
+  const connected = testView({ status: sessionStatus("connected") });
+  assert.match(row(connected, "docs"), /aria-label="docs: Connected in a session"/);
+  const { value, text: shown } = connection(connected);
+  // The session's folder, shortened as every path in the panel is.
+  assert.match(value, /<span class="mcp-config-state is-on">Connected<\/span> A session in ~\/repo connected it at [^.]+\./);
+  assert.match(text(decode(connected)), /Status Connected in a session A session connected it\. Sessions connect it before their next message\./);
+  // A session lists no tools for the panel; only a test does.
+  assert.doesNotMatch(decode(connected), />Listed tools</);
+  assert.match(shown, /Test connection/, "Test stays offered beside a session's report");
+
+  const failed = testView({ transport: "stdio", url: undefined, command: "node", status: sessionStatus("failed", { error: "spawn lint ENOENT", stderr: "no\nconfig" }) });
+  assert.match(row(failed, "docs"), /aria-label="docs: Did not connect in a session"/);
+  assert.match(decode(failed), /<span class="mcp-sidebar-badge is-error">failed<\/span>/);
+  const failedRow = connection(failed).value;
+  assert.match(failedRow, /<span class="mcp-config-state is-error">Did not connect<\/span> A session in ~\/repo could not connect it at/);
+  assert.match(failedRow, /<span class="mcp-config-line is-error">Error: <code class="mcp-config-chip">spawn lint ENOENT<\/code><\/span>/);
+  assert.match(failedRow, /<pre class="mcp-test-output">no\nconfig<\/pre>/);
+  assert.match(text(decode(failed)), /A session could not connect it; Connection below says why\./);
+
+  const signIn = testView({ status: sessionStatus("needs-auth") });
+  assert.match(row(signIn, "docs"), /aria-label="docs: Needs sign-in"/);
+  assert.match(decode(signIn), /<span class="mcp-sidebar-badge is-warning">sign-in<\/span>/);
+  assert.match(connection(signIn).text, /^Needs sign-in The server asked a session in ~\/repo for an OAuth sign-in at/);
+  assert.match(text(decode(signIn)), /The server asked a session for an OAuth sign-in, so sessions cannot use its tools until you sign in/);
+});
+
+test("a connection the session closed since reads like an untested entry, and says when it closed, with the date when not today", () => {
+  const time = (ms) => new Date(ms).toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" });
+  const closedAt = TODAY_10_42 + 10 * 60_000;
+  const closed = testView({ status: sessionStatus("connected", { closedAt }) });
+  // No green "connected" for a connection nobody holds: the row reads on, as an untested entry does.
+  assert.match(row(closed, "docs"), /aria-label="docs: On"/);
+  assert.match(text(decode(closed)), /Status On Sessions connect it before their next message\./);
+  const { value } = connection(closed);
+  assert.equal(
+    value.match(/<span class="mcp-config-line"><span class="mcp-config-state is-off">Closed<\/span> ([^<]*)<\/span>/)?.[1],
+    `A session in ~/repo connected it at ${time(TODAY_10_42)}, and closed that connection at ${time(closedAt)}, when the session went idle, ended or reloaded.`,
+  );
+
+  // A report from another day says which day.
+  const yesterday = TODAY_10_42 - 24 * 60 * 60_000;
+  const old = connection(testView({ status: sessionStatus("failed", { updatedAt: yesterday }) })).text;
+  assert.ok(old.includes(`could not connect it at ${new Date(yesterday).toLocaleString("en", { dateStyle: "medium", timeStyle: "short" })}.`), old);
+});
+
+test("connecting, a dropped connection and a name another extension holds each have visible words", () => {
+  const connecting = testView({ status: sessionStatus("connecting") });
+  assert.match(row(connecting, "docs"), /aria-label="docs: Connecting in a session"/);
+  assert.match(decode(connecting), /<span class="mcp-sidebar-badge is-off">connecting<\/span>/);
+  assert.match(connection(connecting).text, /^Connecting A session in ~\/repo started connecting it at/);
+
+  const dropped = testView({ transport: "stdio", url: undefined, command: "node", status: sessionStatus("disconnected", { stderr: "panic: out of memory" }) });
+  assert.match(row(dropped, "docs"), /aria-label="docs: Connection dropped in a session"/);
+  assert.match(decode(dropped), /<span class="mcp-sidebar-badge is-warning">dropped<\/span>/);
+  assert.match(connection(dropped).value, /<span class="mcp-config-state is-warning">Dropped<\/span> The connection of a session in ~\/repo dropped at [^.]+\./);
+  assert.match(connection(dropped).value, /<pre class="mcp-test-output">panic: out of memory<\/pre>/);
+  assert.match(text(decode(dropped)), /That session connects it again at the next call to one of its tools\./);
+
+  const taken = testView({ status: sessionStatus("conflict", { conflict: "/Users/me/.pi/agent/extensions/jira.ts" }) });
+  assert.match(row(taken, "docs"), /aria-label="docs: Name taken by another extension"/);
+  assert.match(decode(taken), /<span class="mcp-sidebar-badge is-error">conflict<\/span>/);
+  const takenRow = connection(taken).value;
+  assert.match(takenRow, /<span class="mcp-config-state is-error">Name taken<\/span> A session in ~\/repo found the name taken at [^,]+, so it did not connect this entry\./);
+  // The owner is named, the home folder shortened as everywhere in the panel.
+  assert.match(takenRow, /<span class="mcp-config-line is-error">Registered first by: <code class="mcp-config-chip">~\/\.pi\/agent\/extensions\/jira\.ts<\/code><\/span>/);
+  assert.match(text(decode(taken)), /Rename the entry in its file, or turn the other extension off\./);
+});
+
+test("a session that found the project untrusted is said in the Connection row, whatever the listing says now", () => {
+  const data = overview({
+    files: [globalFile, projectFile],
+    project: { cwd: "/Users/me/repo", trust: untrusted },
+    servers: [server({ name: "repo", scope: "project", sourcePath: projectFile.path, transport: "stdio", command: "node", status: sessionStatus("not-trusted") })],
+  });
+  const select = { selected: "project\0repo", cwd: "/Users/me/repo" };
+  const still = view({ load: { state: "loaded", data }, ...select });
+  assert.match(row(still, "repo"), /aria-label="repo: Project not trusted"/);
+  assert.match(connection(still).value, /<span class="mcp-config-state is-warning">Not read<\/span> A session in ~\/repo did not read it at [^,]+, because no decision trusted the project then\./);
+  // Trusted since: the row reads on, since sessions read the file at their next message.
+  const since = view({ load: { state: "loaded", data: { ...data, project: { cwd: "/Users/me/repo", trust: trusted } } }, ...select });
+  assert.match(row(since, "repo"), /aria-label="repo: On"/);
+  assert.match(connection(since).text, /^Not read A session in/);
+});
+
+test("a session whose /mcp is another extension's is said above the list, unless MCP is off anyway", () => {
+  const hostInactive = { owner: "/Users/me/repo/.pi/extensions/mcp.ts", cwd: "/Users/me/repo", updatedAt: 1 };
+  const shown = text(decode(view({ load: { state: "loaded", data: overview({ servers: [httpServer], hostInactive }) } })));
+  assert.match(shown, /A session in ~\/repo connects none of these servers through Pi Web: its \/mcp command comes from ~\/repo\/\.pi\/extensions\/mcp\.ts, not from Pi's built-in MCP extension\. That extension may read mcp\.json and connect them its own way\./);
+  const off = text(decode(view({
+    load: { state: "loaded", data: overview({ servers: [httpServer], hostInactive, mcp: { available: false, reason: "operator-disabled", error: "x" } }) },
+  })));
+  assert.doesNotMatch(off, /connects none of these servers/);
 });
