@@ -126,6 +126,23 @@ import {
   type McpTestRun,
   type McpWriteBlock,
 } from "./mcp-config-helpers";
+import { McpSignInRow } from "./McpSignIn";
+import {
+  MCP_SIGN_IN_POLL_MS,
+  cancelMcpSignInFlow,
+  getMcpSignIn,
+  mcpSignInActive,
+  mcpSignInBlock,
+  mcpSignInJustEnded,
+  mcpSignInRunAfterCancel,
+  mcpSignInRunAfterPaste,
+  mcpSignInRunAfterPoll,
+  mcpSignInRunAfterStart,
+  mcpSignOutBlock,
+  pasteMcpSignIn,
+  postMcpSignIn,
+  type McpSignInRun,
+} from "./mcp-sign-in-helpers";
 import { projectTrustReloadKey } from "./settings-ui-helpers";
 
 type Translate = ReturnType<typeof useI18n>["t"];
@@ -221,7 +238,9 @@ function pressedButton(): HTMLButtonElement | null {
  * through `POST /api/mcp`, whose answer is the overview after the change; open
  * sessions apply it at their next message. Test connects one server once
  * through `POST /api/mcp/test`, beside any change, and its result becomes the
- * row's state. The Code mode choice is written through
+ * row's state. An OAuth server signs in through `/api/mcp/sign-in`, whose
+ * flow lives on the server and is polled here, and signs out through
+ * `POST /api/mcp`. The Code mode choice is written through
  * `PUT /api/tools/settings`. An untrusted project's notice offers
  * Trust, which opens the page's trust dialog (AppShell owns trust), and the
  * panel reloads once the page's status for the folder changes.
@@ -245,7 +264,7 @@ export function McpConfig({
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<string | null>(() => getLastSettingsSelection("mcp", cwd));
   const [codemodeSave, setCodemodeSave] = useState<McpCodemodeSaveState>({ saving: false, error: null });
-  // Which change is on its way (`switch:<key>`, `remove:<key>`, `group:<scope>`, `undo`); one at a time.
+  // Which change is on its way (`switch:<key>`, `remove:<key>`, `sign-out:<key>`, `group:<scope>`, `undo`); one at a time.
   const [busy, setBusy] = useState<string | null>(null);
   const [actionError, setActionError] = useState<McpActionErrorState | null>(null);
   const [groupStatus, setGroupStatus] = useState<McpGroupStatus | null>(null);
@@ -260,6 +279,13 @@ export function McpConfig({
   const actionControllerRef = useRef<AbortController | null>(null);
   // The test request on its way for each server, by key; an entry is only an identity.
   const testRequestsRef = useRef(new Map<string, object>());
+  // Sign-ins by server key. A sign-in writes mcp-auth.json, never mcp.json, so it runs beside
+  // changes, as a Test does; its flow lives on the server, and the panel only polls it.
+  const [signIns, setSignIns] = useState<Record<string, McpSignInRun>>({});
+  const signInsRef = useRef(signIns);
+  signInsRef.current = signIns;
+  const [pollRound, setPollRound] = useState(0);
+  const mountedRef = useRef(true);
   const loadRef = useRef(load);
   loadRef.current = load;
 
@@ -314,7 +340,10 @@ export function McpConfig({
 
   useEffect(() => {
     const testRequests = testRequestsRef.current;
+    mountedRef.current = true;
     return () => {
+      // Sign-ins are let go too: they go on on the server, and Sign in joins one again.
+      mountedRef.current = false;
       saveControllerRef.current?.abort();
       saveControllerRef.current = null;
       actionControllerRef.current?.abort();
@@ -363,6 +392,85 @@ export function McpConfig({
     }));
     setSelected((current) => pickMcpSelection(mcpServerGroups(data, Boolean(cwd)), select ?? current));
   }, [cwd]);
+
+  // Sign in: the route starts the flow (or joins the one under way for the
+  // server's URL) and answers at once. A refusal with a reason may mean the
+  // listing is out of date, as for a test.
+  const startSignIn = useCallback(async (server: McpServerInfo) => {
+    const key = mcpServerKey(server);
+    const current = signInsRef.current[key];
+    if (current?.starting || mcpSignInActive(current)) return;
+    setSignIns((runs) => ({ ...runs, [key]: { starting: true } }));
+    const listing = loadRef.current;
+    // As for Test: the project only when the listing covers it.
+    const signInCwd = listing.state === "loaded" && listing.data.project ? cwd : null;
+    const result = await postMcpSignIn({ scope: server.scope, name: server.name }, signInCwd);
+    if (!mountedRef.current) return;
+    setSignIns((runs) => ({ ...runs, [key]: mcpSignInRunAfterStart(result) }));
+    if (!result.ok && result.error.reason !== undefined && !result.error.timedOut) void refresh();
+  }, [cwd, refresh]);
+
+  const pasteSignIn = useCallback(async (server: McpServerInfo, flowId: string, value: string) => {
+    const key = mcpServerKey(server);
+    setSignIns((runs) => (runs[key]?.flow?.flowId === flowId
+      ? { ...runs, [key]: { ...runs[key], pasting: true, pasteError: undefined } }
+      : runs));
+    const result = await pasteMcpSignIn(flowId, value);
+    if (!mountedRef.current) return;
+    setSignIns((runs) => {
+      const next = mcpSignInRunAfterPaste(runs[key], flowId, result);
+      return next === undefined || next === runs[key] ? runs : { ...runs, [key]: next };
+    });
+  }, []);
+
+  const cancelSignIn = useCallback(async (server: McpServerInfo, flowId: string) => {
+    const key = mcpServerKey(server);
+    setSignIns((runs) => (runs[key]?.flow?.flowId === flowId ? { ...runs, [key]: { ...runs[key], cancelling: true } } : runs));
+    const result = await cancelMcpSignInFlow(flowId);
+    if (!mountedRef.current) return;
+    setSignIns((runs) => {
+      const next = mcpSignInRunAfterCancel(runs[key], flowId, result);
+      return next === undefined || next === runs[key] ? runs : { ...runs, [key]: next };
+    });
+  }, []);
+
+  // While a sign-in runs, the panel asks where it stands about once a second:
+  // the flow moves on by itself when the browser reaches the loopback
+  // listener. A round ends with a new round number, which schedules the next.
+  const activeFlowsKey = Object.entries(signIns)
+    .flatMap(([key, run]) => (mcpSignInActive(run) && run.flow ? [`${key}\u0001${run.flow.flowId}`] : []))
+    .join("\u0002");
+  useEffect(() => {
+    if (!activeFlowsKey) return;
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      for (const item of activeFlowsKey.split("\u0002")) {
+        const [key, flowId] = item.split("\u0001");
+        // A paste or cancel answered while this poll is out is newer than what it brings back.
+        const sentVersion = signInsRef.current[key]?.version ?? 0;
+        const result = await getMcpSignIn(flowId, undefined, controller.signal);
+        if (controller.signal.aborted) return;
+        setSignIns((runs) => {
+          const next = mcpSignInRunAfterPoll(runs[key], flowId, result, Date.now(), sentVersion);
+          return next === undefined || next === runs[key] ? runs : { ...runs, [key]: next };
+        });
+      }
+      setPollRound((round) => round + 1);
+    }, MCP_SIGN_IN_POLL_MS);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [activeFlowsKey, pollRound]);
+
+  // A sign-in that ended changed mcp-auth.json and recorded what connecting
+  // found: the overview is read again, for Signed in and the Connection row.
+  const previousSignInsRef = useRef(signIns);
+  useEffect(() => {
+    const previous = previousSignInsRef.current;
+    previousSignInsRef.current = signIns;
+    if (Object.keys(signIns).some((key) => mcpSignInJustEnded(previous[key], signIns[key]))) void refresh();
+  }, [signIns, refresh]);
 
   // Every control waits while a change runs, so only one is ever on its way.
   // A refused change reloads the listing: the file may no longer say what the
@@ -440,6 +548,23 @@ export function McpConfig({
     if (!result.ok) setFocusBack({ control: pressed });
   }, [runAction, undo]);
 
+  // Sign out deletes the URL's tokens from mcp-auth.json through POST /api/mcp,
+  // which answers with the overview, like any change.
+  const signOut = useCallback(async (server: McpServerInfo) => {
+    const key = mcpServerKey(server);
+    const pressed = pressedButton();
+    setActionError(null);
+    setGroupStatus(null);
+    setSignIns((runs) => ({ ...runs, [key]: { ...runs[key], signOutError: undefined, signedOut: undefined } }));
+    const result = await runAction({ action: "sign-out", scope: server.scope, name: server.name }, `sign-out:${key}`);
+    if (!result) return;
+    setSignIns((runs) => ({
+      ...runs,
+      [key]: result.ok ? { signedOut: { removed: result.data.signedOut?.removed === true } } : { ...runs[key], signOutError: result.error },
+    }));
+    setFocusBack({ control: pressed });
+  }, [runAction]);
+
   // The notice goes when the route lets the removal go.
   const undoToken = undo?.token;
   const undoExpiresInMs = undo?.expiresInMs;
@@ -493,7 +618,12 @@ export function McpConfig({
       undo={undo}
       focusBack={focusBack}
       tests={tests}
+      signIns={signIns}
       onTest={(server) => void testServer(server)}
+      onSignIn={(server) => void startSignIn(server)}
+      onSignOut={(server) => void signOut(server)}
+      onSignInPaste={(server, flowId, value) => void pasteSignIn(server, flowId, value)}
+      onSignInCancel={(server, flowId) => void cancelSignIn(server, flowId)}
       onSelect={(key) => {
         setSelected(key);
         setActionError(null);
@@ -530,6 +660,7 @@ export function McpConfigView({
   undo = null,
   focusBack = null,
   tests = {},
+  signIns = {},
   onSelect,
   onRefresh,
   onCodemodeChange,
@@ -538,6 +669,10 @@ export function McpConfigView({
   onRemove = () => {},
   onUndo = () => {},
   onTest = () => {},
+  onSignIn = () => {},
+  onSignOut = () => {},
+  onSignInPaste = () => {},
+  onSignInCancel = () => {},
   onTrustProject,
   onClose,
 }: {
@@ -547,7 +682,7 @@ export function McpConfigView({
   refreshing: boolean;
   embedded: boolean;
   codemodeSave?: McpCodemodeSaveState;
-  /** The change on its way, if any: `switch:<key>`, `remove:<key>`, `group:<scope>` or `undo`. */
+  /** The change on its way, if any: `switch:<key>`, `remove:<key>`, `sign-out:<key>`, `group:<scope>` or `undo`. */
   busy?: string | null;
   actionError?: McpActionErrorState | null;
   groupStatus?: McpGroupStatus | null;
@@ -556,6 +691,8 @@ export function McpConfigView({
   focusBack?: McpFocusBack | null;
   /** The panel's tests by server key: running, their last answer, or why one failed. */
   tests?: Readonly<Record<string, McpTestRun>>;
+  /** The panel's sign-ins by server key: starting, the flow as last polled, or why a request failed. */
+  signIns?: Readonly<Record<string, McpSignInRun>>;
   onSelect: (key: string) => void;
   onRefresh: () => void;
   onCodemodeChange: (preference: McpCodemodePreference) => void;
@@ -564,6 +701,10 @@ export function McpConfigView({
   onRemove?: (server: McpServerInfo) => void;
   onUndo?: () => void;
   onTest?: (server: McpServerInfo) => void;
+  onSignIn?: (server: McpServerInfo) => void;
+  onSignOut?: (server: McpServerInfo) => void;
+  onSignInPaste?: (server: McpServerInfo, flowId: string, value: string) => void;
+  onSignInCancel?: (server: McpServerInfo, flowId: string) => void;
   onTrustProject?: () => void;
   onClose: () => void;
 }) {
@@ -752,9 +893,16 @@ export function McpConfigView({
                 actionError={actionError?.key === mcpServerKey(selectedServer) ? actionError.failure : null}
                 test={mcpTestRunFor(tests[mcpServerKey(selectedServer)], selectedServer)}
                 testBlock={mcpTestBlock(selectedServer, data)}
+                signIn={signIns[mcpServerKey(selectedServer)]}
+                signInBlock={mcpSignInBlock(selectedServer, data)}
+                signOutBlock={mcpSignOutBlock(selectedServer, data)}
                 onSwitch={onServerSwitch}
                 onRemove={onRemove}
                 onTest={onTest}
+                onSignIn={onSignIn}
+                onSignOut={onSignOut}
+                onSignInPaste={onSignInPaste}
+                onSignInCancel={onSignInCancel}
               />
             ) : (
               <ConfigEmptyState>
@@ -976,9 +1124,16 @@ function McpServerDetail({
   actionError,
   test,
   testBlock,
+  signIn,
+  signInBlock,
+  signOutBlock,
   onSwitch,
   onRemove,
   onTest,
+  onSignIn,
+  onSignOut,
+  onSignInPaste,
+  onSignInCancel,
 }: {
   server: McpServerInfo;
   context: McpRowContext;
@@ -996,9 +1151,18 @@ function McpServerDetail({
   test: McpTestRun | undefined;
   /** Why it cannot be tested. */
   testBlock: McpTestBlock | undefined;
+  /** This server's sign-in, if the panel started or joined one. */
+  signIn: McpSignInRun | undefined;
+  /** Why it cannot be signed in to, or out of. */
+  signInBlock: McpTestBlock | undefined;
+  signOutBlock: McpTestBlock | undefined;
   onSwitch: (server: McpServerInfo, enabled: boolean) => void;
   onRemove: (server: McpServerInfo) => void;
   onTest: (server: McpServerInfo) => void;
+  onSignIn: (server: McpServerInfo) => void;
+  onSignOut: (server: McpServerInfo) => void;
+  onSignInPaste: (server: McpServerInfo, flowId: string, value: string) => void;
+  onSignInCancel: (server: McpServerInfo, flowId: string) => void;
 }) {
   const { t } = useI18n();
   const noteId = useId();
@@ -1127,15 +1291,18 @@ function McpServerDetail({
           </ConfigDetailGridRow>
         )}
         {http && connects && (
-          <ConfigDetailGridRow label={t("mcp.detail.signIn")}>
-            {!server.usesOAuth
-              ? t("mcp.signIn.header")
-              : server.signedIn === true
-                ? t("mcp.signIn.signedIn")
-                : server.signedIn === false
-                  ? t("mcp.signIn.notSignedIn")
-                  : t("mcp.signIn.unknown")}
-          </ConfigDetailGridRow>
+          <McpSignInRow
+            server={server}
+            run={signIn}
+            block={signInBlock}
+            signOutBlock={signOutBlock}
+            controlsBusy={controlsBusy}
+            signingOut={busy === `sign-out:${key}`}
+            onSignIn={onSignIn}
+            onSignOut={onSignOut}
+            onPaste={onSignInPaste}
+            onCancel={onSignInCancel}
+          />
         )}
         {server.exposure && (
           <ConfigDetailGridRow label={t("mcp.detail.exposure")} tone="plain">

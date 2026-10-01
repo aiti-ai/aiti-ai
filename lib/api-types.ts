@@ -271,6 +271,8 @@ export interface McpTestResult {
   queuedMs?: number;
   /** When it finished, in milliseconds since the epoch. */
   testedAt: number;
+  /** The connection a Settings sign-in made right after it stored new tokens (`lib/mcp-sign-in.ts`), not a Test. */
+  afterSignIn?: true;
 }
 
 /**
@@ -420,7 +422,7 @@ export interface McpResponse {
   hostInactive?: McpHostInactiveInfo;
 }
 
-/** Why `/api/mcp`, `/api/mcp/test`, `/api/project-trust` or `/api/tools/settings` refused a request; later routes add their own codes. */
+/** Why `/api/mcp`, `/api/mcp/test`, `/api/mcp/sign-in`, `/api/project-trust` or `/api/tools/settings` refused a request; later routes add their own codes. */
 export type McpRefusalReason =
   /** `cwd` is empty or not an absolute path. */
   | "cwd-invalid"
@@ -472,6 +474,20 @@ export type McpRefusalReason =
   | "too-large"
   /** Another process held the file's lock for longer than the writer waits (`path`). */
   | "locked"
+  /** Sign-in or sign-out of a server that does not use OAuth: only an HTTP server without an `Authorization` header does (`name`). */
+  | "sign-in-not-oauth"
+  /** No sign-in has that id: it ended over a minute ago, or Pi Web restarted (`/api/mcp/sign-in/[flowId]`). */
+  | "sign-in-unknown"
+  /** The sign-in is not waiting for a redirected address: not yet, or not anymore. */
+  | "sign-in-not-waiting"
+  /** The pasted text is not a URL. The sign-in keeps waiting. */
+  | "redirect-invalid"
+  /** The pasted URL's `state` is not this sign-in's: it belongs to another one. The sign-in keeps waiting. */
+  | "redirect-state-mismatch"
+  /** The pasted URL carries no authorization `code`. The sign-in keeps waiting. */
+  | "redirect-no-code"
+  /** The pasted URL is the authorization server's refusal (`error`); `error` holds its description. The sign-in keeps waiting. */
+  | "redirect-denied"
   /** Reading failed unexpectedly; `error` says how. */
   | "internal";
 
@@ -484,8 +500,8 @@ export interface McpErrorResponse {
   name?: string;
 }
 
-/** What `POST /api/mcp` can do to a server of either file (ADR 0006: a switch, Remove, and Undo). */
-export type McpServerAction = "enable" | "disable" | "remove" | "undo" | "set-enabled";
+/** What `POST /api/mcp` can do to a server of either file (ADR 0006: a switch, Remove, Undo, and Sign out). */
+export type McpServerAction = "enable" | "disable" | "remove" | "undo" | "set-enabled" | "sign-out";
 
 export interface McpServerRef {
   scope: McpScope;
@@ -518,6 +534,59 @@ export interface McpActionResponse extends McpResponse {
   restored?: McpServerRef;
   /** `set-enabled`: one result per server asked for, in request order. */
   results?: McpActionItemResult[];
+  /** `sign-out`: the server signed out of, and whether `mcp-auth.json` held anything for its URL. */
+  signedOut?: McpServerRef & { removed: boolean };
+}
+
+/**
+ * Where a Settings sign-in stands (`lib/mcp-sign-in.ts`), as `pi mcp login`
+ * runs it:
+ * - `connecting`: connecting once, to learn whether the server asks for a
+ *   sign-in and with which challenge;
+ * - `starting`: the SDK's sign-in runs (discovery, client registration) and
+ *   has not produced a sign-in page yet;
+ * - `authorize`: waiting for the browser, `authorizationUrl` to open; the
+ *   loopback callback or a pasted redirected address finishes it;
+ * - `finishing`: the code is being exchanged for tokens, then Pi Web
+ *   connects again with them;
+ * - `done`, `failed`, `cancelled`, `expired` (not finished within the SDK's
+ *   5 minutes): ended.
+ */
+export type McpSignInPhase = "connecting" | "starting" | "authorize" | "finishing" | "done" | "failed" | "cancelled" | "expired";
+
+/** Why a sign-in ended `failed`. */
+export type McpSignInFailure =
+  /** The first connection failed without asking for a sign-in, so there is nothing to sign in to; `result` says how. */
+  | "connect-failed"
+  /** Another test of a server that runs a shell command held the queue too long, so the sign-in never connected. */
+  | "queue-timed-out"
+  /** The SDK's sign-in failed (discovery, registration, the token exchange, a `!command` client secret); `error` says how. */
+  | "sign-in-failed"
+  | "internal";
+
+/** `/api/mcp/sign-in`: one sign-in, as the browser polls it. URLs aside, server text in it is masked like a test's. */
+export interface McpSignInFlowInfo extends McpServerRef {
+  flowId: string;
+  /** The `configKey` of the entry the sign-in read; another entry of the same URL joins it. */
+  configKey: string;
+  phase: McpSignInPhase;
+  /** `authorize`: the sign-in page to open. */
+  authorizationUrl?: string;
+  /** `authorize`: where the browser is sent back, Pi Web's loopback listener on the computer running it. */
+  redirectUrl?: string;
+  /** How long the sign-in still waits, in milliseconds; 0 once it ended. */
+  expiresInMs: number;
+  /** `done`: the first connection worked, so no sign-in was needed. */
+  alreadySignedIn?: true;
+  /** `done`: the SDK renewed the tokens with the stored refresh token, without the browser. */
+  refreshed?: true;
+  /** `done`: what connecting with the new tokens found, also recorded as the server's status; `connect-failed`: what the first connection found. */
+  result?: McpTestResult;
+  failure?: McpSignInFailure;
+  /** `failed`: the SDK's words, masked; at most 2,000 characters. */
+  error?: string;
+  /** In `POST /api/mcp/sign-in`'s answer only: the start joined this sign-in, already under way for the same URL. */
+  joined?: true;
 }
 
 /** What a project's `.pi/mcp.json` declares, as `GET /api/project-trust` lists it. */
