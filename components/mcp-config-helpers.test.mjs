@@ -13,8 +13,13 @@ const {
   MCP_OVERVIEW_TIMEOUT_MS,
   MCP_READ_ONLY_KEYS,
   MCP_ROW_STATE_BADGE_KEYS,
+  MCP_ROW_STATE_DETAIL_KEYS,
   MCP_ROW_STATE_LABEL_KEYS,
   MCP_SERVER_ROW_STATES,
+  MCP_SESSION_ROW_STATE_DETAIL_KEYS,
+  MCP_SESSION_ROW_STATE_LABEL_KEYS,
+  MCP_SESSION_STATE_KEYS,
+  MCP_SESSION_SUMMARY_KEYS,
   isBlockingFileProblem,
   loadMcpOverview,
   mcpCodemodeAlwaysUnavailableNotice,
@@ -36,11 +41,18 @@ const {
   mcpProjectServersLoad,
   mcpProjectTrustable,
   mcpRowContext,
+  mcpRowStateDetailKey,
+  mcpRowStateLabelKey,
   mcpRowStateTone,
   mcpServerGroups,
   mcpServerKey,
   mcpServerRowState,
+  mcpSessionStateView,
+  mcpSessionSummaryKey,
   mcpStatusDot,
+  mcpStatusRowState,
+  mcpStatusTime,
+  mcpStatusTimeText,
   mcpTrustNotice,
   mcpUnavailableNotice,
   pickMcpSelection,
@@ -875,6 +887,81 @@ test("a test's answer is the server's status for the entry it read, while it is 
   const newer = { ...data, servers: [server({ name: "a", configKey: "a1", status: testStatus("failed", { testedAt: 2_000 }) })] };
   assert.equal(mcpWithTestResults(newer, { "global\0a": answer("a", "a1", testStatus("connected", { testedAt: 1_500 })) }).servers[0].status.state, "failed");
   assert.equal(mcpWithTestResults(newer, { "global\0a": answer("a", "a1", testStatus("connected", { testedAt: 2_500 })) }).servers[0].status.state, "connected");
+});
+
+test("an open session's report refines a row as a test's does, in a session's words", () => {
+  const report = (state, extra = {}) => ({ origin: "session", state, sessionId: "s", cwd: "/repo", updatedAt: 3_000, ...extra });
+  const states = ["connecting", "connected", "needs-auth", "failed", "disconnected", "conflict"];
+  for (const state of states) {
+    assert.equal(mcpStatusRowState(report(state)), state, state);
+    assert.equal(mcpServerRowState(server({ status: report(state) }), on), state, state);
+  }
+  // A session that found the project untrusted saw an older trust than the listing, which says it is read now.
+  assert.equal(mcpStatusRowState(report("not-trusted")), "on");
+  // The file still decides first.
+  assert.equal(mcpServerRowState(server({ enabled: false, status: report("conflict") }), on), "disabled");
+  assert.equal(mcpStatusRowState({ origin: "test", state: "failed" }), "failed");
+
+  assert.equal(mcpRowStateTone("connecting"), "off");
+  assert.equal(mcpRowStateTone("disconnected"), "warning");
+  assert.equal(mcpRowStateTone("conflict"), "error");
+  // Where a test and a session say the same thing differently, the session's words say where it was seen.
+  assert.equal(mcpRowStateLabelKey("connected", report("connected")), "mcp.state.session.connected");
+  assert.equal(mcpRowStateLabelKey("connected", { origin: "test", state: "connected" }), "mcp.state.connected");
+  assert.equal(mcpRowStateLabelKey("needs-auth", report("needs-auth")), "mcp.state.needs-auth");
+  assert.equal(mcpRowStateLabelKey("disabled", report("connected")), "mcp.state.disabled");
+  assert.equal(mcpRowStateDetailKey("needs-auth", report("needs-auth")), "mcp.stateDetail.session.needs-auth");
+  assert.equal(mcpRowStateDetailKey("needs-auth", undefined), "mcp.stateDetail.needs-auth");
+  assert.equal(mcpRowStateDetailKey("invalid", undefined), undefined, "the pane words a refusal with its reason");
+  assert.deepEqual(mcpSessionStateView(report("disconnected")), { key: "mcp.session.state.disconnected", tone: "warning" });
+  assert.deepEqual(mcpSessionStateView(report("not-trusted")), { key: "mcp.session.state.not-trusted", tone: "warning" });
+  for (const key of [
+    ...Object.values(MCP_SESSION_ROW_STATE_LABEL_KEYS),
+    ...Object.values(MCP_ROW_STATE_DETAIL_KEYS),
+    ...Object.values(MCP_SESSION_ROW_STATE_DETAIL_KEYS),
+    ...Object.values(MCP_SESSION_STATE_KEYS),
+    ...Object.values(MCP_SESSION_SUMMARY_KEYS),
+  ]) {
+    assert.equal(typeof messages[key], "string", key);
+  }
+  assert.deepEqual(Object.keys(MCP_SESSION_STATE_KEYS).sort(), [...states, "not-trusted"].sort());
+  assert.deepEqual(Object.keys(MCP_SESSION_SUMMARY_KEYS).sort(), Object.keys(MCP_SESSION_STATE_KEYS).sort());
+  // Each summary names the session's folder and the time.
+  for (const key of Object.values(MCP_SESSION_SUMMARY_KEYS)) assert.match(messages[key], /\{path\}[\s\S]*\{time\}|\{time\}[\s\S]*\{path\}/, key);
+
+  // A session's report newer than the panel's own test answer stands; an older one gives way.
+  assert.equal(mcpStatusTime(report("connected")), 3_000);
+  assert.equal(mcpStatusTime({ origin: "test", testedAt: 7 }), 7);
+  const data = { mcp: { available: true }, codemode: {}, files: [], servers: [server({ name: "a", configKey: "a1", status: report("disconnected") })] };
+  const answer = (testedAt) => ({ "global\0a": { running: false, response: { scope: "global", name: "a", configKey: "a1", result: testStatus("connected", { testedAt }) } } });
+  assert.equal(mcpWithTestResults(data, answer(2_000)).servers[0].status.state, "disconnected");
+  assert.equal(mcpWithTestResults(data, answer(4_000)).servers[0].status.state, "connected");
+});
+
+test("a connection a session closed since reads like an untested entry, and its Connection row says when it closed", () => {
+  const closed = { origin: "session", state: "connected", sessionId: "s", cwd: "/repo", updatedAt: 3_000, closedAt: 9_000 };
+  assert.equal(mcpStatusRowState(closed), "on");
+  assert.equal(mcpServerRowState(server({ status: closed }), on), "on");
+  // Neutral, not the green of a live connection.
+  assert.deepEqual(mcpSessionStateView(closed), { key: "mcp.session.state.closed", tone: "off" });
+  assert.equal(mcpSessionSummaryKey(closed), "mcp.session.summary.closed");
+  assert.equal(mcpSessionSummaryKey({ ...closed, closedAt: undefined }), "mcp.session.summary.connected");
+  assert.equal(typeof messages["mcp.session.state.closed"], "string");
+  assert.match(messages["mcp.session.summary.closed"], /\{path\}[\s\S]*\{time\}[\s\S]*\{closedTime\}/);
+  // Its write time is the close, which a test answer must be newer than to replace it.
+  assert.equal(mcpStatusTime(closed), 9_000);
+});
+
+test("a status's time carries its date unless it is today's", () => {
+  const now = new Date(2026, 9, 2, 18, 0).getTime();
+  const today = new Date(2026, 9, 2, 9, 5).getTime();
+  const yesterday = new Date(2026, 9, 1, 9, 5).getTime();
+  assert.equal(mcpStatusTimeText(today, "en", now), new Date(today).toLocaleTimeString("en", { hour: "2-digit", minute: "2-digit" }));
+  const dated = mcpStatusTimeText(yesterday, "en", now);
+  assert.equal(dated, new Date(yesterday).toLocaleString("en", { dateStyle: "medium", timeStyle: "short" }));
+  assert.match(dated, /Oct 1, 2026/);
+  // Same day and month a year before is not today either.
+  assert.match(mcpStatusTimeText(new Date(2025, 9, 2, 9, 5).getTime(), "en", now), /2025/);
 });
 
 test("a test request leaves its last answer standing when it fails or never left the queue", () => {

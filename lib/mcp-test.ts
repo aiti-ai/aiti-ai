@@ -140,6 +140,16 @@ function tailOf(text: string, redact: (text: string) => string, max: number): st
   return redact(text.slice(-REDACT_WINDOW_CHARS)).slice(-max);
 }
 
+/** A status's `error`, as a test and a session's MCP host record it: masked, then its start. */
+export function maskStatusError(text: string, redact: (text: string) => string): string {
+  return headOf(text, redact, ERROR_MAX_CHARS);
+}
+
+/** A status's `stderr`, as a test and a session's MCP host record it: masked, then its end. */
+export function maskStatusStderr(text: string, redact: (text: string) => string): string {
+  return tailOf(text, redact, STDERR_TAIL_CHARS);
+}
+
 /** Whether connecting resolves a `!command`: in a stdio entry's env, an HTTP entry's headers or `oauth.clientSecret`. */
 export function runsShellCommand(config: unknown, internals: Pick<PiSdkInternals, "isCommandConfigValue">): boolean {
   return resolvedConfigValues(config).some(({ value }) => internals.isCommandConfigValue(value));
