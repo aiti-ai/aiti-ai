@@ -134,6 +134,12 @@ The panel offers one choice, **Automatic** or **Always on**:
 - There is no **Never**: MCP tools with `codemode` or `deferred` exposure cannot
   be called without `codemode` or `tool_search`.
 
+Before the first normal session, Pi Web runs one script through the SDK's
+codemode tool. If the sandbox cannot run (its worker and wasm are resolved from
+the SDK's files at run time), no session offers `codemode`: the
+`builtin:codemode` entry stays, so settings that name it keep their meaning,
+but registers nothing.
+
 `codemode.mode`, `codemode.inlineBudget`, `autoEnableCodemode`, and the
 `±builtin:*` entries stay file-only; they keep working as in the CLI.
 
