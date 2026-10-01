@@ -116,7 +116,6 @@ export function ConfigSidebarGroupSwitch({
     <span className="config-sidebar-group-switch">
       <span className="config-sidebar-group-count">{enabled}/{total}</span>
       <ConfigSwitch
-        size="small"
         checked={total > 0 && enabled === total}
         disabled={disabled}
         loading={loading}

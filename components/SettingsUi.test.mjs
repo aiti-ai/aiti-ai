@@ -191,6 +191,6 @@ test("skills and plugins switch whole groups from the group heading, not from a 
   assert.doesNotMatch(templateSource, /ConfigSidebarBulkActions/);
   assert.doesNotMatch(cssSource, /config-sidebar-bulk/);
   assert.match(cssSource, /\.config-sidebar-group-label \{[\s\S]*?display: flex/);
-  assert.match(cssSource, /\.config-switch\.is-small \{[\s\S]*?width: 24px[\s\S]*?height: 14px/);
+  assert.match(cssSource, /\.config-switch \{[\s\S]*?width: 32px[\s\S]*?height: 18px/);
   assert.match(cssSource, /\.config-sidebar-group-status \{[\s\S]*?max-height: 4\.2em[\s\S]*?white-space: pre-wrap/);
 });
