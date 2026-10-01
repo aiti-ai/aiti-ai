@@ -202,8 +202,6 @@ export interface AgentSessionLike {
   getFollowUpMessages(): readonly string[];
   clearQueue(): { steering: string[]; followUp: string[] };
   getAllTools(): ToolInfo[];
-  /** `getAllTools()` leaves out `defaultActive`; a tool with `false` is not activated on registration. */
-  getToolDefinition(name: string): { defaultActive?: boolean } | undefined;
   getActiveToolNames(): string[];
   setActiveToolsByName(names: string[]): void;
   abortCompaction(): void;
