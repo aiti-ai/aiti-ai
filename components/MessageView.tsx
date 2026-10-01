@@ -194,6 +194,8 @@ interface Props {
   onFork?: (entryId: string) => void;
   forking?: boolean;
   onEditContent?: (message: UserMessage, entryId: string) => void;
+  onCancelEdit?: () => void;
+  isEditing?: boolean;
   showTimestamp?: boolean;
   prevTimestamp?: number;
   sessionId?: string;
@@ -274,9 +276,9 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, searchBlock, onFork, forking, onEditContent, showTimestamp, prevTimestamp, sessionId, writtenFiles, onCompact, isCompacting, compactError }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSession, entryId, searchBlock, onFork, forking, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, onCompact, isCompacting, compactError }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onEditContent={onEditContent} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
   }
   if (message.role === "assistant") {
     return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSession={onOpenSession} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
@@ -308,6 +310,8 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.onFork === next.onFork
     && prev.forking === next.forking
     && prev.onEditContent === next.onEditContent
+    && prev.onCancelEdit === next.onCancelEdit
+    && prev.isEditing === next.isEditing
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
     && prev.writtenFiles === next.writtenFiles
@@ -317,7 +321,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.compactError === next.compactError;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onEditContent }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, onEditContent, onCancelEdit, isEditing }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
@@ -325,6 +329,8 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
   onFork?: (entryId: string) => void;
   forking?: boolean;
   onEditContent?: (message: UserMessage, entryId: string) => void;
+  onCancelEdit?: () => void;
+  isEditing?: boolean;
 }) {
   const { t } = useI18n();
   const [hovered, setHovered] = useState(false);
@@ -389,6 +395,7 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
     </div>
   );
   const canEdit = !!entryId && !!onEditContent;
+  const canCancelEdit = !!isEditing && !!onCancelEdit;
 
   const copyContent = () => {
     copyText(copyTarget).then(() => {
@@ -408,8 +415,9 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
           style={{
             flex: 1,
             minWidth: 0,
-            background: "var(--user-bg)",
-            border: "1px solid rgba(59,130,246,0.2)",
+            background: isEditing ? "color-mix(in srgb, var(--accent) 14%, var(--user-bg))" : "var(--user-bg)",
+            border: isEditing ? "1px solid color-mix(in srgb, var(--accent) 62%, var(--user-bg))" : "1px solid rgba(59,130,246,0.2)",
+            boxShadow: isEditing ? "0 0 0 2px color-mix(in srgb, var(--accent) 16%, transparent)" : undefined,
             borderRadius: 12,
             padding: "8px 12px",
             fontSize: "calc(14px + var(--chat-font-size-offset, 0px))",
@@ -531,14 +539,14 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                {copied ? t("i18n.copied") : t("i18n.copy")}
             </button>
           </div>
-          {(canFork || canEdit) && (
+          {(canFork || canEdit || canCancelEdit) && (
             <div style={{
               display: "flex", gap: 3,
-              opacity: (hovered || forking) ? 1 : 0,
-              pointerEvents: (hovered || forking) ? "auto" : "none",
+              opacity: (hovered || forking || canCancelEdit) ? 1 : 0,
+              pointerEvents: (hovered || forking || canCancelEdit) ? "auto" : "none",
               transition: "opacity 0.12s",
             }}>
-              {canEdit && (
+              {canEdit && !canCancelEdit && (
                 <button
                   onClick={() => onEditContent!(editTarget, entryId!)}
                    title={t("i18n.editFromHereTitle")}
@@ -561,6 +569,29 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, onFork, forking, o
                     <path d="M4 4v7a4 4 0 0 0 4 4h12" />
                   </svg>
                    {t("i18n.editFromHere")}
+                </button>
+              )}
+              {canCancelEdit && (
+                <button
+                  type="button"
+                  onClick={onCancelEdit}
+                  title={t("i18n.cancel")}
+                  aria-label={t("i18n.cancel")}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 4,
+                    padding: "3px 8px", height: 22,
+                    background: "none", border: "none",
+                    borderRadius: 5,
+                    color: "var(--accent)",
+                    cursor: "pointer",
+                    fontSize: 11, fontWeight: 500,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                    <path d="M6 6l12 12M18 6L6 18" />
+                  </svg>
+                  {t("i18n.cancel")}
                 </button>
               )}
               {canFork && (
