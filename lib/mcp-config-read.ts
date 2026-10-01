@@ -24,7 +24,7 @@ import {
   type BuiltinExtensionName,
   type BuiltinExtensionSwitch,
 } from "./builtin-extensions";
-import { readCodemodePreference } from "./codemode-settings";
+import { readCodemodePreference, readProjectCodemodeOverride } from "./codemode-settings";
 import { getGlobalSettingsPath } from "./global-settings-file";
 import { canonicalJson } from "./mcp-host";
 import { maskArgs, maskCommand, maskUrl } from "./mcp-secrets";
@@ -566,9 +566,16 @@ function mcpAvailability(
   return { available: true };
 }
 
+/**
+ * Code mode as a session would get it: the global preference, the sandbox
+ * self-test and `-builtin:codemode` (both as the project's sessions see it and
+ * as the global settings alone say), and, given `trustedCwd`, the project
+ * settings that decide it there whatever the global choice.
+ */
 async function codemodeInfo(
   agentDir: string,
   codemodeSwitch: BuiltinExtensionSwitch | undefined,
+  trustedCwd: string | undefined,
 ): Promise<McpCodemodeInfo> {
   const peek = await peekCodemodeSandbox();
   const sandbox: CodemodeSandboxStatus = !peek.checked
@@ -578,11 +585,18 @@ async function codemodeInfo(
       : { state: "unavailable", error: peek.reason };
   const info: McpCodemodeInfo = { sandbox, builtinDisabled: codemodeSwitch?.enabled === false };
   if (codemodeSwitch?.settingsPath) info.builtinSettingsPath = codemodeSwitch.settingsPath;
+  // What the global `extensions` alone say, which is what Always on, a global setting, depends on.
+  const globalSwitch = codemodeSwitch?.global ?? codemodeSwitch;
+  if (globalSwitch?.enabled === false) {
+    info.globalBuiltinSettingsPath = globalSwitch.settingsPath ?? getGlobalSettingsPath(agentDir);
+  }
   try {
     info.preference = await readCodemodePreference(getGlobalSettingsPath(agentDir));
   } catch (error) {
     info.preferenceError = errorMessage(error);
   }
+  const projectOverride = trustedCwd === undefined ? undefined : readProjectCodemodeOverride(trustedCwd);
+  if (projectOverride) info.projectOverride = projectOverride;
   return info;
 }
 
@@ -611,12 +625,16 @@ export async function readMcpOverview(options: McpOverviewOptions): Promise<McpR
       projectInfo.trustError = errorMessage(error);
     }
   }
+  // Whether sessions load the project's settings, as `projectTrustReloadOptions()` decides when one
+  // starts: a folder that requires trust only with a decision that trusts it, never while trust.json
+  // cannot be read; one that requires none has no `.pi/settings.json`, which alone requires trust.
+  const projectSettingsLoad = projectInfo?.trust?.trusted === true;
   let switches: Record<BuiltinExtensionName, BuiltinExtensionSwitch> | undefined;
   try {
     switches = await readBuiltinExtensionSwitches({
       agentDir,
       cwd: project?.cwd,
-      projectTrusted: projectInfo?.trust?.trusted === true,
+      projectTrusted: projectSettingsLoad,
     });
   } catch (error) {
     // A settings file that cannot be read leaves the built-ins as the session would find them: on.
@@ -629,7 +647,7 @@ export async function readMcpOverview(options: McpOverviewOptions): Promise<McpR
   });
   return {
     mcp: mcpAvailability(environment, internals, switches?.mcp),
-    codemode: await codemodeInfo(agentDir, switches?.codemode),
+    codemode: await codemodeInfo(agentDir, switches?.codemode, project && projectSettingsLoad ? project.cwd : undefined),
     files,
     servers,
     ...(projectInfo ? { project: projectInfo } : {}),
