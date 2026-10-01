@@ -113,6 +113,8 @@ lib/
   npx.ts               npx runner used by skill install
   plugin-updates.ts    npm view update checks for /api/plugins/check
   pi-types.ts          local structural types for pi SDK objects
+  pi-sdk-internals.ts  file-URL loader for SDK modules the package does not export (MCP connection, config, OAuth)
+  mcp-transport.ts     MCP transport factory: stdio servers get the sanitized project-command env, never PI_WEB_PASSWORD
   rpc-manager.ts      AgentSessionWrapper + registry + startRpcSession
   session-reader.ts   SessionManager wrappers + path cache + buildSessionContext adapter
   subagent-settings.ts  read/write ~/.pi/agent/agents/settings.json
