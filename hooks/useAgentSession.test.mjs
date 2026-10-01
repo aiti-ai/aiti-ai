@@ -7,6 +7,7 @@ const source = await jitiSource(new URL("./useAgentSession.ts", import.meta.url)
 const chatWindowSource = await jitiSource(new URL("../components/ChatWindow.tsx", import.meta.url));
 const phaseLabelSource = await jitiSource(new URL("../lib/chat-phase-label.ts", import.meta.url));
 const chatInputSource = await jitiSource(new URL("../components/ChatInput.tsx", import.meta.url));
+const messageViewSource = await jitiSource(new URL("../components/MessageView.tsx", import.meta.url));
 const appShellSource = await jitiSource(new URL("../components/AppShell.tsx", import.meta.url));
 
 test("keeps the session event stream open through the idle grace window", () => {
@@ -230,8 +231,8 @@ test("history edits move the branch only when sent, so cancel or reload keeps it
   );
 
   assert.doesNotMatch(chatWindowSource, /onNavigate=/);
-  assert.match(source, /if \(session\?\.id && opts\.chatInputRef\?\.current\?\.replaceMessage\(message\)\) setEdit\(entryId\)/);
-  assert.match(chatInputSource, /onClick=\{\(\) => \{ clearInput\(\); onCancelEdit\(\); \}\}/);
+  assert.match(source, /opts\.chatInputRef\?\.current\?\.replaceMessage\(message\);\s*setEdit\(entryId\)/);
+  assert.match(messageViewSource, /onClick=\{onCancelEdit\}/);
   assert.match(source, /const cancelEdit = useCallback\(\(\) => setEdit\(null\)/);
   assert.match(sendSource, /setEdit\(null\);\s*if \(!\(await handleNavigateRef\.current\?\.\(entryId\)\)\) \{\s*setEdit\(entryId\);\s*restoreSubmission\(/);
 });
