@@ -265,6 +265,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     savedDefaultThinkingLevel,
     agentPhase,
     isNew,
+    editEntryId,
     showScrollToBottom,
     sessionIdRef, scrollContainerRef,
     lastUserMsgRef, promptAnchorActive,
@@ -846,7 +847,6 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       ref={chatInputRef}
       onSend={handleSend}
       onAbort={handleAbort}
-      onCancelEdit={cancelEdit}
       onSteer={agentRunning ? handleSteer : undefined}
       onFollowUp={agentRunning ? handleFollowUp : undefined}
       onPromptWithStreamingBehavior={agentRunning ? handlePromptWithStreamingBehavior : undefined}
@@ -1044,6 +1044,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     onFork={bashRunning || isNew ? undefined : handleFork}
                     forking={forkingEntryId === entryIds[idx]}
                     onEditContent={sessionBusy ? undefined : handleEditContent}
+                    onCancelEdit={cancelEdit}
+                    isEditing={editEntryId === entryIds[idx]}
                     showTimestamp={showTimestamp}
                     prevTimestamp={idx > 0 ? (messages[idx - 1] as AgentMessage & { timestamp?: number }).timestamp : undefined}
                     sessionId={session?.id ?? sessionIdRef.current ?? undefined}
