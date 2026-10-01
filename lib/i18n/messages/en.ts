@@ -659,6 +659,7 @@ export const enLocale: LocalePlugin = {
     "mcp.trust.untrustedThrough": "This project is not trusted ({path} is marked untrusted), so the servers in its .pi/mcp.json do not connect.",
     "mcp.trust.trustedThrough": "Trusted through {path}: the servers in this project's .pi/mcp.json connect, as in every folder under it.",
     "mcp.trust.unreadable": "Pi Web cannot read the trust store (trust.json), so this project's servers count as untrusted for now.",
+    "mcp.trust.trustButton": "Trust project…",
     "mcp.footer.fileProblem": "1 file problem",
     "mcp.footer.fileProblems": "{count} file problems",
     "mcp.codemode.title": "Code mode",

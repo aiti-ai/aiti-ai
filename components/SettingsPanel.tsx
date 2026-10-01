@@ -16,12 +16,13 @@ import {
 } from "@/hooks/useChatAppearance";
 import { useEnterSendMode, setEnterSendMode } from "@/hooks/useEnterSendMode";
 import { sendAgentCommand } from "@/lib/agent-client";
-import type { ToolSettingsResponse } from "@/lib/api-types";
+import type { ProjectTrustStatus, ToolSettingsResponse } from "@/lib/api-types";
 import {
   setLastSettingsSection,
   settingsSectionRequiresProject,
   type SettingsSection,
 } from "@/lib/settings-navigation";
+import { listenForPanelEscape } from "@/lib/stacked-dialog";
 import {
   isThinkingExpandedByDefault,
   setThinkingExpandedByDefault,
@@ -42,6 +43,10 @@ interface Props {
   onSessionReloaded: () => void;
   quoteSelectionEnabled: boolean;
   onQuoteSelectionChange: (enabled: boolean) => void;
+  /** The page's trust status for `cwd`; Settings › MCP reloads when it changes, as after trusting. */
+  projectTrust?: ProjectTrustStatus | null;
+  /** Opens the page's trust dialog for `cwd`, above Settings; Settings › MCP's trust notice offers it. */
+  onOpenTrustDialog?: () => void;
 }
 
 export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: { section: SettingsSection; size?: number; strokeWidth?: number }) {
@@ -382,7 +387,17 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   );
 }
 
-export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessionReloaded, quoteSelectionEnabled, onQuoteSelectionChange }: Props) {
+export function SettingsPanel({
+  cwd,
+  sessionId,
+  initialSection,
+  onClose,
+  onSessionReloaded,
+  quoteSelectionEnabled,
+  onQuoteSelectionChange,
+  projectTrust,
+  onOpenTrustDialog,
+}: Props) {
   const { t } = useI18n();
   const [section, setSection] = useState<SettingsSection>(initialSection);
   const [mountedSections, setMountedSections] = useState<ReadonlySet<SettingsSection>>(
@@ -401,15 +416,10 @@ export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessi
 
   useEffect(() => setLastSettingsSection(initialSection), [initialSection]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.defaultPrevented) return;
-      event.preventDefault();
-      onClose();
-    };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  // Bubble phase, unless something nearer handled the key. The trust dialog,
+  // which opens above Settings, takes Escape in the capture phase and stops it,
+  // so one Escape closes that dialog and leaves Settings open.
+  useEffect(() => listenForPanelEscape(document, onClose), [onClose]);
 
   useEffect(() => {
     if (cwd || !sectionRequiresProject) return;
@@ -483,11 +493,13 @@ export function SettingsPanel({ cwd, sessionId, initialSection, onClose, onSessi
         <main className="settings-dialog-main">
           {sectionHost("general", <GeneralSettings sessionId={sessionId} onSessionReloaded={onSessionReloaded} quoteSelectionEnabled={quoteSelectionEnabled} onQuoteSelectionChange={onQuoteSelectionChange} />)}
           {sectionHost("models", <ModelsConfig embedded cwd={cwd} onClose={onClose} />)}
-          {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} onClose={onClose} />)}
-          {cwd && sectionHost("agents", <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />)}
-          {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} onClose={onClose} onReloaded={onSessionReloaded} />)}
+          {/* Visited sections stay mounted, so the ones whose answer depends on trust take the page's
+              status and load again in place when trusting from Settings › MCP changes it. */}
+          {cwd && sectionHost("skills", <SkillsConfig embedded key={cwd} cwd={cwd} trust={projectTrust} onClose={onClose} />)}
+          {cwd && sectionHost("agents", <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />)}
+          {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />)}
           {/* No project needed: the global mcp.json is listed alone, and a project adds its group. */}
-          {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} onClose={onClose} />)}
+          {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onClose={onClose} />)}
         </main>
       </div>
     </div>

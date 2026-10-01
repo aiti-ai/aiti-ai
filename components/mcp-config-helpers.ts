@@ -208,7 +208,7 @@ export function mcpUnavailableNotice(mcp: McpAvailability): McpNoticeText | unde
 }
 
 export type McpTrustNotice =
-  /** The project servers do not connect; the trust notice (a button arrives with the trust dialog wiring). */
+  /** The project servers do not connect; the trust notice, with Trust where `mcpProjectTrustable()` says so. */
   | (McpNoticeText & { kind: "untrusted" })
   /** They connect because an ancestor is trusted, which every folder under it shares. */
   | (McpNoticeText & { kind: "inherited" });
@@ -241,6 +241,19 @@ export function mcpTrustNotice(project: McpProjectInfo | undefined, projectFile:
     return { kind: "untrusted", key: "mcp.trust.untrustedThrough", params: { path: trust.decisionPath } };
   }
   return { kind: "untrusted", key: "mcp.trust.untrusted" };
+}
+
+/**
+ * Whether the untrusted notice offers Trust: only while the folder requires
+ * trust and is not trusted, as the trust dialog and `POST /api/project-trust`
+ * see it. Not for an unreadable `trust.json` (trusting would fail the same
+ * way, and whether the folder needs trust is unknown), nor for an explicit
+ * `false` on a folder that no longer requires trust (a dangling `.pi/mcp.json`
+ * link), where POST answers `trust-not-required`.
+ */
+export function mcpProjectTrustable(project: McpProjectInfo | undefined): boolean {
+  const trust = project?.trust;
+  return trust !== undefined && trust.requiresTrust && !trust.trusted;
 }
 
 /** Every file problem, the global file's first, for the footer. */

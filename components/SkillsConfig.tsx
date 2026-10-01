@@ -9,6 +9,7 @@ import type {
   SkillsResponse,
   SkillToggleResult,
   SkillUpdateResult,
+  ProjectTrustStatus,
 } from "@/lib/api-types";
 import { displayPathWithin, shortenPath } from "@/lib/display-path";
 import {
@@ -42,7 +43,7 @@ import {
   ConfigSwitch,
   ConfigTrustNotice,
 } from "./SettingsUi";
-import { itemsToSwitch } from "./settings-ui-helpers";
+import { itemsToSwitch, projectTrustReloadKey } from "./settings-ui-helpers";
 
 type SkillScope = "global" | "project" | "path";
 type Translate = ReturnType<typeof useI18n>["t"];
@@ -558,10 +559,13 @@ export function SkillsConfig({
   cwd,
   onClose,
   embedded = false,
+  trust,
 }: {
   cwd: string;
   onClose: () => void;
   embedded?: boolean;
+  /** The page's trust status for `cwd`; a new decision loads the list again. */
+  trust?: ProjectTrustStatus | null;
 }) {
   const { t } = useI18n();
   const [skills, setSkills] = useState<Skill[]>([]);
@@ -610,6 +614,18 @@ export function SkillsConfig({
     setUpdateError(null);
     void loadSkills();
   }, [cwd]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Whether the project's skills load follows its trust, which can change while
+  // this section stays mounted (hidden) in Settings: trusting from Settings ›
+  // MCP. A new decision loads the list again in place, keeping the selection and
+  // any update checks; the first load is the effect above.
+  const trustKey = projectTrustReloadKey(trust);
+  const loadedTrustKeyRef = useRef(trustKey);
+  useEffect(() => {
+    if (loadedTrustKeyRef.current === trustKey) return;
+    loadedTrustKeyRef.current = trustKey;
+    void loadSkills();
+  }, [trustKey, loadSkills]);
 
   useEffect(() => {
     if (selected) setLastSettingsSelection("skills", selected, cwd);

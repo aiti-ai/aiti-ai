@@ -265,8 +265,8 @@ test("the MCP panel's words come from the locale files, and its reasons are visi
   assert.match(mcp, /\{badgeKey && <span className=\{`mcp-sidebar-badge is-\$\{tone\}`\}>\{t\(badgeKey\)\}<\/span>\}/);
   // The panel's own title is the only one: no reason hides in a tooltip.
   assert.deepEqual(mcp.match(/\btitle=\{[^}]*\}/g), ['title={t("settings.mcp")}']);
-  // The untrusted project's notice has no button until the trust dialog is wired in.
-  assert.match(mcp, /<ConfigTrustNotice message=\{noticeText\(trustNotice, t\)\} \/>/);
+  // The untrusted project's notice offers Trust (the page's trust dialog) through the shared block.
+  assert.match(mcp, /<ConfigTrustNotice message=\{noticeText\(trustNotice, t\)\} trustLabel=\{t\("mcp\.trust\.trustButton"\)\} onTrust=\{onTrust\} \/>/);
   // File problems open a list in the footer instead of a tooltip.
   assert.match(mcp, /<ConfigFooterStatus[\s\S]*?details=\{problems\.map\(/);
   for (const primitive of ["ConfigDetailGrid", "ConfigDetailGridRow", "ConfigScopeTag", "ConfigStatusDot", "ConfigNotice"]) {
