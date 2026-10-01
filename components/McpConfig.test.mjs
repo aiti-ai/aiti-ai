@@ -16,6 +16,7 @@ const source = await readFile(new URL("./McpConfig.tsx", import.meta.url), "utf8
 const helperSource = await readFile(new URL("./mcp-config-helpers.ts", import.meta.url), "utf8");
 const displaySource = await readFile(new URL("../lib/mcp-server-display.ts", import.meta.url), "utf8");
 const apiTypesSource = await readFile(new URL("../lib/api-types.ts", import.meta.url), "utf8");
+const cssSource = await readFile(new URL("../app/settings.css", import.meta.url), "utf8");
 
 const h = React.createElement;
 const messages = enLocale.messages;
@@ -338,16 +339,150 @@ test("loading, a failed load and an empty listing each say so", () => {
   assert.match(decode(view({ refreshing: true })), /<button type="button" disabled="" class="config-button config-button-secondary config-button-default">Refresh<\/button>/);
 });
 
-test("the Code mode pane shows the preference, the sandbox and a setting that turns it off", () => {
-  const codemode = (info) => text(view({ selected: "codemode", load: { state: "loaded", data: overview({ codemode: info }) } }));
-  assert.match(codemode({ sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic" }),
-    /Mode Automatic A session turns Code mode on when a server whose tools use code mode connects\. Sandbox Works: its self-test passed\./);
-  assert.match(codemode({ sandbox: { state: "not-checked" }, builtinDisabled: false, preference: "always" }),
-    /Mode Always on Sessions start with Code mode on .* Sandbox Not checked yet: the self-test runs when the first session starts after Pi Web does\./);
-  const down = codemode({ sandbox: { state: "unavailable", error: "worker exited" }, builtinDisabled: true, builtinSettingsPath: "/Users/me/.pi/agent/settings.json" , preferenceError: "Unexpected token" });
+/** The Code mode switch's buttons, by label, with whether each is pressed and disabled. */
+function codemodeOptions(html) {
+  const group = decode(html).match(/<div role="group" aria-label="Code mode"[^>]*>([\s\S]*?)<\/div>/)?.[1];
+  assert.ok(group, "the Code mode switch is rendered");
+  return [...group.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map(([, attributes, label]) => ({
+    label,
+    pressed: /aria-pressed="true"/.test(attributes),
+    disabled: /disabled=""/.test(attributes),
+    describedBy: attributes.match(/aria-describedby="([^"]+)"/)?.[1],
+  }));
+}
+
+function codemodeView(info, props = {}) {
+  return view({ selected: "codemode", load: { state: "loaded", data: overview({ codemode: info, ...props.data }) }, ...props.view });
+}
+
+test("the Code mode pane offers Automatic and Always on, and says when a choice applies", () => {
+  const automatic = codemodeView({ sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic" });
+  assert.deepEqual(codemodeOptions(automatic), [
+    { label: "Automatic", pressed: true, disabled: false, describedBy: undefined },
+    { label: "Always on", pressed: false, disabled: false, describedBy: undefined },
+  ]);
+  assert.match(text(automatic),
+    /Mode Automatic Always on A session turns Code mode on when a server whose tools use code mode connects\. Applies to sessions started after you change it\. Open sessions keep their tools\. Sandbox Works: its self-test passed\./);
+  assert.doesNotMatch(automatic, /role="alert"/);
+
+  // A self-test nobody has run yet leaves Always on available and has its own wording.
+  const always = codemodeView({ sandbox: { state: "not-checked" }, builtinDisabled: false, preference: "always" });
+  assert.deepEqual(codemodeOptions(always).map(({ label, pressed, disabled }) => [label, pressed, disabled]), [
+    ["Automatic", false, false],
+    ["Always on", true, false],
+  ]);
+  assert.match(text(always),
+    /Sessions start with Code mode on .* Sandbox Not checked yet: the self-test runs when the first session starts after Pi Web does\./);
+
+  // While a save is on its way both options wait, and the pane says it is saving.
+  const saving = codemodeView({ sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic" }, {
+    view: { codemodeSave: { saving: true, error: null } },
+  });
+  assert.deepEqual(codemodeOptions(saving).map(({ disabled }) => disabled), [true, true]);
+  assert.match(decode(saving), /<span role="status" class="mcp-config-line is-dim">Saving…<\/span>/);
+});
+
+test("Always on is disabled with a visible reason while no session could offer Code mode", () => {
+  const reasonOf = (html) => {
+    const [, always] = codemodeOptions(html);
+    assert.equal(always.disabled, true);
+    assert.ok(always.describedBy, "the disabled option points at its reason");
+    const reason = decode(html).match(new RegExp(`<span id="${always.describedBy}" class="config-scope-switch-reason">([^<]*)</span>`))?.[1];
+    assert.ok(reason, "the reason is visible text, not a tooltip");
+    // Automatic can still be chosen.
+    assert.equal(codemodeOptions(html)[0].disabled, false);
+    return reason;
+  };
+  assert.equal(
+    reasonOf(codemodeView({ sandbox: { state: "unavailable", error: "worker exited" }, builtinDisabled: false, preference: "automatic" })),
+    "Always on is unavailable: Code mode's sandbox cannot run on this Pi Web server.",
+  );
+  const globalPath = "/Users/me/.pi/agent/settings.json";
+  assert.equal(
+    reasonOf(codemodeView({ sandbox: { state: "available" }, builtinDisabled: true, builtinSettingsPath: globalPath, globalBuiltinSettingsPath: globalPath, preference: "always" })),
+    "Always on is unavailable: -builtin:codemode in ~/.pi/agent/settings.json turns Code mode off.",
+  );
+  // A project that turns Code mode back on for its sessions does not make the global switch work elsewhere.
+  assert.equal(
+    reasonOf(codemodeView({ sandbox: { state: "available" }, builtinDisabled: false, globalBuiltinSettingsPath: globalPath, preference: "automatic" })),
+    "Always on is unavailable: -builtin:codemode in ~/.pi/agent/settings.json turns Code mode off.",
+  );
+
+  const down = text(codemodeView({ sandbox: { state: "unavailable", error: "worker exited" }, builtinDisabled: true, builtinSettingsPath: globalPath, globalBuiltinSettingsPath: globalPath, preferenceError: "Unexpected token" }));
+  // An unreadable settings file offers no choice to save into it.
   assert.match(down, /Cannot read the global settings file: Unexpected token/);
+  assert.doesNotMatch(down, /Applies to sessions started/);
   assert.match(down, /Cannot run on this Pi Web server, so no session offers Code mode: worker exited/);
   assert.match(down, /Turned off by -builtin:codemode in ~\/\.pi\/agent\/settings\.json\./);
+  const html = view({ load: { state: "loaded", data: overview({ codemode: { sandbox: { state: "unavailable", error: "x" }, builtinDisabled: false, preference: "automatic" } }) } });
+  assert.match(row(html, "Code mode"), /aria-label="Code mode: Unavailable"/);
+  assert.match(decode(html), /class="mcp-sidebar-badge is-error">Unavailable</);
+});
+
+test("a trusted project that turns Code mode off for itself leaves Always on, a global choice, available", () => {
+  const html = codemodeView({
+    sandbox: { state: "available" },
+    builtinDisabled: true,
+    builtinSettingsPath: "/work/app/.pi/settings.json",
+    preference: "automatic",
+  });
+  assert.deepEqual(codemodeOptions(html).map(({ label, disabled, describedBy }) => [label, disabled, describedBy]), [
+    ["Automatic", false, undefined],
+    ["Always on", false, undefined],
+  ]);
+  assert.doesNotMatch(decode(html), /config-scope-switch-reason/);
+  // The project's own line says what it does to its sessions, and that the switch still reaches the others.
+  assert.match(text(html),
+    /Extension Turned off for this project's sessions by -builtin:codemode in \/work\/app\/\.pi\/settings\.json\. Always on still applies to sessions in other folders\./);
+});
+
+test("a failed save is shown with its reason on every platform", () => {
+  const info = { sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic" };
+  const failed = (error) => {
+    const html = codemodeView(info, { view: { codemodeSave: { saving: false, error } } });
+    return decode(html).match(/<span role="alert" class="mcp-config-line is-error">([\s\S]*?)<\/span>(?=<span|<\/div>)/)?.[1];
+  };
+  assert.equal(text(failed({ error: "Untrusted API request", reason: "request-denied" })),
+    "Could not save the choice: Pi Web refused the request because it did not come from this page.");
+  // An internal failure (the settings file no longer parses, its lock is held) shows its diagnostic.
+  assert.equal(text(failed({ error: "Unexpected token n in JSON", reason: "internal" })), "Could not save the choice: Unexpected token n in JSON");
+  assert.equal(text(failed({ error: "Failed to fetch" })), "Could not save the choice: Failed to fetch");
+  assert.equal(text(failed({ error: "PUT /api/tools/settings did not answer within 15000 ms", timedOut: true })),
+    "Could not save the choice: Pi Web did not answer in time, so the choice may not have been saved.");
+  // Unlike the PowerShell switch in General, nothing here waits for the platform.
+  assert.doesNotMatch(source, /isWindows/);
+  // The error line has its own color.
+  assert.match(cssSource, /\.mcp-config-line\.is-error \{[\s\S]*?color: #ef4444;/);
+});
+
+test("a trusted project whose defaultTools decides Code mode is named in the pane", () => {
+  const settingsPath = "/Users/me/repo/.pi/settings.json";
+  const pane = (globalPreference, projectPreference, autoEnableCodemode = true) => text(view({
+    cwd: "/Users/me/repo",
+    selected: "codemode",
+    load: { state: "loaded", data: overview({
+      files: [{ ...globalFile, autoEnableCodemode }, projectFile],
+      project: { cwd: "/Users/me/repo", trust: trusted },
+      codemode: {
+        sandbox: { state: "available" },
+        builtinDisabled: false,
+        preference: globalPreference,
+        projectOverride: { settingsPath, preference: projectPreference },
+      },
+    }) },
+  }));
+  assert.match(pane("always", "automatic"),
+    /This project decides for itself: defaultTools in ~\/repo\/\.pi\/settings\.json starts its sessions without Code mode, as Automatic does, whichever you choose here\./);
+  assert.match(pane("automatic", "always"),
+    /This project decides for itself: defaultTools in ~\/repo\/\.pi\/settings\.json starts its sessions with Code mode on, whichever you choose here\./);
+  // The switch still shows and saves the global choice.
+  assert.match(pane("automatic", "always"), /Mode Automatic Always on A session turns Code mode on when a server/);
+  // With autoEnableCodemode false, Automatic is what these sessions get, so the warning follows the project.
+  assert.match(pane("always", "automatic", false), /autoEnableCodemode is false in ~\/\.pi\/agent\/mcp\.json, so Automatic never turns Code mode on/);
+  assert.doesNotMatch(pane("automatic", "always", false), /autoEnableCodemode/);
+});
+
+test("the autoEnableCodemode warning names the file whose value sessions read", () => {
   // autoEnableCodemode false (the trusted project's value wins) keeps Automatic from ever turning it on.
   const autoOff = (preference) => text(view({
     cwd: "/Users/me/repo",
@@ -358,11 +493,8 @@ test("the Code mode pane shows the preference, the sandbox and a setting that tu
       codemode: { sandbox: { state: "available" }, builtinDisabled: false, preference },
     }) },
   }));
-  assert.match(autoOff("automatic"), /Mode Automatic A session turns Code mode on .* autoEnableCodemode is false in ~\/repo\/\.pi\/mcp\.json, so Automatic never turns Code mode on/);
+  assert.match(autoOff("automatic"), /Mode Automatic Always on A session turns Code mode on .* autoEnableCodemode is false in ~\/repo\/\.pi\/mcp\.json, so Automatic never turns Code mode on/);
   assert.doesNotMatch(autoOff("always"), /autoEnableCodemode/);
-  const html = view({ load: { state: "loaded", data: overview({ codemode: { sandbox: { state: "unavailable", error: "x" }, builtinDisabled: false, preference: "automatic" } }) } });
-  assert.match(row(html, "Code mode"), /aria-label="Code mode: Unavailable"/);
-  assert.match(decode(html), /class="mcp-sidebar-badge is-error">Unavailable</);
 });
 
 test("the container starts loading and remembers the selection per project", () => {
@@ -373,9 +505,26 @@ test("the container starts loading and remembers the selection per project", () 
   assert.match(source, /setSelected\(\(current\) => pickMcpSelection\(mcpServerGroups\(result\.data, Boolean\(cwd\)\), current\)\);/);
   // A late answer from an earlier load never replaces a newer one.
   assert.match(source, /if \(request !== requestRef\.current\) return;/);
-  // Read-only: the panel and its helpers only ever GET.
-  assert.doesNotMatch(source + helperSource, /method:/);
+  // The servers are read-only: the one write is the Code mode choice, through the tools settings route.
+  assert.doesNotMatch(source, /method:/);
+  assert.deepEqual([...helperSource.matchAll(/method: "([A-Z]+)"/g)].map((match) => match[1]), ["PUT"]);
+  assert.match(helperSource, /fetchImpl\("\/api\/tools\/settings", \{\n\s*method: "PUT",/);
   assert.doesNotMatch(source, /style=\{/);
+});
+
+test("the container saves the Code mode choice, then reads back what is stored", () => {
+  // Only a change is saved; the pressed option does nothing.
+  assert.match(source, /onChange=\{\(value\) => \{\n\s*if \(value !== preference\) onChange\(value\);/);
+  assert.match(source, /const result = await saveMcpCodemodePreference\(preference, undefined, controller\.signal\);/);
+  // A save answered after the panel closed changes nothing.
+  assert.match(source, /if \(saveControllerRef\.current !== controller\) return;/);
+  // The stored preference is shown at once, and the overview is read again whatever the outcome:
+  // a timed-out save may still land, and a refused one may mean the file changed.
+  const save = source.slice(source.indexOf("const saveCodemode = useCallback"), source.indexOf("}, [refresh]);", source.indexOf("const saveCodemode")));
+  assert.match(save, /withMcpCodemodePreference\(current\.data, result\.preference\)/);
+  assert.match(save, /\n    void refresh\(\);\n {2}$/);
+  // Nothing reloads an open session: pi applies defaultTools when it creates one.
+  assert.doesNotMatch(source, /sendAgentCommand|type: "reload"/);
 });
 
 test("every string the panel shows is translated", () => {

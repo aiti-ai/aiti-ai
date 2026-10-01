@@ -48,28 +48,40 @@ test("reports and switches Code mode on every platform", async () => {
   assert.deepEqual(JSON.parse(await readFile(settingsPath, "utf8")), { defaultModel: "m" });
 });
 
-test("rejects requests that do not name exactly one valid change", async () => {
-  for (const [body, status] of [
-    [{ codemode: "never" }, 400],
-    [{ codemode: "always", enabled: true }, 400],
-    [{}, 400],
-    [[], 400],
-    ["{ not json", 400],
+test("rejects requests that do not name exactly one valid change, with a reason Settings › MCP translates", async () => {
+  for (const body of [
+    { codemode: "never" },
+    { codemode: "always", enabled: true },
+    {},
+    [],
+    "{ not json",
   ]) {
     const response = await put(body);
-    assert.equal(response.status, status, JSON.stringify(body));
+    assert.equal(response.status, 400, JSON.stringify(body));
+    assert.equal((await response.json()).reason, "invalid-request", JSON.stringify(body));
   }
-  assert.equal((await put({ codemode: "always" }, { host: "localhost", "Content-Type": "text/plain" })).status, 415);
+  const plain = await put({ codemode: "always" }, { host: "localhost", "Content-Type": "text/plain" });
+  assert.deepEqual([plain.status, await plain.json()], [415, { error: "Content-Type must be application/json", reason: "content-type" }]);
+  const foreign = await put({ codemode: "always" }, { host: "localhost", origin: "https://evil.example", "Content-Type": "application/json" });
+  assert.deepEqual([foreign.status, await foreign.json()], [403, { error: "Untrusted API request", reason: "request-denied" }]);
 });
 
 test("keeps the PowerShell switch Windows-only", { skip: isWindows }, async () => {
   const response = await put({ enabled: true });
   assert.equal(response.status, 404);
+  assert.equal((await response.json()).reason, "invalid-request");
 });
 
 test("reports a settings file it cannot parse instead of overwriting it", async () => {
   await writeFile(settingsPath, "{ not json");
-  assert.equal((await GET()).status, 500);
-  assert.equal((await put({ codemode: "always" })).status, 500);
+  const read = await GET();
+  assert.equal(read.status, 500);
+  assert.equal((await read.json()).reason, "internal");
+  const write = await put({ codemode: "always" });
+  assert.equal(write.status, 500);
+  const refusal = await write.json();
+  // The panel shows the diagnostic of an internal failure.
+  assert.equal(refusal.reason, "internal");
+  assert.match(refusal.error, /JSON/);
   assert.equal(await readFile(settingsPath, "utf8"), "{ not json");
 });

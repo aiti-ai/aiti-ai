@@ -1847,6 +1847,10 @@
   font-size: 11px;
 }
 
+.mcp-config-line.is-error {
+  color: #ef4444;
+}
+
 .mcp-config-state {
   color: var(--text);
   font-weight: 600;
