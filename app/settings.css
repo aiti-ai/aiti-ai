@@ -274,6 +274,8 @@
 
 .oauth-paste-input {
   flex: 1;
+  /* An input's intrinsic width would otherwise push the button out of a narrow pane. */
+  min-width: 0;
   padding: 6px 9px;
   border: 1px solid var(--border);
   border-radius: 5px;
@@ -1943,6 +1945,15 @@
   font-size: 10px;
   line-height: 18px;
   white-space: nowrap;
+}
+
+/* Sign in / Cancel and Sign out under a server's Sign-in row; they wrap
+   below each other in the narrow phone pane instead of widening it. */
+.mcp-sign-in-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
 }
 
 /* Project trust dialog (components/ProjectTrustDialog.tsx). It sits above

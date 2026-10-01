@@ -21,7 +21,9 @@ import {
   type McpConfigFileTarget,
   type McpEnabledOutcome,
 } from "@/lib/mcp-config-file";
-import { readMcpOverview } from "@/lib/mcp-config-read";
+import { readMcpOverview, readMcpServerEntry } from "@/lib/mcp-config-read";
+import { mcpOAuthUrl, signOutMcpServer } from "@/lib/mcp-sign-in";
+import { forgetMcpEntryStatuses } from "@/lib/mcp-status";
 import { findWebPasswordField } from "@/lib/mcp-transport";
 import { holdRemovedEntry, returnRemovedEntry, takeRemovedEntry } from "@/lib/mcp-undo";
 import { loadPiSdkInternals, type PiSdkInternals } from "@/lib/pi-sdk-internals";
@@ -39,6 +41,7 @@ export const dynamic = "force-dynamic";
 // SDK editor's bytes) and answers with the overview GET would give, so the
 // panel replaces its listing without a second request. Open sessions apply a
 // change at their next message, when their MCP host reads the files again.
+// `sign-out` changes `mcp-auth.json` instead, as `pi mcp logout` does.
 
 type Project = { cwd: string; allowedRoots: Set<string> };
 
@@ -331,8 +334,42 @@ async function undoRemoval(agentDir: string, project: Project | undefined, token
   return overviewResponse(agentDir, project, { restored: server });
 }
 
+/**
+ * Signs out of a server as `pi mcp logout` does: deletes its URL's tokens and
+ * client registration from `mcp-auth.json` (`lib/mcp-sign-in.ts`), after
+ * barring every sign-in run of the URL from writing there again and
+ * cancelling the one under way. The URL is read from the entry's file, never
+ * taken from the browser, under the checks of any change to that entry: a
+ * project entry is a repository's, so its folder must be trusted. What
+ * connections found before is forgotten, since signed-out ones no longer see
+ * it; open sessions lose access at their next request to the server.
+ */
+async function signOutServer(agentDir: string, project: Project | undefined, internals: PiSdkInternals, server: McpServerRef) {
+  const target = writeTarget(server.scope, project, agentDir);
+  if (target instanceof Refusal) return target.response();
+  const { name } = server;
+  const read = readMcpServerEntry({ agentDir, scope: server.scope, name, project });
+  if (!read.ok) {
+    const params = { path: read.path, ...(read.reason === "server-missing" ? { name } : {}) };
+    if (read.reason === "unreadable") return refusal(500, "internal", read.error, params);
+    return refusal(409, read.reason, read.error, params);
+  }
+  if (!isRecord(read.value)) {
+    return refusal(409, "entry-not-object", `${read.sourcePath} defines MCP server "${name}" as something other than an object`, { name });
+  }
+  const config = internals.validateMcpServerConfig(name, read.value);
+  if (typeof config === "string") return refusal(409, "server-invalid", config, { name });
+  const url = mcpOAuthUrl(config);
+  if (url === undefined) {
+    return refusal(409, "sign-in-not-oauth", `MCP server "${name}" does not use OAuth: only an HTTP server without an Authorization header does`, { name });
+  }
+  const removed = signOutMcpServer(url, agentDir, internals);
+  forgetMcpEntryStatuses({ scope: server.scope, sourcePath: read.sourcePath, name });
+  return overviewResponse(agentDir, project, { signedOut: { ...server, removed } });
+}
+
 // POST /api/mcp body: { action, cwd?, ... }
-//   enable | disable | remove: { scope, name }
+//   enable | disable | remove | sign-out: { scope, name }
 //   set-enabled: { enabled, servers: [{ scope, name }] } → per-server `results`
 //   undo: { token } (from a remove's `undo`)
 // `cwd` is the panel's project: required for a project server, and the
@@ -363,11 +400,13 @@ export async function POST(req: Request) {
     switch (body.action) {
       case "enable":
       case "disable":
-      case "remove": {
+      case "remove":
+      case "sign-out": {
         const scope = readScope(body.scope);
         const name = readName(body.name);
         if (!scope || name === undefined) return refusal(400, "invalid-request", "scope must be \"global\" or \"project\", and name a server name");
         if (body.action === "remove") return await removeServer(agentDir, project, { scope, name });
+        if (body.action === "sign-out") return await signOutServer(agentDir, project, internals, { scope, name });
         return await switchServer(agentDir, project, internals, { scope, name }, body.action === "enable");
       }
       case "set-enabled": {
@@ -384,7 +423,7 @@ export async function POST(req: Request) {
         return await undoRemoval(agentDir, project, body.token);
       }
       default:
-        return refusal(400, "invalid-request", "action must be enable, disable, remove, set-enabled or undo");
+        return refusal(400, "invalid-request", "action must be enable, disable, remove, set-enabled, undo or sign-out");
     }
   } catch (error) {
     return refusal(500, "internal", errorMessage(error));

@@ -12,7 +12,15 @@ import {
 } from "./mcp-secrets";
 import { recordMcpStatus } from "./mcp-status";
 import { createPiWebMcpTransportFactory, resolvedConfigValues } from "./mcp-transport";
-import type { McpClient, McpServerConnection, McpTool, McpTransport, PiSdkInternals, StdioTransport } from "./pi-sdk-internals";
+import type {
+  McpClient,
+  McpOAuthCredentialStore,
+  McpServerConnection,
+  McpTool,
+  McpTransport,
+  PiSdkInternals,
+  StdioTransport,
+} from "./pi-sdk-internals";
 
 // Settings › MCP's Test (ADR 0006): connect one `mcp.json` entry once, outside
 // any session, list what it offers, and close it again. It connects the way a
@@ -194,6 +202,8 @@ export function createTestRedactor(
   config: McpServerConfig,
   transports: readonly McpTransport[],
   internals: Pick<PiSdkInternals, "isCommandConfigValue">,
+  /** Values resolved outside the transports, such as the `oauth.clientSecret` a sign-in resolved. */
+  resolvedSecrets: readonly string[] = [],
 ): (text: string) => string {
   const replacements = new Map<string, Replacement>();
   const add = (raw: string, shown: string, word: boolean) => {
@@ -245,6 +255,7 @@ export function createTestRedactor(
     args.forEach((arg, index) => masked(arg, { value: shown[index] ?? SECRET_MASK, masked: shown[index] !== arg }));
     for (const part of argSecretParts(args)) secret(part);
   }
+  for (const value of resolvedSecrets) secret(value);
   // Longest first, so a value is never left half replaced by a shorter one inside it.
   const ordered = [...replacements.values()]
     .sort((a, b) => b.raw.length - a.raw.length)
@@ -321,27 +332,30 @@ function splitStderr(message: string, stdio: StdioTransport | undefined): { erro
 }
 
 /**
- * Starts closing everything the test opened and waits at most `waitMs`.
- * `connection.close()` marks the connection closed before its first await,
- * which also ends an HTTP retry waiting between attempts.
+ * One entry's connection as a test opens it: the SDK's `McpServerConnection`
+ * through Pi Web's transport factory, with every transport it creates kept so
+ * that closing can reach them directly. Settings › MCP's sign-in
+ * (`lib/mcp-sign-in.ts`) opens its connection the same way and keeps it from
+ * the first connect, which records the server's OAuth challenge, through the
+ * reconnect after it stored the new tokens.
  */
-async function closeWithin(connection: McpServerConnection, transports: readonly McpTransport[], waitMs: number): Promise<void> {
-  const closing = [connection.close(), ...transports.map((transport) => transport.close())]
-    .map((promise) => promise.catch(() => undefined));
-  const wait = delay(waitMs);
-  await Promise.race([Promise.all(closing), wait.promise]);
-  wait.cancel();
+export interface McpTestConnection {
+  connection: McpServerConnection;
+  /** Every transport the connection created, in order: the last one is the current. */
+  transports: McpTransport[];
 }
 
-/** The SDK's connection to one entry through Pi Web's transport factory, until it settles or `signal` aborts. */
-export async function connectForTest(
+/** Builds the connection; nothing is started or contacted until it is asked for a client. */
+export function openTestConnection(
   target: McpTestTarget,
   internals: McpTestInternals,
-  signal: AbortSignal,
-  options: { requestTimeoutMs?: number; closeWaitMs?: number } = {},
-): Promise<McpTestRun> {
+  options: {
+    requestTimeoutMs?: number;
+    /** The store the connection reads and refreshes tokens through; the default one when omitted. */
+    credentials?: McpOAuthCredentialStore;
+  } = {},
+): McpTestConnection {
   const requestTimeoutMs = options.requestTimeoutMs ?? MCP_TEST_REQUEST_TIMEOUT_MS;
-  const closeWaitMs = options.closeWaitMs ?? MCP_TEST_CLOSE_WAIT_MS;
   const { config } = target;
   const timeout = Math.min(config.timeout ?? SDK_DEFAULT_TIMEOUT_SECONDS, requestTimeoutMs / 1000);
   const entry: McpServerEntry = { name: target.name, config: { ...config, timeout }, source: target.sourcePath, scope: target.scope };
@@ -355,67 +369,110 @@ export async function connectForTest(
       transports.push(transport);
       return transport;
     },
-    // The default store, `mcp-auth.json` in the agent dir: the one sessions and the pi CLI use.
-    credentials: new internals.McpOAuthCredentialStore(),
+    // The default store, `mcp-auth.json` in the agent dir: the one sessions and the pi CLI use. A
+    // sign-in passes one over the same file whose writes stop once its URL is signed out.
+    credentials: options.credentials ?? new internals.McpOAuthCredentialStore(),
     onTools: () => {},
   });
+  return { connection, transports };
+}
 
+/**
+ * Starts closing everything the connection opened and waits at most `waitMs`.
+ * `connection.close()` marks the connection closed before its first await,
+ * which also ends an HTTP retry waiting between attempts; closing the
+ * transports directly fails a handshake still in progress.
+ */
+export async function closeTestConnection({ connection, transports }: McpTestConnection, waitMs: number = MCP_TEST_CLOSE_WAIT_MS): Promise<void> {
+  const closing = [connection.close(), ...transports.map((transport) => transport.close())]
+    .map((promise) => promise.catch(() => undefined));
+  const wait = delay(waitMs);
+  await Promise.race([Promise.all(closing), wait.promise]);
+  wait.cancel();
+}
+
+/**
+ * What one attempt to connect found, read from the connection before anything
+ * closes it (closing sets its state to "closed"): `attempt` settles, or
+ * `signal` aborts, which reads as no answer. The attempt is the first connect
+ * by default; a sign-in passes its reconnect. Everything server-written is
+ * masked with `createTestRedactor()`, plus `resolvedSecrets`.
+ */
+export async function observeTestConnection(
+  { connection, transports }: McpTestConnection,
+  target: McpTestTarget,
+  internals: McpTestInternals,
+  signal: AbortSignal,
+  options: { attempt?: () => Promise<McpClient>; resolvedSecrets?: readonly string[] } = {},
+): Promise<McpTestRun> {
+  const { config } = target;
+  const attempt = options.attempt ?? (() => connection.getClient());
   const started = Date.now();
-  // Whatever happens below, the connection and its transports are closed: a
-  // result that could not be built must not leave a stdio server running.
-  try {
-    type Outcome = { client: McpClient } | { error: unknown } | { aborted: true };
-    const outcome: Outcome = signal.aborted
-      ? { aborted: true }
-      : await Promise.race([
-          connection.getClient().then((client): Outcome => ({ client }), (error: unknown): Outcome => ({ error })),
-          aborted(signal).then((): Outcome => ({ aborted: true })),
-        ]);
-    const durationMs = Date.now() - started;
+  type Outcome = { client: McpClient } | { error: unknown } | { aborted: true };
+  const outcome: Outcome = signal.aborted
+    ? { aborted: true }
+    : await Promise.race([
+        attempt().then((client): Outcome => ({ client }), (error: unknown): Outcome => ({ error })),
+        aborted(signal).then((): Outcome => ({ aborted: true })),
+      ]);
+  const durationMs = Date.now() - started;
 
-    // Read before closing, which sets the connection's state to "closed".
-    const stdioTransports = transports.filter((transport): transport is StdioTransport => transport instanceof internals.StdioTransport);
-    const stdio = stdioTransports[stdioTransports.length - 1];
-    const redact = createTestRedactor(config, transports, internals);
-    const isStdio = !("url" in config);
-    const cwd = isStdio ? { cwd: stdio?.options.cwd ?? target.cwd } : {};
-    if ("aborted" in outcome) {
-      const stderr = stdio?.stderr.trim();
-      return {
-        state: "failed",
-        timedOut: true,
-        tools: [],
-        toolCount: 0,
-        durationMs,
-        ...cwd,
-        ...(stderr ? { stderr: tailOf(stderr, redact, STDERR_TAIL_CHARS) } : {}),
-      };
-    }
-    const state: McpTestState = connection.state === "connected"
-      ? "connected"
-      : connection.state === "needs-auth" ? "needs-auth" : "failed";
-    const tools = state === "connected" ? connection.tools : [];
-    const client = "client" in outcome ? outcome.client : undefined;
-    const run: McpTestRun = {
-      state,
-      tools: tools.slice(0, MCP_TEST_MAX_TOOLS).map((tool) => describeTool(tool, config, internals, redact)),
-      toolCount: tools.length,
+  const stdioTransports = transports.filter((transport): transport is StdioTransport => transport instanceof internals.StdioTransport);
+  const stdio = stdioTransports[stdioTransports.length - 1];
+  const redact = createTestRedactor(config, transports, internals, options.resolvedSecrets);
+  const isStdio = !("url" in config);
+  const cwd = isStdio ? { cwd: stdio?.options.cwd ?? target.cwd } : {};
+  if ("aborted" in outcome) {
+    const stderr = stdio?.stderr.trim();
+    return {
+      state: "failed",
+      timedOut: true,
+      tools: [],
+      toolCount: 0,
       durationMs,
       ...cwd,
-      ...(state === "connected" && connection.hasResources
-        ? { resources: connection.resources.length, resourceTemplates: connection.resourceTemplates.length }
-        : {}),
-      ...(client?.serverInfo ? { serverInfo: describeServerInfo(client.serverInfo, redact) } : {}),
+      ...(stderr ? { stderr: tailOf(stderr, redact, STDERR_TAIL_CHARS) } : {}),
     };
-    if (state === "failed") {
-      const message = connection.error ?? ("error" in outcome ? errorMessage(outcome.error) : "The connection failed");
-      const { error, stderr } = splitStderr(message, stdio);
-      run.error = headOf(error, redact, ERROR_MAX_CHARS);
-      if (stderr) run.stderr = tailOf(stderr, redact, STDERR_TAIL_CHARS);
-    }
-    return run;
+  }
+  const state: McpTestState = connection.state === "connected"
+    ? "connected"
+    : connection.state === "needs-auth" ? "needs-auth" : "failed";
+  const tools = state === "connected" ? connection.tools : [];
+  const client = "client" in outcome ? outcome.client : undefined;
+  const run: McpTestRun = {
+    state,
+    tools: tools.slice(0, MCP_TEST_MAX_TOOLS).map((tool) => describeTool(tool, config, internals, redact)),
+    toolCount: tools.length,
+    durationMs,
+    ...cwd,
+    ...(state === "connected" && connection.hasResources
+      ? { resources: connection.resources.length, resourceTemplates: connection.resourceTemplates.length }
+      : {}),
+    ...(client?.serverInfo ? { serverInfo: describeServerInfo(client.serverInfo, redact) } : {}),
+  };
+  if (state === "failed") {
+    const message = connection.error ?? ("error" in outcome ? errorMessage(outcome.error) : "The connection failed");
+    const { error, stderr } = splitStderr(message, stdio);
+    run.error = headOf(error, redact, ERROR_MAX_CHARS);
+    if (stderr) run.stderr = tailOf(stderr, redact, STDERR_TAIL_CHARS);
+  }
+  return run;
+}
+
+/** The SDK's connection to one entry through Pi Web's transport factory, until it settles or `signal` aborts. */
+export async function connectForTest(
+  target: McpTestTarget,
+  internals: McpTestInternals,
+  signal: AbortSignal,
+  options: { requestTimeoutMs?: number; closeWaitMs?: number } = {},
+): Promise<McpTestRun> {
+  const opened = openTestConnection(target, internals, options);
+  // Whatever happens, the connection and its transports are closed: a result
+  // that could not be built must not leave a stdio server running.
+  try {
+    return await observeTestConnection(opened, target, internals, signal);
   } finally {
-    await closeWithin(connection, transports, closeWaitMs);
+    await closeTestConnection(opened, options.closeWaitMs ?? MCP_TEST_CLOSE_WAIT_MS);
   }
 }
 
@@ -442,9 +499,10 @@ function commandQueue(): { tail: Promise<void> } {
  * A place in the queue of tests that run a shell command: resolves once every
  * test ahead has released its place, `waitMs` passed, or `signal` aborted. A
  * test that gives up releases its place at once; the next one still waits for
- * the ones ahead of it.
+ * the ones ahead of it. A sign-in of such an entry takes a place for each of
+ * its connects, never across the wait for the browser.
  */
-async function takeCommandSlot(signal: AbortSignal, waitMs: number): Promise<{ release: () => void; turn: boolean; timedOut: boolean }> {
+export async function takeMcpCommandSlot(signal: AbortSignal, waitMs: number): Promise<{ release: () => void; turn: boolean; timedOut: boolean }> {
   const queue = commandQueue();
   const ahead = queue.tail;
   let release!: () => void;
@@ -543,7 +601,7 @@ function startTest(
     await Promise.resolve();
     const queuedAt = Date.now();
     const serial = runsShellCommand(target.config, internals);
-    const slot = serial ? await takeCommandSlot(controller.signal, deadlineMs) : undefined;
+    const slot = serial ? await takeMcpCommandSlot(controller.signal, deadlineMs) : undefined;
     const queuedMs = serial ? Date.now() - queuedAt : 0;
     const finish = (result: McpTestRun, record: boolean): McpTestResult => {
       const full: McpTestResult = { ...result, testedAt: Date.now(), ...(queuedMs > 0 ? { queuedMs } : {}) };

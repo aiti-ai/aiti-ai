@@ -992,7 +992,9 @@ test("a failed test shows the error and stderr, a sign-in, and no answer, each w
   assert.match(row(signIn, "docs"), /aria-label="docs: Needs sign-in"/);
   assert.match(decode(signIn), /<span class="mcp-sidebar-badge is-warning">sign-in<\/span>/);
   assert.match(connection(signIn).value, /<span class="mcp-config-state is-warning">Needs sign-in<\/span> The server asked for an OAuth sign-in\. Tested at/);
-  assert.match(text(decode(signIn)), /The server asked for an OAuth sign-in when tested, so sessions cannot use its tools until you sign in, for example with \/mcp in a chat\./);
+  // The panel's own Sign in, not a chat command, is where to sign in.
+  assert.match(text(decode(signIn)), /The server asked for an OAuth sign-in when tested, so sessions cannot use its tools until you sign in\. Sign in is below\./);
+  assert.doesNotMatch(text(decode(signIn)), /for example with \/mcp/);
 
   const silent = connection(testView({ status: testedStatus("failed", { timedOut: true, durationMs: 20_000 }) }));
   assert.match(silent.value, /<span class="mcp-config-state is-error">No answer<\/span> It did not answer within 20\.0 s, so Pi Web stopped the test\. Tested at/);
@@ -1201,4 +1203,83 @@ test("a session whose /mcp is another extension's is said above the list, unless
     load: { state: "loaded", data: overview({ servers: [httpServer], hostInactive, mcp: { available: false, reason: "operator-disabled", error: "x" } }) },
   })));
   assert.doesNotMatch(off, /connects none of these servers/);
+});
+
+// ---------------------------------------------------------------------------
+// Signing in to an OAuth server
+// ---------------------------------------------------------------------------
+
+/** The Sign-in row's value. */
+function signInRow(html) {
+  const markup = decode(html);
+  const start = markup.indexOf('<div class="config-detail-grid-label">Sign-in</div>');
+  assert.ok(start >= 0, "the detail pane has a Sign-in row");
+  const value = markup.slice(start, markup.indexOf('<div class="config-detail-grid-label">', start + 1));
+  return { value, text: text(value) };
+}
+
+test("an OAuth server's pane signs in from its Sign-in row, which needs-sign-in points at", () => {
+  const html = testView({ usesOAuth: true, signedIn: false, status: testedStatus("needs-auth") });
+  assert.match(text(decode(html)), /until you sign in\. Sign in is below\./);
+  const { value, text: shown } = signInRow(html);
+  assert.match(value, /<button type="button" class="config-button config-button-primary config-button-small">Sign in<\/button>/);
+  assert.match(shown, /No OAuth tokens stored\./);
+
+  // The panel's sign-in for the selected server is the one the row shows.
+  const key = mcpServerKey({ scope: "global", name: "docs" });
+  const flow = { flowId: "f1", scope: "global", name: "docs", configKey: "key", phase: "authorize", expiresInMs: 100_000, authorizationUrl: "https://auth.example/authorize?state=s" };
+  const waiting = signInRow(testView({ usesOAuth: true, signedIn: false }, { view: { signIns: { [key]: { flow } } } }));
+  assert.match(waiting.value, /<a href="https:\/\/auth\.example\/authorize\?state=s" target="_blank" rel="noopener noreferrer">/);
+  assert.match(waiting.value, /class="oauth-paste-input"/);
+
+  // A project nobody trusted: no sign-in, and the reason is visible.
+  const blocked = signInRow(view({
+    cwd: "/Users/me/repo",
+    load: { state: "loaded", data: overview({
+      files: [globalFile, projectFile],
+      servers: [server({ name: "docs", scope: "project", sourcePath: projectFile.path, transport: "http", url: "https://docs/mcp", usesOAuth: true, signedIn: false })],
+      project: { cwd: "/Users/me/repo", trust: untrusted },
+    }) },
+    selected: mcpServerKey({ scope: "project", name: "docs" }),
+  }));
+  const id = blocked.value.match(/<button type="button" disabled="" aria-describedby="([^"]+)" class="config-button config-button-primary config-button-small">Sign in<\/button>/)?.[1];
+  assert.ok(id, "Sign in is disabled and points at the reason");
+  assert.match(blocked.value, new RegExp(`<span id="${id}" class="mcp-config-line is-dim">This project is not trusted`));
+  assert.match(blocked.text, /This project is not trusted, so Pi Web does not sign in to or out of its servers\./);
+});
+
+test("the connection a sign-in made is summed up as a sign-in's in the Connection row", () => {
+  const status = testedStatus("connected", { toolCount: 2, afterSignIn: true, tools: [{ name: "whoami", readOnly: true, exposure: "codemode" }] });
+  const { value } = connection(testView({ usesOAuth: true, signedIn: true, status }));
+  assert.match(value, /<span class="mcp-config-state is-on">Connected<\/span> Signed in, then 2 tool\(s\) listed in 0\.4 s, at [^.]+\./);
+  const after = connection(testView({ usesOAuth: true, signedIn: true, status: testedStatus("needs-auth", { afterSignIn: true }) }));
+  assert.match(after.text, /^Needs sign-in Signed in, but the server still asked for a sign-in at /);
+});
+
+test("the container starts, polls, pastes into and cancels a sign-in, and signs out as a change", () => {
+  const body = (name, end) => source.slice(source.indexOf(`const ${name} = useCallback`), source.indexOf(end, source.indexOf(`const ${name} = useCallback`)));
+  const start = body("startSignIn", "}, [cwd, refresh]);");
+  // As for Test: the project only when the listing covers it, and no signal, since the flow lives on the server.
+  assert.match(start, /const signInCwd = listing\.state === "loaded" && listing\.data\.project \? cwd : null;/);
+  assert.match(start, /const result = await postMcpSignIn\(\{ scope: server\.scope, name: server\.name \}, signInCwd\);/);
+  assert.doesNotMatch(start, /abort|signal/);
+  // A press while one starts or runs does nothing: the route would only join it.
+  assert.match(start, /if \(current\?\.starting \|\| mcpSignInActive\(current\)\) return;/);
+  // A refusal may mean the listing is out of date.
+  assert.match(start, /if \(!result\.ok && result\.error\.reason !== undefined && !result\.error\.timedOut\) void refresh\(\);/);
+  // Polling: about once a second while a flow runs, aborted only as the panel goes; a flow that ended reloads the overview.
+  assert.match(source, /const result = await getMcpSignIn\(flowId, undefined, controller\.signal\);/);
+  assert.match(source, /\}, MCP_SIGN_IN_POLL_MS\);/);
+  assert.match(source, /if \(Object\.keys\(signIns\)\.some\(\(key\) => mcpSignInJustEnded\(previous\[key\], signIns\[key\]\)\)\) void refresh\(\);/);
+  assert.match(body("pasteSignIn", "}, []);"), /const result = await pasteMcpSignIn\(flowId, value\);/);
+  assert.match(body("cancelSignIn", "}, []);"), /const result = await cancelMcpSignInFlow\(flowId\);/);
+  // Sign out writes mcp-auth.json through POST /api/mcp, as one more change the controls wait for.
+  const signOut = body("signOut", "}, [runAction]);");
+  assert.match(signOut, /await runAction\(\{ action: "sign-out", scope: server\.scope, name: server\.name \}, `sign-out:\$\{key\}`\);/);
+  assert.match(signOut, /setFocusBack\(\{ control: pressed \}\);/);
+  assert.match(source, /signingOut=\{busy === `sign-out:\$\{key\}`\}/);
+  // Closing the panel lets sign-ins go, never cancels them: Sign in joins one again.
+  const unmount = source.slice(source.indexOf("const testRequests = testRequestsRef.current;"), source.indexOf("}, []);", source.indexOf("const testRequests = testRequestsRef.current;")));
+  assert.match(unmount, /mountedRef\.current = false;/);
+  assert.doesNotMatch(unmount, /SignIn|signIns/);
 });

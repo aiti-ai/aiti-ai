@@ -606,10 +606,10 @@ export type McpLoadResult =
     }
   | { ok: false; error: McpLoadFailure };
 
-type FetchLike = (input: string, init?: RequestInit) => Promise<Pick<Response, "ok" | "status" | "json">>;
+export type FetchLike = (input: string, init?: RequestInit) => Promise<Pick<Response, "ok" | "status" | "json">>;
 
 /** A refusal's diagnostic and reason code (with the file and server it names), or the HTTP status when the body has none. */
-function refusalFailure(data: unknown, status: number): McpActionFailure {
+export function refusalFailure(data: unknown, status: number): McpActionFailure {
   const refusal = (data ?? {}) as Partial<McpErrorResponse>;
   return {
     error: typeof refusal.error === "string" ? refusal.error : `HTTP ${status}`,
@@ -628,7 +628,7 @@ function refusalFailure(data: unknown, status: number): McpActionFailure {
  * supports 16.2). The deadline resolves the race itself, so a fetch that
  * ignores its signal cannot outlast it.
  */
-async function withinDeadline<T>(
+export async function withinDeadline<T>(
   run: (signal: AbortSignal) => Promise<T>,
   timedOut: () => T,
   timeoutMs: number,
@@ -862,7 +862,7 @@ export function mcpGroupSwitchChecked(servers: readonly McpSwitchable[]): boolea
 
 /** What the panel asks `POST /api/mcp` to do. */
 export type McpActionRequest =
-  | { action: "enable" | "disable" | "remove"; scope: McpScope; name: string }
+  | { action: "enable" | "disable" | "remove" | "sign-out"; scope: McpScope; name: string }
   | { action: "set-enabled"; enabled: boolean; servers: McpServerRef[] }
   | { action: "undo"; token: string };
 
@@ -1007,8 +1007,16 @@ export const MCP_TEST_SUMMARY_KEYS: Record<McpTestResult["state"] | "timedOut", 
   timedOut: "mcp.test.summary.timedOut",
 };
 
-export function mcpTestSummaryKey(result: Pick<McpTestResult, "state" | "timedOut">): string {
-  return MCP_TEST_SUMMARY_KEYS[result.timedOut ? "timedOut" : result.state];
+/** The same for the connection a sign-in made right after storing new tokens (`afterSignIn`), which no Test made. */
+export const MCP_SIGN_IN_SUMMARY_KEYS: Record<McpTestResult["state"] | "timedOut", string> = {
+  connected: "mcp.signIn.summary.connected",
+  "needs-auth": "mcp.signIn.summary.needs-auth",
+  failed: "mcp.signIn.summary.failed",
+  timedOut: "mcp.signIn.summary.timedOut",
+};
+
+export function mcpTestSummaryKey(result: Pick<McpTestResult, "state" | "timedOut" | "afterSignIn">): string {
+  return (result.afterSignIn ? MCP_SIGN_IN_SUMMARY_KEYS : MCP_TEST_SUMMARY_KEYS)[result.timedOut ? "timedOut" : result.state];
 }
 
 /** Milliseconds as seconds with one decimal, for `{seconds}`. */
