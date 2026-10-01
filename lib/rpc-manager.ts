@@ -43,6 +43,7 @@ import { resolveShellTools } from "./powershell-settings";
 import { CHAT_ONLY_RESOURCE_LOADER_OPTIONS, contextFilesSystemPrompt } from "./chat-only";
 import { createExactSystemPromptExtension } from "./exact-system-prompt";
 import { createPiWebBuiltinExtensions } from "./builtin-extensions";
+import type { McpHost } from "./mcp-host";
 import { createReadOnlyMcpPolicyExtension } from "./mcp-read-only-policy";
 import { isNestedToolExecutionEvent } from "./agent-event-wire";
 import {
@@ -119,7 +120,11 @@ type AgentSessionWrapperOptions = {
   chatOnly?: boolean;
   onAgentRunComplete?: AgentRunCompleteListener;
   suppressCompletionNotifications?: boolean;
+  /** Connects the session's MCP servers before a prompt starts a run (lib/mcp-host.ts). */
+  mcpHost?: Pick<McpHost, "prepareForPrompt">;
 };
+
+export const MCP_WAIT_STOPPED_MESSAGE = "Stopped while MCP servers were connecting; the message was not sent.";
 
 const IDLE_RESET_EVENT_TYPES = new Set([
   "agent_end",
@@ -294,6 +299,9 @@ export class AgentSessionWrapper {
   private readonly chatOnly: boolean;
   private readonly onAgentRunComplete?: AgentRunCompleteListener;
   private readonly suppressCompletionNotifications: boolean;
+  private readonly mcpHost?: Pick<McpHost, "prepareForPrompt">;
+  // The MCP wait of the prompt being admitted; Stop ends it.
+  private mcpPromptWait: { controller: AbortController; done: Promise<void> } | null = null;
   private unsubscribe: (() => void) | null = null;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   private onDestroyCallback: (() => void) | null = null;
@@ -317,6 +325,7 @@ export class AgentSessionWrapper {
     this.chatOnly = options.chatOnly ?? false;
     this.onAgentRunComplete = options.onAgentRunComplete;
     this.suppressCompletionNotifications = options.suppressCompletionNotifications ?? false;
+    this.mcpHost = options.mcpHost;
   }
 
   get sessionId(): string {
@@ -740,6 +749,29 @@ export class AgentSessionWrapper {
           };
 
           this.pendingPromptCount += 1;
+          // A prompt that starts a run first connects the session's MCP servers and waits
+          // for the ones still connecting. The SDK runs before_agent_start before a run has
+          // an abort signal, so Stop is honoured here: it ends the wait, and the message is
+          // rejected unsent, which returns it to the composer.
+          if (this.mcpHost && !this.inner.isStreaming) {
+            const controller = new AbortController();
+            const waited = this.mcpHost.prepareForPrompt(controller.signal)
+              .catch((error: unknown) => {
+                console.error("[pi-web] MCP servers could not be prepared:", error instanceof Error ? error.message : error);
+              })
+              .then(() => {
+                if (!controller.signal.aborted) return;
+                finishPrompt();
+                throw new Error(MCP_WAIT_STOPPED_MESSAGE);
+              });
+            const wait = { controller, done: waited.then(() => undefined, () => undefined) };
+            this.mcpPromptWait = wait;
+            try {
+              await waited;
+            } finally {
+              if (this.mcpPromptWait === wait) this.mcpPromptWait = null;
+            }
+          }
           let prompt: Promise<void>;
           try {
             prompt = this.inner.prompt(command.message as string, {
@@ -797,6 +829,12 @@ export class AgentSessionWrapper {
         this.resetIdleTimer();
         // Stop must unwind extension commands that have not started the agent yet.
         this.extensionUiAbortController.abort(new DOMException("Extension UI cancelled by Stop", "AbortError"));
+        // A prompt still waiting for MCP servers is withdrawn before it starts a run.
+        if (this.mcpPromptWait) {
+          const wait = this.mcpPromptWait;
+          wait.controller.abort();
+          await wait.done;
+        }
         try {
           await this.withFinalIdleReset(() => this.inner.abort());
           return null;
@@ -2267,9 +2305,10 @@ export async function startRpcSession(
     const exactSystemPromptRef: { current?: () => string } = {};
     const exactSystemPromptExtension = createExactSystemPromptExtension(() => exactSystemPromptRef.current?.());
     const usesExactSystemPrompt = chatOnly || subagentResources?.exactSystemPrompt !== undefined;
-    // codemode, tool-search, and mcp, as the pi CLI loads them (ADR 0006).
-    const builtinExtensions = subagentResources || chatOnly
-      ? []
+    // codemode, tool-search, and mcp, as the pi CLI loads them, and the host that decides
+    // which MCP servers the session connects (ADR 0006).
+    const builtins = subagentResources || chatOnly
+      ? undefined
       : await createPiWebBuiltinExtensions({ agentDir });
     const services = await createAgentSessionServices({
       cwd: sessionCwd,
@@ -2295,7 +2334,7 @@ export async function startRpcSession(
           ? { ...CHAT_ONLY_RESOURCE_LOADER_OPTIONS, extensionFactories: [exactSystemPromptExtension] }
         : {
             extensionFactories: [
-              ...builtinExtensions,
+              ...(builtins?.extensions ?? []),
               createReadOnlyMcpPolicyExtension(),
               createProjectCommandBashExtension({
                 cwd: sessionCwd,
@@ -2380,6 +2419,7 @@ export async function startRpcSession(
         });
       },
       suppressCompletionNotifications: Boolean(subagentResources),
+      ...(builtins?.mcpHost ? { mcpHost: builtins.mcpHost } : {}),
     });
     const realSessionId = inner.sessionId as string;
     registerRpcWrapper(wrapper);
