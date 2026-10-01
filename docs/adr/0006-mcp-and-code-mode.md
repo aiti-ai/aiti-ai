@@ -2,9 +2,11 @@
 
 ## Status
 
-Accepted. Implemented in phases (see "Rollout"); until P1 lands, Pi Web
-sessions load none of pi's built-in `codemode`, `tool-search`, or `mcp`
-extensions.
+Accepted. Implemented in phases (see "Rollout"); P0 and P1 are in place.
+Normal sessions load pi's built-in `codemode`, `tool-search`, and `mcp`
+extensions and connect the servers in the global `mcp.json`, but nothing
+manages them from the browser yet, and project entries wait for the
+approvals P2 brings.
 
 ## Context
 
