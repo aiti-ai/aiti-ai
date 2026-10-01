@@ -4,9 +4,10 @@
 
 Accepted. Implemented in phases (see "Rollout"); P0 and P1 are in place.
 Normal sessions load pi's built-in `codemode`, `tool-search`, and `mcp`
-extensions and connect the servers in the global `mcp.json`, but nothing
-manages them from the browser yet, and project entries wait for the
-approvals P2 brings.
+extensions and connect the servers in the global `mcp.json` and in a trusted
+project's `.pi/mcp.json`, but nothing manages them from the browser yet.
+Per-entry approval of project servers was dropped after P1 in favor of the
+CLI's project trust (see "Safety").
 
 ## Context
 
@@ -46,6 +47,7 @@ a long-lived, possibly remote server that runs many sessions in one process:
 - **Trust.** A project `.pi/mcp.json` is read once the project is trusted, and
   trust is inherited from ancestor folders, so a repository cloned under a
   trusted parent starts its servers on first open without anyone seeing them.
+  The same holds for its `.pi/extensions`, which run earlier still.
 - **Tool activation.** `withExtensionTools()` re-activates every extension tool
   whose exposure is `direct` or `model-only`, ignoring `defaultActive: false`,
   so loading `codemode` and `tool_search` would force both on in every session.
@@ -70,8 +72,8 @@ per-wrapper `McpHost` reads the global and project `mcp.json` itself and
 registers the servers it wants through the public `pi.registerMcpServer()` /
 `pi.unregisterMcpServer()`:
 
-- **Before every prompt that starts a run** it reads the config, trust, and
-  approvals, registers or unregisters only the servers whose entry changed,
+- **Before every prompt that starts a run** it reads the config and the
+  project's trust, registers or unregisters only the servers whose entry changed,
   and waits up to 10 s for the ones still connecting. The wrapper runs this
   before `AgentSession.prompt()`, because `before_agent_start` runs before a
   run has an abort signal: Stop ends the wait and rejects the message unsent,
@@ -167,15 +169,20 @@ restores the branch's tool set from its transcript.
   entry that references `PI_WEB_PASSWORD` is refused. If the internals adapter
   cannot load, MCP is off: Pi Web never falls back to the SDK's default
   transport.
-- **Project entries need trust and approval.** Each project `mcp.json` entry is
-  approved by the SHA-256 of its JSON, keyed by the repository's main project
-  root, in `~/.pi/agent/pi-web/mcp-approvals.json`. Entries written through the
-  panel, entries shown in the trust dialog, and, once, the entries of a project
-  trusted exactly (not by inheritance) when Pi Web first sees it are approved
-  automatically. An entry changed outside Pi Web, or reached through inherited
-  trust, shows "Waiting for approval" with the command it would run; turning
-  its switch on approves it. The hash covers the entry, not the code it points
-  to, the same limit project extensions have.
+- **Project entries follow project trust, as in the CLI.** A project
+  `mcp.json` is read only once the project is trusted, inherited trust
+  included, and every enabled entry then connects on the next prompt. An
+  earlier version of this decision also approved each entry by the SHA-256 of
+  its JSON, in a Pi Web-only `mcp-approvals.json`. It was dropped after P1: a
+  trusted project's `.pi/extensions` already run inside the same boundary,
+  earlier (when a session is browsed, not when it prompts) and with no
+  approval, so gating only MCP entries stopped neither a malicious repository
+  nor inherited trust, and it made Pi Web and the CLI disagree about which
+  servers run. What Pi Web adds is visibility: the panel lists an untrusted
+  project's entries with the command each would run, and the trust dialog
+  lists them before the folder is trusted. Tightening trust itself (exact
+  rather than inherited, or per entry) belongs upstream, for extensions and
+  MCP servers alike.
 - **Fresh folders.** Writing `.pi/mcp.json` makes a folder require trust, and
   `trustProject()` refuses a folder that does not. When neither the folder nor
   an ancestor has a trust decision, adding a project server trusts the folder
@@ -219,7 +226,7 @@ restores the branch's tool set from its transcript.
   self-test registers `codemode`-exposure servers as `deferred` instead), and
   the codemode and MCP result views.
 - **P2 — Settings › MCP ships.** Panel, routes, paste import, test, sign-in,
-  approvals, `/mcp` interception.
+  project servers in the trust dialog, `/mcp` interception.
 - **P3.** Registry search, editing an existing entry, TOML and YAML paste,
   per-tool exposure, the same fresh-folder fix for Plugins and Skills.
 - **P4.** Per-session switches, MCP for subagents, and dropping the internals
@@ -227,10 +234,9 @@ restores the branch's tool set from its transcript.
 
 ## Consequences
 
-- Pi Web and the CLI share `mcp.json`, `mcp-auth.json`, and the
-  `-builtin:<name>` settings. Pi Web additionally keeps `mcp-approvals.json`,
-  which the CLI ignores, so a project entry the CLI connects may wait for
-  approval in Pi Web.
+- Pi Web and the CLI share `mcp.json`, `mcp-auth.json`, `trust.json`, and the
+  `-builtin:<name>` settings, so both connect the same servers for the same
+  project.
 - The internals adapter couples Pi Web to file paths inside the SDK package.
   Contract tests fail on an SDK upgrade that moves or renames them; MCP then
   turns off with a visible reason instead of misbehaving.
