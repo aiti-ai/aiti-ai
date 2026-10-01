@@ -606,16 +606,27 @@ test("labels an MCP call server/tool and indents a JSON result", (t) => {
   assert.match(text, /\{\n {2}"hits": \[\n {4}\{\n {6}"title": "Code mode"/);
 });
 
-test("names MCP calls inside a codemode card the same way", (t) => {
-  const block = codemodeCall("call-codemode-mcp", "await tools.mcp__docs__search({})");
-  setToolCallExpanded(block.toolCallId, true);
-  t.after(() => setToolCallExpanded(block.toolCallId, false));
-  const html = renderCodemode(block, {
+test("keeps the registered name where no result names the server and tool", (t) => {
+  // Sanitizing maps docs.v2/search.pages and docs_v2/search_pages to one name, so it is not split.
+  const block = { type: "toolCall", toolCallId: "call-mcp-running", toolName: "mcp__docs_v2__search_pages", input: {} };
+  const running = textOf(renderMessage({
+    role: "assistant",
+    provider: "anthropic",
+    model: "claude-test",
+    content: [block],
+  }, { toolResults: new Map() }));
+  assert.match(running, /mcp__docs_v2__search_pages/);
+  assert.doesNotMatch(running, /docs_v2\//);
+
+  // A codemode script's calls carry only that name, which is also what the script calls.
+  const script = codemodeCall("call-codemode-mcp", "await tools.mcp__docs_v2__search_pages({})");
+  setToolCallExpanded(script.toolCallId, true);
+  t.after(() => setToolCallExpanded(script.toolCallId, false));
+  const html = renderCodemode(script, {
     role: "toolResult",
-    toolCallId: block.toolCallId,
+    toolCallId: script.toolCallId,
     content: [{ type: "text", text: "Script completed\nWall time 0.1 seconds\nOutput:\n" }],
-    details: { calls: [{ id: "call-codemode-mcp/1", name: "mcp__docs__search", args: "{}", status: "ok" }] },
+    details: { calls: [{ id: "call-codemode-mcp/1", name: "mcp__docs_v2__search_pages", args: "{}", status: "ok" }] },
   });
-  assert.match(textOf(html), /docs\/search\{\}/);
-  assert.match(html, /title="mcp__docs__search"/);
+  assert.match(textOf(html), /mcp__docs_v2__search_pages\{\}/);
 });
