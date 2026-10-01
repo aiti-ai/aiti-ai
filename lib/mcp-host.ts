@@ -165,8 +165,6 @@ export type McpHostServerState =
   | "connecting"
   | "ready"
   | "failed"
-  /** A project entry nobody approved yet; P1 approves none. */
-  | "waiting-approval"
   /** Another extension registered the name first, or the extension refused the config. */
   | "not-registered";
 
@@ -368,6 +366,8 @@ class HostInstance {
     const desired = new Map<string, { config: McpServerConfig; scope: "global" | "project" }>();
     let loaded;
     try {
+      // Project entries follow the project's trust, as in the pi CLI: the SDK reads
+      // `.pi/mcp.json` only once the project is trusted (ADR 0006).
       loaded = this.options.internals.loadMcpConfig({
         agentDir: this.options.agentDir,
         cwd: ctx.cwd,
@@ -380,12 +380,6 @@ class HostInstance {
     for (const entry of loaded.servers) {
       if (entry.config.enabled === false) continue;
       const scope = entry.scope === "project" ? "project" : "global";
-      // A project entry replaced any global one of its name, so waiting for approval leaves
-      // the name unconnected rather than falling back to the global entry.
-      if (scope === "project" && !this.options.isProjectEntryApproved(entry, ctx.cwd)) {
-        this.problems.set(entry.name, { name: entry.name, scope, state: "waiting-approval" });
-        continue;
-      }
       desired.set(entry.name, { config: withReachableExposure(entry.config, this.options.codemodeAvailable()), scope });
     }
     return desired;
@@ -441,11 +435,6 @@ export interface McpHostOptions {
   codemodeAvailable: () => boolean;
   idleMs?: number;
   promptWaitMs?: number;
-  /**
-   * Whether a project `.pi/mcp.json` entry may connect. Approvals arrive with the
-   * Settings panel (ADR 0006, P2); until then no project entry connects.
-   */
-  isProjectEntryApproved?: (entry: McpServerEntry, cwd: string) => boolean;
 }
 
 /**
@@ -461,7 +450,6 @@ export class McpHost {
     this.options = {
       idleMs: resolveMcpIdleMs(),
       promptWaitMs: PROMPT_WAIT_MS,
-      isProjectEntryApproved: () => false,
       ...options,
     };
   }
