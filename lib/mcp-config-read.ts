@@ -28,6 +28,7 @@ import { readCodemodePreference, readProjectCodemodeOverride } from "./codemode-
 import { getGlobalSettingsPath } from "./global-settings-file";
 import { canonicalJson } from "./mcp-host";
 import { maskArgs, maskCommand, maskUrl } from "./mcp-secrets";
+import { withMcpStatuses } from "./mcp-status";
 import { findWebPasswordField, resolvedConfigValues, WEB_PASSWORD_VARIABLE } from "./mcp-transport";
 import { samePath } from "./paths";
 import { hasParentDirectorySegment, isPathWithinRoots, resolveRealRoots } from "./path-security";
@@ -566,6 +567,53 @@ export function readMcpServerConfigs(options: McpConfigReadOptions): McpConfigRe
   return { files, servers: described.map(({ info }) => info) };
 }
 
+/** One entry as its file holds it, for a route that connects it; never sent to the browser. */
+export type McpServerEntryRead =
+  | {
+      ok: true;
+      /** The raw entry, literal values included. */
+      value: unknown;
+      /** The configured path of its file, as `McpServerInfo.sourcePath` names it. */
+      sourcePath: string;
+      /** `mcpConfigKey()` of the raw entry, as GET reports it. */
+      configKey: string;
+    }
+  | {
+      ok: false;
+      /** A problem of the file (its servers are not listed), or `server-missing`. */
+      reason: Exclude<McpConfigFileProblem["reason"], "auto-enable-codemode-invalid"> | "server-missing";
+      error: string;
+      path: string;
+    };
+
+/**
+ * The entry `name` of the global file or the project's, read and parsed as
+ * the listing reads it, under the same link rule, so a route acts only on an
+ * entry the panel can list and never on a config the browser sent.
+ */
+export function readMcpServerEntry(options: {
+  agentDir: string;
+  scope: McpScope;
+  name: string;
+  /** Required for a project entry. */
+  project?: { cwd: string; allowedRoots: Set<string> };
+}): McpServerEntryRead {
+  const { scope, name, project } = options;
+  if (scope === "project" && !project) throw new Error("a project entry needs the project");
+  const { info, text } = scope === "global" || !project
+    ? readGlobalFile(options.agentDir)
+    : readProjectFile(project.cwd, project.allowedRoots);
+  const entries = text === undefined ? [] : parseConfigText(info, text);
+  for (const problem of info.problems) {
+    if (problem.reason !== "auto-enable-codemode-invalid") {
+      return { ok: false, reason: problem.reason, error: problem.error, path: info.path };
+    }
+  }
+  const found = entries.find(([entryName]) => entryName === name);
+  if (!found) return { ok: false, reason: "server-missing", error: `${info.path} does not define MCP server "${name}"`, path: info.path };
+  return { ok: true, value: found[1], sourcePath: info.path, configKey: mcpConfigKey(found[1]) };
+}
+
 export interface ProjectMcpServers {
   file: McpConfigFileInfo;
   servers: McpServerInfo[];
@@ -666,8 +714,9 @@ export interface McpOverviewOptions {
 
 /**
  * Everything Settings › MCP shows, from files and process state only: whether
- * MCP and Code mode can run, the servers of both files, and the project's
- * trust, read fresh. A project that is not trusted is listed too, with the
+ * MCP and Code mode can run, the servers of both files with the last known
+ * status of each (`lib/mcp-status.ts`, for the entry as the file holds it
+ * now), and the project's trust, read fresh. A project that is not trusted is listed too, with the
  * command each entry would run, which is the point: it can be checked before
  * anyone trusts it.
  */
@@ -703,11 +752,13 @@ export async function readMcpOverview(options: McpOverviewOptions): Promise<McpR
     project,
     internals: internals.ok ? internals : undefined,
   });
+  // A file whose servers are all listed: statuses of names it no longer defines can go.
+  const listedFiles = files.filter((file) => !file.problems.some((item) => item.reason !== "auto-enable-codemode-invalid"));
   return {
     mcp: mcpAvailability(environment, internals, switches?.mcp),
     codemode: await codemodeInfo(agentDir, switches?.codemode, project && projectSettingsLoad ? project.cwd : undefined),
     files,
-    servers,
+    servers: withMcpStatuses(servers, listedFiles),
     ...(projectInfo ? { project: projectInfo } : {}),
   };
 }
