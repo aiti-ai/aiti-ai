@@ -20,6 +20,7 @@ import { skillExpansionToCommand } from "@/lib/slash-display";
 import type { SubagentToolDetails } from "@/lib/subagent-extension";
 import { CODEMODE_TOOL_NAME, codemodeCalls, codemodeScript, codemodeScriptPreview, stripCodemodeHeader } from "@/lib/codemode-view";
 import { CodemodeCallList, CodemodeScript } from "./CodemodeToolView";
+import { mcpToolLabel, prettyMcpResultText } from "@/lib/mcp-tool-display";
 import type {
   AgentMessage,
   UserMessage,
@@ -1134,11 +1135,15 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
   // A running script's progress snapshot has calls but no content yet.
   const codemodeRunning = codemode !== null && result !== undefined && result.content.length === 0;
 
+  // `server/tool` instead of the registered `mcp__server__tool`, as pi's TUI shows it.
+  const mcpLabel = mcpToolLabel(block.toolName, result?.details);
+
   // Result display
   const resultContent = result ? (codemode ? stripCodemodeHeader(result.content) : result.content) : [];
-  const resultText = result
+  const joinedResultText = result
     ? resultContent.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n")
     : null;
+  const resultText = mcpLabel && joinedResultText !== null ? prettyMcpResultText(joinedResultText) : joinedResultText;
   const resultImages = getMessageImages(resultContent);
   const resultIsEmpty = resultText === null ? false : (resultText.trim() === "(no output)" || resultText.trim() === "");
   const isError = (result?.isError ?? false)
@@ -1175,8 +1180,16 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
             textAlign: "left",
           }}
         >
-          <span style={{ color: isError ? "#f87171" : "#16a34a", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}>
-            {block.toolName}
+          <span
+            title={mcpLabel ? block.toolName : undefined}
+            style={{ color: isError ? "#f87171" : "#16a34a", fontFamily: "var(--font-mono)", fontWeight: 600, fontSize: 11, flexShrink: 0 }}
+          >
+            {mcpLabel ? (
+              <>
+                <span style={{ fontWeight: 500, opacity: 0.75 }}>{mcpLabel.server}/</span>
+                {mcpLabel.tool}
+              </>
+            ) : block.toolName}
           </span>
           <span style={{ color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 11, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
             {isStreamingInput
