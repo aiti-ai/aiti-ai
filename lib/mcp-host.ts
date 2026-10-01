@@ -238,6 +238,10 @@ class HostInstance {
   private readonly problems = new Map<string, McpHostServerStatus>();
   private queue: Promise<void> = Promise.resolve();
   private idleTimer: NodeJS.Timeout | undefined;
+  /** Between agent_start and agent_end; the idle timer never runs meanwhile. */
+  private runActive = false;
+  /** Prompts waiting in prepareForPrompt(); nor does it run while one waits. */
+  private preparing = 0;
 
   constructor(private readonly pi: ExtensionAPI, private readonly options: Required<McpHostOptions>) {
     pi.on("session_start", (_event, ctx) => {
@@ -252,8 +256,14 @@ class HostInstance {
       // Prompts that do not come through the wrapper, such as an extension's, still connect.
       void this.sync();
     });
-    pi.on("agent_start", () => this.clearIdle());
-    pi.on("agent_end", () => this.armIdle());
+    pi.on("agent_start", () => {
+      this.runActive = true;
+      this.clearIdle();
+    });
+    pi.on("agent_end", () => {
+      this.runActive = false;
+      this.armIdle();
+    });
     pi.on("session_shutdown", () => {
       // The extension closes every connection itself.
       this.active = false;
@@ -268,7 +278,7 @@ class HostInstance {
   }
 
   sync(): Promise<void> {
-    return this.enqueue(async () => {
+    const synced = this.enqueue(async () => {
       if (!this.active || !this.ctx) return;
       const desired = this.desiredServers(this.ctx);
       for (const [name, attempt] of [...this.attempts]) {
@@ -280,10 +290,30 @@ class HostInstance {
         if (!this.attempts.has(name)) this.register(name, wanted.config, wanted.scope);
       }
     });
+    // A prompt can register servers and then start no run: Stop during the wait, a
+    // slash command, a preflight that rejects it. None reaches agent_end, so the idle
+    // timer starts once the servers are registered, also when the sync finishes after
+    // the prompt gave up on it. A run that does start stops the timer at agent_start.
+    void synced.then(() => this.armIdle());
+    return synced;
   }
 
   async prepareForPrompt(signal: AbortSignal): Promise<void> {
     this.clearIdle();
+    // The wrapper prepares only prompts that start a run, so none is running now;
+    // this also recovers from a run whose agent_end never arrived.
+    this.runActive = false;
+    this.preparing += 1;
+    try {
+      await this.waitForServers(signal);
+    } finally {
+      this.preparing -= 1;
+      // Started now in case the prompt starts no run; agent_start stops it if one does.
+      this.armIdle();
+    }
+  }
+
+  private async waitForServers(signal: AbortSignal): Promise<void> {
     const stopped = aborted(signal);
     await Promise.race([this.sync(), stopped]);
     if (signal.aborted) return;
@@ -394,7 +424,7 @@ class HostInstance {
 
   private armIdle(): void {
     this.clearIdle();
-    if (this.options.idleMs <= 0 || this.attempts.size === 0) return;
+    if (this.runActive || this.preparing > 0 || this.options.idleMs <= 0 || this.attempts.size === 0) return;
     this.idleTimer = setTimeout(() => {
       this.idleTimer = undefined;
       if (this.ctx && !this.ctx.isIdle()) return;
