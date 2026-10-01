@@ -9,7 +9,9 @@ const {
   MCP_CODEMODE_SELECTION,
   MCP_CODEMODE_STATE_KEYS,
   MCP_EXPOSURE_KEYS,
+  MCP_ACTION_TIMEOUT_MS,
   MCP_OVERVIEW_TIMEOUT_MS,
+  MCP_READ_ONLY_KEYS,
   MCP_ROW_STATE_BADGE_KEYS,
   MCP_ROW_STATE_LABEL_KEYS,
   MCP_SERVER_ROW_STATES,
@@ -28,6 +30,8 @@ const {
   mcpFileProblems,
   mcpGroupCounts,
   mcpGroupEmptyKey,
+  mcpGroupSwitchChecked,
+  mcpGroupSwitchTargets,
   mcpOverviewUrl,
   mcpProjectServersLoad,
   mcpProjectTrustable,
@@ -40,6 +44,9 @@ const {
   mcpTrustNotice,
   mcpUnavailableNotice,
   pickMcpSelection,
+  mcpWriteBlock,
+  mcpWritesOff,
+  postMcpAction,
   saveMcpCodemodePreference,
   withMcpCodemodePreference,
 } = await jiti.import("./mcp-config-helpers.ts");
@@ -619,4 +626,138 @@ test("a saved choice replaces the preference and its read error in the loaded ov
   assert.deepEqual(next.codemode, { sandbox: { state: "available" }, builtinDisabled: false, preference: "always" });
   assert.equal(next.servers, data.servers);
   assert.equal(data.codemode.preferenceError, "Unexpected token", "the loaded overview is not changed in place");
+});
+
+test("the panel is read-only while MCP is off on the server, and for a project no decision trusts", () => {
+  const trusted = { cwd: "/repo", trust: { requiresTrust: true, trusted: true, decision: true, decisionPath: "/repo", inherited: false } };
+  const data = (mcp, project = trusted) => ({ mcp, project });
+  const available = { available: true };
+  assert.equal(mcpWriteBlock("global", data(available)), undefined);
+  assert.equal(mcpWriteBlock("project", data(available)), undefined);
+  // The operator's switch and missing SDK modules stop every write, whatever the scope.
+  for (const reason of ["operator-disabled", "internals-unavailable"]) {
+    const mcp = { available: false, reason, error: "x" };
+    assert.equal(mcpWritesOff(mcp), true, reason);
+    assert.equal(mcpWriteBlock("global", data(mcp)), "mcp-off", reason);
+    assert.equal(mcpWriteBlock("project", data(mcp)), "mcp-off", reason);
+  }
+  // -builtin:mcp is a setting a project can reverse, so it never decides whether a file may be written.
+  const builtin = { available: false, reason: "builtin-disabled", error: "x" };
+  assert.equal(mcpWritesOff(builtin), false);
+  assert.equal(mcpWriteBlock("global", data(builtin)), undefined);
+  // A project needs a decision that trusts it, as the MCP host reads its file; an unreadable store blocks too.
+  assert.equal(mcpWriteBlock("project", data(available, { cwd: "/repo", trust: { requiresTrust: true, trusted: false, decision: null, inherited: false } })), "project-untrusted");
+  assert.equal(mcpWriteBlock("project", data(available, { cwd: "/repo", trust: { requiresTrust: true, trusted: false, decision: false, decisionPath: "/repo", inherited: false } })), "project-untrusted");
+  assert.equal(mcpWriteBlock("project", data(available, { cwd: "/repo", trust: { requiresTrust: false, trusted: true, decision: null, inherited: false } })), "project-untrusted");
+  assert.equal(mcpWriteBlock("project", data(available, { cwd: "/repo", trust: { ...trusted.trust, decisionPath: "/", inherited: true } })), undefined);
+  assert.equal(mcpWriteBlock("project", data(available, { cwd: "/repo", trustError: "locked" })), "trust-unreadable");
+  assert.equal(mcpWriteBlock("global", data(available, { cwd: "/repo", trustError: "locked" })), undefined);
+  for (const key of Object.values(MCP_READ_ONLY_KEYS)) assert.equal(typeof messages[key], "string", key);
+  for (const block of Object.keys(MCP_READ_ONLY_KEYS)) assert.equal(typeof messages[`mcp.reason.${block}`], "string", block);
+});
+
+test("a group switch sends only the servers it changes, and never turns on one that references PI_WEB_PASSWORD", () => {
+  const servers = [
+    server({ name: "on" }),
+    server({ name: "off", enabled: false }),
+    server({ name: "pw-off", enabled: false, webPasswordField: { kind: "header", name: "Authorization" } }),
+    server({ name: "pw-on", webPasswordField: { kind: "header", name: "Authorization" } }),
+  ];
+  const names = ({ targets, keptOff }) => [targets.map((target) => target.name), keptOff];
+  assert.deepEqual(names(mcpGroupSwitchTargets(servers, true)), [["off"], 1]);
+  // Switching off reaches every server that is on, a PI_WEB_PASSWORD one included.
+  assert.deepEqual(names(mcpGroupSwitchTargets(servers, false)), [["on", "pw-on"], 0]);
+  assert.deepEqual(names(mcpGroupSwitchTargets([server({ name: "on" })], true)), [[], 0]);
+});
+
+test("a group switch reads on once every server it can turn on is, so a click can always switch the group off", () => {
+  const pwField = { kind: "header", name: "Authorization" };
+  // Click the switch the way the panel does: it reads `mcpGroupSwitchChecked()`, asks for the
+  // opposite, and the route turns exactly the targets.
+  const click = (servers) => {
+    const next = !mcpGroupSwitchChecked(servers);
+    const { targets, keptOff } = mcpGroupSwitchTargets(servers, next);
+    return {
+      sent: [next, targets.map((target) => target.name), keptOff],
+      servers: servers.map((item) => (targets.includes(item) ? { ...item, enabled: next } : item)),
+    };
+  };
+  // A server on and one referencing PI_WEB_PASSWORD off: reading "every row on" kept this group
+  // off for good, so each click asked to turn it on, sent nothing, and it never switched off.
+  let servers = [server({ name: "a" }), server({ name: "pw", enabled: false, webPasswordField: pwField })];
+  assert.equal(mcpGroupSwitchChecked(servers), true);
+  let step = click(servers);
+  assert.deepEqual(step.sent, [false, ["a"], 0]);
+  servers = step.servers;
+  assert.equal(mcpGroupSwitchChecked(servers), false);
+  step = click(servers);
+  assert.deepEqual(step.sent, [true, ["a"], 1]);
+  assert.equal(mcpGroupSwitchChecked(step.servers), true);
+
+  // Without such entries it is the Skills and Plugins rule: on only while every server is.
+  assert.equal(mcpGroupSwitchChecked([server({ name: "a" }), server({ name: "b" })]), true);
+  assert.equal(mcpGroupSwitchChecked([server({ name: "a" }), server({ name: "b", enabled: false })]), false);
+  assert.equal(mcpGroupSwitchChecked([]), false);
+  // A PI_WEB_PASSWORD entry that is on counts as on, and switching off reaches it.
+  assert.equal(mcpGroupSwitchChecked([server({ name: "pw", webPasswordField: pwField })]), true);
+  // Nothing it could turn on: off, and a click only says why the entries stay off.
+  servers = [server({ name: "pw", enabled: false, webPasswordField: pwField })];
+  assert.equal(mcpGroupSwitchChecked(servers), false);
+  assert.deepEqual(click(servers).sent, [true, [], 1]);
+
+  // An entry that is not an object reads as on but has nothing to switch: it is never sent, and
+  // it neither holds the group on nor off.
+  const junk = server({ name: "junk", notAnObject: true, invalidError: 'server "junk" must be an object' });
+  assert.equal(mcpGroupSwitchChecked([junk]), false);
+  assert.deepEqual(click([junk]).sent, [true, [], 0]);
+  servers = [junk, server({ name: "a" })];
+  assert.equal(mcpGroupSwitchChecked(servers), true);
+  assert.deepEqual(click(servers).sent, [false, ["a"], 0]);
+  servers = [junk, server({ name: "a", enabled: false })];
+  assert.equal(mcpGroupSwitchChecked(servers), false);
+  assert.deepEqual(click(servers).sent, [true, ["a"], 0]);
+});
+
+test("a change is posted to the MCP route with the project only when the listing covers one", async () => {
+  assert.equal(MCP_ACTION_TIMEOUT_MS, 15_000);
+  const done = fakeFetch([{ status: 200, body: { ...overview, undo: { scope: "global", name: "a", token: "t", path: "/p", expiresInMs: 60_000 } } }]);
+  const result = await postMcpAction({ action: "remove", scope: "global", name: "a" }, "/repo", done.fetchImpl);
+  assert.equal(result.ok, true);
+  assert.equal(result.data.undo.token, "t");
+  assert.equal(done.calls[0].input, "/api/mcp");
+  assert.equal(done.calls[0].init.method, "POST");
+  assert.deepEqual(done.calls[0].init.headers, { "Content-Type": "application/json" });
+  assert.deepEqual(JSON.parse(done.calls[0].init.body), { action: "remove", scope: "global", name: "a", cwd: "/repo" });
+
+  const global = fakeFetch([{ status: 200, body: overview }]);
+  await postMcpAction({ action: "set-enabled", enabled: false, servers: [{ scope: "global", name: "a" }] }, null, global.fetchImpl);
+  assert.deepEqual(JSON.parse(global.calls[0].init.body), { action: "set-enabled", enabled: false, servers: [{ scope: "global", name: "a" }] });
+
+  // A refusal keeps its reason and the file and server it names.
+  const refused = fakeFetch([{ status: 409, body: { error: "/p: Unexpected token", reason: "unparsable", path: "/p" } }]);
+  assert.deepEqual(await postMcpAction({ action: "disable", scope: "global", name: "a" }, null, refused.fetchImpl), {
+    ok: false,
+    error: { error: "/p: Unexpected token", reason: "unparsable", path: "/p" },
+  });
+  const missing = fakeFetch([{ status: 409, body: { error: "gone", reason: "server-missing", path: "/p", name: "a" } }]);
+  assert.deepEqual((await postMcpAction({ action: "enable", scope: "global", name: "a" }, null, missing.fetchImpl)).error, {
+    error: "gone",
+    reason: "server-missing",
+    path: "/p",
+    name: "a",
+  });
+  const network = fakeFetch([new TypeError("Failed to fetch")]);
+  assert.deepEqual(await postMcpAction({ action: "undo", token: "t" }, null, network.fetchImpl), { ok: false, error: { error: "Failed to fetch" } });
+  // A 200 that is not the overview is not taken for a change.
+  const odd = fakeFetch([{ status: 200, body: { ok: true } }]);
+  assert.deepEqual(await postMcpAction({ action: "undo", token: "t" }, null, odd.fetchImpl), { ok: false, error: { error: "HTTP 200" } });
+
+  // A change that never answers ends at the deadline, and may still have landed.
+  const hung = [];
+  const timedOut = await postMcpAction({ action: "disable", scope: "global", name: "a" }, null, (input, init) => {
+    hung.push(init.signal);
+    return new Promise(() => {});
+  }, undefined, 30);
+  assert.deepEqual([timedOut.ok, timedOut.error.timedOut, hung[0].aborted], [false, true, true]);
+  for (const key of ["mcp.actionFailed", "mcp.actionTimedOut"]) assert.equal(typeof messages[key], "string", key);
 });

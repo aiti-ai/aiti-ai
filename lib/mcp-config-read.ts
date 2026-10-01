@@ -106,26 +106,26 @@ function problem(info: McpConfigFileInfo, reason: McpConfigFileProblem["reason"]
   info.problems.push({ reason, error });
 }
 
+/** What reading a resolved path gave: the text and the file's permission bits, or why it was not read. */
+export type ResolvedConfigFileRead =
+  | { ok: true; text: string; mode: number }
+  | { ok: false; reason: Extract<McpConfigFileProblem["reason"], "not-a-file" | "too-large" | "unreadable">; error: string; code?: string };
+
 /**
  * Read the file at `realPath`, which has no link left in it: opened once
  * without following a link swapped in since and without blocking on a FIFO,
  * then checked through what was opened. A FIFO or a device is never read.
+ * The `mcp.json` writer (`lib/mcp-config-file.ts`) reads through this too.
  */
-function readResolvedFile(realPath: string, info: McpConfigFileInfo, maxBytes: number | undefined): string | undefined {
+export function readResolvedConfigFile(realPath: string, maxBytes: number | undefined): ResolvedConfigFileRead {
   let fd: number | undefined;
   try {
     fd = openSync(realPath, OPEN_FLAGS);
-    info.exists = true;
     const stats = fstatSync(fd);
-    if (!stats.isFile()) {
-      problem(info, "not-a-file", "not a regular file");
-      return undefined;
-    }
-    if (maxBytes === undefined) return readFileSync(fd, "utf8");
-    if (stats.size > maxBytes) {
-      problem(info, "too-large", `larger than ${maxBytes} bytes`);
-      return undefined;
-    }
+    const mode = stats.mode & 0o777;
+    if (!stats.isFile()) return { ok: false, reason: "not-a-file", error: "not a regular file" };
+    if (maxBytes === undefined) return { ok: true, text: readFileSync(fd, "utf8"), mode };
+    if (stats.size > maxBytes) return { ok: false, reason: "too-large", error: `larger than ${maxBytes} bytes` };
     // One byte past the limit: a file still growing past it is not parsed.
     const limit = maxBytes + 1;
     const chunks: Buffer[] = [];
@@ -137,18 +137,22 @@ function readResolvedFile(realPath: string, info: McpConfigFileInfo, maxBytes: n
       chunks.push(chunk.subarray(0, read));
       length += read;
     }
-    if (length > maxBytes) {
-      problem(info, "too-large", `larger than ${maxBytes} bytes`);
-      return undefined;
-    }
-    return Buffer.concat(chunks, length).toString("utf8");
+    if (length > maxBytes) return { ok: false, reason: "too-large", error: `larger than ${maxBytes} bytes` };
+    return { ok: true, text: Buffer.concat(chunks, length).toString("utf8"), mode };
   } catch (error) {
-    info.exists = true;
-    problem(info, "unreadable", errorMessage(error));
-    return undefined;
+    const code = errorCode(error);
+    return { ok: false, reason: "unreadable", error: errorMessage(error), ...(code ? { code } : {}) };
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+function readResolvedFile(realPath: string, info: McpConfigFileInfo, maxBytes: number | undefined): string | undefined {
+  const read = readResolvedConfigFile(realPath, maxBytes);
+  info.exists = true;
+  if (read.ok) return read.text;
+  problem(info, read.reason, read.error);
+  return undefined;
 }
 
 /**
@@ -180,40 +184,93 @@ function readGlobalFile(agentDir: string): { info: McpConfigFileInfo; text?: str
  * file. The same rule as the rest of the file access allow-list: a link is
  * authorized by where it resolves.
  */
-function readProjectFile(cwd: string, allowedRoots: Set<string>): { info: McpConfigFileInfo; text?: string } {
-  const path = projectMcpConfigPath(cwd);
-  const info: McpConfigFileInfo = { scope: "project", path, exists: false, problems: [] };
-  if (hasParentDirectorySegment(path)) {
-    info.exists = true;
-    problem(info, "unreadable", "the path has a .. segment");
-    return { info };
+/** Where a project's `.pi/mcp.json` leads under the link rule, before anything is read from it. */
+export type ProjectMcpConfigLocation =
+  | { kind: "found"; path: string; realPath: string }
+  | { kind: "missing"; path: string }
+  | {
+      kind: "refused";
+      path: string;
+      /** Where the link leads, when it leads somewhere. */
+      realPath?: string;
+      reason: Extract<McpConfigFileProblem["reason"], "link-dangling" | "link-outside" | "unreadable">;
+      error: string;
+    };
+
+function isSymbolicLink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    // Missing, or a folder above it is missing or a dangling link.
+    return false;
   }
+}
+
+/**
+ * The project file under the link rule: its real path, a link in the file or
+ * in `.pi/` above it included, must be inside `allowedRoots`, and a dangling
+ * link is refused rather than taken for a missing file. Settings › MCP reads,
+ * and `lib/mcp-config-file.ts` writes, only what this lets through.
+ */
+export function locateProjectMcpConfig(cwd: string, allowedRoots: Set<string>): ProjectMcpConfigLocation {
+  const path = projectMcpConfigPath(cwd);
+  if (hasParentDirectorySegment(path)) return { kind: "refused", path, reason: "unreadable", error: "the path has a .. segment" };
   let realPath: string;
   try {
     realPath = realpathSync(path);
   } catch (error) {
-    let link = false;
-    try {
-      link = lstatSync(path).isSymbolicLink();
-    } catch {
-      // Missing, or a folder above it is missing or a dangling link.
-    }
-    if (link) {
-      info.exists = true;
-      problem(info, "link-dangling", "a symbolic link to nothing");
-    } else if (errorCode(error) !== "ENOENT") {
-      info.exists = true;
-      problem(info, "unreadable", errorMessage(error));
-    }
-    return { info };
+    if (isSymbolicLink(path)) return { kind: "refused", path, reason: "link-dangling", error: "a symbolic link to nothing" };
+    if (errorCode(error) !== "ENOENT") return { kind: "refused", path, reason: "unreadable", error: errorMessage(error) };
+    return { kind: "missing", path };
   }
-  if (!samePath(realPath, join(realPathOr(cwd), CONFIG_DIR_NAME, "mcp.json"))) info.realPath = realPath;
   if (!isPathWithinRoots(realPath, resolveRealRoots(allowedRoots))) {
+    return { kind: "refused", path, realPath, reason: "link-outside", error: "a symbolic link outside the folders Pi Web may read" };
+  }
+  return { kind: "found", path, realPath };
+}
+
+/**
+ * Where a project file that does not exist yet would be created, under the
+ * same rule: inside the real `.pi/` folder when there is one, which must
+ * resolve inside `allowedRoots` (a dangling `.pi` link is refused), else in a
+ * `.pi/` the writer creates in the project folder's real path.
+ */
+export function projectMcpConfigCreatePath(
+  cwd: string,
+  allowedRoots: Set<string>,
+): { ok: true; realPath: string } | { ok: false; reason: "link-dangling" | "link-outside" | "unreadable"; error: string } {
+  const dir = join(cwd, CONFIG_DIR_NAME);
+  if (hasParentDirectorySegment(dir)) return { ok: false, reason: "unreadable", error: "the path has a .. segment" };
+  let realDir: string;
+  try {
+    realDir = realpathSync(dir);
+  } catch (error) {
+    if (isSymbolicLink(dir)) return { ok: false, reason: "link-dangling", error: "a symbolic link to nothing" };
+    if (errorCode(error) !== "ENOENT") return { ok: false, reason: "unreadable", error: errorMessage(error) };
+    try {
+      realDir = join(realpathSync(cwd), CONFIG_DIR_NAME);
+    } catch (cwdError) {
+      return { ok: false, reason: "unreadable", error: errorMessage(cwdError) };
+    }
+  }
+  if (!isPathWithinRoots(realDir, resolveRealRoots(allowedRoots))) {
+    return { ok: false, reason: "link-outside", error: "a symbolic link outside the folders Pi Web may read" };
+  }
+  return { ok: true, realPath: join(realDir, "mcp.json") };
+}
+
+function readProjectFile(cwd: string, allowedRoots: Set<string>): { info: McpConfigFileInfo; text?: string } {
+  const location = locateProjectMcpConfig(cwd, allowedRoots);
+  const info: McpConfigFileInfo = { scope: "project", path: location.path, exists: false, problems: [] };
+  if (location.kind === "missing") return { info };
+  const realPath = location.realPath;
+  if (realPath !== undefined && !samePath(realPath, join(realPathOr(cwd), CONFIG_DIR_NAME, "mcp.json"))) info.realPath = realPath;
+  if (location.kind === "refused") {
     info.exists = true;
-    problem(info, "link-outside", "a symbolic link outside the folders Pi Web may read");
+    problem(info, location.reason, location.error);
     return { info };
   }
-  return { info, text: readResolvedFile(realPath, info, PROJECT_MCP_CONFIG_MAX_BYTES) };
+  return { info, text: readResolvedFile(location.realPath, info, PROJECT_MCP_CONFIG_MAX_BYTES) };
 }
 
 // V8's message for an unexpected token quotes the source around it instead of
@@ -264,7 +321,7 @@ function describePosition(text: string, position: number): string {
  * a value, and gives the position the quote stood for. Messages that already
  * give a position quote nothing and are kept.
  */
-function jsonErrorMessage(error: unknown, text: string): string {
+export function jsonErrorMessage(error: unknown, text: string): string {
   const message = errorMessage(error);
   if (!message.includes('"')) return message;
   const match = UNEXPECTED_TOKEN.exec(message);
@@ -411,6 +468,7 @@ function describeServer(
     masked: false,
   };
   if (typeof validation === "string") info.invalidError = validation;
+  if (!isRecord(value)) info.notAnObject = true;
   const transport = transportOf(config, typeof validation === "string");
   if (transport) info.transport = transport;
   if (validation !== undefined && typeof validation !== "string") {

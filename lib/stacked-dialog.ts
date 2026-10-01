@@ -107,3 +107,24 @@ export function focusIfLost(doc: FocusDocument, target: Focusable | null): boole
   target.focus({ preventScroll: true });
   return true;
 }
+
+/** A control a change was started from: whether it is still on the page, and still disabled. */
+export interface PressedControl extends Focusable {
+  readonly isConnected: boolean;
+  readonly disabled?: boolean;
+}
+
+/**
+ * Focus after a change whose control was disabled while it ran, such as a
+ * switch in Settings › MCP: a focused element that becomes disabled loses
+ * focus (the HTML focus-fixup rule drops it to `body`), so a keyboard user
+ * would land on the page behind the panel. Focus goes back to that control,
+ * or to `fallback` when the control left the page or is disabled still (a
+ * server just turned off that may not be turned on again); as with
+ * `focusIfLost()`, only when focus fell to the page. Nothing moves when no
+ * control had focus to begin with (a click that focuses nothing, as in Safari).
+ */
+export function focusAfterChange(doc: FocusDocument, control: PressedControl | null, fallback: Focusable | null): boolean {
+  if (!control) return false;
+  return focusIfLost(doc, control.isConnected && !control.disabled ? control : fallback);
+}

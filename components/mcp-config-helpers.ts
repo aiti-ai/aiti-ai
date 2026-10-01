@@ -1,4 +1,5 @@
 import type {
+  McpActionResponse,
   McpAvailability,
   McpCodemodeInfo,
   McpCodemodePreference,
@@ -10,7 +11,9 @@ import type {
   McpResponse,
   McpScope,
   McpServerInfo,
+  McpServerRef,
 } from "@/lib/api-types";
+import { itemsToSwitch } from "./settings-ui-helpers";
 
 // Pure helpers for Settings › MCP (components/McpConfig.tsx): what each row
 // shows, how the groups are built, and how the overview is loaded. Client-safe:
@@ -437,12 +440,14 @@ export type McpLoadResult =
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Pick<Response, "ok" | "status" | "json">>;
 
-/** A refusal's diagnostic and reason code, or the HTTP status when the body has none. */
-function refusalFailure(data: unknown, status: number): McpLoadFailure {
+/** A refusal's diagnostic and reason code (with the file and server it names), or the HTTP status when the body has none. */
+function refusalFailure(data: unknown, status: number): McpActionFailure {
   const refusal = (data ?? {}) as Partial<McpErrorResponse>;
   return {
     error: typeof refusal.error === "string" ? refusal.error : `HTTP ${status}`,
     ...(typeof refusal.reason === "string" ? { reason: refusal.reason } : {}),
+    ...(typeof refusal.path === "string" ? { path: refusal.path } : {}),
+    ...(typeof refusal.name === "string" ? { name: refusal.name } : {}),
   };
 }
 
@@ -598,6 +603,150 @@ export async function saveMcpCodemodePreference(
   return withinDeadline<McpCodemodeSaveResult>(
     (deadlineSignal) => requestCodemodeSave(preference, fetchImpl, deadlineSignal),
     () => ({ ok: false, error: { error: `PUT /api/tools/settings did not answer within ${timeoutMs} ms`, timedOut: true } }),
+    timeoutMs,
+    signal,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Changing servers: POST /api/mcp
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether MCP being off leaves the panel read-only, as `POST /api/mcp`
+ * decides: the operator turned it off (`PI_WEB_DISABLE_MCP`), or the SDK's
+ * MCP modules cannot load, so nothing could be checked. `-builtin:mcp` does
+ * not: a project can turn it back on, and whether a global switch works must
+ * not depend on the folder Settings was opened from.
+ */
+export function mcpWritesOff(mcp: McpAvailability): boolean {
+  return !mcp.available && mcp.reason !== "builtin-disabled";
+}
+
+/** Why the panel cannot change a server of a scope; each is also a refusal reason the route gives. */
+export type McpWriteBlock = Extract<McpRefusalReason, "mcp-off" | "project-untrusted" | "trust-unreadable">;
+
+/**
+ * Why no server of `scope` can be changed here, or undefined when they can:
+ * MCP is off (`mcpWritesOff()`), or for the project, no decision trusts it
+ * (the rule sessions read its file by, `mcpProjectServersLoad()`) or
+ * `trust.json` cannot be read.
+ */
+export function mcpWriteBlock(scope: McpScope, data: Pick<McpResponse, "mcp" | "project">): McpWriteBlock | undefined {
+  if (mcpWritesOff(data.mcp)) return "mcp-off";
+  if (scope === "project") {
+    if (!data.project?.trust) return "trust-unreadable";
+    if (!mcpProjectServersLoad(data.project)) return "project-untrusted";
+  }
+  return undefined;
+}
+
+/** The sentence a notice adds when what it reports also keeps the panel from changing servers. */
+export const MCP_READ_ONLY_KEYS: Record<McpWriteBlock, string> = {
+  "mcp-off": "mcp.readOnly.mcp-off",
+  "project-untrusted": "mcp.readOnly.project-untrusted",
+  "trust-unreadable": "mcp.readOnly.trust-unreadable",
+};
+
+type McpSwitchable = Pick<McpServerInfo, "enabled" | "webPasswordField" | "notAnObject">;
+
+/** Whether a switch can change the entry at all: one that is not an object has no `enabled` to write. */
+function mcpServerSwitchable(server: McpSwitchable): boolean {
+  return server.notAnObject !== true;
+}
+
+/** Whether a switch may turn the entry on: the route refuses one that references PI_WEB_PASSWORD. */
+function mcpServerCanTurnOn(server: McpSwitchable): boolean {
+  return mcpServerSwitchable(server) && server.webPasswordField === undefined;
+}
+
+/**
+ * What a group switch sends: the servers not already as asked, as
+ * `itemsToSwitch()` picks them, except that one referencing PI_WEB_PASSWORD
+ * is never turned on (the route refuses it) and an entry that is not an object
+ * is never sent (nothing in it can be switched); `keptOff` counts the
+ * PI_WEB_PASSWORD ones, for the note under the heading.
+ */
+export function mcpGroupSwitchTargets<T extends McpSwitchable>(servers: readonly T[], enabled: boolean): { targets: T[]; keptOff: number } {
+  const sendable = enabled ? mcpServerCanTurnOn : mcpServerSwitchable;
+  return {
+    targets: itemsToSwitch(servers, enabled, (server) => server.enabled).filter(sendable),
+    keptOff: enabled ? servers.filter((server) => !server.enabled && mcpServerSwitchable(server) && !mcpServerCanTurnOn(server)).length : 0,
+  };
+}
+
+/**
+ * Whether a group switch reads on: some server is on, and every server it
+ * could turn on is. That is the Skills and Plugins rule (on only while every
+ * row is) over the servers the switch can change: an entry referencing
+ * PI_WEB_PASSWORD that is off, which it never turns on, or one that is not an
+ * object would otherwise keep the group partial for good, so the switch would
+ * always read off, every click would ask to turn it on and send nothing, and
+ * the group could never be switched off from its heading.
+ */
+export function mcpGroupSwitchChecked(servers: readonly McpSwitchable[]): boolean {
+  return servers.some((server) => server.enabled && mcpServerSwitchable(server))
+    && servers.every((server) => server.enabled || !mcpServerCanTurnOn(server));
+}
+
+/** What the panel asks `POST /api/mcp` to do. */
+export type McpActionRequest =
+  | { action: "enable" | "disable" | "remove"; scope: McpScope; name: string }
+  | { action: "set-enabled"; enabled: boolean; servers: McpServerRef[] }
+  | { action: "undo"; token: string };
+
+/** A refused change: the reason, plus the file and the server it names. */
+export interface McpActionFailure extends McpLoadFailure {
+  path?: string;
+  name?: string;
+}
+
+export type McpActionResult = { ok: true; data: McpActionResponse } | { ok: false; error: McpActionFailure };
+
+/** How long a change may take; the panel's controls wait meanwhile, as the Code mode switch does. */
+export const MCP_ACTION_TIMEOUT_MS = 15_000;
+
+async function requestMcpAction(body: Record<string, unknown>, fetchImpl: FetchLike, signal: AbortSignal): Promise<McpActionResult> {
+  let response: Awaited<ReturnType<FetchLike>>;
+  try {
+    response = await fetchImpl("/api/mcp", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal,
+    });
+  } catch (error) {
+    return { ok: false, error: { error: error instanceof Error ? error.message : String(error) } };
+  }
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    return { ok: false, error: { error: `HTTP ${response.status}` } };
+  }
+  if (response.ok && isMcpResponse(data)) return { ok: true, data: data as McpActionResponse };
+  return { ok: false, error: refusalFailure(data, response.status) };
+}
+
+/**
+ * Sends a change to `POST /api/mcp`, whose answer is the overview after it.
+ * `cwd` is the panel's project, sent only when the overview covers one (a
+ * folder the route refused would refuse the change too, global ones
+ * included). A change that times out may still land, so the caller reads the
+ * overview again on any failure.
+ */
+export async function postMcpAction(
+  request: McpActionRequest,
+  cwd: string | null,
+  fetchImpl: FetchLike = (input, init) => fetch(input, init),
+  signal?: AbortSignal,
+  timeoutMs: number = MCP_ACTION_TIMEOUT_MS,
+): Promise<McpActionResult> {
+  const body: Record<string, unknown> = { ...request, ...(cwd ? { cwd } : {}) };
+  return withinDeadline<McpActionResult>(
+    (deadlineSignal) => requestMcpAction(body, fetchImpl, deadlineSignal),
+    () => ({ ok: false, error: { error: `POST /api/mcp did not answer within ${timeoutMs} ms`, timedOut: true } }),
     timeoutMs,
     signal,
   );

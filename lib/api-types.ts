@@ -183,6 +183,11 @@ export interface McpServerInfo {
   /** The SDK's reason for refusing the entry; it never connects. */
   invalidError?: string;
   /**
+   * The entry is not a JSON object (`"name": "text"`), so it has no `enabled`
+   * to switch: `enabled` reads true, pi refuses it, and it can only be removed.
+   */
+  notAnObject?: true;
+  /**
    * What a connection uses: HTTP whenever the entry has a `url` key, as the
    * SDK's transport decides, even where the validator took it for stdio
    * (`type: "stdio"` beside a `url`). An entry with `invalidError` never
@@ -301,14 +306,84 @@ export type McpRefusalReason =
   | "trust-not-required"
   /** A session in the folder is running, and trusting would rebuild it mid-run (`/api/project-trust`). */
   | "session-busy"
-  /** The body does not ask for a change the route can make (`/api/tools/settings`). */
+  /** The body does not ask for a change the route can make (`/api/tools/settings`, `POST /api/mcp`). */
   | "invalid-request"
+  /** MCP is off on this server (`PI_WEB_DISABLE_MCP`, or the SDK's MCP modules cannot load), so `mcp.json` is not written. */
+  | "mcp-off"
+  /** A project entry, and no decision trusts the project, so its `.pi/mcp.json` is not written. */
+  | "project-untrusted"
+  /** The file to write is not JSON; it was left as it is (`path`). */
+  | "unparsable"
+  /** The file to write is not an object with an `mcpServers` object; left as it is (`path`). */
+  | "invalid-shape"
+  /** The file does not define the server (anymore) (`path`, `name`). */
+  | "server-missing"
+  /** The entry is not a JSON object, so it cannot be switched on or off, only removed (`path`, `name`). */
+  | "entry-not-object"
+  /** Turning on an entry that references `PI_WEB_PASSWORD`, which Pi Web refuses to connect (`name`). */
+  | "web-password"
+  /** The undo token is unknown, used, or past its 60 seconds. */
+  | "undo-unavailable"
+  /** Undo would put back a name the file defines again since the removal (`name`). */
+  | "undo-name-taken"
+  /** The file already defines a server of that name (`path`, `name`). */
+  | "name-taken"
+  /** A project file that is a symbolic link to nothing (`path`). */
+  | "link-dangling"
+  /** A project file whose real path is outside the folders Pi Web may read (`path`). */
+  | "link-outside"
+  /** The path is not a regular file (`path`). */
+  | "not-a-file"
+  /** A project file larger than 1 MiB (`path`). */
+  | "too-large"
+  /** Another process held the file's lock for longer than the writer waits (`path`). */
+  | "locked"
   /** Reading failed unexpectedly; `error` says how. */
   | "internal";
 
 export interface McpErrorResponse {
   error: string;
   reason: McpRefusalReason;
+  /** The configured path of the file a write refusal is about. */
+  path?: string;
+  /** The server a refusal is about. */
+  name?: string;
+}
+
+/** What `POST /api/mcp` can do to a server of either file (ADR 0006: a switch, Remove, and Undo). */
+export type McpServerAction = "enable" | "disable" | "remove" | "undo" | "set-enabled";
+
+export interface McpServerRef {
+  scope: McpScope;
+  name: string;
+}
+
+/**
+ * The browser's handle on a removal it may undo: the token, never the entry,
+ * which stays on the server and may hold literal secrets.
+ */
+export interface McpUndoInfo extends McpServerRef {
+  token: string;
+  /** The configured path it was removed from. */
+  path: string;
+  /** How long the undo stays possible from when the response was sent, in milliseconds. */
+  expiresInMs: number;
+}
+
+/** One server of a bulk `set-enabled`: no `reason` means it now says what was asked. */
+export interface McpActionItemResult extends McpServerRef {
+  error?: string;
+  reason?: McpRefusalReason;
+}
+
+/** `POST /api/mcp`: the overview read after the change, as GET returns it, plus what the action adds. */
+export interface McpActionResponse extends McpResponse {
+  /** `remove`: how to undo it. */
+  undo?: McpUndoInfo;
+  /** `undo`: the server put back. */
+  restored?: McpServerRef;
+  /** `set-enabled`: one result per server asked for, in request order. */
+  results?: McpActionItemResult[];
 }
 
 /** What a project's `.pi/mcp.json` declares, as `GET /api/project-trust` lists it. */
