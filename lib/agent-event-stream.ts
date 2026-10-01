@@ -267,6 +267,11 @@ export function createAgentEventStream(
             type: "connected",
             sessionId,
             isStreaming: session.isStreaming,
+            // onEvent() has just replayed every request the session still holds,
+            // so a reconnecting client can drop the ones closed while it was away.
+            pendingExtensionUiIds: bufferedEvents
+              .filter((event) => event.type === "extension_ui_request" && typeof event.id === "string")
+              .map((event) => event.id as string),
           });
           for (const event of bufferedEvents) forwardEvent(event, snapshot);
           if (snapshot !== undefined && snapshot !== null) {

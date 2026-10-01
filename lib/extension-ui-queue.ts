@@ -28,6 +28,16 @@ export function upsertExtensionUiRequest<T extends { id: string }>(queue: T[], r
   return queue.map((item, itemIndex) => itemIndex === index ? request : item);
 }
 
+/**
+ * Keeps only the requests the server still holds. A close sent while this tab's
+ * event stream was down never arrives, and the stale request would otherwise stay
+ * at the head of the queue, hiding every request behind it.
+ */
+export function retainExtensionUiRequests<T extends { id: string }>(queue: T[], ids: ReadonlySet<string>): T[] {
+  if (queue.every((item) => ids.has(item.id))) return queue;
+  return queue.filter((item) => ids.has(item.id));
+}
+
 /** Removes exactly the request with this id: answered, cancelled, expired, or closed by Stop. */
 export function removeExtensionUiRequest<T extends { id: string }>(queue: T[], id: string): T[] {
   if (!queue.some((item) => item.id === id)) return queue;
