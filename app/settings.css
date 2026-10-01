@@ -1790,6 +1790,113 @@
   to   { stroke-dashoffset: 0;  opacity: 1; }
 }
 
+/* Settings › MCP (components/McpConfig.tsx). Rows keep the shared 30px
+   height on the 190px phone sidebar: a badge never wraps and gives way to the
+   name, and an empty group says so in small type, not a full message block.
+   Detail values wrap
+   anywhere, so a long command or URL never widens the pane, and repository
+   text keeps white-space: normal, so its runs of spaces cannot push a tail
+   out of view. */
+.mcp-sidebar-badge {
+  flex-shrink: 0;
+  max-width: 45%;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mcp-sidebar-badge.is-warning {
+  color: #d97706;
+}
+
+.mcp-sidebar-badge.is-error {
+  color: #ef4444;
+}
+
+.mcp-sidebar-group-empty {
+  padding: 1px 8px 5px;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.mcp-config-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mcp-config-line {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.mcp-config-line.is-warning {
+  color: #d97706;
+}
+
+.mcp-config-line.is-dim {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.mcp-config-state {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.mcp-config-state.is-on {
+  color: var(--accent);
+}
+
+.mcp-config-state.is-off {
+  color: var(--text-dim);
+}
+
+.mcp-config-state.is-warning {
+  color: #d97706;
+}
+
+.mcp-config-state.is-error {
+  color: #ef4444;
+}
+
+.mcp-config-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mcp-config-chip {
+  max-width: 100%;
+  padding: 0 5px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.mcp-config-note {
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 /* Project trust dialog (components/ProjectTrustDialog.tsx). It sits above
    Settings (z-index 1000), which opens it too, keeps clear of the notch and
    the home indicator, and only its body scrolls, so a long MCP server list
