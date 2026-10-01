@@ -520,6 +520,22 @@ test("reconnects active shell output to its streaming tool call", () => {
   assert.match(chatWindowSource, /<MessageView message=\{streamState\.streamingMessage as AgentMessage\} toolResults=\{toolResultsMap\}/);
 });
 
+test("keeps calls a tool made itself out of the running tools", () => {
+  // A codemode script's nested calls would otherwise show as top-level running
+  // tools beside the script that made them.
+  for (const [from, to] of [
+    ['case "tool_execution_start"', 'case "tool_execution_update"'],
+    ['case "tool_execution_update"', 'case "tool_execution_end"'],
+    ['case "tool_execution_end"', 'case "queue_update"'],
+  ]) {
+    const caseSource = source.slice(source.indexOf(from), source.indexOf(to));
+    const guard = caseSource.indexOf("if (isNestedToolExecutionEvent(event)) break;");
+    assert.notEqual(guard, -1, `${from} must skip nested tool events`);
+    assert.ok(guard < caseSource.indexOf("const id = event.toolCallId"), `${from} must skip them before using the id`);
+  }
+  assert.match(source, /import \{ isNestedToolExecutionEvent, isSystemMessageEvent \} from "@\/lib\/agent-event-wire";/);
+});
+
 test("plays the enabled sound once for each extension dialog", () => {
   assert.match(chatWindowSource, /soundedExtensionDialogIdRef = useRef<string \| null>\(null\)/);
   assert.match(
