@@ -1,4 +1,5 @@
 import type { McpServerConfig, McpTransportFactory } from "@earendil-works/pi-coding-agent";
+import type { McpConfigFieldRef } from "./api-types";
 import type { PiSdkInternals } from "./pi-sdk-internals";
 import { sanitizeProjectCommandEnvironment } from "./project-command-env";
 
@@ -7,7 +8,7 @@ import { sanitizeProjectCommandEnvironment } from "./project-command-env";
 // configure or guard this Next.js process (ADR 0006, "Safety → Environment").
 // The SDK's default stdio transport passes the whole `process.env` instead.
 
-const WEB_PASSWORD_VARIABLE = "PI_WEB_PASSWORD";
+export const WEB_PASSWORD_VARIABLE = "PI_WEB_PASSWORD";
 
 type TransportInternals = Pick<
   PiSdkInternals,
@@ -21,35 +22,76 @@ export interface PiWebMcpTransportOptions {
   platform?: NodeJS.Platform;
 }
 
-/** The values pi resolves in this process before it connects: `${NAME}`, `$NAME`, `!command`. */
-function resolvedConfigValues(config: McpServerConfig): [field: string, value: string][] {
-  if (!("url" in config)) {
-    return Object.entries(config.env ?? {}).map(([key, value]): [string, string] => [`env "${key}"`, value]);
-  }
-  const values = Object.entries(config.headers ?? {}).map(([key, value]): [string, string] => [`header "${key}"`, value]);
-  if (config.oauth?.clientSecret !== undefined) values.push(["oauth.clientSecret", config.oauth.clientSecret]);
-  return values;
+export interface McpResolvedConfigValue extends McpConfigFieldRef {
+  value: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringEntries(value: unknown): [string, string][] {
+  return isRecord(value)
+    ? Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    : [];
 }
 
 /**
- * The field of `config` whose value references `PI_WEB_PASSWORD`, or
- * undefined. Values resolve against this process's environment, which still
- * holds the password, so removing it from the server's environment is not
- * enough. Names compare case-insensitively, as Windows resolves them. A
- * `!command` can read the variable without a `$` reference, so any mention
- * counts; the SDK still runs it with this process's whole environment.
+ * The values pi resolves in this process before it connects: `${NAME}`,
+ * `$NAME`, `!command`. The SDK's transport resolves a stdio entry's `env`, and
+ * an HTTP entry's headers and `oauth.clientSecret`, telling them apart by
+ * whether `url` is present. Anything else is used as written. Accepts an
+ * entry the SDK has not validated: values that are not strings are skipped.
  */
-export function findWebPasswordReference(
-  config: McpServerConfig,
+export function resolvedConfigValues(config: unknown): McpResolvedConfigValue[] {
+  if (!isRecord(config)) return [];
+  if (!("url" in config)) {
+    return stringEntries(config.env).map(([name, value]) => ({ kind: "env", name, value }));
+  }
+  const values: McpResolvedConfigValue[] = stringEntries(config.headers).map(([name, value]) => ({
+    kind: "header",
+    name,
+    value,
+  }));
+  const clientSecret = isRecord(config.oauth) ? config.oauth.clientSecret : undefined;
+  if (typeof clientSecret === "string") values.push({ kind: "oauth-client-secret", value: clientSecret });
+  return values;
+}
+
+/** `env "KEY"`, `header "Name"` or `oauth.clientSecret`, for messages. */
+export function describeConfigField(field: McpConfigFieldRef): string {
+  if (field.kind === "oauth-client-secret") return "oauth.clientSecret";
+  return `${field.kind} "${field.name}"`;
+}
+
+/**
+ * The value of `config` that references `PI_WEB_PASSWORD`, or undefined.
+ * Values resolve against this process's environment, which still holds the
+ * password, so removing it from the server's environment is not enough. Names
+ * compare case-insensitively, as Windows resolves them. A `!command` can read
+ * the variable without a `$` reference, so any mention counts; the SDK still
+ * runs it with this process's whole environment.
+ */
+export function findWebPasswordField(
+  config: unknown,
   internals: ConfigValueInternals,
-): string | undefined {
-  for (const [field, value] of resolvedConfigValues(config)) {
+): McpConfigFieldRef | undefined {
+  for (const { value, ...field } of resolvedConfigValues(config)) {
     const references = internals.isCommandConfigValue(value)
       ? value.toUpperCase().includes(WEB_PASSWORD_VARIABLE)
       : internals.getConfigValueEnvVarNames(value).some((name) => name.toUpperCase() === WEB_PASSWORD_VARIABLE);
     if (references) return field;
   }
   return undefined;
+}
+
+/** `findWebPasswordField()` as the field's description, for messages. */
+export function findWebPasswordReference(
+  config: McpServerConfig,
+  internals: ConfigValueInternals,
+): string | undefined {
+  const field = findWebPasswordField(config, internals);
+  return field && describeConfigField(field);
 }
 
 /** The sanitized environment with the server's own `env` on top; a Windows name replaces any casing of itself. */
