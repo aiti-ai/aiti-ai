@@ -96,31 +96,40 @@ export function ConfigSidebarGroupLabel({ children, aside }: { children: ReactNo
  * Switches every row of a sidebar group at once, for a group heading's
  * `aside`. Like the provider switch in the Models panel it is on only while
  * every row is, so a partial group reads as off beside its count and one click
- * completes it; on, a click switches the whole group off.
+ * completes it; on, a click switches the whole group off. `checked` replaces
+ * that rule for a group holding rows no switch can turn on, which would
+ * otherwise keep it off for good.
  */
 export function ConfigSidebarGroupSwitch({
   enabled,
   total,
+  checked,
   label,
   disabled = false,
   loading = false,
+  describedBy,
   onChange,
 }: {
   enabled: number;
   total: number;
+  /** Whether the switch reads on; every row on (`enabled === total`) when absent. */
+  checked?: boolean;
   label: string;
   disabled?: boolean;
   loading?: boolean;
+  /** The id of the visible text that says why the switch is disabled. */
+  describedBy?: string;
   onChange: (enabled: boolean) => void;
 }) {
   return (
     <span className="config-sidebar-group-switch">
       <span className="config-sidebar-group-count">{enabled}/{total}</span>
       <ConfigSwitch
-        checked={total > 0 && enabled === total}
+        checked={checked ?? (total > 0 && enabled === total)}
         disabled={disabled}
         loading={loading}
         label={label}
+        describedBy={describedBy}
         onChange={onChange}
       />
     </span>
@@ -454,10 +463,10 @@ export function ConfigAddSourcePanel({
   );
 }
 
-/** A banner above a panel's split view; `action` sits at its right edge. */
-export function ConfigNotice({ action, children }: { action?: ReactNode; children: ReactNode }) {
+/** A banner above a panel's split view; `action` sits at its right edge. `id` lets a control it explains point at it. */
+export function ConfigNotice({ id, action, children }: { id?: string; action?: ReactNode; children: ReactNode }) {
   return (
-    <div role="status" className={`config-notice${action ? " has-action" : ""}`}>
+    <div id={id} role="status" className={`config-notice${action ? " has-action" : ""}`}>
       {action ? <span className="config-notice-text">{children}</span> : children}
       {action}
     </div>
@@ -470,11 +479,13 @@ export function ConfigNotice({ action, children }: { action?: ReactNode; childre
  * button that does nothing.
  */
 export function ConfigTrustNotice({
+  id,
   message,
   trustLabel,
   trusting = false,
   onTrust,
 }: {
+  id?: string;
   message: string;
   trustLabel?: string;
   trusting?: boolean;
@@ -482,6 +493,7 @@ export function ConfigTrustNotice({
 }) {
   return (
     <ConfigNotice
+      id={id}
       action={onTrust && trustLabel ? (
         <ConfigButton size="small" onClick={onTrust} disabled={trusting}>
           {trustLabel}
@@ -542,13 +554,14 @@ export function ConfigFooterStatus({
   );
 }
 
+/** A button; `ref` reaches it (a prop since React 19), so a panel can move focus to it. */
 export function ConfigButton({
   variant = "secondary",
   size = "default",
   className,
   children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ConfigButtonVariant; size?: ConfigButtonSize }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: ConfigButtonVariant; size?: ConfigButtonSize; ref?: Ref<HTMLButtonElement> }) {
   return (
     <button
       type="button"
@@ -571,6 +584,7 @@ export function ConfigSwitch({
   loading = false,
   size = "default",
   label,
+  describedBy,
   onChange,
 }: {
   checked: boolean;
@@ -578,6 +592,8 @@ export function ConfigSwitch({
   loading?: boolean;
   size?: "default" | "small";
   label: string;
+  /** The id of visible text about the switch, such as why it is disabled; never only its tooltip. */
+  describedBy?: string;
   onChange: (checked: boolean) => void;
 }) {
   const inactive = disabled || loading;
@@ -588,6 +604,7 @@ export function ConfigSwitch({
       aria-checked={checked}
       aria-busy={loading || undefined}
       aria-label={label}
+      aria-describedby={describedBy}
       title={label}
       disabled={inactive}
       className={`config-switch${size === "small" ? " is-small" : ""}${loading ? " is-loading" : ""}`}

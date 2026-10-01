@@ -266,7 +266,7 @@ test("the MCP panel's words come from the locale files, and its reasons are visi
   // The panel's own title is the only one: no reason hides in a tooltip.
   assert.deepEqual(mcp.match(/\btitle=\{[^}]*\}/g), ['title={t("settings.mcp")}']);
   // The untrusted project's notice offers Trust (the page's trust dialog) through the shared block.
-  assert.match(mcp, /<ConfigTrustNotice message=\{noticeText\(trustNotice, t\)\} trustLabel=\{t\("mcp\.trust\.trustButton"\)\} onTrust=\{onTrust\} \/>/);
+  assert.match(mcp, /<ConfigTrustNotice id=\{trustNoticeId\} message=\{trustMessage\} trustLabel=\{t\("mcp\.trust\.trustButton"\)\} onTrust=\{onTrust\} \/>/);
   // File problems open a list in the footer instead of a tooltip.
   assert.match(mcp, /<ConfigFooterStatus[\s\S]*?details=\{problems\.map\(/);
   for (const primitive of ["ConfigDetailGrid", "ConfigDetailGridRow", "ConfigScopeTag", "ConfigStatusDot", "ConfigNotice"]) {
@@ -288,4 +288,26 @@ test("skills and plugins switch whole groups from the group heading, not from a 
   assert.match(cssSource, /\.config-sidebar-group-label \{[\s\S]*?display: flex/);
   assert.match(cssSource, /\.config-switch \{[\s\S]*?width: 32px[\s\S]*?height: 18px/);
   assert.match(cssSource, /\.config-sidebar-group-status \{[\s\S]*?max-height: 4\.2em[\s\S]*?white-space: pre-wrap/);
+});
+
+test("Settings › MCP switches whole groups from the heading too, and a disabled switch points at its reason", () => {
+  const mcp = Object.fromEntries(configSources).McpConfig;
+  // The n/m count became the group switch, in the heading row, with what it left undone under it.
+  assert.match(mcp, /<ConfigSidebarGroupLabel\n\s*aside=\{total > 0 \? \(\n\s*<ConfigSidebarGroupSwitch/);
+  assert.match(mcp, /<ConfigSidebarGroupStatus note=\{statusText\.note\} error=\{statusText\.error\} \/>/);
+  // MCP passes its own on rule (entries the switch never turns on do not hold it off); the others keep every row on.
+  assert.match(templateSource, /checked=\{checked \?\? \(total > 0 && enabled === total\)\}/);
+  assert.match(mcp, /checked=\{checked\}/);
+  for (const name of ["SkillsConfig", "PluginsConfig"]) {
+    const groupSwitch = Object.fromEntries(configSources)[name].match(/<ConfigSidebarGroupSwitch[\s\S]*?\/>/)?.[0] ?? "";
+    assert.doesNotMatch(groupSwitch, /checked=/, name);
+  }
+  assert.doesNotMatch(mcp, /className="sr-only"/);
+  // Why a control cannot be used is visible text it is described by, never only a tooltip.
+  assert.match(templateSource, /export function ConfigSwitch\(\{[\s\S]*?describedBy,[\s\S]*?aria-describedby=\{describedBy\}/);
+  assert.match(templateSource, /export function ConfigSidebarGroupSwitch\(\{[\s\S]*?describedBy=\{describedBy\}/);
+  assert.match(templateSource, /export function ConfigNotice\(\{ id, action, children \}[\s\S]*?<div id=\{id\} role="status"/);
+  assert.match(templateSource, /export function ConfigTrustNotice\(\{\n\s*id,[\s\S]*?<ConfigNotice\n\s*id=\{id\}/);
+  assert.match(mcp, /describedBy=\{block \? blockNoticeId : undefined\}/);
+  assert.match(mcp, /<ConfigSwitch[\s\S]*?describedBy=\{noteId\}/);
 });
