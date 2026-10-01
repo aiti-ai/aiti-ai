@@ -14,6 +14,7 @@ import type {
   McpScope,
   McpServerInfo,
   McpTransportKind,
+  McpVariableReference,
 } from "./api-types";
 import {
   isMcpDisabledByOperator,
@@ -364,6 +365,24 @@ interface DescribedServer {
   loads: boolean;
 }
 
+const TEMPLATE_REFERENCE = /\$(?:[$!]|\{([^}]*)\}|([A-Za-z_][A-Za-z0-9_]*))/g;
+const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * The variables a value that is not a `!command` reads, as the SDK's
+ * `getConfigValueEnvVarNames()` parses them, for when its internals cannot be
+ * loaded: `${NAME}` and `$NAME`, with `$$` and `$!` escaping a literal, and
+ * `${…}` around anything but a name left as written.
+ */
+export function templateVariableNames(value: string): string[] {
+  const names: string[] = [];
+  for (const [, braced, bare] of value.matchAll(TEMPLATE_REFERENCE)) {
+    const name = braced !== undefined ? (VARIABLE_NAME.test(braced) ? braced : undefined) : bare;
+    if (name !== undefined && !names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
 function fieldRef({ kind, name }: McpConfigFieldRef): McpConfigFieldRef {
   return name === undefined ? { kind } : { kind, name };
 }
@@ -388,6 +407,7 @@ function describeServer(
     headerNames: isRecord(config.headers) ? Object.keys(config.headers) : [],
     usesOAuth: false,
     commandFields: [],
+    variableReferences: [],
     masked: false,
   };
   if (typeof validation === "string") info.invalidError = validation;
@@ -425,6 +445,13 @@ function describeServer(
   const isCommand = internals ? (text: string) => internals.isCommandConfigValue(text) : (text: string) => text.startsWith("!");
   const values = resolvedConfigValues(config);
   info.commandFields = values.filter((field) => isCommand(field.value)).map(fieldRef);
+  // Named, never expanded: these are the host's variables the entry hands to
+  // its process or sends to its URL, which the trust dialog has to show.
+  const variableNames = internals ? (text: string) => internals.getConfigValueEnvVarNames(text) : templateVariableNames;
+  info.variableReferences = values
+    .filter((field) => !isCommand(field.value))
+    .map((field): McpVariableReference => ({ ...fieldRef(field), variables: variableNames(field.value) }))
+    .filter((reference) => reference.variables.length > 0);
   const webPasswordField = internals
     ? findWebPasswordField(config, internals)
     : values.find((field) => field.value.toUpperCase().includes(WEB_PASSWORD_VARIABLE));
@@ -468,10 +495,44 @@ export function readMcpServerConfigs(options: McpConfigReadOptions): McpConfigRe
   const projectNames = new Set(
     described.filter(({ info, loads }) => info.scope === "project" && loads).map(({ info }) => info.name),
   );
+  const shadowedNames = new Set<string>();
   for (const { info } of described) {
-    if (info.scope === "global" && projectNames.has(info.name)) info.shadowedByProject = true;
+    if (info.scope === "global" && projectNames.has(info.name)) {
+      info.shadowedByProject = true;
+      shadowedNames.add(info.name);
+    }
+  }
+  for (const { info } of described) {
+    if (info.scope === "project" && shadowedNames.has(info.name)) info.replacesGlobal = true;
   }
   return { files, servers: described.map(({ info }) => info) };
+}
+
+export interface ProjectMcpServers {
+  file: McpConfigFileInfo;
+  servers: McpServerInfo[];
+}
+
+/**
+ * What a project's `.pi/mcp.json` declares, for the trust dialog: read as
+ * `GET /api/mcp` reads it, from the file only and whether or not the project
+ * is trusted. The global file is read too, only to tell which project entries
+ * replace a global one of their name.
+ */
+export async function readProjectMcpServers(options: {
+  agentDir: string;
+  cwd: string;
+  allowedRoots: Set<string>;
+}): Promise<ProjectMcpServers> {
+  const internals = await loadPiSdkInternals();
+  const { files, servers } = readMcpServerConfigs({
+    agentDir: options.agentDir,
+    project: { cwd: options.cwd, allowedRoots: options.allowedRoots },
+    internals: internals.ok ? internals : undefined,
+  });
+  const file = files.find((info) => info.scope === "project");
+  if (!file) throw new Error("the project file was not read");
+  return { file, servers: servers.filter((server) => server.scope === "project") };
 }
 
 // ---------------------------------------------------------------------------

@@ -114,6 +114,16 @@ export interface McpConfigFieldRef {
   name?: string;
 }
 
+/**
+ * A value that reads environment variables of the process connecting the
+ * server (`${NAME}` or `$NAME`), named without expanding anything: a stdio
+ * server gets them in its environment, an HTTP server in a header or in the
+ * OAuth client secret it is sent.
+ */
+export interface McpVariableReference extends McpConfigFieldRef {
+  variables: string[];
+}
+
 export type McpConfigFileProblemReason =
   /** The file is not JSON. */
   | "unparsable"
@@ -190,12 +200,16 @@ export interface McpServerInfo {
   signedIn?: boolean;
   /** Values that run a shell command on every connection. */
   commandFields: McpConfigFieldRef[];
+  /** Values that read the host's environment variables on every connection; a `!command` is in `commandFields` instead. */
+  variableReferences: McpVariableReference[];
   /** The value that references `PI_WEB_PASSWORD`; Pi Web refuses to connect such an entry. */
   webPasswordField?: McpConfigFieldRef;
   /** Some of `command`, `args` or `url` was masked. */
   masked: boolean;
   /** A global entry the project file defines too; the project's replaces it while the project is trusted. */
   shadowedByProject?: boolean;
+  /** The project entry that replaces a global entry of its name while the project is trusted; the counterpart of `shadowedByProject`. */
+  replacesGlobal?: boolean;
 }
 
 export type McpUnavailableReason = "operator-disabled" | "internals-unavailable" | "builtin-disabled";
@@ -245,7 +259,7 @@ export interface McpResponse {
   project?: McpProjectInfo;
 }
 
-/** Why `/api/mcp` refused a request; later routes add their own codes. */
+/** Why `/api/mcp` or `/api/project-trust` refused a request; later routes add their own codes. */
 export type McpRefusalReason =
   /** `cwd` is empty or not an absolute path. */
   | "cwd-invalid"
@@ -253,12 +267,50 @@ export type McpRefusalReason =
   | "cwd-denied"
   /** `cwd` is not a directory (anymore). */
   | "cwd-not-directory"
+  /** A mutating request that did not come from Pi Web's own page (origin or host check). */
+  | "request-denied"
+  /** A mutating request whose body is not sent as JSON. */
+  | "content-type"
+  /** `trust.json` cannot be read, or is locked by another process (`/api/project-trust`). */
+  | "trust-unreadable"
+  /** The project has no resources that need trust (anymore), so there is nothing to trust (`/api/project-trust`). */
+  | "trust-not-required"
+  /** A session in the folder is running, and trusting would rebuild it mid-run (`/api/project-trust`). */
+  | "session-busy"
   /** Reading failed unexpectedly; `error` says how. */
   | "internal";
 
 export interface McpErrorResponse {
   error: string;
   reason: McpRefusalReason;
+}
+
+/** What a project's `.pi/mcp.json` declares, as `GET /api/project-trust` lists it. */
+export interface ProjectMcpListing {
+  /** The project file; absent only when listing failed (`mcpError`). */
+  mcpFile?: McpConfigFileInfo;
+  /** Its entries in file order, described like `McpResponse.servers`. */
+  mcpServers: McpServerInfo[];
+  /** Listing failed unexpectedly. */
+  mcpError?: string;
+}
+
+/**
+ * GET /api/project-trust: the trust status, plus what the project's
+ * `.pi/mcp.json` declares, for the trust dialog to list before anyone trusts
+ * the folder. Read from the file only, as `/api/mcp` reads it; nothing is
+ * resolved or run.
+ */
+export interface ProjectTrustResponse extends ProjectTrustStatus, ProjectMcpListing {}
+
+/**
+ * GET /api/project-trust when `trust.json` cannot be read (500): the listing
+ * still comes along, since it does not depend on the trust store, so the
+ * dialog can show it while saying why the status is unknown.
+ */
+export interface ProjectTrustUnreadableResponse extends ProjectMcpListing {
+  error: string;
+  reason: "trust-unreadable";
 }
 
 export interface AppUpdateResponse {
