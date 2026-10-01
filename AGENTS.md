@@ -118,6 +118,7 @@ lib/
   pi-sdk-internals.ts  file-URL loader for SDK modules the package does not export (MCP connection, config, OAuth)
   mcp-transport.ts     MCP transport factory: stdio servers get the sanitized project-command env, never PI_WEB_PASSWORD
   builtin-extensions.ts  codemode / tool-search / mcp built-ins for normal sessions, PI_WEB_DISABLE_MCP, sandbox self-test
+  codemode-view.ts     display helpers for codemode cards: script, nested calls, header-free output, progress
   rpc-manager.ts      AgentSessionWrapper + registry + startRpcSession
   session-reader.ts   SessionManager wrappers + path cache + buildSessionContext adapter
   subagent-settings.ts  read/write ~/.pi/agent/agents/settings.json
@@ -133,6 +134,7 @@ components/
   ChatWindow.tsx      chat composition + completion sound wrapper
   ChatInput.tsx       input bar + model/thinking/tools/compact controls
   MessageView.tsx     renders one message (user/assistant/toolCall/toolResult)
+  CodemodeToolView.tsx  codemode card body: highlighted script + the tool calls it made
   BranchNavigator.tsx in-session branch switcher
   ChatMinimap.tsx     scroll minimap alongside the message list
   MarkdownBody.tsx    markdown renderer
@@ -224,6 +226,7 @@ Newer pi emits `compaction_start` / `compaction_end`; older versions emitted `au
 - Calls a tool makes itself through `ctx.executeTool()` (a codemode script's) emit `tool_execution_*` with `parentToolCallId` and ids `<parent>/<n>`. `toClientAgentEvent()` sends their start and end slim with `parentToolCallId`, and drops their updates. Test for nesting *before* rebuilding an update: the rebuild keeps only `toolCallId`, `toolName` and `partialResult`, so a nested update would reach the browser as a top-level tool. `handleAgentEvent` keeps nested events out of the running-tools phase, and `AgentSessionWrapper` never records them for replay; a parent's end also forgets every id under `<parent>/`, and `agent_end` clears the replay set.
 - `tool_execution_end` never carries `result`, which can hold up to 1 MiB of bash output in `structuredContent`: the browser reads only its ids and renders the tool result message that follows. `entry_appended` is omitted, since nothing reads it and a custom entry can be 1 MiB.
 - A codemode update publishes every call made so far each time one starts or ends, so its `details.calls` is cut to the newest 200 with `omittedCalls` counting the rest.
+- A codemode card shows the script and the calls it made (`details.calls`) as rows inside the card, never as cards of their own: those calls never reach the model as tool calls. `handleAgentEvent` keeps a running script's progress snapshot in `activeToolResults`, as it does for shell output, so the card lists calls while they run; a snapshot has no content, which is how the card tells it from a finished result and skips the empty output. The finished result's "Script completed / Wall time / Output:" header is dropped from the output, since the card's colour and duration already say it.
 - `createAgentEventStream()` coalesces `tool_execution_update` per `toolCallId` (latest wins, `TOOL_UPDATE_COALESCE_MS`). Before forwarding a `tool_execution_end` it discards that id's pending update, and `agent_end` discards them all: an update delivered after the end would put the tool back in the running phase. Everything else is forwarded at once, so a pending update can arrive after unrelated events.
 
 ### Transcript system messages, usage entries and context edits (pi >= 0.86)
