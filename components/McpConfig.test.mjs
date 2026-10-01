@@ -11,6 +11,7 @@ const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n.tsx");
 const { McpConfig, McpConfigView } = await jiti.import("./McpConfig.tsx");
+const { ConfigSidebarGroupSwitch } = await jiti.import("./SettingsUi.tsx");
 const { enLocale } = await jiti.import("@/lib/i18n/messages/en.ts");
 const source = await readFile(new URL("./McpConfig.tsx", import.meta.url), "utf8");
 const helperSource = await readFile(new URL("./mcp-config-helpers.ts", import.meta.url), "utf8");
@@ -135,9 +136,13 @@ test("with a project, its group comes first and every row names its state", () =
   const html = view({ cwd: "/Users/me/repo", load: { state: "loaded", data } });
   const markup = decode(html);
   assert.ok(markup.indexOf(">project<") < markup.indexOf(">global<"));
-  // n/m counts read as a sentence to a screen reader.
-  assert.match(markup, /<span aria-hidden="true">2\/2<\/span><span class="sr-only">2 of 2 servers turned on<\/span>/);
-  assert.match(markup, /<span aria-hidden="true">1\/2<\/span><span class="sr-only">1 of 2 servers turned on<\/span>/);
+  // Each heading holds its n/m count and the group switch, on only while every server is.
+  assert.match(markup, /<span class="config-sidebar-group-count">1\/2<\/span><button type="button" role="switch" aria-checked="false" aria-label="Turn on every global server"/);
+  // The untrusted project's switch waits for trust, pointing at the notice that says so.
+  const projectSwitch = markup.match(/<span class="config-sidebar-group-count">2\/2<\/span>(<button[^>]*>)/)?.[1];
+  assert.match(projectSwitch, /aria-checked="true" aria-label="Turn off every project server" aria-describedby="([^"]+)"[^>]*disabled=""/);
+  const noticeId = projectSwitch.match(/aria-describedby="([^"]+)"/)[1];
+  assert.match(markup, new RegExp(`<div id="${noticeId}" role="status" class="config-notice">This project is not trusted`));
   // The project is not trusted, so its entry does not connect and the global one is not replaced.
   assert.match(row(html, "shared: Project"), /aria-label="shared: Project not trusted"/);
   assert.match(row(html, "shared: On"), /aria-label="shared: On"/);
@@ -147,8 +152,9 @@ test("with a project, its group comes first and every row names its state", () =
   for (const badge of ["untrusted", "off", "refused"]) {
     assert.match(markup, new RegExp(`class="mcp-sidebar-badge is-[a-z]+">${badge}<`), badge);
   }
-  // The untrusted project gets the trust notice; without a Trust handler it has no button.
-  assert.match(markup, /<div role="status" class="config-notice">This project is not trusted, so the servers in its \.pi\/mcp\.json do not connect\.<\/div>/);
+  // The untrusted project gets the trust notice, which also says its servers cannot be changed
+  // here; without a Trust handler it has no button.
+  assert.match(markup, /<div id="[^"]+" role="status" class="config-notice">This project is not trusted, so the servers in its \.pi\/mcp\.json do not connect\. Pi Web does not change them until the project is trusted\.<\/div>/);
 
   const trustedHtml = view({
     cwd: "/Users/me/repo",
@@ -333,7 +339,7 @@ test("an untrusted project's notice offers Trust only where the trust dialog wou
 
   // The folder requires trust and is not trusted: the notice and its button share one line.
   const offered = withTrust({ trust: untrusted });
-  assert.match(offered, /<div role="status" class="config-notice has-action"><span class="config-notice-text">This project is not trusted, so the servers in its \.pi\/mcp\.json do not connect\.<\/span><button type="button"[^>]*>Trust project…<\/button><\/div>/);
+  assert.match(offered, /<div id="[^"]+" role="status" class="config-notice has-action"><span class="config-notice-text">This project is not trusted, so the servers in its \.pi\/mcp\.json do not connect\. Pi Web does not change them until the project is trusted\.<\/span><button type="button"[^>]*>Trust project…<\/button><\/div>/);
   // An ancestor marked untrusted: trusting records this folder's own decision, which wins.
   assert.match(withTrust({ trust: { ...untrusted, decision: false, decisionPath: "/Users/me", inherited: true } }), trustButton);
 
@@ -360,7 +366,7 @@ test("an untrusted project's notice offers Trust only where the trust dialog wou
 });
 
 test("the container passes Trust to the notice and reloads in place when the page's trust changes", () => {
-  assert.match(source, /<ConfigTrustNotice message=\{noticeText\(trustNotice, t\)\} trustLabel=\{t\("mcp\.trust\.trustButton"\)\} onTrust=\{onTrust\} \/>/);
+  assert.match(source, /<ConfigTrustNotice id=\{trustNoticeId\} message=\{trustMessage\} trustLabel=\{t\("mcp\.trust\.trustButton"\)\} onTrust=\{onTrust\} \/>/);
   assert.match(source, /const onTrust = onTrustProject && mcpProjectTrustable\(data\?\.project\) \? onTrustProject : undefined;/);
   assert.match(source, /onTrustProject=\{onTrustProject\}/);
   // A new decision loads the panel again without remounting it, so the selection stays.
@@ -376,7 +382,7 @@ test("when trusting removes Trust… under the keyboard, focus goes to the selec
   // only when it fell to the page (lib/stacked-dialog.test.mjs pins focusIfLost()).
   assert.match(source, /const offersTrust = trustNotice\?\.kind === "untrusted" && onTrust !== undefined;/);
   assert.match(source, /const offeredTrustRef = useRef\(offersTrust\);\n\s*useEffect\(\(\) => \{\n\s*const offeredTrust = offeredTrustRef\.current;\n\s*offeredTrustRef\.current = offersTrust;\n\s*if \(offeredTrust && !offersTrust\) focusIfLost\(document, selectedRowRef\.current\);\n\s*\}, \[offersTrust\]\);/);
-  assert.match(source, /import \{ focusIfLost \} from "@\/lib\/stacked-dialog";/);
+  assert.match(source, /import \{ focusAfterChange, focusIfLost \} from "@\/lib\/stacked-dialog";/);
   // The ref follows the selection: the Code mode row or a server row, whichever is selected.
   assert.match(source, /<ConfigSidebarItem\n\s*ref=\{active \? rowRef : undefined\}\n\s*active=\{active\}/);
   assert.match(source, /<ConfigSidebarItem\n\s*key=\{key\}\n\s*ref=\{selected === key \? selectedRowRef : undefined\}\n\s*active=\{selected === key\}/);
@@ -573,10 +579,12 @@ test("the container starts loading and remembers the selection per project", () 
   assert.match(source, /setSelected\(\(current\) => pickMcpSelection\(mcpServerGroups\(result\.data, Boolean\(cwd\)\), current\)\);/);
   // A late answer from an earlier load never replaces a newer one.
   assert.match(source, /if \(request !== requestRef\.current\) return;/);
-  // The servers are read-only: the one write is the Code mode choice, through the tools settings route.
+  // Two writes, both in the helpers: the Code mode choice through the tools settings route, and
+  // the servers' changes through the MCP route.
   assert.doesNotMatch(source, /method:/);
-  assert.deepEqual([...helperSource.matchAll(/method: "([A-Z]+)"/g)].map((match) => match[1]), ["PUT"]);
+  assert.deepEqual([...helperSource.matchAll(/method: "([A-Z]+)"/g)].map((match) => match[1]), ["PUT", "POST"]);
   assert.match(helperSource, /fetchImpl\("\/api\/tools\/settings", \{\n\s*method: "PUT",/);
+  assert.match(helperSource, /fetchImpl\("\/api\/mcp", \{\n\s*method: "POST",/);
   assert.doesNotMatch(source, /style=\{/);
 });
 
@@ -620,4 +628,260 @@ test("every string the panel shows is translated", () => {
   for (const key of keys) assert.equal(typeof messages[key], "string", `${key} is missing from en.ts`);
   // No English sentence is written into the markup itself.
   assert.doesNotMatch(source, />\s*[A-Z][a-z]+(?: [a-z]+){2,}[.:]?\s*</);
+});
+
+/** The opening tags of the selected server's Remove button and switch, and the note under them. */
+function detailControls(html) {
+  const markup = decode(html);
+  const actions = markup.match(/<div class="config-detail-actions">([\s\S]*?)<\/div><\/div><div id="([^"]+)" class="config-detail-heading-note">([^<]*)<\/div>/);
+  assert.ok(actions, "the detail header holds Remove, the switch and a note");
+  const [, buttons, noteId, note] = actions;
+  return {
+    remove: buttons.match(/<button[^>]*class="config-button config-button-danger[^"]*"[^>]*>([^<]*)<\/button>/),
+    toggle: buttons.match(/<button type="button" role="switch"[^>]*>/)?.[0],
+    noteId,
+    note,
+  };
+}
+
+const groupOverview = (overrides = {}) => overview({
+  files: [globalFile, projectFile],
+  servers: [
+    server({ name: "docs", transport: "http", url: "https://docs/mcp" }),
+    server({ name: "pw", transport: "http", url: "https://pw/mcp", enabled: false, webPasswordField: { kind: "header", name: "Authorization" } }),
+    server({ name: "repo", scope: "project", sourcePath: projectFile.path, transport: "stdio", command: "node" }),
+  ],
+  project: { cwd: "/Users/me/repo", trust: trusted },
+  ...overrides,
+});
+
+function writeView(props = {}) {
+  return view({ cwd: "/Users/me/repo", load: { state: "loaded", data: groupOverview(props.data) }, selected: "global\0docs", ...props.view });
+}
+
+test("a server's detail switches it and removes it, and says when a change applies", () => {
+  const { remove, toggle, noteId, note } = detailControls(writeView());
+  assert.equal(remove[1], "Remove");
+  assert.doesNotMatch(remove[0], /disabled/);
+  assert.match(toggle, new RegExp(`aria-checked="true" aria-label="Turn docs off" aria-describedby="${noteId}"`));
+  assert.doesNotMatch(toggle, /disabled/);
+  assert.equal(note, "Changes take effect at each open session's next message.");
+  // A server that is off offers to turn it on.
+  const off = detailControls(writeView({ data: { servers: [server({ name: "docs", enabled: false, transport: "http", url: "https://docs/mcp" })] } }));
+  assert.match(off.toggle, /aria-checked="false" aria-label="Turn docs on"/);
+});
+
+test("why a server cannot be changed is the visible note its controls point at", () => {
+  // An untrusted project: neither control works, and the note says why.
+  const untrustedProject = detailControls(writeView({
+    data: { project: { cwd: "/Users/me/repo", trust: untrusted } },
+    view: { selected: "project\0repo" },
+  }));
+  assert.equal(untrustedProject.note, "This project is not trusted, so Pi Web does not change its .pi/mcp.json.");
+  assert.match(untrustedProject.toggle, /disabled=""/);
+  assert.match(untrustedProject.remove[0], new RegExp(`disabled="" aria-describedby="${untrustedProject.noteId}"`));
+  // ...while the global servers beside it can still be changed.
+  assert.doesNotMatch(detailControls(writeView({ data: { project: { cwd: "/Users/me/repo", trust: untrusted } } })).toggle, /disabled/);
+  // An unreadable trust store blocks the project the same way, with its own reason.
+  assert.equal(
+    detailControls(writeView({ data: { project: { cwd: "/Users/me/repo", trustError: "locked" } }, view: { selected: "project\0repo" } })).note,
+    "Pi Web cannot read the trust store (trust.json), or another program has it locked.",
+  );
+
+  // MCP off on the server: everything is read-only, and the banner says so too.
+  const offHtml = writeView({ data: { mcp: { available: false, reason: "operator-disabled", error: "x" } } });
+  const mcpOff = detailControls(offHtml);
+  assert.equal(mcpOff.note, "MCP is off on this Pi Web server, so it changes no server.");
+  assert.match(mcpOff.toggle, /disabled=""/);
+  assert.match(text(offHtml), /MCP is off: PI_WEB_DISABLE_MCP is set where Pi Web runs\. The servers are listed, but no session connects them\. Servers cannot be changed here while MCP is off\./);
+  const offSwitch = decode(offHtml).match(/<span class="config-sidebar-group-count">1\/2<\/span>(<button[^>]*>)/)[1];
+  const bannerId = offSwitch.match(/aria-describedby="([^"]+)"/)?.[1];
+  assert.ok(bannerId, "the disabled group switch points at the banner");
+  assert.match(decode(offHtml), new RegExp(`<div id="${bannerId}" role="status" class="config-notice">MCP is off`));
+  // -builtin:mcp leaves the files writable: a project can turn MCP back on.
+  const builtin = writeView({ data: { mcp: { available: false, reason: "builtin-disabled", error: "x", settingsPath: "/s.json" } } });
+  assert.doesNotMatch(detailControls(builtin).toggle, /disabled/);
+  assert.doesNotMatch(text(builtin), /cannot be changed here/);
+
+  // An entry that references PI_WEB_PASSWORD is never turned on, but can be removed.
+  const password = detailControls(writeView({ view: { selected: "global\0pw" } }));
+  assert.equal(password.note, "It references PI_WEB_PASSWORD, so Pi Web does not turn it on.");
+  assert.match(password.toggle, /aria-checked="false"[^>]*disabled=""/);
+  assert.doesNotMatch(password.remove[0], /disabled/);
+});
+
+test("while a change is on its way every control waits, and the one in use says so", () => {
+  const removing = writeView({ view: { busy: "remove:global\0docs" } });
+  const controls = detailControls(removing);
+  assert.equal(controls.remove[1], "Removing…");
+  assert.match(controls.remove[0], /disabled=""/);
+  assert.match(controls.toggle, /disabled=""/);
+  assert.match(decode(removing), /<button type="button" disabled="" class="config-button config-button-secondary config-button-default">Refresh<\/button>/);
+  for (const match of decode(removing).matchAll(/<button type="button" role="switch"[^>]*>/g)) assert.match(match[0], /disabled=""/);
+
+  const switching = detailControls(writeView({ view: { busy: "switch:global\0docs" } }));
+  assert.match(switching.toggle, /aria-busy="true"/);
+  assert.equal(switching.remove[1], "Remove");
+  // A load on its way holds the controls too, so a click acts on the listing shown.
+  assert.match(detailControls(writeView({ view: { refreshing: true } })).toggle, /disabled=""/);
+  // The group switch shows its own wait (on: the one server off references PI_WEB_PASSWORD).
+  assert.match(decode(writeView({ view: { busy: "group:global" } })), /<span class="config-sidebar-group-count">1\/2<\/span><button type="button" role="switch" aria-checked="true" aria-busy="true"/);
+});
+
+test("a failed change is said in the server's pane with its reason, and a timeout as possibly landed", () => {
+  const failed = (failure, key = "global\0docs") => decode(writeView({ view: { actionError: { key, failure } } }))
+    .match(/<p role="alert" class="mcp-config-line is-error">([^<]*)<\/p>/)?.[1];
+  assert.equal(failed({ error: "/x: Unexpected token", reason: "unparsable", path: "/x" }), "Could not change the server: The file is not valid JSON, so Pi Web left it unchanged.");
+  assert.equal(failed({ error: "EACCES: permission denied", reason: "internal" }), "Could not change the server: EACCES: permission denied");
+  assert.equal(failed({ error: "POST /api/mcp did not answer within 15000 ms", timedOut: true }),
+    "Could not change the server: Pi Web did not answer in time, so the change may not have been made.");
+  // Another server's failure is not shown on this one.
+  assert.equal(failed({ error: "x", reason: "server-missing" }, "global\0pw"), undefined);
+});
+
+test("the group switch names what it left undone under the heading", () => {
+  const html = decode(writeView({ view: { groupStatus: {
+    scope: "global",
+    keptOff: 1,
+    failures: [{ name: "gone", failure: { error: "x", reason: "server-missing" } }, { name: "odd", failure: { error: "EIO", reason: "internal" } }],
+    total: 3,
+  } } }));
+  const status = html.match(/<div class="config-sidebar-group-status">([\s\S]*?)<\/div><\/div>/)?.[1];
+  assert.ok(status, "the status sits under the Global heading");
+  assert.ok(html.indexOf("config-sidebar-group-status") > html.indexOf(">global<"));
+  assert.match(status, /<div role="status" class="config-sidebar-group-note">1 server\(s\) that reference PI_WEB_PASSWORD stayed off\.<\/div>/);
+  assert.match(status, /<div role="alert" class="config-sidebar-group-error">Could not change 2 of 3 servers:\ngone: The file no longer defines this server\.\nodd: EIO/);
+  const whole = decode(writeView({ view: { groupStatus: { scope: "project", keptOff: 0, failures: [], total: 1, error: { error: "x", reason: "project-untrusted" } } } }));
+  assert.match(whole, /<div role="alert" class="config-sidebar-group-error">Could not change the server: This project is not trusted, so Pi Web does not change its \.pi\/mcp\.json\.<\/div>/);
+  assert.ok(whole.indexOf("config-sidebar-group-error") < whole.indexOf(">global<"), "under the Project heading");
+});
+
+test("a removal offers Undo until the route lets it go, and says why an undo failed", () => {
+  const notice = (undo) => decode(writeView({ view: { undo: { token: "t", scope: "global", name: "lint", path: "/Users/me/.pi/agent/mcp.json", expiresInMs: 60_000, undoing: false, ...undo } } }))
+    .match(/<div role="status" class="config-notice[^"]*">([\s\S]*?)<\/div>/)?.[1];
+  assert.match(notice({}), /^<span class="config-notice-text">Removed lint from ~\/\.pi\/agent\/mcp\.json\.<\/span><button type="button" class="config-button config-button-secondary config-button-small">Undo<\/button>$/);
+  assert.match(notice({ undoing: true }), /<button type="button" disabled="" [^>]*>Undoing…<\/button>/);
+  // A name added again since keeps Undo for when it is gone; an undo that is no longer possible drops it.
+  assert.match(notice({ error: { error: "x", reason: "undo-name-taken", name: "lint" } }),
+    /Removed lint from ~\/\.pi\/agent\/mcp\.json\. Could not undo: The file defines a server of the same name again, so the removal was not undone\.<\/span><button[^>]*>Undo</);
+  const gone = notice({ error: { error: "x", reason: "undo-unavailable" } });
+  assert.match(gone, /Could not undo: The removal can no longer be undone\.$/);
+  assert.doesNotMatch(gone, /<button/);
+});
+
+test("the container posts each change and shows the overview it answers with", () => {
+  // One change at a time, through the helper; its answer replaces the listing.
+  const run = source.slice(source.indexOf("const runAction = useCallback"), source.indexOf("const switchServer = useCallback"));
+  assert.match(run, /const result = await postMcpAction\(request, writeCwd, undefined, controller\.signal\);/);
+  assert.match(run, /if \(actionControllerRef\.current !== controller\) return undefined;/);
+  assert.match(run, /if \(result\.ok\) applyOverview\(result\.data, select\?\.\(result\.data\)\);\n\s*else void refresh\(\);/);
+  // The project is sent only when the listing covers it; a refused folder would refuse the change.
+  assert.match(run, /const writeCwd = current\.state === "loaded" && current\.data\.project \? cwd : null;/);
+  // A load still on its way predates the change, so its answer is dropped.
+  const apply = source.slice(source.indexOf("const applyOverview = useCallback"), source.indexOf("const runAction = useCallback"));
+  assert.match(apply, /requestRef\.current \+= 1;\n\s*controllerRef\.current\?\.abort\(\);\n\s*setRefreshing\(false\);/);
+  // Undo selects what it put back, and its notice goes when the route lets the removal go.
+  assert.match(source, /\(data\) => \(data\.restored \? mcpServerKey\(data\.restored\) : undefined\)/);
+  assert.match(source, /const timer = setTimeout\(\(\) => setUndo\(\(current\) => \(current\?\.token === undoToken \? null : current\)\), undoExpiresInMs\);/);
+  // The group switch leaves PI_WEB_PASSWORD entries off and reports what the route refused.
+  assert.match(source, /const \{ targets, keptOff \} = mcpGroupSwitchTargets\(servers, enabled\);/);
+  assert.match(source, /\{ action: "set-enabled", enabled, servers: targets\.map\(/);
+  // When Remove takes the focused pane with it, focus goes to Undo; when the notice goes, to the
+  // selected row; only when it fell to the page (lib/stacked-dialog.test.mjs pins focusIfLost()).
+  assert.match(source, /if \(undoToken !== undefined && undoToken !== shown\) focusIfLost\(document, undoButtonRef\.current\);\n\s*else if \(shown !== undefined && undoToken === undefined\) focusIfLost\(document, selectedRowRef\.current\);/);
+  assert.match(source, /<ConfigButton ref=\{undoButtonRef\} size="small" onClick=\{onUndo\}/);
+  assert.match(settingsUiSource, /export function ConfigButton\(\{[\s\S]*?ref\?: Ref<HTMLButtonElement> \}\) \{\n\s*return \(\n\s*<button\n\s*type="button"\n\s*\{\.\.\.props\}/);
+  // Picking another server clears the last failure, which belongs to the one it was about.
+  assert.match(source, /onSelect=\{\(key\) => \{\n\s*setSelected\(key\);\n\s*setActionError\(null\);/);
+  // Nothing about a removed entry but its token, name and file reaches the panel's state.
+  assert.match(source, /if \(removed\) setUndo\(\{ \.\.\.removed, undoing: false \}\);/);
+  assert.match(apiTypesSource, /export interface McpUndoInfo extends McpServerRef \{\n\s*token: string;\n[\s\S]*?path: string;\n[\s\S]*?expiresInMs: number;\n\}/);
+});
+
+/** The opening tag of a group's switch, found by the n/m count in front of it. */
+function groupSwitch(html, count) {
+  return decode(html).match(new RegExp(`<span class="config-sidebar-group-count">${count.replace("/", "\\/")}</span>(<button[^>]*>)`))?.[1];
+}
+
+test("a group holding a server the switch never turns on can still be switched off from its heading", () => {
+  // docs is on and pw, the only server off, references PI_WEB_PASSWORD: the switch reads on and
+  // offers to turn the group off. Reading "every row on" kept it off for good, and each click
+  // asked to turn on again and sent nothing.
+  assert.match(groupSwitch(writeView(), "1/2"), /aria-checked="true" aria-label="Turn off every global server"/);
+  // The count still says what the file says.
+  const pwOff = server({ name: "pw", transport: "http", url: "https://pw/mcp", enabled: false, webPasswordField: { kind: "header", name: "Authorization" } });
+  assert.match(
+    groupSwitch(writeView({ data: { servers: [server({ name: "docs", enabled: false, transport: "http", url: "https://docs/mcp" }), pwOff] } }), "0/2"),
+    /aria-checked="false" aria-label="Turn on every global server"/,
+  );
+  // The panel passes its own rule to the shared switch, whose click asks for the opposite.
+  assert.match(source, /const checked = mcpGroupSwitchChecked\(group\.servers\);/);
+  assert.match(source, /<ConfigSidebarGroupSwitch\n\s*enabled=\{enabled\}\n\s*total=\{total\}\n\s*checked=\{checked\}/);
+  const asked = [];
+  const heading = ConfigSidebarGroupSwitch({ enabled: 1, total: 2, checked: true, label: "x", onChange: (next) => asked.push(next) });
+  const toggle = heading.props.children[1];
+  assert.equal(toggle.props.checked, true);
+  toggle.type(toggle.props).props.onClick();
+  assert.deepEqual(asked, [false]);
+  // Without `checked` it keeps the Skills and Plugins rule.
+  assert.equal(ConfigSidebarGroupSwitch({ enabled: 1, total: 2, label: "x", onChange() {} }).props.children[1].props.checked, false);
+});
+
+test("an entry that is not an object can be removed but not switched, and says so", () => {
+  const junk = server({ name: "junk", notAnObject: true, invalidError: 'server "junk" must be an object' });
+  const html = writeView({ data: { servers: [junk, server({ name: "docs", transport: "http", url: "https://docs/mcp" })] }, view: { selected: "global\0junk" } });
+  const controls = detailControls(html);
+  assert.equal(controls.note, "This entry is not an object, so it cannot be turned on or off. Remove it, or fix it in the file.");
+  assert.match(controls.toggle, new RegExp(`aria-describedby="${controls.noteId}"[^>]*disabled=""`));
+  assert.doesNotMatch(controls.remove[0], /disabled/);
+  // It reads as on in the count, but does not hold the group switch off.
+  assert.match(groupSwitch(html, "2/2"), /aria-checked="true"/);
+});
+
+test("a Code mode save and a server change never overlap", () => {
+  // While the Code mode choice saves, no server control starts a change whose answer would carry
+  // the choice as read before the save.
+  const saving = writeView({ view: { codemodeSave: { saving: true, error: null } } });
+  const controls = detailControls(saving);
+  assert.match(controls.toggle, /disabled=""/);
+  assert.match(controls.remove[0], /disabled=""/);
+  assert.match(groupSwitch(saving, "1/2"), /disabled=""/);
+  assert.match(decode(saving), /<button type="button" disabled="" class="config-button config-button-secondary config-button-default">Refresh<\/button>/);
+  assert.match(source, /const controlsBusy = busy !== null \|\| refreshing \|\| codemodeSave\.saving;/);
+  // While a server change runs, neither Code mode option can be chosen.
+  const info = { sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic" };
+  assert.deepEqual(codemodeOptions(codemodeView(info, { view: { busy: "switch:global\0docs" } })).map(({ disabled }) => disabled), [true, true]);
+  assert.deepEqual(codemodeOptions(codemodeView(info)).map(({ disabled }) => disabled), [false, false]);
+  assert.match(source, /serverBusy=\{busy !== null\}/);
+});
+
+test("under -builtin:mcp a change is saved, and the note says no session connects it", () => {
+  const builtin = detailControls(writeView({ data: { mcp: { available: false, reason: "builtin-disabled", error: "x", settingsPath: "/s.json" } } }));
+  assert.equal(builtin.note, "Changes are saved to the file, but no session connects these servers while builtin:mcp is off.");
+  assert.doesNotMatch(builtin.toggle, /disabled/);
+  // MCP on: the usual note.
+  assert.equal(detailControls(writeView()).note, "Changes take effect at each open session's next message.");
+  assert.match(source, /savedWhileOff=\{!data\.mcp\.available && !writesOff\}/);
+});
+
+test("focus goes back to the control a change was started from once nothing waits", () => {
+  // Each handler notes the focused button before the change disables it, and hands it back once
+  // answered; a removal or an undo that worked leaves focus to Undo and to the restored row.
+  const handler = (name, next) => source.slice(source.indexOf(`const ${name} = useCallback`), source.indexOf(`const ${next} = useCallback`));
+  for (const [name, next] of [["switchServer", "removeServer"], ["removeServer", "undoRemoval"], ["switchGroup", "McpConfigView"]]) {
+    const body = next === "McpConfigView" ? source.slice(source.indexOf(`const ${name} = useCallback`), source.indexOf("useEffect(() => {\n    if (selected)")) : handler(name, next);
+    assert.match(body, /const pressed = pressedButton\(\);/, name);
+    assert.match(body, /setFocusBack\(\{ control: pressed \}\);/, name);
+  }
+  const remove = handler("removeServer", "undoRemoval");
+  assert.match(remove, /if \(!result\.ok\) \{\n\s*setActionError\(\{ key, failure: result\.error \}\);\n\s*setFocusBack\(\{ control: pressed \}\);\n\s*return;\n\s*\}/);
+  const undo = source.slice(source.indexOf("const undoRemoval = useCallback"), source.indexOf("// The notice goes when the route lets the removal go."));
+  assert.match(undo, /const pressed = pressedButton\(\);/);
+  assert.match(undo, /if \(!result\.ok\) setFocusBack\(\{ control: pressed \}\);/);
+  // The view waits until no change, save or load holds the controls, handles each request once, and
+  // falls back to the selected row (lib/stacked-dialog.test.mjs pins focusAfterChange()). It comes
+  // after the Undo effects, so a fallback never takes focus from Undo.
+  assert.match(source, /useEffect\(\(\) => \{\n\s*if \(!focusBack \|\| controlsBusy \|\| handledFocusBackRef\.current === focusBack\) return;\n\s*handledFocusBackRef\.current = focusBack;\n\s*focusAfterChange\(document, focusBack\.control, selectedRowRef\.current\);\n\s*\}, \[focusBack, controlsBusy\]\);/);
+  assert.ok(source.indexOf("focusAfterChange(document") > source.indexOf("focusIfLost(document, undoButtonRef.current)"));
+  assert.match(source, /focusBack=\{focusBack\}/);
 });
