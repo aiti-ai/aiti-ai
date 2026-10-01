@@ -10,11 +10,14 @@ export interface SubagentSettingsResponse {
   maxConcurrent: number;
 }
 
+/** Code mode's one choice (ADR 0006): Automatic writes nothing, Always on adds `+codemode` to the global defaultTools. */
+export type McpCodemodePreference = "automatic" | "always";
+
 export interface ToolSettingsResponse {
   isWindows: boolean;
   powerShellEnabled: boolean;
   /** "always" when the global defaultTools starts sessions with codemode active (ADR 0006). */
-  codemode: "automatic" | "always";
+  codemode: McpCodemodePreference;
 }
 
 export interface SkillSearchResult {
@@ -234,12 +237,33 @@ export type CodemodeSandboxStatus =
 
 export interface McpCodemodeInfo {
   /** Absent when the global settings file cannot be read; see `preferenceError`. */
-  preference?: "automatic" | "always";
+  preference?: McpCodemodePreference;
   preferenceError?: string;
   sandbox: CodemodeSandboxStatus;
   /** `-builtin:codemode` (or a pattern matching it) in the global or a trusted project's `extensions`. */
   builtinDisabled: boolean;
   builtinSettingsPath?: string;
+  /**
+   * The global settings file, when its `extensions` alone turn Code mode off,
+   * whatever a project says. Always on writes the global `defaultTools`, which
+   * every project's sessions read, so it is weighed against this rather than
+   * `builtinDisabled`, which a trusted project's own list can change either way.
+   */
+  globalBuiltinSettingsPath?: string;
+  /**
+   * A trusted project whose `.pi/settings.json` `defaultTools` decides Code
+   * mode for its sessions whatever the global choice (a plain list, or a
+   * `+codemode` / `-codemode` modifier): `preference` is what its sessions get.
+   * Only read with a cwd whose project settings sessions load.
+   */
+  projectOverride?: McpCodemodeProjectOverride;
+}
+
+export interface McpCodemodeProjectOverride {
+  /** The project's `.pi/settings.json`. */
+  settingsPath: string;
+  /** "always" when its sessions start with `codemode` active, "automatic" when they start without it. */
+  preference: McpCodemodePreference;
 }
 
 export interface McpProjectInfo {
@@ -259,7 +283,7 @@ export interface McpResponse {
   project?: McpProjectInfo;
 }
 
-/** Why `/api/mcp` or `/api/project-trust` refused a request; later routes add their own codes. */
+/** Why `/api/mcp`, `/api/project-trust` or `/api/tools/settings` refused a request; later routes add their own codes. */
 export type McpRefusalReason =
   /** `cwd` is empty or not an absolute path. */
   | "cwd-invalid"
@@ -277,6 +301,8 @@ export type McpRefusalReason =
   | "trust-not-required"
   /** A session in the folder is running, and trusting would rebuild it mid-run (`/api/project-trust`). */
   | "session-busy"
+  /** The body does not ask for a change the route can make (`/api/tools/settings`). */
+  | "invalid-request"
   /** Reading failed unexpectedly; `error` says how. */
   | "internal";
 

@@ -4,6 +4,8 @@ import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, { tsconfigPaths: true });
 const {
+  MCP_CODEMODE_PROJECT_OVERRIDE_KEYS,
+  MCP_CODEMODE_SAVE_TIMEOUT_MS,
   MCP_CODEMODE_SELECTION,
   MCP_CODEMODE_STATE_KEYS,
   MCP_EXPOSURE_KEYS,
@@ -13,11 +15,15 @@ const {
   MCP_SERVER_ROW_STATES,
   isBlockingFileProblem,
   loadMcpOverview,
+  mcpCodemodeAlwaysUnavailableNotice,
   mcpCodemodeAutomaticNotice,
+  mcpCodemodeBuiltinNotice,
+  mcpCodemodeProjectOverrideNotice,
   mcpCodemodeReachNotice,
   mcpCodemodeRowState,
   mcpCodemodeTone,
   mcpEffectiveAutoEnableCodemode,
+  mcpEffectiveCodemodePreference,
   mcpEmptyDetailKey,
   mcpFileProblems,
   mcpGroupCounts,
@@ -33,6 +39,8 @@ const {
   mcpTrustNotice,
   mcpUnavailableNotice,
   pickMcpSelection,
+  saveMcpCodemodePreference,
+  withMcpCodemodePreference,
 } = await jiti.import("./mcp-config-helpers.ts");
 const { enLocale } = await jiti.import("@/lib/i18n/messages/en.ts");
 
@@ -287,6 +295,98 @@ test("tools only Code mode scripts call are flagged where no session would reach
   assert.match(messages["mcp.codemode.autoEnableOff"], /\{path\}/);
 });
 
+test("a project whose own defaultTools decides Code mode is what its sessions get, and says so", () => {
+  const info = (overrides) => ({ sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic", ...overrides });
+  const settingsPath = "/repo/.pi/settings.json";
+  const off = { value: false, path: "/repo/.pi/mcp.json" };
+  assert.equal(mcpEffectiveCodemodePreference(info()), "automatic");
+  assert.equal(mcpEffectiveCodemodePreference(info({ preference: undefined, preferenceError: "bad" })), undefined);
+  assert.equal(mcpCodemodeProjectOverrideNotice(info()), undefined);
+
+  // The project starts its sessions with Code mode on: Automatic's autoEnableCodemode warning no longer applies.
+  const projectOn = info({ projectOverride: { settingsPath, preference: "always" } });
+  assert.equal(mcpEffectiveCodemodePreference(projectOn), "always");
+  assert.equal(mcpCodemodeReachNotice(projectOn, off), undefined);
+  assert.equal(mcpCodemodeAutomaticNotice(projectOn, off), undefined);
+  assert.deepEqual(mcpCodemodeProjectOverrideNotice(projectOn), {
+    key: "mcp.codemode.projectOverride.always",
+    params: { path: settingsPath },
+  });
+
+  // It starts them without Code mode (-codemode, or a plain list without it) although Always on is chosen.
+  const projectOff = info({ preference: "always", projectOverride: { settingsPath, preference: "automatic" } });
+  assert.equal(mcpEffectiveCodemodePreference(projectOff), "automatic");
+  assert.deepEqual(mcpCodemodeReachNotice(projectOff, off), { key: "mcp.exposure.autoEnableOff", params: { path: off.path } });
+  assert.deepEqual(mcpCodemodeAutomaticNotice(projectOff, off), { key: "mcp.codemode.autoEnableOff", params: { path: off.path } });
+  assert.deepEqual(mcpCodemodeProjectOverrideNotice(projectOff), {
+    key: "mcp.codemode.projectOverride.automatic",
+    params: { path: settingsPath },
+  });
+  // Said even when it agrees with the global choice: changing that choice still changes nothing there.
+  assert.ok(mcpCodemodeProjectOverrideNotice(info({ preference: "always", projectOverride: { settingsPath, preference: "always" } })));
+
+  for (const key of Object.values(MCP_CODEMODE_PROJECT_OVERRIDE_KEYS)) assert.match(messages[key], /\{path\}/, key);
+});
+
+test("Always on is unavailable while no session could offer Code mode, and says why", () => {
+  const info = (overrides) => ({ sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic", ...overrides });
+  const globalPath = "/home/u/.pi/agent/settings.json";
+  assert.equal(mcpCodemodeAlwaysUnavailableNotice(info()), undefined);
+  // Nobody has run the self-test yet: Always on stays available, and the Sandbox line says it is unchecked.
+  assert.equal(mcpCodemodeAlwaysUnavailableNotice(info({ sandbox: { state: "not-checked" } })), undefined);
+  // The sandbox first: nothing in Settings fixes it.
+  assert.deepEqual(
+    mcpCodemodeAlwaysUnavailableNotice(info({
+      sandbox: { state: "unavailable", error: "x" },
+      builtinDisabled: true,
+      builtinSettingsPath: globalPath,
+      globalBuiltinSettingsPath: globalPath,
+    })),
+    { key: "mcp.codemode.alwaysUnavailable.sandbox" },
+  );
+  assert.deepEqual(
+    mcpCodemodeAlwaysUnavailableNotice(info({ builtinDisabled: true, builtinSettingsPath: globalPath, globalBuiltinSettingsPath: globalPath })),
+    { key: "mcp.codemode.alwaysUnavailable.builtin", params: { path: globalPath } },
+  );
+  for (const key of ["sandbox", "builtin"]) {
+    assert.equal(typeof messages[`mcp.codemode.alwaysUnavailable.${key}`], "string", key);
+  }
+  assert.match(messages["mcp.codemode.alwaysUnavailable.builtin"], /\{path\}/);
+});
+
+test("Always on is weighed against the global extensions alone, never the project Settings was opened from", () => {
+  const info = (overrides) => ({ sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic", ...overrides });
+  const globalPath = "/home/u/.pi/agent/settings.json";
+  const projectPath = "/work/app/.pi/settings.json";
+  // Only the trusted project turns Code mode off: its sessions lose it, Always on still works everywhere else.
+  const projectOnly = info({ builtinDisabled: true, builtinSettingsPath: projectPath });
+  assert.equal(mcpCodemodeAlwaysUnavailableNotice(projectOnly), undefined);
+  assert.deepEqual(mcpCodemodeBuiltinNotice(projectOnly), { key: "mcp.codemode.builtinDisabledProject", params: { path: projectPath } });
+  // This project's sessions still cannot offer it, so the row and the Tools line say so.
+  assert.equal(mcpCodemodeRowState(projectOnly), "unavailable");
+  assert.deepEqual(mcpCodemodeReachNotice(projectOnly, { value: true }), { key: "mcp.exposure.builtinDisabled" });
+  // The global settings turn it off and the project turns it back on: Always on is still unavailable,
+  // as it is from every other folder, and this project's sessions have nothing to report.
+  const reEnabled = info({ globalBuiltinSettingsPath: globalPath });
+  assert.deepEqual(mcpCodemodeAlwaysUnavailableNotice(reEnabled), { key: "mcp.codemode.alwaysUnavailable.builtin", params: { path: globalPath } });
+  assert.equal(mcpCodemodeBuiltinNotice(reEnabled), undefined);
+  // Both off: the line names the file that decides for these sessions.
+  assert.deepEqual(
+    mcpCodemodeBuiltinNotice(info({ builtinDisabled: true, builtinSettingsPath: projectPath, globalBuiltinSettingsPath: globalPath })),
+    { key: "mcp.codemode.builtinDisabled", params: { path: projectPath } },
+  );
+  assert.deepEqual(
+    mcpCodemodeBuiltinNotice(info({ builtinDisabled: true, builtinSettingsPath: globalPath, globalBuiltinSettingsPath: globalPath })),
+    { key: "mcp.codemode.builtinDisabled", params: { path: globalPath } },
+  );
+  assert.deepEqual(mcpCodemodeBuiltinNotice(info({ builtinDisabled: true })), { key: "mcp.codemode.builtinDisabledUnknown" });
+  assert.equal(mcpCodemodeBuiltinNotice(info()), undefined);
+  for (const key of ["mcp.codemode.builtinDisabled", "mcp.codemode.builtinDisabledProject"]) {
+    assert.match(messages[key], /\{path\}/, key);
+  }
+  assert.equal(typeof messages["mcp.codemode.builtinDisabledUnknown"], "string");
+});
+
 test("with nothing selected, the detail pane tells an empty listing from one a file problem hides", () => {
   assert.equal(mcpEmptyDetailKey(2, [file("global")]), "mcp.selectItem");
   assert.equal(mcpEmptyDetailKey(0, [file("global"), file("project", { exists: false })]), "mcp.empty");
@@ -434,4 +534,72 @@ test("the caller's signal reaches the request, and a load that never answers end
   assert.equal(calls, 2);
   assert.equal(second.ok, false);
   assert.equal(second.error.timedOut, true);
+});
+
+test("the Code mode choice is saved through the tools settings route and answers with what it stored", async () => {
+  assert.equal(MCP_CODEMODE_SAVE_TIMEOUT_MS, 15_000);
+  const saved = fakeFetch([{ status: 200, body: { isWindows: false, powerShellEnabled: false, codemode: "always" } }]);
+  assert.deepEqual(await saveMcpCodemodePreference("always", saved.fetchImpl), { ok: true, preference: "always" });
+  assert.equal(saved.calls.length, 1);
+  assert.equal(saved.calls[0].input, "/api/tools/settings");
+  assert.equal(saved.calls[0].init.method, "PUT");
+  assert.deepEqual(saved.calls[0].init.headers, { "Content-Type": "application/json" });
+  assert.deepEqual(JSON.parse(saved.calls[0].init.body), { codemode: "always" });
+
+  // What the route read back after writing is what the switch shows.
+  const stored = fakeFetch([{ status: 200, body: { isWindows: true, powerShellEnabled: true, codemode: "automatic" } }]);
+  assert.deepEqual(await saveMcpCodemodePreference("always", stored.fetchImpl), { ok: true, preference: "automatic" });
+
+  // Refusals keep their reason; failures without one keep their diagnostic.
+  const refused = fakeFetch([{ status: 403, body: { error: "Untrusted API request", reason: "request-denied" } }]);
+  assert.deepEqual(await saveMcpCodemodePreference("always", refused.fetchImpl), {
+    ok: false,
+    error: { error: "Untrusted API request", reason: "request-denied" },
+  });
+  const unparsable = fakeFetch([{ status: 500, body: { error: "Unexpected token n in JSON", reason: "internal" } }]);
+  assert.deepEqual(await saveMcpCodemodePreference("automatic", unparsable.fetchImpl), {
+    ok: false,
+    error: { error: "Unexpected token n in JSON", reason: "internal" },
+  });
+  const network = fakeFetch([new TypeError("Failed to fetch")]);
+  assert.deepEqual(await saveMcpCodemodePreference("always", network.fetchImpl), { ok: false, error: { error: "Failed to fetch" } });
+  const html = fakeFetch([{ status: 502 }]);
+  assert.deepEqual(await saveMcpCodemodePreference("always", html.fetchImpl), { ok: false, error: { error: "HTTP 502" } });
+  // A 200 without a preference is not taken for a save.
+  const odd = fakeFetch([{ status: 200, body: { codemode: "never" } }]);
+  assert.deepEqual(await saveMcpCodemodePreference("always", odd.fetchImpl), { ok: false, error: { error: "HTTP 200" } });
+});
+
+test("a save that never answers ends at the deadline, and the caller's signal reaches it", async () => {
+  const hung = [];
+  const started = Date.now();
+  const timedOut = await saveMcpCodemodePreference("always", (input, init) => {
+    hung.push(init.signal);
+    return new Promise(() => {});
+  }, undefined, 30);
+  assert.ok(Date.now() - started < 2_000);
+  assert.equal(timedOut.ok, false);
+  assert.equal(timedOut.error.timedOut, true);
+  assert.equal(hung[0].aborted, true);
+
+  const caller = new AbortController();
+  const seen = [];
+  const pending = saveMcpCodemodePreference("automatic", (input, init) => {
+    seen.push(init.signal);
+    return new Promise((_, reject) => init.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+  }, caller.signal);
+  caller.abort();
+  const aborted = await pending;
+  assert.equal(seen[0].aborted, true);
+  assert.equal(aborted.ok, false);
+  assert.equal(aborted.error.timedOut, undefined);
+  for (const key of ["mcp.codemode.saveFailed", "mcp.codemode.saveTimedOut"]) assert.equal(typeof messages[key], "string", key);
+});
+
+test("a saved choice replaces the preference and its read error in the loaded overview", () => {
+  const data = { ...overview, codemode: { sandbox: { state: "available" }, builtinDisabled: false, preferenceError: "Unexpected token" } };
+  const next = withMcpCodemodePreference(data, "always");
+  assert.deepEqual(next.codemode, { sandbox: { state: "available" }, builtinDisabled: false, preference: "always" });
+  assert.equal(next.servers, data.servers);
+  assert.equal(data.codemode.preferenceError, "Unexpected token", "the loaded overview is not changed in place");
 });

@@ -1,4 +1,3 @@
-import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   CONFIG_DIR_NAME,
@@ -18,6 +17,7 @@ import { McpHost, type McpHostOptions } from "./mcp-host";
 import { createPiWebMcpTransportFactory } from "./mcp-transport";
 import { loadPiSdkInternals, type PiSdkInternals, type PiSdkInternalsResult } from "./pi-sdk-internals";
 import { mayReadProjectConfigNow } from "./project-trust";
+import { PROJECT_SETTINGS_MAX_BYTES, readRegularFileText } from "./regular-file";
 
 // The built-in extensions the pi CLI prepends from a module the SDK does not
 // export (ADR 0006, "Loading"). Normal sessions load them under the CLI's
@@ -233,13 +233,24 @@ export interface BuiltinExtensionSwitch {
   enabled: boolean;
   /** The settings file whose `extensions` entry turns it off. */
   settingsPath?: string;
+  /**
+   * What the global settings alone make of it. Present only when a trusted
+   * project's `extensions` list was read; otherwise the switch itself is the
+   * global answer. A global setting, such as Code mode's Always on, is weighed
+   * against this, never against whichever project Settings was opened from.
+   */
+  global?: { enabled: boolean; settingsPath?: string };
 }
 
-function readSettingsExtensions(path: string): string[] | undefined {
-  if (!existsSync(path)) return undefined;
-  const text = readFileSync(path, "utf8");
-  // As SettingsManager reads it: a byte-order mark is allowed, and a file that
-  // does not parse counts as empty.
+/**
+ * A settings file's `extensions` list, read as SettingsManager reads it: a
+ * byte-order mark is allowed, and a file that does not parse counts as empty.
+ * A FIFO or a device there throws instead of blocking the server on a read
+ * nothing answers, as does a project file past `PROJECT_SETTINGS_MAX_BYTES`.
+ */
+function readSettingsExtensions(path: string, maxBytes?: number): string[] | undefined {
+  const text = readRegularFileText(path, maxBytes);
+  if (text === undefined) return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
@@ -250,33 +261,14 @@ function readSettingsExtensions(path: string): string[] | undefined {
   return Array.isArray(extensions) ? extensions.filter((entry): entry is string => typeof entry === "string") : undefined;
 }
 
-/**
- * Whether the `extensions` settings leave each built-in on, read from the
- * files as the session's resource loader would: `-builtin:mcp` (or a `!`
- * pattern matching it) in the global settings turns it off, and a matching
- * `+`, `-` or `!` entry in a trusted project's settings overrides that. The
- * SDK's package manager decides, so its pattern rules apply exactly; it is
- * given only the two `extensions` lists, never `packages`, so it cannot
- * install or even look up a package. It still scans the extension, skill,
- * prompt and theme folders it auto-discovers, which only reads them.
- */
-export async function readBuiltinExtensionSwitches(options: {
-  agentDir: string;
-  /** Without one, only the global settings count. */
-  cwd?: string;
-  projectTrusted: boolean;
-}): Promise<Record<BuiltinExtensionName, BuiltinExtensionSwitch>> {
-  const { agentDir } = options;
-  const projectTrusted = options.cwd !== undefined && options.projectTrusted;
-  const cwd = options.cwd ?? agentDir;
-  const paths = {
-    global: join(agentDir, "settings.json"),
-    project: join(cwd, CONFIG_DIR_NAME, "settings.json"),
-  };
-  const lists = {
-    global: readSettingsExtensions(paths.global),
-    project: projectTrusted ? readSettingsExtensions(paths.project) : undefined,
-  };
+type SettingsScope = "global" | "project";
+
+async function resolveBuiltinSwitches(
+  options: { agentDir: string; cwd: string; projectTrusted: boolean },
+  lists: Partial<Record<SettingsScope, string[]>>,
+  paths: Record<SettingsScope, string>,
+): Promise<Record<BuiltinExtensionName, BuiltinExtensionSwitch>> {
+  const { agentDir, cwd, projectTrusted } = options;
   const storage: Parameters<typeof SettingsManager.fromStorage>[0] = {
     withLock: (scope, fn) => {
       const extensions = lists[scope];
@@ -299,6 +291,41 @@ export async function readBuiltinExtensionSwitches(options: {
       ? { enabled }
       : { enabled, settingsPath: resource?.metadata.scope === "project" ? paths.project : paths.global };
   }
+  return switches;
+}
+
+/**
+ * Whether the `extensions` settings leave each built-in on, read from the
+ * files as the session's resource loader would: `-builtin:mcp` (or a `!`
+ * pattern matching it) in the global settings turns it off, and a matching
+ * `+`, `-` or `!` entry in a trusted project's settings overrides that. The
+ * SDK's package manager decides, so its pattern rules apply exactly; it is
+ * given only the two `extensions` lists, never `packages`, so it cannot
+ * install or even look up a package. It still scans the extension, skill,
+ * prompt and theme folders it auto-discovers, which only reads them. When a
+ * trusted project has a list of its own, the global list is resolved a second
+ * time on its own for each switch's `global` answer.
+ */
+export async function readBuiltinExtensionSwitches(options: {
+  agentDir: string;
+  /** Without one, only the global settings count. */
+  cwd?: string;
+  projectTrusted: boolean;
+}): Promise<Record<BuiltinExtensionName, BuiltinExtensionSwitch>> {
+  const { agentDir } = options;
+  const projectTrusted = options.cwd !== undefined && options.projectTrusted;
+  const cwd = options.cwd ?? agentDir;
+  const paths = {
+    global: join(agentDir, "settings.json"),
+    project: join(cwd, CONFIG_DIR_NAME, "settings.json"),
+  };
+  const global = readSettingsExtensions(paths.global);
+  // The project file is the repository's, read by a GET: capped, and never a FIFO.
+  const project = projectTrusted ? readSettingsExtensions(paths.project, PROJECT_SETTINGS_MAX_BYTES) : undefined;
+  const switches = await resolveBuiltinSwitches({ agentDir, cwd, projectTrusted }, { global, project }, paths);
+  if (project === undefined) return switches;
+  const globalSwitches = await resolveBuiltinSwitches({ agentDir, cwd, projectTrusted: false }, { global }, paths);
+  for (const name of BUILTIN_EXTENSION_NAMES) switches[name].global = globalSwitches[name];
   return switches;
 }
 
