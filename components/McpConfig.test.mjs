@@ -17,6 +17,7 @@ const helperSource = await readFile(new URL("./mcp-config-helpers.ts", import.me
 const displaySource = await readFile(new URL("../lib/mcp-server-display.ts", import.meta.url), "utf8");
 const apiTypesSource = await readFile(new URL("../lib/api-types.ts", import.meta.url), "utf8");
 const cssSource = await readFile(new URL("../app/settings.css", import.meta.url), "utf8");
+const settingsUiSource = await readFile(new URL("./SettingsUi.tsx", import.meta.url), "utf8");
 
 const h = React.createElement;
 const messages = enLocale.messages;
@@ -146,7 +147,7 @@ test("with a project, its group comes first and every row names its state", () =
   for (const badge of ["untrusted", "off", "refused"]) {
     assert.match(markup, new RegExp(`class="mcp-sidebar-badge is-[a-z]+">${badge}<`), badge);
   }
-  // The untrusted project gets the trust notice, with no button yet.
+  // The untrusted project gets the trust notice; without a Trust handler it has no button.
   assert.match(markup, /<div role="status" class="config-notice">This project is not trusted, so the servers in its \.pi\/mcp\.json do not connect\.<\/div>/);
 
   const trustedHtml = view({
@@ -318,6 +319,73 @@ test("a dangling project link needs no trust, so only the footer speaks of it", 
   const shown = text(html);
   assert.doesNotMatch(shown, /not trusted/);
   assert.match(shown, /1 file problem/);
+});
+
+test("an untrusted project's notice offers Trust only where the trust dialog would", () => {
+  const trustButton = /<button type="button" class="config-button config-button-secondary config-button-small">Trust project…<\/button>/;
+  const projectServer = server({ name: "p", scope: "project", sourcePath: projectFile.path, transport: "stdio", command: "node" });
+  const withTrust = (project, files = [globalFile, projectFile], props = {}) => decode(view({
+    cwd: "/Users/me/repo",
+    load: { state: "loaded", data: overview({ files, servers: [projectServer], project: { cwd: "/Users/me/repo", ...project } }) },
+    onTrustProject() {},
+    ...props,
+  }));
+
+  // The folder requires trust and is not trusted: the notice and its button share one line.
+  const offered = withTrust({ trust: untrusted });
+  assert.match(offered, /<div role="status" class="config-notice has-action"><span class="config-notice-text">This project is not trusted, so the servers in its \.pi\/mcp\.json do not connect\.<\/span><button type="button"[^>]*>Trust project…<\/button><\/div>/);
+  // An ancestor marked untrusted: trusting records this folder's own decision, which wins.
+  assert.match(withTrust({ trust: { ...untrusted, decision: false, decisionPath: "/Users/me", inherited: true } }), trustButton);
+
+  // The notice stays, without a button, where trusting could not succeed:
+  // an unreadable trust.json, whose failure trusting would meet too...
+  const unreadable = withTrust({ trustError: "Lock file is already being held" });
+  assert.match(unreadable, /Pi Web cannot read the trust store/);
+  assert.doesNotMatch(unreadable, trustButton);
+  // ...and an explicit false on a folder that requires no trust (a dangling .pi/mcp.json link),
+  // where POST /api/project-trust answers trust-not-required.
+  const dangling = withTrust(
+    { trust: { requiresTrust: false, trusted: true, decision: false, decisionPath: "/Users/me/repo", inherited: false } },
+    [globalFile, { ...projectFile, problems: [{ reason: "link-dangling", error: "a symbolic link to nothing" }] }],
+  );
+  assert.match(dangling, /This project is not trusted/);
+  assert.doesNotMatch(dangling, trustButton);
+
+  // Nothing to trust: trusted, exactly or through a parent.
+  assert.doesNotMatch(withTrust({ trust: trusted }), trustButton);
+  assert.doesNotMatch(withTrust({ trust: { ...trusted, decisionPath: "/Users/me", inherited: true } }), trustButton);
+  // No handler, no button: the panel never offers one that does nothing.
+  assert.doesNotMatch(withTrust({ trust: untrusted }, undefined, { onTrustProject: undefined }), trustButton);
+  for (const key of ["mcp.trust.trustButton", "trust.trustProject"]) assert.equal(typeof messages[key], "string", key);
+});
+
+test("the container passes Trust to the notice and reloads in place when the page's trust changes", () => {
+  assert.match(source, /<ConfigTrustNotice message=\{noticeText\(trustNotice, t\)\} trustLabel=\{t\("mcp\.trust\.trustButton"\)\} onTrust=\{onTrust\} \/>/);
+  assert.match(source, /const onTrust = onTrustProject && mcpProjectTrustable\(data\?\.project\) \? onTrustProject : undefined;/);
+  assert.match(source, /onTrustProject=\{onTrustProject\}/);
+  // A new decision loads the panel again without remounting it, so the selection stays.
+  assert.match(source, /const trustKey = projectTrustReloadKey\(trust\);\n\s*useEffect\(\(\) => \{\n\s*void refresh\(\);[\s\S]*?\}, \[refresh, trustKey\]\);/);
+  assert.match(source, /import \{ projectTrustReloadKey \} from "\.\/settings-ui-helpers";/);
+  // The container renders with the page's status and handler without fetching anything itself.
+  assert.match(text(render(h(McpConfig, { cwd: "/Users/me/repo", trust: untrusted, onTrustProject() {}, onClose() {}, embedded: true }))), /Loading\.\.\./);
+});
+
+test("when trusting removes Trust… under the keyboard, focus goes to the selected row", () => {
+  // The dialog hands focus back to Trust… on close; the reload then removes the notice and
+  // its button, and the browser drops focus to body. Only that transition moves focus, and
+  // only when it fell to the page (lib/stacked-dialog.test.mjs pins focusIfLost()).
+  assert.match(source, /const offersTrust = trustNotice\?\.kind === "untrusted" && onTrust !== undefined;/);
+  assert.match(source, /const offeredTrustRef = useRef\(offersTrust\);\n\s*useEffect\(\(\) => \{\n\s*const offeredTrust = offeredTrustRef\.current;\n\s*offeredTrustRef\.current = offersTrust;\n\s*if \(offeredTrust && !offersTrust\) focusIfLost\(document, selectedRowRef\.current\);\n\s*\}, \[offersTrust\]\);/);
+  assert.match(source, /import \{ focusIfLost \} from "@\/lib\/stacked-dialog";/);
+  // The ref follows the selection: the Code mode row or a server row, whichever is selected.
+  assert.match(source, /<ConfigSidebarItem\n\s*ref=\{active \? rowRef : undefined\}\n\s*active=\{active\}/);
+  assert.match(source, /<ConfigSidebarItem\n\s*key=\{key\}\n\s*ref=\{selected === key \? selectedRowRef : undefined\}\n\s*active=\{selected === key\}/);
+  assert.match(source, /rowRef=\{selectedRowRef\}/);
+  assert.match(source, /selectedRowRef=\{selectedRowRef\}/);
+  // The shared row passes the ref on to its button (a prop since React 19).
+  assert.match(settingsUiSource, /export function ConfigSidebarItem\(\{[\s\S]*?\.\.\.props\n\}: ButtonHTMLAttributes<HTMLButtonElement> & \{ active\?: boolean; ref\?: Ref<HTMLButtonElement> \}\) \{\n\s*return \(\n\s*<button\n\s*type="button"\n\s*\{\.\.\.props\}/);
+  // A selected row with the ref attached renders as before: the ref is not an attribute.
+  assert.match(view({ selected: "codemode" }), /<button type="button" aria-label="Code mode: [^"]+" aria-current="page" class="config-sidebar-item">/);
 });
 
 test("loading, a failed load and an empty listing each say so", () => {

@@ -659,6 +659,7 @@ export const zhCNLocale: LocalePlugin = {
     "mcp.trust.untrustedThrough": "此项目未受信任（{path} 被标记为不受信任），其 .pi/mcp.json 中的服务器不会连接。",
     "mcp.trust.trustedThrough": "通过 {path} 受信任：此项目 .pi/mcp.json 中的服务器会连接，它下面的每个文件夹都是如此。",
     "mcp.trust.unreadable": "Pi Web 无法读取信任记录（trust.json），因此暂时把此项目的服务器视为未受信任。",
+    "mcp.trust.trustButton": "信任项目…",
     "mcp.footer.fileProblem": "1 个文件问题",
     "mcp.footer.fileProblems": "{count} 个文件问题",
     "mcp.codemode.title": "代码模式",
