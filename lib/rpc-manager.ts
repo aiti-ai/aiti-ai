@@ -226,23 +226,18 @@ class PlainTextTheme extends Theme {
 const PLAIN_TEXT_THEME = new PlainTextTheme();
 const CUSTOM_UI_KEYBINDINGS = new TuiKeybindingsManager(TUI_KEYBINDINGS);
 
-// pi declares active `direct` and `model-only` tools to the model. `codemode` and `deferred`
-// tools stay undeclared until something activates them, and `hidden` is withdrawn.
-const DECLARABLE_EXPOSURES = new Set(["direct", "model-only"]);
-// Tools that reach other tools. They belong to the session, not to a branch of it.
-const TOOL_DISCOVERY_TOOL_NAMES = new Set(["codemode", "tool_search"]);
-
-/** The SDK's own rule (`_isActivatedOnRegistration`): codemode and tool_search opt out. */
-function isActivatedOnRegistration(session: AgentSessionLike, tool: ToolInfo): boolean {
-  return DECLARABLE_EXPOSURES.has(tool.exposure ?? "direct")
-    && session.getToolDefinition(tool.name)?.defaultActive !== false;
-}
+// Tools that belong to the session, not to a branch of it: the ones that reach other tools,
+// and pi-web's subagent tools, which the built-in subagent setting switches on for the whole
+// session. Navigation keeps them although the target branch was recorded without them.
+const SESSION_TOOL_NAMES = new Set<string>(["codemode", "tool_search", ...SUBAGENT_CONTROL_TOOL_NAMES]);
 
 /**
  * The active tools for a coding tool selection. The selection replaces only the coding
  * tools: every other tool named in `carry` that is still registered and not withdrawn stays
- * active, so a tool an extension, `tool_search`, or `defaultTools` activated survives, and
- * the extension tools pi activates on registration are added. An empty selection is Chat only.
+ * active, so a tool an extension, `tool_search`, or `defaultTools` activated survives, and a
+ * tool one switched off stays off. Nothing else is added: pi itself activates the extension
+ * tools it registers (all of them when it builds or reloads a session, then each new one), so
+ * `carry` already holds them. An empty selection is Chat only.
  */
 export function resolveActiveToolNames(
   session: AgentSessionLike,
@@ -261,11 +256,8 @@ export function resolveActiveToolNames(
     const tool = registered.get(name);
     return tool !== undefined && !codingToolNames.has(name) && tool.exposure !== "hidden";
   });
-  const activatedOnRegistration = [...registered.values()]
-    .filter((tool) => !codingToolNames.has(tool.name) && isActivatedOnRegistration(session, tool))
-    .map((tool) => tool.name);
 
-  return [...new Set([...selectedToolNames, ...carriedToolNames, ...activatedOnRegistration])];
+  return [...new Set([...selectedToolNames, ...carriedToolNames])];
 }
 
 // ============================================================================
@@ -537,7 +529,7 @@ export class AgentSessionWrapper {
       const activeAfter = this.inner.getActiveToolNames();
       this.setActiveToolSelection(
         readSessionToolSelection(entries) ?? activeAfter,
-        [...activeAfter, ...activeBefore.filter((name) => TOOL_DISCOVERY_TOOL_NAMES.has(name))],
+        [...activeAfter, ...activeBefore.filter((name) => SESSION_TOOL_NAMES.has(name))],
       );
     }
     return { cancelled: false };
