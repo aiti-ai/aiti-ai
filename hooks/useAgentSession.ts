@@ -528,7 +528,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     setEditEntryId(entryId);
   }, [session?.id]);
   const handleEditContent = useCallback((message: UserMessage, entryId: string) => {
-    if (session?.id && opts.chatInputRef?.current?.replaceMessage(message)) setEdit(entryId);
+    if (!session?.id) return;
+    opts.chatInputRef?.current?.replaceMessage(message);
+    setEdit(entryId);
   }, [opts.chatInputRef, session?.id, setEdit]);
   const cancelEdit = useCallback(() => setEdit(null), [setEdit]);
 
@@ -2548,6 +2550,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     savedDefaultThinkingLevel,
     agentPhase,
     isNew,
+    editEntryId,
     promptAnchorActive,
     showScrollToBottom,
     // Refs
