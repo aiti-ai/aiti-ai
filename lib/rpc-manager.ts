@@ -42,6 +42,7 @@ import { isBuiltInSubagentsEnabled } from "./subagent-settings";
 import { resolveShellTools } from "./powershell-settings";
 import { CHAT_ONLY_RESOURCE_LOADER_OPTIONS, contextFilesSystemPrompt } from "./chat-only";
 import { createExactSystemPromptExtension } from "./exact-system-prompt";
+import { isNestedToolExecutionEvent } from "./agent-event-wire";
 import {
   appendClearedSessionToolSelection,
   appendSessionToolSelection,
@@ -383,20 +384,36 @@ export class AgentSessionWrapper {
       if (event.type === "agent_start") this.agentRunNeedsCompletion = true;
       if (event.type === "agent_end") {
         invalidateSessionListCache();
+        // Every tool call of the run has finished; nothing is left to replay.
+        this.activeToolEvents.clear();
       }
-      const toolCallId = event.toolCallId;
-      if (typeof toolCallId === "string") {
-        if (event.type === "tool_execution_start" || event.type === "tool_execution_update") {
-          this.activeToolEvents.set(toolCallId, event);
-        } else if (event.type === "tool_execution_end") {
-          this.activeToolEvents.delete(toolCallId);
-        }
-      }
+      this.trackActiveToolEvent(event);
       if (IDLE_RESET_EVENT_TYPES.has(event.type)) this.resetIdleTimer();
       this.emit(event);
       if (event.type === "agent_settled") this.notifyAgentRunCompleteIfIdle();
     });
     this.resetIdleTimer();
+  }
+
+  /**
+   * Keep the latest start or update of each running tool call for onEvent() to
+   * replay. Calls a tool makes itself (a codemode script's, which carry
+   * `parentToolCallId`) are left out: a reconnecting client would show each as a
+   * top-level tool, and the parent's own update already reports them. A nested
+   * end can still arrive after its parent's, and is ignored like the rest.
+   */
+  private trackActiveToolEvent(event: AgentEvent): void {
+    const toolCallId = event.toolCallId;
+    if (typeof toolCallId !== "string" || isNestedToolExecutionEvent(event)) return;
+    if (event.type === "tool_execution_start" || event.type === "tool_execution_update") {
+      this.activeToolEvents.set(toolCallId, event);
+    } else if (event.type === "tool_execution_end") {
+      this.activeToolEvents.delete(toolCallId);
+      const nestedPrefix = `${toolCallId}/`;
+      for (const id of this.activeToolEvents.keys()) {
+        if (id.startsWith(nestedPrefix)) this.activeToolEvents.delete(id);
+      }
+    }
   }
 
   private notifyAgentRunCompleteIfIdle(): void {
