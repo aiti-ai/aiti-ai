@@ -512,12 +512,24 @@ test("reconnects active shell output to its streaming tool call", () => {
     source.indexOf('case "queue_update"'),
   );
 
-  assert.match(updateSource, /name === "bash" \|\| name === "powershell"/);
+  assert.match(updateSource, /name === "bash" \|\| name === "powershell" \|\| name === CODEMODE_TOOL_NAME/);
   assert.match(updateSource, /setActiveToolResults/);
   assert.match(updateSource, /content,/);
   assert.match(endSource, /setActiveToolResults[\s\S]*next\.delete\(id\)/);
   assert.match(chatWindowSource, /const map = new Map\(activeToolResults\)/);
   assert.match(chatWindowSource, /<MessageView message=\{streamState\.streamingMessage as AgentMessage\} toolResults=\{toolResultsMap\}/);
+});
+
+test("reports a running script's newest call as its progress", () => {
+  const updateSource = source.slice(
+    source.indexOf('case "tool_execution_update"'),
+    source.indexOf('case "tool_execution_end"'),
+  );
+  // A codemode snapshot has no text content, so the generic progress would stay empty.
+  assert.match(
+    updateSource,
+    /name === CODEMODE_TOOL_NAME\s*\? getCodemodeProgress\(event\.partialResult\)\s*: getToolExecutionProgress\(event\.partialResult\)/,
+  );
 });
 
 test("keeps calls a tool made itself out of the running tools", () => {
