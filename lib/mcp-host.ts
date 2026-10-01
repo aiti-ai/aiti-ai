@@ -10,9 +10,24 @@ import {
   type McpServerEntry,
   type McpTransportFactory,
 } from "@earendil-works/pi-coding-agent";
+import type { McpHostInactiveInfo, McpScope, McpSessionState, McpSessionStatus } from "./api-types";
+import { canonicalJson, mcpConfigKey } from "./mcp-config-key";
+import {
+  forgetMcpHostInactive,
+  forgetMcpStatus,
+  isCurrentMcpStatus,
+  mcpStatusKey,
+  recordMcpHostInactive,
+  recordMcpStatus,
+  replaceMcpStatus,
+  type McpStatusEntry,
+} from "./mcp-status";
+import { createTestRedactor, maskStatusError, maskStatusStderr } from "./mcp-test";
 import { hasParentDirectorySegment, isPathWithinRoots, resolveRealRoots } from "./path-security";
-import type { PiSdkInternals } from "./pi-sdk-internals";
+import type { McpTransport, PiSdkInternals } from "./pi-sdk-internals";
 import { mayReadProjectConfigNow } from "./project-trust";
+
+export { canonicalJson };
 
 // Pi Web decides which MCP servers a session connects (ADR 0006). The SDK's
 // MCP extension is created with a `loadConfig` that returns no servers; this
@@ -34,7 +49,10 @@ import { mayReadProjectConfigNow } from "./project-trust";
 // transports it creates through the factory pi-web gives it. A transport exists
 // only once the extension has assigned the server's connection, which is what
 // makes unregistering safe: before that, the extension's removal finds no
-// connection to close, then connects the server anyway and loses it.
+// connection to close, then connects the server anyway and loses it. What the
+// host sees — every transport of a server, reconnects included, and what
+// stops it registering one — goes to the status store (`lib/mcp-status.ts`)
+// for Settings › MCP, keyed by the entry as its file holds it.
 
 export const MCP_HOST_EXTENSION_NAME = "pi-web-mcp-host";
 
@@ -67,15 +85,6 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** JSON with sorted keys, so an entry compares equal however its file orders it. */
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (isRecord(value)) {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
 // Hot reload re-evaluates this module; globalThis keeps one log line per error per process.
 const CONFIG_ERRORS_LOGGED_KEY: symbol = Symbol.for("pi-web:mcp-config-errors-logged");
 const CONFIG_ERRORS_LOGGED_MAX = 200;
@@ -98,8 +107,9 @@ const PROJECT_CONFIG_MAX_BYTES = 1024 * 1024;
 const NAMES_OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK || 0) | (constants.O_NOFOLLOW || 0);
 
 /**
- * The server names an untrusted project's `.pi/mcp.json` declares, so the host
- * can report why they do not connect. Only the names are read: nothing is
+ * The entries an untrusted project's `.pi/mcp.json` declares, so the host can
+ * report why they do not connect: each name with its raw value, which is only
+ * hashed into the key its status is recorded under (`mcpConfigKey()`), never
  * validated, resolved, or run. The file is repository-controlled and read
  * before anyone trusted it, so only a regular file of at most 1 MiB that
  * resolves inside the project is parsed. The resolved path is opened once,
@@ -108,7 +118,7 @@ const NAMES_OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK || 0) | (con
  * to a file elsewhere on the disk is refused before opening, and a FIFO or a
  * device is opened without blocking and never read.
  */
-export function untrustedProjectServerNames(cwd: string): string[] {
+export function untrustedProjectServerEntries(cwd: string): [name: string, value: unknown][] {
   const path = join(cwd, CONFIG_DIR_NAME, "mcp.json");
   let fd: number | undefined;
   try {
@@ -128,13 +138,18 @@ export function untrustedProjectServerNames(cwd: string): string[] {
     }
     if (length > stats.size) return [];
     const parsed: unknown = JSON.parse(buffer.toString("utf8", 0, length));
-    return isRecord(parsed) && isRecord(parsed.mcpServers) ? Object.keys(parsed.mcpServers) : [];
+    return isRecord(parsed) && isRecord(parsed.mcpServers) ? Object.entries(parsed.mcpServers) : [];
   } catch {
     // Missing, unreadable, swapped for a link, or not JSON: there are no names to report.
     return [];
   } finally {
     if (fd !== undefined) closeSync(fd);
   }
+}
+
+/** The server names of `untrustedProjectServerEntries()`. */
+export function untrustedProjectServerNames(cwd: string): string[] {
+  return untrustedProjectServerEntries(cwd).map(([name]) => name);
 }
 
 const SCRIPT_EXPOSURES = new Set<McpExposure>(["codemode", "codemode-deferred"]);
@@ -166,8 +181,12 @@ export function withReachableExposure(config: McpServerConfig, codemodeAvailable
 /** The part of pi-mcp's `McpTransport` the host observes. */
 interface ObservedTransport {
   send(message: unknown): Promise<void>;
+  start?(): Promise<void>;
+  close?(): Promise<void>;
   onMessage(listener: (message: unknown) => void): () => void;
   onClose(listener: () => void): () => void;
+  /** A stdio transport's stderr so far (pi-mcp keeps at most 64 KiB). */
+  readonly stderr?: unknown;
 }
 
 /**
@@ -225,6 +244,108 @@ export function watchConnection(transport: ObservedTransport, done: (outcome: "r
   transport.onClose(() => finish("closed"));
 }
 
+/** What one transport of a server did, as `watchTransport()` reports it. */
+export type McpTransportEvent =
+  | { type: "ready" }
+  /** It closed before the server was ready: the connection failed, or the server asked for a sign-in. */
+  | { type: "failed"; authRequired: boolean; error?: unknown; stderr?: string }
+  /**
+   * It closed after it was ready: `dropped` when it closed by itself (a stdio
+   * server that exited), not when the client closed it (a session ending, a
+   * reconnect, a sign-in asked for by a later request, which `authRequired` says).
+   */
+  | { type: "closed"; dropped: boolean; authRequired: boolean; stderr?: string };
+
+function errorName(error: unknown): string | undefined {
+  return error instanceof Error ? error.name : undefined;
+}
+
+/**
+ * Whether a request failed because the server wants an OAuth sign-in, as the
+ * SDK's `McpServerConnection.needsSignIn()` decides: the auth provider gave
+ * up (`McpOAuthAuthorizationRequiredError`), or an OAuth server still answered
+ * 401 (`McpAuthRequiredError`). A server with an `Authorization` header gets
+ * no auth provider, and its 401 is a failure. Told by name: neither class is
+ * among the SDK modules Pi Web loads, and a second module copy would defeat
+ * `instanceof` anyway.
+ */
+function asksForSignIn(error: unknown, usesOAuth: boolean): boolean {
+  const name = errorName(error);
+  return name === "McpOAuthAuthorizationRequiredError" || (usesOAuth && name === "McpAuthRequiredError");
+}
+
+/**
+ * Follow one transport for its whole life: ready or failed, as
+ * `watchConnection()` decides, then whether it closes afterwards. Like that,
+ * it adds listeners and own `start`, `send` and `close` properties on the
+ * instance, never a wrapper object. What it notes along the way:
+ * - the first error `start` or a request's `send` rejected with (a spawn
+ *   failure, an HTTP error), or the server's error answer to `initialize`; a
+ *   request on a transport already closed says nothing and is skipped;
+ * - whether one of those asked for a sign-in;
+ * - whether anything called `close()`: a transport closing on its own is a
+ *   drop, one the client closed is not news;
+ * - a stdio server's stderr, read when it closes.
+ */
+export function watchTransport(
+  transport: ObservedTransport,
+  usesOAuth: boolean,
+  report: (event: McpTransportEvent) => void,
+): void {
+  let ready = false;
+  let authRequired = false;
+  let failure: unknown;
+  let closeCalled = false;
+  let initializeId: unknown;
+  const note = (error: unknown) => {
+    if (asksForSignIn(error, usesOAuth)) authRequired = true;
+    else if (failure === undefined && errorName(error) !== "McpConnectionClosedError") failure = error;
+  };
+  const stderr = () => {
+    const text = typeof transport.stderr === "string" ? transport.stderr.trim() : "";
+    return text ? { stderr: text } : {};
+  };
+  watchConnection(transport, (outcome) => {
+    if (outcome === "ready") {
+      ready = true;
+      report({ type: "ready" });
+    } else {
+      report({ type: "failed", authRequired, ...(failure === undefined ? {} : { error: failure }), ...stderr() });
+    }
+  });
+  if (typeof transport.start === "function") {
+    const start = transport.start;
+    transport.start = () => start.call(transport).catch((error: unknown) => {
+      note(error);
+      throw error;
+    });
+  }
+  // watchConnection's own `send`, which this one calls in turn.
+  const send = transport.send;
+  transport.send = (message: unknown) => {
+    if (isRecord(message) && message.method === "initialize" && message.id !== undefined) initializeId = message.id;
+    return send.call(transport, message).catch((error: unknown) => {
+      note(error);
+      throw error;
+    });
+  };
+  if (typeof transport.close === "function") {
+    const close = transport.close;
+    transport.close = () => {
+      closeCalled = true;
+      return close.call(transport);
+    };
+  }
+  transport.onMessage((message) => {
+    if (failure !== undefined || initializeId === undefined || !isRecord(message) || message.id !== initializeId) return;
+    if (isRecord(message.error) && typeof message.error.message === "string") failure = message.error.message;
+  });
+  // After watchConnection's listener, which reports a close before ready itself.
+  transport.onClose(() => {
+    if (ready) report({ type: "closed", dropped: !closeCalled, authRequired, ...stderr() });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // The host
 // ---------------------------------------------------------------------------
@@ -233,30 +354,69 @@ export type McpHostServerState =
   | "connecting"
   | "ready"
   | "failed"
-  /** Another extension registered the name first, or the extension refused the config. */
+  /** The server asked for an OAuth sign-in. */
+  | "needs-auth"
+  /** It was ready, then its transport closed by itself; the extension reconnects at the next call. */
+  | "disconnected"
+  /** Another extension registered the name first (`conflict` names it), or the extension refused the config. */
   | "not-registered"
   /** The project's `.pi/mcp.json` declares it, but the project is not trusted, so it is not read. */
   | "not-trusted";
 
 export interface McpHostServerStatus {
   name: string;
-  scope: "global" | "project";
+  scope: McpScope;
   state: McpHostServerState;
   error?: string;
+  /** A stdio server's stderr tail, masked, when it failed or dropped. */
+  stderr?: string;
+  /** `not-registered`: the extension that registered a server of this name first. */
+  conflict?: string;
 }
 
+/** Which entry a status is about (`lib/mcp-status.ts`), with the `mcpConfigKey()` of the entry as its file holds it. */
+type StatusTarget = McpStatusEntry & { configKey: string };
+
+/** What a session reports to the status store, before the session, folder and time are added. */
+type SessionReport = Pick<McpSessionStatus, "state" | "error" | "stderr" | "conflict">;
+
+type AttemptState = "connecting" | "ready" | "failed" | "needs-auth" | "disconnected";
+
+const SESSION_STATES: Record<AttemptState, McpSessionState> = {
+  connecting: "connecting",
+  ready: "connected",
+  failed: "failed",
+  "needs-auth": "needs-auth",
+  disconnected: "disconnected",
+};
+
+/** For a transport that closed before the server was ready, when nothing said why. */
+const NOT_READY_MESSAGE = "The connection closed before the server was ready";
+
+/** One registration of a server, and every transport the extension opens for it until the host lets it go. */
 class ConnectAttempt {
   /** Set once the extension created the server's transport, or the attempt ended. */
   started = false;
+  /** Set at its first outcome other than connecting, which is what a prompt waits for. */
   settled = false;
   /** A prompt already waited for this attempt until the deadline; later prompts do not. */
   waited = false;
-  state: "connecting" | "ready" | "failed" = "connecting";
+  /**
+   * The host let it go (unregistered it, or the session ended): whatever its
+   * transports do afterwards is the extension closing them, not news.
+   */
+  released = false;
+  state: AttemptState = "connecting";
   error: string | undefined;
+  stderr: string | undefined;
+  /** The transport the extension opened last; an older one that closes late no longer says how the server is. */
+  current: object | undefined;
+  /** What this attempt last wrote to the status store. */
+  recorded: McpSessionStatus | undefined;
   private readonly startedListeners = new Set<() => void>();
   private readonly settledListeners = new Set<() => void>();
 
-  constructor(readonly configKey: string, readonly scope: "global" | "project") {}
+  constructor(readonly configKey: string, readonly scope: McpScope, readonly target: StatusTarget) {}
 
   markStarted(): void {
     if (this.started) return;
@@ -265,11 +425,12 @@ class ConnectAttempt {
     this.startedListeners.clear();
   }
 
-  settle(state: "ready" | "failed", error?: string): void {
-    if (this.settled) return;
-    this.settled = true;
+  update(state: AttemptState, details: { error?: string; stderr?: string } = {}): void {
     this.state = state;
-    this.error = error;
+    this.error = details.error;
+    this.stderr = details.stderr;
+    if (state === "connecting" || this.settled) return;
+    this.settled = true;
     this.markStarted();
     for (const listener of this.settledListeners) listener();
     this.settledListeners.clear();
@@ -281,6 +442,24 @@ class ConnectAttempt {
 
   whenSettled(): Promise<void> {
     return this.settled ? Promise.resolve() : new Promise((resolve) => this.settledListeners.add(resolve));
+  }
+}
+
+/** Something that keeps a server from being registered, as `serverStates()` lists it and the status store gets it. */
+interface HostProblem {
+  status: McpHostServerStatus;
+  target: StatusTarget;
+  report: SessionReport;
+}
+
+/** `pi.registerMcpServer()`'s words when another extension holds the name (SDK `loader.js`). */
+const ALREADY_REGISTERED = /is already registered by extension "(.+)"$/;
+
+function sessionIdOf(ctx: ExtensionContext): string {
+  try {
+    return ctx.sessionManager?.getSessionId() ?? "";
+  } catch {
+    return "";
   }
 }
 
@@ -298,13 +477,24 @@ function aborted(signal: AbortSignal): Promise<void> {
   return new Promise((resolve) => signal.addEventListener("abort", () => resolve(), { once: true }));
 }
 
+/** A server the host wants registered: its config as registered, and the entry its status is about. */
+interface DesiredServer {
+  config: McpServerConfig;
+  scope: McpScope;
+  target: StatusTarget;
+}
+
 /** One load of the host extension; a reload binds a new one. */
 class HostInstance {
   private ctx: ExtensionContext | undefined;
   private active = false;
   private readonly attempts = new Map<string, ConnectAttempt>();
   /** Keyed by scope and name: an untrusted project entry may share its name with a global one. */
-  private readonly problems = new Map<string, McpHostServerStatus>();
+  private problems = new Map<string, HostProblem>();
+  /** What each problem last wrote to the status store, by status key, so a sync repeats a report only once it was replaced. */
+  private readonly problemReports = new Map<string, { signature: string; target: StatusTarget; status: McpSessionStatus }>();
+  /** The record saying this session's `/mcp` is another extension's, while it is. */
+  private inactiveReport: { sessionId: string; info: McpHostInactiveInfo } | undefined;
   private queue: Promise<void> = Promise.resolve();
   private idleTimer: NodeJS.Timeout | undefined;
   /** Between agent_start and agent_end; the idle timer never runs meanwhile. */
@@ -318,7 +508,11 @@ class HostInstance {
       // The built-in MCP extension may be switched off (-builtin:mcp) or replaced by one that
       // registers /mcp; such an extension would connect these servers its own way, so the
       // host hands it nothing.
-      this.active = pi.getCommands().some((command) => command.name === "mcp" && command.sourceInfo?.path === MCP_EXTENSION_PATH);
+      const commands = pi.getCommands().filter((command) => command.name === "mcp");
+      this.active = commands.some((command) => command.sourceInfo?.path === MCP_EXTENSION_PATH);
+      // `-builtin:mcp` leaves no /mcp at all, which Settings reads from the files. Another
+      // extension's /mcp only a session can see, by loading the extensions.
+      this.reportActivity(ctx, this.active ? undefined : commands[0]?.sourceInfo?.path);
     });
     pi.on("before_agent_start", () => {
       this.clearIdle();
@@ -334,16 +528,63 @@ class HostInstance {
       this.armIdle();
     });
     pi.on("session_shutdown", () => {
-      // The extension closes every connection itself.
+      // The extension closes every connection itself, and has by now: its handler runs
+      // first and awaits the closes. Those it called close() on are not drops anyway.
       this.active = false;
       this.clearIdle();
+      this.letGoOfAll();
+      this.reportActivity(undefined, undefined);
     });
   }
 
-  /** Called by the transport factory for every connection the extension opens. */
+  /**
+   * Called by the transport factory for every connection the extension opens,
+   * the first and every one after: a reconnect after a drop or a sign-in, an
+   * HTTP retry. Each belongs to the registration it was opened for, until the
+   * host lets that go.
+   */
   attemptFor(entry: McpServerEntry): ConnectAttempt | undefined {
     const attempt = this.attempts.get(entry.name);
-    return attempt && !attempt.settled && attempt.configKey === canonicalJson(entry.config) ? attempt : undefined;
+    return attempt && !attempt.released && attempt.configKey === canonicalJson(entry.config) ? attempt : undefined;
+  }
+
+  /** The factory could not build a transport (a PI_WEB_PASSWORD reference, a failing `!command`). */
+  transportFailed(attempt: ConnectAttempt, entry: McpServerEntry, error: unknown): void {
+    attempt.current = undefined;
+    const redact = createTestRedactor(entry.config, [], { isCommandConfigValue: this.isCommandValue });
+    this.update(attempt, "failed", { error: maskStatusError(errorMessage(error), redact) });
+  }
+
+  /** Follow a transport the extension opened for `attempt`; the latest one speaks for the server. */
+  watch(attempt: ConnectAttempt, entry: McpServerEntry, transport: McpTransport, usesOAuth: boolean): void {
+    attempt.markStarted();
+    attempt.current = transport;
+    this.update(attempt, "connecting");
+    let redactor: ((text: string) => string) | undefined;
+    const redact = (text: string) => {
+      redactor ??= createTestRedactor(entry.config, [transport], { isCommandConfigValue: this.isCommandValue });
+      return redactor(text);
+    };
+    const stderr = (text: string | undefined) => (text === undefined ? {} : { stderr: maskStatusStderr(text, redact) });
+    watchTransport(transport as unknown as ObservedTransport, usesOAuth, (event) => {
+      // An attempt the host let go still settles, for a prompt still waiting on it; `update()` records nothing for it.
+      if (attempt.current !== transport) return;
+      if (event.type === "ready") {
+        this.update(attempt, "ready");
+      } else if (event.type === "failed") {
+        if (event.authRequired) this.update(attempt, "needs-auth");
+        else {
+          const error = event.error === undefined ? NOT_READY_MESSAGE : errorMessage(event.error);
+          this.update(attempt, "failed", { error: maskStatusError(error, redact), ...stderr(event.stderr) });
+        }
+      } else if (event.authRequired) {
+        // A later request asked for a sign-in, and the SDK dropped the client to wait for one.
+        this.update(attempt, "needs-auth");
+      } else if (event.dropped) {
+        this.update(attempt, "disconnected", stderr(event.stderr));
+      }
+      // Closed by the client otherwise: a reconnect opens the next transport, and a session that ends lets go first.
+    });
   }
 
   sync(): Promise<void> {
@@ -356,8 +597,9 @@ class HostInstance {
         await this.unregister(name);
       }
       for (const [name, wanted] of desired) {
-        if (!this.attempts.has(name)) this.register(name, wanted.config, wanted.scope);
+        if (!this.attempts.has(name)) this.register(name, wanted);
       }
+      this.reportProblems();
     });
     // A prompt can register servers and then start no run: Stop during the wait, a
     // slash command, a preflight that rejects it. None reaches agent_end, so the idle
@@ -400,13 +642,14 @@ class HostInstance {
   }
 
   serverStates(): McpHostServerStatus[] {
-    const states: McpHostServerStatus[] = [...this.problems.values()];
+    const states: McpHostServerStatus[] = [...this.problems.values()].map((problem) => problem.status);
     for (const [name, attempt] of this.attempts) {
       states.push({
         name,
         scope: attempt.scope,
         state: attempt.state,
         ...(attempt.error ? { error: attempt.error } : {}),
+        ...(attempt.stderr ? { stderr: attempt.stderr } : {}),
       });
     }
     return states.sort((a, b) => a.name.localeCompare(b.name) || a.scope.localeCompare(b.scope));
@@ -422,6 +665,102 @@ class HostInstance {
   dispose(): void {
     this.active = false;
     this.clearIdle();
+    this.letGoOfAll();
+  }
+
+  private readonly isCommandValue = (value: string): boolean =>
+    // The SDK's rule (`isCommandConfigValue()`), for hosts given no value parser, such as tests'.
+    this.options.internals.isCommandConfigValue?.(value) ?? value.startsWith("!");
+
+  /** Writes what this session sees of `target` to the status store, and returns the record. */
+  private write(target: StatusTarget, report: SessionReport): McpSessionStatus | undefined {
+    const ctx = this.ctx;
+    if (!ctx) return undefined;
+    const status: McpSessionStatus = {
+      origin: "session",
+      state: report.state,
+      sessionId: sessionIdOf(ctx),
+      cwd: ctx.cwd,
+      updatedAt: Date.now(),
+      ...(report.error ? { error: report.error } : {}),
+      ...(report.stderr ? { stderr: report.stderr } : {}),
+      ...(report.conflict ? { conflict: report.conflict } : {}),
+    };
+    recordMcpStatus(target, target.configKey, status);
+    return status;
+  }
+
+  /** A change of `attempt`'s state, recorded unless the host let it go. */
+  private update(attempt: ConnectAttempt, state: AttemptState, details: { error?: string; stderr?: string } = {}): void {
+    attempt.update(state, details);
+    if (attempt.released) return;
+    attempt.recorded = this.write(attempt.target, { state: SESSION_STATES[state], ...details });
+  }
+
+  /**
+   * The host no longer follows `attempt`, and the extension is about to close
+   * its connection. Its last state stays recorded as the last thing this
+   * session saw, unless someone wrote another since, with two exceptions that
+   * would describe a connection nobody holds: "connecting", which nothing would
+   * ever finish, goes, and "connected" is marked closed (`closedAt`), so a
+   * session that idled out or ended does not read as connected for as long as
+   * the server process runs. A failure, a sign-in asked for, or a drop is
+   * still true of the server afterwards and stays as it is.
+   */
+  private letGo(attempt: ConnectAttempt): void {
+    attempt.released = true;
+    const { target, recorded } = attempt;
+    if (!recorded) return;
+    if (attempt.state === "connecting") forgetMcpStatus(target, target.configKey, recorded);
+    else if (attempt.state === "ready") replaceMcpStatus(target, target.configKey, recorded, { ...recorded, closedAt: Date.now() });
+  }
+
+  /**
+   * For a host that stops: its session ended, or a reload replaces it. Besides
+   * its attempts, the problems it reported go: unlike what a connection did,
+   * they are found again at every sync, and a host that no longer syncs no
+   * longer sees them (another extension holding the name is that session's).
+   */
+  private letGoOfAll(): void {
+    for (const attempt of this.attempts.values()) this.letGo(attempt);
+    for (const { target, status } of this.problemReports.values()) forgetMcpStatus(target, target.configKey, status);
+    this.problemReports.clear();
+  }
+
+  /**
+   * Records the problems of the last sync. Each sync finds them again (a
+   * registration is retried, trust is read again), so one is written only when
+   * it changed, or when its record was replaced since (by a test, or another
+   * session), which makes it the latest report again.
+   */
+  private reportProblems(): void {
+    const reported = new Set<string>();
+    for (const { target, report } of this.problems.values()) {
+      const key = mcpStatusKey(target);
+      reported.add(key);
+      const signature = [target.configKey, report.state, report.conflict ?? "", report.error ?? ""].join("\0");
+      const previous = this.problemReports.get(key);
+      if (previous?.signature === signature && isCurrentMcpStatus(target, target.configKey, previous.status)) continue;
+      const status = this.write(target, report);
+      if (status) this.problemReports.set(key, { signature, target, status });
+    }
+    for (const key of [...this.problemReports.keys()]) if (!reported.has(key)) this.problemReports.delete(key);
+  }
+
+  /** Records (`owner`) or forgets that this session's `/mcp` is another extension's. */
+  private reportActivity(ctx: ExtensionContext | undefined, owner: string | undefined): void {
+    if (this.inactiveReport) forgetMcpHostInactive(this.inactiveReport.sessionId, this.inactiveReport.info);
+    this.inactiveReport = undefined;
+    if (!ctx) return;
+    const sessionId = sessionIdOf(ctx);
+    if (!owner) {
+      // A host of this session before a reload may have recorded one.
+      forgetMcpHostInactive(sessionId);
+      return;
+    }
+    const info: McpHostInactiveInfo = { owner, cwd: ctx.cwd, updatedAt: Date.now() };
+    recordMcpHostInactive(sessionId, info);
+    this.inactiveReport = { sessionId, info };
   }
 
   private enqueue(operation: () => Promise<void>): Promise<void> {
@@ -432,9 +771,9 @@ class HostInstance {
     return this.queue;
   }
 
-  private desiredServers(ctx: ExtensionContext): Map<string, { config: McpServerConfig; scope: "global" | "project" }> {
-    this.problems.clear();
-    const desired = new Map<string, { config: McpServerConfig; scope: "global" | "project" }>();
+  private desiredServers(ctx: ExtensionContext): Map<string, DesiredServer> {
+    this.problems = new Map();
+    const desired = new Map<string, DesiredServer>();
     // Project entries follow the project's trust, as in the pi CLI: the SDK reads
     // `.pi/mcp.json` only once the project is trusted (ADR 0006). Trust is read
     // fresh here, never from ctx.isProjectTrusted(): that is the wrapper's
@@ -457,8 +796,14 @@ class HostInstance {
     }
     // After the SDK's read, so a file that landed since the trust read is reported too.
     if (!projectReadable) {
-      for (const name of untrustedProjectServerNames(ctx.cwd)) {
-        this.problems.set(`project\0${name}`, { name, scope: "project", state: "not-trusted" });
+      // The path the SDK reads, which Settings lists the entries under.
+      const sourcePath = join(ctx.cwd, CONFIG_DIR_NAME, "mcp.json");
+      for (const [name, value] of untrustedProjectServerEntries(ctx.cwd)) {
+        this.problems.set(`project\0${name}`, {
+          status: { name, scope: "project", state: "not-trusted" },
+          target: { scope: "project", sourcePath, name, configKey: mcpConfigKey(value) },
+          report: { state: "not-trusted" },
+        });
       }
     }
     if (!loaded) return desired;
@@ -467,19 +812,41 @@ class HostInstance {
     for (const entry of loaded.servers) {
       if (entry.config.enabled === false) continue;
       const scope = entry.scope === "project" ? "project" : "global";
-      desired.set(entry.name, { config: withReachableExposure(entry.config, this.options.codemodeAvailable()), scope });
+      desired.set(entry.name, {
+        config: withReachableExposure(entry.config, this.options.codemodeAvailable()),
+        scope,
+        // The validator hands back the parsed entry itself, so this is the key Settings lists it with.
+        target: { scope, sourcePath: entry.source, name: entry.name, configKey: mcpConfigKey(entry.config) },
+      });
     }
     return desired;
   }
 
-  private register(name: string, config: McpServerConfig, scope: "global" | "project"): void {
-    const attempt = new ConnectAttempt(canonicalJson(config), scope);
+  private register(name: string, wanted: DesiredServer): void {
+    const { config, scope, target } = wanted;
+    const attempt = new ConnectAttempt(canonicalJson(config), scope, target);
     this.attempts.set(name, attempt);
     try {
       this.pi.registerMcpServer(name, config);
     } catch (error) {
       this.attempts.delete(name);
-      this.problems.set(`${scope}\0${name}`, { name, scope, state: "not-registered", error: errorMessage(error) });
+      const message = errorMessage(error);
+      const owner = this.registeredOwner(name) ?? ALREADY_REGISTERED.exec(message)?.[1];
+      const redact = createTestRedactor(config, [], { isCommandConfigValue: this.isCommandValue });
+      this.problems.set(`${scope}\0${name}`, {
+        status: { name, scope, state: "not-registered", error: message, ...(owner ? { conflict: owner } : {}) },
+        target,
+        report: owner ? { state: "conflict", conflict: owner } : { state: "failed", error: maskStatusError(message, redact) },
+      });
+    }
+  }
+
+  /** The extension a server of this name is registered by, read from the registry rather than from words. */
+  private registeredOwner(name: string): string | undefined {
+    try {
+      return this.pi.getMcpServers?.().find((server) => server.name === name)?.extensionPath;
+    } catch {
+      return undefined;
     }
   }
 
@@ -491,6 +858,8 @@ class HostInstance {
       deadline.cancel();
     }
     this.attempts.delete(name);
+    // Before the extension closes it: that close is the host's doing, not a drop.
+    if (attempt) this.letGo(attempt);
     try {
       this.pi.unregisterMcpServer(name);
     } catch (error) {
@@ -517,7 +886,8 @@ class HostInstance {
 
 export interface McpHostOptions {
   agentDir: string;
-  internals: Pick<PiSdkInternals, "loadMcpConfig">;
+  /** `loadMcpConfig`, and the SDK's `!command` test for masking what servers say (else a leading `!`, as the SDK decides). */
+  internals: Pick<PiSdkInternals, "loadMcpConfig"> & Partial<Pick<PiSdkInternals, "isCommandConfigValue">>;
   /** Whether codemode can run scripts; servers it cannot reach become `deferred`. */
   codemodeAvailable: () => boolean;
   /**
@@ -563,21 +933,17 @@ export class McpHost {
 
   wrapTransportFactory(factory: McpTransportFactory): McpTransportFactory {
     return (entry, cwd, authProvider) => {
-      const attempt = this.current?.attemptFor(entry);
+      const host = this.current;
+      const attempt = host?.attemptFor(entry);
       let transport: ReturnType<McpTransportFactory>;
       try {
         transport = factory(entry, cwd, authProvider);
       } catch (error) {
-        attempt?.settle("failed", errorMessage(error));
+        if (host && attempt) host.transportFailed(attempt, entry, error);
         throw error;
       }
-      if (attempt) {
-        attempt.markStarted();
-        watchConnection(transport as unknown as ObservedTransport, (outcome) => {
-          if (outcome === "ready") attempt.settle("ready");
-          else attempt.settle("failed", "The connection closed before the server was ready");
-        });
-      }
+      // The connection passes an auth provider exactly when the server signs in with OAuth.
+      if (host && attempt) host.watch(attempt, entry, transport as McpTransport, authProvider !== undefined);
       return transport;
     };
   }
