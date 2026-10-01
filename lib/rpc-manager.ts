@@ -42,6 +42,7 @@ import { isBuiltInSubagentsEnabled } from "./subagent-settings";
 import { resolveShellTools } from "./powershell-settings";
 import { CHAT_ONLY_RESOURCE_LOADER_OPTIONS, contextFilesSystemPrompt } from "./chat-only";
 import { createExactSystemPromptExtension } from "./exact-system-prompt";
+import { createPiWebBuiltinExtensions } from "./builtin-extensions";
 import { isNestedToolExecutionEvent } from "./agent-event-wire";
 import {
   appendClearedSessionToolSelection,
@@ -2265,6 +2266,10 @@ export async function startRpcSession(
     const exactSystemPromptRef: { current?: () => string } = {};
     const exactSystemPromptExtension = createExactSystemPromptExtension(() => exactSystemPromptRef.current?.());
     const usesExactSystemPrompt = chatOnly || subagentResources?.exactSystemPrompt !== undefined;
+    // codemode, tool-search, and mcp, as the pi CLI loads them (ADR 0006).
+    const builtinExtensions = subagentResources || chatOnly
+      ? []
+      : await createPiWebBuiltinExtensions({ agentDir });
     const services = await createAgentSessionServices({
       cwd: sessionCwd,
       agentDir,
@@ -2289,6 +2294,7 @@ export async function startRpcSession(
           ? { ...CHAT_ONLY_RESOURCE_LOADER_OPTIONS, extensionFactories: [exactSystemPromptExtension] }
         : {
             extensionFactories: [
+              ...builtinExtensions,
               createProjectCommandBashExtension({
                 cwd: sessionCwd,
                 settings: settingsManager,
