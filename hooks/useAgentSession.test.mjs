@@ -536,14 +536,71 @@ test("keeps calls a tool made itself out of the running tools", () => {
   assert.match(source, /import \{ isNestedToolExecutionEvent, isSystemMessageEvent \} from "@\/lib\/agent-event-wire";/);
 });
 
-test("plays the enabled sound once for each extension dialog", () => {
-  assert.match(chatWindowSource, /soundedExtensionDialogIdRef = useRef<string \| null>\(null\)/);
-  assert.match(
-    chatWindowSource,
-    /soundedExtensionDialogIdRef\.current === extensionDialog\.id/,
+test("plays the enabled sound once when an extension dialog appears over an empty slot", () => {
+  const soundSource = chatWindowSource.slice(
+    chatWindowSource.indexOf("const surfaced = "),
+    chatWindowSource.indexOf("}, [completionNotificationsEnabled, extensionDialog]);"),
   );
-  assert.match(chatWindowSource, /soundedExtensionDialogIdRef\.current = extensionDialog\.id/);
-  assert.match(chatWindowSource, /playDoneSoundRef\.current\(\)/);
+  assert.match(chatWindowSource, /extensionDialogShownRef = useRef\(false\)/);
+  // A dialog queued behind another surfaces right after the user answers that one,
+  // so only the transition from no dialog to a dialog sounds.
+  assert.match(soundSource, /const surfaced = Boolean\(extensionDialog\) && !extensionDialogShownRef\.current;/);
+  assert.match(soundSource, /extensionDialogShownRef\.current = Boolean\(extensionDialog\);\s+if \(!completionNotificationsEnabled \|\| !surfaced\) return;/);
+  assert.match(soundSource, /playDoneSoundRef\.current\(\)/);
+});
+
+test("queues extension dialogs and custom panels by request id instead of sharing one slot", () => {
+  const extensionRequestSource = source.slice(
+    source.indexOf("  const handleExtensionUiRequest = useCallback"),
+    source.indexOf("  const settleUiStage = useCallback"),
+  );
+  const respondSource = source.slice(
+    source.indexOf("  const respondToExtensionUi = useCallback"),
+    source.indexOf("  const sendExtensionCustomInput = useCallback"),
+  );
+  const closedSource = source.slice(
+    source.indexOf('      case "extension_ui_closed":'),
+    source.indexOf("  handleAgentEventRef.current = handleAgentEvent;"),
+  );
+
+  assert.match(source, /import \{ enqueueExtensionUiRequest, removeExtensionUiRequest, upsertExtensionUiRequest \} from "@\/lib\/extension-ui-queue"/);
+  assert.match(source, /const \[extensionDialogs, setExtensionDialogs\] = useState<ExtensionUiDialogRequest\[\]>\(\[\]\)/);
+  assert.match(source, /const \[extensionCustomUis, setExtensionCustomUis\] = useState<ExtensionUiCustomRequest\[\]>\(\[\]\)/);
+  assert.doesNotMatch(source, /setExtensionDialog\(|setExtensionCustomUi\(/);
+  assert.match(
+    extensionRequestSource,
+    /case "editor":\s+setExtensionDialogs\(\(queue\) => enqueueExtensionUiRequest\(queue, request\)\)/,
+  );
+  // A custom panel re-renders under its id: replace it where it stands, drop it on close.
+  assert.match(
+    extensionRequestSource,
+    /case "custom":\s+setExtensionCustomUis\(\(queue\) => request\.closed\s+\? removeExtensionUiRequest\(queue, request\.id\)\s+: upsertExtensionUiRequest\(queue, request\)\)/,
+  );
+  assert.match(respondSource, /setExtensionDialogs\(\(queue\) => removeExtensionUiRequest\(queue, request\.id\)\)/);
+  assert.match(closedSource, /setExtensionDialogs\(\(queue\) => removeExtensionUiRequest\(queue, event\.id as string\)\)/);
+  // The hook keeps exposing what is on screen under the old names, plus how many wait behind it.
+  assert.match(source, /const extensionDialog = extensionDialogs\[0\] \?\? null;/);
+  assert.match(source, /const waitingExtensionDialogCount = Math\.max\(0, extensionDialogs\.length - 1\);/);
+  assert.match(source, /const extensionCustomUi = extensionCustomUis\[0\] \?\? null;/);
+  assert.match(source, /const waitingExtensionCustomUiCount = Math\.max\(0, extensionCustomUis\.length - 1\);/);
+  assert.match(source, /notices: noticeState\.visible, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount,/);
+  assert.match(chatWindowSource, /notices, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount,/);
+});
+
+test("drops queued extension UI when a tool change rebuilds the wrapper", () => {
+  const setToolsSource = source.slice(
+    source.indexOf("  const handleToolPresetChange = useCallback"),
+    source.indexOf("  const scrollToMessage = useCallback"),
+  );
+  // The old wrapper closes its event stream before cancelling its pending requests,
+  // so their extension_ui_closed events never reach this hook.
+  assert.match(
+    setToolsSource,
+    /if \(activeSessionId !== sid \|\| result\?\.recreated\) \{[\s\S]*?closeEvents\(\);[\s\S]*?setExtensionDialogs\(\[\]\);\s+setExtensionCustomUis\(\[\]\);[\s\S]*?maintainEventsConnected\(activeSessionId\)/,
+  );
+  // A tool change that keeps the wrapper keeps its pending requests on screen.
+  const unconditional = setToolsSource.slice(setToolsSource.indexOf("      setSlashCommands([]);"));
+  assert.doesNotMatch(unconditional, /setExtensionDialogs|setExtensionCustomUis/);
 });
 
 test("suppresses sounds and browser attention for the active subagent session", () => {
@@ -558,7 +615,7 @@ test("suppresses sounds and browser attention for the active subagent session", 
 
   assert.match(chatWindowSource, /completionNotificationsEnabled = session\?\.relation\?\.kind !== "subagent"/);
   assert.match(chatWindowSource, /completionNotificationsEnabled && soundEnabledRef\.current/);
-  assert.match(chatWindowSource, /!completionNotificationsEnabled[\s\S]*?!extensionDialog/);
+  assert.match(chatWindowSource, /!completionNotificationsEnabled \|\| !surfaced/);
   assert.match(completionSource, /selectedSession\?\.relation\?\.kind === "subagent"\) return/);
   assert.match(attentionSource, /selectedSession\?\.relation\?\.kind === "subagent"\) return/);
 });

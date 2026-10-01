@@ -100,6 +100,7 @@ lib/
   agent-client.ts      typed fetch helper for /api/agent commands
   default-preferences.ts  write defaultModel/defaultThinkingLevel; detect project-level shadowing
   draft-store.ts       local draft persistence helpers
+  extension-ui-queue.ts  FIFO queues for extension dialogs and custom panels, keyed by request id
   file-access.ts       allowed file roots for /api/files and worktrees
   linked-directory.ts  directory links that lead outside the allowed roots + the allow-link check
   default-cwd.ts       dated ~/pi-cwd/YYYYMMDD path for "Use default directory"
