@@ -1,7 +1,12 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
+  CONFIG_DIR_NAME,
   createCodemodeExtension,
   createMcpExtension,
   createToolSearchExtension,
+  DefaultPackageManager,
+  SettingsManager,
   type ExtensionAPI,
   type ExtensionContext,
   type ExtensionFactory,
@@ -132,6 +137,25 @@ export function checkCodemodeSandbox(): Promise<BuiltinFeatureStatus> {
   });
 }
 
+export type CodemodeSandboxPeek = { checked: false } | ({ checked: true } & BuiltinFeatureStatus);
+
+const NOT_SETTLED: unique symbol = Symbol("not settled");
+
+/**
+ * The self-test's result once it has settled, without ever starting it: the
+ * first normal session runs it, and Settings only reports what it found. A
+ * test still running, or not started since the server did, is `checked:
+ * false`. A promise that has already settled wins the race against one
+ * resolved now, because their reactions run in the order they were attached.
+ */
+export async function peekCodemodeSandbox(): Promise<CodemodeSandboxPeek> {
+  const store = globalThis as Record<symbol, Promise<BuiltinFeatureStatus> | undefined>;
+  const pending = store[CODEMODE_SANDBOX_KEY];
+  if (!pending) return { checked: false };
+  const settled = await Promise.race([pending, Promise.resolve(NOT_SETTLED)]);
+  return settled === NOT_SETTLED ? { checked: false } : { checked: true, ...settled };
+}
+
 // ---------------------------------------------------------------------------
 // MCP
 // ---------------------------------------------------------------------------
@@ -196,6 +220,86 @@ export function createMcpExtensionConfigLoader(
     }
     return { servers: [], errors: [], ...(autoEnableCodemode === undefined ? {} : { autoEnableCodemode }) };
   };
+}
+
+// ---------------------------------------------------------------------------
+// Whether the settings switch a built-in off
+// ---------------------------------------------------------------------------
+
+export const BUILTIN_EXTENSION_NAMES = ["codemode", "tool-search", "mcp"] as const;
+export type BuiltinExtensionName = typeof BUILTIN_EXTENSION_NAMES[number];
+
+export interface BuiltinExtensionSwitch {
+  enabled: boolean;
+  /** The settings file whose `extensions` entry turns it off. */
+  settingsPath?: string;
+}
+
+function readSettingsExtensions(path: string): string[] | undefined {
+  if (!existsSync(path)) return undefined;
+  const text = readFileSync(path, "utf8");
+  // As SettingsManager reads it: a byte-order mark is allowed, and a file that
+  // does not parse counts as empty.
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
+  } catch {
+    return undefined;
+  }
+  const extensions = typeof parsed === "object" && parsed !== null ? (parsed as { extensions?: unknown }).extensions : undefined;
+  return Array.isArray(extensions) ? extensions.filter((entry): entry is string => typeof entry === "string") : undefined;
+}
+
+/**
+ * Whether the `extensions` settings leave each built-in on, read from the
+ * files as the session's resource loader would: `-builtin:mcp` (or a `!`
+ * pattern matching it) in the global settings turns it off, and a matching
+ * `+`, `-` or `!` entry in a trusted project's settings overrides that. The
+ * SDK's package manager decides, so its pattern rules apply exactly; it is
+ * given only the two `extensions` lists, never `packages`, so it cannot
+ * install or even look up a package. It still scans the extension, skill,
+ * prompt and theme folders it auto-discovers, which only reads them.
+ */
+export async function readBuiltinExtensionSwitches(options: {
+  agentDir: string;
+  /** Without one, only the global settings count. */
+  cwd?: string;
+  projectTrusted: boolean;
+}): Promise<Record<BuiltinExtensionName, BuiltinExtensionSwitch>> {
+  const { agentDir } = options;
+  const projectTrusted = options.cwd !== undefined && options.projectTrusted;
+  const cwd = options.cwd ?? agentDir;
+  const paths = {
+    global: join(agentDir, "settings.json"),
+    project: join(cwd, CONFIG_DIR_NAME, "settings.json"),
+  };
+  const lists = {
+    global: readSettingsExtensions(paths.global),
+    project: projectTrusted ? readSettingsExtensions(paths.project) : undefined,
+  };
+  const storage: Parameters<typeof SettingsManager.fromStorage>[0] = {
+    withLock: (scope, fn) => {
+      const extensions = lists[scope];
+      fn(extensions ? JSON.stringify({ extensions }) : undefined);
+    },
+  };
+  const packageManager = new DefaultPackageManager({
+    cwd,
+    agentDir,
+    settingsManager: SettingsManager.fromStorage(storage, { projectTrusted }),
+    builtinExtensions: [...BUILTIN_EXTENSION_NAMES],
+  });
+  // Nothing is missing without packages; skip rather than install if that ever changes.
+  const resolved = await packageManager.resolve(async () => "skip");
+  const switches = {} as Record<BuiltinExtensionName, BuiltinExtensionSwitch>;
+  for (const name of BUILTIN_EXTENSION_NAMES) {
+    const resource = resolved.extensions.find((extension) => extension.path === `builtin:${name}`);
+    const enabled = resource?.enabled ?? true;
+    switches[name] = enabled
+      ? { enabled }
+      : { enabled, settingsPath: resource?.metadata.scope === "project" ? paths.project : paths.global };
+  }
+  return switches;
 }
 
 // ---------------------------------------------------------------------------

@@ -1,15 +1,69 @@
-import { join } from "node:path";
-import { hasTrustRequiringProjectResources, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
+import { realpathSync } from "node:fs";
+import { join, resolve } from "node:path";
+import {
+  hasTrustRequiringProjectResources,
+  ProjectTrustStore,
+  type ProjectTrustStoreEntry,
+} from "@earendil-works/pi-coding-agent";
 import type { ProjectTrustStatus } from "./api-types";
+import { samePath } from "./paths";
 
+/** The folder as `trust.json` keys it: resolved, then its real path when it exists. */
+function trustKeyPath(cwd: string): string {
+  const resolved = resolve(cwd);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+function describeDecision(
+  cwd: string,
+  entry: ProjectTrustStoreEntry | null,
+): Pick<ProjectTrustStatus, "decision" | "decisionPath" | "inherited"> {
+  if (!entry) return { decision: null, inherited: false };
+  return {
+    decision: entry.decision,
+    decisionPath: entry.path,
+    inherited: !samePath(entry.path, trustKeyPath(cwd)),
+  };
+}
+
+/**
+ * Whether the project at `cwd` needs trust and is trusted, and the decision
+ * that answers it. The store resolves the nearest decision, exact or
+ * inherited from an ancestor, so `decision` and `decisionPath` tell exact
+ * trust from trust through a parent, and no decision from an explicit `false`,
+ * which `trusted` alone cannot. They are read for a folder that requires no
+ * trust too: a fresh folder (no decision anywhere) and one inside a trusted
+ * tree both report `trusted: true`. Such a folder never failed on an
+ * unreadable `trust.json` before, and callers that only need `trusted` still
+ * must not, so that failure is reported in `decisionError` instead.
+ */
 export function getProjectTrustStatus(cwd: string, agentDir: string): ProjectTrustStatus {
   const requiresTrust = Boolean(cwd) && hasTrustRequiringProjectResources(cwd);
-  if (!requiresTrust) return { requiresTrust: false, trusted: true };
-
   const trustStore = new ProjectTrustStore(agentDir);
+  if (!requiresTrust) {
+    if (!cwd) return { requiresTrust: false, trusted: true, decision: null, inherited: false };
+    try {
+      return { requiresTrust: false, trusted: true, ...describeDecision(cwd, trustStore.getEntry(cwd)) };
+    } catch (error) {
+      return {
+        requiresTrust: false,
+        trusted: true,
+        decision: null,
+        inherited: false,
+        decisionError: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+
+  const entry = trustStore.getEntry(cwd);
   return {
     requiresTrust: true,
-    trusted: trustStore.get(cwd) === true,
+    trusted: entry?.decision === true,
+    ...describeDecision(cwd, entry),
   };
 }
 
@@ -39,8 +93,11 @@ const TRUST_READ_WARNINGS_MAX = 200;
  */
 export function mayReadProjectConfigNow(cwd: string, agentDir: string): boolean {
   try {
-    const status = getProjectTrustStatus(cwd, agentDir);
-    return status.requiresTrust && status.trusted;
+    // Not getProjectTrustStatus(): that also reads trust.json for a folder that
+    // requires no trust, which this answers false whatever its decision. Twice
+    // per prompt, that would lock and read trust.json for nothing.
+    if (!cwd || !hasTrustRequiringProjectResources(cwd)) return false;
+    return new ProjectTrustStore(agentDir).get(cwd) === true;
   } catch (error) {
     const trustPath = join(agentDir, "trust.json");
     const message = error instanceof Error ? error.message : String(error);
@@ -62,7 +119,10 @@ export function trustProject(cwd: string, agentDir: string): ProjectTrustStatus 
   if (!status.requiresTrust) return status;
 
   new ProjectTrustStore(agentDir).set(cwd, true);
-  return { requiresTrust: true, trusted: true };
+  // Built from what was just written, not read back: a second read can fail
+  // (the lock held past the store's wait), and the route would then report a
+  // decision already on disk as a failure and skip rebuilding the cwd's wrappers.
+  return { requiresTrust: true, trusted: true, decision: true, decisionPath: trustKeyPath(cwd), inherited: false };
 }
 
 /**
@@ -86,8 +146,7 @@ export function projectTrustReloadOptions(
   cwd: string,
   agentDir: string,
 ): { resolveProjectTrust: () => Promise<boolean> } | undefined {
-  const status = getProjectTrustStatus(cwd, agentDir);
-  if (!status.requiresTrust) return undefined;
+  if (!cwd || !hasTrustRequiringProjectResources(cwd)) return undefined;
   const trustStore = new ProjectTrustStore(agentDir);
   return { resolveProjectTrust: async () => trustStore.get(cwd) === true };
 }

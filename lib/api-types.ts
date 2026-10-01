@@ -1,4 +1,4 @@
-import type { ResourceDiagnostic } from "@earendil-works/pi-coding-agent";
+import type { McpExposure, ResourceDiagnostic } from "@earendil-works/pi-coding-agent";
 import type { SubagentProfile } from "./subagents";
 
 export interface SubagentProfilesResponse {
@@ -80,6 +80,185 @@ export interface SkillToggleResult {
 export interface ProjectTrustStatus {
   requiresTrust: boolean;
   trusted: boolean;
+  /**
+   * The nearest decision `trust.json` records for this folder or an ancestor,
+   * null when there is none. Read for a folder that requires no trust too, so
+   * a fresh folder (no decision anywhere) can be told from one inside a
+   * trusted or untrusted tree.
+   */
+  decision: boolean | null;
+  /** The folder that decision is recorded for, as `trust.json` keys it (its real path). */
+  decisionPath?: string;
+  /** The decision is recorded for an ancestor, so every folder below it shares it. */
+  inherited: boolean;
+  /**
+   * Set only for a folder that requires no trust when `trust.json` could not
+   * be read; `decision` is then null although one may exist. A folder that
+   * requires trust reports the failure as an error instead.
+   */
+  decisionError?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Settings › MCP (ADR 0006). Every refusal carries `{ error, reason }`: `error`
+// is an English diagnostic, `reason` a code the panel translates.
+// ---------------------------------------------------------------------------
+
+export type McpScope = "global" | "project";
+export type McpTransportKind = "stdio" | "http";
+
+/** A value the SDK resolves before it connects: a stdio `env` value, an HTTP header, or `oauth.clientSecret`. */
+export interface McpConfigFieldRef {
+  kind: "env" | "header" | "oauth-client-secret";
+  /** The variable or header name; absent for `oauth.clientSecret`. */
+  name?: string;
+}
+
+export type McpConfigFileProblemReason =
+  /** The file is not JSON. */
+  | "unparsable"
+  /** Not an object with an `mcpServers` object. */
+  | "invalid-shape"
+  /** `autoEnableCodemode` is set to something other than a boolean; the servers still load. */
+  | "auto-enable-codemode-invalid"
+  /** A project file that is a symbolic link to nothing. */
+  | "link-dangling"
+  /** A project file whose real path is outside the folders Pi Web may read. */
+  | "link-outside"
+  /** Not a regular file (a directory, a FIFO, a device). */
+  | "not-a-file"
+  /** A project file larger than 1 MiB. */
+  | "too-large"
+  | "unreadable";
+
+export interface McpConfigFileProblem {
+  reason: McpConfigFileProblemReason;
+  error: string;
+}
+
+export interface McpConfigFileInfo {
+  scope: McpScope;
+  /** `<agent-dir>/mcp.json` or `<cwd>/.pi/mcp.json`, as the SDK names it. */
+  path: string;
+  /** Where the path leads when it, or a folder above it, is a symbolic link. */
+  realPath?: string;
+  exists: boolean;
+  /** A problem other than `auto-enable-codemode-invalid` means no server of the file is listed. */
+  problems: McpConfigFileProblem[];
+  autoEnableCodemode?: boolean;
+}
+
+/**
+ * One `mcpServers` entry, described from the file without resolving anything:
+ * no `${VAR}` is expanded and no `!command` runs. Literal env and header
+ * values are never included, and URL and argument parts that look like
+ * secrets are masked.
+ */
+export interface McpServerInfo {
+  name: string;
+  scope: McpScope;
+  sourcePath: string;
+  /**
+   * Identifies the entry's content, to tell a changed entry from the one a
+   * status was recorded for: an HMAC of its canonical JSON under a per-process
+   * key (`mcpConfigKey()`), never the JSON, which holds literal values.
+   */
+  configKey: string;
+  enabled: boolean;
+  /** False when the SDK's validator was unavailable; nothing below was checked. */
+  validated: boolean;
+  /** The SDK's reason for refusing the entry; it never connects. */
+  invalidError?: string;
+  /**
+   * What a connection uses: HTTP whenever the entry has a `url` key, as the
+   * SDK's transport decides, even where the validator took it for stdio
+   * (`type: "stdio"` beside a `url`). An entry with `invalidError` never
+   * connects and gets the validator's reading (none for legacy SSE).
+   */
+  transport?: McpTransportKind;
+  exposure?: McpExposure;
+  command?: string;
+  args?: string[];
+  /** The configured working directory, relative to the session's. */
+  cwd?: string;
+  envNames: string[];
+  url?: string;
+  headerNames: string[];
+  /** An HTTP server without an `Authorization` header signs in with OAuth when it answers 401. */
+  usesOAuth: boolean;
+  /** Whether `mcp-auth.json` holds tokens for the URL; absent when unknown or not an OAuth server. */
+  signedIn?: boolean;
+  /** Values that run a shell command on every connection. */
+  commandFields: McpConfigFieldRef[];
+  /** The value that references `PI_WEB_PASSWORD`; Pi Web refuses to connect such an entry. */
+  webPasswordField?: McpConfigFieldRef;
+  /** Some of `command`, `args` or `url` was masked. */
+  masked: boolean;
+  /** A global entry the project file defines too; the project's replaces it while the project is trusted. */
+  shadowedByProject?: boolean;
+}
+
+export type McpUnavailableReason = "operator-disabled" | "internals-unavailable" | "builtin-disabled";
+
+export type McpAvailability =
+  | { available: true }
+  | {
+      available: false;
+      reason: McpUnavailableReason;
+      error: string;
+      /** internals-unavailable: what failed to load. */
+      detail?: string;
+      /** builtin-disabled: the settings file whose `extensions` entry turns it off. */
+      settingsPath?: string;
+    };
+
+export type CodemodeSandboxStatus =
+  /** No normal session has started since the server did, so the self-test has not run. */
+  | { state: "not-checked" }
+  | { state: "available" }
+  | { state: "unavailable"; error: string };
+
+export interface McpCodemodeInfo {
+  /** Absent when the global settings file cannot be read; see `preferenceError`. */
+  preference?: "automatic" | "always";
+  preferenceError?: string;
+  sandbox: CodemodeSandboxStatus;
+  /** `-builtin:codemode` (or a pattern matching it) in the global or a trusted project's `extensions`. */
+  builtinDisabled: boolean;
+  builtinSettingsPath?: string;
+}
+
+export interface McpProjectInfo {
+  cwd: string;
+  /** Absent when `trust.json` cannot be read; the project then counts as untrusted. */
+  trust?: ProjectTrustStatus;
+  trustError?: string;
+}
+
+export interface McpResponse {
+  mcp: McpAvailability;
+  codemode: McpCodemodeInfo;
+  /** The global file, then the project file when a cwd was given. */
+  files: McpConfigFileInfo[];
+  /** Global entries, then project entries, each in file order. */
+  servers: McpServerInfo[];
+  project?: McpProjectInfo;
+}
+
+/** Why `/api/mcp` refused a request; later routes add their own codes. */
+export type McpRefusalReason =
+  /** `cwd` is empty or not an absolute path. */
+  | "cwd-invalid"
+  /** `cwd` is outside the folders Pi Web may read, or has a `..` segment. */
+  | "cwd-denied"
+  /** `cwd` is not a directory (anymore). */
+  | "cwd-not-directory"
+  /** Reading failed unexpectedly; `error` says how. */
+  | "internal";
+
+export interface McpErrorResponse {
+  error: string;
+  reason: McpRefusalReason;
 }
 
 export interface AppUpdateResponse {
