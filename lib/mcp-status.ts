@@ -152,6 +152,15 @@ export function replaceMcpStatus(entry: McpStatusEntry, configKey: string, statu
   return true;
 }
 
+/**
+ * Drops every record of `entry`, whatever content it was recorded for: what
+ * connections found before a sign-out, which signed-out connections no longer
+ * see. The entry then reads as untested until a test or a session reports.
+ */
+export function forgetMcpEntryStatuses(entry: McpStatusEntry): void {
+  records().delete(mcpStatusKey(entry));
+}
+
 /** How many records are held; for tests. */
 export function mcpStatusCount(): number {
   return recordCount(records());
