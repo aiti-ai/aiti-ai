@@ -68,20 +68,28 @@ per-wrapper `McpHost` reads the global and project `mcp.json` itself and
 registers the servers it wants through the public `pi.registerMcpServer()` /
 `pi.unregisterMcpServer()`:
 
-- **Before every user prompt** it compares a fingerprint of the config,
-  trust, approval, and OAuth token files, registers or unregisters only the
-  servers that changed, and waits up to 10 s for the ones still connecting.
-  The wait honours Stop. A change therefore reaches every open session on its
+- **Before every prompt that starts a run** it reads the config, trust, and
+  approvals, registers or unregisters only the servers whose entry changed,
+  and waits up to 10 s for the ones still connecting. The wrapper runs this
+  before `AgentSession.prompt()`, because `before_agent_start` runs before a
+  run has an abort signal: Stop ends the wait and rejects the message unsent,
+  which returns it to the composer. A server that outlasts one full wait is
+  not waited for again. A change therefore reaches every open session on its
   next message, including changes made outside Pi Web (`pi mcp add`, a manual
-  edit, `git pull`), and there is no Reload button.
+  edit, `git pull`), and there is no Reload button. A sign-in made elsewhere
+  needs no re-registration: the extension reconnects servers waiting for one
+  when their stored tokens change.
 - **Nothing connects until a session prompts.** Browsing, switching sessions,
   auto-naming, and forking start no MCP process. A host that has not prompted
   for `PI_WEB_MCP_IDLE_MS` (10 minutes) unregisters its servers.
-- Operations on one host run in a serial queue, and a server that is still
-  connecting is allowed to settle before it is replaced: the extension's
-  `mcp_servers_change` handler closes `server.connection`, which is not
-  assigned until the handshake finishes, so replacing it earlier orphans the
-  process.
+- Operations on one host run in a serial queue, and a server is replaced only
+  once the extension has opened its connection: the extension's
+  `mcp_servers_change` handler closes `server.connection`, which it assigns
+  only after loading the MCP runtime, so unregistering earlier finds nothing
+  to close and the server connects anyway, out of reach. The extension does
+  not report connection state, so the host watches the transports it creates
+  through the factory Pi Web passes in: one exists only once the connection
+  is assigned, and its messages show when the server's tools are listed.
 
 This differs from the CLI in two visible ways, both shown in the panel: servers
 report the scope `extension`, and a package extension that registers a server
