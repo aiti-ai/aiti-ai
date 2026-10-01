@@ -218,6 +218,68 @@ export interface McpServerInfo {
   shadowedByProject?: boolean;
   /** The project entry that replaces a global entry of its name while the project is trusted; the counterpart of `shadowedByProject`. */
   replacesGlobal?: boolean;
+  /**
+   * The last known connection state (`lib/mcp-status.ts`): only while it was
+   * recorded for this entry as the file holds it now (same `configKey`).
+   */
+  status?: McpServerStatus;
+}
+
+/** How a connection test ended (`POST /api/mcp/test`). */
+export type McpTestState = "connected" | "needs-auth" | "failed";
+
+/** One tool a tested server listed. */
+export interface McpTestTool {
+  name: string;
+  /** The first line of its description (or title), shortened. */
+  description?: string;
+  /** The server marks it read-only (`annotations.readOnlyHint`). */
+  readOnly: boolean;
+  /** How it reaches the model under the entry's `exposure` and `toolExposure`. */
+  exposure: McpExposure;
+}
+
+/**
+ * What a connection test found. Literal env and header values, `!command`
+ * texts, what they resolved to, and the secret parts of the command, the
+ * arguments and the URL are masked in `error`, `stderr`, the tools'
+ * descriptions and `serverInfo`.
+ */
+export interface McpTestResult {
+  state: McpTestState;
+  /** Why it failed, as the SDK words it, without the stderr tail (`stderr`); at most 2,000 characters. */
+  error?: string;
+  /** The last 2,000 characters a stdio server wrote to stderr, when it did not connect. */
+  stderr?: string;
+  /** The server did not answer within the test's deadline, and Pi Web stopped the test. */
+  timedOut?: boolean;
+  /** Another test of a server that runs a shell command held the queue past the deadline, so this one never started. */
+  queueTimedOut?: boolean;
+  /** At most `MCP_TEST_MAX_TOOLS`, in the server's order; `toolCount` counts all of them. */
+  tools: McpTestTool[];
+  toolCount: number;
+  /** Present when the server offers resources. */
+  resources?: number;
+  resourceTemplates?: number;
+  serverInfo?: { name: string; version: string; title?: string };
+  /** The folder a stdio server ran in. */
+  cwd?: string;
+  /** From connecting to the result, without any wait in the queue. */
+  durationMs: number;
+  /** How long it waited for other tests of servers that run a shell command, when it did. */
+  queuedMs?: number;
+  /** When it finished, in milliseconds since the epoch. */
+  testedAt: number;
+}
+
+/** A server's last known connection state; a test records `origin: "test"`. */
+export type McpServerStatus = { origin: "test" } & McpTestResult;
+
+/** `POST /api/mcp/test`: which entry was tested, as the file held it, and what the test found. */
+export interface McpTestResponse extends McpServerRef {
+  /** The `configKey` of the entry the test read; the result belongs to that entry only. */
+  configKey: string;
+  result: McpTestResult;
 }
 
 export type McpUnavailableReason = "operator-disabled" | "internals-unavailable" | "builtin-disabled";
@@ -288,7 +350,7 @@ export interface McpResponse {
   project?: McpProjectInfo;
 }
 
-/** Why `/api/mcp`, `/api/project-trust` or `/api/tools/settings` refused a request; later routes add their own codes. */
+/** Why `/api/mcp`, `/api/mcp/test`, `/api/project-trust` or `/api/tools/settings` refused a request; later routes add their own codes. */
 export type McpRefusalReason =
   /** `cwd` is empty or not an absolute path. */
   | "cwd-invalid"
@@ -320,8 +382,10 @@ export type McpRefusalReason =
   | "server-missing"
   /** The entry is not a JSON object, so it cannot be switched on or off, only removed (`path`, `name`). */
   | "entry-not-object"
-  /** Turning on an entry that references `PI_WEB_PASSWORD`, which Pi Web refuses to connect (`name`). */
+  /** Turning on, or testing, an entry that references `PI_WEB_PASSWORD`, which Pi Web refuses to connect (`name`). */
   | "web-password"
+  /** The SDK's validator refuses the entry, so it never connects and is not tested (`name`). */
+  | "server-invalid"
   /** The undo token is unknown, used, or past its 60 seconds. */
   | "undo-unavailable"
   /** Undo would put back a name the file defines again since the removal (`name`). */

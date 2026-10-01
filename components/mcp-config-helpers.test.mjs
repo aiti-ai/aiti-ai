@@ -49,6 +49,23 @@ const {
   postMcpAction,
   saveMcpCodemodePreference,
   withMcpCodemodePreference,
+  MCP_EXPOSURE_SHORT_KEYS,
+  MCP_TEST_BLOCK_KEYS,
+  MCP_TEST_REFUSAL_KEYS,
+  MCP_TEST_SERIAL_KEY,
+  MCP_TEST_STATE_KEYS,
+  MCP_TEST_SUMMARY_KEYS,
+  MCP_TEST_TIMEOUT_MS,
+  mcpSeconds,
+  mcpTestAnswerOutdates,
+  mcpTestBlock,
+  mcpTestExplainKey,
+  mcpTestRunAfter,
+  mcpTestRunFor,
+  mcpTestStateView,
+  mcpTestSummaryKey,
+  mcpWithTestResults,
+  postMcpTest,
 } = await jiti.import("./mcp-config-helpers.ts");
 const { enLocale } = await jiti.import("@/lib/i18n/messages/en.ts");
 
@@ -132,10 +149,15 @@ test("each state has a color, a full label and, when it is not plain on, visible
   assert.deepEqual(mcpStatusDot("off"), { active: false });
   assert.deepEqual(mcpStatusDot("error"), { color: "#ef4444" });
   assert.deepEqual(mcpStatusDot("warning"), { color: "#f59e0b" });
-  // Color is never the only sign: every state but on (and MCP off, which the banner says once) has a badge.
+  // A tested server: connected reads like on, needing a sign-in like a warning, a failure like an error.
+  assert.equal(mcpRowStateTone("connected"), "on");
+  assert.equal(mcpRowStateTone("needs-auth"), "warning");
+  assert.equal(mcpRowStateTone("failed"), "error");
+  // Color is never the only sign: every state but on and connected (which need nothing done) and
+  // MCP off (which the banner says once) has a badge.
   for (const state of MCP_SERVER_ROW_STATES) {
     assert.equal(typeof messages[MCP_ROW_STATE_LABEL_KEYS[state]], "string", state);
-    if (state === "on" || state === "mcp-off") assert.equal(MCP_ROW_STATE_BADGE_KEYS[state], undefined, state);
+    if (state === "on" || state === "connected" || state === "mcp-off") assert.equal(MCP_ROW_STATE_BADGE_KEYS[state], undefined, state);
     else assert.equal(typeof messages[MCP_ROW_STATE_BADGE_KEYS[state]], "string", state);
   }
   for (const key of [...Object.values(MCP_EXPOSURE_KEYS), ...Object.values(MCP_CODEMODE_STATE_KEYS)]) {
@@ -760,4 +782,194 @@ test("a change is posted to the MCP route with the project only when the listing
   }, undefined, 30);
   assert.deepEqual([timedOut.ok, timedOut.error.timedOut, hung[0].aborted], [false, true, true]);
   for (const key of ["mcp.actionFailed", "mcp.actionTimedOut"]) assert.equal(typeof messages[key], "string", key);
+});
+
+// ---------------------------------------------------------------------------
+// Test connection
+// ---------------------------------------------------------------------------
+
+function testStatus(state, extra = {}) {
+  return { origin: "test", state, tools: [], toolCount: 0, durationMs: 420, testedAt: 1_000, ...extra };
+}
+
+test("a tested server's row shows its last status, but only where the file lets it connect", () => {
+  assert.equal(mcpServerRowState(server({ status: testStatus("connected") }), on), "connected");
+  assert.equal(mcpServerRowState(server({ status: testStatus("needs-auth") }), on), "needs-auth");
+  assert.equal(mcpServerRowState(server({ status: testStatus("failed") }), on), "failed");
+  // What the file says comes first: a server turned off, untrusted or replaced does not connect,
+  // whatever an earlier test found.
+  assert.equal(mcpServerRowState(server({ enabled: false, status: testStatus("connected") }), on), "disabled");
+  assert.equal(mcpServerRowState(server({ scope: "project", status: testStatus("connected") }), { mcpAvailable: true, projectServersLoad: false }), "not-trusted");
+  assert.equal(mcpServerRowState(server({ shadowedByProject: true, status: testStatus("failed") }), on), "replaced");
+  assert.equal(mcpServerRowState(server({ status: testStatus("connected") }), { mcpAvailable: false, projectServersLoad: true }), "mcp-off");
+});
+
+test("Test is offered exactly where the route would test, with the reason as text", () => {
+  const data = { mcp: { available: true }, project: { cwd: "/repo", trust: { requiresTrust: true, trusted: true, decision: true, decisionPath: "/repo", inherited: false } } };
+  assert.equal(mcpTestBlock(server(), data), undefined);
+  // A switched-off entry can be tested before it is turned on, and -builtin:mcp leaves Test as an explicit action.
+  assert.equal(mcpTestBlock(server({ enabled: false }), data), undefined);
+  assert.equal(mcpTestBlock(server(), { ...data, mcp: { available: false, reason: "builtin-disabled", error: "x" } }), undefined);
+  assert.equal(mcpTestBlock(server(), { ...data, mcp: { available: false, reason: "operator-disabled", error: "x" } }), "mcp-off");
+  assert.equal(mcpTestBlock(server(), { ...data, mcp: { available: false, reason: "internals-unavailable", error: "x" } }), "mcp-off");
+  const project = server({ scope: "project" });
+  assert.equal(mcpTestBlock(project, data), undefined);
+  assert.equal(mcpTestBlock(project, { ...data, project: { cwd: "/repo", trust: { requiresTrust: true, trusted: false, decision: null, inherited: false } } }), "project-untrusted");
+  // A fresh folder is `trusted` with no decision, and its servers are not read: the host's rule.
+  assert.equal(mcpTestBlock(project, { ...data, project: { cwd: "/repo", trust: { requiresTrust: false, trusted: true, decision: null, inherited: false } } }), "project-untrusted");
+  assert.equal(mcpTestBlock(project, { ...data, project: { cwd: "/repo", trustError: "locked" } }), "trust-unreadable");
+  // The global servers beside an untrusted project can still be tested.
+  assert.equal(mcpTestBlock(server(), { ...data, project: { cwd: "/repo", trustError: "locked" } }), undefined);
+  assert.equal(mcpTestBlock(server({ invalidError: "legacy SSE" }), data), "invalid");
+  assert.equal(mcpTestBlock(server({ webPasswordField: { kind: "header", name: "Authorization" } }), data), "web-password");
+  for (const key of [...Object.values(MCP_TEST_BLOCK_KEYS), ...Object.values(MCP_TEST_REFUSAL_KEYS)]) {
+    assert.equal(typeof messages[key], "string", key);
+  }
+  // The route's reasons for refusing a test read as a test's, not as a change's.
+  assert.equal(MCP_TEST_REFUSAL_KEYS["mcp-off"], MCP_TEST_BLOCK_KEYS["mcp-off"]);
+  assert.equal(MCP_TEST_REFUSAL_KEYS["server-invalid"], MCP_TEST_BLOCK_KEYS.invalid);
+  // Every reason the route shares with the writer whose wording speaks of a change or a write.
+  for (const reason of ["entry-not-object", "invalid-request", "unparsable", "invalid-shape", "link-dangling", "link-outside", "not-a-file", "too-large"]) {
+    assert.equal(MCP_TEST_REFUSAL_KEYS[reason], `mcp.test.refused.${reason}`, reason);
+    assert.doesNotMatch(messages[MCP_TEST_REFUSAL_KEYS[reason]], /unchanged|write|turned on or off|change/, reason);
+  }
+  // What a test does depends on how the server is reached; the shell-command sentence fits both.
+  assert.equal(mcpTestExplainKey({ transport: "http" }), "mcp.test.explain.http");
+  assert.equal(mcpTestExplainKey({ transport: "stdio" }), "mcp.test.explain.stdio");
+  assert.equal(mcpTestExplainKey({}), "mcp.test.explain.stdio");
+  for (const key of ["mcp.test.explain.http", "mcp.test.explain.stdio", MCP_TEST_SERIAL_KEY]) assert.equal(typeof messages[key], "string", key);
+  assert.doesNotMatch(messages["mcp.test.explain.http"], /starts the server/);
+  assert.doesNotMatch(messages[MCP_TEST_SERIAL_KEY], /starts the server/);
+  assert.doesNotMatch(messages["mcp.test.summary.timedOut"], /stopped it/, "an HTTP server is not stopped, only its test");
+});
+
+test("a test's state reads as connected, a sign-in, a failure, or no answer, with how long and when", () => {
+  assert.deepEqual(mcpTestStateView({ state: "connected" }), { key: "mcp.test.state.connected", tone: "on" });
+  assert.deepEqual(mcpTestStateView({ state: "needs-auth" }), { key: "mcp.test.state.needs-auth", tone: "warning" });
+  assert.deepEqual(mcpTestStateView({ state: "failed" }), { key: "mcp.test.state.failed", tone: "error" });
+  assert.deepEqual(mcpTestStateView({ state: "failed", timedOut: true }), { key: "mcp.test.state.timedOut", tone: "error" });
+  assert.equal(mcpTestSummaryKey({ state: "failed", timedOut: true }), "mcp.test.summary.timedOut");
+  assert.equal(mcpTestSummaryKey({ state: "connected" }), "mcp.test.summary.connected");
+  assert.equal(mcpSeconds(420), "0.4");
+  assert.equal(mcpSeconds(20_004), "20.0");
+  assert.equal(mcpSeconds(-5), "0.0");
+  for (const key of [...Object.values(MCP_TEST_STATE_KEYS), ...Object.values(MCP_TEST_SUMMARY_KEYS), ...Object.values(MCP_EXPOSURE_SHORT_KEYS)]) {
+    assert.equal(typeof messages[key], "string", key);
+  }
+  assert.deepEqual(Object.keys(MCP_EXPOSURE_SHORT_KEYS).sort(), Object.keys(MCP_EXPOSURE_KEYS).sort());
+});
+
+test("a test's answer is the server's status for the entry it read, while it is the newest", () => {
+  const data = { mcp: { available: true }, codemode: {}, files: [], servers: [server({ name: "a", configKey: "a1" }), server({ name: "b", configKey: "b1" })] };
+  const answer = (name, configKey, result) => ({ running: false, response: { scope: "global", name, configKey, result } });
+  // No answers: the same overview.
+  assert.equal(mcpWithTestResults(data, {}), data);
+  const shown = mcpWithTestResults(data, { [mcpServerKey({ scope: "global", name: "a" })]: answer("a", "a1", testStatus("connected", { origin: undefined })) });
+  assert.equal(shown.servers[0].status.state, "connected");
+  assert.equal(shown.servers[0].status.origin, "test");
+  assert.equal(shown.servers[1].status, undefined);
+  assert.equal(data.servers[0].status, undefined, "the overview it was given is not changed");
+  // An answer about the entry before an edit is not the edited entry's.
+  assert.equal(mcpWithTestResults(data, { "global\0a": answer("a", "a0", testStatus("connected")) }), data);
+  // A newer status from the server (a later test from another tab) wins over an older answer here.
+  const newer = { ...data, servers: [server({ name: "a", configKey: "a1", status: testStatus("failed", { testedAt: 2_000 }) })] };
+  assert.equal(mcpWithTestResults(newer, { "global\0a": answer("a", "a1", testStatus("connected", { testedAt: 1_500 })) }).servers[0].status.state, "failed");
+  assert.equal(mcpWithTestResults(newer, { "global\0a": answer("a", "a1", testStatus("connected", { testedAt: 2_500 })) }).servers[0].status.state, "connected");
+});
+
+test("a test request leaves its last answer standing when it fails or never left the queue", () => {
+  const response = { scope: "global", name: "a", configKey: "k", result: testStatus("connected") };
+  const previous = { running: true, response };
+  // A failure is about the entry the press was for; a queue timeout about the one the route read.
+  assert.deepEqual(mcpTestRunAfter(previous, { ok: false, error: { error: "x", reason: "mcp-off" } }, "k"), {
+    running: false,
+    response,
+    error: { error: "x", reason: "mcp-off" },
+    configKey: "k",
+  });
+  assert.deepEqual(mcpTestRunAfter(previous, { ok: true, data: { ...response, configKey: "k2", result: testStatus("failed", { queueTimedOut: true }) } }, "k"), {
+    running: false,
+    response,
+    queueTimedOut: true,
+    configKey: "k2",
+  });
+  const next = { ...response, result: testStatus("failed") };
+  assert.deepEqual(mcpTestRunAfter(previous, { ok: true, data: next }, "k"), { running: false, response: next });
+  assert.deepEqual(mcpTestRunAfter(undefined, { ok: false, error: { error: "x" } }), { running: false, error: { error: "x" } });
+});
+
+test("a failure or a queue timeout is shown only for the entry it was about", () => {
+  const response = { scope: "global", name: "a", configKey: "k1", result: testStatus("connected") };
+  const run = { running: false, response, error: { error: "x", reason: "server-missing" }, configKey: "k1" };
+  assert.equal(mcpTestRunFor(run, { configKey: "k1" }), run);
+  // Edited since: the failure is the old entry's; the answer is filtered by `mcpWithTestResults()` on its own.
+  assert.deepEqual(mcpTestRunFor(run, { configKey: "k2" }), { running: false, response });
+  assert.deepEqual(mcpTestRunFor({ running: true, queueTimedOut: true, configKey: "k1" }, { configKey: "k2" }), { running: true });
+  assert.equal(mcpTestRunFor(undefined, { configKey: "k1" }), undefined);
+  const plain = { running: false, error: { error: "offline" } };
+  assert.equal(mcpTestRunFor(plain, { configKey: "k2" }), plain, "no entry named: shown");
+});
+
+test("an answer that shows the listing is out of date loads it again", () => {
+  const answer = (configKey) => ({ ok: true, data: { scope: "global", name: "a", configKey, result: testStatus("connected") } });
+  assert.equal(mcpTestAnswerOutdates(answer("k1"), { configKey: "k1" }), false);
+  // The route read other content than the listing shows: the entry was edited outside the panel.
+  assert.equal(mcpTestAnswerOutdates(answer("k2"), { configKey: "k1" }), true);
+  assert.equal(mcpTestAnswerOutdates(answer("k1"), undefined), true, "the listing no longer has the server");
+  // Any refusal with a reason: the server is gone, the file no longer parses, trust or MCP changed.
+  for (const reason of ["server-missing", "unparsable", "project-untrusted", "mcp-off", "server-invalid"]) {
+    assert.equal(mcpTestAnswerOutdates({ ok: false, error: { error: "x", reason } }, { configKey: "k1" }), true, reason);
+  }
+  // A request that failed or timed out says nothing about the files.
+  assert.equal(mcpTestAnswerOutdates({ ok: false, error: { error: "offline" } }, { configKey: "k1" }), false);
+  assert.equal(mcpTestAnswerOutdates({ ok: false, error: { error: "late", timedOut: true } }, { configKey: "k1" }), false);
+});
+
+test("a test is posted to its own route with the project only when given, and ends at its deadline", async () => {
+  const calls = [];
+  const answer = { scope: "global", name: "lint", configKey: "k", result: testStatus("connected") };
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    return { ok: true, status: 200, json: async () => answer };
+  };
+  assert.deepEqual(await postMcpTest({ scope: "global", name: "lint" }, null, fetchImpl), { ok: true, data: answer });
+  assert.deepEqual(await postMcpTest({ scope: "project", name: "repo" }, "/repo", fetchImpl), { ok: true, data: answer });
+  assert.deepEqual(calls.map(({ url, init }) => [url, init.method, init.headers["Content-Type"], JSON.parse(init.body)]), [
+    ["/api/mcp/test", "POST", "application/json", { scope: "global", name: "lint" }],
+    ["/api/mcp/test", "POST", "application/json", { scope: "project", name: "repo", cwd: "/repo" }],
+  ]);
+  // A refusal keeps its reason and the server it names.
+  const refused = await postMcpTest({ scope: "global", name: "pw" }, null, async () => ({
+    ok: false,
+    status: 409,
+    json: async () => ({ error: "references PI_WEB_PASSWORD", reason: "web-password", name: "pw" }),
+  }));
+  assert.deepEqual(refused, { ok: false, error: { error: "references PI_WEB_PASSWORD", reason: "web-password", name: "pw" } });
+  // An answer that is not a test result is a failure, not a result.
+  assert.deepEqual(await postMcpTest({ scope: "global", name: "x" }, null, async () => ({ ok: true, status: 200, json: async () => ({ servers: [] }) })), {
+    ok: false,
+    error: { error: "HTTP 200" },
+  });
+  // The deadline is longer than the route's own (queue, close and a blocking !command included).
+  assert.ok(MCP_TEST_TIMEOUT_MS >= 45_000);
+  // At the deadline the panel stops waiting but leaves the request running: the route stops a test
+  // nobody waits for and records nothing, while one left running lands in the store.
+  let signal;
+  const hung = await postMcpTest({ scope: "global", name: "x" }, null, (url, init) => {
+    signal = init.signal;
+    return new Promise(() => {});
+  }, undefined, 30);
+  assert.equal(hung.ok, false);
+  assert.equal(hung.error.timedOut, true);
+  assert.equal(signal.aborted, false);
+  // A caller's own signal still aborts it.
+  const caller = new AbortController();
+  let callerSignal;
+  const stopped = postMcpTest({ scope: "global", name: "x" }, null, (url, init) => {
+    callerSignal = init.signal;
+    return new Promise((resolve, reject) => init.signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }));
+  }, caller.signal, 5_000);
+  caller.abort();
+  assert.deepEqual(await stopped, { ok: false, error: { error: "aborted" } });
+  assert.equal(callerSignal.aborted, true);
 });
