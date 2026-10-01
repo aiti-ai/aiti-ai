@@ -563,7 +563,15 @@ test("queues extension dialogs and custom panels by request id instead of sharin
     source.indexOf("  handleAgentEventRef.current = handleAgentEvent;"),
   );
 
-  assert.match(source, /import \{ enqueueExtensionUiRequest, removeExtensionUiRequest, upsertExtensionUiRequest \} from "@\/lib\/extension-ui-queue"/);
+  assert.match(
+    source,
+    /import \{\s+enqueueExtensionUiRequest,\s+removeExtensionUiRequest,\s+retainExtensionUiRequests,\s+upsertExtensionUiRequest,\s+\} from "@\/lib\/extension-ui-queue"/,
+  );
+  // A (re)connect drops what the server no longer holds; its replay follows.
+  const connectedSource = source.slice(source.indexOf('      case "connected": {'), source.indexOf('      case "agent_start":'));
+  assert.match(connectedSource, /const pending = new Set\(event\.pendingExtensionUiIds as string\[\]\);/);
+  assert.match(connectedSource, /setExtensionDialogs\(\(queue\) => retainExtensionUiRequests\(queue, pending\)\);/);
+  assert.match(connectedSource, /setExtensionCustomUis\(\(queue\) => retainExtensionUiRequests\(queue, pending\)\);/);
   assert.match(source, /const \[extensionDialogs, setExtensionDialogs\] = useState<ExtensionUiDialogRequest\[\]>\(\[\]\)/);
   assert.match(source, /const \[extensionCustomUis, setExtensionCustomUis\] = useState<ExtensionUiCustomRequest\[\]>\(\[\]\)/);
   assert.doesNotMatch(source, /setExtensionDialog\(|setExtensionCustomUi\(/);
