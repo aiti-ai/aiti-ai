@@ -10,9 +10,11 @@ export interface SubagentSettingsResponse {
   maxConcurrent: number;
 }
 
-export interface ShellToolSettingsResponse {
+export interface ToolSettingsResponse {
   isWindows: boolean;
   powerShellEnabled: boolean;
+  /** "always" when the global defaultTools starts sessions with codemode active (ADR 0006). */
+  codemode: "automatic" | "always";
 }
 
 export interface SkillSearchResult {
