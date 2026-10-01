@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { McpCodemodeInfo, McpConfigFieldRef, McpResponse, McpScope, McpServerInfo } from "@/lib/api-types";
+import type {
+  McpCodemodeInfo,
+  McpCodemodePreference,
+  McpConfigFieldRef,
+  McpResponse,
+  McpScope,
+  McpServerInfo,
+} from "@/lib/api-types";
 import { useI18n } from "@/hooks/useI18n";
 import { shortenPath } from "@/lib/display-path";
 import {
@@ -31,6 +38,7 @@ import {
   ConfigFooterStatus,
   ConfigNotice,
   ConfigPanelShell,
+  ConfigScopeSwitch,
   ConfigScopeTag,
   ConfigSidebar,
   ConfigSidebarGroupLabel,
@@ -49,7 +57,10 @@ import {
   MCP_ROW_STATE_LABEL_KEYS,
   isBlockingFileProblem,
   loadMcpOverview,
+  mcpCodemodeAlwaysUnavailableNotice,
   mcpCodemodeAutomaticNotice,
+  mcpCodemodeBuiltinNotice,
+  mcpCodemodeProjectOverrideNotice,
   mcpCodemodeReachNotice,
   mcpCodemodeRowState,
   mcpCodemodeTone,
@@ -67,6 +78,8 @@ import {
   mcpTrustNotice,
   mcpUnavailableNotice,
   pickMcpSelection,
+  saveMcpCodemodePreference,
+  withMcpCodemodePreference,
   type McpAutoEnableCodemode,
   type McpLoadFailure,
   type McpNoticeText,
@@ -103,11 +116,18 @@ function failureText(failure: McpLoadFailure, t: Translate): string {
   return failure.reason && failure.reason !== "internal" ? t(`mcp.reason.${failure.reason}`) : failure.error;
 }
 
+/** What saving the Code mode choice is doing: nothing, waiting for the route, or why it failed. */
+export interface McpCodemodeSaveState {
+  saving: boolean;
+  error: McpLoadFailure | null;
+}
+
 /**
  * Settings › MCP: the servers of the global `mcp.json` and, with a project,
  * its `.pi/mcp.json`, listed read-only from `GET /api/mcp`, which reads the
  * files and nothing else: no server is started or contacted to show this.
- * Works without a project; the Project group appears only with one.
+ * Works without a project; the Project group appears only with one. The one
+ * thing it writes is the Code mode choice, through `PUT /api/tools/settings`.
  */
 export function McpConfig({
   cwd,
@@ -121,9 +141,11 @@ export function McpConfig({
   const [load, setLoad] = useState<McpConfigLoad>({ state: "loading" });
   const [refreshing, setRefreshing] = useState(false);
   const [selected, setSelected] = useState<string | null>(() => getLastSettingsSelection("mcp", cwd));
+  const [codemodeSave, setCodemodeSave] = useState<McpCodemodeSaveState>({ saving: false, error: null });
   // A later load (Refresh, or the panel's project changing) wins over an earlier one still on its way.
   const requestRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
+  const saveControllerRef = useRef<AbortController | null>(null);
 
   const refresh = useCallback(async () => {
     const request = ++requestRef.current;
@@ -150,6 +172,31 @@ export function McpConfig({
     };
   }, [refresh]);
 
+  // The switch is disabled while a save runs, so only one is ever on its way.
+  const saveCodemode = useCallback(async (preference: McpCodemodePreference) => {
+    const controller = new AbortController();
+    saveControllerRef.current = controller;
+    setCodemodeSave({ saving: true, error: null });
+    const result = await saveMcpCodemodePreference(preference, undefined, controller.signal);
+    // Closed meanwhile: nothing is left to update.
+    if (saveControllerRef.current !== controller) return;
+    saveControllerRef.current = null;
+    setCodemodeSave({ saving: false, error: result.ok ? null : result.error });
+    if (result.ok) {
+      setLoad((current) => current.state === "loaded"
+        ? { ...current, data: withMcpCodemodePreference(current.data, result.preference) }
+        : current);
+    }
+    // Read back what is stored: a save that timed out may still land, and one
+    // refused because the file no longer parses should show that file's error.
+    void refresh();
+  }, [refresh]);
+
+  useEffect(() => () => {
+    saveControllerRef.current?.abort();
+    saveControllerRef.current = null;
+  }, []);
+
   useEffect(() => {
     if (selected) setLastSettingsSelection("mcp", selected, cwd);
   }, [cwd, selected]);
@@ -161,8 +208,10 @@ export function McpConfig({
       selected={selected}
       refreshing={refreshing}
       embedded={embedded}
+      codemodeSave={codemodeSave}
       onSelect={setSelected}
       onRefresh={() => void refresh()}
+      onCodemodeChange={(preference) => void saveCodemode(preference)}
       onClose={onClose}
     />
   );
@@ -175,8 +224,10 @@ export function McpConfigView({
   selected,
   refreshing,
   embedded,
+  codemodeSave = { saving: false, error: null },
   onSelect,
   onRefresh,
+  onCodemodeChange,
   onClose,
 }: {
   cwd: string | null;
@@ -184,8 +235,10 @@ export function McpConfigView({
   selected: string | null;
   refreshing: boolean;
   embedded: boolean;
+  codemodeSave?: McpCodemodeSaveState;
   onSelect: (key: string) => void;
   onRefresh: () => void;
+  onCodemodeChange: (preference: McpCodemodePreference) => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -257,7 +310,12 @@ export function McpConfigView({
         <ConfigDetail>
           <ConfigDetailStack className="is-fill">
             {!data || !context || !autoEnable || !emptyKey ? null : selected === MCP_CODEMODE_SELECTION ? (
-              <McpCodemodeDetail codemode={data.codemode} autoEnable={autoEnable} />
+              <McpCodemodeDetail
+                codemode={data.codemode}
+                autoEnable={autoEnable}
+                save={codemodeSave}
+                onChange={onCodemodeChange}
+              />
             ) : selectedServer ? (
               <McpServerDetail
                 key={mcpServerKey(selectedServer)}
@@ -569,13 +627,31 @@ function McpServerDetail({
 }
 
 /**
- * Code mode, read-only for now: the preference, whether its sandbox can run,
- * and whether a setting turns it off or keeps Automatic from turning it on.
+ * Code mode: the one choice, Automatic or Always on, saved to the global
+ * `defaultTools` and read by sessions started afterwards (pi applies
+ * `defaultTools` when it creates a session, so nothing reloads); a trusted
+ * project whose own `defaultTools` decides it there; whether its sandbox can
+ * run; and whether a setting turns it off. Always on is disabled, with the
+ * reason as text under the switch, while no session could offer Code mode.
  */
-function McpCodemodeDetail({ codemode, autoEnable }: { codemode: McpCodemodeInfo; autoEnable: McpAutoEnableCodemode }) {
+function McpCodemodeDetail({
+  codemode,
+  autoEnable,
+  save,
+  onChange,
+}: {
+  codemode: McpCodemodeInfo;
+  autoEnable: McpAutoEnableCodemode;
+  save: McpCodemodeSaveState;
+  onChange: (preference: McpCodemodePreference) => void;
+}) {
   const { t } = useI18n();
   const sandbox = codemode.sandbox;
+  const preference = codemode.preference;
   const automaticNotice = mcpCodemodeAutomaticNotice(codemode, autoEnable);
+  const alwaysUnavailable = mcpCodemodeAlwaysUnavailableNotice(codemode);
+  const builtinNotice = mcpCodemodeBuiltinNotice(codemode);
+  const projectOverride = mcpCodemodeProjectOverrideNotice(codemode);
   return (
     <ConfigDetailStack>
       <ConfigDetailHeader>
@@ -587,20 +663,52 @@ function McpCodemodeDetail({ codemode, autoEnable }: { codemode: McpCodemodeInfo
 
       <ConfigDetailGrid>
         <ConfigDetailGridRow label={t("mcp.codemode.mode")} tone="plain">
-          {codemode.preference ? (
-            <span className="mcp-config-lines">
-              <span className="mcp-config-state">{t(MCP_CODEMODE_STATE_KEYS[codemode.preference])}</span>
-              <span className="mcp-config-line">
-                {t(codemode.preference === "always" ? "mcp.codemode.alwaysDescription" : "mcp.codemode.automaticDescription")}
+          <div className="mcp-config-lines">
+            {preference ? (
+              <>
+                <ConfigScopeSwitch
+                  value={preference}
+                  label={t("mcp.codemode.title")}
+                  options={[
+                    { value: "automatic", label: t(MCP_CODEMODE_STATE_KEYS.automatic), disabled: save.saving },
+                    {
+                      value: "always",
+                      label: t(MCP_CODEMODE_STATE_KEYS.always),
+                      disabled: save.saving || alwaysUnavailable !== undefined,
+                    },
+                  ]}
+                  disabledReason={alwaysUnavailable ? noticeText(alwaysUnavailable, t) : null}
+                  onChange={(value) => {
+                    if (value !== preference) onChange(value);
+                  }}
+                >
+                  {save.saving && <span role="status" className="mcp-config-line is-dim">{t("i18n.saving")}</span>}
+                </ConfigScopeSwitch>
+                <span className="mcp-config-line">
+                  {t(preference === "always" ? "mcp.codemode.alwaysDescription" : "mcp.codemode.automaticDescription")}
+                </span>
+                <span className="mcp-config-line is-dim">{t("mcp.codemode.appliesLater")}</span>
+              </>
+            ) : (
+              <span className="mcp-config-line is-warning">
+                {t("mcp.codemode.preferenceError")}{" "}
+                <code className="mcp-config-chip">{revealHiddenCharacters(codemode.preferenceError ?? "")}</code>
               </span>
-              {automaticNotice && <span className="mcp-config-line is-warning">{noticeText(automaticNotice, t)}</span>}
-            </span>
-          ) : (
-            <span className="mcp-config-line is-warning">
-              {t("mcp.codemode.preferenceError")}{" "}
-              <code className="mcp-config-chip">{revealHiddenCharacters(codemode.preferenceError ?? "")}</code>
-            </span>
-          )}
+            )}
+            {/* Shown on every platform: unlike the PowerShell switch, Code mode is not Windows-only. */}
+            {save.error && (
+              <span role="alert" className="mcp-config-line is-error">
+                {t("mcp.codemode.saveFailed")}{" "}
+                {save.error.timedOut
+                  ? t("mcp.codemode.saveTimedOut")
+                  : save.error.reason && save.error.reason !== "internal"
+                    ? t(`mcp.reason.${save.error.reason}`)
+                    : <code className="mcp-config-chip">{revealHiddenCharacters(save.error.error)}</code>}
+              </span>
+            )}
+            {projectOverride && <span className="mcp-config-line is-warning">{noticeText(projectOverride, t)}</span>}
+            {automaticNotice && <span className="mcp-config-line is-warning">{noticeText(automaticNotice, t)}</span>}
+          </div>
         </ConfigDetailGridRow>
         <ConfigDetailGridRow label={t("mcp.codemode.sandbox")} tone="plain">
           {sandbox.state === "unavailable" ? (
@@ -614,11 +722,9 @@ function McpCodemodeDetail({ codemode, autoEnable }: { codemode: McpCodemodeInfo
             </span>
           )}
         </ConfigDetailGridRow>
-        {codemode.builtinDisabled && (
+        {builtinNotice && (
           <ConfigDetailGridRow label={t("mcp.codemode.builtin")} tone="error">
-            {codemode.builtinSettingsPath
-              ? t("mcp.codemode.builtinDisabled", { path: displayPath(codemode.builtinSettingsPath) })
-              : t("mcp.codemode.builtinDisabledUnknown")}
+            {noticeText(builtinNotice, t)}
           </ConfigDetailGridRow>
         )}
       </ConfigDetailGrid>

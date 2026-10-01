@@ -1,6 +1,7 @@
 import type {
   McpAvailability,
   McpCodemodeInfo,
+  McpCodemodePreference,
   McpConfigFileInfo,
   McpConfigFileProblem,
   McpErrorResponse,
@@ -271,27 +272,101 @@ export function mcpEffectiveAutoEnableCodemode(data: Pick<McpResponse, "files" |
 }
 
 /**
+ * The Code mode a session started now gets in the panel's context: what the
+ * project's settings decide, where they decide it (`projectOverride`), else
+ * the global choice; undefined when the global settings cannot be read.
+ */
+export function mcpEffectiveCodemodePreference(codemode: McpCodemodeInfo): McpCodemodePreference | undefined {
+  return codemode.projectOverride?.preference ?? codemode.preference;
+}
+
+/**
  * Why the tools of a server with `codemode` or `codemode-deferred` exposure,
  * which only Code mode scripts call, may not be callable, most decisive first:
  * the sandbox cannot run (the MCP host then offers them through tool search),
  * `-builtin:codemode` registers no codemode tool (the host keeps their
  * exposure, so only an active tool search reaches them), or Automatic with
  * `autoEnableCodemode: false`, under which the MCP extension never turns Code
- * mode on. Undefined when a session turns Code mode on for them.
+ * mode on. Automatic is the effective choice, so a project whose settings
+ * start its sessions with Code mode on needs no warning, and one that starts
+ * them without it does. Undefined when a session turns Code mode on for them.
  */
 export function mcpCodemodeReachNotice(codemode: McpCodemodeInfo, autoEnable: McpAutoEnableCodemode): McpNoticeText | undefined {
   if (codemode.sandbox.state === "unavailable") return { key: "mcp.exposure.sandboxUnavailable" };
   if (codemode.builtinDisabled) return { key: "mcp.exposure.builtinDisabled" };
-  if (!autoEnable.value && codemode.preference !== "always") {
+  if (!autoEnable.value && mcpEffectiveCodemodePreference(codemode) !== "always") {
     return { key: "mcp.exposure.autoEnableOff", params: { path: autoEnable.path } };
   }
   return undefined;
 }
 
-/** The warning under Automatic when the file setting keeps it from ever turning Code mode on. */
+/**
+ * The warning under the choice when Automatic is in effect and the file
+ * setting keeps it from ever turning Code mode on: the global Automatic, or a
+ * project's settings that start its sessions without Code mode.
+ */
 export function mcpCodemodeAutomaticNotice(codemode: McpCodemodeInfo, autoEnable: McpAutoEnableCodemode): McpNoticeText | undefined {
-  if (codemode.preference !== "automatic" || autoEnable.value) return undefined;
+  if (mcpEffectiveCodemodePreference(codemode) !== "automatic" || autoEnable.value) return undefined;
   return { key: "mcp.codemode.autoEnableOff", params: { path: autoEnable.path } };
+}
+
+/**
+ * Why Always on cannot be chosen, shown under the switch: no session can
+ * offer Code mode, because its sandbox failed the self-test (checked first,
+ * as nothing in Settings fixes it) or the global `extensions` turn it off
+ * (`-builtin:codemode`). Always on writes the global `defaultTools`, which
+ * every project's sessions read, so only the global settings count: a trusted
+ * project that turns Code mode off for its own sessions leaves Always on
+ * working everywhere else (`mcpCodemodeBuiltinNotice()` says so), and one that
+ * turns it back on does not make the global choice work elsewhere. Whether
+ * the switch is offered never depends on which project Settings was opened
+ * from. A sandbox nobody has checked yet leaves it available; the Sandbox
+ * line says so.
+ */
+export function mcpCodemodeAlwaysUnavailableNotice(codemode: McpCodemodeInfo): McpNoticeText | undefined {
+  if (codemode.sandbox.state === "unavailable") return { key: "mcp.codemode.alwaysUnavailable.sandbox" };
+  if (!codemode.globalBuiltinSettingsPath) return undefined;
+  return { key: "mcp.codemode.alwaysUnavailable.builtin", params: { path: codemode.globalBuiltinSettingsPath } };
+}
+
+/**
+ * The Built-in line of the Code mode pane: `-builtin:codemode` turns Code mode
+ * off for the sessions the panel describes, naming the file that does. When
+ * only the trusted project's own list does it, the line adds that Always on
+ * still applies to sessions in other folders, since the switch stays offered.
+ */
+export function mcpCodemodeBuiltinNotice(codemode: McpCodemodeInfo): McpNoticeText | undefined {
+  if (!codemode.builtinDisabled) return undefined;
+  const path = codemode.builtinSettingsPath;
+  if (!path) return { key: "mcp.codemode.builtinDisabledUnknown" };
+  return codemode.globalBuiltinSettingsPath
+    ? { key: "mcp.codemode.builtinDisabled", params: { path } }
+    : { key: "mcp.codemode.builtinDisabledProject", params: { path } };
+}
+
+export const MCP_CODEMODE_PROJECT_OVERRIDE_KEYS: Record<McpCodemodePreference, string> = {
+  always: "mcp.codemode.projectOverride.always",
+  automatic: "mcp.codemode.projectOverride.automatic",
+};
+
+/**
+ * That the panel's project decides Code mode for its own sessions through the
+ * `defaultTools` of its `.pi/settings.json`, so the global choice does not
+ * reach them, naming the file, the way a project-scope refusal of the model
+ * default does. Said whether or not it agrees with the global choice: either
+ * way, changing the choice changes nothing there.
+ */
+export function mcpCodemodeProjectOverrideNotice(codemode: McpCodemodeInfo): McpNoticeText | undefined {
+  const override = codemode.projectOverride;
+  if (!override) return undefined;
+  return { key: MCP_CODEMODE_PROJECT_OVERRIDE_KEYS[override.preference], params: { path: override.settingsPath } };
+}
+
+/** The overview after a save: the stored preference, and no read error, since the file was just read. */
+export function withMcpCodemodePreference(data: McpResponse, preference: McpCodemodePreference): McpResponse {
+  const codemode: McpCodemodeInfo = { ...data.codemode, preference };
+  delete codemode.preferenceError;
+  return { ...data, codemode };
 }
 
 export type McpCodemodeRowState = "automatic" | "always" | "unavailable" | "unknown";
@@ -349,6 +424,48 @@ export type McpLoadResult =
 
 type FetchLike = (input: string, init?: RequestInit) => Promise<Pick<Response, "ok" | "status" | "json">>;
 
+/** A refusal's diagnostic and reason code, or the HTTP status when the body has none. */
+function refusalFailure(data: unknown, status: number): McpLoadFailure {
+  const refusal = (data ?? {}) as Partial<McpErrorResponse>;
+  return {
+    error: typeof refusal.error === "string" ? refusal.error : `HTTP ${status}`,
+    ...(typeof refusal.reason === "string" ? { reason: refusal.reason } : {}),
+  };
+}
+
+/**
+ * Runs `run` until `timeoutMs`, then settles with `timedOut()` and aborts the
+ * signal `run` was given. The caller's `signal` is forwarded by hand, not with
+ * `AbortSignal.any()`, which Safari supports only from 17.4 (this app
+ * supports 16.2). The deadline resolves the race itself, so a fetch that
+ * ignores its signal cannot outlast it.
+ */
+async function withinDeadline<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  timedOut: () => T,
+  timeoutMs: number,
+  signal?: AbortSignal,
+): Promise<T> {
+  const controller = new AbortController();
+  const forward = () => controller.abort();
+  if (signal?.aborted) controller.abort();
+  else signal?.addEventListener("abort", forward, { once: true });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<T>((resolve) => {
+    timer = setTimeout(() => {
+      // Settled before aborting, so the aborted fetch's failure cannot win the race.
+      resolve(timedOut());
+      controller.abort();
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([run(controller.signal), deadline]);
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", forward);
+  }
+}
+
 function isMcpResponse(value: unknown): value is McpResponse {
   if (value === null || typeof value !== "object") return false;
   const data = value as Partial<McpResponse>;
@@ -375,14 +492,7 @@ async function requestMcpOverview(cwd: string | null, fetchImpl: FetchLike, sign
     return { ok: false, error: { error: `HTTP ${response.status}` } };
   }
   if (response.ok && isMcpResponse(data)) return { ok: true, data };
-  const refusal = (data ?? {}) as Partial<McpErrorResponse>;
-  return {
-    ok: false,
-    error: {
-      error: typeof refusal.error === "string" ? refusal.error : `HTTP ${response.status}`,
-      ...(typeof refusal.reason === "string" ? { reason: refusal.reason } : {}),
-    },
-  };
+  return { ok: false, error: refusalFailure(data, response.status) };
 }
 
 const CWD_REFUSALS = new Set<McpRefusalReason>(["cwd-invalid", "cwd-denied", "cwd-not-directory"]);
@@ -399,11 +509,8 @@ async function loadWithin(cwd: string | null, fetchImpl: FetchLike, signal: Abor
  * one. A project folder the route refuses (removed since, or outside the
  * folders Pi Web may read) does not hide the global servers: they are loaded
  * again without it, and the refusal is kept for the Project group to explain.
- *
- * The whole load ends by `timeoutMs`, aborting what is still on its way. The
- * caller's `signal` is forwarded by hand, not with `AbortSignal.any()`, which
- * Safari supports only from 17.4 (this app supports 16.2). The deadline
- * resolves the race itself, so a fetch that ignores its signal cannot outlast it.
+ * The whole load ends by `timeoutMs`, aborting what is still on its way
+ * (`withinDeadline()`).
  */
 export async function loadMcpOverview(
   cwd: string | null,
@@ -411,22 +518,74 @@ export async function loadMcpOverview(
   signal?: AbortSignal,
   timeoutMs: number = MCP_OVERVIEW_TIMEOUT_MS,
 ): Promise<McpLoadResult> {
-  const controller = new AbortController();
-  const forward = () => controller.abort();
-  if (signal?.aborted) controller.abort();
-  else signal?.addEventListener("abort", forward, { once: true });
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const deadline = new Promise<McpLoadResult>((resolve) => {
-    timer = setTimeout(() => {
-      // Settled before aborting, so the aborted fetch's failure cannot win the race.
-      resolve({ ok: false, error: { error: `GET /api/mcp did not answer within ${timeoutMs} ms`, timedOut: true } });
-      controller.abort();
-    }, timeoutMs);
-  });
+  return withinDeadline<McpLoadResult>(
+    (deadlineSignal) => loadWithin(cwd, fetchImpl, deadlineSignal),
+    () => ({ ok: false, error: { error: `GET /api/mcp did not answer within ${timeoutMs} ms`, timedOut: true } }),
+    timeoutMs,
+    signal,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Saving the Code mode choice
+// ---------------------------------------------------------------------------
+
+/** How long a save may take; the switch is disabled meanwhile, as Refresh is during a load. */
+export const MCP_CODEMODE_SAVE_TIMEOUT_MS = 15_000;
+
+export type McpCodemodeSaveResult =
+  | { ok: true; preference: McpCodemodePreference }
+  | { ok: false; error: McpLoadFailure };
+
+function isCodemodePreferenceValue(value: unknown): value is McpCodemodePreference {
+  return value === "automatic" || value === "always";
+}
+
+async function requestCodemodeSave(
+  preference: McpCodemodePreference,
+  fetchImpl: FetchLike,
+  signal: AbortSignal,
+): Promise<McpCodemodeSaveResult> {
+  let response: Awaited<ReturnType<FetchLike>>;
   try {
-    return await Promise.race([loadWithin(cwd, fetchImpl, controller.signal), deadline]);
-  } finally {
-    clearTimeout(timer);
-    signal?.removeEventListener("abort", forward);
+    response = await fetchImpl("/api/tools/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codemode: preference }),
+      cache: "no-store",
+      signal,
+    });
+  } catch (error) {
+    return { ok: false, error: { error: error instanceof Error ? error.message : String(error) } };
   }
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    return { ok: false, error: { error: `HTTP ${response.status}` } };
+  }
+  const stored = (data as { codemode?: unknown } | null)?.codemode;
+  // The route answers with what it read back after writing, which is what the switch shows.
+  if (response.ok && isCodemodePreferenceValue(stored)) return { ok: true, preference: stored };
+  return { ok: false, error: refusalFailure(data, response.status) };
+}
+
+/**
+ * Saves the Code mode choice through `PUT /api/tools/settings`, the only
+ * writer of the global `defaultTools` (it shares its lock with the PowerShell
+ * switch). A timed-out save may still land on the server, so the caller reads
+ * the overview again afterwards either way.
+ */
+export async function saveMcpCodemodePreference(
+  preference: McpCodemodePreference,
+  fetchImpl: FetchLike = (input, init) => fetch(input, init),
+  signal?: AbortSignal,
+  timeoutMs: number = MCP_CODEMODE_SAVE_TIMEOUT_MS,
+): Promise<McpCodemodeSaveResult> {
+  return withinDeadline<McpCodemodeSaveResult>(
+    (deadlineSignal) => requestCodemodeSave(preference, fetchImpl, deadlineSignal),
+    () => ({ ok: false, error: { error: `PUT /api/tools/settings did not answer within ${timeoutMs} ms`, timedOut: true } }),
+    timeoutMs,
+    signal,
+  );
 }
