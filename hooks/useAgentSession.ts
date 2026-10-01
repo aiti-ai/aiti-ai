@@ -30,6 +30,7 @@ import { AgentEventConnection } from "@/lib/agent-event-connection";
 import { isNestedToolExecutionEvent, isSystemMessageEvent } from "@/lib/agent-event-wire";
 import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
 import { updateExtensionWidgets } from "@/lib/extension-widgets";
+import { enqueueExtensionUiRequest, removeExtensionUiRequest, upsertExtensionUiRequest } from "@/lib/extension-ui-queue";
 import {
   CHAT_SCROLL_REATTACH_TOLERANCE,
   CHAT_SCROLL_TAIL_TOLERANCE,
@@ -355,8 +356,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [slashCommandsLoading, setSlashCommandsLoading] = useState(false);
   const [noticeState, dispatchNotice] = useReducer(noticeReducer, { visible: [], pending: [] });
   const [sessionStatsOverride, setSessionStatsOverride] = useState<SessionStatsInfo | null>(null);
-  const [extensionDialog, setExtensionDialog] = useState<ExtensionUiDialogRequest | null>(null);
-  const [extensionCustomUi, setExtensionCustomUi] = useState<ExtensionUiCustomRequest | null>(null);
+  const [extensionDialogs, setExtensionDialogs] = useState<ExtensionUiDialogRequest[]>([]);
+  const [extensionCustomUis, setExtensionCustomUis] = useState<ExtensionUiCustomRequest[]>([]);
   const [extensionStatuses, setExtensionStatuses] = useState<ExtensionStatusItem[]>([]);
   const [extensionWidgets, setExtensionWidgets] = useState<ExtensionWidgetItem[]>([]);
   const [queuedMessages, setQueuedMessages] = useState<QueuedMessages>({ steering: [], followUp: [] });
@@ -968,7 +969,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     response: { value: string } | { confirmed: boolean } | { cancelled: true },
   ) => {
     const sid = sessionIdRef.current;
-    setExtensionDialog((current) => current?.id === request.id ? null : current);
+    setExtensionDialogs((queue) => removeExtensionUiRequest(queue, request.id));
     if (!sid) return;
     try {
       await sendAgentCommand(sid, {
@@ -1016,7 +1017,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "confirm":
       case "input":
       case "editor":
-        setExtensionDialog(request);
+        setExtensionDialogs((queue) => enqueueExtensionUiRequest(queue, request));
         break;
       case "notify": {
         addNotice({
@@ -1049,10 +1050,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         opts.chatInputRef?.current?.insertText(request.text);
         break;
       case "custom":
-        setExtensionCustomUi((current) => {
-          if (request.closed) return current?.id === request.id ? null : current;
-          return request;
-        });
+        setExtensionCustomUis((queue) => request.closed
+          ? removeExtensionUiRequest(queue, request.id)
+          : upsertExtensionUiRequest(queue, request));
         break;
     }
   }, [addNotice, onAttentionNeeded, opts.chatInputRef]);
@@ -1547,7 +1547,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         handleExtensionUiRequest(event as ExtensionUiRequest);
         break;
       case "extension_ui_closed":
-        setExtensionDialog((current) => current?.id === event.id ? null : current);
+        setExtensionDialogs((queue) => removeExtensionUiRequest(queue, event.id as string));
         break;
     }
   }, [addNotice, cancelEventStreamGrace, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
@@ -2218,6 +2218,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (activeSessionId !== sid || result?.recreated) {
         cancelEventStreamGrace();
         closeEvents();
+        // The old wrapper cancels its pending extension UI only after its stream has
+        // closed, so those close events never arrive; drop the requests here instead
+        // of leaving them queued in front of the new wrapper's.
+        setExtensionDialogs([]);
+        setExtensionCustomUis([]);
         sessionIdRef.current = activeSessionId;
         if (result?.recreated && sessionPropIdRef.current === activeSessionId) {
           maintainEventsConnected(activeSessionId);
@@ -2541,6 +2546,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [messages.length, contextUsage?.tokens, contextUsage?.percent, contextUsage?.contextWindow]);
 
   const thinkingLevel: ThinkingLevelOption = displayThinkingLevel ?? "auto";
+  // The head of each queue is on screen; the rest wait behind it.
+  const extensionDialog = extensionDialogs[0] ?? null;
+  const waitingExtensionDialogCount = Math.max(0, extensionDialogs.length - 1);
+  const extensionCustomUi = extensionCustomUis[0] ?? null;
+  const waitingExtensionCustomUiCount = Math.max(0, extensionCustomUis.length - 1);
 
   return {
     // State
@@ -2549,7 +2559,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching, sessionStats, autoCompactionEnabled,
     slashCommands, slashCommandsLoading, queuedMessages,
-    notices: noticeState.visible, extensionDialog, extensionCustomUi, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
+    notices: noticeState.visible, extensionDialog, waitingExtensionDialogCount, extensionCustomUi, waitingExtensionCustomUiCount, extensionStatuses, extensionWidgets, respondToExtensionUi, sendExtensionCustomInput,
     isAutoModelSelection: isNew && newSessionModel === null,
     isAutoThinkingSelection: isNew && newSessionThinkingLevel === null,
     defaultModel: newSessionDefaultModel,
