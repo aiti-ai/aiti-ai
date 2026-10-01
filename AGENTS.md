@@ -120,6 +120,7 @@ lib/
   builtin-extensions.ts  codemode / tool-search / mcp built-ins for normal sessions, PI_WEB_DISABLE_MCP, sandbox self-test
   mcp-read-only-policy.ts  tool_call policy: read-only sessions block MCP tools without readOnlyHint, nested calls too
   mcp-host.ts          per-wrapper MCP host: registers mcp.json servers before a prompt, waits for them, idles them out
+  mcp-tool-display.ts  `server/tool` labels for mcp__ tools (result details win over the sanitized name), JSON result indenting
   codemode-view.ts     display helpers for codemode cards: script, nested calls, header-free output, progress
   codemode-settings.ts Code mode automatic / always as `+codemode` in the global defaultTools
   global-settings-file.ts  locked read-modify-write of the global settings.json (shared with SettingsManager's lock)

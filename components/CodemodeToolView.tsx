@@ -9,6 +9,7 @@ import {
   type CodemodeCallStatus,
   type CodemodeCallView,
 } from "@/lib/codemode-view";
+import { toolDisplayName } from "@/lib/mcp-tool-display";
 import { CodeBlock } from "./MermaidBlock";
 
 // The parts of a codemode tool card: the script the model wrote, and the tool
@@ -51,7 +52,7 @@ function CallRow({ call }: { call: CodemodeCallView }) {
         >
           {status.icon}
         </span>
-        <span style={{ color: "var(--text-muted)", fontWeight: 600, flexShrink: 0 }}>{call.name}</span>
+        <span title={call.name} style={{ color: "var(--text-muted)", fontWeight: 600, flexShrink: 0 }}>{toolDisplayName(call.name)}</span>
         {call.args && (
           <span style={{ color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>
             {call.args}
