@@ -25,19 +25,36 @@ test("opens one settings panel from direct sidebar shortcuts", () => {
 });
 
 test("keeps every requested configuration surface inside the settings panel", () => {
-  for (const section of ["general", "models", "skills", "agents", "plugins"]) {
+  for (const section of ["general", "models", "skills", "agents", "plugins", "mcp"]) {
     assert.match(panelSource, new RegExp(`id: "${section}"`));
   }
-  for (const component of ["ModelsConfig", "SkillsConfig", "AgentsConfig", "PluginsConfig"]) {
+  for (const component of ["ModelsConfig", "SkillsConfig", "AgentsConfig", "PluginsConfig", "McpConfig"]) {
     assert.match(panelSource, new RegExp(`<${component} embedded`));
   }
+});
+
+test("Settings › MCP works without a project, and only project sections fall back to General", () => {
+  // Mounted with or without a cwd, and remounted when the project changes.
+  assert.match(panelSource, /\{sectionHost\("mcp", <McpConfig embedded key=\{cwd \?\? ""\} cwd=\{cwd\} onClose=\{onClose\} \/>\)\}/);
+  assert.doesNotMatch(panelSource, /cwd && sectionHost\("mcp"/);
+  // Which sections need a project is decided once, in settings-navigation.
+  assert.match(panelSource, /requiresProject: settingsSectionRequiresProject\(item\.id\)/);
+  assert.match(panelSource, /const sectionRequiresProject = settingsSectionRequiresProject\(section\);/);
+  assert.match(panelSource, /if \(cwd \|\| !sectionRequiresProject\) return;/);
+  assert.doesNotMatch(panelSource, /section !== "skills" && section !== "agents"/);
+  // The sidebar shortcuts ask the same function instead of naming sections by hand.
+  assert.match(shellSource, /const disabled = settingsSectionRequiresProject\(section\) && !projectTrustCwd;/);
+  assert.doesNotMatch(shellSource, /section !== "models"/);
+  // Its own glyph, not the Plugins fallback.
+  assert.match(panelSource, /if \(section === "mcp"\) return <svg \{\.\.\.common\}>/);
+  for (const source of [enSource, zhSource]) assert.match(source, /"settings\.mcp": "MCP"/);
 });
 
 test("restores the settings section and each list detail selection", async () => {
   assert.match(shellSource, /getLastSettingsSection\(projectTrustCwd\)/);
   assert.match(panelSource, /setLastSettingsSection\(initialSection\)/);
   assert.match(panelSource, /setLastSettingsSection\(nextSection\)/);
-  for (const name of ["ModelsConfig", "SkillsConfig", "AgentsConfig", "PluginsConfig"]) {
+  for (const name of ["ModelsConfig", "SkillsConfig", "AgentsConfig", "PluginsConfig", "McpConfig"]) {
     assert.match(
       await readFile(new URL(`./${name}.tsx`, import.meta.url), "utf8"),
       /getLastSettingsSelection/,

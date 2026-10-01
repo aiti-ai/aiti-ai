@@ -9,7 +9,7 @@ const layoutSource = await readFile(new URL("../app/layout.tsx", import.meta.url
 const enSource = await readFile(new URL("../lib/i18n/messages/en.ts", import.meta.url), "utf8");
 const zhSource = await readFile(new URL("../lib/i18n/messages/zh-CN.ts", import.meta.url), "utf8");
 const configSources = await Promise.all(
-  ["ModelsConfig", "SkillsConfig", "AgentsConfig", "PluginsConfig"].map(async (name) => [
+  ["ModelsConfig", "SkillsConfig", "AgentsConfig", "PluginsConfig", "McpConfig"].map(async (name) => [
     name,
     await readFile(new URL(`./${name}.tsx`, import.meta.url), "utf8"),
   ]),
@@ -66,7 +66,7 @@ test("loads settings presentation from its dedicated stylesheet", () => {
   assert.doesNotMatch(globalCssSource, /\.settings-dialog-backdrop \{/);
 });
 
-test("all four settings sections use the shared list-detail layout", () => {
+test("every settings section uses the shared list-detail layout", () => {
   for (const [name, source] of configSources) {
     for (const primitive of ["ConfigPanelShell", "ConfigSplitView", "ConfigSidebar", "ConfigDetail", "ConfigFooter"]) {
       assert.match(source, new RegExp(`<${primitive}`), `${name} should use ${primitive}`);
@@ -81,7 +81,7 @@ test("all subpanel sidebars share one typography scale", () => {
   for (const source of Object.values(sources)) {
     assert.match(source, /<ConfigSidebarText/);
   }
-  for (const name of ["SkillsConfig", "AgentsConfig", "PluginsConfig"]) {
+  for (const name of ["SkillsConfig", "AgentsConfig", "PluginsConfig", "McpConfig"]) {
     assert.match(sources[name], /<ConfigSidebarGroupLabel/);
   }
 });
@@ -243,6 +243,34 @@ test("plugin and skill panel words come from the locale files", () => {
     for (const status of ["loaded", "installed", "missing", "disabled"]) {
       assert.match(source, new RegExp(`"plugins\\.status\\.${status}":`));
     }
+  }
+});
+
+test("the MCP panel's words come from the locale files, and its reasons are visible text", () => {
+  const mcp = Object.fromEntries(configSources).McpConfig;
+  for (const literal of [
+    /Loading\.\.\./,
+    /"(?:Global|Project|Code mode|Automatic|Always on|No servers)"/,
+    />\s*(?:Global|Project|Code mode|Command|URL|Headers|Environment|Refresh)\s*</,
+    /label="[A-Z][^"]*"/,
+    /\{group\.scope\}</,
+    /\{server\.scope\}</,
+  ]) {
+    assert.doesNotMatch(mcp, literal);
+  }
+  assert.match(mcp, /\{scopeLabel\(group\.scope, t\)\}/);
+  assert.match(mcp, /<ConfigScopeTag scope=\{server\.scope\}>\{scopeLabel\(server\.scope, t\)\}<\/ConfigScopeTag>/);
+  // Why a server does not connect is text on its row and in its accessible name, not only the dot.
+  assert.match(mcp, /aria-label=\{t\("mcp\.rowLabel", \{ name, state: t\(MCP_ROW_STATE_LABEL_KEYS\[state\]\) \}\)\}/);
+  assert.match(mcp, /\{badgeKey && <span className=\{`mcp-sidebar-badge is-\$\{tone\}`\}>\{t\(badgeKey\)\}<\/span>\}/);
+  // The panel's own title is the only one: no reason hides in a tooltip.
+  assert.deepEqual(mcp.match(/\btitle=\{[^}]*\}/g), ['title={t("settings.mcp")}']);
+  // The untrusted project's notice has no button until the trust dialog is wired in.
+  assert.match(mcp, /<ConfigTrustNotice message=\{noticeText\(trustNotice, t\)\} \/>/);
+  // File problems open a list in the footer instead of a tooltip.
+  assert.match(mcp, /<ConfigFooterStatus[\s\S]*?details=\{problems\.map\(/);
+  for (const primitive of ["ConfigDetailGrid", "ConfigDetailGridRow", "ConfigScopeTag", "ConfigStatusDot", "ConfigNotice"]) {
+    assert.match(mcp, new RegExp(`<${primitive}[ >]`), primitive);
   }
 });
 
