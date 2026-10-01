@@ -580,11 +580,12 @@ test("the container starts loading and remembers the selection per project", () 
   // A late answer from an earlier load never replaces a newer one.
   assert.match(source, /if \(request !== requestRef\.current\) return;/);
   // Two writes, both in the helpers: the Code mode choice through the tools settings route, and
-  // the servers' changes through the MCP route.
+  // the servers' changes through the MCP route; and the Test request, which writes no file.
   assert.doesNotMatch(source, /method:/);
-  assert.deepEqual([...helperSource.matchAll(/method: "([A-Z]+)"/g)].map((match) => match[1]), ["PUT", "POST"]);
+  assert.deepEqual([...helperSource.matchAll(/method: "([A-Z]+)"/g)].map((match) => match[1]), ["PUT", "POST", "POST"]);
   assert.match(helperSource, /fetchImpl\("\/api\/tools\/settings", \{\n\s*method: "PUT",/);
   assert.match(helperSource, /fetchImpl\("\/api\/mcp", \{\n\s*method: "POST",/);
+  assert.match(helperSource, /fetchImpl\("\/api\/mcp\/test", \{\n\s*method: "POST",/);
   assert.doesNotMatch(source, /style=\{/);
 });
 
@@ -884,4 +885,214 @@ test("focus goes back to the control a change was started from once nothing wait
   assert.match(source, /useEffect\(\(\) => \{\n\s*if \(!focusBack \|\| controlsBusy \|\| handledFocusBackRef\.current === focusBack\) return;\n\s*handledFocusBackRef\.current = focusBack;\n\s*focusAfterChange\(document, focusBack\.control, selectedRowRef\.current\);\n\s*\}, \[focusBack, controlsBusy\]\);/);
   assert.ok(source.indexOf("focusAfterChange(document") > source.indexOf("focusIfLost(document, undoButtonRef.current)"));
   assert.match(source, /focusBack=\{focusBack\}/);
+});
+
+// ---------------------------------------------------------------------------
+// Test connection
+// ---------------------------------------------------------------------------
+
+/** The Connection row's value, and its Test button. */
+function connection(html) {
+  const markup = decode(html);
+  const value = markup.match(/<div class="config-detail-grid-label">Connection<\/div><div class="config-detail-grid-value">([\s\S]*?)<\/div>/)?.[1];
+  assert.ok(value, "the detail pane has a Connection row");
+  const button = value.match(/<button([^>]*)>([^<]*)<\/button>/);
+  return { value, text: text(value), button: { attributes: button[1], label: button[2] } };
+}
+
+function testedStatus(state, extra = {}) {
+  return { origin: "test", state, tools: [], toolCount: 0, durationMs: 420, testedAt: Date.UTC(2026, 9, 2, 10, 42), ...extra };
+}
+
+function testView(serverOverrides = {}, props = {}) {
+  const tested = server({ name: "docs", transport: "http", url: "https://docs/mcp", exposure: "codemode", ...serverOverrides });
+  return view({
+    load: { state: "loaded", data: overview({ servers: [tested], ...(props.data ?? {}) }) },
+    selected: mcpServerKey(tested),
+    ...props.view,
+  });
+}
+
+const { mcpServerKey } = await jiti.import("./mcp-config-helpers.ts");
+
+test("an untested server offers Test, and says what a test does", () => {
+  const { text: shown, button } = connection(testView());
+  assert.equal(button.label, "Test connection");
+  assert.doesNotMatch(button.attributes, /disabled/);
+  assert.match(shown, /^Not tested yet\./);
+  // In the words of how it is reached: an HTTP server is contacted, a stdio server started.
+  assert.match(shown, /Test contacts the server's URL from the computer running Pi Web, lists what it offers, and disconnects again\.$/);
+  const stdio = connection(testView({ transport: "stdio", url: undefined, command: "node" }));
+  assert.match(stdio.text, /Test starts the server from the computer running Pi Web, lists what it offers, and stops it again\.$/);
+  // A server that runs a shell command on every connection is labelled: its tests run one at a time.
+  const serial = connection(testView({ transport: "stdio", url: undefined, command: "node", commandFields: [{ kind: "env", name: "TOKEN" }] }));
+  assert.match(serial.text, /and stops it again\. It runs a shell command on every connection, so its test waits for any other such test to finish first\./);
+  // An HTTP server's header command is such a command too, and the server is still only contacted.
+  const header = connection(testView({ commandFields: [{ kind: "header", name: "Authorization" }] }));
+  assert.match(header.text, /and disconnects again\. It runs a shell command on every connection, so its test waits/);
+  assert.doesNotMatch(header.text, /starts the server/);
+  // No listed tools before a test connected.
+  assert.doesNotMatch(decode(testView()), />Listed tools</);
+});
+
+test("a connected test shows what it listed, and the row reads connected", () => {
+  const status = testedStatus("connected", {
+    toolCount: 3,
+    tools: [
+      { name: "search", description: "Search the docs.", readOnly: true, exposure: "codemode" },
+      { name: "publish", readOnly: false, exposure: "direct" },
+      { name: "bidi‮tool", readOnly: false, exposure: "codemode" },
+    ],
+    serverInfo: { name: "docs-server", version: "2.1.0" },
+    resources: 4,
+    resourceTemplates: 1,
+  });
+  const html = testView({ status });
+  const markup = decode(html);
+  // The dot and the accessible name follow the test; connected needs no badge, as on needs none.
+  assert.match(row(html, "docs"), /aria-label="docs: Connected when tested"/);
+  assert.match(markup, /<button type="button" aria-label="docs: Connected when tested"[^>]*><span aria-hidden="true" class="config-status-dot is-active"><\/span><span class="config-sidebar-text is-grow">docs<\/span><\/button>/);
+  const { value, text: shown } = connection(html);
+  assert.match(value, /<span class="mcp-config-state is-on">Connected<\/span> 3 tool\(s\) listed in 0\.4 s, tested at [^.]+\./);
+  assert.match(shown, /Server: docs-server 2\.1\.0/);
+  assert.match(shown, /4 resource\(s\) and 1 resource template\(s\)\./);
+  assert.doesNotMatch(shown, /Ran in/, "an HTTP server runs in no folder");
+  assert.match(text(markup), /Status Connected when tested The last test connected\. Sessions connect it before their next message\./);
+  const tools = markup.match(/<div class="config-detail-grid-label">Listed tools<\/div><div class="config-detail-grid-value">([\s\S]*?)<\/div>/)?.[1];
+  assert.ok(tools, "a Listed tools row");
+  assert.match(tools, /<li class="mcp-test-tool"><span class="mcp-config-chips"><code class="mcp-config-chip">search<\/code><span class="mcp-test-tool-tag">read-only<\/span><\/span><span class="mcp-config-line is-dim">Search the docs\.<\/span><\/li>/);
+  // A tool whose exposure differs from its server's says so; one like its server's does not.
+  assert.match(tools, /<code class="mcp-config-chip">publish<\/code><span class="mcp-test-tool-tag">direct<\/span>/);
+  assert.doesNotMatch(tools, /<span class="mcp-test-tool-tag">Code mode<\/span>/);
+  // A tool name is the server's text: hidden characters are shown as codes.
+  assert.match(tools, /bidi\\u\{202E\}tool/);
+  // More tools than listed say how many are not shown.
+  assert.match(text(decode(testView({ status: { ...status, toolCount: 10 } }))), /7 more not shown\./);
+});
+
+test("a stdio server's test names the folder it ran in", () => {
+  const html = testView({ transport: "stdio", url: undefined, command: "node", status: testedStatus("connected", { cwd: "/srv/repo" }) });
+  assert.match(connection(html).text, /Ran in \/srv\/repo\./);
+});
+
+test("a failed test shows the error and stderr, a sign-in, and no answer, each with visible text", () => {
+  const failed = testView({ status: testedStatus("failed", { error: "spawn lint-mcp ENOENT", stderr: "line one\nline\u0007two", durationMs: 1_250 }) });
+  assert.match(row(failed, "docs"), /aria-label="docs: Did not connect when tested"/);
+  assert.match(decode(failed), /<span class="mcp-sidebar-badge is-error">failed<\/span>/);
+  const { value } = connection(failed);
+  assert.match(value, /<span class="mcp-config-state is-error">Did not connect<\/span> Gave up after 1\.3 s, tested at/);
+  assert.match(value, /<span class="mcp-config-line is-error">Error: <code class="mcp-config-chip">spawn lint-mcp ENOENT<\/code><\/span>/);
+  // The stderr tail keeps its lines, and its control characters are shown as codes.
+  assert.match(value, /<span class="mcp-config-line is-dim">The last lines it wrote to stderr:<\/span><pre class="mcp-test-output">line one\nline\\u\{0007\}two<\/pre>/);
+
+  const signIn = testView({ status: testedStatus("needs-auth") });
+  assert.match(row(signIn, "docs"), /aria-label="docs: Needs sign-in"/);
+  assert.match(decode(signIn), /<span class="mcp-sidebar-badge is-warning">sign-in<\/span>/);
+  assert.match(connection(signIn).value, /<span class="mcp-config-state is-warning">Needs sign-in<\/span> The server asked for an OAuth sign-in\. Tested at/);
+  assert.match(text(decode(signIn)), /The server asked for an OAuth sign-in when tested, so sessions cannot use its tools until you sign in, for example with \/mcp in a chat\./);
+
+  const silent = connection(testView({ status: testedStatus("failed", { timedOut: true, durationMs: 20_000 }) }));
+  assert.match(silent.value, /<span class="mcp-config-state is-error">No answer<\/span> It did not answer within 20\.0 s, so Pi Web stopped the test\. Tested at/);
+
+  // A test of a switched-off server is shown in its pane, but the row says what the file says.
+  const off = testView({ enabled: false, status: testedStatus("connected") });
+  assert.match(row(off, "docs"), /aria-label="docs: Turned off in the file"/);
+  assert.match(connection(off).text, /^Connected/);
+});
+
+test("Test is disabled where the route would refuse it, and points at the visible reason", () => {
+  const reason = (html) => {
+    const { value, button } = connection(html);
+    assert.match(button.attributes, /disabled=""/);
+    const id = button.attributes.match(/aria-describedby="([^"]+)"/)?.[1];
+    assert.ok(id, "the disabled button points at its reason");
+    return value.match(new RegExp(`<span id="${id}" class="mcp-config-line is-dim">([^<]*)</span>`))?.[1];
+  };
+  const untrusted = { cwd: "/Users/me/repo", trust: { requiresTrust: true, trusted: false, decision: null, inherited: false } };
+  const projectServer = { scope: "project", sourcePath: "/Users/me/repo/.pi/mcp.json", transport: "stdio", url: undefined, command: "node" };
+  assert.equal(
+    reason(testView(projectServer, { data: { files: [globalFile, projectFile], project: untrusted }, view: { cwd: "/Users/me/repo" } })),
+    "This project is not trusted, so Pi Web does not start its servers.",
+  );
+  assert.equal(
+    reason(testView({}, { data: { mcp: { available: false, reason: "operator-disabled", error: "x" } } })),
+    "MCP is off on this Pi Web server, so it tests no server.",
+  );
+  assert.equal(reason(testView({ invalidError: "legacy SSE" })), "Pi refuses this entry, so there is nothing to test.");
+  assert.equal(
+    reason(testView({ webPasswordField: { kind: "header", name: "Authorization" } })),
+    "It references PI_WEB_PASSWORD, so Pi Web does not connect it.",
+  );
+  // -builtin:mcp leaves it as an explicit action.
+  const builtin = connection(testView({}, { data: { mcp: { available: false, reason: "builtin-disabled", error: "x", settingsPath: "/s.json" } } }));
+  assert.doesNotMatch(builtin.button.attributes, /disabled/);
+});
+
+test("while a test runs its button says so, and every other control keeps working", () => {
+  const key = "global\0docs";
+  const html = testView({}, { view: { tests: { [key]: { running: true } } } });
+  const { button } = connection(html);
+  assert.equal(button.label, "Testing…");
+  assert.match(button.attributes, /disabled="" aria-busy="true"/);
+  // A test writes no file: the switch, Remove and Refresh do not wait for it.
+  const controls = detailControls(html);
+  assert.doesNotMatch(controls.toggle, /disabled/);
+  assert.doesNotMatch(controls.remove[0], /disabled/);
+  assert.match(decode(html), /<button type="button" class="config-button config-button-secondary config-button-default">Refresh<\/button>/);
+  // ...and a change on its way does not hold Test either.
+  assert.doesNotMatch(connection(testView({}, { view: { busy: "switch:global\0docs" } })).button.attributes, /disabled/);
+});
+
+test("a test request that failed says why in a test's words, and keeps the last result", () => {
+  const key = "global\0docs";
+  const failure = (error, extra = {}) => connection(testView({ status: testedStatus("connected") }, { view: { tests: { [key]: { running: false, error, ...extra } } } }));
+  const refused = failure({ error: "x", reason: "project-untrusted" });
+  assert.match(refused.value, /<span role="alert" class="mcp-config-line is-error">Could not test the server: This project is not trusted, so Pi Web does not start its servers\.<\/span>/);
+  assert.match(refused.text, /^Connected/, "the last result stays");
+  assert.match(failure({ error: "x", reason: "server-missing" }).text, /Could not test the server: The file no longer defines this server\./);
+  assert.match(failure({ error: "EIO: i/o error", reason: "internal" }).text, /Could not test the server: EIO: i\/o error/);
+  assert.match(failure({ error: "late", timedOut: true }).text, /Could not test the server: Pi Web did not answer in time\. The test may still finish; press Refresh to see its result\./);
+  // A file problem reads as a test's, not as the writer's "left it unchanged".
+  assert.match(failure({ error: "x", reason: "unparsable" }).text, /Could not test the server: The file is not valid JSON, so Pi Web cannot read this entry to test it\./);
+  assert.match(failure({ error: "x", reason: "entry-not-object" }).text, /Could not test the server: This entry is not an object, so there is nothing to test\. Fix it in the file\./);
+  // A failure about the entry before it was edited is not shown for the edited one.
+  assert.doesNotMatch(failure({ error: "x", reason: "server-invalid" }, { configKey: "old-key" }).text, /Could not test/);
+  assert.match(failure({ error: "x", reason: "server-invalid" }, { configKey: "key" }).text, /Could not test the server: Pi refuses this entry/);
+  const queued = connection(testView({}, { view: { tests: { [key]: { running: false, queueTimedOut: true, configKey: "key" } } } }));
+  assert.match(queued.value, /<span role="alert" class="mcp-config-line is-error">Another test of a server that runs a shell command did not finish in time, so this one did not start\. Try again\.<\/span>/);
+  assert.doesNotMatch(connection(testView({}, { view: { tests: { [key]: { running: false, queueTimedOut: true, configKey: "old-key" } } } })).text, /did not start/);
+});
+
+test("the panel's own answer shows over the listing while it is about the entry shown", () => {
+  const key = "global\0docs";
+  const response = (configKey) => ({ scope: "global", name: "docs", configKey, result: { state: "failed", error: "boom", tools: [], toolCount: 0, durationMs: 10, testedAt: 5 } });
+  const shown = testView({}, { view: { tests: { [key]: { running: false, response: response("key") } } } });
+  assert.match(row(shown, "docs"), /aria-label="docs: Did not connect when tested"/);
+  assert.match(connection(shown).text, /^Did not connect/);
+  // An answer about the entry before it was edited is not this entry's.
+  const stale = testView({}, { view: { tests: { [key]: { running: false, response: response("old-key") } } } });
+  assert.match(connection(stale).text, /^Not tested yet\./);
+});
+
+test("the container tests one server at a time each, beside any change, and gives focus back", () => {
+  const body = source.slice(source.indexOf("const testServer = useCallback"), source.indexOf("// A change answers with the overview read after it"));
+  assert.match(body, /if \(testRequestsRef\.current\.has\(key\)\) return;/);
+  assert.match(body, /const testCwd = current\.state === "loaded" && current\.data\.project \? cwd : null;/);
+  // No signal: neither the panel closing nor its deadline aborts a test, since the route stops a
+  // test nobody waits for and records nothing.
+  assert.match(body, /const result = await postMcpTest\(\{ scope: server\.scope, name: server\.name \}, testCwd\);/);
+  assert.doesNotMatch(body, /abort/);
+  assert.match(source, /testRequests\.clear\(\);/);
+  assert.doesNotMatch(source, /testControllers/);
+  assert.match(body, /if \(testRequestsRef\.current\.get\(key\) !== request\) return;/);
+  assert.match(body, /setTests\(\(runs\) => \(\{ \.\.\.runs, \[key\]: mcpTestRunAfter\(runs\[key\], result, server\.configKey\) \}\)\);/);
+  // A refusal, or a test of other content than the listing shows, loads the listing again.
+  assert.match(body, /if \(mcpTestAnswerOutdates\(result, listed\)\) void refresh\(\);/);
+  // A test sets no `busy`, so no other control waits for it.
+  assert.doesNotMatch(body, /setBusy/);
+  // The view shows the panel's own answers over the listing, and a failure only for the entry it was about.
+  assert.match(source, /const data = load\.state === "loaded" \? mcpWithTestResults\(load\.data, tests\) : undefined;/);
+  assert.match(source, /test=\{mcpTestRunFor\(tests\[mcpServerKey\(selectedServer\)\], selectedServer\)\}/);
+  // Test is disabled while it runs, which drops focus to the page; it gets it back from there only.
+  assert.match(source, /if \(wasRunning && !running\) focusIfLost\(document, buttonRef\.current\);/);
 });

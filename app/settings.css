@@ -1901,6 +1901,50 @@
   line-height: 1.5;
 }
 
+/* A tested server's stderr tail keeps its line breaks but wraps long lines,
+   and scrolls inside a box of its own, so 2,000 characters never push the
+   rest of the pane off a phone screen. */
+.mcp-test-output {
+  max-width: 100%;
+  max-height: 160px;
+  margin: 0;
+  padding: 6px 8px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.mcp-test-tools {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mcp-test-tool {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mcp-test-tool-tag {
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 18px;
+  white-space: nowrap;
+}
+
 /* Project trust dialog (components/ProjectTrustDialog.tsx). It sits above
    Settings (z-index 1000), which opens it too, keeps clear of the notch and
    the home indicator, and only its body scrolls, so a long MCP server list

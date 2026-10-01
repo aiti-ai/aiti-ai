@@ -12,13 +12,17 @@ import type {
   McpScope,
   McpServerInfo,
   McpServerRef,
+  McpServerStatus,
+  McpTestResponse,
+  McpTestResult,
 } from "@/lib/api-types";
 import { itemsToSwitch } from "./settings-ui-helpers";
 
 // Pure helpers for Settings › MCP (components/McpConfig.tsx): what each row
 // shows, how the groups are built, and how the overview is loaded. Client-safe:
 // types and fetch only. Every state here is derived from the files GET /api/mcp
-// read; nothing says whether a session actually connected a server.
+// read, refined by a server's last known status (`status`, from a Test) where
+// the file lets it connect.
 
 /** The sidebar selection of the Code mode row; a server's key always holds a NUL. */
 export const MCP_CODEMODE_SELECTION = "codemode";
@@ -29,14 +33,26 @@ export function mcpServerKey(server: Pick<McpServerInfo, "scope" | "name">): str
 }
 
 /**
- * What a row says about an entry, from the file alone, most important first:
- * an entry pi refuses, one Pi Web refuses because it references
- * PI_WEB_PASSWORD, one turned off in the file, a project entry of a project
- * whose servers may not be read, a global entry the trusted project's entry of
- * the same name replaces, and MCP being off on this server. `on` means only
- * that a session would connect it; whether one did is not known here.
+ * What a row says about an entry, most important first. From the file: an
+ * entry pi refuses, one Pi Web refuses because it references PI_WEB_PASSWORD,
+ * one turned off in the file, a project entry of a project whose servers may
+ * not be read, a global entry the trusted project's entry of the same name
+ * replaces, and MCP being off on this server. Only an entry the file lets
+ * connect then shows its last known status: `connected`, `needs-auth` or
+ * `failed`, from the last Test of the entry as the file holds it now. `on`
+ * means only that a session would connect it; nothing says whether one did.
  */
-export type McpServerRowState = "invalid" | "web-password" | "disabled" | "not-trusted" | "replaced" | "mcp-off" | "on";
+export type McpServerRowState =
+  | "invalid"
+  | "web-password"
+  | "disabled"
+  | "not-trusted"
+  | "replaced"
+  | "mcp-off"
+  | "connected"
+  | "needs-auth"
+  | "failed"
+  | "on";
 
 export const MCP_SERVER_ROW_STATES: readonly McpServerRowState[] = [
   "invalid",
@@ -45,6 +61,9 @@ export const MCP_SERVER_ROW_STATES: readonly McpServerRowState[] = [
   "not-trusted",
   "replaced",
   "mcp-off",
+  "connected",
+  "needs-auth",
+  "failed",
   "on",
 ];
 
@@ -79,7 +98,7 @@ export function mcpServerRowState(server: McpServerInfo, context: McpRowContext)
   // The project's entry replaces this one only where it is read.
   if (server.scope === "global" && server.shadowedByProject && context.projectServersLoad) return "replaced";
   if (!context.mcpAvailable) return "mcp-off";
-  return "on";
+  return server.status?.state ?? "on";
 }
 
 /** The full state text, for the row's accessible name and the detail pane. */
@@ -90,13 +109,17 @@ export const MCP_ROW_STATE_LABEL_KEYS: Record<McpServerRowState, string> = {
   "not-trusted": "mcp.state.not-trusted",
   replaced: "mcp.state.replaced",
   "mcp-off": "mcp.state.mcp-off",
+  connected: "mcp.state.connected",
+  "needs-auth": "mcp.state.needs-auth",
+  failed: "mcp.state.failed",
   on: "mcp.state.on",
 };
 
 /**
  * The short text a row shows beside the name, so a state is never told by the
- * dot's color alone. None for `on`, and none for `mcp-off`, which the banner
- * above the list says once for every row.
+ * dot's color alone. None for `on` and `connected`, which need nothing done,
+ * and none for `mcp-off`, which the banner above the list says once for every
+ * row.
  */
 export const MCP_ROW_STATE_BADGE_KEYS: Partial<Record<McpServerRowState, string>> = {
   invalid: "mcp.stateShort.invalid",
@@ -104,15 +127,17 @@ export const MCP_ROW_STATE_BADGE_KEYS: Partial<Record<McpServerRowState, string>
   disabled: "mcp.stateShort.disabled",
   "not-trusted": "mcp.stateShort.not-trusted",
   replaced: "mcp.stateShort.replaced",
+  "needs-auth": "mcp.stateShort.needs-auth",
+  failed: "mcp.stateShort.failed",
 };
 
 export type McpStateTone = "on" | "off" | "warning" | "error";
 
 /** How a state is colored: the dot, and the state text in the detail pane. */
 export function mcpRowStateTone(state: McpServerRowState): McpStateTone {
-  if (state === "on") return "on";
-  if (state === "invalid" || state === "web-password") return "error";
-  if (state === "not-trusted") return "warning";
+  if (state === "on" || state === "connected") return "on";
+  if (state === "invalid" || state === "web-password" || state === "failed") return "error";
+  if (state === "not-trusted" || state === "needs-auth") return "warning";
   return "off";
 }
 
@@ -130,6 +155,15 @@ export const MCP_EXPOSURE_KEYS: Record<NonNullable<McpServerInfo["exposure"]>, s
   deferred: "mcp.exposure.deferred",
   direct: "mcp.exposure.direct",
   hidden: "mcp.exposure.hidden",
+};
+
+/** The same, as a tag beside one tested tool whose `toolExposure` differs from its server's. */
+export const MCP_EXPOSURE_SHORT_KEYS: Record<NonNullable<McpServerInfo["exposure"]>, string> = {
+  codemode: "mcp.exposureShort.codemode",
+  "codemode-deferred": "mcp.exposureShort.codemode-deferred",
+  deferred: "mcp.exposureShort.deferred",
+  direct: "mcp.exposureShort.direct",
+  hidden: "mcp.exposureShort.hidden",
 };
 
 /** A file problem other than this one means none of the file's servers is listed. */
@@ -453,7 +487,9 @@ function refusalFailure(data: unknown, status: number): McpActionFailure {
 
 /**
  * Runs `run` until `timeoutMs`, then settles with `timedOut()` and aborts the
- * signal `run` was given. The caller's `signal` is forwarded by hand, not with
+ * signal `run` was given, unless `abortAtDeadline` is false: then the request
+ * goes on unanswered, for a route whose work must not stop because the panel
+ * stopped waiting. The caller's `signal` is forwarded by hand, not with
  * `AbortSignal.any()`, which Safari supports only from 17.4 (this app
  * supports 16.2). The deadline resolves the race itself, so a fetch that
  * ignores its signal cannot outlast it.
@@ -463,6 +499,7 @@ async function withinDeadline<T>(
   timedOut: () => T,
   timeoutMs: number,
   signal?: AbortSignal,
+  { abortAtDeadline = true }: { abortAtDeadline?: boolean } = {},
 ): Promise<T> {
   const controller = new AbortController();
   const forward = () => controller.abort();
@@ -473,7 +510,7 @@ async function withinDeadline<T>(
     timer = setTimeout(() => {
       // Settled before aborting, so the aborted fetch's failure cannot win the race.
       resolve(timedOut());
-      controller.abort();
+      if (abortAtDeadline) controller.abort();
     }, timeoutMs);
   });
   try {
@@ -749,5 +786,244 @@ export async function postMcpAction(
     () => ({ ok: false, error: { error: `POST /api/mcp did not answer within ${timeoutMs} ms`, timedOut: true } }),
     timeoutMs,
     signal,
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Testing a server: POST /api/mcp/test
+// ---------------------------------------------------------------------------
+
+/**
+ * Why Test cannot be used for a server, or undefined when it can. It is the
+ * route's own check, so the button is never offered for a request that would
+ * be refused: MCP off on the server (`mcpWritesOff()`; `-builtin:mcp` still
+ * tests, as an explicit action), a project no decision trusts or a trust store
+ * that cannot be read, an entry pi refuses, and one that references
+ * PI_WEB_PASSWORD. A switched-off entry can be tested before it is turned on.
+ */
+export type McpTestBlock = McpWriteBlock | "invalid" | "web-password";
+
+export const MCP_TEST_BLOCK_KEYS: Record<McpTestBlock, string> = {
+  "mcp-off": "mcp.test.blocked.mcp-off",
+  "project-untrusted": "mcp.test.blocked.project-untrusted",
+  "trust-unreadable": "mcp.test.blocked.trust-unreadable",
+  invalid: "mcp.test.blocked.invalid",
+  "web-password": "mcp.test.blocked.web-password",
+};
+
+export function mcpTestBlock(
+  server: Pick<McpServerInfo, "scope" | "invalidError" | "validated" | "webPasswordField">,
+  data: Pick<McpResponse, "mcp" | "project">,
+): McpTestBlock | undefined {
+  const block = mcpWriteBlock(server.scope, data);
+  if (block) return block;
+  if (server.invalidError !== undefined || !server.validated) return "invalid";
+  if (server.webPasswordField) return "web-password";
+  return undefined;
+}
+
+/**
+ * A refusal of the test route in the words of a test: the reasons the route
+ * shares with the switches would otherwise say Pi Web "changes" nothing, or
+ * that it left a file "unchanged" (`mcp.reason.*` is worded for writes).
+ * `server-missing`, the `cwd-*` reasons and the request guards read the same
+ * for both, and `internal` shows the route's diagnostic.
+ */
+export const MCP_TEST_REFUSAL_KEYS: Partial<Record<McpRefusalReason, string>> = {
+  "mcp-off": "mcp.test.blocked.mcp-off",
+  "project-untrusted": "mcp.test.blocked.project-untrusted",
+  "trust-unreadable": "mcp.test.blocked.trust-unreadable",
+  "server-invalid": "mcp.test.blocked.invalid",
+  "web-password": "mcp.test.blocked.web-password",
+  "entry-not-object": "mcp.test.refused.entry-not-object",
+  "invalid-request": "mcp.test.refused.invalid-request",
+  unparsable: "mcp.test.refused.unparsable",
+  "invalid-shape": "mcp.test.refused.invalid-shape",
+  "link-dangling": "mcp.test.refused.link-dangling",
+  "link-outside": "mcp.test.refused.link-outside",
+  "not-a-file": "mcp.test.refused.not-a-file",
+  "too-large": "mcp.test.refused.too-large",
+};
+
+/** What a test does, by how the server is reached; a server that runs a shell command adds `MCP_TEST_SERIAL_KEY`. */
+export function mcpTestExplainKey(server: Pick<McpServerInfo, "transport">): string {
+  return server.transport === "http" ? "mcp.test.explain.http" : "mcp.test.explain.stdio";
+}
+
+export const MCP_TEST_SERIAL_KEY = "mcp.test.serial";
+
+/** The state line of a test result: its label and tone; a deadline that passed reads as no answer. */
+export function mcpTestStateView(result: Pick<McpTestResult, "state" | "timedOut">): { key: string; tone: McpStateTone } {
+  if (result.timedOut) return { key: MCP_TEST_STATE_KEYS.timedOut, tone: "error" };
+  return { key: MCP_TEST_STATE_KEYS[result.state], tone: mcpRowStateTone(result.state) };
+}
+
+export const MCP_TEST_STATE_KEYS: Record<McpTestResult["state"] | "timedOut", string> = {
+  connected: "mcp.test.state.connected",
+  "needs-auth": "mcp.test.state.needs-auth",
+  failed: "mcp.test.state.failed",
+  timedOut: "mcp.test.state.timedOut",
+};
+
+/** The sentence after the state: what was listed, or why nothing was, with when and how long. */
+export const MCP_TEST_SUMMARY_KEYS: Record<McpTestResult["state"] | "timedOut", string> = {
+  connected: "mcp.test.summary.connected",
+  "needs-auth": "mcp.test.summary.needs-auth",
+  failed: "mcp.test.summary.failed",
+  timedOut: "mcp.test.summary.timedOut",
+};
+
+export function mcpTestSummaryKey(result: Pick<McpTestResult, "state" | "timedOut">): string {
+  return MCP_TEST_SUMMARY_KEYS[result.timedOut ? "timedOut" : result.state];
+}
+
+/** Milliseconds as seconds with one decimal, for `{seconds}`. */
+export function mcpSeconds(ms: number): string {
+  return (Math.max(0, ms) / 1000).toFixed(1);
+}
+
+/** A Test the panel started for one server (by `mcpServerKey()`): running, the route's last answer, or why the request failed. */
+export interface McpTestRun {
+  running: boolean;
+  /** The last answer, for the entry as the route read it (its `configKey`). */
+  response?: McpTestResponse;
+  /** The request failed, was refused, or timed out. */
+  error?: McpActionFailure;
+  /** The last press waited past the deadline for another test of a server that runs a shell command and never ran. */
+  queueTimedOut?: boolean;
+  /**
+   * The entry `error` and `queueTimedOut` are about: the one the press was for
+   * (a refusal names none), or the one the route read. Neither is shown for an
+   * entry edited since.
+   */
+  configKey?: string;
+}
+
+/**
+ * Where a test request leaves its run: an answer replaces the last one, unless
+ * it never left the queue (it found nothing, so the last result stays shown
+ * beside a note); a failed request keeps the last answer and says why.
+ * `pressedConfigKey` is the entry the panel listed when Test was pressed.
+ */
+export function mcpTestRunAfter(previous: McpTestRun | undefined, result: McpTestRequestResult, pressedConfigKey?: string): McpTestRun {
+  const kept = previous?.response ? { response: previous.response } : {};
+  if (!result.ok) {
+    return { running: false, ...kept, error: result.error, ...(pressedConfigKey !== undefined ? { configKey: pressedConfigKey } : {}) };
+  }
+  if (result.data.result.queueTimedOut) return { running: false, ...kept, queueTimedOut: true, configKey: result.data.configKey };
+  return { running: false, response: result.data };
+}
+
+/** A server's run as its pane shows it: a failure or a queue timeout about another version of the entry is left out. */
+export function mcpTestRunFor(run: McpTestRun | undefined, server: Pick<McpServerInfo, "configKey">): McpTestRun | undefined {
+  if (!run || run.configKey === undefined || run.configKey === server.configKey) return run;
+  return { running: run.running, ...(run.response ? { response: run.response } : {}) };
+}
+
+/**
+ * Whether a test's answer says the listing is out of date, so the panel loads
+ * it again, as it does after a refused change: the route refused with a
+ * reason (the server is gone, the file no longer parses, the project lost its
+ * trust, MCP was turned off), or it tested other content than the listing
+ * shows (the entry was edited outside the panel), whose result the listing
+ * would otherwise never show. A request that failed or timed out says nothing
+ * about the files.
+ */
+export function mcpTestAnswerOutdates(
+  result: McpTestRequestResult,
+  listed: Pick<McpServerInfo, "configKey"> | undefined,
+): boolean {
+  if (!result.ok) return result.error.reason !== undefined && !result.error.timedOut;
+  return listed?.configKey !== result.data.configKey;
+}
+
+/**
+ * The overview with what the panel's own tests found: a test's answer becomes
+ * the server's status when it is about the entry the listing shows (same
+ * `configKey`) and newer than the status the overview carries. A load that
+ * started before the test finished then cannot hide its result, and a result
+ * for an entry edited since is not shown for the edited one.
+ */
+export function mcpWithTestResults(data: McpResponse, runs: Readonly<Record<string, McpTestRun>>): McpResponse {
+  let changed = false;
+  const servers = data.servers.map((server) => {
+    const response = runs[mcpServerKey(server)]?.response;
+    if (!response || response.configKey !== server.configKey) return server;
+    if (server.status && server.status.testedAt >= response.result.testedAt) return server;
+    changed = true;
+    const status: McpServerStatus = { ...response.result, origin: "test" };
+    return { ...server, status };
+  });
+  return changed ? { ...data, servers } : data;
+}
+
+/**
+ * How long the panel waits for a test: the route's 20 s deadline, as long
+ * again in the queue behind another test of a server that runs a shell
+ * command, the close it waits for, and a `!command`, which blocks the server's
+ * clock for up to 10 s. The request is not aborted then, nor when the panel
+ * closes: the route stops a test once every request waiting for it has gone,
+ * and records nothing, so an aborted request would lose the result. A test
+ * that outlasts the wait therefore still finishes on the server, and its
+ * result shows at the next load; only closing the page stops it.
+ */
+export const MCP_TEST_TIMEOUT_MS = 60_000;
+
+export type McpTestRequestResult = { ok: true; data: McpTestResponse } | { ok: false; error: McpActionFailure };
+
+function isMcpTestResponse(value: unknown): value is McpTestResponse {
+  if (value === null || typeof value !== "object") return false;
+  const data = value as Partial<McpTestResponse>;
+  const result = data.result as Partial<McpTestResult> | undefined;
+  return typeof data.configKey === "string" && typeof data.name === "string" && (data.scope === "global" || data.scope === "project")
+    && typeof result === "object" && result !== null && typeof result.state === "string" && Array.isArray(result.tools)
+    && typeof result.testedAt === "number";
+}
+
+async function requestMcpTest(body: Record<string, unknown>, fetchImpl: FetchLike, signal: AbortSignal): Promise<McpTestRequestResult> {
+  let response: Awaited<ReturnType<FetchLike>>;
+  try {
+    response = await fetchImpl("/api/mcp/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      cache: "no-store",
+      signal,
+    });
+  } catch (error) {
+    return { ok: false, error: { error: error instanceof Error ? error.message : String(error) } };
+  }
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    return { ok: false, error: { error: `HTTP ${response.status}` } };
+  }
+  if (response.ok && isMcpTestResponse(data)) return { ok: true, data };
+  return { ok: false, error: refusalFailure(data, response.status) };
+}
+
+/**
+ * Asks `POST /api/mcp/test` to connect one server, which the route reads from
+ * its file. `cwd` is the panel's project, sent only when the listing covers
+ * one, as for a change: a project server needs it, and a global stdio server
+ * runs in it (else in the home folder). At `timeoutMs` it answers `timedOut`
+ * and leaves the request running (`MCP_TEST_TIMEOUT_MS`); only `signal`
+ * aborts it.
+ */
+export async function postMcpTest(
+  server: McpServerRef,
+  cwd: string | null,
+  fetchImpl: FetchLike = (input, init) => fetch(input, init),
+  signal?: AbortSignal,
+  timeoutMs: number = MCP_TEST_TIMEOUT_MS,
+): Promise<McpTestRequestResult> {
+  const body: Record<string, unknown> = { scope: server.scope, name: server.name, ...(cwd ? { cwd } : {}) };
+  return withinDeadline<McpTestRequestResult>(
+    (deadlineSignal) => requestMcpTest(body, fetchImpl, deadlineSignal),
+    () => ({ ok: false, error: { error: `POST /api/mcp/test did not answer within ${timeoutMs} ms`, timedOut: true } }),
+    timeoutMs,
+    signal,
+    { abortAtDeadline: false },
   );
 }

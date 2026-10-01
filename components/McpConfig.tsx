@@ -9,6 +9,7 @@ import type {
   McpResponse,
   McpScope,
   McpServerInfo,
+  McpServerStatus,
   ProjectTrustStatus,
 } from "@/lib/api-types";
 import { useI18n } from "@/hooks/useI18n";
@@ -60,9 +61,13 @@ import {
   MCP_CODEMODE_SELECTION,
   MCP_CODEMODE_STATE_KEYS,
   MCP_EXPOSURE_KEYS,
+  MCP_EXPOSURE_SHORT_KEYS,
   MCP_READ_ONLY_KEYS,
   MCP_ROW_STATE_BADGE_KEYS,
   MCP_ROW_STATE_LABEL_KEYS,
+  MCP_TEST_BLOCK_KEYS,
+  MCP_TEST_REFUSAL_KEYS,
+  MCP_TEST_SERIAL_KEY,
   isBlockingFileProblem,
   loadMcpOverview,
   mcpCodemodeAlwaysUnavailableNotice,
@@ -83,15 +88,25 @@ import {
   mcpRowContext,
   mcpRowStateTone,
   mcpServerGroups,
+  mcpSeconds,
   mcpServerKey,
   mcpServerRowState,
   mcpStatusDot,
+  mcpTestAnswerOutdates,
+  mcpTestBlock,
+  mcpTestExplainKey,
+  mcpTestRunAfter,
+  mcpTestRunFor,
+  mcpTestStateView,
+  mcpTestSummaryKey,
   mcpTrustNotice,
   mcpUnavailableNotice,
+  mcpWithTestResults,
   mcpWriteBlock,
   mcpWritesOff,
   pickMcpSelection,
   postMcpAction,
+  postMcpTest,
   saveMcpCodemodePreference,
   withMcpCodemodePreference,
   type McpActionFailure,
@@ -102,6 +117,8 @@ import {
   type McpNoticeText,
   type McpRowContext,
   type McpServerGroup,
+  type McpTestBlock,
+  type McpTestRun,
   type McpWriteBlock,
 } from "./mcp-config-helpers";
 import { projectTrustReloadKey } from "./settings-ui-helpers";
@@ -197,8 +214,10 @@ function pressedButton(): HTMLButtonElement | null {
  * project; the Project group appears only with one. A server can be switched
  * on or off, a whole group at once, and removed with 60 seconds to undo,
  * through `POST /api/mcp`, whose answer is the overview after the change; open
- * sessions apply it at their next message. The Code mode choice is written
- * through `PUT /api/tools/settings`. An untrusted project's notice offers
+ * sessions apply it at their next message. Test connects one server once
+ * through `POST /api/mcp/test`, beside any change, and its result becomes the
+ * row's state. The Code mode choice is written through
+ * `PUT /api/tools/settings`. An untrusted project's notice offers
  * Trust, which opens the page's trust dialog (AppShell owns trust), and the
  * panel reloads once the page's status for the folder changes.
  */
@@ -227,11 +246,15 @@ export function McpConfig({
   const [groupStatus, setGroupStatus] = useState<McpGroupStatus | null>(null);
   const [undo, setUndo] = useState<McpUndoNotice | null>(null);
   const [focusBack, setFocusBack] = useState<McpFocusBack | null>(null);
+  // Tests by server key. A test writes no file, so it runs beside changes and other tests.
+  const [tests, setTests] = useState<Record<string, McpTestRun>>({});
   // A later load (Refresh, or the panel's project changing) wins over an earlier one still on its way.
   const requestRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
   const saveControllerRef = useRef<AbortController | null>(null);
   const actionControllerRef = useRef<AbortController | null>(null);
+  // The test request on its way for each server, by key; an entry is only an identity.
+  const testRequestsRef = useRef(new Map<string, object>());
   const loadRef = useRef(load);
   loadRef.current = load;
 
@@ -284,12 +307,43 @@ export function McpConfig({
     void refresh();
   }, [refresh]);
 
-  useEffect(() => () => {
-    saveControllerRef.current?.abort();
-    saveControllerRef.current = null;
-    actionControllerRef.current?.abort();
-    actionControllerRef.current = null;
+  useEffect(() => {
+    const testRequests = testRequestsRef.current;
+    return () => {
+      saveControllerRef.current?.abort();
+      saveControllerRef.current = null;
+      actionControllerRef.current?.abort();
+      actionControllerRef.current = null;
+      // Tests are let go, never aborted: the route stops a test nobody waits
+      // for and records nothing, while one left running records its result
+      // for the next time Settings opens.
+      testRequests.clear();
+    };
   }, []);
+
+  // One test per server at a time; the route joins presses from other tabs too.
+  // Its answer is kept per server and shown over the listing's status while it
+  // is the newer one (`mcpWithTestResults()`), so a load already on its way
+  // cannot hide it. An answer that shows the listing is out of date (a
+  // refusal, or a test of content the listing does not show) loads it again.
+  const testServer = useCallback(async (server: McpServerInfo) => {
+    const key = mcpServerKey(server);
+    if (testRequestsRef.current.has(key)) return;
+    const request = {};
+    testRequestsRef.current.set(key, request);
+    setTests((runs) => ({ ...runs, [key]: { ...runs[key], running: true, error: undefined, queueTimedOut: undefined, configKey: undefined } }));
+    const current = loadRef.current;
+    // As for a change: the project only when the listing covers it. A global stdio server runs there, else in the home folder.
+    const testCwd = current.state === "loaded" && current.data.project ? cwd : null;
+    const result = await postMcpTest({ scope: server.scope, name: server.name }, testCwd);
+    // Closed meanwhile: nothing is left to update.
+    if (testRequestsRef.current.get(key) !== request) return;
+    testRequestsRef.current.delete(key);
+    setTests((runs) => ({ ...runs, [key]: mcpTestRunAfter(runs[key], result, server.configKey) }));
+    const listing = loadRef.current;
+    const listed = listing.state === "loaded" ? listing.data.servers.find((item) => mcpServerKey(item) === key) : undefined;
+    if (mcpTestAnswerOutdates(result, listed)) void refresh();
+  }, [cwd, refresh]);
 
   // A change answers with the overview read after it, which replaces the
   // listing; a load still on its way may predate the change, so it is dropped.
@@ -433,6 +487,8 @@ export function McpConfig({
       groupStatus={groupStatus}
       undo={undo}
       focusBack={focusBack}
+      tests={tests}
+      onTest={(server) => void testServer(server)}
       onSelect={(key) => {
         setSelected(key);
         setActionError(null);
@@ -468,6 +524,7 @@ export function McpConfigView({
   groupStatus = null,
   undo = null,
   focusBack = null,
+  tests = {},
   onSelect,
   onRefresh,
   onCodemodeChange,
@@ -475,6 +532,7 @@ export function McpConfigView({
   onGroupSwitch = () => {},
   onRemove = () => {},
   onUndo = () => {},
+  onTest = () => {},
   onTrustProject,
   onClose,
 }: {
@@ -491,6 +549,8 @@ export function McpConfigView({
   undo?: McpUndoNotice | null;
   /** The control the last answered change was started from, to give focus back to. */
   focusBack?: McpFocusBack | null;
+  /** The panel's tests by server key: running, their last answer, or why one failed. */
+  tests?: Readonly<Record<string, McpTestRun>>;
   onSelect: (key: string) => void;
   onRefresh: () => void;
   onCodemodeChange: (preference: McpCodemodePreference) => void;
@@ -498,13 +558,15 @@ export function McpConfigView({
   onGroupSwitch?: (scope: McpScope, servers: McpServerInfo[], enabled: boolean) => void;
   onRemove?: (server: McpServerInfo) => void;
   onUndo?: () => void;
+  onTest?: (server: McpServerInfo) => void;
   onTrustProject?: () => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
   const unavailableNoticeId = useId();
   const trustNoticeId = useId();
-  const data = load.state === "loaded" ? load.data : undefined;
+  // The panel's own test results count as each server's status while they are the newest.
+  const data = load.state === "loaded" ? mcpWithTestResults(load.data, tests) : undefined;
   const groups = data ? mcpServerGroups(data, Boolean(cwd)) : [];
   const context = data ? mcpRowContext(data) : undefined;
   const servers = groups.flatMap((group) => group.servers);
@@ -678,8 +740,11 @@ export function McpConfigView({
                 busy={busy}
                 controlsBusy={controlsBusy}
                 actionError={actionError?.key === mcpServerKey(selectedServer) ? actionError.failure : null}
+                test={mcpTestRunFor(tests[mcpServerKey(selectedServer)], selectedServer)}
+                testBlock={mcpTestBlock(selectedServer, data)}
                 onSwitch={onServerSwitch}
                 onRemove={onRemove}
+                onTest={onTest}
               />
             ) : (
               <ConfigEmptyState>
@@ -891,6 +956,9 @@ function McpStateDetail({ server, state }: { server: McpServerInfo; state: Retur
     "not-trusted": "mcp.stateDetail.not-trusted",
     replaced: "mcp.server.shadowedByProject",
     "mcp-off": "mcp.stateDetail.mcp-off",
+    connected: "mcp.stateDetail.connected",
+    "needs-auth": "mcp.stateDetail.needs-auth",
+    failed: "mcp.stateDetail.failed",
     on: "mcp.stateDetail.on",
   }[state];
   return <span className="mcp-config-line">{t(key)}</span>;
@@ -906,8 +974,11 @@ function McpServerDetail({
   busy,
   controlsBusy,
   actionError,
+  test,
+  testBlock,
   onSwitch,
   onRemove,
+  onTest,
 }: {
   server: McpServerInfo;
   context: McpRowContext;
@@ -921,8 +992,13 @@ function McpServerDetail({
   controlsBusy: boolean;
   /** The last change to this server that failed. */
   actionError: McpActionFailure | null;
+  /** This server's test, if the panel started one. */
+  test: McpTestRun | undefined;
+  /** Why it cannot be tested. */
+  testBlock: McpTestBlock | undefined;
   onSwitch: (server: McpServerInfo, enabled: boolean) => void;
   onRemove: (server: McpServerInfo) => void;
+  onTest: (server: McpServerInfo) => void;
 }) {
   const { t } = useI18n();
   const noteId = useId();
@@ -999,6 +1075,7 @@ function McpServerDetail({
             )}
           </span>
         </ConfigDetailGridRow>
+        <McpConnectionRows server={server} test={test} testBlock={testBlock} onTest={onTest} />
         {server.transport && (
           <ConfigDetailGridRow label={t("mcp.detail.transport")}>
             {t(`mcp.transport.${server.transport}`)}
@@ -1087,6 +1164,151 @@ function McpServerDetail({
 
       <p className="mcp-config-note">{t("mcp.disclosure")}</p>
     </ConfigDetailStack>
+  );
+}
+
+/** A server's stderr as lines, each with its hidden characters escaped; the line breaks stay. */
+function revealLines(text: string): string {
+  return text.split(/\r?\n/).map(revealHiddenCharacters).join("\n");
+}
+
+/** Why a test request did not answer with a result, in a test's words where the reason has them. */
+function testFailureText(failure: McpActionFailure, t: Translate): string {
+  if (failure.timedOut) return t("mcp.test.requestTimedOut");
+  const key = failure.reason ? MCP_TEST_REFUSAL_KEYS[failure.reason] : undefined;
+  return key ? t(key) : failureText(failure, t);
+}
+
+/** What the last test found: its state with when and how long, the error and stderr, and what the server said about itself. */
+function McpStatusLines({ status }: { status: McpServerStatus }) {
+  const { t, locale } = useI18n();
+  const view = mcpTestStateView(status);
+  const time = new Date(status.testedAt).toLocaleTimeString(locale, { hour: "2-digit", minute: "2-digit" });
+  const info = status.serverInfo;
+  return (
+    <>
+      <span className="mcp-config-line">
+        <span className={`mcp-config-state is-${view.tone}`}>{t(view.key)}</span>{" "}
+        {t(mcpTestSummaryKey(status), { count: status.toolCount, seconds: mcpSeconds(status.durationMs), time })}
+      </span>
+      {status.error && (
+        <span className="mcp-config-line is-error">
+          {t("mcp.test.error")} <code className="mcp-config-chip">{revealHiddenCharacters(status.error)}</code>
+        </span>
+      )}
+      {status.stderr && (
+        <>
+          <span className="mcp-config-line is-dim">{t("mcp.test.stderr")}</span>
+          <pre className="mcp-test-output">{revealLines(status.stderr)}</pre>
+        </>
+      )}
+      {info && (
+        <span className="mcp-config-line is-dim">
+          {t("mcp.test.serverInfo", { name: revealHiddenCharacters(info.title ?? info.name), version: revealHiddenCharacters(info.version) })}
+        </span>
+      )}
+      {status.resources !== undefined && (
+        <span className="mcp-config-line is-dim">
+          {t("mcp.test.resources", { resources: status.resources, templates: status.resourceTemplates ?? 0 })}
+        </span>
+      )}
+      {status.cwd !== undefined && <span className="mcp-config-line is-dim">{t("mcp.test.ranIn", { path: displayPath(status.cwd) })}</span>}
+      {status.queuedMs !== undefined && status.queuedMs >= 500 && (
+        <span className="mcp-config-line is-dim">{t("mcp.test.queued", { seconds: mcpSeconds(status.queuedMs) })}</span>
+      )}
+    </>
+  );
+}
+
+/** The tools a connected test listed, read-only: name, whether the server marks it read-only, an exposure of its own, and its description's first line. */
+function McpTestToolList({ status, serverExposure }: { status: McpServerStatus; serverExposure: McpServerInfo["exposure"] }) {
+  const { t } = useI18n();
+  const notShown = status.toolCount - status.tools.length;
+  return (
+    <span className="mcp-config-lines">
+      <ul className="mcp-test-tools">
+        {status.tools.map((tool, index) => (
+          <li key={`${index}\0${tool.name}`} className="mcp-test-tool">
+            <span className="mcp-config-chips">
+              <code className="mcp-config-chip">{revealHiddenCharacters(tool.name)}</code>
+              {tool.readOnly && <span className="mcp-test-tool-tag">{t("mcp.test.readOnly")}</span>}
+              {tool.exposure !== (serverExposure ?? "codemode") && (
+                <span className="mcp-test-tool-tag">{t(MCP_EXPOSURE_SHORT_KEYS[tool.exposure])}</span>
+              )}
+            </span>
+            {tool.description && <span className="mcp-config-line is-dim">{revealHiddenCharacters(tool.description)}</span>}
+          </li>
+        ))}
+      </ul>
+      {notShown > 0 && <span className="mcp-config-line is-dim">{t("mcp.test.moreTools", { count: notShown })}</span>}
+    </span>
+  );
+}
+
+/**
+ * The Connection row: the server's last known status (from a Test) and what
+ * it found, the Test button, and why it cannot be used, which the button
+ * points at; then, when it connected, the tools it listed.
+ */
+function McpConnectionRows({
+  server,
+  test,
+  testBlock,
+  onTest,
+}: {
+  server: McpServerInfo;
+  test: McpTestRun | undefined;
+  testBlock: McpTestBlock | undefined;
+  onTest: (server: McpServerInfo) => void;
+}) {
+  const { t } = useI18n();
+  const blockId = useId();
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const running = test?.running === true;
+  // The button is disabled while its test runs, which drops focus to the page
+  // behind Settings; it gets it back once the answer is in, only from there.
+  const wasRunningRef = useRef(running);
+  useEffect(() => {
+    const wasRunning = wasRunningRef.current;
+    wasRunningRef.current = running;
+    if (wasRunning && !running) focusIfLost(document, buttonRef.current);
+  }, [running]);
+  const status = server.status;
+  return (
+    <>
+      <ConfigDetailGridRow label={t("mcp.detail.connection")} tone="plain">
+        <span className="mcp-config-lines">
+          {status ? <McpStatusLines status={status} /> : <span className="mcp-config-line">{t("mcp.test.never")}</span>}
+          {test?.queueTimedOut && <span role="alert" className="mcp-config-line is-error">{t("mcp.test.queueTimedOut")}</span>}
+          {test?.error && (
+            <span role="alert" className="mcp-config-line is-error">
+              {t("mcp.test.requestFailed")} {testFailureText(test.error, t)}
+            </span>
+          )}
+          {testBlock && <span id={blockId} className="mcp-config-line is-dim">{t(MCP_TEST_BLOCK_KEYS[testBlock])}</span>}
+          <span className="mcp-config-line">
+            <ConfigButton
+              ref={buttonRef}
+              size="small"
+              disabled={running || testBlock !== undefined}
+              aria-busy={running || undefined}
+              aria-describedby={testBlock ? blockId : undefined}
+              onClick={() => onTest(server)}
+            >
+              {running ? t("mcp.test.testing") : t("mcp.test.button")}
+            </ConfigButton>
+          </span>
+          {!testBlock && <span className="mcp-config-line is-dim">{t(mcpTestExplainKey(server))}</span>}
+          {/* Its own line, so no locale has to join two sentences with a space. */}
+          {!testBlock && server.commandFields.length > 0 && <span className="mcp-config-line is-dim">{t(MCP_TEST_SERIAL_KEY)}</span>}
+        </span>
+      </ConfigDetailGridRow>
+      {status?.state === "connected" && status.toolCount > 0 && (
+        <ConfigDetailGridRow label={t("mcp.detail.listedTools")} tone="plain">
+          <McpTestToolList status={status} serverExposure={server.exposure} />
+        </ConfigDetailGridRow>
+      )}
+    </>
   );
 }
 
