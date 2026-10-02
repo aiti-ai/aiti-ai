@@ -3,6 +3,7 @@ import { chmodSync, lstatSync, mkdirSync, readlinkSync, realpathSync, renameSync
 import { basename, dirname, join, resolve } from "node:path";
 import type { McpExposure } from "@earendil-works/pi-coding-agent";
 import lockfile from "proper-lockfile";
+import { serializeByKey } from "./key-serializer";
 import {
   globalMcpConfigPath,
   jsonErrorMessage,
@@ -289,15 +290,7 @@ const QUEUE_KEY: symbol = Symbol.for("pi-web:mcp-config-write-queue");
 
 /** Runs `task` after every earlier task for the same file has settled. */
 function serialize<T>(key: string, task: () => Promise<T>): Promise<T> {
-  const store = globalThis as Record<symbol, Map<string, Promise<void>> | undefined>;
-  const queues = (store[QUEUE_KEY] ??= new Map());
-  const run = (queues.get(key) ?? Promise.resolve()).then(task);
-  const tail = run.then(() => undefined, () => undefined);
-  queues.set(key, tail);
-  void tail.then(() => {
-    if (queues.get(key) === tail) queues.delete(key);
-  });
-  return run;
+  return serializeByKey(QUEUE_KEY, key, task);
 }
 
 /**
