@@ -453,14 +453,22 @@ function codemodeView(info, props = {}) {
   return view({ selected: "codemode", load: { state: "loaded", data: overview({ codemode: info, ...props.data }) }, ...props.view });
 }
 
-test("the Code mode pane offers Automatic and Always on, and says when a choice applies", () => {
+test("the Code mode pane offers Automatic and Always on, and says once when its settings apply", () => {
   const automatic = codemodeView({ sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic" });
   assert.deepEqual(codemodeOptions(automatic), [
     { label: "Automatic", pressed: true, disabled: false, describedBy: undefined },
     { label: "Always on", pressed: false, disabled: false, describedBy: undefined },
   ]);
   assert.match(text(automatic),
-    /Mode Automatic Always on Turns on when an MCP server that uses code mode connects\. Applies only to sessions started afterwards\. Sandbox Available\./);
+    /Add MCP Code mode The model calls tools from a short script; MCP tools use it by default\. Changes apply to sessions started afterwards\. Mode Automatic Always on Turns on when an MCP server that uses code mode connects\. Sandbox Available\./);
+  // Said once, in the intro, not under every row.
+  assert.equal(text(codemodeView({
+    sandbox: { state: "available" },
+    builtinDisabled: false,
+    preference: "automatic",
+    mode: { settingsPath: "/Users/me/.pi/agent/settings.json", value: "on" },
+    inlineBudget: { settingsPath: "/Users/me/.pi/agent/settings.json", default: 3000, max: 1_000_000 },
+  })).match(/sessions started afterwards/g).length, 1);
   assert.doesNotMatch(automatic, /role="alert"/);
 
   // A self-test nobody has run yet leaves Always on available and has its own wording.
@@ -470,7 +478,7 @@ test("the Code mode pane offers Automatic and Always on, and says when a choice 
     ["Always on", true, false],
   ]);
   assert.match(text(always),
-    /Sessions start with Code mode on .* Sandbox Not checked yet: the self-test runs when the first session starts after Pi Web does\./);
+    /Sessions start with Code mode on\. Sandbox Not checked yet: the self-test runs when the first session starts after Pi Web does\./);
 
   // While a save is on its way both options wait, and the pane says it is saving.
   const saving = codemodeView({ sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic" }, {
@@ -509,7 +517,7 @@ test("Always on is disabled with a visible reason while no session could offer C
   const down = text(codemodeView({ sandbox: { state: "unavailable", error: "worker exited" }, builtinDisabled: true, builtinSettingsPath: globalPath, globalBuiltinSettingsPath: globalPath, preferenceError: "Unexpected token" }));
   // An unreadable settings file offers no choice to save into it.
   assert.match(down, /Cannot read the global settings file: Unexpected token/);
-  assert.doesNotMatch(down, /Applies only to sessions started/);
+  assert.doesNotMatch(down, /Turns on when an MCP server/);
   assert.match(down, /Cannot run on this Pi Web server, so no session offers Code mode: worker exited/);
   assert.match(down, /Turned off by -builtin:codemode in ~\/\.pi\/agent\/settings\.json\./);
   const html = view({ load: { state: "loaded", data: overview({ codemode: { sandbox: { state: "unavailable", error: "x" }, builtinDisabled: false, preference: "automatic" } }) } });
@@ -642,10 +650,10 @@ test("the Code mode pane's budget field saves a whole number, or empty for pi's 
   assert.match(input(unset), /inputMode="numeric"/);
   // Nothing typed yet: nothing to save.
   assert.match(save(unset), /disabled=""/);
-  assert.match(text(unset), /Applies only to sessions started afterwards\. Tool list budget tokens Save How many tokens \(estimated as characters ÷ 4\) the code mode tool's description may spend declaring MCP tools, shortest first\. Scripts find the tools left out with searchTools\(\); 0 lists only each server's name and tool count\. Leave it empty for pi's default, 3000\. Applies only to sessions started afterwards\. Sandbox/);
+  assert.match(text(unset), /Turns on when an MCP server that uses code mode connects\. Tool list budget tokens Save Tokens the code mode description may spend listing tools; scripts find the rest with searchTools\(\)\. Leave empty for pi's default, 3000\. Sandbox/);
   // The hint describes the field.
   const hintId = input(unset).match(/aria-describedby="([^"]+)"/)[1];
-  assert.match(decode(unset), new RegExp(`<span id="${hintId}" class="mcp-config-line">How many tokens`));
+  assert.match(decode(unset), new RegExp(`<span id="${hintId}" class="mcp-config-line">Tokens the code mode description`));
   assert.match(input(codemodeView(info({ ...budget, value: 1000 }))), /value="1000"/);
 
   // While a budget save is on its way, the field keeps focus (read-only, not disabled), Save waits, and the
@@ -714,17 +722,17 @@ test("the Code mode pane's Built-in tools switch keeps tools declared or leaves 
 
   const on = codemodeView(info({ settingsPath, value: "on" }));
   assert.deepEqual(modeOptions(on), [["Direct", true, false], ["In scripts", false, false]]);
-  // Between the choice and the budget, with what it does and when it applies.
-  assert.match(text(on), /Applies only to sessions started afterwards\. Built-in tools Direct In scripts While Code mode is on, the model still calls read, bash, edit, write and the session's other tools directly, and each one's description also says how to call it from a script \(codemode\.mode "on", pi's default\)\. Applies only to sessions started afterwards\. Sandbox/);
+  // Between the choice and the budget, with what it does.
+  assert.match(text(on), /Sessions start with Code mode on\. Built-in tools Direct In scripts The model calls read, bash and the other tools directly\. Sandbox/);
   // The Code mode choice keeps its own switch.
   assert.deepEqual(codemodeOptions(on).map(({ label }) => label), ["Automatic", "Always on"]);
 
   const only = text(codemodeView(info({ settingsPath, value: "only" })));
-  assert.match(only, /While Code mode is on, read, bash, edit, write and the session's other tools \(MCP tools with direct exposure too\) are no longer declared to the model: the code mode tool's description lists them, within the tool list budget, and the model calls them from scripts \(codemode\.mode "only"\)\. The session's tool selection still decides which tools there are\./);
-  assert.doesNotMatch(only, /With Automatic/);
+  assert.match(only, /Built-in tools Direct In scripts While Code mode is on, the model calls read, bash and the other tools only from scripts\. Sandbox/);
+  assert.doesNotMatch(only, /Under Automatic/);
   // Under Automatic, Code mode and so "only" wait for an MCP server.
   assert.match(text(codemodeView(info({ settingsPath, value: "only" }, { preference: "automatic" }))),
-    /With Automatic, Code mode turns on only once an MCP server that uses it connects, and until then the model calls these tools directly\. Choose Always on to have every session call them from scripts\./);
+    /only from scripts\. Under Automatic, this waits until Code mode turns on\. Sandbox/);
 
   // While a mode save is on its way, both switches wait, and the Saving… line is the mode's.
   const saving = codemodeView(info({ settingsPath, value: "on" }), { view: { codemodeSave: { saving: true, error: null, target: "mode" } } });
