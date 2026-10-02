@@ -57,7 +57,7 @@ const MCP_CATALOGS: readonly ConfigAddSourceCatalog[] = [
   { href: "https://glama.ai/mcp/servers", label: "glama.ai" },
   { href: "https://smithery.ai/servers", label: "smithery.ai" },
   { href: "https://mcp.so/", label: "mcp.so" },
-  { href: "https://registry.modelcontextprotocol.io/", label: "registry.modelcontextprotocol.io" },
+  { href: "https://registry.modelcontextprotocol.io/", label: "MCP Registry" },
 ];
 
 /** The importer's notes about the server's name, shown under the name box instead of with the rest. */
