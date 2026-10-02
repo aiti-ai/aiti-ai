@@ -236,6 +236,30 @@ test("an untrusted project's server is never contacted; a trusted one's is", asy
   await cancel(started.body.flowId);
 });
 
+for (const [label, revoke] of [
+  ["trust is revoked", () => store.set(cwd, false)],
+  ["PI_WEB_DISABLE_MCP is set", () => {
+    process.env.PI_WEB_DISABLE_MCP = "1";
+  }],
+]) {
+  test(`a project sign-in finished after ${label} ends signed in without connecting again`, async () => {
+    // The route's checks ran minutes before the reconnect with the new tokens; mayConnect asks again.
+    store.set(cwd, true);
+    const started = await start({ scope: "project", name: "repo", cwd });
+    assert.equal(started.status, 200, JSON.stringify(started.body));
+    const waiting = await until(started.body.flowId, (flow) => flow.phase === "authorize" || ENDED.has(flow.phase));
+    assert.equal(waiting.phase, "authorize", waiting.error);
+    // The first connect ran the repository's header; only a reconnect would run it again.
+    await rm(marker, { force: true });
+    revoke();
+    assert.equal((await paste(started.body.flowId, { redirectUrl: await approveSignIn(waiting.authorizationUrl) })).status, 200);
+    const done = await until(started.body.flowId, (flow) => ENDED.has(flow.phase));
+    assert.equal(done.phase, "done", done.error);
+    assert.equal(done.result, undefined, "no reconnect result");
+    assert.equal(existsSync(marker), false, "the project's !command header did not run again");
+  });
+}
+
 test("sign-out deletes the URL's tokens through POST /api/mcp, under the checks of any change", async () => {
   const key = mcpSignInUrlKey(fake.url);
   const other = mcpSignInUrlKey("https://other.example/mcp");
