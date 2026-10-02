@@ -242,7 +242,7 @@ test("Settings › MCP opens the add pane from the sidebar, keeps the draft, and
   assert.match(decode(html), /<button type="button" aria-current="page" class="config-list-action-button">[\s\S]*?Add MCP server<\/button>/);
   assert.match(text(html), /What Add writes/);
   // The added notice: the server and its file, the folder trusted with it, the test, and Sign in.
-  const notice = renderToStaticMarkup(h(I18nProvider, null, h(McpConfigView, {
+  const addedView = (props = {}) => renderToStaticMarkup(h(I18nProvider, null, h(McpConfigView, {
     cwd: "/Users/me/repo",
     load: {
       state: "loaded",
@@ -263,9 +263,17 @@ test("Settings › MCP opens the add pane from the sidebar, keeps the draft, and
     onRefresh: noop,
     onCodemodeChange: noop,
     onClose: noop,
+    ...props,
   })));
+  const notice = addedView();
   assert.match(text(notice), /Added docs to .*repo\/\.pi\/mcp\.json, and trusted .*repo\. It asks for a sign-in\./);
   assert.match(decode(notice), /<div role="status" class="config-notice has-action">[\s\S]*?<button type="button" class="config-button config-button-primary config-button-small">Sign in<\/button>/);
+  // A Sign out of the same server on its way would cancel a sign-in started now, so the notice's
+  // Sign in waits for it, as the row's does.
+  const signingOut = decode(addedView({ busy: "sign-out:project\0docs" }));
+  assert.match(text(signingOut), /It asks for a sign-in\./);
+  assert.doesNotMatch(signingOut.slice(signingOut.indexOf("Added docs"), signingOut.indexOf("</div>", signingOut.indexOf("Added docs"))), /Sign in</);
+  assert.match(configSource, /signingOut=\{busy === `sign-out:\$\{added\.key\}`\}/);
 
   // The container: Add is a change like any other, and only an Add that worked starts the test.
   const submit = configSource.slice(configSource.indexOf("const submitAdd = useCallback"), configSource.indexOf("// The notice goes when the route lets the removal go."));
@@ -280,5 +288,12 @@ test("Settings › MCP opens the add pane from the sidebar, keeps the draft, and
   // Cmd/Ctrl+Enter in the box, which leaves no pressed button): focus goes to the new server's row.
   const success = submit.slice(submit.indexOf("setAdding(false)"));
   assert.match(success, /setFocusBack\(\{ control: null, toSelectedRow: true \}\);/);
-  assert.match(configSource, /if \(focusBack\.toSelectedRow\) focusIfLost\(document, selectedRowRef\.current\);/);
+  assert.match(configSource, /if \(focusBack\.toSelectedRow\) focusIfLost\(document, focusFallback\(\)\);/);
+  // An answer about a draft edited while the request was out is not shown under the new draft, nor
+  // acted on (the host-variable confirmation, Use <name>), and what was typed since is kept.
+  assert.match(submit, /const sent = addDraftRef\.current;[\s\S]*?await runAction\(request, "add"/);
+  assert.match(submit, /const edited = addDraftRef\.current !== sent;/);
+  assert.match(submit, /if \(!edited\) setAddFailure\(result\.error\);/);
+  assert.match(success, /if \(!edited\) setAddDraft\(EMPTY_MCP_ADD_DRAFT\);/);
+  assert.match(configSource, /onAddDraftChange=\{\(draft\) => \{\n\s*addDraftRef\.current = draft;\n\s*setAddDraft\(draft\);/);
 });
