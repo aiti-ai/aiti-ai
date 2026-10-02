@@ -180,6 +180,17 @@ test("why Project is unavailable is visible text under the switch, never only a 
   assert.match(decode(html), /<div class="config-save-target">[\s\S]*?class="config-scope-switch-reason">This project is not trusted[^<]*<\/span><\/div><span class="mcp-config-line"><button[^>]*>Trust project…<\/button><\/span><\/div>/);
 });
 
+test("the name comes right after the paste, with the importer's notes about it, which go once it is edited", () => {
+  const paste = JSON.stringify({ mcpServers: { "My Server!": { command: "npx", args: ["-y", "@acme/lint-mcp"] } } });
+  let shown = text(pane({ draft: { text: paste } }));
+  assert.match(shown, /Server to add .* Name My Server! became My-Server: pi server names use letters, digits, _ and -\. Preview /);
+  assert.equal(shown.match(/became My-Server/g)?.length, 1, "said once, under the name, not again with the preview's notes");
+  // Typed over, the note would describe a name no longer in the box.
+  shown = text(pane({ draft: { text: paste, name: "lint" } }));
+  assert.doesNotMatch(shown, /became My-Server/);
+  assert.match(shown, /Name Preview /);
+});
+
 test("a password field takes a host variable instead, and the name field says when the name is taken", () => {
   const paste = JSON.stringify({
     servers: { gh: { type: "http", url: "https://api.example.com/mcp", headers: { Authorization: "Bearer ${input:pat}" } } },
@@ -318,8 +329,10 @@ test("Settings › MCP opens the add pane from the sidebar, keeps the draft, and
     onClose: noop,
   })));
   assert.match(decode(html), /<button type="button" aria-current="page" class="config-list-action-button">[\s\S]*?Add MCP<\/button>/);
-  // No working directory and no env names: those rows are left out, not shown as "None".
-  assert.match(text(html), /Preview Read as a command line Transport stdio Command npx -y @acme\/lint-mcp Named lint/);
+  // The name first, under the paste box, with the note on where it came from; then the preview, which
+  // leaves out what is not set: no working directory and no env names, rather than "None".
+  assert.match(text(html), /Server to add npx -y @acme\/lint-mcp Name Named lint after its address or command\. Preview Read as a command line Transport stdio Command npx -y @acme\/lint-mcp Add /);
+  assert.match(decode(html), /aria-label="Name"[^>]*value="lint"\/>/);
   // The added notice: the server and its file, the folder trusted with it, the test, and Sign in.
   const addedView = (props = {}) => renderToStaticMarkup(h(I18nProvider, null, h(McpConfigView, {
     cwd: "/Users/me/repo",
