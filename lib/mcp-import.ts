@@ -3,6 +3,7 @@ import { parseJsonc } from "./jsonc";
 import { readCommandLine } from "./mcp-import-cli";
 import {
   configValueEnvVarNames,
+  escapeConfigValue,
   finishDraft,
   isResolvedPath,
   isValidServerName,
@@ -276,8 +277,7 @@ function encodeFieldValue(value: FilledValue, path: McpImportPath, first: boolea
   if ("reference" in value) return `\${${value.reference}}`;
   if (encoding === "uri-component") return encodeURIComponent(value.text);
   if (!isResolvedPath(path)) return value.text;
-  const doubled = value.text.replace(/\$/g, "$$$$");
-  return first && doubled.startsWith("!") ? `$${doubled}` : doubled;
+  return escapeConfigValue(value.text, { atStart: first });
 }
 
 function setPath(config: Record<string, unknown>, path: McpImportPath, value: string | undefined): void {
@@ -459,7 +459,3 @@ export function findLiteralSecretPaths(config: McpServerConfig): McpImportPath[]
   return paths.sort((a, b) => PATH_ORDER.indexOf(a[0]) - PATH_ORDER.indexOf(b[0]));
 }
 
-/** `findLiteralSecretPaths` as labels (`env.API_KEY`, `headers.Authorization`, `args[3]`, `url`). */
-export function findLiteralSecrets(config: McpServerConfig): string[] {
-  return findLiteralSecretPaths(config).map(pathLabel);
-}

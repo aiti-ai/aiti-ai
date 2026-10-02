@@ -128,6 +128,8 @@ lib/
   mcp-host.ts          per-wrapper MCP host: registers mcp.json servers before a prompt, waits for them, idles them out, reports what each server does (and a /mcp it does not own) to the status store
   mcp-config-key.ts    canonicalJson() and mcpConfigKey() (the per-process HMAC every status is keyed by), shared by the host and the reader; total, nesting past 64 levels prints as a marker
   mcp-json-error.ts    JSON.parse messages without the source text they quote: jsonErrorMessage() for the reader and writer, scrubMcpLoadError() for what the host logs
+  mcp-config-values.ts client-safe: the values pi resolves (resolvedConfigValues()) and the PI_WEB_PASSWORD rule (findWebPasswordField()), shared by the add pane, the reader, the transport and the routes
+  key-serializer.ts    serializeByKey(): one globalThis promise chain per key, for the mcp.json writer and fresh-folder trust
   mcp-config-read.ts   Settings › MCP reads: each mcp.json read and described from the file, nothing resolved or run; GET /api/mcp's overview; the project file's link rule (`locateProjectMcpConfig()`), which the writer shares
   mcp-config-file.ts   the mcp.json writer: the SDK editor's bytes, plus a lock, an atomic write through links, 0600 global / kept project mode, typed refusals
   mcp-undo.ts          removed mcp.json entries held 60 s in process memory (globalThis), keyed by a token; only the token reaches the browser
@@ -140,7 +142,7 @@ lib/
   jsonc.ts             JSON with comments: stripJsonComments (pi's line comments + trailing commas, plus block comments) and parseJsonc; models-config-store reads models.json through it
   shell-words.ts       split one pasted command line into words without a shell: quotes, $'…', \ ^ ` continuations, NAME=value prefixes; refuses | && ; redirects $(…); keeps Windows backslashes; variables returned as parts
   mcp-add.ts           POST /api/mcp add's checks before it writes: the paste parsed again, values filled, SDK-validated, PI_WEB_PASSWORD / literal-secret-in-project / host-variable refusals
-  mcp-import.ts        Settings › MCP paste importer (pure): parseMcpImport, fillMcpImportFields, findLiteralSecrets; mcp-import-core/json/cli/links.ts hold the value encoder, JSON shapes, CLI grammars and install links
+  mcp-import.ts        Settings › MCP paste importer (pure): parseMcpImport, fillMcpImportFields (secretPaths), referenceableLiteralSecrets; mcp-import-core/json/cli/links.ts hold the value encoder, JSON shapes, CLI grammars and install links
   mcp-server-display.ts  client-safe display helpers for McpServerInfo: hidden-character escapes, quoted command line, target, field and variable labels, file-problem details
   mcp-tool-display.ts  `server/tool` label for an mcp__ call from its result's details (never parsed from the name), JSON result indenting
   codemode-view.ts     display helpers for codemode cards: script, nested calls, header-free output, progress

@@ -320,10 +320,16 @@ export function parseValue(value: string, grammar: ValueGrammar, resolved: boole
   return segments;
 }
 
-/** Literal text as pi stores it in a value it resolves: `$` doubled, a leading `!` escaped as `$!`. */
-export function escapeConfigValue(value: string): string {
+/**
+ * Literal text as pi stores it in a value it resolves: `$` doubled, a leading
+ * `!` escaped as `$!`. `atStart: false` for text that follows other parts of
+ * the value (a field after a prefix), where a `!` is no command. The one rule
+ * every encoder of the importer goes through, so the SDK round-trip test of it
+ * sweeps what is written.
+ */
+export function escapeConfigValue(value: string, { atStart = true }: { atStart?: boolean } = {}): string {
   const doubled = value.replace(/\$/g, "$$$$");
-  return doubled.startsWith("!") ? `$${doubled}` : doubled;
+  return atStart && doubled.startsWith("!") ? `$${doubled}` : doubled;
 }
 
 /** Whether pi runs this resolved value as a shell command (SDK `isCommandConfigValue`). */
@@ -532,8 +538,7 @@ class Encoder {
       // The source passes `$NAME` on as text; pi would have read it as a variable.
       const bare = /\$([A-Za-z_][A-Za-z0-9_]*)/.exec(text);
       if (bare) this.draft.note("bare-dollar-literal", { field: label, name: bare[1] });
-      let value = text.replace(/\$/g, "$$$$");
-      if (atStart() && value.startsWith("!")) value = `$${value}`;
+      const value = escapeConfigValue(text, { atStart: atStart() });
       if (value !== text) escaped = true;
       parts.push(value);
     };
