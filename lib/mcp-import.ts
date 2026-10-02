@@ -312,10 +312,10 @@ function referenceableSecretPaths(server: McpImportServer): McpImportPath[] {
 
 /**
  * The paste's own literal secrets that may be stored as a `${NAME}` reference
- * instead (ADR 0006, decision 8), by label (`env.API_KEY`,
- * `headers.Authorization`, `oauth.clientSecret`): those in a value pi
- * resolves that no field fills. A secret in the URL, the command or its
- * arguments cannot be, since pi reads no variable there; a field's value
+ * instead (ADR 0006, "Secrets typed in the panel"), by label
+ * (`env.API_KEY`, `headers.Authorization`, `oauth.clientSecret`): those in a
+ * value pi resolves that no field fills. A secret in the URL, the command or
+ * its arguments cannot be, since pi reads no variable there; a field's value
  * takes a reference through the field.
  */
 export function referenceableLiteralSecrets(server: McpImportServer): string[] {
