@@ -1662,12 +1662,6 @@ function McpTestToolList({ status, serverExposure }: { status: McpServerStatus &
 }
 
 /**
- * The Connection row: the server's last known status (from a Test or an
- * open session) and what it found, the Test button, and why it cannot be
- * used, which the button points at; then, when a test connected, the tools it
- * listed.
- */
-/**
  * Test, in the detail header: one connection through `POST /api/mcp/test`. It
  * writes no file, so a change on its way does not hold it; disabled while its
  * test runs, or where the route would refuse it, pointing at that reason in
