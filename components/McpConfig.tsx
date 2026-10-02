@@ -1921,7 +1921,6 @@ function McpCodemodeDetail({
                 <span className="mcp-config-line">
                   {t(preference === "always" ? "mcp.codemode.alwaysDescription" : "mcp.codemode.automaticDescription")}
                 </span>
-                <span className="mcp-config-line is-dim">{t("mcp.codemode.appliesLater")}</span>
               </>
             ) : (
               <span className="mcp-config-line is-warning">
@@ -2037,7 +2036,6 @@ function McpCodemodeModeRow({
           {own && save.saving && <span role="status" className="mcp-config-line is-dim">{t("i18n.saving")}</span>}
         </ConfigScopeSwitch>
         <span className="mcp-config-line">{t(MCP_CODEMODE_MODE_DESCRIPTION_KEYS[mode.value])}</span>
-        <span className="mcp-config-line is-dim">{t("mcp.codemode.appliesLater")}</span>
         {notices.map((notice) => (
           <span key={notice.key} className="mcp-config-line is-warning">{noticeText(notice, t)}</span>
         ))}
@@ -2130,7 +2128,6 @@ function McpCodemodeInlineBudgetRow({
         <span id={hintId} className="mcp-config-line">
           {t("mcp.codemode.inlineBudget.description", { default: String(budget.default) })}
         </span>
-        <span className="mcp-config-line is-dim">{t("mcp.codemode.appliesLater")}</span>
         {notices.map((notice) => (
           <span key={notice.key} className="mcp-config-line is-warning">{noticeText(notice, t)}</span>
         ))}
