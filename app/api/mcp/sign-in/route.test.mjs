@@ -256,6 +256,20 @@ test("sign-out deletes the URL's tokens through POST /api/mcp, under the checks 
   assert.equal((await action({ action: "sign-out", scope: "global", name: "oauth" })).body.reason, "mcp-off");
 });
 
+test("what a cancelled sign-in left behind without tokens is listed as stored, and Sign out removes it", async () => {
+  const key = mcpSignInUrlKey(fake.url);
+  // A dynamic registration and the PKCE state, saved before the browser was sent to the page.
+  await writeFile(authPath, `${JSON.stringify({ [key]: { serverUrl: key, clientInformation: { client_id: "c" }, codeVerifier: "v", oauthState: "s" } }, null, 2)}\n`);
+  const server = (await listed()).find((item) => item.name === "oauth");
+  assert.deepEqual([server.signedIn, server.oauthStateStored], [false, true]);
+  const signedOut = await action({ action: "sign-out", scope: "global", name: "oauth" });
+  assert.equal(signedOut.status, 200, JSON.stringify(signedOut.body));
+  assert.deepEqual(signedOut.body.signedOut, { scope: "global", name: "oauth", removed: true });
+  const after = signedOut.body.servers.find((item) => item.name === "oauth");
+  assert.deepEqual([after.signedIn, after.oauthStateStored], [false, false]);
+  assert.deepEqual(JSON.parse(readFileSync(authPath, "utf8")), {});
+});
+
 test("signing out cancels a sign-in under way and forgets what connections found", async () => {
   const { body } = await start({ scope: "global", name: "oauth" });
   await until(body.flowId, (flow) => flow.phase === "authorize" || ENDED.has(flow.phase));

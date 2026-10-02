@@ -312,8 +312,10 @@ restores the branch's tool set from its transcript.
 - **Subagents.** `Agent`, `get_subagent_result`, and `steer_subagent` become
   `model-only`, so a codemode script cannot start subagents.
 - **Operators.** `PI_WEB_DISABLE_MCP=1` turns MCP off for the whole server.
-  Nothing in the browser can override it, and Settings › MCP becomes
-  read-only.
+  Nothing in the browser can override it, and the server list in Settings ›
+  MCP becomes read-only: switches, Remove, Undo, Add, Test, sign-in and
+  sign-out answer 409 `mcp-off`. The Code mode choice, which belongs to the
+  separate codemode built-in, stays editable.
 
 ### Transport, rendering, and lifecycle
 
