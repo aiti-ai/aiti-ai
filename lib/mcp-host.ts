@@ -503,6 +503,8 @@ interface DesiredServer {
 class HostInstance {
   private ctx: ExtensionContext | undefined;
   private active = false;
+  /** Disposed: its session is closing, or a reload replaced it. Nothing it hears afterwards is recorded. */
+  private disposed = false;
   private readonly attempts = new Map<string, ConnectAttempt>();
   /** Keyed by scope and name: an untrusted project entry may share its name with a global one. */
   private problems = new Map<string, HostProblem>();
@@ -519,6 +521,7 @@ class HostInstance {
 
   constructor(private readonly pi: ExtensionAPI, private readonly options: Required<McpHostOptions>) {
     pi.on("session_start", (_event, ctx) => {
+      if (this.disposed) return;
       this.ctx = ctx;
       // The built-in MCP extension may be switched off (-builtin:mcp) or replaced by one that
       // registers /mcp (several are named mcp:1, mcp:2, …); such an extension would connect
@@ -544,12 +547,12 @@ class HostInstance {
       this.armIdle();
     });
     pi.on("session_shutdown", () => {
-      // The extension closes every connection itself, and has by now: its handler runs
-      // first and awaits the closes. Those it called close() on are not drops anyway.
-      this.active = false;
-      this.clearIdle();
-      this.letGoOfAll();
-      this.reportActivity(undefined, undefined);
+      // The wrapper disposes the host when it starts closing (`McpHost.dispose()`), before any
+      // extension hears session_shutdown, so this is a repeat: handlers run one after another,
+      // this one after the MCP extension's and every other extension's, and a close of theirs
+      // that never returns (a stdio grandchild holding stdout, a refresh in flight) would
+      // otherwise leave this session's records describing connections nobody holds.
+      this.dispose();
     });
   }
 
@@ -678,10 +681,18 @@ class HostInstance {
     });
   }
 
+  /**
+   * Lets go of everything this host reported: its attempts, its problem
+   * records and its host-inactive record. Safe to repeat, and in any order
+   * with the MCP extension closing the connections: a released attempt
+   * records nothing its transports do afterwards.
+   */
   dispose(): void {
+    this.disposed = true;
     this.active = false;
     this.clearIdle();
     this.letGoOfAll();
+    this.reportActivity(undefined, undefined);
   }
 
   private readonly isCommandValue = (value: string): boolean =>
@@ -982,6 +993,17 @@ export class McpHost {
       if (host && attempt) host.watch(attempt, entry, transport as McpTransport, authProvider !== undefined);
       return transport;
     };
+  }
+
+  /**
+   * For a wrapper that starts closing: the host lets go of what it reported
+   * before extensions hear `session_shutdown`, whose handlers run in order and
+   * whose MCP connection closes have no upper bound. The wrapper disposes the
+   * SDK session after `PI_WEB_SHUTDOWN_DEADLINE_MS` either way, and nothing
+   * else would reach the host then.
+   */
+  dispose(): void {
+    this.current?.dispose();
   }
 
   /** Sync the session's servers with `mcp.json`, then wait for the ones still connecting. */
