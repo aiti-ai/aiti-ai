@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useId, useRef, useState, type Ref } from "react";
+import type { McpExposure } from "@earendil-works/pi-coding-agent";
 import type {
   McpActionResponse,
   McpCodemodeInfo,
@@ -64,6 +65,7 @@ import {
   MCP_CODEMODE_SELECTION,
   MCP_CODEMODE_STATE_KEYS,
   MCP_EXPOSURE_KEYS,
+  MCP_EXPOSURE_OPTIONS,
   MCP_EXPOSURE_SHORT_KEYS,
   MCP_READ_ONLY_KEYS,
   MCP_ROW_STATE_BADGE_KEYS,
@@ -77,7 +79,7 @@ import {
   mcpCodemodeBuiltinNotice,
   mcpCodemodeInlineBudgetNotices,
   mcpCodemodeProjectOverrideNotice,
-  mcpCodemodeReachNotice,
+  mcpExposureReachNotice,
   mcpCodemodeRowState,
   mcpCodemodeTone,
   mcpEffectiveAutoEnableCodemode,
@@ -241,7 +243,7 @@ export interface McpAddedNotice {
  * page). A new object per change, so the same button twice still counts.
  */
 export interface McpFocusBack {
-  control: HTMLButtonElement | null;
+  control: HTMLButtonElement | HTMLSelectElement | null;
   /**
    * The change took its control away with the pane it sat in (an Add that
    * worked, whether its button or Cmd/Ctrl+Enter in the box started it):
@@ -251,10 +253,10 @@ export interface McpFocusBack {
 }
 
 /** The button a change is started from, when it has focus: a keyboard press, or a click in most browsers. */
-function pressedButton(): HTMLButtonElement | null {
+function pressedButton(): HTMLButtonElement | HTMLSelectElement | null {
   if (typeof document === "undefined") return null;
   const active = document.activeElement;
-  return active instanceof HTMLButtonElement ? active : null;
+  return active instanceof HTMLButtonElement || active instanceof HTMLSelectElement ? active : null;
 }
 
 /**
@@ -569,6 +571,18 @@ export function McpConfig({
     setFocusBack({ control: pressed });
   }, [runAction]);
 
+  // Like a switch: the dropdown is disabled while the change runs, and gets focus back after.
+  const setServerExposure = useCallback(async (server: McpServerInfo, exposure: McpExposure) => {
+    const key = mcpServerKey(server);
+    const pressed = pressedButton();
+    setActionError(null);
+    setGroupStatus(null);
+    const result = await runAction({ action: "set-exposure", scope: server.scope, name: server.name, exposure }, `exposure:${key}`);
+    if (!result) return;
+    if (!result.ok) setActionError({ key, failure: result.error });
+    setFocusBack({ control: pressed });
+  }, [runAction]);
+
   // A removal that worked moves focus to Undo, and an undo that worked to the
   // row it put back (both in the view); only a failed one gives focus back to
   // the button pressed.
@@ -754,6 +768,7 @@ export function McpConfig({
       onCodemodeChange={(preference) => void saveCodemode(preference)}
       onCodemodeInlineBudgetSave={(budget) => void saveCodemodeInlineBudget(budget)}
       onServerSwitch={(server, enabled) => void switchServer(server, enabled)}
+      onExposureChange={(server, exposure) => void setServerExposure(server, exposure)}
       onGroupSwitch={(scope, servers, enabled) => void switchGroup(scope, servers, enabled)}
       onRemove={(server) => void removeServer(server)}
       onUndo={() => void undoRemoval()}
@@ -796,6 +811,7 @@ export function McpConfigView({
   onCodemodeChange,
   onCodemodeInlineBudgetSave = () => {},
   onServerSwitch = () => {},
+  onExposureChange = () => {},
   onGroupSwitch = () => {},
   onRemove = () => {},
   onUndo = () => {},
@@ -840,6 +856,7 @@ export function McpConfigView({
   /** Saves the global `codemode.inlineBudget`; null removes it, for pi's default. */
   onCodemodeInlineBudgetSave?: (budget: number | null) => void;
   onServerSwitch?: (server: McpServerInfo, enabled: boolean) => void;
+  onExposureChange?: (server: McpServerInfo, exposure: McpExposure) => void;
   onGroupSwitch?: (scope: McpScope, servers: McpServerInfo[], enabled: boolean) => void;
   onRemove?: (server: McpServerInfo) => void;
   onUndo?: () => void;
@@ -1068,6 +1085,7 @@ export function McpConfigView({
                 server={selectedServer}
                 context={context}
                 codemode={data.codemode}
+                toolSearchDisabled={data.toolSearchDisabled}
                 autoEnable={autoEnable}
                 block={writeBlock(selectedServer.scope)}
                 savedWhileOff={!data.mcp.available && !writesOff}
@@ -1080,6 +1098,7 @@ export function McpConfigView({
                 signInBlock={mcpSignInBlock(selectedServer, data)}
                 signOutBlock={mcpSignOutBlock(selectedServer, data)}
                 onSwitch={onServerSwitch}
+                onExposureChange={onExposureChange}
                 onRemove={onRemove}
                 onTest={onTest}
                 onSignIn={onSignIn}
@@ -1323,13 +1342,9 @@ function McpFieldChips({ fields }: { fields: readonly McpConfigFieldRef[] }) {
 
 /** Env or header names: the values stay in the file and never reach the browser. */
 function McpNameList({ names }: { names: readonly string[] }) {
-  const { t } = useI18n();
   return (
-    <span className="mcp-config-lines">
-      <span className="mcp-config-chips">
-        {names.map((name) => <code key={name} className="mcp-config-chip">{revealHiddenCharacters(name)}</code>)}
-      </span>
-      <span className="mcp-config-line is-dim">{t("mcp.detail.valuesHidden")}</span>
+    <span className="mcp-config-chips">
+      {names.map((name) => <code key={name} className="mcp-config-chip">{revealHiddenCharacters(name)}</code>)}
     </span>
   );
 }
@@ -1353,6 +1368,7 @@ function McpServerDetail({
   server,
   context,
   codemode,
+  toolSearchDisabled,
   autoEnable,
   block,
   savedWhileOff,
@@ -1365,6 +1381,7 @@ function McpServerDetail({
   signInBlock,
   signOutBlock,
   onSwitch,
+  onExposureChange,
   onRemove,
   onTest,
   onSignIn,
@@ -1375,6 +1392,7 @@ function McpServerDetail({
   server: McpServerInfo;
   context: McpRowContext;
   codemode: McpCodemodeInfo;
+  toolSearchDisabled: McpResponse["toolSearchDisabled"];
   autoEnable: McpAutoEnableCodemode;
   /** Why this server cannot be changed here. */
   block: McpWriteBlock | undefined;
@@ -1394,6 +1412,7 @@ function McpServerDetail({
   signInBlock: McpTestBlock | undefined;
   signOutBlock: McpTestBlock | undefined;
   onSwitch: (server: McpServerInfo, enabled: boolean) => void;
+  onExposureChange: (server: McpServerInfo, exposure: McpExposure) => void;
   onRemove: (server: McpServerInfo) => void;
   onTest: (server: McpServerInfo) => void;
   onSignIn: (server: McpServerInfo) => void;
@@ -1411,8 +1430,8 @@ function McpServerDetail({
   const connects = server.invalidError === undefined;
   const http = server.transport === "http" || (server.transport === undefined && server.url !== undefined);
   const stdio = !http && (server.transport === "stdio" || server.command !== undefined);
-  const viaCodemode = server.exposure === "codemode" || server.exposure === "codemode-deferred";
-  const reachNotice = viaCodemode ? mcpCodemodeReachNotice(codemode, autoEnable) : undefined;
+  const reachNotice = server.exposure ? mcpExposureReachNotice(server.exposure, { codemode, toolSearchDisabled }, autoEnable) : undefined;
+  const exposureId = useId();
   const key = mcpServerKey(server);
   const name = revealHiddenCharacters(server.name);
   // The route never turns on an entry that references PI_WEB_PASSWORD; turning one off still works.
@@ -1547,7 +1566,32 @@ function McpServerDetail({
         {server.exposure && (
           <ConfigDetailGridRow label={t("mcp.detail.exposure")} tone="plain">
             <span className="mcp-config-lines">
-              <span className="mcp-config-line">{t(MCP_EXPOSURE_KEYS[server.exposure])}</span>
+              <span className="mcp-exposure-choice">
+                <select
+                  className="mcp-add-input mcp-exposure-select"
+                  aria-label={t("mcp.exposure.label", { name })}
+                  aria-describedby={[exposureId, block ? noteId : null].filter(Boolean).join(" ")}
+                  value={server.exposure}
+                  disabled={controlsBusy || block !== undefined}
+                  onChange={(event) => {
+                    const exposure = event.target.value as McpExposure;
+                    if (exposure !== server.exposure) onExposureChange(server, exposure);
+                  }}
+                >
+                  {MCP_EXPOSURE_OPTIONS.map((exposure) => (
+                    <option key={exposure} value={exposure}>
+                      {exposure === "codemode"
+                        ? t("mcp.exposure.optionDefault", { label: t(MCP_EXPOSURE_SHORT_KEYS[exposure]) })
+                        : t(MCP_EXPOSURE_SHORT_KEYS[exposure])}
+                    </option>
+                  ))}
+                </select>
+                {busy === `exposure:${key}` && <span role="status" className="mcp-config-line is-dim">{t("i18n.saving")}</span>}
+              </span>
+              <span id={exposureId} className="mcp-config-line">{t(MCP_EXPOSURE_KEYS[server.exposure])}</span>
+              {server.toolExposureCount !== undefined && (
+                <span className="mcp-config-line is-dim">{t("mcp.exposure.toolOverrides", { count: server.toolExposureCount })}</span>
+              )}
               {reachNotice && <span className="mcp-config-line is-warning">{noticeText(reachNotice, t)}</span>}
             </span>
           </ConfigDetailGridRow>

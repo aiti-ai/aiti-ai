@@ -188,9 +188,11 @@ test("a stdio server's detail shows its masked command line, folder, env names a
   assert.match(shown, /Command npx -y @acme\/lint-mcp --api-key=••••/);
   assert.match(shown, /Working directory tools/);
   assert.match(markup, /<code class="mcp-config-chip">NODE_ENV<\/code><code class="mcp-config-chip">LINT_TOKEN<\/code>/);
-  assert.match(shown, /Values are not shown here\./);
+  // Names only: the values stay in the file.
+  assert.doesNotMatch(shown, /Values are not shown here/);
   assert.match(shown, /Shell commands Runs a shell command on every connection: env LINT_TOKEN/);
-  assert.match(shown, /Tools Declared to the model directly/);
+  assert.match(markup, /<option value="direct" selected="">direct<\/option>/);
+  assert.match(shown, /Every tool's full declaration goes with every request: the most tokens\./);
   assert.match(shown, /File ~\/\.pi\/agent\/mcp\.json/);
   assert.match(shown, /Parts that look like secrets are hidden\./);
   // Headers and sign-in belong to HTTP servers.
@@ -204,10 +206,10 @@ test("a stdio server's detail shows its masked command line, folder, env names a
 test("an HTTP server's detail shows its URL, header names, the variables it sends and how it signs in", () => {
   const shown = text(view({ selected: "global\0github" }));
   assert.match(shown, /URL https:\/\/api\.example\.com\/mcp/);
-  assert.match(shown, /Headers Authorization Values are not shown here\./);
+  assert.match(shown, /Headers Authorization Host variables/);
   assert.match(shown, /Host variables Sends environment variables of the computer running Pi Web to this server on every connection: GITHUB_TOKEN in header Authorization/);
-  assert.match(shown, /Sign-in Uses its Authorization header instead of OAuth\./);
-  assert.match(shown, /Tools Called from Code mode scripts, not declared to the model/);
+  assert.match(shown, /Sign-in Authorization header/);
+  assert.match(shown, /Listed in the Code mode description, up to the tool list budget\./);
   assert.doesNotMatch(shown, /Working directory|Environment/);
 
   const oauth = (signedIn) => text(view({
@@ -230,7 +232,7 @@ test("an HTTP server's detail shows its URL, header names, the variables it send
     selected: "global\0github",
     load: { state: "loaded", data: overview({ servers: [httpServer], codemode: { sandbox: { state: "available" }, builtinDisabled: true, preference: "always" } }) },
   }));
-  assert.match(builtinOff, /Tools Called from Code mode scripts, not declared to the model -builtin:codemode turns Code mode off, so these tools can be called only while tool search is active\./);
+  assert.match(builtinOff, /up to the tool list budget\. -builtin:codemode turns Code mode off, so these tools can be called only while tool search is active\./);
 
   // Automatic with autoEnableCodemode false never turns Code mode on for them.
   const autoOff = (preference) => text(view({
@@ -720,6 +722,81 @@ test("every string the panel shows is translated", () => {
   for (const key of keys) assert.equal(typeof messages[key], "string", `${key} is missing from en.ts`);
   // No English sentence is written into the markup itself.
   assert.doesNotMatch(source, />\s*[A-Z][a-z]+(?: [a-z]+){2,}[.:]?\s*</);
+});
+
+/** The selected server's exposure dropdown: its opening tag, and each option with whether it is selected. */
+function exposureSelect(html) {
+  const markup = decode(html);
+  const match = markup.match(/(<select[^>]*class="mcp-add-input mcp-exposure-select"[^>]*>)([\s\S]*?)<\/select>/);
+  assert.ok(match, "the Tools row holds the exposure dropdown");
+  return {
+    tag: match[1],
+    options: [...match[2].matchAll(/<option value="([^"]+)"( selected="")?>([^<]*)<\/option>/g)].map(([, value, selected, label]) => ({ value, selected: Boolean(selected), label })),
+  };
+}
+
+test("a server's Tools row chooses its exposure, saying in one line what each costs", () => {
+  const select = exposureSelect(view({ selected: "global\0github" }));
+  assert.match(select.tag, /aria-label="How github's tools reach the model"/);
+  assert.doesNotMatch(select.tag, /disabled/);
+  assert.deepEqual(select.options, [
+    { value: "codemode", selected: true, label: "Code mode (default)" },
+    { value: "codemode-deferred", selected: false, label: "Code mode, by search" },
+    { value: "deferred", selected: false, label: "tool search" },
+    { value: "direct", selected: false, label: "direct" },
+    { value: "hidden", selected: false, label: "hidden" },
+  ]);
+  // The description of the chosen exposure describes the dropdown.
+  const describedBy = select.tag.match(/aria-describedby="([^"]+)"/)[1];
+  assert.match(decode(view({ selected: "global\0github" })), new RegExp(`<span id="${describedBy}" class="mcp-config-line">Listed in the Code mode description`));
+  const shown = text(view({ selected: "global\0github" }));
+  assert.match(shown, /Tools Code mode \(default\) .*? Listed in the Code mode description, up to the tool list budget\. File/);
+  assert.doesNotMatch(shown, /toolExposure/);
+
+  // toolExposure rules are named and kept.
+  const off = text(view({
+    selected: "global\0github",
+    load: { state: "loaded", data: overview({ servers: [{ ...httpServer, enabled: false, exposure: "codemode-deferred", toolExposureCount: 2 }] }) },
+  }));
+  assert.match(off, /scripts search for the tools\. Suits servers with many tools\. Rules in toolExposure \(2\) keep their own exposure\./);
+
+  // Behind tool search, while -builtin:tool-search turns it off, only Code mode scripts reach the tools.
+  const noSearch = (toolSearchDisabled) => text(view({
+    selected: "global\0github",
+    load: { state: "loaded", data: overview({ servers: [{ ...httpServer, exposure: "deferred" }], toolSearchDisabled }) },
+  }));
+  assert.match(noSearch({ settingsPath: "/Users/me/.pi/agent/settings.json" }),
+    /needs no Code mode\. -builtin:tool-search in ~\/\.pi\/agent\/settings\.json turns tool search off, so these tools can be called only from Code mode scripts while Code mode is on\./);
+  assert.match(noSearch({}), /-builtin:tool-search turns tool search off/);
+  assert.doesNotMatch(noSearch(undefined), /tool-search/);
+
+  // A refused entry has no exposure to choose.
+  const refused = view({ selected: "global\0bad", load: { state: "loaded", data: overview({ servers: [server({ name: "bad", invalidError: "x" })] }) } });
+  assert.doesNotMatch(refused, /mcp-exposure-select/);
+});
+
+test("the exposure dropdown waits like a switch and is saved through the MCP route", () => {
+  // The group fixture's servers, validated, so each has an exposure.
+  const validated = (props = {}) => writeView({
+    ...props,
+    data: { servers: groupOverview().servers.map((item) => ({ ...item, exposure: "codemode" })), ...props.data },
+  });
+  // While any change is on its way it waits; the one for this server says it is saving.
+  const saving = validated({ view: { busy: "exposure:global\0docs" } });
+  assert.match(exposureSelect(saving).tag, /disabled=""/);
+  assert.match(decode(saving), /<span class="mcp-exposure-choice"><select[^>]*>[\s\S]*?<\/select><span role="status" class="mcp-config-line is-dim">Saving…<\/span><\/span>/);
+  assert.match(exposureSelect(validated({ view: { busy: "switch:global\0pw" } })).tag, /disabled=""/);
+  assert.doesNotMatch(exposureSelect(validated()).tag, /disabled/);
+  // Where no change may be written, it points at the note that says why.
+  const html = validated({ data: { mcp: { available: false, reason: "operator-disabled", error: "x" } } });
+  const select = exposureSelect(html);
+  assert.match(select.tag, /disabled=""/);
+  const { noteId } = detailControls(html);
+  assert.match(select.tag, new RegExp(`aria-describedby="[^"]* ${noteId}"`));
+  // Only a different value is sent, as a change through POST /api/mcp, and focus comes back to the dropdown.
+  assert.match(source, /if \(exposure !== server\.exposure\) onExposureChange\(server, exposure\);/);
+  assert.match(source, /runAction\(\{ action: "set-exposure", scope: server\.scope, name: server\.name, exposure \}, `exposure:\$\{key\}`\)/);
+  assert.match(source, /return active instanceof HTMLButtonElement \|\| active instanceof HTMLSelectElement \? active : null;/);
 });
 
 /** The opening tags of the selected server's Remove button and switch, and the note under them. */
@@ -1242,11 +1319,11 @@ test("a connection the session closed since reads like an untested entry, and sa
   const closed = testView({ status: sessionStatus("connected", { closedAt }) });
   // No green "connected" for a connection nobody holds: the row reads on, as an untested entry does.
   assert.match(row(closed, "docs"), /aria-label="docs: On"/);
-  assert.match(text(decode(closed)), /Status On Sessions connect it before their next message\./);
+  assert.match(text(decode(closed)), /Status On Connection Closed/);
   const { value } = connection(closed);
   assert.equal(
     value.match(/<span class="mcp-config-line"><span class="mcp-config-state is-off">Closed<\/span> ([^<]*)<\/span>/)?.[1],
-    `A session in ~/repo connected it at ${time(TODAY_10_42)}, and closed that connection at ${time(closedAt)}, when the session went idle, ended or reloaded.`,
+    `A session in ~/repo connected it at ${time(TODAY_10_42)} and closed it at ${time(closedAt)}.`,
   );
 
   // A report from another day says which day.
