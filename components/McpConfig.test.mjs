@@ -193,7 +193,9 @@ test("a stdio server's detail shows its masked command line, folder, env names a
   assert.match(shown, /Tools Declared to the model directly/);
   assert.match(shown, /File ~\/\.pi\/agent\/mcp\.json/);
   assert.match(shown, /Parts that look like secrets are hidden\./);
-  assert.match(shown, /scope "extension"/);
+  // A bare /mcp opens this panel where Pi's built-in owns it (or nothing does); its subcommands
+  // still reach the session (hooks/mcp-slash-command.test.mjs).
+  assert.match(shown, /In a chat whose \/mcp is Pi's built-in one, or that has none, \/mcp on its own opens this panel; \/mcp login and \/mcp reconnect are still sent to the session/);
   // Headers and sign-in belong to HTTP servers.
   assert.doesNotMatch(shown, /Headers|Sign-in/);
 

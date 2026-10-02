@@ -1336,6 +1336,11 @@
   background: rgba(0, 0, 0, 0.38);
 }
 
+/* Focus moves to the dialog itself when Settings opens (tabIndex -1); it is not a control, so no ring. */
+.settings-dialog-backdrop:focus {
+  outline: none;
+}
+
 .settings-dialog-surface {
   display: flex;
   flex-direction: column;
