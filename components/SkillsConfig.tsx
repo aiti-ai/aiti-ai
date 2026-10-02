@@ -354,8 +354,7 @@ function AddSkillPanel({
       >
         <ConfigAddSourceHeading
           title={t("i18n.addSkill")}
-          catalogHref="https://skills.sh"
-          catalogLabel="skills.sh"
+          catalogs={[{ href: "https://skills.sh", label: "skills.sh" }]}
           target={
             <ConfigSaveTarget
               value={scope}

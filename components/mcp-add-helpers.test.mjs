@@ -547,7 +547,7 @@ test("the helpers and the pane only use words from the locale files", () => {
   const keys = [
     ...[...paneSource.matchAll(/\bt\("([^"]+)"/g)].map((match) => match[1]),
     ...[...`${paneSource}\n${helperSource}`.matchAll(/"((?:mcp|config|skills)\.[\w.-]+)"/g)].map((match) => match[1]),
-  ].filter((key) => key !== "mcp.json");
+  ].filter((key) => key !== "mcp.json" && key !== "mcp.so"); // a file name and a catalog's label, not keys
   assert.ok(keys.length > 40);
   for (const key of keys) assert.equal(typeof messages.en[key], "string", `${key} is missing from en.ts`);
   assert.doesNotMatch(paneSource, />\s*[A-Z][a-z]+(?: [a-z]+){2,}[.:]?\s*</, "no English sentence in the markup");

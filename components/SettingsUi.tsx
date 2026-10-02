@@ -418,32 +418,39 @@ export function addSourceKeySubmits(event: {
   return event.nativeEvent?.isComposing !== true && event.keyCode !== 229;
 }
 
+/** A catalog an add pane installs from: its address, its label, and an optional icon before the label. */
+export interface ConfigAddSourceCatalog {
+  href: string;
+  label: string;
+  icon?: ReactNode;
+}
+
 /**
- * The top of every add pane: its title, the catalog it installs from as a
- * link at the right of the title, and where the result is saved (a
+ * The top of every add pane: its title, the catalogs it installs from as
+ * links at the right of the title, and where the result is saved (a
  * `ConfigSaveTarget`) under both.
  */
 export function ConfigAddSourceHeading({
   title,
-  catalogHref,
-  catalogLabel,
-  catalogIcon,
+  catalogs,
   target,
 }: {
   title: string;
-  catalogHref: string;
-  catalogLabel: string;
-  catalogIcon?: ReactNode;
+  catalogs: readonly ConfigAddSourceCatalog[];
   target: ReactNode;
 }) {
   return (
     <div className="config-add-source-heading">
       <div className="config-add-source-title-row">
         <ConfigDetailTitle>{title}</ConfigDetailTitle>
-        <a href={catalogHref} target="_blank" rel="noopener noreferrer" className="config-add-source-catalog">
-          {catalogIcon}
-          {catalogLabel}
-        </a>
+        <span className="config-add-source-catalogs">
+          {catalogs.map((catalog) => (
+            <a key={catalog.href} href={catalog.href} target="_blank" rel="noopener noreferrer" className="config-add-source-catalog">
+              {catalog.icon}
+              {catalog.label}
+            </a>
+          ))}
+        </span>
       </div>
       {target}
     </div>
@@ -455,7 +462,7 @@ export type ConfigAddSourceExample = string | { label: string; value: string };
 
 /**
  * The add form of a list-detail panel: its heading (`ConfigAddSourceHeading`:
- * the title, the catalog link, where the result is saved), one source box, the
+ * the title, the catalog links, where the result is saved), one source box, the
  * caller's controls (at least the submit button) as `children`, and examples
  * that fill the box. Enter submits while `canSubmit` holds; `normalizeValue` rewrites a
  * paste or the box on blur, e.g. to drop a pasted `pi install` prefix.
@@ -468,9 +475,7 @@ export type ConfigAddSourceExample = string | { label: string; value: string };
  */
 export function ConfigAddSourcePanel({
   title,
-  catalogHref,
-  catalogLabel,
-  catalogIcon,
+  catalogs,
   target,
   inputLabel,
   inputId,
@@ -487,9 +492,7 @@ export function ConfigAddSourcePanel({
   children,
 }: {
   title: string;
-  catalogHref: string;
-  catalogLabel: string;
-  catalogIcon?: ReactNode;
+  catalogs: readonly ConfigAddSourceCatalog[];
   /** Where the result is saved: a `ConfigSaveTarget`. */
   target: ReactNode;
   inputLabel: string;
@@ -532,9 +535,7 @@ export function ConfigAddSourcePanel({
     <ConfigDetailStack className="is-fill">
       <ConfigAddSourceHeading
         title={title}
-        catalogHref={catalogHref}
-        catalogLabel={catalogLabel}
-        catalogIcon={catalogIcon}
+        catalogs={catalogs}
         target={target}
       />
 

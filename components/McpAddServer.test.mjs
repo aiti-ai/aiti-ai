@@ -71,7 +71,16 @@ test("the paste box is a textarea that never takes focus by itself on a phone, a
   const html = decode(pane());
   assert.match(html, /<textarea id="mcp-add-source" aria-label="Server to add" class="config-add-source-input is-multiline"/);
   assert.doesNotMatch(html, /autofocus|autoFocus/i, "focus is decided on mount, by pointer, never in the markup");
-  assert.match(html, /<a href="https:\/\/github\.com\/mcp" target="_blank" rel="noopener noreferrer" class="config-add-source-catalog">github\.com\/mcp<\/a>/);
+  // The catalogs to browse, in order, at the right of the title.
+  assert.deepEqual(
+    [...html.matchAll(/<a href="([^"]+)" target="_blank" rel="noopener noreferrer" class="config-add-source-catalog">([^<]+)<\/a>/g)].map((match) => [match[1], match[2]]),
+    [
+      ["https://glama.ai/mcp/servers", "glama.ai"],
+      ["https://smithery.ai/servers", "smithery.ai"],
+      ["https://mcp.so/", "mcp.so"],
+      ["https://registry.modelcontextprotocol.io/", "registry.modelcontextprotocol.io"],
+    ],
+  );
   // The placeholder lists what may be pasted; no sentence under the box repeats it.
   assert.doesNotMatch(html, /config-add-source-hint|Cmd\/Ctrl\+Enter adds it/);
   assert.match(html, /<div class="config-add-source-examples">/, "an empty box offers examples");

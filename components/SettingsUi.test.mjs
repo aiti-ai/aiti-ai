@@ -264,7 +264,7 @@ test("plugin and skill panel words come from the locale files", () => {
     assert.doesNotMatch(skills, literal);
   }
   // The catalog link sits at the right of the title, as in every add pane, and nowhere else.
-  assert.match(skills, /<ConfigAddSourceHeading\s+title=\{t\("i18n\.addSkill"\)\}\s+catalogHref="https:\/\/skills\.sh"\s+catalogLabel="skills\.sh"/);
+  assert.match(skills, /<ConfigAddSourceHeading\s+title=\{t\("i18n\.addSkill"\)\}\s+catalogs=\{\[\{ href: "https:\/\/skills\.sh", label: "skills\.sh" \}\]\}/);
   assert.doesNotMatch(skills, /href="https:\/\/skills\.sh"|skills\.discoverHint/);
   for (const source of [enSource, zhSource]) {
     for (const key of ["config.source", "config.examples", "config.name", "config.saveTo", "plugins.diagnostic", "plugins.diagnostics"]) {
