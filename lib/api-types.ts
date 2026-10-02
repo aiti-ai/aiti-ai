@@ -261,6 +261,8 @@ export interface McpServerInfo {
   exposure?: McpExposure;
   /** How many tools `toolExposure` gives an exposure of their own, by exact name or pattern; absent when none. */
   toolExposureCount?: number;
+  /** The entry's `description`, as written: what pi lists the server with in the system prompt. */
+  description?: string;
   command?: string;
   args?: string[];
   /** The configured working directory, relative to the session's. */
@@ -268,12 +270,18 @@ export interface McpServerInfo {
   envNames: string[];
   url?: string;
   headerNames: string[];
-  /** An HTTP server without an `Authorization` header signs in with OAuth when it answers 401. */
+  /** An HTTP server without an `Authorization` header or `auth` signs in with OAuth when it answers 401. */
   usesOAuth: boolean;
-  /** Whether `mcp-auth.json` holds an access token for the URL; absent when unknown or not an OAuth server. */
+  /** An HTTP server's `auth.provider`: it sends that pi provider's token (signed in under Settings › Models) instead of using OAuth. */
+  authProvider?: string;
+  /**
+   * Whether `mcp-auth.json` holds an access token for the server (by its name
+   * and URL, else the record older versions kept by URL alone, as the SDK
+   * reads it); absent when unknown or not an OAuth server.
+   */
   signedIn?: boolean;
   /**
-   * Whether `mcp-auth.json` holds anything for the URL: tokens, or what a
+   * Whether `mcp-auth.json` holds anything for the server: tokens, or what a
    * sign-in stores before any token (a dynamic client registration, the PKCE
    * verifier and state), which a cancelled or expired sign-in leaves behind.
    * Sign out removes all of it. Absent when unknown or not an OAuth server.
