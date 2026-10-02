@@ -42,7 +42,7 @@ import { isBlockingFileProblem, mcpProjectTrustable, mcpWritesOff } from "./mcp-
 /** What the user has typed into the add pane; the panel keeps it while another row is shown. */
 export interface McpAddDraft {
   text: string;
-  /** "This is a pi config": JSON values keep `${VAR}`, `$$` and `!command` as written. */
+  /** "Enable pi mcp syntax": JSON values keep `${VAR}`, `$$` and `!command` as written. */
   rawPi: boolean;
   /** Which of the paste's servers, in the importer's order. */
   server: number;
@@ -93,7 +93,7 @@ export function mcpAddDraftWithPaste(draft: McpAddDraft, paste: { text?: string;
 }
 
 /**
- * Whether the "this is a pi config" toggle changes how the paste is read: the
+ * Whether the "Enable pi mcp syntax" toggle changes how the paste is read: the
  * importer takes some server as pi syntax with it and not without. Asking the
  * importer keeps this in step with it (VS Code, Zed, opencode and registry
  * JSON are always other clients' syntax, and `pi mcp add` always pi's).

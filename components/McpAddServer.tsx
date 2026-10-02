@@ -191,6 +191,8 @@ export function McpAddServer({
     : undefined;
   const describedBy = [scopeLine ? scopeBlockId : undefined, ownBlockLine ? blockId : undefined].filter(Boolean).join(" ") || undefined;
   const trustable = projectBlock?.kind === "project-untrusted" && projectBlock.trustable && onTrustProject;
+  // The preview leaves out what is not set: no working directory, no env or header names.
+  const names = preview ? (preview.transport === "http" ? preview.headerNames : preview.envNames) : [];
 
   return (
     <ConfigAddSourcePanel
@@ -206,7 +208,8 @@ export function McpAddServer({
       onValueChange={(text) => onDraftChange(mcpAddDraftWithPaste(draft, { text }))}
       onSubmit={submit}
       examplesLabel={t("config.examples")}
-      examples={MCP_ADD_EXAMPLES}
+      // Examples only while the box is empty: clicking one replaces the paste.
+      examples={draft.text.trim() === "" ? MCP_ADD_EXAMPLES : []}
       multiline
       hint={t("mcp.add.hint")}
     >
@@ -215,7 +218,7 @@ export function McpAddServer({
           <input type="checkbox" checked={draft.rawPi} onChange={(event) => onDraftChange(mcpAddDraftWithPaste(draft, { rawPi: event.target.checked }))} />
           <span className="mcp-config-lines">
             <span className="mcp-config-line">{t("mcp.add.rawPi")}</span>
-            <span className="mcp-config-line is-dim">{t(draft.rawPi ? "mcp.add.rawPiOn" : "mcp.add.rawPiOff")}</span>
+            {draft.rawPi && <span className="mcp-config-line is-dim">{t("mcp.add.rawPiOn")}</span>}
           </span>
         </label>
       )}
@@ -247,14 +250,14 @@ export function McpAddServer({
             <ConfigDetailGridRow label={preview.transport === "http" ? t("mcp.detail.url") : t("mcp.detail.command")} tone="plain" mono>
               {preview.target}
             </ConfigDetailGridRow>
-            {preview.transport === "stdio" && (
-              <ConfigDetailGridRow label={t("mcp.detail.cwd")} mono={preview.cwd !== undefined}>
-                {preview.cwd ?? t("mcp.detail.cwdSession")}
+            {preview.transport === "stdio" && preview.cwd !== undefined && (
+              <ConfigDetailGridRow label={t("mcp.detail.cwd")} mono>{preview.cwd}</ConfigDetailGridRow>
+            )}
+            {names.length > 0 && (
+              <ConfigDetailGridRow label={preview.transport === "http" ? t("mcp.detail.headers") : t("mcp.detail.env")}>
+                <McpAddNames names={names} />
               </ConfigDetailGridRow>
             )}
-            <ConfigDetailGridRow label={preview.transport === "http" ? t("mcp.detail.headers") : t("mcp.detail.env")}>
-              <McpAddNames names={preview.transport === "http" ? preview.headerNames : preview.envNames} />
-            </ConfigDetailGridRow>
             {preview.commandFields.length > 0 && (
               <ConfigDetailGridRow label={t("mcp.detail.shellCommands")} tone="plain">
                 <span className="mcp-config-lines">
@@ -424,7 +427,6 @@ export function McpAddServer({
 /** Env or header names; their values are never shown. */
 function McpAddNames({ names }: { names: readonly string[] }) {
   const { t } = useI18n();
-  if (names.length === 0) return <>{t("mcp.detail.none")}</>;
   return (
     <span className="mcp-config-lines">
       <span className="mcp-config-chips">
