@@ -77,7 +77,7 @@ test("keeps visited settings sections mounted and contains nested Escape handlin
 test("Settings › MCP offers Trust through the page's trust dialog, which opens above Settings", () => {
   // AppShell owns trust: its status and its dialog opener go through SettingsPanel to McpConfig.
   assert.match(shellSource, /<SettingsPanel[\s\S]*?projectTrust=\{projectTrust\}\n\s*onOpenTrustDialog=\{openProjectTrustDialog\}[\s\S]*?\/>/);
-  assert.match(panelSource, /<McpConfig embedded key=\{cwd \?\? ""\} cwd=\{cwd\} trust=\{projectTrust\} onTrustProject=\{onOpenTrustDialog\} onClose=\{onClose\} \/>/);
+  assert.match(panelSource, /<McpConfig embedded key=\{cwd \?\? ""\} cwd=\{cwd\} trust=\{projectTrust\} onTrustProject=\{onOpenTrustDialog\} onProjectTrustChanged=\{onProjectTrustChanged\} onClose=\{onClose\} \/>/);
   // The banner and Settings open the same dialog, for the same folder Settings shows.
   assert.match(shellSource, /const openProjectTrustDialog = useCallback\(\(\) => \{\n\s*setProjectTrustError\(null\);\n\s*setProjectTrustDialogOpen\(true\);\n\s*\}, \[\]\);/);
   assert.match(shellSource, /onClick=\{openProjectTrustDialog\}/);
@@ -88,6 +88,16 @@ test("Settings › MCP offers Trust through the page's trust dialog, which opens
   const zIndex = (selector) => Number(cssSource.match(new RegExp(`\\${selector} \\{[^}]*z-index: (\\d+);`))?.[1]);
   assert.ok(zIndex(".project-trust-backdrop") > zIndex(".settings-dialog-backdrop"));
   // Escape there closes only the dialog: ProjectTrustDialog.test.mjs and lib/stacked-dialog.test.mjs.
+});
+
+test("an Add in Settings › MCP hands the folder's new trust to the page, which every section reloads on", () => {
+  // Adding a project server writes .pi/mcp.json (the folder now requires trust) and may trust a
+  // fresh folder in the same step; the page takes that status only for the folder Settings shows.
+  assert.match(shellSource, /<SettingsPanel[\s\S]*?onProjectTrustChanged=\{handleProjectTrustChanged\}[\s\S]*?\/>/);
+  assert.match(shellSource, /const handleProjectTrustChanged = useCallback\(\(cwd: string, status: ProjectTrustStatus\) => \{\n\s*if \(cwd === projectTrustCwd\) setProjectTrust\(status\);\n\s*\}, \[projectTrustCwd\]\);/);
+  // Nothing was rebuilt on the server, so the chat keeps its session key.
+  const handler = shellSource.slice(shellSource.indexOf("const handleProjectTrustChanged"), shellSource.indexOf("}, [projectTrustCwd]);", shellSource.indexOf("const handleProjectTrustChanged")));
+  assert.doesNotMatch(handler, /setSessionKey|setModelsRefreshKey/);
 });
 
 test("trusting from Settings › MCP reloads, in place, the other mounted sections whose answer depends on trust", async () => {

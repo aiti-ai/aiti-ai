@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useId, useRef } from "react";
-import type { ButtonHTMLAttributes, CSSProperties, HTMLAttributes, ReactNode, Ref } from "react";
+import type { ButtonHTMLAttributes, ClipboardEvent, CSSProperties, HTMLAttributes, ReactNode, Ref } from "react";
 
 type ConfigButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 type ConfigButtonSize = "small" | "default";
@@ -346,11 +346,34 @@ export function ConfigScopeSwitch<S extends string>({
 }
 
 /**
+ * Whether a key in a multiline add box submits it: Cmd/Ctrl+Enter, never a
+ * plain Enter (a line break) and never while an input method composes, whose
+ * Enter picks a candidate.
+ */
+export function addSourceKeySubmits(event: {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  nativeEvent?: { isComposing?: boolean };
+  keyCode?: number;
+}): boolean {
+  if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return false;
+  // Safari reports a composing Enter as keyCode 229 without isComposing.
+  return event.nativeEvent?.isComposing !== true && event.keyCode !== 229;
+}
+
+/**
  * The add form of a list-detail panel: a title with a link to the catalog,
  * where the result is saved, one source box, the caller's controls (usually a
  * scope switch and the submit button) as `children`, and examples that fill
  * the box. Enter submits while `canSubmit` holds; `normalizeValue` rewrites a
  * paste or the box on blur, e.g. to drop a pasted `pi install` prefix.
+ *
+ * `multiline` makes the box a textarea for pasting a whole config: Enter
+ * inserts a line break and Cmd/Ctrl+Enter submits (never while an input method
+ * composes), the paste-box rule. The box takes focus on mount except on a
+ * coarse pointer, where a phone keyboard would cover what the panel says; the
+ * single-line box keeps taking it everywhere.
  */
 export function ConfigAddSourcePanel({
   title,
@@ -369,6 +392,8 @@ export function ConfigAddSourcePanel({
   examplesLabel,
   examples,
   error,
+  multiline = false,
+  hint,
   children,
 }: {
   title: string;
@@ -387,13 +412,33 @@ export function ConfigAddSourcePanel({
   examplesLabel: string;
   examples: readonly string[];
   error?: string | null;
+  /** A textarea instead of one line: Enter adds a line, Cmd/Ctrl+Enter submits. */
+  multiline?: boolean;
+  /** A line under the box, such as how to submit it. */
+  hint?: ReactNode;
   children?: ReactNode;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const hintId = useId();
 
   useEffect(() => {
-    inputRef.current?.focus();
-  }, []);
+    if (!multiline) {
+      inputRef.current?.focus();
+      return;
+    }
+    if (typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches) return;
+    textareaRef.current?.focus();
+  }, [multiline]);
+
+  const onPaste = (event: ClipboardEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    if (!normalizeValue) return;
+    const pasted = event.clipboardData.getData("text");
+    const normalized = normalizeValue(pasted);
+    if (normalized === pasted) return;
+    event.preventDefault();
+    onValueChange(normalized);
+  };
 
   return (
     <ConfigDetailStack className="is-fill">
@@ -409,29 +454,49 @@ export function ConfigAddSourcePanel({
       </div>
 
       <ConfigField label={inputLabel}>
-        <input
-          id={inputId}
-          ref={inputRef}
-          value={value}
-          aria-label={inputLabel}
-          className="config-add-source-input"
-          placeholder={placeholder}
-          onChange={(event) => onValueChange(event.target.value)}
-          onPaste={(event) => {
-            if (!normalizeValue) return;
-            const pasted = event.clipboardData.getData("text");
-            const normalized = normalizeValue(pasted);
-            if (normalized === pasted) return;
-            event.preventDefault();
-            onValueChange(normalized);
-          }}
-          onBlur={(event) => {
-            if (normalizeValue) onValueChange(normalizeValue(event.currentTarget.value));
-          }}
-          onKeyDown={(event) => {
-            if (event.key === "Enter" && canSubmit) onSubmit();
-          }}
-        />
+        {multiline ? (
+          <textarea
+            id={inputId}
+            ref={textareaRef}
+            value={value}
+            aria-label={inputLabel}
+            aria-describedby={hint ? hintId : undefined}
+            className="config-add-source-input is-multiline"
+            placeholder={placeholder}
+            rows={5}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            onChange={(event) => onValueChange(event.target.value)}
+            onPaste={onPaste}
+            onBlur={(event) => {
+              if (normalizeValue) onValueChange(normalizeValue(event.currentTarget.value));
+            }}
+            onKeyDown={(event) => {
+              if (!addSourceKeySubmits(event)) return;
+              event.preventDefault();
+              if (canSubmit) onSubmit();
+            }}
+          />
+        ) : (
+          <input
+            id={inputId}
+            ref={inputRef}
+            value={value}
+            aria-label={inputLabel}
+            className="config-add-source-input"
+            placeholder={placeholder}
+            onChange={(event) => onValueChange(event.target.value)}
+            onPaste={onPaste}
+            onBlur={(event) => {
+              if (normalizeValue) onValueChange(normalizeValue(event.currentTarget.value));
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && canSubmit) onSubmit();
+            }}
+          />
+        )}
+        {hint && <span id={hintId} className="config-add-source-hint">{hint}</span>}
       </ConfigField>
 
       {children}
