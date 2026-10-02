@@ -60,6 +60,12 @@ const {
   postMcpAction,
   saveMcpCodemodePreference,
   withMcpCodemodePreference,
+  mcpCodemodeInlineBudgetNotices,
+  mcpInlineBudgetDraftChanges,
+  mcpInlineBudgetDraftOf,
+  parseMcpInlineBudgetDraft,
+  saveMcpCodemodeInlineBudget,
+  withMcpCodemodeInlineBudget,
   MCP_EXPOSURE_SHORT_KEYS,
   MCP_TEST_BLOCK_KEYS,
   MCP_TEST_REFUSAL_KEYS,
@@ -659,6 +665,90 @@ test("a saved choice replaces the preference and its read error in the loaded ov
   assert.deepEqual(next.codemode, { sandbox: { state: "available" }, builtinDisabled: false, preference: "always" });
   assert.equal(next.servers, data.servers);
   assert.equal(data.codemode.preferenceError, "Unexpected token", "the loaded overview is not changed in place");
+});
+
+const inlineBudget = { settingsPath: "/Users/me/.pi/agent/settings.json", default: 3000, max: 1_000_000 };
+
+test("the budget field is empty for pi's default and saves a whole number within the limit, or empty", () => {
+  assert.equal(mcpInlineBudgetDraftOf(inlineBudget), "");
+  assert.equal(mcpInlineBudgetDraftOf({ ...inlineBudget, value: 0 }), "0");
+  assert.deepEqual(parseMcpInlineBudgetDraft("", 1_000_000), { ok: true, value: null });
+  assert.deepEqual(parseMcpInlineBudgetDraft("  ", 1_000_000), { ok: true, value: null });
+  assert.deepEqual(parseMcpInlineBudgetDraft(" 1500 ", 1_000_000), { ok: true, value: 1500 });
+  assert.deepEqual(parseMcpInlineBudgetDraft("0", 1_000_000), { ok: true, value: 0 });
+  assert.deepEqual(parseMcpInlineBudgetDraft("1000000", 1_000_000), { ok: true, value: 1_000_000 });
+  for (const draft of ["-1", "1.5", "1e3", "3,000", "abc", "1000001"]) {
+    assert.deepEqual(parseMcpInlineBudgetDraft(draft, 1_000_000), { ok: false }, draft);
+  }
+
+  const changes = (budget, draft) => mcpInlineBudgetDraftChanges(budget, parseMcpInlineBudgetDraft(draft, budget.max));
+  assert.equal(changes(inlineBudget, ""), false);
+  assert.equal(changes(inlineBudget, "3000"), true, "writing the default's value is a change: it no longer follows pi");
+  assert.equal(changes({ ...inlineBudget, value: 1000 }, "1000"), false);
+  assert.equal(changes({ ...inlineBudget, value: 1000 }, ""), true);
+  assert.equal(changes({ ...inlineBudget, value: 1000 }, "x"), false);
+  // Saving empty over a value pi ignores removes it.
+  assert.equal(changes({ ...inlineBudget, invalid: '"lots"' }, ""), true);
+});
+
+test("the budget's warnings name a value pi ignores and a project that decides for itself", () => {
+  assert.deepEqual(mcpCodemodeInlineBudgetNotices(inlineBudget), []);
+  const projectPath = "/Users/me/repo/.pi/settings.json";
+  assert.deepEqual(mcpCodemodeInlineBudgetNotices({
+    ...inlineBudget,
+    invalid: '"lots"',
+    projectOverride: { settingsPath: projectPath, value: 800 },
+  }), [
+    { key: "mcp.codemode.inlineBudget.invalid", params: { path: inlineBudget.settingsPath, value: '"lots"', default: "3000" } },
+    { key: "mcp.codemode.inlineBudget.projectOverride", params: { path: projectPath, value: "800" } },
+  ]);
+  // A project value pi ignores, or a codemode that is not an object, leaves its sessions the default.
+  for (const projectOverride of [{ settingsPath: projectPath }, { settingsPath: projectPath, invalid: "null" }]) {
+    assert.deepEqual(mcpCodemodeInlineBudgetNotices({ ...inlineBudget, projectOverride }), [
+      { key: "mcp.codemode.inlineBudget.projectOverrideDefault", params: { path: projectPath, default: "3000" } },
+    ]);
+  }
+  for (const key of [
+    "mcp.codemode.inlineBudget.invalid",
+    "mcp.codemode.inlineBudget.projectOverride",
+    "mcp.codemode.inlineBudget.projectOverrideDefault",
+    "mcp.codemode.inlineBudget.saveFailed",
+  ]) assert.equal(typeof messages[key], "string", key);
+});
+
+test("the budget is saved through the tools settings route and answers with what it stored", async () => {
+  const saved = fakeFetch([{ status: 200, body: { isWindows: false, powerShellEnabled: false, codemode: "automatic", codemodeInlineBudget: { value: 1000 } } }]);
+  assert.deepEqual(await saveMcpCodemodeInlineBudget(1000, saved.fetchImpl), { ok: true, inlineBudget: { value: 1000 } });
+  assert.equal(saved.calls[0].input, "/api/tools/settings");
+  assert.equal(saved.calls[0].init.method, "PUT");
+  assert.deepEqual(JSON.parse(saved.calls[0].init.body), { codemodeInlineBudget: 1000 });
+
+  const reset = fakeFetch([{ status: 200, body: { codemode: "automatic", codemodeInlineBudget: {} } }]);
+  assert.deepEqual(await saveMcpCodemodeInlineBudget(null, reset.fetchImpl), { ok: true, inlineBudget: {} });
+  assert.deepEqual(JSON.parse(reset.calls[0].init.body), { codemodeInlineBudget: null });
+
+  const refused = fakeFetch([{ status: 500, body: { error: "Invalid settings.json: codemode must be an object", reason: "internal" } }]);
+  assert.deepEqual(await saveMcpCodemodeInlineBudget(1000, refused.fetchImpl), {
+    ok: false,
+    error: { error: "Invalid settings.json: codemode must be an object", reason: "internal" },
+  });
+  // A 200 without a budget is not taken for a save.
+  const odd = fakeFetch([{ status: 200, body: { codemode: "automatic", codemodeInlineBudget: { value: "1000" } } }]);
+  assert.deepEqual(await saveMcpCodemodeInlineBudget(1000, odd.fetchImpl), { ok: false, error: { error: "HTTP 200" } });
+  const timedOut = await saveMcpCodemodeInlineBudget(1000, () => new Promise(() => {}), undefined, 30);
+  assert.equal(timedOut.ok, false);
+  assert.equal(timedOut.error.timedOut, true);
+});
+
+test("a saved budget replaces the stored value and keeps the default, the limit and the project's own", () => {
+  const projectOverride = { settingsPath: "/Users/me/repo/.pi/settings.json", value: 800 };
+  const data = { ...overview, codemode: { ...overview.codemode, inlineBudget: { ...inlineBudget, invalid: '"lots"', projectOverride } } };
+  const next = withMcpCodemodeInlineBudget(data, { value: 1000 });
+  assert.deepEqual(next.codemode.inlineBudget, { ...inlineBudget, projectOverride, value: 1000 });
+  assert.equal(next.codemode.preference, "automatic");
+  assert.equal(data.codemode.inlineBudget.invalid, '"lots"', "the loaded overview is not changed in place");
+  // An overview without a budget (its file could not be read) is left for the reload.
+  assert.equal(withMcpCodemodeInlineBudget(overview, { value: 1000 }), overview);
 });
 
 test("the panel is read-only while MCP is off on the server, and for a project no decision trusts", () => {

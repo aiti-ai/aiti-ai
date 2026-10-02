@@ -2034,6 +2034,22 @@
   min-width: 0;
 }
 
+/* The Code mode pane's budget field: a short number field, its unit and Save
+   on one line, wrapping in the narrow phone pane. */
+.mcp-codemode-budget {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* Two classes: it reuses .mcp-add-input, which comes later and takes the pane's width. */
+.mcp-add-input.mcp-codemode-budget-input {
+  width: 96px;
+  flex-shrink: 0;
+}
+
 /* The add pane (components/McpAddServer.tsx). Notes, fields and the failure
    wrap inside the narrow phone pane; inputs take the pane's width. */
 .mcp-add-input {

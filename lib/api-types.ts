@@ -14,11 +14,21 @@ export interface SubagentSettingsResponse {
 /** Code mode's one choice (ADR 0006): Automatic writes nothing, Always on adds `+codemode` to the global defaultTools. */
 export type McpCodemodePreference = "automatic" | "always";
 
+/** One settings layer's `codemode.inlineBudget`, as the codemode extension reads it. */
+export interface CodemodeInlineBudgetSetting {
+  /** The budget sessions use; absent when unset or ignored, which gives them pi's default. */
+  value?: number;
+  /** A value pi ignores (not a finite number of 0 or more), as shortened JSON. */
+  invalid?: string;
+}
+
 export interface ToolSettingsResponse {
   isWindows: boolean;
   powerShellEnabled: boolean;
   /** "always" when the global defaultTools starts sessions with codemode active (ADR 0006). */
   codemode: McpCodemodePreference;
+  /** The global `codemode.inlineBudget`. */
+  codemodeInlineBudget: CodemodeInlineBudgetSetting;
 }
 
 export interface SkillSearchResult {
@@ -434,6 +444,28 @@ export interface McpCodemodeInfo {
    * Only read with a cwd whose project settings sessions load.
    */
   projectOverride?: McpCodemodeProjectOverride;
+  /**
+   * `codemode.inlineBudget`: the estimated tokens (characters / 4) the
+   * codemode tool's description may spend on tool declarations. Absent when
+   * the global settings file cannot be read; see `inlineBudgetError`.
+   */
+  inlineBudget?: McpCodemodeInlineBudget;
+  inlineBudgetError?: string;
+}
+
+export interface McpCodemodeInlineBudget extends CodemodeInlineBudgetSetting {
+  /** The global settings file the value is read from and saved to. */
+  settingsPath: string;
+  /** pi's default, which sessions use while nothing usable is set. */
+  default: number;
+  /** The largest budget `PUT /api/tools/settings` saves. */
+  max: number;
+  /**
+   * A trusted project whose `.pi/settings.json` sets the budget its sessions
+   * get whatever the global value: its `codemode.inlineBudget`, or a
+   * `codemode` that is not an object, which leaves them the default.
+   */
+  projectOverride?: CodemodeInlineBudgetSetting & { settingsPath: string };
 }
 
 export interface McpCodemodeProjectOverride {
