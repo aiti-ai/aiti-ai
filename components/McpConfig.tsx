@@ -100,7 +100,6 @@ import {
   mcpStatusTimeText,
   mcpTestAnswerOutdates,
   mcpTestBlock,
-  mcpTestExplainKey,
   mcpTestRunAfter,
   mcpTestRunAfterSignOut,
   mcpTestRunFor,
@@ -1294,7 +1293,6 @@ function McpFieldChips({ fields }: { fields: readonly McpConfigFieldRef[] }) {
 /** Env or header names: the values stay in the file and never reach the browser. */
 function McpNameList({ names }: { names: readonly string[] }) {
   const { t } = useI18n();
-  if (names.length === 0) return <>{t("mcp.detail.none")}</>;
   return (
     <span className="mcp-config-lines">
       <span className="mcp-config-chips">
@@ -1316,7 +1314,7 @@ function McpStateDetail({ server, state }: { server: McpServerInfo; state: Retur
     );
   }
   // None for web-password: the PI_WEB_PASSWORD line, which every state shows, says it.
-  const key = mcpRowStateDetailKey(state, server.status);
+  const key = mcpRowStateDetailKey(state);
   return key ? <span className="mcp-config-line">{t(key)}</span> : null;
 }
 
@@ -1374,6 +1372,7 @@ function McpServerDetail({
 }) {
   const { t } = useI18n();
   const noteId = useId();
+  const testBlockId = useId();
   const state = mcpServerRowState(server, context);
   const tone = mcpRowStateTone(state);
   const target = mcpServerTarget(server);
@@ -1389,15 +1388,17 @@ function McpServerDetail({
   const passwordKeepsOff = !server.enabled && server.webPasswordField !== undefined;
   // An entry that is not an object has no `enabled` to write; Remove still works.
   const switchless = server.notAnObject === true;
-  // The note under the controls: why they cannot be used, else when a change applies, which under
-  // -builtin:mcp is never: the file is written, but no session connects its servers.
+  // The note under the controls: why they cannot be used, or, under -builtin:mcp, that a change is
+  // written but no session connects its servers. Nothing when they simply work.
   const note = block
     ? t(`mcp.reason.${block}`)
     : switchless
       ? t("mcp.reason.entry-not-object")
       : passwordKeepsOff
         ? t("mcp.reason.web-password")
-        : t(savedWhileOff ? "mcp.write.savedWhileOff" : "mcp.write.appliesNextMessage");
+        : savedWhileOff
+          ? t("mcp.write.savedWhileOff")
+          : undefined;
 
   return (
     <ConfigDetailStack>
@@ -1408,6 +1409,7 @@ function McpServerDetail({
             <ConfigDetailTitle>{name}</ConfigDetailTitle>
           </ConfigDetailHeaderInfo>
           <ConfigDetailActions>
+            <McpTestButton server={server} test={test} testBlock={testBlock} describedBy={testBlockId} onTest={onTest} />
             <ConfigButton
               variant="danger"
               size="small"
@@ -1421,13 +1423,13 @@ function McpServerDetail({
               checked={server.enabled}
               disabled={controlsBusy || block !== undefined || switchless || passwordKeepsOff}
               loading={busy === `switch:${key}`}
-              describedBy={noteId}
+              describedBy={note ? noteId : undefined}
               label={t(server.enabled ? "mcp.server.switchOff" : "mcp.server.switchOn", { name })}
               onChange={(enabled) => onSwitch(server, enabled)}
             />
           </ConfigDetailActions>
         </ConfigDetailHeader>
-        <div id={noteId} className="config-detail-heading-note">{note}</div>
+        {note && <div id={noteId} className="config-detail-heading-note">{note}</div>}
       </div>
       {actionError && (
         <p role="alert" className="mcp-config-line is-error">
@@ -1447,7 +1449,7 @@ function McpServerDetail({
             )}
           </span>
         </ConfigDetailGridRow>
-        <McpConnectionRows server={server} test={test} testBlock={testBlock} onTest={onTest} />
+        <McpConnectionRows server={server} test={test} testBlock={testBlock} testBlockId={testBlockId} />
         {server.transport && (
           <ConfigDetailGridRow label={t("mcp.detail.transport")}>
             {t(`mcp.transport.${server.transport}`)}
@@ -1458,17 +1460,16 @@ function McpServerDetail({
             {target}
           </ConfigDetailGridRow>
         )}
-        {stdio && (
-          <ConfigDetailGridRow label={t("mcp.detail.cwd")} mono={server.cwd !== undefined}>
-            {server.cwd !== undefined ? revealHiddenCharacters(server.cwd) : t("mcp.detail.cwdSession")}
-          </ConfigDetailGridRow>
+        {/* Left out when not set: the server then runs in the session's folder, with no env or headers of its own. */}
+        {stdio && server.cwd !== undefined && (
+          <ConfigDetailGridRow label={t("mcp.detail.cwd")} mono>{revealHiddenCharacters(server.cwd)}</ConfigDetailGridRow>
         )}
-        {stdio && (
+        {stdio && server.envNames.length > 0 && (
           <ConfigDetailGridRow label={t("mcp.detail.env")}>
             <McpNameList names={server.envNames} />
           </ConfigDetailGridRow>
         )}
-        {http && (
+        {http && server.headerNames.length > 0 && (
           <ConfigDetailGridRow label={t("mcp.detail.headers")}>
             <McpNameList names={server.headerNames} />
           </ConfigDetailGridRow>
@@ -1536,8 +1537,6 @@ function McpServerDetail({
         )}
         {server.masked && <p className="mcp-config-line is-dim">{t("mcp.server.masked")}</p>}
       </div>
-
-      <p className="mcp-config-note">{t("mcp.disclosure")}</p>
     </ConfigDetailStack>
   );
 }
@@ -1668,19 +1667,27 @@ function McpTestToolList({ status, serverExposure }: { status: McpServerStatus &
  * used, which the button points at; then, when a test connected, the tools it
  * listed.
  */
-function McpConnectionRows({
+/**
+ * Test, in the detail header: one connection through `POST /api/mcp/test`. It
+ * writes no file, so a change on its way does not hold it; disabled while its
+ * test runs, or where the route would refuse it, pointing at that reason in
+ * the Connection row.
+ */
+function McpTestButton({
   server,
   test,
   testBlock,
+  describedBy,
   onTest,
 }: {
   server: McpServerInfo;
   test: McpTestRun | undefined;
   testBlock: McpTestBlock | undefined;
+  /** The id of the Connection row's line that says why Test cannot be used. */
+  describedBy: string;
   onTest: (server: McpServerInfo) => void;
 }) {
   const { t } = useI18n();
-  const blockId = useId();
   const buttonRef = useRef<HTMLButtonElement>(null);
   const running = test?.running === true;
   // The button is disabled while its test runs, which drops focus to the page
@@ -1691,6 +1698,33 @@ function McpConnectionRows({
     wasRunningRef.current = running;
     if (wasRunning && !running) focusIfLost(document, buttonRef.current);
   }, [running]);
+  return (
+    <ConfigButton
+      ref={buttonRef}
+      size="small"
+      disabled={running || testBlock !== undefined}
+      aria-busy={running || undefined}
+      aria-describedby={testBlock ? describedBy : undefined}
+      onClick={() => onTest(server)}
+    >
+      {running ? t("mcp.test.testing") : t("mcp.test.button")}
+    </ConfigButton>
+  );
+}
+
+/** The Connection row: the last status, why Test cannot be used, and what the last test request did; then the tools a test listed. */
+function McpConnectionRows({
+  server,
+  test,
+  testBlock,
+  testBlockId,
+}: {
+  server: McpServerInfo;
+  test: McpTestRun | undefined;
+  testBlock: McpTestBlock | undefined;
+  testBlockId: string;
+}) {
+  const { t } = useI18n();
   const status = server.status;
   return (
     <>
@@ -1703,20 +1737,7 @@ function McpConnectionRows({
               {t("mcp.test.requestFailed")} {testFailureText(test.error, t)}
             </span>
           )}
-          {testBlock && <span id={blockId} className="mcp-config-line is-dim">{t(MCP_TEST_BLOCK_KEYS[testBlock])}</span>}
-          <span className="mcp-config-line">
-            <ConfigButton
-              ref={buttonRef}
-              size="small"
-              disabled={running || testBlock !== undefined}
-              aria-busy={running || undefined}
-              aria-describedby={testBlock ? blockId : undefined}
-              onClick={() => onTest(server)}
-            >
-              {running ? t("mcp.test.testing") : t("mcp.test.button")}
-            </ConfigButton>
-          </span>
-          {!testBlock && <span className="mcp-config-line is-dim">{t(mcpTestExplainKey(server))}</span>}
+          {testBlock && <span id={testBlockId} className="mcp-config-line is-dim">{t(MCP_TEST_BLOCK_KEYS[testBlock])}</span>}
           {/* Its own line, so no locale has to join two sentences with a space. */}
           {!testBlock && server.commandFields.length > 0 && <span className="mcp-config-line is-dim">{t(MCP_TEST_SERIAL_KEY)}</span>}
         </span>
