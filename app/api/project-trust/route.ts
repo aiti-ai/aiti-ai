@@ -1,5 +1,3 @@
-import { stat } from "fs/promises";
-import { resolve } from "path";
 import { NextResponse } from "next/server";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type {
@@ -9,8 +7,8 @@ import type {
   ProjectTrustResponse,
   ProjectTrustUnreadableResponse,
 } from "@/lib/api-types";
-import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { readProjectMcpServers } from "@/lib/mcp-config-read";
+import { isMcpEntryRefusal, validateMcpProject } from "@/lib/mcp-entry-request";
 import { invalidateModelsCache } from "@/lib/models-cache";
 import { getProjectTrustStatus, trustProject } from "@/lib/project-trust";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
@@ -26,27 +24,19 @@ function refusal(status: number, reason: McpRefusalReason, error: string) {
   return NextResponse.json({ error, reason } satisfies McpErrorResponse, { status });
 }
 
+/**
+ * The folder, checked as Settings › MCP's routes check theirs
+ * (`validateMcpProject()`): absolute, inside the allowed roots as given, then
+ * a directory. A relative path is refused rather than resolved against the
+ * server process's own folder, and a folder outside the roots gets 403
+ * whether or not it exists.
+ */
 async function validateCwd(value: unknown): Promise<
   { cwd: string; allowedRoots: Set<string> } | { response: NextResponse }
 > {
-  if (typeof value !== "string" || !value.trim()) {
-    return { response: refusal(400, "cwd-invalid", "cwd required") };
-  }
-
-  const cwd = resolve(value);
-  try {
-    if (!(await stat(cwd)).isDirectory()) {
-      return { response: refusal(400, "cwd-not-directory", "cwd must be a directory") };
-    }
-  } catch {
-    return { response: refusal(400, "cwd-not-directory", "Directory does not exist") };
-  }
-
-  const allowedRoots = await getAllowedFileRoots();
-  if (!isExistingFilePathAllowed(cwd, allowedRoots)) {
-    return { response: refusal(403, "cwd-denied", "Access denied") };
-  }
-  return { cwd, allowedRoots };
+  const result = await validateMcpProject(value);
+  if (isMcpEntryRefusal(result)) return { response: NextResponse.json(result.body, { status: result.status }) };
+  return result;
 }
 
 async function listProjectMcpServers(agentDir: string, cwd: string, allowedRoots: Set<string>): Promise<ProjectMcpListing> {

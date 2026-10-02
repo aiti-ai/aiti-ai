@@ -72,7 +72,7 @@ function McpImportNotes({ notes, fields = [] }: { notes: readonly McpImportNote[
 }
 
 /** Why Add waits, as the line its button points at. */
-function submitBlockText(block: McpAddSubmitBlock, t: Translate): string {
+function submitBlockText(block: McpAddSubmitBlock, t: Translate, fields: readonly McpImportField[] = []): string {
   switch (block.kind) {
     case "mcp-off":
       return t("mcp.reason.mcp-off");
@@ -86,12 +86,23 @@ function submitBlockText(block: McpAddSubmitBlock, t: Translate): string {
       return t("mcp.add.blocked.fields", { fields: block.fields.map(revealHiddenCharacters).join(", ") });
     case "field-invalid":
       return t("mcp.add.blocked.fieldsInvalid", { fields: block.fields.map(revealHiddenCharacters).join(", ") });
+    case "config-invalid":
+      return mcpImportNoteText(block.note, t, fields);
     case "web-password":
       return t("mcp.add.blocked.web-password");
     case "scope":
       return mcpAddProjectBlockText(block.block, t, displayPath);
   }
 }
+
+/**
+ * Refusals the add pane words as an Add's, before the generic `mcp.reason.*`
+ * words, which were written for switching, testing and connecting.
+ */
+export const MCP_ADD_REFUSAL_KEYS: Partial<Record<NonNullable<McpActionFailure["reason"]>, string>> = {
+  "server-invalid": "mcp.add.refused.server-invalid",
+  "web-password": "mcp.add.blocked.web-password",
+};
 
 /** Why the route refused the last Add, in the add pane's words where the reason has them. */
 function failureText(failure: McpActionFailure, t: Translate): string {
@@ -106,6 +117,9 @@ function failureText(failure: McpActionFailure, t: Translate): string {
   if (failure.reason === "name-taken" && failure.name) {
     return t("mcp.add.nameTaken", { name: revealHiddenCharacters(failure.name), path: failure.path ? displayPath(failure.path) : "mcp.json" });
   }
+  const addKey = failure.reason ? MCP_ADD_REFUSAL_KEYS[failure.reason] : undefined;
+  // The SDK validator's words name the field, never a value.
+  if (addKey) return t(addKey, { error: revealHiddenCharacters(failure.error) });
   if (failure.reason && failure.reason !== "internal") return t(`mcp.reason.${failure.reason}`);
   return revealHiddenCharacters(failure.error);
 }
@@ -171,7 +185,7 @@ export function McpAddServer({
   const scopeLine = analysis.scope === "project" && projectBlock ? mcpAddProjectBlockText(projectBlock, t, displayPath) : undefined;
   const blockSaidByScopeLine = submitBlock?.kind === "scope" && scopeLine !== undefined && submitBlock.block === projectBlock;
   const ownBlockLine = submitBlock && !blockSaidByScopeLine && (draft.text.trim() !== "" || submitBlock.kind === "mcp-off")
-    ? submitBlockText(submitBlock, t)
+    ? submitBlockText(submitBlock, t, server?.fields)
     : undefined;
   const describedBy = [scopeLine ? scopeBlockId : undefined, ownBlockLine ? blockId : undefined].filter(Boolean).join(" ") || undefined;
   const trustable = projectBlock?.kind === "project-untrusted" && projectBlock.trustable && onTrustProject;

@@ -88,6 +88,12 @@ test("an OAuth server offers Sign in, says what it does and that it may replace 
   assert.match(text(signedIn), /Sign out deletes the tokens and client registration stored for this URL; open sessions lose access at their next request to the server\./);
   // An unreadable mcp-auth.json still offers Sign out.
   assert.deepEqual(buttons(row({ server: { ...oauth, signedIn: undefined } })).map((button) => button.label), ["Sign in", "Sign out"]);
+  // A cancelled or expired sign-in leaves a client registration and its PKCE state but no tokens:
+  // Sign out still clears them, as `pi mcp logout` would.
+  const leftover = row({ server: { ...oauth, signedIn: false, oauthStateStored: true } });
+  assert.deepEqual(buttons(leftover).map((button) => button.label), ["Sign in", "Sign out"]);
+  assert.match(text(leftover), /^Sign-in No OAuth tokens stored, but mcp-auth\.json holds a client registration or an unfinished sign-in for this URL\./);
+  assert.deepEqual(buttons(row({ server: { ...oauth, signedIn: false, oauthStateStored: false } })).map((button) => button.label), ["Sign in"]);
   // While a change runs, Sign out waits; Sign in, which writes no mcp.json, does not.
   const busy = buttons(row({ server: { ...oauth, signedIn: true }, controlsBusy: true }));
   assert.doesNotMatch(busy[0].attributes, /disabled/);
