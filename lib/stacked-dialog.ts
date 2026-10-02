@@ -11,6 +11,16 @@
 
 type KeyDownListener = (event: KeyboardEvent) => void;
 
+/**
+ * An Escape that cancels an input method's composition (a Pinyin candidate,
+ * a kana conversion): `isComposing` in Chrome and Firefox, and the IME's
+ * keyCode 229 in Safari, which reports the composition's last key with it.
+ * The input method keeps such a key.
+ */
+function cancelsComposition(event: KeyboardEvent): boolean {
+  return event.isComposing || event.keyCode === 229;
+}
+
 /** The part of `document` these listeners use. */
 export interface EscapeKeyTarget {
   addEventListener(type: "keydown", listener: KeyDownListener, capture: boolean): void;
@@ -39,7 +49,7 @@ export function listenForStackedDialogEscape(target: EscapeKeyTarget, onEscape: 
     if (event.key !== "Escape") return;
     // Nothing below the dialog reacts to it, whatever it is for.
     event.stopPropagation();
-    if (event.isComposing) return;
+    if (cancelsComposition(event)) return;
     event.preventDefault();
     onEscape();
   };
@@ -50,11 +60,14 @@ export function listenForStackedDialogEscape(target: EscapeKeyTarget, onEscape: 
 /**
  * Escape for a panel that closes on it (Settings): the bubble phase, and only
  * while nothing nearer handled the key first (`defaultPrevented`), such as a
- * menu or a nested modal inside the panel. Returns the cleanup.
+ * menu or a nested modal inside the panel. An Escape that cancels an IME
+ * composition in one of the panel's text boxes is left to the input method,
+ * unhandled: closing would throw away what was typed, such as an Add draft.
+ * Returns the cleanup.
  */
 export function listenForPanelEscape(target: EscapeKeyTarget, onEscape: () => void): () => void {
   const handleKeyDown: KeyDownListener = (event) => {
-    if (event.key !== "Escape" || event.defaultPrevented) return;
+    if (event.key !== "Escape" || event.defaultPrevented || cancelsComposition(event)) return;
     event.preventDefault();
     onEscape();
   };
