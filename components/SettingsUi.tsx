@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
+import { Fragment, useEffect, useId, useRef } from "react";
 import type { ButtonHTMLAttributes, ClipboardEvent, CSSProperties, HTMLAttributes, ReactNode, Ref } from "react";
 
 type ConfigButtonVariant = "primary" | "secondary" | "danger" | "ghost";
@@ -346,6 +346,62 @@ export function ConfigScopeSwitch<S extends string>({
 }
 
 /**
+ * A path that may wrap between folders: a break opportunity after each
+ * separator, so a narrow pane breaks `~/.pi/agent/agents/` before the file
+ * name instead of inside it. A split, not a lookbehind, which Safari 16.2
+ * cannot parse.
+ */
+function pathWithBreaks(path: string): ReactNode[] {
+  return path.split(/([\\/])/).map((part, index) => (
+    part === "/" || part === "\\" ? <Fragment key={index}>{part}<wbr /></Fragment> : part
+  ));
+}
+
+/**
+ * Where an add or create pane saves: the scope switch and the path that
+ * choice writes to, first under the pane's title. A detail pane shows its
+ * scope tag and path in that place, so every settings section reads and
+ * chooses a scope in the same spot. Why an option is unavailable is visible
+ * text under the line; `children` follow it (a Trust button, what saving
+ * there means).
+ */
+export function ConfigSaveTarget<S extends string>({
+  value,
+  options,
+  label,
+  path,
+  disabledReason,
+  onChange,
+  children,
+}: {
+  value: S;
+  options: readonly ConfigScopeOption<S>[];
+  /** Names the group for assistive technology. */
+  label: string;
+  /** Where the chosen scope writes, shortened for display; a string wraps between folders. */
+  path: ReactNode;
+  disabledReason?: string | null;
+  onChange: (value: S) => void;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="config-save-target">
+      <ConfigScopeSwitch
+        value={value}
+        options={options}
+        label={label}
+        disabledReason={disabledReason}
+        size="small"
+        onChange={onChange}
+      >
+        <span className="config-save-target-path">{typeof path === "string" ? pathWithBreaks(path) : path}</span>
+      </ConfigScopeSwitch>
+      {children}
+    </div>
+  );
+}
+
+/**
  * Whether a key in a multiline add box submits it: Cmd/Ctrl+Enter, never a
  * plain Enter (a line break) and never while an input method composes, whose
  * Enter picks a candidate.
@@ -362,14 +418,46 @@ export function addSourceKeySubmits(event: {
   return event.nativeEvent?.isComposing !== true && event.keyCode !== 229;
 }
 
+/**
+ * The top of every add pane: its title, the catalog it installs from as a
+ * link at the right of the title, and where the result is saved (a
+ * `ConfigSaveTarget`) under both.
+ */
+export function ConfigAddSourceHeading({
+  title,
+  catalogHref,
+  catalogLabel,
+  catalogIcon,
+  target,
+}: {
+  title: string;
+  catalogHref: string;
+  catalogLabel: string;
+  catalogIcon?: ReactNode;
+  target: ReactNode;
+}) {
+  return (
+    <div className="config-add-source-heading">
+      <div className="config-add-source-title-row">
+        <ConfigDetailTitle>{title}</ConfigDetailTitle>
+        <a href={catalogHref} target="_blank" rel="noopener noreferrer" className="config-add-source-catalog">
+          {catalogIcon}
+          {catalogLabel}
+        </a>
+      </div>
+      {target}
+    </div>
+  );
+}
+
 /** An example the add form offers: its text, or its text beside what it is (a format, a client). */
 export type ConfigAddSourceExample = string | { label: string; value: string };
 
 /**
- * The add form of a list-detail panel: a title with a link to the catalog,
- * where the result is saved, one source box, the caller's controls (usually a
- * scope switch and the submit button) as `children`, and examples that fill
- * the box. Enter submits while `canSubmit` holds; `normalizeValue` rewrites a
+ * The add form of a list-detail panel: its heading (`ConfigAddSourceHeading`:
+ * the title, the catalog link, where the result is saved), one source box, the
+ * caller's controls (at least the submit button) as `children`, and examples
+ * that fill the box. Enter submits while `canSubmit` holds; `normalizeValue` rewrites a
  * paste or the box on blur, e.g. to drop a pasted `pi install` prefix.
  *
  * `multiline` makes the box a textarea for pasting a whole config: Enter
@@ -383,7 +471,7 @@ export function ConfigAddSourcePanel({
   catalogHref,
   catalogLabel,
   catalogIcon,
-  location,
+  target,
   inputLabel,
   inputId,
   placeholder,
@@ -396,14 +484,14 @@ export function ConfigAddSourcePanel({
   examples,
   error,
   multiline = false,
-  hint,
   children,
 }: {
   title: string;
   catalogHref: string;
   catalogLabel: string;
   catalogIcon?: ReactNode;
-  location: ReactNode;
+  /** Where the result is saved: a `ConfigSaveTarget`. */
+  target: ReactNode;
   inputLabel: string;
   inputId?: string;
   placeholder: string;
@@ -417,13 +505,10 @@ export function ConfigAddSourcePanel({
   error?: string | null;
   /** A textarea instead of one line: Enter adds a line, Cmd/Ctrl+Enter submits. */
   multiline?: boolean;
-  /** A line under the box, such as how to submit it. */
-  hint?: ReactNode;
   children?: ReactNode;
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const hintId = useId();
 
   useEffect(() => {
     if (!multiline) {
@@ -445,16 +530,13 @@ export function ConfigAddSourcePanel({
 
   return (
     <ConfigDetailStack className="is-fill">
-      <div className="config-add-source-heading">
-        <div className="config-add-source-title-row">
-          <ConfigDetailTitle>{title}</ConfigDetailTitle>
-          <a href={catalogHref} target="_blank" rel="noopener noreferrer" className="config-add-source-catalog">
-            {catalogIcon}
-            {catalogLabel}
-          </a>
-        </div>
-        <div className="config-add-source-location">{location}</div>
-      </div>
+      <ConfigAddSourceHeading
+        title={title}
+        catalogHref={catalogHref}
+        catalogLabel={catalogLabel}
+        catalogIcon={catalogIcon}
+        target={target}
+      />
 
       <ConfigField label={inputLabel}>
         {multiline ? (
@@ -463,7 +545,6 @@ export function ConfigAddSourcePanel({
             ref={textareaRef}
             value={value}
             aria-label={inputLabel}
-            aria-describedby={hint ? hintId : undefined}
             className="config-add-source-input is-multiline"
             placeholder={placeholder}
             rows={5}
@@ -499,7 +580,6 @@ export function ConfigAddSourcePanel({
             }}
           />
         )}
-        {hint && <span id={hintId} className="config-add-source-hint">{hint}</span>}
       </ConfigField>
 
       {children}
