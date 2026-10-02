@@ -26,10 +26,12 @@ import {
   mcpAddOffersRawPi,
   mcpAddProjectBlockText,
   mcpAddRequest,
+  mcpFieldSuggestedVariableName,
   mcpFieldTakesVariable,
   mcpImportNoteSeverity,
   mcpImportNoteText,
   mcpSecretPathTakesVariable,
+  mcpSuggestedVariableName,
   type McpAddDraft,
   type McpAddSubmitBlock,
 } from "./mcp-add-helpers";
@@ -300,6 +302,7 @@ export function McpAddServer({
                   key={field.id}
                   field={field}
                   draft={draft}
+                  suggestedName={mcpFieldSuggestedVariableName(field, analysis.name)}
                   problem={analysis.fieldProblems[field.id]}
                   onDraftChange={onDraftChange}
                 />
@@ -315,6 +318,7 @@ export function McpAddServer({
                   key={label}
                   label={label}
                   draft={draft}
+                  suggestedName={mcpSuggestedVariableName(label, analysis.name)}
                   stored={analysis.fill?.ok ? storedValue(analysis.fill.config, label) : undefined}
                   problem={analysis.fieldProblems[label]}
                   onDraftChange={onDraftChange}
@@ -436,16 +440,19 @@ function McpAddNames({ names }: { names: readonly string[] }) {
  * source gave them, why it is asked for, and a box (a password box for a
  * secret, a list for a choice). Where pi resolves every value it fills, the
  * user may name a host variable instead, stored as `${NAME}`, which keeps a
- * secret out of the file.
+ * secret out of the file; its box opens with the name the pane suggests.
  */
 function McpAddFieldInput({
   field,
   draft,
+  suggestedName,
   problem,
   onDraftChange,
 }: {
   field: McpImportField;
   draft: McpAddDraft;
+  /** The variable the box opens with (`mcpFieldSuggestedVariableName()`), always a valid name. */
+  suggestedName?: string;
   /** Why what was filled in cannot be used, shown under the box it is about. */
   problem?: McpImportNote;
   onDraftChange: (draft: McpAddDraft) => void;
@@ -473,7 +480,7 @@ function McpAddFieldInput({
             className="mcp-add-input"
             aria-label={t("mcp.add.field.variableName", { field: label })}
             value={reference}
-            placeholder="GITHUB_TOKEN"
+            placeholder={suggestedName ?? "GITHUB_TOKEN"}
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
@@ -515,7 +522,7 @@ function McpAddFieldInput({
       </span>
       {takesVariable && (
         <label className="mcp-add-toggle">
-          <input type="checkbox" checked={usesVariable} onChange={(event) => setReference(event.target.checked ? "" : undefined)} />
+          <input type="checkbox" checked={usesVariable} onChange={(event) => setReference(event.target.checked ? suggestedName ?? "" : undefined)} />
           <span className="mcp-config-line">{t("mcp.add.field.useVariable")}</span>
         </label>
       )}
@@ -540,17 +547,21 @@ function storedValue(config: McpServerConfig, label: string): string | undefined
  * "Secrets typed in the panel"): saved as written it keeps the server global,
  * so it can be read from a variable of the computer running Pi Web instead,
  * stored as `${NAME}` (after a header's `Bearer `), which lets the server go
- * to the project. The secret itself is never shown.
+ * to the project. Its box opens with the name the pane suggests. The secret
+ * itself is never shown.
  */
 function McpAddSecretInput({
   label,
   draft,
+  suggestedName,
   stored,
   problem,
   onDraftChange,
 }: {
   label: string;
   draft: McpAddDraft;
+  /** The variable the box opens with (`mcpSuggestedVariableName()`), always a valid name. */
+  suggestedName?: string;
   /** The value as it will be stored, once it reads a variable. */
   stored?: string;
   problem?: McpImportNote;
@@ -575,7 +586,7 @@ function McpAddSecretInput({
         </span>
       </span>
       <label className="mcp-add-toggle">
-        <input type="checkbox" checked={usesVariable} onChange={(event) => setReference(event.target.checked ? "" : undefined)} />
+        <input type="checkbox" checked={usesVariable} onChange={(event) => setReference(event.target.checked ? suggestedName ?? "" : undefined)} />
         <span className="mcp-config-line">{t("mcp.add.field.useVariable")}</span>
       </label>
       {usesVariable && (
@@ -584,7 +595,7 @@ function McpAddSecretInput({
             className="mcp-add-input"
             aria-label={t("mcp.add.field.variableName", { field: shown })}
             value={reference}
-            placeholder="API_TOKEN"
+            placeholder={suggestedName ?? "API_TOKEN"}
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"

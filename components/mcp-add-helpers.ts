@@ -15,6 +15,7 @@ import {
   isValidServerName,
   MCP_IMPORT_NOTE_SEVERITY,
   parseMcpImport,
+  pathLabel,
   referenceableLiteralSecrets,
   suggestFreeName,
   validationProblem,
@@ -27,7 +28,7 @@ import {
   type McpImportResult,
   type McpImportServer,
 } from "@/lib/mcp-import";
-import { findWebPasswordField, resolvedConfigValues, type McpResolvedConfigValue } from "@/lib/mcp-config-values";
+import { findWebPasswordField, resolvedConfigValues, WEB_PASSWORD_VARIABLE, type McpResolvedConfigValue } from "@/lib/mcp-config-values";
 import { SECRET_MASK } from "@/lib/mcp-secrets";
 import { formatMcpCommandLine, revealHiddenCharacters } from "@/lib/mcp-server-display";
 import { isBlockingFileProblem, mcpProjectTrustable, mcpWritesOff } from "./mcp-config-helpers";
@@ -112,7 +113,7 @@ export function mcpImportNoteKey(note: McpImportNote): string {
   const params = note.params ?? {};
   switch (note.code) {
     case "field-reference-invalid":
-      return `mcp.importNote.field-reference-invalid.${params.problem === "target" ? "target" : "name"}`;
+      return `mcp.importNote.field-reference-invalid.${params.problem === "target" || params.problem === "missing" ? params.problem : "name"}`;
     case "sse-transport":
       return params.suggestedUrl === undefined ? "mcp.importNote.sse-transport" : "mcp.importNote.sse-transport.suggested";
     case "timeout-unit-guessed":
@@ -242,6 +243,54 @@ export function mcpAddFieldValues(server: McpImportServer, draft: Pick<McpAddDra
 }
 
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Words as one variable name (`my-server`, `Api-Key` → `MY_SERVER_API_KEY`), or undefined when they make none. */
+function variableNameOf(...words: string[]): string | undefined {
+  const name = words
+    .map((word) => word.replace(/[^A-Za-z0-9]+/g, "_"))
+    .join("_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
+    .toUpperCase();
+  return VARIABLE_NAME.test(name) ? name : undefined;
+}
+
+/** A header whose value is a credential as a whole, so its variable is the server's token. */
+const AUTHORIZATION_HEADER = /^(?:proxy-)?authorization$/i;
+
+/**
+ * The host variable the add pane offers for a value pi resolves, by its place
+ * (a `secretPaths` label): an env value reads the variable of its own name,
+ * as pi passes `GITHUB_TOKEN` on; a header or the OAuth client secret a name
+ * made from the server's (`docs` with `Authorization` → `DOCS_TOKEN`,
+ * `X-Api-Key` → `DOCS_API_KEY`, `DOCS_CLIENT_SECRET`). Only a valid variable
+ * name, or undefined, so the box it fills never opens on a refusal; never
+ * PI_WEB_PASSWORD, which Add refuses.
+ */
+export function mcpSuggestedVariableName(label: string, serverName: string): string | undefined {
+  const name = suggestedVariableName(label, serverName);
+  return name === WEB_PASSWORD_VARIABLE ? undefined : name;
+}
+
+function suggestedVariableName(label: string, serverName: string): string | undefined {
+  if (label.startsWith("env.")) {
+    const key = label.slice("env.".length);
+    return VARIABLE_NAME.test(key) ? key : variableNameOf(key);
+  }
+  const named = (...words: string[]) => variableNameOf(serverName, ...words) ?? variableNameOf(...words);
+  if (label.startsWith("headers.")) {
+    const header = label.slice("headers.".length);
+    return AUTHORIZATION_HEADER.test(header) ? named("TOKEN") : named(header.replace(/^x-/i, ""));
+  }
+  if (label === "oauth.clientSecret") return named("CLIENT_SECRET");
+  return undefined;
+}
+
+/** The host variable offered for a field answered with one: by the place its value goes (`mcpSuggestedVariableName()`). */
+export function mcpFieldSuggestedVariableName(field: McpImportField, serverName: string): string | undefined {
+  const target = field.targets[0];
+  return target ? mcpSuggestedVariableName(pathLabel(target.path), serverName) : undefined;
+}
 
 /**
  * Where the server would hold a literal secret once its fields are answered:
@@ -553,7 +602,9 @@ export function mcpAddAnalysis(draft: McpAddDraft, data: McpResponse, cwd: strin
       const id = String(note.params?.field ?? "");
       return server.fields.find((field) => field.id === id)?.label ?? id;
     };
-    const required = fill.notes.filter((note) => note.code === "field-required");
+    // A variable box still empty is asked for like any value not typed yet.
+    const required = fill.notes.filter((note) => note.code === "field-required"
+      || (note.code === "field-reference-invalid" && note.params?.problem === "missing"));
     submitBlock = required.length > 0
       ? { kind: "fields", fields: [...new Set(required.map(labelOf))] }
       : { kind: "field-invalid", fields: [...new Set(fill.notes.map(labelOf))] };
