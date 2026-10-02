@@ -73,6 +73,11 @@ test("the paste box is a textarea that never takes focus by itself on a phone, a
   assert.match(html, /<a href="https:\/\/github\.com\/mcp" target="_blank" rel="noopener noreferrer" class="config-add-source-catalog">github\.com\/mcp<\/a>/);
   assert.match(html, /Cmd\/Ctrl\+Enter adds it\./);
   assert.match(html, /<div class="config-add-source-examples">/, "an empty box offers examples");
+  // Every supported format, each named as the preview would name it.
+  assert.match(html, /<div class="config-add-source-examples-label">Supported formats \(click one to fill in an example\)<\/div>/);
+  assert.match(html, /<span class="config-add-source-example-label">codex mcp add<\/span><span class="config-add-source-example-value">codex mcp add fetch -- uvx mcp-server-fetch<\/span>/);
+  assert.match(html, /<span class="config-add-source-example-label">Zed settings<\/span>/);
+  assert.equal(html.match(/class="config-add-source-example has-label"/g)?.length, 19);
   assert.match(addButton(html).tag, /disabled=""/);
   assert.equal(addButton(html).label, "Add");
   // An empty box is no refusal: nothing explains Add yet but the hint.

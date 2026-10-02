@@ -19,6 +19,7 @@ import {
 } from "./SettingsUi";
 import {
   MCP_ADD_BREADTH_KEYS,
+  MCP_ADD_EXAMPLES,
   MCP_IMPORT_FIELD_REASON_KEYS,
   MCP_IMPORT_SOURCE_KEYS,
   mcpAddAnalysis,
@@ -41,14 +42,6 @@ import type { McpActionFailure, McpActionRequest } from "./mcp-config-helpers";
 
 type Translate = ReturnType<typeof useI18n>["t"];
 export type McpAddActionRequest = Extract<McpActionRequest, { action: "add" }>;
-
-/** Pastes the box offers to fill in: an address, a command line, another client's command, a config. */
-export const MCP_ADD_EXAMPLES = [
-  "https://mcp.example.com/mcp",
-  "npx -y @modelcontextprotocol/server-everything",
-  "claude mcp add --transport http docs https://mcp.example.com/mcp",
-  '{ "mcpServers": { "fetch": { "command": "uvx", "args": ["mcp-server-fetch"] } } }',
-] as const;
 
 function displayPath(path: string): string {
   return revealHiddenCharacters(shortenPath(path));
@@ -209,9 +202,9 @@ export function McpAddServer({
       canSubmit={canSubmit}
       onValueChange={(text) => onDraftChange(mcpAddDraftWithPaste(draft, { text }))}
       onSubmit={submit}
-      examplesLabel={t("config.examples")}
-      // Examples only while the box is empty: clicking one replaces the paste.
-      examples={draft.text.trim() === "" ? MCP_ADD_EXAMPLES : []}
+      examplesLabel={t("mcp.add.examples")}
+      // Every format the importer reads, each with an example, only while the box is empty: clicking one replaces the paste.
+      examples={draft.text.trim() === "" ? MCP_ADD_EXAMPLES.map(({ source, text }) => ({ label: t(MCP_IMPORT_SOURCE_KEYS[source]), value: text })) : []}
       multiline
       hint={t("mcp.add.hint")}
     >
