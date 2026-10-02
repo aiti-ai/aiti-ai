@@ -1,10 +1,13 @@
 import type {
   CodemodeInlineBudgetSetting,
+  CodemodeMode,
+  CodemodeModeSetting,
   FreshFolderTrustBreadth,
   McpActionResponse,
   McpAvailability,
   McpCodemodeInfo,
   McpCodemodeInlineBudget,
+  McpCodemodeMode,
   McpCodemodePreference,
   McpConfigFileInfo,
   McpConfigFileProblem,
@@ -579,6 +582,68 @@ export function withMcpCodemodePreference(data: McpResponse, preference: McpCode
   return { ...data, codemode };
 }
 
+export const MCP_CODEMODE_MODE_KEYS: Record<CodemodeMode, string> = {
+  on: "mcp.codemode.toolMode.on",
+  only: "mcp.codemode.toolMode.only",
+};
+
+export const MCP_CODEMODE_MODE_DESCRIPTION_KEYS: Record<CodemodeMode, string> = {
+  on: "mcp.codemode.toolMode.onDescription",
+  only: "mcp.codemode.toolMode.onlyDescription",
+};
+
+const MCP_CODEMODE_MODE_PROJECT_OVERRIDE_KEYS: Record<CodemodeMode, string> = {
+  on: "mcp.codemode.toolMode.projectOverride.on",
+  only: "mcp.codemode.toolMode.projectOverride.only",
+};
+
+/**
+ * Whether choosing `value` changes the global settings: another mode, or
+ * either one over a stored value pi reads as "on" without it being a mode,
+ * which saving replaces.
+ */
+export function mcpCodemodeModeChanges(mode: McpCodemodeMode, value: CodemodeMode): boolean {
+  return value !== mode.value || mode.invalid !== undefined;
+}
+
+/**
+ * The lines under the mode switch: a global value pi reads as "on" without it
+ * being a mode; a trusted project whose settings give its sessions their own
+ * mode (said whether or not it agrees, as for the Code mode choice); and,
+ * when sessions get "only" while Automatic decides when Code mode turns on,
+ * that until then the model calls these tools directly. With
+ * `autoEnableCodemode: false` Automatic never turns it on, which the choice's
+ * own warning says.
+ */
+export function mcpCodemodeModeNotices(codemode: McpCodemodeInfo): McpNoticeText[] {
+  const mode = codemode.mode;
+  if (!mode) return [];
+  const notices: McpNoticeText[] = [];
+  if (mode.invalid !== undefined) {
+    notices.push({ key: "mcp.codemode.toolMode.invalid", params: { path: mode.settingsPath, value: mode.invalid } });
+  }
+  const project = mode.projectOverride;
+  if (project) {
+    notices.push({ key: MCP_CODEMODE_MODE_PROJECT_OVERRIDE_KEYS[project.value], params: { path: project.settingsPath } });
+  }
+  if ((project ?? mode).value === "only" && mcpEffectiveCodemodePreference(codemode) === "automatic") {
+    notices.push({ key: "mcp.codemode.toolMode.automaticNote" });
+  }
+  return notices;
+}
+
+/** The overview after a mode save: the stored value, keeping the file and the project's own. */
+export function withMcpCodemodeMode(data: McpResponse, stored: CodemodeModeSetting): McpResponse {
+  const current = data.codemode.mode;
+  if (!current) return data;
+  const mode: McpCodemodeMode = {
+    settingsPath: current.settingsPath,
+    ...(current.projectOverride ? { projectOverride: current.projectOverride } : {}),
+    ...stored,
+  };
+  return { ...data, codemode: { ...data.codemode, mode } };
+}
+
 /** The overview after a budget save: the stored value, keeping the default, the limit and the project's own. */
 export function withMcpCodemodeInlineBudget(data: McpResponse, stored: CodemodeInlineBudgetSetting): McpResponse {
   const current = data.codemode.inlineBudget;
@@ -828,12 +893,23 @@ export type McpCodemodeSaveResult =
   | { ok: true; preference: McpCodemodePreference }
   | { ok: false; error: McpLoadFailure };
 
+export type McpCodemodeModeSaveResult =
+  | { ok: true; mode: CodemodeModeSetting }
+  | { ok: false; error: McpLoadFailure };
+
 export type McpCodemodeInlineBudgetSaveResult =
   | { ok: true; inlineBudget: CodemodeInlineBudgetSetting }
   | { ok: false; error: McpLoadFailure };
 
 function isCodemodePreferenceValue(value: unknown): value is McpCodemodePreference {
   return value === "automatic" || value === "always";
+}
+
+function isCodemodeModeSetting(value: unknown): value is CodemodeModeSetting {
+  if (value === null || typeof value !== "object") return false;
+  const setting = value as Record<string, unknown>;
+  return (setting.value === "on" || setting.value === "only")
+    && (setting.invalid === undefined || typeof setting.invalid === "string");
 }
 
 function isInlineBudgetSetting(value: unknown): value is CodemodeInlineBudgetSetting {
@@ -905,6 +981,33 @@ export async function saveMcpCodemodePreference(
 ): Promise<McpCodemodeSaveResult> {
   return withinDeadline<McpCodemodeSaveResult>(
     (deadlineSignal) => requestCodemodeSave(preference, fetchImpl, deadlineSignal),
+    () => ({ ok: false, error: { error: `PUT /api/tools/settings did not answer within ${timeoutMs} ms`, timedOut: true } }),
+    timeoutMs,
+    signal,
+  );
+}
+
+/**
+ * Saves the global `codemode.mode` through `PUT /api/tools/settings`, which
+ * writes it under the settings lock ("on", pi's default, removes the key). As
+ * with the choice, the caller reads the overview again afterwards either way.
+ */
+export async function saveMcpCodemodeMode(
+  mode: CodemodeMode,
+  fetchImpl: FetchLike = (input, init) => fetch(input, init),
+  signal?: AbortSignal,
+  timeoutMs: number = MCP_CODEMODE_SAVE_TIMEOUT_MS,
+): Promise<McpCodemodeModeSaveResult> {
+  return withinDeadline<McpCodemodeModeSaveResult>(
+    async (deadlineSignal) => {
+      const result = await requestToolSettingsChange(
+        { codemodeMode: mode },
+        (data) => (isCodemodeModeSetting(data.codemodeMode) ? data.codemodeMode : undefined),
+        fetchImpl,
+        deadlineSignal,
+      );
+      return result.ok ? { ok: true, mode: result.stored } : result;
+    },
     () => ({ ok: false, error: { error: `PUT /api/tools/settings did not answer within ${timeoutMs} ms`, timedOut: true } }),
     timeoutMs,
     signal,

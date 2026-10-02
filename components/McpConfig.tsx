@@ -3,9 +3,11 @@
 import { useCallback, useEffect, useId, useRef, useState, type Ref } from "react";
 import type { McpExposure } from "@earendil-works/pi-coding-agent";
 import type {
+  CodemodeMode,
   McpActionResponse,
   McpCodemodeInfo,
   McpCodemodeInlineBudget,
+  McpCodemodeMode,
   McpCodemodePreference,
   McpConfigFieldRef,
   McpResponse,
@@ -62,6 +64,8 @@ import {
   ConfigTrustNotice,
 } from "./SettingsUi";
 import {
+  MCP_CODEMODE_MODE_DESCRIPTION_KEYS,
+  MCP_CODEMODE_MODE_KEYS,
   MCP_CODEMODE_SELECTION,
   MCP_CODEMODE_STATE_KEYS,
   MCP_EXPOSURE_KEYS,
@@ -78,6 +82,8 @@ import {
   mcpCodemodeAutomaticNotice,
   mcpCodemodeBuiltinNotice,
   mcpCodemodeInlineBudgetNotices,
+  mcpCodemodeModeChanges,
+  mcpCodemodeModeNotices,
   mcpCodemodeProjectOverrideNotice,
   mcpExposureReachNotice,
   mcpCodemodeRowState,
@@ -121,8 +127,10 @@ import {
   mcpInlineBudgetDraftOf,
   parseMcpInlineBudgetDraft,
   saveMcpCodemodeInlineBudget,
+  saveMcpCodemodeMode,
   saveMcpCodemodePreference,
   withMcpCodemodeInlineBudget,
+  withMcpCodemodeMode,
   withMcpCodemodePreference,
   type McpActionFailure,
   type McpActionRequest,
@@ -192,12 +200,12 @@ function actionFailureText(failure: McpActionFailure, t: Translate): string {
   return failureText(failure, t);
 }
 
-/** What saving the Code mode choice or budget is doing: nothing, waiting for the route, or why it failed. */
+/** What saving the Code mode choice, mode or budget is doing: nothing, waiting for the route, or why it failed. */
 export interface McpCodemodeSaveState {
   saving: boolean;
   error: McpLoadFailure | null;
   /** What the save is about, so its state shows in that row; the choice when absent. */
-  target?: "preference" | "inlineBudget";
+  target?: "preference" | "mode" | "inlineBudget";
 }
 
 /** What the last group switch left undone, under that group's heading. */
@@ -270,7 +278,7 @@ function pressedButton(): HTMLButtonElement | HTMLSelectElement | null {
  * through `POST /api/mcp/test`, beside any change, and its result becomes the
  * row's state. An OAuth server signs in through `/api/mcp/sign-in`, whose
  * flow lives on the server and is polled here, and signs out through
- * `POST /api/mcp`. The Code mode choice is written through
+ * `POST /api/mcp`. The Code mode choice, mode and budget are written through
  * `PUT /api/tools/settings`. An untrusted project's notice offers
  * Trust, which opens the page's trust dialog (AppShell owns trust), and the
  * panel reloads once the page's status for the folder changes. Add MCP server
@@ -383,7 +391,23 @@ export function McpConfig({
     void refresh();
   }, [refresh]);
 
-  // The budget shares the choice's save state, so it waits for and is waited for by the same writes.
+  // The mode and the budget share the choice's save state, so each waits for and is waited for by the same writes.
+  const saveCodemodeMode = useCallback(async (mode: CodemodeMode) => {
+    const controller = new AbortController();
+    saveControllerRef.current = controller;
+    setCodemodeSave({ saving: true, error: null, target: "mode" });
+    const result = await saveMcpCodemodeMode(mode, undefined, controller.signal);
+    if (saveControllerRef.current !== controller) return;
+    saveControllerRef.current = null;
+    setCodemodeSave({ saving: false, error: result.ok ? null : result.error, target: "mode" });
+    if (result.ok) {
+      setLoad((current) => current.state === "loaded"
+        ? { ...current, data: withMcpCodemodeMode(current.data, result.mode) }
+        : current);
+    }
+    void refresh();
+  }, [refresh]);
+
   const saveCodemodeInlineBudget = useCallback(async (budget: number | null) => {
     const controller = new AbortController();
     saveControllerRef.current = controller;
@@ -766,6 +790,7 @@ export function McpConfig({
       }}
       onRefresh={() => void refresh()}
       onCodemodeChange={(preference) => void saveCodemode(preference)}
+      onCodemodeModeChange={(mode) => void saveCodemodeMode(mode)}
       onCodemodeInlineBudgetSave={(budget) => void saveCodemodeInlineBudget(budget)}
       onServerSwitch={(server, enabled) => void switchServer(server, enabled)}
       onExposureChange={(server, exposure) => void setServerExposure(server, exposure)}
@@ -809,6 +834,7 @@ export function McpConfigView({
   onSelect,
   onRefresh,
   onCodemodeChange,
+  onCodemodeModeChange = () => {},
   onCodemodeInlineBudgetSave = () => {},
   onServerSwitch = () => {},
   onExposureChange = () => {},
@@ -853,6 +879,8 @@ export function McpConfigView({
   onSelect: (key: string) => void;
   onRefresh: () => void;
   onCodemodeChange: (preference: McpCodemodePreference) => void;
+  /** Saves the global `codemode.mode`; "on" removes it, pi's default. */
+  onCodemodeModeChange?: (mode: CodemodeMode) => void;
   /** Saves the global `codemode.inlineBudget`; null removes it, for pi's default. */
   onCodemodeInlineBudgetSave?: (budget: number | null) => void;
   onServerSwitch?: (server: McpServerInfo, enabled: boolean) => void;
@@ -1077,6 +1105,7 @@ export function McpConfigView({
                 save={codemodeSave}
                 serverBusy={busy !== null}
                 onChange={onCodemodeChange}
+                onModeChange={onCodemodeModeChange}
                 onInlineBudgetSave={onCodemodeInlineBudgetSave}
               />
             ) : selectedServer ? (
@@ -1824,7 +1853,8 @@ function McpConnectionRows({
  * Code mode: the one choice, Automatic or Always on, saved to the global
  * `defaultTools` and read by sessions started afterwards (pi applies
  * `defaultTools` when it creates a session, so nothing reloads); a trusted
- * project whose own `defaultTools` decides it there; whether its sandbox can
+ * project whose own `defaultTools` decides it there; the global
+ * `codemode.mode` and `codemode.inlineBudget` rows; whether its sandbox can
  * run; and whether a setting turns it off. Always on is disabled, with the
  * reason as text under the switch, while no session could offer Code mode.
  */
@@ -1834,6 +1864,7 @@ function McpCodemodeDetail({
   save,
   serverBusy,
   onChange,
+  onModeChange,
   onInlineBudgetSave,
 }: {
   codemode: McpCodemodeInfo;
@@ -1842,6 +1873,7 @@ function McpCodemodeDetail({
   /** A server change is on its way; its answer carries the Code mode choice as read before this save. */
   serverBusy: boolean;
   onChange: (preference: McpCodemodePreference) => void;
+  onModeChange: (mode: CodemodeMode) => void;
   onInlineBudgetSave: (budget: number | null) => void;
 }) {
   const { t } = useI18n();
@@ -1849,7 +1881,7 @@ function McpCodemodeDetail({
   const preference = codemode.preference;
   const waiting = save.saving || serverBusy;
   // A save shows its progress and failure in the row it was made from.
-  const choiceSave = save.target === "inlineBudget" ? { saving: false, error: null } : save;
+  const choiceSave = save.target === undefined || save.target === "preference" ? save : { saving: false, error: null };
   const automaticNotice = mcpCodemodeAutomaticNotice(codemode, autoEnable);
   const alwaysUnavailable = mcpCodemodeAlwaysUnavailableNotice(codemode);
   const builtinNotice = mcpCodemodeBuiltinNotice(codemode);
@@ -1908,6 +1940,16 @@ function McpCodemodeDetail({
             {automaticNotice && <span className="mcp-config-line is-warning">{noticeText(automaticNotice, t)}</span>}
           </div>
         </ConfigDetailGridRow>
+        {codemode.mode ? (
+          <McpCodemodeModeRow mode={codemode.mode} codemode={codemode} save={save} waiting={waiting} onChange={onModeChange} />
+        ) : codemode.modeError !== undefined && (
+          <ConfigDetailGridRow label={t("mcp.codemode.toolMode")} tone="plain">
+            <span className="mcp-config-line is-warning">
+              {t("mcp.codemode.preferenceError")}{" "}
+              <code className="mcp-config-chip">{revealHiddenCharacters(codemode.modeError)}</code>
+            </span>
+          </ConfigDetailGridRow>
+        )}
         {codemode.inlineBudget ? (
           <McpCodemodeInlineBudgetRow
             budget={codemode.inlineBudget}
@@ -1951,6 +1993,63 @@ function McpCodemodeSaveFailure({ error }: { error: McpLoadFailure }) {
   if (error.timedOut) return <>{t("mcp.codemode.saveTimedOut")}</>;
   if (error.reason && error.reason !== "internal") return <>{t(`mcp.reason.${error.reason}`)}</>;
   return <code className="mcp-config-chip">{revealHiddenCharacters(error.error)}</code>;
+}
+
+/**
+ * The mode row of the Code mode pane: the global `codemode.mode`, whether the
+ * active built-in and extension tools stay declared to the model while Code
+ * mode is on ("on", pi's default) or are reached only from scripts ("only").
+ * Sessions read it when they start, like the choice. Choosing the pressed
+ * option saves too while the stored value is not a mode, which that replaces.
+ */
+function McpCodemodeModeRow({
+  mode,
+  codemode,
+  save,
+  waiting,
+  onChange,
+}: {
+  mode: McpCodemodeMode;
+  /** The rest of the pane's Code mode, which the notices weigh the mode against. */
+  codemode: McpCodemodeInfo;
+  save: McpCodemodeSaveState;
+  /** A Code mode save or a server change is on its way. */
+  waiting: boolean;
+  onChange: (mode: CodemodeMode) => void;
+}) {
+  const { t } = useI18n();
+  const own = save.target === "mode";
+  const notices = mcpCodemodeModeNotices(codemode);
+  return (
+    <ConfigDetailGridRow label={t("mcp.codemode.toolMode")} tone="plain">
+      <div className="mcp-config-lines">
+        <ConfigScopeSwitch
+          value={mode.value}
+          label={t("mcp.codemode.toolMode")}
+          options={[
+            { value: "on", label: t(MCP_CODEMODE_MODE_KEYS.on), disabled: waiting },
+            { value: "only", label: t(MCP_CODEMODE_MODE_KEYS.only), disabled: waiting },
+          ]}
+          onChange={(value) => {
+            if (mcpCodemodeModeChanges(mode, value)) onChange(value);
+          }}
+        >
+          {own && save.saving && <span role="status" className="mcp-config-line is-dim">{t("i18n.saving")}</span>}
+        </ConfigScopeSwitch>
+        <span className="mcp-config-line">{t(MCP_CODEMODE_MODE_DESCRIPTION_KEYS[mode.value])}</span>
+        <span className="mcp-config-line is-dim">{t("mcp.codemode.appliesLater")}</span>
+        {notices.map((notice) => (
+          <span key={notice.key} className="mcp-config-line is-warning">{noticeText(notice, t)}</span>
+        ))}
+        {own && save.error && (
+          <span role="alert" className="mcp-config-line is-error">
+            {t("mcp.codemode.toolMode.saveFailed")}{" "}
+            <McpCodemodeSaveFailure error={save.error} />
+          </span>
+        )}
+      </div>
+    </ConfigDetailGridRow>
+  );
 }
 
 /**
