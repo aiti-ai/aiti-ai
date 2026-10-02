@@ -873,6 +873,7 @@ export const zhCNLocale: LocalePlugin = {
     "mcp.add.inputLabel": "要添加的服务器",
     "mcp.add.placeholder": "https://mcp.example.com/mcp\nnpx -y @scope/server\nclaude mcp add …\n{ \"mcpServers\": { … } }",
     "mcp.add.hint": "可以粘贴 URL、命令、mcp add 命令行、JSON 配置或安装链接。按 Cmd/Ctrl+Enter 添加。",
+    "mcp.add.examples": "支持的格式（点击填入示例）",
     "mcp.add.rawPi": "启用 pi mcp 语法，支持 $NAME 和 !command",
     "mcp.add.rawPiOn": "环境变量和请求头里的 $NAME 会读取运行 Pi Web 的计算机上的变量，以 ! 开头的值每次连接都会作为命令执行。",
     "mcp.add.serverLabel": "服务器",
