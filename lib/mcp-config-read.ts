@@ -26,6 +26,7 @@ import {
 import { readCodemodePreference, readProjectCodemodeOverride } from "./codemode-settings";
 import { getGlobalSettingsPath } from "./global-settings-file";
 import { mcpConfigKey } from "./mcp-config-key";
+import { jsonErrorMessage } from "./mcp-json-error";
 import { maskArgs, maskCommand, maskUrl } from "./mcp-secrets";
 import { readMcpHostInactive, withMcpStatuses } from "./mcp-status";
 import { findWebPasswordField, resolvedConfigValues, WEB_PASSWORD_VARIABLE } from "./mcp-transport";
@@ -62,9 +63,19 @@ export function projectMcpConfigPath(cwd: string): string {
 // `configKey`, which statuses are compared against: an HMAC of the entry's
 // canonical JSON, never the JSON (`lib/mcp-config-key.ts`).
 export { mcpConfigKey };
+// The parser's message without the text it quotes (`lib/mcp-json-error.ts`).
+export { jsonErrorMessage };
 
 /** The largest project file that is parsed; it comes from a repository nobody may have trusted. */
 export const PROJECT_MCP_CONFIG_MAX_BYTES = 1024 * 1024;
+/**
+ * The most servers a project file may declare to be listed. A repository's
+ * file of 1 MiB holds tens of thousands of names, each of which would be
+ * validated, hashed and sent to the panel (tens of megabytes) and to the trust
+ * dialog; past this the file is reported as a problem instead, as one over
+ * 1 MiB is.
+ */
+export const MCP_PROJECT_MAX_SERVERS = 200;
 /** Windows defines neither flag; it has no FIFOs, and the real-path check still refuses a link that leads outside. */
 const OPEN_FLAGS = constants.O_RDONLY | (constants.O_NONBLOCK || 0) | (constants.O_NOFOLLOW || 0);
 
@@ -259,70 +270,6 @@ function readProjectFile(cwd: string, allowedRoots: Set<string>): { info: McpCon
   return { info, text: readResolvedFile(location.realPath, info, PROJECT_MCP_CONFIG_MAX_BYTES) };
 }
 
-// V8's message for an unexpected token quotes the source around it instead of
-// giving a position: the whole text when it is shorter than 21 characters,
-// else up to 10 characters on either side, with `...` where it was cut.
-const UNEXPECTED_TOKEN = /^Unexpected token '([\s\S])', ([\s\S]*) is not valid JSON$/;
-const TOKEN_CONTEXT = 10;
-
-/** Where V8's quoted context puts the unexpected token in `text`, or undefined when it cannot be told. */
-function unexpectedTokenPosition(text: string, token: string, quoted: string): number | undefined {
-  const cutBefore = quoted.startsWith('..."');
-  const cutAfter = quoted.endsWith('"...');
-  const inner = quoted.slice(cutBefore ? 3 : 0, cutAfter ? -3 : undefined);
-  if (inner.length < 2 || !inner.startsWith('"') || !inner.endsWith('"')) return undefined;
-  // The whole text: V8 says nothing about where in it.
-  if (!cutBefore && !cutAfter) return undefined;
-  const context = inner.slice(1, -1);
-  let position: number;
-  if (!cutBefore) {
-    if (!text.startsWith(context)) return undefined;
-    position = context.length - TOKEN_CONTEXT;
-  } else if (!cutAfter) {
-    if (!text.endsWith(context)) return undefined;
-    position = text.length - context.length + TOKEN_CONTEXT;
-  } else {
-    position = text.indexOf(context);
-    while (position >= 0 && text[position + TOKEN_CONTEXT] !== token) position = text.indexOf(context, position + 1);
-    if (position < 0) return undefined;
-    position += TOKEN_CONTEXT;
-  }
-  return text[position] === token ? position : undefined;
-}
-
-/** `at position 62 (line 5 column 7)`, as V8 words the messages that give one. */
-function describePosition(text: string, position: number): string {
-  const before = text.slice(0, position);
-  const line = before.split("\n").length;
-  const column = position - before.lastIndexOf("\n");
-  return `at position ${position} (line ${line} column ${column})`;
-}
-
-/**
- * The parser's message without the source text it quotes. For an unexpected
- * token V8 quotes up to twenty characters around it (`Unexpected token ''',
- * ..."B_TOKEN": 'ghp_abcde"... is not valid JSON`), and that text is often a
- * literal secret — a single-quoted value is the usual mistake. The message
- * keeps the token only when it is punctuation, never a letter or a digit of
- * a value, and gives the position the quote stood for. Messages that already
- * give a position quote nothing and are kept.
- */
-export function jsonErrorMessage(error: unknown, text: string): string {
-  const message = errorMessage(error);
-  if (!message.includes('"')) return message;
-  const match = UNEXPECTED_TOKEN.exec(message);
-  if (!match) return "Not valid JSON";
-  const [, token, quoted] = match;
-  const code = token.charCodeAt(0);
-  const shown = /[\p{L}\p{N}]/u.test(token)
-    ? ""
-    : /[\p{P}\p{S}]/u.test(token)
-      ? ` '${token}'`
-      : ` U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
-  const position = unexpectedTokenPosition(text, token, quoted);
-  return `Unexpected token${shown} in JSON${position === undefined ? "" : ` ${describePosition(text, position)}`}`;
-}
-
 /** The file's `mcpServers` entries, parsed as the SDK's `loadMcpConfig()` parses them. */
 function parseConfigText(info: McpConfigFileInfo, text: string): [name: string, value: unknown][] {
   let parsed: unknown;
@@ -341,7 +288,12 @@ function parseConfigText(info: McpConfigFileInfo, text: string): [name: string, 
   else if (parsed.autoEnableCodemode !== undefined) {
     problem(info, "auto-enable-codemode-invalid", "autoEnableCodemode must be a boolean");
   }
-  return Object.entries(isRecord(parsed.mcpServers) ? parsed.mcpServers : {});
+  const entries = Object.entries(isRecord(parsed.mcpServers) ? parsed.mcpServers : {});
+  if (info.scope === "project" && entries.length > MCP_PROJECT_MAX_SERVERS) {
+    problem(info, "too-many-servers", `declares ${entries.length} servers, more than ${MCP_PROJECT_MAX_SERVERS}`);
+    return [];
+  }
+  return entries;
 }
 
 /**
@@ -439,11 +391,20 @@ function describeServer(
 ): DescribedServer {
   const validation = internals?.validateMcpServerConfig(name, value);
   const config: Record<string, unknown> = isRecord(value) ? value : {};
+  // `mcpConfigKey()` is total; should it ever throw, the entry is listed as one pi refuses,
+  // rather than the whole file (and the global one with it) failing to list.
+  let configKey = "";
+  let keyError: string | undefined;
+  try {
+    configKey = mcpConfigKey(value);
+  } catch (error) {
+    keyError = `server "${name}": cannot be read: ${errorMessage(error)}`;
+  }
   const info: McpServerInfo = {
     name,
     scope,
     sourcePath,
-    configKey: mcpConfigKey(value),
+    configKey,
     enabled: config.enabled !== false,
     validated: internals !== undefined,
     envNames: isRecord(config.env) ? Object.keys(config.env) : [],
@@ -501,6 +462,10 @@ function describeServer(
     : values.find((field) => field.value.toUpperCase().includes(WEB_PASSWORD_VARIABLE));
   if (webPasswordField) info.webPasswordField = fieldRef(webPasswordField);
 
+  if (keyError !== undefined) {
+    info.invalidError ??= keyError;
+    return { info, loads: false };
+  }
   return { info, loads: internals ? typeof validation !== "string" : isRecord(value) };
 }
 

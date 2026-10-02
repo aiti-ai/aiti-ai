@@ -132,6 +132,7 @@ export const MCP_SIGN_IN_REFUSAL_KEYS: Partial<Record<McpRefusalReason, string>>
   "link-outside": "mcp.signIn.refused.file",
   "not-a-file": "mcp.signIn.refused.file",
   "too-large": "mcp.signIn.refused.file",
+  "too-many-servers": "mcp.signIn.refused.file",
   "invalid-request": "mcp.signIn.refused.invalid-request",
 };
 

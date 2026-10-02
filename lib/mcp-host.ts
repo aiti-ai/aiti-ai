@@ -13,6 +13,7 @@ import {
 import type { McpHostInactiveInfo, McpScope, McpSessionState, McpSessionStatus } from "./api-types";
 import { isBuiltinMcpCommand, isMcpExtensionCommand } from "./mcp-command";
 import { canonicalJson, mcpConfigKey } from "./mcp-config-key";
+import { scrubMcpLoadError } from "./mcp-json-error";
 import {
   forgetMcpHostInactive,
   forgetMcpStatus,
@@ -88,6 +89,8 @@ function errorMessage(error: unknown): string {
 // Hot reload re-evaluates this module; globalThis keeps one log line per error per process.
 const CONFIG_ERRORS_LOGGED_KEY: symbol = Symbol.for("pi-web:mcp-config-errors-logged");
 const CONFIG_ERRORS_LOGGED_MAX = 200;
+/** How many of `loadMcpConfig().errors` one sync logs; well below what the set holds. */
+const CONFIG_ERRORS_LOGGED_PER_SYNC = 20;
 
 /**
  * Log an `mcp.json` problem once. Every open session syncs twice per prompt,
@@ -97,10 +100,22 @@ function logConfigErrorOnce(message: string): void {
   const store = globalThis as Record<symbol, Set<string> | undefined>;
   const logged = (store[CONFIG_ERRORS_LOGGED_KEY] ??= new Set());
   if (logged.has(message)) return;
-  if (logged.size >= CONFIG_ERRORS_LOGGED_MAX) logged.clear();
+  // The oldest goes, never the whole set: a file with more errors than the set holds
+  // would otherwise log every one of them again at each sync.
+  if (logged.size >= CONFIG_ERRORS_LOGGED_MAX) logged.delete(logged.values().next().value as string);
   logged.add(message);
   console.warn(`[pi-web] MCP config: ${message}`);
 }
+
+/**
+ * How many of an untrusted project's entries a sync reports as `not-trusted`.
+ * Every one is a record in the status store, which holds 500 across all
+ * entries, and a repository can declare tens of thousands: reporting each would
+ * evict every other record (the user's Tests, other sessions' reports) and
+ * block the event loop on every prompt. Settings lists at most 200 entries of a
+ * project file (`MCP_PROJECT_MAX_SERVERS`), and reads trust itself.
+ */
+export const MCP_UNTRUSTED_REPORT_MAX = 100;
 
 const PROJECT_CONFIG_MAX_BYTES = 1024 * 1024;
 /** Windows defines neither flag; it has no FIFOs, and the realpath check still refuses a link that leads outside. */
@@ -795,30 +810,50 @@ class HostInstance {
     } catch (error) {
       logConfigErrorOnce(`cannot read mcp.json: ${errorMessage(error)}`);
     }
+    // The path the SDK reads the project's entries from, which Settings lists them under.
+    const projectPath = join(ctx.cwd, CONFIG_DIR_NAME, "mcp.json");
     // After the SDK's read, so a file that landed since the trust read is reported too.
     if (!projectReadable) {
-      // The path the SDK reads, which Settings lists the entries under.
-      const sourcePath = join(ctx.cwd, CONFIG_DIR_NAME, "mcp.json");
-      for (const [name, value] of untrustedProjectServerEntries(ctx.cwd)) {
-        this.problems.set(`project\0${name}`, {
-          status: { name, scope: "project", state: "not-trusted" },
-          target: { scope: "project", sourcePath, name, configKey: mcpConfigKey(value) },
-          report: { state: "not-trusted" },
-        });
+      const entries = untrustedProjectServerEntries(ctx.cwd);
+      for (const [name, value] of entries.slice(0, MCP_UNTRUSTED_REPORT_MAX)) {
+        // One entry the host cannot key (`mcpConfigKey()` is total, so this is a guard) never drops the others.
+        try {
+          this.problems.set(`project\0${name}`, {
+            status: { name, scope: "project", state: "not-trusted" },
+            target: { scope: "project", sourcePath: projectPath, name, configKey: mcpConfigKey(value) },
+            report: { state: "not-trusted" },
+          });
+        } catch (error) {
+          logConfigErrorOnce(`${projectPath}: server "${name}" is not reported: ${errorMessage(error)}`);
+        }
+      }
+      if (entries.length > MCP_UNTRUSTED_REPORT_MAX) {
+        logConfigErrorOnce(`${projectPath}: ${entries.length - MCP_UNTRUSTED_REPORT_MAX} more servers of this untrusted project are not reported`);
       }
     }
     if (!loaded) return desired;
-    // Each names its file: an unparsable file, or an entry the SDK refused and skipped.
-    for (const error of loaded.errors) logConfigErrorOnce(error);
+    // Each names its file: an unparsable file, or an entry the SDK refused and skipped. A parse
+    // error quotes the file around the bad token, often part of a secret, so it is reworded.
+    // At most a few per sync: errors past what the dedupe set holds would each be logged again
+    // at every sync, so the rest are one line with their count.
+    const loadedPaths = [join(this.options.agentDir, "mcp.json"), projectPath];
+    for (const error of loaded.errors.slice(0, CONFIG_ERRORS_LOGGED_PER_SYNC)) logConfigErrorOnce(scrubMcpLoadError(error, loadedPaths));
+    if (loaded.errors.length > CONFIG_ERRORS_LOGGED_PER_SYNC) {
+      logConfigErrorOnce(`${loaded.errors.length - CONFIG_ERRORS_LOGGED_PER_SYNC} more errors in mcp.json are not logged`);
+    }
     for (const entry of loaded.servers) {
       if (entry.config.enabled === false) continue;
       const scope = entry.scope === "project" ? "project" : "global";
-      desired.set(entry.name, {
-        config: withReachableExposure(entry.config, this.options.codemodeAvailable()),
-        scope,
-        // The validator hands back the parsed entry itself, so this is the key Settings lists it with.
-        target: { scope, sourcePath: entry.source, name: entry.name, configKey: mcpConfigKey(entry.config) },
-      });
+      try {
+        desired.set(entry.name, {
+          config: withReachableExposure(entry.config, this.options.codemodeAvailable()),
+          scope,
+          // The validator hands back the parsed entry itself, so this is the key Settings lists it with.
+          target: { scope, sourcePath: entry.source, name: entry.name, configKey: mcpConfigKey(entry.config) },
+        });
+      } catch (error) {
+        logConfigErrorOnce(`${entry.source}: server "${entry.name}" is not connected: ${errorMessage(error)}`);
+      }
     }
     return desired;
   }

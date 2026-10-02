@@ -273,7 +273,9 @@ restores the branch's tool set from its transcript.
   servers run. What Pi Web adds is visibility: the panel lists an untrusted
   project's entries with the command each would run and the host variables
   each would read, and the trust dialog lists them before the folder is
-  trusted. The dialog opens only for a folder that requires trust and is not
+  trusted. A project file over 1 MiB, or declaring more than 200 servers, is
+  reported instead of listed: it comes from a repository nobody has trusted
+  yet. The dialog opens only for a folder that requires trust and is not
   trusted, so a project trusted through an ancestor, the case "Context"
   names, never shows it; the panel lists that project's servers under
   "Trusted through <path>". Tightening trust itself (exact rather than
