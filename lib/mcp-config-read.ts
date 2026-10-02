@@ -26,9 +26,10 @@ import {
 import {
   CODEMODE_INLINE_BUDGET_DEFAULT,
   CODEMODE_INLINE_BUDGET_MAX,
-  readCodemodeInlineBudget,
   readCodemodePreference,
+  readCodemodeSettings,
   readProjectCodemodeInlineBudget,
+  readProjectCodemodeMode,
   readProjectCodemodeOverride,
 } from "./codemode-settings";
 import { getGlobalSettingsPath } from "./global-settings-file";
@@ -672,11 +673,11 @@ function mcpAvailability(
 }
 
 /**
- * Code mode as a session would get it: the global preference and inline
+ * Code mode as a session would get it: the global preference, mode and inline
  * budget, the sandbox self-test and `-builtin:codemode` (both as the project's
  * sessions see it and as the global settings alone say), and, given
- * `trustedCwd`, the project settings that decide either there whatever the
- * global value.
+ * `trustedCwd`, the project settings that decide any of them there whatever
+ * the global value.
  */
 async function codemodeInfo(
   agentDir: string,
@@ -703,15 +704,19 @@ async function codemodeInfo(
   }
   const projectOverride = trustedCwd === undefined ? undefined : readProjectCodemodeOverride(trustedCwd);
   if (projectOverride) info.projectOverride = projectOverride;
-  // Read on its own: a malformed defaultTools leaves the budget readable, and the other way round.
+  // Read on its own: a malformed defaultTools leaves the codemode object readable, and the other way round.
   try {
     const settingsPath = getGlobalSettingsPath(agentDir);
-    const budget = await readCodemodeInlineBudget(settingsPath);
-    info.inlineBudget = { ...budget, settingsPath, default: CODEMODE_INLINE_BUDGET_DEFAULT, max: CODEMODE_INLINE_BUDGET_MAX };
+    const { mode, inlineBudget } = await readCodemodeSettings(settingsPath);
+    info.mode = { ...mode, settingsPath };
+    const projectMode = trustedCwd === undefined ? undefined : readProjectCodemodeMode(trustedCwd);
+    if (projectMode) info.mode.projectOverride = projectMode;
+    info.inlineBudget = { ...inlineBudget, settingsPath, default: CODEMODE_INLINE_BUDGET_DEFAULT, max: CODEMODE_INLINE_BUDGET_MAX };
     const projectBudget = trustedCwd === undefined ? undefined : readProjectCodemodeInlineBudget(trustedCwd);
     if (projectBudget) info.inlineBudget.projectOverride = projectBudget;
   } catch (error) {
-    info.inlineBudgetError = errorMessage(error);
+    info.modeError = errorMessage(error);
+    info.inlineBudgetError = info.modeError;
   }
   return info;
 }

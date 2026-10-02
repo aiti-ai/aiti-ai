@@ -68,6 +68,12 @@ const {
   parseMcpInlineBudgetDraft,
   saveMcpCodemodeInlineBudget,
   withMcpCodemodeInlineBudget,
+  MCP_CODEMODE_MODE_DESCRIPTION_KEYS,
+  MCP_CODEMODE_MODE_KEYS,
+  mcpCodemodeModeChanges,
+  mcpCodemodeModeNotices,
+  saveMcpCodemodeMode,
+  withMcpCodemodeMode,
   MCP_EXPOSURE_SHORT_KEYS,
   MCP_TEST_BLOCK_KEYS,
   MCP_TEST_REFUSAL_KEYS,
@@ -699,7 +705,88 @@ test("why an exposure's tools may be out of reach depends on the exposure", () =
   for (const key of ["mcp.exposure.toolSearchDisabled", "mcp.exposure.toolSearchDisabledUnknown"]) assert.equal(typeof messages[key], "string", key);
 });
 
-const inlineBudget = { settingsPath: "/Users/me/.pi/agent/settings.json", default: 3000, max: 1_000_000 };
+const globalSettingsPath = "/Users/me/.pi/agent/settings.json";
+const projectSettingsPath = "/Users/me/repo/.pi/settings.json";
+
+test("the mode switch saves another mode, or either one over a value that is not a mode", () => {
+  const mode = { settingsPath: globalSettingsPath, value: "on" };
+  assert.equal(mcpCodemodeModeChanges(mode, "on"), false);
+  assert.equal(mcpCodemodeModeChanges(mode, "only"), true);
+  assert.equal(mcpCodemodeModeChanges({ ...mode, value: "only" }, "only"), false);
+  assert.equal(mcpCodemodeModeChanges({ ...mode, invalid: '"never"' }, "on"), true);
+  for (const key of [...Object.values(MCP_CODEMODE_MODE_KEYS), ...Object.values(MCP_CODEMODE_MODE_DESCRIPTION_KEYS)]) {
+    assert.equal(typeof messages[key], "string", key);
+  }
+});
+
+test("the mode's notes name a value that is not a mode, a project that decides for itself, and Automatic's wait", () => {
+  const info = (mode, extra = {}) => ({ sandbox: { state: "available" }, builtinDisabled: false, preference: "always", mode, ...extra });
+  assert.deepEqual(mcpCodemodeModeNotices(info(undefined)), []);
+  assert.deepEqual(mcpCodemodeModeNotices(info({ settingsPath: globalSettingsPath, value: "only" })), []);
+  assert.deepEqual(mcpCodemodeModeNotices(info({
+    settingsPath: globalSettingsPath,
+    value: "on",
+    invalid: '"never"',
+    projectOverride: { settingsPath: projectSettingsPath, value: "only" },
+  })), [
+    { key: "mcp.codemode.toolMode.invalid", params: { path: globalSettingsPath, value: '"never"' } },
+    { key: "mcp.codemode.toolMode.projectOverride.only", params: { path: projectSettingsPath } },
+  ]);
+  assert.deepEqual(mcpCodemodeModeNotices(info({
+    settingsPath: globalSettingsPath,
+    value: "only",
+    projectOverride: { settingsPath: projectSettingsPath, value: "on" },
+  })), [{ key: "mcp.codemode.toolMode.projectOverride.on", params: { path: projectSettingsPath } }]);
+
+  // "only" under Automatic waits for an MCP server to turn Code mode on; the effective values count.
+  const only = { settingsPath: globalSettingsPath, value: "only" };
+  assert.deepEqual(mcpCodemodeModeNotices(info(only, { preference: "automatic" })), [{ key: "mcp.codemode.toolMode.automaticNote" }]);
+  assert.deepEqual(mcpCodemodeModeNotices(info(only, { preference: "automatic", projectOverride: { settingsPath: projectSettingsPath, preference: "always" } })), []);
+  assert.deepEqual(mcpCodemodeModeNotices(info(
+    { settingsPath: globalSettingsPath, value: "on", projectOverride: { settingsPath: projectSettingsPath, value: "only" } },
+    { projectOverride: { settingsPath: projectSettingsPath, preference: "automatic" } },
+  )).map((notice) => notice.key), ["mcp.codemode.toolMode.projectOverride.only", "mcp.codemode.toolMode.automaticNote"]);
+  for (const key of [
+    "mcp.codemode.toolMode.invalid",
+    "mcp.codemode.toolMode.projectOverride.on",
+    "mcp.codemode.toolMode.projectOverride.only",
+    "mcp.codemode.toolMode.automaticNote",
+    "mcp.codemode.toolMode.saveFailed",
+  ]) assert.equal(typeof messages[key], "string", key);
+});
+
+test("the mode is saved through the tools settings route and answers with what it stored", async () => {
+  const saved = fakeFetch([{ status: 200, body: { isWindows: false, powerShellEnabled: false, codemode: "automatic", codemodeMode: { value: "only" }, codemodeInlineBudget: {} } }]);
+  assert.deepEqual(await saveMcpCodemodeMode("only", saved.fetchImpl), { ok: true, mode: { value: "only" } });
+  assert.equal(saved.calls[0].input, "/api/tools/settings");
+  assert.equal(saved.calls[0].init.method, "PUT");
+  assert.deepEqual(JSON.parse(saved.calls[0].init.body), { codemodeMode: "only" });
+
+  const refused = fakeFetch([{ status: 500, body: { error: "Invalid settings.json: codemode must be an object", reason: "internal" } }]);
+  assert.deepEqual(await saveMcpCodemodeMode("only", refused.fetchImpl), {
+    ok: false,
+    error: { error: "Invalid settings.json: codemode must be an object", reason: "internal" },
+  });
+  // A 200 without a mode is not taken for a save.
+  const odd = fakeFetch([{ status: 200, body: { codemode: "automatic", codemodeMode: { value: "off" } } }]);
+  assert.deepEqual(await saveMcpCodemodeMode("on", odd.fetchImpl), { ok: false, error: { error: "HTTP 200" } });
+  const timedOut = await saveMcpCodemodeMode("on", () => new Promise(() => {}), undefined, 30);
+  assert.equal(timedOut.ok, false);
+  assert.equal(timedOut.error.timedOut, true);
+});
+
+test("a saved mode replaces the stored value and keeps the file and the project's own", () => {
+  const projectOverride = { settingsPath: projectSettingsPath, value: "on" };
+  const data = { ...overview, codemode: { ...overview.codemode, mode: { settingsPath: globalSettingsPath, value: "on", invalid: '"never"', projectOverride } } };
+  const next = withMcpCodemodeMode(data, { value: "only" });
+  assert.deepEqual(next.codemode.mode, { settingsPath: globalSettingsPath, projectOverride, value: "only" });
+  assert.equal(next.codemode.preference, data.codemode.preference);
+  assert.equal(data.codemode.mode.invalid, '"never"', "the loaded overview is not changed in place");
+  // An overview without a mode (its file could not be read) is left for the reload.
+  assert.equal(withMcpCodemodeMode(overview, { value: "only" }), overview);
+});
+
+const inlineBudget = { settingsPath: globalSettingsPath, default: 3000, max: 1_000_000 };
 
 test("the budget field is empty for pi's default and saves a whole number within the limit, or empty", () => {
   assert.equal(mcpInlineBudgetDraftOf(inlineBudget), "");
