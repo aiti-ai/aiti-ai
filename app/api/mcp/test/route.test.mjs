@@ -77,7 +77,24 @@ async function get(query = "") {
   return (await response.json()).servers;
 }
 
-test("a global server is tested from its file and answers with what it found", async () => {
+/** Sets `name` in the environment for one test, restoring what was there after it. */
+function setEnvFor(t, name, value) {
+  const previous = process.env[name];
+  process.env[name] = value;
+  t.after(() => {
+    if (previous === undefined) delete process.env[name];
+    else process.env[name] = previous;
+  });
+}
+
+test("a global server is tested from its file and answers with what it found", async (t) => {
+  // Set, so the check below fails if the transport ever hands the child the whole environment.
+  setEnvFor(t, "PI_WEB_PASSWORD", "web-password");
+  // Without a project the server starts in the home folder: a temporary one, never the developer's.
+  const home = join(root, "home");
+  await mkdir(home, { recursive: true });
+  setEnvFor(t, "HOME", home);
+  assert.equal(homedir(), home);
   const { status, body } = await post({ scope: "global", name: "lint" });
   assert.equal(status, 200);
   assert.equal(body.scope, "global");
@@ -85,7 +102,7 @@ test("a global server is tested from its file and answers with what it found", a
   assert.equal(body.result.state, "connected", body.result.error);
   assert.deepEqual(body.result.tools.map((tool) => tool.name), ["env_has", "env_get", "spawn_child", "record"]);
   // Without a project, a global stdio server runs in the home folder, and the answer says so.
-  assert.equal(body.result.cwd, homedir());
+  assert.equal(body.result.cwd, home);
   // The key of the entry the test read: the panel shows the result only for that entry.
   const listed = (await get()).find((server) => server.name === "lint");
   assert.equal(body.configKey, listed.configKey);
