@@ -26,6 +26,7 @@ import {
   type McpImportResult,
   type McpImportServer,
 } from "@/lib/mcp-import";
+import { findWebPasswordField, resolvedConfigValues, type McpResolvedConfigValue } from "@/lib/mcp-config-values";
 import { SECRET_MASK } from "@/lib/mcp-secrets";
 import { formatMcpCommandLine, revealHiddenCharacters } from "@/lib/mcp-server-display";
 import { isBlockingFileProblem, mcpProjectTrustable, mcpWritesOff } from "./mcp-config-helpers";
@@ -316,13 +317,9 @@ function hideForms(text: string, forms: readonly string[]): { text: string; mask
   return { text: result, masked: result !== text };
 }
 
-function fieldRefs(config: McpServerConfig): { field: McpConfigFieldRef; value: string }[] {
-  if ("url" in config) {
-    const refs: { field: McpConfigFieldRef; value: string }[] = Object.entries(config.headers ?? {}).map(([name, value]) => ({ field: { kind: "header", name }, value }));
-    if (typeof config.oauth?.clientSecret === "string") refs.push({ field: { kind: "oauth-client-secret" }, value: config.oauth.clientSecret });
-    return refs;
-  }
-  return Object.entries(config.env ?? {}).map(([name, value]) => ({ field: { kind: "env", name }, value }));
+/** The field a resolved value sits in, as the listing names it. */
+function fieldOf({ kind, name }: McpResolvedConfigValue): McpConfigFieldRef {
+  return name === undefined ? { kind } : { kind, name };
 }
 
 /**
@@ -343,9 +340,10 @@ export function mcpAddPreview(server: McpImportServer, values: Readonly<Record<s
   const enabled = config.enabled !== false;
   const base = {
     source: server.source,
-    commandFields: fieldRefs(config).filter(({ value }) => isCommandConfigValue(value)).map(({ field }) => field),
-    variableReferences: fieldRefs(config)
-      .map(({ field, value }) => ({ ...field, variables: configValueEnvVarNames(value) }))
+    // The values the SDK resolves, by the walk the server-side reader and the transport use.
+    commandFields: resolvedConfigValues(config).filter(({ value }) => isCommandConfigValue(value)).map(fieldOf),
+    variableReferences: resolvedConfigValues(config)
+      .map((resolved) => ({ ...fieldOf(resolved), variables: configValueEnvVarNames(resolved.value) }))
       .filter(({ variables }) => variables.length > 0),
     ...(config.exposure ? { exposure: config.exposure } : {}),
     enabled,
@@ -471,11 +469,9 @@ function namesIn(data: Pick<McpResponse, "servers">, scope: McpScope): string[] 
   return data.servers.filter((server) => server.scope === scope).map((server) => server.name);
 }
 
-/** Whether a value references PI_WEB_PASSWORD, which the route refuses as the transport would. */
+/** Whether a value references PI_WEB_PASSWORD, which the route refuses as the transport would: the transport's own rule. */
 function referencesWebPassword(config: McpServerConfig): boolean {
-  return fieldRefs(config).some(({ value }) => (isCommandConfigValue(value)
-    ? value.toUpperCase().includes("PI_WEB_PASSWORD")
-    : configValueEnvVarNames(value).some((name) => name.toUpperCase() === "PI_WEB_PASSWORD")));
+  return findWebPasswordField(config, { isCommandConfigValue, getConfigValueEnvVarNames: configValueEnvVarNames }) !== undefined;
 }
 
 /**
