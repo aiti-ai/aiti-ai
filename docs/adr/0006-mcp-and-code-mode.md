@@ -260,13 +260,23 @@ the SDK's files at run time), no session offers `codemode`: the
 but registers nothing. The panel shows the result, and "not checked yet"
 until a normal session has run the test.
 
-The pane also edits the global `codemode.inlineBudget`, the estimated
-tokens the `codemode` description may spend declaring tools (pi's default
-3000), through the same route and lock. An earlier version of this decision
-kept it file-only, but one server with many tools fills that budget, so it is
-the setting that decides what an MCP server costs every request; the pane
-names a trusted project whose settings set their own. `codemode.mode`,
-`autoEnableCodemode`, and the `±builtin:*` entries stay file-only; they keep
+The pane also edits two global `codemode` settings through the same route
+and lock, and names a trusted project whose settings set their own. An
+earlier version of this decision kept both file-only.
+
+- `codemode.inlineBudget`, the estimated tokens the `codemode` description
+  may spend declaring tools (pi's default 3000). One server with many tools
+  fills that budget, so it is the setting that decides what an MCP server
+  costs every request.
+- `codemode.mode`, the **Built-in tools** switch: `on` (pi's default, which
+  the switch writes by removing the key) keeps the active built-in and
+  extension tools declared while Code mode is on; `only` leaves their
+  declarations out of requests and lists them in the `codemode` description,
+  within the same budget, so the model calls them from scripts. It decides
+  how a session reaches its own tools, not which tools it has: a preset
+  still bounds them, since a `direct` tool is callable only while active.
+
+`autoEnableCodemode` and the `±builtin:*` entries stay file-only; they keep
 working as in the CLI. The panel reports the ones that change what it offers
 (`-builtin:mcp`, `-builtin:codemode`, `autoEnableCodemode: false`).
 
