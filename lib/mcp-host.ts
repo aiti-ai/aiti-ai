@@ -11,6 +11,7 @@ import {
   type McpTransportFactory,
 } from "@earendil-works/pi-coding-agent";
 import type { McpHostInactiveInfo, McpScope, McpSessionState, McpSessionStatus } from "./api-types";
+import { isBuiltinMcpCommand, isMcpExtensionCommand } from "./mcp-command";
 import { canonicalJson, mcpConfigKey } from "./mcp-config-key";
 import {
   forgetMcpHostInactive,
@@ -60,7 +61,6 @@ const DEFAULT_MCP_IDLE_MS = 10 * 60 * 1000;
 const PROMPT_WAIT_MS = 10_000;
 /** How long an unregister waits for the extension to start a connection it can close. */
 const REPLACE_WAIT_MS = 5_000;
-const MCP_EXTENSION_PATH = "builtin:mcp";
 const LIST_METHODS = new Set(["tools/list", "resources/list", "resources/templates/list"]);
 
 /**
@@ -506,12 +506,13 @@ class HostInstance {
     pi.on("session_start", (_event, ctx) => {
       this.ctx = ctx;
       // The built-in MCP extension may be switched off (-builtin:mcp) or replaced by one that
-      // registers /mcp; such an extension would connect these servers its own way, so the
-      // host hands it nothing.
-      const commands = pi.getCommands().filter((command) => command.name === "mcp");
-      this.active = commands.some((command) => command.sourceInfo?.path === MCP_EXTENSION_PATH);
-      // `-builtin:mcp` leaves no /mcp at all, which Settings reads from the files. Another
-      // extension's /mcp only a session can see, by loading the extensions.
+      // registers /mcp (several are named mcp:1, mcp:2, …); such an extension would connect
+      // these servers its own way, so the host hands it nothing.
+      const commands = pi.getCommands().filter(isMcpExtensionCommand);
+      this.active = commands.some(isBuiltinMcpCommand);
+      // `-builtin:mcp` leaves no /mcp at all, which Settings reads from the files; a prompt
+      // template named mcp is no owner. Another extension's /mcp only a session can see, by
+      // loading the extensions.
       this.reportActivity(ctx, this.active ? undefined : commands[0]?.sourceInfo?.path);
     });
     pi.on("before_agent_start", () => {

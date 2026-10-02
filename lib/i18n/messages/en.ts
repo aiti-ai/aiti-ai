@@ -677,7 +677,7 @@ export const enLocale: LocalePlugin = {
     "mcp.exposure.sandboxUnavailable": "Code mode cannot run on this Pi Web server, so these tools are reached through tool search instead.",
     "mcp.exposure.builtinDisabled": "-builtin:codemode turns Code mode off, so these tools can be called only while tool search is active.",
     "mcp.exposure.autoEnableOff": "autoEnableCodemode is false in {path}, so sessions do not turn Code mode on for these tools: they can be called only while Code mode is Always on or tool search is active.",
-    "mcp.disclosure": "Sessions register these servers through Pi Web's MCP host, so /mcp in a chat (its list, login and reconnect) shows them with the scope \"extension\".",
+    "mcp.disclosure": "Sessions register these servers through Pi Web's MCP host. In a chat whose /mcp is Pi's built-in one, or that has none, /mcp on its own opens this panel; /mcp login and /mcp reconnect are still sent to the session and act on its own connections.",
     "mcp.empty": "No MCP servers yet. Servers in {globalPath} and in a project's .pi/mcp.json appear here.",
     "mcp.emptyFileProblem": "No servers could be listed: see the file problems below.",
     "mcp.selectItem": "Select a server or Code mode.",

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useTheme } from "@/hooks/useTheme";
 import { THEME_OPTIONS } from "@/lib/theme";
@@ -22,7 +22,7 @@ import {
   settingsSectionRequiresProject,
   type SettingsSection,
 } from "@/lib/settings-navigation";
-import { listenForPanelEscape } from "@/lib/stacked-dialog";
+import { focusModalPanel, listenForPanelEscape } from "@/lib/stacked-dialog";
 import {
   isThinkingExpandedByDefault,
   setThinkingExpandedByDefault,
@@ -424,6 +424,15 @@ export function SettingsPanel({
   // so one Escape closes that dialog and leaves Settings open.
   useEffect(() => listenForPanelEscape(document, onClose), [onClose]);
 
+  // Focus moves into Settings as it opens and back to what had it once it closes. Left
+  // on the chat composer (a bare /mcp opens Settings from there), Escape would reach the
+  // composer first and stop a running agent, which also kept Settings open. A layout
+  // effect, so the opener is read before a section focuses its own search box.
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => focusModalPanel(document, dialogRef.current, {
+    restoreTextEntry: !window.matchMedia?.("(pointer: coarse)").matches,
+  }), []);
+
   useEffect(() => {
     if (cwd || !sectionRequiresProject) return;
     setSection("general");
@@ -449,9 +458,11 @@ export function SettingsPanel({
 
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={t("settings.title")}
+      tabIndex={-1}
       onClick={(event) => { if (event.target === event.currentTarget) onClose(); }}
       className="settings-dialog-backdrop"
     >

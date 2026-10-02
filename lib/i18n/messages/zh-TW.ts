@@ -677,7 +677,7 @@ export const zhTWLocale: LocalePlugin = {
     "mcp.exposure.sandboxUnavailable": "程式碼模式無法在此 Pi Web 伺服器上執行，因此這些工具改為透過工具搜尋呼叫。",
     "mcp.exposure.builtinDisabled": "-builtin:codemode 關閉了程式碼模式，因此只有在工具搜尋開啟時才能呼叫這些工具。",
     "mcp.exposure.autoEnableOff": "{path} 中的 autoEnableCodemode 為 false，因此工作階段不會為這些工具開啟程式碼模式：只有程式碼模式設為「一律開啟」或工具搜尋開啟時才能呼叫它們。",
-    "mcp.disclosure": "工作階段透過 Pi Web 的 MCP 主機註冊這些伺服器，因此聊天中的 /mcp（清單、login 和 reconnect）會把它們的範圍顯示為 \"extension\"。",
+    "mcp.disclosure": "工作階段透過 Pi Web 的 MCP 主機註冊這些伺服器。在 /mcp 是 Pi 內建命令（或沒有 /mcp）的聊天中，單獨輸入 /mcp 會開啟此面板；/mcp login 和 /mcp reconnect 仍會傳送給工作階段，作用於該工作階段自身的連線。",
     "mcp.empty": "還沒有 MCP 伺服器。{globalPath} 和專案 .pi/mcp.json 中的伺服器會顯示在這裡。",
     "mcp.emptyFileProblem": "無法列出任何伺服器：請看下方的檔案問題。",
     "mcp.selectItem": "選擇一個伺服器或程式碼模式。",
