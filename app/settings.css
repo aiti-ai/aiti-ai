@@ -2050,6 +2050,20 @@
   flex-shrink: 0;
 }
 
+/* A server's exposure dropdown, sized to its longest option, with its Saving… beside it. */
+.mcp-exposure-choice {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.mcp-add-input.mcp-exposure-select {
+  width: auto;
+  max-width: 100%;
+}
+
 /* The add pane (components/McpAddServer.tsx). Notes, fields and the failure
    wrap inside the narrow phone pane; inputs take the pane's width. */
 .mcp-add-input {

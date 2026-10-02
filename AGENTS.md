@@ -59,7 +59,7 @@ app/api/
   worktrees/route.ts               GET/POST/DELETE git worktrees
   terminal/route.ts                POST create a terminal session
   terminal/[id]/route.ts           GET { id, cwd } (404 once closed; stream at [id]/events) | POST input/resize | DELETE kill
-  mcp/route.ts                     GET [?cwd=] Settings › MCP overview, files only | POST add/enable/disable/remove/undo/set-enabled/sign-out
+  mcp/route.ts                     GET [?cwd=] Settings › MCP overview, files only | POST add/enable/disable/remove/undo/set-enabled/set-exposure/sign-out
   mcp/test/route.ts                POST { scope, name, cwd? } test one server once (entry read from its file)
   mcp/sign-in/route.ts             POST { scope, name, cwd? } start or join an OAuth sign-in
   mcp/sign-in/[flowId]/route.ts    GET flow state (polled) | POST { redirectUrl } | DELETE cancel
@@ -161,7 +161,7 @@ components/
   AgentsConfig.tsx         built-in subagent toggle + agent profile editor
   PluginsConfig.tsx        Settings › Plugins: installed package plugins
   SkillsConfig.tsx         Settings › Skills: loaded, search, install
-  McpConfig.tsx            Settings › MCP: servers, switches, remove/undo, Test, sign-in, Code mode, trust
+  McpConfig.tsx            Settings › MCP: servers, switches, exposure, remove/undo, Test, sign-in, Code mode, trust
   mcp-config-helpers.ts    pure helpers and requests for McpConfig
   McpSignIn.tsx            a server's Sign-in row in Settings › MCP
   mcp-sign-in-helpers.ts   pure helpers and requests for McpSignIn

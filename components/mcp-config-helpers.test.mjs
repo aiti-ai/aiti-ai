@@ -9,6 +9,7 @@ const {
   MCP_CODEMODE_SELECTION,
   MCP_CODEMODE_STATE_KEYS,
   MCP_EXPOSURE_KEYS,
+  MCP_EXPOSURE_OPTIONS,
   MCP_ACTION_TIMEOUT_MS,
   MCP_OVERVIEW_TIMEOUT_MS,
   MCP_READ_ONLY_KEYS,
@@ -26,6 +27,7 @@ const {
   mcpCodemodeBuiltinNotice,
   mcpCodemodeProjectOverrideNotice,
   mcpCodemodeReachNotice,
+  mcpExposureReachNotice,
   mcpCodemodeRowState,
   mcpCodemodeTone,
   mcpEffectiveAutoEnableCodemode,
@@ -665,6 +667,36 @@ test("a saved choice replaces the preference and its read error in the loaded ov
   assert.deepEqual(next.codemode, { sandbox: { state: "available" }, builtinDisabled: false, preference: "always" });
   assert.equal(next.servers, data.servers);
   assert.equal(data.codemode.preferenceError, "Unexpected token", "the loaded overview is not changed in place");
+});
+
+test("the exposure dropdown offers every exposure the SDK accepts, each described", async () => {
+  const { MCP_EXPOSURES } = await jiti.import("@/lib/mcp-import.ts");
+  assert.deepEqual([...MCP_EXPOSURE_OPTIONS], [...MCP_EXPOSURES]);
+  for (const exposure of MCP_EXPOSURE_OPTIONS) {
+    assert.equal(typeof messages[MCP_EXPOSURE_KEYS[exposure]], "string", exposure);
+    assert.equal(typeof messages[MCP_EXPOSURE_SHORT_KEYS[exposure]], "string", exposure);
+  }
+});
+
+test("why an exposure's tools may be out of reach depends on the exposure", () => {
+  const codemode = { sandbox: { state: "available" }, builtinDisabled: true, preference: "automatic" };
+  const autoEnable = { value: true };
+  const toolSearchDisabled = { settingsPath: "/Users/me/.pi/agent/settings.json" };
+  // Code mode's own reasons reach only the exposures Code mode serves.
+  for (const exposure of ["codemode", "codemode-deferred"]) {
+    assert.deepEqual(mcpExposureReachNotice(exposure, { codemode, toolSearchDisabled }, autoEnable), { key: "mcp.exposure.builtinDisabled" });
+  }
+  // Tool search off strands deferred tools, naming the file when there is one.
+  assert.deepEqual(mcpExposureReachNotice("deferred", { codemode, toolSearchDisabled }, autoEnable), {
+    key: "mcp.exposure.toolSearchDisabled",
+    params: { path: toolSearchDisabled.settingsPath },
+  });
+  assert.deepEqual(mcpExposureReachNotice("deferred", { codemode, toolSearchDisabled: {} }, autoEnable), { key: "mcp.exposure.toolSearchDisabledUnknown" });
+  assert.equal(mcpExposureReachNotice("deferred", { codemode }, autoEnable), undefined);
+  for (const exposure of ["direct", "hidden"]) {
+    assert.equal(mcpExposureReachNotice(exposure, { codemode, toolSearchDisabled }, autoEnable), undefined, exposure);
+  }
+  for (const key of ["mcp.exposure.toolSearchDisabled", "mcp.exposure.toolSearchDisabledUnknown"]) assert.equal(typeof messages[key], "string", key);
 });
 
 const inlineBudget = { settingsPath: "/Users/me/.pi/agent/settings.json", default: 3000, max: 1_000_000 };

@@ -160,9 +160,9 @@ export function mcpRowStateLabelKey(state: McpServerRowState, status: McpServerS
 /**
  * The sentence under a server's state in its pane: why it does or does not
  * connect. None for `invalid` and `web-password`, which the pane words with
- * the reason itself, and none for `connected`, `needs-auth`, `failed` and
+ * the reason itself, none for `connected`, `needs-auth`, `failed` and
  * `connecting`, which the Connection row right under it reports with where and
- * when they were seen.
+ * when they were seen, and none for `on`, which needs no explaining.
  */
 export const MCP_ROW_STATE_DETAIL_KEYS: Partial<Record<McpServerRowState, string>> = {
   disabled: "mcp.server.disabled",
@@ -171,7 +171,6 @@ export const MCP_ROW_STATE_DETAIL_KEYS: Partial<Record<McpServerRowState, string
   "mcp-off": "mcp.stateDetail.mcp-off",
   disconnected: "mcp.stateDetail.disconnected",
   conflict: "mcp.stateDetail.conflict",
-  on: "mcp.stateDetail.on",
 };
 
 export function mcpRowStateDetailKey(state: McpServerRowState): string | undefined {
@@ -286,6 +285,19 @@ export const MCP_EXPOSURE_KEYS: Record<NonNullable<McpServerInfo["exposure"]>, s
   direct: "mcp.exposure.direct",
   hidden: "mcp.exposure.hidden",
 };
+
+/**
+ * The exposures a server's Tools row offers, in the order the SDK lists them:
+ * the default first, then cheaper to dearer for the model's context, then
+ * none at all.
+ */
+export const MCP_EXPOSURE_OPTIONS: readonly NonNullable<McpServerInfo["exposure"]>[] = [
+  "codemode",
+  "codemode-deferred",
+  "deferred",
+  "direct",
+  "hidden",
+];
 
 /** The same, as a tag beside one tested tool whose `toolExposure` differs from its server's. */
 export const MCP_EXPOSURE_SHORT_KEYS: Record<NonNullable<McpServerInfo["exposure"]>, string> = {
@@ -478,6 +490,24 @@ export function mcpCodemodeReachNotice(codemode: McpCodemodeInfo, autoEnable: Mc
     return { key: "mcp.exposure.autoEnableOff", params: { path: autoEnable.path } };
   }
   return undefined;
+}
+
+/**
+ * Why the tools of a server with `exposure` may not be callable, for the
+ * exposure the row shows: the Code mode cases of `mcpCodemodeReachNotice()`
+ * for `codemode` and `codemode-deferred`, and for `deferred`, tool search
+ * turned off by `-builtin:tool-search`, which leaves those tools to Code mode
+ * scripts alone. Undefined when a session reaches them.
+ */
+export function mcpExposureReachNotice(
+  exposure: NonNullable<McpServerInfo["exposure"]>,
+  data: Pick<McpResponse, "codemode" | "toolSearchDisabled">,
+  autoEnable: McpAutoEnableCodemode,
+): McpNoticeText | undefined {
+  if (exposure === "codemode" || exposure === "codemode-deferred") return mcpCodemodeReachNotice(data.codemode, autoEnable);
+  if (exposure !== "deferred" || !data.toolSearchDisabled) return undefined;
+  const path = data.toolSearchDisabled.settingsPath;
+  return path ? { key: "mcp.exposure.toolSearchDisabled", params: { path } } : { key: "mcp.exposure.toolSearchDisabledUnknown" };
 }
 
 /**
@@ -993,6 +1023,7 @@ export function mcpGroupSwitchChecked(servers: readonly McpSwitchable[]): boolea
 /** What the panel asks `POST /api/mcp` to do. */
 export type McpActionRequest =
   | { action: "enable" | "disable" | "remove" | "sign-out"; scope: McpScope; name: string }
+  | { action: "set-exposure"; scope: McpScope; name: string; exposure: NonNullable<McpServerInfo["exposure"]> }
   | { action: "set-enabled"; enabled: boolean; servers: McpServerRef[] }
   | { action: "undo"; token: string }
   | {

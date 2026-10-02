@@ -241,6 +241,8 @@ export interface McpServerInfo {
    */
   transport?: McpTransportKind;
   exposure?: McpExposure;
+  /** How many tools `toolExposure` gives an exposure of their own, by exact name or pattern; absent when none. */
+  toolExposureCount?: number;
   command?: string;
   args?: string[];
   /** The configured working directory, relative to the session's. */
@@ -491,6 +493,12 @@ export interface McpProjectInfo {
 export interface McpResponse {
   mcp: McpAvailability;
   codemode: McpCodemodeInfo;
+  /**
+   * Present when `-builtin:tool-search` (or a pattern matching it), in the
+   * global or a trusted project's `extensions`, turns tool search off, so
+   * `deferred` tools are reached only from Code mode scripts.
+   */
+  toolSearchDisabled?: { settingsPath?: string };
   /** The global file, then the project file when a cwd was given. */
   files: McpConfigFileInfo[];
   /** Global entries, then project entries, each in file order. */
