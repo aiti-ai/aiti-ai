@@ -165,7 +165,7 @@ components/
   ChatWindow.tsx      chat composition + completion sound wrapper
   ChatInput.tsx       input bar + model/thinking/tools/compact controls
   MessageView.tsx     renders one message (user/assistant/toolCall/toolResult)
-  CodemodeToolView.tsx  codemode card body: highlighted script + the tool calls it made
+  CodemodeToolView.tsx  codemode card: the tool calls its script made (the script shows like any tool input)
   BranchNavigator.tsx in-session branch switcher
   ChatMinimap.tsx     scroll minimap alongside the message list
   MarkdownBody.tsx    markdown renderer
