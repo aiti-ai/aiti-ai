@@ -79,6 +79,7 @@ test("the paste box is a textarea that never takes focus by itself on a phone, a
       ["https://smithery.ai/servers", "smithery.ai"],
       ["https://mcp.so/", "mcp.so"],
       ["https://registry.modelcontextprotocol.io/", "MCP Registry"],
+      ["https://github.com/mcp", "github.com/mcp"],
     ],
   );
   // The placeholder lists what may be pasted; no sentence under the box repeats it.
