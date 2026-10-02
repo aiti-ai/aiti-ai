@@ -14,7 +14,7 @@ import type {
   ProjectTrustStatus,
 } from "@/lib/api-types";
 import { useI18n } from "@/hooks/useI18n";
-import { shortenPath } from "@/lib/display-path";
+import { displayPathWithin, shortenPath } from "@/lib/display-path";
 import {
   mcpFieldLabel,
   mcpFileProblemDetail,
@@ -950,6 +950,7 @@ export function McpConfigView({
         {added && data && addedServer && (
           <McpAddedNoticeView
             added={added}
+            cwd={cwd}
             server={addedServer}
             testing={tests[added.key]?.running === true}
             signIn={signIns[added.key]}
@@ -1099,10 +1100,14 @@ export function McpConfigView({
 /**
  * What the last Add wrote, above the list: the server and its file, the folder
  * it trusted in the same step, the test that follows, and Sign in when that
- * test found the server asks for one.
+ * test found the server asks for one. A project file is named from the
+ * panel's folder (`./.pi/mcp.json`), which the subtitle shows, and that folder
+ * as "this folder", as the Add button named it: two absolute paths took a
+ * quarter of a phone screen. The detail pane's File row keeps the full path.
  */
 function McpAddedNoticeView({
   added,
+  cwd,
   server,
   testing,
   signIn,
@@ -1111,6 +1116,8 @@ function McpAddedNoticeView({
   onSignIn,
 }: {
   added: McpAddedNotice;
+  /** The panel's project folder, which project paths are shown from. */
+  cwd: string | null;
   /** The server as listed now; the notice goes once the file no longer defines it. */
   server: McpServerInfo;
   testing: boolean;
@@ -1122,7 +1129,7 @@ function McpAddedNoticeView({
 }) {
   const { t } = useI18n();
   const name = revealHiddenCharacters(added.name);
-  const path = displayPath(added.path);
+  const path = added.scope === "project" && cwd ? revealHiddenCharacters(displayPathWithin(added.path, cwd)) : displayPath(added.path);
   const status = server.status;
   const asksSignIn = !testing && status?.origin === "test" && status.state === "needs-auth" && server.usesOAuth;
   const signingIn = signIn?.starting === true || mcpSignInActive(signIn);
@@ -1134,9 +1141,11 @@ function McpAddedNoticeView({
         </ConfigButton>
       ) : undefined}
     >
-      {added.trustedFolder
-        ? t("mcp.add.addedTrusted", { name, path, folder: displayPath(added.trustedFolder) })
-        : t("mcp.add.added", { name, path })}
+      {added.trustedFolder === undefined
+        ? t("mcp.add.added", { name, path })
+        : added.trustedFolder === cwd
+          ? t("mcp.add.addedTrustedHere", { name, path })
+          : t("mcp.add.addedTrusted", { name, path, folder: displayPath(added.trustedFolder) })}
       {testing && <> {t("mcp.add.testing")}</>}
       {asksSignIn && <> {t("mcp.add.needsSignIn")}</>}
     </ConfigNotice>

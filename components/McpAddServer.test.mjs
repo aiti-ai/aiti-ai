@@ -202,6 +202,30 @@ test("a pasted secret read from a variable says how it is stored, and a name pi 
   assert.match(text(html), /Correct GITHUB_TOKEN first\./);
 });
 
+test("a variable box opens with the name it suggests, and an emptied one asks for a name instead of refusing it", () => {
+  // The e2e case: a literal env secret, read from a variable instead.
+  const secret = JSON.stringify({ mcpServers: { api: { command: "npx", args: ["api"], env: { API_TOKEN: "sk-live-0123456789abcdef0123" } } } });
+  let html = decode(pane({ draft: { text: secret, secretReferences: { "env.API_TOKEN": "" } } }));
+  assert.match(html, /aria-label="Variable for env\.API_TOKEN" placeholder="API_TOKEN"[^>]*value=""\/>/);
+  assert.match(text(html), /env\.API_TOKEN: enter the name of the variable to read it from\./);
+  assert.doesNotMatch(text(html), /a variable name has letters/);
+  assert.match(text(html), /Fill in env\.API_TOKEN first\./);
+  // Ticking the box puts the suggestion in it (`suggestedName ?? ""`), which the pane takes as it is.
+  html = decode(pane({ draft: { text: secret, secretReferences: { "env.API_TOKEN": "API_TOKEN" } } }));
+  assert.doesNotMatch(html, /aria-invalid/);
+  assert.match(text(html), /Stored as \$\{API_TOKEN\}/);
+  // A header's suggestion is made from the server's name; a field's from where its value goes.
+  const header = JSON.stringify({ mcpServers: { docs: { url: "https://docs.example.com/mcp", headers: { Authorization: "Bearer sk-live-0123456789abcdef0123" } } } });
+  assert.match(decode(pane({ draft: { text: header, secretReferences: { "headers.Authorization": "" } } })), /aria-label="Variable for headers\.Authorization" placeholder="DOCS_TOKEN"[^>]*value=""\/>/);
+  const field = JSON.stringify({ mcpServers: { gh: { command: "npx", args: ["gh"], env: { GH_PAT: "YOUR_TOKEN" } } } });
+  html = decode(pane({ draft: { text: field, references: { "env.GH_PAT": "" } } }));
+  assert.match(html, /aria-label="Variable for GH_PAT" placeholder="GH_PAT"[^>]*value=""\/>/);
+  assert.match(text(html), /GH_PAT: enter the name of the variable to read it from\./);
+  // Both boxes open with the suggestion, never empty when there is one.
+  assert.equal([...paneSource.matchAll(/setReference\(event\.target\.checked \? suggestedName \?\? "" : undefined\)/g)].length, 2);
+  assert.doesNotMatch(paneSource, /setReference\(event\.target\.checked \? "" : undefined\)/);
+});
+
 test("a refused Add says why; host variables are added only through an explicit second button", () => {
   let html = pane({
     draft: { text: "https://api.example.com/mcp" },
@@ -278,8 +302,47 @@ test("Settings › MCP opens the add pane from the sidebar, keeps the draft, and
     ...props,
   })));
   const notice = addedView();
-  assert.match(text(notice), /Added docs to .*repo\/\.pi\/mcp\.json, and trusted .*repo\. It asks for a sign-in\./);
+  // Short on a phone: the project file from the panel's folder, and that folder as the button named it.
+  assert.match(text(notice), /Added docs to \.\/\.pi\/mcp\.json, and trusted this folder\. It asks for a sign-in\./);
   assert.match(decode(notice), /<div role="status" class="config-notice has-action">[\s\S]*?<button type="button" class="config-button config-button-primary config-button-small">Sign in<\/button>/);
+  // Outside the home folder too, where `~` shortens nothing (the e2e run's folder). The detail
+  // pane's File row still shows the whole path.
+  const far = "/private/tmp/work/some/long/folder/project";
+  const farView = decode(renderToStaticMarkup(h(I18nProvider, null, h(McpConfigView, {
+    cwd: far,
+    load: {
+      state: "loaded",
+      data: overview({ cwd: far, trust: { requiresTrust: true, trusted: true, decision: true, decisionPath: far, inherited: false } }, {
+        files: [globalFile, { ...projectFile, path: `${far}/.pi/mcp.json`, exists: true }],
+        servers: [{
+          name: "docs", scope: "project", sourcePath: `${far}/.pi/mcp.json`, configKey: "k", enabled: true, validated: true,
+          transport: "http", url: "https://docs.example.com/mcp", envNames: [], headerNames: [], usesOAuth: false,
+          commandFields: [], variableReferences: [], masked: false,
+        }],
+      }),
+    },
+    selected: "project\0docs",
+    refreshing: false,
+    embedded: true,
+    added: { scope: "project", name: "docs", path: `${far}/.pi/mcp.json`, key: "project\0docs", trustedFolder: far },
+    onSelect: noop,
+    onRefresh: noop,
+    onCodemodeChange: noop,
+    onClose: noop,
+  }))));
+  const farNotice = farView.match(/<div role="status" class="config-notice[^"]*">([\s\S]*?)<\/div>/)?.[1] ?? "";
+  assert.equal(text(farNotice), "Added docs to ./.pi/mcp.json, and trusted this folder.");
+  assert.match(text(farView), new RegExp(`File ${far.replace(/[/.]/g, "\\$&")}\\/\\.pi\\/mcp\\.json`));
+  // A global Add names its file as the other panels do, and a folder other than the panel's by its path.
+  const globalNotice = text(addedView({ added: { scope: "global", name: "docs", path: globalFile.path, key: "project\0docs" } }));
+  assert.match(globalNotice, /Added docs to ~\/\.pi\/agent\/mcp\.json\./);
+  const elsewhere = text(addedView({ added: { scope: "project", name: "docs", path: projectFile.path, key: "project\0docs", trustedFolder: "/Users/me/other" } }));
+  assert.match(elsewhere, /Added docs to \.\/\.pi\/mcp\.json, and trusted ~\/other\./);
+  for (const [locale, words] of Object.entries(locales)) {
+    assert.equal(typeof words["mcp.add.addedTrustedHere"], "string", locale);
+    assert.match(words["mcp.add.addedTrustedHere"], /\{name\}[\s\S]*\{path\}/, locale);
+    assert.doesNotMatch(words["mcp.add.addedTrustedHere"], /\{folder\}/, locale);
+  }
   // A Sign out of the same server on its way would cancel a sign-in started now, so the notice's
   // Sign in waits for it, as the row's does.
   const signingOut = decode(addedView({ busy: "sign-out:project\0docs" }));

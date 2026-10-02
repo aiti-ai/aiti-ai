@@ -17,10 +17,12 @@ const {
   mcpAddPreview,
   mcpAddProjectMode,
   mcpAddRequest,
+  mcpFieldSuggestedVariableName,
   mcpFieldTakesVariable,
   mcpImportNoteKey,
   mcpImportNoteText,
   mcpImportProblemKey,
+  mcpSuggestedVariableName,
 } = await jiti.import("./mcp-add-helpers.ts");
 const { MCP_IMPORT_NOTE_CODES, parseMcpImport, fillMcpImportFields } = await jiti.import("@/lib/mcp-import.ts");
 const { translateMessage } = await jiti.import("@/lib/i18n/format.ts");
@@ -63,7 +65,7 @@ const SAMPLES = {
   "pi-help": [{}],
   "field-required": [{ field: "env.TOKEN" }],
   "field-invalid-option": [{ field: "input.region" }],
-  "field-reference-invalid": [{ field: "env.TOKEN", problem: "name" }, { field: "args.1", problem: "target" }],
+  "field-reference-invalid": [{ field: "env.TOKEN", problem: "name" }, { field: "args.1", problem: "target" }, { field: "env.TOKEN", problem: "missing" }],
   "sse-transport": [{ server: "old", url: "https://x/sse" }, { url: "https://x/sse", suggestedUrl: "https://x/mcp" }, {}],
   "websocket-transport": [{ server: "ws", url: "wss://x" }, {}],
   "unsupported-transport": [{ server: "x", type: "grpc" }, { type: "grpc" }],
@@ -311,6 +313,63 @@ test("a variable name pi does not accept is said under its box, not as a value s
   const badSecret = analyse({ text: secret, secretReferences: { "headers.Authorization": "9TOKEN" } });
   assert.deepEqual(badSecret.submitBlock, { kind: "field-invalid", fields: ["headers.Authorization"] });
   assert.equal(badSecret.fieldProblems["headers.Authorization"].params.problem, "name");
+});
+
+test("an empty variable box asks for a name, as a value still to fill in, never as a name pi refuses", () => {
+  const secret = JSON.stringify({ mcpServers: { api: { command: "npx", args: ["api"], env: { API_TOKEN: "sk-live-0123456789abcdef0123" } } } });
+  const empty = analyse({ text: secret, secretReferences: { "env.API_TOKEN": "" } });
+  assert.deepEqual(empty.fieldProblems, { "env.API_TOKEN": { code: "field-reference-invalid", params: { field: "env.API_TOKEN", problem: "missing" } } });
+  assert.equal(mcpImportNoteKey(empty.fieldProblems["env.API_TOKEN"]), "mcp.importNote.field-reference-invalid.missing");
+  assert.equal(mcpImportNoteText(empty.fieldProblems["env.API_TOKEN"], t), "env.API_TOKEN: enter the name of the variable to read it from.");
+  assert.deepEqual(empty.submitBlock, { kind: "fields", fields: ["env.API_TOKEN"] });
+  // Blank space is nothing typed yet too; text that is no variable name is the name problem.
+  assert.equal(analyse({ text: secret, secretReferences: { "env.API_TOKEN": "  " } }).fieldProblems["env.API_TOKEN"].params.problem, "missing");
+  assert.equal(analyse({ text: secret, secretReferences: { "env.API_TOKEN": "api-token" } }).fieldProblems["env.API_TOKEN"].params.problem, "name");
+
+  const field = JSON.stringify({ mcpServers: { gh: { command: "npx", args: ["gh"], env: { GITHUB_TOKEN: "YOUR_TOKEN" } } } });
+  const emptyField = analyse({ text: field, references: { "env.GITHUB_TOKEN": "" } });
+  assert.equal(emptyField.fieldProblems["env.GITHUB_TOKEN"].params.problem, "missing");
+  assert.match(mcpImportNoteText(emptyField.fieldProblems["env.GITHUB_TOKEN"], t, emptyField.server.fields), /^GITHUB_TOKEN: enter the name/);
+  assert.deepEqual(emptyField.submitBlock, { kind: "fields", fields: ["GITHUB_TOKEN"] });
+  // The route reads the same fill: a reference that is not text is a name problem, not an empty box.
+  assert.equal(fillMcpImportFields(emptyField.server, { "env.GITHUB_TOKEN": { reference: 7 } }).notes[0].params.problem, "name");
+});
+
+test("a variable box opens with a name pi accepts: an env value's own, or one made from the server's for a header or client secret", () => {
+  assert.equal(mcpSuggestedVariableName("env.API_TOKEN", "api"), "API_TOKEN");
+  assert.equal(mcpSuggestedVariableName("env.github_token", "gh"), "github_token", "a valid env name as written");
+  assert.equal(mcpSuggestedVariableName("env.api-token", "x"), "API_TOKEN");
+  assert.equal(mcpSuggestedVariableName("headers.Authorization", "docs"), "DOCS_TOKEN");
+  assert.equal(mcpSuggestedVariableName("headers.proxy-authorization", "docs"), "DOCS_TOKEN");
+  assert.equal(mcpSuggestedVariableName("headers.X-Api-Key", "brave-search"), "BRAVE_SEARCH_API_KEY");
+  assert.equal(mcpSuggestedVariableName("headers.Api-Key", "docs"), "DOCS_API_KEY");
+  assert.equal(mcpSuggestedVariableName("oauth.clientSecret", "my.server"), "MY_SERVER_CLIENT_SECRET");
+  // A server name that cannot start one is left out rather than offered as a name pi refuses.
+  assert.equal(mcpSuggestedVariableName("headers.Authorization", "1password"), "TOKEN");
+  assert.equal(mcpSuggestedVariableName("headers.Authorization", ""), "TOKEN");
+  // Nothing to offer: the box then opens empty and asks for a name.
+  assert.equal(mcpSuggestedVariableName("env.9", "x"), undefined);
+  assert.equal(mcpSuggestedVariableName("url", "x"), undefined);
+  // Never the variable Add refuses.
+  assert.equal(mcpSuggestedVariableName("env.PI_WEB_PASSWORD", "x"), undefined);
+  assert.equal(mcpSuggestedVariableName("headers.X-Password", "pi-web"), undefined);
+  for (const [label, server] of [["env.A", "x"], ["headers.Authorization", "a b"], ["headers.-", "z"], ["oauth.clientSecret", "é"]]) {
+    const name = mcpSuggestedVariableName(label, server);
+    assert.ok(name === undefined || /^[A-Za-z_][A-Za-z0-9_]*$/.test(name), `${label} ${server}: ${name}`);
+  }
+
+  // A field is offered the name of the place its value goes.
+  const env = parseMcpImport(JSON.stringify({ mcpServers: { gh: { command: "npx", args: ["gh"], env: { GITHUB_TOKEN: "YOUR_TOKEN" } } } })).servers[0];
+  assert.equal(mcpFieldSuggestedVariableName(env.fields[0], env.name), "GITHUB_TOKEN");
+  const header = parseMcpImport(JSON.stringify({
+    servers: { gh: { type: "http", url: "https://api.example.com/mcp", headers: { Authorization: "Bearer ${input:pat}" } } },
+    inputs: [{ id: "pat", type: "promptString", password: true }],
+  })).servers[0];
+  assert.equal(mcpFieldSuggestedVariableName(header.fields[0], "gh"), "GH_TOKEN");
+  // What the box opens with is a reference the analysis takes as it is.
+  const opened = analyse({ text: JSON.stringify({ mcpServers: { api: { command: "npx", args: ["api"], env: { API_TOKEN: "sk-live-0123456789abcdef0123" } } } }), secretReferences: { "env.API_TOKEN": mcpSuggestedVariableName("env.API_TOKEN", "api") } });
+  assert.deepEqual(opened.fieldProblems, {});
+  assert.equal(opened.fill.config.env.API_TOKEN, "${API_TOKEN}");
 });
 
 test("a paste replaced by another server's drops what was typed for the first; an edit of the same server keeps it", () => {

@@ -322,6 +322,15 @@ export function referenceableLiteralSecrets(server: McpImportServer): string[] {
   return referenceableSecretPaths(server).map(pathLabel);
 }
 
+/**
+ * Why a variable name given for a reference is refused: `missing` while
+ * nothing is typed yet (the box was just shown), `name` for text that is not
+ * a variable name, or anything that is not text.
+ */
+function referenceNameProblem(given: unknown): "missing" | "name" {
+  return typeof given === "string" && given.trim() === "" ? "missing" : "name";
+}
+
 /** An authorization scheme a header value starts with; a stored reference keeps it (`Bearer ${TOKEN}`). */
 const AUTHORIZATION_SCHEME = /^(?:bearer|basic|token)\s+/i;
 
@@ -350,7 +359,7 @@ export function fillMcpImportFields(
     const name = typeof given === "string" ? given.trim() : "";
     const path = referenceable.get(label);
     if (!path) notes.push({ code: "field-reference-invalid", params: { field: label, problem: "target" } });
-    else if (!ENV_NAME.test(name)) notes.push({ code: "field-reference-invalid", params: { field: label, problem: "name" } });
+    else if (!ENV_NAME.test(name)) notes.push({ code: "field-reference-invalid", params: { field: label, problem: referenceNameProblem(given) } });
     else stored.push([path, name]);
   }
   for (const field of server.fields) {
@@ -359,7 +368,7 @@ export function fillMcpImportFields(
       const reference = (given as { reference?: unknown }).reference;
       const name = typeof reference === "string" ? reference.trim() : "";
       if (!ENV_NAME.test(name)) {
-        notes.push({ code: "field-reference-invalid", params: { field: field.id, problem: "name" } });
+        notes.push({ code: "field-reference-invalid", params: { field: field.id, problem: referenceNameProblem(reference) } });
       } else if (field.kind === "select" || !field.targets.every((target) => isResolvedPath(target.path) && target.encoding === undefined)) {
         // pi substitutes nothing in command, args, url or cwd.
         notes.push({ code: "field-reference-invalid", params: { field: field.id, problem: "target" } });
