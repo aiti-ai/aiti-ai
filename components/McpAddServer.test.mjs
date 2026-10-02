@@ -26,7 +26,8 @@ function decode(html) {
 }
 
 function text(html) {
-  return decode(html.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+  // A line-break opportunity is no space: the save target's path holds one after each folder.
+  return decode(html.replace(/<wbr\/>/g, "").replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
 }
 
 const globalFile = { scope: "global", path: "/Users/me/.pi/agent/mcp.json", exists: true, problems: [] };
@@ -68,10 +69,11 @@ function addButton(html) {
 
 test("the paste box is a textarea that never takes focus by itself on a phone, and Add waits for a paste", () => {
   const html = decode(pane());
-  assert.match(html, /<textarea id="mcp-add-source" aria-label="Server to add" aria-describedby="[^"]+" class="config-add-source-input is-multiline"/);
+  assert.match(html, /<textarea id="mcp-add-source" aria-label="Server to add" class="config-add-source-input is-multiline"/);
   assert.doesNotMatch(html, /autofocus|autoFocus/i, "focus is decided on mount, by pointer, never in the markup");
   assert.match(html, /<a href="https:\/\/github\.com\/mcp" target="_blank" rel="noopener noreferrer" class="config-add-source-catalog">github\.com\/mcp<\/a>/);
-  assert.match(html, /Cmd\/Ctrl\+Enter adds it\./);
+  // The placeholder lists what may be pasted; no sentence under the box repeats it.
+  assert.doesNotMatch(html, /config-add-source-hint|Cmd\/Ctrl\+Enter adds it/);
   assert.match(html, /<div class="config-add-source-examples">/, "an empty box offers examples");
   // Every supported format, each named as the preview would name it.
   assert.match(html, /<div class="config-add-source-examples-label">Supported formats \(click one to fill in an example\)<\/div>/);
@@ -130,6 +132,13 @@ test("a fresh folder is trusted in the same step, and the button and a line say 
   assert.equal(addButton(html).label, "Add and trust this folder");
   assert.match(text(html), /This folder has no trust decision yet, and writing \.pi\/mcp\.json makes it need one, so Add trusts ~?\/?.*repo in the same step\./);
   assert.match(text(html), /~?\/?.*repo\/\.pi\/mcp\.json/, "the location names the project file");
+  // Where it saves, the file and what choosing it means come first, under the title; the button stays at the end.
+  const decoded = decode(html);
+  const target = decoded.match(/<div class="config-save-target">[\s\S]*?<\/p><\/div>/)?.[0] ?? "";
+  assert.match(target.replace(/<wbr\/>/g, ""), /<span class="config-save-target-path">[^<]*repo\/\.pi\/mcp\.json<\/span>/);
+  assert.match(target, /Add trusts ~?\/?.*repo in the same step\./);
+  assert.ok(decoded.indexOf("config-save-target") < decoded.indexOf("<textarea"), "before the paste box");
+  assert.ok(decoded.indexOf("<textarea") < decoded.indexOf("Add and trust this folder"), "Add after it");
 });
 
 test("why Project is unavailable is visible text under the switch, never only a tooltip", () => {
@@ -147,7 +156,7 @@ test("why Project is unavailable is visible text under the switch, never only a 
   // A literal secret, with the way out: read it from a host variable, with the control that does it.
   const secret = JSON.stringify({ mcpServers: { api: { url: "https://api.example.com/mcp", headers: { Authorization: "Bearer sk-live-0123456789abcdef0123" } } } });
   html = pane({ draft: { text: secret } });
-  assert.match(text(html), /headers\.Authorization holds a secret as plain text, so this server can be saved only globally\. To save it in the project, choose “Read it from a variable of the computer running Pi Web” for it above\./);
+  assert.match(text(html), /headers\.Authorization holds a secret as plain text, so this server can be saved only globally\. To save it in the project, choose “Read it from a variable of the computer running Pi Web” for it\./);
   assert.match(text(html), /Secrets in the paste headers\.Authorization holds a secret as plain text\. Read it from a variable of the computer running Pi Web Saved in mcp\.json as pasted/);
   assert.doesNotMatch(text(html), /headers\.Authorization holds a secret as plain text, so the server can be saved only in the global mcp\.json/, "the importer's note gives way to the row that says it");
   assert.ok(!html.replace(/<textarea[\s\S]*?<\/textarea>/, "").includes("sk-live"), "the secret itself is shown only in the box it was pasted into");
@@ -167,7 +176,8 @@ test("why Project is unavailable is visible text under the switch, never only a 
     onTrustProject: noop,
   });
   assert.match(text(html), /This project is not trusted, so Pi Web does not write its \.pi\/mcp\.json\. Trust it first\./);
-  assert.match(text(html), /Trust project…/);
+  // The way to make Project available sits under its reason, in the save target.
+  assert.match(decode(html), /<div class="config-save-target">[\s\S]*?class="config-scope-switch-reason">This project is not trusted[^<]*<\/span><\/div><span class="mcp-config-line"><button[^>]*>Trust project…<\/button><\/span><\/div>/);
 });
 
 test("a password field takes a host variable instead, and the name field says when the name is taken", () => {

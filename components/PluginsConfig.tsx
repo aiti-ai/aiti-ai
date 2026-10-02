@@ -32,7 +32,7 @@ import {
   ConfigFooterStatus,
   ConfigListAction,
   ConfigPanelShell,
-  ConfigScopeSwitch,
+  ConfigSaveTarget,
   ConfigScopeTag,
   ConfigSidebar,
   ConfigSidebarGroupLabel,
@@ -130,9 +130,10 @@ function versionSummary(pkg: PluginPackageInfo, t: Translate): string {
   return parts.length ? parts.join(" · ") : t("i18n.unknown");
 }
 
+/** Where pi installs a package of this scope (`DefaultPackageManager`'s npm and git roots). */
 function installLocation(scope: PluginScope, cwd: string): string {
   return scope === "project"
-    ? `${shortenPath(cwd)}/.pi/agent/{npm,git}`
+    ? `${shortenPath(cwd)}/.pi/{npm,git}`
     : "~/.pi/agent/{npm,git}";
 }
 
@@ -282,7 +283,19 @@ function AddPluginPanel({
           <path fill="#000" d="M517.36 400H634.72V634.72H517.36Z" />
         </svg>
       }
-      location={installLocation(scope, cwd)}
+      target={
+        <ConfigSaveTarget
+          value={scope}
+          label={t("config.saveTo")}
+          options={[
+            { value: "global", label: scopeLabel("global", t) },
+            { value: "project", label: scopeLabel("project", t), disabled: !projectResourcesLoaded },
+          ]}
+          path={installLocation(scope, cwd)}
+          disabledReason={t("trust.projectScopeUnavailable")}
+          onChange={onScopeChange}
+        />
+      }
       inputLabel={t("config.source")}
       inputId="plugin-source"
       placeholder="npm:@scope/package"
@@ -295,25 +308,14 @@ function AddPluginPanel({
       examples={PLUGIN_SOURCE_EXAMPLES}
       error={actionError}
     >
-      <ConfigScopeSwitch
-        value={scope}
-        label={t("config.scope")}
-        options={[
-          { value: "global", label: scopeLabel("global", t) },
-          { value: "project", label: scopeLabel("project", t), disabled: !projectResourcesLoaded },
-        ]}
-        disabledReason={t("trust.projectScopeUnavailable")}
-        onChange={onScopeChange}
+      <ConfigButton
+        variant="primary"
+        onClick={onInstall}
+        disabled={busy || !source.trim()}
+        className="is-pushed-right"
       >
-        <ConfigButton
-          variant="primary"
-          onClick={onInstall}
-          disabled={busy || !source.trim()}
-          className="is-pushed-right"
-        >
-          {busy ? t("i18n.installing") : t("i18n.install")}
-        </ConfigButton>
-      </ConfigScopeSwitch>
+        {busy ? t("i18n.installing") : t("i18n.install")}
+      </ConfigButton>
     </ConfigAddSourcePanel>
   );
 }
