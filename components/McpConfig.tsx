@@ -1529,6 +1529,11 @@ function McpServerDetail({
           </span>
         </ConfigDetailGridRow>
         <McpConnectionRows server={server} test={test} testBlock={testBlock} testBlockId={testBlockId} />
+        {server.description !== undefined && (
+          <ConfigDetailGridRow label={t("mcp.detail.description")} tone="plain">
+            {revealHiddenCharacters(server.description)}
+          </ConfigDetailGridRow>
+        )}
         {server.transport && (
           <ConfigDetailGridRow label={t("mcp.detail.transport")}>
             {t(`mcp.transport.${server.transport}`)}

@@ -283,7 +283,6 @@ export function mcpSessionSummaryKey(status: Pick<McpSessionStatus, "state" | "c
 /** How a validated entry's tools reach the model (the SDK's `exposure`, `codemode` by default). */
 export const MCP_EXPOSURE_KEYS: Record<NonNullable<McpServerInfo["exposure"]>, string> = {
   codemode: "mcp.exposure.codemode",
-  "codemode-deferred": "mcp.exposure.codemode-deferred",
   deferred: "mcp.exposure.deferred",
   direct: "mcp.exposure.direct",
   hidden: "mcp.exposure.hidden",
@@ -292,11 +291,11 @@ export const MCP_EXPOSURE_KEYS: Record<NonNullable<McpServerInfo["exposure"]>, s
 /**
  * The exposures a server's Tools row offers, in the order the SDK lists them:
  * the default first, then cheaper to dearer for the model's context, then
- * none at all.
+ * none at all. An entry still holding the old `codemode-deferred` reads as
+ * `codemode` (GET reports the validator's copy), which is what it now means.
  */
 export const MCP_EXPOSURE_OPTIONS: readonly NonNullable<McpServerInfo["exposure"]>[] = [
   "codemode",
-  "codemode-deferred",
   "deferred",
   "direct",
   "hidden",
@@ -305,7 +304,6 @@ export const MCP_EXPOSURE_OPTIONS: readonly NonNullable<McpServerInfo["exposure"
 /** The same, as a tag beside one tested tool whose `toolExposure` differs from its server's. */
 export const MCP_EXPOSURE_SHORT_KEYS: Record<NonNullable<McpServerInfo["exposure"]>, string> = {
   codemode: "mcp.exposureShort.codemode",
-  "codemode-deferred": "mcp.exposureShort.codemode-deferred",
   deferred: "mcp.exposureShort.deferred",
   direct: "mcp.exposureShort.direct",
   hidden: "mcp.exposureShort.hidden",
@@ -476,8 +474,8 @@ export function mcpEffectiveCodemodePreference(codemode: McpCodemodeInfo): McpCo
 }
 
 /**
- * Why the tools of a server with `codemode` or `codemode-deferred` exposure,
- * which only Code mode scripts call, may not be callable, most decisive first:
+ * Why the tools of a server with `codemode` exposure, which only Code mode
+ * scripts call, may not be callable, most decisive first:
  * the sandbox cannot run (the MCP host then offers them through tool search),
  * `-builtin:codemode` registers no codemode tool (the host keeps their
  * exposure, so only an active tool search reaches them), or Automatic with
@@ -498,7 +496,7 @@ export function mcpCodemodeReachNotice(codemode: McpCodemodeInfo, autoEnable: Mc
 /**
  * Why the tools of a server with `exposure` may not be callable, for the
  * exposure the row shows: the Code mode cases of `mcpCodemodeReachNotice()`
- * for `codemode` and `codemode-deferred`, and for `deferred`, tool search
+ * for `codemode`, and for `deferred`, tool search
  * turned off by `-builtin:tool-search`, which leaves those tools to Code mode
  * scripts alone. Undefined when a session reaches them.
  */
@@ -507,7 +505,7 @@ export function mcpExposureReachNotice(
   data: Pick<McpResponse, "codemode" | "toolSearchDisabled">,
   autoEnable: McpAutoEnableCodemode,
 ): McpNoticeText | undefined {
-  if (exposure === "codemode" || exposure === "codemode-deferred") return mcpCodemodeReachNotice(data.codemode, autoEnable);
+  if (exposure === "codemode") return mcpCodemodeReachNotice(data.codemode, autoEnable);
   if (exposure !== "deferred" || !data.toolSearchDisabled) return undefined;
   const path = data.toolSearchDisabled.settingsPath;
   return path ? { key: "mcp.exposure.toolSearchDisabled", params: { path } } : { key: "mcp.exposure.toolSearchDisabledUnknown" };

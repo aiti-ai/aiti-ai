@@ -36,8 +36,9 @@ a long-lived, possibly remote server that runs many sessions in one process:
   visible session holds a liveness lease, so it is never reclaimed by the idle
   timer. Every browsed session would spawn every stdio server and keep it.
 - **Stop.** The extension's `before_agent_start` handler waits up to 10 s for
-  servers to connect and ignores the abort signal, so Stop does nothing during
-  that wait.
+  servers to connect (since pi 1.0, only for servers with `direct` tools, at a
+  session's first prompt) and ignores the abort signal, so Stop does nothing
+  during that wait.
 - **Environment.** The stdio transport spawns servers with the whole
   `process.env`, including `PI_WEB_PASSWORD`.
 - **Applying changes.** `mcp.json` is read once, on `session_start`; a change
@@ -71,14 +72,19 @@ the CLI. Chat-only and subagent sessions do not load them.
 ### Pi Web decides which MCP servers a session connects
 
 The `mcp` factory is created with a `loadConfig` that returns no servers, so
-`session_start` connects nothing and the 10-second startup wait never arms. A
+`session_start` connects nothing, and with `startupWaitMs: 0`, so the
+extension's own first-prompt wait (which since pi 1.0 also covers servers
+registered later) never holds a prompt. A
 per-wrapper `McpHost` reads the global and project `mcp.json` itself and
 registers the servers it wants through the public `pi.registerMcpServer()` /
 `pi.unregisterMcpServer()`:
 
 - **Before every prompt that may start a run** it reads the config and the
   project's trust, registers or unregisters only the servers whose entry changed,
-  and waits up to 10 s for the ones still connecting. An extension command
+  and waits up to 10 s for the ones with `direct` tools still connecting. As in
+  pi 1.0, other servers connect in the background: their tools are in no
+  request, and the extension waits for them when a codemode script names or
+  searches them, or `tool_search` runs. An extension command
   starts no run (pi runs it before anything else), so another extension's
   command skips this, and the built-in `/mcp`, which acts on the registered
   servers, registers them without waiting. The wrapper runs this
@@ -137,8 +143,10 @@ pane with Sign in, Test, Remove, a switch, and the server's exposure, and an
 - **Exposure is chosen per server**, as the TUI's `/mcp` manager does, and
   written as the SDK's config editor writes it (`codemode` removes the key,
   `toolExposure` is kept). It decides what a server costs every request, from
-  nothing (`hidden`) through a name and a count (`codemode-deferred`) to every
-  tool's schema (`direct`). The manager re-registers the tools in place; Pi
+  nothing (`hidden`) through a name and a summary (`codemode`, whose tools
+  scripts find by search) to every tool's schema (`direct`). pi 1.0 folded
+  `codemode-deferred` into `codemode`: an entry that still holds it lists, and
+  is keyed for its status, as `codemode`, and is no longer offered. The manager re-registers the tools in place; Pi
   Web can only register the changed entry again, so open sessions reconnect
   the server at their next message. Per-tool exposure stays in P3.
 
@@ -179,14 +187,15 @@ pane with Sign in, Test, Remove, a switch, and the server's exposure, and an
   - The SDK ends the whole sign-in on a bad paste, so Pi Web checks a pasted
     address (a URL, the flow's `state`, a `code`) before handing it on.
   - A stored refresh token can finish a sign-in with no page at all.
-  - The SDK keeps one PKCE verifier per server URL, so one flow runs per URL
-    and a second start joins it.
+  - The SDK keeps one PKCE verifier per server (since pi 1.0 keyed by name
+    and URL, so servers sharing a URL keep separate accounts), so one flow
+    runs per server and a second start joins it.
   - Starting a sign-in can drop the stored client registration and its tokens
     when the loopback address changes; the panel says so beside the button.
 
-  Sign out removes the URL's tokens and client registration, as
-  `pi mcp logout` does, and stops a code exchange already on its way from
-  writing them back.
+  Sign out removes the server's tokens and client registration (or the record
+  older versions kept by URL alone), as `pi mcp logout` does, and stops a code
+  exchange already on its way from writing them back.
 - **Writes** go through Pi Web's own writer (`lib/mcp-config-file.ts`), not the
   SDK's config editor, which writes in place with no lock, no atomic replace,
   and no file mode, and throws untyped errors. For every edit that changes
@@ -418,4 +427,4 @@ restores the branch's tool set from its transcript.
   `McpServerConnection`, `signInMcpServer` (with an abort signal), and the
   list of project resources that require trust; a status callback; abortable
   startup waits; asynchronous `!command` resolution; a configurable OAuth
-  redirect URI; restoring `tool_search` loads on resume.
+  redirect URI.

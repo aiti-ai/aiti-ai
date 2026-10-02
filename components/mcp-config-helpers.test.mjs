@@ -188,7 +188,7 @@ test("each state has a color, a full label and, when it is not plain on, visible
   for (const key of [...Object.values(MCP_EXPOSURE_KEYS), ...Object.values(MCP_CODEMODE_STATE_KEYS)]) {
     assert.equal(typeof messages[key], "string", key);
   }
-  assert.deepEqual(Object.keys(MCP_EXPOSURE_KEYS).sort(), ["codemode", "codemode-deferred", "deferred", "direct", "hidden"]);
+  assert.deepEqual(Object.keys(MCP_EXPOSURE_KEYS).sort(), ["codemode", "deferred", "direct", "hidden"]);
 });
 
 test("the Project group appears only with a project, first, and says why it lists nothing", () => {
@@ -689,9 +689,7 @@ test("why an exposure's tools may be out of reach depends on the exposure", () =
   const autoEnable = { value: true };
   const toolSearchDisabled = { settingsPath: "/Users/me/.pi/agent/settings.json" };
   // Code mode's own reasons reach only the exposures Code mode serves.
-  for (const exposure of ["codemode", "codemode-deferred"]) {
-    assert.deepEqual(mcpExposureReachNotice(exposure, { codemode, toolSearchDisabled }, autoEnable), { key: "mcp.exposure.builtinDisabled" });
-  }
+  assert.deepEqual(mcpExposureReachNotice("codemode", { codemode, toolSearchDisabled }, autoEnable), { key: "mcp.exposure.builtinDisabled" });
   // Tool search off strands deferred tools, naming the file when there is one.
   assert.deepEqual(mcpExposureReachNotice("deferred", { codemode, toolSearchDisabled }, autoEnable), {
     key: "mcp.exposure.toolSearchDisabled",
