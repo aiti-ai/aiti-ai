@@ -58,6 +58,7 @@ const MCP_CATALOGS: readonly ConfigAddSourceCatalog[] = [
   { href: "https://smithery.ai/servers", label: "smithery.ai" },
   { href: "https://mcp.so/", label: "mcp.so" },
   { href: "https://registry.modelcontextprotocol.io/", label: "MCP Registry" },
+  { href: "https://github.com/mcp", label: "github.com/mcp" },
 ];
 
 /** The importer's notes about the server's name, shown under the name box instead of with the rest. */

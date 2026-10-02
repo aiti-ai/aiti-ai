@@ -225,8 +225,9 @@ pane with Sign in, Test, Remove, a switch, and the server's exposure, and an
   `/mcp` and every subcommand (`/mcp login`, `logout`, `reconnect`, which act
   on the session's own connections) are sent as before.
 - Registry search is deferred. The add panel links to catalogs for browsing
-  (glama.ai, smithery.ai, mcp.so, registry.modelcontextprotocol.io). A
-  `github.com/mcp` page's Install buttons cannot be pasted: they are menu
+  (glama.ai, smithery.ai, mcp.so, registry.modelcontextprotocol.io,
+  github.com/mcp). A `github.com/mcp` page's Install buttons cannot be
+  pasted: they are menu
   items, not links. The VS Code items open `vscode:mcp/by-name/<name>`, which names a
   server but carries none of its settings, and the GitHub Copilot app item
   navigates to a launch page. The paste box takes that launch address and the
