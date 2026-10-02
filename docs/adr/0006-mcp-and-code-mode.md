@@ -130,8 +130,17 @@ panel reports that as a name conflict naming the extension.
 A new Settings section sits next to Plugins and is built from the same
 `SettingsUi` primitives: a Code mode row, then servers grouped by Project and
 Global with a group switch and an `n/m` count, a status dot per row, a detail
-pane with Sign in, Test, Remove, and a switch, and an "Add MCP" action.
-It needs no project either: without one it lists the global `mcp.json` alone.
+pane with Sign in, Test, Remove, a switch, and the server's exposure, and an
+"Add MCP" action. It needs no project either: without one it lists the global
+`mcp.json` alone.
+
+- **Exposure is chosen per server**, as the TUI's `/mcp` manager does, and
+  written as the SDK's config editor writes it (`codemode` removes the key,
+  `toolExposure` is kept). It decides what a server costs every request, from
+  nothing (`hidden`) through a name and a count (`codemode-deferred`) to every
+  tool's schema (`direct`). The manager re-registers the tools in place; Pi
+  Web can only register the changed entry again, so open sessions reconnect
+  the server at their next message. Per-tool exposure stays in P3.
 
 - `GET /api/mcp` reads files only. It never spawns a process, opens a network
   connection, or runs a `!command` value. The two obvious sources of its
