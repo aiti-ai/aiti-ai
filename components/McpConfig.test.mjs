@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
+import test, { mock } from "node:test";
 import { createJiti } from "jiti";
 
 const jiti = createJiti(import.meta.url, {
@@ -925,8 +925,14 @@ function connection(html) {
   return { value, text: text(value), button: { attributes: button[1], label: button[2] } };
 }
 
+// The Connection row shows a time alone only when it falls on the day the row
+// renders (a date otherwise), so the clock stands still at 18:00 for the rest of
+// the file: a run that crossed midnight would otherwise print a date. Only Date
+// is mocked; timers run as usual.
+mock.timers.enable({ apis: ["Date"], now: new Date(2026, 9, 2, 18, 0).getTime() });
+
 /** Today at 10:42, local time: the Connection row then shows the time alone (a date only when it is not today). */
-const TODAY_10_42 = new Date().setHours(10, 42, 0, 0);
+const TODAY_10_42 = new Date(Date.now()).setHours(10, 42, 0, 0);
 
 function testedStatus(state, extra = {}) {
   return { origin: "test", state, tools: [], toolCount: 0, durationMs: 420, testedAt: TODAY_10_42, ...extra };
