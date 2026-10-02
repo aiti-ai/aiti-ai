@@ -63,6 +63,9 @@ const PROMPT_WAIT_MS = 10_000;
 /**
  * How long an unregister waits for the extension to start a connection it can
  * close. One that starts later is refused its transport (`refuseAbandoned()`).
+ * In practice the gap is a few microtasks: `lib/pi-sdk-internals.ts` imports the
+ * SDK's `runtime.js` (the same module instance) before any host exists, so the
+ * extension's own runtime load is a cache hit.
  */
 const REPLACE_WAIT_MS = 5_000;
 const LIST_METHODS = new Set(["tools/list", "resources/list", "resources/templates/list"]);
@@ -878,6 +881,8 @@ class HostInstance {
     for (const entry of loaded.servers) {
       if (entry.config.enabled === false) continue;
       const scope = entry.scope === "project" ? "project" : "global";
+      // Each entry is keyed in its own try: one the host cannot key never stops the others,
+      // global servers included, from connecting.
       try {
         desired.set(entry.name, {
           config: withReachableExposure(entry.config, this.options.codemodeAvailable()),

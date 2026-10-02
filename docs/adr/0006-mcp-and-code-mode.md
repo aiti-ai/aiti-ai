@@ -130,7 +130,7 @@ panel reports that as a name conflict naming the extension.
 A new Settings section sits next to Plugins and is built from the same
 `SettingsUi` primitives: a Code mode row, then servers grouped by Project and
 Global with a group switch and an `n/m` count, a status dot per row, a detail
-pane with Sign in, Test, Remove, and a switch, and an "Add MCP server" action.
+pane with Sign in, Test, Remove, and a switch, and an "Add MCP" action.
 It needs no project either: without one it lists the global `mcp.json` alone.
 
 - `GET /api/mcp` reads files only. It never spawns a process, opens a network
