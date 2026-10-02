@@ -749,6 +749,7 @@
 .config-scope-switch-option[aria-pressed="true"] {
   background: var(--bg-selected);
   color: var(--text);
+  font-weight: 600;
 }
 
 .config-scope-switch-option:disabled {
