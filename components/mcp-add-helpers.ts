@@ -187,9 +187,12 @@ export function mcpImportNoteText(note: McpImportNote, t: Translate, fields: rea
   return typeof params.server === "string" ? t("mcp.importNote.forServer", { server: params.server, note: text }) : text;
 }
 
-export const MCP_IMPORT_FIELD_REASON_KEYS: Record<McpImportField["reason"], string> = {
-  placeholder: "mcp.importField.reason.placeholder",
-  "placeholder-path": "mcp.importField.reason.placeholder-path",
+/**
+ * Why a field is asked for. A placeholder has no words of its own: its box
+ * shows the paste's text as its placeholder, and `mcpFieldStoredAs()` the text
+ * around it.
+ */
+export const MCP_IMPORT_FIELD_REASON_KEYS: Partial<Record<McpImportField["reason"], string>> = {
   empty: "mcp.importField.reason.empty",
   input: "mcp.importField.reason.input",
   variable: "mcp.importField.reason.variable",
@@ -225,6 +228,30 @@ export const MCP_IMPORT_SOURCE_KEYS: Record<McpImportFormat, string> = {
 
 // ---------------------------------------------------------------------------
 // Fields
+
+/**
+ * The values a field is part of, as they will be stored: the paste's fixed
+ * text with `slot` where this field goes (`Bearer ‹your value›`, or
+ * `Bearer ${GH_TOKEN}` for a variable) and `‹label›` where another field goes.
+ * Undefined when the field makes up every value whole, unless `whole` is set:
+ * the line would only repeat the box. It is what tells whether to type the
+ * token or `Bearer` and the token.
+ */
+export function mcpFieldStoredAs(field: McpImportField, fields: readonly McpImportField[], slot: string, whole = false): string | undefined {
+  if (!whole && field.targets.every(({ parts }) => parts.length === 1)) return undefined;
+  const values = field.targets.map(({ parts }) => parts.map((part) => {
+    if (typeof part === "string") return revealHiddenCharacters(part);
+    if (part.field === field.id) return slot;
+    return `‹${revealHiddenCharacters(fields.find(({ id }) => id === part.field)?.label ?? part.field)}›`;
+  }).join(""));
+  return [...new Set(values)].join(", ");
+}
+
+/** The header a blank optional field leaves out, when it fills exactly one. */
+export function mcpFieldOptionalHeader(field: McpImportField): string | undefined {
+  const names = new Set(field.targets.map(({ path }) => (path[0] === "headers" ? path[1] : undefined)));
+  return names.size === 1 ? [...names][0] : undefined;
+}
 
 /** Whether a field may be answered with a host variable: only where pi resolves every value it fills (env, headers, `oauth.clientSecret`). */
 export function mcpFieldTakesVariable(field: McpImportField): boolean {
