@@ -358,7 +358,7 @@ test("every string the dialog shows is translated", async () => {
     apiTypesSource.indexOf("export type McpConfigFileProblemReason"),
     apiTypesSource.indexOf("export interface McpConfigFileProblem "),
   ).matchAll(/\| "([a-z-]+)"/g)].map((match) => match[1]);
-  assert.equal(problemReasons.length, 8);
+  assert.equal(problemReasons.length, 9);
   // Every reason but `internal`, whose diagnostic is shown instead, is translated.
   assert.ok(reasonCodes.length >= 8);
   const keys = [

@@ -172,6 +172,8 @@ export type McpConfigFileProblemReason =
   | "not-a-file"
   /** A project file larger than 1 MiB. */
   | "too-large"
+  /** A project file that declares more servers than Pi Web lists (`MCP_PROJECT_MAX_SERVERS`, 200). */
+  | "too-many-servers"
   | "unreadable";
 
 export interface McpConfigFileProblem {
@@ -508,6 +510,8 @@ export type McpRefusalReason =
   | "not-a-file"
   /** A project file larger than 1 MiB (`path`). */
   | "too-large"
+  /** A project file that declares more than 200 servers, which Pi Web neither lists nor acts on (`path`). */
+  | "too-many-servers"
   /** Another process held the file's lock for longer than the writer waits (`path`). */
   | "locked"
   /** Sign-in or sign-out of a server that does not use OAuth: only an HTTP server without an `Authorization` header does (`name`). */
