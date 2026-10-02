@@ -1,5 +1,3 @@
-import { statSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
 import { NextResponse } from "next/server";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type {
@@ -12,8 +10,6 @@ import type {
   McpServerRef,
   ProjectTrustStatus,
 } from "@/lib/api-types";
-import { isMcpDisabledByOperator, MCP_DISABLE_VARIABLE } from "@/lib/builtin-extensions";
-import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import {
   insertMcpServer,
   isMcpConfigWriteError,
@@ -31,12 +27,19 @@ import {
   type McpAddRequest,
 } from "@/lib/mcp-add";
 import { readMcpOverview, readMcpServerConfigs, readMcpServerEntry } from "@/lib/mcp-config-read";
+import {
+  isMcpEntryRefusal,
+  mcpInternalsOrRefusal,
+  mcpProjectTrustRefusal,
+  validateMcpProject,
+  type McpEntryRefusal,
+} from "@/lib/mcp-entry-request";
 import { suggestFreeName } from "@/lib/mcp-import";
 import { mcpOAuthUrl, signOutMcpServer } from "@/lib/mcp-sign-in";
 import { forgetMcpEntryStatuses } from "@/lib/mcp-status";
 import { findWebPasswordField } from "@/lib/mcp-transport";
 import { holdRemovedEntry, returnRemovedEntry, takeRemovedEntry } from "@/lib/mcp-undo";
-import { loadPiSdkInternals, type PiSdkInternals } from "@/lib/pi-sdk-internals";
+import type { PiSdkInternals } from "@/lib/pi-sdk-internals";
 import { invalidateModelsCache } from "@/lib/models-cache";
 import { freshFolderTrustBreadth, getProjectTrustStatus, trustFreshFolderAndWrite } from "@/lib/project-trust";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
@@ -90,22 +93,16 @@ class Refusal {
   }
 }
 
-/** The project folder the request names: absolute, inside the allowed roots (checked as given, so a `..` is refused, not collapsed), a directory. */
+/** The shared checks of `lib/mcp-entry-request.ts`, as one of this route's refusals. */
+function asRefusal(refused: McpEntryRefusal): Refusal {
+  const { error, reason, ...params } = refused.body;
+  return new Refusal(refused.status, reason, error, params);
+}
+
+/** The project folder the request names, checked as Test, sign-in and the trust route check it (`validateMcpProject()`). */
 async function validateProject(value: unknown): Promise<Project | Refusal> {
-  if (typeof value !== "string" || !value.trim() || !isAbsolute(value)) {
-    return new Refusal(400, "cwd-invalid", "cwd must be an absolute path");
-  }
-  const allowedRoots = await getAllowedFileRoots();
-  if (!isExistingFilePathAllowed(value, allowedRoots)) return new Refusal(403, "cwd-denied", "Access denied");
-  const cwd = resolve(value);
-  let directory = false;
-  try {
-    directory = statSync(cwd).isDirectory();
-  } catch {
-    // Removed since the check.
-  }
-  if (!directory) return new Refusal(400, "cwd-not-directory", "cwd must be a directory");
-  return { cwd, allowedRoots };
+  const result = await validateMcpProject(value);
+  return isMcpEntryRefusal(result) ? asRefusal(result) : result;
 }
 
 // GET /api/mcp?cwd=<absolute project folder>
@@ -134,16 +131,8 @@ export async function GET(req: Request) {
 function writeTarget(scope: McpScope, project: Project | undefined, agentDir: string): McpConfigFileTarget | Refusal {
   if (scope === "global") return { scope: "global", agentDir };
   if (!project) return new Refusal(400, "invalid-request", "A project server needs the project's cwd");
-  let decision: boolean | null;
-  try {
-    const status = getProjectTrustStatus(project.cwd, agentDir);
-    // A folder that requires no trust reports an unreadable store here instead of throwing.
-    if (status.decisionError !== undefined) return new Refusal(409, "trust-unreadable", status.decisionError);
-    decision = status.decision;
-  } catch (error) {
-    return new Refusal(409, "trust-unreadable", errorMessage(error));
-  }
-  if (decision !== true) return new Refusal(403, "project-untrusted", "The project is not trusted, so its .pi/mcp.json is not changed");
+  const refused = mcpProjectTrustRefusal(project.cwd, agentDir, "The project is not trusted, so its .pi/mcp.json is not changed");
+  if (refused) return asRefusal(refused);
   return { scope: "project", cwd: project.cwd, allowedRoots: project.allowedRoots };
 }
 
@@ -165,10 +154,8 @@ function writeRefusal(error: unknown): Refusal {
  * whether a global switch worked must not depend on the folder Settings shows.
  */
 async function mcpWritable(): Promise<PiSdkInternals | Refusal> {
-  if (isMcpDisabledByOperator()) return new Refusal(409, "mcp-off", `${MCP_DISABLE_VARIABLE} is set, so Pi Web changes no MCP server`);
-  const internals = await loadPiSdkInternals();
-  if (!internals.ok) return new Refusal(409, "mcp-off", `Pi Web cannot load the SDK's MCP modules: ${internals.reason}`);
-  return internals;
+  const internals = await mcpInternalsOrRefusal("changes no MCP server");
+  return isMcpEntryRefusal(internals) ? asRefusal(internals) : internals;
 }
 
 function readScope(value: unknown): McpScope | undefined {

@@ -151,13 +151,17 @@ test("a folder without a project file lists no servers and says the file does no
 });
 
 test("a cwd that is missing, not a folder, or outside the allowed folders is refused with a reason", async () => {
-  assert.deepEqual(await get(), { status: 400, body: { error: "cwd required", reason: "cwd-invalid" } });
-  assert.deepEqual(await get(join(root, "missing")), {
-    status: 400,
-    body: { error: "Directory does not exist", reason: "cwd-not-directory" },
-  });
+  // As /api/mcp checks it (validateMcpProject()): absolute, inside the allowed roots as given, then a directory.
+  assert.deepEqual(await get(), { status: 400, body: { error: "cwd must be an absolute path", reason: "cwd-invalid" } });
+  // A relative path is not resolved against the server process's own folder.
+  assert.deepEqual(await get("."), { status: 400, body: { error: "cwd must be an absolute path", reason: "cwd-invalid" } });
   assert.deepEqual(await get(projectPath), { status: 400, body: { error: "cwd must be a directory", reason: "cwd-not-directory" } });
   assert.deepEqual(await get(outside), { status: 403, body: { error: "Access denied", reason: "cwd-denied" } });
+  // A folder that does not exist gets the same answer as one outside the roots, wherever it would be.
+  assert.deepEqual(await get(join(root, "missing")), { status: 403, body: { error: "Access denied", reason: "cwd-denied" } });
+  assert.deepEqual(await get(join(cwd, "missing")), { status: 403, body: { error: "Access denied", reason: "cwd-denied" } });
+  // A `..` is refused, not collapsed into an allowed folder.
+  assert.deepEqual(await get(`${cwd}/../project`), { status: 403, body: { error: "Access denied", reason: "cwd-denied" } });
 
   const response = await POST(new Request("http://localhost/api/project-trust", {
     method: "POST",
@@ -217,7 +221,9 @@ test("POST refuses a foreign origin, a body that is not JSON, and a folder with 
 
   response = await post("{ not json");
   assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "cwd required", reason: "cwd-invalid" });
+  assert.deepEqual(await response.json(), { error: "cwd must be an absolute path", reason: "cwd-invalid" });
+  response = await post({ cwd: "." });
+  assert.deepEqual([response.status, (await response.json()).reason], [400, "cwd-invalid"], "a relative path is not resolved against the server's folder");
 
   response = await post({ cwd: fresh });
   assert.equal(response.status, 409);

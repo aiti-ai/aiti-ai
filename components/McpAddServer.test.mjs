@@ -10,7 +10,9 @@ const jiti = createJiti(import.meta.url, {
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n.tsx");
-const { McpAddServer } = await jiti.import("./McpAddServer.tsx");
+const { MCP_ADD_REFUSAL_KEYS, McpAddServer } = await jiti.import("./McpAddServer.tsx");
+const { getLocalePlugin, getSupportedLocales } = await jiti.import("@/lib/i18n/registry.ts");
+const locales = Object.fromEntries(getSupportedLocales().map((id) => [id, getLocalePlugin(id).messages]));
 const { McpConfigView } = await jiti.import("./McpConfig.tsx");
 const { EMPTY_MCP_ADD_DRAFT } = await jiti.import("./mcp-add-helpers.ts");
 const configSource = await readFile(new URL("./McpConfig.tsx", import.meta.url), "utf8");
@@ -223,6 +225,16 @@ test("a refused Add says why; host variables are added only through an explicit 
   });
   assert.match(text(html), /Not added: .* Pi Web trusted ~?\/?.*repo for this step and could not take that back, so the folder stays trusted\./);
   assert.doesNotMatch(text(html), /the folder stays trusted$/m, "not the English diagnostic");
+
+  // Refusals worded as an Add's, not as the switch's, Test's or a session's.
+  html = pane({ draft: { text: "https://api.example.com/mcp" }, failure: { error: 'server "server": url must be an http or https URL', reason: "server-invalid", name: "server" } });
+  assert.match(text(html), /Not added: pi refuses it as filled in: server "server": url must be an http or https URL/);
+  assert.doesNotMatch(text(html), /does not connect it/);
+  html = pane({ draft: { text: "https://api.example.com/mcp" }, failure: { error: "x", reason: "web-password", name: "server" } });
+  assert.match(text(html), /Not added: It references PI_WEB_PASSWORD, so Pi Web does not add it\./);
+  for (const key of Object.values(MCP_ADD_REFUSAL_KEYS)) {
+    for (const [locale, plugin] of Object.entries(locales)) assert.equal(typeof plugin[key], "string", `${key} in ${locale}`);
+  }
 });
 
 test("Settings › MCP opens the add pane from the sidebar, keeps the draft, and tests what Add wrote", () => {

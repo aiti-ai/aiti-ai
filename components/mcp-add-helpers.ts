@@ -17,6 +17,7 @@ import {
   parseMcpImport,
   referenceableLiteralSecrets,
   suggestFreeName,
+  validationProblem,
   type McpImportField,
   type McpImportFieldValue,
   type McpImportFillResult,
@@ -438,6 +439,11 @@ export type McpAddSubmitBlock =
   | { kind: "fields"; fields: string[] }
   /** Values filled in that cannot be used (a variable name pi does not accept, an option not offered), by label. */
   | { kind: "field-invalid"; fields: string[] }
+  /**
+   * The config as filled in is one pi's validator refuses (a host typed into
+   * the URL with a space): an `invalid-config` note, worded as the importer's.
+   */
+  | { kind: "config-invalid"; note: McpImportNote }
   | { kind: "web-password" }
   | { kind: "scope"; block: McpAddProjectBlock };
 
@@ -525,6 +531,10 @@ export function mcpAddAnalysis(draft: McpAddDraft, data: McpResponse, cwd: strin
     }
   }
   const secretPaths = mcpAddSecretPaths(server, values, secretReferences);
+  const preview = mcpAddPreview(server, values, fill);
+  // The parse checked the paste with its placeholders filled by samples; only now are the values the
+  // user typed in place, and the route refuses what the SDK's validator refuses (`server-invalid`).
+  const filledProblem = fill.ok ? validationProblem(name, fill.config) : undefined;
   const projectBlock: McpAddProjectBlock | undefined = projectMode.kind === "blocked"
     ? projectMode.block
     : secretPaths.length > 0
@@ -547,6 +557,10 @@ export function mcpAddAnalysis(draft: McpAddDraft, data: McpResponse, cwd: strin
     submitBlock = required.length > 0
       ? { kind: "fields", fields: [...new Set(required.map(labelOf))] }
       : { kind: "field-invalid", fields: [...new Set(fill.notes.map(labelOf))] };
+  } else if (filledProblem) {
+    // A URL is shown as the preview shows it, so a password typed into it stays hidden.
+    const params = filledProblem.problem === "url" ? { ...filledProblem, url: preview.target } : filledProblem;
+    submitBlock = { kind: "config-invalid", note: { code: "invalid-config", params } };
   } else if (referencesWebPassword(fill.config)) submitBlock = { kind: "web-password" };
   else if (scope === "project" && projectBlock) submitBlock = { kind: "scope", block: projectBlock };
   else {
@@ -568,7 +582,7 @@ export function mcpAddAnalysis(draft: McpAddDraft, data: McpResponse, cwd: strin
     fill,
     fieldProblems,
     secretPaths,
-    preview: mcpAddPreview(server, values, fill),
+    preview,
     ...(submitBlock ? { submitBlock } : {}),
     trustFolder: scope === "project" && projectMode.kind === "trust-and-write",
   };
