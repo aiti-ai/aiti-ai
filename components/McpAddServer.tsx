@@ -523,10 +523,10 @@ function storedValue(config: McpServerConfig, label: string): string | undefined
 
 /**
  * One of the paste's own literal secrets, in a value pi resolves (ADR 0006,
- * decision 8): saved as written it keeps the server global, so it can be read
- * from a variable of the computer running Pi Web instead, stored as
- * `${NAME}` (after a header's `Bearer `), which lets the server go to the
- * project. The secret itself is never shown.
+ * "Secrets typed in the panel"): saved as written it keeps the server global,
+ * so it can be read from a variable of the computer running Pi Web instead,
+ * stored as `${NAME}` (after a header's `Bearer `), which lets the server go
+ * to the project. The secret itself is never shown.
  */
 function McpAddSecretInput({
   label,
