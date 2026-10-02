@@ -26,7 +26,7 @@ import {
   type McpImportResult,
   type McpImportServer,
 } from "@/lib/mcp-import";
-import { maskArgs, maskCommand, maskUrl, SECRET_MASK } from "@/lib/mcp-secrets";
+import { SECRET_MASK } from "@/lib/mcp-secrets";
 import { formatMcpCommandLine, revealHiddenCharacters } from "@/lib/mcp-server-display";
 import { isBlockingFileProblem, mcpProjectTrustable, mcpWritesOff } from "./mcp-config-helpers";
 
@@ -280,7 +280,7 @@ export function mcpSecretPathTakesVariable(label: string): boolean {
 export interface McpAddPreview {
   source: McpImportFormat;
   transport: "stdio" | "http";
-  /** The command line or URL, with secret-looking parts and typed passwords masked. */
+  /** The command line or URL as it would be written, with only the values typed into password fields masked. */
   target: string;
   cwd?: string;
   envNames: string[];
@@ -326,11 +326,16 @@ function fieldRefs(config: McpServerConfig): { field: McpConfigFieldRef; value: 
 }
 
 /**
- * What Add would write, for the user to read before pressing it: the masked
- * command line or URL, the working folder, env and header names (never their
+ * What Add would write, for the user to read before pressing it: the command
+ * line or URL, the working folder, env and header names (never their
  * values), the values that run a shell command, and the host variables it
  * reads. An install link hides all of this in base64, which is why the
- * automatic test after Add only ever follows this preview.
+ * automatic test after Add only ever follows this preview, and why the
+ * command line and URL are shown as written: masking what looks like a secret
+ * (any value after `--token`, a long hex package name) would let whoever
+ * wrote the link choose what the user cannot read before it runs, and the
+ * pasted text is in the page already. Only what the user typed into a
+ * password field is masked.
  */
 export function mcpAddPreview(server: McpImportServer, values: Readonly<Record<string, McpImportFieldValue>>, fill?: McpImportFillResult): McpAddPreview {
   const config = fill?.ok ? fill.config : server.config;
@@ -347,20 +352,17 @@ export function mcpAddPreview(server: McpImportServer, values: Readonly<Record<s
     unfilled: !fill?.ok && server.fields.length > 0,
   };
   if ("url" in config) {
-    const url = maskUrl(config.url);
-    const hidden = hideForms(url.value, forms);
+    const hidden = hideForms(config.url, forms);
     return {
       ...base,
       transport: "http",
       target: revealHiddenCharacters(hidden.text),
       envNames: [],
       headerNames: Object.keys(config.headers ?? {}),
-      masked: url.masked || hidden.masked,
+      masked: hidden.masked,
     };
   }
-  const command = maskCommand(config.command);
-  const args = maskArgs(config.args ?? []);
-  const line = hideForms(formatMcpCommandLine(command.value, args.args), forms);
+  const line = hideForms(formatMcpCommandLine(config.command, config.args ?? []), forms);
   return {
     ...base,
     transport: "stdio",
@@ -368,7 +370,7 @@ export function mcpAddPreview(server: McpImportServer, values: Readonly<Record<s
     ...(config.cwd !== undefined ? { cwd: revealHiddenCharacters(config.cwd) } : {}),
     envNames: Object.keys(config.env ?? {}),
     headerNames: [],
-    masked: command.masked || args.masked || line.masked,
+    masked: line.masked,
   };
 }
 

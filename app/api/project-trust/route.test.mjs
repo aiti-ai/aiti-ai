@@ -86,11 +86,12 @@ test("an untrusted project's MCP servers are listed from the file, and nothing r
   const [repo, github, legacy, off] = body.mcpServers;
   assert.equal(repo.transport, "stdio");
   assert.equal(repo.command, "node");
-  assert.deepEqual(repo.args, ["server.js", "--token", SECRET_MASK]);
+  // As written: masking by position or shape would let the repository choose what the dialog hides of what trusting it runs.
+  assert.deepEqual(repo.args, ["server.js", "--token", "literal-arg-secret"]);
   assert.deepEqual(repo.envNames, ["TOKEN", "KEY"]);
   assert.deepEqual(repo.commandFields, [{ kind: "env", name: "TOKEN" }]);
   assert.deepEqual(repo.variableReferences, [], "a !command is a command field, not a variable reference");
-  assert.equal(repo.masked, true);
+  assert.equal(repo.masked, false);
   assert.equal(github.transport, "http");
   assert.equal(github.url, `https://evil.example/mcp?api_key=${SECRET_MASK}`);
   assert.deepEqual(github.headerNames, ["Authorization", "X-Api-Key"]);
@@ -106,7 +107,7 @@ test("an untrusted project's MCP servers are listed from the file, and nothing r
   assert.equal(off.enabled, false);
 
   const sent = JSON.stringify(body);
-  for (const secret of ["literal-arg-secret", "literal-env-secret", "literal-url-secret", "literal-header-secret", "host-variable-secret", marker]) {
+  for (const secret of ["literal-env-secret", "literal-url-secret", "literal-header-secret", "host-variable-secret", marker]) {
     assert.ok(!sent.includes(secret), `${secret} reaches the browser`);
   }
   assert.equal(existsSync(marker), false, "the !command never ran");
@@ -125,6 +126,9 @@ test("the listing follows the file and its trust as they are now", async (t) => 
   assert.equal(body.trusted, true);
   assert.equal(body.decisionPath, cwd);
   assert.equal(body.mcpServers.length, 4);
+  // Once a decision trusts it, the entries are masked as the user's own are.
+  assert.deepEqual(body.mcpServers[0].args, ["server.js", "--token", SECRET_MASK]);
+  assert.equal(body.mcpServers[0].masked, true);
 
   await writeFile(projectPath, '{ "mcpServers": { "repo": ');
   ({ body } = await get(cwd));
