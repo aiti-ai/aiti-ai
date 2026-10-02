@@ -7,6 +7,7 @@ const jiti = createJiti(import.meta.url, { tsconfigPaths: true });
 const {
   EMPTY_MCP_ADD_DRAFT,
   MCP_ADD_BREADTH_KEYS,
+  MCP_ADD_EXAMPLES,
   MCP_ADD_PROJECT_BLOCK_KEYS,
   MCP_IMPORT_FIELD_REASON_KEYS,
   MCP_IMPORT_PROBLEM_KEYS,
@@ -22,6 +23,7 @@ const {
   mcpFieldSuggestedVariableName,
   mcpFieldTakesVariable,
   mcpImportNoteKey,
+  mcpImportNoteSeverity,
   mcpImportNoteText,
   mcpImportProblemKey,
   mcpSuggestedVariableName,
@@ -267,6 +269,22 @@ test("a literal secret keeps the Project option closed, unless the value is read
   assert.equal(referenced.submitBlock, undefined);
   assert.deepEqual(referenced.values, { "env.GITHUB_TOKEN": { reference: "GITHUB_TOKEN" } });
   assert.equal(referenced.fill.config.env.GITHUB_TOKEN, "${GITHUB_TOKEN}");
+});
+
+test("every format the importer reads has one example, read as that format with nothing left to fill in", () => {
+  assert.deepEqual(MCP_ADD_EXAMPLES.map(({ source }) => source).sort(), Object.keys(MCP_IMPORT_SOURCE_KEYS).sort());
+  for (const { source, text } of MCP_ADD_EXAMPLES) {
+    const result = parseMcpImport(text);
+    assert.ok(result.ok, `${source}: ${JSON.stringify(result.notes)}`);
+    assert.equal(result.servers.length, 1, source);
+    const [server] = result.servers;
+    assert.equal(server.source, source, text);
+    assert.deepEqual(server.fields, [], `${source} asks for nothing`);
+    assert.deepEqual([...result.notes, ...server.notes].filter((note) => mcpImportNoteSeverity(note) !== "info"), [], `${source} reads cleanly`);
+  }
+  // The install links carry the fetch server, which the preview shows as written.
+  const cursor = parseMcpImport(MCP_ADD_EXAMPLES.find(({ source }) => source === "cursor-install-link").text).servers[0];
+  assert.deepEqual([cursor.name, cursor.config], ["fetch", { command: "uvx", args: ["mcp-server-fetch"] }]);
 });
 
 test("a field says what is stored around it only where it is part of a longer value", () => {

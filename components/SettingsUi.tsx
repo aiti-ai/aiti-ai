@@ -362,6 +362,9 @@ export function addSourceKeySubmits(event: {
   return event.nativeEvent?.isComposing !== true && event.keyCode !== 229;
 }
 
+/** An example the add form offers: its text, or its text beside what it is (a format, a client). */
+export type ConfigAddSourceExample = string | { label: string; value: string };
+
 /**
  * The add form of a list-detail panel: a title with a link to the catalog,
  * where the result is saved, one source box, the caller's controls (usually a
@@ -410,7 +413,7 @@ export function ConfigAddSourcePanel({
   onValueChange: (value: string) => void;
   onSubmit: () => void;
   examplesLabel: string;
-  examples: readonly string[];
+  examples: readonly ConfigAddSourceExample[];
   error?: string | null;
   /** A textarea instead of one line: Enter adds a line, Cmd/Ctrl+Enter submits. */
   multiline?: boolean;
@@ -505,7 +508,7 @@ export function ConfigAddSourcePanel({
         <div className="config-add-source-examples">
           <div className="config-add-source-examples-label">{examplesLabel}</div>
           <div className="config-add-source-example-list">
-            {examples.map((example) => (
+            {examples.map((example) => typeof example === "string" ? (
               <button
                 key={example}
                 type="button"
@@ -513,6 +516,16 @@ export function ConfigAddSourcePanel({
                 onClick={() => onValueChange(example)}
               >
                 {example}
+              </button>
+            ) : (
+              <button
+                key={example.value}
+                type="button"
+                className="config-add-source-example has-label"
+                onClick={() => onValueChange(example.value)}
+              >
+                <span className="config-add-source-example-label">{example.label}</span>
+                <span className="config-add-source-example-value">{example.value}</span>
               </button>
             ))}
           </div>

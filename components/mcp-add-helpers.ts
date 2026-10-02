@@ -226,6 +226,43 @@ export const MCP_IMPORT_SOURCE_KEYS: Record<McpImportFormat, string> = {
   "copilot-app-install-link": "mcp.add.source.copilot-app-install-link",
 };
 
+// The fetch server the stdio examples add, as an install link carries it: Cursor's
+// config without its name, VS Code's (and the links built on it) with it.
+const FETCH_CONFIG = JSON.stringify({ command: "uvx", args: ["mcp-server-fetch"] });
+const FETCH_NAMED = JSON.stringify({ name: "fetch", command: "uvx", args: ["mcp-server-fetch"] });
+
+/**
+ * One example per format the importer reads, shown under the empty paste box
+ * with its format's name (`MCP_IMPORT_SOURCE_KEYS`): addresses and commands,
+ * other clients' command lines, configs, install links. Each is read as its
+ * format with nothing left to fill in, which `mcp-add-helpers.test.mjs` checks,
+ * along with a format added to the importer without one here.
+ */
+export const MCP_ADD_EXAMPLES: readonly { source: McpImportFormat; text: string }[] = [
+  { source: "url", text: "https://mcp.example.com/mcp" },
+  { source: "command-line", text: "npx -y @modelcontextprotocol/server-everything" },
+  { source: "pi-mcp-add", text: "pi mcp add docs --url https://mcp.example.com/mcp" },
+  { source: "claude-mcp-add", text: "claude mcp add --transport http docs https://mcp.example.com/mcp" },
+  { source: "claude-mcp-add-json", text: `claude mcp add-json docs '{"type":"http","url":"https://mcp.example.com/mcp"}'` },
+  { source: "codex-mcp-add", text: "codex mcp add fetch -- uvx mcp-server-fetch" },
+  { source: "gemini-mcp-add", text: "gemini mcp add --transport http docs https://mcp.example.com/mcp" },
+  { source: "vscode-add-mcp", text: `code --add-mcp '${FETCH_NAMED}'` },
+  { source: "mcp-servers-json", text: '{ "mcpServers": { "fetch": { "command": "uvx", "args": ["mcp-server-fetch"] } } }' },
+  { source: "vscode-json", text: '{ "servers": { "docs": { "type": "http", "url": "https://mcp.example.com/mcp" } } }' },
+  { source: "zed-json", text: '{ "context_servers": { "fetch": { "command": "uvx", "args": ["mcp-server-fetch"] } } }' },
+  { source: "opencode-json", text: '{ "mcp": { "docs": { "type": "remote", "url": "https://mcp.example.com/mcp" } } }' },
+  { source: "server-object", text: '{ "type": "http", "url": "https://mcp.example.com/mcp" }' },
+  { source: "server-map", text: '{ "fetch": { "command": "uvx", "args": ["mcp-server-fetch"] } }' },
+  {
+    source: "registry-server-json",
+    text: '{ "name": "com.example/docs", "version": "1.0.0", "remotes": [{ "type": "streamable-http", "url": "https://mcp.example.com/mcp" }] }',
+  },
+  { source: "cursor-install-link", text: `cursor://anysphere.cursor-deeplink/mcp/install?name=fetch&config=${btoa(FETCH_CONFIG)}` },
+  { source: "vscode-install-link", text: `vscode:mcp/install?${encodeURIComponent(FETCH_NAMED)}` },
+  { source: "visual-studio-install-link", text: `vsweb+mcp:/install?${encodeURIComponent(FETCH_NAMED)}` },
+  { source: "copilot-app-install-link", text: `ghapp://mcp/install?${encodeURIComponent(FETCH_NAMED)}` },
+];
+
 // ---------------------------------------------------------------------------
 // Fields
 
