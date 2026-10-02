@@ -355,6 +355,29 @@ test("Add waits, with a reason, for a free valid name, the values, and a scope i
   assert.equal(analyse({ text: "npx x" }, overview({ mcp: { available: false, reason: "builtin-disabled", error: "x" } })).submitBlock, undefined);
 });
 
+test("a config pi's validator refuses once the values are filled in blocks Add, worded as the importer words it", () => {
+  const text = "https://<your-server>/mcp";
+  const [field] = parseMcpImport(text).servers[0].fields;
+  const blocked = analyse({ text, values: { [field.id]: "my server" } });
+  assert.equal(blocked.submitBlock?.kind, "config-invalid");
+  assert.equal(blocked.submitBlock.note.code, "invalid-config");
+  assert.equal(blocked.submitBlock.note.params.url, blocked.preview.target, "the URL as the preview shows it");
+  assert.equal(mcpImportNoteText(blocked.submitBlock.note, t), "pi would refuse it: https://my server/mcp is not an http or https URL.");
+  // A value that makes a valid URL does not.
+  assert.equal(analyse({ text, values: { [field.id]: "mcp.example.com" } }).submitBlock, undefined);
+
+  // A password typed into the same URL stays hidden in the block's words, as in the preview.
+  const both = "https://<your-server>/mcp?api_key=YOUR_KEY";
+  const fields = parseMcpImport(both).servers[0].fields;
+  const keyField = fields.find((item) => item.kind === "password");
+  const hostField = fields.find((item) => item !== keyField);
+  assert.ok(keyField && hostField, JSON.stringify(fields));
+  const hidden = analyse({ text: both, values: { [hostField.id]: "my server", [keyField.id]: "s3cretvalue" } });
+  assert.equal(hidden.submitBlock?.kind, "config-invalid");
+  assert.match(mcpImportNoteText(hidden.submitBlock.note, t), /api_key=••• is not an http or https URL\.$/);
+  assert.doesNotMatch(JSON.stringify(hidden.submitBlock), /s3cretvalue/);
+});
+
 test("the preview shows the command line and URL as written, masking only what was typed into a password field, and never shows values", () => {
   const server = parseMcpImport("npx -y @scope/server --token YOUR_TOKEN --region YOUR_REGION").servers[0];
   const token = server.fields.find((field) => field.label.includes("TOKEN") || field.kind === "password");

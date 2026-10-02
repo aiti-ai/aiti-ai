@@ -296,24 +296,35 @@ function parseConfigText(info: McpConfigFileInfo, text: string): [name: string, 
   return entries;
 }
 
+/** What `mcp-auth.json` holds, by URL key: any record at all, and an access token. */
+interface McpAuthState {
+  /** URLs with an access token: signed in. */
+  signedIn: Set<string>;
+  /** URLs with any record, a token-less one a sign-in left included: what Sign out removes. */
+  stored: Set<string>;
+}
+
 /**
- * Servers with tokens in `mcp-auth.json`, keyed as the SDK keys them
+ * The servers `mcp-auth.json` holds state for, keyed as the SDK keys them
  * (`String(new URL(url))`). Read raw and never locked or created; undefined
  * when the file cannot be read, so no server is reported either way.
  */
-function readSignedInUrls(agentDir: string): Set<string> | undefined {
+function readAuthState(agentDir: string): McpAuthState | undefined {
   const path = join(agentDir, "mcp-auth.json");
-  if (!existsSync(path)) return new Set();
+  const none = (): McpAuthState => ({ signedIn: new Set(), stored: new Set() });
+  if (!existsSync(path)) return none();
   try {
     const text = readFileSync(path, "utf8");
-    if (!text.trim()) return new Set();
+    if (!text.trim()) return none();
     const parsed: unknown = JSON.parse(text);
-    if (!isRecord(parsed)) return new Set();
-    return new Set(
-      Object.entries(parsed)
-        .filter(([, state]) => isRecord(state) && isRecord(state.tokens) && typeof state.tokens.access_token === "string")
-        .map(([key]) => key),
-    );
+    if (!isRecord(parsed)) return none();
+    const state = none();
+    for (const [key, value] of Object.entries(parsed)) {
+      // The SDK's store removes the whole key, whatever it holds (`McpOAuthCredentialStore.remove()`).
+      state.stored.add(key);
+      if (isRecord(value) && isRecord(value.tokens) && typeof value.tokens.access_token === "string") state.signedIn.add(key);
+    }
+    return state;
   } catch {
     return undefined;
   }
@@ -351,7 +362,7 @@ function signInKey(url: string): string | undefined {
 
 interface DescribeContext {
   internals: McpConfigReadInternals | undefined;
-  signedInUrls: Set<string> | undefined;
+  authState: McpAuthState | undefined;
   /** Project entries are shown with their command and arguments as written (`McpConfigReadOptions.projectUntrusted`). */
   revealProjectCommands: boolean;
 }
@@ -389,7 +400,7 @@ function describeServer(
   value: unknown,
   scope: McpScope,
   sourcePath: string,
-  { internals, signedInUrls, revealProjectCommands }: DescribeContext,
+  { internals, authState, revealProjectCommands }: DescribeContext,
 ): DescribedServer {
   const validation = internals?.validateMcpServerConfig(name, value);
   const config: Record<string, unknown> = isRecord(value) ? value : {};
@@ -447,9 +458,12 @@ function describeServer(
   }
   // The SDK's rule (runtime.js usesOAuth): `url` present and no Authorization header.
   info.usesOAuth = transport === "http" && !info.headerNames.some((header) => header.toLowerCase() === "authorization");
-  if (info.usesOAuth && signedInUrls && typeof config.url === "string") {
+  if (info.usesOAuth && authState && typeof config.url === "string") {
     const key = signInKey(config.url);
-    if (key) info.signedIn = signedInUrls.has(key);
+    if (key) {
+      info.signedIn = authState.signedIn.has(key);
+      info.oauthStateStored = authState.stored.has(key);
+    }
   }
 
   // Without the SDK's parser, a leading `!` is all that marks a command, and any
@@ -500,7 +514,7 @@ export interface McpConfigRead {
 export function readMcpServerConfigs(options: McpConfigReadOptions): McpConfigRead {
   const context: DescribeContext = {
     internals: options.internals,
-    signedInUrls: readSignedInUrls(options.agentDir),
+    authState: readAuthState(options.agentDir),
     revealProjectCommands: options.projectUntrusted === true,
   };
   const files: McpConfigFileInfo[] = [];

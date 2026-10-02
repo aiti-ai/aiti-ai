@@ -240,8 +240,15 @@ export interface McpServerInfo {
   headerNames: string[];
   /** An HTTP server without an `Authorization` header signs in with OAuth when it answers 401. */
   usesOAuth: boolean;
-  /** Whether `mcp-auth.json` holds tokens for the URL; absent when unknown or not an OAuth server. */
+  /** Whether `mcp-auth.json` holds an access token for the URL; absent when unknown or not an OAuth server. */
   signedIn?: boolean;
+  /**
+   * Whether `mcp-auth.json` holds anything for the URL: tokens, or what a
+   * sign-in stores before any token (a dynamic client registration, the PKCE
+   * verifier and state), which a cancelled or expired sign-in leaves behind.
+   * Sign out removes all of it. Absent when unknown or not an OAuth server.
+   */
+  oauthStateStored?: boolean;
   /** Values that run a shell command on every connection. */
   commandFields: McpConfigFieldRef[];
   /** Values that read the host's environment variables on every connection; a `!command` is in `commandFields` instead. */
@@ -464,11 +471,17 @@ export interface McpResponse {
   hostInactive?: McpHostInactiveInfo;
 }
 
-/** Why `/api/mcp`, `/api/mcp/test`, `/api/mcp/sign-in`, `/api/project-trust` or `/api/tools/settings` refused a request; later routes add their own codes. */
+/**
+ * Why a route refused a request: `/api/mcp`, `/api/mcp/test`,
+ * `/api/mcp/sign-in`, `/api/mcp/sign-in/[flowId]`, `/api/project-trust` or
+ * `/api/tools/settings`. Each code is described by its condition, not by the
+ * route that added it first, since several routes share most of them; the
+ * status a route answers with is noted where routes differ.
+ */
 export type McpRefusalReason =
   /** `cwd` is empty or not an absolute path. */
   | "cwd-invalid"
-  /** `cwd` is outside the folders Pi Web may read, or has a `..` segment. */
+  /** `cwd` is outside the folders Pi Web may read, has a `..` segment, or does not exist. */
   | "cwd-denied"
   /** `cwd` is not a directory (anymore). */
   | "cwd-not-directory"
@@ -476,17 +489,17 @@ export type McpRefusalReason =
   | "request-denied"
   /** A mutating request whose body is not sent as JSON. */
   | "content-type"
-  /** `trust.json` cannot be read, or is locked by another process (`/api/project-trust`). */
+  /** `trust.json` cannot be read, or is locked by another process: 500 from `GET /api/project-trust`, 409 from writes, add, Test and sign-in. */
   | "trust-unreadable"
   /** The project has no resources that need trust (anymore), so there is nothing to trust (`/api/project-trust`). */
   | "trust-not-required"
   /** A session in the folder is running, and trusting would rebuild it mid-run (`/api/project-trust`). */
   | "session-busy"
-  /** The body does not ask for a change the route can make (`/api/tools/settings`, `POST /api/mcp`). */
+  /** The body is not a request the route can act on. */
   | "invalid-request"
-  /** MCP is off on this server (`PI_WEB_DISABLE_MCP`, or the SDK's MCP modules cannot load), so `mcp.json` is not written. */
+  /** MCP is off on this server (`PI_WEB_DISABLE_MCP`, or the SDK's MCP modules cannot load), so Pi Web neither writes `mcp.json` nor connects a server. */
   | "mcp-off"
-  /** A project entry, and no decision trusts the project, so its `.pi/mcp.json` is not written. */
+  /** A project entry, and no decision trusts the project, so its `.pi/mcp.json` is neither written nor connected. */
   | "project-untrusted"
   /** The file to write is not JSON; it was left as it is (`path`). */
   | "unparsable"
@@ -496,15 +509,15 @@ export type McpRefusalReason =
   | "server-missing"
   /** The entry is not a JSON object, so it cannot be switched on or off, only removed (`path`, `name`). */
   | "entry-not-object"
-  /** Turning on, or testing, an entry that references `PI_WEB_PASSWORD`, which Pi Web refuses to connect (`name`). */
+  /** The entry references `PI_WEB_PASSWORD`, so Pi Web does not turn it on, add, test or sign in to it (`name`). */
   | "web-password"
-  /** The SDK's validator refuses the entry, so it never connects and is not tested (`name`). */
+  /** The SDK's validator refuses the entry (`name`; `error` is the validator's message, which names fields, never values). */
   | "server-invalid"
   /** The undo token is unknown, used, or past its 60 seconds. */
   | "undo-unavailable"
   /** Undo would put back a name the file defines again since the removal (`name`). */
   | "undo-name-taken"
-  /** The file already defines a server of that name (`path`, `name`). */
+  /** The file already defines a server of that name (`name`; `path` when the writer found it under the lock; `suggestedName` on add). */
   | "name-taken"
   /** A project file that is a symbolic link to nothing (`path`). */
   | "link-dangling"

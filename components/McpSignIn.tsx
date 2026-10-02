@@ -95,7 +95,10 @@ export function McpSignInRow({
   // Another entry of the same URL started the flow this one joined: what it found is that entry's.
   const shared = flow !== undefined && mcpSignInShared(flow, server);
   // Signing out of a URL nothing is stored for does nothing; unknown (an unreadable file) still offers it.
-  const offersSignOut = server.signedIn !== false;
+  // What is stored counts, not only tokens: a cancelled sign-in leaves a client registration and its
+  // PKCE state, which only Sign out (or `pi mcp logout`) clears. A listing that predates the field
+  // falls back to the tokens.
+  const offersSignOut = (server.oauthStateStored ?? server.signedIn) !== false;
   // A sign-out on its way cancels the URL's sign-in when it arrives, so Sign in waits for it.
   const signInDisabled = starting || signingOut || block !== undefined;
   const signOutDisabled = controlsBusy || starting || signOutBlock !== undefined;
@@ -108,7 +111,7 @@ export function McpSignInRow({
           {server.signedIn === true
             ? t("mcp.signIn.signedIn")
             : server.signedIn === false
-              ? t("mcp.signIn.notSignedIn")
+              ? t(server.oauthStateStored ? "mcp.signIn.registrationOnly" : "mcp.signIn.notSignedIn")
               : t("mcp.signIn.unknown")}
         </span>
         {flow && active && shared && (

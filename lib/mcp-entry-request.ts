@@ -69,8 +69,15 @@ export function isMcpEntryRefusal(value: unknown): value is McpEntryRefusal {
   return isRecord(value) && typeof value.status === "number" && isRecord(value.body);
 }
 
-/** The panel's project, checked as GET /api/mcp checks it: absolute, inside the allowed roots as given (a `..` is refused, not collapsed), a directory. */
-async function validateProject(value: unknown): Promise<McpRequestProject | McpEntryRefusal> {
+/**
+ * The folder a request names as its project, checked alike by every route
+ * that takes one for Settings › MCP or the trust dialog (`/api/mcp`, its Test
+ * and sign-in, `/api/project-trust`): absolute (400 `cwd-invalid`), inside the
+ * allowed roots as given — a `..` is refused, not collapsed (403
+ * `cwd-denied`) — and only then a directory (400 `cwd-not-directory`), so a
+ * folder outside the roots gets the same answer whether or not it exists.
+ */
+export async function validateMcpProject(value: unknown): Promise<McpRequestProject | McpEntryRefusal> {
   if (typeof value !== "string" || !value.trim() || !isAbsolute(value)) {
     return mcpEntryRefusal(400, "cwd-invalid", "cwd must be an absolute path");
   }
@@ -87,6 +94,21 @@ async function validateProject(value: unknown): Promise<McpRequestProject | McpE
   return { cwd, allowedRoots };
 }
 
+/**
+ * The SDK's internals, or MCP off as every Settings › MCP route reads it: the
+ * operator's switch (`PI_WEB_DISABLE_MCP`), which nothing in the browser may
+ * override, or SDK modules that cannot load, without which nothing can be
+ * checked, written or connected through Pi Web's transport. `-builtin:mcp`
+ * does not count: a project may reverse that setting, and an explicit action
+ * still works. `doing` ends the operator's message ("so Pi Web …").
+ */
+export async function mcpInternalsOrRefusal(doing: string): Promise<PiSdkInternals | McpEntryRefusal> {
+  if (isMcpDisabledByOperator()) return mcpEntryRefusal(409, "mcp-off", `${MCP_DISABLE_VARIABLE} is set, so Pi Web ${doing}`);
+  const internals = await loadPiSdkInternals();
+  if (!internals.ok) return mcpEntryRefusal(409, "mcp-off", `Pi Web cannot load the SDK's MCP modules: ${internals.reason}`);
+  return internals;
+}
+
 function readScope(value: unknown): McpScope | undefined {
   return value === "global" || value === "project" ? value : undefined;
 }
@@ -97,13 +119,16 @@ function readScope(value: unknown): McpScope | undefined {
  * trust-requiring resources has without any decision; without this, a route
  * would run an untrusted repository's command. Undefined when trusted.
  */
-export function mcpProjectTrustRefusal(cwd: string, agentDir: string): McpEntryRefusal | undefined {
+export function mcpProjectTrustRefusal(
+  cwd: string,
+  agentDir: string,
+  untrustedMessage = "The project is not trusted, so Pi Web does not start its MCP servers",
+): McpEntryRefusal | undefined {
   try {
     const status = getProjectTrustStatus(cwd, agentDir);
+    // A folder that requires no trust reports an unreadable store here instead of throwing.
     if (status.decisionError !== undefined) return mcpEntryRefusal(409, "trust-unreadable", status.decisionError);
-    if (status.decision !== true) {
-      return mcpEntryRefusal(403, "project-untrusted", "The project is not trusted, so Pi Web does not start its MCP servers");
-    }
+    if (status.decision !== true) return mcpEntryRefusal(403, "project-untrusted", untrustedMessage);
     return undefined;
   } catch (error) {
     return mcpEntryRefusal(409, "trust-unreadable", errorMessage(error));
@@ -138,17 +163,14 @@ export async function readConnectableMcpEntry(req: Request): Promise<McpConnecta
 
   let project: McpRequestProject | undefined;
   if (body.cwd !== undefined && body.cwd !== null) {
-    const result = await validateProject(body.cwd);
+    const result = await validateMcpProject(body.cwd);
     if (isMcpEntryRefusal(result)) return result;
     project = result;
   }
   if (scope === "project" && !project) return mcpEntryRefusal(400, "invalid-request", "A project server needs the project's cwd");
 
-  // MCP off: the operator's switch, which nothing in the browser may override, or SDK modules
-  // that cannot load, without which Pi Web has no transport it would connect through.
-  if (isMcpDisabledByOperator()) return mcpEntryRefusal(409, "mcp-off", `${MCP_DISABLE_VARIABLE} is set, so Pi Web connects no MCP server`);
-  const internals = await loadPiSdkInternals();
-  if (!internals.ok) return mcpEntryRefusal(409, "mcp-off", `Pi Web cannot load the SDK's MCP modules: ${internals.reason}`);
+  const internals = await mcpInternalsOrRefusal("connects no MCP server");
+  if (isMcpEntryRefusal(internals)) return internals;
 
   const agentDir = getAgentDir();
   if (scope === "project" && project) {
