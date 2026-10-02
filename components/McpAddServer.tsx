@@ -11,6 +11,7 @@ import { mcpFieldLabel, mcpVariableChips, revealHiddenCharacters } from "@/lib/m
 import {
   ConfigAddSourcePanel,
   ConfigButton,
+  type ConfigAddSourceCatalog,
   ConfigDetailGrid,
   ConfigDetailGridRow,
   ConfigField,
@@ -50,6 +51,14 @@ function displayPath(path: string): string {
 function scopeLabel(scope: McpScope, t: Translate): string {
   return scope === "project" ? t("skills.scope.project") : t("skills.scope.global");
 }
+
+/** MCP server catalogs to browse, linked at the right of the pane's title. */
+const MCP_CATALOGS: readonly ConfigAddSourceCatalog[] = [
+  { href: "https://glama.ai/mcp/servers", label: "glama.ai" },
+  { href: "https://smithery.ai/servers", label: "smithery.ai" },
+  { href: "https://mcp.so/", label: "mcp.so" },
+  { href: "https://registry.modelcontextprotocol.io/", label: "registry.modelcontextprotocol.io" },
+];
 
 /** The importer's notes about the server's name, shown under the name box instead of with the rest. */
 const NAME_NOTE_CODES: ReadonlySet<string> = new Set(["name-derived", "name-sanitized", "name-deduplicated", "name-taken"]);
@@ -196,8 +205,7 @@ export function McpAddServer({
   return (
     <ConfigAddSourcePanel
       title={t("mcp.add.title")}
-      catalogHref="https://github.com/mcp"
-      catalogLabel="github.com/mcp"
+      catalogs={MCP_CATALOGS}
       target={
         <ConfigSaveTarget
           value={analysis.scope}

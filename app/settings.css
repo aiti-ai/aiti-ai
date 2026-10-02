@@ -863,6 +863,14 @@
   gap: 12px;
 }
 
+.config-add-source-catalogs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 12px;
+}
+
 .config-add-source-catalog {
   display: inline-flex;
   align-items: center;
