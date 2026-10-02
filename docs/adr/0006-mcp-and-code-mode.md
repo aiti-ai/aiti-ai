@@ -145,7 +145,9 @@ It needs no project either: without one it lists the global `mcp.json` alone.
   Missing values become password, text, or select fields, and only the
   secret-looking ones are masked, since many are paths or choices. Nothing
   connects on paste, because an install link can hide its command in base64:
-  a new server is tested once, after the explicit Add.
+  a new server is tested once, after the explicit Add, and the preview before
+  it shows the decoded command line and URL as written, hiding only what the
+  user typed into a password field.
 - **Test connection and OAuth sign-in run server-side**, through SDK modules
   the package does not export (`McpServerConnection`, `signInMcpServer`),
   loaded by file URL in `lib/pi-sdk-internals.ts`. A test is bounded (15 s per
@@ -271,8 +273,9 @@ restores the branch's tool set from its transcript.
   approval, so gating only MCP entries stopped neither a malicious repository
   nor inherited trust, and it made Pi Web and the CLI disagree about which
   servers run. What Pi Web adds is visibility: the panel lists an untrusted
-  project's entries with the command each would run and the host variables
-  each would read, and the trust dialog lists them before the folder is
+  project's entries with the command each would run, as written rather than
+  masked (masking by shape would let the repository choose what is hidden),
+  and the host variables each would read, and the trust dialog lists them before the folder is
   trusted. A project file over 1 MiB, or declaring more than 200 servers, is
   reported instead of listed: it comes from a repository nobody has trusted
   yet. The dialog opens only for a folder that requires trust and is not
