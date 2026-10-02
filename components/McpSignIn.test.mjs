@@ -70,7 +70,7 @@ function buttons(html) {
 
 test("a server with its own Authorization header says so, with nothing to press", () => {
   const html = row({ server: { ...oauth, usesOAuth: false } });
-  assert.equal(text(html), "Sign-in Uses its Authorization header instead of OAuth.");
+  assert.equal(text(html), "Sign-in Authorization header");
   assert.deepEqual(buttons(html), []);
 });
 

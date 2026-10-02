@@ -435,6 +435,26 @@ export async function setMcpServersEnabled<R extends string = never>(
   });
 }
 
+/**
+ * Sets one server's `exposure`, as the SDK's `updateMcpServerConfig({
+ * exposure })` sets it: `codemode`, the default, removes the key, any other
+ * value is written. `toolExposure` and every other key are left alone. An
+ * entry that already says it is left alone, and so is its file.
+ */
+export async function setMcpServerExposure(
+  target: McpConfigFileTarget,
+  name: string,
+  exposure: McpExposure,
+): Promise<McpConfigEditOutcome<McpEnabledOutcome<never>>> {
+  return editMcpConfigFile<McpEnabledOutcome<never>>(target, ({ servers }) => {
+    if (!servers || !Object.hasOwn(servers, name)) return { changed: false, value: { name, outcome: "missing" } };
+    const entry = servers[name];
+    if (!isRecord(entry)) return { changed: false, value: { name, outcome: "not-an-object" } };
+    const changed = patchMcpServerEntry(entry, { exposure });
+    return { changed, value: { name, outcome: changed ? "changed" : "unchanged" } };
+  });
+}
+
 /** An entry a removal took out of a file, with where it stood, for undo. */
 export interface McpRemovedServer {
   /** The raw entry, literal secrets and all: it stays on the server. */

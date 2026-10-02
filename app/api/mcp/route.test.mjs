@@ -187,6 +187,13 @@ test("Always on is weighed against the global extensions alone, whichever projec
   }
 });
 
+test("-builtin:tool-search is reported with the file that turns tool search off", async (t) => {
+  t.after(() => rm(settingsPath, { force: true }));
+  assert.equal((await get()).body.toolSearchDisabled, undefined);
+  await writeFile(settingsPath, JSON.stringify({ extensions: ["-builtin:tool-search"] }));
+  assert.deepEqual((await get()).body.toolSearchDisabled, { settingsPath });
+});
+
 test("Code mode reports the global preference and a self-test nobody has run yet", async (t) => {
   t.after(() => rm(settingsPath, { force: true }));
   let { body } = await get();

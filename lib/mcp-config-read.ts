@@ -439,7 +439,10 @@ function describeServer(
   const transport = transportOf(config, typeof validation === "string");
   if (transport) info.transport = transport;
   if (validation !== undefined && typeof validation !== "string") {
-    info.exposure = (validation as McpServerConfig).exposure ?? "codemode";
+    const validated = validation as McpServerConfig;
+    info.exposure = validated.exposure ?? "codemode";
+    const overrides = validated.toolExposure ? Object.keys(validated.toolExposure).length : 0;
+    if (overrides > 0) info.toolExposureCount = overrides;
   }
 
   // Masking hides what looks like a secret by shape and by position (any value after `--token`),
@@ -786,6 +789,9 @@ export async function readMcpOverview(options: McpOverviewOptions): Promise<McpR
     codemode: await codemodeInfo(agentDir, switches?.codemode, project && projectSettingsLoad ? project.cwd : undefined),
     files,
     servers: withMcpStatuses(servers, listedFiles),
+    ...(switches?.["tool-search"].enabled === false
+      ? { toolSearchDisabled: switches["tool-search"].settingsPath ? { settingsPath: switches["tool-search"].settingsPath } : {} }
+      : {}),
     ...(projectInfo ? { project: projectInfo } : {}),
     ...withHostInactive(project?.cwd),
   };
