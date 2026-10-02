@@ -102,6 +102,7 @@ import {
   mcpTestBlock,
   mcpTestExplainKey,
   mcpTestRunAfter,
+  mcpTestRunAfterSignOut,
   mcpTestRunFor,
   mcpTestStateView,
   mcpTestSummaryKey,
@@ -313,6 +314,10 @@ export function McpConfig({
   // The add pane: open or not, what was typed (kept while another row is shown), why the last Add was refused, and what it added.
   const [adding, setAdding] = useState(false);
   const [addDraft, setAddDraft] = useState<McpAddDraft>(EMPTY_MCP_ADD_DRAFT);
+  // The draft as it stands now, for an Add's answer to tell whether it is still about it: the pane
+  // stays editable while the request is out, and every change makes a new draft object.
+  const addDraftRef = useRef(addDraft);
+  addDraftRef.current = addDraft;
   const [addFailure, setAddFailure] = useState<McpActionFailure | null>(null);
   const [added, setAdded] = useState<McpAddedNotice | null>(null);
   const mountedRef = useRef(true);
@@ -395,7 +400,7 @@ export function McpConfig({
     if (testRequestsRef.current.has(key)) return;
     const request = {};
     testRequestsRef.current.set(key, request);
-    setTests((runs) => ({ ...runs, [key]: { ...runs[key], running: true, error: undefined, queueTimedOut: undefined, configKey: undefined } }));
+    setTests((runs) => ({ ...runs, [key]: { ...runs[key], running: true, startedAt: Date.now(), error: undefined, queueTimedOut: undefined, configKey: undefined } }));
     const current = loadRef.current;
     // As for a change: the project only when the listing covers it. A global stdio server runs there, else in the home folder.
     const testCwd = current.state === "loaded" && current.data.project ? cwd : null;
@@ -592,6 +597,15 @@ export function McpConfig({
       ...runs,
       [key]: result.ok ? { signedOut: { removed: result.data.signedOut?.removed === true } } : { ...runs[key], signOutError: result.error },
     }));
+    // The route forgot what connections found; this panel's own test answers go too, or one would
+    // read Connected over the untested entry until Settings closed.
+    if (result.ok) {
+      const now = Date.now();
+      setTests((runs) => {
+        const next = mcpTestRunAfterSignOut(runs[key], now);
+        return next ? { ...runs, [key]: next } : runs;
+      });
+    }
     setFocusBack({ control: pressed });
   }, [runAction]);
 
@@ -600,13 +614,18 @@ export function McpConfig({
   // it, and only then: an install link hides its command until the preview.
   const submitAdd = useCallback(async (request: McpAddActionRequest) => {
     const pressed = pressedButton();
+    const sent = addDraftRef.current;
     setActionError(null);
     setGroupStatus(null);
     setAddFailure(null);
     const result = await runAction(request, "add", (data) => (data.added ? mcpServerKey(data.added) : undefined));
     if (!result) return;
+    // Edited while the request was out: the answer is about the draft as it was sent.
+    const edited = addDraftRef.current !== sent;
     if (!result.ok) {
-      setAddFailure(result.error);
+      // A refusal of the old draft says nothing of the new one, and acting on it (the host-variable
+      // confirmation, Use <name>) would send the new draft with the old answer's names.
+      if (!edited) setAddFailure(result.error);
       // A folder that changed under the step: the page shows its trust as it is now.
       if (result.error.trust && cwd) onProjectTrustChanged?.(cwd, result.error.trust);
       setFocusBack({ control: pressed });
@@ -614,7 +633,8 @@ export function McpConfig({
     }
     const { added: written, trust: writtenTrust, trustedFolder } = result.data;
     setAdding(false);
-    setAddDraft(EMPTY_MCP_ADD_DRAFT);
+    // What was typed since is kept for the next Add rather than thrown away.
+    if (!edited) setAddDraft(EMPTY_MCP_ADD_DRAFT);
     // The pane goes with its button and its box: focus moves to the new server's row, which the answer selected.
     setFocusBack({ control: null, toSelectedRow: true });
     if (!written) return;
@@ -688,6 +708,7 @@ export function McpConfig({
         setActionError(null);
       }}
       onAddDraftChange={(draft) => {
+        addDraftRef.current = draft;
         setAddDraft(draft);
         // What was refused was about the draft as it stood.
         setAddFailure(null);
@@ -823,12 +844,17 @@ export function McpConfigView({
   // successful trust the reload removes that button with its notice: focus
   // would fall to the page behind Settings. It goes to the selected row
   // instead, which the reload keeps; focus anywhere else stays where it is.
+  // No row is selected while the add pane is open or the list is empty, so
+  // every fallback ends at the Add MCP server action, on screen whenever the
+  // overview has loaded.
   const selectedRowRef = useRef<HTMLButtonElement>(null);
+  const addActionRef = useRef<HTMLButtonElement>(null);
+  const focusFallback = () => selectedRowRef.current ?? addActionRef.current;
   const offeredTrustRef = useRef(offersTrust);
   useEffect(() => {
     const offeredTrust = offeredTrustRef.current;
     offeredTrustRef.current = offersTrust;
-    if (offeredTrust && !offersTrust) focusIfLost(document, selectedRowRef.current);
+    if (offeredTrust && !offersTrust) focusIfLost(document, focusFallback());
   }, [offersTrust]);
   // A removal unmounts the pane its Remove button sat in, and a finished or
   // expired undo the notice its Undo button sat in, so focus would fall to the
@@ -841,7 +867,7 @@ export function McpConfigView({
     const shown = shownUndoRef.current;
     shownUndoRef.current = undoToken;
     if (undoToken !== undefined && undoToken !== shown) focusIfLost(document, undoButtonRef.current);
-    else if (shown !== undefined && undoToken === undefined) focusIfLost(document, selectedRowRef.current);
+    else if (shown !== undefined && undoToken === undefined) focusIfLost(document, focusFallback());
   }, [undoToken]);
   const problems = data ? mcpFileProblems(data.files) : [];
   const counts = mcpGroupCounts(servers);
@@ -861,8 +887,8 @@ export function McpConfigView({
   useEffect(() => {
     if (!focusBack || controlsBusy || handledFocusBackRef.current === focusBack) return;
     handledFocusBackRef.current = focusBack;
-    if (focusBack.toSelectedRow) focusIfLost(document, selectedRowRef.current);
-    else focusAfterChange(document, focusBack.control, selectedRowRef.current);
+    if (focusBack.toSelectedRow) focusIfLost(document, focusFallback());
+    else focusAfterChange(document, focusBack.control, focusFallback());
   }, [focusBack, controlsBusy]);
   const writeBlock = (scope: McpScope): McpWriteBlock | undefined => (data ? mcpWriteBlock(scope, data) : undefined);
   const writesOff = data ? mcpWritesOff(data.mcp) : false;
@@ -888,47 +914,51 @@ export function McpConfigView({
       closeLabel={t("i18n.close")}
       onClose={onClose}
     >
-      {unavailable && (
-        <ConfigNotice id={unavailableNoticeId}>
-          {noticeText(unavailable, t)}
-          {writesOff && <> {t(MCP_READ_ONLY_KEYS["mcp-off"])}</>}
-          {data && !data.mcp.available && data.mcp.detail && (
-            <> <code className="mcp-config-chip">{revealHiddenCharacters(data.mcp.detail)}</code></>
-          )}
-        </ConfigNotice>
-      )}
-      {hostInactive && (
-        <ConfigNotice>{t("mcp.hostInactive", { path: displayPath(hostInactive.cwd), owner: displayPath(hostInactive.owner) })}</ConfigNotice>
-      )}
-      {load.state === "loaded" && load.projectError && (
-        <ConfigNotice>{t("mcp.projectNotListed", { reason: failureText(load.projectError, t) })}</ConfigNotice>
-      )}
-      {trustNotice?.kind === "untrusted" && (
-        <ConfigTrustNotice id={trustNoticeId} message={trustMessage} trustLabel={t("mcp.trust.trustButton")} onTrust={onTrust} />
-      )}
-      {trustNotice?.kind === "inherited" && <ConfigNotice>{noticeText(trustNotice, t)}</ConfigNotice>}
-      {undo && (
-        <ConfigNotice
-          action={undo.error?.reason === "undo-unavailable" ? undefined : (
-            <ConfigButton ref={undoButtonRef} size="small" onClick={onUndo} disabled={undo.undoing || controlsBusy}>
-              {undo.undoing ? t("mcp.undoing") : t("mcp.undo")}
-            </ConfigButton>
-          )}
-        >
-          {t("mcp.removed", { name: revealHiddenCharacters(undo.name), path: displayPath(undo.path) })}
-          {undo.error && <> {t("mcp.undoFailed")} {actionFailureText(undo.error, t)}</>}
-        </ConfigNotice>
-      )}
-      {added && data && addedServer && (
-        <McpAddedNoticeView
-          added={added}
-          server={addedServer}
-          testing={tests[added.key]?.running === true}
-          signIn={signIns[added.key]}
-          signInBlock={addedServer ? mcpSignInBlock(addedServer, data) : undefined}
-          onSignIn={onSignIn}
-        />
-      )}
+      {/* Up to six at once: they scroll in their own box, so the list and the pane keep most of the height. */}
+      <div className="mcp-config-notices">
+        {unavailable && (
+          <ConfigNotice id={unavailableNoticeId}>
+            {noticeText(unavailable, t)}
+            {writesOff && <> {t(MCP_READ_ONLY_KEYS["mcp-off"])}</>}
+            {data && !data.mcp.available && data.mcp.detail && (
+              <> <code className="mcp-config-chip">{revealHiddenCharacters(data.mcp.detail)}</code></>
+            )}
+          </ConfigNotice>
+        )}
+        {hostInactive && (
+          <ConfigNotice>{t("mcp.hostInactive", { path: displayPath(hostInactive.cwd), owner: displayPath(hostInactive.owner) })}</ConfigNotice>
+        )}
+        {load.state === "loaded" && load.projectError && (
+          <ConfigNotice>{t("mcp.projectNotListed", { reason: failureText(load.projectError, t) })}</ConfigNotice>
+        )}
+        {trustNotice?.kind === "untrusted" && (
+          <ConfigTrustNotice id={trustNoticeId} message={trustMessage} trustLabel={t("mcp.trust.trustButton")} onTrust={onTrust} />
+        )}
+        {trustNotice?.kind === "inherited" && <ConfigNotice>{noticeText(trustNotice, t)}</ConfigNotice>}
+        {undo && (
+          <ConfigNotice
+            action={undo.error?.reason === "undo-unavailable" ? undefined : (
+              <ConfigButton ref={undoButtonRef} size="small" onClick={onUndo} disabled={undo.undoing || controlsBusy}>
+                {undo.undoing ? t("mcp.undoing") : t("mcp.undo")}
+              </ConfigButton>
+            )}
+          >
+            {t("mcp.removed", { name: revealHiddenCharacters(undo.name), path: displayPath(undo.path) })}
+            {undo.error && <> {t("mcp.undoFailed")} {actionFailureText(undo.error, t)}</>}
+          </ConfigNotice>
+        )}
+        {added && data && addedServer && (
+          <McpAddedNoticeView
+            added={added}
+            server={addedServer}
+            testing={tests[added.key]?.running === true}
+            signIn={signIns[added.key]}
+            signingOut={busy === `sign-out:${added.key}`}
+            signInBlock={addedServer ? mcpSignInBlock(addedServer, data) : undefined}
+            onSignIn={onSignIn}
+          />
+        )}
+      </div>
 
       <ConfigSplitView>
         <ConfigSidebar>
@@ -973,7 +1003,7 @@ export function McpConfigView({
             ) : null}
           </ConfigSidebarList>
           {data && (
-            <ConfigListAction active={adding} onClick={onAddOpen}>
+            <ConfigListAction ref={addActionRef} active={adding} onClick={onAddOpen}>
               {t("mcp.add.action")}
             </ConfigListAction>
           )}
@@ -1076,6 +1106,7 @@ function McpAddedNoticeView({
   server,
   testing,
   signIn,
+  signingOut,
   signInBlock,
   onSignIn,
 }: {
@@ -1084,6 +1115,8 @@ function McpAddedNoticeView({
   server: McpServerInfo;
   testing: boolean;
   signIn: McpSignInRun | undefined;
+  /** A Sign out of the same server is on its way; it would cancel a sign-in started now on arrival. */
+  signingOut: boolean;
   signInBlock: McpTestBlock | undefined;
   onSignIn: (server: McpServerInfo) => void;
 }) {
@@ -1095,7 +1128,7 @@ function McpAddedNoticeView({
   const signingIn = signIn?.starting === true || mcpSignInActive(signIn);
   return (
     <ConfigNotice
-      action={asksSignIn && !signingIn && !signInBlock ? (
+      action={asksSignIn && !signingIn && !signingOut && !signInBlock ? (
         <ConfigButton size="small" variant="primary" onClick={() => onSignIn(server)}>
           {t("mcp.signIn.button")}
         </ConfigButton>

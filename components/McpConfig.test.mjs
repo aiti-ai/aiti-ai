@@ -378,12 +378,34 @@ test("the container passes Trust to the notice and reloads in place when the pag
   assert.match(text(render(h(McpConfig, { cwd: "/Users/me/repo", trust: untrusted, onTrustProject() {}, onClose() {}, embedded: true }))), /Loading\.\.\./);
 });
 
+test("the notices above the list scroll in their own box, so on a phone they never squeeze the pane to nothing", () => {
+  const html = decode(view({
+    load: { state: "loaded", data: overview({ servers: [httpServer], hostInactive: { owner: "/ext/other-mcp.ts", cwd: "/Users/me/repo", updatedAt: 1 } }) },
+    undo: { scope: "global", name: "lint", path: globalFile.path, token: "t", expiresInMs: 60_000, undoing: false },
+  }));
+  const notices = html.match(/<div class="mcp-config-notices">([\s\S]*?)<\/div><div class="config-split-view">/);
+  assert.ok(notices, "the notices sit in one box right before the split view");
+  assert.equal((notices[1].match(/role="status" class="config-notice/g) ?? []).length, 2);
+  // The box shrinks and scrolls; a notice alone never shrinks below its text.
+  assert.match(cssSource, /\.mcp-config-notices \{\n\s*flex: 0 1 auto;\n\s*min-height: 0;\n\s*max-height: 40vh;\n\s*overflow-y: auto;\n\}/);
+  const phone = cssSource.slice(cssSource.indexOf(".mcp-config-notices {"));
+  assert.match(phone, /@media \(max-width: 640px\) \{\n\s*\.mcp-config-notices \{\n\s*max-height: 30vh;\n\s*max-height: 30dvh;\n\s*\}/);
+  // Short of height, the 190px phone sidebar gives way before the detail pane is clipped.
+  assert.match(phone, /\.mcp-config-notices \+ \.config-split-view > \.config-sidebar \{\n\s*flex-shrink: 1;\n\s*min-height: 96px;\n\s*\}/);
+  assert.match(phone, /\.mcp-config-notices \+ \.config-split-view > \.config-detail \{\n\s*min-height: 120px;\n\s*\}/);
+});
+
 test("when trusting removes Trust… under the keyboard, focus goes to the selected row", () => {
   // The dialog hands focus back to Trust… on close; the reload then removes the notice and
   // its button, and the browser drops focus to body. Only that transition moves focus, and
   // only when it fell to the page (lib/stacked-dialog.test.mjs pins focusIfLost()).
   assert.match(source, /const offersTrust = trustNotice\?\.kind === "untrusted" && onTrust !== undefined;/);
-  assert.match(source, /const offeredTrustRef = useRef\(offersTrust\);\n\s*useEffect\(\(\) => \{\n\s*const offeredTrust = offeredTrustRef\.current;\n\s*offeredTrustRef\.current = offersTrust;\n\s*if \(offeredTrust && !offersTrust\) focusIfLost\(document, selectedRowRef\.current\);\n\s*\}, \[offersTrust\]\);/);
+  assert.match(source, /const offeredTrustRef = useRef\(offersTrust\);\n\s*useEffect\(\(\) => \{\n\s*const offeredTrust = offeredTrustRef\.current;\n\s*offeredTrustRef\.current = offersTrust;\n\s*if \(offeredTrust && !offersTrust\) focusIfLost\(document, focusFallback\(\)\);\n\s*\}, \[offersTrust\]\);/);
+  // With no row selected (the add pane is open, or the list is empty), the fallback is the Add action,
+  // on screen whenever the overview has loaded.
+  assert.match(source, /const focusFallback = \(\) => selectedRowRef\.current \?\? addActionRef\.current;/);
+  assert.match(source, /<ConfigListAction ref=\{addActionRef\} active=\{adding\} onClick=\{onAddOpen\}>/);
+  assert.match(settingsUiSource, /export function ConfigListAction\(\{ active = false, children, className, \.\.\.props \}: ButtonHTMLAttributes<HTMLButtonElement> & \{ active\?: boolean; ref\?: Ref<HTMLButtonElement> \}\) \{\n\s*return \(\n\s*<div className="config-list-action">\n\s*<button\n\s*type="button"\n\s*\{\.\.\.props\}/);
   assert.match(source, /import \{ focusAfterChange, focusIfLost \} from "@\/lib\/stacked-dialog";/);
   // The ref follows the selection: the Code mode row or a server row, whichever is selected.
   assert.match(source, /<ConfigSidebarItem\n\s*ref=\{active \? rowRef : undefined\}\n\s*active=\{active\}/);
@@ -791,7 +813,7 @@ test("the container posts each change and shows the overview it answers with", (
   assert.match(source, /\{ action: "set-enabled", enabled, servers: targets\.map\(/);
   // When Remove takes the focused pane with it, focus goes to Undo; when the notice goes, to the
   // selected row; only when it fell to the page (lib/stacked-dialog.test.mjs pins focusIfLost()).
-  assert.match(source, /if \(undoToken !== undefined && undoToken !== shown\) focusIfLost\(document, undoButtonRef\.current\);\n\s*else if \(shown !== undefined && undoToken === undefined\) focusIfLost\(document, selectedRowRef\.current\);/);
+  assert.match(source, /if \(undoToken !== undefined && undoToken !== shown\) focusIfLost\(document, undoButtonRef\.current\);\n\s*else if \(shown !== undefined && undoToken === undefined\) focusIfLost\(document, focusFallback\(\)\);/);
   assert.match(source, /<ConfigButton ref=\{undoButtonRef\} size="small" onClick=\{onUndo\}/);
   assert.match(settingsUiSource, /export function ConfigButton\(\{[\s\S]*?ref\?: Ref<HTMLButtonElement> \}\) \{\n\s*return \(\n\s*<button\n\s*type="button"\n\s*\{\.\.\.props\}/);
   // Picking another server clears the last failure, which belongs to the one it was about.
@@ -885,7 +907,7 @@ test("focus goes back to the control a change was started from once nothing wait
   // falls back to the selected row (lib/stacked-dialog.test.mjs pins focusAfterChange()). It comes
   // after the Undo effects, so a fallback never takes focus from Undo.
   // A change that took its control away with its pane (an Add that worked) goes straight to the row.
-  assert.match(source, /useEffect\(\(\) => \{\n\s*if \(!focusBack \|\| controlsBusy \|\| handledFocusBackRef\.current === focusBack\) return;\n\s*handledFocusBackRef\.current = focusBack;\n\s*if \(focusBack\.toSelectedRow\) focusIfLost\(document, selectedRowRef\.current\);\n\s*else focusAfterChange\(document, focusBack\.control, selectedRowRef\.current\);\n\s*\}, \[focusBack, controlsBusy\]\);/);
+  assert.match(source, /useEffect\(\(\) => \{\n\s*if \(!focusBack \|\| controlsBusy \|\| handledFocusBackRef\.current === focusBack\) return;\n\s*handledFocusBackRef\.current = focusBack;\n\s*if \(focusBack\.toSelectedRow\) focusIfLost\(document, focusFallback\(\)\);\n\s*else focusAfterChange\(document, focusBack\.control, focusFallback\(\)\);\n\s*\}, \[focusBack, controlsBusy\]\);/);
   assert.ok(source.indexOf("focusAfterChange(document") > source.indexOf("focusIfLost(document, undoButtonRef.current)"));
   assert.match(source, /focusBack=\{focusBack\}/);
 });
@@ -1280,6 +1302,10 @@ test("the container starts, polls, pastes into and cancels a sign-in, and signs 
   const signOut = body("signOut", "}, [runAction]);");
   assert.match(signOut, /await runAction\(\{ action: "sign-out", scope: server\.scope, name: server\.name \}, `sign-out:\$\{key\}`\);/);
   assert.match(signOut, /setFocusBack\(\{ control: pressed \}\);/);
+  // One that worked drops this panel's own test answers, kept and on their way, which would read
+  // Connected over the entry the route just forgot (components/mcp-config-helpers.test.mjs).
+  assert.match(signOut, /if \(result\.ok\) \{\n\s*const now = Date\.now\(\);\n\s*setTests\(\(runs\) => \{\n\s*const next = mcpTestRunAfterSignOut\(runs\[key\], now\);/);
+  assert.match(source, /\[key\]: \{ \.\.\.runs\[key\], running: true, startedAt: Date\.now\(\),/);
   assert.match(source, /signingOut=\{busy === `sign-out:\$\{key\}`\}/);
   // Closing the panel lets sign-ins go, never cancels them: Sign in joins one again.
   const unmount = source.slice(source.indexOf("const testRequests = testRequestsRef.current;"), source.indexOf("}, []);", source.indexOf("const testRequests = testRequestsRef.current;")));
