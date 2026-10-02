@@ -10,6 +10,7 @@ import {
   SECRET_MASK,
   urlSecretParts,
 } from "./mcp-secrets";
+import { guardedCredentialStore, mcpOAuthUrl, mcpSignInUrlKey, mcpSignOutCount, mcpSignOutGuard, type McpSignInWriteGuard } from "./mcp-sign-out";
 import { recordMcpStatus } from "./mcp-status";
 import { createPiWebMcpTransportFactory, resolvedConfigValues } from "./mcp-transport";
 import type {
@@ -459,14 +460,23 @@ export async function observeTestConnection(
   return run;
 }
 
-/** The SDK's connection to one entry through Pi Web's transport factory, until it settles or `signal` aborts. */
+/**
+ * The SDK's connection to one entry through Pi Web's transport factory, until
+ * it settles or `signal` aborts. With `guard`, an OAuth entry's connection
+ * reads and refreshes tokens through `guardedCredentialStore()`, as a
+ * sign-in's does: a refresh still on its way when the URL is signed out
+ * stores nothing afterwards.
+ */
 export async function connectForTest(
   target: McpTestTarget,
   internals: McpTestInternals,
   signal: AbortSignal,
-  options: { requestTimeoutMs?: number; closeWaitMs?: number } = {},
+  options: { requestTimeoutMs?: number; closeWaitMs?: number; guard?: McpSignInWriteGuard } = {},
 ): Promise<McpTestRun> {
-  const opened = openTestConnection(target, internals, options);
+  const opened = openTestConnection(target, internals, {
+    ...(options.requestTimeoutMs !== undefined ? { requestTimeoutMs: options.requestTimeoutMs } : {}),
+    ...(options.guard ? { credentials: guardedCredentialStore(internals, options.guard) } : {}),
+  });
   // Whatever happens, the connection and its transports are closed: a result
   // that could not be built must not leave a stdio server running.
   try {
@@ -521,8 +531,31 @@ export async function takeMcpCommandSlot(signal: AbortSignal, waitMs: number): P
   return { release, turn: outcome === "turn", timedOut: outcome === "timeout" };
 }
 
+/** The sign-out guard of a test of `target` starting now, for an entry that signs in with OAuth. */
+function signOutGuardFor(target: McpTestTarget): McpSignInWriteGuard | undefined {
+  const url = mcpOAuthUrl(target.config);
+  if (url === undefined) return undefined;
+  try {
+    return mcpSignOutGuard(url);
+  } catch {
+    // Not a URL the store could key: it stores nothing for it either.
+    return undefined;
+  }
+}
+
+/** How often the entry's OAuth URL was signed out: a press after a sign-out never joins a test started before it. */
+function signOutsOf(target: McpTestTarget): number {
+  const url = mcpOAuthUrl(target.config);
+  if (url === undefined) return 0;
+  try {
+    return mcpSignOutCount(mcpSignInUrlKey(url));
+  } catch {
+    return 0;
+  }
+}
+
 function flightKey(target: McpTestTarget): string {
-  return [target.scope, target.sourcePath, target.name, target.configKey, target.cwd].join("\0");
+  return [target.scope, target.sourcePath, target.name, target.configKey, target.cwd, signOutsOf(target)].join("\0");
 }
 
 /**
@@ -560,8 +593,18 @@ function startTest(
 ): Promise<McpTestResult> & { join: (signal?: AbortSignal) => void } {
   const deadlineMs = options.deadlineMs ?? MCP_TEST_DEADLINE_MS;
   const closeWaitMs = options.closeWaitMs ?? MCP_TEST_CLOSE_WAIT_MS;
+  // Taken when the test starts: a sign-out from then on bars its token writes and its record.
+  const guard = signOutGuardFor(target);
   const connect: McpTestConnect = options.connect
-    ?? ((entry, signal) => connectForTest(entry, internals, signal, { requestTimeoutMs: options.requestTimeoutMs, closeWaitMs }));
+    ?? ((entry, signal) => connectForTest(entry, internals, signal, { requestTimeoutMs: options.requestTimeoutMs, closeWaitMs, guard }));
+  const signedOutSince = (): boolean => {
+    try {
+      guard?.();
+      return false;
+    } catch {
+      return true;
+    }
+  };
   const controller = new AbortController();
   // Callers still waiting; one without a signal never gives up.
   let waiting = 0;
@@ -605,7 +648,9 @@ function startTest(
     const queuedMs = serial ? Date.now() - queuedAt : 0;
     const finish = (result: McpTestRun, record: boolean): McpTestResult => {
       const full: McpTestResult = { ...result, testedAt: Date.now(), ...(queuedMs > 0 ? { queuedMs } : {}) };
-      if (record) recordMcpStatus(target, target.configKey, { ...full, origin: "test" });
+      // A sign-out since the test started forgot the entry's statuses; what the test found with
+      // the tokens it had then is not news about the server signed out of.
+      if (record && !signedOutSince()) recordMcpStatus(target, target.configKey, { ...full, origin: "test" });
       return full;
     };
     const notRun = (extra: Partial<McpTestRun>): McpTestRun => ({ state: "failed", tools: [], toolCount: 0, durationMs: 0, ...extra });

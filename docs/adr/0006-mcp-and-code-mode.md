@@ -326,7 +326,9 @@ restores the branch's tool set from its transcript.
 - A wrapper is removed from the registry by identity, reports itself closing
   as soon as shutdown starts, and gives `session_shutdown` a deadline
   (`PI_WEB_SHUTDOWN_DEADLINE_MS`, 5 s), because closing an MCP connection has
-  no upper bound.
+  no upper bound. Its MCP host lets go of what it reported to Settings when
+  closing starts, before any extension's handler runs, so a close that never
+  returns leaves no session reading as connected.
 
 ## Rollout
 
