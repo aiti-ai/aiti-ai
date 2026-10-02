@@ -51,6 +51,9 @@ function scopeLabel(scope: McpScope, t: Translate): string {
   return scope === "project" ? t("skills.scope.project") : t("skills.scope.global");
 }
 
+/** The importer's notes about the server's name, shown under the name box instead of with the rest. */
+const NAME_NOTE_CODES: ReadonlySet<string> = new Set(["name-derived", "name-sanitized", "name-deduplicated", "name-taken"]);
+
 /** The importer's notes as a list, errors first; each says what it is about in words. */
 function McpImportNotes({ notes, fields = [] }: { notes: readonly McpImportNote[]; fields?: readonly McpImportField[] }) {
   const { t } = useI18n();
@@ -166,9 +169,14 @@ export function McpAddServer({
   const offersRawPi = useMemo(() => mcpAddOffersRawPi(draft.text), [draft.text]);
   const { parsed, server, preview, projectBlock, submitBlock } = analysis;
   // The paste's secrets that can be read from a variable have their own rows below, which say it.
-  const notes = server ? [...server.notes, ...parsed.notes].filter((note) => (
+  const allNotes = server ? [...server.notes, ...parsed.notes].filter((note) => (
     note.code !== "literal-secret" || !analysis.pasteSecrets.includes(String(note.params?.field))
   )) : [];
+  // The name's notes go under its box, and only while it holds the importer's name: once edited,
+  // they would describe a name no longer there.
+  const nameEdited = draft.name !== undefined && draft.name !== server?.name;
+  const nameNotes = nameEdited ? [] : allNotes.filter((note) => NAME_NOTE_CODES.has(note.code));
+  const notes = allNotes.filter((note) => !NAME_NOTE_CODES.has(note.code));
   const canSubmit = !busy && !controlsBusy && submitBlock === undefined;
   const submit = () => {
     if (canSubmit) onSubmit(mcpAddRequest(draft, analysis));
@@ -250,6 +258,32 @@ export function McpAddServer({
           </select>
           <span className="mcp-config-line is-dim">{t("mcp.add.serverCount", { count: parsed.servers.length })}</span>
         </ConfigField>
+      )}
+
+      {/* What the server is called comes first: it is its key in mcp.json and its row in the list. */}
+      {server && (
+        <>
+          <ConfigField label={t("config.name")}>
+            <input
+              id={nameId}
+              className="mcp-add-input"
+              aria-label={t("config.name")}
+              value={analysis.name}
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
+              onChange={(event) => change({ name: event.target.value })}
+            />
+          </ConfigField>
+          <McpImportNotes notes={nameNotes} fields={server.fields} />
+          {submitBlock?.kind === "name-taken" && (
+            <span className="mcp-config-line">
+              <ConfigButton size="small" onClick={() => change({ name: submitBlock.suggestedName })}>
+                {t("mcp.add.useName", { name: revealHiddenCharacters(submitBlock.suggestedName) })}
+              </ConfigButton>
+            </span>
+          )}
+        </>
       )}
 
       {server && preview && (
@@ -340,26 +374,6 @@ export function McpAddServer({
                 />
               ))}
             </>
-          )}
-
-          <ConfigField label={t("config.name")}>
-            <input
-              id={nameId}
-              className="mcp-add-input"
-              aria-label={t("config.name")}
-              value={analysis.name}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoCorrect="off"
-              onChange={(event) => change({ name: event.target.value })}
-            />
-          </ConfigField>
-          {submitBlock?.kind === "name-taken" && (
-            <span className="mcp-config-line">
-              <ConfigButton size="small" onClick={() => change({ name: submitBlock.suggestedName })}>
-                {t("mcp.add.useName", { name: revealHiddenCharacters(submitBlock.suggestedName) })}
-              </ConfigButton>
-            </span>
           )}
         </>
       )}
