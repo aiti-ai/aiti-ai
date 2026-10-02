@@ -1,4 +1,4 @@
-import { lstatSync, realpathSync } from "node:fs";
+import { lstatSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import {
@@ -209,19 +209,92 @@ function somethingAt(path: string): boolean {
  */
 export function hasTrustRelevantEntries(cwd: string, home: string = process.env.HOME || homedir()): boolean {
   const folder = realPathOr(cwd);
-  const configDir = join(folder, ".pi");
-  try {
-    if (lstatSync(configDir).isSymbolicLink() && realPathOr(configDir) === configDir) return true;
-  } catch {
-    // No `.pi`.
-  }
-  if (TRUST_REQUIRING_PROJECT_ENTRIES.some((entry) => somethingAt(join(configDir, entry)))) return true;
+  if (hasOwnTrustEntries(folder)) return true;
   const userSkills = join(realPathOr(home), ".agents", "skills");
   for (let current = folder; ; current = dirname(current)) {
     const skills = join(current, ".agents", "skills");
     if (!samePath(skills, userSkills) && somethingAt(skills)) return true;
     if (dirname(current) === current) return false;
   }
+}
+
+/** What under `folder/.pi` makes it require trust, or a `.pi` that is a link to nothing, by `lstat`. */
+function hasOwnTrustEntries(folder: string): boolean {
+  const configDir = join(folder, ".pi");
+  try {
+    if (lstatSync(configDir).isSymbolicLink() && realPathOr(configDir) === configDir) return true;
+  } catch {
+    // No `.pi`.
+  }
+  return TRUST_REQUIRING_PROJECT_ENTRIES.some((entry) => somethingAt(join(configDir, entry)));
+}
+
+/** How many levels below a fresh folder `findInheritingTrustProject()` looks. */
+export const NESTED_PROJECT_SCAN_DEPTH = 4;
+/** How many folders it reads before it stops and refuses the step, since it cannot tell. */
+export const NESTED_PROJECT_SCAN_MAX_FOLDERS = 2000;
+/** Never descended into: dependencies and history hold no project, and `.pi` / `.agents` are checked, not walked. */
+const NESTED_PROJECT_SCAN_SKIP = new Set(["node_modules", ".git", ".pi", ".agents"]);
+
+/**
+ * A folder below `cwd` that would inherit a decision trusting `cwd`: one with
+ * resources that need trust (`.pi/<entry>` for each of
+ * `TRUST_REQUIRING_PROJECT_ENTRIES`, a `.pi` that is a link to nothing, or
+ * `.agents/skills`, all by `lstat`) and no decision of its own or between it
+ * and `cwd`. An exact decision below wins over the new one anyway. Fresh
+ * folders are mostly containers (`~/work`, `~/code`, a dated `~/pi-cwd`
+ * folder), which often hold repositories Pi Web has never opened, and
+ * trusting the container would load such a repository's `.pi/extensions` and
+ * connect its `.pi/mcp.json` with no dialog the first time it is opened.
+ *
+ * Breadth first, `NESTED_PROJECT_SCAN_DEPTH` levels deep, never through a
+ * link, `node_modules` or `.git`. Past `NESTED_PROJECT_SCAN_MAX_FOLDERS`
+ * folders read it answers `too-many-folders`, refusing what it could not
+ * check. A `trust.json` that cannot be read counts a found project as having
+ * no decision. Folders deeper than the scan are not looked at.
+ */
+export function findInheritingTrustProject(cwd: string, agentDir: string): FreshFolderTrustBreadth | undefined {
+  const folder = realPathOr(cwd);
+  let store: ProjectTrustStore | undefined;
+  const hasDecision = (path: string): boolean => {
+    try {
+      store ??= new ProjectTrustStore(agentDir);
+      return store.getEntry(path) !== null;
+    } catch {
+      return false;
+    }
+  };
+  let read = 0;
+  let level = [folder];
+  for (let depth = 0; depth <= NESTED_PROJECT_SCAN_DEPTH && level.length > 0; depth += 1) {
+    const next: string[] = [];
+    for (const dir of level) {
+      if (read >= NESTED_PROJECT_SCAN_MAX_FOLDERS) return { kind: "too-many-folders", path: folder };
+      read += 1;
+      let names: Set<string>;
+      let children: string[] = [];
+      try {
+        const entries = readdirSync(dir, { withFileTypes: true });
+        names = new Set(entries.map((entry) => entry.name));
+        if (depth < NESTED_PROJECT_SCAN_DEPTH) {
+          children = entries
+            .filter((entry) => entry.isDirectory() && !NESTED_PROJECT_SCAN_SKIP.has(entry.name))
+            .map((entry) => join(dir, entry.name));
+        }
+      } catch {
+        // Unreadable: nothing below it can be told, nor can a session read it.
+        continue;
+      }
+      // `cwd` itself was checked before (`hasTrustRelevantEntries()`).
+      if (depth > 0) {
+        const needsTrust = (names.has(".pi") && hasOwnTrustEntries(dir)) || (names.has(".agents") && somethingAt(join(dir, ".agents", "skills")));
+        if (needsTrust && !hasDecision(dir)) return { kind: "contains-project", path: dir };
+      }
+      next.push(...children);
+    }
+    level = next;
+  }
+  return undefined;
 }
 
 /** `target` is `root` or inside it. */
@@ -233,10 +306,11 @@ function within(target: string, root: string): boolean {
  * Why trusting `cwd` would trust more than the one folder, or undefined when
  * it would not. A decision is inherited by every folder below it, so Pi Web
  * never trusts by itself the home folder, a filesystem root, a folder that
- * holds the home folder or Pi's agent folder, or one that holds another folder
+ * holds the home folder or Pi's agent folder, one that holds another folder
  * Pi Web knows (`knownFolders`: the folders sessions ran in, their projects,
- * and folders chosen in Pi Web, which is what the allowed file roots hold).
- * Paths are compared by real path.
+ * and folders chosen in Pi Web, which is what the allowed file roots hold),
+ * or one that holds a project with no decision that needs trust
+ * (`findInheritingTrustProject()`). Paths are compared by real path.
  */
 export function freshFolderTrustBreadth(
   cwd: string,
@@ -253,7 +327,7 @@ export function freshFolderTrustBreadth(
     const knownFolder = realPathOr(known);
     if (!samePath(knownFolder, folder) && within(knownFolder, folder)) return { kind: "contains-folder", path: knownFolder };
   }
-  return undefined;
+  return findInheritingTrustProject(folder, options.agentDir);
 }
 
 export type FreshFolderTrustResult<T> =
@@ -297,7 +371,8 @@ function message(error: unknown): string {
  * such as adding a server to its `.pi/mcp.json`), as one step. Requests for
  * the same folder run one at a time (a per-folder chain on globalThis), and
  * inside it the folder is checked again: no trust-requiring entry by `lstat`
- * (`hasTrustRelevantEntries()`) and no decision for it or an ancestor. A
+ * (`hasTrustRelevantEntries()`), no decision for it or an ancestor, and no
+ * project below it that would inherit the decision (`findInheritingTrustProject()`). A
  * folder that changed since the panel offered the step (a `git pull` that
  * brought `.pi/extensions`, a trust given elsewhere) is refused with its new
  * status: trusting it now would also trust what arrived, unseen.
@@ -352,6 +427,9 @@ export async function trustFreshFolderAndWrite<T>(
       return { ok: false, reason: "trust-unreadable", error: message(error) };
     }
     if (entry) return notFresh(`${entry.path} has a trust decision now`);
+    // Again inside the chain: a `git clone` into the folder may have landed since the panel offered the step.
+    const nested = findInheritingTrustProject(cwd, agentDir);
+    if (nested) return { ok: false, reason: "trust-too-broad", breadth: nested, error: `Trusting ${cwd} would also trust ${nested.path}` };
     try {
       store.set(cwd, true);
     } catch (error) {

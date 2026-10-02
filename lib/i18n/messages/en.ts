@@ -936,6 +936,8 @@ export const enLocale: LocalePlugin = {
     "mcp.add.projectBlocked.trust-too-broad.contains-home": "This folder holds your home folder ({path}). Pi Web does not trust it by itself, since every folder in it would be trusted too; add the server globally.",
     "mcp.add.projectBlocked.trust-too-broad.contains-agent-dir": "This folder holds Pi's agent folder ({path}). Pi Web does not trust it by itself, since every folder in it would be trusted too; add the server globally.",
     "mcp.add.projectBlocked.trust-too-broad.contains-folder": "This folder holds {path}, another folder Pi Web knows, which trusting it would trust too. Pi Web does not do that by itself; add the server globally.",
+    "mcp.add.projectBlocked.trust-too-broad.contains-project": "This folder holds {path}, a project with resources that need trust and no decision of its own, which trusting this folder would trust too. Pi Web does not do that by itself; add the server globally, or open that project and trust it on its own.",
+    "mcp.add.projectBlocked.trust-too-broad.too-many-folders": "This folder holds too many folders for Pi Web to check that trusting it would trust no project inside them. Pi Web does not trust it by itself; add the server globally.",
     "mcp.add.added": "Added {name} to {path}.",
     "mcp.add.addedTrusted": "Added {name} to {path}, and trusted {folder}.",
     "mcp.add.testing": "Testing its connection…",
