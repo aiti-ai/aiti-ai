@@ -923,6 +923,26 @@
   font-family: var(--font-mono);
   font-size: 11px;
   text-align: left;
+  /* An install link is one long word. */
+  overflow-wrap: anywhere;
+}
+
+/* What an example is (a format, a client) beside its text; stacked on a phone. */
+.config-add-source-example.has-label {
+  display: grid;
+  grid-template-columns: minmax(0, 15em) minmax(0, 1fr);
+  gap: 2px 12px;
+  align-items: baseline;
+  font-family: inherit;
+}
+
+.config-add-source-example-label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.config-add-source-example-value {
+  font-family: var(--font-mono);
 }
 
 .config-add-source-example:hover {
@@ -1748,6 +1768,10 @@
 }
 
 @media (max-width: 640px) {
+  .config-add-source-example.has-label {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .config-panel-root.is-modal > .config-panel-surface {
     width: calc(100vw - 16px);
     height: calc(100dvh - 16px);

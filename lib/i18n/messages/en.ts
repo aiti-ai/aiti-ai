@@ -873,6 +873,7 @@ export const enLocale: LocalePlugin = {
     "mcp.add.inputLabel": "Server to add",
     "mcp.add.placeholder": "https://mcp.example.com/mcp\nnpx -y @scope/server\nclaude mcp add …\n{ \"mcpServers\": { … } }",
     "mcp.add.hint": "A URL, a command, an mcp add command line, a JSON config or an install link. Cmd/Ctrl+Enter adds it.",
+    "mcp.add.examples": "Supported formats (click one to fill in an example)",
     "mcp.add.rawPi": "Enable pi mcp syntax ($NAME, !command)",
     "mcp.add.rawPiOn": "In env and header values, $NAME reads a variable on the computer running Pi Web, and a value starting with ! runs as a command at every connection.",
     "mcp.add.serverLabel": "Server",

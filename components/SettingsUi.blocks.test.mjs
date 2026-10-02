@@ -145,6 +145,28 @@ test("the add panel lays out the catalog, location, source box, caller controls 
   assert.match(html, /<div role="alert" class="config-add-source-error">boom<\/div>/);
 });
 
+test("a labeled example shows what it is beside its text, and the box gets the text alone", async () => {
+  const html = render(h(ConfigAddSourcePanel, {
+    title: "Add MCP server",
+    catalogHref: "https://github.com/mcp",
+    catalogLabel: "github.com/mcp",
+    location: "~/.pi/agent/mcp.json",
+    inputLabel: "Server to add",
+    placeholder: "",
+    value: "",
+    canSubmit: false,
+    onValueChange: noop,
+    onSubmit: noop,
+    examplesLabel: "Supported formats",
+    examples: [{ label: "Zed settings", value: '{ "context_servers": {} }' }, "plain"],
+  }));
+  assert.match(html, /<button type="button" class="config-add-source-example has-label"><span class="config-add-source-example-label">Zed settings<\/span><span class="config-add-source-example-value">\{ &quot;context_servers&quot;: \{\} \}<\/span><\/button>/);
+  assert.match(html, /<button type="button" class="config-add-source-example">plain<\/button>/);
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("./SettingsUi.tsx", import.meta.url), "utf8");
+  assert.match(source, /onClick=\{\(\) => onValueChange\(example\.value\)\}/, "the label never reaches the box");
+});
+
 test("the multiline add box is a textarea where Enter adds a line and Cmd/Ctrl+Enter submits", () => {
   const html = render(h(ConfigAddSourcePanel, {
     title: "Add MCP server",
