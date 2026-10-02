@@ -289,8 +289,11 @@ restores the branch's tool set from its transcript.
   therefore trusts the folder in the same request, and the button says "Add
   and trust this folder". A decision is inherited by every folder below it,
   so this step never trusts the home folder, a filesystem root, or a folder
-  that holds the home folder, Pi's agent folder, or another folder Pi Web
-  knows (a session's folder, its project, a folder chosen in Pi Web). Steps
+  that holds the home folder, Pi's agent folder, another folder Pi Web
+  knows (a session's folder, its project, a folder chosen in Pi Web), or a
+  project with resources that need trust and no decision of its own, such
+  as a repository cloned into it (found by a bounded scan of four levels
+  below it; a folder too large to scan is refused). Steps
   for one folder run one at a time, and each checks again that the folder is
   still fresh (a `git pull` may have brought `.pi/extensions` in the
   meantime), trusts it first, then writes, and takes the decision back when

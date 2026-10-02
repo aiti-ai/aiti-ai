@@ -203,6 +203,19 @@ test("a fresh folder with a link to nothing under .pi is not offered the step, a
   assert.equal(existsSync(projectPath(fresh)), false);
 });
 
+test("a fresh folder holding a project Pi Web never opened is not offered the step, and the step refuses it", async () => {
+  // A repository cloned into the folder: trusting the folder would load its extensions with no dialog.
+  const cloned = join(fresh, "cloned-repo");
+  await mkdir(join(cloned, ".pi", "extensions"), { recursive: true });
+  const listed = await (await GET(new Request(`http://localhost/api/mcp?cwd=${encodeURIComponent(fresh)}`, { headers: { host: "localhost" } }))).json();
+  assert.deepEqual(listed.project.trustFolder, { allowed: false, reason: "trust-too-broad", breadth: { kind: "contains-project", path: cloned } });
+  const { status, body } = await add({ text: "npx -y @scope/lint-mcp", scope: "project", cwd: fresh, trustFolder: true });
+  assert.deepEqual([status, body.reason], [409, "trust-too-broad"]);
+  assert.deepEqual(body.breadth, { kind: "contains-project", path: cloned });
+  assert.deepEqual(await trustFile(), { [trusted]: true });
+  assert.equal(existsSync(projectPath(fresh)), false);
+});
+
 test("a folder whose trust would reach other folders is never trusted by the step", async (t) => {
   // `outer` holds `inner`, a folder Pi Web knows (an allowed root, as a session's folder is).
   let response = await add({ text: "npx -y @scope/lint-mcp", scope: "project", cwd: outer, trustFolder: true });

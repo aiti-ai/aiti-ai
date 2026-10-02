@@ -621,4 +621,6 @@ export const MCP_ADD_BREADTH_KEYS: Record<FreshFolderTrustBreadth["kind"], strin
   "contains-home": "mcp.add.projectBlocked.trust-too-broad.contains-home",
   "contains-agent-dir": "mcp.add.projectBlocked.trust-too-broad.contains-agent-dir",
   "contains-folder": "mcp.add.projectBlocked.trust-too-broad.contains-folder",
+  "contains-project": "mcp.add.projectBlocked.trust-too-broad.contains-project",
+  "too-many-folders": "mcp.add.projectBlocked.trust-too-broad.too-many-folders",
 };
