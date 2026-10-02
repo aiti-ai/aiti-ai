@@ -626,6 +626,75 @@ test("the container saves the Code mode choice, then reads back what is stored",
   assert.doesNotMatch(source, /sendAgentCommand|type: "reload"/);
 });
 
+test("the Code mode pane's budget field saves a whole number, or empty for pi's default", () => {
+  const budget = { settingsPath: "/Users/me/.pi/agent/settings.json", default: 3000, max: 1_000_000 };
+  const info = (inlineBudget, extra = {}) => ({ sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic", inlineBudget, ...extra });
+  const field = (html) => decode(html).match(/<form class="mcp-codemode-budget">([\s\S]*?)<\/form>/)?.[1];
+  const input = (html) => field(html).match(/<input[^>]*>/)[0];
+  const save = (html) => field(html).match(/<button type="submit"[^>]*>/)[0];
+
+  const unset = codemodeView(info(budget));
+  assert.match(input(unset), /aria-label="Tool list budget"/);
+  assert.match(input(unset), /value=""/);
+  assert.match(input(unset), /placeholder="3000"/);
+  assert.match(input(unset), /inputMode="numeric"/);
+  // Nothing typed yet: nothing to save.
+  assert.match(save(unset), /disabled=""/);
+  assert.match(text(unset), /Applies only to sessions started afterwards\. Tool list budget tokens Save How many tokens \(estimated as characters ÷ 4\) the code mode tool's description may spend declaring MCP tools, shortest first\. Scripts find the tools left out with searchTools\(\); 0 lists only each server's name and tool count\. Leave it empty for pi's default, 3000\. Applies only to sessions started afterwards\. Sandbox/);
+  // The hint describes the field.
+  const hintId = input(unset).match(/aria-describedby="([^"]+)"/)[1];
+  assert.match(decode(unset), new RegExp(`<span id="${hintId}" class="mcp-config-line">How many tokens`));
+  assert.match(input(codemodeView(info({ ...budget, value: 1000 }))), /value="1000"/);
+
+  // While a budget save is on its way, the field keeps focus (read-only, not disabled), Save waits, and the
+  // choice waits too; the Saving… line is the budget's, not the choice's.
+  const saving = codemodeView(info({ ...budget, value: 1000 }), { view: { codemodeSave: { saving: true, error: null, target: "inlineBudget" } } });
+  assert.match(input(saving), /readOnly=""/);
+  assert.doesNotMatch(input(saving), /disabled/);
+  assert.match(save(saving), /disabled=""/);
+  assert.match(field(saving), /<span role="status" class="mcp-config-line is-dim">Saving…<\/span>/);
+  assert.deepEqual(codemodeOptions(saving).map(({ disabled }) => disabled), [true, true]);
+  assert.equal(decode(saving).match(/role="status"/g).length, 1);
+  // A server change on its way makes the field wait as well.
+  assert.match(input(codemodeView(info(budget), { view: { busy: "switch:global\0docs" } })), /readOnly=""/);
+
+  // Each failure shows in the row its save was made from.
+  const failure = { error: "Invalid settings.json: codemode must be an object", reason: "internal" };
+  const budgetFailed = text(codemodeView(info(budget), { view: { codemodeSave: { saving: false, error: failure, target: "inlineBudget" } } }));
+  assert.match(budgetFailed, /Could not save the budget: Invalid settings\.json: codemode must be an object Sandbox/);
+  assert.doesNotMatch(budgetFailed, /Could not save the choice/);
+  const choiceFailed = text(codemodeView(info(budget), { view: { codemodeSave: { saving: false, error: failure, target: "preference" } } }));
+  assert.match(choiceFailed, /Could not save the choice:/);
+  assert.doesNotMatch(choiceFailed, /Could not save the budget/);
+
+  // A stored value pi ignores and a project that decides for itself are said under the field.
+  const notices = text(codemodeView(info({
+    ...budget,
+    invalid: '"lots"',
+    projectOverride: { settingsPath: "/Users/me/repo/.pi/settings.json", value: 800 },
+  })));
+  assert.match(notices, /codemode\.inlineBudget in ~\/\.pi\/agent\/settings\.json is "lots", which pi ignores, so sessions use 3000\. Saving replaces it\./);
+  assert.match(notices, /This project decides for itself: codemode\.inlineBudget in ~\/repo\/\.pi\/settings\.json gives its sessions 800, whatever you save here\./);
+
+  // An unreadable settings file offers no field to save into it; an overview without a budget shows no row.
+  const unreadable = text(codemodeView(info(undefined, { inlineBudgetError: "Unexpected token" })));
+  assert.match(unreadable, /Tool list budget Cannot read the global settings file: Unexpected token/);
+  assert.doesNotMatch(codemodeView(info(undefined)), /Tool list budget/);
+});
+
+test("the container saves the budget like the choice, then reads back what is stored", () => {
+  const save = source.slice(source.indexOf("const saveCodemodeInlineBudget = useCallback"), source.indexOf("}, [refresh]);", source.indexOf("const saveCodemodeInlineBudget")));
+  assert.match(save, /setCodemodeSave\(\{ saving: true, error: null, target: "inlineBudget" \}\);/);
+  assert.match(save, /const result = await saveMcpCodemodeInlineBudget\(budget, undefined, controller\.signal\);/);
+  assert.match(save, /if \(saveControllerRef\.current !== controller\) return;/);
+  assert.match(save, /withMcpCodemodeInlineBudget\(current\.data, result\.inlineBudget\)/);
+  assert.match(save, /\n    void refresh\(\);\n {2}$/);
+  // Only a change is saved, and only while nothing else writes.
+  assert.match(source, /if \(parsed\.ok && changes && !waiting\) onSave\(parsed\.value\);/);
+  // Save is disabled while it runs; focus comes back to the field from the page.
+  assert.match(source, /if \(wasSaving && !saving\) focusIfLost\(document, inputRef\.current\);/);
+});
+
 test("every string the panel shows is translated", () => {
   const literal = (text) => [...text.matchAll(/\bt\("([^"]+)"/g)].map((match) => match[1]);
   const quoted = (text) => [...text.matchAll(/"((?:mcp|i18n|skills|settings)\.[\w.-]+)"/g)].map((match) => match[1]);

@@ -190,7 +190,12 @@ test("Always on is weighed against the global extensions alone, whichever projec
 test("Code mode reports the global preference and a self-test nobody has run yet", async (t) => {
   t.after(() => rm(settingsPath, { force: true }));
   let { body } = await get();
-  assert.deepEqual(body.codemode, { sandbox: { state: "not-checked" }, builtinDisabled: false, preference: "automatic" });
+  assert.deepEqual(body.codemode, {
+    sandbox: { state: "not-checked" },
+    builtinDisabled: false,
+    preference: "automatic",
+    inlineBudget: { settingsPath, default: 3000, max: 1_000_000 },
+  });
 
   await writeFile(settingsPath, JSON.stringify({ defaultTools: ["+codemode"] }));
   ({ body } = await get());
@@ -201,7 +206,44 @@ test("Code mode reports the global preference and a self-test nobody has run yet
   assert.equal(response.status, 200, "an unreadable settings file does not fail the listing");
   assert.equal(response.body.codemode.preference, undefined);
   assert.match(response.body.codemode.preferenceError, /JSON/);
+  assert.equal(response.body.codemode.inlineBudget, undefined);
+  assert.match(response.body.codemode.inlineBudgetError, /JSON/);
   assert.deepEqual(response.body.servers.map((server) => server.name), ["docs", "shared"]);
+});
+
+test("the inline budget is reported as sessions read it, with a trusted project's own", async (t) => {
+  const store = new ProjectTrustStore(agentDir);
+  const projectSettings = join(cwd, ".pi", "settings.json");
+  t.after(async () => {
+    store.set(cwd, null);
+    await rm(projectSettings, { force: true });
+    await rm(settingsPath, { force: true });
+  });
+  const budget = async (query = forCwd()) => {
+    const { status, body } = await get(query);
+    assert.equal(status, 200);
+    return body.codemode.inlineBudget;
+  };
+  const limits = { settingsPath, default: 3000, max: 1_000_000 };
+
+  // A malformed defaultTools leaves the budget readable.
+  await writeFile(settingsPath, JSON.stringify({ defaultTools: "codemode", codemode: { mode: "on", inlineBudget: 1200 } }));
+  assert.deepEqual(await budget(""), { ...limits, value: 1200 });
+  await writeFile(settingsPath, JSON.stringify({ codemode: { inlineBudget: "lots" } }));
+  assert.deepEqual(await budget(""), { ...limits, invalid: '"lots"' });
+
+  // An untrusted project's settings reach no session.
+  await writeFile(settingsPath, JSON.stringify({ codemode: { inlineBudget: 1200 } }));
+  await writeFile(projectSettings, JSON.stringify({ codemode: { inlineBudget: 0 } }));
+  assert.deepEqual(await budget(), { ...limits, value: 1200 });
+  store.set(cwd, true);
+  assert.deepEqual(await budget(), { ...limits, value: 1200, projectOverride: { settingsPath: projectSettings, value: 0 } });
+  assert.deepEqual(await budget(""), { ...limits, value: 1200 });
+  // Other codemode keys leave the global budget in charge; a codemode that is not an object leaves none.
+  await writeFile(projectSettings, JSON.stringify({ codemode: { mode: "only" } }));
+  assert.deepEqual(await budget(), { ...limits, value: 1200 });
+  await writeFile(projectSettings, JSON.stringify({ codemode: "off" }));
+  assert.deepEqual(await budget(), { ...limits, value: 1200, projectOverride: { settingsPath: projectSettings } });
 });
 
 test("a trusted project whose own defaultTools decides Code mode there is reported, naming its settings", async (t) => {

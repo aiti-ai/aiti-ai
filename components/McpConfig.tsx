@@ -4,6 +4,7 @@ import { useCallback, useEffect, useId, useRef, useState, type Ref } from "react
 import type {
   McpActionResponse,
   McpCodemodeInfo,
+  McpCodemodeInlineBudget,
   McpCodemodePreference,
   McpConfigFieldRef,
   McpResponse,
@@ -74,6 +75,7 @@ import {
   mcpCodemodeAlwaysUnavailableNotice,
   mcpCodemodeAutomaticNotice,
   mcpCodemodeBuiltinNotice,
+  mcpCodemodeInlineBudgetNotices,
   mcpCodemodeProjectOverrideNotice,
   mcpCodemodeReachNotice,
   mcpCodemodeRowState,
@@ -113,7 +115,12 @@ import {
   pickMcpSelection,
   postMcpAction,
   postMcpTest,
+  mcpInlineBudgetDraftChanges,
+  mcpInlineBudgetDraftOf,
+  parseMcpInlineBudgetDraft,
+  saveMcpCodemodeInlineBudget,
   saveMcpCodemodePreference,
+  withMcpCodemodeInlineBudget,
   withMcpCodemodePreference,
   type McpActionFailure,
   type McpActionRequest,
@@ -183,10 +190,12 @@ function actionFailureText(failure: McpActionFailure, t: Translate): string {
   return failureText(failure, t);
 }
 
-/** What saving the Code mode choice is doing: nothing, waiting for the route, or why it failed. */
+/** What saving the Code mode choice or budget is doing: nothing, waiting for the route, or why it failed. */
 export interface McpCodemodeSaveState {
   saving: boolean;
   error: McpLoadFailure | null;
+  /** What the save is about, so its state shows in that row; the choice when absent. */
+  target?: "preference" | "inlineBudget";
 }
 
 /** What the last group switch left undone, under that group's heading. */
@@ -356,12 +365,12 @@ export function McpConfig({
   const saveCodemode = useCallback(async (preference: McpCodemodePreference) => {
     const controller = new AbortController();
     saveControllerRef.current = controller;
-    setCodemodeSave({ saving: true, error: null });
+    setCodemodeSave({ saving: true, error: null, target: "preference" });
     const result = await saveMcpCodemodePreference(preference, undefined, controller.signal);
     // Closed meanwhile: nothing is left to update.
     if (saveControllerRef.current !== controller) return;
     saveControllerRef.current = null;
-    setCodemodeSave({ saving: false, error: result.ok ? null : result.error });
+    setCodemodeSave({ saving: false, error: result.ok ? null : result.error, target: "preference" });
     if (result.ok) {
       setLoad((current) => current.state === "loaded"
         ? { ...current, data: withMcpCodemodePreference(current.data, result.preference) }
@@ -369,6 +378,23 @@ export function McpConfig({
     }
     // Read back what is stored: a save that timed out may still land, and one
     // refused because the file no longer parses should show that file's error.
+    void refresh();
+  }, [refresh]);
+
+  // The budget shares the choice's save state, so it waits for and is waited for by the same writes.
+  const saveCodemodeInlineBudget = useCallback(async (budget: number | null) => {
+    const controller = new AbortController();
+    saveControllerRef.current = controller;
+    setCodemodeSave({ saving: true, error: null, target: "inlineBudget" });
+    const result = await saveMcpCodemodeInlineBudget(budget, undefined, controller.signal);
+    if (saveControllerRef.current !== controller) return;
+    saveControllerRef.current = null;
+    setCodemodeSave({ saving: false, error: result.ok ? null : result.error, target: "inlineBudget" });
+    if (result.ok) {
+      setLoad((current) => current.state === "loaded"
+        ? { ...current, data: withMcpCodemodeInlineBudget(current.data, result.inlineBudget) }
+        : current);
+    }
     void refresh();
   }, [refresh]);
 
@@ -726,6 +752,7 @@ export function McpConfig({
       }}
       onRefresh={() => void refresh()}
       onCodemodeChange={(preference) => void saveCodemode(preference)}
+      onCodemodeInlineBudgetSave={(budget) => void saveCodemodeInlineBudget(budget)}
       onServerSwitch={(server, enabled) => void switchServer(server, enabled)}
       onGroupSwitch={(scope, servers, enabled) => void switchGroup(scope, servers, enabled)}
       onRemove={(server) => void removeServer(server)}
@@ -767,6 +794,7 @@ export function McpConfigView({
   onSelect,
   onRefresh,
   onCodemodeChange,
+  onCodemodeInlineBudgetSave = () => {},
   onServerSwitch = () => {},
   onGroupSwitch = () => {},
   onRemove = () => {},
@@ -809,6 +837,8 @@ export function McpConfigView({
   onSelect: (key: string) => void;
   onRefresh: () => void;
   onCodemodeChange: (preference: McpCodemodePreference) => void;
+  /** Saves the global `codemode.inlineBudget`; null removes it, for pi's default. */
+  onCodemodeInlineBudgetSave?: (budget: number | null) => void;
   onServerSwitch?: (server: McpServerInfo, enabled: boolean) => void;
   onGroupSwitch?: (scope: McpScope, servers: McpServerInfo[], enabled: boolean) => void;
   onRemove?: (server: McpServerInfo) => void;
@@ -1030,6 +1060,7 @@ export function McpConfigView({
                 save={codemodeSave}
                 serverBusy={busy !== null}
                 onChange={onCodemodeChange}
+                onInlineBudgetSave={onCodemodeInlineBudgetSave}
               />
             ) : selectedServer ? (
               <McpServerDetail
@@ -1759,6 +1790,7 @@ function McpCodemodeDetail({
   save,
   serverBusy,
   onChange,
+  onInlineBudgetSave,
 }: {
   codemode: McpCodemodeInfo;
   autoEnable: McpAutoEnableCodemode;
@@ -1766,11 +1798,14 @@ function McpCodemodeDetail({
   /** A server change is on its way; its answer carries the Code mode choice as read before this save. */
   serverBusy: boolean;
   onChange: (preference: McpCodemodePreference) => void;
+  onInlineBudgetSave: (budget: number | null) => void;
 }) {
   const { t } = useI18n();
   const sandbox = codemode.sandbox;
   const preference = codemode.preference;
   const waiting = save.saving || serverBusy;
+  // A save shows its progress and failure in the row it was made from.
+  const choiceSave = save.target === "inlineBudget" ? { saving: false, error: null } : save;
   const automaticNotice = mcpCodemodeAutomaticNotice(codemode, autoEnable);
   const alwaysUnavailable = mcpCodemodeAlwaysUnavailableNotice(codemode);
   const builtinNotice = mcpCodemodeBuiltinNotice(codemode);
@@ -1805,7 +1840,7 @@ function McpCodemodeDetail({
                     if (value !== preference) onChange(value);
                   }}
                 >
-                  {save.saving && <span role="status" className="mcp-config-line is-dim">{t("i18n.saving")}</span>}
+                  {choiceSave.saving && <span role="status" className="mcp-config-line is-dim">{t("i18n.saving")}</span>}
                 </ConfigScopeSwitch>
                 <span className="mcp-config-line">
                   {t(preference === "always" ? "mcp.codemode.alwaysDescription" : "mcp.codemode.automaticDescription")}
@@ -1819,20 +1854,31 @@ function McpCodemodeDetail({
               </span>
             )}
             {/* Shown on every platform: unlike the PowerShell switch, Code mode is not Windows-only. */}
-            {save.error && (
+            {choiceSave.error && (
               <span role="alert" className="mcp-config-line is-error">
                 {t("mcp.codemode.saveFailed")}{" "}
-                {save.error.timedOut
-                  ? t("mcp.codemode.saveTimedOut")
-                  : save.error.reason && save.error.reason !== "internal"
-                    ? t(`mcp.reason.${save.error.reason}`)
-                    : <code className="mcp-config-chip">{revealHiddenCharacters(save.error.error)}</code>}
+                <McpCodemodeSaveFailure error={choiceSave.error} />
               </span>
             )}
             {projectOverride && <span className="mcp-config-line is-warning">{noticeText(projectOverride, t)}</span>}
             {automaticNotice && <span className="mcp-config-line is-warning">{noticeText(automaticNotice, t)}</span>}
           </div>
         </ConfigDetailGridRow>
+        {codemode.inlineBudget ? (
+          <McpCodemodeInlineBudgetRow
+            budget={codemode.inlineBudget}
+            save={save}
+            waiting={waiting}
+            onSave={onInlineBudgetSave}
+          />
+        ) : codemode.inlineBudgetError !== undefined && (
+          <ConfigDetailGridRow label={t("mcp.codemode.inlineBudget")} tone="plain">
+            <span className="mcp-config-line is-warning">
+              {t("mcp.codemode.preferenceError")}{" "}
+              <code className="mcp-config-chip">{revealHiddenCharacters(codemode.inlineBudgetError)}</code>
+            </span>
+          </ConfigDetailGridRow>
+        )}
         <ConfigDetailGridRow label={t("mcp.codemode.sandbox")} tone="plain">
           {sandbox.state === "unavailable" ? (
             <span className="mcp-config-line is-warning">
@@ -1852,5 +1898,106 @@ function McpCodemodeDetail({
         )}
       </ConfigDetailGrid>
     </ConfigDetailStack>
+  );
+}
+
+/** Why a Code mode save failed: a timeout may have landed, a refusal is translated, an internal failure shows its diagnostic. */
+function McpCodemodeSaveFailure({ error }: { error: McpLoadFailure }) {
+  const { t } = useI18n();
+  if (error.timedOut) return <>{t("mcp.codemode.saveTimedOut")}</>;
+  if (error.reason && error.reason !== "internal") return <>{t(`mcp.reason.${error.reason}`)}</>;
+  return <code className="mcp-config-chip">{revealHiddenCharacters(error.error)}</code>;
+}
+
+/**
+ * The budget row of the Code mode pane: the global `codemode.inlineBudget`,
+ * the estimated tokens the codemode tool's description may spend declaring
+ * tools. The field is empty for pi's default, which its placeholder shows;
+ * Save (or Enter) writes the change, and saving it empty removes the key.
+ * Sessions read it when they start, like the choice. While any Code mode or
+ * server write is on its way the field is read-only rather than disabled, so
+ * it keeps focus, and Save, which is disabled then, gives focus back to the
+ * field once its answer is in.
+ */
+function McpCodemodeInlineBudgetRow({
+  budget,
+  save,
+  waiting,
+  onSave,
+}: {
+  budget: McpCodemodeInlineBudget;
+  save: McpCodemodeSaveState;
+  /** A Code mode save or a server change is on its way. */
+  waiting: boolean;
+  onSave: (budget: number | null) => void;
+}) {
+  const { t } = useI18n();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const hintId = useId();
+  const stored = mcpInlineBudgetDraftOf(budget);
+  const [draft, setDraft] = useState(stored);
+  // A newly stored value (this save, or a reload after an edit elsewhere) replaces what was typed.
+  useEffect(() => {
+    setDraft(stored);
+  }, [stored]);
+  const parsed = parseMcpInlineBudgetDraft(draft, budget.max);
+  const changes = mcpInlineBudgetDraftChanges(budget, parsed);
+  const own = save.target === "inlineBudget";
+  const saving = own && save.saving;
+  const wasSavingRef = useRef(saving);
+  useEffect(() => {
+    const wasSaving = wasSavingRef.current;
+    wasSavingRef.current = saving;
+    if (wasSaving && !saving) focusIfLost(document, inputRef.current);
+  }, [saving]);
+  const notices = mcpCodemodeInlineBudgetNotices(budget);
+  return (
+    <ConfigDetailGridRow label={t("mcp.codemode.inlineBudget")} tone="plain">
+      <div className="mcp-config-lines">
+        <form
+          className="mcp-codemode-budget"
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (parsed.ok && changes && !waiting) onSave(parsed.value);
+          }}
+        >
+          <input
+            ref={inputRef}
+            className="mcp-add-input mcp-codemode-budget-input"
+            inputMode="numeric"
+            aria-label={t("mcp.codemode.inlineBudget")}
+            aria-describedby={hintId}
+            aria-invalid={parsed.ok ? undefined : true}
+            value={draft}
+            placeholder={String(budget.default)}
+            readOnly={waiting}
+            autoComplete="off"
+            spellCheck={false}
+            onChange={(event) => setDraft(event.target.value)}
+          />
+          <span className="mcp-config-line">{t("mcp.codemode.inlineBudget.unit")}</span>
+          <ConfigButton type="submit" size="small" disabled={!changes || waiting}>
+            {t("mcp.codemode.inlineBudget.save")}
+          </ConfigButton>
+          {saving && <span role="status" className="mcp-config-line is-dim">{t("i18n.saving")}</span>}
+        </form>
+        {!parsed.ok && (
+          <span className="mcp-config-line is-error">{t("mcp.codemode.inlineBudget.invalidDraft", { max: String(budget.max) })}</span>
+        )}
+        <span id={hintId} className="mcp-config-line">
+          {t("mcp.codemode.inlineBudget.description", { default: String(budget.default) })}
+        </span>
+        <span className="mcp-config-line is-dim">{t("mcp.codemode.appliesLater")}</span>
+        {notices.map((notice) => (
+          <span key={notice.key} className="mcp-config-line is-warning">{noticeText(notice, t)}</span>
+        ))}
+        {own && save.error && (
+          <span role="alert" className="mcp-config-line is-error">
+            {t("mcp.codemode.inlineBudget.saveFailed")}{" "}
+            <McpCodemodeSaveFailure error={save.error} />
+          </span>
+        )}
+      </div>
+    </ConfigDetailGridRow>
   );
 }

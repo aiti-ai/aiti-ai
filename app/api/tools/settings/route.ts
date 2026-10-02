@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import type { McpErrorResponse, McpRefusalReason, ToolSettingsResponse } from "@/lib/api-types";
-import { isCodemodePreference, readCodemodePreference, writeCodemodePreference } from "@/lib/codemode-settings";
+import {
+  CODEMODE_INLINE_BUDGET_MAX,
+  isCodemodeInlineBudget,
+  isCodemodePreference,
+  readCodemodeInlineBudget,
+  readCodemodePreference,
+  writeCodemodeInlineBudget,
+  writeCodemodePreference,
+} from "@/lib/codemode-settings";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import {
   readPowerShellToolEnabled,
@@ -11,9 +19,12 @@ export const dynamic = "force-dynamic";
 
 // The only writer of the global `defaultTools` key: the PowerShell switch
 // (Windows) and the Code mode choice (ADR 0006, chosen in Settings › MCP) both
-// edit it, under the lock pi's SettingsManager takes on the same file. Every
-// refusal carries a `reason` code the panel translates, beside the English
-// `error` it shows only as the diagnostic of an `internal` failure.
+// edit it, under the lock pi's SettingsManager takes on the same file. Settings
+// › MCP saves the global `codemode.inlineBudget` here too, under the same lock.
+// Every refusal carries a `reason` code the panel translates, beside the
+// English `error` it shows only as the diagnostic of an `internal` failure.
+
+const CHANGES = ["enabled", "codemode", "codemodeInlineBudget"] as const;
 
 function refusal(status: number, reason: McpRefusalReason, error: string) {
   return NextResponse.json({ error, reason } satisfies McpErrorResponse, { status });
@@ -24,11 +35,12 @@ function errorResponse(error: unknown) {
 }
 
 async function readToolSettings(): Promise<ToolSettingsResponse> {
-  // One after the other: both take the file lock, and a reader that finds it
+  // One after the other: each takes the file lock, and a reader that finds it
   // held backs off for about a second.
   const powerShellEnabled = await readPowerShellToolEnabled();
   const codemode = await readCodemodePreference();
-  return { isWindows: process.platform === "win32", powerShellEnabled, codemode };
+  const codemodeInlineBudget = await readCodemodeInlineBudget();
+  return { isWindows: process.platform === "win32", powerShellEnabled, codemode, codemodeInlineBudget };
 }
 
 export async function GET() {
@@ -56,9 +68,23 @@ export async function PUT(req: Request) {
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
     return refusal(400, "invalid-request", "Expected a JSON object");
   }
-  const changes = body as { enabled?: unknown; codemode?: unknown };
-  if (("codemode" in changes) === ("enabled" in changes)) {
-    return refusal(400, "invalid-request", "Send either enabled (PowerShell) or codemode");
+  const changes = body as { enabled?: unknown; codemode?: unknown; codemodeInlineBudget?: unknown };
+  if (CHANGES.filter((key) => key in changes).length !== 1) {
+    return refusal(400, "invalid-request", "Send one of enabled (PowerShell), codemode or codemodeInlineBudget");
+  }
+
+  if ("codemodeInlineBudget" in changes) {
+    // null removes the key, which gives sessions pi's default.
+    const budget = changes.codemodeInlineBudget;
+    if (budget !== null && !isCodemodeInlineBudget(budget)) {
+      return refusal(400, "invalid-request", `codemodeInlineBudget must be a whole number from 0 to ${CODEMODE_INLINE_BUDGET_MAX}, or null`);
+    }
+    try {
+      await writeCodemodeInlineBudget(budget ?? undefined);
+      return NextResponse.json(await readToolSettings());
+    } catch (error) {
+      return errorResponse(error);
+    }
   }
 
   if ("codemode" in changes) {

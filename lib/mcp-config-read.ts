@@ -23,7 +23,14 @@ import {
   type BuiltinExtensionName,
   type BuiltinExtensionSwitch,
 } from "./builtin-extensions";
-import { readCodemodePreference, readProjectCodemodeOverride } from "./codemode-settings";
+import {
+  CODEMODE_INLINE_BUDGET_DEFAULT,
+  CODEMODE_INLINE_BUDGET_MAX,
+  readCodemodeInlineBudget,
+  readCodemodePreference,
+  readProjectCodemodeInlineBudget,
+  readProjectCodemodeOverride,
+} from "./codemode-settings";
 import { getGlobalSettingsPath } from "./global-settings-file";
 import { mcpConfigKey } from "./mcp-config-key";
 import { jsonErrorMessage } from "./mcp-json-error";
@@ -662,10 +669,11 @@ function mcpAvailability(
 }
 
 /**
- * Code mode as a session would get it: the global preference, the sandbox
- * self-test and `-builtin:codemode` (both as the project's sessions see it and
- * as the global settings alone say), and, given `trustedCwd`, the project
- * settings that decide it there whatever the global choice.
+ * Code mode as a session would get it: the global preference and inline
+ * budget, the sandbox self-test and `-builtin:codemode` (both as the project's
+ * sessions see it and as the global settings alone say), and, given
+ * `trustedCwd`, the project settings that decide either there whatever the
+ * global value.
  */
 async function codemodeInfo(
   agentDir: string,
@@ -692,6 +700,16 @@ async function codemodeInfo(
   }
   const projectOverride = trustedCwd === undefined ? undefined : readProjectCodemodeOverride(trustedCwd);
   if (projectOverride) info.projectOverride = projectOverride;
+  // Read on its own: a malformed defaultTools leaves the budget readable, and the other way round.
+  try {
+    const settingsPath = getGlobalSettingsPath(agentDir);
+    const budget = await readCodemodeInlineBudget(settingsPath);
+    info.inlineBudget = { ...budget, settingsPath, default: CODEMODE_INLINE_BUDGET_DEFAULT, max: CODEMODE_INLINE_BUDGET_MAX };
+    const projectBudget = trustedCwd === undefined ? undefined : readProjectCodemodeInlineBudget(trustedCwd);
+    if (projectBudget) info.inlineBudget.projectOverride = projectBudget;
+  } catch (error) {
+    info.inlineBudgetError = errorMessage(error);
+  }
   return info;
 }
 
