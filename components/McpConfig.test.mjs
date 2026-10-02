@@ -697,6 +697,80 @@ test("the container saves the budget like the choice, then reads back what is st
   assert.match(source, /if \(wasSaving && !saving\) focusIfLost\(document, inputRef\.current\);/);
 });
 
+/** The Built-in tools switch's buttons, by label, with whether each is pressed and disabled. */
+function modeOptions(html) {
+  const group = decode(html).match(/<div role="group" aria-label="Built-in tools"[^>]*>([\s\S]*?)<\/div>/)?.[1];
+  assert.ok(group, "the mode switch is rendered");
+  return [...group.matchAll(/<button([^>]*)>([^<]*)<\/button>/g)].map(([, attributes, label]) => [
+    label,
+    /aria-pressed="true"/.test(attributes),
+    /disabled=""/.test(attributes),
+  ]);
+}
+
+test("the Code mode pane's Built-in tools switch keeps tools declared or leaves them to scripts", () => {
+  const settingsPath = "/Users/me/.pi/agent/settings.json";
+  const info = (mode, extra = {}) => ({ sandbox: { state: "available" }, builtinDisabled: false, preference: "always", mode, ...extra });
+
+  const on = codemodeView(info({ settingsPath, value: "on" }));
+  assert.deepEqual(modeOptions(on), [["Direct", true, false], ["In scripts", false, false]]);
+  // Between the choice and the budget, with what it does and when it applies.
+  assert.match(text(on), /Applies only to sessions started afterwards\. Built-in tools Direct In scripts While Code mode is on, the model still calls read, bash, edit, write and the session's other tools directly, and each one's description also says how to call it from a script \(codemode\.mode "on", pi's default\)\. Applies only to sessions started afterwards\. Sandbox/);
+  // The Code mode choice keeps its own switch.
+  assert.deepEqual(codemodeOptions(on).map(({ label }) => label), ["Automatic", "Always on"]);
+
+  const only = text(codemodeView(info({ settingsPath, value: "only" })));
+  assert.match(only, /While Code mode is on, read, bash, edit, write and the session's other tools \(MCP tools with direct exposure too\) are no longer declared to the model: the code mode tool's description lists them, within the tool list budget, and the model calls them from scripts \(codemode\.mode "only"\)\. The session's tool selection still decides which tools there are\./);
+  assert.doesNotMatch(only, /With Automatic/);
+  // Under Automatic, Code mode and so "only" wait for an MCP server.
+  assert.match(text(codemodeView(info({ settingsPath, value: "only" }, { preference: "automatic" }))),
+    /With Automatic, Code mode turns on only once an MCP server that uses it connects, and until then the model calls these tools directly\. Choose Always on to have every session call them from scripts\./);
+
+  // While a mode save is on its way, both switches wait, and the Saving… line is the mode's.
+  const saving = codemodeView(info({ settingsPath, value: "on" }), { view: { codemodeSave: { saving: true, error: null, target: "mode" } } });
+  assert.deepEqual(modeOptions(saving).map(([, , disabled]) => disabled), [true, true]);
+  assert.deepEqual(codemodeOptions(saving).map(({ disabled }) => disabled), [true, true]);
+  assert.equal(decode(saving).match(/role="status"/g).length, 1);
+  assert.match(text(saving), /Built-in tools Direct In scripts Saving…/);
+  // Another write on its way makes the switch wait as well.
+  assert.deepEqual(modeOptions(codemodeView(info({ settingsPath, value: "on" }), { view: { busy: "switch:global\0docs" } })).map(([, , disabled]) => disabled), [true, true]);
+
+  // Each failure shows in the row its save was made from.
+  const failure = { error: "Invalid settings.json: codemode must be an object", reason: "internal" };
+  const modeFailed = text(codemodeView(info({ settingsPath, value: "on" }), { view: { codemodeSave: { saving: false, error: failure, target: "mode" } } }));
+  assert.match(modeFailed, /Could not save the setting: Invalid settings\.json: codemode must be an object Sandbox/);
+  assert.doesNotMatch(modeFailed, /Could not save the choice/);
+  const choiceFailed = text(codemodeView(info({ settingsPath, value: "on" }), { view: { codemodeSave: { saving: false, error: failure, target: "preference" } } }));
+  assert.doesNotMatch(choiceFailed, /Could not save the setting/);
+
+  // A stored value that is not a mode and a project that decides for itself are said under the switch.
+  const notices = text(codemodeView(info({
+    settingsPath,
+    value: "on",
+    invalid: '"never"',
+    projectOverride: { settingsPath: "/Users/me/repo/.pi/settings.json", value: "only" },
+  })));
+  assert.match(notices, /codemode\.mode in ~\/\.pi\/agent\/settings\.json is "never", which pi reads as "on"\. Choosing either option replaces it\./);
+  assert.match(notices, /This project decides for itself: codemode\.mode in ~\/repo\/\.pi\/settings\.json has its sessions call these tools from scripts only, whatever you choose here\./);
+
+  // An unreadable settings file offers no switch to save into it; an overview without a mode shows no row.
+  const unreadable = codemodeView(info(undefined, { modeError: "Unexpected token" }));
+  assert.match(text(unreadable), /Built-in tools Cannot read the global settings file: Unexpected token/);
+  assert.doesNotMatch(unreadable, /aria-label="Built-in tools"/);
+  assert.doesNotMatch(codemodeView(info(undefined)), /Built-in tools/);
+});
+
+test("the container saves the mode like the choice, then reads back what is stored", () => {
+  const save = source.slice(source.indexOf("const saveCodemodeMode = useCallback"), source.indexOf("}, [refresh]);", source.indexOf("const saveCodemodeMode")));
+  assert.match(save, /setCodemodeSave\(\{ saving: true, error: null, target: "mode" \}\);/);
+  assert.match(save, /const result = await saveMcpCodemodeMode\(mode, undefined, controller\.signal\);/);
+  assert.match(save, /if \(saveControllerRef\.current !== controller\) return;/);
+  assert.match(save, /withMcpCodemodeMode\(current\.data, result\.mode\)/);
+  assert.match(save, /\n    void refresh\(\);\n {2}$/);
+  // Only a change is saved: the pressed option saves only over a value that is not a mode.
+  assert.match(source, /if \(mcpCodemodeModeChanges\(mode, value\)\) onChange\(value\);/);
+});
+
 test("every string the panel shows is translated", () => {
   const literal = (text) => [...text.matchAll(/\bt\("([^"]+)"/g)].map((match) => match[1]);
   const quoted = (text) => [...text.matchAll(/"((?:mcp|i18n|skills|settings)\.[\w.-]+)"/g)].map((match) => match[1]);

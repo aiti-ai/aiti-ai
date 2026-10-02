@@ -22,11 +22,29 @@ export interface CodemodeInlineBudgetSetting {
   invalid?: string;
 }
 
+/**
+ * pi's `codemode.mode`: how the codemode tool presents the other tools while
+ * it is active. "on" (pi's default) keeps them declared; "only" hides the
+ * active `direct` ones (built-in, extension and direct MCP tools) from the
+ * model and lists them in the codemode description, so scripts call them.
+ */
+export type CodemodeMode = "on" | "only";
+
+/** One settings layer's `codemode.mode`, as the codemode extension reads it. */
+export interface CodemodeModeSetting {
+  /** The mode sessions get: "only" when set to exactly that, else "on". */
+  value: CodemodeMode;
+  /** A value that is neither mode, which pi reads as "on", as shortened JSON. */
+  invalid?: string;
+}
+
 export interface ToolSettingsResponse {
   isWindows: boolean;
   powerShellEnabled: boolean;
   /** "always" when the global defaultTools starts sessions with codemode active (ADR 0006). */
   codemode: McpCodemodePreference;
+  /** The global `codemode.mode`. */
+  codemodeMode: CodemodeModeSetting;
   /** The global `codemode.inlineBudget`. */
   codemodeInlineBudget: CodemodeInlineBudgetSetting;
 }
@@ -447,12 +465,30 @@ export interface McpCodemodeInfo {
    */
   projectOverride?: McpCodemodeProjectOverride;
   /**
+   * `codemode.mode`: whether active built-in and extension tools stay
+   * declared while Code mode is on, or are reached only from scripts. Absent
+   * when the global settings file cannot be read; see `modeError`.
+   */
+  mode?: McpCodemodeMode;
+  modeError?: string;
+  /**
    * `codemode.inlineBudget`: the estimated tokens (characters / 4) the
    * codemode tool's description may spend on tool declarations. Absent when
    * the global settings file cannot be read; see `inlineBudgetError`.
    */
   inlineBudget?: McpCodemodeInlineBudget;
   inlineBudgetError?: string;
+}
+
+export interface McpCodemodeMode extends CodemodeModeSetting {
+  /** The global settings file the mode is read from and saved to. */
+  settingsPath: string;
+  /**
+   * A trusted project whose `.pi/settings.json` sets the mode its sessions get
+   * whatever the global value: its `codemode.mode`, or a `codemode` that is
+   * not an object, which leaves them "on".
+   */
+  projectOverride?: CodemodeModeSetting & { settingsPath: string };
 }
 
 export interface McpCodemodeInlineBudget extends CodemodeInlineBudgetSetting {
