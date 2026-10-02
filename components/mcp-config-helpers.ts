@@ -1014,6 +1014,7 @@ export const MCP_TEST_REFUSAL_KEYS: Partial<Record<McpRefusalReason, string>> = 
   "link-outside": "mcp.test.refused.link-outside",
   "not-a-file": "mcp.test.refused.not-a-file",
   "too-large": "mcp.test.refused.too-large",
+  "too-many-servers": "mcp.test.refused.too-many-servers",
 };
 
 /** What a test does, by how the server is reached; a server that runs a shell command adds `MCP_TEST_SERIAL_KEY`. */

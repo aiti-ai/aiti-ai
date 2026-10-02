@@ -107,7 +107,8 @@ export function mayReadProjectConfigNow(cwd: string, agentDir: string): boolean 
     const warned = (store[TRUST_READ_WARNINGS_KEY] ??= new Set());
     const key = `${trustPath}\0${message}`;
     if (!warned.has(key)) {
-      if (warned.size >= TRUST_READ_WARNINGS_MAX) warned.clear();
+      // The oldest goes, never the whole set, which would repeat every warning it held.
+      if (warned.size >= TRUST_READ_WARNINGS_MAX) warned.delete(warned.values().next().value as string);
       warned.add(key);
       // A lock error does not name the file, so the path is always given.
       console.warn(`[pi-web] cannot read project trust from ${trustPath}; projects that need it count as untrusted meanwhile: ${message}`);

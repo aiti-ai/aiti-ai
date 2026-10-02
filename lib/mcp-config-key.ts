@@ -11,11 +11,29 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** JSON with sorted keys, so an entry compares equal however its file orders it. */
-export function canonicalJson(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (isRecord(value)) {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+/**
+ * How deep `canonicalJson()` follows arrays and objects. Real entries are a
+ * few levels deep; the entries hashed include an untrusted repository's
+ * `.pi/mcp.json`, which `JSON.parse` accepts hundreds of thousands of levels
+ * deep, and one recursion per level would overflow the stack at a few
+ * thousand.
+ */
+export const MCP_CONFIG_KEY_MAX_DEPTH = 64;
+
+/** What stands for an array or object below the depth limit: not JSON, so no value prints as it. */
+const TOO_DEEP = "<too deep>";
+
+/**
+ * JSON with sorted keys, so an entry compares equal however its file orders it.
+ * Total: past `MCP_CONFIG_KEY_MAX_DEPTH` levels an array or object prints as a
+ * fixed marker instead of being followed. The result only has to be the same
+ * for the same value, so two entries that differ only that deep compare equal.
+ */
+export function canonicalJson(value: unknown, depth = 0): string {
+  if (Array.isArray(value) || isRecord(value)) {
+    if (depth >= MCP_CONFIG_KEY_MAX_DEPTH) return TOO_DEEP;
+    if (Array.isArray(value)) return `[${value.map((item) => canonicalJson(item, depth + 1)).join(",")}]`;
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key], depth + 1)}`).join(",")}}`;
   }
   return JSON.stringify(value) ?? "null";
 }
