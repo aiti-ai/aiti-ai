@@ -74,6 +74,15 @@ test("keeps visited settings sections mounted and contains nested Escape handlin
   assert.match(modelsSource, /e\.preventDefault\(\);\s*e\.stopPropagation\(\);\s*onClose\(\);/);
 });
 
+test("focus moves into Settings as it opens and back to its opener as it closes", () => {
+  // Left on the composer a bare /mcp opened Settings from, Escape stopped a running agent
+  // and Settings stayed open (lib/stacked-dialog.test.mjs runs focusModalPanel()).
+  assert.match(panelSource, /const dialogRef = useRef<HTMLDivElement>\(null\);\n\s*useLayoutEffect\(\(\) => focusModalPanel\(document, dialogRef\.current, \{\n\s*restoreTextEntry: !window\.matchMedia\?\.\("\(pointer: coarse\)"\)\.matches,\n\s*\}\), \[\]\);/);
+  assert.match(panelSource, /<div\n\s*ref=\{dialogRef\}\n\s*role="dialog"\n\s*aria-modal="true"\n\s*aria-label=\{t\("settings\.title"\)\}\n\s*tabIndex=\{-1\}/);
+  // The dialog element is not a control: no focus ring around the whole page.
+  assert.match(cssSource, /\.settings-dialog-backdrop:focus \{\n\s*outline: none;\n\}/);
+});
+
 test("Settings › MCP offers Trust through the page's trust dialog, which opens above Settings", () => {
   // AppShell owns trust: its status and its dialog opener go through SettingsPanel to McpConfig.
   assert.match(shellSource, /<SettingsPanel[\s\S]*?projectTrust=\{projectTrust\}\n\s*onOpenTrustDialog=\{openProjectTrustDialog\}[\s\S]*?\/>/);
