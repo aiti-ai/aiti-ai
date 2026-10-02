@@ -85,11 +85,21 @@ test("a server is switched off and on in its file, and the answer is the overvie
 });
 
 test("a server's exposure is set in its file, codemode removing the key, and the answer is the overview after it", async () => {
-  let { status, body } = await post({ action: "set-exposure", scope: "global", name: "docs", exposure: "codemode-deferred" });
+  let { status, body } = await post({ action: "set-exposure", scope: "global", name: "docs", exposure: "direct" });
   assert.equal(status, 200);
-  assert.equal(server(body, "global", "docs").exposure, "codemode-deferred");
-  assert.equal((await readJson(globalPath)).mcpServers.docs.exposure, "codemode-deferred");
+  assert.equal(server(body, "global", "docs").exposure, "direct");
+  assert.equal((await readJson(globalPath)).mcpServers.docs.exposure, "direct");
   assert.ok(!JSON.stringify(body).includes(SECRET));
+
+  // The old name pi still reads is not offered, and an entry holding it lists as what it now means.
+  ({ status, body } = await post({ action: "set-exposure", scope: "global", name: "docs", exposure: "codemode-deferred" }));
+  assert.equal(status, 400);
+  const aliased = JSON.parse(globalText);
+  aliased.mcpServers.docs.exposure = "codemode-deferred";
+  await writeFile(globalPath, JSON.stringify(aliased));
+  ({ status, body } = await post({ action: "set-exposure", scope: "global", name: "lint", exposure: "codemode" }));
+  assert.equal(status, 200);
+  assert.equal(server(body, "global", "docs").exposure, "codemode");
 
   ({ status, body } = await post({ action: "set-exposure", scope: "global", name: "docs", exposure: "codemode" }));
   assert.equal(status, 200);
