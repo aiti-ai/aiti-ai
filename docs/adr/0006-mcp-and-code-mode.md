@@ -224,9 +224,10 @@ pane with Sign in, Test, Remove, a switch, and the server's exposure, and an
   `mcp:1`, `mcp:2`, so a bare `/mcp` runs none of them). Another extension's
   `/mcp` and every subcommand (`/mcp login`, `logout`, `reconnect`, which act
   on the session's own connections) are sent as before.
-- Registry search is deferred. The add panel links to `github.com/mcp` for
-  browsing, but its Install buttons cannot be pasted: they are menu items, not
-  links. The VS Code items open `vscode:mcp/by-name/<name>`, which names a
+- Registry search is deferred. The add panel links to catalogs for browsing
+  (glama.ai, smithery.ai, mcp.so, registry.modelcontextprotocol.io). A
+  `github.com/mcp` page's Install buttons cannot be pasted: they are menu
+  items, not links. The VS Code items open `vscode:mcp/by-name/<name>`, which names a
   server but carries none of its settings, and the GitHub Copilot app item
   navigates to a launch page. The paste box takes that launch address and the
   install badges in a server's README (Cursor, VS Code), and explains a

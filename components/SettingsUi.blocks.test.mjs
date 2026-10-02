@@ -141,8 +141,7 @@ test("a trust notice offers its button only when the caller can trust the projec
 test("the add panel lays out the catalog, save target, source box, caller controls and examples", () => {
   const html = render(h(ConfigAddSourcePanel, {
     title: "Add plugin",
-    catalogHref: "https://pi.dev/packages",
-    catalogLabel: "pi.dev/packages",
+    catalogs: [{ href: "https://pi.dev/packages", label: "pi.dev/packages" }],
     target: h("div", { className: "save-target" }, "~/.pi/agent/{npm,git}"),
     inputLabel: "Source",
     inputId: "plugin-source",
@@ -155,9 +154,9 @@ test("the add panel lays out the catalog, save target, source box, caller contro
     examples: ["npm:a", "git:b"],
     error: "boom",
   }, h("div", { className: "caller-controls" }, "controls")));
-  assert.match(html, /<div class="config-detail-title">Add plugin<\/div><a href="https:\/\/pi\.dev\/packages" target="_blank" rel="noopener noreferrer" class="config-add-source-catalog">pi\.dev\/packages<\/a>/);
+  assert.match(html, /<div class="config-detail-title">Add plugin<\/div><span class="config-add-source-catalogs"><a href="https:\/\/pi\.dev\/packages" target="_blank" rel="noopener noreferrer" class="config-add-source-catalog">pi\.dev\/packages<\/a><\/span>/);
   // Where it saves comes first under the title, before the source box.
-  assert.match(html, /<\/a><\/div><div class="save-target">~\/\.pi\/agent\/\{npm,git\}<\/div><\/div><div class="config-field">/);
+  assert.match(html, /<\/a><\/span><\/div><div class="save-target">~\/\.pi\/agent\/\{npm,git\}<\/div><\/div><div class="config-field">/);
   assert.match(html, /<span class="config-field-label">Source<\/span><input id="plugin-source" aria-label="Source" class="config-add-source-input" placeholder="npm:@scope\/package" value=""\/>/);
   // The caller's controls sit between the box and the examples.
   assert.match(html, /<\/div><div class="caller-controls">controls<\/div><div class="config-add-source-examples">/);
@@ -169,8 +168,7 @@ test("the add panel lays out the catalog, save target, source box, caller contro
 test("a labeled example shows what it is beside its text, and the box gets the text alone", async () => {
   const html = render(h(ConfigAddSourcePanel, {
     title: "Add MCP server",
-    catalogHref: "https://github.com/mcp",
-    catalogLabel: "github.com/mcp",
+    catalogs: [{ href: "https://mcp.so/", label: "mcp.so" }],
     target: "~/.pi/agent/mcp.json",
     inputLabel: "Server to add",
     placeholder: "",
@@ -191,8 +189,7 @@ test("a labeled example shows what it is beside its text, and the box gets the t
 test("the multiline add box is a textarea where Enter adds a line and Cmd/Ctrl+Enter submits", () => {
   const html = render(h(ConfigAddSourcePanel, {
     title: "Add MCP server",
-    catalogHref: "https://github.com/mcp",
-    catalogLabel: "github.com/mcp",
+    catalogs: [{ href: "https://mcp.so/", label: "mcp.so" }],
     target: "~/.pi/agent/mcp.json",
     inputLabel: "Server to add",
     inputId: "mcp-add-source",
