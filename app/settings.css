@@ -1947,15 +1947,6 @@
   white-space: normal;
 }
 
-.mcp-config-note {
-  margin: 0;
-  padding-top: 10px;
-  border-top: 1px solid var(--border);
-  color: var(--text-dim);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
 /* A tested server's stderr tail keeps its line breaks but wraps long lines,
    and scrolls inside a box of its own, so 2,000 characters never push the
    rest of the pane off a phone screen. */

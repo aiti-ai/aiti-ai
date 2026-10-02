@@ -16,7 +16,6 @@ const {
   MCP_ROW_STATE_DETAIL_KEYS,
   MCP_ROW_STATE_LABEL_KEYS,
   MCP_SERVER_ROW_STATES,
-  MCP_SESSION_ROW_STATE_DETAIL_KEYS,
   MCP_SESSION_ROW_STATE_LABEL_KEYS,
   MCP_SESSION_STATE_KEYS,
   MCP_SESSION_SUMMARY_KEYS,
@@ -71,7 +70,6 @@ const {
   mcpSeconds,
   mcpTestAnswerOutdates,
   mcpTestBlock,
-  mcpTestExplainKey,
   mcpTestRunAfter,
   mcpTestRunAfterSignOut,
   mcpTestRunFor,
@@ -846,12 +844,8 @@ test("Test is offered exactly where the route would test, with the reason as tex
     assert.equal(MCP_TEST_REFUSAL_KEYS[reason], `mcp.test.refused.${reason}`, reason);
     assert.doesNotMatch(messages[MCP_TEST_REFUSAL_KEYS[reason]], /unchanged|write|turned on or off|change/, reason);
   }
-  // What a test does depends on how the server is reached; the shell-command sentence fits both.
-  assert.equal(mcpTestExplainKey({ transport: "http" }), "mcp.test.explain.http");
-  assert.equal(mcpTestExplainKey({ transport: "stdio" }), "mcp.test.explain.stdio");
-  assert.equal(mcpTestExplainKey({}), "mcp.test.explain.stdio");
-  for (const key of ["mcp.test.explain.http", "mcp.test.explain.stdio", MCP_TEST_SERIAL_KEY]) assert.equal(typeof messages[key], "string", key);
-  assert.doesNotMatch(messages["mcp.test.explain.http"], /starts the server/);
+  // The shell-command sentence fits an HTTP server as well as a stdio one.
+  assert.equal(typeof messages[MCP_TEST_SERIAL_KEY], "string");
   assert.doesNotMatch(messages[MCP_TEST_SERIAL_KEY], /starts the server/);
   assert.doesNotMatch(messages["mcp.test.summary.timedOut"], /stopped it/, "an HTTP server is not stopped, only its test");
 });
@@ -911,15 +905,15 @@ test("an open session's report refines a row as a test's does, in a session's wo
   assert.equal(mcpRowStateLabelKey("connected", { origin: "test", state: "connected" }), "mcp.state.connected");
   assert.equal(mcpRowStateLabelKey("needs-auth", report("needs-auth")), "mcp.state.needs-auth");
   assert.equal(mcpRowStateLabelKey("disabled", report("connected")), "mcp.state.disabled");
-  assert.equal(mcpRowStateDetailKey("needs-auth", report("needs-auth")), "mcp.stateDetail.session.needs-auth");
-  assert.equal(mcpRowStateDetailKey("needs-auth", undefined), "mcp.stateDetail.needs-auth");
-  assert.equal(mcpRowStateDetailKey("invalid", undefined), undefined, "the pane words a refusal with its reason");
+  // The Connection row reports what a test or a session saw; the Status row adds no sentence of its own.
+  for (const state of ["connected", "needs-auth", "failed", "connecting"]) assert.equal(mcpRowStateDetailKey(state), undefined, state);
+  assert.equal(mcpRowStateDetailKey("conflict"), "mcp.stateDetail.conflict");
+  assert.equal(mcpRowStateDetailKey("invalid"), undefined, "the pane words a refusal with its reason");
   assert.deepEqual(mcpSessionStateView(report("disconnected")), { key: "mcp.session.state.disconnected", tone: "warning" });
   assert.deepEqual(mcpSessionStateView(report("not-trusted")), { key: "mcp.session.state.not-trusted", tone: "warning" });
   for (const key of [
     ...Object.values(MCP_SESSION_ROW_STATE_LABEL_KEYS),
     ...Object.values(MCP_ROW_STATE_DETAIL_KEYS),
-    ...Object.values(MCP_SESSION_ROW_STATE_DETAIL_KEYS),
     ...Object.values(MCP_SESSION_STATE_KEYS),
     ...Object.values(MCP_SESSION_SUMMARY_KEYS),
   ]) {

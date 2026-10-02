@@ -74,25 +74,25 @@ test("a server with its own Authorization header says so, with nothing to press"
   assert.deepEqual(buttons(html), []);
 });
 
-test("an OAuth server offers Sign in, says what it does and that it may replace a registration, and Sign out once signed in", () => {
+test("an OAuth server offers Sign in, says what it does and, once something is stored, that it may replace it, and Sign out", () => {
   const out = row();
   assert.deepEqual(buttons(out).map((button) => button.label), ["Sign in"]);
-  assert.match(text(out), /^Sign-in No OAuth tokens stored\./);
-  assert.match(text(out), /Sign in runs on the computer running Pi Web, as pi mcp login does/);
-  assert.match(text(out), /Signing in can replace the client registration and tokens already stored for this server's URL\./);
-  assert.doesNotMatch(text(out), /Sign out deletes/);
+  assert.match(text(out), /^Sign-in Not signed in\./);
+  // Nothing stored for the URL: nothing to replace, and nothing to sign out of.
+  assert.doesNotMatch(text(out), /may replace|Sign out deletes/);
 
   const signedIn = row({ server: { ...oauth, signedIn: true } });
   assert.deepEqual(buttons(signedIn).map((button) => button.label), ["Sign in", "Sign out"]);
-  assert.match(text(signedIn), /Signed in: OAuth tokens are stored in mcp-auth\.json\./);
-  assert.match(text(signedIn), /Sign out deletes the tokens and client registration stored for this URL; open sessions lose access at their next request to the server\./);
+  assert.match(text(signedIn), /^Sign-in Signed in\./);
+  assert.match(text(signedIn), /Signing in may replace what is stored for this URL\./);
+  assert.match(text(signedIn), /Sign out deletes what is stored for this URL; open sessions lose access at their next request\./);
   // An unreadable mcp-auth.json still offers Sign out.
   assert.deepEqual(buttons(row({ server: { ...oauth, signedIn: undefined } })).map((button) => button.label), ["Sign in", "Sign out"]);
   // A cancelled or expired sign-in leaves a client registration and its PKCE state but no tokens:
   // Sign out still clears them, as `pi mcp logout` would.
   const leftover = row({ server: { ...oauth, signedIn: false, oauthStateStored: true } });
   assert.deepEqual(buttons(leftover).map((button) => button.label), ["Sign in", "Sign out"]);
-  assert.match(text(leftover), /^Sign-in No OAuth tokens stored, but mcp-auth\.json holds a client registration or an unfinished sign-in for this URL\./);
+  assert.match(text(leftover), /^Sign-in Not signed in, but a client registration or an unfinished sign-in is stored for this URL\./);
   assert.deepEqual(buttons(row({ server: { ...oauth, signedIn: false, oauthStateStored: false } })).map((button) => button.label), ["Sign in"]);
   // While a change runs, Sign out waits; Sign in, which writes no mcp.json, does not.
   const busy = buttons(row({ server: { ...oauth, signedIn: true }, controlsBusy: true }));
@@ -112,7 +112,7 @@ test("a blocked sign-in is disabled and points at the visible reason", () => {
     assert.ok(id, button.label);
     assert.match(html, new RegExp(`<span id="${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}" class="mcp-config-line is-dim">This project is not trusted, so Pi Web does not sign in to or out of its servers\\.</span>`));
   }
-  assert.doesNotMatch(text(html), /Sign in runs on the computer/, "no explanation of what cannot be done");
+  assert.doesNotMatch(text(html), /may replace|Sign out deletes/, "no explanation of what cannot be done");
   // A PI_WEB_PASSWORD entry cannot sign in, but its tokens can still go.
   const password = buttons(row({ server: { ...oauth, signedIn: true }, block: "web-password" }));
   assert.match(password[0].attributes, /disabled=""/);
@@ -226,10 +226,10 @@ test("the row's words come from the locale files, and nothing hides in a tooltip
   assert.match(source, /if \(wasPasting && !pasting\) focusIfLost\(document, inputRef\.current\);/);
   // The paste box submits from its button or Cmd/Ctrl+Enter, never a plain Enter.
   assert.match(source, /<OAuthPastePanel[\s\S]*?plainEnterSubmits=\{false\}[\s\S]*?\/>/);
-  // The panel's Sign-in row is this one, and its needs-sign-in words point at it, not at a chat command.
+  // The panel's Sign-in row is this one, and the needs-sign-in words above it never send the user to a chat command.
   assert.match(mcpConfigSource, /<McpSignInRow\n\s*server=\{server\}/);
-  for (const key of ["mcp.stateDetail.needs-auth", "mcp.stateDetail.session.needs-auth"]) {
-    assert.match(messages[key], /Sign in is below\.$/, key);
+  for (const key of ["mcp.test.summary.needs-auth", "mcp.session.summary.needs-auth"]) {
+    assert.equal(typeof messages[key], "string", key);
     assert.doesNotMatch(messages[key], /\/mcp/, key);
   }
 });
