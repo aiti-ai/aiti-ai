@@ -250,10 +250,15 @@ the SDK's files at run time), no session offers `codemode`: the
 but registers nothing. The panel shows the result, and "not checked yet"
 until a normal session has run the test.
 
-`codemode.mode`, `codemode.inlineBudget`, `autoEnableCodemode`, and the
-`±builtin:*` entries stay file-only; they keep working as in the CLI. The
-panel reports the ones that change what it offers (`-builtin:mcp`,
-`-builtin:codemode`, `autoEnableCodemode: false`).
+The pane also edits the global `codemode.inlineBudget`, the estimated
+tokens the `codemode` description may spend declaring tools (pi's default
+3000), through the same route and lock. An earlier version of this decision
+kept it file-only, but one server with many tools fills that budget, so it is
+the setting that decides what an MCP server costs every request; the pane
+names a trusted project whose settings set their own. `codemode.mode`,
+`autoEnableCodemode`, and the `±builtin:*` entries stay file-only; they keep
+working as in the CLI. The panel reports the ones that change what it offers
+(`-builtin:mcp`, `-builtin:codemode`, `autoEnableCodemode: false`).
 
 `resolveActiveToolNames()` replaces `withExtensionTools()`. It respects
 `defaultActive: false`, carries extension tools that were activated at runtime

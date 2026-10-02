@@ -1,8 +1,10 @@
 import type {
+  CodemodeInlineBudgetSetting,
   FreshFolderTrustBreadth,
   McpActionResponse,
   McpAvailability,
   McpCodemodeInfo,
+  McpCodemodeInlineBudget,
   McpCodemodePreference,
   McpConfigFileInfo,
   McpConfigFileProblem,
@@ -547,6 +549,68 @@ export function withMcpCodemodePreference(data: McpResponse, preference: McpCode
   return { ...data, codemode };
 }
 
+/** The overview after a budget save: the stored value, keeping the default, the limit and the project's own. */
+export function withMcpCodemodeInlineBudget(data: McpResponse, stored: CodemodeInlineBudgetSetting): McpResponse {
+  const current = data.codemode.inlineBudget;
+  if (!current) return data;
+  const inlineBudget: McpCodemodeInlineBudget = {
+    settingsPath: current.settingsPath,
+    default: current.default,
+    max: current.max,
+    ...(current.projectOverride ? { projectOverride: current.projectOverride } : {}),
+    ...stored,
+  };
+  return { ...data, codemode: { ...data.codemode, inlineBudget } };
+}
+
+/** The budget field's text for a stored value: empty for pi's default, which the placeholder shows. */
+export function mcpInlineBudgetDraftOf(budget: Pick<McpCodemodeInlineBudget, "value">): string {
+  return budget.value === undefined ? "" : String(budget.value);
+}
+
+/** What the budget field asks to save: a whole number up to `max`, or null (empty) for pi's default. */
+export type McpInlineBudgetDraft = { ok: true; value: number | null } | { ok: false };
+
+export function parseMcpInlineBudgetDraft(text: string, max: number): McpInlineBudgetDraft {
+  const trimmed = text.trim();
+  if (trimmed === "") return { ok: true, value: null };
+  if (!/^\d+$/.test(trimmed)) return { ok: false };
+  const value = Number(trimmed);
+  return value <= max ? { ok: true, value } : { ok: false };
+}
+
+/**
+ * Whether saving the draft changes the global settings: a different budget,
+ * or an empty field over a value pi ignores, which saving removes.
+ */
+export function mcpInlineBudgetDraftChanges(budget: McpCodemodeInlineBudget, draft: McpInlineBudgetDraft): boolean {
+  if (!draft.ok) return false;
+  if (draft.value === null) return budget.value !== undefined || budget.invalid !== undefined;
+  return draft.value !== budget.value;
+}
+
+/**
+ * The warnings under the budget field: a global value pi ignores, and a
+ * trusted project whose settings give its sessions their own budget (said
+ * whether or not it agrees, as for the Code mode choice).
+ */
+export function mcpCodemodeInlineBudgetNotices(budget: McpCodemodeInlineBudget): McpNoticeText[] {
+  const notices: McpNoticeText[] = [];
+  if (budget.invalid !== undefined) {
+    notices.push({
+      key: "mcp.codemode.inlineBudget.invalid",
+      params: { path: budget.settingsPath, value: budget.invalid, default: String(budget.default) },
+    });
+  }
+  const project = budget.projectOverride;
+  if (project) {
+    notices.push(project.value !== undefined
+      ? { key: "mcp.codemode.inlineBudget.projectOverride", params: { path: project.settingsPath, value: String(project.value) } }
+      : { key: "mcp.codemode.inlineBudget.projectOverrideDefault", params: { path: project.settingsPath, default: String(budget.default) } });
+  }
+  return notices;
+}
+
 export type McpCodemodeRowState = "automatic" | "always" | "unavailable" | "unknown";
 
 /**
@@ -734,21 +798,38 @@ export type McpCodemodeSaveResult =
   | { ok: true; preference: McpCodemodePreference }
   | { ok: false; error: McpLoadFailure };
 
+export type McpCodemodeInlineBudgetSaveResult =
+  | { ok: true; inlineBudget: CodemodeInlineBudgetSetting }
+  | { ok: false; error: McpLoadFailure };
+
 function isCodemodePreferenceValue(value: unknown): value is McpCodemodePreference {
   return value === "automatic" || value === "always";
 }
 
-async function requestCodemodeSave(
-  preference: McpCodemodePreference,
+function isInlineBudgetSetting(value: unknown): value is CodemodeInlineBudgetSetting {
+  if (value === null || typeof value !== "object") return false;
+  const setting = value as Record<string, unknown>;
+  return (setting.value === undefined || typeof setting.value === "number")
+    && (setting.invalid === undefined || typeof setting.invalid === "string");
+}
+
+/**
+ * One change through `PUT /api/tools/settings`, answered with the value the
+ * route read back after writing (picked from its answer by `stored`), which
+ * is what the pane shows.
+ */
+async function requestToolSettingsChange<T>(
+  change: Record<string, unknown>,
+  stored: (data: Record<string, unknown>) => T | undefined,
   fetchImpl: FetchLike,
   signal: AbortSignal,
-): Promise<McpCodemodeSaveResult> {
+): Promise<{ ok: true; stored: T } | { ok: false; error: McpLoadFailure }> {
   let response: Awaited<ReturnType<FetchLike>>;
   try {
     response = await fetchImpl("/api/tools/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ codemode: preference }),
+      body: JSON.stringify(change),
       cache: "no-store",
       signal,
     });
@@ -761,10 +842,23 @@ async function requestCodemodeSave(
   } catch {
     return { ok: false, error: { error: `HTTP ${response.status}` } };
   }
-  const stored = (data as { codemode?: unknown } | null)?.codemode;
-  // The route answers with what it read back after writing, which is what the switch shows.
-  if (response.ok && isCodemodePreferenceValue(stored)) return { ok: true, preference: stored };
+  const value = response.ok && data !== null && typeof data === "object" ? stored(data as Record<string, unknown>) : undefined;
+  if (value !== undefined) return { ok: true, stored: value };
   return { ok: false, error: refusalFailure(data, response.status) };
+}
+
+async function requestCodemodeSave(
+  preference: McpCodemodePreference,
+  fetchImpl: FetchLike,
+  signal: AbortSignal,
+): Promise<McpCodemodeSaveResult> {
+  const result = await requestToolSettingsChange(
+    { codemode: preference },
+    (data) => (isCodemodePreferenceValue(data.codemode) ? data.codemode : undefined),
+    fetchImpl,
+    signal,
+  );
+  return result.ok ? { ok: true, preference: result.stored } : result;
 }
 
 /**
@@ -781,6 +875,34 @@ export async function saveMcpCodemodePreference(
 ): Promise<McpCodemodeSaveResult> {
   return withinDeadline<McpCodemodeSaveResult>(
     (deadlineSignal) => requestCodemodeSave(preference, fetchImpl, deadlineSignal),
+    () => ({ ok: false, error: { error: `PUT /api/tools/settings did not answer within ${timeoutMs} ms`, timedOut: true } }),
+    timeoutMs,
+    signal,
+  );
+}
+
+/**
+ * Saves the global `codemode.inlineBudget` through `PUT /api/tools/settings`,
+ * which writes it under the settings lock; null removes it, giving sessions
+ * pi's default. As with the choice, the caller reads the overview again
+ * afterwards either way.
+ */
+export async function saveMcpCodemodeInlineBudget(
+  budget: number | null,
+  fetchImpl: FetchLike = (input, init) => fetch(input, init),
+  signal?: AbortSignal,
+  timeoutMs: number = MCP_CODEMODE_SAVE_TIMEOUT_MS,
+): Promise<McpCodemodeInlineBudgetSaveResult> {
+  return withinDeadline<McpCodemodeInlineBudgetSaveResult>(
+    async (deadlineSignal) => {
+      const result = await requestToolSettingsChange(
+        { codemodeInlineBudget: budget },
+        (data) => (isInlineBudgetSetting(data.codemodeInlineBudget) ? data.codemodeInlineBudget : undefined),
+        fetchImpl,
+        deadlineSignal,
+      );
+      return result.ok ? { ok: true, inlineBudget: result.stored } : result;
+    },
     () => ({ ok: false, error: { error: `PUT /api/tools/settings did not answer within ${timeoutMs} ms`, timedOut: true } }),
     timeoutMs,
     signal,
