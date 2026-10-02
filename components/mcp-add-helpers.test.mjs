@@ -17,6 +17,8 @@ const {
   mcpAddPreview,
   mcpAddProjectMode,
   mcpAddRequest,
+  mcpFieldOptionalHeader,
+  mcpFieldStoredAs,
   mcpFieldSuggestedVariableName,
   mcpFieldTakesVariable,
   mcpImportNoteKey,
@@ -265,6 +267,31 @@ test("a literal secret keeps the Project option closed, unless the value is read
   assert.equal(referenced.submitBlock, undefined);
   assert.deepEqual(referenced.values, { "env.GITHUB_TOKEN": { reference: "GITHUB_TOKEN" } });
   assert.equal(referenced.fill.config.env.GITHUB_TOKEN, "${GITHUB_TOKEN}");
+});
+
+test("a field says what is stored around it only where it is part of a longer value", () => {
+  const github = parseMcpImport(`claude mcp add-json github '{"type":"http","url":"https://api.githubcopilot.com/mcp","headers":{"Authorization":"Bearer YOUR_GITHUB_PAT"}}'`).servers[0];
+  const [pat] = github.fields;
+  assert.equal(mcpFieldStoredAs(pat, github.fields, "‹your value›"), "Bearer ‹your value›");
+  assert.equal(mcpFieldStoredAs(pat, github.fields, "${GH_TOKEN}", true), "Bearer ${GH_TOKEN}");
+  assert.equal(mcpFieldOptionalHeader(pat), "Authorization");
+
+  const whole = parseMcpImport(JSON.stringify({ mcpServers: { api: { command: "npx", args: ["api"], env: { API_KEY: "<your-api-key>" } } } })).servers[0];
+  assert.equal(mcpFieldStoredAs(whole.fields[0], whole.fields, "‹your value›"), undefined, "the box says it all");
+  assert.equal(mcpFieldStoredAs(whole.fields[0], whole.fields, "${API_KEY}", true), "${API_KEY}");
+  assert.equal(mcpFieldOptionalHeader(whole.fields[0]), undefined);
+
+  // Another field in the same value shows as its label, and a value said twice is said once.
+  const tenant = { id: "tenant", kind: "text", reason: "registry-variable", label: "tenant", targets: [] };
+  const region = {
+    id: "region", kind: "text", reason: "registry-variable", label: "region", targets: [
+      { path: ["url"], parts: ["https://", { field: "region" }, ".example.com/", { field: "tenant" }] },
+      { path: ["headers", "X-Region"], parts: ["r-", { field: "region" }] },
+      { path: ["headers", "X-Region-2"], parts: ["r-", { field: "region" }] },
+    ],
+  };
+  assert.equal(mcpFieldStoredAs(region, [region, tenant], "‹your value›"), "https://‹your value›.example.com/‹tenant›, r-‹your value›");
+  assert.equal(mcpFieldOptionalHeader(region), undefined, "not one header alone");
 });
 
 test("an optional password field left blank is no secret: it is left out, as the route leaves it out", () => {
