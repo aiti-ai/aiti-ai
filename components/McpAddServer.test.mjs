@@ -171,13 +171,15 @@ test("a password field takes a host variable instead, and the name field says wh
     inputs: [{ id: "pat", type: "promptString", password: true, description: "GitHub personal access token" }],
   });
   let html = decode(pane({ draft: { text: paste } }));
-  assert.match(html, /<input class="mcp-add-input" type="password" aria-label="pat" autoComplete="off"[^>]*value=""\/>/);
+  // The box shows what the paste held there; the line under it, what is stored around the value.
+  assert.match(html, /<input class="mcp-add-input" type="password" aria-label="pat" autoComplete="off" placeholder="\$\{input:pat\}"[^>]*value=""\/>/);
   assert.match(text(html), /GitHub personal access token/);
-  assert.match(text(html), /In the paste: \$\{input:pat\}/);
+  assert.match(text(html), /Stored as Bearer ‹your value›\./);
   assert.match(text(html), /Read it from a variable of the computer running Pi Web/);
   assert.match(text(html), /Fill in pat first\./);
   html = decode(pane({ draft: { text: paste, references: { "input.pat": "GH_TOKEN" } } }));
   assert.match(html, /aria-label="Variable for pat"[^>]*value="GH_TOKEN"\/>/);
+  assert.match(text(html), /Stored as Bearer \$\{GH_TOKEN\}: pi reads the variable each time it connects/);
   // The preview then says the header sends that variable.
   assert.match(text(html), /Host variables Sends environment variables of the computer running Pi Web to this server on every connection: GH_TOKEN in header Authorization/);
   assert.doesNotMatch(addButton(html).tag, /disabled/);
@@ -185,6 +187,24 @@ test("a password field takes a host variable instead, and the name field says wh
   html = pane({ data: overview(undefined, { servers: [{ name: "gh", scope: "global" }] }), draft: { text: paste, references: { "input.pat": "GH_TOKEN" } } });
   assert.match(text(html), /\.pi\/agent\/mcp\.json already has a server named gh\./);
   assert.match(text(html), /Use gh-2/);
+});
+
+test("a placeholder in a header says only what to type: the box holds the placeholder, the line what is stored around it", () => {
+  const paste = `claude mcp add-json github '{"type":"http","url":"https://api.githubcopilot.com/mcp","headers":{"Authorization":"Bearer YOUR_GITHUB_PAT"}}'`;
+  let html = decode(pane({ draft: { text: paste } }));
+  assert.match(html, /aria-label="Authorization" autoComplete="off" placeholder="YOUR_GITHUB_PAT"[^>]*value=""\/>/);
+  assert.match(text(html), /Stored as Bearer ‹your value›\. Optional: left blank, the Authorization header is not sent\. Read it from a variable/);
+  // No reason for a plain placeholder, no "In the paste" line repeating the box, no warning repeating the scope switch.
+  assert.doesNotMatch(text(html), /placeholder here|In the paste|Stored as typed|value it belongs to/);
+  // Once typed, the scope switch says the secret keeps the server global, once.
+  html = decode(pane({ draft: { text: paste, values: { "headers.Authorization": "ghp_x" } } }));
+  assert.equal(text(html).match(/can be saved only globally/g)?.length, 1);
+
+  // A value the field makes up whole needs no line: the box says it all.
+  const whole = JSON.stringify({ mcpServers: { api: { command: "npx", args: ["api"], env: { API_KEY: "<your-api-key>" } } } });
+  html = decode(pane({ draft: { text: whole } }));
+  assert.match(html, /aria-label="API_KEY" autoComplete="off" placeholder="<your-api-key>"[^>]*value=""\/>/);
+  assert.doesNotMatch(text(html), /Stored as|Optional:/);
 });
 
 test("a pasted secret read from a variable says how it is stored, and a name pi refuses says so under its box", () => {

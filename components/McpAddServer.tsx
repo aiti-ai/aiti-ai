@@ -26,6 +26,8 @@ import {
   mcpAddOffersRawPi,
   mcpAddProjectBlockText,
   mcpAddRequest,
+  mcpFieldOptionalHeader,
+  mcpFieldStoredAs,
   mcpFieldSuggestedVariableName,
   mcpFieldTakesVariable,
   mcpImportNoteSeverity,
@@ -304,6 +306,7 @@ export function McpAddServer({
                 <McpAddFieldInput
                   key={field.id}
                   field={field}
+                  fields={server.fields}
                   draft={draft}
                   suggestedName={mcpFieldSuggestedVariableName(field, analysis.name)}
                   problem={analysis.fieldProblems[field.id]}
@@ -439,19 +442,25 @@ function McpAddNames({ names }: { names: readonly string[] }) {
 
 /**
  * One value the paste left to fill in: its label and description as the
- * source gave them, why it is asked for, and a box (a password box for a
- * secret, a list for a choice). Where pi resolves every value it fills, the
- * user may name a host variable instead, stored as `${NAME}`, which keeps a
- * secret out of the file; its box opens with the name the pane suggests.
+ * source gave them, a box (a password box for a secret, a list for a choice)
+ * showing what the paste held there, why it is asked for unless that is a
+ * plain placeholder, and what is stored around it (`Bearer ‹your value›`).
+ * Where pi resolves every value it fills, the user may name a host variable
+ * instead, stored as `${NAME}`, which keeps a secret out of the file; its box
+ * opens with the name the pane suggests. That a typed secret keeps the server
+ * global is said once, under the scope switch.
  */
 function McpAddFieldInput({
   field,
+  fields,
   draft,
   suggestedName,
   problem,
   onDraftChange,
 }: {
   field: McpImportField;
+  /** Every field of the server, for another field's slot in a value this one is part of. */
+  fields: readonly McpImportField[];
   draft: McpAddDraft;
   /** The variable the box opens with (`mcpFieldSuggestedVariableName()`), always a valid name. */
   suggestedName?: string;
@@ -467,6 +476,11 @@ function McpAddFieldInput({
   const usesVariable = reference !== undefined;
   const label = revealHiddenCharacters(field.label);
   const value = draft.values[field.id] ?? field.defaultValue ?? "";
+  const reasonKey = MCP_IMPORT_FIELD_REASON_KEYS[field.reason];
+  const optionalHeader = field.optional ? mcpFieldOptionalHeader(field) : undefined;
+  const storedAs = usesVariable
+    ? (reference && !problem ? mcpFieldStoredAs(field, fields, "${" + reference + "}", true) : undefined)
+    : mcpFieldStoredAs(field, fields, `‹${t("mcp.add.field.slot")}›`);
   const setValue = (next: string) => onDraftChange({ ...draft, values: { ...draft.values, [field.id]: next } });
   const setReference = (next: string | undefined) => {
     const references = { ...draft.references };
@@ -501,6 +515,7 @@ function McpAddFieldInput({
             aria-label={label}
             value={value}
             autoComplete="off"
+            placeholder={field.placeholder ? revealHiddenCharacters(field.placeholder) : undefined}
             spellCheck={false}
             autoCapitalize="off"
             autoCorrect="off"
@@ -511,16 +526,24 @@ function McpAddFieldInput({
       </ConfigField>
       {problem && <span id={problemId} className="mcp-config-line is-error">{mcpImportNoteText(problem, t, [field])}</span>}
       <span className="mcp-config-lines">
-        <span className="mcp-config-line is-dim">
-          {t(MCP_IMPORT_FIELD_REASON_KEYS[field.reason])}
-          {field.optional && <> {t("mcp.add.field.optional")}</>}
-        </span>
         {field.description && <span className="mcp-config-line is-dim">{revealHiddenCharacters(field.description)}</span>}
-        {field.placeholder && (
-          <span className="mcp-config-line is-dim">{t("mcp.add.field.inPaste", { placeholder: revealHiddenCharacters(field.placeholder) })}</span>
+        {reasonKey && <span className="mcp-config-line is-dim">{t(reasonKey)}</span>}
+        {usesVariable ? (
+          <span className="mcp-config-line is-dim">
+            {storedAs ? t("mcp.add.field.storedAsVariable", { value: storedAs }) : t("mcp.add.field.variableHint")}
+          </span>
+        ) : (
+          <>
+            {storedAs && <span className="mcp-config-line is-dim">{t("mcp.add.field.storedAs", { value: storedAs })}</span>}
+            {field.optional && (
+              <span className="mcp-config-line is-dim">
+                {optionalHeader
+                  ? t("mcp.add.field.optionalHeader", { name: revealHiddenCharacters(optionalHeader) })
+                  : t("mcp.add.field.optional")}
+              </span>
+            )}
+          </>
         )}
-        {usesVariable && <span className="mcp-config-line is-dim">{t("mcp.add.field.variableHint")}</span>}
-        {!usesVariable && field.kind === "password" && <span className="mcp-config-line is-dim">{t("mcp.add.field.secret")}</span>}
       </span>
       {takesVariable && (
         <label className="mcp-add-toggle">
