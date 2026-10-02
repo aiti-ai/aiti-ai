@@ -45,6 +45,28 @@ export function isMcpExtensionCommand(command: McpCommandCandidate): boolean {
   return command.name === MCP_COMMAND_NAME || /^mcp:\d+$/.test(command.name);
 }
 
+/**
+ * What the MCP host does before a prompt sent while no run is going, given
+ * the session's extension commands (`getRegisteredCommands()`, by invocation
+ * name). pi runs an extension command at the very start of `prompt()` and
+ * starts no run for it, so another extension's command needs no MCP server:
+ * `"none"`. The built-in `/mcp` acts on the servers the host registered, which
+ * it registers only before prompts, so `/mcp login docs` as a session's first
+ * message needs them registered, but not connected: `"register"`. Anything
+ * else may start a run: register, then wait for servers still connecting,
+ * `"wait"`. The name is read as pi reads it: everything after the leading `/`
+ * up to the first space. A prompt template or a skill (`/skill:name`) is no
+ * extension command and starts a run.
+ */
+export function mcpPromptPreparation(message: string, commands: readonly McpCommandCandidate[]): "wait" | "register" | "none" {
+  if (!message.startsWith("/")) return "wait";
+  const space = message.indexOf(" ");
+  const name = space === -1 ? message.slice(1) : message.slice(1, space);
+  const command = commands.find((candidate) => candidate.name === name);
+  if (!command) return "wait";
+  return isBuiltinMcpCommand(command) ? "register" : "none";
+}
+
 /** Whether a composer message is `/mcp` alone, with no subcommand. */
 export function isBareMcpCommand(message: string): boolean {
   return message.trim() === `/${MCP_COMMAND_NAME}`;
