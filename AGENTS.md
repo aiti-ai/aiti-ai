@@ -64,7 +64,7 @@ app/api/
   mcp/sign-in/route.ts             POST { scope, name, cwd? } start or join an OAuth sign-in
   mcp/sign-in/[flowId]/route.ts    GET flow state (polled) | POST { redirectUrl } | DELETE cancel
   project-trust/route.ts           GET trust status + project .pi/mcp.json servers (files only) | POST trust, rebuild the cwd's wrappers
-  tools/settings/route.ts          GET/PUT defaultTools switches: PowerShell (Windows), Code mode automatic/always
+  tools/settings/route.ts          GET/PUT defaultTools switches: PowerShell (Windows), Code mode automatic/always; codemode.inlineBudget
   models/route.ts                  GET ?cwd= { models, modelList, defaultModel, … }
   models/enabled/route.ts          GET/PUT enabledModels switches
   models/default/route.ts          PUT default model / reasoning level for new sessions
@@ -96,7 +96,7 @@ lib/
   tool-presets.ts           PRESET_NONE/READ_ONLY/DEFAULT/FULL + getPresetFromTools()
   tool-preset-preference.ts browser-persisted default preset for fresh sessions
   builtin-extensions.ts     codemode / tool-search / mcp built-ins, sandbox self-test, -builtin: switches
-  codemode-settings.ts      Code mode automatic/always (+codemode in global defaultTools); project override
+  codemode-settings.ts      Code mode automatic/always (+codemode in global defaultTools), codemode.inlineBudget; project overrides
   codemode-view.ts          display helpers for codemode cards
   global-settings-file.ts   locked read-modify-write of global settings.json (SettingsManager's lock)
   regular-file.ts           readRegularFileText(): non-blocking read of a regular file only, optional size cap
