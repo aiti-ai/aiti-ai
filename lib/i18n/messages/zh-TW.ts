@@ -936,6 +936,8 @@ export const zhTWLocale: LocalePlugin = {
     "mcp.add.projectBlocked.trust-too-broad.contains-home": "此資料夾包含你的主資料夾（{path}）。Pi Web 不會自行信任它，因為其中的每個資料夾都會一併受信任；請把伺服器新增到全域。",
     "mcp.add.projectBlocked.trust-too-broad.contains-agent-dir": "此資料夾包含 Pi 的 agent 資料夾（{path}）。Pi Web 不會自行信任它，因為其中的每個資料夾都會一併受信任；請把伺服器新增到全域。",
     "mcp.add.projectBlocked.trust-too-broad.contains-folder": "此資料夾包含 Pi Web 已知的另一個資料夾 {path}，信任它也會信任那個資料夾。Pi Web 不會自行這樣做；請把伺服器新增到全域。",
+    "mcp.add.projectBlocked.trust-too-broad.contains-project": "此資料夾包含 {path}，這是一個帶有需要信任的資源、且本身尚無信任決定的專案，信任此資料夾也會信任它。Pi Web 不會自行這樣做；請把伺服器新增到全域，或開啟那個專案單獨信任它。",
+    "mcp.add.projectBlocked.trust-too-broad.too-many-folders": "此資料夾包含的資料夾太多，Pi Web 無法確認信任它不會同時信任其中的專案。Pi Web 不會自行信任它；請把伺服器新增到全域。",
     "mcp.add.added": "已把 {name} 新增到 {path}。",
     "mcp.add.addedTrusted": "已把 {name} 新增到 {path}，並信任了 {folder}。",
     "mcp.add.testing": "正在測試連線…",

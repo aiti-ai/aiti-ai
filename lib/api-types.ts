@@ -113,10 +113,14 @@ export interface ProjectTrustStatus {
  * - `contains-home`: it holds the home folder (`path`);
  * - `contains-agent-dir`: it is, or holds, Pi's agent folder (`path`);
  * - `contains-folder`: it holds another folder Pi Web knows (`path`): a
- *   session's folder, its project, or a folder chosen in Pi Web.
+ *   session's folder, its project, or a folder chosen in Pi Web;
+ * - `contains-project`: it holds a project whose resources need trust and
+ *   which has no decision (`path`), such as a repository cloned into it;
+ * - `too-many-folders`: it holds more folders than Pi Web reads to look for
+ *   such a project (`path` is the folder itself).
  */
 export interface FreshFolderTrustBreadth {
-  kind: "home" | "root" | "contains-home" | "contains-agent-dir" | "contains-folder";
+  kind: "home" | "root" | "contains-home" | "contains-agent-dir" | "contains-folder" | "contains-project" | "too-many-folders";
   path: string;
 }
 
