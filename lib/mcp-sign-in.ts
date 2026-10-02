@@ -1,8 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import type { McpServerConfig } from "@earendil-works/pi-coding-agent";
 import type { McpRefusalReason, McpSignInFailure, McpSignInFlowInfo, McpSignInPhase, McpTestResult } from "./api-types";
+import {
+  guardedCredentialStore,
+  mcpOAuthUrl,
+  McpSignedOutError,
+  mcpSignInUrlKey,
+  mcpSignOutCount,
+  noteMcpSignOut,
+  type McpSignInWriteGuard,
+} from "./mcp-sign-out";
 import { recordMcpStatus } from "./mcp-status";
 import {
   closeTestConnection,
@@ -19,13 +27,15 @@ import {
 } from "./mcp-test";
 import type {
   McpOAuthChallenge,
-  McpOAuthCredentialStore,
-  McpOAuthServerStore,
   McpOAuthSettings,
   McpOAuthStateStore,
   McpSignInOptions,
   PiSdkInternals,
 } from "./pi-sdk-internals";
+
+// The URL rule, the sign-out counts and the guarded store live in
+// `lib/mcp-sign-out.ts`, which Tests use too; re-exported for the routes.
+export { guardedCredentialStore, mcpOAuthUrl, McpSignedOutError, mcpSignInUrlKey, type McpSignInWriteGuard };
 
 // Settings › MCP's sign-in (ADR 0006), run as `pi mcp login` runs it (SDK
 // `extensions/mcp/cli.js` login()): connect once, to learn whether the server
@@ -101,22 +111,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * The URL a server signs in at, by the SDK's rule (`runtime.js` usesOAuth /
- * `oauthUrl`): an entry with a `url` and no `Authorization` header, in any
- * case. Undefined for a stdio server and for one that sends its own header.
- */
-export function mcpOAuthUrl(config: McpServerConfig | Record<string, unknown>): string | undefined {
-  if (!isRecord(config) || !("url" in config) || typeof config.url !== "string") return undefined;
-  const headers = isRecord(config.headers) ? Object.keys(config.headers) : [];
-  return headers.some((header) => header.toLowerCase() === "authorization") ? undefined : config.url;
-}
-
-/** The key `mcp-auth.json` stores a server's credentials under, as the SDK's store spells it. */
-export function mcpSignInUrlKey(url: string): string {
-  return String(new URL(url));
-}
-
 // ---------------------------------------------------------------------------
 // What a flow needs from the SDK, replaceable in tests
 // ---------------------------------------------------------------------------
@@ -148,20 +142,6 @@ export interface McpSignInConnection {
   redact(text: string): string;
   /** Closes everything; never waits long. */
   close(): Promise<void>;
-}
-
-/**
- * Called by a run's stores before every write to `mcp-auth.json`: throws
- * `McpSignedOutError` once the run's URL was signed out after the run started.
- */
-export type McpSignInWriteGuard = () => void;
-
-/** What a run's store throws when it would write after its URL was signed out. */
-export class McpSignedOutError extends Error {
-  constructor() {
-    super("The server was signed out of while this sign-in was under way, so it stores nothing more");
-    this.name = "McpSignedOutError";
-  }
 }
 
 export interface McpSignInDeps {
@@ -253,33 +233,6 @@ export function openMcpSignInConnection(
   };
 }
 
-/**
- * The SDK's credential store over the same `mcp-auth.json`, whose writes call
- * `guard` first: the store a sign-in's connection reads and refreshes tokens
- * through, so a refresh that is still on its way when the URL is signed out
- * cannot store the renewed tokens after they were removed. `guard` runs in
- * the same synchronous step as the SDK's write, so no removal fits between.
- */
-export function guardedCredentialStore(
-  internals: Pick<PiSdkInternals, "McpOAuthCredentialStore">,
-  guard: McpSignInWriteGuard,
-): McpOAuthCredentialStore {
-  class GuardedCredentialStore extends internals.McpOAuthCredentialStore {
-    forServer(serverUrl: string): McpOAuthServerStore {
-      const store = super.forServer(serverUrl);
-      return {
-        load: () => store.load(),
-        save: (state) => {
-          guard();
-          return store.save(state);
-        },
-        withRefreshLock: (fn) => store.withRefreshLock(fn),
-      };
-    }
-  }
-  return new GuardedCredentialStore();
-}
-
 /** The SDK's own pieces: its connection (through Pi Web's transport factory), sign-in and credential store. */
 export function createMcpSignInDeps(internals: McpSignInInternals): McpSignInDeps {
   return {
@@ -333,33 +286,19 @@ interface Registry {
   active: Map<string, string>;
   /** URL key → the end of the last run started for it, which the next run waits for. */
   tails: Map<string, Promise<void>>;
-  /**
-   * URL key → how often it was signed out in this process. Never pruned: one
-   * number per URL signed out of. Optional because a registry made before it
-   * existed (a dev server keeps globalThis across hot reloads) lacks it.
-   */
-  signOuts?: Map<string, number>;
 }
 
 const REGISTRY_KEY: symbol = Symbol.for("pi-web:mcp-sign-in");
 
 function registry(): Registry {
   const store = globalThis as Record<symbol, Registry | undefined>;
-  return (store[REGISTRY_KEY] ??= { flows: new Map(), active: new Map(), tails: new Map(), signOuts: new Map() });
-}
-
-function signOutCounts(): Map<string, number> {
-  return (registry().signOuts ??= new Map());
-}
-
-function signOutCount(key: string): number {
-  return signOutCounts().get(key) ?? 0;
+  return (store[REGISTRY_KEY] ??= { flows: new Map(), active: new Map(), tails: new Map() });
 }
 
 /** The guard of a flow's run: its URL must not have been signed out since the flow started. */
 function writeGuard(flow: Flow): McpSignInWriteGuard {
   return () => {
-    if (signOutCount(flow.key) !== flow.signOutsAtStart) throw new McpSignedOutError();
+    if (mcpSignOutCount(flow.key) !== flow.signOutsAtStart) throw new McpSignedOutError();
   };
 }
 
@@ -635,7 +574,7 @@ export function startMcpSignIn(
     id: randomUUID(),
     key,
     target,
-    signOutsAtStart: signOutCount(key),
+    signOutsAtStart: mcpSignOutCount(key),
     phase: "connecting",
     expiresAt: Date.now() + ttlMs,
     keepMs: options.keepMs ?? MCP_SIGN_IN_KEEP_MS,
@@ -719,8 +658,8 @@ export function cancelMcpSignInsFor(url: string): void {
  * Signs out of `url` as `pi mcp logout` does (`credentials.remove(url)`):
  * deletes the URL's tokens and client registration from `mcp-auth.json`,
  * answering whether it held any. First every run of the URL started before
- * now is barred from writing (its stores throw `McpSignedOutError`), the
- * active one also cancelled, and only then the credentials go: a cancel alone
+ * now is barred from writing (its stores throw `McpSignedOutError`): a
+ * sign-in's, and a Test's (`lib/mcp-test.ts`). The active sign-in is also cancelled, and only then the credentials go: a cancel alone
  * does not stop a code exchange or a refresh already on its way, which would
  * store tokens right after the removal. A missing file is not created just to
  * find nothing in it. Open sessions read the store on every request, so they
@@ -728,9 +667,7 @@ export function cancelMcpSignInsFor(url: string): void {
  * is theirs, as it is for `pi mcp logout`.
  */
 export function signOutMcpServer(url: string, agentDir: string, internals: Pick<PiSdkInternals, "McpOAuthCredentialStore">): boolean {
-  const key = mcpSignInUrlKey(url);
-  const counts = signOutCounts();
-  counts.set(key, (counts.get(key) ?? 0) + 1);
+  noteMcpSignOut(mcpSignInUrlKey(url));
   cancelMcpSignInsFor(url);
   if (!existsSync(join(agentDir, "mcp-auth.json"))) return false;
   return new internals.McpOAuthCredentialStore().remove(url);
