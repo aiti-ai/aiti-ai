@@ -7,6 +7,7 @@ import {
   type ProjectTrustStoreEntry,
 } from "@earendil-works/pi-coding-agent";
 import type { FreshFolderTrustBreadth, ProjectTrustStatus } from "./api-types";
+import { serializeByKey } from "./key-serializer";
 import { isPathWithinRoots } from "./path-security";
 import { samePath } from "./paths";
 
@@ -351,15 +352,7 @@ const FRESH_TRUST_LOCKS_KEY: symbol = Symbol.for("pi-web:fresh-folder-trust-lock
 
 /** Runs `task` after every earlier task for the same folder has settled. */
 function serializeForFolder<T>(key: string, task: () => Promise<T>): Promise<T> {
-  const store = globalThis as Record<symbol, Map<string, Promise<void>> | undefined>;
-  const locks = (store[FRESH_TRUST_LOCKS_KEY] ??= new Map());
-  const run = (locks.get(key) ?? Promise.resolve()).then(task);
-  const tail = run.then(() => undefined, () => undefined);
-  locks.set(key, tail);
-  void tail.then(() => {
-    if (locks.get(key) === tail) locks.delete(key);
-  });
-  return run;
+  return serializeByKey(FRESH_TRUST_LOCKS_KEY, key, task);
 }
 
 function message(error: unknown): string {

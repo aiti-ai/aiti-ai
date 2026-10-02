@@ -162,11 +162,6 @@ export function untrustedProjectServerEntries(cwd: string): [name: string, value
   }
 }
 
-/** The server names of `untrustedProjectServerEntries()`. */
-export function untrustedProjectServerNames(cwd: string): string[] {
-  return untrustedProjectServerEntries(cwd).map(([name]) => name);
-}
-
 const SCRIPT_EXPOSURES = new Set<McpExposure>(["codemode", "codemode-deferred"]);
 
 /**
