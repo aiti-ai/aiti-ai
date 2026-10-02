@@ -158,31 +158,22 @@ export function mcpRowStateLabelKey(state: McpServerRowState, status: McpServerS
 /**
  * The sentence under a server's state in its pane: why it does or does not
  * connect. None for `invalid` and `web-password`, which the pane words with
- * the reason itself.
+ * the reason itself, and none for `connected`, `needs-auth`, `failed` and
+ * `connecting`, which the Connection row right under it reports with where and
+ * when they were seen.
  */
 export const MCP_ROW_STATE_DETAIL_KEYS: Partial<Record<McpServerRowState, string>> = {
   disabled: "mcp.server.disabled",
   "not-trusted": "mcp.stateDetail.not-trusted",
   replaced: "mcp.server.shadowedByProject",
   "mcp-off": "mcp.stateDetail.mcp-off",
-  connected: "mcp.stateDetail.connected",
-  "needs-auth": "mcp.stateDetail.needs-auth",
-  failed: "mcp.stateDetail.failed",
-  connecting: "mcp.stateDetail.connecting",
   disconnected: "mcp.stateDetail.disconnected",
   conflict: "mcp.stateDetail.conflict",
   on: "mcp.stateDetail.on",
 };
 
-/** The same sentences where an open session, not a test, saw the state. */
-export const MCP_SESSION_ROW_STATE_DETAIL_KEYS: Partial<Record<McpServerRowState, string>> = {
-  connected: "mcp.stateDetail.session.connected",
-  "needs-auth": "mcp.stateDetail.session.needs-auth",
-  failed: "mcp.stateDetail.session.failed",
-};
-
-export function mcpRowStateDetailKey(state: McpServerRowState, status: McpServerStatus | undefined): string | undefined {
-  return (status?.origin === "session" ? MCP_SESSION_ROW_STATE_DETAIL_KEYS[state] : undefined) ?? MCP_ROW_STATE_DETAIL_KEYS[state];
+export function mcpRowStateDetailKey(state: McpServerRowState): string | undefined {
+  return MCP_ROW_STATE_DETAIL_KEYS[state];
 }
 
 /**
@@ -1018,10 +1009,6 @@ export const MCP_TEST_REFUSAL_KEYS: Partial<Record<McpRefusalReason, string>> = 
 };
 
 /** What a test does, by how the server is reached; a server that runs a shell command adds `MCP_TEST_SERIAL_KEY`. */
-export function mcpTestExplainKey(server: Pick<McpServerInfo, "transport">): string {
-  return server.transport === "http" ? "mcp.test.explain.http" : "mcp.test.explain.stdio";
-}
-
 export const MCP_TEST_SERIAL_KEY = "mcp.test.serial";
 
 /** The state line of a test result: its label and tone; a deadline that passed reads as no answer. */

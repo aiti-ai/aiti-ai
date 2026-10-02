@@ -72,6 +72,7 @@ test("the paste box is a textarea that never takes focus by itself on a phone, a
   assert.doesNotMatch(html, /autofocus|autoFocus/i, "focus is decided on mount, by pointer, never in the markup");
   assert.match(html, /<a href="https:\/\/github\.com\/mcp" target="_blank" rel="noopener noreferrer" class="config-add-source-catalog">github\.com\/mcp<\/a>/);
   assert.match(html, /Cmd\/Ctrl\+Enter adds it\./);
+  assert.match(html, /<div class="config-add-source-examples">/, "an empty box offers examples");
   assert.match(addButton(html).tag, /disabled=""/);
   assert.equal(addButton(html).label, "Add");
   // An empty box is no refusal: nothing explains Add yet but the hint.
@@ -99,11 +100,17 @@ test("before Add the pane shows what would be written: the target as written, na
   assert.match(shown, /args\[2\] holds a secret as plain text where pi reads no variable \(the URL, the command or its arguments\), so this server can be saved only globally\./);
   // Escaped by default, so the foreign `!curl` runs nothing; the note says so.
   assert.match(shown, /env\.HOOK: \$ and a leading ! were escaped/);
-  assert.match(shown, /This is a pi config/, "a JSON paste offers the pi-config toggle");
+  assert.match(shown, /Enable pi mcp syntax \(\$NAME, !command\)/, "a JSON paste offers the pi-config toggle");
+  // Off, the label says it all; on, the line under it says what runs.
+  assert.doesNotMatch(shown, /reads a variable on the computer running Pi Web/);
+  // A paste replaces the examples, and the preview leaves out what is not set.
+  assert.doesNotMatch(decode(html), /config-add-source-examples/);
+  assert.doesNotMatch(preview, /Working directory/);
   assert.equal(addButton(html).label, "Add");
   assert.doesNotMatch(addButton(html).tag, /disabled/);
 
   const raw = text(pane({ draft: { text: paste, rawPi: true } }));
+  assert.match(raw, /In env and header values, \$NAME reads a variable on the computer running Pi Web/);
   assert.match(raw, /Shell commands Runs a shell command on every connection: env HOOK/);
 });
 
@@ -275,8 +282,9 @@ test("Settings › MCP opens the add pane from the sidebar, keeps the draft, and
     onCodemodeChange: noop,
     onClose: noop,
   })));
-  assert.match(decode(html), /<button type="button" aria-current="page" class="config-list-action-button">[\s\S]*?Add MCP server<\/button>/);
-  assert.match(text(html), /What Add writes/);
+  assert.match(decode(html), /<button type="button" aria-current="page" class="config-list-action-button">[\s\S]*?Add MCP<\/button>/);
+  // No working directory and no env names: those rows are left out, not shown as "None".
+  assert.match(text(html), /Preview Read as a command line Transport stdio Command npx -y @acme\/lint-mcp Named lint/);
   // The added notice: the server and its file, the folder trusted with it, the test, and Sign in.
   const addedView = (props = {}) => renderToStaticMarkup(h(I18nProvider, null, h(McpConfigView, {
     cwd: "/Users/me/repo",

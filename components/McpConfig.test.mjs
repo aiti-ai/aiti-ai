@@ -193,14 +193,12 @@ test("a stdio server's detail shows its masked command line, folder, env names a
   assert.match(shown, /Tools Declared to the model directly/);
   assert.match(shown, /File ~\/\.pi\/agent\/mcp\.json/);
   assert.match(shown, /Parts that look like secrets are hidden\./);
-  // A bare /mcp opens this panel where Pi's built-in owns it (or nothing does); its subcommands
-  // still reach the session (hooks/mcp-slash-command.test.mjs).
-  assert.match(shown, /In a chat whose \/mcp is Pi's built-in one, or that has none, \/mcp on its own opens this panel; \/mcp login and \/mcp reconnect are still sent to the session/);
   // Headers and sign-in belong to HTTP servers.
   assert.doesNotMatch(shown, /Headers|Sign-in/);
 
-  const sessionFolder = text(view({ selected: "global\0lint", load: { state: "loaded", data: overview({ servers: [{ ...stdioServer, cwd: undefined }] }) } }));
-  assert.match(sessionFolder, /Working directory The session's folder/);
+  // What the entry does not set is left out: no working directory, no env names.
+  const plain = text(view({ selected: "global\0lint", load: { state: "loaded", data: overview({ servers: [{ ...stdioServer, cwd: undefined, envNames: [] }] }) } }));
+  assert.doesNotMatch(plain, /Working directory|Environment|None/);
 });
 
 test("an HTTP server's detail shows its URL, header names, the variables it sends and how it signs in", () => {
@@ -216,8 +214,8 @@ test("an HTTP server's detail shows its URL, header names, the variables it send
     selected: "global\0notion",
     load: { state: "loaded", data: overview({ servers: [server({ name: "notion", transport: "http", url: "https://n/mcp", usesOAuth: true, signedIn })] }) },
   }));
-  assert.match(oauth(true), /Sign-in Signed in: OAuth tokens are stored in mcp-auth\.json\./);
-  assert.match(oauth(false), /Sign-in No OAuth tokens stored\./);
+  assert.match(oauth(true), /Sign-in Signed in\./);
+  assert.match(oauth(false), /Sign-in Not signed in\./);
   assert.match(oauth(undefined), /Sign-in Unknown: mcp-auth\.json cannot be read\./);
 
   // Code mode cannot run here, so its tools go through tool search.
@@ -460,7 +458,7 @@ test("the Code mode pane offers Automatic and Always on, and says when a choice 
     { label: "Always on", pressed: false, disabled: false, describedBy: undefined },
   ]);
   assert.match(text(automatic),
-    /Mode Automatic Always on A session turns Code mode on when a server whose tools use code mode connects\. Applies to sessions started after you change it\. Open sessions keep their tools\. Sandbox Works: its self-test passed\./);
+    /Mode Automatic Always on Turns on when an MCP server that uses code mode connects\. Applies only to sessions started afterwards\. Sandbox Available\./);
   assert.doesNotMatch(automatic, /role="alert"/);
 
   // A self-test nobody has run yet leaves Always on available and has its own wording.
@@ -509,7 +507,7 @@ test("Always on is disabled with a visible reason while no session could offer C
   const down = text(codemodeView({ sandbox: { state: "unavailable", error: "worker exited" }, builtinDisabled: true, builtinSettingsPath: globalPath, globalBuiltinSettingsPath: globalPath, preferenceError: "Unexpected token" }));
   // An unreadable settings file offers no choice to save into it.
   assert.match(down, /Cannot read the global settings file: Unexpected token/);
-  assert.doesNotMatch(down, /Applies to sessions started/);
+  assert.doesNotMatch(down, /Applies only to sessions started/);
   assert.match(down, /Cannot run on this Pi Web server, so no session offers Code mode: worker exited/);
   assert.match(down, /Turned off by -builtin:codemode in ~\/\.pi\/agent\/settings\.json\./);
   const html = view({ load: { state: "loaded", data: overview({ codemode: { sandbox: { state: "unavailable", error: "x" }, builtinDisabled: false, preference: "automatic" } }) } });
@@ -574,7 +572,7 @@ test("a trusted project whose defaultTools decides Code mode is named in the pan
   assert.match(pane("automatic", "always"),
     /This project decides for itself: defaultTools in ~\/repo\/\.pi\/settings\.json starts its sessions with Code mode on, whichever you choose here\./);
   // The switch still shows and saves the global choice.
-  assert.match(pane("automatic", "always"), /Mode Automatic Always on A session turns Code mode on when a server/);
+  assert.match(pane("automatic", "always"), /Mode Automatic Always on Turns on when an MCP server that uses code mode connects/);
   // With autoEnableCodemode false, Automatic is what these sessions get, so the warning follows the project.
   assert.match(pane("always", "automatic", false), /autoEnableCodemode is false in ~\/\.pi\/agent\/mcp\.json, so Automatic never turns Code mode on/);
   assert.doesNotMatch(pane("automatic", "always", false), /autoEnableCodemode/);
@@ -591,7 +589,7 @@ test("the autoEnableCodemode warning names the file whose value sessions read", 
       codemode: { sandbox: { state: "available" }, builtinDisabled: false, preference },
     }) },
   }));
-  assert.match(autoOff("automatic"), /Mode Automatic Always on A session turns Code mode on .* autoEnableCodemode is false in ~\/repo\/\.pi\/mcp\.json, so Automatic never turns Code mode on/);
+  assert.match(autoOff("automatic"), /Mode Automatic Always on Turns on when an MCP server .* autoEnableCodemode is false in ~\/repo\/\.pi\/mcp\.json, so Automatic never turns Code mode on/);
   assert.doesNotMatch(autoOff("always"), /autoEnableCodemode/);
 });
 
@@ -658,8 +656,9 @@ test("every string the panel shows is translated", () => {
 /** The opening tags of the selected server's Remove button and switch, and the note under them. */
 function detailControls(html) {
   const markup = decode(html);
-  const actions = markup.match(/<div class="config-detail-actions">([\s\S]*?)<\/div><\/div><div id="([^"]+)" class="config-detail-heading-note">([^<]*)<\/div>/);
-  assert.ok(actions, "the detail header holds Remove, the switch and a note");
+  // The note is there only when the controls cannot be used, or under -builtin:mcp.
+  const actions = markup.match(/<div class="config-detail-actions">([\s\S]*?)<\/div><\/div>(?:<div id="([^"]+)" class="config-detail-heading-note">([^<]*)<\/div>)?/);
+  assert.ok(actions, "the detail header holds Remove and the switch");
   const [, buttons, noteId, note] = actions;
   return {
     remove: buttons.match(/<button[^>]*class="config-button config-button-danger[^"]*"[^>]*>([^<]*)<\/button>/),
@@ -684,13 +683,13 @@ function writeView(props = {}) {
   return view({ cwd: "/Users/me/repo", load: { state: "loaded", data: groupOverview(props.data) }, selected: "global\0docs", ...props.view });
 }
 
-test("a server's detail switches it and removes it, and says when a change applies", () => {
-  const { remove, toggle, noteId, note } = detailControls(writeView());
+test("a server's detail switches it and removes it, with no note while both work", () => {
+  const { remove, toggle, note } = detailControls(writeView());
   assert.equal(remove[1], "Remove");
   assert.doesNotMatch(remove[0], /disabled/);
-  assert.match(toggle, new RegExp(`aria-checked="true" aria-label="Turn docs off" aria-describedby="${noteId}"`));
-  assert.doesNotMatch(toggle, /disabled/);
-  assert.equal(note, "Changes take effect at each open session's next message.");
+  assert.match(toggle, /aria-checked="true" aria-label="Turn docs off"/);
+  assert.doesNotMatch(toggle, /disabled|aria-describedby/);
+  assert.equal(note, undefined, "nothing to say while the controls simply work");
   // A server that is off offers to turn it on.
   const off = detailControls(writeView({ data: { servers: [server({ name: "docs", enabled: false, transport: "http", url: "https://docs/mcp" })] } }));
   assert.match(off.toggle, /aria-checked="false" aria-label="Turn docs on"/);
@@ -884,8 +883,8 @@ test("under -builtin:mcp a change is saved, and the note says no session connect
   const builtin = detailControls(writeView({ data: { mcp: { available: false, reason: "builtin-disabled", error: "x", settingsPath: "/s.json" } } }));
   assert.equal(builtin.note, "Changes are saved to the file, but no session connects these servers while builtin:mcp is off.");
   assert.doesNotMatch(builtin.toggle, /disabled/);
-  // MCP on: the usual note.
-  assert.equal(detailControls(writeView()).note, "Changes take effect at each open session's next message.");
+  // MCP on: no note.
+  assert.equal(detailControls(writeView()).note, undefined);
   assert.match(source, /savedWhileOff=\{!data\.mcp\.available && !writesOff\}/);
 });
 
@@ -916,12 +915,14 @@ test("focus goes back to the control a change was started from once nothing wait
 // Test connection
 // ---------------------------------------------------------------------------
 
-/** The Connection row's value, and its Test button. */
+/** The Connection row's value, and the Test button, which sits in the detail header beside Remove. */
 function connection(html) {
   const markup = decode(html);
   const value = markup.match(/<div class="config-detail-grid-label">Connection<\/div><div class="config-detail-grid-value">([\s\S]*?)<\/div>/)?.[1];
   assert.ok(value, "the detail pane has a Connection row");
-  const button = value.match(/<button([^>]*)>([^<]*)<\/button>/);
+  const actions = markup.match(/<div class="config-detail-actions">([\s\S]*?)<\/div><\/div>/)?.[1] ?? "";
+  const button = actions.match(/<button([^>]*)>(Test connection|Testing…)<\/button>/);
+  assert.ok(button, "the detail header holds Test");
   return { value, text: text(value), button: { attributes: button[1], label: button[2] } };
 }
 
@@ -949,22 +950,19 @@ function testView(serverOverrides = {}, props = {}) {
 
 const { mcpServerKey } = await jiti.import("./mcp-config-helpers.ts");
 
-test("an untested server offers Test, and says what a test does", () => {
-  const { text: shown, button } = connection(testView());
+test("an untested server offers Test in its header, beside Remove", () => {
+  const html = testView();
+  const { text: shown, button } = connection(html);
   assert.equal(button.label, "Test connection");
-  assert.doesNotMatch(button.attributes, /disabled/);
-  assert.match(shown, /^Not tested yet\./);
-  // In the words of how it is reached: an HTTP server is contacted, a stdio server started.
-  assert.match(shown, /Test contacts the server's URL from the computer running Pi Web, lists what it offers, and disconnects again\.$/);
-  const stdio = connection(testView({ transport: "stdio", url: undefined, command: "node" }));
-  assert.match(stdio.text, /Test starts the server from the computer running Pi Web, lists what it offers, and stops it again\.$/);
+  assert.doesNotMatch(button.attributes, /disabled|aria-describedby/);
+  assert.match(decode(html), /<div class="config-detail-actions"><button type="button" class="config-button config-button-secondary config-button-small">Test connection<\/button><button[^>]*class="config-button config-button-danger/);
+  assert.equal(shown, "Not tested yet.");
   // A server that runs a shell command on every connection is labelled: its tests run one at a time.
   const serial = connection(testView({ transport: "stdio", url: undefined, command: "node", commandFields: [{ kind: "env", name: "TOKEN" }] }));
-  assert.match(serial.text, /and stops it again\. It runs a shell command on every connection, so its test waits for any other such test to finish first\./);
-  // An HTTP server's header command is such a command too, and the server is still only contacted.
+  assert.equal(serial.text, "Not tested yet. It runs a shell command, so its test waits for other such tests.");
+  // An HTTP server's header command is such a command too.
   const header = connection(testView({ commandFields: [{ kind: "header", name: "Authorization" }] }));
-  assert.match(header.text, /and disconnects again\. It runs a shell command on every connection, so its test waits/);
-  assert.doesNotMatch(header.text, /starts the server/);
+  assert.match(header.text, /It runs a shell command, so its test waits/);
   // No listed tools before a test connected.
   assert.doesNotMatch(decode(testView()), />Listed tools</);
 });
@@ -991,7 +989,8 @@ test("a connected test shows what it listed, and the row reads connected", () =>
   assert.match(shown, /Server: docs-server 2\.1\.0/);
   assert.match(shown, /4 resource\(s\) and 1 resource template\(s\)\./);
   assert.doesNotMatch(shown, /Ran in/, "an HTTP server runs in no folder");
-  assert.match(text(markup), /Status Connected when tested The last test connected\. Sessions connect it before their next message\./);
+  // The Connection row right under it says what the test found; the Status row adds no sentence.
+  assert.match(text(markup), /Status Connected when tested Connection Connected/);
   const tools = markup.match(/<div class="config-detail-grid-label">Listed tools<\/div><div class="config-detail-grid-value">([\s\S]*?)<\/div>/)?.[1];
   assert.ok(tools, "a Listed tools row");
   assert.match(tools, /<li class="mcp-test-tool"><span class="mcp-config-chips"><code class="mcp-config-chip">search<\/code><span class="mcp-test-tool-tag">read-only<\/span><\/span><span class="mcp-config-line is-dim">Search the docs\.<\/span><\/li>/);
@@ -1024,7 +1023,7 @@ test("a failed test shows the error and stderr, a sign-in, and no answer, each w
   assert.match(decode(signIn), /<span class="mcp-sidebar-badge is-warning">sign-in<\/span>/);
   assert.match(connection(signIn).value, /<span class="mcp-config-state is-warning">Needs sign-in<\/span> The server asked for an OAuth sign-in\. Tested at/);
   // The panel's own Sign in, not a chat command, is where to sign in.
-  assert.match(text(decode(signIn)), /The server asked for an OAuth sign-in when tested, so sessions cannot use its tools until you sign in\. Sign in is below\./);
+  assert.match(text(decode(signIn)), /Status Needs sign-in Connection Needs sign-in The server asked for an OAuth sign-in\./);
   assert.doesNotMatch(text(decode(signIn)), /for example with \/mcp/);
 
   const silent = connection(testView({ status: testedStatus("failed", { timedOut: true, durationMs: 20_000 }) }));
@@ -1144,13 +1143,13 @@ function sessionStatus(state, extra = {}) {
 test("a session's report names the state in the row and says which session saw it, and when", () => {
   const connected = testView({ status: sessionStatus("connected") });
   assert.match(row(connected, "docs"), /aria-label="docs: Connected in a session"/);
-  const { value, text: shown } = connection(connected);
+  const { value, button } = connection(connected);
   // The session's folder, shortened as every path in the panel is.
   assert.match(value, /<span class="mcp-config-state is-on">Connected<\/span> A session in ~\/repo connected it at [^.]+\./);
-  assert.match(text(decode(connected)), /Status Connected in a session A session connected it\. Sessions connect it before their next message\./);
+  assert.match(text(decode(connected)), /Status Connected in a session Connection Connected A session in ~\/repo connected it/);
   // A session lists no tools for the panel; only a test does.
   assert.doesNotMatch(decode(connected), />Listed tools</);
-  assert.match(shown, /Test connection/, "Test stays offered beside a session's report");
+  assert.equal(button.label, "Test connection", "Test stays offered beside a session's report");
 
   const failed = testView({ transport: "stdio", url: undefined, command: "node", status: sessionStatus("failed", { error: "spawn lint ENOENT", stderr: "no\nconfig" }) });
   assert.match(row(failed, "docs"), /aria-label="docs: Did not connect in a session"/);
@@ -1159,13 +1158,13 @@ test("a session's report names the state in the row and says which session saw i
   assert.match(failedRow, /<span class="mcp-config-state is-error">Did not connect<\/span> A session in ~\/repo could not connect it at/);
   assert.match(failedRow, /<span class="mcp-config-line is-error">Error: <code class="mcp-config-chip">spawn lint ENOENT<\/code><\/span>/);
   assert.match(failedRow, /<pre class="mcp-test-output">no\nconfig<\/pre>/);
-  assert.match(text(decode(failed)), /A session could not connect it; Connection below says why\./);
+  assert.match(text(decode(failed)), /Status Did not connect in a session Connection Did not connect/);
 
   const signIn = testView({ status: sessionStatus("needs-auth") });
   assert.match(row(signIn, "docs"), /aria-label="docs: Needs sign-in"/);
   assert.match(decode(signIn), /<span class="mcp-sidebar-badge is-warning">sign-in<\/span>/);
   assert.match(connection(signIn).text, /^Needs sign-in The server asked a session in ~\/repo for an OAuth sign-in at/);
-  assert.match(text(decode(signIn)), /The server asked a session for an OAuth sign-in, so sessions cannot use its tools until you sign in/);
+  assert.match(text(decode(signIn)), /Status Needs sign-in Connection Needs sign-in The server asked a session in ~\/repo for an OAuth sign-in/);
 });
 
 test("a connection the session closed since reads like an untested entry, and says when it closed, with the date when not today", () => {
@@ -1249,12 +1248,12 @@ function signInRow(html) {
   return { value, text: text(value) };
 }
 
-test("an OAuth server's pane signs in from its Sign-in row, which needs-sign-in points at", () => {
+test("an OAuth server's pane signs in from its Sign-in row, under the Connection row that asks for it", () => {
   const html = testView({ usesOAuth: true, signedIn: false, status: testedStatus("needs-auth") });
-  assert.match(text(decode(html)), /until you sign in\. Sign in is below\./);
+  assert.match(text(decode(html)), /Connection Needs sign-in The server asked for an OAuth sign-in\./);
   const { value, text: shown } = signInRow(html);
   assert.match(value, /<button type="button" class="config-button config-button-primary config-button-small">Sign in<\/button>/);
-  assert.match(shown, /No OAuth tokens stored\./);
+  assert.match(shown, /Not signed in\./);
 
   // The panel's sign-in for the selected server is the one the row shows.
   const key = mcpServerKey({ scope: "global", name: "docs" });

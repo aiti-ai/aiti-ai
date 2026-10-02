@@ -197,9 +197,9 @@ export function McpSignInRow({
             </ConfigButton>
           )}
         </div>
-        {/* What the buttons do, while they are offered; each sentence on its own line, so no locale has to join two. */}
-        {!block && !active && <span className="mcp-config-line is-dim">{t("mcp.signIn.explain")}</span>}
-        {!block && !active && <span className="mcp-config-line is-dim">{t("mcp.signIn.replaces")}</span>}
+        {/* What the buttons change, while they are offered; each sentence on its own line, so no locale has to join two.
+            Only while something is stored for the URL: with nothing stored there is nothing to replace. */}
+        {!block && !active && offersSignOut && <span className="mcp-config-line is-dim">{t("mcp.signIn.replaces")}</span>}
         {offersSignOut && !signOutBlock && !active && <span className="mcp-config-line is-dim">{t("mcp.signIn.signOutExplain")}</span>}
       </div>
     </ConfigDetailGridRow>
