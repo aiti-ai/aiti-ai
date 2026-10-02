@@ -1,4 +1,5 @@
 import type {
+  FreshFolderTrustBreadth,
   McpActionResponse,
   McpAvailability,
   McpCodemodeInfo,
@@ -17,7 +18,9 @@ import type {
   McpSessionStatus,
   McpTestResponse,
   McpTestResult,
+  ProjectTrustStatus,
 } from "@/lib/api-types";
+import type { McpImportFieldValue, McpImportNote } from "@/lib/mcp-import";
 import { itemsToSwitch } from "./settings-ui-helpers";
 
 // Pure helpers for Settings › MCP (components/McpConfig.tsx): what each row
@@ -608,14 +611,28 @@ export type McpLoadResult =
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Pick<Response, "ok" | "status" | "json">>;
 
-/** A refusal's diagnostic and reason code (with the file and server it names), or the HTTP status when the body has none. */
+const isStringList = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
+
+/**
+ * A refusal's diagnostic and reason code (with the file and server it names,
+ * and what an add refusal carries), or the HTTP status when the body has none.
+ */
 export function refusalFailure(data: unknown, status: number): McpActionFailure {
-  const refusal = (data ?? {}) as Partial<McpErrorResponse>;
+  const refusal = (data ?? {}) as Partial<Record<keyof McpErrorResponse, unknown>>;
+  const breadth = refusal.breadth as Partial<FreshFolderTrustBreadth> | undefined;
+  const trust = refusal.trust as Partial<ProjectTrustStatus> | undefined;
   return {
     error: typeof refusal.error === "string" ? refusal.error : `HTTP ${status}`,
-    ...(typeof refusal.reason === "string" ? { reason: refusal.reason } : {}),
+    ...(typeof refusal.reason === "string" ? { reason: refusal.reason as McpRefusalReason } : {}),
     ...(typeof refusal.path === "string" ? { path: refusal.path } : {}),
     ...(typeof refusal.name === "string" ? { name: refusal.name } : {}),
+    ...(typeof refusal.suggestedName === "string" ? { suggestedName: refusal.suggestedName } : {}),
+    ...(isStringList(refusal.names) ? { names: refusal.names } : {}),
+    ...(isStringList(refusal.fields) ? { fields: refusal.fields } : {}),
+    ...(Array.isArray(refusal.notes) ? { notes: refusal.notes.filter((note): note is McpImportNote => typeof note?.code === "string") } : {}),
+    ...(typeof breadth?.kind === "string" && typeof breadth.path === "string" ? { breadth: breadth as FreshFolderTrustBreadth } : {}),
+    ...(typeof trust?.requiresTrust === "boolean" && typeof trust.trusted === "boolean" ? { trust: trust as ProjectTrustStatus } : {}),
+    ...(refusal.trustKept === true ? { trustKept: true } : {}),
   };
 }
 
@@ -864,12 +881,32 @@ export function mcpGroupSwitchChecked(servers: readonly McpSwitchable[]): boolea
 export type McpActionRequest =
   | { action: "enable" | "disable" | "remove" | "sign-out"; scope: McpScope; name: string }
   | { action: "set-enabled"; enabled: boolean; servers: McpServerRef[] }
-  | { action: "undo"; token: string };
+  | { action: "undo"; token: string }
+  | {
+      action: "add";
+      text: string;
+      values: Record<string, McpImportFieldValue>;
+      secretReferences?: Record<string, string>;
+      server: number;
+      name: string;
+      scope: McpScope;
+      rawPi: boolean;
+      trustFolder?: boolean;
+      confirmHostEnv?: string[];
+    };
 
-/** A refused change: the reason, plus the file and the server it names. */
+/** A refused change: the reason, plus the file and the server it names, and what a refused add says. */
 export interface McpActionFailure extends McpLoadFailure {
   path?: string;
   name?: string;
+  suggestedName?: string;
+  names?: string[];
+  fields?: string[];
+  notes?: McpImportNote[];
+  breadth?: FreshFolderTrustBreadth;
+  trust?: ProjectTrustStatus;
+  /** The add trusted the fresh folder and could not take that back after its write failed. */
+  trustKept?: boolean;
 }
 
 export type McpActionResult = { ok: true; data: McpActionResponse } | { ok: false; error: McpActionFailure };

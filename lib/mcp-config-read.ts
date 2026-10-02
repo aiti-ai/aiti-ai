@@ -32,7 +32,7 @@ import { findWebPasswordField, resolvedConfigValues, WEB_PASSWORD_VARIABLE } fro
 import { samePath } from "./paths";
 import { hasParentDirectorySegment, isPathWithinRoots, resolveRealRoots } from "./path-security";
 import { loadPiSdkInternals, type PiSdkInternals } from "./pi-sdk-internals";
-import { getProjectTrustStatus } from "./project-trust";
+import { freshFolderTrustBreadth, getProjectTrustStatus, hasTrustRelevantEntries } from "./project-trust";
 
 // What Settings › MCP and the trust dialog list (ADR 0006): the entries of the
 // global `mcp.json` and of a project's `.pi/mcp.json`, read from the files
@@ -721,6 +721,18 @@ export async function readMcpOverview(options: McpOverviewOptions): Promise<McpR
       projectInfo.trust = getProjectTrustStatus(project.cwd, agentDir);
     } catch (error) {
       projectInfo.trustError = errorMessage(error);
+    }
+    const trust = projectInfo.trust;
+    // A fresh folder: adding a project server trusts it in the same step, unless that would trust too
+    // much, or a link to nothing where the SDK looks would need trust later. The same checks, in the
+    // same order, as trustFreshFolderAndWrite(), so the pane never offers a step the route refuses.
+    if (trust && !trust.requiresTrust && trust.decision === null && trust.decisionError === undefined) {
+      const breadth = freshFolderTrustBreadth(project.cwd, { agentDir, knownFolders: project.allowedRoots });
+      projectInfo.trustFolder = breadth
+        ? { allowed: false, reason: "trust-too-broad", breadth }
+        : hasTrustRelevantEntries(project.cwd)
+          ? { allowed: false, reason: "folder-not-fresh" }
+          : { allowed: true };
     }
   }
   // Whether sessions load the project's settings, as `projectTrustReloadOptions()` decides when one

@@ -297,21 +297,62 @@ function setPath(config: Record<string, unknown>, path: McpImportPath, value: st
   else config[key] = record;
 }
 
+function readPath(config: Record<string, unknown>, path: McpImportPath): unknown {
+  const [key, sub] = path;
+  const value = config[key];
+  if (sub === undefined || typeof value !== "object" || value === null) return sub === undefined ? value : undefined;
+  return (value as Record<string | number, unknown>)[sub];
+}
+
+/** The literal secrets of a server that no field fills, in a value pi resolves: these may become a `${NAME}` reference. */
+function referenceableSecretPaths(server: McpImportServer): McpImportPath[] {
+  const withFields = fieldPaths(server);
+  return findLiteralSecretPaths(server.config).filter((path) => isResolvedPath(path) && !withFields.has(pathKey(path)));
+}
+
+/**
+ * The paste's own literal secrets that may be stored as a `${NAME}` reference
+ * instead (ADR 0006, decision 8), by label (`env.API_KEY`,
+ * `headers.Authorization`, `oauth.clientSecret`): those in a value pi
+ * resolves that no field fills. A secret in the URL, the command or its
+ * arguments cannot be, since pi reads no variable there; a field's value
+ * takes a reference through the field.
+ */
+export function referenceableLiteralSecrets(server: McpImportServer): string[] {
+  return referenceableSecretPaths(server).map(pathLabel);
+}
+
+/** An authorization scheme a header value starts with; a stored reference keeps it (`Bearer ${TOKEN}`). */
+const AUTHORIZATION_SCHEME = /^(?:bearer|basic|token)\s+/i;
+
 /**
  * The server's config with the user's values filled in. Values typed into a
  * field pi resolves are escaped like any literal, so a password containing
  * `$` or starting with `!` is stored as typed; a `{ reference }` is stored as
  * `${NAME}` instead. A blank optional field removes the value it belongs to.
- * `secretPaths` lists every literal secret in the result (typed password
- * fields included, references not), which keeps the entry global.
+ * `secretReferences` stores one of the paste's own literal secrets
+ * (`referenceableLiteralSecrets()`, by label) as `${NAME}` instead of the
+ * secret, after the authorization scheme of a header value (`Bearer
+ * ${NAME}`). `secretPaths` lists every literal secret in the result (typed
+ * password fields included, references not), which keeps the entry global.
  */
 export function fillMcpImportFields(
   server: McpImportServer,
   values: Readonly<Record<string, McpImportFieldValue | undefined>>,
+  secretReferences: Readonly<Record<string, string>> = {},
 ): McpImportFillResult {
   const config = JSON.parse(JSON.stringify(server.config)) as Record<string, unknown>;
   const filled = new Map<string, FilledValue | undefined>();
   const notes: McpImportNote[] = [];
+  const referenceable = new Map(referenceableSecretPaths(server).map((path) => [pathLabel(path), path]));
+  const stored: [McpImportPath, string][] = [];
+  for (const [label, given] of Object.entries(secretReferences)) {
+    const name = typeof given === "string" ? given.trim() : "";
+    const path = referenceable.get(label);
+    if (!path) notes.push({ code: "field-reference-invalid", params: { field: label, problem: "target" } });
+    else if (!ENV_NAME.test(name)) notes.push({ code: "field-reference-invalid", params: { field: label, problem: "name" } });
+    else stored.push([path, name]);
+  }
   for (const field of server.fields) {
     const given: unknown = values[field.id];
     if (typeof given === "object" && given !== null) {
@@ -361,6 +402,11 @@ export function fillMcpImportFields(
       }
       setPath(config, target.path, output);
     }
+  }
+  for (const [path, name] of stored) {
+    const current = readPath(config, path);
+    const scheme = path[0] === "headers" && typeof current === "string" ? current.match(AUTHORIZATION_SCHEME)?.[0] ?? "" : "";
+    setPath(config, path, `${scheme}\${${name}}`);
   }
   const result = config as unknown as McpServerConfig;
   for (const path of findLiteralSecretPaths(result)) secretPaths.add(pathLabel(path));

@@ -40,6 +40,7 @@ import {
   ConfigDetailStack,
   ConfigDetailTitle,
   ConfigEmptyState,
+  ConfigListAction,
   ConfigFooter,
   ConfigFooterStatus,
   ConfigNotice,
@@ -126,6 +127,8 @@ import {
   type McpTestRun,
   type McpWriteBlock,
 } from "./mcp-config-helpers";
+import { McpAddServer, type McpAddActionRequest } from "./McpAddServer";
+import { EMPTY_MCP_ADD_DRAFT, type McpAddDraft } from "./mcp-add-helpers";
 import { McpSignInRow } from "./McpSignIn";
 import {
   MCP_SIGN_IN_POLL_MS,
@@ -213,6 +216,16 @@ export interface McpUndoNotice {
   error?: McpActionFailure;
 }
 
+/** What the last Add wrote, while its notice shows: the server, its file, and the folder it trusted. */
+export interface McpAddedNotice {
+  scope: McpScope;
+  name: string;
+  path: string;
+  key: string;
+  /** The project folder the Add trusted in the same step. */
+  trustedFolder?: string;
+}
+
 /**
  * Where focus goes once a change is answered and nothing waits any more: the
  * button it was started from (disabled meanwhile, which dropped focus to the
@@ -220,6 +233,12 @@ export interface McpUndoNotice {
  */
 export interface McpFocusBack {
   control: HTMLButtonElement | null;
+  /**
+   * The change took its control away with the pane it sat in (an Add that
+   * worked, whether its button or Cmd/Ctrl+Enter in the box started it):
+   * focus goes to the selected row once it fell to the page.
+   */
+  toSelectedRow?: boolean;
 }
 
 /** The button a change is started from, when it has focus: a keyboard press, or a click in most browsers. */
@@ -243,7 +262,10 @@ function pressedButton(): HTMLButtonElement | null {
  * `POST /api/mcp`. The Code mode choice is written through
  * `PUT /api/tools/settings`. An untrusted project's notice offers
  * Trust, which opens the page's trust dialog (AppShell owns trust), and the
- * panel reloads once the page's status for the folder changes.
+ * panel reloads once the page's status for the folder changes. Add MCP server
+ * opens the paste pane (`McpAddServer`); an Add that worked selects the new
+ * server, tests it once, offers Sign in when it asks for one, and hands the
+ * folder's new trust to the page when a project server was added.
  */
 export function McpConfig({
   cwd,
@@ -251,6 +273,7 @@ export function McpConfig({
   embedded = false,
   trust,
   onTrustProject,
+  onProjectTrustChanged,
 }: {
   cwd: string | null;
   onClose: () => void;
@@ -259,6 +282,8 @@ export function McpConfig({
   trust?: ProjectTrustStatus | null;
   /** Opens the page's trust dialog for `cwd`; without it the trust notice has no button. */
   onTrustProject?: () => void;
+  /** Hands the page `cwd`'s trust after an Add wrote to its `.pi/mcp.json` (and maybe trusted it). */
+  onProjectTrustChanged?: (cwd: string, status: ProjectTrustStatus) => void;
 }) {
   const [load, setLoad] = useState<McpConfigLoad>({ state: "loading" });
   const [refreshing, setRefreshing] = useState(false);
@@ -285,6 +310,11 @@ export function McpConfig({
   const signInsRef = useRef(signIns);
   signInsRef.current = signIns;
   const [pollRound, setPollRound] = useState(0);
+  // The add pane: open or not, what was typed (kept while another row is shown), why the last Add was refused, and what it added.
+  const [adding, setAdding] = useState(false);
+  const [addDraft, setAddDraft] = useState<McpAddDraft>(EMPTY_MCP_ADD_DRAFT);
+  const [addFailure, setAddFailure] = useState<McpActionFailure | null>(null);
+  const [added, setAdded] = useState<McpAddedNotice | null>(null);
   const mountedRef = useRef(true);
   const loadRef = useRef(load);
   loadRef.current = load;
@@ -565,6 +595,35 @@ export function McpConfig({
     setFocusBack({ control: pressed });
   }, [runAction]);
 
+  // Add writes through POST /api/mcp like any change, after the explicit click
+  // that followed the preview; the server is then tested once, as the ADR has
+  // it, and only then: an install link hides its command until the preview.
+  const submitAdd = useCallback(async (request: McpAddActionRequest) => {
+    const pressed = pressedButton();
+    setActionError(null);
+    setGroupStatus(null);
+    setAddFailure(null);
+    const result = await runAction(request, "add", (data) => (data.added ? mcpServerKey(data.added) : undefined));
+    if (!result) return;
+    if (!result.ok) {
+      setAddFailure(result.error);
+      // A folder that changed under the step: the page shows its trust as it is now.
+      if (result.error.trust && cwd) onProjectTrustChanged?.(cwd, result.error.trust);
+      setFocusBack({ control: pressed });
+      return;
+    }
+    const { added: written, trust: writtenTrust, trustedFolder } = result.data;
+    setAdding(false);
+    setAddDraft(EMPTY_MCP_ADD_DRAFT);
+    // The pane goes with its button and its box: focus moves to the new server's row, which the answer selected.
+    setFocusBack({ control: null, toSelectedRow: true });
+    if (!written) return;
+    setAdded({ ...written, key: mcpServerKey(written), ...(trustedFolder && cwd ? { trustedFolder: cwd } : {}) });
+    if (writtenTrust && cwd) onProjectTrustChanged?.(cwd, writtenTrust);
+    const listed = result.data.servers.find((item) => mcpServerKey(item) === mcpServerKey(written));
+    if (listed && !mcpTestBlock(listed, result.data)) void testServer(listed);
+  }, [cwd, onProjectTrustChanged, runAction, testServer]);
+
   // The notice goes when the route lets the removal go.
   const undoToken = undo?.token;
   const undoExpiresInMs = undo?.expiresInMs;
@@ -619,6 +678,21 @@ export function McpConfig({
       focusBack={focusBack}
       tests={tests}
       signIns={signIns}
+      adding={adding}
+      addDraft={addDraft}
+      addFailure={addFailure}
+      added={added}
+      onAddOpen={() => {
+        setAdding(true);
+        setAdded(null);
+        setActionError(null);
+      }}
+      onAddDraftChange={(draft) => {
+        setAddDraft(draft);
+        // What was refused was about the draft as it stood.
+        setAddFailure(null);
+      }}
+      onAddSubmit={(request) => void submitAdd(request)}
       onTest={(server) => void testServer(server)}
       onSignIn={(server) => void startSignIn(server)}
       onSignOut={(server) => void signOut(server)}
@@ -627,6 +701,8 @@ export function McpConfig({
       onSelect={(key) => {
         setSelected(key);
         setActionError(null);
+        setAdding(false);
+        setAdded((current) => (current?.key === key ? current : null));
       }}
       onRefresh={() => void refresh()}
       onCodemodeChange={(preference) => void saveCodemode(preference)}
@@ -661,6 +737,13 @@ export function McpConfigView({
   focusBack = null,
   tests = {},
   signIns = {},
+  adding = false,
+  addDraft = EMPTY_MCP_ADD_DRAFT,
+  addFailure = null,
+  added = null,
+  onAddOpen = () => {},
+  onAddDraftChange = () => {},
+  onAddSubmit = () => {},
   onSelect,
   onRefresh,
   onCodemodeChange,
@@ -693,6 +776,16 @@ export function McpConfigView({
   tests?: Readonly<Record<string, McpTestRun>>;
   /** The panel's sign-ins by server key: starting, the flow as last polled, or why a request failed. */
   signIns?: Readonly<Record<string, McpSignInRun>>;
+  /** The add pane is shown instead of the selected row's detail. */
+  adding?: boolean;
+  addDraft?: McpAddDraft;
+  /** Why the route refused the last Add. */
+  addFailure?: McpActionFailure | null;
+  /** What the last Add wrote, for its notice. */
+  added?: McpAddedNotice | null;
+  onAddOpen?: () => void;
+  onAddDraftChange?: (draft: McpAddDraft) => void;
+  onAddSubmit?: (request: McpAddActionRequest) => void;
   onSelect: (key: string) => void;
   onRefresh: () => void;
   onCodemodeChange: (preference: McpCodemodePreference) => void;
@@ -717,6 +810,7 @@ export function McpConfigView({
   const context = data ? mcpRowContext(data) : undefined;
   const servers = groups.flatMap((group) => group.servers);
   const selectedServer = servers.find((server) => mcpServerKey(server) === selected);
+  const addedServer = added ? servers.find((server) => mcpServerKey(server) === added.key) : undefined;
   const unavailable = data ? mcpUnavailableNotice(data.mcp) : undefined;
   // MCP off says more: no session connects anything then.
   const hostInactive = unavailable ? undefined : data?.hostInactive;
@@ -767,7 +861,8 @@ export function McpConfigView({
   useEffect(() => {
     if (!focusBack || controlsBusy || handledFocusBackRef.current === focusBack) return;
     handledFocusBackRef.current = focusBack;
-    focusAfterChange(document, focusBack.control, selectedRowRef.current);
+    if (focusBack.toSelectedRow) focusIfLost(document, selectedRowRef.current);
+    else focusAfterChange(document, focusBack.control, selectedRowRef.current);
   }, [focusBack, controlsBusy]);
   const writeBlock = (scope: McpScope): McpWriteBlock | undefined => (data ? mcpWriteBlock(scope, data) : undefined);
   const writesOff = data ? mcpWritesOff(data.mcp) : false;
@@ -824,6 +919,16 @@ export function McpConfigView({
           {undo.error && <> {t("mcp.undoFailed")} {actionFailureText(undo.error, t)}</>}
         </ConfigNotice>
       )}
+      {added && data && addedServer && (
+        <McpAddedNoticeView
+          added={added}
+          server={addedServer}
+          testing={tests[added.key]?.running === true}
+          signIn={signIns[added.key]}
+          signInBlock={addedServer ? mcpSignInBlock(addedServer, data) : undefined}
+          onSignIn={onSignIn}
+        />
+      )}
 
       <ConfigSplitView>
         <ConfigSidebar>
@@ -840,7 +945,7 @@ export function McpConfigView({
                 <div className="config-sidebar-group">
                   <McpCodemodeRow
                     codemode={data.codemode}
-                    active={selected === MCP_CODEMODE_SELECTION}
+                    active={!adding && selected === MCP_CODEMODE_SELECTION}
                     rowRef={selectedRowRef}
                     onSelect={onSelect}
                   />
@@ -852,7 +957,7 @@ export function McpConfigView({
                       key={group.scope}
                       group={group}
                       context={context}
-                      selected={selected}
+                      selected={adding ? null : selected}
                       selectedRowRef={selectedRowRef}
                       block={block}
                       blockNoticeId={blockNoticeId(block)}
@@ -867,11 +972,28 @@ export function McpConfigView({
               </>
             ) : null}
           </ConfigSidebarList>
+          {data && (
+            <ConfigListAction active={adding} onClick={onAddOpen}>
+              {t("mcp.add.action")}
+            </ConfigListAction>
+          )}
         </ConfigSidebar>
 
         <ConfigDetail>
           <ConfigDetailStack className="is-fill">
-            {!data || !context || !autoEnable || !emptyKey ? null : selected === MCP_CODEMODE_SELECTION ? (
+            {!data || !context || !autoEnable || !emptyKey ? null : adding ? (
+              <McpAddServer
+                data={data}
+                cwd={cwd}
+                draft={addDraft}
+                busy={busy === "add"}
+                controlsBusy={controlsBusy}
+                failure={addFailure}
+                onDraftChange={onAddDraftChange}
+                onSubmit={onAddSubmit}
+                onTrustProject={onTrust}
+              />
+            ) : selected === MCP_CODEMODE_SELECTION ? (
               <McpCodemodeDetail
                 codemode={data.codemode}
                 autoEnable={autoEnable}
@@ -941,6 +1063,50 @@ export function McpConfigView({
         </ConfigButton>
       </ConfigFooter>
     </ConfigPanelShell>
+  );
+}
+
+/**
+ * What the last Add wrote, above the list: the server and its file, the folder
+ * it trusted in the same step, the test that follows, and Sign in when that
+ * test found the server asks for one.
+ */
+function McpAddedNoticeView({
+  added,
+  server,
+  testing,
+  signIn,
+  signInBlock,
+  onSignIn,
+}: {
+  added: McpAddedNotice;
+  /** The server as listed now; the notice goes once the file no longer defines it. */
+  server: McpServerInfo;
+  testing: boolean;
+  signIn: McpSignInRun | undefined;
+  signInBlock: McpTestBlock | undefined;
+  onSignIn: (server: McpServerInfo) => void;
+}) {
+  const { t } = useI18n();
+  const name = revealHiddenCharacters(added.name);
+  const path = displayPath(added.path);
+  const status = server.status;
+  const asksSignIn = !testing && status?.origin === "test" && status.state === "needs-auth" && server.usesOAuth;
+  const signingIn = signIn?.starting === true || mcpSignInActive(signIn);
+  return (
+    <ConfigNotice
+      action={asksSignIn && !signingIn && !signInBlock ? (
+        <ConfigButton size="small" variant="primary" onClick={() => onSignIn(server)}>
+          {t("mcp.signIn.button")}
+        </ConfigButton>
+      ) : undefined}
+    >
+      {added.trustedFolder
+        ? t("mcp.add.addedTrusted", { name, path, folder: displayPath(added.trustedFolder) })
+        : t("mcp.add.added", { name, path })}
+      {testing && <> {t("mcp.add.testing")}</>}
+      {asksSignIn && <> {t("mcp.add.needsSignIn")}</>}
+    </ConfigNotice>
   );
 }
 

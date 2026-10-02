@@ -882,7 +882,8 @@ test("focus goes back to the control a change was started from once nothing wait
   // The view waits until no change, save or load holds the controls, handles each request once, and
   // falls back to the selected row (lib/stacked-dialog.test.mjs pins focusAfterChange()). It comes
   // after the Undo effects, so a fallback never takes focus from Undo.
-  assert.match(source, /useEffect\(\(\) => \{\n\s*if \(!focusBack \|\| controlsBusy \|\| handledFocusBackRef\.current === focusBack\) return;\n\s*handledFocusBackRef\.current = focusBack;\n\s*focusAfterChange\(document, focusBack\.control, selectedRowRef\.current\);\n\s*\}, \[focusBack, controlsBusy\]\);/);
+  // A change that took its control away with its pane (an Add that worked) goes straight to the row.
+  assert.match(source, /useEffect\(\(\) => \{\n\s*if \(!focusBack \|\| controlsBusy \|\| handledFocusBackRef\.current === focusBack\) return;\n\s*handledFocusBackRef\.current = focusBack;\n\s*if \(focusBack\.toSelectedRow\) focusIfLost\(document, selectedRowRef\.current\);\n\s*else focusAfterChange\(document, focusBack\.control, selectedRowRef\.current\);\n\s*\}, \[focusBack, controlsBusy\]\);/);
   assert.ok(source.indexOf("focusAfterChange(document") > source.indexOf("focusIfLost(document, undoButtonRef.current)"));
   assert.match(source, /focusBack=\{focusBack\}/);
 });

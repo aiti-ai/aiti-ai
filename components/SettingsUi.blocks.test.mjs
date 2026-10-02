@@ -9,6 +9,7 @@ const jiti = createJiti(import.meta.url, {
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const {
+  addSourceKeySubmits,
   ConfigAddSourcePanel,
   ConfigDetailGrid,
   ConfigDetailGridRow,
@@ -142,4 +143,46 @@ test("the add panel lays out the catalog, location, source box, caller controls 
   assert.match(html, /<div class="config-add-source-examples-label">Examples<\/div>/);
   assert.match(html, /<button type="button" class="config-add-source-example">npm:a<\/button><button type="button" class="config-add-source-example">git:b<\/button>/);
   assert.match(html, /<div role="alert" class="config-add-source-error">boom<\/div>/);
+});
+
+test("the multiline add box is a textarea where Enter adds a line and Cmd/Ctrl+Enter submits", () => {
+  const html = render(h(ConfigAddSourcePanel, {
+    title: "Add MCP server",
+    catalogHref: "https://github.com/mcp",
+    catalogLabel: "github.com/mcp",
+    location: "~/.pi/agent/mcp.json",
+    inputLabel: "Server to add",
+    inputId: "mcp-add-source",
+    placeholder: "https://…",
+    value: "npx x",
+    canSubmit: true,
+    onValueChange: noop,
+    onSubmit: noop,
+    examplesLabel: "Examples",
+    examples: [],
+    multiline: true,
+    hint: "Cmd/Ctrl+Enter adds it.",
+  }));
+  const hintId = html.match(/<span id="([^"]+)" class="config-add-source-hint">Cmd\/Ctrl\+Enter adds it\.<\/span>/)?.[1];
+  assert.ok(hintId, "the hint is visible text under the box");
+  assert.match(html, new RegExp(`<textarea id="mcp-add-source" aria-label="Server to add" aria-describedby="${hintId}" class="config-add-source-input is-multiline" placeholder="https://…" rows="5" spellCheck="false" autoCapitalize="off" autoCorrect="off">npx x</textarea>`));
+  assert.doesNotMatch(html, /<input/, "no single-line box beside it");
+
+  const key = (overrides) => ({ key: "Enter", metaKey: false, ctrlKey: false, nativeEvent: { isComposing: false }, keyCode: 13, ...overrides });
+  assert.equal(addSourceKeySubmits(key({})), false, "a plain Enter is a line break");
+  assert.equal(addSourceKeySubmits(key({ metaKey: true })), true);
+  assert.equal(addSourceKeySubmits(key({ ctrlKey: true })), true);
+  assert.equal(addSourceKeySubmits(key({ ctrlKey: true, nativeEvent: { isComposing: true } })), false, "an input method picks a candidate");
+  assert.equal(addSourceKeySubmits(key({ metaKey: true, keyCode: 229 })), false, "Safari's composing Enter");
+  assert.equal(addSourceKeySubmits(key({ key: "a", metaKey: true })), false);
+});
+
+test("the single-line add box keeps taking focus, and the multiline one never on a coarse pointer", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const source = await readFile(new URL("./SettingsUi.tsx", import.meta.url), "utf8");
+  const effect = source.slice(source.indexOf("useEffect(() => {\n    if (!multiline)"), source.indexOf("}, [multiline]);"));
+  assert.match(effect, /if \(!multiline\) \{\n\s*inputRef\.current\?\.focus\(\);\n\s*return;\n\s*\}/);
+  assert.match(effect, /if \(typeof window !== "undefined" && window\.matchMedia\?\.\("\(pointer: coarse\)"\)\.matches\) return;\n\s*textareaRef\.current\?\.focus\(\);/);
+  // The textarea submits only through addSourceKeySubmits(), never on a plain Enter.
+  assert.match(source, /onKeyDown=\{\(event\) => \{\n\s*if \(!addSourceKeySubmits\(event\)\) return;\n\s*event\.preventDefault\(\);\n\s*if \(canSubmit\) onSubmit\(\);/);
 });
