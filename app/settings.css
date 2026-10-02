@@ -782,6 +782,27 @@
   line-height: 1.4;
 }
 
+/* Where an add or create pane saves: the scope switch, then the path that
+   choice writes to, whole. A path too long for the switch's line moves under
+   it and breaks anywhere, never cut short, since it is the answer to where. */
+.config-save-target {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.config-save-target-path {
+  flex: 1 1 14em;
+  min-width: 0;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
 .config-detail-grid {
   display: grid;
   grid-template-columns: minmax(96px, 130px) minmax(0, 1fr);
@@ -831,7 +852,7 @@
 .config-add-source-heading {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 8px;
 }
 
 .config-add-source-title-row {
@@ -856,11 +877,6 @@
   flex-shrink: 0;
 }
 
-.config-add-source-location {
-  color: var(--text-dim);
-  font-family: var(--font-mono);
-  font-size: 12px;
-}
 
 .config-add-source-input {
   width: 100%;
@@ -885,12 +901,6 @@
   resize: vertical;
   white-space: pre;
   overflow: auto;
-}
-
-.config-add-source-hint {
-  color: var(--text-dim);
-  font-size: 11px;
-  line-height: 1.5;
 }
 
 .config-add-source-examples {

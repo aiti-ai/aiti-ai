@@ -14,7 +14,7 @@ import {
   ConfigDetailGrid,
   ConfigDetailGridRow,
   ConfigField,
-  ConfigScopeSwitch,
+  ConfigSaveTarget,
   ConfigSectionTitle,
 } from "./SettingsUi";
 import {
@@ -125,14 +125,14 @@ function failureText(failure: McpActionFailure, t: Translate): string {
  * Settings › MCP's add pane: one paste box for a URL, a command line,
  * `pi | claude | codex | gemini mcp add …`, another client's JSON or an
  * install link, read in the browser by the importer the route parses it with
- * again (`lib/mcp-import.ts`). Before Add it shows what would be written:
- * the masked command line or URL, env and header names, the values that run a
- * shell command and the host variables it reads, what the importer changed or
- * dropped, the values to fill in, the name, and the scope, whose Project
- * option says why it is unavailable. A fresh folder is trusted in the same
- * step, and the button says so. The box never takes focus on a touch screen,
- * and only its button or Cmd/Ctrl+Enter adds; the panel tests the server once
- * that explicit Add has written it.
+ * again (`lib/mcp-import.ts`). Under the title, where it is saved: the scope,
+ * whose Project option says why it is unavailable, and the file. Before Add it
+ * shows what would be written: the masked command line or URL, env and header
+ * names, the values that run a shell command and the host variables it reads,
+ * what the importer changed or dropped, the values to fill in, and the name.
+ * A fresh folder is trusted in the same step, and the button says so. The box
+ * never takes focus on a touch screen, and only its button or Cmd/Ctrl+Enter
+ * adds; the panel tests the server once that explicit Add has written it.
  */
 export function McpAddServer({
   data,
@@ -161,7 +161,6 @@ export function McpAddServer({
 }) {
   const { t } = useI18n();
   const blockId = useId();
-  const scopeBlockId = useId();
   const nameId = useId();
   const analysis = useMemo(() => mcpAddAnalysis(draft, data, cwd), [draft, data, cwd]);
   const offersRawPi = useMemo(() => mcpAddOffersRawPi(draft.text), [draft.text]);
@@ -177,14 +176,11 @@ export function McpAddServer({
   const change = (patch: Partial<McpAddDraft>) => onDraftChange({ ...draft, ...patch });
   const targetFile = data.files.find((file) => file.scope === analysis.scope)?.path
     ?? (analysis.scope === "project" && cwd ? `${cwd.replace(/[\\/]+$/, "")}/.pi/mcp.json` : "mcp.json");
-  // Project picked, then blocked (a secret typed since): the switch shows its reason only under a
-  // disabled option, so the line is the pane's own, and Add points at it.
-  const scopeLine = analysis.scope === "project" && projectBlock ? mcpAddProjectBlockText(projectBlock, t, displayPath) : undefined;
-  const blockSaidByScopeLine = submitBlock?.kind === "scope" && scopeLine !== undefined && submitBlock.block === projectBlock;
-  const ownBlockLine = submitBlock && !blockSaidByScopeLine && (draft.text.trim() !== "" || submitBlock.kind === "mcp-off")
+  // Why Add waits, under it. Project picked, then blocked (a secret typed since) is said here too:
+  // the switch at the top explains only a disabled option, and the way out is often in the fields above Add.
+  const ownBlockLine = submitBlock && (draft.text.trim() !== "" || submitBlock.kind === "mcp-off")
     ? submitBlockText(submitBlock, t, server?.fields)
     : undefined;
-  const describedBy = [scopeLine ? scopeBlockId : undefined, ownBlockLine ? blockId : undefined].filter(Boolean).join(" ") || undefined;
   const trustable = projectBlock?.kind === "project-untrusted" && projectBlock.trustable && onTrustProject;
   // The preview leaves out what is not set: no working directory, no env or header names.
   const names = preview ? (preview.transport === "http" ? preview.headerNames : preview.envNames) : [];
@@ -194,7 +190,28 @@ export function McpAddServer({
       title={t("mcp.add.title")}
       catalogHref="https://github.com/mcp"
       catalogLabel="github.com/mcp"
-      location={displayPath(targetFile)}
+      target={
+        <ConfigSaveTarget
+          value={analysis.scope}
+          label={t("config.saveTo")}
+          options={[
+            { value: "global", label: scopeLabel("global", t) },
+            { value: "project", label: scopeLabel("project", t), disabled: projectBlock !== undefined && analysis.scope !== "project" },
+          ]}
+          path={displayPath(targetFile)}
+          disabledReason={projectBlock ? mcpAddProjectBlockText(projectBlock, t, displayPath) : null}
+          onChange={(scope) => change({ scope })}
+        >
+          {trustable && (
+            <span className="mcp-config-line">
+              <ConfigButton size="small" onClick={onTrustProject}>{t("mcp.trust.trustButton")}</ConfigButton>
+            </span>
+          )}
+          {analysis.trustFolder && analysis.projectMode.kind === "trust-and-write" && (
+            <p className="mcp-config-line is-warning">{t("mcp.add.trustExplain", { path: displayPath(analysis.projectMode.folder) })}</p>
+          )}
+        </ConfigSaveTarget>
+      }
       inputLabel={t("mcp.add.inputLabel")}
       inputId="mcp-add-source"
       placeholder={t("mcp.add.placeholder")}
@@ -206,7 +223,6 @@ export function McpAddServer({
       // Every format the importer reads, each with an example, only while the box is empty: clicking one replaces the paste.
       examples={draft.text.trim() === "" ? MCP_ADD_EXAMPLES.map(({ source, text }) => ({ label: t(MCP_IMPORT_SOURCE_KEYS[source]), value: text })) : []}
       multiline
-      hint={t("mcp.add.hint")}
     >
       {offersRawPi && (
         <label className="mcp-add-toggle">
@@ -348,37 +364,19 @@ export function McpAddServer({
         </>
       )}
 
-      <ConfigScopeSwitch
-        value={analysis.scope}
-        label={t("config.scope")}
-        options={[
-          { value: "global", label: scopeLabel("global", t) },
-          { value: "project", label: scopeLabel("project", t), disabled: projectBlock !== undefined && analysis.scope !== "project" },
-        ]}
-        disabledReason={projectBlock ? mcpAddProjectBlockText(projectBlock, t, displayPath) : null}
-        onChange={(scope) => change({ scope })}
+      <ConfigButton
+        variant="primary"
+        className="is-pushed-right"
+        disabled={!canSubmit}
+        aria-busy={busy || undefined}
+        aria-describedby={ownBlockLine ? blockId : undefined}
+        onClick={submit}
       >
-        <ConfigButton
-          variant="primary"
-          className="is-pushed-right"
-          disabled={!canSubmit}
-          aria-busy={busy || undefined}
-          aria-describedby={describedBy}
-          onClick={submit}
-        >
-          {busy ? t("mcp.add.adding") : analysis.trustFolder ? t("mcp.add.buttonTrust") : t("mcp.add.button")}
-        </ConfigButton>
-      </ConfigScopeSwitch>
-      {scopeLine && <p id={scopeBlockId} className="mcp-config-line is-warning">{scopeLine}</p>}
-      {trustable && (
-        <span className="mcp-config-line">
-          <ConfigButton size="small" onClick={onTrustProject}>{t("mcp.trust.trustButton")}</ConfigButton>
-        </span>
+        {busy ? t("mcp.add.adding") : analysis.trustFolder ? t("mcp.add.buttonTrust") : t("mcp.add.button")}
+      </ConfigButton>
+      {ownBlockLine && (
+        <p id={blockId} className={`mcp-config-line ${submitBlock?.kind === "scope" ? "is-warning" : "is-dim"}`}>{ownBlockLine}</p>
       )}
-      {analysis.trustFolder && analysis.projectMode.kind === "trust-and-write" && (
-        <p className="mcp-config-line is-warning">{t("mcp.add.trustExplain", { path: displayPath(analysis.projectMode.folder) })}</p>
-      )}
-      {ownBlockLine && <p id={blockId} className="mcp-config-line is-dim">{ownBlockLine}</p>}
       {server && !submitBlock && <p className="mcp-config-line is-dim">{t("mcp.add.afterAdd")}</p>}
 
       {failure && (
