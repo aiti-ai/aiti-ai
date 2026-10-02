@@ -1848,6 +1848,36 @@
   overflow-wrap: anywhere;
 }
 
+/*
+ * Settings › MCP can show up to six notices above its list (MCP off, another
+ * extension's /mcp, the project's trust, Undo, Added). They scroll in their
+ * own box instead of squeezing the split view to nothing: a notice never
+ * shrinks below its text, and the split view does.
+ */
+.mcp-config-notices {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+@media (max-width: 640px) {
+  .mcp-config-notices {
+    max-height: 30vh;
+    max-height: 30dvh;
+  }
+
+  /* Short of height, the 190px sidebar gives way to a few rows before the detail pane is clipped. */
+  .mcp-config-notices + .config-split-view > .config-sidebar {
+    flex-shrink: 1;
+    min-height: 96px;
+  }
+
+  .mcp-config-notices + .config-split-view > .config-detail {
+    min-height: 120px;
+  }
+}
+
 .mcp-config-lines {
   display: flex;
   flex-direction: column;

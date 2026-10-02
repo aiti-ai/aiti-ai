@@ -73,6 +73,7 @@ const {
   mcpTestBlock,
   mcpTestExplainKey,
   mcpTestRunAfter,
+  mcpTestRunAfterSignOut,
   mcpTestRunFor,
   mcpTestStateView,
   mcpTestSummaryKey,
@@ -983,6 +984,31 @@ test("a test request leaves its last answer standing when it fails or never left
   const next = { ...response, result: testStatus("failed") };
   assert.deepEqual(mcpTestRunAfter(previous, { ok: true, data: next }, "k"), { running: false, response: next });
   assert.deepEqual(mcpTestRunAfter(undefined, { ok: false, error: { error: "x" } }), { running: false, error: { error: "x" } });
+});
+
+test("after a Sign out that worked, the panel's own test answers no longer read as the server's status", () => {
+  const key = mcpServerKey({ scope: "global", name: "a" });
+  const response = { scope: "global", name: "a", configKey: "a1", result: testStatus("connected", { toolCount: 12 }) };
+  // The route forgot every status of the entry, so the overview after the sign-out carries none.
+  const data = { mcp: { available: true }, codemode: {}, files: [], servers: [server({ name: "a", configKey: "a1" })] };
+  const kept = { running: false, startedAt: 100, response };
+  assert.equal(mcpServerRowState(mcpWithTestResults(data, { [key]: kept }).servers[0], on), "connected", "the stale answer used to win");
+
+  const after = mcpTestRunAfterSignOut(kept, 200);
+  assert.deepEqual(after, { running: false, startedAt: 100, signedOutAt: 200 });
+  const shown = mcpWithTestResults(data, { [key]: after });
+  assert.equal(shown.servers[0].status, undefined);
+  assert.equal(mcpServerRowState(shown.servers[0], on), "on");
+  assert.equal(mcpTestRunAfterSignOut(undefined, 200), undefined, "nothing tested, nothing to change");
+
+  // A test that was on its way when the sign-out worked: its answer, found with the old tokens, is dropped.
+  const inFlight = mcpTestRunAfterSignOut({ running: true, startedAt: 150 }, 200);
+  assert.deepEqual(inFlight, { running: true, startedAt: 150, signedOutAt: 200 });
+  assert.deepEqual(mcpTestRunAfter(inFlight, { ok: true, data: response }, "a1"), { running: false, startedAt: 150, signedOutAt: 200 });
+  assert.deepEqual(mcpTestRunAfter(inFlight, { ok: false, error: { error: "x" } }, "a1"), { running: false, startedAt: 150, signedOutAt: 200 });
+  // One pressed after it is the server's answer again.
+  const later = { ...inFlight, running: true, startedAt: 300 };
+  assert.deepEqual(mcpTestRunAfter(later, { ok: true, data: response }, "a1"), { running: false, startedAt: 300, signedOutAt: 200, response });
 });
 
 test("a failure or a queue timeout is shown only for the entry it was about", () => {

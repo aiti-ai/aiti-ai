@@ -1065,6 +1065,13 @@ export function mcpSeconds(ms: number): string {
 /** A Test the panel started for one server (by `mcpServerKey()`): running, the route's last answer, or why the request failed. */
 export interface McpTestRun {
   running: boolean;
+  /** When the panel sent the request of the test running now, or of the last one (`Date.now()`). */
+  startedAt?: number;
+  /**
+   * When a Sign out of the server last worked: an answer to a test the panel
+   * sent before it found tokens that are gone, and is dropped.
+   */
+  signedOutAt?: number;
   /** The last answer, for the entry as the route read it (its `configKey`). */
   response?: McpTestResponse;
   /** The request failed, was refused, or timed out. */
@@ -1086,12 +1093,35 @@ export interface McpTestRun {
  * `pressedConfigKey` is the entry the panel listed when Test was pressed.
  */
 export function mcpTestRunAfter(previous: McpTestRun | undefined, result: McpTestRequestResult, pressedConfigKey?: string): McpTestRun {
+  const signedOutAt = previous?.signedOutAt;
+  const marks = {
+    ...(previous?.startedAt !== undefined ? { startedAt: previous.startedAt } : {}),
+    ...(signedOutAt !== undefined ? { signedOutAt } : {}),
+  };
+  // Sent before a Sign out that worked: whatever it found was found with the tokens it removed.
+  if (signedOutAt !== undefined && (previous?.startedAt ?? 0) <= signedOutAt) return { running: false, ...marks };
   const kept = previous?.response ? { response: previous.response } : {};
   if (!result.ok) {
-    return { running: false, ...kept, error: result.error, ...(pressedConfigKey !== undefined ? { configKey: pressedConfigKey } : {}) };
+    return { running: false, ...marks, ...kept, error: result.error, ...(pressedConfigKey !== undefined ? { configKey: pressedConfigKey } : {}) };
   }
-  if (result.data.result.queueTimedOut) return { running: false, ...kept, queueTimedOut: true, configKey: result.data.configKey };
-  return { running: false, response: result.data };
+  if (result.data.result.queueTimedOut) return { running: false, ...marks, ...kept, queueTimedOut: true, configKey: result.data.configKey };
+  return { running: false, ...marks, response: result.data };
+}
+
+/**
+ * Where a Sign out that worked leaves the server's run: the kept answer goes,
+ * since the route forgot what connections found and the overview carries no
+ * status, so the answer would otherwise show over it as Connected; a test
+ * still running stays running, and its answer is dropped when it comes
+ * (`signedOutAt`). No run, nothing to change.
+ */
+export function mcpTestRunAfterSignOut(previous: McpTestRun | undefined, now: number): McpTestRun | undefined {
+  if (!previous) return undefined;
+  return {
+    running: previous.running,
+    ...(previous.startedAt !== undefined ? { startedAt: previous.startedAt } : {}),
+    signedOutAt: now,
+  };
 }
 
 /** A server's run as its pane shows it: a failure or a queue timeout about another version of the entry is left out. */
