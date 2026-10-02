@@ -60,7 +60,10 @@ export const MCP_HOST_EXTENSION_NAME = "pi-web-mcp-host";
 
 const DEFAULT_MCP_IDLE_MS = 10 * 60 * 1000;
 const PROMPT_WAIT_MS = 10_000;
-/** How long an unregister waits for the extension to start a connection it can close. */
+/**
+ * How long an unregister waits for the extension to start a connection it can
+ * close. One that starts later is refused its transport (`refuseAbandoned()`).
+ */
 const REPLACE_WAIT_MS = 5_000;
 const LIST_METHODS = new Set(["tools/list", "resources/list", "resources/templates/list"]);
 
@@ -501,6 +504,15 @@ class HostInstance {
   /** Disposed: its session is closing, or a reload replaced it. Nothing it hears afterwards is recorded. */
   private disposed = false;
   private readonly attempts = new Map<string, ConnectAttempt>();
+  /**
+   * Registrations unregistered before the extension opened their connection
+   * (`unregister()` gave up waiting), by `name\0configKey`, counted. The
+   * extension assigns a connection only after loading the MCP runtime, and
+   * its unregister closes only one already assigned, so a connection it
+   * assigns later is never closed. It still asks this host's factory for a
+   * transport, which is refused, so nothing is started.
+   */
+  private readonly abandoned = new Map<string, number>();
   /** Keyed by scope and name: an untrusted project entry may share its name with a global one. */
   private problems = new Map<string, HostProblem>();
   /** What each problem last wrote to the status store, by status key, so a sync repeats a report only once it was replaced. */
@@ -560,6 +572,22 @@ class HostInstance {
   attemptFor(entry: McpServerEntry): ConnectAttempt | undefined {
     const attempt = this.attempts.get(entry.name);
     return attempt && !attempt.released && attempt.configKey === canonicalJson(entry.config) ? attempt : undefined;
+  }
+
+  /**
+   * Whether a transport is asked for a registration this host unregistered
+   * before the extension opened its connection, and no registration of it
+   * now claims it: that connection is out of the extension's reach, so its
+   * transport is refused. Counted: each abandoned registration refuses one.
+   */
+  refuseAbandoned(entry: McpServerEntry): boolean {
+    const key = `${entry.name}\0${canonicalJson(entry.config)}`;
+    const count = this.abandoned.get(key);
+    if (!count) return false;
+    if (count > 1) this.abandoned.set(key, count - 1);
+    else this.abandoned.delete(key);
+    console.warn(`[pi-web] MCP server "${entry.name}" was unregistered before its connection opened; its transport is refused`);
+    return true;
   }
 
   /** The factory could not build a transport (a PI_WEB_PASSWORD reference, a failing `!command`). */
@@ -623,14 +651,14 @@ class HostInstance {
     return synced;
   }
 
-  async prepareForPrompt(signal: AbortSignal): Promise<void> {
+  async prepareForPrompt(signal: AbortSignal, wait: boolean): Promise<void> {
     this.clearIdle();
-    // The wrapper prepares only prompts that start a run, so none is running now;
-    // this also recovers from a run whose agent_end never arrived.
+    // The wrapper prepares only prompts sent while no run is going, so none is running
+    // now; this also recovers from a run whose agent_end never arrived.
     this.runActive = false;
     this.preparing += 1;
     try {
-      await this.waitForServers(signal);
+      await this.waitForServers(signal, wait);
     } finally {
       this.preparing -= 1;
       // Started now in case the prompt starts no run; agent_start stops it if one does.
@@ -638,10 +666,10 @@ class HostInstance {
     }
   }
 
-  private async waitForServers(signal: AbortSignal): Promise<void> {
+  private async waitForServers(signal: AbortSignal, wait: boolean): Promise<void> {
     const stopped = aborted(signal);
     await Promise.race([this.sync(), stopped]);
-    if (signal.aborted) return;
+    if (signal.aborted || !wait) return;
     const connecting = [...this.attempts.values()].filter((attempt) => !attempt.settled && !attempt.waited);
     if (connecting.length === 0) return;
     const deadline = delay(this.options.promptWaitMs);
@@ -895,11 +923,15 @@ class HostInstance {
   private async unregister(name: string): Promise<void> {
     const attempt = this.attempts.get(name);
     if (attempt && !attempt.started) {
-      const deadline = delay(REPLACE_WAIT_MS);
+      const deadline = delay(this.options.replaceWaitMs);
       await Promise.race([attempt.whenStarted(), deadline.promise]);
       deadline.cancel();
     }
     this.attempts.delete(name);
+    if (attempt && !attempt.started) {
+      const key = `${name}\0${attempt.configKey}`;
+      this.abandoned.set(key, (this.abandoned.get(key) ?? 0) + 1);
+    }
     // Before the extension closes it: that close is the host's doing, not a drop.
     if (attempt) this.letGo(attempt);
     try {
@@ -942,6 +974,8 @@ export interface McpHostOptions {
   mayReadProjectConfig?: (cwd: string) => boolean;
   idleMs?: number;
   promptWaitMs?: number;
+  /** How long an unregister waits for the extension to open the connection it will close. */
+  replaceWaitMs?: number;
 }
 
 /**
@@ -957,6 +991,7 @@ export class McpHost {
     this.options = {
       idleMs: resolveMcpIdleMs(),
       promptWaitMs: PROMPT_WAIT_MS,
+      replaceWaitMs: REPLACE_WAIT_MS,
       ...options,
       mayReadProjectConfig: options.mayReadProjectConfig ?? ((cwd) => mayReadProjectConfigNow(cwd, options.agentDir)),
     };
@@ -977,6 +1012,9 @@ export class McpHost {
     return (entry, cwd, authProvider) => {
       const host = this.current;
       const attempt = host?.attemptFor(entry);
+      if (!attempt && host?.refuseAbandoned(entry)) {
+        throw new Error(`MCP server "${entry.name}" was removed before it connected, so Pi Web did not start it`);
+      }
       let transport: ReturnType<McpTransportFactory>;
       try {
         transport = factory(entry, cwd, authProvider);
@@ -1001,9 +1039,13 @@ export class McpHost {
     this.current?.dispose();
   }
 
-  /** Sync the session's servers with `mcp.json`, then wait for the ones still connecting. */
-  prepareForPrompt(signal: AbortSignal): Promise<void> {
-    return this.current?.prepareForPrompt(signal) ?? Promise.resolve();
+  /**
+   * Sync the session's servers with `mcp.json`, then wait for the ones still
+   * connecting, unless `wait` is false (the built-in `/mcp`, which starts no
+   * run but acts on the registered servers; `mcpPromptPreparation()`).
+   */
+  prepareForPrompt(signal: AbortSignal, options: { wait?: boolean } = {}): Promise<void> {
+    return this.current?.prepareForPrompt(signal, options.wait ?? true) ?? Promise.resolve();
   }
 
   serverStates(): McpHostServerStatus[] {

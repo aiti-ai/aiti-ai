@@ -76,9 +76,12 @@ per-wrapper `McpHost` reads the global and project `mcp.json` itself and
 registers the servers it wants through the public `pi.registerMcpServer()` /
 `pi.unregisterMcpServer()`:
 
-- **Before every prompt that starts a run** it reads the config and the
+- **Before every prompt that may start a run** it reads the config and the
   project's trust, registers or unregisters only the servers whose entry changed,
-  and waits up to 10 s for the ones still connecting. The wrapper runs this
+  and waits up to 10 s for the ones still connecting. An extension command
+  starts no run (pi runs it before anything else), so another extension's
+  command skips this, and the built-in `/mcp`, which acts on the registered
+  servers, registers them without waiting. The wrapper runs this
   before `AgentSession.prompt()`, because `before_agent_start` runs before a
   run has an abort signal: Stop ends the wait and rejects the message unsent,
   which returns it to the composer. A server that outlasts one full wait is
@@ -104,7 +107,10 @@ registers the servers it wants through the public `pi.registerMcpServer()` /
   once the extension has opened its connection: the extension's
   `mcp_servers_change` handler closes `server.connection`, which it assigns
   only after loading the MCP runtime, so unregistering earlier finds nothing
-  to close and the server connects anyway, out of reach. The extension does
+  to close and the server connects anyway, out of reach. The wait is capped
+  at 5 s; a registration unregistered without a connection is remembered, and
+  the factory refuses the transport its late connection asks for, so nothing
+  starts out of reach either way. The extension does
   not report connection state, so the host watches the transports it creates
   through the factory Pi Web passes in: one exists only once the connection
   is assigned, and its messages show when the server's tools are listed. What

@@ -44,6 +44,7 @@ import { CHAT_ONLY_RESOURCE_LOADER_OPTIONS, contextFilesSystemPrompt } from "./c
 import { createExactSystemPromptExtension } from "./exact-system-prompt";
 import { createPiWebBuiltinExtensions } from "./builtin-extensions";
 import type { McpHost } from "./mcp-host";
+import { mcpPromptPreparation, type McpCommandCandidate } from "./mcp-command";
 import { createReadOnlyMcpPolicyExtension } from "./mcp-read-only-policy";
 import { isNestedToolExecutionEvent } from "./agent-event-wire";
 import {
@@ -503,6 +504,19 @@ export class AgentSessionWrapper {
     }
   }
 
+  /** The session's extension commands as pi looks them up: by invocation name, with the extension's path. */
+  private extensionCommandCandidates(): McpCommandCandidate[] {
+    try {
+      return this.inner.extensionRunner.getRegisteredCommands().map((command) => ({
+        name: command.invocationName,
+        sourceInfo: command.sourceInfo,
+      }));
+    } catch {
+      // Unreadable: treat the prompt as one that may start a run, as before.
+      return [];
+    }
+  }
+
   private shouldWaitForExtensions(type: string): boolean {
     return type === "prompt"
       || type === "steer"
@@ -750,13 +764,19 @@ export class AgentSessionWrapper {
           };
 
           this.pendingPromptCount += 1;
-          // A prompt that starts a run first connects the session's MCP servers and waits
-          // for the ones still connecting. The SDK runs before_agent_start before a run has
-          // an abort signal, so Stop is honoured here: it ends the wait, and the message is
-          // rejected unsent, which returns it to the composer.
-          if (this.mcpHost && !this.inner.isStreaming) {
+          // A prompt that may start a run first connects the session's MCP servers and
+          // waits for the ones still connecting. The SDK runs before_agent_start before a
+          // run has an abort signal, so Stop is honoured here: it ends the wait, and the
+          // message is rejected unsent, which returns it to the composer. pi runs an
+          // extension command before anything else and starts no run for it: another
+          // extension's command skips this, and the built-in `/mcp`, which acts on the
+          // registered servers, registers them without waiting (`mcpPromptPreparation()`).
+          const mcpPreparation = this.mcpHost && !this.inner.isStreaming
+            ? mcpPromptPreparation(typeof command.message === "string" ? command.message : "", this.extensionCommandCandidates())
+            : "none";
+          if (this.mcpHost && mcpPreparation !== "none") {
             const controller = new AbortController();
-            const waited = this.mcpHost.prepareForPrompt(controller.signal)
+            const waited = this.mcpHost.prepareForPrompt(controller.signal, { wait: mcpPreparation === "wait" })
               .catch((error: unknown) => {
                 console.error("[pi-web] MCP servers could not be prepared:", error instanceof Error ? error.message : error);
               })
