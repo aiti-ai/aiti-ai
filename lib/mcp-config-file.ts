@@ -313,6 +313,8 @@ const LOCK_OPTIONS = {
 function writeAtomically(realPath: string, text: string, mode: number): void {
   const temp = join(dirname(realPath), `.${basename(realPath)}.${randomUUID()}.tmp`);
   try {
+    // `wx` and 0600 while written: text that may hold literal secrets is never readable by
+    // others, and nothing already at the temporary path is written through. chmod sets the final mode.
     writeFileSync(temp, text, { encoding: "utf8", flag: "wx", mode: 0o600, flush: true });
     chmodSync(temp, mode);
     renameSync(temp, realPath);
