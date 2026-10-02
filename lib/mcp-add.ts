@@ -25,7 +25,7 @@ export interface McpAddRequest {
   text: string;
   /** Field values by field id: the text, or `{ reference }` for a `${NAME}` instead. */
   values: Record<string, McpImportFieldValue>;
-  /** The paste's own literal secrets to store as `${NAME}` instead, by label (`headers.Authorization`): decision 8's way into a project. */
+  /** The paste's own literal secrets to store as `${NAME}` instead, by label (`headers.Authorization`): the way into a project (ADR 0006, "Secrets typed in the panel"). */
   secretReferences?: Record<string, string>;
   /** Which of the paste's servers, in the importer's order. */
   server: number;
