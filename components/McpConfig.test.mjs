@@ -209,7 +209,7 @@ test("an HTTP server's detail shows its URL, header names, the variables it send
   assert.match(shown, /Headers Authorization Host variables/);
   assert.match(shown, /Host variables Sends environment variables of the computer running Pi Web to this server on every connection: GITHUB_TOKEN in header Authorization/);
   assert.match(shown, /Sign-in Authorization header/);
-  assert.match(shown, /Listed in the Code mode description, up to the tool list budget\./);
+  assert.match(shown, /Only the server's name and summary are listed; Code mode scripts search for its tools\./);
   assert.doesNotMatch(shown, /Working directory|Environment/);
 
   const oauth = (signedIn) => text(view({
@@ -232,7 +232,7 @@ test("an HTTP server's detail shows its URL, header names, the variables it send
     selected: "global\0github",
     load: { state: "loaded", data: overview({ servers: [httpServer], codemode: { sandbox: { state: "available" }, builtinDisabled: true, preference: "always" } }) },
   }));
-  assert.match(builtinOff, /up to the tool list budget\. -builtin:codemode turns Code mode off, so these tools can be called only while tool search is active\./);
+  assert.match(builtinOff, /search for its tools\. -builtin:codemode turns Code mode off, so these tools can be called only while tool search is active\./);
 
   // Automatic with autoEnableCodemode false never turns Code mode on for them.
   const autoOff = (preference) => text(view({
@@ -823,24 +823,23 @@ test("a server's Tools row chooses its exposure, saying in one line what each co
   assert.doesNotMatch(select.tag, /disabled/);
   assert.deepEqual(select.options, [
     { value: "codemode", selected: true, label: "Code mode (default)" },
-    { value: "codemode-deferred", selected: false, label: "Code mode, by search" },
     { value: "deferred", selected: false, label: "tool search" },
     { value: "direct", selected: false, label: "direct" },
     { value: "hidden", selected: false, label: "hidden" },
   ]);
   // The description of the chosen exposure describes the dropdown.
   const describedBy = select.tag.match(/aria-describedby="([^"]+)"/)[1];
-  assert.match(decode(view({ selected: "global\0github" })), new RegExp(`<span id="${describedBy}" class="mcp-config-line">Listed in the Code mode description`));
+  assert.match(decode(view({ selected: "global\0github" })), new RegExp(`<span id="${describedBy}" class="mcp-config-line">Only the server's name and summary are listed`));
   const shown = text(view({ selected: "global\0github" }));
-  assert.match(shown, /Tools Code mode \(default\) .*? Listed in the Code mode description, up to the tool list budget\. File/);
+  assert.match(shown, /Tools Code mode \(default\) .*? Only the server's name and summary are listed; Code mode scripts search for its tools\. File/);
   assert.doesNotMatch(shown, /toolExposure/);
 
   // toolExposure rules are named and kept.
   const off = text(view({
     selected: "global\0github",
-    load: { state: "loaded", data: overview({ servers: [{ ...httpServer, enabled: false, exposure: "codemode-deferred", toolExposureCount: 2 }] }) },
+    load: { state: "loaded", data: overview({ servers: [{ ...httpServer, enabled: false, exposure: "deferred", toolExposureCount: 2 }] }) },
   }));
-  assert.match(off, /scripts search for the tools\. Suits servers with many tools\. Rules in toolExposure \(2\) keep their own exposure\./);
+  assert.match(off, /needs no Code mode\. Rules in toolExposure \(2\) keep their own exposure\./);
 
   // Behind tool search, while -builtin:tool-search turns it off, only Code mode scripts reach the tools.
   const noSearch = (toolSearchDisabled) => text(view({

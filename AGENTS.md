@@ -137,7 +137,7 @@ lib/
   mcp-test.ts               Settings › MCP Test: one bounded, masked SDK connection (sign-in reuses its steps)
   mcp-entry-request.ts      route checks before connecting one mcp.json entry (Test, sign-in); guards /api/mcp and /api/project-trust share
   mcp-sign-in.ts            Settings › MCP OAuth sign-in flows (as pi mcp login), polled by id
-  mcp-sign-out.ts           OAuth URL key; guard barring token writes by runs started before a sign-out
+  mcp-sign-out.ts           OAuth store keys (name + URL); guard barring token writes by runs started before a sign-out
   mcp-secrets.ts            pure secret classification and masking for MCP config values
   mcp-add.ts                POST /api/mcp add's checks before it writes
   mcp-import.ts             pure paste importer (+ mcp-import-core/json/cli/links.ts)

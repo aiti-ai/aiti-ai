@@ -389,7 +389,7 @@ async function signOutServer(agentDir: string, project: Project | undefined, int
   if (url === undefined) {
     return refusal(409, "sign-in-not-oauth", `MCP server "${name}" does not use OAuth: only an HTTP server without an Authorization header does`, { name });
   }
-  const removed = signOutMcpServer(url, agentDir, internals);
+  const removed = signOutMcpServer(name, url, agentDir, internals);
   forgetMcpEntryStatuses({ scope: server.scope, sourcePath: read.sourcePath, name });
   return overviewResponse(agentDir, project, { signedOut: { ...server, removed } });
 }
