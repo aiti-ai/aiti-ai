@@ -875,6 +875,24 @@
   outline: none;
 }
 
+/* The paste box of Settings › MCP: a whole config fits, and it grows by hand, never sideways. */
+.config-add-source-input.is-multiline {
+  height: auto;
+  min-height: 96px;
+  max-height: 40vh;
+  padding: 8px 11px;
+  line-height: 1.5;
+  resize: vertical;
+  white-space: pre;
+  overflow: auto;
+}
+
+.config-add-source-hint {
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 .config-add-source-examples {
   display: flex;
   flex-direction: column;
@@ -1952,6 +1970,72 @@
 .mcp-sign-in-actions {
   display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* The add pane (components/McpAddServer.tsx). Notes, fields and the failure
+   wrap inside the narrow phone pane; inputs take the pane's width. */
+.mcp-add-input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.mcp-add-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.mcp-add-toggle input {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+
+.mcp-add-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.mcp-add-note {
+  color: var(--text-dim);
+  overflow-wrap: anywhere;
+}
+
+.mcp-add-note.is-warning {
+  color: #d97706;
+}
+
+.mcp-add-note.is-error {
+  color: #ef4444;
+}
+
+.mcp-add-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mcp-add-failure {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
   min-width: 0;
 }

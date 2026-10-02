@@ -1,4 +1,5 @@
 import type { McpExposure, ResourceDiagnostic } from "@earendil-works/pi-coding-agent";
+import type { McpImportNote } from "./mcp-import-core";
 import type { SubagentProfile } from "./subagents";
 
 export interface SubagentProfilesResponse {
@@ -101,6 +102,35 @@ export interface ProjectTrustStatus {
    */
   decisionError?: string;
 }
+
+/**
+ * Why Pi Web does not trust a fresh folder by itself when a project server is
+ * added to it (`trustFreshFolderAndWrite()` in `lib/project-trust.ts`): a
+ * decision is inherited by every folder below it, so trusting this one would
+ * trust `path` too.
+ * - `home`: the folder is the home folder;
+ * - `root`: it is a filesystem root;
+ * - `contains-home`: it holds the home folder (`path`);
+ * - `contains-agent-dir`: it is, or holds, Pi's agent folder (`path`);
+ * - `contains-folder`: it holds another folder Pi Web knows (`path`): a
+ *   session's folder, its project, or a folder chosen in Pi Web.
+ */
+export interface FreshFolderTrustBreadth {
+  kind: "home" | "root" | "contains-home" | "contains-agent-dir" | "contains-folder";
+  path: string;
+}
+
+/**
+ * Whether adding a project server may trust the folder in the same step: only
+ * a fresh folder, and not too broad a one. `folder-not-fresh`: the SDK sees
+ * nothing that needs trust, but an entry where it looks is a link to nothing
+ * (`hasTrustRelevantEntries()`), which would need trust once its target
+ * appears, so the step refuses the folder.
+ */
+export type McpTrustFolderInfo =
+  | { allowed: true }
+  | { allowed: false; reason: "trust-too-broad"; breadth: FreshFolderTrustBreadth }
+  | { allowed: false; reason: "folder-not-fresh" };
 
 // ---------------------------------------------------------------------------
 // Settings › MCP (ADR 0006). Every refusal carries `{ error, reason }`: `error`
@@ -405,6 +435,12 @@ export interface McpProjectInfo {
   /** Absent when `trust.json` cannot be read; the project then counts as untrusted. */
   trust?: ProjectTrustStatus;
   trustError?: string;
+  /**
+   * Present only for a fresh folder (no resources that need trust, no
+   * decision for it or an ancestor): adding a project server then trusts the
+   * folder in the same request, unless that would trust too much.
+   */
+  trustFolder?: McpTrustFolderInfo;
 }
 
 export interface McpResponse {
@@ -488,6 +524,20 @@ export type McpRefusalReason =
   | "redirect-no-code"
   /** The pasted URL is the authorization server's refusal (`error`); `error` holds its description. The sign-in keeps waiting. */
   | "redirect-denied"
+  /** `add`: nothing in the pasted text could be read as a server (`notes`). */
+  | "import-failed"
+  /** `add`: a value the paste left to fill in is missing or invalid (`notes`). */
+  | "fields-incomplete"
+  /** `add`: the name is not one pi accepts (letters, digits, `_` and `-`) (`name`). */
+  | "name-invalid"
+  /** `add`: the server holds a literal secret (`fields`), so it is saved only in the global `mcp.json`. */
+  | "secret-global-only"
+  /** `add`: the server sends variables of the Pi Web host to a remote party (`names`); the request must confirm them. */
+  | "host-env-confirm"
+  /** `add` with `trustFolder`: the folder is no longer fresh (a decision, or resources that need one), so it was not trusted (`trust`). */
+  | "folder-not-fresh"
+  /** `add` with `trustFolder`: trusting the folder would trust more than it (`breadth`), so Pi Web does not do it by itself. */
+  | "trust-too-broad"
   /** Reading failed unexpectedly; `error` says how. */
   | "internal";
 
@@ -498,10 +548,28 @@ export interface McpErrorResponse {
   path?: string;
   /** The server a refusal is about. */
   name?: string;
+  /** `name-taken` on add: a name the file does not define yet. */
+  suggestedName?: string;
+  /** `import-failed`, `fields-incomplete`: why, as the importer's notes (`lib/mcp-import.ts`). */
+  notes?: McpImportNote[];
+  /** `host-env-confirm`: the host variables the server would be sent. */
+  names?: string[];
+  /** `secret-global-only`: where the literal secrets are (`env.API_KEY`, `headers.Authorization`, `url`). */
+  fields?: string[];
+  /** `trust-too-broad`: what trusting the folder would trust too. */
+  breadth?: FreshFolderTrustBreadth;
+  /** `folder-not-fresh`, and a write that failed after trusting: the folder's trust now, when it could be read. */
+  trust?: ProjectTrustStatus;
+  /**
+   * `add` with `trustFolder`: the write failed after the folder was trusted,
+   * and taking the trust back failed too, so the folder stays trusted with
+   * nothing added. `reason` is the write's.
+   */
+  trustKept?: true;
 }
 
-/** What `POST /api/mcp` can do to a server of either file (ADR 0006: a switch, Remove, Undo, and Sign out). */
-export type McpServerAction = "enable" | "disable" | "remove" | "undo" | "set-enabled" | "sign-out";
+/** What `POST /api/mcp` can do to a server of either file (ADR 0006: Add, a switch, Remove, Undo, and Sign out). */
+export type McpServerAction = "enable" | "disable" | "remove" | "undo" | "set-enabled" | "sign-out" | "add";
 
 export interface McpServerRef {
   scope: McpScope;
@@ -536,6 +604,12 @@ export interface McpActionResponse extends McpResponse {
   results?: McpActionItemResult[];
   /** `sign-out`: the server signed out of, and whether `mcp-auth.json` held anything for its URL. */
   signedOut?: McpServerRef & { removed: boolean };
+  /** `add`: the server written, and the configured path of its file. */
+  added?: McpServerRef & { path: string };
+  /** `add` to a project: the folder's trust after the write (it requires trust once `.pi/mcp.json` exists), for the page's trust status. */
+  trust?: ProjectTrustStatus;
+  /** `add` with `trustFolder`: the folder was trusted in the same request. */
+  trustedFolder?: true;
 }
 
 /**

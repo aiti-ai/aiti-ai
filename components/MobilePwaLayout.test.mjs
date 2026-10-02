@@ -12,6 +12,7 @@ const viewportHookSource = await readFile(new URL("../hooks/useViewportHeight.ts
 const extensionStatusBarSource = await readFile(new URL("./ExtensionStatusBar.tsx", import.meta.url), "utf8");
 const mcpConfigSource = await readFile(new URL("./McpConfig.tsx", import.meta.url), "utf8");
 const mcpSignInSource = await readFile(new URL("./McpSignIn.tsx", import.meta.url), "utf8");
+const mcpAddSource = await readFile(new URL("./McpAddServer.tsx", import.meta.url), "utf8");
 
 /** The declarations of the first `selector {` rule in a stylesheet. */
 function cssRule(css, selector) {
@@ -105,10 +106,14 @@ test("keeps Settings › MCP usable in the 190px phone sidebar", () => {
   // Sign in and Sign out wrap below each other, and the paste box gives way to its button.
   assert.match(cssRule(settingsCssSource, ".mcp-sign-in-actions"), /flex-wrap: wrap;/);
   assert.match(cssRule(settingsCssSource, ".oauth-paste-input"), /min-width: 0;/);
-  // Every .mcp-* rule targets a class the panel (or its Sign-in row) renders, and every class it
-  // renders has a rule, so a rename cannot leave a phone rule silently dead.
+  // The add pane's inputs and notes take the pane's width, and its paste box grows only downwards.
+  assert.match(cssRule(settingsCssSource, ".mcp-add-input"), /width: 100%;[\s\S]*?min-width: 0;/);
+  assert.match(cssRule(settingsCssSource, ".mcp-add-note"), /overflow-wrap: anywhere;/);
+  assert.match(cssRule(settingsCssSource, ".config-add-source-input.is-multiline"), /resize: vertical;[\s\S]*?overflow: auto;/);
+  // Every .mcp-* rule targets a class the panel (its Sign-in row, its add pane) renders, and every
+  // class it renders has a rule, so a rename cannot leave a phone rule silently dead.
   const styled = new Set([...settingsCssSource.matchAll(/\.(mcp-[a-z-]+)/g)].map((match) => match[1]));
-  const rendered = new Set([...`${mcpConfigSource}\n${mcpSignInSource}`.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)]
+  const rendered = new Set([...`${mcpConfigSource}\n${mcpSignInSource}\n${mcpAddSource}`.matchAll(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g)]
     .flatMap((match) => (match[1] ?? match[2]).split(/\s+/))
     .filter((name) => name.startsWith("mcp-")));
   assert.deepEqual([...styled].sort(), [...rendered].sort());

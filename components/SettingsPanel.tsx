@@ -47,6 +47,8 @@ interface Props {
   projectTrust?: ProjectTrustStatus | null;
   /** Opens the page's trust dialog for `cwd`, above Settings; Settings › MCP's trust notice offers it. */
   onOpenTrustDialog?: () => void;
+  /** Settings › MCP added a project server, which changed `cwd`'s trust (and may have trusted a fresh folder). */
+  onProjectTrustChanged?: (cwd: string, status: ProjectTrustStatus) => void;
 }
 
 export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: { section: SettingsSection; size?: number; strokeWidth?: number }) {
@@ -397,6 +399,7 @@ export function SettingsPanel({
   onQuoteSelectionChange,
   projectTrust,
   onOpenTrustDialog,
+  onProjectTrustChanged,
 }: Props) {
   const { t } = useI18n();
   const [section, setSection] = useState<SettingsSection>(initialSection);
@@ -499,7 +502,7 @@ export function SettingsPanel({
           {cwd && sectionHost("agents", <AgentsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />)}
           {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />)}
           {/* No project needed: the global mcp.json is listed alone, and a project adds its group. */}
-          {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onClose={onClose} />)}
+          {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}
         </main>
       </div>
     </div>

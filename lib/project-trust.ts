@@ -1,11 +1,13 @@
-import { realpathSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { lstatSync, realpathSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import {
   hasTrustRequiringProjectResources,
   ProjectTrustStore,
   type ProjectTrustStoreEntry,
 } from "@earendil-works/pi-coding-agent";
-import type { ProjectTrustStatus } from "./api-types";
+import type { FreshFolderTrustBreadth, ProjectTrustStatus } from "./api-types";
+import { isPathWithinRoots } from "./path-security";
 import { samePath } from "./paths";
 
 /** The folder as `trust.json` keys it: resolved, then its real path when it exists. */
@@ -149,4 +151,225 @@ export function projectTrustReloadOptions(
   if (!cwd || !hasTrustRequiringProjectResources(cwd)) return undefined;
   const trustStore = new ProjectTrustStore(agentDir);
   return { resolveProjectTrust: async () => trustStore.get(cwd) === true };
+}
+
+// ---------------------------------------------------------------------------
+// Trusting a fresh folder in the same step as writing to it (ADR 0006,
+// "Fresh folders"). Writing `.pi/mcp.json` makes a folder require trust, and
+// `POST /api/project-trust` refuses one that does not require it yet, so
+// adding a project server to a folder with no decision would leave the server
+// behind Restricted mode with no way to trust it from Pi Web.
+// ---------------------------------------------------------------------------
+
+/**
+ * The SDK's `TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES`
+ * (`dist/core/trust-manager.js`), which it does not export: what under
+ * `<cwd>/.pi` makes a folder require trust. `lib/project-trust.test.mjs`
+ * compares it with the SDK's own list, so an upgrade that adds one fails there.
+ */
+export const TRUST_REQUIRING_PROJECT_ENTRIES = [
+  "settings.json",
+  "mcp.json",
+  "extensions",
+  "skills",
+  "prompts",
+  "themes",
+  "SYSTEM.md",
+  "APPEND_SYSTEM.md",
+] as const;
+
+function realPathOr(path: string): string {
+  const resolved = resolve(path);
+  try {
+    return realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
+}
+
+/** Something is at `path`, read with `lstat`: a dangling link or a FIFO counts, though `existsSync` would say no. */
+function somethingAt(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Whether anything at all sits where the SDK looks for trust-requiring
+ * resources, by `lstat`: `<cwd>/.pi/<entry>` for each of
+ * `TRUST_REQUIRING_PROJECT_ENTRIES`, a `.pi` that is a link to nothing, and
+ * `.agents/skills` in the folder or an ancestor (not the home folder's own).
+ * Stricter than `hasTrustRequiringProjectResources()`, whose `existsSync`
+ * skips a link to nothing: such a link starts counting the moment its target
+ * appears, after the folder was trusted as one with nothing in it.
+ */
+export function hasTrustRelevantEntries(cwd: string, home: string = process.env.HOME || homedir()): boolean {
+  const folder = realPathOr(cwd);
+  const configDir = join(folder, ".pi");
+  try {
+    if (lstatSync(configDir).isSymbolicLink() && realPathOr(configDir) === configDir) return true;
+  } catch {
+    // No `.pi`.
+  }
+  if (TRUST_REQUIRING_PROJECT_ENTRIES.some((entry) => somethingAt(join(configDir, entry)))) return true;
+  const userSkills = join(realPathOr(home), ".agents", "skills");
+  for (let current = folder; ; current = dirname(current)) {
+    const skills = join(current, ".agents", "skills");
+    if (!samePath(skills, userSkills) && somethingAt(skills)) return true;
+    if (dirname(current) === current) return false;
+  }
+}
+
+/** `target` is `root` or inside it. */
+function within(target: string, root: string): boolean {
+  return isPathWithinRoots(target, new Set([root]));
+}
+
+/**
+ * Why trusting `cwd` would trust more than the one folder, or undefined when
+ * it would not. A decision is inherited by every folder below it, so Pi Web
+ * never trusts by itself the home folder, a filesystem root, a folder that
+ * holds the home folder or Pi's agent folder, or one that holds another folder
+ * Pi Web knows (`knownFolders`: the folders sessions ran in, their projects,
+ * and folders chosen in Pi Web, which is what the allowed file roots hold).
+ * Paths are compared by real path.
+ */
+export function freshFolderTrustBreadth(
+  cwd: string,
+  options: { agentDir: string; knownFolders: Iterable<string>; home?: string },
+): FreshFolderTrustBreadth | undefined {
+  const folder = realPathOr(cwd);
+  if (dirname(folder) === folder) return { kind: "root", path: folder };
+  const home = realPathOr(options.home ?? (process.env.HOME || homedir()));
+  if (samePath(folder, home)) return { kind: "home", path: folder };
+  if (within(home, folder)) return { kind: "contains-home", path: home };
+  const agentDir = realPathOr(options.agentDir);
+  if (within(agentDir, folder)) return { kind: "contains-agent-dir", path: agentDir };
+  for (const known of options.knownFolders) {
+    const knownFolder = realPathOr(known);
+    if (!samePath(knownFolder, folder) && within(knownFolder, folder)) return { kind: "contains-folder", path: knownFolder };
+  }
+  return undefined;
+}
+
+export type FreshFolderTrustResult<T> =
+  /** Trusted, then written; `status` is the folder's trust as written. */
+  | { ok: true; value: T; status: ProjectTrustStatus }
+  /** Trusting it would trust more than the folder; nothing was written. */
+  | { ok: false; reason: "trust-too-broad"; breadth: FreshFolderTrustBreadth; error: string }
+  /** Not fresh anymore (resources that need trust, or a decision here or above); nothing was written. */
+  | { ok: false; reason: "folder-not-fresh"; status?: ProjectTrustStatus; error: string }
+  /** `trust.json` could not be read or written (unparsable, or locked by another process); nothing was written. */
+  | { ok: false; reason: "trust-unreadable"; error: string }
+  /**
+   * `write` threw after the folder was trusted. The decision was taken back
+   * unless `rollbackError` says why it could not be, in which case the folder
+   * stays trusted (`status`).
+   */
+  | { ok: false; reason: "write-failed"; writeError: unknown; rollbackError?: string; status?: ProjectTrustStatus };
+
+// Route handlers are bundled separately and hot reload re-evaluates modules; globalThis keeps one chain per folder per process.
+const FRESH_TRUST_LOCKS_KEY: symbol = Symbol.for("pi-web:fresh-folder-trust-locks");
+
+/** Runs `task` after every earlier task for the same folder has settled. */
+function serializeForFolder<T>(key: string, task: () => Promise<T>): Promise<T> {
+  const store = globalThis as Record<symbol, Map<string, Promise<void>> | undefined>;
+  const locks = (store[FRESH_TRUST_LOCKS_KEY] ??= new Map());
+  const run = (locks.get(key) ?? Promise.resolve()).then(task);
+  const tail = run.then(() => undefined, () => undefined);
+  locks.set(key, tail);
+  void tail.then(() => {
+    if (locks.get(key) === tail) locks.delete(key);
+  });
+  return run;
+}
+
+function message(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Trusts a fresh folder and then runs `write` (which makes it require trust,
+ * such as adding a server to its `.pi/mcp.json`), as one step. Requests for
+ * the same folder run one at a time (a per-folder chain on globalThis), and
+ * inside it the folder is checked again: no trust-requiring entry by `lstat`
+ * (`hasTrustRelevantEntries()`) and no decision for it or an ancestor. A
+ * folder that changed since the panel offered the step (a `git pull` that
+ * brought `.pi/extensions`, a trust given elsewhere) is refused with its new
+ * status: trusting it now would also trust what arrived, unseen.
+ *
+ * Trust comes first, then the write: the likelier failure, a `trust.json`
+ * that is locked or unparsable, then happens before anything is written, and
+ * the state in between (trusted, with nothing that needs trust) changes
+ * nothing. A failed write takes the decision back (`set(cwd, null)`), which
+ * removes exactly the key this call wrote: the check found no decision for the
+ * folder or above. A step that waits for the folder gets its turn once the
+ * earlier one has finished or been undone, and checks the folder as that left
+ * it: unchained, it would find the earlier step's decision while that write
+ * was still under way and be refused, even when the write then failed and the
+ * decision was taken back. The pi CLI is not serialized against, so it can
+ * still add resources between the check and the trust.
+ *
+ * No session is rebuilt and none needs to be idle, unlike
+ * `POST /api/project-trust`: a wrapper opened in a folder that required no
+ * trust was built with `projectTrusted` true and found no project extensions
+ * to load, and its MCP host reads trust afresh before every prompt
+ * (`mayReadProjectConfigNow()`), so the new server connects at its next one.
+ */
+export async function trustFreshFolderAndWrite<T>(
+  cwd: string,
+  agentDir: string,
+  write: () => Promise<T> | T,
+  options: { knownFolders: Iterable<string>; home?: string },
+): Promise<FreshFolderTrustResult<T>> {
+  const breadth = freshFolderTrustBreadth(cwd, { agentDir, knownFolders: options.knownFolders, home: options.home });
+  if (breadth) {
+    return { ok: false, reason: "trust-too-broad", breadth, error: `Trusting ${cwd} would also trust ${breadth.path}` };
+  }
+  const key = trustKeyPath(cwd);
+  return serializeForFolder(key, async (): Promise<FreshFolderTrustResult<T>> => {
+    const store = new ProjectTrustStore(agentDir);
+    const notFresh = (error: string): FreshFolderTrustResult<T> => {
+      let status: ProjectTrustStatus | undefined;
+      try {
+        status = getProjectTrustStatus(cwd, agentDir);
+      } catch {
+        // Unknown: the caller reads it again.
+      }
+      return { ok: false, reason: "folder-not-fresh", ...(status ? { status } : {}), error };
+    };
+    if (hasTrustRequiringProjectResources(cwd) || hasTrustRelevantEntries(cwd, options.home)) {
+      return notFresh(`${cwd} now has project resources that need trust`);
+    }
+    let entry: ProjectTrustStoreEntry | null;
+    try {
+      entry = store.getEntry(cwd);
+    } catch (error) {
+      return { ok: false, reason: "trust-unreadable", error: message(error) };
+    }
+    if (entry) return notFresh(`${entry.path} has a trust decision now`);
+    try {
+      store.set(cwd, true);
+    } catch (error) {
+      return { ok: false, reason: "trust-unreadable", error: message(error) };
+    }
+    const trusted: ProjectTrustStatus = { requiresTrust: true, trusted: true, decision: true, decisionPath: key, inherited: false };
+    let value: T;
+    try {
+      value = await write();
+    } catch (writeError) {
+      try {
+        store.set(cwd, null);
+        return { ok: false, reason: "write-failed", writeError };
+      } catch (rollbackError) {
+        console.warn(`[pi-web] could not take back the trust given to ${cwd} after a failed write: ${message(rollbackError)}`);
+        return { ok: false, reason: "write-failed", writeError, rollbackError: message(rollbackError), status: trusted };
+      }
+    }
+    // Built from what was written, as trustProject() does: a second read can fail on the lock.
+    return { ok: true, value, status: { ...trusted, requiresTrust: hasTrustRequiringProjectResources(cwd) } };
+  });
 }
