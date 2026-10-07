@@ -79,10 +79,6 @@
   cursor: pointer;
 }
 
-:where(.session-tree button:disabled) {
-  cursor: default;
-}
-
 .session-tree button:focus {
   outline: none;
 }
@@ -539,7 +535,7 @@
   color: var(--text-dim);
 }
 
-.session-tree .session-tree-group-action:not(:disabled):hover,
+.session-tree .session-tree-group-action:hover,
 .session-tree .session-tree-group-action.is-active {
   background: var(--bg-selected);
   color: var(--text);

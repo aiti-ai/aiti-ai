@@ -408,7 +408,7 @@ html[data-keyboard-open] .sidebar-sheet {
   }
 }
 
-/* The worktree picker's "New worktree…" form (a custom menu body). */
+/* A worktree menu's "New worktree…" form (a custom menu body; components/WorktreeCreateForm.tsx). */
 .sidebar-worktree-form {
   padding: 2px 4px 4px;
 }
