@@ -30,7 +30,7 @@ import {
   saveSidebarTab,
   type SidebarTab,
 } from "@/lib/sidebar-prefs";
-import { sessionMenuEntries, type SessionMenuActionId } from "@/lib/sidebar-actions";
+import { forkFailureMessage, sessionMenuEntries, type SessionMenuActionId } from "@/lib/sidebar-actions";
 import {
   mergeProjectChoices,
   newSessionContextKey,
@@ -50,7 +50,7 @@ import { DirectoryPicker } from "./DirectoryPicker";
 import { DismissButton } from "./DismissButton";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { SessionSearch } from "./SessionSearch";
-import { SessionTree, sessionRowTitle } from "./SessionTree";
+import { SessionTree, sessionRowTitle, type SessionTreeReveal } from "./SessionTree";
 import { SidebarMenu, type SidebarMenuAnchor, type SidebarMenuItem } from "./SidebarMenu";
 import { SidebarToast, type SidebarToastAction, type SidebarToastData } from "./SidebarToast";
 import {
@@ -62,6 +62,7 @@ import {
   DotIcon,
   DotOutlineIcon,
   FolderIcon,
+  ForkIcon,
   MoreIcon,
   PencilIcon,
   PinIcon,
@@ -134,9 +135,15 @@ function sessionListUrl(summary: boolean, force: boolean): string {
   return "/api/sessions";
 }
 
+/** How a pick in the sidebar opens a session. */
+export interface SelectSessionOptions {
+  /** Leave a phone's drawer open: the sidebar has more to show (a fork's revealed row and its toast). */
+  keepSidebarOpen?: boolean;
+}
+
 interface Props {
   selectedSessionId: string | null;
-  onSelectSession: (session: SessionInfo, isRestore?: boolean, entryId?: string, blockIndex?: number) => void;
+  onSelectSession: (session: SessionInfo, isRestore?: boolean, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => void;
   /** projectKey: the target's project identity when it is known (a group's "+", the composer's bar). */
   onNewSession?: (sessionId: string, cwd: string, projectKey?: string | null, options?: NewSessionOptions) => void;
   /** What the bar above a fresh composer moves through (`SessionSidebarControl`). */
@@ -235,6 +242,7 @@ const SESSION_ACTION_LABEL_KEYS: Record<SessionMenuActionId, string> = {
   pin: "sidebar.pin",
   unpin: "sidebar.unpin",
   rename: "sidebar.rename",
+  fork: "sidebar.fork",
   "mark-read": "sidebar.markRead",
   "mark-unread": "sidebar.markUnread",
   archive: "sidebar.archive",
@@ -247,6 +255,7 @@ function sessionActionIcon(id: SessionMenuActionId): ReactNode {
     case "pin": return <PinIcon />;
     case "unpin": return <PinOffIcon />;
     case "rename": return <PencilIcon />;
+    case "fork": return <ForkIcon />;
     case "mark-read": return <DotOutlineIcon />;
     case "mark-unread": return <DotIcon />;
     case "archive": return <ArchiveIcon />;
@@ -598,6 +607,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [renamingRootId, setRenamingRootId] = useState<string | null>(null);
   const [confirmDeleteRootId, setConfirmDeleteRootId] = useState<string | null>(null);
   const [menu, setMenu] = useState<SidebarMenuState | null>(null);
+  // A row the main tree should scroll to (a fork's new row); see
+  // SessionTreeReveal. Held until the tree says it is done with it.
+  const [treeReveal, setTreeReveal] = useState<SessionTreeReveal | null>(null);
+  const treeRevealIdRef = useRef(0);
+  const handleRevealHandled = useCallback((id: number) => {
+    setTreeReveal((current) => (current?.id === id ? null : current));
+  }, []);
   const selectedSessionIdRef = useRef(selectedSessionId);
   selectedSessionIdRef.current = selectedSessionId;
   const [toast, setToast] = useState<SidebarToastData | null>(null);
@@ -1232,10 +1248,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // Done on the click path (not via the selectedCwd prop sync) so it also
   // works when the prop value won't change — e.g. re-clicking the already
   // open session after manually switching worktrees.
-  const handleSelectSessionFromList = useCallback((s: SessionInfo, entryId?: string, blockIndex?: number) => {
+  const handleSelectSessionFromList = useCallback((s: SessionInfo, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     setAllSessions((current) => current.some((session) => session.id === s.id) ? current : [s, ...current]);
     if (s.cwd) setSelectedCwd(s.cwd);
-    onSelectSession(s, false, entryId, blockIndex);
+    onSelectSession(s, false, entryId, blockIndex, options);
   }, [onSelectSession]);
 
   // Every "new session" goes through here. The cwd moves first, on the click
@@ -1512,6 +1528,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // then back to the footer link, or to the tab when that row is not shown.
   const archiveBackRef = useRef<HTMLButtonElement>(null);
   const previousArchiveViewRef = useRef(archiveView);
+  // Where closing the archive put focus: a fork opened from the archive
+  // reveals its row and may take focus from there.
+  const archiveCloseFocusRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (previousArchiveViewRef.current === archiveView) return;
     previousArchiveViewRef.current = archiveView;
@@ -1520,7 +1539,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       return;
     }
     const footer = sessionsPanelRef.current?.querySelector<HTMLElement>('[data-row-key="footer-archived"] button');
-    focusIfHidden(footer && footer.getClientRects().length > 0 ? footer : selectedTabButton());
+    const target = footer && footer.getClientRects().length > 0 ? footer : selectedTabButton();
+    focusIfHidden(target);
+    if (target && document.activeElement === target) archiveCloseFocusRef.current = target;
   }, [archiveView, selectedTabButton]);
 
   const handleTabKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
@@ -1686,12 +1707,100 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
   }, [performDelete]);
 
+  // Fork (the row menu's F): the server copies the family's current branch
+  // into a new session beside it (POST /api/sessions/[id]/fork) and leaves
+  // the source as it is, running or not. The copy opens where its row is: the
+  // archive view closes (the copy has no pin or archive flag), a group the
+  // user collapsed opens, and the main tree scrolls to the row, which takes
+  // focus when it is still on the source's row (or fell to the page). Called
+  // after a request and from a toast, so always through openForkedRef: the
+  // newest state and AppShell's newest selection handler, never a click-time
+  // closure. `fromRowKey` is the row whose Fork this answers: focus may move
+  // from it, and a phone's drawer stays open, since the copy looks just like
+  // its source and only the sidebar (its row, the toast) tells them apart.
+  // null is the toast's Open, which opens the copy as a row click does.
+  const openForked = (forked: SessionInfo, fromRowKey: string | null) => {
+    archiveCloseFocusRef.current = null;
+    if (archiveView) {
+      // The main tree's saved position would be put back over the reveal.
+      const main = sessionsPanelRef.current?.querySelector(".sidebar-sessions-view .session-tree-scroll");
+      if (main) panelScrollTopsRef.current.delete(main);
+      setArchiveView(false);
+    }
+    const groupKey = workspaceKeyOf(forked);
+    if (Object.hasOwn(groupExpansion, groupKey) && groupExpansion[groupKey] === false) {
+      const next = { ...groupExpansion };
+      // Re-inserted, so the choice counts as the newest one kept.
+      delete next[groupKey];
+      next[groupKey] = true;
+      setGroupExpansion(next);
+      saveGroupExpansion(next);
+    }
+    handleSelectSessionFromList(forked, undefined, undefined, { keepSidebarOpen: fromRowKey !== null });
+    // The route invalidated the list: the next load has the copy.
+    void loadSessions();
+    const fromRow = fromRowKey ? `[data-row-key="${CSS.escape(fromRowKey)}"]` : null;
+    treeRevealIdRef.current += 1;
+    setTreeReveal({
+      id: treeRevealIdRef.current,
+      at: Date.now(),
+      rowKey: `session:group:${forked.id}`,
+      takeFocusFrom: (active) => (fromRow !== null && active.closest(fromRow) !== null) || active === archiveCloseFocusRef.current,
+    });
+  };
+  const openForkedRef = useRef(openForked);
+  openForkedRef.current = openForked;
+
+  // One fork per session at a time: F again on a session whose fork is under
+  // way does nothing; another session's Fork goes ahead.
+  const forkingIdsRef = useRef(new Set<string>());
+  const forkFamily = useCallback(async (row: SessionRow) => {
+    const source = row.family.root;
+    if (source.transient || forkingIdsRef.current.has(source.id)) return;
+    forkingIdsRef.current.add(source.id);
+    const selectedAtClick = selectedSessionIdRef.current;
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(source.id)}/fork`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const data = await res.json().catch(() => ({})) as { session?: SessionInfo; code?: string; error?: string };
+      if (!res.ok || !data.session) {
+        const { key, params } = forkFailureMessage(data.code, data.error ?? `HTTP ${res.status}`);
+        showToast(t(key, params));
+        // Deleted elsewhere (the pi CLI, another window): its row goes.
+        if (data.code === "not_found") void loadSessions();
+        return;
+      }
+      const forked = data.session;
+      const message = t("sidebar.forkedToast", { title: shortTitle(sessionRowTitle(forked), TOAST_TITLE_MAX) });
+      if (selectedSessionIdRef.current !== selectedAtClick) {
+        // Another session was opened meanwhile: the user stays there. The
+        // copy waits in its group, unread (so it shows beyond the group's
+        // limit), and the toast offers to open it.
+        setAllSessions((current) => (current.some((session) => session.id === forked.id) ? current : [forked, ...current]));
+        setUnreadSessionIds((prev) => new Set(prev).add(forked.id));
+        void loadSessions();
+        showToast(message, [{ id: "open", label: t("sidebar.open"), onClick: () => openForkedRef.current(forked, null) }]);
+        return;
+      }
+      openForkedRef.current(forked, row.key);
+      showToast(message);
+    } catch (error) {
+      showToast(t("sidebar.forkFailed", { error: error instanceof Error ? error.message : String(error) }));
+    } finally {
+      forkingIdsRef.current.delete(source.id);
+    }
+  }, [loadSessions, showToast, t]);
+
   const runSessionAction = (id: SessionMenuActionId, row: SessionRow, shiftKey: boolean) => {
     const { family } = row;
     switch (id) {
       case "pin": setFamilyPinned(family, true); break;
       case "unpin": setFamilyPinned(family, false); break;
       case "rename": startRename(family); break;
+      case "fork": void forkFamily(row); break;
       case "mark-read": markFamilyRead(family, true); break;
       case "mark-unread": markFamilyRead(family, false); break;
       case "archive": archiveFamily(family); break;
@@ -2141,7 +2250,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         >
           {/* Kept mounted under the archive view, so going back finds it as it was. */}
           <div className="sidebar-sessions-view" hidden={archiveView}>
-            <SessionTree {...treeProps} rows={model.rows} emptyLabel={t("sidebar.noSessions")} />
+            <SessionTree
+              {...treeProps}
+              rows={model.rows}
+              emptyLabel={t("sidebar.noSessions")}
+              reveal={treeReveal}
+              onRevealHandled={handleRevealHandled}
+            />
           </div>
           {archiveView && (
             <div className="sidebar-sessions-view">

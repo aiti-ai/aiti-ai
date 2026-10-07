@@ -339,7 +339,7 @@ test("does not expose disk-backed actions for transient sessions", () => {
 test("row clicks go through the list selection, which moves the cwd to the session's worktree", () => {
   assert.match(source, /const handleSelectFamily = useCallback\(\(family: SessionFamily\) => \{\s*handleSelectSessionFromList\(family\.root\);\s*\}, \[handleSelectSessionFromList\]\);/);
   assert.match(source, /onSelectFamily: handleSelectFamily,/);
-  assert.match(callbackBody("handleSelectSessionFromList"), /if \(s\.cwd\) setSelectedCwd\(s\.cwd\);\s*onSelectSession\(s, false, entryId, blockIndex\);/);
+  assert.match(callbackBody("handleSelectSessionFromList"), /if \(s\.cwd\) setSelectedCwd\(s\.cwd\);\s*onSelectSession\(s, false, entryId, blockIndex, options\);/);
   assert.match(source, /onSelectSession=\{handleSelectSessionFromList\}/);
   // Only the list selection and the initial URL restore select a session.
   assert.equal((source.match(/\bonSelectSession\(/g) ?? []).length, 2);
@@ -468,7 +468,7 @@ test("the footer opens the project list in the files tab; the archive view repla
   assert.match(source, /onOpenOtherProject: handleOpenOtherProject,/);
   assert.match(source, /onOpenArchive: openArchiveView,/);
   assert.match(callbackBody("openArchiveView"), /setArchiveView\(true\);[\s\S]*?setSessionSearchOpen\(false\);\s*switchTab\("sessions"\);/);
-  assert.match(source, /<div className="sidebar-sessions-view" hidden=\{archiveView\}>\s*<SessionTree \{\.\.\.treeProps\} rows=\{model\.rows\} emptyLabel=\{t\("sidebar\.noSessions"\)\} \/>/);
+  assert.match(source, /<div className="sidebar-sessions-view" hidden=\{archiveView\}>\s*<SessionTree\s+\{\.\.\.treeProps\}\s+rows=\{model\.rows\}\s+emptyLabel=\{t\("sidebar\.noSessions"\)\}\s+reveal=\{treeReveal\}\s+onRevealHandled=\{handleRevealHandled\}\s+\/>/);
   assert.match(source, /<SessionTree \{\.\.\.treeProps\} rows=\{archiveRows\} emptyLabel=\{t\("sidebar\.noArchived"\)\} \/>/);
   assert.match(source, /const sessionMenuItems = \(row: SessionRow\): SidebarMenuItem\[\] => sessionMenuEntries\(row\.context, row\.status\)/);
   assert.match(callbackBody("handleTogglePinned"), /setPinnedCollapsed\(next\);\s*savePinnedCollapsed\(next\);/);
@@ -498,7 +498,9 @@ test("focus that went away with the archive view, a toast or a delete confirmati
   const archive = source.slice(source.indexOf("const archiveBackRef"), source.indexOf("const handleTabKeyDown"));
   assert.match(archive, /if \(previousArchiveViewRef\.current === archiveView\) return;/, "nothing moves on mount");
   assert.match(archive, /if \(archiveView\) \{\s*focusIfHidden\(archiveBackRef\.current\);/);
-  assert.match(archive, /querySelector<HTMLElement>\('\[data-row-key="footer-archived"\] button'\);\s*focusIfHidden\(footer && footer\.getClientRects\(\)\.length > 0 \? footer : selectedTabButton\(\)\);/);
+  assert.match(archive, /querySelector<HTMLElement>\('\[data-row-key="footer-archived"\] button'\);\s*const target = footer && footer\.getClientRects\(\)\.length > 0 \? footer : selectedTabButton\(\);\s*focusIfHidden\(target\);/);
+  // A fork opened from the archive may take focus from where closing it put it.
+  assert.match(archive, /if \(target && document\.activeElement === target\) archiveCloseFocusRef\.current = target;/);
   assert.match(source, /<button\s+ref=\{archiveBackRef\}\s+type="button"\s+className="sidebar-archive-back"/);
   // Focus still on something just hidden counts as lost; elsewhere it stays.
   assert.match(source, /function focusIfHidden\(target: HTMLElement \| null\): void \{[\s\S]*?active\.getClientRects\(\)\.length === 0\) \{\s*target\.focus\(\{ preventScroll: true \}\);\s*return;\s*\}\s*focusIfLost\(document, target\);/);
@@ -513,4 +515,62 @@ test("focus that went away with the archive view, a toast or a delete confirmati
   assert.match(rowButton, /\.session-tree-main`\);\s*if \(button && button\.getClientRects\(\)\.length > 0\) return button;\s*\}\s*return selectedTabButton\(\);/);
   // The toast's View opens the archive, whose Back then takes focus.
   assert.match(callbackBody("archiveFamilies"), /\{ id: "view", label: t\("sidebar\.viewArchive"\), onClick: openArchiveView \}/);
+});
+
+test("Fork copies the row's session on the server and opens the copy where its row is", () => {
+  assert.match(source, /case "fork": void forkFamily\(row\); break;/);
+  const fork = callbackBody("forkFamily");
+  // One per session at a time (another session's Fork goes ahead), never for
+  // a transient session, never through an AgentSession.
+  assert.match(source, /const forkingIdsRef = useRef\(new Set<string>\(\)\);/);
+  assert.match(fork, /if \(source\.transient \|\| forkingIdsRef\.current\.has\(source\.id\)\) return;\s*forkingIdsRef\.current\.add\(source\.id\);/);
+  assert.match(fork, /fetch\(`\/api\/sessions\/\$\{encodeURIComponent\(source\.id\)\}\/fork`, \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json" \},\s*body: "\{\}",/);
+  assert.doesNotMatch(fork, /sendAgentCommand|handleSessionForked|\/api\/agent/);
+  assert.match(fork, /finally \{\s*forkingIdsRef\.current\.delete\(source\.id\);\s*\}/);
+  // A refusal says why; a source deleted elsewhere leaves the tree. No forced rescan.
+  assert.match(fork, /const \{ key, params \} = forkFailureMessage\(data\.code, data\.error \?\? `HTTP \$\{res\.status\}`\);\s*showToast\(t\(key, params\)\);/);
+  assert.match(fork, /if \(data\.code === "not_found"\) void loadSessions\(\);/);
+  assert.doesNotMatch(fork, /loadSessions\(false, true\)/);
+  // The answer always runs the newest openForked, never a click-time closure.
+  const selectedAtClick = fork.indexOf("const selectedAtClick = selectedSessionIdRef.current;");
+  const request = fork.indexOf("await fetch(");
+  assert.ok(selectedAtClick >= 0 && selectedAtClick < request, "the selection is noted before the request");
+  assert.match(fork, /openForkedRef\.current\(forked, row\.key\);\s*showToast\(message\);/);
+  assert.doesNotMatch(fork, /[^.]openForked\(|handleSelectSessionFromList/);
+  assert.match(fork, /const message = t\("sidebar\.forkedToast", \{ title: shortTitle\(sessionRowTitle\(forked\), TOAST_TITLE_MAX\) \}\);/);
+  // The user moved on meanwhile: they stay; the copy waits unread and the toast offers it.
+  const movedOn = fork.slice(fork.indexOf("if (selectedSessionIdRef.current !== selectedAtClick) {"), fork.indexOf("openForkedRef.current(forked, row.key);"));
+  assert.match(movedOn, /setAllSessions\(\(current\) => \(current\.some\(\(session\) => session\.id === forked\.id\) \? current : \[forked, \.\.\.current\]\)\);/);
+  assert.match(movedOn, /setUnreadSessionIds\(\(prev\) => new Set\(prev\)\.add\(forked\.id\)\);/);
+  assert.match(movedOn, /void loadSessions\(\);/);
+  assert.match(movedOn, /showToast\(message, \[\{ id: "open", label: t\("sidebar\.open"\), onClick: \(\) => openForkedRef\.current\(forked, null\) \}\]\);\s*return;/);
+  assert.match(source, /const openForkedRef = useRef\(openForked\);\s*openForkedRef\.current = openForked;/);
+
+  const open = callbackBody("openForked");
+  // The archive closes; its saved scroll of the main tree must not undo the reveal.
+  const dropScroll = open.indexOf("panelScrollTopsRef.current.delete(main);");
+  const close = open.indexOf("setArchiveView(false);");
+  assert.ok(dropScroll >= 0 && dropScroll < close, "the main tree's saved position goes before the archive closes");
+  assert.match(open, /querySelector\("\.sidebar-sessions-view \.session-tree-scroll"\)/);
+  // A group the user collapsed opens, as the newest choice.
+  assert.match(open, /if \(Object\.hasOwn\(groupExpansion, groupKey\) && groupExpansion\[groupKey\] === false\) \{\s*const next = \{ \.\.\.groupExpansion \};[\s\S]*?delete next\[groupKey\];\s*next\[groupKey\] = true;\s*setGroupExpansion\(next\);\s*saveGroupExpansion\(next\);/);
+  // Opened like a row click: the cwd moves to its worktree, AppShell adopts
+  // the project. The Fork's own answer leaves a phone's drawer open (the copy
+  // looks like its source; its row and the toast are in the drawer); the
+  // toast's Open closes it, as a row click does.
+  assert.match(open, /handleSelectSessionFromList\(forked, undefined, undefined, \{ keepSidebarOpen: fromRowKey !== null \}\);\s*\/\/[^\n]*\n\s*void loadSessions\(\);/);
+  assert.match(source, /export interface SelectSessionOptions \{[\s\S]*?keepSidebarOpen\?: boolean;\s*\}/);
+  // Every request has a new id (a counter, not the last request's, which is
+  // gone once handled) and its time, so the tree can drop it when stale.
+  assert.match(open, /treeRevealIdRef\.current \+= 1;\s*setTreeReveal\(\{\s*id: treeRevealIdRef\.current,\s*at: Date\.now\(\),\s*rowKey: `session:group:\$\{forked\.id\}`,\s*takeFocusFrom: \(active\) => \(fromRow !== null && active\.closest\(fromRow\) !== null\) \|\| active === archiveCloseFocusRef\.current,/);
+  // The tree hands a request back once it has scrolled to it or dropped it:
+  // kept, a tree mounted again after a search would run it a second time.
+  assert.match(source, /const handleRevealHandled = useCallback\(\(id: number\) => \{\s*setTreeReveal\(\(current\) => \(current\?\.id === id \? null : current\)\);\s*\}, \[\]\);/);
+  assert.equal((source.match(/setTreeReveal\(/g) ?? []).length, 2, "only a fork's open and the tree's answer set it");
+  // Only the main tree reveals; the archive view is closed by then.
+  assert.equal((source.match(/reveal=\{treeReveal\}/g) ?? []).length, 1);
+  assert.equal((source.match(/onRevealHandled=\{handleRevealHandled\}/g) ?? []).length, 1);
+  assert.doesNotMatch(source.slice(source.indexOf("const treeProps = {"), source.indexOf("} as const;")), /reveal/);
+  assert.match(source, /fork: "sidebar\.fork",/);
+  assert.match(source, /case "fork": return <ForkIcon \/>;/);
 });
