@@ -11,10 +11,14 @@
  * family returns on its own when the root session gets a newer message
  * (`root.modified`, not `latestModified`: subagent activity alone does not
  * bring it back) or while any member is running.
+ *
+ * Groups keep the stored project order (`projectOrder`): activity never moves
+ * a project that has a place in it. Pinned projects come first, then the
+ * rest; in each band the projects without a place come first.
  */
 
 import { listSessionFamilies, type SessionFamily } from "./session-family";
-import type { SessionUiFamilyState, SessionUiState } from "./session-ui-state-shared";
+import type { ProjectMovePosition, SessionUiFamilyState, SessionUiState } from "./session-ui-state-shared";
 import type { SessionInfo } from "./types";
 import { workspaceKeyOf } from "./workspace-memory";
 
@@ -71,6 +75,18 @@ export interface SessionTreeModel {
   projects: SidebarProject[];
   /** Archived families across all projects. */
   archivedCount: number;
+  /**
+   * Shown projects without a place in `projectOrder`, per band, top to
+   * bottom: a move saves its band's ones first, so it lands where it was seen.
+   */
+  unorderedKeysByBand: { pinned: string[]; other: string[] };
+  /**
+   * Of those, the ones the sidebar saves on its own, top to bottom: pinned
+   * projects, and projects with a saved (not transient) live family. Not the
+   * current project while it has none, nor a project of transient sessions
+   * only: either may never get a file.
+   */
+  projectKeysToRecord: string[];
 }
 
 type FamilyFlagsInput = Pick<SessionTreeInput, "uiState" | "runningIds" | "unreadIds" | "selectedSessionId">;
@@ -307,6 +323,8 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
   // Insertion order follows family activity (newest first).
   const projectFamilies = new Map<string, SessionFamily[]>();
   const projectActivity = new Map<string, number>();
+  // Projects with a live family that has a file (pinned families included).
+  const savedKeys = new Set<string>();
 
   for (const family of families) {
     if (isFamilyArchived(family, uiState, runningIds)) {
@@ -317,6 +335,7 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
     const key = familyProjectKey(family);
     const activity = timeOf(family.latestModified);
     projectActivity.set(key, Math.max(projectActivity.get(key) ?? -Infinity, activity));
+    if (!family.root.transient) savedKeys.add(key);
     if (isFamilyPinned(family, uiState, runningIds)) {
       pinnedFamilies.push(family);
       continue;
@@ -366,20 +385,42 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
   for (const key of Object.keys(uiState.projects)) addKey(key);
 
   const projects = projectKeys.map((key) => resolver.get(key));
+  // A Map: a stored key such as "constructor" must not find a prototype member.
+  const rank = new Map<string, number>();
+  (uiState.projectOrder ?? []).forEach((key, index) => {
+    if (!rank.has(key)) rank.set(key, index);
+  });
+  const recordable = (project: SidebarProject) => project.pinned || savedKeys.has(project.key);
+  // Projects without a place come first, in the fallback order, the ones that
+  // are not saved on their own (transient only, the empty current project)
+  // before the others: saving those then changes nothing on screen.
+  type Indexed = { project: SidebarProject; index: number };
+  const orderBand = (band: Indexed[], fallback: (a: Indexed, b: Indexed) => number): SidebarProject[] => [
+    ...band
+      .filter(({ project }) => !rank.has(project.key))
+      .sort((a, b) => Number(recordable(a.project)) - Number(recordable(b.project)) || fallback(a, b)),
+    ...band
+      .filter(({ project }) => rank.has(project.key))
+      .sort((a, b) => (rank.get(a.project.key) ?? 0) - (rank.get(b.project.key) ?? 0)),
+  ].map(({ project }) => project);
   const activityOf = (project: SidebarProject) => projectActivity.get(project.key)
     ?? (project.current ? Infinity : -Infinity);
   const projectPinnedAt = (project: SidebarProject) => finiteNumber(uiState.projects[project.key]?.pinnedAt) ?? 0;
-  const pinnedProjects = projects
-    .map((project, index) => ({ project, index }))
-    .filter(({ project }) => project.pinned)
-    .sort((a, b) => compareDesc(projectPinnedAt(b.project), projectPinnedAt(a.project)) || a.index - b.index)
-    .map(({ project }) => project);
-  const otherProjects = projects
-    .map((project, index) => ({ project, index }))
-    .filter(({ project }) => !project.pinned)
-    .sort((a, b) => compareDesc(activityOf(a.project), activityOf(b.project)) || a.index - b.index)
-    .map(({ project }) => project);
+  const indexed = projects.map((project, index) => ({ project, index }));
+  const pinnedProjects = orderBand(
+    indexed.filter(({ project }) => project.pinned),
+    (a, b) => compareDesc(projectPinnedAt(b.project), projectPinnedAt(a.project)) || a.index - b.index,
+  );
+  const otherProjects = orderBand(
+    indexed.filter(({ project }) => !project.pinned),
+    (a, b) => compareDesc(activityOf(a.project), activityOf(b.project)) || a.index - b.index,
+  );
   const orderedProjects = [...pinnedProjects, ...otherProjects];
+  const unorderedKeys = (band: SidebarProject[]) => band.filter((project) => !rank.has(project.key)).map((project) => project.key);
+  const unorderedKeysByBand = { pinned: unorderedKeys(pinnedProjects), other: unorderedKeys(otherProjects) };
+  const projectKeysToRecord = orderedProjects
+    .filter((project) => !rank.has(project.key) && recordable(project))
+    .map((project) => project.key);
 
   for (const project of orderedProjects) {
     const groupFamilies = projectFamilies.get(project.key) ?? [];
@@ -408,7 +449,21 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
   rows.push({ kind: "footer-open", key: "footer-open" });
   if (archivedCount > 0) rows.push({ kind: "footer-archived", key: "footer-archived", count: archivedCount });
 
-  return { rows, projects: orderedProjects, archivedCount };
+  return { rows, projects: orderedProjects, archivedCount, unorderedKeysByBand, projectKeysToRecord };
+}
+
+/**
+ * The next `projectKeysToRecord` the sidebar saves on its own, at most `limit`,
+ * taken from the bottom up. Saved keys go in front of the list and render right
+ * below the unsaved ones, so each batch lands where it already shows and the
+ * unsaved keys above it stay above it. A key sent before but still unsaved
+ * (refused, or no room left) ends the batch: a key saved above it would drop
+ * below it.
+ */
+export function nextProjectKeysToRecord(toRecord: readonly string[], sent: ReadonlySet<string>, limit: number): string[] {
+  let first = toRecord.length;
+  while (first > 0 && toRecord.length - first < limit && !sent.has(toRecord[first - 1])) first--;
+  return toRecord.slice(first);
 }
 
 /**
@@ -489,6 +544,90 @@ export function getRowOffsets(rows: readonly SidebarRow[], layout: SidebarLayout
     offsets[index + 1] = offsets[index] + heights[rows[index].kind];
   }
   return offsets;
+}
+
+/** One project group as it is laid out: from its header row to the bottom of its spacer row. */
+export interface GroupBlock { key: string; pinned: boolean; top: number; bottom: number }
+
+/** The group blocks of `rows` (every group ends with its `spacer:<key>` row), top to bottom. */
+export function groupBlocks(rows: readonly SidebarRow[], offsets: readonly number[]): GroupBlock[] {
+  const blocks: GroupBlock[] = [];
+  let open: GroupBlock | null = null;
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+    if (row.kind === "group") {
+      open = { key: row.project.key, pinned: row.project.pinned, top: offsets[index], bottom: offsets[index + 1] };
+      blocks.push(open);
+    } else if (open && row.kind === "spacer" && row.key === `spacer:${open.key}`) {
+      open.bottom = offsets[index + 1];
+      open = null;
+    }
+  }
+  return blocks;
+}
+
+/** Where a dragged group would go: next to `anchorKey`, with its drop line at `lineY` (content coordinates). */
+export interface GroupDrop { anchorKey: string; position: ProjectMovePosition; lineY: number }
+
+/** Spacer rows are 8px: the drop line sits in the middle of one. */
+const DROP_LINE_INSET = 4;
+
+/**
+ * The drop target for a group dragged to content position `y`. Only the
+ * dragged group's band counts (a drag never crosses from pinned projects to
+ * the others), so a pointer above the band (the pinned section) means its
+ * top and one below it (the footer) its bottom. The dragged block goes
+ * before the first other block whose middle is below `y`. Null when that is
+ * where it already is, or the band has no other group. Works from the rows
+ * and offsets alone: collapsed groups, "show more" and rows not mounted
+ * count as laid out.
+ */
+export function groupDropAt(blocks: readonly GroupBlock[], draggedKey: string, y: number): GroupDrop | null {
+  const dragged = blocks.find((block) => block.key === draggedKey);
+  if (!dragged) return null;
+  const band = blocks.filter((block) => block.pinned === dragged.pinned);
+  const from = band.indexOf(dragged);
+  const others = band.filter((block) => block !== dragged);
+  if (others.length === 0) return null;
+  const to = others.filter((block) => (block.top + block.bottom) / 2 < y).length;
+  if (to === from) return null;
+  const lineY = Math.max(1, to < others.length ? others[to].top - DROP_LINE_INSET : others[others.length - 1].bottom - DROP_LINE_INSET);
+  return to > 0
+    ? { anchorKey: others[to - 1].key, position: "after", lineY }
+    : { anchorKey: others[0].key, position: "before", lineY };
+}
+
+/**
+ * Move up / Move down in a group's menu: the move that swaps `key` with its
+ * neighbour in its band (`projects` in group order). Null at the band's edge.
+ */
+export function adjacentProjectMove(
+  projects: readonly SidebarProject[],
+  key: string,
+  direction: "up" | "down",
+): { anchorKey: string; position: ProjectMovePosition } | null {
+  const project = projects.find((item) => item.key === key);
+  if (!project) return null;
+  const band = projects.filter((item) => item.pinned === project.pinned);
+  const index = band.indexOf(project);
+  const neighbour = band[direction === "up" ? index - 1 : index + 1];
+  if (!neighbour) return null;
+  return { anchorKey: neighbour.key, position: direction === "up" ? "before" : "after" };
+}
+
+/**
+ * Auto-scroll while a group is dragged near an edge of the list (`top` and
+ * `bottom` of its box, `clientY` the pointer): up to `maxStep` px a frame,
+ * faster the deeper into the `edge` band (at most half the box), at full
+ * speed past it; negative scrolls up, 0 outside both bands.
+ */
+export function autoScrollDelta(clientY: number, top: number, bottom: number, edge: number, maxStep: number): number {
+  const band = Math.min(edge, (bottom - top) / 2);
+  if (!(band > 0) || !Number.isFinite(clientY)) return 0;
+  const speed = (depth: number) => Math.ceil(maxStep * Math.min(1, depth / band));
+  if (clientY < top + band) return -speed(top + band - clientY);
+  if (clientY > bottom - band) return speed(clientY - (bottom - band));
+  return 0;
 }
 
 const UNMEASURED_VIEWPORT_HEIGHT = 600;

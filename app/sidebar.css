@@ -8,6 +8,8 @@
  * not a media query, so the CSS always matches the heights the rows got.
  */
 .session-tree {
+  /* The drag ghost's box: it sits outside the scroll box (SessionTree). */
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
@@ -402,17 +404,78 @@
 }
 
 /* Project group header: the name with its chevron after it, the toggle fills
-   the row; "+" and ⋯ replace the summary on hover. Same inset box as rows. */
+   the row; "+" and ⋯ replace the summary on hover. Same inset box as rows.
+   It can be dragged (hooks/useGroupDrag.ts): a long-press on a phone must
+   not select its text or open the iOS callout. touch-action stays as it is,
+   so a swipe that starts on a header still scrolls the list. */
 .session-tree-group {
   right: var(--session-tree-inset-right);
   left: var(--session-tree-inset-left);
   gap: 2px;
   padding: 0 4px 0 0;
   border-radius: 7px;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .session-tree-group:hover {
   background: var(--bg-hover);
+}
+
+/* Picked up by a long-press, before the finger moves. */
+.session-tree-group.is-drag-armed {
+  background: var(--bg-selected);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+}
+
+/* While a group is dragged: its block dimmed in place, the drop line in the
+   middle of a spacer row, and a ghost of the header under the pointer. */
+.session-tree-drag-source {
+  position: absolute;
+  right: var(--session-tree-inset-right);
+  left: var(--session-tree-inset-left);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--bg-panel) 55%, transparent);
+  pointer-events: none;
+}
+
+.session-tree-drop-line {
+  position: absolute;
+  right: var(--session-tree-inset-right);
+  left: var(--session-tree-inset-left);
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.session-tree-drag-ghost {
+  position: absolute;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-panel);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.session-tree.is-group-dragging {
+  cursor: grabbing;
+}
+
+.session-tree.is-group-dragging * {
+  cursor: grabbing;
 }
 
 .session-tree-group-toggle {
@@ -936,6 +999,10 @@
 
 .sidebar-icon-down {
   transform: rotate(90deg);
+}
+
+.sidebar-icon-up {
+  transform: rotate(-90deg);
 }
 
 /* Files tab: the project in use, its worktree, the explorer toolbar and tree. */

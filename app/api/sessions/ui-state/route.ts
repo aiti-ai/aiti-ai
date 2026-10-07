@@ -14,9 +14,10 @@ import {
 
 export const dynamic = "force-dynamic";
 
-// The sidebar's pins and archive (lib/session-ui-state.ts). Ids are not
-// checked against the session list: an entry for a session that is gone is
-// harmless, and deleting a session removes its entry.
+// The sidebar's pins, archive and project order (lib/session-ui-state.ts).
+// Ids and projectKeys are not checked against the session list: an entry for
+// a session that is gone is harmless, and deleting a session removes its
+// entry; a project no longer shown keeps its place in the order.
 
 const NO_STORE = { "Cache-Control": "no-store" };
 

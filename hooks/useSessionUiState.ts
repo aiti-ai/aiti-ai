@@ -17,6 +17,12 @@ export interface SessionUiStateApi {
   state: SessionUiState;
   /** True after the first GET settled (success or failure). */
   loaded: boolean;
+  /**
+   * True once server state has been adopted (a GET or a write response); never
+   * false again. A failed first GET leaves the local state empty: what is
+   * saved on its own (the project order's new keys) waits for this.
+   */
+  synced: boolean;
   /** Last request error (cleared on the next success). */
   error: string | null;
   /** GET /api/sessions/ui-state; a response older than a later read or write is ignored. */
@@ -60,7 +66,7 @@ async function readState(response: Response): Promise<SessionUiState> {
 }
 
 /**
- * Pin/archive state of the sidebar (`/api/sessions/ui-state`).
+ * Pin, archive and project order state of the sidebar (`/api/sessions/ui-state`).
  *
  * The local state is always the last server state with every queued write
  * replayed on top, so a GET or a write response that lands while other writes
@@ -70,6 +76,7 @@ async function readState(response: Response): Promise<SessionUiState> {
 export function useSessionUiState(): SessionUiStateApi {
   const [state, setState] = useState<SessionUiState>(emptySessionUiState);
   const [loaded, setLoaded] = useState(false);
+  const [synced, setSynced] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const serverStateRef = useRef<SessionUiState>(state);
@@ -101,6 +108,7 @@ export function useSessionUiState(): SessionUiStateApi {
       publish();
       if (!keepError) setError(null);
       setLoaded(true);
+      setSynced(true);
     } catch (err) {
       if (loadId !== loadIdRef.current) return;
       setError(errorMessage(err));
@@ -141,6 +149,7 @@ export function useSessionUiState(): SessionUiStateApi {
         serverStateRef.current = next;
         setError(null);
         setLoaded(true);
+        setSynced(true);
         ok = true;
       } catch (err) {
         setError(errorMessage(err));
@@ -167,7 +176,7 @@ export function useSessionUiState(): SessionUiStateApi {
   }, [refresh]);
 
   return useMemo(
-    () => ({ state, loaded, error, refresh, noteRevision, apply, snapshot }),
-    [state, loaded, error, refresh, noteRevision, apply, snapshot],
+    () => ({ state, loaded, synced, error, refresh, noteRevision, apply, snapshot }),
+    [state, loaded, synced, error, refresh, noteRevision, apply, snapshot],
   );
 }
