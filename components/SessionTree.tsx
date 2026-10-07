@@ -64,10 +64,6 @@ export interface SessionTreeProps {
   confirmDeleteRootId: string | null;
   /** Row whose menu is open: kept mounted, its ⋯ shown pressed. A group row's key works too. */
   activeMenuRowKey: string | null;
-  /** Which button of the `activeMenuRowKey` group opened the menu; defaults to its ⋯. */
-  activeGroupMenu?: "new" | "more" | null;
-  /** Project key whose "+" is still looking up worktrees: that button is disabled meanwhile. */
-  pendingGroupKey?: string | null;
   onSelectFamily(family: SessionFamily): void;
   onToggleGroup(projectKey: string): void;
   /** Reveal SHOW_MORE_STEP more families; key is a projectKey or PINNED_MORE_KEY. */
@@ -85,7 +81,8 @@ export interface SessionTreeProps {
   onRenameCancel(): void;
   onDeleteConfirm(family: SessionFamily, event: ReactMouseEvent): void;
   onDeleteCancel(): void;
-  onGroupNew(project: SidebarProject, opener: HTMLElement): void;
+  /** A group's "+": a new session in that project at once. */
+  onGroupNew(project: SidebarProject): void;
   onGroupMenu(project: SidebarProject, opener: HTMLElement): void;
   onOpenOtherProject(opener: HTMLElement): void;
   onOpenArchive(): void;
@@ -126,8 +123,6 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
     renamingRootId,
     confirmDeleteRootId,
     activeMenuRowKey,
-    activeGroupMenu,
-    pendingGroupKey,
   } = props;
   const { t } = useI18n();
   // Rows read the handlers at event time, so memoized rows need not re-render
@@ -317,8 +312,7 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
                     row={row}
                     top={top}
                     height={height}
-                    openMenu={menuOpen ? activeGroupMenu ?? "more" : null}
-                    pending={row.project.key === pendingGroupKey}
+                    menuOpen={menuOpen}
                     handlers={handlersRef}
                   />
                 );
@@ -637,15 +631,14 @@ const GroupRowView = memo(function GroupRowView({
   row,
   top,
   height,
-  openMenu,
-  pending,
+  menuOpen,
   handlers,
 }: {
   row: Extract<SidebarRow, { kind: "group" }>;
   top: number;
   height: number;
-  openMenu: "new" | "more" | null;
-  pending: boolean;
+  /** The group's ⋯ menu is open. */
+  menuOpen: boolean;
   handlers: Handlers;
 }) {
   const { t } = useI18n();
@@ -653,7 +646,7 @@ const GroupRowView = memo(function GroupRowView({
   const className = [
     "session-tree-row session-tree-group",
     project.current ? "is-current" : "",
-    openMenu || pending ? "is-active" : "",
+    menuOpen ? "is-active" : "",
   ].filter(Boolean).join(" ");
 
   return (
@@ -673,26 +666,23 @@ const GroupRowView = memo(function GroupRowView({
       <span className="session-tree-group-actions">
         <button
           type="button"
-          className={`session-tree-group-action${openMenu === "new" ? " is-active" : ""}`}
+          className="session-tree-group-action"
           aria-label={t("sidebar.newSessionInProject", { name: project.name })}
           title={t("sidebar.newSessionInProject", { name: project.name })}
-          aria-expanded={openMenu === "new" ? true : undefined}
-          aria-busy={pending || undefined}
-          disabled={pending}
           onClick={(event) => {
             event.stopPropagation();
-            handlers.current.onGroupNew(project, event.currentTarget);
+            handlers.current.onGroupNew(project);
           }}
         >
-          {pending ? <SpinnerIcon size={12} /> : <PlusIcon size={13} />}
+          <PlusIcon size={13} />
         </button>
         <button
           type="button"
-          className={`session-tree-group-action${openMenu === "more" ? " is-active" : ""}`}
+          className={`session-tree-group-action${menuOpen ? " is-active" : ""}`}
           aria-label={t("sidebar.projectActions", { name: project.name })}
           title={t("sidebar.projectActions", { name: project.name })}
           aria-haspopup="menu"
-          aria-expanded={openMenu === "more"}
+          aria-expanded={menuOpen}
           onClick={(event) => {
             event.stopPropagation();
             handlers.current.onGroupMenu(project, event.currentTarget);

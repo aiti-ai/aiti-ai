@@ -13,12 +13,3 @@ test("uses the server-resolved current worktree identity", () => {
   assert.match(source, /if \(currentWorktreePath === path\) setSelectedCwd\(worktreeState\.projectRoot\)/);
   assert.doesNotMatch(source, /const isCurrent = wt\.path === selectedCwd/);
 });
-
-test("the group + picker marks the checkout in use with the server-resolved path", () => {
-  const picker = source.slice(source.indexOf("const worktreeMenuItems"), source.indexOf("const viewMenuItems"));
-  assert.match(
-    picker,
-    /const current = pickerCurrentWorktreePath\(listing, project\.key === selectedProject\?\.key \? currentWorktreePath : null\);/,
-  );
-  assert.doesNotMatch(picker, /worktree\.path === selectedCwd/);
-});

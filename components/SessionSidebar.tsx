@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type UIEvent as ReactUIEvent } from "react";
+import { useEffect, useImperativeHandle, useLayoutEffect, useState, useCallback, useMemo, useRef, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode, type Ref, type UIEvent as ReactUIEvent } from "react";
 import type { SessionInfo } from "@/lib/types";
 import { listSessionFamilies, type SessionFamily } from "@/lib/session-family";
 import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
@@ -30,14 +30,16 @@ import {
   saveSidebarTab,
   type SidebarTab,
 } from "@/lib/sidebar-prefs";
+import { sessionMenuEntries, type SessionMenuActionId } from "@/lib/sidebar-actions";
 import {
-  needsWorktreePicker,
-  parseWorktreeListing,
-  pickerCurrentWorktreePath,
-  sessionMenuEntries,
-  type SessionMenuActionId,
-  type WorktreeListing,
-} from "@/lib/sidebar-actions";
+  mergeProjectChoices,
+  newSessionContextKey,
+  type NewSessionContext,
+  type NewSessionOptions,
+  type NewSessionTarget,
+  type ProjectChoice,
+  type WorktreeChoice,
+} from "@/lib/new-session-context";
 import { chunkForSessionUiRequests, type SessionUiStateRequest } from "@/lib/session-ui-state-shared";
 import { focusIfLost } from "@/lib/stacked-dialog";
 import { useI18n } from "@/hooks/useI18n";
@@ -135,8 +137,12 @@ function sessionListUrl(summary: boolean, force: boolean): string {
 interface Props {
   selectedSessionId: string | null;
   onSelectSession: (session: SessionInfo, isRestore?: boolean, entryId?: string, blockIndex?: number) => void;
-  /** projectKey: the target's project identity when it is known (a group's "+"). */
-  onNewSession?: (sessionId: string, cwd: string, projectKey?: string | null) => void;
+  /** projectKey: the target's project identity when it is known (a group's "+", the composer's bar). */
+  onNewSession?: (sessionId: string, cwd: string, projectKey?: string | null, options?: NewSessionOptions) => void;
+  /** What the bar above a fresh composer moves through (`SessionSidebarControl`). */
+  controlRef?: Ref<SessionSidebarControl>;
+  /** The sidebar's cwd as the bar above a fresh composer shows it; reported when that changes. */
+  onNewSessionContextChange?: (context: NewSessionContext | null) => void;
   initialSessionId?: string | null;
   skipInitialProjectSelection?: boolean;
   onInitialRestoreDone?: () => void;
@@ -161,11 +167,27 @@ interface Props {
   onSessionsChange?: (sessions: SessionInfo[]) => void;
 }
 
-interface WorktreeEntry {
-  path: string;
-  branch: string | null;
-  isMain: boolean;
+/**
+ * How the bar above a fresh composer (components/NewSessionContextBar.tsx)
+ * moves it: the sidebar keeps the cwd and the project identity, so every
+ * move goes through here, as the sidebar's own "+" buttons do.
+ */
+export interface SessionSidebarControl {
+  /** Identity, then the sidebar's cwd, then `onNewSession`, as any new session. */
+  startNewSessionIn(target: NewSessionTarget): void;
+  /**
+   * Opens the folder picker; the validated folder goes to `onPicked`, which
+   * decides whether to start there. Focus goes back to `returnFocusTo` when
+   * the picker closes without moving the composer.
+   */
+  openFolderForNewSession(onPicked: (target: NewSessionTarget) => void, returnFocusTo: HTMLElement | null): void;
+  /** Lists the worktrees of the sidebar's cwd again (the composer's worktree menu opening). */
+  refreshWorktrees(): void;
+  /** Creates a worktree of `project` and lists it at once; the caller starts the session in it. */
+  createWorktree(project: ProjectChoice, branch: string): Promise<{ path: string } | { error: string }>;
 }
+
+type WorktreeEntry = WorktreeChoice;
 
 interface WorktreeState {
   /** The cwd this data was fetched for — guards against stale responses */
@@ -195,28 +217,10 @@ interface ValidatedProject {
 
 type SessionRow = Extract<SidebarRow, { kind: "session" }>;
 
-/** Where a new session starts, from the header "+", a group's "+" or its worktree picker. */
-interface NewSessionTarget {
-  cwd: string;
-  /** The target's project identity, handed to the shell so it adopts that project. */
-  projectKey?: string;
-  /** Server-resolved root of that identity (a worktree listing): installed before the cwd changes. */
-  projectRoot?: string;
-}
-
 /** The one popup menu of the sidebar; kept here, above the virtualized rows. */
 type SidebarMenuState =
   | { kind: "row"; row: SessionRow; anchor: SidebarMenuAnchor; opener: HTMLElement | null }
   | { kind: "group"; project: SidebarProject; olderCount: number; anchor: SidebarMenuAnchor; opener: HTMLElement }
-  | {
-      kind: "worktrees";
-      project: SidebarProject;
-      listing: WorktreeListing;
-      anchor: SidebarMenuAnchor;
-      opener: HTMLElement;
-      /** Set while the menu shows the "new worktree" form instead of the list. */
-      form: { busy: boolean; error: string | null } | null;
-    }
   | { kind: "view"; anchor: SidebarMenuAnchor; opener: HTMLElement };
 
 const UNREAD_SESSIONS_STORAGE_KEY = "pi-web:unread-session-ids";
@@ -518,63 +522,7 @@ function PiWebTitle() {
   );
 }
 
-/**
- * The worktree picker's "New worktree…" body: a branch name and Create. On a
- * phone the sheet brings its own Cancel and title.
- */
-function WorktreeCreateForm({
-  heading,
-  busy,
-  error,
-  showCancel,
-  onCreate,
-  onCancel,
-}: {
-  heading: string | null;
-  busy: boolean;
-  error: string | null;
-  showCancel: boolean;
-  onCreate: (branch: string) => void;
-  onCancel: () => void;
-}) {
-  const { t } = useI18n();
-  const [branch, setBranch] = useState("");
-  const trimmed = branch.trim();
-  const submit = () => {
-    if (trimmed && !busy) onCreate(trimmed);
-  };
-  return (
-    <div className="sidebar-worktree-form">
-      {heading && <div className="sidebar-menu-header">{heading}</div>}
-      <input
-        className="sidebar-worktree-input"
-        value={branch}
-        readOnly={busy}
-        placeholder={t("sidebar.branchName")}
-        aria-label={t("sidebar.branchName")}
-        onChange={(event) => setBranch(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
-          event.preventDefault();
-          submit();
-        }}
-      />
-      <div className="sidebar-worktree-form-buttons">
-        <button type="button" className="sidebar-worktree-create" disabled={busy || !trimmed} onClick={submit}>
-          {busy ? t("sidebar.creating") : t("sidebar.create")}
-        </button>
-        {showCancel && (
-          <button type="button" className="sidebar-worktree-cancel" onClick={onCancel}>
-            {t("sidebar.cancel")}
-          </button>
-        )}
-      </div>
-      {error && <div className="sidebar-worktree-error" role="alert">{error}</div>}
-    </div>
-  );
-}
-
-export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
+export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSession, controlRef, onNewSessionContextChange, initialSessionId, skipInitialProjectSelection, onInitialRestoreDone, refreshKey, onSessionDeleted, selectedCwd: selectedCwdProp, onCwdChange, onOpenFile, onOpenTerminal, explorerRefreshKey, onExplorerRefresh, onAtMention, onAtMentions, onBackgroundTaskDone, onRunningSessionIdsChange, onSessionsChange }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
   const [allSessions, setAllSessions] = useState<SessionInfo[]>([]);
@@ -589,7 +537,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const [projectFilter, setProjectFilter] = useState("");
   const [wtFilter, setWtFilter] = useState("");
-  const [customPathOpen, setCustomPathOpen] = useState(false);
+  // Open for the files tab's project list, or for the composer's bar ("new-session").
+  const [customPathOpen, setCustomPathOpen] = useState<false | "files" | "new-session">(false);
   const [customPathValue, setCustomPathValue] = useState(loadLastCustomCwd);
   const [customPathError, setCustomPathError] = useState<string | null>(null);
   const [customPathValidating, setCustomPathValidating] = useState(false);
@@ -649,13 +598,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [renamingRootId, setRenamingRootId] = useState<string | null>(null);
   const [confirmDeleteRootId, setConfirmDeleteRootId] = useState<string | null>(null);
   const [menu, setMenu] = useState<SidebarMenuState | null>(null);
-  const menuRef = useRef<SidebarMenuState | null>(null);
-  menuRef.current = menu;
   const selectedSessionIdRef = useRef(selectedSessionId);
   selectedSessionIdRef.current = selectedSessionId;
-  // A group "+" waiting for its project's worktree list.
-  const [pendingGroupKey, setPendingGroupKey] = useState<string | null>(null);
-  const groupNewRequestRef = useRef(0);
   const [toast, setToast] = useState<SidebarToastData | null>(null);
   const toastIdRef = useRef(0);
   const [uiWriteFailures, setUiWriteFailures] = useState(0);
@@ -664,24 +608,26 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // there was in the sessions tab, which hides with its focus).
   const filesTabFocusRef = useRef<"project-button" | "project-list" | null>(null);
   const contextMenuFocusRef = useRef<HTMLElement | null>(null);
+  // The composer's "Open another project…": where the validated folder goes,
+  // and the control focus returns to when the composer does not move.
+  const folderPickRef = useRef<((target: NewSessionTarget) => void) | null>(null);
+  const folderReturnFocusRef = useRef<HTMLElement | null>(null);
 
-  // A group's "+" waits for its project's worktree list. Anything the user
-  // does meanwhile (a session or project picked, another new session, a menu
-  // or picker opened) cancels it: a late answer must not start a session, or
-  // open the worktree picker, over wherever they went.
-  const cancelGroupNew = useCallback(() => {
-    groupNewRequestRef.current += 1;
-    setPendingGroupKey(null);
+  // Focus to settle once a change is on the page, after the control that had
+  // it went away with that change (a toast's button, a delete confirmation's
+  // Cancel, the folder picker). Only focus that fell to <body> moves
+  // (focusIfLost): focus the user put elsewhere stays.
+  const focusAfterCommitRef = useRef<(() => HTMLElement | null) | null>(null);
+  const [focusRequest, setFocusRequest] = useState(0);
+  const focusAfterCommit = useCallback((target: () => HTMLElement | null) => {
+    focusAfterCommitRef.current = target;
+    setFocusRequest((count) => count + 1);
   }, []);
   useEffect(() => {
-    cancelGroupNew();
-  }, [selectedSessionId, selectedCwd, cancelGroupNew]);
-  useEffect(() => {
-    if (menu !== null) cancelGroupNew();
-  }, [menu, cancelGroupNew]);
-  useEffect(() => {
-    if (dropdownOpen || wtDropdownOpen || customPathOpen) cancelGroupNew();
-  }, [dropdownOpen, wtDropdownOpen, customPathOpen, cancelGroupNew]);
+    const target = focusAfterCommitRef.current;
+    focusAfterCommitRef.current = null;
+    if (target) focusIfLost(document, target());
+  }, [focusRequest]);
 
   // Pins and archive: pi-web's own state, kept on the server for every window.
   const {
@@ -1126,6 +1072,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const commitCustomPath = useCallback(async (candidate?: string, { remember = true } = {}) => {
     const path = (candidate ?? customPathValue).trim();
     if (!path || customPathValidating) return;
+    const purpose = customPathOpen;
 
     setCustomPathValidating(true);
     setCustomPathError(null);
@@ -1145,27 +1092,39 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         setCustomPathError(data.error ?? `HTTP ${res.status}`);
         return;
       }
+      if (remember) {
+        saveLastCustomCwd(data.cwd);
+        setCustomPathValue(data.cwd);
+      }
+      setCustomPathOpen(false);
+      if (purpose === "new-session") {
+        // The composer's bar asked: the shell decides whether its fresh
+        // composer moves there, and the sidebar's cwd moves only with it.
+        const pick = folderPickRef.current;
+        const opener = folderReturnFocusRef.current;
+        folderPickRef.current = null;
+        folderReturnFocusRef.current = null;
+        pick?.({ cwd: data.cwd, projectKey: data.projectKey, projectRoot: data.projectRoot });
+        // Not moved (the folder in use): the bar's control takes focus back.
+        focusAfterCommit(() => (opener?.isConnected ? opener : null));
+        return;
+      }
       setValidatedProject({
         cwd: data.cwd,
         root: data.projectRoot,
         key: data.projectKey,
       });
-      if (remember) {
-        saveLastCustomCwd(data.cwd);
-        setCustomPathValue(data.cwd);
-      }
       setSelectedCwd(data.cwd);
-      setCustomPathOpen(false);
       setDropdownOpen(false);
     } catch (e) {
       setCustomPathError(e instanceof Error ? e.message : String(e));
     } finally {
       setCustomPathValidating(false);
     }
-  }, [customPathValue, customPathValidating]);
+  }, [customPathOpen, customPathValue, customPathValidating, focusAfterCommit]);
 
   const handleCustomPathClick = useCallback(() => {
-    setCustomPathOpen(true);
+    setCustomPathOpen("files");
     setCustomPathError(null);
     setDropdownOpen(false);
   }, []);
@@ -1274,26 +1233,56 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // works when the prop value won't change — e.g. re-clicking the already
   // open session after manually switching worktrees.
   const handleSelectSessionFromList = useCallback((s: SessionInfo, entryId?: string, blockIndex?: number) => {
-    cancelGroupNew();
     setAllSessions((current) => current.some((session) => session.id === s.id) ? current : [s, ...current]);
     if (s.cwd) setSelectedCwd(s.cwd);
     onSelectSession(s, false, entryId, blockIndex);
-  }, [cancelGroupNew, onSelectSession]);
+  }, [onSelectSession]);
 
   // Every "new session" goes through here. The cwd moves first, on the click
   // path like a session pick, and the shell gets the target's project so it
   // adopts it up front: a session in another project closes the previous
   // project's file tabs instead of being mistaken for identity hydration.
-  const startNewSessionIn = useCallback(({ cwd, projectKey, projectRoot }: NewSessionTarget) => {
-    cancelGroupNew();
+  const startNewSessionIn = useCallback(({ cwd, projectKey, projectRoot, carryComposer }: NewSessionTarget) => {
     // A worktree without sessions has no other source of identity yet.
     if (projectKey && projectRoot) setValidatedProject({ cwd, root: projectRoot, key: projectKey });
     setSelectedCwd(cwd);
-    onNewSession?.(createTempSessionId(), cwd, projectKey);
-  }, [cancelGroupNew, onNewSession]);
-  // A group's "+" answers later: it starts the session with the newest closure.
+    onNewSession?.(createTempSessionId(), cwd, projectKey, carryComposer ? { carryComposer: true } : undefined);
+  }, [onNewSession]);
+  // The handle below is made once: it calls the newest closure.
   const startNewSessionInRef = useRef(startNewSessionIn);
   startNewSessionInRef.current = startNewSessionIn;
+
+  useImperativeHandle(controlRef, () => ({
+    startNewSessionIn: (target) => startNewSessionInRef.current(target),
+    openFolderForNewSession: (onPicked, returnFocusTo) => {
+      folderPickRef.current = onPicked;
+      folderReturnFocusRef.current = returnFocusTo;
+      setCustomPathError(null);
+      setCustomPathOpen("new-session");
+    },
+    refreshWorktrees: () => setWtRefreshKey((k) => k + 1),
+    createWorktree: async (project, branch) => {
+      try {
+        const res = await fetch("/api/worktrees", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cwd: project.root, branch }),
+        });
+        const data = await res.json().catch(() => ({})) as { path?: string; error?: string };
+        if (!res.ok || data.error || !data.path) return { error: data.error ?? `HTTP ${res.status}` };
+        const path = data.path;
+        // Listed at once, so projectFor() keeps it in the project before the
+        // refetch lands, and listed even when nobody starts a session in it.
+        setWorktreeState((prev) => (prev && prev.projectKey === project.key && !prev.worktrees.some((worktree) => worktree.path === path)
+          ? { ...prev, worktrees: [...prev.worktrees, { path, branch, isMain: false }] }
+          : prev));
+        setWtRefreshKey((k) => k + 1);
+        return { path };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  }), []);
 
   // Header "+": a new session in the sidebar's current cwd (worktree).
   const handleNewSession = useCallback(() => {
@@ -1413,6 +1402,30 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     [model.projects],
   );
 
+  // What the bar above a fresh composer shows for this cwd: the project, its
+  // worktrees where the files tab offers them, and every project in the
+  // groups' order (then those with sessions but no group: all of them
+  // archived, or pinned while the project is not). The tree is rebuilt on
+  // every refresh and running poll; the bar hears of it only when something
+  // it shows changed.
+  const newSessionContext = useMemo<NewSessionContext | null>(() => {
+    if (!selectedCwd || !selectedProject) return null;
+    const listed = showWorktreeSwitcher && worktreeState !== null;
+    return {
+      cwd: selectedCwd,
+      project: { key: selectedProject.key, root: selectedProject.root },
+      worktrees: listed ? worktreeState.worktrees.map(({ path, branch, isMain }) => ({ path, branch, isMain })) : null,
+      currentWorktreePath: listed ? currentWorktreePath : null,
+      projects: mergeProjectChoices(model.projects, recentProjects),
+    };
+  }, [selectedCwd, selectedProject, showWorktreeSwitcher, worktreeState, currentWorktreePath, model.projects, recentProjects]);
+  const newSessionContextRef = useRef(newSessionContext);
+  newSessionContextRef.current = newSessionContext;
+  const newSessionContextSignature = newSessionContextKey(newSessionContext);
+  useEffect(() => {
+    onNewSessionContextChange?.(newSessionContextRef.current);
+  }, [newSessionContextSignature, onNewSessionContextChange]);
+
   // Picking a session in another group makes its project current. The group
   // that was current keeps its look instead of folding up under the pointer
   // (keepOutgoingGroupOpen), before the browser paints the change.
@@ -1431,22 +1444,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     toastIdRef.current += 1;
     setToast({ id: toastIdRef.current, message, actions });
   }, []);
-
-  // Focus to settle once a change is on the page, after the control that had
-  // it went away with that change (a toast's button, a delete confirmation's
-  // Cancel). Only focus that fell to <body> moves (focusIfLost): focus the
-  // user put elsewhere stays.
-  const focusAfterCommitRef = useRef<(() => HTMLElement | null) | null>(null);
-  const [focusRequest, setFocusRequest] = useState(0);
-  const focusAfterCommit = useCallback((target: () => HTMLElement | null) => {
-    focusAfterCommitRef.current = target;
-    setFocusRequest((count) => count + 1);
-  }, []);
-  useEffect(() => {
-    const target = focusAfterCommitRef.current;
-    focusAfterCommitRef.current = null;
-    if (target) focusIfLost(document, target());
-  }, [focusRequest]);
 
   /** The selected tab: focus has somewhere to go when the control it was on is gone. */
   const selectedTabButton = useCallback(
@@ -1765,67 +1762,19 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }));
   }, [archiveFamilies, familyByRootId, treeSelectionInput]);
 
-  // A group's "+": the project's worktrees decide between starting at once in
-  // its root and asking which worktree (GET /api/worktrees also makes every
-  // listed worktree browsable). The group's own key goes to the shell, so a
-  // sibling worktree is never mistaken for another project.
-  const handleGroupNew = useCallback((project: SidebarProject, opener: HTMLElement) => {
-    const requestId = ++groupNewRequestRef.current;
-    const clickedAnchor = buttonAnchor(opener, "end");
+  // A group's "+": a new session at once. The current project starts in the
+  // sidebar's worktree, another one in its root (the main checkout); the bar
+  // above the fresh composer picks another worktree. The group's own key and
+  // root go along, so a worktree is never taken for another project, and a
+  // pinned project without sessions keeps its server identity.
+  const handleGroupNew = useCallback((project: SidebarProject) => {
     setMenu(null);
-    setPendingGroupKey(project.key);
-    void fetch(`/api/worktrees?cwd=${encodeURIComponent(project.root)}`, { cache: "no-store" })
-      .then((res) => res.json() as Promise<unknown>)
-      .catch(() => null)
-      .then((data) => {
-        if (requestId !== groupNewRequestRef.current) return;
-        setPendingGroupKey(null);
-        const listing = parseWorktreeListing(data);
-        if (listing && needsWorktreePicker(listing)) {
-          setMenu({
-            kind: "worktrees",
-            project,
-            listing,
-            anchor: opener.isConnected ? buttonAnchor(opener, "end") : clickedAnchor,
-            opener,
-            form: null,
-          });
-          return;
-        }
-        // No choice to make (or no answer): start in the project root.
-        startNewSessionInRef.current(listing
-          ? { cwd: project.root, projectKey: listing.projectKey, projectRoot: listing.projectRoot }
-          : { cwd: project.root, projectKey: project.key });
-      });
-  }, []);
-
-  // The picker's "New worktree…": create it, then start the session in it.
-  const createWorktreeForSession = useCallback(async (listing: WorktreeListing, branch: string) => {
-    const setForm = (form: { busy: boolean; error: string | null }) => {
-      setMenu((current) => (current?.kind === "worktrees" && current.listing === listing && current.form ? { ...current, form } : current));
-    };
-    setForm({ busy: true, error: null });
-    try {
-      const res = await fetch("/api/worktrees", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cwd: listing.projectRoot, branch }),
-      });
-      const data = await res.json().catch(() => ({})) as { path?: string; error?: string };
-      if (!res.ok || data.error || !data.path) {
-        setForm({ busy: false, error: data.error ?? `HTTP ${res.status}` });
-        return;
-      }
-      setWtRefreshKey((k) => k + 1);
-      // Closed meanwhile: the worktree exists, but nobody asked for a session any more.
-      const current = menuRef.current;
-      if (current?.kind !== "worktrees" || current.listing !== listing) return;
-      setMenu(null);
-      startNewSessionIn({ cwd: data.path, projectKey: listing.projectKey, projectRoot: listing.projectRoot });
-    } catch (e) {
-      setForm({ busy: false, error: e instanceof Error ? e.message : String(e) });
-    }
-  }, [startNewSessionIn]);
+    startNewSessionIn({
+      cwd: project.current && selectedCwd ? selectedCwd : project.root,
+      projectKey: project.key,
+      projectRoot: project.root,
+    });
+  }, [selectedCwd, startNewSessionIn]);
 
   const closeMenu = useCallback(() => setMenu(null), []);
 
@@ -1968,36 +1917,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     ];
   };
 
-  const worktreeMenuItems = (project: SidebarProject, listing: WorktreeListing): SidebarMenuItem[] => {
-    const current = pickerCurrentWorktreePath(listing, project.key === selectedProject?.key ? currentWorktreePath : null);
-    const items: SidebarMenuItem[] = [];
-    // The sheet's title already asks the question.
-    if (!isMobile) items.push({ type: "header", id: "heading", label: t("sidebar.pickWorktree") });
-    for (const worktree of listing.worktrees) {
-      items.push({
-        type: "item",
-        id: `worktree:${worktree.path}`,
-        label: worktree.branch ?? projectNameOf(worktree.path),
-        mono: true,
-        note: worktree.isMain ? t("sidebar.main") : undefined,
-        checked: worktree.path === current,
-        onSelect: () => startNewSessionIn({ cwd: worktree.path, projectKey: listing.projectKey, projectRoot: listing.projectRoot }),
-      });
-    }
-    items.push({ type: "separator", id: "separator" });
-    items.push({
-      type: "item",
-      id: "new-worktree",
-      label: t("sidebar.newWorktree"),
-      icon: <PlusIcon />,
-      onSelect: ({ keepOpen }) => {
-        keepOpen();
-        setMenu((state) => (state?.kind === "worktrees" ? { ...state, form: { busy: false, error: null } } : state));
-      },
-    });
-    return items;
-  };
-
   const viewMenuItems = (): SidebarMenuItem[] => [
     { type: "item", id: "collapse-all", label: t("sidebar.collapseAllGroups"), icon: <ChevronIcon />, onSelect: () => setAllGroupsExpanded(false) },
     { type: "item", id: "expand-all", label: t("sidebar.expandAllGroups"), icon: <ChevronIcon className="sidebar-icon-down" />, onSelect: () => setAllGroupsExpanded(true) },
@@ -2014,10 +1933,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   let menuTitle: string | undefined;
   let menuLabel = "";
-  // Room for "Archive sessions older than 7 days · N" and branch names.
+  // Room for "Archive sessions older than 7 days · N".
   let menuWidth: number | undefined;
   let menuItems: SidebarMenuItem[] | undefined;
-  let menuBody: ReactNode;
   if (menu?.kind === "row" && menuRow) {
     menuTitle = sessionRowTitle(menuRow.family.root);
     menuLabel = t("sidebar.sessionActions");
@@ -2027,27 +1945,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     menuLabel = t("sidebar.projectActions", { name: menu.project.name });
     menuItems = groupMenuItems(menu.project, menu.olderCount);
     menuWidth = 264;
-  } else if (menu?.kind === "worktrees") {
-    menuWidth = 240;
-    if (menu.form) {
-      const { listing, form } = menu;
-      menuTitle = t("sidebar.newWorktreeForSession");
-      menuLabel = menuTitle;
-      menuBody = (
-        <WorktreeCreateForm
-          heading={isMobile ? null : menuTitle}
-          busy={form.busy}
-          error={form.error}
-          showCancel={!isMobile}
-          onCreate={(branch) => { void createWorktreeForSession(listing, branch); }}
-          onCancel={closeMenu}
-        />
-      );
-    } else {
-      menuTitle = t("sidebar.pickWorktree");
-      menuLabel = menuTitle;
-      menuItems = worktreeMenuItems(menu.project, menu.listing);
-    }
   } else if (menu?.kind === "view") {
     menuTitle = t("sidebar.viewOptions");
     menuLabel = menuTitle;
@@ -2057,10 +1954,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // The tree row (and the button in it) that the open menu belongs to.
   const activeMenuRowKey = menu?.kind === "row"
     ? menu.row.key
-    : menu?.kind === "group" || menu?.kind === "worktrees"
-      ? `group:${menu.project.key}`
-      : pendingGroupKey !== null ? `group:${pendingGroupKey}` : null;
-  const activeGroupMenu = menu?.kind === "group" ? "more" : menu?.kind === "worktrees" || pendingGroupKey !== null ? "new" : null;
+    : menu?.kind === "group" ? `group:${menu.project.key}` : null;
 
   const treeLayout = isMobile ? "mobile" : "desktop";
   // Until pins and archive have loaded, archived rows would flash in.
@@ -2072,8 +1966,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     renamingRootId,
     confirmDeleteRootId,
     activeMenuRowKey,
-    activeGroupMenu,
-    pendingGroupKey,
     onSelectFamily: handleSelectFamily,
     onToggleGroup: handleToggleGroup,
     onShowMore: handleShowMore,
@@ -2109,8 +2001,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           busy={customPathValidating}
           error={customPathError}
           onCancel={() => {
+            // The composer's "Open another project…" puts focus back on its
+            // control: the picker took it and leaves nothing behind.
+            const opener = customPathOpen === "new-session" ? folderReturnFocusRef.current : null;
+            folderPickRef.current = null;
+            folderReturnFocusRef.current = null;
             setCustomPathOpen(false);
             setCustomPathError(null);
+            if (opener) focusAfterCommit(() => (opener.isConnected ? opener : null));
           }}
           onSelect={(path) => void commitCustomPath(path)}
         />
@@ -2825,9 +2723,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         onClose={closeMenu}
         returnFocusTo={menu?.opener ?? null}
         width={menuWidth}
-      >
-        {menuBody}
-      </SidebarMenu>
+      />
       <SidebarToast toast={toast} onDismiss={() => setToast(null)} dismissLabel={t("sidebar.dismiss")} />
     </div>
   );

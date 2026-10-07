@@ -33,7 +33,7 @@ const items = [
   { type: "header", id: "head", label: "New session in which worktree?" },
   { type: "item", id: "pin", label: "Pin", icon: h(PinIcon), shortcut: "P", onSelect: noop },
   { type: "item", id: "main", label: "main", mono: true, note: "main", checked: true, onSelect: noop },
-  { type: "item", id: "feature", label: "feature/x", mono: true, checked: false, onSelect: noop },
+  { type: "item", id: "feature", label: "feature/x", mono: true, checked: false, title: "/work/app-worktrees/feature-x", onSelect: noop },
   { type: "item", id: "archive", label: "Archive", shortcut: "A", disabled: true, disabledReason: "Running", onSelect: noop },
   { type: "separator", id: "sep" },
   { type: "item", id: "delete", label: "Delete…", shortcut: "D", danger: true, onSelect: noop },
@@ -90,6 +90,8 @@ test("desktop menu markup: menu roles, check marks, shortcuts, notes and disable
   const feature = html.match(/<button[^>]*aria-checked="false"[^>]*>.*?<\/button>/)?.[0] ?? "";
   assert.match(feature, /role="menuitemradio"/);
   assert.match(feature, /<span class="sidebar-menu-icon"><\/span>/, "an unchecked choice keeps an empty slot");
+  assert.match(feature, /title="\/work\/app-worktrees\/feature-x"/, "a tooltip shows what the label shortens");
+  assert.doesNotMatch(main, /title=/);
 
   const archive = html.match(/<button[^>]*aria-disabled="true"[^>]*>.*?<\/button>/)?.[0] ?? "";
   assert.match(archive, /Archive/);
