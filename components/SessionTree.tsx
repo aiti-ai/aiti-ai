@@ -19,6 +19,9 @@ import {
   PINNED_MORE_KEY,
   getRowOffsets,
   getVisibleRowIndices,
+  revealScrollTop,
+  revealStep,
+  type RevealMisses,
   type SidebarLayout,
   type SidebarProject,
   type SidebarRow,
@@ -51,6 +54,33 @@ import {
  */
 
 type SessionRow = Extract<SidebarRow, { kind: "session" }>;
+
+/**
+ * A request to bring one row into view, made by the parent after a change
+ * that puts it somewhere the user is not looking (a fork's new row, a moved
+ * group). Until it is handled the row is kept mounted. It is handled once:
+ * scrolled to when its row is in the rows, or dropped (revealStep(): its row
+ * missed REVEAL_MAX_MISSES rows updates, or it is older than
+ * REVEAL_EXPIRY_MS), so it never fires later, when that row shows up for
+ * another reason (its group expanded minutes after). Either way the tree
+ * calls onRevealHandled(id), and the parent drops the request: kept, a tree
+ * mounted again (search results replace it while a query is typed) would
+ * take it for a new one.
+ */
+export interface SessionTreeReveal {
+  /** Unique: a new number for every request. */
+  id: number;
+  /** When it was made (Date.now()). */
+  at: number;
+  /** Any row's key: a session row, a group header. */
+  rowKey: string;
+  /**
+   * Also focus the row's first button once it is on the page: when focus has
+   * fallen to <body>, or when this says the element that has it may give it
+   * up (it is still where the request came from). Omitted: focus stays put.
+   */
+  takeFocusFrom?: (active: Element) => boolean;
+}
 
 export interface SessionTreeProps {
   rows: SidebarRow[];
@@ -86,6 +116,10 @@ export interface SessionTreeProps {
   onGroupMenu(project: SidebarProject, opener: HTMLElement): void;
   onOpenOtherProject(opener: HTMLElement): void;
   onOpenArchive(): void;
+  /** Scroll a row into view (and maybe focus it); see SessionTreeReveal. */
+  reveal?: SessionTreeReveal | null;
+  /** The reveal request with this id was scrolled to or dropped: the parent lets go of it. */
+  onRevealHandled?(id: number): void;
 }
 
 /** Rows rendered beyond each edge of the viewport. */
@@ -123,6 +157,7 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
     renamingRootId,
     confirmDeleteRootId,
     activeMenuRowKey,
+    reveal,
   } = props;
   const { t } = useI18n();
   // Rows read the handlers at event time, so memoized rows need not re-render
@@ -194,14 +229,19 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
   }, []);
 
   const offsets = useMemo(() => getRowOffsets(rows, layout), [rows, layout]);
+  // The last reveal request handled (scrolled to, or dropped), ignored from
+  // then on, until the parent's answer to onRevealHandled arrives.
+  const [handledRevealId, setHandledRevealId] = useState<number | null>(null);
+  const pendingReveal = reveal && reveal.id !== handledRevealId ? reveal : null;
+  const pendingRevealKey = pendingReveal?.rowKey ?? null;
   const keepMounted = useMemo(() => {
     const indices: number[] = [];
     rows.forEach((row, index) => {
-      if (row.key === focusedRowKey || row.key === activeMenuRowKey) indices.push(index);
+      if (row.key === focusedRowKey || row.key === activeMenuRowKey || row.key === pendingRevealKey) indices.push(index);
       else if (row.kind === "session" && (row.family.root.id === renamingRootId || row.family.root.id === confirmDeleteRootId)) indices.push(index);
     });
     return indices;
-  }, [rows, focusedRowKey, activeMenuRowKey, renamingRootId, confirmDeleteRootId]);
+  }, [rows, focusedRowKey, activeMenuRowKey, pendingRevealKey, renamingRootId, confirmDeleteRootId]);
   const visibleIndices = useMemo(
     () => (loading ? [] : getVisibleRowIndices(offsets, scrollTop, viewportHeight, OVERSCAN_PX, keepMounted)),
     [loading, offsets, scrollTop, viewportHeight, keepMounted],
@@ -216,7 +256,13 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
   // the group or pinned header. Focus waits in its own ref until a commit has
   // the target mounted, so a second rows change in between cannot drop it.
   const pendingMoreRef = useRef<{ rowKey: string; fallbackKey: string; focus: boolean; scroll: boolean } | null>(null);
-  const pendingFocusRef = useRef<{ rowKey: string; fallbackKey: string; tries: number } | null>(null);
+  const pendingFocusRef = useRef<{
+    rowKey: string;
+    fallbackKey: string;
+    tries: number;
+    /** A reveal's rule for focus that is still on the page (see SessionTreeReveal). */
+    takeFocusFrom?: (active: Element) => boolean;
+  } | null>(null);
   const handleMoreAction = useCallback((rowKey: string, key: string, action: "more" | "less", button: HTMLElement) => {
     const focus = document.activeElement === button;
     const keyboard = focus && button.matches(":focus-visible");
@@ -233,22 +279,46 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
     let index = rows.findIndex((row) => row.key === pending.rowKey);
     if (index < 0) index = rows.findIndex((row) => row.key === pending.fallbackKey);
     if (pending.scroll && element && index >= 0) {
-      const top = offsets[index];
-      const bottom = offsets[index + 1];
-      if (top < element.scrollTop || bottom > element.scrollTop + element.clientHeight) {
-        element.scrollTop = Math.max(0, top - Math.max(0, (element.clientHeight - (bottom - top)) / 2));
-      }
+      const next = revealScrollTop(offsets, index, element.scrollTop, element.clientHeight);
+      if (next !== null) element.scrollTop = next;
       // The browser may clamp scrollTop when the list shrank: keep the window in step either way.
       setScrollTop(element.scrollTop);
     }
     if (pending.focus) pendingFocusRef.current = { rowKey: pending.rowKey, fallbackKey: pending.fallbackKey, tries: 0 };
   }, [rows, offsets]);
+  // A reveal request: scrolled to once its row is in the rows (it is kept
+  // mounted meanwhile, so focus can go to it in the same commit), or dropped.
+  // Its age is checked on every look, so a late one is dropped even when its
+  // row has just turned up, and a tree mounted after it has gone stale.
+  const revealMissesRef = useRef<RevealMisses | null>(null);
+  useLayoutEffect(() => {
+    if (!pendingReveal) return;
+    const index = rows.findIndex((row) => row.key === pendingReveal.rowKey);
+    const step = revealStep(revealMissesRef.current, pendingReveal, index >= 0, Date.now());
+    revealMissesRef.current = step.misses;
+    if (step.action === "wait") return;
+    if (step.action === "reveal") {
+      const element = scrollRef.current;
+      // A tree in a hidden tab has no box to scroll: it gets its saved position back when shown.
+      if (element && element.getClientRects().length > 0) {
+        const next = revealScrollTop(offsets, index, element.scrollTop, element.clientHeight);
+        if (next !== null) element.scrollTop = next;
+        setScrollTop(element.scrollTop);
+      }
+      if (pendingReveal.takeFocusFrom) {
+        pendingFocusRef.current = { rowKey: pendingReveal.rowKey, fallbackKey: pendingReveal.rowKey, tries: 0, takeFocusFrom: pendingReveal.takeFocusFrom };
+      }
+    }
+    setHandledRevealId(pendingReveal.id);
+    handlersRef.current.onRevealHandled?.(pendingReveal.id);
+  }, [pendingReveal, rows, offsets]);
   useLayoutEffect(() => {
     const target = pendingFocusRef.current;
     if (!target) return;
     const active = document.activeElement;
-    // Focus that survived (the clicked button is still there) stays put.
-    if (active && active !== document.body && document.contains(active)) {
+    // Focus that survived (the clicked button is still there) stays put,
+    // unless a reveal may take it from where it is.
+    if (active && active !== document.body && document.contains(active) && !target.takeFocusFrom?.(active)) {
       pendingFocusRef.current = null;
       return;
     }

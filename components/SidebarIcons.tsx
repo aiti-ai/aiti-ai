@@ -104,6 +104,19 @@ export function BranchIcon(props: SidebarIconProps) {
   );
 }
 
+/** Two branches from one stem: a row's "Fork" (BranchIcon stands for a worktree's branch). */
+export function ForkIcon(props: SidebarIconProps) {
+  return (
+    <SidebarIcon {...props}>
+      <circle cx="6" cy="5" r="2.5" />
+      <circle cx="18" cy="5" r="2.5" />
+      <circle cx="12" cy="19" r="2.5" />
+      <path d="M6 7.5v1.5a3 3 0 0 0 3 3h6a3 3 0 0 0 3-3V7.5" />
+      <path d="M12 12v4.5" />
+    </SidebarIcon>
+  );
+}
+
 export function TrashIcon(props: SidebarIconProps) {
   return (
     <SidebarIcon {...props}>

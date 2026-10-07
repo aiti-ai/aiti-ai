@@ -275,7 +275,7 @@ test("icons are decorative unless labelled, and the spinner turns through a clas
   assert.match(spinner, /role="img" aria-label="Agent running"/);
   assert.doesNotMatch(spinner, /aria-hidden/);
   assert.match(spinner, /<path d="M21 12a9 9 0 1 1-3\.8-7\.4"><\/path>/);
-  for (const name of ["PlusIcon", "MoreIcon", "ArchiveIcon", "RestoreIcon", "PinIcon", "PinOffIcon", "ChevronIcon", "BranchIcon", "TrashIcon", "PencilIcon", "DotIcon", "DotOutlineIcon", "CheckIcon", "FolderIcon", "FolderPlusIcon", "TerminalIcon", "SearchIcon", "UploadIcon", "RefreshIcon", "ChangesIcon", "MessageIcon", "SpinnerIcon"]) {
+  for (const name of ["PlusIcon", "MoreIcon", "ArchiveIcon", "RestoreIcon", "PinIcon", "PinOffIcon", "ChevronIcon", "BranchIcon", "ForkIcon", "TrashIcon", "PencilIcon", "DotIcon", "DotOutlineIcon", "CheckIcon", "FolderIcon", "FolderPlusIcon", "TerminalIcon", "SearchIcon", "UploadIcon", "RefreshIcon", "ChangesIcon", "MessageIcon", "SpinnerIcon"]) {
     assert.match(iconSource, new RegExp(`export function ${name}\\(`), `${name} is exported`);
   }
 });
