@@ -361,33 +361,64 @@ test("a new session moves the cwd and hands the shell the target's project", () 
   const body = callbackBody("startNewSessionIn");
   const identity = body.indexOf("setValidatedProject({ cwd, root: projectRoot, key: projectKey })");
   const cwd = body.indexOf("setSelectedCwd(cwd);");
-  const handOff = body.indexOf("onNewSession?.(createTempSessionId(), cwd, projectKey);");
+  const handOff = body.indexOf("onNewSession?.(createTempSessionId(), cwd, projectKey, carryComposer ? { carryComposer: true } : undefined);");
   assert.ok(identity >= 0 && identity < cwd && cwd < handOff, "identity, then cwd, then the new session");
   // The header "+" keeps the sidebar's cwd and lets the shell keep its project.
   assert.match(callbackBody("handleNewSession"), /if \(!selectedCwd\) return;\s*startNewSessionIn\(\{ cwd: selectedCwd \}\);/);
-  assert.match(source, /onNewSession\?: \(sessionId: string, cwd: string, projectKey\?: string \| null\) => void;/);
+  assert.match(source, /onNewSession\?: \(sessionId: string, cwd: string, projectKey\?: string \| null, options\?: NewSessionOptions\) => void;/);
 });
 
-test("a group's + asks for a worktree only where there is a choice", () => {
+test("a group's + starts a session at once, in the sidebar's worktree for the current project", () => {
   const body = callbackBody("handleGroupNew");
-  assert.match(body, /fetch\(`\/api\/worktrees\?cwd=\$\{encodeURIComponent\(project\.root\)\}`/);
-  assert.match(body, /setPendingGroupKey\(project\.key\);/);
-  assert.match(body, /if \(requestId !== groupNewRequestRef\.current\) return;/);
-  assert.match(body, /if \(listing && needsWorktreePicker\(listing\)\) \{\s*setMenu\(\{\s*kind: "worktrees",/);
-  // The answer starts the session with the latest closure, not the click's.
-  assert.match(
-    body,
-    /startNewSessionInRef\.current\(listing\s*\? \{ cwd: project\.root, projectKey: listing\.projectKey, projectRoot: listing\.projectRoot \}\s*: \{ cwd: project\.root, projectKey: project\.key \}\);/,
-  );
-  assert.match(body, /\}, \[\]\);\n/);
+  assert.match(body, /const handleGroupNew = useCallback\(\(project: SidebarProject\) => \{\s*setMenu\(null\);\s*startNewSessionIn\(\{\s*cwd: project\.current && selectedCwd \? selectedCwd : project\.root,\s*projectKey: project\.key,\s*projectRoot: project\.root,\s*\}\);/);
+  assert.match(body, /\}, \[selectedCwd, startNewSessionIn\]\);/);
+  assert.doesNotMatch(body, /fetch\(|\/api\/worktrees|kind: "worktrees"/);
+  assert.match(source, /onGroupNew: handleGroupNew,/);
+  // Nothing of the old worktree picker is left in the sidebar.
+  assert.doesNotMatch(source, /pendingGroupKey|cancelGroupNew|groupNewRequestRef|needsWorktreePicker|WorktreeCreateForm|worktreeMenuItems|createWorktreeForSession|kind: "worktrees"|sidebar\.pickWorktree|activeGroupMenu|menuRef/);
+});
+
+test("the composer's bar moves through a handle made once, with the newest closures", () => {
+  const handle = source.slice(source.indexOf("useImperativeHandle(controlRef"), source.indexOf("// Header \"+\""));
   assert.match(source, /const startNewSessionInRef = useRef\(startNewSessionIn\);\s*startNewSessionInRef\.current = startNewSessionIn;/);
-  const picker = source.slice(source.indexOf("const worktreeMenuItems"), source.indexOf("const viewMenuItems"));
-  assert.match(picker, /onSelect: \(\) => startNewSessionIn\(\{ cwd: worktree\.path, projectKey: listing\.projectKey, projectRoot: listing\.projectRoot \}\)/);
-  assert.match(picker, /checked: worktree\.path === current,/);
-  assert.match(picker, /onSelect: \(\{ keepOpen \}\) => \{\s*keepOpen\(\);/);
-  const create = callbackBody("createWorktreeForSession");
-  assert.match(create, /body: JSON\.stringify\(\{ cwd: listing\.projectRoot, branch \}\)/);
-  assert.match(create, /setWtRefreshKey\(\(k\) => k \+ 1\);[\s\S]*?startNewSessionIn\(\{ cwd: data\.path, projectKey: listing\.projectKey, projectRoot: listing\.projectRoot \}\);/);
+  assert.match(handle, /startNewSessionIn: \(target\) => startNewSessionInRef\.current\(target\),/);
+  assert.match(handle, /openFolderForNewSession: \(onPicked, returnFocusTo\) => \{\s*folderPickRef\.current = onPicked;\s*folderReturnFocusRef\.current = returnFocusTo;\s*setCustomPathError\(null\);\s*setCustomPathOpen\("new-session"\);/);
+  assert.match(handle, /refreshWorktrees: \(\) => setWtRefreshKey\(\(k\) => k \+ 1\),/);
+  assert.match(handle, /\}\), \[\]\);\s*$/);
+  // A created worktree is listed at once and refetched, whether or not a session starts in it.
+  assert.match(handle, /body: JSON\.stringify\(\{ cwd: project\.root, branch \}\)/);
+  assert.match(handle, /if \(!res\.ok \|\| data\.error \|\| !data\.path\) return \{ error: data\.error \?\? `HTTP \$\{res\.status\}` \};/);
+  const listed = handle.indexOf("prev.projectKey === project.key && !prev.worktrees.some((worktree) => worktree.path === path)");
+  const refetch = handle.indexOf("setWtRefreshKey((k) => k + 1);\n        return { path };");
+  assert.ok(listed >= 0 && listed < refetch, "listed, then refetched, then handed back");
+  assert.match(source, /controlRef\?: Ref<SessionSidebarControl>;/);
+});
+
+test("the composer's folder pick leaves the sidebar's cwd to the shell, and Cancel gives focus back", () => {
+  const commit = callbackBody("commitCustomPath");
+  assert.match(commit, /const purpose = customPathOpen;/);
+  const branch = commit.slice(commit.indexOf('if (purpose === "new-session") {'), commit.indexOf("setValidatedProject("));
+  assert.match(branch, /const pick = folderPickRef\.current;[\s\S]*?folderPickRef\.current = null;[\s\S]*?pick\?\.\(\{ cwd: data\.cwd, projectKey: data\.projectKey, projectRoot: data\.projectRoot \}\);/);
+  assert.match(branch, /focusAfterCommit\(\(\) => \(opener\?\.isConnected \? opener : null\)\);\s*return;/);
+  assert.doesNotMatch(branch, /setSelectedCwd|setValidatedProject|startNewSessionIn/);
+  assert.match(commit, /\}, \[customPathOpen, customPathValue, customPathValidating, focusAfterCommit\]\);/);
+  assert.match(callbackBody("handleCustomPathClick"), /setCustomPathOpen\("files"\);/);
+  const cancel = source.slice(source.indexOf("<DirectoryPicker"), source.indexOf("onSelect={(path) => void commitCustomPath(path)}"));
+  assert.match(cancel, /const opener = customPathOpen === "new-session" \? folderReturnFocusRef\.current : null;\s*folderPickRef\.current = null;\s*folderReturnFocusRef\.current = null;/);
+  assert.match(cancel, /if \(opener\) focusAfterCommit\(\(\) => \(opener\.isConnected \? opener : null\)\);/);
+  // focusAfterCommit is declared before the callbacks that list it as a dependency.
+  assert.ok(source.indexOf("const focusAfterCommit = useCallback") < source.indexOf("const commitCustomPath = useCallback"));
+});
+
+test("the bar hears of the sidebar's cwd only when something it shows changed", () => {
+  const snapshot = source.slice(source.indexOf("const newSessionContext = useMemo"), source.indexOf("// Picking a session in another group makes its project current."));
+  // Worktrees only where the files tab offers its switcher: the top of a git checkout.
+  assert.match(snapshot, /const listed = showWorktreeSwitcher && worktreeState !== null;/);
+  assert.match(snapshot, /worktrees: listed \? worktreeState\.worktrees\.map\(\(\{ path, branch, isMain \}\) => \(\{ path, branch, isMain \}\)\) : null,/);
+  assert.match(snapshot, /currentWorktreePath: listed \? currentWorktreePath : null,/);
+  assert.match(snapshot, /projects: mergeProjectChoices\(model\.projects, recentProjects\),/);
+  assert.match(snapshot, /const newSessionContextSignature = newSessionContextKey\(newSessionContext\);/);
+  assert.match(snapshot, /useEffect\(\(\) => \{\s*onNewSessionContextChange\?\.\(newSessionContextRef\.current\);\s*\}, \[newSessionContextSignature, onNewSessionContextChange\]\);/);
 });
 
 test("archive keeps an undo snapshot and clears unread markers", () => {
@@ -441,22 +472,6 @@ test("the footer opens the project list in the files tab; the archive view repla
   assert.match(source, /<SessionTree \{\.\.\.treeProps\} rows=\{archiveRows\} emptyLabel=\{t\("sidebar\.noArchived"\)\} \/>/);
   assert.match(source, /const sessionMenuItems = \(row: SessionRow\): SidebarMenuItem\[\] => sessionMenuEntries\(row\.context, row\.status\)/);
   assert.match(callbackBody("handleTogglePinned"), /setPinnedCollapsed\(next\);\s*savePinnedCollapsed\(next\);/);
-});
-
-test("anything done while a group's + waits for its worktrees cancels it", () => {
-  assert.match(callbackBody("cancelGroupNew"), /groupNewRequestRef\.current \+= 1;\s*setPendingGroupKey\(null\);/);
-  // Moving anywhere (a session, a project, a worktree, from here or from the shell) and opening any menu or picker.
-  assert.match(source, /useEffect\(\(\) => \{\s*cancelGroupNew\(\);\s*\}, \[selectedSessionId, selectedCwd, cancelGroupNew\]\);/);
-  // Only an opening counts: the + closing a menu must not cancel its own lookup.
-  assert.match(source, /useEffect\(\(\) => \{\s*if \(menu !== null\) cancelGroupNew\(\);\s*\}, \[menu, cancelGroupNew\]\);/);
-  assert.match(source, /useEffect\(\(\) => \{\s*if \(dropdownOpen \|\| wtDropdownOpen \|\| customPathOpen\) cancelGroupNew\(\);\s*\}, \[dropdownOpen, wtDropdownOpen, customPathOpen, cancelGroupNew\]\);/);
-  // A re-click on the open session or a new session from elsewhere changes nothing that effect sees.
-  assert.match(callbackBody("handleSelectSessionFromList"), /^const handleSelectSessionFromList = useCallback\(\(s: SessionInfo, entryId\?: string, blockIndex\?: number\) => \{\s*cancelGroupNew\(\);/);
-  assert.match(callbackBody("startNewSessionIn"), /=> \{\s*cancelGroupNew\(\);/);
-  // The + itself closes the menu but does not cancel its own lookup.
-  const groupNew = callbackBody("handleGroupNew");
-  assert.ok(groupNew.indexOf("const requestId = ++groupNewRequestRef.current;") < groupNew.indexOf("setMenu(null);"));
-  assert.doesNotMatch(groupNew, /cancelGroupNew/);
 });
 
 test("the group that stops being current keeps its rows open", () => {

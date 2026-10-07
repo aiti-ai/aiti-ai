@@ -161,18 +161,17 @@ test("a collapsed group shows its running and unread counts and labelled actions
   assert.doesNotMatch(expanded, /session-tree-group-pin/);
 });
 
-test("a group shows which of its buttons opened a menu and disables + while it is busy", () => {
+test("a group's ⋯ shows its open menu; its + starts a session at once", () => {
   const more = rowMarkup(render({ rows: [groupRow()], activeMenuRowKey: "group:/work/app" }), "group:/work/app");
   assert.match(more, /session-tree-group is-current is-active/);
   assert.match(more, /class="session-tree-group-action is-active" aria-label="app actions"[^>]*aria-expanded="true"/);
 
-  const picker = rowMarkup(render({ rows: [groupRow()], activeMenuRowKey: "group:/work/app", activeGroupMenu: "new" }), "group:/work/app");
-  assert.match(picker, /class="session-tree-group-action is-active" aria-label="New session in app"[^>]*aria-expanded="true"/);
-  assert.match(picker, /aria-label="app actions"[^>]*aria-expanded="false"/);
-
-  const pending = rowMarkup(render({ rows: [groupRow()], pendingGroupKey: "/work/app" }), "group:/work/app");
-  assert.match(pending, /aria-label="New session in app"[^>]*aria-busy="true" disabled=""/);
-  assert.match(pending, /sidebar-spin/);
+  // The + opens nothing and never waits: no popup, busy or disabled state.
+  const plus = rowMarkup(render({ rows: [groupRow()] }), "group:/work/app").match(/<button[^>]*aria-label="New session in app"[^>]*>/)[0];
+  assert.equal(plus, '<button type="button" class="session-tree-group-action" aria-label="New session in app" title="New session in app">');
+  assert.match(source, /handlers\.current\.onGroupNew\(project\);/);
+  assert.doesNotMatch(source, /pendingGroupKey|activeGroupMenu|aria-busy|disabled=/);
+  assert.doesNotMatch(css, /\.session-tree button:disabled|session-tree-group-action:not\(:disabled\)/, "no tree button is ever disabled");
 });
 
 test("an idle session row shows its short time, branch and both actions", () => {

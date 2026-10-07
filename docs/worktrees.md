@@ -26,9 +26,11 @@ Switching worktrees affects:
 
 Existing sessions stay grouped under the same project. Opening an existing session moves the effective working directory back to that session's checkout.
 
+A new session can also pick its checkout right above the message box. While a new chat is still empty, a small bar there shows its project and, at a repository root, its worktree. Choosing another one moves the new chat there, keeping what you have typed, attached images, and the model and reasoning level you picked (a model the other project does not offer goes back to automatic). The project menu also has `Open another project...` for any other folder. A project's `+` in the sidebar starts the new chat in the worktree you are using for that project (or in the main checkout of another project); use the bar to pick a different one.
+
 ## Creating a Worktree
 
-Choose `New worktree...` from the worktree menu and enter a branch name.
+Choose `New worktree...` from the worktree menu and enter a branch name. From the bar above an empty new chat, the new chat then moves into the new worktree.
 
 Pi Web creates the checkout at:
 
