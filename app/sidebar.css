@@ -222,18 +222,20 @@
   }
 }
 
+/* Titles sit a step softer than the text color; the selected one takes the
+   full text color instead of a heavier weight. */
 .session-tree-title {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--text);
-  font-size: 12px;
+  color: color-mix(in srgb, var(--text) 75%, var(--bg-panel));
+  font-size: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .session-tree-session.is-selected .session-tree-title {
-  font-weight: 500;
+  color: var(--text);
 }
 
 .session-tree-session.is-archived .session-tree-title {
@@ -637,10 +639,6 @@
 }
 
 /* Phone layout: 44px rows, ⋯ and the group buttons always shown, no archive quick button. */
-.session-tree.is-mobile .session-tree-title {
-  font-size: 13px;
-}
-
 .session-tree.is-mobile .session-tree-more-action {
   display: flex;
   width: 32px;
