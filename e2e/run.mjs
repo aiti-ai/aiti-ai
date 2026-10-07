@@ -446,8 +446,12 @@ try {
       await page.locator(".markdown-code-block pre").waitFor();
       await checkChatAppearance(page);
       await page.setViewportSize(viewport);
+      // Returning from the mobile breakpoint restores the desktop sidebar preference in an effect, so wait for the toggle to settle.
+      const hideSidebar = page.getByRole("button", { name: "Hide sidebar", exact: true });
       const showSidebar = page.getByRole("button", { name: "Show sidebar", exact: true });
+      await hideSidebar.or(showSidebar).waitFor({ state: "visible" });
       if (await showSidebar.isVisible()) await showSidebar.click();
+      await hideSidebar.waitFor({ state: "visible" });
       await checkModelDiscovery(page);
     }
     await page.goto(`${base}/?session=${CODE_BACKGROUND}`, { waitUntil: "domcontentloaded" });
