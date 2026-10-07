@@ -347,6 +347,8 @@ export const zhTWLocale: LocalePlugin = {
     "sidebar.unpin": "取消釘選",
     "sidebar.pinProject": "釘選專案",
     "sidebar.unpinProject": "取消釘選專案",
+    "sidebar.moveProjectUp": "上移",
+    "sidebar.moveProjectDown": "下移",
     "sidebar.archive": "封存",
     "sidebar.unarchive": "取消封存",
     "sidebar.restore": "還原",

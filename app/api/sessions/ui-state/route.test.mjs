@@ -107,6 +107,17 @@ test("pin-project pins and unpins a project with its root", async () => {
   assert.equal(unpinned.revision, pinned.revision + 1);
 });
 
+test("add-projects and move-project keep the project order, and GET reads it back", async () => {
+  await reset();
+  const added = await okState(await post({ action: "add-projects", keys: ["/b", "/a", "/b"] }));
+  assert.deepEqual(added.projectOrder, ["/b", "/a"]);
+  const moved = await okState(await post({ action: "move-project", projectKey: "/c", anchorKey: "/a", position: "before", add: ["/c"] }));
+  assert.deepEqual(moved.projectOrder, ["/b", "/c", "/a"]);
+  assert.equal(moved.revision, added.revision + 1);
+  assert.deepEqual((await okState(await GET())).projectOrder, ["/b", "/c", "/a"]);
+  assert.deepEqual(JSON.parse(await readFile(statePath, "utf8")).projectOrder, ["/b", "/c", "/a"]);
+});
+
 test("refuses untrusted, non-JSON and invalid requests without writing", async () => {
   await reset();
   const cases = [
@@ -122,6 +133,9 @@ test("refuses untrusted, non-JSON and invalid requests without writing", async (
     [post({ action: "set", ids: ["../escape"], pinned: true }), 400, "invalid-request"],
     [post({ action: "set", ids: [], archived: true }), 400, "invalid-request"],
     [post({ action: "pin-project", projectKey: "", root: "/r", pinned: true }), 400, "invalid-request"],
+    [post({ action: "add-projects", keys: [] }), 400, "invalid-request"],
+    [post({ action: "move-project", projectKey: "/a", anchorKey: "/a", position: "before" }), 400, "invalid-request"],
+    [post({ action: "move-project", projectKey: "/a", anchorKey: "/b", position: "middle" }), 400, "invalid-request"],
     [post({ action: "drop-everything" }), 400, "invalid-request"],
   ];
   for (const [pending, status, reason] of cases) {
