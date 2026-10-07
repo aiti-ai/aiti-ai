@@ -14,6 +14,8 @@ import {
   isFamilyArchived,
   isGroupExpanded,
   keepOutgoingGroupOpen,
+  showLessFamilies,
+  showMoreFamilies,
   projectNameOf,
   type SidebarProject,
   type SidebarRow,
@@ -636,10 +638,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const sessionsPanelRef = useRef<HTMLDivElement>(null);
   const filesPanelRef = useRef<HTMLDivElement>(null);
   const panelScrollTopsRef = useRef(new WeakMap<Element, number>());
-  // Project groups: explicit expand/collapse choices, "show more" per group,
-  // the pinned section, the archive view.
+  // Project groups: explicit expand/collapse choices, how many families "show
+  // more" has revealed per group (SHOW_MORE_STEP a click), the pinned section,
+  // the archive view.
   const [groupExpansion, setGroupExpansion] = useState<Readonly<Record<string, boolean>>>({});
-  const [expandedMore, setExpandedMore] = useState<ReadonlySet<string>>(() => new Set());
+  const [moreShown, setMoreShown] = useState<Readonly<Record<string, number>>>({});
   const [pinnedCollapsed, setPinnedCollapsed] = useState(false);
   const [archiveView, setArchiveView] = useState(false);
   // Row states that must survive virtualization live here, not in the rows.
@@ -1394,9 +1397,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     selectedSessionId,
     currentProject,
     groupExpansion,
-    expandedMore,
+    moreShown,
     pinnedCollapsed,
-  }), [allSessions, uiState, runningSessionIds, unreadSessionIds, selectedSessionId, currentProject, groupExpansion, expandedMore, pinnedCollapsed]);
+  }), [allSessions, uiState, runningSessionIds, unreadSessionIds, selectedSessionId, currentProject, groupExpansion, moreShown, pinnedCollapsed]);
   const archiveRows = useMemo(() => (archiveView ? buildArchiveRows({
     sessions: allSessions,
     uiState,
@@ -1877,13 +1880,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     saveGroupExpansion(next);
   };
 
-  const handleToggleMore = useCallback((key: string) => {
-    setExpandedMore((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  const handleShowMore = useCallback((key: string) => {
+    setMoreShown((prev) => showMoreFamilies(prev, key));
+  }, []);
+  const handleShowLess = useCallback((key: string) => {
+    setMoreShown((prev) => showLessFamilies(prev, key));
   }, []);
 
   const handleTogglePinned = () => {
@@ -2075,7 +2076,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     pendingGroupKey,
     onSelectFamily: handleSelectFamily,
     onToggleGroup: handleToggleGroup,
-    onToggleMore: handleToggleMore,
+    onShowMore: handleShowMore,
+    onShowLess: handleShowLess,
     onTogglePinned: handleTogglePinned,
     onArchiveFamily: archiveFamily,
     onRestoreFamily: restoreFamily,

@@ -360,7 +360,7 @@ export const enLocale: LocalePlugin = {
     "sidebar.markUnread": "Mark as unread",
     "sidebar.moreActions": "More actions",
     "sidebar.sessionActions": "Session actions",
-    "sidebar.showMore": "Show {count} more",
+    "sidebar.showMore": "Show more · {count}",
     "sidebar.showLess": "Show less",
     "sidebar.openOtherProject": "Open another project…",
     "sidebar.newSessionInProject": "New session in {name}",
