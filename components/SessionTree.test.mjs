@@ -44,7 +44,8 @@ const defaults = {
   activeMenuRowKey: null,
   onSelectFamily: noop,
   onToggleGroup: noop,
-  onToggleMore: noop,
+  onShowMore: noop,
+  onShowLess: noop,
   onTogglePinned: noop,
   onArchiveFamily: noop,
   onRestoreFamily: noop,
@@ -117,7 +118,7 @@ test("the pinned header toggles the section and shows activity dots only while c
     rows: [{ kind: "pinned-header", key: "pinned-header", count: 3, collapsed: true, running: 1, unread: 2 }],
   }), "pinned-header");
   assert.match(collapsed, /<button type="button" class="session-tree-pinned-toggle" aria-expanded="false">/);
-  assert.match(collapsed, /<span class="session-tree-pinned-label">Pinned<\/span><span class="session-tree-pinned-count">· 3<\/span>/);
+  assert.match(collapsed, /<span class="session-tree-pinned-label">Pinned<\/span><span class="session-tree-pinned-count">· 3<\/span><svg[^>]*class="session-tree-chevron"/);
   assert.match(collapsed, /class="session-tree-pinned-dot is-running" role="img" title="Agent running…" aria-label="Agent running… \(1\)"/);
   assert.match(collapsed, /class="session-tree-pinned-dot is-unread" role="img" title="New session activity" aria-label="New session activity \(2\)"/);
   assert.doesNotMatch(collapsed, /session-tree-chevron is-open/);
@@ -136,7 +137,7 @@ test("a collapsed group shows its running and unread counts and labelled actions
   }), "group:/work/app");
   assert.match(html, /^<div class="session-tree-row session-tree-group" style="top:0;height:28px"/);
   assert.match(html, /<button type="button" class="session-tree-group-toggle" aria-expanded="false" title="\/work\/app">/);
-  assert.match(html, /<span class="session-tree-group-name">app<\/span>/);
+  assert.match(html, /<span class="session-tree-group-name">app<\/span><svg[^>]*class="session-tree-group-pin"[\s\S]*?<\/svg><svg[^>]*class="session-tree-chevron"/, "the chevron follows the name");
   assert.match(html, /<svg[^>]*class="session-tree-group-pin" role="img" aria-label="Pinned"/);
   assert.match(html, /aria-label="Agent running… \(2\)"/);
   assert.match(html, /aria-label="New session activity \(1\)"/);
@@ -178,7 +179,8 @@ test("an idle session row shows its short time, branch and both actions", () => 
   const root = session("idle", { isWorktree: true, branch: "feat/rows" });
   const html = rowMarkup(render({ rows: [sessionRow(root)] }), "session:group:idle");
   assert.match(html, /^<div class="session-tree-row session-tree-session" style="top:0;height:32px" data-row-key="session:group:idle">/);
-  assert.match(html, /<span class="session-tree-slot"><\/span><span class="session-tree-title">first idle<\/span><span class="session-tree-branch">⑂ feat\/rows<\/span><span class="session-tree-meta">5m<\/span>/);
+  // Nothing before the title: it gets the room; the time sits at the right.
+  assert.match(html, /<button type="button" class="session-tree-main" title="[^"]*"><span class="session-tree-title">first idle<\/span><span class="session-tree-branch">⑂ feat\/rows<\/span><span class="session-tree-meta">5m<\/span>/);
   assert.match(html, /title="first idle\n3 msgs · 5 minutes ago · ⑂ feat\/rows"/);
   assert.match(html, /class="session-tree-action session-tree-quick-action" aria-label="Archive" title="Archive"/);
   assert.match(html, /class="session-tree-action session-tree-more-action" aria-label="More actions" title="More actions" aria-haspopup="menu" aria-expanded="false"/);
@@ -193,7 +195,10 @@ test("a branch chip needs a linked worktree", () => {
 
 test("a running row shows the labelled spinner and cannot be archived from the row", () => {
   const html = rowMarkup(render({ rows: [sessionRow(session("run"), { status: { running: true, unread: true } })] }), "session:group:run");
-  assert.match(html, /<span class="session-tree-slot is-running" title="Agent running…"><svg[^>]*class="sidebar-spin" role="img" aria-label="Agent running…"/);
+  // The spinner takes the time's place at the right, and the row says it is running.
+  assert.match(html, /class="session-tree-row session-tree-session is-running"/);
+  assert.match(html, /<span class="session-tree-title">first run<\/span><span class="session-tree-meta is-running" title="Agent running…"><svg[^>]*class="sidebar-spin" role="img" aria-label="Agent running…"/);
+  assert.doesNotMatch(html, /session-tree-slot/);
   assert.doesNotMatch(html, /session-tree-unread/);
   assert.doesNotMatch(html, /aria-label="Archive"/);
   assert.match(html, /aria-label="More actions"/);
@@ -201,7 +206,7 @@ test("a running row shows the labelled spinner and cannot be archived from the r
 
 test("an unread row shows the labelled unread dot", () => {
   const html = rowMarkup(render({ rows: [sessionRow(session("new"), { status: { unread: true } })] }), "session:group:new");
-  assert.match(html, /<span class="session-tree-slot" title="New activity"><span class="session-tree-unread" role="img" aria-label="New session activity"><\/span><\/span>/);
+  assert.match(html, /<span class="session-tree-meta is-unread" title="New activity"><span class="session-tree-unread" role="img" aria-label="New session activity"><\/span><\/span>/);
 });
 
 test("the selected row is marked and its menu button reports an open menu", () => {
@@ -229,7 +234,7 @@ test("pinned rows name their project and archived rows offer restore with the ar
     rows: [sessionRow(session("old"), { context: "archive", archivedAt: NOW - 2 * 60 * MINUTE })],
   }), "session:archive:old");
   assert.match(archived, /class="session-tree-row session-tree-session is-archived"/);
-  assert.match(archived, /<span class="session-tree-slot is-archived"><svg/);
+  assert.doesNotMatch(archived, /session-tree-slot/);
   assert.match(archived, /<span class="session-tree-meta">2h<\/span>/);
   assert.match(archived, /aria-label="Restore" title="Restore"/);
   assert.doesNotMatch(archived, /aria-label="Archive"/);
@@ -272,8 +277,9 @@ test("delete confirmation shows a shortened title and both answers", () => {
 test("show more, empty groups, footer links and archive groups", () => {
   const html = render({
     rows: [
-      { kind: "pinned-more", key: "pinned-more", hidden: 0, expanded: true },
-      { kind: "group-more", key: "more:/work/app", projectKey: "/work/app", hidden: 3, expanded: false },
+      { kind: "pinned-more", key: "pinned-more", hidden: 0, canShowLess: true },
+      { kind: "group-more", key: "more:/work/app", projectKey: "/work/app", hidden: 3, canShowLess: false },
+      { kind: "group-more", key: "more:/work/big", projectKey: "/work/big", hidden: 24, canShowLess: true },
       { kind: "group-empty", key: "empty:/work/app", project },
       { kind: "spacer", key: "spacer:/work/app" },
       { kind: "archive-group", key: "archive:/work/app", project, count: 2 },
@@ -281,9 +287,15 @@ test("show more, empty groups, footer links and archive groups", () => {
       { kind: "footer-archived", key: "footer-archived", count: 4 },
     ],
   });
-  assert.match(rowMarkup(html, "pinned-more"), /<button type="button" class="session-tree-more-toggle">Show less<\/button>/);
-  assert.match(rowMarkup(html, "more:/work/app"), /<button type="button" class="session-tree-more-toggle">Show 3 more<\/button>/);
-  assert.match(rowMarkup(html, "empty:/work/app"), /style="top:52px;height:30px" data-row-key="empty:\/work\/app">No sessions yet<\/div>/);
+  assert.match(rowMarkup(html, "pinned-more"), /<button type="button" class="session-tree-more-toggle" data-more-action="less">Show less<\/button><\/div>/);
+  assert.doesNotMatch(rowMarkup(html, "pinned-more"), /data-more-action="more"/);
+  assert.match(rowMarkup(html, "more:/work/app"), /<button type="button" class="session-tree-more-toggle" data-more-action="more">Show more · 3<\/button><\/div>/);
+  assert.doesNotMatch(rowMarkup(html, "more:/work/app"), /data-more-action="less"/);
+  assert.match(
+    rowMarkup(html, "more:/work/big"),
+    /data-more-action="more">Show more · 24<\/button><button type="button" class="session-tree-more-toggle" data-more-action="less">Show less<\/button>/,
+  );
+  assert.match(rowMarkup(html, "empty:/work/app"), /style="top:78px;height:30px" data-row-key="empty:\/work\/app">No sessions yet<\/div>/);
   assert.doesNotMatch(html, /spacer:/);
   assert.match(rowMarkup(html, "archive:/work/app"), /title="\/work\/app"><span class="session-tree-archive-group-name">app<\/span><span class="session-tree-archive-group-count">· 2<\/span>/);
   assert.match(rowMarkup(html, "footer-open"), /<button type="button" class="session-tree-footer-button"><svg[^>]*>[\s\S]*?<\/svg><span class="session-tree-footer-label">Open another project…<\/span><\/button>/);
@@ -341,7 +353,7 @@ test("renders the model built from a catalog with unique row keys", () => {
     selectedSessionId: "a",
     currentProject: { key: "/work/app", root: "/work/app" },
     groupExpansion: {},
-    expandedMore: new Set(),
+    moreShown: {},
     pinnedCollapsed: false,
   });
   const html = render({ rows: model.rows });
@@ -377,12 +389,34 @@ test("row controls stop clicks from also selecting the row and keys skip IME com
   assert.match(source, /align: "end"/);
 });
 
+test("show less scrolls its row back into view and focus stays on the more row", () => {
+  // The click asks the parent, then the next commit settles scroll and focus.
+  // "Show less" always, and a keyboard "show more" (the button moves 20 rows down), scroll the row back.
+  assert.match(source, /const keyboard = focus && button\.matches\(":focus-visible"\);/);
+  assert.match(source, /pendingMoreRef\.current = \{ rowKey, fallbackKey, focus, scroll: action === "less" \|\| keyboard \};\s*if \(action === "more"\) handlersRef\.current\.onShowMore\(key\);\s*else handlersRef\.current\.onShowLess\(key\);/);
+  assert.match(source, /if \(top < element\.scrollTop \|\| bottom > element\.scrollTop \+ element\.clientHeight\) \{\s*element\.scrollTop = Math\.max\(0, top - Math\.max\(0, \(element\.clientHeight - \(bottom - top\)\) \/ 2\)\);\s*\}[\s\S]*?setScrollTop\(element\.scrollTop\);/);
+  // Only focus that was on the clicked button and then fell to <body> moves: to the row's
+  // "show more", else its other button, else the group (or pinned) header.
+  assert.match(source, /const focus = document\.activeElement === button;/);
+  assert.match(source, /const fallbackKey = key === PINNED_MORE_KEY \? "pinned-header" : `group:\$\{key\}`;/);
+  assert.match(source, /if \(active && active !== document\.body && document\.contains\(active\)\) \{\s*pendingFocusRef\.current = null;\s*return;\s*\}/);
+  assert.match(source, /querySelector<HTMLElement>\("\[data-more-action=\\"more\\"\]"\)\s*\?\? row\?\.querySelector<HTMLElement>\("button"\)\s*\?\? rowElement\(target\.fallbackKey\)\?\.querySelector<HTMLElement>\("button"\);/);
+  // The focus waits in a ref until a commit has its target mounted, not in a cancellable frame.
+  assert.match(source, /\}, \[visibleIndices\]\);/);
+  // "Show less" is never clipped on a narrow sidebar.
+  assert.match(cssRule(".session-tree-more-toggle + .session-tree-more-toggle"), /flex: none;/);
+  // A lone button still takes the whole row.
+  assert.match(css, /\.session-tree-more-toggle:only-child \{\s*flex: 1;\s*\}/);
+});
+
 test("the scroll container is measured, throttled and keeps its subtle scrollbar", () => {
   assert.match(source, /className="session-tree-scroll scrollbar-subtle"/);
   assert.match(source, /useScrollbarVisibility\(scrollRef\);/);
   assert.match(source, /const OVERSCAN_PX = 240;/);
   assert.match(source, /scrollFrameRef\.current = requestAnimationFrame\(/);
-  assert.match(source, /new ResizeObserver\(\(\) => \{\s*setViewportHeight\(element\.clientHeight\);[\s\S]*?setScrollTop\(element\.scrollTop\);/);
+  assert.match(source, /new ResizeObserver\(\(\) => \{\s*syncScrollbarWidth\(\);\s*setViewportHeight\(element\.clientHeight\);[\s\S]*?setScrollTop\(element\.scrollTop\);/);
+  // The rows' equal side margins read the measured scrollbar width.
+  assert.match(source, /element\.style\.setProperty\("--session-tree-scrollbar", `\$\{Math\.max\(0, element\.offsetWidth - element\.clientWidth\)\}px`\);/);
   assert.match(source, /getVisibleRowIndices\(offsets, scrollTop, viewportHeight, OVERSCAN_PX, keepMounted\)/);
 });
 
@@ -391,7 +425,16 @@ test("row CSS stays flat, themed and quiet", () => {
   assert.doesNotMatch(css, /@starting-style|prefers-color-scheme/);
   const colors = new Set((css.match(/#[0-9a-fA-F]{3,8}\b/g) ?? []).map((color) => color.toLowerCase()));
   for (const color of colors) assert.ok(["#ef4444", "#0891b2", "#f87171", "#fff"].includes(color), `unexpected color ${color}`);
-  assert.match(cssRule(".session-tree-session.is-selected"), /border-left-color: var\(--accent\);\s*background: var\(--bg-selected\);/);
+  // Hover and selection are a rounded box inset from the edges, not a full-width band.
+  assert.match(cssRule(".session-tree-scroll"), /--session-tree-inset-left: max\(6px, var\(--session-tree-scrollbar, 0px\)\);\s*--session-tree-inset-right: max\(0px, calc\(6px - var\(--session-tree-scrollbar, 0px\)\)\);/);
+  // The scrollbar's room is kept while everything fits, so rows keep their width when it starts to scroll.
+  assert.match(cssRule(".session-tree-scroll"), /overflow-y: auto;[\s\S]*?scrollbar-gutter: stable;/);
+  assert.match(css, /@supports not \(scrollbar-gutter: stable\) \{\s*\.session-tree-scroll \{\s*overflow-y: scroll;\s*\}\s*\}/);
+  assert.match(cssRule(".session-tree-session"), /right: var\(--session-tree-inset-right\);\s*left: var\(--session-tree-inset-left\);[\s\S]*?border-radius: 7px;/);
+  assert.match(cssRule(".session-tree-session.is-running:hover .session-tree-meta"), /display: flex;/);
+  assert.match(cssRule(".session-tree-session.is-selected"), /^\s*background: var\(--bg-selected\);\s*$/);
+  assert.doesNotMatch(css, /border-left/);
+  assert.match(cssRule(".session-tree-group"), /right: var\(--session-tree-inset-right\);\s*left: var\(--session-tree-inset-left\);[\s\S]*?border-radius: 7px;/);
   assert.match(cssRule(".session-tree-action"), /display: none;/);
   assert.match(cssRule(".session-tree.is-mobile .session-tree-more-action"), /display: flex;/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\) \{\s*\.session-tree-unread::after \{\s*animation: none;/);

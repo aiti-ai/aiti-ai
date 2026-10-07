@@ -58,7 +58,7 @@ function treeInput(overrides = {}) {
     selectedSessionId: null,
     currentProject: null,
     groupExpansion: {},
-    expandedMore: new Set(),
+    moreShown: {},
     pinnedCollapsed: false,
     ...overrides,
   };
@@ -81,7 +81,7 @@ function openingTag(html, id) {
 
 test("scrolling keeps the focused session and the viewport mounted without expanding the whole tree", () => {
   const sessions = Array.from({ length: 2000 }, (_, index) => session(`s${index}`, { modified: BASE - index * 60_000 }));
-  const { rows } = buildSessionTree(treeInput({ sessions, currentProject: { key: "/work/alpha", root: "/work/alpha" }, expandedMore: new Set(["/work/alpha"]) }));
+  const { rows } = buildSessionTree(treeInput({ sessions, currentProject: { key: "/work/alpha", root: "/work/alpha" }, moreShown: { "/work/alpha": 5000 } }));
   const offsets = getRowOffsets(rows, "desktop");
   const lastSessionIndex = rows.findLastIndex((row) => row.kind === "session");
   for (const [scrollTop, focusedIndex] of [[0, lastSessionIndex], [30000, 1]]) {
@@ -346,9 +346,12 @@ test("row clicks go through the list selection, which moves the cwd to the sessi
 });
 
 test("expanding, collapsing or paging a group never changes the cwd", () => {
-  for (const name of ["handleToggleGroup", "handleToggleMore", "handleTogglePinned", "setAllGroupsExpanded", "handleGroupMenu"]) {
+  for (const name of ["handleToggleGroup", "handleShowMore", "handleShowLess", "handleTogglePinned", "setAllGroupsExpanded", "handleGroupMenu"]) {
     assert.doesNotMatch(callbackBody(name), /setSelectedCwd|onCwdChange/, `${name} must not switch projects`);
   }
+  // "Show more" adds SHOW_MORE_STEP families a click; "show less" folds back.
+  assert.match(callbackBody("handleShowMore"), /setMoreShown\(\(prev\) => showMoreFamilies\(prev, key\)\);/);
+  assert.match(callbackBody("handleShowLess"), /setMoreShown\(\(prev\) => showLessFamilies\(prev, key\)\);/);
   assert.match(callbackBody("handleToggleGroup"), /delete next\[projectKey\];\s*next\[projectKey\] = !isGroupExpanded\(project, groupExpansion\);\s*setGroupExpansion\(next\);\s*saveGroupExpansion\(next\);/);
   // "Open in Files" of another project is the one deliberate switch from a group.
   assert.match(callbackBody("openProjectInFiles"), /if \(!project\.current\) setSelectedCwd\(project\.root\);[\s\S]*?switchTab\("files"\);/);
