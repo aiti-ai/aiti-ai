@@ -6,7 +6,8 @@ import { CheckIcon } from "./SidebarIcons";
 
 /**
  * The session sidebar's popup menu: a row's ⋯ or right-click menu, a project
- * group's menu, the worktree picker. On a desktop it is a small menu placed at
+ * group's menu; also the project and worktree menus of the bar above a fresh
+ * composer (components/NewSessionContextBar.tsx). On a desktop it is a small menu placed at
  * a point or beside a button; on a phone (`sheet`) a bottom sheet over its own
  * backdrop. Either way it is portaled to `document.body`: the mobile sidebar
  * drawer moves with `transform`, which would make a `position: fixed` menu
@@ -24,7 +25,7 @@ export interface SidebarMenuSelectEvent {
   /**
    * Leaves the menu open instead of closing it after `onSelect`: for an item
    * that swaps the menu's body, such as "New worktree…" turning the worktree
-   * picker into a small form.
+   * menu into a small form.
    */
   keepOpen(): void;
 }
@@ -39,6 +40,8 @@ export type SidebarMenuItem =
       shortcut?: string;
       /** Right-aligned hint shown instead of the shortcut (a worktree's "main"). */
       note?: string;
+      /** Tooltip: what the label shortens (a project's full path). */
+      title?: string;
       /** A choice: shows a check mark (true) or an empty slot (false) instead of `icon`. */
       checked?: boolean;
       mono?: boolean;
@@ -307,6 +310,7 @@ function MenuItemButton({ item, onActivate }: { item: ActionItem; onActivate: Si
       aria-disabled={item.disabled ? true : undefined}
       aria-keyshortcuts={item.shortcut && !item.disabled ? item.shortcut.toUpperCase() : undefined}
       tabIndex={-1}
+      title={item.title}
       data-sidebar-menu-item=""
       className={className}
       onClick={(event) => onActivate(item, event.shiftKey)}
@@ -460,7 +464,7 @@ export function SidebarMenu({
   }, [visible, sheet, anchorKey, custom]);
 
   // Focus moves into the menu when it opens, and again when its body is
-  // swapped (the worktree picker turning into its form).
+  // swapped (the worktree menu turning into its form).
   useLayoutEffect(() => {
     const surface = surfaceRef.current;
     if (!visible || !surface) return;
