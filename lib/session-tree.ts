@@ -29,7 +29,9 @@ export const SIDEBAR_ROW_HEIGHTS: Record<SidebarLayout, Record<SidebarRowKind, n
 };
 export const GROUP_VISIBLE_LIMIT = 6;
 export const PINNED_VISIBLE_LIMIT = 8;
-/** `expandedMore` entry for the pinned section's "show more". */
+/** How many more families each "show more" click reveals. */
+export const SHOW_MORE_STEP = 20;
+/** `moreShown` entry for the pinned section's "show more". */
 export const PINNED_MORE_KEY = "pinned";
 
 export interface SidebarProject { key: string; root: string; name: string; pinned: boolean; current: boolean }
@@ -38,9 +40,9 @@ export interface SidebarFamilyStatus { running: boolean; unread: boolean; select
 export type SidebarRow =
   | { kind: "pinned-header"; key: "pinned-header"; count: number; collapsed: boolean; running: number; unread: number }
   | { kind: "session"; key: string; family: SessionFamily; context: "pinned" | "group" | "archive"; project: SidebarProject; status: SidebarFamilyStatus; archivedAt: number | null }
-  | { kind: "pinned-more"; key: "pinned-more"; hidden: number; expanded: boolean }
+  | { kind: "pinned-more"; key: "pinned-more"; hidden: number; canShowLess: boolean }
   | { kind: "group"; key: string; project: SidebarProject; expanded: boolean; running: number; unread: number }
-  | { kind: "group-more"; key: string; projectKey: string; hidden: number; expanded: boolean }
+  | { kind: "group-more"; key: string; projectKey: string; hidden: number; canShowLess: boolean }
   | { kind: "group-empty"; key: string; project: SidebarProject }
   | { kind: "spacer"; key: string }
   | { kind: "footer-open"; key: "footer-open" }
@@ -58,8 +60,8 @@ export interface SessionTreeInput {
   currentProject: { key: string; root: string } | null;
   /** Explicit user choices only (from prefs); see isGroupExpanded. */
   groupExpansion: Readonly<Record<string, boolean>>;
-  /** projectKeys with "show more" on, plus PINNED_MORE_KEY. */
-  expandedMore: ReadonlySet<string>;
+  /** Families revealed beyond the base limit by "show more", per projectKey or PINNED_MORE_KEY. */
+  moreShown: Readonly<Record<string, number>>;
   pinnedCollapsed: boolean;
 }
 
@@ -238,21 +240,61 @@ function sessionRow(
 }
 
 /**
- * The first `limit` families plus any later one that is running, unread or
- * selected (sorted order kept), or all of them when `showAll`.
+ * The first `limit` families, any later one that is running, unread or
+ * selected, and the next `extra` of the others (sorted order kept). Families
+ * that show anyway do not use up `extra`, so each "show more" click reveals
+ * exactly SHOW_MORE_STEP more rows (or what is left), and a long project
+ * never mounts all of its rows at once. `revealed` counts what `extra` showed.
  */
 function visibleFamilies(
   families: readonly SessionFamily[],
   limit: number,
-  showAll: boolean,
+  extra: number,
   input: FamilyFlagsInput,
-): SessionFamily[] {
-  if (showAll) return [...families];
-  return families.filter((family, index) => {
+): { visible: SessionFamily[]; revealed: number } {
+  let revealed = 0;
+  const visible = families.filter((family, index) => {
     if (index < limit) return true;
     const status = familyStatus(family, input);
-    return status.running || status.unread || status.selected;
+    if (status.running || status.unread || status.selected) return true;
+    if (revealed < extra) {
+      revealed++;
+      return true;
+    }
+    return false;
   });
+  return { visible, revealed };
+}
+
+/** Families "show more" has revealed for `key` (0 when none or malformed). */
+export function shownMoreFor(moreShown: Readonly<Record<string, number>>, key: string): number {
+  if (!Object.hasOwn(moreShown, key)) return 0;
+  const value = moreShown[key];
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+/** One "show more" click: SHOW_MORE_STEP more families for `key`. */
+export function showMoreFamilies(moreShown: Readonly<Record<string, number>>, key: string): Record<string, number> {
+  return { ...moreShown, [key]: shownMoreFor(moreShown, key) + SHOW_MORE_STEP };
+}
+
+/** "Show less": back to the base limit for `key`. */
+export function showLessFamilies(moreShown: Readonly<Record<string, number>>, key: string): Record<string, number> {
+  if (!Object.hasOwn(moreShown, key)) return moreShown as Record<string, number>;
+  const next = { ...moreShown };
+  delete next[key];
+  return next;
+}
+
+/**
+ * The "show more" row: how many families are still hidden, and whether
+ * "show less" would fold anything back (only rows "show more" revealed; the
+ * running, unread or selected ones stay). Null when neither applies.
+ */
+function moreRowState(total: number, visible: number, revealed: number): { hidden: number; canShowLess: boolean } | null {
+  const hidden = total - visible;
+  const canShowLess = revealed > 0;
+  return hidden > 0 || canShowLess ? { hidden, canShowLess } : null;
 }
 
 export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
@@ -301,16 +343,12 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
     }
     rows.push({ kind: "pinned-header", key: "pinned-header", count: sorted.length, collapsed: input.pinnedCollapsed, running, unread });
     if (!input.pinnedCollapsed) {
-      const showAll = input.expandedMore.has(PINNED_MORE_KEY);
-      const visible = visibleFamilies(sorted, PINNED_VISIBLE_LIMIT, showAll, input);
+      const { visible, revealed } = visibleFamilies(sorted, PINNED_VISIBLE_LIMIT, shownMoreFor(input.moreShown, PINNED_MORE_KEY), input);
       for (const family of visible) {
         rows.push(sessionRow(family, "pinned", resolver.get(familyProjectKey(family)), input, null));
       }
-      if (showAll) {
-        if (sorted.length > PINNED_VISIBLE_LIMIT) rows.push({ kind: "pinned-more", key: "pinned-more", hidden: 0, expanded: true });
-      } else if (visible.length < sorted.length) {
-        rows.push({ kind: "pinned-more", key: "pinned-more", hidden: sorted.length - visible.length, expanded: false });
-      }
+      const more = moreRowState(sorted.length, visible.length, revealed);
+      if (more) rows.push({ kind: "pinned-more", key: "pinned-more", ...more });
     }
     // Group spacers are "spacer:<projectKey>", so this key cannot collide.
     rows.push({ kind: "spacer", key: "pinned-spacer" });
@@ -358,22 +396,10 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
       if (groupFamilies.length === 0) {
         rows.push({ kind: "group-empty", key: `empty:${project.key}`, project });
       } else {
-        const showAll = input.expandedMore.has(project.key);
-        const visible = visibleFamilies(groupFamilies, GROUP_VISIBLE_LIMIT, showAll, input);
+        const { visible, revealed } = visibleFamilies(groupFamilies, GROUP_VISIBLE_LIMIT, shownMoreFor(input.moreShown, project.key), input);
         for (const family of visible) rows.push(sessionRow(family, "group", project, input, null));
-        if (showAll) {
-          if (groupFamilies.length > GROUP_VISIBLE_LIMIT) {
-            rows.push({ kind: "group-more", key: `more:${project.key}`, projectKey: project.key, hidden: 0, expanded: true });
-          }
-        } else if (visible.length < groupFamilies.length) {
-          rows.push({
-            kind: "group-more",
-            key: `more:${project.key}`,
-            projectKey: project.key,
-            hidden: groupFamilies.length - visible.length,
-            expanded: false,
-          });
-        }
+        const more = moreRowState(groupFamilies.length, visible.length, revealed);
+        if (more) rows.push({ kind: "group-more", key: `more:${project.key}`, projectKey: project.key, ...more });
       }
     }
     rows.push({ kind: "spacer", key: `spacer:${project.key}` });
