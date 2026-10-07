@@ -433,6 +433,9 @@ test("row CSS stays flat, themed and quiet", () => {
   assert.match(cssRule(".session-tree-session"), /right: var\(--session-tree-inset-right\);\s*left: var\(--session-tree-inset-left\);[\s\S]*?border-radius: 7px;/);
   assert.match(cssRule(".session-tree-session.is-running:hover .session-tree-meta"), /display: flex;/);
   assert.match(cssRule(".session-tree-session.is-selected"), /^\s*background: var\(--bg-selected\);\s*$/);
+  // Selection deepens the title to the text color; no heavier weight.
+  assert.match(cssRule(".session-tree-title"), /color: color-mix\(in srgb, var\(--text\) 75%, var\(--bg-panel\)\);/);
+  assert.match(cssRule(".session-tree-session.is-selected .session-tree-title"), /^\s*color: var\(--text\);\s*$/);
   assert.doesNotMatch(css, /border-left/);
   assert.match(cssRule(".session-tree-group"), /right: var\(--session-tree-inset-right\);\s*left: var\(--session-tree-inset-left\);[\s\S]*?border-radius: 7px;/);
   assert.match(cssRule(".session-tree-action"), /display: none;/);
