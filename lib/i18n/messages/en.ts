@@ -347,6 +347,8 @@ export const enLocale: LocalePlugin = {
     "sidebar.unpin": "Unpin",
     "sidebar.pinProject": "Pin project",
     "sidebar.unpinProject": "Unpin project",
+    "sidebar.moveProjectUp": "Move up",
+    "sidebar.moveProjectDown": "Move down",
     "sidebar.archive": "Archive",
     "sidebar.unarchive": "Unarchive",
     "sidebar.restore": "Restore",

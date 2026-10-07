@@ -15,6 +15,7 @@ const { buildSessionTree, SIDEBAR_ROW_HEIGHTS } = await jiti.import("@/lib/sessi
 const { messages: zhCN } = (await jiti.import("@/lib/i18n/messages/zh-CN.ts")).zhCNLocale;
 const { messages: zhTW } = (await jiti.import("@/lib/i18n/messages/zh-TW.ts")).zhTWLocale;
 const source = await readFile(new URL("./SessionTree.tsx", import.meta.url), "utf8");
+const dragSource = await readFile(new URL("../hooks/useGroupDrag.ts", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/sidebar.css", import.meta.url), "utf8");
 
 const h = React.createElement;
@@ -478,4 +479,76 @@ test("row CSS stays flat, themed and quiet", () => {
   // Heights come from SIDEBAR_ROW_HEIGHTS inline; CSS must not fight them.
   assert.doesNotMatch(cssRule(".session-tree-row"), /height/);
   assert.equal(SIDEBAR_ROW_HEIGHTS.mobile.session, 44);
+});
+
+test("group headers can be dragged within their band; nothing is drawn while idle", () => {
+  const rows = [
+    groupRow({}, { key: "/work/a", name: "a", pinned: true }),
+    { kind: "spacer", key: "spacer:/work/a" },
+    groupRow({}, { key: "/work/b", name: "b" }),
+    { kind: "spacer", key: "spacer:/work/b" },
+    groupRow({}, { key: "/work/c", name: "c", current: false }),
+    { kind: "spacer", key: "spacer:/work/c" },
+    ...footer,
+  ];
+  const html = render({ rows, onMoveGroup: noop });
+  assert.match(html, /^<div class="session-tree">/);
+  assert.doesNotMatch(html, /session-tree-drag-|session-tree-drop-line|is-group-dragging|is-drag-armed/);
+  // Headers keep their markup: the drag adds listeners, no attributes (and never draggable="true").
+  assert.match(rowMarkup(html, "group:/work/b"), /^<div class="session-tree-row session-tree-group is-current" style="top:36px;height:28px" data-row-key="group:\/work\/b">/);
+  assert.doesNotMatch(html, /draggable/);
+
+  // A band needs a second group, and the tree needs onMoveGroup.
+  assert.match(source, /canDrag=\{canMoveGroups && groupsPerBand\[row\.project\.pinned \? "pinned" : "other"\] > 1\}/);
+  assert.match(source, /const canMoveGroups = Boolean\(props\.onMoveGroup\);/);
+  assert.match(source, /enabled: canMoveGroups && !loading,/);
+  assert.match(source, /onPointerDown=\{canDrag \? \(event\) => drag\.onPointerDown\(event, project\.key\) : undefined\}/);
+  assert.match(source, /onMoveGroup\?\(projectKey: string, anchorKey: string, position: ProjectMovePosition\): void;/);
+});
+
+test("a dragged header stays mounted, its release's click is eaten, and its ghost lives outside the scroll box", () => {
+  // Kept mounted while auto-scroll moves it away: it holds the pointer.
+  assert.match(source, /row\.key === pendingRevealKey \|\| row\.key === draggedRowKey\) indices\.push\(index\);/);
+  assert.match(source, /const draggedRowKey = dragView \? `group:\$\{dragView\.projectKey\}` : null;/);
+  // The click after a drop or a long-press, never a plain click.
+  assert.match(source, /onPointerDownCapture=\{groupDrag\.onPointerDownCapture\}\s*onClickCapture=\{groupDrag\.onClickCapture\}/);
+  // The ghost is a child of .session-tree after the scroll box: inside
+  // .session-tree-inner it would add to the scroll height and auto-scroll
+  // would chase it into empty space.
+  const scrollEnd = source.indexOf("{ghostProject && (");
+  assert.ok(scrollEnd > source.indexOf('{dropLineY !== null && <div className="session-tree-drop-line"'));
+  assert.match(source.slice(source.indexOf("{dropLineY !== null"), scrollEnd), /<\/div>\s*\)\}\s*<\/div>\s*$/, "after the inner box and the scroll box close");
+  assert.match(source, /<div ref=\{ghostRef\} className="session-tree-drag-ghost" aria-hidden="true">/);
+  assert.match(source, /className="session-tree-drag-source"\s*aria-hidden="true"/);
+  assert.match(cssRule(".session-tree"), /position: relative;/);
+  // Auto-scroll stops at the rows' own height, never scrollHeight.
+  assert.match(dragSource, /Math\.max\(0, contentHeight - scroll\.clientHeight\)/);
+  assert.doesNotMatch(dragSource, /\.scrollHeight/);
+});
+
+test("the header's touchmove listener is its own, registered ahead of the touch and not passive", () => {
+  const group = source.slice(source.indexOf("const GroupRowView = memo("), source.indexOf("/** The rows with at most one control"));
+  assert.match(group, /useEffect\(\(\) => \{\s*const element = rowRef\.current;\s*if \(!canDrag \|\| !element\) return;\s*const onTouchMove = \(event: TouchEvent\) => drag\.onTouchMove\(event\);\s*element\.addEventListener\("touchmove", onTouchMove, \{ passive: false \}\);\s*return \(\) => element\.removeEventListener\("touchmove", onTouchMove\);\s*\}, \[canDrag, drag\]\);/);
+  assert.equal((source.match(/addEventListener\("touchmove"/g) ?? []).length, 1, "on headers only, never the whole list");
+  assert.doesNotMatch(source, /onTouchMove=|onTouchStart=/);
+  // It cancels moves only once a long-press has picked the group up.
+  assert.match(dragSource, /onTouchMove\(event\) \{\s*const drag = dragRef\.current;[\s\S]*?if \(!drag \|\| \(drag\.phase !== "armed" && drag\.phase !== "dragging"\)\) return;\s*if \(event\.cancelable\) \{\s*event\.preventDefault\(\);/);
+  // Escape and the context menu are taken over only once picked up; Escape in the capture phase.
+  assert.match(dragSource, /if \(!drag \|\| event\.key !== "Escape" \|\| \(drag\.phase !== "armed" && drag\.phase !== "dragging"\)\) return;\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);/);
+  // "+" and ⋯ never start a drag; a plain press never prevents its click.
+  assert.match(dragSource, /event\.target\.closest\("\.session-tree-group-actions"\)\) return;/);
+  assert.match(dragSource, /setPointerCapture\(drag\.pointerId\)/);
+  assert.doesNotMatch(source, /\(\?<[=!]/, "no RegExp lookbehind (Safari 16.2)");
+});
+
+test("drag styles stay flat and themed; headers never select text or open the iOS callout", () => {
+  assert.match(cssRule(".session-tree-group"), /-webkit-user-select: none;\s*user-select: none;\s*-webkit-touch-callout: none;/);
+  assert.doesNotMatch(cssRule(".session-tree-group"), /touch-action/, "a swipe on a header still scrolls the list");
+  assert.match(cssRule(".session-tree-group.is-drag-armed"), /background: var\(--bg-selected\);/);
+  assert.match(cssRule(".session-tree-drag-source"), /background: color-mix\(in srgb, var\(--bg-panel\) 55%, transparent\);[\s\S]*pointer-events: none;/);
+  assert.match(cssRule(".session-tree-drop-line"), /height: 2px;\s*margin-top: -1px;[\s\S]*background: var\(--accent\);\s*pointer-events: none;/);
+  assert.match(cssRule(".session-tree-drag-ghost"), /position: absolute;[\s\S]*background: var\(--bg-panel\);[\s\S]*pointer-events: none;/);
+  assert.match(cssRule(".session-tree.is-group-dragging"), /cursor: grabbing;/);
+  assert.match(cssRule(".session-tree.is-group-dragging *"), /cursor: grabbing;/);
+  assert.match(cssRule(".sidebar-icon-up"), /transform: rotate\(-90deg\);/);
 });

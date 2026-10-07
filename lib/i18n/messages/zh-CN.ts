@@ -347,6 +347,8 @@ export const zhCNLocale: LocalePlugin = {
     "sidebar.unpin": "取消置顶",
     "sidebar.pinProject": "置顶项目",
     "sidebar.unpinProject": "取消置顶项目",
+    "sidebar.moveProjectUp": "上移",
+    "sidebar.moveProjectDown": "下移",
     "sidebar.archive": "归档",
     "sidebar.unarchive": "取消归档",
     "sidebar.restore": "恢复",

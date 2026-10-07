@@ -7,6 +7,7 @@ import { dispatchSessionRowContextMenu } from "@/lib/session-row-context-menu";
 import { getProjectActivity, getRecentProjects } from "@/lib/project-groups";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
 import {
+  adjacentProjectMove,
   buildArchiveRows,
   buildSessionTree,
   familiesToArchive,
@@ -14,6 +15,7 @@ import {
   isFamilyArchived,
   isGroupExpanded,
   keepOutgoingGroupOpen,
+  nextProjectKeysToRecord,
   showLessFamilies,
   showMoreFamilies,
   projectNameOf,
@@ -40,7 +42,13 @@ import {
   type ProjectChoice,
   type WorktreeChoice,
 } from "@/lib/new-session-context";
-import { chunkForSessionUiRequests, type SessionUiStateRequest } from "@/lib/session-ui-state-shared";
+import {
+  chunkForSessionUiRequests,
+  MAX_PROJECT_ORDER_KEYS,
+  MAX_SESSION_UI_IDS_PER_REQUEST,
+  type ProjectMovePosition,
+  type SessionUiStateRequest,
+} from "@/lib/session-ui-state-shared";
 import { focusIfLost } from "@/lib/stacked-dialog";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -540,6 +548,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const sessionListVersionRef = useRef<number | null>(null);
   const sessionLoadIdRef = useRef(0);
   const [loading, setLoading] = useState(true);
+  // The first paint lists summary rows (their time is the file's mtime); the
+  // project order is first saved from the full details.
+  const [sessionDetailsLoaded, setSessionDetailsLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedCwd, setSelectedCwd] = useState<string | null>(null);
   const [homeDir, setHomeDir] = useState<string>("");
@@ -645,10 +656,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     if (target) focusIfLost(document, target());
   }, [focusRequest]);
 
-  // Pins and archive: pi-web's own state, kept on the server for every window.
+  // Pins, archive and project order: pi-web's own state, kept on the server for every window.
   const {
     state: uiState,
     loaded: uiStateLoaded,
+    synced: uiStateSynced,
     error: uiStateError,
     apply: applyUiStateRequest,
     snapshot: snapshotUiState,
@@ -690,6 +702,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       if (loadId !== sessionLoadIdRef.current) return;
       sessionListVersionRef.current = data.sessionListVersion;
       setAllSessions(data.sessions);
+      if (!summary) setSessionDetailsLoaded(true);
       // Treat the fetched running set as an initial fallback only. Once the
       // lightweight poll is live, a slow session-list fetch cannot overwrite it.
       if (!runningPollAuthoritativeRef.current) {
@@ -1418,6 +1431,31 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     [model.projects],
   );
 
+  // The project order is saved as projects turn up: a project without a place
+  // renders at the top of its band, and saving it puts it at the top of the
+  // list, so nothing moves on screen; from then on only a drag or Move up/down
+  // moves it. The first save (an empty order) records the activity order the
+  // user sees. It waits for real server state (a failed GET leaves the local
+  // state empty: archived projects would count as live) and for the session
+  // details (the summary rows' times are file mtimes). When more keys wait
+  // than one request holds, the bottom ones go first
+  // (nextProjectKeysToRecord): a batch never lands below keys still unsaved.
+  // Each key is sent once per page: a refused save is not retried in a loop,
+  // and keys that do not fit a full list are not sent again and again. A
+  // background save fails quietly (the raw apply, no toast).
+  const recordedOrderKeysRef = useRef(new Set<string>());
+  const projectKeysToRecord = model.projectKeysToRecord;
+  const storedOrderLength = uiState.projectOrder?.length ?? 0;
+  useEffect(() => {
+    if (loading || !uiStateSynced || !sessionDetailsLoaded) return;
+    if (storedOrderLength >= MAX_PROJECT_ORDER_KEYS) return;
+    const recorded = recordedOrderKeysRef.current;
+    const keys = nextProjectKeysToRecord(projectKeysToRecord, recorded, MAX_SESSION_UI_IDS_PER_REQUEST);
+    if (keys.length === 0) return;
+    for (const key of keys) recorded.add(key);
+    void applyUiStateRequest({ action: "add-projects", keys });
+  }, [applyUiStateRequest, loading, projectKeysToRecord, sessionDetailsLoaded, storedOrderLength, uiStateSynced]);
+
   // What the bar above a fresh composer shows for this cwd: the project, its
   // worktrees where the files tab offers them, and every project in the
   // groups' order (then those with sessions but no group: all of them
@@ -1491,6 +1529,24 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     shownUiWriteFailuresRef.current = uiWriteFailures;
     showToast(t("sidebar.uiStateFailed", { error: uiStateError ?? "" }));
   }, [uiWriteFailures, uiStateError, showToast, t]);
+
+  // A drop, or Move up/down: the project goes next to another of its band.
+  // Its band's projects without a place are saved first, top to bottom, so
+  // it lands where the user saw it; past one request's worth (a full list, a
+  // move before the first save), the bottom ones, which land where they
+  // show. The moved group is then scrolled into view (a drop past a tall
+  // group, a keyboard move); kept mounted until then, it is still there for
+  // the menu to give focus back to.
+  const moveProject = useCallback((projectKey: string, anchorKey: string, position: ProjectMovePosition) => {
+    const project = projectByKey.get(projectKey);
+    const anchor = projectByKey.get(anchorKey);
+    // Pinned or unpinned in another window meanwhile: a move never crosses bands.
+    if (!project || !anchor || project === anchor || project.pinned !== anchor.pinned) return;
+    const add = model.unorderedKeysByBand[project.pinned ? "pinned" : "other"].slice(-MAX_SESSION_UI_IDS_PER_REQUEST);
+    void applyUiState({ action: "move-project", projectKey, anchorKey, position, add });
+    treeRevealIdRef.current += 1;
+    setTreeReveal({ id: treeRevealIdRef.current, at: Date.now(), rowKey: `group:${projectKey}` });
+  }, [applyUiState, model.unorderedKeysByBand, projectByKey]);
 
   const switchTab = useCallback((tab: SidebarTab) => {
     setSidebarTab(tab);
@@ -1991,6 +2047,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   const groupMenuItems = (project: SidebarProject, olderCount: number): SidebarMenuItem[] => {
     const archivedCount = archiveIndex.countByProject.get(project.key) ?? 0;
+    // Within the project's band; disabled at its edges.
+    const up = adjacentProjectMove(model.projects, project.key, "up");
+    const down = adjacentProjectMove(model.projects, project.key, "down");
     return [
       {
         type: "item",
@@ -1998,6 +2057,22 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         label: t(project.pinned ? "sidebar.unpinProject" : "sidebar.pinProject"),
         icon: project.pinned ? <PinOffIcon /> : <PinIcon />,
         onSelect: () => { void applyUiState({ action: "pin-project", projectKey: project.key, root: project.root, pinned: !project.pinned }); },
+      },
+      {
+        type: "item",
+        id: "move-up",
+        label: t("sidebar.moveProjectUp"),
+        icon: <ChevronIcon className="sidebar-icon-up" />,
+        disabled: up === null,
+        onSelect: () => { if (up) moveProject(project.key, up.anchorKey, up.position); },
+      },
+      {
+        type: "item",
+        id: "move-down",
+        label: t("sidebar.moveProjectDown"),
+        icon: <ChevronIcon className="sidebar-icon-down" />,
+        disabled: down === null,
+        onSelect: () => { if (down) moveProject(project.key, down.anchorKey, down.position); },
       },
       {
         type: "item",
@@ -2052,7 +2127,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   } else if (menu?.kind === "group") {
     menuTitle = menu.project.name;
     menuLabel = t("sidebar.projectActions", { name: menu.project.name });
-    menuItems = groupMenuItems(menu.project, menu.olderCount);
+    // The project as the tree has it now: pinned, unpinned or moved in another window while the menu is open.
+    menuItems = groupMenuItems(projectByKey.get(menu.project.key) ?? menu.project, menu.olderCount);
     menuWidth = 264;
   } else if (menu?.kind === "view") {
     menuTitle = t("sidebar.viewOptions");
@@ -2097,6 +2173,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     onGroupMenu: handleGroupMenu,
     onOpenOtherProject: handleOpenOtherProject,
     onOpenArchive: openArchiveView,
+    // The archive view has no group rows: only the main tree's can be dragged.
+    onMoveGroup: moveProject,
   } as const;
 
   const explorerCwd = selectedCwd ?? selectedCwdProp ?? null;

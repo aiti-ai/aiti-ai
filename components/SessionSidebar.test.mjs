@@ -346,7 +346,7 @@ test("row clicks go through the list selection, which moves the cwd to the sessi
 });
 
 test("expanding, collapsing or paging a group never changes the cwd", () => {
-  for (const name of ["handleToggleGroup", "handleShowMore", "handleShowLess", "handleTogglePinned", "setAllGroupsExpanded", "handleGroupMenu"]) {
+  for (const name of ["handleToggleGroup", "handleShowMore", "handleShowLess", "handleTogglePinned", "setAllGroupsExpanded", "handleGroupMenu", "moveProject"]) {
     assert.doesNotMatch(callbackBody(name), /setSelectedCwd|onCwdChange/, `${name} must not switch projects`);
   }
   // "Show more" adds SHOW_MORE_STEP families a click; "show less" folds back.
@@ -566,11 +566,47 @@ test("Fork copies the row's session on the server and opens the copy where its r
   // The tree hands a request back once it has scrolled to it or dropped it:
   // kept, a tree mounted again after a search would run it a second time.
   assert.match(source, /const handleRevealHandled = useCallback\(\(id: number\) => \{\s*setTreeReveal\(\(current\) => \(current\?\.id === id \? null : current\)\);\s*\}, \[\]\);/);
-  assert.equal((source.match(/setTreeReveal\(/g) ?? []).length, 2, "only a fork's open and the tree's answer set it");
+  assert.equal((source.match(/setTreeReveal\(/g) ?? []).length, 3, "only a fork's open, a project move and the tree's answer set it");
   // Only the main tree reveals; the archive view is closed by then.
   assert.equal((source.match(/reveal=\{treeReveal\}/g) ?? []).length, 1);
   assert.equal((source.match(/onRevealHandled=\{handleRevealHandled\}/g) ?? []).length, 1);
   assert.doesNotMatch(source.slice(source.indexOf("const treeProps = {"), source.indexOf("} as const;")), /reveal/);
   assert.match(source, /fork: "sidebar\.fork",/);
   assert.match(source, /case "fork": return <ForkIcon \/>;/);
+});
+
+test("new projects are saved to the project order once, quietly, after real state and details have loaded", () => {
+  const effect = source.slice(source.indexOf("const recordedOrderKeysRef"), source.indexOf("// What the bar above a fresh composer shows"));
+  // Not from a failed GET's empty state (archived projects would look live), not from summary rows.
+  assert.match(effect, /if \(loading \|\| !uiStateSynced \|\| !sessionDetailsLoaded\) return;/);
+  assert.match(source, /synced: uiStateSynced,/);
+  assert.match(callbackBody("loadSessions"), /setAllSessions\(data\.sessions\);\s*if \(!summary\) setSessionDetailsLoaded\(true\);/);
+  // A full list takes nothing more: no request at all.
+  assert.match(effect, /if \(storedOrderLength >= MAX_PROJECT_ORDER_KEYS\) return;/);
+  // At most one request's worth, bottom first (lib/session-tree.test.mjs plays
+  // it out), and only the keys sent are marked: each key once per page.
+  assert.match(effect, /const keys = nextProjectKeysToRecord\(projectKeysToRecord, recorded, MAX_SESSION_UI_IDS_PER_REQUEST\);\s*if \(keys\.length === 0\) return;\s*for \(const key of keys\) recorded\.add\(key\);/);
+  // The raw apply: a background save that fails shows no toast.
+  assert.match(effect, /void applyUiStateRequest\(\{ action: "add-projects", keys \}\);/);
+  assert.doesNotMatch(effect, /applyUiState\(/);
+  assert.match(effect, /\}, \[applyUiStateRequest, loading, projectKeysToRecord, sessionDetailsLoaded, storedOrderLength, uiStateSynced\]\);/);
+});
+
+test("a project moves next to another of its band, its band's unsaved projects first, and is then revealed", () => {
+  const move = callbackBody("moveProject");
+  assert.match(move, /if \(!project \|\| !anchor \|\| project === anchor \|\| project\.pinned !== anchor\.pinned\) return;/);
+  assert.match(move, /const add = model\.unorderedKeysByBand\[project\.pinned \? "pinned" : "other"\]\.slice\(-MAX_SESSION_UI_IDS_PER_REQUEST\);\s*void applyUiState\(\{ action: "move-project", projectKey, anchorKey, position, add \}\);/);
+  // The tree's one reveal mechanism: a new id from the counter; the row stays
+  // mounted until handled, so the menu can give focus back to its ⋯.
+  assert.match(move, /treeRevealIdRef\.current \+= 1;\s*setTreeReveal\(\{ id: treeRevealIdRef\.current, at: Date\.now\(\), rowKey: `group:\$\{projectKey\}` \}\);/);
+  assert.match(source, /onMoveGroup: moveProject,/);
+
+  // Move up / Move down sit in the group menu, disabled at the band's edges,
+  // for the project as the tree has it now.
+  const items = between("const groupMenuItems = ", "const viewMenuItems = ");
+  assert.match(items, /const up = adjacentProjectMove\(model\.projects, project\.key, "up"\);\s*const down = adjacentProjectMove\(model\.projects, project\.key, "down"\);/);
+  assert.match(items, /id: "move-up",\s*label: t\("sidebar\.moveProjectUp"\),\s*icon: <ChevronIcon className="sidebar-icon-up" \/>,\s*disabled: up === null,\s*onSelect: \(\) => \{ if \(up\) moveProject\(project\.key, up\.anchorKey, up\.position\); \},/);
+  assert.match(items, /id: "move-down",\s*label: t\("sidebar\.moveProjectDown"\),\s*icon: <ChevronIcon className="sidebar-icon-down" \/>,\s*disabled: down === null,\s*onSelect: \(\) => \{ if \(down\) moveProject\(project\.key, down\.anchorKey, down\.position\); \},/);
+  assert.ok(items.indexOf('id: "pin-project"') < items.indexOf('id: "move-up"'));
+  assert.match(source, /menuItems = groupMenuItems\(projectByKey\.get\(menu\.project\.key\) \?\? menu\.project, menu\.olderCount\);/);
 });
