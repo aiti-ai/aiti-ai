@@ -70,8 +70,10 @@ export interface SessionTreeProps {
   pendingGroupKey?: string | null;
   onSelectFamily(family: SessionFamily): void;
   onToggleGroup(projectKey: string): void;
-  /** projectKey or PINNED_MORE_KEY. */
-  onToggleMore(key: string): void;
+  /** Reveal SHOW_MORE_STEP more families; key is a projectKey or PINNED_MORE_KEY. */
+  onShowMore(key: string): void;
+  /** Back to the base limit; key is a projectKey or PINNED_MORE_KEY. */
+  onShowLess(key: string): void;
   onTogglePinned(): void;
   onArchiveFamily(family: SessionFamily): void;
   onRestoreFamily(family: SessionFamily): void;
@@ -153,10 +155,19 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
   useLayoutEffect(() => {
     const element = scrollRef.current;
     if (!element) return;
+    // A classic scrollbar takes width on the right only; the rows read its
+    // width so their inset box keeps equal margins on both sides.
+    const syncScrollbarWidth = () => {
+      element.style.setProperty("--session-tree-scrollbar", `${Math.max(0, element.offsetWidth - element.clientWidth)}px`);
+    };
+    syncScrollbarWidth();
     setViewportHeight(element.clientHeight);
     setScrollTop(element.scrollTop);
     if (typeof ResizeObserver === "undefined") return;
+    // The gutter is reserved (scrollbar-gutter in sidebar.css), but its width
+    // still changes with the pointer media query, which resizes the content box.
     const observer = new ResizeObserver(() => {
+      syncScrollbarWidth();
       setViewportHeight(element.clientHeight);
       // Inside a hidden tab the height was 0; coming back, the position may
       // have changed without a scroll event.
@@ -200,6 +211,65 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
     () => (loading ? [] : getVisibleRowIndices(offsets, scrollTop, viewportHeight, OVERSCAN_PX, keepMounted)),
     [loading, offsets, scrollTop, viewportHeight, keepMounted],
   );
+
+  // "Show more" / "show less" change the rows under the pointer. After "show
+  // less" the list can shrink by hundreds of pixels, and after a keyboard
+  // "show more" the focused button moves 20 rows down: either way the more
+  // row is scrolled back into view. The button a keyboard user was on may be
+  // the one that disappears (the last "show more", any "show less"), or the
+  // whole row may go; focus then moves to what remains of the row, else to
+  // the group or pinned header. Focus waits in its own ref until a commit has
+  // the target mounted, so a second rows change in between cannot drop it.
+  const pendingMoreRef = useRef<{ rowKey: string; fallbackKey: string; focus: boolean; scroll: boolean } | null>(null);
+  const pendingFocusRef = useRef<{ rowKey: string; fallbackKey: string; tries: number } | null>(null);
+  const handleMoreAction = useCallback((rowKey: string, key: string, action: "more" | "less", button: HTMLElement) => {
+    const focus = document.activeElement === button;
+    const keyboard = focus && button.matches(":focus-visible");
+    const fallbackKey = key === PINNED_MORE_KEY ? "pinned-header" : `group:${key}`;
+    pendingMoreRef.current = { rowKey, fallbackKey, focus, scroll: action === "less" || keyboard };
+    if (action === "more") handlersRef.current.onShowMore(key);
+    else handlersRef.current.onShowLess(key);
+  }, []);
+  useLayoutEffect(() => {
+    const pending = pendingMoreRef.current;
+    if (!pending) return;
+    pendingMoreRef.current = null;
+    const element = scrollRef.current;
+    let index = rows.findIndex((row) => row.key === pending.rowKey);
+    if (index < 0) index = rows.findIndex((row) => row.key === pending.fallbackKey);
+    if (pending.scroll && element && index >= 0) {
+      const top = offsets[index];
+      const bottom = offsets[index + 1];
+      if (top < element.scrollTop || bottom > element.scrollTop + element.clientHeight) {
+        element.scrollTop = Math.max(0, top - Math.max(0, (element.clientHeight - (bottom - top)) / 2));
+      }
+      // The browser may clamp scrollTop when the list shrank: keep the window in step either way.
+      setScrollTop(element.scrollTop);
+    }
+    if (pending.focus) pendingFocusRef.current = { rowKey: pending.rowKey, fallbackKey: pending.fallbackKey, tries: 0 };
+  }, [rows, offsets]);
+  useLayoutEffect(() => {
+    const target = pendingFocusRef.current;
+    if (!target) return;
+    const active = document.activeElement;
+    // Focus that survived (the clicked button is still there) stays put.
+    if (active && active !== document.body && document.contains(active)) {
+      pendingFocusRef.current = null;
+      return;
+    }
+    const root = scrollRef.current;
+    const rowElement = (key: string) => root?.querySelector(`[data-row-key="${CSS.escape(key)}"]`) ?? null;
+    const row = rowElement(target.rowKey);
+    const button = row?.querySelector<HTMLElement>("[data-more-action=\"more\"]")
+      ?? row?.querySelector<HTMLElement>("button")
+      ?? rowElement(target.fallbackKey)?.querySelector<HTMLElement>("button");
+    if (button) {
+      button.focus({ preventScroll: true });
+      pendingFocusRef.current = null;
+    } else if (++target.tries > 2) {
+      pendingFocusRef.current = null;
+    }
+  }, [visibleIndices]);
 
   const hasTreeRows = rows.some((row) => row.kind === "session" || row.kind === "group");
   const showEmpty = !loading && !error && emptyLabel !== null && !hasTreeRows;
@@ -253,7 +323,7 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
                   />
                 );
               }
-              return <PlainRowView key={row.key} row={row} top={top} height={height} handlers={handlersRef} />;
+              return <PlainRowView key={row.key} row={row} top={top} height={height} handlers={handlersRef} onMoreAction={handleMoreAction} />;
             })}
           </div>
         )}
@@ -297,6 +367,7 @@ const SessionRowView = memo(function SessionRowView({
   const className = [
     "session-tree-row session-tree-session",
     status.selected ? "is-selected" : "",
+    status.running ? "is-running" : "",
     context === "archive" ? "is-archived" : "",
     menuOpen ? "is-menu-open" : "",
     confirming ? "is-confirming" : "",
@@ -351,27 +422,21 @@ const SessionRowView = memo(function SessionRowView({
   const details = root.detailsPending ? "…" : t("sidebar.messagesCount", { count: root.messageCount });
   const tooltip = `${title}\n${details} · ${formatRelativeTime(root.modified, locale, nowDate)}${branch ? ` · ⑂ ${branch}` : ""}`;
 
-  let slot: ReactNode = null;
-  if (status.running) {
-    slot = (
-      <span className="session-tree-slot is-running" title={t("sidebar.agentRunning")}>
-        <SpinnerIcon size={12} label={t("sidebar.agentRunning")} />
-      </span>
-    );
-  } else if (status.unread) {
-    slot = (
-      <span className="session-tree-slot" title={t("sidebar.newActivity")}>
-        <span className="session-tree-unread" role="img" aria-label={t("sidebar.newSessionActivity")} />
-      </span>
-    );
-  } else if (context === "archive") {
-    slot = <span className="session-tree-slot is-archived"><ArchiveIcon size={11} /></span>;
-  } else {
-    slot = <span className="session-tree-slot" />;
-  }
-
+  // The right column says the one thing worth knowing: running, else unread,
+  // else when (a pinned row names its project instead, an archived row says
+  // when it was archived). Nothing sits before the title, so it gets the room.
   let meta: ReactNode;
-  if (context === "pinned") {
+  let metaState = "";
+  let metaTitle: string | undefined;
+  if (status.running) {
+    meta = <SpinnerIcon size={12} label={t("sidebar.agentRunning")} />;
+    metaState = " is-running";
+    metaTitle = t("sidebar.agentRunning");
+  } else if (status.unread) {
+    meta = <span className="session-tree-unread" role="img" aria-label={t("sidebar.newSessionActivity")} />;
+    metaState = " is-unread";
+    metaTitle = t("sidebar.newActivity");
+  } else if (context === "pinned") {
     meta = <span className="session-tree-project">{row.project.name}</span>;
   } else if (context === "archive" && row.archivedAt !== null) {
     meta = formatShortRelativeTime(new Date(row.archivedAt), locale, nowDate);
@@ -392,10 +457,9 @@ const SessionRowView = memo(function SessionRowView({
       onContextMenu={(event) => handlers.current.onRowContextMenu(row, event)}
     >
       <button type="button" className="session-tree-main" title={tooltip} aria-current={status.selected ? "true" : undefined}>
-        {slot}
         <span className="session-tree-title">{title}</span>
         {branch && <span className="session-tree-branch">⑂ {branch}</span>}
-        <span className="session-tree-meta">{meta}</span>
+        <span className={`session-tree-meta${metaState}`} title={metaTitle}>{meta}</span>
       </button>
       {!status.transient && (
         <span className="session-tree-actions">
@@ -601,9 +665,9 @@ const GroupRowView = memo(function GroupRowView({
         title={project.root}
         onClick={() => handlers.current.onToggleGroup(project.key)}
       >
-        <ChevronIcon size={10} className={`session-tree-chevron${expanded ? " is-open" : ""}`} />
         <span className="session-tree-group-name">{project.name}</span>
         {project.pinned && <PinIcon size={10} className="session-tree-group-pin" label={t("sidebar.pinnedProject")} />}
+        <ChevronIcon size={10} className={`session-tree-chevron${expanded ? " is-open" : ""}`} />
         {!expanded && <ActivitySummary running={row.running} unread={row.unread} t={t} />}
       </button>
       <span className="session-tree-group-actions">
@@ -647,11 +711,13 @@ const PlainRowView = memo(function PlainRowView({
   top,
   height,
   handlers,
+  onMoreAction,
 }: {
   row: Exclude<SidebarRow, { kind: "session" | "group" | "spacer" }>;
   top: number;
   height: number;
   handlers: Handlers;
+  onMoreAction: (rowKey: string, key: string, action: "more" | "less", button: HTMLElement) => void;
 }) {
   const { t } = useI18n();
   const style = rowStyle(top, height);
@@ -666,9 +732,9 @@ const PlainRowView = memo(function PlainRowView({
             aria-expanded={!row.collapsed}
             onClick={() => handlers.current.onTogglePinned()}
           >
-            <ChevronIcon size={9} className={`session-tree-chevron${row.collapsed ? "" : " is-open"}`} />
             <span className="session-tree-pinned-label">{t("sidebar.pinned")}</span>
             <span className="session-tree-pinned-count">· {row.count}</span>
+            <ChevronIcon size={9} className={`session-tree-chevron${row.collapsed ? "" : " is-open"}`} />
             {row.collapsed && row.running > 0 && (
               <span
                 className="session-tree-pinned-dot is-running"
@@ -689,18 +755,33 @@ const PlainRowView = memo(function PlainRowView({
         </div>
       );
     case "pinned-more":
-    case "group-more":
+    case "group-more": {
+      const moreKey = row.kind === "pinned-more" ? PINNED_MORE_KEY : row.projectKey;
       return (
         <div className="session-tree-row session-tree-more" style={style} data-row-key={row.key}>
-          <button
-            type="button"
-            className="session-tree-more-toggle"
-            onClick={() => handlers.current.onToggleMore(row.kind === "pinned-more" ? PINNED_MORE_KEY : row.projectKey)}
-          >
-            {row.expanded ? t("sidebar.showLess") : t("sidebar.showMore", { count: row.hidden })}
-          </button>
+          {row.hidden > 0 && (
+            <button
+              type="button"
+              className="session-tree-more-toggle"
+              data-more-action="more"
+              onClick={(event) => onMoreAction(row.key, moreKey, "more", event.currentTarget)}
+            >
+              {t("sidebar.showMore", { count: row.hidden })}
+            </button>
+          )}
+          {row.canShowLess && (
+            <button
+              type="button"
+              className="session-tree-more-toggle"
+              data-more-action="less"
+              onClick={(event) => onMoreAction(row.key, moreKey, "less", event.currentTarget)}
+            >
+              {t("sidebar.showLess")}
+            </button>
+          )}
         </div>
       );
+    }
     case "group-empty":
       return (
         <div className="session-tree-row session-tree-group-empty" style={style} data-row-key={row.key}>
