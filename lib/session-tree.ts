@@ -540,3 +540,50 @@ export function getVisibleRowIndices(
   if (extra.length === 0) return indices;
   return [...new Set([...indices, ...extra])].sort((a, b) => a - b);
 }
+
+/**
+ * The scrollTop that brings row `index` into a viewport of `viewportHeight`
+ * now scrolled to `scrollTop`: centred when it is partly or wholly out of
+ * view, null when it is already in view (or there is no such row).
+ */
+export function revealScrollTop(
+  offsets: readonly number[],
+  index: number,
+  scrollTop: number,
+  viewportHeight: number,
+): number | null {
+  if (!Number.isInteger(index) || index < 0 || index >= offsets.length - 1) return null;
+  const top = offsets[index];
+  const bottom = offsets[index + 1];
+  if (top >= scrollTop && bottom <= scrollTop + viewportHeight) return null;
+  return Math.max(0, top - Math.max(0, (viewportHeight - (bottom - top)) / 2));
+}
+
+/** A reveal request is dropped once its row has missed this many rows updates, or this long after it was made. */
+export const REVEAL_MAX_MISSES = 3;
+export const REVEAL_EXPIRY_MS = 3000;
+
+/** How many rows updates have missed one reveal request's row so far. */
+export interface RevealMisses { id: number; misses: number }
+
+/**
+ * One look at the rows for a reveal request (SessionTreeReveal in
+ * components/SessionTree.tsx): "reveal" when its row is there, "wait" for the
+ * next rows update, "drop" when it is older than REVEAL_EXPIRY_MS (found or
+ * not: a row that turns up later, for another reason, is not scrolled to) or
+ * its row has now missed REVEAL_MAX_MISSES updates. `misses` is the count
+ * so far, kept for this id only; the next one comes back with the verdict.
+ */
+export function revealStep(
+  misses: RevealMisses | null,
+  request: { id: number; at: number },
+  found: boolean,
+  now: number,
+): { misses: RevealMisses; action: "reveal" | "wait" | "drop" } {
+  const current = misses?.id === request.id ? misses : { id: request.id, misses: 0 };
+  // Written so an unreadable time counts as too old.
+  if (!(now - request.at <= REVEAL_EXPIRY_MS)) return { misses: current, action: "drop" };
+  if (found) return { misses: current, action: "reveal" };
+  const next = { id: request.id, misses: current.misses + 1 };
+  return { misses: next, action: next.misses >= REVEAL_MAX_MISSES ? "drop" : "wait" };
+}

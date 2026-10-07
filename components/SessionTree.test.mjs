@@ -338,6 +338,34 @@ test("only rows near the viewport are mounted, plus the ones that must stay", ()
   assert.match(render({ rows, renamingRootId: "s120" }), /style="top:3840px;height:32px" data-row-key="session:group:s120"/);
 });
 
+test("a reveal request keeps its row mounted until handled, once per id, and expires", () => {
+  const rows = Array.from({ length: 200 }, (_, index) => sessionRow(session(`s${index}`)));
+  const at = Date.now();
+  // Mounted before the scroll, so focus can go to it in the commit that scrolls.
+  const kept = renderedKeys(render({ rows, reveal: { id: 1, at, rowKey: "session:group:s150" } }));
+  assert.equal(kept.at(-1), "session:group:s150");
+  assert.deepEqual(renderedKeys(render({ rows, reveal: { id: 1, at, rowKey: "group:missing" } })), renderedKeys(render({ rows })));
+
+  // Any row key: a session row, a group header. Handled once: the id is
+  // remembered, so passing the same request again does nothing.
+  assert.match(source, /const pendingReveal = reveal && reveal\.id !== handledRevealId \? reveal : null;/);
+  assert.match(source, /row\.key === focusedRowKey \|\| row\.key === activeMenuRowKey \|\| row\.key === pendingRevealKey/);
+  const effect = source.slice(source.indexOf("const revealMissesRef"), source.indexOf("// Focus that survived"));
+  // Every look goes through revealStep(), which checks the age first, found or
+  // not (lib/session-tree.test.mjs), so a late row is never scrolled to.
+  assert.match(effect, /const step = revealStep\(revealMissesRef\.current, pendingReveal, index >= 0, Date\.now\(\)\);\s*revealMissesRef\.current = step\.misses;\s*if \(step\.action === "wait"\) return;\s*if \(step\.action === "reveal"\) \{/);
+  assert.match(effect, /if \(element && element\.getClientRects\(\)\.length > 0\) \{\s*const next = revealScrollTop\(offsets, index, element\.scrollTop, element\.clientHeight\);\s*if \(next !== null\) element\.scrollTop = next;\s*setScrollTop\(element\.scrollTop\);\s*\}/);
+  // Focus only when the request says it may be taken from where it is (or it fell to <body>).
+  assert.match(effect, /if \(pendingReveal\.takeFocusFrom\) \{\s*pendingFocusRef\.current = \{ rowKey: pendingReveal\.rowKey, fallbackKey: pendingReveal\.rowKey, tries: 0, takeFocusFrom: pendingReveal\.takeFocusFrom \};\s*\}\s*\}/);
+  // Scrolled to or dropped, the parent hears of it and lets the request go:
+  // a tree mounted again (after a search) never sees it.
+  assert.match(effect, /\}\s*setHandledRevealId\(pendingReveal\.id\);\s*handlersRef\.current\.onRevealHandled\?\.\(pendingReveal\.id\);\s*\}, \[pendingReveal, rows, offsets\]\);/);
+  assert.equal((source.match(/setHandledRevealId\(/g) ?? []).length, 1, "one place handles a request, for both outcomes");
+  assert.match(source, /onRevealHandled\?\(id: number\): void;/);
+  // Declared before the focus effect, which focuses the row in the same commit.
+  assert.ok(source.indexOf("const revealMissesRef") < source.indexOf("// Focus that survived"));
+});
+
 test("renders the model built from a catalog with unique row keys", () => {
   const sessions = [
     session("a", { modified: new Date(NOW - MINUTE).toISOString() }),
@@ -393,12 +421,13 @@ test("show less scrolls its row back into view and focus stays on the more row",
   // "Show less" always, and a keyboard "show more" (the button moves 20 rows down), scroll the row back.
   assert.match(source, /const keyboard = focus && button\.matches\(":focus-visible"\);/);
   assert.match(source, /pendingMoreRef\.current = \{ rowKey, fallbackKey, focus, scroll: action === "less" \|\| keyboard \};\s*if \(action === "more"\) handlersRef\.current\.onShowMore\(key\);\s*else handlersRef\.current\.onShowLess\(key\);/);
-  assert.match(source, /if \(top < element\.scrollTop \|\| bottom > element\.scrollTop \+ element\.clientHeight\) \{\s*element\.scrollTop = Math\.max\(0, top - Math\.max\(0, \(element\.clientHeight - \(bottom - top\)\) \/ 2\)\);\s*\}[\s\S]*?setScrollTop\(element\.scrollTop\);/);
+  assert.match(source, /if \(pending\.scroll && element && index >= 0\) \{\s*const next = revealScrollTop\(offsets, index, element\.scrollTop, element\.clientHeight\);\s*if \(next !== null\) element\.scrollTop = next;[\s\S]*?setScrollTop\(element\.scrollTop\);/);
   // Only focus that was on the clicked button and then fell to <body> moves: to the row's
   // "show more", else its other button, else the group (or pinned) header.
   assert.match(source, /const focus = document\.activeElement === button;/);
   assert.match(source, /const fallbackKey = key === PINNED_MORE_KEY \? "pinned-header" : `group:\$\{key\}`;/);
-  assert.match(source, /if \(active && active !== document\.body && document\.contains\(active\)\) \{\s*pendingFocusRef\.current = null;\s*return;\s*\}/);
+  assert.match(source, /if \(active && active !== document\.body && document\.contains\(active\) && !target\.takeFocusFrom\?\.\(active\)\) \{\s*pendingFocusRef\.current = null;\s*return;\s*\}/);
+  assert.match(source, /if \(pending\.focus\) pendingFocusRef\.current = \{ rowKey: pending\.rowKey, fallbackKey: pending\.fallbackKey, tries: 0 \};/, "show more never takes focus from elsewhere");
   assert.match(source, /querySelector<HTMLElement>\("\[data-more-action=\\"more\\"\]"\)\s*\?\? row\?\.querySelector<HTMLElement>\("button"\)\s*\?\? rowElement\(target\.fallbackKey\)\?\.querySelector<HTMLElement>\("button"\);/);
   // The focus waits in a ref until a commit has its target mounted, not in a cancellable frame.
   assert.match(source, /\}, \[visibleIndices\]\);/);
