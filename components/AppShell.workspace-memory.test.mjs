@@ -167,3 +167,80 @@ test("New restores the draft after session navigation and workspace auto-restore
     });
   }
 });
+
+test("New in another project adopts it up front and parks the composer's draft", () => {
+  const callbacks = [
+    callbackBody("restoreWorkspaceContext", "handleCwdChange"),
+    callbackBody("handleCwdChange", "handleSelectSession"),
+    callbackBody("handleSelectSession", "handleNewSession"),
+    callbackBody("handleNewSession", "hydrateSelectedSession"),
+  ].join("\n");
+  const parkedKeyHelper = source.slice(source.indexOf("function parkedNewSessionDraftKey"), source.indexOf("export function AppShell"));
+  const fileTab = { id: "file:/p1/notes.md", filePath: "/p1/notes.md" };
+  const context = vm.createContext({
+    ...draftStore,
+    crypto: globalThis.crypto,
+    URLSearchParams,
+    window: { location: { pathname: "/", search: "" } },
+    router: { replace() {} },
+    fetch: () => new Promise(() => {}),
+    getLastOpenSession: () => null,
+    clearLastOpen() {},
+    workspaceKeyOf: (value) => value.projectKey ?? value.cwd,
+    useCallback: (callback) => callback,
+    useGlobalKeyboardShortcuts() {},
+    activeNewSessionDraftKeyRef: { current: "new:first:/p1" },
+    activeProjectKeyRef: { current: "/p1" },
+    workspaceRestoreTokenRef: { current: 0 },
+    suppressCwdBumpRef: { current: false },
+    branchLeafChangeFnRef: { current: null },
+    isMobile: false,
+    activeCwd: "/p1",
+    activeFileTabId: fileTab.id,
+    fileTabs: [fileTab],
+    rightPanelOpen: true,
+    newSessionCwd: "/p1",
+    newSessionDraftId: "first",
+    selectedSession: null,
+    sessionCatalog: [],
+    sessionKey: 0,
+  });
+  context.invalidateWorkspaceRestore = () => context.workspaceRestoreTokenRef.current++;
+  for (const [setter] of callbacks.matchAll(/\bset[A-Z]\w*(?=\()/g)) {
+    const state = setter[3].toLowerCase() + setter.slice(4);
+    context[setter] = (value) => {
+      context[state] = typeof value === "function" ? value(context[state]) : value;
+    };
+  }
+  vm.runInContext(stripTypeScriptTypes(`${parkedKeyHelper}\n${callbacks}
+    globalThis.navigate = { handleCwdChange, handleSelectSession, handleNewSession };
+  `), context);
+  const draft = { value: "half-written in p1", images: [] };
+  draftStore.setDraft("new:first:/p1", draft);
+
+  // Ctrl+Alt+N (no key) in the same cwd keeps the project and its file tabs.
+  context.navigate.handleNewSession("kb-1", "/p1");
+  assert.equal(context.activeProjectKeyRef.current, "/p1");
+  assert.deepEqual(context.fileTabs, [fileTab]);
+  assert.equal(context.rightPanelOpen, true);
+  draftStore.setDraft(context.activeNewSessionDraftKeyRef.current, draft);
+
+  // A group's "+" in another project: adopted before the sidebar reports the cwd.
+  const sessionKey = context.sessionKey;
+  context.navigate.handleNewSession("p2-new", "/p2", "/p2-key");
+  assert.equal(context.activeProjectKeyRef.current, "/p2-key");
+  assert.equal(context.fileTabs.length, 0);
+  assert.equal(context.activeFileTabId, null);
+  assert.equal(context.rightPanelOpen, false);
+  assert.equal(context.newSessionCwd, "/p2");
+  assert.equal(context.sessionKey, sessionKey + 1);
+  assert.deepEqual(draftStore.getDraft("parked-new:/p1"), draft, "the p1 composer's draft is parked, not dropped");
+
+  // The sidebar's report of that cwd is neither a switch nor a second remount.
+  context.activeCwd = "/p1";
+  context.navigate.handleCwdChange("/p2", "/p2", "/p2-key");
+  assert.equal(context.sessionKey, sessionKey + 1);
+  assert.equal(context.newSessionCwd, "/p2");
+  assert.equal(context.activeCwd, "/p2");
+  draftStore.clearDraft("parked-new:/p1");
+});
