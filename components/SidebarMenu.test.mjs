@@ -92,7 +92,7 @@ test("desktop menu markup: menu roles, check marks, shortcuts, notes and disable
 
   const main = html.match(/<button[^>]*aria-checked="true"[^>]*>.*?<\/button>/)?.[0] ?? "";
   assert.match(main, /role="menuitemradio"/);
-  assert.match(main, /class="sidebar-menu-item is-checked"/);
+  assert.match(main, /class="sidebar-menu-item is-choice is-checked"/);
   assert.match(main, /<span class="sidebar-menu-label is-mono">main<\/span>/);
   assert.match(main, /<span class="sidebar-menu-note">main<\/span>/);
   assert.match(main, /<path d="M20 6 9 17l-5-5"><\/path>/, "a checked choice shows the check mark");
@@ -342,6 +342,38 @@ test("a filter shows once a menu has enough choices, and narrows only the choice
   assert.deepEqual(ids("nothing"), ["separator", "open-folder"]);
 });
 
+test("a classic menu: main's dropdown look, paths cut at their left, a footer and a row of its own", () => {
+  const classicItems = [
+    { type: "item", id: "app", label: "~/work/app", mono: true, path: true, title: "/home/me/work/app", checked: true, onSelect: noop },
+    { type: "custom", id: "feature", content: h("div", { className: "question" }, h("button", { type: "button", "data-sidebar-menu-item": "" }, "Force")) },
+    { type: "item", id: "default", label: "Use default directory", onSelect: noop },
+  ];
+  const html = surface({ classic: true, items: classicItems, footer: h("form", { className: "footer" }, "New worktree") });
+  // A footer stands after the list, so the surface is a dialog holding a menu.
+  assert.match(html, /^<div class="sidebar-menu is-classic" role="dialog" aria-label="Session actions"[^>]*><div role="menu" aria-label="Session actions">/);
+  assert.match(html, /<\/div><form class="footer">New worktree<\/form><\/div>$/);
+  // A path is cut at its left, the text kept left to right.
+  assert.match(html, /<span class="sidebar-menu-label is-mono is-path"><span>~\/work\/app<\/span><\/span>/);
+  // A custom entry shows as given, in its place.
+  assert.match(html, /<div class="sidebar-menu-custom" role="none"><div class="question"><button type="button" data-sidebar-menu-item="">Force<\/button><\/div><\/div>/);
+  // Without a footer a classic menu is a plain menu; a sheet never takes the look.
+  assert.match(surface({ classic: true }), /^<div class="sidebar-menu is-classic" role="menu"/);
+  assert.doesNotMatch(surface({ classic: true, sheet: true }), /is-classic/);
+  // Main's dropdowns: rows divided by lines, 11px, a 10px check, no inner padding.
+  assert.match(cssRule(".sidebar-menu.is-classic"), /^\s*padding: 0;\s*$/);
+  assert.match(cssRule(".sidebar-menu.is-classic .sidebar-menu-item"), /gap: 7px;\s*height: auto;\s*padding: 8px 10px;\s*border-radius: 0;\s*color: var\(--text-muted\);\s*font-size: 11px;/);
+  assert.match(css, /\.sidebar-menu\.is-classic \.sidebar-menu-item\.is-choice,\s*\.sidebar-menu\.is-classic \.sidebar-menu-row\.is-choice \{\s*border-bottom: 1px solid var\(--border\);/);
+  assert.match(cssRule(".sidebar-menu.is-classic .sidebar-menu-icon svg"), /width: 10px;\s*height: 10px;/);
+  assert.match(cssRule(".sidebar-menu-label.is-path"), /direction: rtl;\s*text-align: left;/);
+  // A dirty checkout's question in its row: red-tinted, its two buttons small.
+  assert.match(cssRule(".sidebar-worktree-confirm"), /padding: 7px 10px;\s*border-bottom: 1px solid var\(--border\);\s*background: rgba\(239, 68, 68, 0\.06\);/);
+  // Focus goes in again when the body changes, and a filter may ask for more choices.
+  assert.match(source, /\}, \[visible, sheet, custom, focusKey\]\);/);
+  assert.equal(sidebarMenuHasFilter(projectMenu, 9), false);
+  assert.equal(sidebarMenuHasFilter([...projectMenu, { ...projectChoices[0], id: "ninth" }], 9), true);
+  assert.match(source, /sidebarMenuHasFilter\(items, filter\.minChoices\)/);
+});
+
 test("filter markup: a field above the list, the empty label, focus only on a desktop", () => {
   // A menu holds only items: the field and the empty label stand before it, in a dialog.
   const html = surface({ items: projectMenu, filter, filterQuery: "" });
@@ -396,7 +428,7 @@ test("an item's secondary action is its own menu item at the row's end; a badge 
     { type: "item", id: "app", label: "app", checked: true, note: "Workspace", badge: h("span", { className: "badge" }, "2"), onSelect: noop },
   ];
   const html = surface({ items: removeItems });
-  assert.match(html, /<div class="sidebar-menu-row" role="none"><button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" title="\/work\/app-worktrees\/feature-x" data-sidebar-menu-item="" class="sidebar-menu-item">[\s\S]*?<\/button><button type="button" role="menuitem" aria-label="Remove worktree checkout \/work\/app-worktrees\/feature-x" tabindex="-1" title="Remove worktree checkout \/work\/app-worktrees\/feature-x" data-sidebar-menu-item="" class="sidebar-menu-secondary is-danger"><svg/);
+  assert.match(html, /<div class="sidebar-menu-row is-choice" role="none"><button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" title="\/work\/app-worktrees\/feature-x" data-sidebar-menu-item="" class="sidebar-menu-item is-choice">[\s\S]*?<\/button><button type="button" role="menuitem" aria-label="Remove worktree checkout \/work\/app-worktrees\/feature-x" tabindex="-1" title="Remove worktree checkout \/work\/app-worktrees\/feature-x" data-sidebar-menu-item="" class="sidebar-menu-secondary is-danger"><svg/);
   assert.match(html, /aria-label="Remove busy" aria-disabled="true" tabindex="-1"[^>]*class="sidebar-menu-secondary"/);
   // Arrow keys reach both: each is a data-sidebar-menu-item.
   assert.equal((html.match(/data-sidebar-menu-item=""/g) ?? []).length, 5);
@@ -413,5 +445,5 @@ test("filter and secondary action styles: sticky field, room for a finger, a cap
   assert.match(cssRule(".sidebar-menu-secondary"), /width: 28px;\s*height: 28px;/);
   assert.match(cssRule(".sidebar-sheet .sidebar-menu-secondary"), /width: 48px;\s*height: 48px;/);
   assert.match(css, /\.sidebar-menu-secondary\.is-danger:not\(\[aria-disabled="true"\]\):hover,\s*\.sidebar-menu-secondary\.is-danger:focus-visible \{\s*background: rgba\(239, 68, 68, 0\.08\);\s*color: #ef4444;/);
-  assert.match(css, /@media \(pointer: coarse\) \{\s*\.sidebar-menu-item \{\s*height: 40px;\s*\}\s*\.sidebar-menu-secondary \{\s*width: 40px;\s*height: 40px;/);
+  assert.match(css, /@media \(pointer: coarse\) \{\s*\.sidebar-menu-item \{\s*height: 40px;\s*\}[\s\S]*?\.sidebar-menu-secondary \{\s*width: 40px;\s*height: 40px;/);
 });

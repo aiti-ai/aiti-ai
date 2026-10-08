@@ -16,6 +16,7 @@ const searchSource = await readFile(new URL("./SessionSearch.tsx", import.meta.u
 const globalStyles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const sidebarStyles = await readFile(new URL("../app/sidebar.css", import.meta.url), "utf8");
 const explorerSource = await readFile(new URL("./FileExplorer.tsx", import.meta.url), "utf8");
+const appShellSource = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
 
 const h = React.createElement;
 const noop = () => {};
@@ -136,13 +137,16 @@ test("only Shift skips the session deletion confirmation", () => {
 
 test("sessions and files are two tabs of one sidebar, both kept mounted", () => {
   const html = render({ selectedCwd: "/work/alpha", onOpenTerminal: noop });
-  // Only the two tabs are in the tablist; the view options button sits beside it.
-  const tablist = html.match(/<div class="sidebar-tabs"><div class="sidebar-tabs-list" role="tablist" aria-label="Sidebar view">([\s\S]*?)<\/div><span class="sidebar-tabs-spacer"><\/span>/);
-  assert.ok(tablist, "tablist rendered inside the tab row");
+  // One toolbar row: only the two tabs are the tablist, New and the search
+  // follow it. No brand and no view options.
+  const tablist = html.match(/<div class="sidebar-header"><div class="sidebar-tabs-list" role="tablist" aria-label="Sidebar view">([\s\S]*?)<\/div><span class="sidebar-header-spacer"><\/span><button type="button" class="sidebar-new-button"/);
+  assert.ok(tablist, "tablist rendered at the start of the toolbar row");
   assert.equal((tablist[1].match(/<button /g) ?? []).length, 2);
   assert.equal((tablist[1].match(/role="tab"/g) ?? []).length, 2);
-  assert.doesNotMatch(tablist[1], /View options/);
-  assert.match(html, /<span class="sidebar-tabs-spacer"><\/span><button type="button" class="sidebar-icon-button" title="View options" aria-label="View options" aria-haspopup="menu"/);
+  // Each tab is an icon and a label, as the chat bar's cells are.
+  assert.match(tablist[1], /class="sidebar-tab is-selected"><svg[^>]*class="sidebar-tab-icon"[^>]*>[\s\S]*?<\/svg><span class="sidebar-tab-label">Sessions<\/span><\/button>/);
+  assert.match(html, /<span class="sidebar-new-label">New<\/span><\/button><button type="button" title="Search conversations"/);
+  assert.doesNotMatch(html, /View options|Pi Web/);
   const sessionsTab = openingTag(html, "session-sidebar-tab-sessions");
   const filesTab = openingTag(html, "session-sidebar-tab-files");
   assert.match(sessionsTab, /role="tab"/);
@@ -214,27 +218,49 @@ test("the files tab's head holds the picker and its five buttons, always the sam
   // The sessions tab renders it as the sessions search.
   assert.match(html, /title="Search conversations" aria-label="Search conversations" aria-expanded="false" aria-controls="session-search-input" class="sidebar-search-toggle"/);
   assert.doesNotMatch(source, /kind: "files"|filesMenuItems|TabRowToggle/);
-  // No box of its own: the head is flat on the panel like the tab row, and
-  // its line takes the tab row's place on this tab, so one line runs between
-  // the tabs and the tree (the sessions tab keeps the tab row's). None
-  // between the rows and the buttons. The buttons are the tab row's ⋯, laid
-  // out like that row: the folder's four from the rows' icon column, the
-  // changes view at the right end.
-  assert.match(sidebarStyles, /\.sidebar-files-head \{\s*display: flex;\s*flex: none;\s*flex-direction: column;\s*padding: 0 4px 6px;\s*border-bottom: 1px solid var\(--border\);\s*\}/);
-  assert.match(sidebarStyles, /\.sidebar-tabs\.is-files \{\s*border-bottom-color: transparent;\s*\}/);
-  assert.match(source, /className=\{`sidebar-tabs\$\{sidebarTab === "files" \? " is-files" : ""\}`\}/);
-  assert.match(html, /<div class="sidebar-tabs"><div class="sidebar-tabs-list" role="tablist"/);
-  assert.match(sidebarStyles, /\.sidebar-tabs \{[^}]*border-bottom: 1px solid var\(--border\);/);
-  assert.doesNotMatch(sidebarStyles, /sidebar-files-card|sidebar-files-actions::before/);
-  assert.match(sidebarStyles, /\.sidebar-files-actions \{\s*display: flex;\s*align-items: center;\s*gap: 2px;\s*margin-top: 3px;\s*\}/);
+  // No box of its own: the head sits flat under the toolbar row's line and
+  // a line of its own parts it from the tree. None between the boxes and the
+  // keys: square, borderless and dim, the folder's four from the left, the
+  // changes view at the right end, the row's edges on the boxes'.
+  assert.match(sidebarStyles, /\.sidebar-files-head \{\s*display: flex;\s*flex: none;\s*flex-direction: column;\s*padding: 10px 10px 4px;\s*border-bottom: 1px solid var\(--border\);\s*\}/);
+  assert.match(source, /<div className="sidebar-files-head">/);
+  assert.doesNotMatch(source, /explorerScrolled|is-scrolled/);
+  assert.doesNotMatch(sidebarStyles, /sidebar-files-card|sidebar-files-actions::before|sidebar-tabs\.is-files|sidebar-icon-button|is-scrolled/);
+  assert.match(sidebarStyles, /\.sidebar-files-actions \{\s*display: flex;\s*align-items: center;\s*gap: 6px;\s*margin-top: 4px;\s*\}/);
   assert.match(sidebarStyles, /\.sidebar-tool-button:last-child \{\s*margin-left: auto;\s*\}/);
-  assert.match(sidebarStyles, /\.sidebar-tool-button \{\s*display: flex;\s*flex: 0 1 30px;\s*align-items: center;\s*justify-content: center;\s*min-width: 24px;\s*height: 24px;\s*padding: 0;\s*border: 0;\s*border-radius: 6px;\s*background: transparent;\s*color: var\(--text-dim\);/);
+  assert.match(sidebarStyles, /\.sidebar-tool-button \{\s*display: flex;\s*flex: 0 1 32px;\s*align-items: center;\s*justify-content: center;\s*min-width: 26px;\s*height: 32px;\s*padding: 0;\s*border: 0;\s*border-radius: 7px;\s*background: transparent;\s*color: var\(--text-dim\);/);
   assert.match(sidebarStyles, /\.sidebar-tool-button:not\(:disabled\):hover \{\s*background: var\(--bg-selected\);\s*color: var\(--text\);/);
-  assert.match(sidebarStyles, /@media \(pointer: coarse\) \{[\s\S]*?\.sidebar-files-actions \{\s*margin-top: 0;[\s\S]*?\.sidebar-tool-button \{\s*flex-basis: 32px;\s*height: 36px;/);
-  // The tree's first row as far under the line as the buttons are above it.
-  assert.match(sidebarStyles, /\.sidebar-files-scroll \{[^}]*padding-top: 4px;/);
+  assert.match(sidebarStyles, /@media \(pointer: coarse\) \{[\s\S]*?\.sidebar-tool-button \{\s*flex-basis: 36px;\s*height: 36px;\s*\}/);
+  // Little room above and below the keys: 4px to the boxes, 4px to the line,
+  // and the tree's first row as far under it as their icons are above it.
+  assert.match(sidebarStyles, /\.sidebar-files-scroll \{[^}]*padding-top: 6px;/);
   assert.doesNotMatch(globalStyles.slice(globalStyles.indexOf(".project-picker.is-stacked {")), /^\.project-picker\.is-stacked \{[^}]*(border|background|margin)/);
   assert.doesNotMatch(sidebarStyles, /sidebar-files-toolbar|sidebar-files-title|is-pressed/);
+});
+
+test("the toolbar row is the chat bar's cells, and gives up labels only where they do not fit", () => {
+  // 36px with its line, as the chat's top bar beside it (AppShell, border-box
+  // from the global reset), so the two read as one bar; the chosen tab and
+  // the open search take its accent line.
+  assert.match(sidebarStyles, /\.sidebar-header \{\s*display: flex;\s*flex: none;\s*align-items: stretch;\s*height: 36px;\s*box-sizing: border-box;\s*border-bottom: 1px solid var\(--border\);\s*\}/);
+  assert.match(appShellSource, /borderBottom: "1px solid var\(--border\)", height: "calc\(36px \+ env\(safe-area-inset-top\)\)", paddingTop: "env\(safe-area-inset-top\)"/);
+  assert.match(globalStyles, /^\* \{\s*box-sizing: border-box;/m);
+  assert.match(sidebarStyles, /\.sidebar-tab,\s*\.sidebar-new-button,\s*\.sidebar-search-toggle \{[^}]*padding: 0 12px;\s*border: 0;\s*border-top: 2px solid transparent;\s*border-radius: 0;/);
+  assert.match(sidebarStyles, /\.sidebar-tab,\s*\.sidebar-new-button \{\s*border-right: 1px solid var\(--border\);\s*\}/);
+  assert.match(sidebarStyles, /\.sidebar-tab\.is-selected,\s*\.sidebar-search-toggle\.is-active \{\s*border-top-color: var\(--accent\);\s*background: var\(--bg-selected\);\s*color: var\(--text\);\s*\}/);
+  assert.match(sidebarStyles, /\.sidebar-search-toggle \{\s*width: 36px;\s*padding: 0;\s*\}/);
+  // Measured, since the labels' widths change with the language: New keeps
+  // its +, then the tabs their icons. A hidden label is still the name.
+  const fit = between("function useHeaderFit(", "\nfunction buttonAnchor(");
+  assert.match(fit, /useLayoutEffect\(\(\) => \{/);
+  assert.match(fit, /for \(const level of \["0", "1", "2"\]\) \{\s*header\.dataset\.fit = level;\s*if \(header\.scrollWidth <= header\.clientWidth\) return;\s*\}/);
+  assert.match(fit, /const observer = new ResizeObserver\(fit\);\s*observer\.observe\(header\);\s*return \(\) => observer\.disconnect\(\);\s*\}, \[ref, labels\]\);/);
+  assert.match(source, /useHeaderFit\(headerRef, \[t\("sidebar\.tabSessions"\), t\("sidebar\.tabFiles"\), t\("sidebar\.new"\), explorerCwd && changesCount > 0 \? changesCount : "", sidebarTab\]\.join\("\\n"\)\);/);
+  assert.match(source, /<div ref=\{headerRef\} className="sidebar-header">/);
+  assert.match(sidebarStyles, /\.sidebar-header\[data-fit="1"\] \.sidebar-new-button,\s*\.sidebar-header\[data-fit="2"\] \.sidebar-new-button \{\s*width: 36px;\s*padding: 0;\s*\}/);
+  assert.match(sidebarStyles, /\.sidebar-header\[data-fit="1"\] \.sidebar-new-label,\s*\.sidebar-header\[data-fit="2"\] \.sidebar-new-label,\s*\.sidebar-header\[data-fit="2"\] \.sidebar-tab-label \{\s*position: absolute;\s*width: 1px;\s*height: 1px;\s*overflow: hidden;\s*clip: rect\(0 0 0 0\);/);
+  // The brand is the new-session page's alone.
+  assert.doesNotMatch(source, /PiWebTitle|useScramble|SCRAMBLE_CHARS/);
 });
 
 test("the tab chosen last is shown again after hydration, not in the first render", () => {
@@ -255,12 +281,12 @@ test("the tab chosen last is shown again after hydration, not in the first rende
     if (previous === undefined) delete globalThis.window;
     else globalThis.window = previous;
   }
-  // The hydrating render must match the server's HTML: the Sessions tab, its
-  // panel and its view options, whatever the browser saved.
+  // The hydrating render must match the server's HTML: the Sessions tab and
+  // its panel, whatever the browser saved.
   assert.equal(clientHtml, serverHtml);
   assert.match(openingTag(clientHtml, "session-sidebar-tab-sessions"), /aria-selected="true"/);
   assert.match(openingTag(clientHtml, "session-sidebar-panel-files"), /hidden=""/);
-  assert.match(clientHtml, /aria-label="View options"/);
+  assert.match(clientHtml, /<div class="sidebar-header"><div class="sidebar-tabs-list" role="tablist"/);
 
   // The saved tab, group choices and pinned section come back in a mount effect.
   assert.match(source, /const \[sidebarTab, setSidebarTab\] = useState<SidebarTab>\("sessions"\);/);
@@ -418,7 +444,10 @@ test("expanding, collapsing or paging a group never changes the cwd", () => {
   // "Show more" adds SHOW_MORE_STEP families a click; "show less" folds back.
   assert.match(callbackBody("handleShowMore"), /setMoreShown\(\(prev\) => showMoreFamilies\(prev, key\)\);/);
   assert.match(callbackBody("handleShowLess"), /setMoreShown\(\(prev\) => showLessFamilies\(prev, key\)\);/);
-  assert.match(callbackBody("handleToggleGroup"), /delete next\[projectKey\];\s*next\[projectKey\] = !isGroupExpanded\(project, groupExpansion\);\s*setGroupExpansion\(next\);\s*saveGroupExpansion\(next\);/);
+  assert.match(callbackBody("handleToggleGroup"), /const expanded = !isGroupExpanded\(project, groupExpansion\);\s*if \(all\) \{\s*setAllGroupsExpanded\(\(\) => expanded\);\s*return;\s*\}[\s\S]*?delete next\[projectKey\];\s*next\[projectKey\] = expanded;\s*setGroupExpansion\(next\);\s*saveGroupExpansion\(next\);/);
+  // Alt+click on a header: every group follows it.
+  assert.match(treeSource, /onClick=\{\(event\) => handlers\.current\.onToggleGroup\(project\.key, event\.altKey\)\}/);
+  assert.match(callbackBody("setAllGroupsExpanded"), /for \(const project of model\.projects\) \{\s*delete next\[project\.key\];\s*next\[project\.key\] = expanded\(project\);\s*\}/);
   // "Open in Files" of another project is the one deliberate switch from a group.
   assert.match(callbackBody("openProjectInFiles"), /if \(!project\.current\) setSelectedCwd\(project\.root\);[\s\S]*?switchTab\("files"\);/);
 });
@@ -713,10 +742,18 @@ test("a project moves next to another of its band, its band's unsaved projects f
 
   // Move up / Move down sit in the group menu, disabled at the band's edges,
   // for the project as the tree has it now.
-  const items = between("const groupMenuItems = ", "const viewMenuItems = ");
+  const items = between("const groupMenuItems = ", "let menuTitle");
   assert.match(items, /const up = adjacentProjectMove\(model\.projects, project\.key, "up"\);\s*const down = adjacentProjectMove\(model\.projects, project\.key, "down"\);/);
   assert.match(items, /id: "move-up",\s*label: t\("sidebar\.moveProjectUp"\),\s*icon: <ChevronIcon className="sidebar-icon-up" \/>,\s*disabled: up === null,\s*onSelect: \(\) => \{ if \(up\) moveProject\(project\.key, up\.anchorKey, up\.position\); \},/);
   assert.match(items, /id: "move-down",\s*label: t\("sidebar\.moveProjectDown"\),\s*icon: <ChevronIcon className="sidebar-icon-down" \/>,\s*disabled: down === null,\s*onSelect: \(\) => \{ if \(down\) moveProject\(project\.key, down\.anchorKey, down\.position\); \},/);
   assert.ok(items.indexOf('id: "pin-project"') < items.indexOf('id: "move-up"'));
+  // The sidebar's view menu went with the brand's row: collapsing and
+  // expanding every group is a group's menu (and Alt+click on a header),
+  // each disabled when the groups are already that way.
+  assert.match(items, /id: "collapse-others",\s*label: t\("sidebar\.collapseOtherGroups"\),\s*icon: <ChevronIcon \/>,\s*disabled: model\.projects\.every\(\(other\) => isGroupExpanded\(other, groupExpansion\) === \(other\.key === project\.key\)\),\s*onSelect: \(\) => setAllGroupsExpanded\(\(other\) => other\.key === project\.key\),/);
+  assert.match(items, /id: "expand-all",\s*label: t\("sidebar\.expandAllGroups"\),\s*icon: <ChevronIcon className="sidebar-icon-down" \/>,\s*disabled: model\.projects\.every\(\(other\) => isGroupExpanded\(other, groupExpansion\)\),\s*onSelect: \(\) => setAllGroupsExpanded\(\(\) => true\),/);
+  assert.ok(items.indexOf('id: "open-in-files"') < items.indexOf('id: "collapse-others"'));
+  assert.ok(items.indexOf('id: "expand-all"') < items.indexOf('id: "view-archived"'));
+  assert.doesNotMatch(source, /viewMenuItems|kind: "view"|sidebar\.viewOptions/);
   assert.match(source, /menuItems = groupMenuItems\(projectByKey\.get\(menu\.project\.key\) \?\? menu\.project, menu\.olderCount\);/);
 });

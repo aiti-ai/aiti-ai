@@ -233,6 +233,174 @@
   font-size: 12px;
 }
 
+/* A path or a branch, cut at its left (rtl), the text itself kept left to right. */
+.sidebar-menu-label.is-path {
+  direction: rtl;
+  text-align: left;
+}
+
+.sidebar-menu-label.is-path > span {
+  unicode-bidi: plaintext;
+}
+
+/* The files tab's project and worktree menus on a desktop (`classic`,
+   components/ProjectWorktreePicker.tsx): main's dropdowns under their box.
+   Rows divided by lines, 11px, paths and branches in code type, a 10px check
+   (accent) where the icon goes, the folder actions after a double line. */
+.sidebar-menu.is-classic {
+  padding: 0;
+}
+
+.sidebar-menu.is-classic .sidebar-menu-item {
+  gap: 7px;
+  height: auto;
+  padding: 8px 10px;
+  border-radius: 0;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.sidebar-menu.is-classic .sidebar-menu-item.is-choice,
+.sidebar-menu.is-classic .sidebar-menu-row.is-choice {
+  border-bottom: 1px solid var(--border);
+}
+
+.sidebar-menu.is-classic .sidebar-menu-row.is-choice > .sidebar-menu-item {
+  border-bottom: 0;
+}
+
+.sidebar-menu.is-classic .sidebar-menu-item.is-checked {
+  color: var(--text);
+}
+
+.sidebar-menu.is-classic .sidebar-menu-icon {
+  flex-basis: 10px;
+  width: 10px;
+  height: 10px;
+  color: inherit;
+}
+
+.sidebar-menu.is-classic .sidebar-menu-item.is-checked .sidebar-menu-icon {
+  color: var(--accent);
+}
+
+.sidebar-menu.is-classic .sidebar-menu-icon svg {
+  width: 10px;
+  height: 10px;
+}
+
+.sidebar-menu.is-classic .sidebar-menu-label.is-mono {
+  font-size: 11px;
+}
+
+.sidebar-menu.is-classic .sidebar-menu-note {
+  font-size: 10px;
+}
+
+.sidebar-menu.is-classic .sidebar-menu-separator {
+  margin: 0;
+}
+
+.sidebar-menu.is-classic .sidebar-menu-secondary {
+  width: 34px;
+  height: 28px;
+  margin-right: 4px;
+}
+
+.sidebar-menu.is-classic .sidebar-menu-filter {
+  top: 0;
+  margin: 0;
+  padding: 6px 8px;
+}
+
+.sidebar-menu.is-classic .sidebar-menu-filter-input {
+  height: auto;
+  padding: 5px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.sidebar-menu.is-classic .sidebar-menu-empty {
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
+/* "New worktree…" under the list, and what went wrong. */
+.sidebar-menu.is-classic .sidebar-worktree-form {
+  padding: 6px 8px;
+}
+
+.sidebar-menu.is-classic .sidebar-worktree-input {
+  height: auto;
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.sidebar-menu.is-classic .sidebar-worktree-form-buttons {
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.sidebar-menu.is-classic .sidebar-worktree-create,
+.sidebar-menu.is-classic .sidebar-worktree-cancel {
+  height: auto;
+  padding: 4px 0;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+.sidebar-menu.is-classic .sidebar-worktree-cancel {
+  background: var(--bg-hover);
+}
+
+.sidebar-menu.is-classic .sidebar-worktree-error {
+  margin-top: 5px;
+}
+
+.sidebar-menu.is-classic > .sidebar-worktree-error {
+  margin: 0;
+  padding: 5px 10px 8px;
+}
+
+/* A dirty checkout's question in its own row. */
+.sidebar-worktree-confirm {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(239, 68, 68, 0.06);
+}
+
+.sidebar-worktree-confirm-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-worktree-confirm .sidebar-worktree-force,
+.sidebar-worktree-confirm .sidebar-worktree-cancel {
+  flex: none;
+  height: auto;
+  padding: 3px 9px;
+  border-radius: 5px;
+  font-size: 11px;
+}
+
+.sidebar-worktree-confirm .sidebar-worktree-cancel {
+  background: var(--bg-hover);
+}
+
+.sidebar-worktree-confirm .sidebar-worktree-force[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
 /*
  * Mobile bottom sheet: its own backdrop above the drawer's (199) and the
  * drawer (200). The layer spans the visible area the way the drawer does, from
@@ -509,6 +677,11 @@ html[data-keyboard-open] .sidebar-sheet {
 @media (pointer: coarse) {
   .sidebar-menu-item {
     height: 40px;
+  }
+
+  /* A classic menu on a touch screen wider than a phone. */
+  .sidebar-menu.is-classic .sidebar-menu-item {
+    min-height: 36px;
   }
 
   .sidebar-menu-secondary {

@@ -51,36 +51,39 @@ function between(start, end) {
   return source.slice(from, to);
 }
 
-test("inline: two chips with a divider, in the UI font", () => {
-  const html = render({ layout: "inline" });
+test("inline: the files tab's two boxes, side by side", () => {
+  const html = render({ layout: "inline", homeDir: "/home/me" });
   assert.match(html, /^<div class="project-picker is-inline" role="group" aria-label="Project and worktree">/);
-  assert.match(html, /<button type="button" class="project-picker-button is-project" title="\/home\/me\/work\/app" aria-haspopup="menu" aria-expanded="false">/);
-  assert.match(html, /<span class="project-picker-label">app<\/span><svg[^>]*class="project-picker-chevron sidebar-icon-down"/);
-  assert.match(html, /<span class="project-picker-divider" aria-hidden="true"><\/span>/);
-  assert.match(html, /<button type="button" class="project-picker-button" title="Worktree: \/home\/me\/work\/app-worktrees\/feature" aria-haspopup="menu" aria-expanded="false">/);
-  assert.match(html, /<span class="project-picker-label">feature\/x<\/span>/);
-  // The chips carry nothing of the files tab's rows.
-  assert.doesNotMatch(html, /project-picker-path|project-picker-note|project-picker-activity|is-name|is-mono/);
+  // The same boxes in both places: only the layout differs.
+  assert.equal(html.replace("project-picker is-inline", "project-picker is-stacked"), render({ homeDir: "/home/me" }));
+  assert.doesNotMatch(html, /project-picker-divider|is-name/);
+  // The files tab's own: activity elsewhere and the hint for a missing worktree list.
+  assert.doesNotMatch(render({ layout: "inline", projectActivity: new Map([["lib-key", { running: 1, unread: 0 }]]) }), /project-picker-activity/);
 });
 
-test("stacked: the project's name and its path, the worktree with its notes", () => {
+test("stacked: main's two boxes, the project's whole path and the worktree's branch with its notes", () => {
   const html = render({ homeDir: "/home/me" });
   assert.match(html, /^<div class="project-picker is-stacked" role="group" aria-label="Project and worktree">/);
-  assert.match(html, /<span class="project-picker-label is-name">app<\/span><span class="project-picker-path"><span>~\/work\/app<\/span><\/span>/);
-  assert.doesNotMatch(html, /project-picker-divider/);
-  // A linked checkout: its branch and how many checkouts there are.
-  assert.match(html, /<span class="project-picker-label">feature\/x<\/span><span class="project-picker-note">2<\/span><svg/);
-  // The main checkout says so.
+  // The project box is its path, cut at its left: no folder icon, no name, no chevron.
+  assert.match(html, /<button type="button" class="project-picker-button is-project" title="\/home\/me\/work\/app" aria-haspopup="menu" aria-expanded="false"><span class="project-picker-path"><span>~\/work\/app<\/span><\/span><\/button>/);
+  assert.doesNotMatch(html, /project-picker-divider|is-name/);
+  // A linked checkout: its branch icon in the accent, the branch, how many checkouts there are.
+  assert.match(html, /<svg width="11" height="11"[^>]*class="project-picker-icon is-linked"[\s\S]*?<\/svg><span class="project-picker-path"><span>feature\/x<\/span><\/span><span class="project-picker-note">2<\/span><svg width="9" height="9"[^>]*class="project-picker-chevron sidebar-icon-down"/);
+  // The main checkout says so, its icon not in the accent.
   const main = render({ context: { ...context, currentWorktreePath: "/home/me/work/app" } });
-  assert.match(main, /<span class="project-picker-label">main<\/span><span class="project-picker-note">main<\/span><span class="project-picker-note">2<\/span>/);
+  assert.match(main, /class="project-picker-icon"[\s\S]*?<span class="project-picker-path"><span>main<\/span><\/span><span class="project-picker-note">main<\/span><span class="project-picker-note">2<\/span>/);
+  assert.doesNotMatch(main, /is-linked/);
+  // A checkout without a branch shows its path.
+  const detached = render({ homeDir: "/home/me", context: { ...context, worktrees: [context.worktrees[0], { ...context.worktrees[1], branch: null }] } });
+  assert.match(detached, /<span class="project-picker-path"><span>~\/work\/app-worktrees\/feature<\/span><\/span>/);
   // Without the home folder the path shows as it is.
   assert.match(render(), /<span class="project-picker-path"><span>\/home\/me\/work\/app<\/span><\/span>/);
-  assert.doesNotMatch(html, /font-mono|style=/, "no code type, no inline styles");
+  assert.doesNotMatch(html, /style=/, "no inline styles");
 });
 
 test("stacked: activity elsewhere shows a dot; the project in use does not count", () => {
   const elsewhere = render({ projectActivity: new Map([["lib-key", { running: 0, unread: 2 }]]) });
-  assert.match(elsewhere, /<span class="project-picker-activity" role="img" title="New activity" aria-label="New activity"><\/span><svg[^>]*project-picker-chevron/);
+  assert.match(elsewhere, /<span class="project-picker-activity" role="img" title="New activity" aria-label="New activity"><\/span><\/button>/);
   assert.doesNotMatch(render({ projectActivity: new Map([["app-key", { running: 1, unread: 1 }]]) }), /project-picker-activity/);
   assert.doesNotMatch(render({ projectActivity: new Map([["lib-key", { running: 0, unread: 0 }]]) }), /project-picker-activity/);
   // The chips never show it.
@@ -114,7 +117,7 @@ test("both menus in both places: picking what is in use changes nothing while th
   assert.match(projects, /title: choice\.root,/);
   // Then the default directory and any other folder.
   const defaults = projects.indexOf('label: t("sidebar.useDefaultDirectory"),');
-  const other = projects.indexOf('label: t("sidebar.openOtherProject"),');
+  const other = projects.indexOf('label: t(classic ? "sidebar.customPath" : "sidebar.openOtherProject"),');
   assert.ok(projects.indexOf('{ type: "separator", id: "separator" }') < defaults && defaults < other);
   // No project to list (a first run): no line above the two folder items.
   assert.match(projects, /const separator: SidebarMenuItem\[\] = choices\.length > 0 \? \[\{ type: "separator", id: "separator" \}\] : \[\];/);
@@ -129,7 +132,8 @@ test("both menus in both places: picking what is in use changes nothing while th
   // Opening the worktree menu lists the worktrees again.
   assert.match(source, /if \(kind === "worktree"\) onRefreshWorktrees\(\);/);
   // Both lists get a filter once they are long.
-  assert.match(source, /\? \{ placeholder: t\("sidebar\.filterProjects"\), emptyLabel: t\("sidebar\.noMatchingProjects"\) \}\s*: \{ placeholder: t\("sidebar\.filterWorktrees"\), emptyLabel: t\("sidebar\.noMatchingWorktrees"\) \};/);
+  // The files tab's desktop project menu, as main's, only past 8 projects.
+  assert.match(source, /\? \{ placeholder: t\("sidebar\.filterProjects"\), emptyLabel: t\("sidebar\.noMatchingProjects"\), minChoices: classic \? 9 : undefined \}\s*: \{ placeholder: t\("sidebar\.filterWorktrees"\), emptyLabel: t\("sidebar\.noMatchingWorktrees"\) \};/);
   assert.match(source, /filter=\{filter\}/);
 });
 
@@ -156,6 +160,31 @@ test("a removal that needs an answer becomes the menu's body; a removed checkout
   assert.match(source, /menuTitle = t\("sidebar\.removeWorktreeHeading", \{ name: worktreeLabel\(body\.worktree\) \}\);/);
 });
 
+test("the menus on a desktop are main's: whole paths, Custom path, the form under the list, the question in its row", () => {
+  assert.match(source, /const classic = !mobile;/);
+  const projects = between("const projectItems", "const worktreeItems");
+  assert.match(projects, /label: classic \? displayPath\(choice\.root, homeDir\) : name,\s*note: classic \? undefined : note \?\? undefined,\s*mono: classic,\s*path: classic,/);
+  assert.match(projects, /icon: classic \? <PlusIcon size=\{13\} \/> : <FolderPlusIcon size=\{13\} \/>,/);
+  const worktrees = between("const worktreeItems", "const body = ");
+  // A dirty checkout's question takes its row; the others show their branch, or their path.
+  assert.match(worktrees, /classic && body\?\.kind === "remove" && body\.dirty && body\.worktree\.path === worktree\.path \? \{\s*type: "custom",/);
+  assert.match(worktrees, /onForce=\{\(\) => \{ void removeWorktree\(worktree, true\); \}\}\s*onCancel=\{\(\) => showBody\(null\)\}/);
+  assert.match(worktrees, /label: classic \? worktree\.branch \?\? displayPath\(worktree\.path, homeDir\) : worktreeLabel\(worktree\),\s*mono: classic,\s*path: classic,/);
+  // No line before "New worktree…", which goes while its form shows below.
+  assert.match(worktrees, /\.\.\.\(classic \? \[\] : \[\{ type: "separator", id: "separator" \} as const\]\),\s*\.\.\.\(classic && body\?\.kind === "create" \? \[\] : \[\{/);
+  const chain = between("let menuBody: ReactNode = null;", "const filter = ");
+  assert.match(chain, /if \(classic && menu\?\.kind === "worktree"\) \{\s*menuTitle = t\("sidebar\.switchWorktree"\);\s*menuItems = worktreeItems\(\);\s*if \(body\?\.kind === "create"\) \{\s*menuFooter = \(\s*<WorktreeCreateForm\s*heading=\{null\}/);
+  assert.match(chain, /onCancel=\{\(\) => showBody\(null\)\}/);
+  assert.match(chain, /\} else if \(body\?\.kind === "remove" && body\.error\) \{\s*menuFooter = <div className="sidebar-worktree-error" role="alert">\{body\.error\}<\/div>;/);
+  const menu = source.slice(source.indexOf("<SidebarMenu\n"), source.indexOf("</SidebarMenu>"));
+  assert.match(menu, /classic=\{classic\}\s*footer=\{menuFooter\}\s*focusKey=\{body \? `\$\{body\.kind\}:\$\{body\.kind === "remove" && body\.dirty\}` : "list"\}/);
+  // The question's Cancel takes focus; both its buttons are the menu's items.
+  const row = between("function WorktreeConfirmRow(", "\n}\n");
+  assert.equal((row.match(/role="menuitem"/g) ?? []).length, 2);
+  assert.match(row, /data-sidebar-menu-autofocus=""\s*className="sidebar-worktree-cancel"/);
+  assert.match(row, /aria-describedby=\{questionId\}/);
+});
+
 test("a created worktree is moved to only while its form is still open", () => {
   const create = between("const createWorktree = async", "const removeWorktree = async");
   const mounted = create.indexOf("if (!mountedRef.current) return;");
@@ -173,8 +202,8 @@ test("the owner reaches the buttons and opens a menu through the handle", () => 
   assert.match(handle, /button: \(control\) => \(control === "worktree" \? worktreeRef : projectRef\)\.current,/);
   assert.match(handle, /if \(button\) openMenuRef\.current\(control, button\);/);
   assert.match(handle, /\}\), \[\]\);/);
-  // A stacked row's menu is as wide as the row.
-  assert.match(source, /const width = stacked \? Math\.max\(STACKED_MENU_MIN_WIDTH, Math\.round\(rect\.width\)\) : kind === "project" \? 260 : 240;/);
+  // A menu is at least as wide as its box, as main's dropdowns were.
+  assert.match(source, /const width = Math\.max\(stacked \? STACKED_MENU_MIN_WIDTH : kind === "project" \? 260 : 240, Math\.round\(rect\.width\)\);/);
 });
 
 test("client code stays parseable by Safari 16.2 and its CSS flat", () => {
@@ -182,15 +211,17 @@ test("client code stays parseable by Safari 16.2 and its CSS flat", () => {
   const rules = css.slice(css.indexOf("/* The project and worktree picker (ProjectWorktreePicker)"), css.indexOf(".file-viewer-icon-button {"));
   assert.ok(rules.length > 0);
   assert.doesNotMatch(rules.replace(/@media[^{]*\{/g, ""), /\{[^}]*\{|&/, "no nested rules");
-  assert.doesNotMatch(rules, /font-mono/, "the UI font in both places");
-  // The files tab's rows: full width, the bar's type and box, the path cut at its left.
-  // Their icons and chevrons 8px into the box, inside its 1px transparent border.
-  assert.match(rules, /\.project-picker\.is-stacked \{\s*flex: none;\s*flex-direction: column;\s*align-items: stretch;/);
-  assert.match(rules, /\.project-picker\.is-stacked \.project-picker-button \{\s*width: 100%;\s*max-width: none;\s*padding: 0 7px;/);
-  assert.match(rules, /\.project-picker-path \{[^}]*direction: rtl;/);
-  // A long path never squeezes the project name: the name does not shrink, the path grows from zero.
-  assert.match(rules, /\.project-picker\.is-stacked \.project-picker-label\.is-name \{\s*flex: 0 0 auto;\s*max-width: 60%;/);
-  assert.match(rules, /\.project-picker-path \{\s*flex: 1 1 0;\s*min-width: 0;/);
+  // One look in both places, main's: the header buttons' grey box, 11px, the
+  // path and the branch in code type, cut at their left.
+  assert.match(rules, /\.project-picker-button \{\s*display: inline-flex;\s*flex: 0 1 auto;\s*align-items: center;\s*gap: 6px;\s*min-width: 0;\s*height: 29px;\s*padding: 0 10px;\s*border: 1px solid var\(--border\);\s*border-radius: 7px;\s*background: var\(--bg-hover\);/);
+  assert.match(rules, /\.project-picker-path \{[^}]*font-family: var\(--font-mono\);[^}]*direction: rtl;/);
+  assert.match(rules, /\.project-picker-icon\.is-linked,/);
+  assert.doesNotMatch(rules, /is-name|project-picker-divider/);
+  assert.match(rules, /\.project-picker-path \{\s*flex: 0 1 auto;\s*min-width: 0;/);
+  // The files tab's: full width, the path or branch taking the room before the notes.
+  assert.match(rules, /\.project-picker\.is-stacked \{\s*flex: none;\s*flex-direction: column;\s*align-items: stretch;\s*\}/);
+  assert.match(rules, /\.project-picker\.is-stacked \.project-picker-button \{\s*width: 100%;\s*\}/);
+  assert.match(rules, /\.project-picker\.is-stacked \.project-picker-label,\s*\.project-picker\.is-stacked \.project-picker-path \{\s*flex: 1 1 0;\s*\}/);
   assert.match(rules, /\.project-picker-path > span \{\s*unicode-bidi: plaintext;/);
   assert.match(rules, /\.project-picker-button\.is-inactive,\s*\.project-picker-button\.is-inactive:hover \{[^}]*cursor: default;/);
   assert.match(menuCss, /\.sidebar-worktree-force \{\s*border-color: #ef4444;/);
@@ -235,11 +266,11 @@ test("the force question starts on a Cancel on a desktop and in a sheet, never o
 
 test("the menu gets one child, null while it lists items", () => {
   const menu = source.slice(source.indexOf("<SidebarMenu\n"), source.indexOf("</SidebarMenu>"));
-  assert.match(menu, /width=\{menu\?\.width\}\s*>\s*\{menuBody\}\s*$/);
+  assert.match(menu, /focusKey=\{[\s\S]+?"list"\}\s*>\s*\{menuBody\}\s*$/);
   assert.match(source, /let menuBody: ReactNode = null;/);
   // Each body goes with its own title, and a list with no body at all.
   const chain = between("let menuBody: ReactNode = null;", "const filter = ");
-  assert.match(chain, /if \(body\?\.kind === "create"\) \{\s*menuTitle = newWorktreeTitle;\s*menuBody = \(\s*<WorktreeCreateForm/);
+  assert.match(chain, /\} else if \(body\?\.kind === "create"\) \{\s*menuTitle = newWorktreeTitle;\s*menuBody = \(\s*<WorktreeCreateForm/);
   assert.match(chain, /\} else if \(body\?\.kind === "remove"\) \{\s*menuTitle = [^;]+;\s*menuBody = \(\s*<WorktreeRemoveForm/);
   assert.match(chain, /\} else if \(menu\?\.kind === "project"\) \{\s*menuTitle = t\("workspace\.project"\);\s*menuItems = projectItems\(\);/);
 });
