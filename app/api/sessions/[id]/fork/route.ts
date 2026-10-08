@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
-import { forkSessionBranch, SessionForkError } from "@/lib/session-fork";
+import { forkSessionBranch, readForkSourceTitle, SessionForkError } from "@/lib/session-fork";
 import {
   cacheSessionPath,
   invalidateSessionListCache,
@@ -15,9 +15,10 @@ import type { SessionInfo } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 // The sidebar's Fork: copies the session's current branch into a new session
-// file (lib/session-fork.ts). File-level work, like rename and delete: it never
-// starts, prompts or shuts down an AgentSession, so a running source keeps its
-// run and an idle one stays closed.
+// file named after the source plus a short random suffix (lib/session-fork.ts).
+// File-level work, like rename and delete: it never starts, prompts or shuts
+// down an AgentSession, so a running source keeps its run and an idle one
+// stays closed.
 
 const NO_STORE = { "Cache-Control": "no-store" };
 
@@ -44,6 +45,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       invalidateSessionListCache();
       return refusal(404, "not_found", "Session not found");
     }
+    // The title the sidebar shows for the source, which the copy's name
+    // starts with (null: the source has none, the copy stays unnamed). Read
+    // first: the copy below allows no await.
+    const sourceTitle = await readForkSourceTitle(sourcePath);
 
     // No await from here until the copy exists: pi appends finished entries
     // synchronously in this process, so the leaf read here and the file read
@@ -57,10 +62,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       const diskLatest = readLatestSessionEntryId(wrapper.sessionFile);
       if (diskLatest && !wrapper.inner.sessionManager.getEntry(diskLatest)) liveLeafId = undefined;
     }
-    const fork = forkSessionBranch(sourcePath, liveLeafId);
+    const fork = forkSessionBranch(sourcePath, liveLeafId, sourceTitle);
     cacheSessionPath(fork.sessionId, fork.path);
     invalidateSessionListCache();
 
+    // Read after the name was written: the row carries it.
     const info = await readSessionInfo(fork.path);
     if (!info) throw new Error("The forked session could not be read");
     // Only the copy was scanned, so its origin is added here.
