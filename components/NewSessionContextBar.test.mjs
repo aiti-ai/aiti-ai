@@ -48,7 +48,10 @@ test("the bar shows the project and the worktree in use as two menu buttons", ()
   assert.match(html, /<button type="button" class="new-session-context-button is-project" title="\/work\/app" aria-haspopup="menu" aria-expanded="false">/);
   assert.match(html, /<span class="new-session-context-label">app<\/span>/);
   assert.match(html, /<button type="button" class="new-session-context-button" title="Worktree: \/work\/app-worktrees\/feature" aria-haspopup="menu" aria-expanded="false">/);
-  assert.match(html, /<span class="new-session-context-label is-mono">feature\/x<\/span>/);
+  assert.match(html, /<span class="new-session-context-label">feature\/x<\/span>/);
+  // One type for both: the branch is not set in code type.
+  assert.doesNotMatch(html, /is-mono/);
+  assert.match(html, /<span class="new-session-context-divider" aria-hidden="true"><\/span>/);
   // Phones keep the composer's own side padding.
   assert.match(render({ mobile: true }), /^<div class="new-session-context" style="padding-left:16px;padding-right:16px">/);
 });
@@ -56,13 +59,13 @@ test("the bar shows the project and the worktree in use as two menu buttons", ()
 test("the worktree button needs a worktree list: a non-git folder or a subdirectory has none", () => {
   const html = render({ context: { ...context, cwd: "/work/app/sub", project: { key: "/work/app/sub", root: "/work/app/sub" }, worktrees: null, currentWorktreePath: null } });
   assert.match(html, /<span class="new-session-context-label">sub<\/span>/);
-  assert.doesNotMatch(html, /Worktree:|is-mono/);
+  assert.doesNotMatch(html, /Worktree:|new-session-context-divider/);
   assert.equal((html.match(/aria-haspopup="menu"/g) ?? []).length, 1);
   // The main checkout shows its branch; a detached one its folder.
-  assert.match(render({ context: { ...context, currentWorktreePath: "/work/app" } }), /is-mono">main<\/span>/);
+  assert.match(render({ context: { ...context, currentWorktreePath: "/work/app" } }), /context-label">main<\/span>/);
   assert.match(
     render({ context: { ...context, worktrees: [{ path: "/work/app", branch: null, isMain: true }], currentWorktreePath: "/work/app" } }),
-    /is-mono">app<\/span>/,
+    /title="Worktree: \/work\/app"[^>]*>[\s\S]*?context-label">app<\/span>/,
   );
 });
 

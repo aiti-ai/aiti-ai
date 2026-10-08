@@ -159,7 +159,6 @@ export function NewSessionContextBar({
       type: "item",
       id: `worktree:${worktree.path}`,
       label: worktree.branch ?? projectNameOf(worktree.path),
-      mono: true,
       note: worktree.isMain ? t("sidebar.main") : undefined,
       title: worktree.path,
       checked: worktree.path === current?.path,
@@ -211,10 +210,11 @@ export function NewSessionContextBar({
           aria-expanded={menu?.kind === "project"}
           onClick={(event) => openMenu("project", event.currentTarget)}
         >
-          <FolderIcon size={12} className="new-session-context-icon" />
+          <FolderIcon size={14} className="new-session-context-icon" />
           <span className="new-session-context-label">{projectNameOf(context.project.root)}</span>
-          <ChevronIcon size={9} className="new-session-context-chevron sidebar-icon-down" />
+          <ChevronIcon size={10} className="new-session-context-chevron sidebar-icon-down" />
         </button>
+        {context.worktrees && <span className="new-session-context-divider" aria-hidden="true" />}
         {context.worktrees && (
           <button
             ref={worktreeRef}
@@ -225,11 +225,11 @@ export function NewSessionContextBar({
             aria-expanded={menu?.kind === "worktree"}
             onClick={(event) => openMenu("worktree", event.currentTarget)}
           >
-            <BranchIcon size={12} className="new-session-context-icon" />
-            <span className="new-session-context-label is-mono">
+            <BranchIcon size={14} className="new-session-context-icon" />
+            <span className="new-session-context-label">
               {current ? current.branch ?? projectNameOf(current.path) : "…"}
             </span>
-            <ChevronIcon size={9} className="new-session-context-chevron sidebar-icon-down" />
+            <ChevronIcon size={10} className="new-session-context-chevron sidebar-icon-down" />
           </button>
         )}
       </div>
