@@ -447,7 +447,8 @@
 }
 
 /* While a group is dragged: its block dimmed in place, the drop line in the
-   middle of a spacer row, and a ghost of the header under the pointer. */
+   middle of a spacer row, and a ghost with the project's name next to the
+   pointer, placed clear of the line (hooks/useGroupDrag.ts). */
 .session-tree-drag-source {
   position: absolute;
   right: var(--session-tree-inset-right);
@@ -468,6 +469,20 @@
   pointer-events: none;
 }
 
+/* A dot at the line's left end marks it as the insertion point. */
+.session-tree-drop-line::before {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* A one-line pill, shorter than a header, so it fits above or below the
+   pointer and the line without covering either. Outside the scroll box. */
 .session-tree-drag-ghost {
   position: absolute;
   z-index: 2;
@@ -475,15 +490,18 @@
   align-items: center;
   box-sizing: border-box;
   min-width: 0;
-  padding: 0 8px;
+  max-width: 70%;
+  height: 22px;
+  padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: 11px;
   background: var(--bg-panel);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
   color: var(--text);
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
+  opacity: 0.92;
   pointer-events: none;
 }
 
