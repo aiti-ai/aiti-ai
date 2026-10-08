@@ -1052,13 +1052,13 @@
   background: var(--bg);
 }
 
-/* The card's last row: the actions on that folder and the tree's toggles,
-   used often enough to stay in view. Spread from the rows' icon column to
-   their chevrons: 30px wide in the card's 3px padding puts the first icon
-   under the folder icon and the last one's edge under the chevrons. Always
-   six (the changes view is disabled, not gone, without changes), so the
-   spread never moves a button. They give way together at the sidebar's
-   180px minimum. */
+/* The card's last row: the actions on that folder and the tree's changes
+   view, used often enough to stay in view (its search is the header's).
+   Spread from the rows' icon column to their chevrons: 30px wide in the
+   card's 3px padding puts the first icon under the folder icon and the last
+   one's edge under the chevrons. Always the same five (the changes view is
+   disabled, not gone, without changes), so the spread never moves a button.
+   They give way together at the sidebar's 180px minimum. */
 .sidebar-files-actions {
   position: relative;
   display: flex;
