@@ -240,6 +240,23 @@
   color: var(--text-muted);
 }
 
+/* A Fork's copy: the ellipsis cuts its title before the suffix that tells it
+   from its source ("… · 3f9a"), never the suffix. */
+.session-tree-title.has-fork-suffix {
+  display: flex;
+}
+
+.session-tree-title-base {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.session-tree-title-suffix {
+  flex: none;
+  white-space: pre;
+}
+
 .session-tree-branch {
   flex: none;
   max-width: 78px;

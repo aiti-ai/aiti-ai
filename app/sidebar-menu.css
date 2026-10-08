@@ -334,6 +334,23 @@ html[data-keyboard-open] .sidebar-sheet {
   white-space: nowrap;
 }
 
+/* A message with a tail: the ellipsis cuts the head, never the tail (a
+   fork's name suffix and the closing quote). */
+.sidebar-toast-message.has-tail {
+  display: flex;
+}
+
+.sidebar-toast-message-head {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-toast-message-tail {
+  flex: none;
+  white-space: pre;
+}
+
 .sidebar-toast-action {
   flex: none;
   height: 26px;
