@@ -535,15 +535,20 @@ test("Fork copies the row's session on the server and opens the copy where its r
   const selectedAtClick = fork.indexOf("const selectedAtClick = selectedSessionIdRef.current;");
   const request = fork.indexOf("await fetch(");
   assert.ok(selectedAtClick >= 0 && selectedAtClick < request, "the selection is noted before the request");
-  assert.match(fork, /openForkedRef\.current\(forked, row\.key\);\s*showToast\(message\);/);
+  assert.match(fork, /openForkedRef\.current\(forked, row\.key\);\s*showToast\(message, \[\], tail\);/);
   assert.doesNotMatch(fork, /[^.]openForked\(|handleSelectSessionFromList/);
-  assert.match(fork, /const message = t\("sidebar\.forkedToast", \{ title: shortTitle\(sessionRowTitle\(forked\), TOAST_TITLE_MAX\) \}\);/);
+  // The toast names the copy; its ellipsis cuts the name before the suffix,
+  // which stays in the toast's tail (lib/session-fork-name.ts). An unnamed
+  // copy is cut as other toasts are.
+  assert.match(fork, /const title = sessionRowTitle\(forked\);\s*const \{ head: message, tail \} = splitBeforeForkSuffix\(t\("sidebar\.forkedToast", \{ title \}\), title\)\s*\?\? \{ head: t\("sidebar\.forkedToast", \{ title: shortTitle\(title, TOAST_TITLE_MAX\) \}\), tail: undefined \};/);
+  assert.match(source, /import \{ splitBeforeForkSuffix \} from "@\/lib\/session-fork-name";/);
+  assert.match(callbackBody("showToast"), /setToast\(\{ id: toastIdRef\.current, message, \.\.\.\(tail \? \{ tail \} : \{\}\), actions \}\);/);
   // The user moved on meanwhile: they stay; the copy waits unread and the toast offers it.
   const movedOn = fork.slice(fork.indexOf("if (selectedSessionIdRef.current !== selectedAtClick) {"), fork.indexOf("openForkedRef.current(forked, row.key);"));
   assert.match(movedOn, /setAllSessions\(\(current\) => \(current\.some\(\(session\) => session\.id === forked\.id\) \? current : \[forked, \.\.\.current\]\)\);/);
   assert.match(movedOn, /setUnreadSessionIds\(\(prev\) => new Set\(prev\)\.add\(forked\.id\)\);/);
   assert.match(movedOn, /void loadSessions\(\);/);
-  assert.match(movedOn, /showToast\(message, \[\{ id: "open", label: t\("sidebar\.open"\), onClick: \(\) => openForkedRef\.current\(forked, null\) \}\]\);\s*return;/);
+  assert.match(movedOn, /showToast\(message, \[\{ id: "open", label: t\("sidebar\.open"\), onClick: \(\) => openForkedRef\.current\(forked, null\) \}\], tail\);\s*return;/);
   assert.match(source, /const openForkedRef = useRef\(openForked\);\s*openForkedRef\.current = openForked;/);
 
   const open = callbackBody("openForked");

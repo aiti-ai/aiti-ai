@@ -15,6 +15,7 @@ import {
   type RefObject,
 } from "react";
 import type { SessionFamily } from "@/lib/session-family";
+import { splitForkSuffix } from "@/lib/session-fork-name";
 import type { ProjectMovePosition } from "@/lib/session-ui-state-shared";
 import {
   PINNED_MORE_KEY,
@@ -544,6 +545,9 @@ const SessionRowView = memo(function SessionRowView({
 
   const branch = root.isWorktree && root.branch ? root.branch : null;
   const details = root.detailsPending ? "…" : t("sidebar.messagesCount", { count: root.messageCount });
+  // A fork named by the sidebar's Fork: the ellipsis cuts its title before
+  // the suffix that tells it from its source, never the suffix.
+  const forkTitle = root.name && root.relation?.kind === "fork" ? splitForkSuffix(root.name) : null;
   const tooltip = `${title}\n${details} · ${formatRelativeTime(root.modified, locale, nowDate)}${branch ? ` · ⑂ ${branch}` : ""}`;
 
   // The right column says the one thing worth knowing: running, else unread,
@@ -581,7 +585,14 @@ const SessionRowView = memo(function SessionRowView({
       onContextMenu={(event) => handlers.current.onRowContextMenu(row, event)}
     >
       <button type="button" className="session-tree-main" title={tooltip} aria-current={status.selected ? "true" : undefined}>
-        <span className="session-tree-title">{title}</span>
+        {forkTitle ? (
+          <span className="session-tree-title has-fork-suffix">
+            <span className="session-tree-title-base">{forkTitle.base}</span>
+            <span className="session-tree-title-suffix">{forkTitle.suffix}</span>
+          </span>
+        ) : (
+          <span className="session-tree-title">{title}</span>
+        )}
         {branch && <span className="session-tree-branch">⑂ {branch}</span>}
         <span className={`session-tree-meta${metaState}`} title={metaTitle}>{meta}</span>
       </button>

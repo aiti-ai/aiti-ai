@@ -33,6 +33,7 @@ import {
   type SidebarTab,
 } from "@/lib/sidebar-prefs";
 import { forkFailureMessage, sessionMenuEntries, type SessionMenuActionId } from "@/lib/sidebar-actions";
+import { splitBeforeForkSuffix } from "@/lib/session-fork-name";
 import {
   mergeProjectChoices,
   newSessionContextKey,
@@ -1494,9 +1495,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     saveGroupExpansion(next);
   }, [currentProjectKey, groupExpansion, projectByKey]);
 
-  const showToast = useCallback((message: string, actions: SidebarToastAction[] = []) => {
+  const showToast = useCallback((message: string, actions: SidebarToastAction[] = [], tail?: string) => {
     toastIdRef.current += 1;
-    setToast({ id: toastIdRef.current, message, actions });
+    setToast({ id: toastIdRef.current, message, ...(tail ? { tail } : {}), actions });
   }, []);
 
   /** The selected tab: focus has somewhere to go when the control it was on is gone. */
@@ -1830,7 +1831,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         return;
       }
       const forked = data.session;
-      const message = t("sidebar.forkedToast", { title: shortTitle(sessionRowTitle(forked), TOAST_TITLE_MAX) });
+      // The copy's name ends in the suffix that tells it from its source: the
+      // toast's ellipsis cuts the name before it, never the suffix. A copy
+      // left unnamed (its source had no title) is cut as other toasts are.
+      const title = sessionRowTitle(forked);
+      const { head: message, tail } = splitBeforeForkSuffix(t("sidebar.forkedToast", { title }), title)
+        ?? { head: t("sidebar.forkedToast", { title: shortTitle(title, TOAST_TITLE_MAX) }), tail: undefined };
       if (selectedSessionIdRef.current !== selectedAtClick) {
         // Another session was opened meanwhile: the user stays there. The
         // copy waits in its group, unread (so it shows beyond the group's
@@ -1838,11 +1844,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         setAllSessions((current) => (current.some((session) => session.id === forked.id) ? current : [forked, ...current]));
         setUnreadSessionIds((prev) => new Set(prev).add(forked.id));
         void loadSessions();
-        showToast(message, [{ id: "open", label: t("sidebar.open"), onClick: () => openForkedRef.current(forked, null) }]);
+        showToast(message, [{ id: "open", label: t("sidebar.open"), onClick: () => openForkedRef.current(forked, null) }], tail);
         return;
       }
       openForkedRef.current(forked, row.key);
-      showToast(message);
+      showToast(message, [], tail);
     } catch (error) {
       showToast(t("sidebar.forkFailed", { error: error instanceof Error ? error.message : String(error) }));
     } finally {

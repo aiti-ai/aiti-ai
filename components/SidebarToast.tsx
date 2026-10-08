@@ -20,6 +20,12 @@ export interface SidebarToastAction {
 export interface SidebarToastData {
   id: number;
   message: string;
+  /**
+   * Text after `message` that stays in view when the line is too long: only
+   * `message` is cut (a fork's name before its suffix, "Forked “PR#1030 状态…"
+   * then " · 3f9a”").
+   */
+  tail?: string;
   actions: SidebarToastAction[];
 }
 
@@ -83,7 +89,14 @@ function SidebarToastCard({ toast, dismissLabel, durationMs, onDismissRef }: Toa
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
       }}
     >
-      <span className="sidebar-toast-message" title={toast.message}>{toast.message}</span>
+      {toast.tail ? (
+        <span className="sidebar-toast-message has-tail" title={toast.message + toast.tail}>
+          <span className="sidebar-toast-message-head">{toast.message}</span>
+          <span className="sidebar-toast-message-tail">{toast.tail}</span>
+        </span>
+      ) : (
+        <span className="sidebar-toast-message" title={toast.message}>{toast.message}</span>
+      )}
       {toast.actions.map((action) => (
         <button
           key={action.id}

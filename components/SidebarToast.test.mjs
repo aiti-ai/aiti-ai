@@ -55,6 +55,16 @@ test("a toast without actions shows only its message and the dismiss button", ()
   assert.match(html, /Couldn’t save: locked/);
 });
 
+test("a tail stays in view after the message, which alone is cut", () => {
+  const html = render({ id: 5, message: "Forked “PR#1030 状态栏命令按钮", tail: " · 3f9a”", actions: [] });
+  assert.match(html, /<span class="sidebar-toast-message has-tail" title="Forked “PR#1030 状态栏命令按钮 · 3f9a”"><span class="sidebar-toast-message-head">Forked “PR#1030 状态栏命令按钮<\/span><span class="sidebar-toast-message-tail"> · 3f9a”<\/span><\/span>/);
+  assert.match(cssRule(".sidebar-toast-message.has-tail"), /^\s*display: flex;\s*$/);
+  assert.match(cssRule(".sidebar-toast-message-head"), /min-width: 0;\s*overflow: hidden;\s*text-overflow: ellipsis;/);
+  assert.match(cssRule(".sidebar-toast-message-tail"), /flex: none;\s*white-space: pre;/, "never shrinks; keeps its leading space");
+  // Without one, the message is the plain one-line span.
+  assert.doesNotMatch(render({ id: 6, message: "Forked “x”", actions: [] }), /has-tail|sidebar-toast-message-(head|tail)/);
+});
+
 test("each toast id is its own element, so its timer and entrance run once", () => {
   assert.match(source, /<SidebarToastCard\s+key=\{toast\.id\}/);
   assert.match(source, /durationMs = DEFAULT_TOAST_DURATION_MS/);
