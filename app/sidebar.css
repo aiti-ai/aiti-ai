@@ -807,80 +807,14 @@
   padding-bottom: 56px;
 }
 
+/* One toolbar row in the cells of the chat's top bar beside it (AppShell):
+   36px with its line, as that bar is, so the two read as one bar. Each cell is divided on its
+   right; the search cell's right is the sidebar's own edge. */
 .sidebar-header {
   display: flex;
   flex: none;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 10px 10px 8px 12px;
-}
-
-.sidebar-header-actions {
-  display: flex;
-  flex: none;
-  gap: 6px;
-}
-
-.sidebar-new-button,
-.sidebar-search-toggle {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  height: 30px;
-  box-sizing: border-box;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--bg-hover);
-  color: var(--text-muted);
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-}
-
-.sidebar-new-button {
-  gap: 5px;
-  padding: 0 11px 0 9px;
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: -0.01em;
-}
-
-.sidebar-search-toggle {
-  width: 30px;
-  padding: 0;
-}
-
-.sidebar-new-button:not(:disabled):hover,
-.sidebar-search-toggle:hover,
-.sidebar-search-toggle.is-active {
-  background: var(--bg-selected);
-  color: var(--accent);
-}
-
-.sidebar-new-button:disabled {
-  color: var(--text-dim);
-  cursor: not-allowed;
-}
-
-.sidebar-new-button:focus-visible,
-.sidebar-search-toggle:focus-visible,
-.sidebar-tab:focus-visible,
-.sidebar-icon-button:focus-visible,
-.sidebar-archive-back:focus-visible,
-.sidebar-tool-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-/* Sessions | Files: a quiet segmented row with the view options on the right. */
-.sidebar-tabs {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 2px;
+  align-items: stretch;
   height: 36px;
-  padding: 0 6px 0 8px;
   box-sizing: border-box;
   border-bottom: 1px solid var(--border);
 }
@@ -889,32 +823,61 @@
 .sidebar-tabs-list {
   display: flex;
   flex: none;
-  align-items: center;
-  gap: 2px;
+  align-items: stretch;
 }
 
-.sidebar-tab {
+/* The chat bar's cells: a 2px line on top that takes the accent when the
+   cell is the one chosen (a tab, the open search). */
+.sidebar-tab,
+.sidebar-new-button,
+.sidebar-search-toggle {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 5px;
-  height: 24px;
-  padding: 0 10px;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 12px;
   border: 0;
-  border-radius: 6px;
+  border-top: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
   color: var(--text-muted);
   font-size: 12px;
+  white-space: nowrap;
   cursor: pointer;
+  transition: background 0.12s, color 0.12s;
 }
 
-.sidebar-tab:hover {
+.sidebar-tab,
+.sidebar-new-button {
+  border-right: 1px solid var(--border);
+}
+
+.sidebar-tab-icon {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.sidebar-tab:hover,
+.sidebar-new-button:not(:disabled):hover,
+.sidebar-search-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.sidebar-tab.is-selected,
+.sidebar-search-toggle.is-active {
+  border-top-color: var(--accent);
+  background: var(--bg-selected);
   color: var(--text);
 }
 
 .sidebar-tab.is-selected {
-  background: var(--bg-selected);
-  color: var(--text);
   font-weight: 500;
+}
+
+.sidebar-tab.is-selected .sidebar-tab-icon {
+  color: var(--accent);
 }
 
 .sidebar-tab-count {
@@ -924,29 +887,56 @@
   font-weight: 400;
 }
 
-.sidebar-tabs-spacer {
+.sidebar-header-spacer {
   flex: 1;
+  min-width: 0;
 }
 
-.sidebar-icon-button {
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
+.sidebar-new-button {
+  font-weight: 500;
+}
+
+.sidebar-search-toggle {
+  width: 36px;
   padding: 0;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
 }
 
-.sidebar-icon-button:hover,
-.sidebar-icon-button.is-active {
-  background: var(--bg-selected);
-  color: var(--text);
+.sidebar-new-button:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+/* Where the labels do not fit (useHeaderFit measures them: their widths
+   change with the language): New keeps its + (data-fit 1), then the tabs
+   their icons (2). A hidden label is still each one's name. */
+.sidebar-header[data-fit="1"] .sidebar-new-button,
+.sidebar-header[data-fit="2"] .sidebar-new-button {
+  width: 36px;
+  padding: 0;
+}
+
+.sidebar-header[data-fit="2"] .sidebar-tab {
+  padding: 0 11px;
+}
+
+.sidebar-header[data-fit="1"] .sidebar-new-label,
+.sidebar-header[data-fit="2"] .sidebar-new-label,
+.sidebar-header[data-fit="2"] .sidebar-tab-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.sidebar-new-button:focus-visible,
+.sidebar-search-toggle:focus-visible,
+.sidebar-tab:focus-visible,
+.sidebar-archive-back:focus-visible,
+.sidebar-tool-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }
 
 .sidebar-panel {
@@ -1038,53 +1028,41 @@
   transform: rotate(-90deg);
 }
 
-/* Files tab: the folder in use (the stacked project picker, app/globals.css)
-   and what is done with it, then the tree. No box of its own: flat on the
-   panel like the tab row, one more strip of the sidebar's chrome, and one
-   line under it takes the tab row's place between the tabs and the tree.
-   Its 4px sides are the tree's, so the rows' boxes, icons and chevrons line
-   up with the tree's rows, chevrons and status letters. */
+/* Files tab: the folder in use (the stacked project picker's two boxes,
+   app/globals.css) and what is done with it, then a line and the tree. */
 .sidebar-files-head {
   display: flex;
   flex: none;
   flex-direction: column;
-  padding: 0 4px 6px;
+  padding: 10px 10px 4px;
   border-bottom: 1px solid var(--border);
 }
 
-/* On the files tab the tab row's line gives way to the head's: one line
-   between the tabs and the tree. */
-.sidebar-tabs.is-files {
-  border-bottom-color: transparent;
-}
-
 /* The head's last row: the actions on that folder and the tree's changes
-   view, used often enough to stay in view (its search is the header's).
-   Laid out like the tab row: the folder's four from the rows' icon column,
-   the tree's view at the right end as ⋯ is there, over the chevrons and the
-   tree's status letters. Always the same five (the changes view is
-   disabled, not gone, without changes), so nothing moves as the count
-   flips. At the sidebar's 180px minimum only the gap before the view
-   narrows. */
+   view, used often enough to stay in view (its search is the toolbar
+   row's). The folder's four from the left, the tree's view at the right
+   end, the row's edges on the boxes'. Always the same five (the changes
+   view is disabled, not gone, without changes), so nothing moves as the
+   count flips. At the sidebar's 180px minimum they give way together and
+   the gap before the view closes. */
 .sidebar-files-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
-  margin-top: 3px;
+  gap: 6px;
+  margin-top: 4px;
 }
 
-/* The tab row's ⋯ (.sidebar-icon-button): 30px wide, so their icons are
-   8px in like the rows', and 24px tall at the rows' 30px pitch. */
+/* Square keys, borderless and dim: their box shows on hover. */
 .sidebar-tool-button {
   display: flex;
-  flex: 0 1 30px;
+  flex: 0 1 32px;
   align-items: center;
   justify-content: center;
-  min-width: 24px;
-  height: 24px;
+  min-width: 26px;
+  height: 32px;
   padding: 0;
   border: 0;
-  border-radius: 6px;
+  border-radius: 7px;
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
@@ -1117,13 +1095,13 @@
   opacity: 0.6;
 }
 
-/* Under the head's line, its text on the head's icon column. */
+/* Under the head's line, on the boxes' edges. */
 .sidebar-files-error {
   display: flex;
   flex: none;
   align-items: flex-start;
   gap: 6px;
-  padding: 6px 10px 0 12px;
+  padding: 6px 10px 0;
   color: #f87171;
   font-size: 10px;
   line-height: 1.35;
@@ -1135,41 +1113,26 @@
   overflow-wrap: anywhere;
 }
 
-/* The tree's first row as far under the head's line as the buttons are
+/* The tree's first row as far under the head's line as the keys' icons are
    above it (with the tree's own 2px). */
 .sidebar-files-scroll {
   flex: 1 1 auto;
   min-height: 0;
-  padding-top: 4px;
+  padding-top: 6px;
   overflow-x: hidden;
   overflow-y: auto;
 }
 
 @media (pointer: coarse) {
-  .sidebar-tab {
-    height: 30px;
-  }
-
-  .sidebar-icon-button {
-    width: 32px;
-    height: 32px;
-  }
-
-  /* As tall as the picker's rows, at their pitch; 1px into the head's
-     padding on each side keeps the icons on the rows' columns at 32px wide. */
-  .sidebar-files-actions {
-    margin-top: 0;
-    margin-right: -1px;
-    margin-left: -1px;
-  }
-
+  /* As tall as the picker's boxes there, still square. */
   .sidebar-tool-button {
-    flex-basis: 32px;
+    flex-basis: 36px;
     height: 36px;
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .sidebar-tab,
   .sidebar-new-button,
   .sidebar-search-toggle,
   .sidebar-tool-button {
