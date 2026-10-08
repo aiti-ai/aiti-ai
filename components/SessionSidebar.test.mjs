@@ -152,11 +152,13 @@ test("sessions and files are two tabs of one sidebar, both kept mounted", () => 
   assert.match(filesTab, /tabindex="-1"/);
   assert.doesNotMatch(openingTag(html, "session-sidebar-panel-sessions"), /hidden/);
   assert.match(openingTag(html, "session-sidebar-panel-files"), /role="tabpanel"[^>]*hidden=""/);
-  // The hidden files tab still holds the explorer for the cwd, with its toolbar.
+  // The hidden files tab still holds the explorer for the cwd, under the
+  // card with the picker and its buttons (no title row).
   const filesPanel = html.slice(html.indexOf('id="session-sidebar-panel-files"'));
+  assert.match(filesPanel, /^id="session-sidebar-panel-files"[^>]*><div class="sidebar-files-card"><div class="project-picker is-stacked" role="group"/);
   assert.match(filesPanel, /aria-label="Open workspace terminal"/);
   assert.match(filesPanel, /<div class="sidebar-files-scroll scrollbar-subtle">/);
-  assert.match(filesPanel, /<span class="sidebar-files-title">Explorer<\/span>/);
+  assert.doesNotMatch(filesPanel, /sidebar-files-toolbar|sidebar-files-title/);
   // Pins and archive not loaded yet: the tree waits instead of flashing archived rows.
   assert.match(html, /<div class="session-tree-message">Loading\.\.\.<\/div>/);
 
@@ -170,6 +172,50 @@ test("sessions and files are two tabs of one sidebar, both kept mounted", () => 
   // No vertical sessions/explorer split any more.
   assert.doesNotMatch(source, /useResizablePanel|axis: "vertical"|--sidebar-session-pane-height|explorerOpen|file-explorer-state|data-resize-handle/);
   assert.doesNotMatch(globalStyles, /sidebar-section-resize-handle/);
+});
+
+test("the files tab's card holds the picker and its six buttons, always the same ones in the same places", () => {
+  const html = render({ selectedCwd: "/work/alpha", onOpenTerminal: noop });
+  const panel = html.slice(html.indexOf('id="session-sidebar-panel-files"'));
+  const card = panel.slice(panel.indexOf('<div class="sidebar-files-card">'), panel.indexOf('<div class="sidebar-files-scroll'));
+  // The picker's group names only the project and worktree; the buttons are
+  // the card's, a group of their own after it.
+  const pickerEnd = card.indexOf('<div class="sidebar-files-actions"');
+  assert.ok(pickerEnd > 0);
+  assert.equal((card.slice(0, pickerEnd).match(/class="sidebar-tool-button/g) ?? []).length, 0);
+  assert.match(card.slice(pickerEnd), /^<div class="sidebar-files-actions" role="group" aria-label="File actions">/);
+  // The folder's actions, then the tree's two toggles. The changes view is
+  // there without changes too, disabled, so nothing moves as an agent edits
+  // files and commits; its count is the tab's.
+  const labels = [...card.slice(pickerEnd).matchAll(/<button type="button"( disabled="")? title="([^"]+)" aria-label="\2"( aria-pressed="(true|false)")? class="([^"]+)"/g)]
+    .map((match) => `${match[2]}${match[1] ? " (disabled)" : ""}${match[4] ? ` pressed=${match[4]}` : ""}`);
+  assert.deepEqual(labels, [
+    "Open workspace terminal",
+    "Open in file manager",
+    "Upload files to project root",
+    "Refresh file list",
+    "Search files pressed=false",
+    "0 changed files (disabled) pressed=false",
+  ]);
+  assert.match(source, /disabled=\{changesCount === 0\}\s*title=\{t\("sidebar\.changedFiles", \{ count: changesCount \}\)\}\s*pressed=\{changesCount > 0 && !changesCollapsed\}/);
+  assert.doesNotMatch(source, /changesCount > 0 && \(\s*<ToolbarIconButton/);
+  // Without a terminal (no onOpenTerminal) the other five stay.
+  const noTerminal = render({ selectedCwd: "/work/alpha" });
+  assert.doesNotMatch(noTerminal, /Open workspace terminal/);
+  assert.match(noTerminal, /aria-label="Open in file manager"/);
+  // The header's search stays the sessions tab's.
+  assert.doesNotMatch(source, /searchesFiles|file-search-input|kind: "files"|filesMenuItems|TabRowToggle/);
+  // One card on the panel: no line across the sidebar between the tabs and
+  // the tree. Inside it a short line, fainter than the card's edge, marks the
+  // buttons off from the rows; they spread from the rows' icon column to
+  // their chevrons and give way together at the sidebar's 180px minimum.
+  assert.match(sidebarStyles, /\.sidebar-files-card \{\s*display: flex;\s*flex: none;\s*flex-direction: column;\s*margin: 8px 8px 4px;\s*padding: 3px;\s*border: 1px solid var\(--border\);\s*border-radius: 10px;\s*background: var\(--bg\);/);
+  assert.match(sidebarStyles, /\.sidebar-files-actions \{[^}]*justify-content: space-between;/);
+  assert.match(sidebarStyles, /\.sidebar-files-actions::before \{[^}]*right: 8px;\s*left: 8px;\s*height: 1px;\s*background: color-mix\(in srgb, var\(--border\) 70%, transparent\);/);
+  assert.match(sidebarStyles, /\.sidebar-tool-button \{\s*display: flex;\s*flex: 0 1 30px;\s*align-items: center;\s*justify-content: center;\s*min-width: 22px;\s*height: 28px;/);
+  assert.match(sidebarStyles, /@media \(pointer: coarse\) \{[\s\S]*?\.sidebar-tool-button \{\s*flex-basis: 32px;\s*height: 36px;/);
+  assert.doesNotMatch(globalStyles.slice(globalStyles.indexOf(".project-picker.is-stacked {")), /^\.project-picker\.is-stacked \{[^}]*(border|background|margin)/);
+  assert.doesNotMatch(sidebarStyles, /sidebar-files-toolbar|sidebar-files-title|is-pressed/);
 });
 
 test("the tab chosen last is shown again after hydration, not in the first render", () => {
