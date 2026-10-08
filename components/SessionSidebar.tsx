@@ -2021,6 +2021,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   } as const;
 
   const explorerCwd = selectedCwd ?? selectedCwdProp ?? null;
+  // The header's search button searches the files on the files tab: the
+  // card has no search of its own.
+  const searchesFiles = sidebarTab === "files" && explorerCwd !== null;
   const archivedCount = model.archivedCount;
 
   return (
@@ -2060,7 +2063,12 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           <button
             type="button"
             onClick={() => {
-              // Search belongs to the sessions tab: from the files tab it opens there.
+              // The search of the tab in view: the files tab's searches its
+              // files; without a folder there, it opens the sessions tab's.
+              if (searchesFiles) {
+                setFileSearchOpen((open) => !open);
+                return;
+              }
               if (sidebarTab !== "sessions") {
                 switchTab("sessions");
                 setSessionSearchOpen(true);
@@ -2068,11 +2076,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               }
               setSessionSearchOpen((open) => !open);
             }}
-            title={t("sidebar.toggleSessionSearch")}
-            aria-label={t("sidebar.toggleSessionSearch")}
-            aria-expanded={sessionSearchOpen}
-            aria-controls="session-search-input"
-            className={`sidebar-search-toggle${sessionSearchOpen ? " is-active" : ""}`}
+            title={searchesFiles ? t("sidebar.searchFiles") : t("sidebar.toggleSessionSearch")}
+            aria-label={searchesFiles ? t("sidebar.searchFiles") : t("sidebar.toggleSessionSearch")}
+            aria-expanded={searchesFiles ? fileSearchOpen : sessionSearchOpen}
+            aria-controls={searchesFiles ? "file-search-input" : "session-search-input"}
+            className={`sidebar-search-toggle${(searchesFiles ? fileSearchOpen : sessionSearchOpen) ? " is-active" : ""}`}
           >
             <SearchIcon size={16} />
           </button>
@@ -2242,7 +2250,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           {/* Always the same buttons in the same places: the changes view
               stays (disabled) while there is nothing changed, so nothing
               moves as an agent edits files and commits. The folder's
-              actions first, the tree's two view toggles last. */}
+              actions first, the tree's changes view last; its search is the
+              header's search button. */}
           {explorerCwd && (
             <div className="sidebar-files-actions" role="group" aria-label={t("sidebar.fileActions")}>
               {onOpenTerminal && (
@@ -2281,13 +2290,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 done={explorerRefreshDone}
               >
                 {explorerRefreshDone ? <CheckIcon size={14} /> : <RefreshIcon size={14} />}
-              </ToolbarIconButton>
-              <ToolbarIconButton
-                onClick={() => setFileSearchOpen((open) => !open)}
-                title={t("sidebar.searchFiles")}
-                pressed={fileSearchOpen}
-              >
-                <SearchIcon size={14} />
               </ToolbarIconButton>
               <ToolbarIconButton
                 onClick={() => setChangesCollapsed((v) => !v)}

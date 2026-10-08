@@ -1061,6 +1061,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
           </svg>
           <input
             ref={searchInputRef}
+            id="file-search-input"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
             onKeyDown={(event) => { if (event.key === "Escape") onFileSearchOpenChange?.(false); }}
