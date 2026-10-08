@@ -11,6 +11,7 @@ export type NewSessionContextControl = ProjectWorktreeControl;
 
 interface Props {
   context: NewSessionContext;
+  /** A phone: the menus open as bottom sheets. */
   mobile: boolean;
   /** The control the move that mounted this bar came from: it takes focus once, if focus fell to the page. */
   initialFocus: NewSessionContextControl | null;
@@ -26,8 +27,9 @@ interface Props {
 }
 
 /**
- * The project and worktree a fresh composer starts its session in, above the
- * composer of the empty new-session page: the files tab's picker
+ * The project and worktree a fresh composer starts its session in, in the
+ * empty new-session page's header row above the composer (beside the brand,
+ * or under it where the row is narrow): the files tab's picker
  * (components/ProjectWorktreePicker.tsx) as two chips. Every pick starts the
  * composer over in the new folder (the shell remounts it, carrying the draft
  * and its model picks), so this bar only reports what was chosen; the sidebar
@@ -62,7 +64,7 @@ export function NewSessionContextBar({
   }, []);
 
   return (
-    <div className="new-session-context" style={{ paddingLeft: 16, paddingRight: mobile ? 16 : 52 }}>
+    <div className="new-session-context">
       <ProjectWorktreePicker
         handleRef={pickerRef}
         layout="inline"
