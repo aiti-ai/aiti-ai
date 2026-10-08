@@ -9,8 +9,18 @@ const jiti = createJiti(import.meta.url, {
 });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { SidebarMenu, SidebarMenuSurface, placeSidebarMenu, findSidebarMenuShortcut, menuFocusReturnTarget } = await jiti.import("./SidebarMenu.tsx");
-const { SpinnerIcon, MoreIcon, PinIcon } = await jiti.import("./SidebarIcons.tsx");
+const {
+  SidebarMenu,
+  SidebarMenuSurface,
+  placeSidebarMenu,
+  findSidebarMenuShortcut,
+  menuFocusReturnTarget,
+  filterSidebarMenuItems,
+  sidebarMenuHasFilter,
+  hasCustomMenuBody,
+  SIDEBAR_MENU_FILTER_MIN_CHOICES,
+} = await jiti.import("./SidebarMenu.tsx");
+const { SpinnerIcon, MoreIcon, PinIcon, TrashIcon } = await jiti.import("./SidebarIcons.tsx");
 const source = await readFile(new URL("./SidebarMenu.tsx", import.meta.url), "utf8");
 const iconSource = await readFile(new URL("./SidebarIcons.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/sidebar-menu.css", import.meta.url), "utf8");
@@ -120,6 +130,25 @@ test("the mobile sheet has its own backdrop, a title, the items and a Cancel but
 
   const form = surface({ sheet: true, children: h("input", { "aria-label": "Branch" }) });
   assert.match(form, /<div class="sidebar-sheet-body"><input aria-label="Branch"\/><\/div>/);
+  assert.doesNotMatch(form, /data-sidebar-menu-autofocus/, "the body's first control takes focus");
+  // A question whose other answer discards something starts on the sheet's Cancel.
+  const question = surface({ sheet: true, focusCancel: true, children: h("button", { type: "button" }, "Force") });
+  assert.match(question, /<div class="sidebar-sheet-body"><button type="button">Force<\/button><\/div><button type="button" class="sidebar-sheet-cancel" data-sidebar-menu-autofocus="">Cancel<\/button>/);
+});
+
+test("conditional bodies that are all off are no body: the items show", () => {
+  // `{a && <Form/>}{b && <Question/>}` with neither showing arrives as [false, false].
+  for (const children of [undefined, null, false, [false, false], [null, undefined]]) {
+    assert.equal(hasCustomMenuBody(children), false, JSON.stringify(children));
+    const html = surface({ children });
+    assert.match(html, /^<div class="sidebar-menu" role="menu"/);
+    assert.equal((html.match(/data-sidebar-menu-item=""/g) ?? []).length, 5);
+    const sheet = surface({ sheet: true, children });
+    assert.match(sheet, /<div class="sidebar-sheet-body" role="menu" aria-label="Session actions">/);
+  }
+  assert.equal(hasCustomMenuBody([false, h("form")]), true);
+  assert.match(surface({ children: [false, h("form", { key: "form" })] }), /^<div class="sidebar-menu" role="dialog"[^>]*><form><\/form><\/div>$/);
+  assert.match(source, /const custom = hasCustomMenuBody\(children\);[\s\S]*const custom = hasCustomMenuBody\(children\);/, "the surface and the menu decide alike");
 });
 
 test("desktop placement: at a point, flipping like a native context menu, then clamped", () => {
@@ -162,14 +191,17 @@ test("Escape is taken in the capture phase and marked handled, so it never also 
   assert.match(source, /document\.addEventListener\("keydown", onKeyDown, true\);/);
   assert.match(source, /document\.removeEventListener\("keydown", onKeyDown, true\);/);
   assert.match(source, /if \(!surface \|\| event\.isComposing \|\| event\.keyCode === 229\) return;/);
-  assert.match(source, /if \(event\.key === "Escape"\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);\s*onCloseRef\.current\("escape"\);/);
+  assert.match(source, /if \(event\.key === "Escape"\) \{\s*event\.preventDefault\(\);\s*event\.stopPropagation\(\);[\s\S]*?onCloseRef\.current\("escape"\);\s*return;\s*\}/);
   // Arrow keys and shortcut letters are not stolen from a text field inside the menu.
-  assert.match(source, /if \(inside && isTextEntry\(target\)\) return;/);
-  assert.ok(source.indexOf("isTextEntry(target)) return;") < source.indexOf('event.key === "ArrowDown"'));
-  assert.ok(source.indexOf('event.key === "ArrowDown"') < source.indexOf("findSidebarMenuShortcut(itemsRef.current, event.key)"));
+  assert.match(source, /if \(inside && isTextEntry\(target\) && !leavesFilter\) return;/);
+  const arrows = 'if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {';
+  assert.ok(source.indexOf("isTextEntry(target) && !leavesFilter) return;") < source.indexOf(arrows));
+  assert.ok(source.indexOf(arrows) < source.indexOf("findSidebarMenuShortcut(itemsRef.current, event.key)"));
   assert.match(source, /if \(event\.key\.length !== 1 \|\| event\.ctrlKey \|\| event\.metaKey \|\| event\.altKey\) return;/);
   // Enter on an item keeps Shift (Delete skips its confirmation) and ignores IME.
-  assert.match(source, /if \(event\.key !== "Enter" \|\| event\.nativeEvent\.isComposing \|\| event\.keyCode === 229\) return;\s*event\.preventDefault\(\);\s*onActivate\(item, event\.shiftKey\);/);
+  assert.match(source, /if \(event\.key !== "Enter" \|\| event\.nativeEvent\.isComposing \|\| event\.keyCode === 229\) return;\s*event\.preventDefault\(\);\s*onActivate\(action, event\.shiftKey\);/);
+  assert.match(source, /onKeyDown=\{activateOnEnter\(item, onActivate\)\}/);
+  assert.match(source, /onKeyDown=\{activateOnEnter\(secondary, onActivate\)\}/);
 });
 
 test("an outside press closes a desktop menu in the capture phase without swallowing it", () => {
@@ -278,4 +310,108 @@ test("icons are decorative unless labelled, and the spinner turns through a clas
   for (const name of ["PlusIcon", "MoreIcon", "ArchiveIcon", "RestoreIcon", "PinIcon", "PinOffIcon", "ChevronIcon", "BranchIcon", "ForkIcon", "TrashIcon", "PencilIcon", "DotIcon", "DotOutlineIcon", "CheckIcon", "FolderIcon", "FolderPlusIcon", "TerminalIcon", "SearchIcon", "UploadIcon", "RefreshIcon", "ChangesIcon", "MessageIcon", "SpinnerIcon"]) {
     assert.match(iconSource, new RegExp(`export function ${name}\\(`), `${name} is exported`);
   }
+});
+
+const projectChoices = Array.from({ length: SIDEBAR_MENU_FILTER_MIN_CHOICES }, (_, index) => ({
+  type: "item",
+  id: `project:${index}`,
+  label: index === 3 ? "pi-web" : `project-${index}`,
+  note: index === 5 ? "Workspace" : undefined,
+  title: `/home/me/${index === 6 ? "clients/acme" : `p${index}`}`,
+  checked: index === 0,
+  onSelect: noop,
+}));
+const projectMenu = [
+  ...projectChoices,
+  { type: "separator", id: "separator" },
+  { type: "item", id: "open-folder", label: "Open another project…", onSelect: noop },
+];
+const filter = { placeholder: "Filter projects…", emptyLabel: "No matching projects" };
+
+test("a filter shows once a menu has enough choices, and narrows only the choices", () => {
+  assert.equal(SIDEBAR_MENU_FILTER_MIN_CHOICES, 8);
+  assert.equal(sidebarMenuHasFilter(projectMenu), true);
+  assert.equal(sidebarMenuHasFilter(projectMenu.slice(1)), false, "seven choices, and the actions do not count");
+  assert.equal(sidebarMenuHasFilter(undefined), false);
+  // By label, note or title, case-insensitive; separators and actions stay.
+  const ids = (query) => filterSidebarMenuItems(projectMenu, query).map((item) => item.id);
+  assert.deepEqual(ids("PI-WEB"), ["project:3", "separator", "open-folder"]);
+  assert.deepEqual(ids("workspace"), ["project:5", "separator", "open-folder"]);
+  assert.deepEqual(ids("acme"), ["project:6", "separator", "open-folder"]);
+  assert.deepEqual(ids("  "), projectMenu.map((item) => item.id));
+  assert.deepEqual(ids("nothing"), ["separator", "open-folder"]);
+});
+
+test("filter markup: a field above the list, the empty label, focus only on a desktop", () => {
+  // A menu holds only items: the field and the empty label stand before it, in a dialog.
+  const html = surface({ items: projectMenu, filter, filterQuery: "" });
+  assert.match(html, /^<div class="sidebar-menu" role="dialog" aria-label="Session actions" style="width:208px"><div class="sidebar-menu-filter"><input class="sidebar-menu-filter-input" placeholder="Filter projects…" aria-label="Filter projects…" [^>]*data-sidebar-menu-filter="" data-sidebar-menu-autofocus="" value=""\/><\/div><div role="status"><\/div><div role="menu" aria-label="Session actions"><button/);
+  assert.equal((html.match(/role="menu"/g) ?? []).length, 1);
+  assert.equal((html.match(/role="menuitemradio"/g) ?? []).length, 8);
+  const narrowed = surface({ items: projectMenu, filter, filterQuery: "pi-web" });
+  assert.equal((narrowed.match(/role="menuitemradio"/g) ?? []).length, 1);
+  assert.match(narrowed, /Open another project…/);
+  assert.doesNotMatch(narrowed, /sidebar-menu-empty/);
+  const none = surface({ items: projectMenu, filter, filterQuery: "nothing" });
+  assert.match(none, /<\/div><div role="status"><div class="sidebar-menu-empty">No matching projects<\/div><\/div><div role="menu" aria-label="Session actions"><div class="sidebar-menu-separator" role="separator"><\/div>/);
+  // A phone's keyboard would cover the sheet: the field waits for a tap. The sheet is the dialog.
+  const sheet = surface({ sheet: true, items: projectMenu, filter, filterQuery: "" });
+  assert.match(sheet, /<div class="sidebar-sheet-body"><div class="sidebar-menu-filter"><input [^>]*data-sidebar-menu-filter="" value=""\/><\/div><div role="status"><\/div><div role="menu" aria-label="Session actions"><button/);
+  // Too few choices, or a custom body: no field.
+  assert.doesNotMatch(surface({ items: projectMenu.slice(1), filter }), /sidebar-menu-filter/);
+  assert.doesNotMatch(surface({ items: projectMenu, filter, children: h("input") }), /sidebar-menu-filter/);
+});
+
+test("filter keys: Up and Down leave the field, Escape clears it before it closes, IME is left alone", () => {
+  assert.match(source, /const leavesFilter = \(event\.key === "ArrowDown" \|\| event\.key === "ArrowUp"\) && target\?\.matches\(FILTER_SELECTOR\);\s*if \(inside && isTextEntry\(target\) && !leavesFilter\) return;/);
+  const escape = source.slice(source.indexOf('if (event.key === "Escape") {'), source.indexOf("const target = event.target instanceof Element"));
+  assert.match(escape, /const field = surface\.querySelector<HTMLElement>\(FILTER_SELECTOR\);\s*if \(field && filterQueryRef\.current\) \{\s*setFilterQuery\(""\);\s*field\.focus\(\{ preventScroll: true \}\);\s*return;\s*\}\s*onCloseRef\.current\("escape"\);/);
+  // The capture listener already returns for composition before any of this.
+  assert.ok(source.indexOf("if (!surface || event.isComposing || event.keyCode === 229) return;") < source.indexOf("const field = surface.querySelector"));
+  // Each opening, and each body, starts with an empty field.
+  assert.match(source, /useEffect\(\(\) => \{\s*setFilterQuery\(""\);\s*\}, \[visible, custom\]\);/);
+  // A marked control takes the focus first: the filter, or a confirmation's Cancel.
+  assert.match(source, /const marked = Array\.from\(surface\.querySelectorAll<HTMLElement>\(AUTOFOCUS_SELECTOR\)\)\.find\(isFocusable\);\s*if \(marked\) return marked;/);
+});
+
+test("an item's secondary action is its own menu item at the row's end; a badge sits before the note", () => {
+  const removeItems = [
+    {
+      type: "item",
+      id: "feature",
+      label: "feature/x",
+      checked: false,
+      title: "/work/app-worktrees/feature-x",
+      secondary: { label: "Remove worktree checkout /work/app-worktrees/feature-x", icon: h(TrashIcon, { size: 12 }), danger: true, onSelect: noop },
+      onSelect: noop,
+    },
+    {
+      type: "item",
+      id: "busy",
+      label: "busy",
+      checked: false,
+      secondary: { label: "Remove busy", icon: h(TrashIcon, { size: 12 }), disabled: true, onSelect: noop },
+      onSelect: noop,
+    },
+    { type: "item", id: "app", label: "app", checked: true, note: "Workspace", badge: h("span", { className: "badge" }, "2"), onSelect: noop },
+  ];
+  const html = surface({ items: removeItems });
+  assert.match(html, /<div class="sidebar-menu-row" role="none"><button type="button" role="menuitemradio" aria-checked="false" tabindex="-1" title="\/work\/app-worktrees\/feature-x" data-sidebar-menu-item="" class="sidebar-menu-item">[\s\S]*?<\/button><button type="button" role="menuitem" aria-label="Remove worktree checkout \/work\/app-worktrees\/feature-x" tabindex="-1" title="Remove worktree checkout \/work\/app-worktrees\/feature-x" data-sidebar-menu-item="" class="sidebar-menu-secondary is-danger"><svg/);
+  assert.match(html, /aria-label="Remove busy" aria-disabled="true" tabindex="-1"[^>]*class="sidebar-menu-secondary"/);
+  // Arrow keys reach both: each is a data-sidebar-menu-item.
+  assert.equal((html.match(/data-sidebar-menu-item=""/g) ?? []).length, 5);
+  assert.match(html, /<span class="sidebar-menu-label">app<\/span><span class="badge">2<\/span><span class="sidebar-menu-note">Workspace<\/span>/);
+  // A disabled secondary does nothing: activation checks it like any item.
+  assert.match(source, /const activate = \(item: MenuAction, shiftKey: boolean\) => \{\s*if \(item\.disabled\) return;/);
+});
+
+test("filter and secondary action styles: sticky field, room for a finger, a capped height", () => {
+  assert.match(cssRule(".sidebar-menu"), /max-height: min\(calc\(var\(--app-viewport-height, 100dvh\) - 16px\), 480px\);/);
+  // Sticky insets count from inside the scroller's padding (4px, the sheet's too): -4px is its edge.
+  assert.match(cssRule(".sidebar-menu-filter"), /position: sticky;\s*top: -4px;/);
+  assert.match(cssRule(".sidebar-menu-row > .sidebar-menu-item"), /flex: 1;\s*min-width: 0;/);
+  assert.match(cssRule(".sidebar-menu-secondary"), /width: 28px;\s*height: 28px;/);
+  assert.match(cssRule(".sidebar-sheet .sidebar-menu-secondary"), /width: 48px;\s*height: 48px;/);
+  assert.match(css, /\.sidebar-menu-secondary\.is-danger:not\(\[aria-disabled="true"\]\):hover,\s*\.sidebar-menu-secondary\.is-danger:focus-visible \{\s*background: rgba\(239, 68, 68, 0\.08\);\s*color: #ef4444;/);
+  assert.match(css, /@media \(pointer: coarse\) \{\s*\.sidebar-menu-item \{\s*height: 40px;\s*\}\s*\.sidebar-menu-secondary \{\s*width: 40px;\s*height: 40px;/);
 });

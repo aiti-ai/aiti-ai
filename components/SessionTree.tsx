@@ -738,8 +738,11 @@ function DeleteConfirm({
   );
 }
 
-/** Spinner + count and dot + count; the label carries the count for screen readers. */
-function ActivitySummary({ running, unread, t }: { running: number; unread: number; t: (key: string) => string }) {
+/**
+ * Spinner + count and dot + count; the label carries the count for screen
+ * readers. Also a project's badge in the project menus (ProjectWorktreePicker).
+ */
+export function ActivitySummary({ running, unread, t }: { running: number; unread: number; t: (key: string) => string }) {
   if (running === 0 && unread === 0) return null;
   return (
     <span className="session-tree-summary">

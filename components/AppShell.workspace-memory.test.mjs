@@ -353,6 +353,9 @@ test("only a fresh composer moves from the bar, and only somewhere else", () => 
   // The folder picker answers later and goes through the same guard with the newest closure.
   assert.match(source, /const pickNewSessionContextRef = useRef\(handlePickNewSessionContext\);\s*pickNewSessionContextRef\.current = handlePickNewSessionContext;/);
   assert.match(source, /openFolderForNewSession\(\(target\) => pickNewSessionContextRef\.current\(target, "project"\), opener\)/);
+  // So does "Use default directory": today's folder, validated by the sidebar.
+  assert.match(source, /openDefaultDirectoryForNewSession\(\(target\) => pickNewSessionContextRef\.current\(target, "project"\)\)/);
+  assert.match(source, /onUseDefaultDirectory=\{handleDefaultDirectoryForNewSession\}/);
   // The bar exists only for a fresh composer, and gets the composer's cwd even while the sidebar's report lags.
   assert.match(source, /const newSessionContextBar = selectedSession === null && effectiveNewSessionCwd \? \(\s*<NewSessionContextBar\s*context=\{contextForCwd\(sidebarNewSessionContext, effectiveNewSessionCwd, newSessionMoveRef\.current\)\}/);
   assert.match(source, /controlRef=\{sidebarControlRef\}\s*onNewSessionContextChange=\{handleSidebarNewSessionContext\}/);

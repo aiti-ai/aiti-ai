@@ -53,6 +53,13 @@ export interface NewSessionContext {
   projects: readonly ProjectChoice[];
 }
 
+/**
+ * What a project/worktree picker shows (components/ProjectWorktreePicker.tsx):
+ * a context without its cwd, or no project yet (a sidebar with no cwd, whose
+ * files tab still offers every project).
+ */
+export type ProjectWorktreeContext = Omit<NewSessionContext, "cwd" | "project"> & { project: ProjectChoice | null };
+
 /** A move the shell made from the bar, kept until the sidebar reports its cwd. */
 export interface NewSessionMove {
   cwd: string;
@@ -98,11 +105,12 @@ export function contextForCwd(
   };
 }
 
-/** The bar's project list: the current project first when the list does not have it (a folder just opened). */
-export function projectChoices(context: NewSessionContext): ProjectChoice[] {
-  return context.projects.some((project) => project.key === context.project.key)
+/** A picker's project list: the current project first when the list does not have it (a folder just opened). */
+export function projectChoices(context: ProjectWorktreeContext): ProjectChoice[] {
+  const current = context.project;
+  return !current || context.projects.some((project) => project.key === current.key)
     ? [...context.projects]
-    : [context.project, ...context.projects];
+    : [current, ...context.projects];
 }
 
 /** `first` in order, then whatever of `more` it does not list yet (by key). */
@@ -139,8 +147,8 @@ export function describeProjectChoices(choices: readonly ProjectChoice[]): Array
   }));
 }
 
-/** The checkout the bar shows: `currentWorktreePath`'s, else the main one. */
-export function currentWorktreeOf(context: NewSessionContext): WorktreeChoice | null {
+/** The checkout a picker shows: `currentWorktreePath`'s, else the main one. */
+export function currentWorktreeOf(context: ProjectWorktreeContext): WorktreeChoice | null {
   const worktrees = context.worktrees ?? [];
   return worktrees.find((worktree) => worktree.path === context.currentWorktreePath)
     ?? worktrees.find((worktree) => worktree.isMain)

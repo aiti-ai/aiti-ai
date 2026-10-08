@@ -34,6 +34,7 @@ function render(props = {}) {
     initialFocus: null,
     onInitialFocusDone: noop,
     onPick: noop,
+    onUseDefaultDirectory: noop,
     onOpenFolder: noop,
     onRefreshWorktrees: noop,
     onCreateWorktree: async () => ({ error: "unused" }),
@@ -43,57 +44,38 @@ function render(props = {}) {
 
 test("the bar shows the project and the worktree in use as two menu buttons", () => {
   const html = render();
-  assert.match(html, /^<div class="new-session-context" style="padding-left:16px;padding-right:52px">/);
-  assert.match(html, /<div class="new-session-context-row" role="group" aria-label="New session location">/);
-  assert.match(html, /<button type="button" class="new-session-context-button is-project" title="\/work\/app" aria-haspopup="menu" aria-expanded="false">/);
-  assert.match(html, /<span class="new-session-context-label">app<\/span>/);
-  assert.match(html, /<button type="button" class="new-session-context-button" title="Worktree: \/work\/app-worktrees\/feature" aria-haspopup="menu" aria-expanded="false">/);
-  assert.match(html, /<span class="new-session-context-label">feature\/x<\/span>/);
+  assert.match(html, /^<div class="new-session-context" style="padding-left:16px;padding-right:52px"><div class="project-picker is-inline" role="group" aria-label="New session location">/);
+  assert.match(html, /<button type="button" class="project-picker-button is-project" title="\/work\/app" aria-haspopup="menu" aria-expanded="false">/);
+  assert.match(html, /<span class="project-picker-label">app<\/span>/);
+  assert.match(html, /<button type="button" class="project-picker-button" title="Worktree: \/work\/app-worktrees\/feature" aria-haspopup="menu" aria-expanded="false">/);
+  assert.match(html, /<span class="project-picker-label">feature\/x<\/span>/);
   // One type for both: the branch is not set in code type.
   assert.doesNotMatch(html, /is-mono/);
-  assert.match(html, /<span class="new-session-context-divider" aria-hidden="true"><\/span>/);
+  assert.match(html, /<span class="project-picker-divider" aria-hidden="true"><\/span>/);
   // Phones keep the composer's own side padding.
   assert.match(render({ mobile: true }), /^<div class="new-session-context" style="padding-left:16px;padding-right:16px">/);
+  // The files tab's picker, as chips, with the bar's own title for "New worktree…".
+  assert.match(source, /<ProjectWorktreePicker\s+handleRef=\{pickerRef\}\s+layout="inline"/);
+  assert.match(source, /newWorktreeTitle=\{t\("sidebar\.newWorktreeForSession"\)\}/);
+  assert.match(source, /onUseDefaultDirectory=\{onUseDefaultDirectory\}/);
+  assert.doesNotMatch(source, /onRemoveWorktree|SidebarMenu/, "the bar removes nothing, and its menus are the picker's");
 });
 
 test("the worktree button needs a worktree list: a non-git folder or a subdirectory has none", () => {
   const html = render({ context: { ...context, cwd: "/work/app/sub", project: { key: "/work/app/sub", root: "/work/app/sub" }, worktrees: null, currentWorktreePath: null } });
-  assert.match(html, /<span class="new-session-context-label">sub<\/span>/);
-  assert.doesNotMatch(html, /Worktree:|new-session-context-divider/);
+  assert.match(html, /<span class="project-picker-label">sub<\/span>/);
+  assert.doesNotMatch(html, /Worktree:|project-picker-divider/);
   assert.equal((html.match(/aria-haspopup="menu"/g) ?? []).length, 1);
   // The main checkout shows its branch; a detached one its folder.
-  assert.match(render({ context: { ...context, currentWorktreePath: "/work/app" } }), /context-label">main<\/span>/);
+  assert.match(render({ context: { ...context, currentWorktreePath: "/work/app" } }), /picker-label">main<\/span>/);
   assert.match(
     render({ context: { ...context, worktrees: [{ path: "/work/app", branch: null, isMain: true }], currentWorktreePath: "/work/app" } }),
-    /title="Worktree: \/work\/app"[^>]*>[\s\S]*?context-label">app<\/span>/,
+    /title="Worktree: \/work\/app"[^>]*>[\s\S]*?picker-label">app<\/span>/,
   );
 });
 
-test("picking where the composer already is changes nothing", () => {
-  const projects = source.slice(source.indexOf("const projectItems"), source.indexOf("const worktreeItems"));
-  assert.match(projects, /checked: choice\.key === context\.project\.key,/);
-  assert.match(projects, /if \(choice\.key !== context\.project\.key\) onPick\(\{ cwd: choice\.root, projectKey: choice\.key, projectRoot: choice\.root \}, "project"\);/);
-  assert.match(projects, /label: t\("sidebar\.openOtherProject"\),[\s\S]*?onSelect: \(\) => onOpenFolder\(menu\?\.opener \?\? null\),/);
-  const worktrees = source.slice(source.indexOf("const worktreeItems"), source.indexOf("let menuTitle"));
-  assert.match(worktrees, /checked: worktree\.path === current\?\.path,/);
-  assert.match(worktrees, /if \(worktree\.path !== current\?\.path\) \{\s*onPick\(\{ cwd: worktree\.path, projectKey: context\.project\.key, projectRoot: context\.project\.root \}, "worktree"\);/);
-  assert.match(worktrees, /onSelect: \(\{ keepOpen \}\) => \{\s*keepOpen\(\);/);
-  // Opening the worktree menu lists the worktrees again.
-  assert.match(source, /if \(kind === "worktree"\) onRefreshWorktrees\(\);/);
-});
-
-test("a created worktree starts the session only while its form is still open", () => {
-  const create = source.slice(source.indexOf("const createWorktree = async"), source.indexOf("const projectItems"));
-  const mounted = create.indexOf("if (!mountedRef.current) return;");
-  const error = create.indexOf('if ("error" in result) {');
-  const open = create.indexOf("if (menuRef.current?.form?.token !== token) return;");
-  const pick = create.indexOf('onPickRef.current({ cwd: result.path, projectKey: project.key, projectRoot: project.root }, "worktree");');
-  assert.ok(mounted >= 0 && mounted < error && error < open && open < pick, "mounted, error shown, form still open, then the move");
-  assert.match(source, /const onPickRef = useRef\(onPick\);\s*onPickRef\.current = onPick;/);
-});
-
 test("the control a move came from takes focus in the bar of the new composer", () => {
-  assert.match(source, /const from = initialFocusRef\.current;\s*if \(!from\) return;\s*initialFocusRef\.current = null;\s*onInitialFocusDoneRef\.current\(\);\s*focusIfLost\(document, \(from === "worktree" \? worktreeRef\.current : null\) \?\? projectRef\.current\);/);
+  assert.match(source, /const from = initialFocusRef\.current;\s*if \(!from\) return;\s*initialFocusRef\.current = null;\s*onInitialFocusDoneRef\.current\(\);\s*const picker = pickerRef\.current;\s*focusIfLost\(document, \(from === "worktree" \? picker\?\.button\("worktree"\) : null\) \?\? picker\?\.button\("project"\) \?\? null\);/);
 });
 
 test("the bar sits between the empty page's hero and the composer, only while it is empty", () => {
@@ -109,8 +91,12 @@ test("client code stays parseable by Safari 16.2 and its CSS flat", () => {
   }
   const rules = css.slice(css.indexOf(".new-session-context {"), css.indexOf(".file-viewer-icon-button {"));
   assert.doesNotMatch(rules.replace(/@media[^{]*\{/g, ""), /\{[^}]*\{|&/, "no nested rules");
-  assert.match(rules, /\.new-session-context-button:focus-visible \{\s*outline: 2px solid var\(--accent\);/);
+  // The chips keep the composer's controls' look.
+  assert.match(rules, /\.new-session-context > \.project-picker \{\s*max-width: var\(--chat-content-max-width, 820px\);\s*margin: 0 auto;\s*padding: 0 4px;/);
+  assert.match(rules, /\.project-picker \{\s*display: flex;\s*align-items: center;\s*gap: 4px;\s*min-width: 0;\s*box-sizing: border-box;\s*font-size: 12\.5px;\s*font-weight: 500;\s*line-height: 1;/);
+  assert.match(rules, /\.project-picker-button \{[^}]*height: 30px;\s*padding: 0 10px;\s*border: 1px solid transparent;\s*border-radius: 9px;\s*background: transparent;\s*color: var\(--text-muted\);/);
+  assert.match(rules, /\.project-picker-button:focus-visible \{\s*outline: 2px solid var\(--accent\);/);
   // On a narrow row a long branch name is cut before the project's name.
-  assert.match(rules, /\.new-session-context-button\.is-project \{\s*flex-shrink: 0;\s*max-width: 60%;/);
-  assert.match(rules, /@media \(pointer: coarse\) \{\s*\.new-session-context-button \{\s*min-height: 36px;/);
+  assert.match(rules, /\.project-picker-button\.is-project \{\s*flex-shrink: 0;\s*max-width: 60%;/);
+  assert.match(rules, /@media \(pointer: coarse\) \{\s*\.project-picker-button \{\s*min-height: 36px;/);
 });
