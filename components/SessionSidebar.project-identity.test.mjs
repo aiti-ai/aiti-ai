@@ -25,10 +25,12 @@ test("custom cwd selection remembers the last validated path for the picker", ()
 
 test("default cwd is selected through the same validation as a custom path", () => {
   const defaultStart = source.indexOf("const handleDefaultCwd = useCallback");
-  const defaultEnd = source.indexOf("const handleCreateWorktree", defaultStart);
+  const defaultEnd = source.indexOf("const handleDefaultCwdRef", defaultStart);
   const defaultSource = source.slice(defaultStart, defaultEnd);
   assert.notEqual(defaultStart, -1);
-  assert.match(defaultSource, /commitCustomPath\(data\.cwd, \{ remember: false \}\)/);
+  assert.match(defaultSource, /commitCustomPath\(data\.cwd, \{ remember: false, purpose \}\)/);
+  // The files tab's by default; the composer's bar names its own purpose.
+  assert.match(defaultSource, /const handleDefaultCwd = useCallback\(async \(purpose: "files" \| "new-session" = "files"\) => \{/);
   assert.doesNotMatch(defaultSource, /setSelectedCwd\(/);
   assert.match(customPathSource, /if \(remember\) \{\s*saveLastCustomCwd\(data\.cwd\)/);
 });

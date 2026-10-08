@@ -270,10 +270,11 @@ test("subagent completion stays silent and never becomes unread", () => {
 });
 
 test("includes project activity counts in accessible labels", () => {
-  for (const text of [source, treeSource]) {
-    assert.match(text, /aria-label=\{`\$\{t\("sidebar\.agentRunning"\)\} \(\$\{(?:activity\.)?running\}\)`\}/);
-    assert.match(text, /aria-label=\{`\$\{t\("sidebar\.newSessionActivity"\)\} \(\$\{(?:activity\.)?unread\}\)`\}/);
-  }
+  assert.match(treeSource, /aria-label=\{`\$\{t\("sidebar\.agentRunning"\)\} \(\$\{running\}\)`\}/);
+  assert.match(treeSource, /aria-label=\{`\$\{t\("sidebar\.newSessionActivity"\)\} \(\$\{unread\}\)`\}/);
+  // The files tab's project menu shows the group headers' own badge.
+  assert.match(treeSource, /export function ActivitySummary\(/);
+  assert.match(source, /projectActivity=\{projectActivity\}/);
 });
 
 test("project activity ignores archived families", () => {
@@ -383,20 +384,26 @@ test("the composer's bar moves through a handle made once, with the newest closu
   assert.match(source, /const startNewSessionInRef = useRef\(startNewSessionIn\);\s*startNewSessionInRef\.current = startNewSessionIn;/);
   assert.match(handle, /startNewSessionIn: \(target\) => startNewSessionInRef\.current\(target\),/);
   assert.match(handle, /openFolderForNewSession: \(onPicked, returnFocusTo\) => \{\s*folderPickRef\.current = onPicked;\s*folderReturnFocusRef\.current = returnFocusTo;\s*setCustomPathError\(null\);\s*setCustomPathOpen\("new-session"\);/);
-  assert.match(handle, /refreshWorktrees: \(\) => setWtRefreshKey\(\(k\) => k \+ 1\),/);
-  assert.match(handle, /\}\), \[\]\);\s*$/);
-  // A created worktree is listed at once and refetched, whether or not a session starts in it.
-  assert.match(handle, /body: JSON\.stringify\(\{ cwd: project\.root, branch \}\)/);
-  assert.match(handle, /if \(!res\.ok \|\| data\.error \|\| !data\.path\) return \{ error: data\.error \?\? `HTTP \$\{res\.status\}` \};/);
-  const listed = handle.indexOf("prev.projectKey === project.key && !prev.worktrees.some((worktree) => worktree.path === path)");
-  const refetch = handle.indexOf("setWtRefreshKey((k) => k + 1);\n        return { path };");
+  // "Use default directory" validates today's folder like a picked one, for the bar.
+  assert.match(handle, /openDefaultDirectoryForNewSession: \(onPicked\) => \{\s*folderPickRef\.current = onPicked;\s*folderReturnFocusRef\.current = null;\s*void handleDefaultCwdRef\.current\("new-session"\);/);
+  assert.match(source, /const handleDefaultCwdRef = useRef\(handleDefaultCwd\);\s*handleDefaultCwdRef\.current = handleDefaultCwd;/);
+  // The files tab's picker uses the same two: both are stable.
+  assert.match(handle, /refreshWorktrees,\s*createWorktree,\s*\}\), \[createWorktree, refreshWorktrees\]\);\s*$/);
+  assert.match(source, /const refreshWorktrees = useCallback\(\(\) => setWtRefreshKey\(\(k\) => k \+ 1\), \[\]\);/);
+  // A created worktree is listed at once and refetched, whether or not anyone moves there.
+  const create = callbackBody("createWorktree");
+  assert.match(create, /body: JSON\.stringify\(\{ cwd: project\.root, branch \}\)/);
+  assert.match(create, /if \(!res\.ok \|\| data\.error \|\| !data\.path\) return \{ error: data\.error \?\? `HTTP \$\{res\.status\}` \};/);
+  const listed = create.indexOf("prev.projectKey === project.key && !prev.worktrees.some((worktree) => worktree.path === path)");
+  const refetch = create.indexOf("setWtRefreshKey((k) => k + 1);\n      return { path };");
   assert.ok(listed >= 0 && listed < refetch, "listed, then refetched, then handed back");
+  assert.match(create, /return \{ error: e instanceof Error \? e\.message : String\(e\) \};\s*\}\s*\}, \[\]\);/);
   assert.match(source, /controlRef\?: Ref<SessionSidebarControl>;/);
 });
 
 test("the composer's folder pick leaves the sidebar's cwd to the shell, and Cancel gives focus back", () => {
   const commit = callbackBody("commitCustomPath");
-  assert.match(commit, /const purpose = customPathOpen;/);
+  assert.match(commit, /useCallback\(async \(candidate\?: string, \{ remember = true, purpose = customPathOpen \} = \{\}\) => \{/);
   const branch = commit.slice(commit.indexOf('if (purpose === "new-session") {'), commit.indexOf("setValidatedProject("));
   assert.match(branch, /const pick = folderPickRef\.current;[\s\S]*?folderPickRef\.current = null;[\s\S]*?pick\?\.\(\{ cwd: data\.cwd, projectKey: data\.projectKey, projectRoot: data\.projectRoot \}\);/);
   assert.match(branch, /focusAfterCommit\(\(\) => \(opener\?\.isConnected \? opener : null\)\);\s*return;/);
@@ -416,7 +423,8 @@ test("the bar hears of the sidebar's cwd only when something it shows changed", 
   assert.match(snapshot, /const listed = showWorktreeSwitcher && worktreeState !== null;/);
   assert.match(snapshot, /worktrees: listed \? worktreeState\.worktrees\.map\(\(\{ path, branch, isMain \}\) => \(\{ path, branch, isMain \}\)\) : null,/);
   assert.match(snapshot, /currentWorktreePath: listed \? currentWorktreePath : null,/);
-  assert.match(snapshot, /projects: mergeProjectChoices\(model\.projects, recentProjects\),/);
+  assert.match(snapshot, /projects: projectChoiceList,/);
+  assert.match(source, /const projectChoiceList = useMemo\(\(\) => mergeProjectChoices\(model\.projects, recentProjects\), \[model\.projects, recentProjects\]\);/);
   assert.match(snapshot, /const newSessionContextSignature = newSessionContextKey\(newSessionContext\);/);
   assert.match(snapshot, /useEffect\(\(\) => \{\s*onNewSessionContextChange\?\.\(newSessionContextRef\.current\);\s*\}, \[newSessionContextSignature, onNewSessionContextChange\]\);/);
 });
@@ -464,7 +472,9 @@ test("a cwd prop that went away and came back still moves the sidebar", () => {
 
 test("the footer opens the project list in the files tab; the archive view replaces the tree", () => {
   const footer = source.slice(source.indexOf("const handleOpenOtherProject"), source.indexOf("const sessionMenuItems"));
-  assert.match(footer, /switchTab\("files"\);\s*setDropdownOpen\(true\);/);
+  assert.match(footer, /filesTabFocusRef\.current = "project-list";\s*switchTab\("files"\);\s*\};/);
+  // Once the tab shows, the picker's project menu opens below its button.
+  assert.match(footer, /if \(target === "project-list"\) filesPickerRef\.current\?\.openMenu\("project"\);\s*else filesPickerRef\.current\?\.button\("project"\)\?\.focus\(\{ preventScroll: true \}\);\s*\}, \[sidebarTab\]\);/);
   assert.match(source, /onOpenOtherProject: handleOpenOtherProject,/);
   assert.match(source, /onOpenArchive: openArchiveView,/);
   assert.match(callbackBody("openArchiveView"), /setArchiveView\(true\);[\s\S]*?setSessionSearchOpen\(false\);\s*switchTab\("sessions"\);/);
@@ -472,6 +482,36 @@ test("the footer opens the project list in the files tab; the archive view repla
   assert.match(source, /<SessionTree \{\.\.\.treeProps\} rows=\{archiveRows\} emptyLabel=\{t\("sidebar\.noArchived"\)\} \/>/);
   assert.match(source, /const sessionMenuItems = \(row: SessionRow\): SidebarMenuItem\[\] => sessionMenuEntries\(row\.context, row\.status\)/);
   assert.match(callbackBody("handleTogglePinned"), /setPinnedCollapsed\(next\);\s*savePinnedCollapsed\(next\);/);
+});
+
+test("the files tab shows the composer bar's picker as two rows, with removal and activity", () => {
+  const html = render({ selectedCwd: "/work/alpha" });
+  const filesPanel = html.slice(html.indexOf('id="session-sidebar-panel-files"'));
+  // Before the sidebar has a cwd: the project row asks for one.
+  assert.match(filesPanel, /<div class="project-picker is-stacked" role="group" aria-label="Project and worktree"><button type="button" class="project-picker-button is-project is-empty" title="" aria-haspopup="menu" aria-expanded="false">/);
+  assert.match(filesPanel, /<span class="project-picker-label">Select project…<\/span>/);
+  const pickerStart = source.indexOf("<ProjectWorktreePicker\n");
+  const picker = source.slice(pickerStart, source.indexOf("/>", pickerStart));
+  assert.match(picker, /layout="stacked"/);
+  // The bar's context, or every project while there is no cwd yet.
+  assert.match(picker, /context=\{newSessionContext \?\? \{ project: null, worktrees: null, currentWorktreePath: null, projects: projectChoiceList \}\}/);
+  assert.match(picker, /worktreeHint=\{inactiveWorktreeSelector\}/);
+  assert.match(picker, /onPick=\{handleFilesPick\}/);
+  assert.match(picker, /onUseDefaultDirectory=\{\(\) => \{ void handleDefaultCwd\(\); \}\}/);
+  assert.match(picker, /onOpenFolder=\{handleCustomPathClick\}/);
+  assert.match(picker, /onCreateWorktree=\{createWorktree\}/);
+  assert.match(picker, /onRemoveWorktree=\{handleRemoveWorktree\}/);
+  // A pick moves the cwd, as the old dropdowns did, with the picked identity
+  // first: a pinned project without sessions has no other source of its key.
+  assert.match(callbackBody("handleFilesPick"), /useCallback\(\(\{ cwd, projectKey, projectRoot \}: NewSessionTarget\) => \{\s*if \(projectKey && projectRoot\) setValidatedProject\(\{ cwd, root: projectRoot, key: projectKey \}\);\s*setSelectedCwd\(cwd\);\s*\}, \[\]\);/);
+  // A dirty checkout is the picker's question to ask; a removed current one falls back to the root.
+  const remove = callbackBody("handleRemoveWorktree");
+  assert.match(remove, /body: JSON\.stringify\(\{ cwd: project\.root, path, force \}\)/);
+  assert.match(remove, /if \(data\.dirty && !force\) return "dirty";\s*return \{ error: data\.error \?\? `HTTP \$\{res\.status\}` \};/);
+  assert.match(remove, /if \(currentWorktreePath === path\) setSelectedCwd\(project\.root\);\s*setWtRefreshKey\(\(k\) => k \+ 1\);\s*return "removed";/);
+  // Nothing is left of the inline-styled dropdowns.
+  assert.doesNotMatch(source, /AnimatedDropdown|DROPDOWN_STYLE|PathLabel|dropdownOpen|projectFilter|wtFilter|wtNewBranch|wtDropdownOpen|wtConfirmRemove|wtBusy|wtError|showProjectActivity|sidebar-project|sidebar-worktree/);
+  assert.doesNotMatch(sidebarStyles, /\.sidebar-project|\.sidebar-worktree-(?:button|icon|label|note|chevron)/);
 });
 
 test("the group that stops being current keeps its rows open", () => {
@@ -581,7 +621,7 @@ test("Fork copies the row's session on the server and opens the copy where its r
 });
 
 test("new projects are saved to the project order once, quietly, after real state and details have loaded", () => {
-  const effect = source.slice(source.indexOf("const recordedOrderKeysRef"), source.indexOf("// What the bar above a fresh composer shows"));
+  const effect = source.slice(source.indexOf("const recordedOrderKeysRef"), source.indexOf("// Every project in the groups' order"));
   // Not from a failed GET's empty state (archived projects would look live), not from summary rows.
   assert.match(effect, /if \(loading \|\| !uiStateSynced \|\| !sessionDetailsLoaded\) return;/);
   assert.match(source, /synced: uiStateSynced,/);
