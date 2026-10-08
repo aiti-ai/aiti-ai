@@ -1694,8 +1694,8 @@ pre, code {
   line-height: normal;
 }
 
-/* The files tab: the two rows at the top of its card (.sidebar-files-card,
-   app/sidebar.css), which draws the box. */
+/* The files tab: the two rows at the top of its head (.sidebar-files-head,
+   app/sidebar.css), flat on the sidebar's panel like its other rows. */
 .project-picker.is-stacked {
   flex: none;
   flex-direction: column;
@@ -1703,10 +1703,12 @@ pre, code {
   gap: 0;
 }
 
+/* 7px inside the transparent border: the icons and chevrons 8px into the
+   row's box, as in the action buttons under it, on the tree's columns. */
 .project-picker.is-stacked .project-picker-button {
   width: 100%;
   max-width: none;
-  padding: 0 8px;
+  padding: 0 7px;
   border-radius: 7px;
   text-align: left;
 }
