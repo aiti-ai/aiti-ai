@@ -571,6 +571,8 @@ export interface GroupDrop { anchorKey: string; position: ProjectMovePosition; l
 
 /** Spacer rows are 8px: the drop line sits in the middle of one. */
 const DROP_LINE_INSET = 4;
+/** The line's 6px dot is centred on it: this low, at the top of the list, it is still whole. */
+const DROP_LINE_MIN_Y = 3;
 
 /**
  * The drop target for a group dragged to content position `y`. Only the
@@ -591,7 +593,7 @@ export function groupDropAt(blocks: readonly GroupBlock[], draggedKey: string, y
   if (others.length === 0) return null;
   const to = others.filter((block) => (block.top + block.bottom) / 2 < y).length;
   if (to === from) return null;
-  const lineY = Math.max(1, to < others.length ? others[to].top - DROP_LINE_INSET : others[others.length - 1].bottom - DROP_LINE_INSET);
+  const lineY = Math.max(DROP_LINE_MIN_Y, to < others.length ? others[to].top - DROP_LINE_INSET : others[others.length - 1].bottom - DROP_LINE_INSET);
   return to > 0
     ? { anchorKey: others[to - 1].key, position: "after", lineY }
     : { anchorKey: others[0].key, position: "before", lineY };
@@ -628,6 +630,61 @@ export function autoScrollDelta(clientY: number, top: number, bottom: number, ed
   if (clientY < top + band) return -speed(top + band - clientY);
   if (clientY > bottom - band) return speed(clientY - (bottom - band));
   return 0;
+}
+
+/** Where the drag ghost goes; one coordinate space for all (the hook uses the page's). */
+export interface GhostPlacement {
+  pointerY: number;
+  /** The drop line, or null without a drop target. */
+  lineY: number | null;
+  ghostHeight: number;
+  /** Space kept between the ghost and the pointer. */
+  pointerGap: number;
+  /** Space kept between the ghost and the drop line. */
+  lineGap: number;
+  /** The list's visible top. */
+  minTop: number;
+  /** The lowest top that keeps the ghost in the list: its visible bottom less ghostHeight. */
+  maxTop: number;
+}
+
+/**
+ * The drag ghost's top while a group is dragged. It follows the pointer, its
+ * bottom `pointerGap` above it, and moves only as far as keeping clear of the
+ * pointer and the drop line (`lineGap`) and inside the list takes: to the
+ * nearest top that does. A line far from the pointer leaves it where it is;
+ * a line just above the pointer puts it above the line, or below the pointer
+ * when there is no room up there; at the list's top it goes below the
+ * pointer, and below the line too when that is just under the pointer. A
+ * line outside the visible box is scrolled away and cannot be covered: only
+ * the pointer counts, as without a drop target. Only a list too short to
+ * hold the ghost clear of both puts it over the pointer (over the line only
+ * when no top in the list keeps clear of it), and one shorter than the ghost
+ * keeps its top.
+ */
+export function ghostTopFor({ pointerY, lineY, ghostHeight, pointerGap, lineGap, minTop, maxTop }: GhostPlacement): number {
+  const bottom = Math.max(minTop, maxTop);
+  const wanted = pointerY - pointerGap - ghostHeight;
+  const line = lineY !== null && lineY >= minTop && lineY <= bottom + ghostHeight ? lineY : null;
+  const inList = (top: number) => top >= minTop && top <= bottom;
+  // Tops at which the ghost comes closer than its gap to the pointer or the line.
+  const nearPointer = (top: number) => top > wanted && top < pointerY + pointerGap;
+  const nearLine = (top: number) => line !== null && top > line - lineGap - ghostHeight && top < line + lineGap;
+  // The nearest top that fits is the one the pointer wants or one at the edge
+  // of what it keeps clear of; on a tie the first listed, above before below.
+  const candidates = line === null
+    ? [wanted, minTop, pointerY + pointerGap, bottom]
+    : [wanted, line - lineGap - ghostHeight, minTop, pointerY + pointerGap, line + lineGap, bottom];
+  const nearest = (fits: (top: number) => boolean): number | null => {
+    let best: number | null = null;
+    for (const top of candidates) {
+      if (fits(top) && (best === null || Math.abs(top - wanted) < Math.abs(best - wanted))) best = top;
+    }
+    return best;
+  };
+  return nearest((top) => inList(top) && !nearPointer(top) && !nearLine(top))
+    ?? nearest((top) => inList(top) && !nearLine(top))
+    ?? Math.min(bottom, Math.max(minTop, wanted));
 }
 
 const UNMEASURED_VIEWPORT_HEIGHT = 600;

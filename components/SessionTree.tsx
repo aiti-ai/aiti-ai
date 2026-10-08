@@ -373,9 +373,10 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
   const hasTreeRows = rows.some((row) => row.kind === "session" || row.kind === "group");
   const showEmpty = !loading && !error && emptyLabel !== null && !hasTreeRows;
   // While dragging: the group's block is dimmed in place (groups never fold
-  // up under the pointer), a line marks the drop, and a ghost of the header
-  // follows the pointer outside the scroll box, where it cannot make room
-  // to scroll into.
+  // up under the pointer), a line marks the drop, and a pill with the
+  // project's name follows the pointer, clear of it and of the line
+  // (useGroupDrag places it), outside the scroll box, where it cannot make
+  // room to scroll into.
   const dragSource = dragView?.source ?? null;
   const dropLineY = dragView?.drop?.lineY ?? null;
   const ghostProject = dragView?.phase === "dragging"
@@ -544,10 +545,10 @@ const SessionRowView = memo(function SessionRowView({
   }
 
   const branch = root.isWorktree && root.branch ? root.branch : null;
-  const details = root.detailsPending ? "…" : t("sidebar.messagesCount", { count: root.messageCount });
   // A fork named by the sidebar's Fork: the ellipsis cuts its title before
   // the suffix that tells it from its source, never the suffix.
   const forkTitle = root.name && root.relation?.kind === "fork" ? splitForkSuffix(root.name) : null;
+  const details = root.detailsPending ? "…" : t("sidebar.messagesCount", { count: root.messageCount });
   const tooltip = `${title}\n${details} · ${formatRelativeTime(root.modified, locale, nowDate)}${branch ? ` · ⑂ ${branch}` : ""}`;
 
   // The right column says the one thing worth knowing: running, else unread,
