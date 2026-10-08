@@ -15,6 +15,7 @@ const treeSource = await readFile(new URL("./SessionTree.tsx", import.meta.url),
 const searchSource = await readFile(new URL("./SessionSearch.tsx", import.meta.url), "utf8");
 const globalStyles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const sidebarStyles = await readFile(new URL("../app/sidebar.css", import.meta.url), "utf8");
+const explorerSource = await readFile(new URL("./FileExplorer.tsx", import.meta.url), "utf8");
 
 const h = React.createElement;
 const noop = () => {};
@@ -174,7 +175,7 @@ test("sessions and files are two tabs of one sidebar, both kept mounted", () => 
   assert.doesNotMatch(globalStyles, /sidebar-section-resize-handle/);
 });
 
-test("the files tab's card holds the picker and its six buttons, always the same ones in the same places", () => {
+test("the files tab's card holds the picker and its five buttons, always the same ones in the same places", () => {
   const html = render({ selectedCwd: "/work/alpha", onOpenTerminal: noop });
   const panel = html.slice(html.indexOf('id="session-sidebar-panel-files"'));
   const card = panel.slice(panel.indexOf('<div class="sidebar-files-card">'), panel.indexOf('<div class="sidebar-files-scroll'));
@@ -184,9 +185,9 @@ test("the files tab's card holds the picker and its six buttons, always the same
   assert.ok(pickerEnd > 0);
   assert.equal((card.slice(0, pickerEnd).match(/class="sidebar-tool-button/g) ?? []).length, 0);
   assert.match(card.slice(pickerEnd), /^<div class="sidebar-files-actions" role="group" aria-label="File actions">/);
-  // The folder's actions, then the tree's two toggles. The changes view is
-  // there without changes too, disabled, so nothing moves as an agent edits
-  // files and commits; its count is the tab's.
+  // The folder's actions, then the tree's changes view (its search is the
+  // header's). The changes view is there without changes too, disabled, so
+  // nothing moves as an agent edits files and commits; its count is the tab's.
   const labels = [...card.slice(pickerEnd).matchAll(/<button type="button"( disabled="")? title="([^"]+)" aria-label="\2"( aria-pressed="(true|false)")? class="([^"]+)"/g)]
     .map((match) => `${match[2]}${match[1] ? " (disabled)" : ""}${match[4] ? ` pressed=${match[4]}` : ""}`);
   assert.deepEqual(labels, [
@@ -194,17 +195,25 @@ test("the files tab's card holds the picker and its six buttons, always the same
     "Open in file manager",
     "Upload files to project root",
     "Refresh file list",
-    "Search files pressed=false",
     "0 changed files (disabled) pressed=false",
   ]);
+  assert.doesNotMatch(card, /Search files/);
   assert.match(source, /disabled=\{changesCount === 0\}\s*title=\{t\("sidebar\.changedFiles", \{ count: changesCount \}\)\}\s*pressed=\{changesCount > 0 && !changesCollapsed\}/);
   assert.doesNotMatch(source, /changesCount > 0 && \(\s*<ToolbarIconButton/);
   // Without a terminal (no onOpenTerminal) the other five stay.
   const noTerminal = render({ selectedCwd: "/work/alpha" });
   assert.doesNotMatch(noTerminal, /Open workspace terminal/);
   assert.match(noTerminal, /aria-label="Open in file manager"/);
-  // The header's search stays the sessions tab's.
-  assert.doesNotMatch(source, /searchesFiles|file-search-input|kind: "files"|filesMenuItems|TabRowToggle/);
+  // The header's search button is the tab's: the files tab's searches its
+  // files; elsewhere, and on a files tab without a folder, the sessions.
+  assert.match(source, /const searchesFiles = sidebarTab === "files" && explorerCwd !== null;/);
+  assert.match(source, /if \(searchesFiles\) \{\s*setFileSearchOpen\(\(open\) => !open\);\s*return;\s*\}\s*if \(sidebarTab !== "sessions"\) \{\s*switchTab\("sessions"\);\s*setSessionSearchOpen\(true\);\s*return;\s*\}\s*setSessionSearchOpen\(\(open\) => !open\);/);
+  assert.match(source, /title=\{searchesFiles \? t\("sidebar\.searchFiles"\) : t\("sidebar\.toggleSessionSearch"\)\}\s*aria-label=\{searchesFiles \? t\("sidebar\.searchFiles"\) : t\("sidebar\.toggleSessionSearch"\)\}\s*aria-expanded=\{searchesFiles \? fileSearchOpen : sessionSearchOpen\}\s*aria-controls=\{searchesFiles \? "file-search-input" : "session-search-input"\}/);
+  assert.match(source, /className=\{`sidebar-search-toggle\$\{\(searchesFiles \? fileSearchOpen : sessionSearchOpen\) \? " is-active" : ""\}`\}/);
+  assert.match(explorerSource, /ref=\{searchInputRef\}\s*id="file-search-input"/);
+  // The sessions tab renders it as the sessions search.
+  assert.match(html, /title="Search conversations" aria-label="Search conversations" aria-expanded="false" aria-controls="session-search-input" class="sidebar-search-toggle"/);
+  assert.doesNotMatch(source, /kind: "files"|filesMenuItems|TabRowToggle/);
   // One card on the panel: no line across the sidebar between the tabs and
   // the tree. Inside it a short line, fainter than the card's edge, marks the
   // buttons off from the rows; they spread from the rows' icon column to
