@@ -1518,9 +1518,9 @@ pre, code {
 /* The empty new-session page's header above the composer (ChatWindow): the
    brand, then the project and worktree (NewSessionContextBar), as inline
    boxes that wrap, and the versions floated right of the first line. The bar
-   stays beside the brand while its chips fit there whole, names included,
-   and otherwise drops to a line of its own under it (a phone, a chat
-   squeezed between the sidebar and the file panel, a long branch): the room
+   stays beside the brand while its boxes fit there whole, path and branch
+   included, and otherwise drops to a line of its own under it (a phone, a
+   chat squeezed between the sidebar and the file panel, a long path): the room
    they need decides, not the viewport. Below the float, that line has the
    whole width. Every box is 40px tall with its vertical margins, the float
    too, so the first line is 40px whatever it holds and the next one starts
@@ -1578,86 +1578,87 @@ pre, code {
   white-space: nowrap;
 }
 
-/* Under the brand, the first chip's icon lines up with the logo; beside it,
-   the chip's own padding makes up the gap. */
+/* Under the brand, the first box's path lines up with the logo; beside it,
+   the box's own padding makes up the gap. 29px boxes on the row's 40px. */
 .new-session-context {
   display: inline-block;
   max-width: calc(100% + 10px);
-  margin: 5px 0 5px -10px;
+  margin: 5px 0 6px -10px;
   vertical-align: middle;
 }
 
-/* The project and worktree picker (ProjectWorktreePicker): two chips in a
-   row above a fresh composer, two full-width rows in the sidebar's files
-   tab. The composer's own controls (ChatInput) are the reference for both:
-   the same UI font, size, muted colour, hover and rounded box, so neither
-   reads as a path in code type. */
+/* The project and worktree picker (ProjectWorktreePicker), as the sidebar
+   drew it on main, in both places: two grey boxes in the header buttons'
+   material, 11px, the project's whole path and the worktree's branch in code
+   type, cut at their left. Side by side above a fresh composer (inline,
+   without the box until hovered), one under the other in the sidebar's
+   files tab (stacked). No icon and no chevron on the project: its path is
+   the box. */
 .project-picker {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
   box-sizing: border-box;
-  font-size: 12.5px;
-  font-weight: 500;
+  font-size: 11px;
+  font-weight: 400;
   line-height: 1;
 }
 
+/* Each box as wide as what it shows. */
 .project-picker-button {
   display: inline-flex;
   flex: 0 1 auto;
   align-items: center;
   gap: 6px;
   min-width: 0;
-  height: 30px;
+  height: 29px;
   padding: 0 10px;
-  border: 1px solid transparent;
-  border-radius: 9px;
-  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-hover);
   color: var(--text-muted);
   font: inherit;
+  text-align: left;
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
 
-/* On a narrow row a long branch name is cut before the project's name: the
-   project never shrinks, and the worktree button, down to its icons (57px),
-   takes what is left. No share of the row for either: the header's bar is
-   as wide as its chips (it wraps as one box), so a percentage of that width
-   would cut a name that fits, and a lone project button entirely. */
-.project-picker-button.is-project {
-  flex-shrink: 0;
-  max-width: 100%;
-}
-
-/* Room for the worktree button's icons, the divider and the two gaps. Its
-   icons alone: borders 2, padding 20, icon 14, the label's gaps 12 and the
-   chevron 9 (10, 1px drawn in): 57px. Wider, a sliver of the cut label shows. */
-.project-picker.is-inline .project-picker-button.is-project:not(:only-of-type) {
-  max-width: calc(100% - 66px);
+/* Above a fresh composer a long path gives way at about the width main's
+   sidebar box had, so the bar can stay beside the brand, and on a narrow
+   row the path gives way first: the worktree box keeps its icon, notes and
+   chevron (a long branch is cut inside it). Widths of their own, not shares
+   of the bar's: the bar is as wide as its boxes. */
+.project-picker.is-inline .project-picker-button.is-project {
+  max-width: 280px;
 }
 
 .project-picker.is-inline .project-picker-button:not(.is-project) {
-  min-width: 57px;
+  flex: none;
+  max-width: 200px;
+}
+
+/* Above a fresh composer the boxes draw no box until hovered or open: text
+   on the page beside the brand. */
+.project-picker.is-inline .project-picker-button {
+  border-color: transparent;
+  background: transparent;
+}
+
+.project-picker.is-inline .project-picker-button:hover,
+.project-picker.is-inline .project-picker-button[aria-expanded="true"] {
+  background: var(--bg-hover);
 }
 
 .project-picker-button:hover,
 .project-picker-button[aria-expanded="true"] {
-  background: var(--bg-hover);
+  background: var(--bg-selected);
   color: var(--text);
 }
 
 .project-picker-button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
-}
-
-/* Between the project and its worktree. */
-.project-picker-divider {
-  flex: none;
-  width: 1px;
-  height: 14px;
-  background: var(--border);
 }
 
 .project-picker-icon,
@@ -1674,8 +1675,14 @@ pre, code {
   color: var(--text-muted);
 }
 
+/* A linked checkout's branch, not the main one's. */
+.project-picker-icon.is-linked,
+.project-picker-button:hover .project-picker-icon.is-linked,
+.project-picker-button[aria-expanded="true"] .project-picker-icon.is-linked {
+  color: var(--accent);
+}
+
 .project-picker-chevron {
-  margin-left: -1px;
   color: var(--text-dim);
 }
 
@@ -1686,53 +1693,14 @@ pre, code {
   white-space: nowrap;
 }
 
-/* Clipped text keeps its descenders: at the picker's line-height of 1 its
-   box would cut g, p and y. Centred in a fixed-height button, the taller box
-   moves no glyph. */
-.project-picker-label,
+/* A path or a branch, cut at its left (rtl), the text itself kept left to
+   right: the end is what tells them apart. */
 .project-picker-path {
-  line-height: normal;
-}
-
-/* The files tab: the two rows at the top of its head (.sidebar-files-head,
-   app/sidebar.css), flat on the sidebar's panel like its other rows. */
-.project-picker.is-stacked {
-  flex: none;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 0;
-}
-
-/* 7px inside the transparent border: the icons and chevrons 8px into the
-   row's box, as in the action buttons under it, on the tree's columns. */
-.project-picker.is-stacked .project-picker-button {
-  width: 100%;
-  max-width: none;
-  padding: 0 7px;
-  border-radius: 7px;
-  text-align: left;
-}
-
-.project-picker.is-stacked .project-picker-label {
-  flex: 1 1 auto;
-}
-
-/* A project's name stays whole before its path, which gives way first: the
-   name never shrinks (up to 60% of the row, then its own ellipsis), and the
-   path grows from zero, so a long path cannot squeeze the name. */
-.project-picker.is-stacked .project-picker-label.is-name {
-  flex: 0 0 auto;
-  max-width: 60%;
-}
-
-/* Cut at its left (rtl), the path itself kept left to right. */
-.project-picker-path {
-  flex: 1 1 0;
+  flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
-  color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 400;
+  color: var(--text);
+  font-family: var(--font-mono);
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1743,42 +1711,66 @@ pre, code {
   unicode-bidi: plaintext;
 }
 
+/* Clipped text keeps its descenders: at the picker's line-height of 1 its
+   box would cut g, p and y. Centred in a fixed-height button, the taller box
+   moves no glyph. */
+.project-picker-label,
+.project-picker-path {
+  line-height: normal;
+}
+
 .project-picker-note {
   flex: none;
   color: var(--text-dim);
-  font-size: 11px;
-  font-weight: 400;
+  font-size: 10px;
 }
 
-/* Something runs or waits in another project. */
+/* Something runs or waits in another project (the files tab). */
 .project-picker-activity {
   flex: none;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: var(--accent);
 }
 
-.project-picker.is-stacked .project-picker-chevron {
-  margin-left: 0;
+/* No project yet: the box invites the first pick. */
+.project-picker-button.is-empty {
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+  color: var(--text-dim);
+  font-family: var(--font-mono);
 }
 
-/* No project yet: the folder invites the first pick. */
-.project-picker-button.is-empty .project-picker-icon {
-  color: var(--accent);
-}
-
-/* No worktree list here: a row that says why, and does nothing. */
+/* No worktree list here (the files tab): a box that says why, and does nothing. */
 .project-picker-button.is-inactive,
 .project-picker-button.is-inactive:hover {
-  background: transparent;
+  background: var(--bg-hover);
   color: var(--text-dim);
-  font-weight: 400;
   cursor: default;
+  opacity: 0.82;
 }
 
 .project-picker-button.is-inactive:hover .project-picker-icon {
   color: var(--text-dim);
+}
+
+/* The files tab: full width, one under the other, at the top of its head
+   (.sidebar-files-head, app/sidebar.css); the path or branch takes the room
+   before the notes. */
+.project-picker.is-stacked {
+  flex: none;
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.project-picker.is-stacked .project-picker-button {
+  width: 100%;
+}
+
+.project-picker.is-stacked .project-picker-label,
+.project-picker.is-stacked .project-picker-path {
+  flex: 1 1 0;
 }
 
 @media (pointer: coarse) {
@@ -1786,7 +1778,7 @@ pre, code {
     min-height: 36px;
   }
 
-  /* Still 40px with the taller chips. */
+  /* Still 40px with the taller boxes. */
   .new-session-context {
     margin-top: 2px;
     margin-bottom: 2px;

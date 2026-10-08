@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
+import { useEffect, useId, useImperativeHandle, useRef, useState, type ReactNode, type Ref } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import {
   currentWorktreeOf,
@@ -47,14 +47,14 @@ interface MenuState {
   anchor: SidebarMenuAnchor;
   opener: HTMLElement;
   width: number;
-  /** In place of the worktree list. */
+  /** In place of the worktree list (classic: below it, or in the checkout's row). */
   body: MenuBody | null;
   /** A checkout is being removed from the list: the remove buttons wait. */
   removing: boolean;
 }
 
 interface Props {
-  /** "inline": two chips in a row (the bar above a fresh composer). "stacked": two full-width rows (the files tab). */
+  /** "inline": the two boxes side by side (the bar above a fresh composer). "stacked": full width, one under the other (the files tab). */
   layout: "inline" | "stacked";
   context: ProjectWorktreeContext;
   mobile: boolean;
@@ -62,11 +62,11 @@ interface Props {
   label: string;
   /** The project button's text while there is no project. */
   placeholder?: string;
-  /** Shown as ~ in the stacked project row's path. */
+  /** Shown as ~ in the stacked boxes' paths. */
   homeDir?: string;
-  /** Running and unread counts by project key: badges in the project menu, and a dot on the stacked project row for activity elsewhere. */
+  /** Running and unread counts by project key: badges in the project menu, and a dot in the stacked project box for activity elsewhere. */
   projectActivity?: ReadonlyMap<string, { running: number; unread: number }>;
-  /** Stacked, without a worktree list: a disabled row saying why (a subdirectory, no git, still checking). */
+  /** Stacked, without a worktree list: a disabled box saying why (a subdirectory, no git, still checking). */
   worktreeHint?: { label: string; title: string } | null;
   /** The "New worktree…" form's title. */
   newWorktreeTitle: string;
@@ -82,10 +82,10 @@ interface Props {
   onRemoveWorktree?: (project: ProjectChoice, path: string, force: boolean) => Promise<WorktreeRemoval>;
 }
 
-/** Narrower than this, a stacked row's menu keeps this width instead of the row's. */
+/** Narrower than this, a stacked box's menu keeps this width instead of the box's. */
 const STACKED_MENU_MIN_WIDTH = 220;
 
-/** Substitute the home dir prefix with ~ (display only; the stacked row cuts the path at its left). */
+/** Substitute the home dir prefix with ~ (display only; the stacked boxes cut the path at its left). */
 function displayPath(path: string, homeDir?: string): string {
   return homeDir && path.startsWith(homeDir) ? `~${path.slice(homeDir.length)}` : path;
 }
@@ -141,6 +141,47 @@ export function WorktreeRemoveForm({
 }
 
 /**
+ * A classic worktree menu's question for a checkout with changes, in that
+ * checkout's row as on main. Its buttons are the menu's items (arrow keys
+ * reach them); Cancel takes focus, so Enter does not discard the changes,
+ * and goes back to the list.
+ */
+function WorktreeConfirmRow({ busy, onForce, onCancel }: { busy: boolean; onForce: () => void; onCancel: () => void }) {
+  const { t } = useI18n();
+  const questionId = useId();
+  return (
+    <div className="sidebar-worktree-confirm">
+      <span id={questionId} className="sidebar-worktree-confirm-text" title={t("sidebar.forceRemoveCheckout")}>
+        {t("sidebar.forceRemoveCheckout")}
+      </span>
+      <button
+        type="button"
+        role="menuitem"
+        tabIndex={-1}
+        data-sidebar-menu-item=""
+        aria-describedby={questionId}
+        aria-disabled={busy ? true : undefined}
+        className="sidebar-worktree-force"
+        onClick={() => { if (!busy) onForce(); }}
+      >
+        {t("sidebar.force")}
+      </button>
+      <button
+        type="button"
+        role="menuitem"
+        tabIndex={-1}
+        data-sidebar-menu-item=""
+        data-sidebar-menu-autofocus=""
+        className="sidebar-worktree-cancel"
+        onClick={onCancel}
+      >
+        {t("sidebar.cancel")}
+      </button>
+    </div>
+  );
+}
+
+/**
  * The project and worktree in use, and the two menus that change them: the
  * files tab's (stacked) and the bar's above a fresh composer (inline). The
  * owner keeps the cwd; the picker only reports what was chosen. Picking the
@@ -181,6 +222,10 @@ export function ProjectWorktreePicker({
   const onPickRef = useRef(onPick);
   onPickRef.current = onPick;
   const stacked = layout === "stacked";
+  // The menus on a desktop look as main's dropdowns did: whole paths,
+  // "Custom path…", the "New worktree…" form under the list, a dirty
+  // checkout's question in its row. A phone keeps the sheet.
+  const classic = !mobile;
   const { project, worktrees } = context;
   const current = currentWorktreeOf(context);
 
@@ -199,7 +244,8 @@ export function ProjectWorktreePicker({
 
   const openMenu = (kind: ProjectWorktreeControl, opener: HTMLElement) => {
     const rect = opener.getBoundingClientRect();
-    const width = stacked ? Math.max(STACKED_MENU_MIN_WIDTH, Math.round(rect.width)) : kind === "project" ? 260 : 240;
+    // At least as wide as its box, as main's dropdowns were.
+    const width = Math.max(stacked ? STACKED_MENU_MIN_WIDTH : kind === "project" ? 260 : 240, Math.round(rect.width));
     setMenu({
       id: nextId(),
       kind,
@@ -229,7 +275,7 @@ export function ProjectWorktreePicker({
   };
 
   // A new body is a new menu: what the list was still waiting for is dropped.
-  const showBody = (body: MenuBody) => {
+  const showBody = (body: MenuBody | null) => {
     const id = nextId();
     setMenu((state) => (state?.kind === "worktree" ? { ...state, id, body, removing: false } : state));
   };
@@ -294,8 +340,10 @@ export function ProjectWorktreePicker({
       return {
         type: "item",
         id: `project:${choice.key}`,
-        label: name,
-        note: note ?? undefined,
+        label: classic ? displayPath(choice.root, homeDir) : name,
+        note: classic ? undefined : note ?? undefined,
+        mono: classic,
+        path: classic,
         title: choice.root,
         checked: choice.key === project?.key,
         badge: activity ? <ActivitySummary running={activity.running} unread={activity.unread} t={t} /> : undefined,
@@ -320,18 +368,30 @@ export function ProjectWorktreePicker({
       {
         type: "item",
         id: "open-folder",
-        label: t("sidebar.openOtherProject"),
-        icon: <FolderPlusIcon size={13} />,
+        label: t(classic ? "sidebar.customPath" : "sidebar.openOtherProject"),
+        icon: classic ? <PlusIcon size={13} /> : <FolderPlusIcon size={13} />,
         onSelect: () => onOpenFolder(menu?.opener ?? null),
       },
     ];
   };
 
   const worktreeItems = (): SidebarMenuItem[] => [
-    ...(worktrees ?? []).map((worktree): SidebarMenuItem => ({
+    ...(worktrees ?? []).map((worktree): SidebarMenuItem => classic && body?.kind === "remove" && body.dirty && body.worktree.path === worktree.path ? {
+      type: "custom",
+      id: `worktree:${worktree.path}`,
+      content: (
+        <WorktreeConfirmRow
+          busy={body.busy}
+          onForce={() => { void removeWorktree(worktree, true); }}
+          onCancel={() => showBody(null)}
+        />
+      ),
+    } : {
       type: "item",
       id: `worktree:${worktree.path}`,
-      label: worktreeLabel(worktree),
+      label: classic ? worktree.branch ?? displayPath(worktree.path, homeDir) : worktreeLabel(worktree),
+      mono: classic,
+      path: classic,
       note: worktree.isMain ? t("sidebar.main") : undefined,
       title: worktree.path,
       checked: worktree.path === current?.path,
@@ -350,9 +410,10 @@ export function ProjectWorktreePicker({
           onPick({ cwd: worktree.path, projectKey: project.key, projectRoot: project.root }, "worktree");
         }
       },
-    })),
-    { type: "separator", id: "separator" },
-    {
+    }),
+    // Classic: no line of its own (the rows have theirs), and gone while its form shows below.
+    ...(classic ? [] : [{ type: "separator", id: "separator" } as const]),
+    ...(classic && body?.kind === "create" ? [] : [{
       type: "item",
       id: "new-worktree",
       label: t("sidebar.newWorktree"),
@@ -361,7 +422,7 @@ export function ProjectWorktreePicker({
         keepOpen();
         showBody({ kind: "create", busy: false, error: null });
       },
-    },
+    } satisfies SidebarMenuItem]),
   ];
 
   const body = menu?.kind === "worktree" ? menu.body : null;
@@ -370,7 +431,26 @@ export function ProjectWorktreePicker({
   // The form or question in place of the list, as one child that is null for
   // a list: the menu would take two side by side (an array) for a body.
   let menuBody: ReactNode = null;
-  if (body?.kind === "create") {
+  // Classic: the form, or what went wrong, under the list.
+  let menuFooter: ReactNode = null;
+  if (classic && menu?.kind === "worktree") {
+    menuTitle = t("sidebar.switchWorktree");
+    menuItems = worktreeItems();
+    if (body?.kind === "create") {
+      menuFooter = (
+        <WorktreeCreateForm
+          heading={null}
+          busy={body.busy}
+          error={body.error}
+          showCancel
+          onCreate={(branch) => { void createWorktree(branch); }}
+          onCancel={() => showBody(null)}
+        />
+      );
+    } else if (body?.kind === "remove" && body.error) {
+      menuFooter = <div className="sidebar-worktree-error" role="alert">{body.error}</div>;
+    }
+  } else if (body?.kind === "create") {
     menuTitle = newWorktreeTitle;
     menuBody = (
       <WorktreeCreateForm
@@ -403,9 +483,10 @@ export function ProjectWorktreePicker({
     menuItems = worktreeItems();
   }
   const filter = menu?.kind === "project"
-    ? { placeholder: t("sidebar.filterProjects"), emptyLabel: t("sidebar.noMatchingProjects") }
+    // Main showed the projects' field only past 8 of them, the worktrees' from 8.
+    ? { placeholder: t("sidebar.filterProjects"), emptyLabel: t("sidebar.noMatchingProjects"), minChoices: classic ? 9 : undefined }
     : { placeholder: t("sidebar.filterWorktrees"), emptyLabel: t("sidebar.noMatchingWorktrees") };
-  // A dot on the stacked project row: something runs or waits in another project.
+  // A dot in the stacked project box: something runs or waits in another project.
   const otherActivity = stacked && projectActivity !== undefined && [...projectActivity].some(
     ([key, { running, unread }]) => key !== project?.key && (running > 0 || unread > 0),
   );
@@ -421,22 +502,17 @@ export function ProjectWorktreePicker({
         aria-expanded={menu?.kind === "project"}
         onClick={(event) => openMenu("project", event.currentTarget)}
       >
-        <FolderIcon size={14} className="project-picker-icon" />
+        {/* The whole path, cut at its left: the folder name at its end is
+            what tells paths apart. No icon and no chevron: the path is the box. */}
         {project ? (
-          <span className={stacked ? "project-picker-label is-name" : "project-picker-label"}>{projectNameOf(project.root)}</span>
+          <span className="project-picker-path"><span>{displayPath(project.root, homeDir)}</span></span>
         ) : (
           <span className="project-picker-label">{placeholder}</span>
-        )}
-        {/* Cut at its left: the folder name at its end is what tells paths apart. */}
-        {stacked && project && (
-          <span className="project-picker-path"><span>{displayPath(project.root, homeDir)}</span></span>
         )}
         {otherActivity && (
           <span className="project-picker-activity" role="img" title={t("sidebar.newActivity")} aria-label={t("sidebar.newActivity")} />
         )}
-        <ChevronIcon size={10} className="project-picker-chevron sidebar-icon-down" />
       </button>
-      {worktrees && !stacked && <span className="project-picker-divider" aria-hidden="true" />}
       {worktrees && (
         <button
           ref={worktreeRef}
@@ -447,16 +523,17 @@ export function ProjectWorktreePicker({
           aria-expanded={menu?.kind === "worktree"}
           onClick={(event) => openMenu("worktree", event.currentTarget)}
         >
-          <BranchIcon size={14} className="project-picker-icon" />
-          <span className="project-picker-label">{current ? worktreeLabel(current) : "…"}</span>
-          {stacked && current?.isMain && <span className="project-picker-note">{t("sidebar.main")}</span>}
-          {stacked && worktrees.length > 1 && <span className="project-picker-note">{worktrees.length}</span>}
-          <ChevronIcon size={10} className="project-picker-chevron sidebar-icon-down" />
+          {/* A linked checkout's branch icon in the accent, as the main checkout's is not. */}
+          <BranchIcon size={11} className={current && !current.isMain ? "project-picker-icon is-linked" : "project-picker-icon"} />
+          <span className="project-picker-path"><span>{current ? current.branch ?? displayPath(current.path, homeDir) : "…"}</span></span>
+          {current?.isMain && <span className="project-picker-note">{t("sidebar.main")}</span>}
+          {worktrees.length > 1 && <span className="project-picker-note">{worktrees.length}</span>}
+          <ChevronIcon size={9} className="project-picker-chevron sidebar-icon-down" />
         </button>
       )}
       {!worktrees && stacked && worktreeHint && (
         <button type="button" aria-disabled="true" tabIndex={-1} title={worktreeHint.title} className="project-picker-button is-inactive">
-          <BranchIcon size={14} className="project-picker-icon" />
+          <BranchIcon size={11} className="project-picker-icon" />
           <span className="project-picker-label">{worktreeHint.label}</span>
         </button>
       )}
@@ -473,6 +550,9 @@ export function ProjectWorktreePicker({
         onClose={closeMenu}
         returnFocusTo={menu?.opener ?? null}
         width={menu?.width}
+        classic={classic}
+        footer={menuFooter}
+        focusKey={body ? `${body.kind}:${body.kind === "remove" && body.dirty}` : "list"}
       >
         {menuBody}
       </SidebarMenu>

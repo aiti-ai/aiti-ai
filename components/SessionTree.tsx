@@ -100,7 +100,8 @@ export interface SessionTreeProps {
   /** Row whose menu is open: kept mounted, its ⋯ shown pressed. A group row's key works too. */
   activeMenuRowKey: string | null;
   onSelectFamily(family: SessionFamily): void;
-  onToggleGroup(projectKey: string): void;
+  /** `all` (Alt+click): every group follows this one. */
+  onToggleGroup(projectKey: string, all: boolean): void;
   /** Reveal SHOW_MORE_STEP more families; key is a projectKey or PINNED_MORE_KEY. */
   onShowMore(key: string): void;
   /** Back to the base limit; key is a projectKey or PINNED_MORE_KEY. */
@@ -830,7 +831,7 @@ const GroupRowView = memo(function GroupRowView({
         className="session-tree-group-toggle"
         aria-expanded={expanded}
         title={project.root}
-        onClick={() => handlers.current.onToggleGroup(project.key)}
+        onClick={(event) => handlers.current.onToggleGroup(project.key, event.altKey)}
       >
         <span className="session-tree-group-name">{project.name}</span>
         {project.pinned && <PinIcon size={10} className="session-tree-group-pin" label={t("sidebar.pinnedProject")} />}

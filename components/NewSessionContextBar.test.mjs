@@ -45,16 +45,21 @@ function render(props = {}) {
 test("the bar shows the project and the worktree in use as two menu buttons", () => {
   const html = render();
   assert.match(html, /^<div class="new-session-context"><div class="project-picker is-inline" role="group" aria-label="New session location">/);
-  assert.match(html, /<button type="button" class="project-picker-button is-project" title="\/work\/app" aria-haspopup="menu" aria-expanded="false">/);
-  assert.match(html, /<span class="project-picker-label">app<\/span>/);
+  // The files tab's two boxes, side by side: the project's whole path, the
+  // worktree's branch.
+  assert.match(html, /<button type="button" class="project-picker-button is-project" title="\/work\/app" aria-haspopup="menu" aria-expanded="false"><span class="project-picker-path"><span>\/work\/app<\/span><\/span><\/button>/);
   assert.match(html, /<button type="button" class="project-picker-button" title="Worktree: \/work\/app-worktrees\/feature" aria-haspopup="menu" aria-expanded="false">/);
-  assert.match(html, /<span class="project-picker-label">feature\/x<\/span>/);
-  // One type for both: the branch is not set in code type.
-  assert.doesNotMatch(html, /is-mono/);
-  assert.match(html, /<span class="project-picker-divider" aria-hidden="true"><\/span>/);
+  assert.match(html, /<span class="project-picker-path"><span>feature\/x<\/span><\/span>/);
+  assert.doesNotMatch(html, /project-picker-divider/);
+  // The home folder shows as ~, asked for once per page (the bar mounts
+  // again with every move).
+  assert.match(source, /homeDir=\{homeDir\}/);
+  assert.match(source, /homeDirCheck \?\?= fetch\("\/api\/home"\)/);
+  assert.match(source, /const \[homeDir, setHomeDir\] = useState\(\(\) => homeDirFound\);/);
+  assert.match(source, /if \(homeDirFound\) return;\s*let cancelled = false;/);
   // The side padding is the header row's (ChatWindow), on phones too.
   assert.match(render({ mobile: true }), /^<div class="new-session-context"><div class="project-picker is-inline"/);
-  // The files tab's picker, as chips, with the bar's own title for "New worktree…".
+  // The files tab's picker, with the bar's own title for "New worktree…".
   assert.match(source, /<ProjectWorktreePicker\s+handleRef=\{pickerRef\}\s+layout="inline"/);
   assert.match(source, /newWorktreeTitle=\{t\("sidebar\.newWorktreeForSession"\)\}/);
   assert.match(source, /onUseDefaultDirectory=\{onUseDefaultDirectory\}/);
@@ -63,14 +68,14 @@ test("the bar shows the project and the worktree in use as two menu buttons", ()
 
 test("the worktree button needs a worktree list: a non-git folder or a subdirectory has none", () => {
   const html = render({ context: { ...context, cwd: "/work/app/sub", project: { key: "/work/app/sub", root: "/work/app/sub" }, worktrees: null, currentWorktreePath: null } });
-  assert.match(html, /<span class="project-picker-label">sub<\/span>/);
+  assert.match(html, /<span class="project-picker-path"><span>\/work\/app\/sub<\/span><\/span>/);
   assert.doesNotMatch(html, /Worktree:|project-picker-divider/);
   assert.equal((html.match(/aria-haspopup="menu"/g) ?? []).length, 1);
-  // The main checkout shows its branch; a detached one its folder.
-  assert.match(render({ context: { ...context, currentWorktreePath: "/work/app" } }), /picker-label">main<\/span>/);
+  // The main checkout shows its branch; a detached one its path.
+  assert.match(render({ context: { ...context, currentWorktreePath: "/work/app" } }), /picker-path"><span>main<\/span>/);
   assert.match(
     render({ context: { ...context, worktrees: [{ path: "/work/app", branch: null, isMain: true }], currentWorktreePath: "/work/app" } }),
-    /title="Worktree: \/work\/app"[^>]*>[\s\S]*?picker-label">app<\/span>/,
+    /title="Worktree: \/work\/app"[^>]*>[\s\S]*?picker-path"><span>\/work\/app<\/span>/,
   );
 });
 
@@ -114,22 +119,23 @@ test("client code stays parseable by Safari 16.2 and its CSS flat", () => {
   assert.match(rules, /\.new-session-versions \{\s*display: flex;\s*float: right;[^}]*height: 40px;\s*margin-left: 14px;/);
   // The brand gives way beside the versions rather than dropping under them.
   assert.match(rules, /\.new-session-brand \{\s*display: inline-flex;\s*align-items: center;\s*min-width: 0;\s*max-width: calc\(100% - 120px\);\s*margin: 4px 20px 4px 0;\s*overflow: hidden;[^}]*vertical-align: middle;/);
-  assert.match(rules, /\.new-session-context \{\s*display: inline-block;\s*max-width: calc\(100% \+ 10px\);\s*margin: 5px 0 5px -10px;\s*vertical-align: middle;/);
+  assert.match(rules, /\.new-session-context \{\s*display: inline-block;\s*max-width: calc\(100% \+ 10px\);\s*margin: 5px 0 6px -10px;\s*vertical-align: middle;/);
   assert.match(rules, /@media \(pointer: coarse\) \{[^@]*?\.new-session-context \{\s*margin-top: 2px;\s*margin-bottom: 2px;/);
   assert.doesNotMatch(rules, /@container|container-type/);
-  // The bar's chips keep the UI font: only the brand and the versions are in code type.
-  assert.equal((rules.match(/font-family: var\(--font-mono\);/g) ?? []).length, 2);
-  // The chips keep the composer's controls' look.
-  assert.match(rules, /\.project-picker \{\s*display: flex;\s*align-items: center;\s*gap: 4px;\s*min-width: 0;\s*box-sizing: border-box;\s*font-size: 12\.5px;\s*font-weight: 500;\s*line-height: 1;/);
-  assert.match(rules, /\.project-picker-button \{[^}]*height: 30px;\s*padding: 0 10px;\s*border: 1px solid transparent;\s*border-radius: 9px;\s*background: transparent;\s*color: var\(--text-muted\);/);
+  // The files tab's boxes (main's), 11px, the path and the branch in code
+  // type; here without the box until hovered or open.
+  assert.match(rules, /\.project-picker \{\s*display: flex;\s*align-items: center;\s*gap: 6px;\s*min-width: 0;\s*box-sizing: border-box;\s*font-size: 11px;\s*font-weight: 400;\s*line-height: 1;/);
+  assert.match(rules, /\.project-picker-button \{[^}]*height: 29px;\s*padding: 0 10px;\s*border: 1px solid var\(--border\);\s*border-radius: 7px;\s*background: var\(--bg-hover\);/);
+  assert.match(rules, /\.project-picker-path \{[^}]*font-family: var\(--font-mono\);/);
+  assert.match(rules, /\.project-picker\.is-inline \.project-picker-button \{\s*border-color: transparent;\s*background: transparent;\s*\}/);
+  assert.match(rules, /\.project-picker\.is-inline \.project-picker-button:hover,\s*\.project-picker\.is-inline \.project-picker-button\[aria-expanded="true"\] \{\s*background: var\(--bg-hover\);/);
   assert.match(rules, /\.project-picker-button:focus-visible \{\s*outline: 2px solid var\(--accent\);/);
-  // On a narrow row a long branch name is cut before the project's name,
-  // down to the worktree button's icons. The bar is as wide as its chips, so
-  // no cap may be a share of its width: 60% of a lone project button (a repo
-  // subdirectory has no worktree list) left its name 0px wide.
-  assert.match(rules, /\.project-picker-button\.is-project \{\s*flex-shrink: 0;\s*max-width: 100%;\s*\}/);
-  assert.match(rules, /\.project-picker\.is-inline \.project-picker-button\.is-project:not\(:only-of-type\) \{\s*max-width: calc\(100% - 66px\);\s*\}/);
-  assert.match(rules, /\.project-picker\.is-inline \.project-picker-button:not\(\.is-project\) \{\s*min-width: 57px;\s*\}/);
+  // On a narrow row the path gives way first, at a width of its own, never
+  // a share of the bar's: the bar is as wide as its boxes, so a percentage
+  // of it would cut a path that fits (60% of a lone project button, in a
+  // repo subdirectory, left it 0px wide). The worktree box stays whole.
+  assert.match(rules, /\.project-picker\.is-inline \.project-picker-button\.is-project \{\s*max-width: 280px;\s*\}/);
+  assert.match(rules, /\.project-picker\.is-inline \.project-picker-button:not\(\.is-project\) \{\s*flex: none;\s*max-width: 200px;\s*\}/);
   assert.doesNotMatch(rules.slice(0, rules.indexOf(".project-picker.is-stacked {")), /max-width: [1-9]\d?%/);
   assert.match(rules, /@media \(pointer: coarse\) \{\s*\.project-picker-button \{\s*min-height: 36px;/);
 });
