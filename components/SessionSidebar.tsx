@@ -104,7 +104,7 @@ declare global {
   }
 }
 
-/** A 26px icon button of the files tab's explorer toolbar. */
+/** An icon button of the files card's action row, under the project and worktree. */
 function ToolbarIconButton({
   onClick,
   title,
@@ -2210,92 +2210,97 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         className="sidebar-panel"
         onScrollCapture={rememberScroll}
       >
-        {/* The project and worktree in use: the same picker as the bar above a
-            fresh composer, as two rows. Its worktree row shows only at the
-            top of a git checkout (repo subdirs keep their own project
-            identity, so switching from them would jump projects); a disabled
-            row says why elsewhere. The list comes from the loaded project
-            (not just its forCwd), so switching between worktrees of one
-            project keeps the row instead of flickering while it refetches. */}
-        <ProjectWorktreePicker
-          handleRef={filesPickerRef}
-          layout="stacked"
-          context={newSessionContext ?? { project: null, worktrees: null, currentWorktreePath: null, projects: projectChoiceList }}
-          mobile={isMobile}
-          label={t("sidebar.projectAndWorktree")}
-          placeholder={initialSessionId && !restoredRef.current ? "" : t("sidebar.selectProject")}
-          homeDir={homeDir}
-          projectActivity={projectActivity}
-          worktreeHint={inactiveWorktreeSelector}
-          newWorktreeTitle={t("sidebar.createWorktreeTitle")}
-          onPick={handleFilesPick}
-          onUseDefaultDirectory={() => { void handleDefaultCwd(); }}
-          onOpenFolder={handleCustomPathClick}
-          onRefreshWorktrees={refreshWorktrees}
-          onCreateWorktree={createWorktree}
-          onRemoveWorktree={handleRemoveWorktree}
-        />
-
-        {explorerCwd && (
-          <div className="sidebar-files-toolbar">
-            <span className="sidebar-files-title">{t("files.explorer")}</span>
-            <ToolbarIconButton
-              onClick={() => { void openInFileManager(); }}
-              disabled={fileManagerUnavailable}
-              title={fileManagerUnavailable
-                ? t(fileManager?.reason === "remote" ? "sidebar.openInExplorerRemoteOnly" : "sidebar.openInExplorerUnsupported")
-                : fileManagerLabel}
-            >
-              <FolderIcon size={13} />
-            </ToolbarIconButton>
-            {onOpenTerminal && (
+        {/* One card: the folder in use, then what is done with it. The
+            buttons are the card's, not the picker's: its group names only
+            the project and worktree. */}
+        <div className="sidebar-files-card">
+          {/* The project and worktree in use: the same picker as the bar above a
+              fresh composer, as two rows. Its worktree row shows only at the
+              top of a git checkout (repo subdirs keep their own project
+              identity, so switching from them would jump projects); a disabled
+              row says why elsewhere. The list comes from the loaded project
+              (not just its forCwd), so switching between worktrees of one
+              project keeps the row instead of flickering while it refetches. */}
+          <ProjectWorktreePicker
+            handleRef={filesPickerRef}
+            layout="stacked"
+            context={newSessionContext ?? { project: null, worktrees: null, currentWorktreePath: null, projects: projectChoiceList }}
+            mobile={isMobile}
+            label={t("sidebar.projectAndWorktree")}
+            placeholder={initialSessionId && !restoredRef.current ? "" : t("sidebar.selectProject")}
+            homeDir={homeDir}
+            projectActivity={projectActivity}
+            worktreeHint={inactiveWorktreeSelector}
+            newWorktreeTitle={t("sidebar.createWorktreeTitle")}
+            onPick={handleFilesPick}
+            onUseDefaultDirectory={() => { void handleDefaultCwd(); }}
+            onOpenFolder={handleCustomPathClick}
+            onRefreshWorktrees={refreshWorktrees}
+            onCreateWorktree={createWorktree}
+            onRemoveWorktree={handleRemoveWorktree}
+          />
+          {/* Always the same buttons in the same places: the changes view
+              stays (disabled) while there is nothing changed, so nothing
+              moves as an agent edits files and commits. The folder's
+              actions first, the tree's two view toggles last. */}
+          {explorerCwd && (
+            <div className="sidebar-files-actions" role="group" aria-label={t("sidebar.fileActions")}>
+              {onOpenTerminal && (
+                <ToolbarIconButton
+                  onClick={() => onOpenTerminal(explorerCwd)}
+                  title={t("terminal.open")}
+                >
+                  <TerminalIcon size={14} />
+                </ToolbarIconButton>
+              )}
               <ToolbarIconButton
-                onClick={() => onOpenTerminal(explorerCwd)}
-                title={t("terminal.open")}
+                onClick={() => { void openInFileManager(); }}
+                disabled={fileManagerUnavailable}
+                title={fileManagerUnavailable
+                  ? t(fileManager?.reason === "remote" ? "sidebar.openInExplorerRemoteOnly" : "sidebar.openInExplorerUnsupported")
+                  : fileManagerLabel}
               >
-                <TerminalIcon size={13} />
+                <FolderIcon size={14} />
               </ToolbarIconButton>
-            )}
-            {changesCount > 0 && (
+              <ToolbarIconButton
+                onClick={() => fileExplorerRef.current?.openUploadPicker()}
+                disabled={explorerUploadBusy}
+                title={t("sidebar.uploadFilesTitle")}
+              >
+                <UploadIcon size={14} />
+              </ToolbarIconButton>
+              <ToolbarIconButton
+                onClick={() => {
+                  if (onExplorerRefresh) onExplorerRefresh();
+                  else setExplorerKey((k) => k + 1);
+                  setExplorerRefreshDone(true);
+                  if (explorerRefreshTimerRef.current) clearTimeout(explorerRefreshTimerRef.current);
+                  explorerRefreshTimerRef.current = setTimeout(() => setExplorerRefreshDone(false), 2000);
+                }}
+                title={t("sidebar.refreshExplorer")}
+                done={explorerRefreshDone}
+              >
+                {explorerRefreshDone ? <CheckIcon size={14} /> : <RefreshIcon size={14} />}
+              </ToolbarIconButton>
+              <ToolbarIconButton
+                onClick={() => setFileSearchOpen((open) => !open)}
+                title={t("sidebar.searchFiles")}
+                pressed={fileSearchOpen}
+              >
+                <SearchIcon size={14} />
+              </ToolbarIconButton>
               <ToolbarIconButton
                 onClick={() => setChangesCollapsed((v) => !v)}
+                disabled={changesCount === 0}
                 title={t("sidebar.changedFiles", { count: changesCount })}
-                pressed={!changesCollapsed}
+                pressed={changesCount > 0 && !changesCollapsed}
               >
-                <ChangesIcon size={13} />
+                <ChangesIcon size={14} />
               </ToolbarIconButton>
-            )}
-            <ToolbarIconButton
-              onClick={() => {
-                setFileSearchOpen((open) => !open);
-              }}
-              title={t("sidebar.searchFiles")}
-              pressed={fileSearchOpen}
-            >
-              <SearchIcon size={13} />
-            </ToolbarIconButton>
-            <ToolbarIconButton
-              onClick={() => fileExplorerRef.current?.openUploadPicker()}
-              disabled={explorerUploadBusy}
-              title={t("sidebar.uploadFilesTitle")}
-            >
-              <UploadIcon size={13} />
-            </ToolbarIconButton>
-            <ToolbarIconButton
-              onClick={() => {
-                if (onExplorerRefresh) onExplorerRefresh();
-                else setExplorerKey((k) => k + 1);
-                setExplorerRefreshDone(true);
-                if (explorerRefreshTimerRef.current) clearTimeout(explorerRefreshTimerRef.current);
-                explorerRefreshTimerRef.current = setTimeout(() => setExplorerRefreshDone(false), 2000);
-              }}
-              title={t("sidebar.refreshExplorer")}
-              done={explorerRefreshDone}
-            >
-              {explorerRefreshDone ? <CheckIcon size={13} /> : <RefreshIcon size={13} />}
-            </ToolbarIconButton>
-          </div>
-        )}
+            </div>
+          )}
+        </div>
+
         {explorerCwd && fileManagerErrorMessage && (
           <div role="alert" className="sidebar-files-error">
             <span className="sidebar-files-error-text">{fileManagerErrorMessage}</span>
