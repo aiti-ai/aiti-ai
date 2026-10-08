@@ -1038,66 +1038,65 @@
   transform: rotate(-90deg);
 }
 
-/* Files tab: one card for the folder in use (the stacked project picker,
-   app/globals.css) and what is done with it, then the tree. Like the
-   composer's box, it needs no line across the sidebar under the tabs. */
-.sidebar-files-card {
+/* Files tab: the folder in use (the stacked project picker, app/globals.css)
+   and what is done with it, then the tree. No box of its own: flat on the
+   panel like the tab row, one more strip of the sidebar's chrome, and one
+   line under it takes the tab row's place between the tabs and the tree.
+   Its 4px sides are the tree's, so the rows' boxes, icons and chevrons line
+   up with the tree's rows, chevrons and status letters. */
+.sidebar-files-head {
   display: flex;
   flex: none;
   flex-direction: column;
-  margin: 8px 8px 4px;
-  padding: 3px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--bg);
+  padding: 0 4px 6px;
+  border-bottom: 1px solid var(--border);
 }
 
-/* The card's last row: the actions on that folder and the tree's changes
+/* On the files tab the tab row's line gives way to the head's: one line
+   between the tabs and the tree. */
+.sidebar-tabs.is-files {
+  border-bottom-color: transparent;
+}
+
+/* The head's last row: the actions on that folder and the tree's changes
    view, used often enough to stay in view (its search is the header's).
-   Spread from the rows' icon column to their chevrons: 30px wide in the
-   card's 3px padding puts the first icon under the folder icon and the last
-   one's edge under the chevrons. Always the same five (the changes view is
-   disabled, not gone, without changes), so the spread never moves a button.
-   They give way together at the sidebar's 180px minimum. */
+   Laid out like the tab row: the folder's four from the rows' icon column,
+   the tree's view at the right end as ⋯ is there, over the chevrons and the
+   tree's status letters. Always the same five (the changes view is
+   disabled, not gone, without changes), so nothing moves as the count
+   flips. At the sidebar's 180px minimum only the gap before the view
+   narrows. */
 .sidebar-files-actions {
-  position: relative;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  margin-top: 4px;
-  padding-top: 4px;
+  gap: 2px;
+  margin-top: 3px;
 }
 
-/* Between the picker and the actions, only as wide as the rows' content and
-   fainter than the card's edge: it groups, it does not cross the sidebar. */
-.sidebar-files-actions::before {
-  position: absolute;
-  top: 0;
-  right: 8px;
-  left: 8px;
-  height: 1px;
-  background: color-mix(in srgb, var(--border) 70%, transparent);
-  content: "";
-}
-
+/* The tab row's ⋯ (.sidebar-icon-button): 30px wide, so their icons are
+   8px in like the rows', and 24px tall at the rows' 30px pitch. */
 .sidebar-tool-button {
   display: flex;
   flex: 0 1 30px;
   align-items: center;
   justify-content: center;
-  min-width: 22px;
-  height: 28px;
+  min-width: 24px;
+  height: 24px;
   padding: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: 6px;
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
   transition: color 0.12s, background 0.12s;
 }
 
+.sidebar-tool-button:last-child {
+  margin-left: auto;
+}
+
 .sidebar-tool-button:not(:disabled):hover {
-  background: var(--bg-hover);
+  background: var(--bg-selected);
   color: var(--text);
 }
 
@@ -1118,12 +1117,13 @@
   opacity: 0.6;
 }
 
+/* Under the head's line, its text on the head's icon column. */
 .sidebar-files-error {
   display: flex;
   flex: none;
   align-items: flex-start;
   gap: 6px;
-  padding: 0 10px 6px;
+  padding: 6px 10px 0 12px;
   color: #f87171;
   font-size: 10px;
   line-height: 1.35;
@@ -1135,9 +1135,12 @@
   overflow-wrap: anywhere;
 }
 
+/* The tree's first row as far under the head's line as the buttons are
+   above it (with the tree's own 2px). */
 .sidebar-files-scroll {
   flex: 1 1 auto;
   min-height: 0;
+  padding-top: 4px;
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -1152,16 +1155,12 @@
     height: 32px;
   }
 
-  /* As tall as the picker's rows; 1px into the card's padding on each side
-     keeps the icons, and the line, on the rows' columns at 32px wide. */
+  /* As tall as the picker's rows, at their pitch; 1px into the head's
+     padding on each side keeps the icons on the rows' columns at 32px wide. */
   .sidebar-files-actions {
+    margin-top: 0;
     margin-right: -1px;
     margin-left: -1px;
-  }
-
-  .sidebar-files-actions::before {
-    right: 9px;
-    left: 9px;
   }
 
   .sidebar-tool-button {
