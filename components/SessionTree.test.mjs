@@ -193,6 +193,26 @@ test("a branch chip needs a linked worktree", () => {
   assert.doesNotMatch(html, /⑂/);
 });
 
+test("a fork's row keeps its name's suffix in view; other titles stay one span", () => {
+  const fork = { kind: "fork", originSessionId: "src" };
+  const named = rowMarkup(render({ rows: [sessionRow(session("copy", { name: "PR#1030 状态栏命令按钮 · 3f9a", relation: fork }))] }), "session:group:copy");
+  assert.match(named, /<span class="session-tree-title has-fork-suffix"><span class="session-tree-title-base">PR#1030 状态栏命令按钮<\/span><span class="session-tree-title-suffix"> · 3f9a<\/span><\/span><span class="session-tree-meta">/);
+  assert.match(named, /title="PR#1030 状态栏命令按钮 · 3f9a\n/, "the tooltip has the whole name");
+  // Not a fork, no suffix, or no name: the title is cut as a whole.
+  for (const extra of [
+    { name: "Weekly sync · 2024" },
+    { name: "Plan · beta", relation: fork },
+    { firstMessage: "ask · 3f9a", relation: fork },
+  ]) {
+    const html = render({ rows: [sessionRow(session("other", extra))] });
+    assert.doesNotMatch(html, /has-fork-suffix|session-tree-title-(base|suffix)/);
+    assert.match(html, /<span class="session-tree-title">[^<]+<\/span>/);
+  }
+  assert.match(cssRule(".session-tree-title.has-fork-suffix"), /^\s*display: flex;\s*$/);
+  assert.match(cssRule(".session-tree-title-base"), /min-width: 0;\s*overflow: hidden;\s*text-overflow: ellipsis;/);
+  assert.match(cssRule(".session-tree-title-suffix"), /flex: none;\s*white-space: pre;/, "never shrinks; keeps its leading space");
+});
+
 test("a running row shows the labelled spinner and cannot be archived from the row", () => {
   const html = rowMarkup(render({ rows: [sessionRow(session("run"), { status: { running: true, unread: true } })] }), "session:group:run");
   // The spinner takes the time's place at the right, and the row says it is running.

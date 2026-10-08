@@ -27,8 +27,10 @@ const { SessionManager } = await jiti.import("@earendil-works/pi-coding-agent");
 async function scratchSession(t) {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-fork-route-"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const previousHome = process.env.HOME;
   const previousRegistry = globalThis.__piSessions;
   process.env.PI_CODING_AGENT_DIR = dir;
+  process.env.HOME = join(dir, "home");
   invalidateSessionListCache();
   const manager = SessionManager.create(join(dir, "project"), join(dir, "sessions", "project"));
   const u1 = manager.appendMessage({ role: "user", content: "Fork me", timestamp: Date.now() });
@@ -41,6 +43,8 @@ async function scratchSession(t) {
     globalThis.__piSessions = previousRegistry;
     if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
     for (const sessionId of [id, ...forked]) invalidateSessionPathCache(sessionId);
     invalidateSessionListCache();
     await rm(dir, { recursive: true, force: true });
@@ -88,6 +92,9 @@ test("forks an idle session on disk without starting it, and the copy is a row o
   assert.equal(body.session.cwd, join(source.dir, "project"));
   assert.equal(typeof body.session.projectKey, "string", "grouped like any listed session");
   assert.equal(body.session.firstMessage, "Fork me");
+  // Named after the source's title plus a short random suffix, already in the row.
+  assert.match(body.session.name, /^Fork me · [0-9a-f]{4}$/);
+  assert.equal(SessionManager.open(source.path).getSessionName(), undefined, "the source keeps no name");
   assert.ok(getSessionListVersion() > versionBefore, "other windows hear of the copy");
   // The file's leaf branch, and no AgentSession was started for it.
   assert.deepEqual(assistantTexts(body.session.path), ["second"]);
@@ -98,6 +105,7 @@ test("forks an idle session on disk without starting it, and the copy is a row o
   assert.ok(listed, "the list has the copy");
   assert.equal(listed.modified, body.session.modified, "the row does not move when the list replaces it");
   assert.equal(listed.projectKey, body.session.projectKey);
+  assert.equal(listed.name, body.session.name);
   assert.deepEqual(listed.relation, { kind: "fork", originSessionId: source.id });
   const { rows } = buildSessionTree({
     sessions: list.sessions,
@@ -131,7 +139,8 @@ test("an open wrapper's leaf is the branch forked, unless the file moved past an
   const behind = await (await post(source.id)).json();
   source.forked.push(behind.sessionId);
   assert.deepEqual(assistantTexts(behind.session.path), ["second"]);
-  assert.equal(behind.session.name, "Renamed in the CLI");
+  assert.match(behind.session.name, /^Renamed in the CLI · [0-9a-f]{4}$/);
+  assert.match(live.session.name, /^Fork me · [0-9a-f]{4}$/);
 });
 
 test("refusals: unknown session, unsaved wrapper, no JSON content type", async (t) => {
@@ -170,5 +179,12 @@ test("the route never starts, prompts or forks an AgentSession", () => {
   assert.doesNotMatch(routeSource, /startRpcSession|\.send\(|\.fork\(|\.prompt\(|shutdown\(/);
   assert.match(routeSource, /if \(!isApiRequestAllowed\(req\)\) return refusal\(403, "request-denied"/);
   assert.match(routeSource, /if \(!hasJsonContentType\(req\)\) return refusal\(415, "request-denied"/);
-  assert.match(routeSource, /const fork = forkSessionBranch\(sourcePath, liveLeafId\);\s*cacheSessionPath\(fork\.sessionId, fork\.path\);\s*invalidateSessionListCache\(\);/);
+  assert.match(routeSource, /const fork = forkSessionBranch\(sourcePath, liveLeafId, sourceTitle\);\s*cacheSessionPath\(fork\.sessionId, fork\.path\);\s*invalidateSessionListCache\(\);/);
+  // The source's title is the one await before the copy; the leaf is read after it.
+  const title = routeSource.indexOf("const sourceTitle = await readForkSourceTitle(sourcePath);");
+  const leaf = routeSource.indexOf("const wrapper = getRpcSession(id);");
+  assert.ok(title >= 0 && title < leaf, "the title is read before the leaf");
+  assert.doesNotMatch(routeSource.slice(leaf, routeSource.indexOf("const fork = forkSessionBranch(")), /await /);
+  // The row is read once the name is written.
+  assert.ok(routeSource.indexOf("await readSessionInfo(fork.path)") > routeSource.indexOf("const fork = forkSessionBranch("));
 });
