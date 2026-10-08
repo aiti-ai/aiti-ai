@@ -15,7 +15,8 @@
   z-index: 400;
   box-sizing: border-box;
   max-width: calc(100vw - 16px);
-  max-height: calc(var(--app-viewport-height, 100dvh) - 16px);
+  /* A long project list scrolls under its filter instead of covering the page. */
+  max-height: min(calc(var(--app-viewport-height, 100dvh) - 16px), 480px);
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 4px;
@@ -144,6 +145,94 @@
   white-space: nowrap;
 }
 
+/* An item with an icon button of its own at its end (a worktree's remove). */
+.sidebar-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.sidebar-menu-row > .sidebar-menu-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.sidebar-menu-secondary {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.sidebar-menu-secondary:focus {
+  outline: none;
+}
+
+.sidebar-menu-secondary:not([aria-disabled="true"]):hover,
+.sidebar-menu-secondary:focus-visible {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.sidebar-menu-secondary.is-danger:not([aria-disabled="true"]):hover,
+.sidebar-menu-secondary.is-danger:focus-visible {
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
+}
+
+.sidebar-menu-secondary[aria-disabled="true"] {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* The filter of a long list of choices: it stays on top while the list
+   scrolls. A sticky inset counts from inside the scroller's padding (4px on
+   the menu, and on the sheet), so -4px holds it at the scroller's edge. */
+.sidebar-menu-filter {
+  position: sticky;
+  top: -4px;
+  z-index: 1;
+  margin: -4px -4px 4px;
+  padding: 4px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.sidebar-menu-filter-input {
+  display: block;
+  width: 100%;
+  height: 28px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  outline: none;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.sidebar-menu-filter-input:focus {
+  border-color: var(--accent);
+}
+
+.sidebar-menu-empty {
+  padding: 6px 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
 /*
  * Mobile bottom sheet: its own backdrop above the drawer's (199) and the
  * drawer (200). The layer spans the visible area the way the drawer does, from
@@ -261,6 +350,27 @@ html[data-keyboard-open] .sidebar-sheet {
 .sidebar-sheet .sidebar-menu-header {
   padding: 8px 16px 4px;
   font-size: 12px;
+}
+
+.sidebar-sheet .sidebar-menu-secondary {
+  width: 48px;
+  height: 48px;
+  border-radius: 0;
+}
+
+.sidebar-sheet .sidebar-menu-filter {
+  margin: -4px 0 4px;
+  padding: 8px 16px;
+}
+
+.sidebar-sheet .sidebar-menu-filter-input {
+  height: 40px;
+  font-size: 14px;
+}
+
+.sidebar-sheet .sidebar-menu-empty {
+  padding: 12px 16px;
+  font-size: 15px;
 }
 
 .sidebar-sheet-cancel {
@@ -401,6 +511,11 @@ html[data-keyboard-open] .sidebar-sheet {
     height: 40px;
   }
 
+  .sidebar-menu-secondary {
+    width: 40px;
+    height: 40px;
+  }
+
   .sidebar-toast {
     height: 44px;
   }
@@ -425,7 +540,8 @@ html[data-keyboard-open] .sidebar-sheet {
   }
 }
 
-/* A worktree menu's "New worktree…" form (a custom menu body; components/WorktreeCreateForm.tsx). */
+/* A worktree menu's "New worktree…" form (a custom menu body; components/WorktreeCreateForm.tsx),
+   and its removal body. */
 .sidebar-worktree-form {
   padding: 2px 4px 4px;
 }
@@ -455,6 +571,7 @@ html[data-keyboard-open] .sidebar-sheet {
 }
 
 .sidebar-worktree-create,
+.sidebar-worktree-force,
 .sidebar-worktree-cancel {
   flex: 1;
   height: 26px;
@@ -478,15 +595,33 @@ html[data-keyboard-open] .sidebar-sheet {
   font-weight: 600;
 }
 
-.sidebar-worktree-create:disabled {
+/* Force-removing a checkout discards its changes. */
+.sidebar-worktree-force {
+  border-color: #ef4444;
+  background: #ef4444;
+  color: #fff;
+  font-weight: 600;
+}
+
+.sidebar-worktree-create:disabled,
+.sidebar-worktree-force:disabled {
   cursor: not-allowed;
   opacity: 0.65;
 }
 
 .sidebar-worktree-create:focus-visible,
+.sidebar-worktree-force:focus-visible,
 .sidebar-worktree-cancel:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
+}
+
+/* A worktree menu's removal body (components/ProjectWorktreePicker.tsx): what Force would do. */
+.sidebar-worktree-message {
+  padding: 2px 4px 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .sidebar-worktree-error {
@@ -503,6 +638,7 @@ html[data-keyboard-open] .sidebar-sheet {
 
 .sidebar-sheet .sidebar-worktree-input,
 .sidebar-sheet .sidebar-worktree-create,
+.sidebar-sheet .sidebar-worktree-force,
 .sidebar-sheet .sidebar-worktree-cancel {
   height: 40px;
   font-size: 14px;
