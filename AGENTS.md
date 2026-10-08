@@ -159,7 +159,7 @@ lib/
 
 components/
   AppShell.tsx             layout, URL state, tab management
-  SessionSidebar.tsx       Sessions | Files tabs: tree, archive, menus, toast; project/worktree pickers + FileExplorer
+  SessionSidebar.tsx       Sessions | Files tabs: tree, archive, menus, toast; files card (project/worktree picker + file buttons), FileExplorer
   SessionTree.tsx          virtualized rows of the session tree and the archive view
   SidebarMenu.tsx          sidebar popup menu (bottom sheet on phones), portaled to body: filter field, item secondary actions
   ProjectWorktreePicker.tsx project and worktree buttons + menus: the files tab's rows and the new-session bar's chips
