@@ -172,8 +172,6 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
 
   return (
     <div className="settings-general">
-      <h2 className="settings-general-title">{t("settings.general")}</h2>
-
       <section className="settings-general-section">
         <h3 className="settings-general-heading">{t("settings.appearance")}</h3>
         <div role="radiogroup" aria-label={t("settings.appearance")} className="settings-theme-options">

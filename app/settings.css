@@ -1533,19 +1533,12 @@
   max-width: 600px;
 }
 
-.settings-general-title {
-  margin: 0;
-  color: var(--text);
-  font-size: 18px;
-  font-weight: 700;
-}
-
 .settings-general-section {
   margin-top: 30px;
 }
 
 .settings-general-section:first-of-type {
-  margin-top: 24px;
+  margin-top: 0;
 }
 
 .settings-general-heading {
