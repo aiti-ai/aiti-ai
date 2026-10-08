@@ -104,7 +104,7 @@ declare global {
   }
 }
 
-/** An icon button of the files card's action row, under the project and worktree. */
+/** An icon button of the files tab's action row, under the project and worktree. */
 function ToolbarIconButton({
   onClick,
   title,
@@ -2088,8 +2088,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       </div>
 
       {/* Sessions | Files. Only the two tabs are the tablist; the view
-          options button beside them is not a tab. */}
-      <div className="sidebar-tabs">
+          options button beside them is not a tab. On the files tab the
+          line under it moves under the files head. */}
+      <div className={`sidebar-tabs${sidebarTab === "files" ? " is-files" : ""}`}>
         <div className="sidebar-tabs-list" role="tablist" aria-label={t("sidebar.tabsLabel")}>
           <button
             ref={sessionsTabRef}
@@ -2218,10 +2219,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         className="sidebar-panel"
         onScrollCapture={rememberScroll}
       >
-        {/* One card: the folder in use, then what is done with it. The
-            buttons are the card's, not the picker's: its group names only
+        {/* One head: the folder in use, then what is done with it. The
+            buttons are the head's, not the picker's: its group names only
             the project and worktree. */}
-        <div className="sidebar-files-card">
+        <div className="sidebar-files-head">
           {/* The project and worktree in use: the same picker as the bar above a
               fresh composer, as two rows. Its worktree row shows only at the
               top of a git checkout (repo subdirs keep their own project
