@@ -1515,15 +1515,76 @@ pre, code {
   }
 }
 
-/* The project and worktree above a fresh composer (NewSessionContextBar). */
-.new-session-context {
+/* The empty new-session page's header above the composer (ChatWindow): the
+   brand, then the project and worktree (NewSessionContextBar), as inline
+   boxes that wrap, and the versions floated right of the first line. The bar
+   stays beside the brand while its chips fit there whole, names included,
+   and otherwise drops to a line of its own under it (a phone, a chat
+   squeezed between the sidebar and the file panel, a long branch): the room
+   they need decides, not the viewport. Below the float, that line has the
+   whole width. Every box is 40px tall with its vertical margins, the float
+   too, so the first line is 40px whatever it holds and the next one starts
+   where the float ends. */
+.new-session-hero {
   margin-bottom: 8px;
 }
 
-.new-session-context > .project-picker {
-  max-width: var(--chat-content-max-width, 820px);
+.new-session-hero-row {
   margin: 0 auto;
-  padding: 0 4px;
+  line-height: 0;
+}
+
+.new-session-versions {
+  display: flex;
+  float: right;
+  flex-direction: column;
+  justify-content: center;
+  align-items: flex-end;
+  gap: 2px;
+  height: 40px;
+  margin-left: 14px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.new-session-version {
+  color: var(--text);
+}
+
+/* Never pushed under the versions: an inline box that cannot sit beside a
+   float moves below it, leaving a line of versions only. It gives way
+   beside them instead (120px: the versions, their margin, its own), the
+   update link's version first (its ellipsis), as the brand did before. */
+.new-session-brand {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  max-width: calc(100% - 120px);
+  margin: 4px 20px 4px 0;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  line-height: 1.4;
+  vertical-align: middle;
+}
+
+.new-session-brand-name {
+  flex-shrink: 0;
+  color: var(--text);
+  font-size: 22px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+/* Under the brand, the first chip's icon lines up with the logo; beside it,
+   the chip's own padding makes up the gap. */
+.new-session-context {
+  display: inline-block;
+  max-width: calc(100% + 10px);
+  margin: 5px 0 5px -10px;
+  vertical-align: middle;
 }
 
 /* The project and worktree picker (ProjectWorktreePicker): two chips in a
@@ -1559,9 +1620,25 @@ pre, code {
   transition: background 0.12s, color 0.12s;
 }
 
+/* On a narrow row a long branch name is cut before the project's name: the
+   project never shrinks, and the worktree button, down to its icons (57px),
+   takes what is left. No share of the row for either: the header's bar is
+   as wide as its chips (it wraps as one box), so a percentage of that width
+   would cut a name that fits, and a lone project button entirely. */
 .project-picker-button.is-project {
   flex-shrink: 0;
-  max-width: 60%;
+  max-width: 100%;
+}
+
+/* Room for the worktree button's icons, the divider and the two gaps. Its
+   icons alone: borders 2, padding 20, icon 14, the label's gaps 12 and the
+   chevron 9 (10, 1px drawn in): 57px. Wider, a sliver of the cut label shows. */
+.project-picker.is-inline .project-picker-button.is-project:not(:only-of-type) {
+  max-width: calc(100% - 66px);
+}
+
+.project-picker.is-inline .project-picker-button:not(.is-project) {
+  min-width: 57px;
 }
 
 .project-picker-button:hover,
@@ -1705,6 +1782,12 @@ pre, code {
 @media (pointer: coarse) {
   .project-picker-button {
     min-height: 36px;
+  }
+
+  /* Still 40px with the taller chips. */
+  .new-session-context {
+    margin-top: 2px;
+    margin-bottom: 2px;
   }
 }
 

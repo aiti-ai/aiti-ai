@@ -83,7 +83,7 @@ test("collapses secondary composer chrome while the mobile keyboard is open", ()
   assert.match(cssSource, /html\[data-keyboard-open\] \.chat-content \{\s*padding-bottom: 0 !important;/);
   assert.match(cssSource, /html\[data-keyboard-open\] \.chat-input-shell \{\s*padding-bottom: 6px !important;/);
   // A fresh composer's project bar goes too, in a rule of its own inside the same query.
-  assert.match(newSessionBarSource, /<div className="new-session-context" /);
+  assert.match(newSessionBarSource, /<div className="new-session-context">/);
   assert.match(cssSource, /@media \(max-width: 640px\), \(pointer: coarse\) and \(max-height: 500px\) \{[^@]*?html\[data-keyboard-open\] \.new-session-context \{\s*display: none !important;/);
   // Mobile send is icon-only but keeps an accessible name.
   assert.match(chatInputSource, /aria-label=\{t\("chat\.send"\)\}/);
