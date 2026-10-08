@@ -1038,48 +1038,67 @@
   transform: rotate(-90deg);
 }
 
-/* Files tab: the explorer toolbar and tree, below the project picker (app/globals.css). */
-.sidebar-files-toolbar {
+/* Files tab: one card for the folder in use (the stacked project picker,
+   app/globals.css) and what is done with it, then the tree. Like the
+   composer's box, it needs no line across the sidebar under the tabs. */
+.sidebar-files-card {
   display: flex;
   flex: none;
-  align-items: center;
-  gap: 1px;
-  height: 30px;
-  padding: 0 4px 0 10px;
+  flex-direction: column;
+  margin: 8px 8px 4px;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
 }
 
-.sidebar-files-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
+/* The card's last row: the actions on that folder and the tree's toggles,
+   used often enough to stay in view. Spread from the rows' icon column to
+   their chevrons: 30px wide in the card's 3px padding puts the first icon
+   under the folder icon and the last one's edge under the chevrons. Always
+   six (the changes view is disabled, not gone, without changes), so the
+   spread never moves a button. They give way together at the sidebar's
+   180px minimum. */
+.sidebar-files-actions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+  padding-top: 4px;
+}
+
+/* Between the picker and the actions, only as wide as the rows' content and
+   fainter than the card's edge: it groups, it does not cross the sidebar. */
+.sidebar-files-actions::before {
+  position: absolute;
+  top: 0;
+  right: 8px;
+  left: 8px;
+  height: 1px;
+  background: color-mix(in srgb, var(--border) 70%, transparent);
+  content: "";
 }
 
 .sidebar-tool-button {
   display: flex;
-  flex: none;
+  flex: 0 1 30px;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  min-width: 22px;
+  height: 28px;
   padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: 7px;
   background: transparent;
   color: var(--text-dim);
   cursor: pointer;
-  transition: color 0.3s, background 0.3s;
+  transition: color 0.12s, background 0.12s;
 }
 
 .sidebar-tool-button:not(:disabled):hover {
   background: var(--bg-hover);
-  color: var(--text-muted);
+  color: var(--text);
 }
 
 .sidebar-tool-button.is-active,
@@ -1124,11 +1143,6 @@
 }
 
 @media (pointer: coarse) {
-  .sidebar-tool-button {
-    width: 32px;
-    height: 32px;
-  }
-
   .sidebar-tab {
     height: 30px;
   }
@@ -1136,6 +1150,23 @@
   .sidebar-icon-button {
     width: 32px;
     height: 32px;
+  }
+
+  /* As tall as the picker's rows; 1px into the card's padding on each side
+     keeps the icons, and the line, on the rows' columns at 32px wide. */
+  .sidebar-files-actions {
+    margin-right: -1px;
+    margin-left: -1px;
+  }
+
+  .sidebar-files-actions::before {
+    right: 9px;
+    left: 9px;
+  }
+
+  .sidebar-tool-button {
+    flex-basis: 32px;
+    height: 36px;
   }
 }
 
