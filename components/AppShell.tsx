@@ -1217,6 +1217,9 @@ export function AppShell() {
   const handleOpenFolderForNewSession = useCallback((opener: HTMLElement | null) => {
     sidebarControlRef.current?.openFolderForNewSession((target) => pickNewSessionContextRef.current(target, "project"), opener);
   }, []);
+  const handleDefaultDirectoryForNewSession = useCallback(() => {
+    sidebarControlRef.current?.openDefaultDirectoryForNewSession((target) => pickNewSessionContextRef.current(target, "project"));
+  }, []);
   const handleRefreshNewSessionWorktrees = useCallback(() => {
     sidebarControlRef.current?.refreshWorktrees();
   }, []);
@@ -1238,6 +1241,7 @@ export function AppShell() {
       initialFocus={newSessionBarFocusRef.current}
       onInitialFocusDone={handleNewSessionBarFocusDone}
       onPick={handlePickNewSessionContext}
+      onUseDefaultDirectory={handleDefaultDirectoryForNewSession}
       onOpenFolder={handleOpenFolderForNewSession}
       onRefreshWorktrees={handleRefreshNewSessionWorktrees}
       onCreateWorktree={handleCreateNewSessionWorktree}

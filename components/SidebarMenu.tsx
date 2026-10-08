@@ -1,21 +1,21 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type SyntheticEvent } from "react";
+import { Children, useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref, type SyntheticEvent } from "react";
 import { createPortal } from "react-dom";
 import { CheckIcon } from "./SidebarIcons";
 
 /**
  * The session sidebar's popup menu: a row's ⋯ or right-click menu, a project
- * group's menu; also the project and worktree menus of the bar above a fresh
- * composer (components/NewSessionContextBar.tsx). On a desktop it is a small menu placed at
- * a point or beside a button; on a phone (`sheet`) a bottom sheet over its own
- * backdrop. Either way it is portaled to `document.body`: the mobile sidebar
+ * group's menu; also the project and worktree menus of the files tab and of
+ * the bar above a fresh composer (components/ProjectWorktreePicker.tsx). On a
+ * desktop it is a small menu placed at a point or beside a button; on a phone
+ * (`sheet`) a bottom sheet over its own backdrop. Either way it is portaled to `document.body`: the mobile sidebar
  * drawer moves with `transform`, which would make a `position: fixed` menu
  * inside it fixed to the 280px drawer instead of the screen.
  *
- * The menu holds no state of its own: what it shows and whether it is open
- * come from the parent, which keeps them above the virtualized rows so a row
- * scrolled out of view does not take its open menu with it.
+ * What it shows and whether it is open come from the parent, which keeps
+ * them above the virtualized rows so a row scrolled out of view does not
+ * take its open menu with it; the menu keeps only its filter field's text.
  */
 
 /** What an item's `onSelect` is told about the activation. */
@@ -28,6 +28,16 @@ export interface SidebarMenuSelectEvent {
    * menu into a small form.
    */
   keepOpen(): void;
+}
+
+/** An icon button at the end of an item's row with an action of its own (a worktree's remove). */
+export interface SidebarMenuSecondaryAction {
+  /** Its accessible name and tooltip. */
+  label: string;
+  icon: ReactNode;
+  danger?: boolean;
+  disabled?: boolean;
+  onSelect: (event: SidebarMenuSelectEvent) => void;
 }
 
 export type SidebarMenuItem =
@@ -49,6 +59,10 @@ export type SidebarMenuItem =
       disabled?: boolean;
       /** Shown on the right of a disabled item, in place of its shortcut. */
       disabledReason?: string;
+      /** Shown before the note: a project's running and unread counts. */
+      badge?: ReactNode;
+      /** Arrow keys reach it right after its item. */
+      secondary?: SidebarMenuSecondaryAction;
       onSelect: (event: SidebarMenuSelectEvent) => void;
     }
   | { type: "separator"; id: string }
@@ -60,6 +74,20 @@ export type SidebarMenuAnchor =
 
 export type SidebarMenuCloseReason = "escape" | "outside" | "select" | "cancel";
 
+/**
+ * A field above the items that narrows the menu's choices (the items with
+ * `checked`) by label, note and title, shown once there are
+ * `SIDEBAR_MENU_FILTER_MIN_CHOICES` of them. Other items (an action such as
+ * "New worktree…") always show.
+ */
+export interface SidebarMenuFilter {
+  placeholder: string;
+  /** Shown when no choice matches. */
+  emptyLabel: string;
+}
+
+export const SIDEBAR_MENU_FILTER_MIN_CHOICES = 8;
+
 export interface SidebarMenuProps {
   open: boolean;
   anchor: SidebarMenuAnchor | null;
@@ -69,10 +97,18 @@ export interface SidebarMenuProps {
   /** The sheet's heading (one line, ellipsis). */
   title?: string;
   items?: SidebarMenuItem[];
+  filter?: SidebarMenuFilter;
   /** A custom body (a small form) instead of `items`. */
   children?: ReactNode;
   /** The sheet's Cancel button. */
   cancelLabel: string;
+  /**
+   * The sheet's Cancel takes focus when the menu opens or its body changes:
+   * for a question whose other answer discards something (force-removing a
+   * checkout), so Enter must not give it. On a desktop the body marks its own
+   * Cancel instead.
+   */
+  focusCancel?: boolean;
   /** Tab out of the menu reports "outside". */
   onClose: (reason: SidebarMenuCloseReason) => void;
   /**
@@ -86,6 +122,8 @@ export interface SidebarMenuProps {
 }
 
 type ActionItem = Extract<SidebarMenuItem, { type: "item" }>;
+/** What activating an item or its secondary action needs. */
+type MenuAction = Pick<ActionItem, "disabled" | "onSelect">;
 
 /** Distance the menu keeps from the edges of the visible viewport. */
 const MENU_MARGIN = 8;
@@ -94,6 +132,9 @@ const ANCHOR_GAP = 4;
 const DEFAULT_MENU_WIDTH = 208;
 
 const ITEM_SELECTOR = "[data-sidebar-menu-item]";
+const FILTER_SELECTOR = "[data-sidebar-menu-filter]";
+/** The control that takes focus when the menu or its body shows (the filter, a confirmation's Cancel, the sheet's for `focusCancel`). */
+const AUTOFOCUS_SELECTOR = "[data-sidebar-menu-autofocus]";
 const FOCUSABLE_SELECTOR = "button, input, textarea, select, a[href], [tabindex]";
 /** A row of the session tree (components/SessionTree.tsx), where most openers sit. */
 const ROW_SELECTOR = "[data-row-key]";
@@ -154,6 +195,34 @@ export function findSidebarMenuShortcut(items: readonly SidebarMenuItem[] | unde
   return null;
 }
 
+/**
+ * Whether `children` is a custom body. Two conditional bodies side by side
+ * arrive as an array (`[false, false]` while neither shows), which is no body.
+ */
+export function hasCustomMenuBody(children: ReactNode): boolean {
+  return Children.toArray(children).length > 0;
+}
+
+function isChoice(item: SidebarMenuItem): boolean {
+  return item.type === "item" && item.checked !== undefined;
+}
+
+/** Whether `items` have enough choices for a filter field. */
+export function sidebarMenuHasFilter(items: readonly SidebarMenuItem[] | undefined): boolean {
+  return (items ?? []).filter(isChoice).length >= SIDEBAR_MENU_FILTER_MIN_CHOICES;
+}
+
+/**
+ * The items a filter `query` leaves: the choices whose label, note or title
+ * contains it (case-insensitive), and every item that is not a choice.
+ */
+export function filterSidebarMenuItems(items: readonly SidebarMenuItem[], query: string): SidebarMenuItem[] {
+  const wanted = query.trim().toLowerCase();
+  if (!wanted) return [...items];
+  return items.filter((item) => item.type !== "item" || item.checked === undefined
+    || [item.label, item.note, item.title].some((text) => text?.toLowerCase().includes(wanted)));
+}
+
 /** A field the keys belong to: arrows move its caret, letters are typed into it. */
 function isTextEntry(element: Element | null): boolean {
   if (!element) return false;
@@ -199,8 +268,14 @@ function enabledItems(surface: HTMLElement): HTMLElement[] {
   return Array.from(surface.querySelectorAll<HTMLElement>(ITEM_SELECTOR)).filter(isFocusable);
 }
 
-/** What focus goes to when the menu opens: the first enabled item, or the custom body's first control. */
+/**
+ * What focus goes to when the menu opens: a control marked to take it (a
+ * filter field, a confirmation's Cancel), else the first enabled item, else
+ * the custom body's first control.
+ */
 function initialFocusTarget(surface: HTMLElement): HTMLElement | null {
+  const marked = Array.from(surface.querySelectorAll<HTMLElement>(AUTOFOCUS_SELECTOR)).find(isFocusable);
+  if (marked) return marked;
   const items = enabledItems(surface);
   if (items.length > 0) return items[0];
   const controls = Array.from(surface.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR))
@@ -279,12 +354,29 @@ export interface SidebarMenuSurfaceProps {
   ariaLabel: string;
   title?: string;
   items?: SidebarMenuItem[];
+  filter?: SidebarMenuFilter;
+  /** The filter field's text. */
+  filterQuery?: string;
+  onFilterQueryChange?: (query: string) => void;
   children?: ReactNode;
   cancelLabel: string;
+  focusCancel?: boolean;
   width?: number;
   surfaceRef?: Ref<HTMLDivElement>;
-  onActivate: (item: ActionItem, shiftKey: boolean) => void;
+  onActivate: (action: MenuAction, shiftKey: boolean) => void;
   onClose: (reason: "outside" | "cancel") => void;
+}
+
+/**
+ * Enter is taken on the button rather than left to its click, which would
+ * not say whether Shift was held.
+ */
+function activateOnEnter(action: MenuAction, onActivate: SidebarMenuSurfaceProps["onActivate"]) {
+  return (event: ReactKeyboardEvent) => {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    onActivate(action, event.shiftKey);
+  };
 }
 
 function MenuItemButton({ item, onActivate }: { item: ActionItem; onActivate: SidebarMenuSurfaceProps["onActivate"] }) {
@@ -302,7 +394,7 @@ function MenuItemButton({ item, onActivate }: { item: ActionItem; onActivate: Si
   } else if (item.shortcut) {
     trailing = <kbd className="sidebar-menu-shortcut">{item.shortcut}</kbd>;
   }
-  return (
+  const button = (
     <button
       type="button"
       role={choice ? "menuitemradio" : "menuitem"}
@@ -314,20 +406,36 @@ function MenuItemButton({ item, onActivate }: { item: ActionItem; onActivate: Si
       data-sidebar-menu-item=""
       className={className}
       onClick={(event) => onActivate(item, event.shiftKey)}
-      onKeyDown={(event) => {
-        // Enter is taken here rather than left to the button's click, which
-        // would not say whether Shift was held.
-        if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
-        event.preventDefault();
-        onActivate(item, event.shiftKey);
-      }}
+      onKeyDown={activateOnEnter(item, onActivate)}
     >
       <span className="sidebar-menu-icon">
         {choice ? (item.checked ? <CheckIcon size={13} /> : null) : item.icon}
       </span>
       <span className={item.mono ? "sidebar-menu-label is-mono" : "sidebar-menu-label"}>{item.label}</span>
+      {item.badge}
       {trailing}
     </button>
+  );
+  const secondary = item.secondary;
+  if (!secondary) return button;
+  return (
+    <div className="sidebar-menu-row" role="none">
+      {button}
+      <button
+        type="button"
+        role="menuitem"
+        aria-label={secondary.label}
+        aria-disabled={secondary.disabled ? true : undefined}
+        tabIndex={-1}
+        title={secondary.label}
+        data-sidebar-menu-item=""
+        className={secondary.danger ? "sidebar-menu-secondary is-danger" : "sidebar-menu-secondary"}
+        onClick={(event) => onActivate(secondary, event.shiftKey)}
+        onKeyDown={activateOnEnter(secondary, onActivate)}
+      >
+        {secondary.icon}
+      </button>
+    </div>
   );
 }
 
@@ -340,26 +448,57 @@ export function SidebarMenuSurface({
   ariaLabel,
   title,
   items,
+  filter,
+  filterQuery = "",
+  onFilterQueryChange,
   children,
   cancelLabel,
+  focusCancel = false,
   width = DEFAULT_MENU_WIDTH,
   surfaceRef,
   onActivate,
   onClose,
 }: SidebarMenuSurfaceProps) {
-  const custom = children !== undefined && children !== null && children !== false;
-  const body = custom ? children : (items ?? []).map((item) => {
+  const custom = hasCustomMenuBody(children);
+  const filtered = filter !== undefined && !custom && sidebarMenuHasFilter(items);
+  const shown = filtered ? filterSidebarMenuItems(items ?? [], filterQuery) : items ?? [];
+  const list = shown.map((item) => {
     if (item.type === "separator") return <div key={item.id} className="sidebar-menu-separator" role="separator" />;
     if (item.type === "header") return <div key={item.id} className="sidebar-menu-header" role="presentation">{item.label}</div>;
     return <MenuItemButton key={item.id} item={item} onActivate={onActivate} />;
   });
+  // A menu holds only its items: the field and what it found stand before
+  // the list, inside a dialog (the sheet is one already).
+  const body = custom ? children : filtered ? (
+    <>
+      {/* On a phone the field takes no focus by itself: the keyboard would cover the sheet. */}
+      <div className="sidebar-menu-filter">
+        <input
+          className="sidebar-menu-filter-input"
+          value={filterQuery}
+          placeholder={filter.placeholder}
+          aria-label={filter.placeholder}
+          autoComplete="off"
+          spellCheck={false}
+          data-sidebar-menu-filter=""
+          data-sidebar-menu-autofocus={sheet ? undefined : ""}
+          onChange={(event) => onFilterQueryChange?.(event.target.value)}
+        />
+      </div>
+      <div role="status">
+        {filterQuery.trim() && !shown.some(isChoice) && <div className="sidebar-menu-empty">{filter.emptyLabel}</div>}
+      </div>
+      <div role="menu" aria-label={ariaLabel}>{list}</div>
+    </>
+  ) : list;
+  const menuRole = custom || filtered ? undefined : "menu";
 
   if (!sheet) {
     return (
       <div
         ref={surfaceRef}
         className="sidebar-menu"
-        role={custom ? "dialog" : "menu"}
+        role={menuRole ?? "dialog"}
         aria-label={ariaLabel}
         style={{ width }}
         {...isolateEvents}
@@ -376,12 +515,13 @@ export function SidebarMenuSurface({
       <div className="sidebar-sheet-backdrop" aria-hidden="true" onClick={() => onClose("outside")} />
       <div ref={surfaceRef} className="sidebar-sheet" role="dialog" aria-modal="true" aria-label={ariaLabel}>
         {title ? <div className="sidebar-sheet-title">{title}</div> : null}
-        {custom ? (
-          <div className="sidebar-sheet-body">{body}</div>
-        ) : (
-          <div className="sidebar-sheet-body" role="menu" aria-label={ariaLabel}>{body}</div>
-        )}
-        <button type="button" className="sidebar-sheet-cancel" onClick={() => onClose("cancel")}>
+        <div className="sidebar-sheet-body" role={menuRole} aria-label={menuRole ? ariaLabel : undefined}>{body}</div>
+        <button
+          type="button"
+          className="sidebar-sheet-cancel"
+          data-sidebar-menu-autofocus={focusCancel ? "" : undefined}
+          onClick={() => onClose("cancel")}
+        >
           {cancelLabel}
         </button>
       </div>
@@ -396,13 +536,20 @@ export function SidebarMenu({
   ariaLabel,
   title,
   items,
+  filter,
   children,
   cancelLabel,
+  focusCancel,
   onClose,
   returnFocusTo,
   width,
 }: SidebarMenuProps) {
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
+  // The one piece of state the menu keeps: its filter field's text, for one
+  // opening of one body.
+  const [filterQuery, setFilterQuery] = useState("");
+  const filterQueryRef = useRef(filterQuery);
+  filterQueryRef.current = filterQuery;
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   // The latest props for listeners attached once per opening.
   const onCloseRef = useRef(onClose);
@@ -419,10 +566,10 @@ export function SidebarMenu({
   }, []);
 
   const visible = open && portalTarget !== null && (sheet || anchor !== null);
-  const custom = children !== undefined && children !== null && children !== false;
+  const custom = hasCustomMenuBody(children);
   const anchorKey = anchor ? JSON.stringify(anchor) : "";
 
-  const activate = (item: ActionItem, shiftKey: boolean) => {
+  const activate = (item: MenuAction, shiftKey: boolean) => {
     if (item.disabled) return;
     let keepOpen = false;
     item.onSelect({ shiftKey, keepOpen: () => { keepOpen = true; } });
@@ -462,6 +609,10 @@ export function SidebarMenu({
       viewport?.removeEventListener("scroll", position);
     };
   }, [visible, sheet, anchorKey, custom]);
+
+  useEffect(() => {
+    setFilterQuery("");
+  }, [visible, custom]);
 
   // Focus moves into the menu when it opens, and again when its body is
   // swapped (the worktree menu turning into its form).
@@ -503,6 +654,13 @@ export function SidebarMenu({
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
+        // A filter with text in it is cleared first; the next Escape closes.
+        const field = surface.querySelector<HTMLElement>(FILTER_SELECTOR);
+        if (field && filterQueryRef.current) {
+          setFilterQuery("");
+          field.focus({ preventScroll: true });
+          return;
+        }
         onCloseRef.current("escape");
         return;
       }
@@ -515,7 +673,9 @@ export function SidebarMenu({
         if (!inside || tabLeavesSurface(surface, target as Element, event.shiftKey)) onCloseRef.current("outside");
         return;
       }
-      if (inside && isTextEntry(target)) return;
+      // The filter field keeps its letters and caret keys; Up and Down go on to the items.
+      const leavesFilter = (event.key === "ArrowDown" || event.key === "ArrowUp") && target?.matches(FILTER_SELECTOR);
+      if (inside && isTextEntry(target) && !leavesFilter) return;
       if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Home" || event.key === "End") {
         const list = enabledItems(surface);
         if (list.length === 0) return;
@@ -566,7 +726,11 @@ export function SidebarMenu({
       ariaLabel={ariaLabel}
       title={title}
       items={items}
+      filter={filter}
+      filterQuery={filterQuery}
+      onFilterQueryChange={setFilterQuery}
       cancelLabel={cancelLabel}
+      focusCancel={focusCancel}
       width={width}
       surfaceRef={surfaceRef}
       onActivate={(item, shiftKey) => activateRef.current(item, shiftKey)}

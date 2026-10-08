@@ -217,11 +217,12 @@ try {
       await run("export PR695_WORKSPACE=retained");
       await hidePanel();
       await showSidebar();
-      // Switch projects with the Files tab's project list (its button and rows carry the root as title).
+      // Switch projects with the Files tab's project menu (its button and items carry the root as title;
+      // the menu is portaled to the body, outside the panel).
       await showTab("Files");
       await filesPanel.getByRole("button").and(page.getByTitle(workspace, { exact: true })).first().click();
-      await filesPanel.getByRole("button").and(page.getByTitle(otherWorkspace, { exact: true })).click();
-      await page.waitForFunction((root) => document.querySelector("#session-sidebar-panel-files .sidebar-project-button")?.title === root, otherWorkspace);
+      await page.getByRole("menuitemradio").and(page.getByTitle(otherWorkspace, { exact: true })).click();
+      await page.waitForFunction((root) => document.querySelector("#session-sidebar-panel-files .project-picker-button.is-project")?.title === root, otherWorkspace);
       await page.getByRole("button", { name: "Open workspace terminal", exact: true }).click();
       await ready();
       const workspaceTabs = await page.evaluate(() => JSON.parse(sessionStorage.getItem("pi-web:terminal-tabs")).tabs);
