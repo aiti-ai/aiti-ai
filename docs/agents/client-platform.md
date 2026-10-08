@@ -12,3 +12,4 @@
 ## Completion sound
 - `hooks/useAudio.ts` stores the toggle in `localStorage` as `pi-sound-enabled` and reuses one `AudioContext`.
 - Autoplay policy requires unlocking sound from a user gesture: `ChatInput` calls the unlock hook from interactive controls, and `ChatWindow` plays the tone from `onAgentEnd`.
+- A stopped run is not a finished one (pi 1.1's `agent_settled.aborted`, which pi's own status reporting reads as idle, not done): `onAgentEnd({ aborted })` plays no tone and AppShell shows no browser notification, and the wrapper sends no "Task finished" push (`lastRunAborted`). The wrapper's `prompt_done` carries `aborted: true` for it, since the client finishes a prompt it sent on `prompt_done`, not `agent_settled`.
