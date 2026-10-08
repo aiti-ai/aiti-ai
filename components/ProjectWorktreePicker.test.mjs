@@ -184,8 +184,9 @@ test("client code stays parseable by Safari 16.2 and its CSS flat", () => {
   assert.doesNotMatch(rules.replace(/@media[^{]*\{/g, ""), /\{[^}]*\{|&/, "no nested rules");
   assert.doesNotMatch(rules, /font-mono/, "the UI font in both places");
   // The files tab's rows: full width, the bar's type and box, the path cut at its left.
+  // Their icons and chevrons 8px into the box, inside its 1px transparent border.
   assert.match(rules, /\.project-picker\.is-stacked \{\s*flex: none;\s*flex-direction: column;\s*align-items: stretch;/);
-  assert.match(rules, /\.project-picker\.is-stacked \.project-picker-button \{\s*width: 100%;\s*max-width: none;/);
+  assert.match(rules, /\.project-picker\.is-stacked \.project-picker-button \{\s*width: 100%;\s*max-width: none;\s*padding: 0 7px;/);
   assert.match(rules, /\.project-picker-path \{[^}]*direction: rtl;/);
   // A long path never squeezes the project name: the name does not shrink, the path grows from zero.
   assert.match(rules, /\.project-picker\.is-stacked \.project-picker-label\.is-name \{\s*flex: 0 0 auto;\s*max-width: 60%;/);
