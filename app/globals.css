@@ -2,6 +2,9 @@
 @import "tailwindcss";
 /* demo/ is a separate project; keep its sources out of this app's class scan. */
 @source not "../demo";
+/* Agent worktrees: scanning them makes webpack snapshot their symlinked
+   node_modules, which crashes `next build` with "reading 'length'". */
+@source not "../.claude";
 
 @theme {
   --color-bg: var(--bg);
