@@ -28,14 +28,16 @@ export type SidebarRowKind =
   | "spacer" | "footer-open" | "footer-archived" | "archive-group";
 
 /**
- * Per-kind row heights. The pinned section's header is as tall as a group's:
- * both are section headers. A spacer parts the pinned section from the
- * groups and the groups from the footer; groups themselves sit right on
- * each other, with none between them.
+ * Per-kind row heights: one rhythm. Session rows, the section headers (a
+ * project's, the pinned section's, the archive's projects), the empty
+ * group's note and the footer are one height, 28px (44px on a phone, a
+ * finger's minimum for the rows); only "show more" is a step shorter. A
+ * spacer parts the pinned section from the groups and the groups from the
+ * footer; groups themselves sit right on each other, with none between them.
  */
 export const SIDEBAR_ROW_HEIGHTS: Record<SidebarLayout, Record<SidebarRowKind, number>> = {
-  desktop: { "pinned-header": 28, session: 32, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 30, spacer: 8, "footer-open": 30, "footer-archived": 30, "archive-group": 26 },
-  mobile: { "pinned-header": 40, session: 44, "pinned-more": 36, group: 40, "group-more": 36, "group-empty": 40, spacer: 8, "footer-open": 44, "footer-archived": 44, "archive-group": 30 },
+  desktop: { "pinned-header": 28, session: 28, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 28, spacer: 8, "footer-open": 28, "footer-archived": 28, "archive-group": 28 },
+  mobile: { "pinned-header": 44, session: 44, "pinned-more": 36, group: 44, "group-more": 36, "group-empty": 44, spacer: 8, "footer-open": 44, "footer-archived": 44, "archive-group": 44 },
 };
 export const GROUP_VISIBLE_LIMIT = 6;
 export const PINNED_VISIBLE_LIMIT = 8;
