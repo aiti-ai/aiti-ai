@@ -39,6 +39,7 @@ import type { SidebarMenuAnchor } from "./SidebarMenu";
 import {
   ArchiveIcon,
   ChevronIcon,
+  FolderIcon,
   FolderPlusIcon,
   MoreIcon,
   PinIcon,
@@ -203,9 +204,14 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
     const element = scrollRef.current;
     if (!element) return;
     // A classic scrollbar takes width on the right only; the rows read its
-    // width so their inset box keeps equal margins on both sides.
+    // width so their inset box keeps equal margins on both sides. The files
+    // section's header below the sessions reads it from the sidebar's root,
+    // to put its folder in the groups' icon column; a tree with no box (under
+    // the archive view, in a hidden tab) measures nothing and leaves it.
     const syncScrollbarWidth = () => {
-      element.style.setProperty("--session-tree-scrollbar", `${Math.max(0, element.offsetWidth - element.clientWidth)}px`);
+      const width = `${Math.max(0, element.offsetWidth - element.clientWidth)}px`;
+      element.style.setProperty("--session-tree-scrollbar", width);
+      if (element.offsetWidth > 0) element.closest<HTMLElement>(".session-sidebar")?.style.setProperty("--session-tree-scrollbar", width);
     };
     syncScrollbarWidth();
     setViewportHeight(element.clientHeight);
@@ -873,6 +879,9 @@ const GroupRowView = memo(function GroupRowView({
         title={project.root}
         onClick={(event) => handlers.current.onToggleGroup(project.key, event.altKey)}
       >
+        {/* A section header, not one more row: a folder in a column of its
+            own, so the name starts where the session titles below it do. */}
+        <FolderIcon size={14} className="session-tree-group-icon" />
         <span className="session-tree-group-name">{project.name}</span>
         {project.pinned && <PinIcon size={10} className="session-tree-group-pin" label={t("sidebar.pinnedProject")} />}
         <ChevronIcon size={10} className={`session-tree-chevron${expanded ? " is-open" : ""}`} />
@@ -937,9 +946,10 @@ const PlainRowView = memo(function PlainRowView({
             aria-expanded={!row.collapsed}
             onClick={() => handlers.current.onTogglePinned()}
           >
+            <PinIcon size={14} className="session-tree-group-icon" />
             <span className="session-tree-pinned-label">{t("sidebar.pinned")}</span>
             <span className="session-tree-pinned-count">· {row.count}</span>
-            <ChevronIcon size={9} className={`session-tree-chevron${row.collapsed ? "" : " is-open"}`} />
+            <ChevronIcon size={10} className={`session-tree-chevron${row.collapsed ? "" : " is-open"}`} />
             {row.collapsed && row.running > 0 && (
               <span
                 className="session-tree-pinned-dot is-running"
@@ -1019,6 +1029,7 @@ const PlainRowView = memo(function PlainRowView({
     case "archive-group":
       return (
         <div className="session-tree-row session-tree-archive-group" style={style} data-row-key={row.key} title={row.project.root}>
+          <FolderIcon size={14} className="session-tree-group-icon" />
           <span className="session-tree-archive-group-name">{row.project.name}</span>
           <span className="session-tree-archive-group-count">· {row.count}</span>
         </div>
