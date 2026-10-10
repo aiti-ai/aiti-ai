@@ -14,6 +14,7 @@ import {
   familiesToArchive,
   familyIds,
   forgetKeptOpenGroups,
+  forgetShownMoreOfFolded,
   isFamilyArchived,
   isGroupExpanded,
   keepOutgoingGroupOpen,
@@ -1472,10 +1473,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   // An explicit choice for the groups `keys` (null: every group): saved, and
   // it replaces what the page kept open for them.
+  // A group it folds also drops its "show more" window: opened again, it
+  // shows its first rows only.
   const saveGroupChoices = useCallback((next: Readonly<Record<string, boolean>>, keys: readonly string[] | null) => {
     setGroupExpansion(next);
     saveGroupExpansion(next);
     setKeptOpenGroups((kept) => forgetKeptOpenGroups(kept, keys));
+    setMoreShown((shown) => forgetShownMoreOfFolded(shown, next, keys));
   }, []);
 
   const showToast = useCallback((message: string, actions: SidebarToastAction[] = [], tail?: string) => {
@@ -2068,6 +2072,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     const next = !pinnedCollapsed;
     setPinnedCollapsed(next);
     savePinnedCollapsed(next);
+    // Folded, the pinned section drops its "show more" window as a group does.
+    if (next) setMoreShown((shown) => showLessFamilies(shown, PINNED_MORE_KEY));
   };
 
   // Everything that goes to the files goes through here: the files tab, or
