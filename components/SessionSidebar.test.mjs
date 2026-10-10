@@ -945,6 +945,10 @@ test("expanding, collapsing or paging a group never changes the cwd", () => {
   // decided at the click); "show less" folds back.
   assert.match(callbackBody("handleShowMore"), /item\.kind === "group-more" && item\.projectKey === key\)[\s\S]*?item\.kind === "pinned-more" && key === PINNED_MORE_KEY[\s\S]*?setMoreShown\(\(prev\) => showMoreFamilies\(prev, key, row\.nextShown\)\);/);
   assert.match(callbackBody("handleShowLess"), /setMoreShown\(\(prev\) => showLessFamilies\(prev, key\)\);/);
+  // Folding a group (any explicit choice) or the pinned section drops its
+  // "show more" window: opened again, it shows its first rows only.
+  assert.match(callbackBody("saveGroupChoices"), /setMoreShown\(\(shown\) => forgetShownMoreOfFolded\(shown, next, keys\)\);/);
+  assert.match(source, /const handleTogglePinned = \(\) => \{[\s\S]*?if \(next\) setMoreShown\(\(shown\) => showLessFamilies\(shown, PINNED_MORE_KEY\)\);/);
   // A toggle reads what is shown (kept open for the page included) and saves
   // an explicit choice, which replaces the page's for that group.
   assert.match(callbackBody("handleToggleGroup"), /const expanded = !isGroupExpanded\(project, shownGroupExpansion\);\s*if \(all\) \{\s*setAllGroupsExpanded\(\(\) => expanded\);\s*return;\s*\}\s*const next = \{ \.\.\.groupExpansion \};[\s\S]*?delete next\[projectKey\];\s*next\[projectKey\] = expanded;\s*saveGroupChoices\(next, \[projectKey\]\);/);
@@ -1131,7 +1135,7 @@ test("the group that stops being current keeps its rows open for the page, never
 
   // Only explicit choices are saved, and each one replaces what the page kept
   // open for its groups (all of them for a choice made for every group).
-  assert.match(callbackBody("saveGroupChoices"), /useCallback\(\(next: Readonly<Record<string, boolean>>, keys: readonly string\[\] \| null\) => \{\s*setGroupExpansion\(next\);\s*saveGroupExpansion\(next\);\s*setKeptOpenGroups\(\(kept\) => forgetKeptOpenGroups\(kept, keys\)\);\s*\}, \[\]\);/);
+  assert.match(callbackBody("saveGroupChoices"), /useCallback\(\(next: Readonly<Record<string, boolean>>, keys: readonly string\[\] \| null\) => \{\s*setGroupExpansion\(next\);\s*saveGroupExpansion\(next\);\s*setKeptOpenGroups\(\(kept\) => forgetKeptOpenGroups\(kept, keys\)\);\s*setMoreShown\(\(shown\) => forgetShownMoreOfFolded\(shown, next, keys\)\);\s*\}, \[\]\);/);
   assert.equal((source.match(/saveGroupExpansion\(/g) ?? []).length, 1, "saved in one place");
   assert.equal((source.match(/setGroupExpansion\(/g) ?? []).length, 2, "the load after hydration and saveGroupChoices");
 });
