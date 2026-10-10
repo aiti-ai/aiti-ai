@@ -68,7 +68,10 @@ export interface SessionTreeInput {
   selectedSessionId: string | null;
   /** projectFor(selectedCwd); shown as a group even without sessions. */
   currentProject: { key: string; root: string } | null;
-  /** Explicit user choices only (from prefs); see isGroupExpanded. */
+  /**
+   * Explicit user choices (from prefs) over the groups kept open for the
+   * page (effectiveGroupExpansion); see isGroupExpanded.
+   */
   groupExpansion: Readonly<Record<string, boolean>>;
   /** Families revealed beyond the base limit by "show more", per projectKey or PINNED_MORE_KEY. */
   moreShown: Readonly<Record<string, number>>;
@@ -171,20 +174,57 @@ export function isGroupExpanded(project: SidebarProject, groupExpansion: Readonl
 }
 
 /**
- * Group choices once `outgoing`, the project that was current, no longer is
- * (`outgoing` as the new model has it). A group open only by the "current"
- * default would fold up at once: picking a session in another group would
- * move every row below it, the clicked one included, from under the pointer.
- * It stays open as an explicit choice instead. Returns `groupExpansion`
- * itself when nothing changes: an explicit choice, a pinned project (open by
- * default anyway), a project still current, or one without a group any more.
+ * The groups kept open for the page once `outgoing`, the project that was
+ * current, no longer is (`outgoing` as the new model has it). A group open
+ * only by the "current" default would fold up at once: picking a session in
+ * another group would move every row below it, the clicked one included,
+ * from under the pointer. It stays open for the page's life instead, never
+ * as a saved choice: saved, every project ever visited would come back open
+ * after a reload. Returns `keptOpen` itself when nothing changes: an explicit
+ * choice in `groupExpansion` (the saved ones), a group already kept open, a
+ * pinned project (open by default anyway), a project still current, or one
+ * without a group any more.
  */
 export function keepOutgoingGroupOpen(
+  keptOpen: ReadonlySet<string>,
   groupExpansion: Readonly<Record<string, boolean>>,
   outgoing: SidebarProject | undefined,
+): ReadonlySet<string> {
+  if (!outgoing || outgoing.current || outgoing.pinned) return keptOpen;
+  if (keptOpen.has(outgoing.key) || Object.hasOwn(groupExpansion, outgoing.key)) return keptOpen;
+  return new Set(keptOpen).add(outgoing.key);
+}
+
+/**
+ * What the tree shows and every toggle reads: the saved choices over the
+ * groups kept open for the page (keepOutgoingGroupOpen). Returns
+ * `groupExpansion` itself while none is kept open. Never saved: only
+ * explicit choices are.
+ */
+export function effectiveGroupExpansion(
+  groupExpansion: Readonly<Record<string, boolean>>,
+  keptOpen: ReadonlySet<string>,
 ): Readonly<Record<string, boolean>> {
-  if (!outgoing || outgoing.current || outgoing.pinned || Object.hasOwn(groupExpansion, outgoing.key)) return groupExpansion;
-  return { ...groupExpansion, [outgoing.key]: true };
+  if (keptOpen.size === 0) return groupExpansion;
+  // fromEntries defines own properties, so no key can reach the prototype.
+  return Object.fromEntries([
+    ...[...keptOpen].filter((key) => !Object.hasOwn(groupExpansion, key)).map((key) => [key, true] as const),
+    ...Object.entries(groupExpansion),
+  ]);
+}
+
+/**
+ * `keptOpen` without the groups an explicit choice now covers (`keys`; null
+ * for a choice made for every group at once). Returns `keptOpen` itself
+ * when none of them was in it.
+ */
+export function forgetKeptOpenGroups(keptOpen: ReadonlySet<string>, keys: readonly string[] | null): ReadonlySet<string> {
+  if (keptOpen.size === 0) return keptOpen;
+  if (keys === null) return new Set();
+  if (!keys.some((key) => keptOpen.has(key))) return keptOpen;
+  const next = new Set(keptOpen);
+  for (const key of keys) next.delete(key);
+  return next;
 }
 
 function familyStatus(family: SessionFamily, input: FamilyFlagsInput): SidebarFamilyStatus {
