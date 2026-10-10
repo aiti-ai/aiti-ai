@@ -2,7 +2,8 @@
  * Per-browser sidebar preferences: the active tab (sessions or files), the
  * user's explicit project group expand/collapse choices, whether the pinned
  * section is collapsed, whether the files section below the sessions is
- * collapsed, and whether the files tab or section lists ignored files.
+ * collapsed, whether the files tab or section lists ignored files, and the
+ * folders the worktree listing last found outside git.
  * Best-effort localStorage, like the other sidebar memories: privacy mode or
  * quota errors fall back to defaults.
  */
@@ -19,6 +20,7 @@ const LEGACY_GROUP_EXPANSION_STORAGE_KEY = "pi-web:sidebar-groups";
 const PINNED_COLLAPSED_STORAGE_KEY = "pi-web:sidebar-pins-collapsed";
 const SHOW_IGNORED_FILES_STORAGE_KEY = "pi-web:sidebar-files-show-ignored";
 const FILES_COLLAPSED_STORAGE_KEY = "pi-web:sidebar-files-collapsed";
+const NON_GIT_CWDS_STORAGE_KEY = "pi-web:sidebar-non-git-cwds";
 /**
  * Keys nothing reads now: the sessions/explorer split's, which the two tabs
  * replaced, and the group choices before v2 (loadGroupExpansion reads them
@@ -28,6 +30,8 @@ const RETIRED_STORAGE_KEYS = ["pi-web:file-explorer:open", "pi-web:sidebar-sessi
 
 /** Oldest choices are dropped beyond this many project keys. */
 const MAX_GROUP_EXPANSION_ENTRIES = 300;
+/** Oldest folders are dropped beyond this many. */
+const MAX_NON_GIT_CWDS = 50;
 
 export type SidebarTab = "sessions" | "files";
 
@@ -187,6 +191,48 @@ export function saveFilesCollapsed(
   if (!storage) return;
   try {
     storage.setItem(FILES_COLLAPSED_STORAGE_KEY, String(collapsed));
+  } catch {
+    // Persistence is best-effort.
+  }
+}
+
+/**
+ * Folders the worktree listing last found outside any git repository, oldest
+ * first. The sidebar knows them before its listing answers, after a reload
+ * too, so such a folder never shows the "checking" worktree box only to drop
+ * it and widen the project box (the default dated folder is one).
+ */
+export function loadNonGitCwds(storage: StorageLike | null = getBrowserStorage()): string[] {
+  if (!storage) return [];
+  try {
+    const raw = storage.getItem(NON_GIT_CWDS_STORAGE_KEY);
+    const value: unknown = raw === null ? [] : JSON.parse(raw);
+    if (!Array.isArray(value)) return [];
+    return value.filter((cwd): cwd is string => typeof cwd === "string" && cwd !== "").slice(-MAX_NON_GIT_CWDS);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Records what a listing found for `cwd`: a folder outside git becomes the
+ * newest, one in git leaves the list (it may have become a repository).
+ * Read, then written, so the folders another tab saved stay; nothing is
+ * written when nothing changes.
+ */
+export function rememberCwdGitStatus(
+  cwd: string,
+  isGit: boolean,
+  storage: StorageLike | null = getBrowserStorage(),
+): void {
+  if (!storage || !cwd) return;
+  const known = loadNonGitCwds(storage);
+  const index = known.indexOf(cwd);
+  if (isGit ? index === -1 : index !== -1 && index === known.length - 1) return;
+  const next = known.filter((other) => other !== cwd);
+  if (!isGit) next.push(cwd);
+  try {
+    storage.setItem(NON_GIT_CWDS_STORAGE_KEY, JSON.stringify(next.slice(-MAX_NON_GIT_CWDS)));
   } catch {
     // Persistence is best-effort.
   }

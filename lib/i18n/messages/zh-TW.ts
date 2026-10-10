@@ -302,8 +302,6 @@ export const zhTWLocale: LocalePlugin = {
     "sidebar.cancel": "取消",
     "sidebar.openRepoRoot": "開啟儲存庫根目錄",
     "sidebar.openRepoRootTitle": "開啟儲存庫根目錄以管理 worktree。",
-    "sidebar.gitRepoRootOnly": "僅限 Git 儲存庫根目錄",
-    "sidebar.gitRepoRootOnlyTitle": "worktree 只能在 Git 儲存庫根目錄使用。",
     "sidebar.worktrees": "Worktrees...",
     "sidebar.checkingWorktrees": "正在檢查此目錄的 worktree。",
     "sidebar.filterWorktrees": "篩選 worktree…",
