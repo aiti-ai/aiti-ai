@@ -152,11 +152,19 @@ test("stacked: no project yet, and no worktree list", () => {
   assert.match(empty, /<span class="project-picker-label">Select project…<\/span>/);
   assert.equal((empty.match(/<button /g) ?? []).length, 1);
 
-  // A subdirectory or a non-git folder: a disabled row says why, out of the tab order.
+  // A subdirectory of a git checkout: a disabled row says why, out of the tab order.
   const hint = { label: "Open repo root", title: "Open the repository root to manage worktrees." };
   const subdir = render({ context: { ...context, worktrees: null, currentWorktreePath: null }, worktreeHint: hint });
   assert.match(subdir, /<button type="button" aria-disabled="true" tabindex="-1" title="Open the repository root to manage worktrees\." class="project-picker-button is-inactive"><svg[^>]*class="project-picker-icon"[\s\S]*?<span class="project-picker-label">Open repo root<\/span><\/button>/);
   assert.equal((subdir.match(/aria-haspopup="menu"/g) ?? []).length, 1, "one menu button");
+  // A folder outside git gets no hint from the sidebar: the project box
+  // alone, in the tab and in the row, where it takes the whole row.
+  for (const layout of ["stacked", "row"]) {
+    const plain = render({ layout, context: { ...context, worktrees: null, currentWorktreePath: null } });
+    assert.equal((plain.match(/<button /g) ?? []).length, 1, layout);
+    assert.doesNotMatch(plain, /is-inactive|project-picker-icon/, layout);
+  }
+  assert.match(css, /\.project-picker\.is-row \.project-picker-button\.is-project \{\s*flex: 1 1 0;\s*\}/);
   // The chips have no hint: the project alone.
   assert.doesNotMatch(render({ layout: "inline", context: { ...context, worktrees: null }, worktreeHint: hint }), /is-inactive|project-picker-divider/);
 });

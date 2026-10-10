@@ -27,9 +27,11 @@ import {
   forgetRetiredSidebarKeys,
   loadFilesCollapsed,
   loadGroupExpansion,
+  loadNonGitCwds,
   loadPinnedCollapsed,
   loadShowIgnoredFiles,
   loadSidebarTab,
+  rememberCwdGitStatus,
   saveFilesCollapsed,
   saveGroupExpansion,
   savePinnedCollapsed,
@@ -62,13 +64,14 @@ import {
   type ProjectMovePosition,
   type SessionUiStateRequest,
 } from "@/lib/session-ui-state-shared";
-import { focusIfLost } from "@/lib/stacked-dialog";
+import { focusIfLost, type FocusDocument } from "@/lib/stacked-dialog";
 import { useFilesPlacement } from "@/hooks/useFilesPlacement";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useScrollbarVisibility } from "@/hooks/useScrollbarVisibility";
 import { useSessionUiState } from "@/hooks/useSessionUiState";
+import { archiveViewState, filesFoldState, useSidebarMotion } from "@/hooks/useSidebarMotion";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { DismissButton } from "./DismissButton";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
@@ -126,6 +129,7 @@ declare global {
  * sessions, or in the files tab's row under the project and worktree.
  */
 function ToolbarIconButton({
+  ref,
   onClick,
   title,
   disabled,
@@ -136,6 +140,7 @@ function ToolbarIconButton({
   className,
   children,
 }: {
+  ref?: Ref<HTMLButtonElement>;
   onClick: () => void;
   title: string;
   disabled?: boolean;
@@ -152,6 +157,7 @@ function ToolbarIconButton({
 }) {
   return (
     <button
+      ref={ref}
       type="button"
       onClick={onClick}
       disabled={disabled}
@@ -388,16 +394,41 @@ function shortTitle(title: string, max: number): string {
 
 /**
  * focusIfLost, also when focus is still on an element that is no longer
- * rendered (in a view just hidden): browsers move it to <body> only at their
- * next rendering update, so it does not count as lost yet.
+ * rendered (in a view just hidden) or inert (in a view sliding away, or
+ * covered by one sliding in): browsers move it to <body> only at their next
+ * rendering update, so it does not count as lost yet.
  */
 function focusIfHidden(target: HTMLElement | null): void {
   const active = document.activeElement;
-  if (target && active instanceof HTMLElement && active !== document.body && active.getClientRects().length === 0) {
+  if (target && active instanceof HTMLElement && active !== document.body && (active.getClientRects().length === 0 || active.closest("[inert]") !== null)) {
     target.focus({ preventScroll: true });
     return;
   }
   focusIfLost(document, target);
+}
+
+/** The key nearest `key` in its group that is still enabled, the next one first. */
+export function nearestEnabledKey(key: Element): HTMLButtonElement | null {
+  const enabled = (element: Element | null): element is HTMLButtonElement => element?.tagName === "BUTTON" && !(element as HTMLButtonElement).disabled;
+  for (let next = key.nextElementSibling; next; next = next.nextElementSibling) if (enabled(next)) return next;
+  for (let previous = key.previousElementSibling; previous; previous = previous.previousElementSibling) if (enabled(previous)) return previous;
+  return null;
+}
+
+/**
+ * Hands the focus of a key just disabled to the nearest key still enabled
+ * (else `fallback`). Focus still on the key counts as lost: current Chromium
+ * (154) keeps a just-disabled element focused until its next rendering
+ * update, after the layout effect that calls this, and only then blurs it to
+ * the page (relatedTarget null; older builds blur it at once, which
+ * focusIfLost covers). Focus the user put elsewhere stays. Returns whether
+ * it moved focus.
+ */
+export function handOffDisabledKeyFocus(doc: FocusDocument, key: Element, fallback: HTMLElement | null): boolean {
+  const target = nearestEnabledKey(key) ?? fallback;
+  if (!target || doc.activeElement !== key) return focusIfLost(doc, target);
+  target.focus({ preventScroll: true });
+  return true;
 }
 
 /**
@@ -460,6 +491,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const filesPickerRef = useRef<ProjectWorktreePickerHandle>(null);
   const [worktreeState, setWorktreeState] = useState<WorktreeState | null>(null);
   const [worktreeLoadingCwd, setWorktreeLoadingCwd] = useState<string | null>(null);
+  // Folders the listing last found outside any git repository, loaded from
+  // the browser's memory of them (after a reload too: the default dated
+  // folder is one) on the first client render: while one is listed, no
+  // "checking" box shows only to go and widen the project box. The server's
+  // render reads none; the box shows only once a listing starts, client-side.
+  const nonGitCwdsRef = useRef<Set<string> | null>(null);
+  nonGitCwdsRef.current ??= new Set(loadNonGitCwds());
   const [explorerKey, setExplorerKey] = useState(0);
   const [explorerUploadBusy, setExplorerUploadBusy] = useState(false);
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
@@ -511,7 +549,23 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   const [keptOpenGroups, setKeptOpenGroups] = useState<ReadonlySet<string>>(() => new Set());
   const [moreShown, setMoreShown] = useState<Readonly<Record<string, number>>>({});
   const [pinnedCollapsed, setPinnedCollapsed] = useState(false);
-  const [archiveView, setArchiveView] = useState(false);
+  const [archiveView, setArchiveViewState] = useState(false);
+  // The fold and the archive view move (hooks/useSidebarMotion.ts): only
+  // when the user folds or goes in or out, never on a restore, a drag, keys,
+  // a resize or a layout switch, and not at all under reduced motion. The
+  // current values tell a change from a repeat, which starts nothing.
+  const { phase: filesFoldPhase, start: startFilesFold, end: endFilesFold } = useSidebarMotion();
+  const { phase: archivePhase, start: startArchiveMotion, end: endArchiveMotion } = useSidebarMotion();
+  const filesCollapsedRef = useRef(filesCollapsed);
+  filesCollapsedRef.current = filesCollapsed;
+  const archiveViewRef = useRef(archiveView);
+  archiveViewRef.current = archiveView;
+  const setArchiveView = useCallback((open: boolean) => {
+    if (open !== archiveViewRef.current) startArchiveMotion(open ? "in" : "out");
+    setArchiveViewState(open);
+  }, [startArchiveMotion]);
+  const filesFold = filesFoldState(filesCollapsed, filesFoldPhase);
+  const archiveMotion = archiveViewState(archiveView, archivePhase);
   // Row states that must survive virtualization live here, not in the rows.
   const [renamingRootId, setRenamingRootId] = useState<string | null>(null);
   const [renamingProjectKey, setRenamingProjectKey] = useState<string | null>(null);
@@ -1009,6 +1063,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           setWorktreeState(null);
           return;
         }
+        if (d.isGit) nonGitCwdsRef.current?.delete(selectedCwd);
+        else nonGitCwdsRef.current?.add(selectedCwd);
+        rememberCwdGitStatus(selectedCwd, Boolean(d.isGit));
         setWorktreeState({
           forCwd: selectedCwd,
           projectRoot: d.projectRoot,
@@ -1277,23 +1334,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     && selectedCwd
     && selectedProject?.key === worktreeState.projectKey
   );
+  // A subdirectory of a git checkout keeps a disabled box saying why it has
+  // no worktrees (its root has them). A folder outside any repository has
+  // no worktree box at all: the project box takes the whole row.
   const worktreeGuide = selectedCwd
-    && worktreeState
+    && worktreeState?.isGit
     && selectedProject?.key === worktreeState.projectKey
     && !showWorktreeSwitcher
-    ? (worktreeState.isGit
-        ? {
-             label: t("sidebar.openRepoRoot"),
-             title: t("sidebar.openRepoRootTitle"),
-          }
-        : {
-             label: t("sidebar.gitRepoRootOnly"),
-             title: t("sidebar.gitRepoRootOnlyTitle"),
-          })
+    ? {
+        label: t("sidebar.openRepoRoot"),
+        title: t("sidebar.openRepoRootTitle"),
+      }
     : null;
   const worktreeLoading = Boolean(selectedCwd && worktreeLoadingCwd === selectedCwd);
   const inactiveWorktreeSelector = worktreeGuide
-    ?? (worktreeLoading && !showWorktreeSwitcher
+    ?? (worktreeLoading && !showWorktreeSwitcher && !(selectedCwd && nonGitCwdsRef.current?.has(selectedCwd))
       ? {
            label: t("sidebar.worktrees"),
            title: t("sidebar.checkingWorktrees"),
@@ -1327,7 +1382,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     moreShown,
     pinnedCollapsed,
   }), [allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject, shownGroupExpansion, moreShown, pinnedCollapsed]);
-  const archiveRows = useMemo(() => (archiveView ? buildArchiveRows({
+  // Built while the archive view is rendered, its way out included: it
+  // leaves as it was, not empty.
+  const archiveMounted = archiveMotion.archiveMounted;
+  const archiveRows = useMemo(() => (archiveMounted ? buildArchiveRows({
     sessions: allSessions,
     uiState,
     runningIds: runningSessionIds,
@@ -1335,7 +1393,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     unreadIds: unreadSessionIds,
     selectedSessionId,
     currentProject,
-  }) : []), [archiveView, allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject]);
+  }) : []), [archiveMounted, allSessions, uiState, runningSessionIds, awaitingInputSessionIds, unreadSessionIds, selectedSessionId, currentProject]);
   const projectByKey = useMemo(
     () => new Map(model.projects.map((project) => [project.key, project])),
     [model.projects],
@@ -1493,10 +1551,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     saveSidebarTab(tab);
   }, [stacked]);
 
+  // Every fold and unfold goes through here (the toggle, revealFiles, the
+  // file search, changes and upload keys, a file manager error), and moves;
+  // the restore after hydration sets the state directly and does not.
   const setFilesSectionCollapsed = useCallback((collapsed: boolean) => {
+    if (collapsed !== filesCollapsedRef.current) startFilesFold(collapsed ? "out" : "in");
     setFilesCollapsed(collapsed);
     saveFilesCollapsed(collapsed);
-  }, []);
+  }, [startFilesFold]);
 
   // A hidden panel is display: none, and browsers do not reliably keep the
   // scroll position of what it holds. Positions are noted as the user
@@ -1523,12 +1585,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     // Search results would cover it.
     setSessionSearchOpen(false);
     switchTab("sessions");
-  }, [switchTab]);
+  }, [setArchiveView, switchTab]);
 
   // Opening the archive hides the tree that held focus (the footer link, a
   // menu's opener, the toast's View) and Back removes the archive's own
-  // controls. Focus that went with them moves to the archive's Back button,
-  // then back to the footer link, or to the tab when that row is not shown.
+  // controls; while the view slides in or away, what it covers or what
+  // leaves is inert first (focusIfHidden counts both). Focus that went with
+  // them moves to the archive's Back button, then back to the footer link,
+  // or to the tab when that row is not shown.
   const archiveBackRef = useRef<HTMLButtonElement>(null);
   const previousArchiveViewRef = useRef(archiveView);
   // Where closing the archive put focus: a fork opened from the archive
@@ -2022,8 +2086,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // Once the files show, the project button takes the focus, or its menu
   // opens below it (the menu takes the focus: its filter or first project),
   // or the file search field does. Below the sessions they may show already:
-  // the request counter runs it all the same.
-  const filesShown = stacked ? !filesCollapsed : sidebarTab === "files";
+  // the request counter runs it all the same. An unfolding section is not
+  // shown yet: its button is still below the sidebar's edge, where the
+  // project menu would be placed.
+  const filesShown = stacked ? filesFold.open : sidebarTab === "files";
   useEffect(() => {
     const target = filesFocusRef.current;
     if (!target || !filesShown) return;
@@ -2201,18 +2267,20 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   const explorerCwd = selectedCwd ?? selectedCwdProp ?? null;
   const changedFilesTitle = explorerCwd && changesCount > 0 ? t("sidebar.changedFiles", { count: changesCount }) : undefined;
-  // The count goes when nothing is changed any more (a commit, a revert),
-  // under a keyboard user too: focus on it would fall to the page, so it
-  // moves to the key after it, the file search. React detaches the ref
-  // before it removes the button, while the button still has the focus.
-  const changesChipRef = useCallback((chip: HTMLButtonElement | null) => {
-    if (!chip) return;
-    return () => {
-      if (chip.ownerDocument.activeElement !== chip) return;
-      const next = chip.nextElementSibling;
-      focusAfterCommit(() => (next instanceof HTMLElement && next.isConnected ? next : null));
-    };
-  }, [focusAfterCommit]);
+  // The changes view's key turns disabled once nothing is changed (a
+  // commit, a revert), under a keyboard user too. The browser blurs it to
+  // the page only at its next rendering update (current Chromium), after
+  // this effect, and that blur clears the root's note, so nothing would try
+  // again: while the note still names the key, its focus goes now to the
+  // nearest key still enabled (the file search after it below the
+  // sessions, the ignored-files switch before it in the tab).
+  const changesKeyRef = useRef<HTMLButtonElement>(null);
+  const changesKeyDisabled = !explorerCwd || changesCount === 0;
+  useLayoutEffect(() => {
+    const key = changesKeyRef.current;
+    if (!changesKeyDisabled || !key || sidebarFocusRef.current !== key) return;
+    handOffDisabledKeyFocus(document, key, selectedTabButton());
+  }, [changesKeyDisabled, selectedTabButton]);
   // The toolbar row's search button searches the files on the files tab:
   // the head has no search of its own. Below the sessions it is the
   // sessions' search alone; the files section's header has the files'.
@@ -2301,11 +2369,33 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       <EyeIcon size={14} />
     </ToolbarIconButton>
   );
+  // The tree's second view, its changes: there without changes too,
+  // disabled, so nothing moves as an agent edits files and commits.
+  const changesButton = (
+    <ToolbarIconButton
+      ref={changesKeyRef}
+      onClick={() => {
+        // Below the sessions this key is in the header row, there while the
+        // section is folded too: a folded section opens on the changes.
+        if (stacked && filesCollapsed) {
+          setFilesSectionCollapsed(false);
+          setChangesCollapsed(false);
+          return;
+        }
+        setChangesCollapsed((collapsed) => !collapsed);
+      }}
+      disabled={changesKeyDisabled}
+      title={t("sidebar.changedFiles", { count: changesCount })}
+      pressed={!changesKeyDisabled && !changesCollapsed}
+    >
+      <ChangesIcon size={14} />
+    </ToolbarIconButton>
+  );
 
   return (
     <div
       ref={setSidebarRoot}
-      className={`session-sidebar${stacked ? " is-files-below" : ""}${stacked && filesCollapsed ? " is-files-collapsed" : ""}${toast ? " has-toast" : ""}`}
+      className={`session-sidebar${stacked ? " is-files-below" : ""}${stacked && filesCollapsed ? " is-files-collapsed" : ""}${stacked && filesFold.moving ? " is-files-folding" : ""}${toast ? " has-toast" : ""}`}
       style={{ "--sidebar-files-height": `${filesSizer.width}px` } as CSSProperties}
       onFocus={(event) => { sidebarFocusRef.current = event.target; }}
       onBlur={(event) => { if (event.relatedTarget === null && !document.hasFocus()) return; if (!event.currentTarget.contains(event.relatedTarget)) sidebarFocusRef.current = null; }}
@@ -2450,42 +2540,54 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           onSelectSession={handleSelectSessionFromList}
           archivedSessionIds={archiveIndex.ids}
         >
-          {/* Kept mounted under the archive view, so going back finds it as it was. */}
-          <div className="sidebar-sessions-view" hidden={archiveView}>
-            <SessionTree
-              {...treeProps}
-              rows={model.rows}
-              emptyLabel={t("sidebar.noSessions")}
-              reveal={treeReveal}
-              onRevealHandled={handleRevealHandled}
-            />
-          </div>
-          {archiveView && (
-            <div className="sidebar-sessions-view">
-              <div className="sidebar-archive-bar">
-                <button
-                  ref={archiveBackRef}
-                  type="button"
-                  className="sidebar-archive-back"
-                  title={t("sidebar.backToSessions")}
-                  aria-label={`${t("sidebar.backToSessions")}: ${t("sidebar.archivedCount", { count: archivedCount })}`}
-                  onClick={() => setArchiveView(false)}
-                >
-                  <ChevronIcon size={13} className="sidebar-icon-back" />
-                  <span>{t("sidebar.archived")}</span>
-                  <span className="sidebar-archive-count">· {archivedCount}</span>
-                </button>
-              </div>
-              <SessionTree {...treeProps} rows={archiveRows} emptyLabel={t("sidebar.noArchived")} />
+          {/* The tree and the archive view share one cell: the archive
+              slides in over the tree and away from it again. */}
+          <div className="sidebar-sessions-views">
+            {/* Kept mounted under the archive view, so going back finds it as
+                it was: inert while the archive slides in, then hidden. */}
+            <div className="sidebar-sessions-view" hidden={archiveMotion.mainHidden} inert={archiveMotion.mainInert}>
+              <SessionTree
+                {...treeProps}
+                rows={model.rows}
+                emptyLabel={t("sidebar.noSessions")}
+                reveal={treeReveal}
+                onRevealHandled={handleRevealHandled}
+              />
             </div>
-          )}
+            {/* Mounted while open and on its way out, inert then, so nothing
+                in it is clicked twice; the tree is back under it at once. */}
+            {archiveMotion.archiveMounted && (
+              <div
+                className={`sidebar-sessions-view sidebar-archive-view${archiveMotion.archiveClass ? ` ${archiveMotion.archiveClass}` : ""}`}
+                inert={archiveMotion.archiveInert}
+                onAnimationEnd={(event) => { if (event.target === event.currentTarget) endArchiveMotion(); }}
+              >
+                <div className="sidebar-archive-bar">
+                  <button
+                    ref={archiveBackRef}
+                    type="button"
+                    className="sidebar-archive-back"
+                    title={t("sidebar.backToSessions")}
+                    aria-label={`${t("sidebar.backToSessions")}: ${t("sidebar.archivedCount", { count: archivedCount })}`}
+                    onClick={() => setArchiveView(false)}
+                  >
+                    <ChevronIcon size={13} className="sidebar-icon-back" />
+                    <span>{t("sidebar.archived")}</span>
+                    <span className="sidebar-archive-count">· {archivedCount}</span>
+                  </button>
+                </div>
+                <SessionTree {...treeProps} rows={archiveRows} emptyLabel={t("sidebar.noArchived")} />
+              </div>
+            )}
+          </div>
         </SessionSearch>
       </div>
 
       {/* Below the sessions, the separator: drag, arrows, Home/End, Enter
           or a double-click to reset (useResizablePanel). Only while the
-          files section is open. */}
-      {stacked && !filesCollapsed && (
+          files section is open and still: a drag never meets the fold's
+          height transition. */}
+      {stacked && filesFold.open && (
         <div
           {...filesSizer.separatorProps}
           aria-controls="session-sidebar-panel-files"
@@ -2507,9 +2609,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         hidden={!stacked && sidebarTab !== "files"}
         className="sidebar-panel sidebar-files-panel"
         onScrollCapture={rememberScroll}
+        onTransitionEnd={(event) => { if (event.target === event.currentTarget && event.propertyName === "height") endFilesFold(); }}
       >
-        {/* Below the sessions, one row: the section's toggle (its label
-            gives way first), then the files' keys at its right end. They
+        {/* Below the sessions, one row: the section's toggle (its label,
+            then the count, give way first), then the files' keys at its
+            right end, in the files tab's order with the search last. They
             stay in this row while the section is folded. */}
         {stacked && (
           <div className="sidebar-files-section">
@@ -2518,36 +2622,21 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               className="sidebar-files-section-toggle"
               aria-expanded={!filesCollapsed}
               aria-controls="session-sidebar-files-body"
+              title={changedFilesTitle}
               onClick={() => setFilesSectionCollapsed(!filesCollapsed)}
             >
               <ChevronIcon size={12} strokeWidth={3} className={`session-tree-chevron${filesCollapsed ? "" : " is-open"}`} />
               <span className="sidebar-files-section-label">{t("sidebar.tabFiles")}</span>
+              {/* As the pinned section's count; the changes key says it to a screen reader. */}
+              {changedFilesTitle && <span className="sidebar-files-section-count" aria-hidden="true">· {changesCount}</span>}
             </button>
             <div className="sidebar-files-keys" role="group" aria-label={t("sidebar.fileActions")}>
-              {/* The changed files' count is the changes view's switch, there
-                  only while something is changed. First in a group aligned
-                  right, so its coming and going never moves a key. Folded,
-                  the section opens on the changes. */}
-              {explorerCwd && changesCount > 0 && (
-                <button
-                  ref={changesChipRef}
-                  type="button"
-                  className={`sidebar-files-changes${changesCollapsed ? "" : " is-active"}`}
-                  aria-pressed={!changesCollapsed}
-                  title={changedFilesTitle}
-                  aria-label={changedFilesTitle}
-                  onClick={() => {
-                    if (filesCollapsed) {
-                      setFilesSectionCollapsed(false);
-                      setChangesCollapsed(false);
-                      return;
-                    }
-                    setChangesCollapsed((collapsed) => !collapsed);
-                  }}
-                >
-                  {changesCount}
-                </button>
-              )}
+              {terminalButton}
+              {fileManagerButton}
+              {uploadButton}
+              {refreshButton}
+              {ignoredFilesButton()}
+              {changesButton}
               <ToolbarIconButton
                 onClick={() => {
                   // Folded, the section opens first, with the field open and focused.
@@ -2565,17 +2654,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               >
                 <SearchIcon size={14} />
               </ToolbarIconButton>
-              {terminalButton}
-              {fileManagerButton}
-              {uploadButton}
-              {refreshButton}
-              {ignoredFilesButton()}
             </div>
           </div>
         )}
         {/* Everything under that header row: hidden while the section is
-            folded, never unmounted. */}
-        <div id="session-sidebar-files-body" className="sidebar-files-body" hidden={stacked && filesCollapsed}>
+            folded, never unmounted. Shown from the start of an unfold, and
+            until the end of a fold, inert then. */}
+        <div id="session-sidebar-files-body" className="sidebar-files-body" hidden={stacked && filesFold.bodyHidden} inert={stacked && filesFold.bodyInert}>
           {/* One head: the folder in use, then (in the files tab) what is
               done with it; below the sessions the keys are the header row's.
               The buttons are the head's, not the picker's: its group names
@@ -2587,7 +2672,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 layout switch never remounts it). Its worktree box shows only at the
                 top of a git checkout (repo subdirs keep their own project
                 identity, so switching from them would jump projects); a disabled
-                box says why elsewhere. The list comes from the loaded project
+                box says why in a subdirectory, and a folder outside git has
+                none. The list comes from the loaded project
                 (not just its forCwd), so switching between worktrees of one
                 project keeps the box instead of flickering while it refetches. */}
             <ProjectWorktreePicker
@@ -2621,14 +2707,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 {uploadButton}
                 {refreshButton}
                 {ignoredFilesButton("sidebar-files-views-start")}
-                <ToolbarIconButton
-                  onClick={() => setChangesCollapsed((v) => !v)}
-                  disabled={changesCount === 0}
-                  title={t("sidebar.changedFiles", { count: changesCount })}
-                  pressed={changesCount > 0 && !changesCollapsed}
-                >
-                  <ChangesIcon size={14} />
-                </ToolbarIconButton>
+                {changesButton}
               </div>
             )}
           </div>
