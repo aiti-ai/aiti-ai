@@ -51,14 +51,27 @@ function between(start, end) {
   return source.slice(from, to);
 }
 
-test("inline: the files tab's two boxes, side by side", () => {
+test("inline: the project's name and the branch as text, no path and no notes", () => {
   const html = render({ layout: "inline", homeDir: "/home/me" });
   assert.match(html, /^<div class="project-picker is-inline" role="group" aria-label="Project and worktree">/);
-  // The same boxes in both places: only the layout differs.
-  assert.equal(html.replace("project-picker is-inline", "project-picker is-stacked"), render({ homeDir: "/home/me" }));
-  assert.doesNotMatch(html, /project-picker-divider|is-name/);
+  // A folder icon, the name, a chevron; the whole path only as the tooltip
+  // (the menu's rows show it on a desktop).
+  assert.match(html, /<button type="button" class="project-picker-button is-project" title="\/home\/me\/work\/app" aria-haspopup="menu" aria-expanded="false"><svg width="12" height="12"[^>]*class="project-picker-icon"[\s\S]*?<\/svg><span class="project-picker-name"><span class="project-picker-leaf">app<\/span><\/span><svg width="9" height="9"[^>]*class="project-picker-chevron sidebar-icon-down"[\s\S]*?<\/svg><\/button>/);
+  assert.doesNotMatch(html, /~\/work\/app<|project-picker-label/);
+  // The branch, cut at its left, and the chevron: neither "main" nor the count.
+  assert.match(html, /class="project-picker-icon is-linked"[\s\S]*?<\/svg><span class="project-picker-path"><span>feature\/x<\/span><\/span><svg width="9" height="9"/);
+  const main = render({ layout: "inline", context: { ...context, currentWorktreePath: "/home/me/work/app" } });
+  assert.match(main, /<span class="project-picker-path"><span>main<\/span><\/span><svg width="9"/);
+  assert.doesNotMatch(html + main, /project-picker-note|project-picker-divider|is-name/);
+  // Twins get the parent folder and "/", dim, before the name, each in a
+  // span of its own: the parent is cut first, the name last.
+  const twins = { ...context, projects: [...context.projects, { key: "old-key", root: "/home/me/old/app" }] };
+  assert.match(render({ layout: "inline", context: twins }), /<span class="project-picker-name"><span class="project-picker-parent">work<\/span>\/<span class="project-picker-leaf">app<\/span><\/span>/);
+  assert.match(source, /describeProjectChoices\(projectChoices\(context\)\)\.find\(\(\{ choice \}\) => choice\.key === project\.key\)/);
   // The files tab's own: activity elsewhere and the hint for a missing worktree list.
   assert.doesNotMatch(render({ layout: "inline", projectActivity: new Map([["lib-key", { running: 1, unread: 0 }]]) }), /project-picker-activity/);
+  // The files' boxes keep their paths and notes.
+  assert.doesNotMatch(render({ homeDir: "/home/me" }) + render({ layout: "row" }), /project-picker-name|<svg width="12"/);
 });
 
 test("row: the files' boxes below the sessions, side by side, with everything the stacked ones have", () => {
@@ -84,7 +97,7 @@ test("row: the files' boxes below the sessions, side by side, with everything th
   assert.doesNotMatch(mainRow, /project-picker-note">main</);
   assert.doesNotMatch(mainRow, /is-linked/);
   assert.match(render({ context: mainContext }), /<span class="project-picker-note">main<\/span>/);
-  assert.match(render({ layout: "inline", context: mainContext }), /<span class="project-picker-note">main<\/span>/);
+  assert.doesNotMatch(render({ layout: "inline", context: mainContext }), /project-picker-note/);
   assert.match(source, /layout: "inline" \| "stacked" \| "row";/);
   assert.match(source, /const stacked = layout !== "inline";/);
   // Side by side, a little lower than the tab's: the worktree box as wide as
@@ -123,11 +136,15 @@ test("stacked: main's two boxes, the project's whole path and the worktree's bra
 
 test("a project the user named shows that name in its box, in code type, the path as the tooltip", () => {
   const named = { ...context, project: { ...context.project, alias: "Thermal <b>Models</b>" } };
-  for (const layout of ["stacked", "inline"]) {
+  for (const layout of ["stacked", "row"]) {
     const html = render({ layout, homeDir: "/home/me", context: named });
     assert.match(html, /<button type="button" class="project-picker-button is-project" title="\/home\/me\/work\/app" aria-haspopup="menu" aria-expanded="false"><span class="project-picker-label is-alias">Thermal &lt;b&gt;Models&lt;\/b&gt;<\/span><\/button>/);
     assert.doesNotMatch(html, /~\/work\/app<\/span>/);
   }
+  // Inline every project shows a name: this one its own.
+  const inline = render({ layout: "inline", homeDir: "/home/me", context: named });
+  assert.match(inline, /title="\/home\/me\/work\/app"[^>]*><svg[^>]*>[\s\S]*?<\/svg><span class="project-picker-name"><span class="project-picker-leaf">Thermal &lt;b&gt;Models&lt;\/b&gt;<\/span><\/span>/);
+  assert.doesNotMatch(inline, /is-alias|~\/work\/app<\/span>/);
   // In the menus a named project shows its name alone, the full path as the tooltip.
   const projects = between("const projectItems", "const worktreeItems");
   assert.match(projects, /title: choice\.root,/);
@@ -287,8 +304,9 @@ test("client code stays parseable by Safari 16.2 and its CSS flat", () => {
   const rules = css.slice(css.indexOf("/* The project and worktree picker (ProjectWorktreePicker)"), css.indexOf(".file-viewer-icon-button {"));
   assert.ok(rules.length > 0);
   assert.doesNotMatch(rules.replace(/@media[^{]*\{/g, ""), /\{[^}]*\{|&/, "no nested rules");
-  // One look in both places, main's: the header buttons' grey box, 11px, the
-  // path and the branch in code type, cut at their left.
+  // The files' look, main's: the header buttons' grey box, 11px, the path
+  // and the branch in code type, cut at their left (the inline bar overrides
+  // it: no box, 12px, the name; see the inline test).
   assert.match(rules, /\.project-picker-button \{\s*display: inline-flex;\s*flex: 0 1 auto;\s*align-items: center;\s*gap: 6px;\s*min-width: 0;\s*height: 29px;\s*padding: 0 10px;\s*border: 1px solid var\(--border\);\s*border-radius: 7px;\s*background: var\(--bg-hover\);/);
   assert.match(rules, /\.project-picker-path \{[^}]*font-family: var\(--font-mono\);[^}]*direction: rtl;/);
   assert.match(rules, /\.project-picker-icon\.is-linked,/);
@@ -354,7 +372,8 @@ test("the menu gets one child, null while it lists items", () => {
 test("clipped labels keep their descenders in both places", () => {
   const rules = css.slice(css.indexOf("/* The project and worktree picker (ProjectWorktreePicker)"), css.indexOf(".file-viewer-icon-button {"));
   assert.match(rules, /\.project-picker \{[^}]*line-height: 1;/);
-  assert.match(rules, /\.project-picker-label,\s*\.project-picker-path \{\s*line-height: normal;\s*\}/);
+  assert.match(rules, /\.project-picker-label,\s*\.project-picker-path,\s*\.project-picker-name \{\s*line-height: normal;\s*\}/);
+  assert.match(rules, /\.project-picker-name \{[^}]*overflow: hidden;/);
   assert.match(rules, /\.project-picker-label \{[^}]*overflow: hidden;/);
   assert.match(rules, /\.project-picker-path \{[^}]*overflow: hidden;/);
 });
