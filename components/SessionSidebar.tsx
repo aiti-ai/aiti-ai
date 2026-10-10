@@ -18,6 +18,7 @@ import {
   isGroupExpanded,
   keepOutgoingGroupOpen,
   nextProjectKeysToRecord,
+  PINNED_MORE_KEY,
   showLessFamilies,
   showMoreFamilies,
   type SidebarProject,
@@ -2050,9 +2051,15 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     saveGroupChoices(next, [projectKey]);
   }, [groupExpansion, projectByKey, saveGroupChoices, setAllGroupsExpanded, shownGroupExpansion]);
 
+  // The window a click opens is the one its row offers now (`nextShown`):
+  // decided at the click, by position, so a row that turns selected, unread
+  // or running later never shifts it.
   const handleShowMore = useCallback((key: string) => {
-    setMoreShown((prev) => showMoreFamilies(prev, key));
-  }, []);
+    const row = model.rows.find((item) => (item.kind === "group-more" && item.projectKey === key)
+      || (item.kind === "pinned-more" && key === PINNED_MORE_KEY));
+    if (row?.kind !== "group-more" && row?.kind !== "pinned-more") return;
+    setMoreShown((prev) => showMoreFamilies(prev, key, row.nextShown));
+  }, [model.rows]);
   const handleShowLess = useCallback((key: string) => {
     setMoreShown((prev) => showLessFamilies(prev, key));
   }, []);
