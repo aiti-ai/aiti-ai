@@ -72,6 +72,7 @@ import { useSessionUiState } from "@/hooks/useSessionUiState";
 import { DirectoryPicker } from "./DirectoryPicker";
 import { DismissButton } from "./DismissButton";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
+import { PiWebTitle } from "./PiWebTitle";
 import { ProjectWorktreePicker, type ProjectWorktreePickerHandle, type WorktreeRemoval } from "./ProjectWorktreePicker";
 import { SessionSearch } from "./SessionSearch";
 import { SessionTree, sessionRowTitle, type SessionTreeReveal } from "./SessionTree";
@@ -120,12 +121,17 @@ declare global {
   }
 }
 
-/** An icon button of the files tab's action row, under the project and worktree. */
+/**
+ * A key of the files' actions: in the files section's header row below the
+ * sessions, or in the files tab's row under the project and worktree.
+ */
 function ToolbarIconButton({
   onClick,
   title,
   disabled,
   pressed,
+  expanded,
+  controls,
   done,
   className,
   children,
@@ -135,6 +141,10 @@ function ToolbarIconButton({
   disabled?: boolean;
   /** A toggle's state: shown pressed (accent) and exposed as aria-pressed. */
   pressed?: boolean;
+  /** What it opens is open (the file search): shown as pressed, exposed as aria-expanded. */
+  expanded?: boolean;
+  /** The id of what it opens. */
+  controls?: string;
   /** Brief confirmation after an action (refresh). */
   done?: boolean;
   className?: string;
@@ -148,7 +158,9 @@ function ToolbarIconButton({
       title={title}
       aria-label={title}
       aria-pressed={pressed}
-      className={`sidebar-tool-button${pressed ? " is-active" : ""}${done ? " is-done" : ""}${className ? ` ${className}` : ""}`}
+      aria-expanded={expanded}
+      aria-controls={controls}
+      className={`sidebar-tool-button${pressed || expanded ? " is-active" : ""}${done ? " is-done" : ""}${className ? ` ${className}` : ""}`}
     >
       {children}
     </button>
@@ -267,8 +279,8 @@ const TOAST_TITLE_MAX = 28;
 
 /**
  * The files section below the sessions (the desktop's default layout). Its
- * height is the separator's, kept per browser: at least its header row, the
- * picker's two boxes with the six keys (115px) and about three tree rows; at
+ * height is the separator's, kept per browser: at least its header row (the
+ * keys in it), the picker's row and about six tree rows; at
  * most what leaves the sessions SESSIONS_SECTION_MIN_HEIGHT (a few rows, the
  * CSS min-height of their panel). By default 45% of the sidebar under its
  * toolbar row; the 320px stands in until that is measured. A sidebar shorter
@@ -388,31 +400,36 @@ function focusIfHidden(target: HTMLElement | null): void {
   focusIfLost(document, target);
 }
 
-/** A menu placed below (or above) a button, lined up with one of its edges. */
 /**
  * How much of the toolbar row's labels fit (`data-fit`, app/sidebar.css):
- * all (0), New's + alone (1), the tabs' (or the sessions' title's) icons too
- * (2). Measured, not a fixed width, since the labels' widths change with the
- * language; on the row itself, before paint, again whenever it resizes or
- * `labels` change.
+ * all (0), New's + alone (1), then the tabs' icons alone, or below the
+ * sessions the brand's versions in a smaller type (2): the brand itself is
+ * never cut. Measured, not a fixed width, since the labels' widths change
+ * with the language; on the row itself, before paint, again whenever it
+ * resizes or `labels` change. The returned fit is for what the row's size
+ * does not show: the brand's text changing its width.
  */
-function useHeaderFit(ref: RefObject<HTMLElement | null>, labels: string): void {
+function useHeaderFit(ref: RefObject<HTMLElement | null>, labels: string): () => void {
+  const fit = useCallback(() => {
+    const header = ref.current;
+    if (!header) return;
+    for (const level of ["0", "1", "2"]) {
+      header.dataset.fit = level;
+      if (header.scrollWidth <= header.clientWidth) return;
+    }
+  }, [ref]);
   useLayoutEffect(() => {
     const header = ref.current;
     if (!header) return;
-    const fit = () => {
-      for (const level of ["0", "1", "2"]) {
-        header.dataset.fit = level;
-        if (header.scrollWidth <= header.clientWidth) return;
-      }
-    };
     fit();
     const observer = new ResizeObserver(fit);
     observer.observe(header);
     return () => observer.disconnect();
-  }, [ref, labels]);
+  }, [ref, fit, labels]);
+  return fit;
 }
 
+/** A menu placed below (or above) a button, lined up with one of its edges. */
 function buttonAnchor(element: HTMLElement, align: "start" | "end"): SidebarMenuAnchor {
   const rect = element.getBoundingClientRect();
   return { kind: "rect", rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }, align };
@@ -721,9 +738,10 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     setFileManagerError(null);
   }, [selectedCwd, selectedCwdProp]);
 
-  const openInFileManager = useCallback(async () => {
+  /** Resolves true when it failed: the message is then in the files' body. */
+  const openInFileManager = useCallback(async (): Promise<boolean> => {
     const dir = selectedCwd ?? selectedCwdProp;
-    if (!dir) return;
+    if (!dir) return false;
     try {
       const res = await fetch("/api/open-in-explorer", {
         method: "POST",
@@ -732,13 +750,14 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       });
       if (res.ok) {
         setFileManagerError(null);
-        return;
+        return false;
       }
       const data = await res.json().catch(() => ({})) as { error?: string };
       setFileManagerError(data.error ?? `HTTP ${res.status}`);
     } catch (error) {
       setFileManagerError(error instanceof Error ? error.message : String(error));
     }
+    return true;
   }, [selectedCwd, selectedCwdProp]);
 
   const fileManagerLabel = t(
@@ -2182,18 +2201,106 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   const explorerCwd = selectedCwd ?? selectedCwdProp ?? null;
   const changedFilesTitle = explorerCwd && changesCount > 0 ? t("sidebar.changedFiles", { count: changesCount }) : undefined;
+  // The count goes when nothing is changed any more (a commit, a revert),
+  // under a keyboard user too: focus on it would fall to the page, so it
+  // moves to the key after it, the file search. React detaches the ref
+  // before it removes the button, while the button still has the focus.
+  const changesChipRef = useCallback((chip: HTMLButtonElement | null) => {
+    if (!chip) return;
+    return () => {
+      if (chip.ownerDocument.activeElement !== chip) return;
+      const next = chip.nextElementSibling;
+      focusAfterCommit(() => (next instanceof HTMLElement && next.isConnected ? next : null));
+    };
+  }, [focusAfterCommit]);
   // The toolbar row's search button searches the files on the files tab:
   // the head has no search of its own. Below the sessions it is the
   // sessions' search alone; the files section's header has the files'.
   const sessionsShown = stacked || sidebarTab === "sessions";
   const searchesFiles = !stacked && sidebarTab === "files" && explorerCwd !== null;
-  // What the toolbar row's widths depend on: the sessions' title, or the tabs
-  // (the chosen tab's label is bolder, the files tab carries the count).
-  useHeaderFit(headerRef, (stacked
-    ? ["below", t("sidebar.tabSessions"), t("sidebar.new")]
+  // What the toolbar row's widths depend on: New's label, and the tabs (the
+  // chosen tab's label is bolder, the files tab carries the count). The
+  // brand's text reports its own changes (fitHeader).
+  const fitHeader = useHeaderFit(headerRef, (stacked
+    ? ["below", t("sidebar.new")]
     : ["tabs", t("sidebar.tabSessions"), t("sidebar.tabFiles"), t("sidebar.new"), explorerCwd && changesCount > 0 ? changesCount : "", sidebarTab]
   ).join("\n"));
   const archivedCount = model.archivedCount;
+
+  // The files' keys: below the sessions in the files section's header row,
+  // in the files tab in the row under the picker. Always the same ones in
+  // the same places; without a folder they wait, disabled.
+  const terminalButton = (
+    <ToolbarIconButton
+      onClick={() => { if (explorerCwd) onOpenTerminal?.(explorerCwd); }}
+      disabled={!explorerCwd || !onOpenTerminal}
+      title={t("terminal.open")}
+    >
+      <TerminalIcon size={14} />
+    </ToolbarIconButton>
+  );
+  const fileManagerButton = (
+    <ToolbarIconButton
+      onClick={() => {
+        void openInFileManager().then((failed) => {
+          // Its failure shows in the files' body. Below the sessions this key
+          // is in the header row, there while the section is folded too: a
+          // folded section opens, else the message would wait unseen.
+          if (failed && stacked) setFilesSectionCollapsed(false);
+        });
+      }}
+      disabled={!explorerCwd || fileManagerUnavailable}
+      title={fileManagerUnavailable
+        ? t(fileManager?.reason === "remote" ? "sidebar.openInExplorerRemoteOnly" : "sidebar.openInExplorerUnsupported")
+        : fileManagerLabel}
+    >
+      <FolderIcon size={14} />
+    </ToolbarIconButton>
+  );
+  const uploadButton = (
+    <ToolbarIconButton
+      onClick={() => {
+        // The upload's progress and summary are the tree's: a folded section opens.
+        if (stacked && filesCollapsed) setFilesSectionCollapsed(false);
+        fileExplorerRef.current?.openUploadPicker();
+      }}
+      disabled={!explorerCwd || explorerUploadBusy}
+      title={t("sidebar.uploadFilesTitle")}
+    >
+      <UploadIcon size={14} />
+    </ToolbarIconButton>
+  );
+  const refreshButton = (
+    <ToolbarIconButton
+      onClick={() => {
+        if (onExplorerRefresh) onExplorerRefresh();
+        else setExplorerKey((k) => k + 1);
+        setExplorerRefreshDone(true);
+        if (explorerRefreshTimerRef.current) clearTimeout(explorerRefreshTimerRef.current);
+        explorerRefreshTimerRef.current = setTimeout(() => setExplorerRefreshDone(false), 2000);
+      }}
+      disabled={!explorerCwd}
+      title={t("sidebar.refreshExplorer")}
+      done={explorerRefreshDone}
+    >
+      {explorerRefreshDone ? <CheckIcon size={14} /> : <RefreshIcon size={14} />}
+    </ToolbarIconButton>
+  );
+  const ignoredFilesButton = (className?: string) => (
+    <ToolbarIconButton
+      onClick={() => {
+        const next = !showIgnoredFiles;
+        setShowIgnoredFiles(next);
+        saveShowIgnoredFiles(next);
+      }}
+      disabled={!explorerCwd}
+      title={t("sidebar.showIgnoredFiles")}
+      pressed={showIgnoredFiles}
+      className={className}
+    >
+      <EyeIcon size={14} />
+    </ToolbarIconButton>
+  );
 
   return (
     <div
@@ -2224,15 +2331,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       {/* One toolbar row, in the cells of the chat's top bar beside it (its
           line continues that bar's): Sessions | Files, then New and the
           search of the tab in view. Only the two tabs are the tablist. With
-          the files below the sessions there is nothing to choose: the
-          sessions' title stands there, and the search is theirs. */}
+          the files below the sessions there is nothing to choose: the brand
+          stands there (the panel's anchor, the versions on a click), and
+          the search is the sessions'. */}
       <div ref={headerRef} className="sidebar-header">
-        {stacked && (
-          <span className="sidebar-title">
-            <MessageIcon size={13} className="sidebar-tab-icon" />
-            <span className="sidebar-tab-label">{t("sidebar.tabSessions")}</span>
-          </span>
-        )}
+        {stacked && <PiWebTitle onWidthChange={fitHeader} />}
         {!stacked && (
           <div className="sidebar-tabs-list" role="tablist" aria-label={t("sidebar.tabsLabel")}>
             <button
@@ -2405,6 +2508,9 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         className="sidebar-panel sidebar-files-panel"
         onScrollCapture={rememberScroll}
       >
+        {/* Below the sessions, one row: the section's toggle (its label
+            gives way first), then the files' keys at its right end. They
+            stay in this row while the section is folded. */}
         {stacked && (
           <div className="sidebar-files-section">
             <button
@@ -2412,45 +2518,73 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               className="sidebar-files-section-toggle"
               aria-expanded={!filesCollapsed}
               aria-controls="session-sidebar-files-body"
-              title={changedFilesTitle}
               onClick={() => setFilesSectionCollapsed(!filesCollapsed)}
             >
-              <FolderIcon size={14} className="session-tree-group-icon" />
+              <ChevronIcon size={12} strokeWidth={3} className={`session-tree-chevron${filesCollapsed ? "" : " is-open"}`} />
               <span className="sidebar-files-section-label">{t("sidebar.tabFiles")}</span>
-              {explorerCwd && changesCount > 0 && <span className="sidebar-files-section-count" aria-hidden="true">· {changesCount}</span>}
-              <ChevronIcon size={10} className={`session-tree-chevron${filesCollapsed ? "" : " is-open"}`} />
             </button>
-            <button
-              type="button"
-              disabled={!explorerCwd}
-              onClick={() => {
-                // Folded, the section opens first, with the field open and focused.
-                if (filesCollapsed) {
-                  setFileSearchOpen(true);
-                  revealFiles("file-search");
-                  return;
-                }
-                setFileSearchOpen((open) => !open);
-              }}
-              title={t("sidebar.searchFiles")}
-              aria-label={t("sidebar.searchFiles")}
-              aria-expanded={fileSearchOpen}
-              aria-controls="file-search-input"
-              className={`sidebar-files-section-search${fileSearchOpen ? " is-active" : ""}`}
-            >
-              <SearchIcon size={14} />
-            </button>
+            <div className="sidebar-files-keys" role="group" aria-label={t("sidebar.fileActions")}>
+              {/* The changed files' count is the changes view's switch, there
+                  only while something is changed. First in a group aligned
+                  right, so its coming and going never moves a key. Folded,
+                  the section opens on the changes. */}
+              {explorerCwd && changesCount > 0 && (
+                <button
+                  ref={changesChipRef}
+                  type="button"
+                  className={`sidebar-files-changes${changesCollapsed ? "" : " is-active"}`}
+                  aria-pressed={!changesCollapsed}
+                  title={changedFilesTitle}
+                  aria-label={changedFilesTitle}
+                  onClick={() => {
+                    if (filesCollapsed) {
+                      setFilesSectionCollapsed(false);
+                      setChangesCollapsed(false);
+                      return;
+                    }
+                    setChangesCollapsed((collapsed) => !collapsed);
+                  }}
+                >
+                  {changesCount}
+                </button>
+              )}
+              <ToolbarIconButton
+                onClick={() => {
+                  // Folded, the section opens first, with the field open and focused.
+                  if (filesCollapsed) {
+                    setFileSearchOpen(true);
+                    revealFiles("file-search");
+                    return;
+                  }
+                  setFileSearchOpen((open) => !open);
+                }}
+                disabled={!explorerCwd}
+                title={t("sidebar.searchFiles")}
+                expanded={fileSearchOpen}
+                controls="file-search-input"
+              >
+                <SearchIcon size={14} />
+              </ToolbarIconButton>
+              {terminalButton}
+              {fileManagerButton}
+              {uploadButton}
+              {refreshButton}
+              {ignoredFilesButton()}
+            </div>
           </div>
         )}
         {/* Everything under that header row: hidden while the section is
             folded, never unmounted. */}
         <div id="session-sidebar-files-body" className="sidebar-files-body" hidden={stacked && filesCollapsed}>
-          {/* One head: the folder in use, then what is done with it. The
-              buttons are the head's, not the picker's: its group names only
-              the project and worktree. */}
+          {/* One head: the folder in use, then (in the files tab) what is
+              done with it; below the sessions the keys are the header row's.
+              The buttons are the head's, not the picker's: its group names
+              only the project and worktree. */}
           <div className="sidebar-files-head">
             {/* The project and worktree in use: the same picker as the bar above a
-                fresh composer, as two boxes. Its worktree box shows only at the
+                fresh composer, as two boxes, side by side below the sessions,
+                one under the other in the files tab (the same instance: a
+                layout switch never remounts it). Its worktree box shows only at the
                 top of a git checkout (repo subdirs keep their own project
                 identity, so switching from them would jump projects); a disabled
                 box says why elsewhere. The list comes from the loaded project
@@ -2458,7 +2592,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 project keeps the box instead of flickering while it refetches. */}
             <ProjectWorktreePicker
               handleRef={filesPickerRef}
-              layout="stacked"
+              layout={stacked ? "row" : "stacked"}
               context={newSessionContext ?? { project: null, worktrees: null, currentWorktreePath: null, projects: projectChoiceList }}
               mobile={isMobile}
               label={t("sidebar.projectAndWorktree")}
@@ -2474,62 +2608,19 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
               onCreateWorktree={createWorktree}
               onRemoveWorktree={handleRemoveWorktree}
             />
-            {/* Always the same buttons in the same places: the changes view
-                stays (disabled) while there is nothing changed, so nothing
-                moves as an agent edits files and commits. The folder's
-                actions first, the tree's two views last (what it lists, then
-                its changes); its search is the header's search button. */}
-            {explorerCwd && (
+            {/* The files tab's keys, under the picker. Always the same
+                buttons in the same places: the changes view stays (disabled)
+                while there is nothing changed, so nothing moves as an agent
+                edits files and commits. The folder's actions first, the
+                tree's two views last (what it lists, then its changes); its
+                search is the toolbar row's search button. */}
+            {!stacked && explorerCwd && (
               <div className="sidebar-files-actions" role="group" aria-label={t("sidebar.fileActions")}>
-                {onOpenTerminal && (
-                  <ToolbarIconButton
-                    onClick={() => onOpenTerminal(explorerCwd)}
-                    title={t("terminal.open")}
-                  >
-                    <TerminalIcon size={14} />
-                  </ToolbarIconButton>
-                )}
-                <ToolbarIconButton
-                  onClick={() => { void openInFileManager(); }}
-                  disabled={fileManagerUnavailable}
-                  title={fileManagerUnavailable
-                    ? t(fileManager?.reason === "remote" ? "sidebar.openInExplorerRemoteOnly" : "sidebar.openInExplorerUnsupported")
-                    : fileManagerLabel}
-                >
-                  <FolderIcon size={14} />
-                </ToolbarIconButton>
-                <ToolbarIconButton
-                  onClick={() => fileExplorerRef.current?.openUploadPicker()}
-                  disabled={explorerUploadBusy}
-                  title={t("sidebar.uploadFilesTitle")}
-                >
-                  <UploadIcon size={14} />
-                </ToolbarIconButton>
-                <ToolbarIconButton
-                  onClick={() => {
-                    if (onExplorerRefresh) onExplorerRefresh();
-                    else setExplorerKey((k) => k + 1);
-                    setExplorerRefreshDone(true);
-                    if (explorerRefreshTimerRef.current) clearTimeout(explorerRefreshTimerRef.current);
-                    explorerRefreshTimerRef.current = setTimeout(() => setExplorerRefreshDone(false), 2000);
-                  }}
-                  title={t("sidebar.refreshExplorer")}
-                  done={explorerRefreshDone}
-                >
-                  {explorerRefreshDone ? <CheckIcon size={14} /> : <RefreshIcon size={14} />}
-                </ToolbarIconButton>
-                <ToolbarIconButton
-                  onClick={() => {
-                    const next = !showIgnoredFiles;
-                    setShowIgnoredFiles(next);
-                    saveShowIgnoredFiles(next);
-                  }}
-                  title={t("sidebar.showIgnoredFiles")}
-                  pressed={showIgnoredFiles}
-                  className="sidebar-files-views-start"
-                >
-                  <EyeIcon size={14} />
-                </ToolbarIconButton>
+                {onOpenTerminal && terminalButton}
+                {fileManagerButton}
+                {uploadButton}
+                {refreshButton}
+                {ignoredFilesButton("sidebar-files-views-start")}
                 <ToolbarIconButton
                   onClick={() => setChangesCollapsed((v) => !v)}
                   disabled={changesCount === 0}

@@ -8,7 +8,7 @@ const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n.tsx");
 const { ProjectWorktreePicker, WorktreeRemoveForm } = await jiti.import("./ProjectWorktreePicker.tsx");
-const { SidebarMenuSurface } = await jiti.import("./SidebarMenu.tsx");
+const { SidebarMenuSurface, placeSidebarMenu } = await jiti.import("./SidebarMenu.tsx");
 const source = await readFile(new URL("./ProjectWorktreePicker.tsx", import.meta.url), "utf8");
 const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
 const menuCss = await readFile(new URL("../app/sidebar-menu.css", import.meta.url), "utf8");
@@ -59,6 +59,46 @@ test("inline: the files tab's two boxes, side by side", () => {
   assert.doesNotMatch(html, /project-picker-divider|is-name/);
   // The files tab's own: activity elsewhere and the hint for a missing worktree list.
   assert.doesNotMatch(render({ layout: "inline", projectActivity: new Map([["lib-key", { running: 1, unread: 0 }]]) }), /project-picker-activity/);
+});
+
+test("row: the files' boxes below the sessions, side by side, with everything the stacked ones have", () => {
+  const activity = new Map([["lib-key", { running: 1, unread: 0 }]]);
+  const hint = { label: "Open repo root", title: "Open the repository root to manage worktrees." };
+  const subdir = { ...context, worktrees: null, currentWorktreePath: null };
+  // The same markup as the files tab's but for the layout: the activity
+  // dot, the worktree hint, the menus' minimum width.
+  for (const props of [{ homeDir: "/home/me" }, { projectActivity: activity }, { context: subdir, worktreeHint: hint }]) {
+    const row = render({ ...props, layout: "row" });
+    assert.match(row, /^<div class="project-picker is-row" role="group" aria-label="Project and worktree">/);
+    assert.equal(row.replace("project-picker is-row", "project-picker is-stacked"), render(props));
+  }
+  assert.match(render({ layout: "row", projectActivity: activity }), /project-picker-activity/);
+  assert.match(render({ layout: "row", context: subdir, worktreeHint: hint }), /project-picker-button is-inactive/);
+  // The main checkout's "main" note stays out of the row: there the box is a
+  // share of a narrow sidebar, and the branch needs the room (at 180px the
+  // note left it none); the icon, in the accent only for a linked checkout,
+  // still tells the main one. The tab and the bar keep the note.
+  const mainContext = { ...context, currentWorktreePath: "/home/me/work/app" };
+  const mainRow = render({ layout: "row", context: mainContext });
+  assert.match(mainRow, /class="project-picker-icon"[\s\S]*?<span class="project-picker-path"><span>main<\/span><\/span><span class="project-picker-note">2<\/span><svg/);
+  assert.doesNotMatch(mainRow, /project-picker-note">main</);
+  assert.doesNotMatch(mainRow, /is-linked/);
+  assert.match(render({ context: mainContext }), /<span class="project-picker-note">main<\/span>/);
+  assert.match(render({ layout: "inline", context: mainContext }), /<span class="project-picker-note">main<\/span>/);
+  assert.match(source, /layout: "inline" \| "stacked" \| "row";/);
+  assert.match(source, /const stacked = layout !== "inline";/);
+  // Side by side, a little lower than the tab's: the worktree box as wide as
+  // its branch and notes up to 55% of the row, the project's path taking the
+  // rest, cut at its left. A share is safe here: the row is the head's whole
+  // width, never as wide as its boxes (the bar's case).
+  const rules = css.slice(css.indexOf(".project-picker.is-stacked {"), css.indexOf(".file-viewer-icon-button {"));
+  assert.match(rules, /\.project-picker\.is-row \{\s*flex: none;\s*flex-direction: row;\s*\}/);
+  assert.match(rules, /\.project-picker\.is-row \.project-picker-button \{\s*height: 26px;\s*\}/);
+  assert.match(rules, /\.project-picker\.is-row \.project-picker-button\.is-project \{\s*flex: 1 1 0;\s*\}/);
+  assert.match(rules, /\.project-picker\.is-row \.project-picker-button:not\(\.is-project\) \{\s*flex: 0 1 auto;\s*max-width: 55%;\s*\}/);
+  assert.match(rules, /\.project-picker\.is-row \.project-picker-label,\s*\.project-picker\.is-row \.project-picker-path \{\s*flex: 1 1 0;\s*\}/);
+  // Its boxes keep the common min-width 0, so the path can be cut.
+  assert.match(css, /\.project-picker-button \{[^}]*min-width: 0;/);
 });
 
 test("stacked: main's two boxes, the project's whole path and the worktree's branch with its notes", () => {
@@ -220,6 +260,18 @@ test("the owner reaches the buttons and opens a menu through the handle", () => 
   assert.match(handle, /\}\), \[\]\);/);
   // A menu is at least as wide as its box, as main's dropdowns were.
   assert.match(source, /const width = Math\.max\(stacked \? STACKED_MENU_MIN_WIDTH : kind === "project" \? 260 : 240, Math\.round\(rect\.width\)\);/);
+  // In the row the worktree box is the right one, narrower than its menu:
+  // the menu grows leftward from the box's right edge. At the default 260px
+  // sidebar (the box from about 128 to 250) it stays over the sidebar
+  // instead of reaching about 90px past it over the chat.
+  assert.match(source, /const align = layout === "row" && kind === "worktree" \? "end" : "start";/);
+  assert.match(source, /anchor: \{ kind: "rect", rect: \{ left: rect\.left, top: rect\.top, right: rect\.right, bottom: rect\.bottom \}, align \},/);
+  const minWidth = Number(source.match(/const STACKED_MENU_MIN_WIDTH = (\d+);/)[1]);
+  const box = { left: 128, top: 300, right: 250, bottom: 326 };
+  const viewport = { left: 0, top: 0, width: 1280, height: 800 };
+  const size = { width: minWidth, height: 200 };
+  assert.equal(placeSidebarMenu({ kind: "rect", rect: box, align: "end" }, size, viewport).left, 250 - minWidth);
+  assert.ok(placeSidebarMenu({ kind: "rect", rect: box, align: "start" }, size, viewport).left + minWidth > 260, "start would run past the sidebar");
 });
 
 test("client code stays parseable by Safari 16.2 and its CSS flat", () => {
