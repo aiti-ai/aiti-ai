@@ -72,7 +72,7 @@ interface Props {
   homeDir?: string;
   /** Running and unread counts by project key: badges in the project menu, and a dot in the files' project box for activity elsewhere. */
   projectActivity?: ReadonlyMap<string, { running: number; unread: number }>;
-  /** The files' (stacked or row), without a worktree list: a disabled box saying why (a subdirectory, no git, still checking). */
+  /** The files' (stacked or row), without a worktree list: a disabled box saying why (a subdirectory of a checkout, still checking). None for a folder outside git: the project box alone. */
   worktreeHint?: { label: string; title: string } | null;
   /** The "New worktree…" form's title. */
   newWorktreeTitle: string;

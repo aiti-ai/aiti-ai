@@ -198,13 +198,14 @@
 /* The selected row's mark, the tree's one use of the accent: a bar on the
    box's left edge, before the chevron column, so it is found at a glance
    even where --bg-selected is faint. The row (absolutely positioned) is its
-   containing block; inset from the top and bottom, the row's rounded
-   corners never clip it. A delete confirmation's red frame stands alone. */
+   containing block; inset from the top and bottom (a 14px bar on a 28px
+   row, 20px on a phone's 44px), the row's rounded corners never clip it.
+   A delete confirmation's red frame stands alone. */
 .session-tree-session.is-selected:not(.is-confirming)::before {
   content: "";
   position: absolute;
-  top: 8px;
-  bottom: 8px;
+  top: 7px;
+  bottom: 7px;
   left: 0;
   width: 3px;
   border-radius: 0 2px 2px 0;
@@ -801,11 +802,13 @@
 
 /* Archive view: one header per project above its archived sessions, a
    project's name as the main tree's headers show it, in the text column (it
-   folds nothing, so no chevron). No spacer row parts the projects, so it
-   sits low in its row, near its own sessions. */
+   folds nothing, so no chevron). As tall as a group's header, but no spacer
+   row parts the projects, so the name sits at the bottom of its row, near
+   its own sessions, at any height (a phone's 44px too). */
 .session-tree-archive-group {
+  align-items: flex-end;
   gap: 5px;
-  padding: 6px 8px 0 calc(var(--session-tree-inset-left) + 20px);
+  padding: 0 8px 3px calc(var(--session-tree-inset-left) + 20px);
   color: var(--text-muted);
   font-size: 12px;
   white-space: nowrap;
@@ -968,6 +971,17 @@
   border-right: 1px solid var(--border);
 }
 
+/* New closes its own left side in both layouts, so New and the search read
+   as two cells, as the chat bar's right-end cell does: the brand before it
+   is no cell, and in the tabs layout the spacer leaves a gap after the last
+   tab at most widths. Its -1px margin lays that line over the last tab's
+   right one where the spacer has collapsed, and keeps New's footprint (and
+   so the fit levels) what it was without the line. */
+.sidebar-new-button {
+  margin-left: -1px;
+  border-left: 1px solid var(--border);
+}
+
 .sidebar-tab-icon {
   flex: none;
   color: var(--text-dim);
@@ -1118,8 +1132,9 @@
    both (a landscape phone, a short window) shrinks the files, never past
    their header row: the sessions' zero basis freezes them at their minimum,
    so the files take the whole shortfall and nothing runs past the root.
-   Folded, it is its header row alone, at the bottom, and the sessions take
-   the rest. */
+   Folded, it is its header row alone (28px and its line, a height in pixels
+   so a fold can move to it), at the bottom, and the sessions take the
+   rest. */
 .session-sidebar.is-files-below .sidebar-sessions-panel {
   flex-basis: 0;
   min-height: 120px;
@@ -1133,8 +1148,21 @@
 }
 
 .session-sidebar.is-files-below.is-files-collapsed .sidebar-files-panel {
-  flex: none;
-  height: auto;
+  height: 29px;
+}
+
+/* A fold or an unfold (only those: .is-files-folding is on the root while
+   one runs, never for a drag, keys, a window resize or a layout switch)
+   moves the files' height between the separator's and the header row's,
+   the sessions growing or shrinking to match, and the toast above them
+   with it. The body shows from the start of an unfold and stays, inert,
+   to the end of a fold (SessionSidebar.tsx). */
+.session-sidebar.is-files-below.is-files-folding .sidebar-files-panel {
+  transition: height 180ms ease-out;
+}
+
+.session-sidebar.is-files-below.is-files-folding .sidebar-toast-region {
+  transition: bottom 180ms ease-out;
 }
 
 /* The separator between them: a 12px hit area centred on the files
@@ -1170,25 +1198,27 @@
 /* The files section's header row (files below the sessions only), one row
    for the whole files chrome. A section header as the pinned section's is:
    the chevron in the tree's chevron column (6px in, plus the toggle's 5px),
-   the label in small capitals in the text column; the whole toggle folds
-   the section. At the right end, on the session times' edge, the files'
-   keys: the changed files' count, then six keys always there (disabled
-   without a folder), so no key moves as the count comes and goes. The
-   toggle takes only what the keys leave: its label gives way first, down
-   to the chevron (17px), then the keys narrow together. At the sidebar's
-   180px minimum, beside Chromium's 10px scrollbar (159px inside the row's
-   padding), that leaves 159 - 17 - 4 = 138px for the keys and the count:
-   six 15px keys and a count of up to four digits (about 42px with its 4px
-   margin). Without a count the keys keep 23px there. */
+   the label in small capitals in the text column, the changed files' count
+   after it (" · N", meta); the whole toggle folds the section. At the right
+   end, on the session times' edge, the files' keys in the files tab's
+   order, the search last: seven keys always there (disabled without a
+   folder), so no key ever moves. The toggle takes only what the keys leave:
+   its label gives way first, then the count, down to the chevron (17px),
+   then the keys narrow together. At the default 260px beside Chromium's
+   10px scrollbar the keys take 7 x 22px and the toggle keeps 83px, room for
+   "Files · 123"; at the sidebar's 180px minimum (159px inside the row's
+   padding) the keys still get 20px each. */
 .sidebar-files-section {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4px;
+  gap: 2px;
   height: 28px;
   padding: 0 var(--sidebar-files-inset-right) 0 6px;
 }
 
+/* Its overflow is clipped: below the label's width the count is cut by the
+   toggle's edge instead of running under the keys. */
 .sidebar-files-section-toggle {
   display: flex;
   flex: 1 1 0;
@@ -1197,6 +1227,7 @@
   min-width: 17px;
   height: 100%;
   padding: 0 0 0 5px;
+  overflow: hidden;
   border: 0;
   border-radius: 7px;
   background: transparent;
@@ -1223,9 +1254,16 @@
   text-transform: uppercase;
 }
 
+/* The changed files' count, as the pinned section's (.session-tree-pinned-count). */
+.sidebar-files-section-count {
+  flex: none;
+  color: var(--text-dim);
+  font-weight: 400;
+}
+
 /* The keys' group, right-aligned by the toggle before it. A wrapper is
    sized by what its items contribute, not by their flex basis: the keys'
-   width gives it their 24px, and its zero minimum lets it give way, the
+   width gives it their 22px, and its zero minimum lets it give way, the
    keys narrowing inside it down to their own minimum. */
 .sidebar-files-keys {
   display: flex;
@@ -1234,53 +1272,14 @@
   min-width: 0;
 }
 
-/* The section's keys: the files tab's square keys, smaller in this row. */
+/* The section's keys: the files tab's square keys, as small as a group
+   header's buttons in this row. */
 .sidebar-files-keys .sidebar-tool-button {
-  flex: 0 1 24px;
-  width: 24px;
+  flex: 0 1 22px;
+  width: 22px;
   min-width: 15px;
-  height: 24px;
+  height: 22px;
   border-radius: 6px;
-}
-
-/* The changed files' count, the changes view's switch: a pill, the accent
-   while the changes show. */
-.sidebar-files-changes {
-  flex: none;
-  min-width: 20px;
-  height: 18px;
-  margin-right: 4px;
-  padding: 0 6px;
-  border: 0;
-  border-radius: 9px;
-  background: var(--bg-hover);
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  line-height: 18px;
-  cursor: pointer;
-  transition: background 0.12s, color 0.12s;
-}
-
-.sidebar-files-changes:hover {
-  background: var(--bg-selected);
-  color: var(--text);
-}
-
-.sidebar-files-changes.is-active,
-.sidebar-files-changes.is-active:hover {
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
-}
-
-.sidebar-files-changes:focus {
-  outline: none;
-}
-
-.sidebar-files-changes:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 
 /* Under that row (or the whole files tab): the head, then the tree filling
@@ -1317,13 +1316,59 @@
   outline: 2px solid var(--accent);
 }
 
-/* The tree (or the archive) under the search: SessionTree fills it. */
+/* The tree and the archive view under the search, in one cell: the archive
+   slides in over the tree, which stays mounted under it (hidden once the
+   archive is in), and away again. SessionTree fills each. */
+.sidebar-sessions-views {
+  display: grid;
+  flex: 1 1 auto;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
 .sidebar-sessions-view {
   display: flex;
-  flex: 1 1 auto;
+  grid-area: 1 / 1;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
+}
+
+/* Opaque, so the tree under it only shows through while it fades. Stacked
+   above it for good: the tree's rows are positioned, and an unpositioned view
+   paints its background before them. Only its animation (opacity, transform)
+   would lift it, so the frame its entrance ends in showed the tree's rows
+   over it until the tree was hidden. */
+.sidebar-archive-view {
+  position: relative;
+  z-index: 1;
+  background: var(--bg-panel);
+}
+
+/* In from the right over the tree; out to the right, the tree back under it.
+   Nothing in a view on its way out takes a click (it is inert too). */
+.sidebar-archive-view.is-entering {
+  animation: sidebar-archive-in 180ms ease-out;
+}
+
+.sidebar-archive-view.is-leaving {
+  animation: sidebar-archive-out 180ms ease-in forwards;
+  pointer-events: none;
+}
+
+@keyframes sidebar-archive-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+}
+
+@keyframes sidebar-archive-out {
+  to {
+    opacity: 0;
+    transform: translateX(14px);
+  }
 }
 
 .sidebar-archive-bar {
@@ -1386,18 +1431,20 @@
 /* Below the sessions the head is the picker's one row (its keys are the
    header row's): the paths start in the text column (15px, the box's 1px
    line and its 10px: 26px), the boxes end on the keys' edge, and no line
-   parts it from the tree, which follows close under it. */
+   parts it from the tree, whose first row starts 4px under the boxes (the
+   head's 2px, then the tree's own 2px; the scroll box adds none). An error
+   under them keeps that 4px and the boxes' edges. */
 .session-sidebar.is-files-below .sidebar-files-head {
-  padding: 2px var(--sidebar-files-inset-right) 6px 15px;
+  padding: 2px var(--sidebar-files-inset-right) 2px 15px;
   border-bottom: 0;
 }
 
 .session-sidebar.is-files-below .sidebar-files-scroll {
-  padding-top: 2px;
+  padding-top: 0;
 }
 
 .session-sidebar.is-files-below .sidebar-files-error {
-  padding: 0 var(--sidebar-files-inset-right) 4px 15px;
+  padding: 2px var(--sidebar-files-inset-right) 4px 15px;
 }
 
 /* The head's last row: the actions on that folder and the tree's two
@@ -1477,12 +1524,12 @@
   overflow-wrap: anywhere;
 }
 
-/* The tree's first row as far under the head's line as the keys' icons are
-   above it (with the tree's own 2px). */
+/* The tree's first row 4px under the head's line (with the tree's own 2px),
+   as close as it sits under the boxes below the sessions. */
 .sidebar-files-scroll {
   flex: 1 1 auto;
   min-height: 0;
-  padding-top: 6px;
+  padding-top: 2px;
   overflow-x: hidden;
   overflow-y: auto;
 }
@@ -1506,14 +1553,12 @@
     height: 32px;
   }
 
-  .sidebar-files-changes {
-    height: 24px;
-    border-radius: 12px;
-    line-height: 24px;
-  }
-
   .session-sidebar.is-files-below .sidebar-files-panel {
     min-height: 37px;
+  }
+
+  .session-sidebar.is-files-below.is-files-collapsed .sidebar-files-panel {
+    height: 37px;
   }
 
   .session-sidebar.is-files-below.is-files-collapsed .sidebar-toast-region {
@@ -1525,8 +1570,19 @@
   .sidebar-tab,
   .sidebar-new-button,
   .sidebar-search-toggle,
-  .sidebar-tool-button,
-  .sidebar-files-changes {
+  .sidebar-tool-button {
     transition: none;
+  }
+
+  /* The fold and the archive view change at once (no phase starts either:
+     useSidebarMotion). */
+  .session-sidebar.is-files-below.is-files-folding .sidebar-files-panel,
+  .session-sidebar.is-files-below.is-files-folding .sidebar-toast-region {
+    transition: none;
+  }
+
+  .sidebar-archive-view.is-entering,
+  .sidebar-archive-view.is-leaving {
+    animation: none;
   }
 }

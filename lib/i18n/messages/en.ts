@@ -302,8 +302,6 @@ export const enLocale: LocalePlugin = {
     "sidebar.cancel": "Cancel",
     "sidebar.openRepoRoot": "Open repo root",
     "sidebar.openRepoRootTitle": "Open the repository root to manage worktrees.",
-    "sidebar.gitRepoRootOnly": "Git repo root only",
-    "sidebar.gitRepoRootOnlyTitle": "Worktrees are available in Git repository roots.",
     "sidebar.worktrees": "Worktrees...",
     "sidebar.checkingWorktrees": "Checking worktrees for this directory.",
     "sidebar.filterWorktrees": "Filter worktrees…",
