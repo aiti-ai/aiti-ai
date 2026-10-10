@@ -54,19 +54,25 @@ interface MenuState {
 }
 
 interface Props {
-  /** "inline": the two boxes side by side (the bar above a fresh composer). "stacked": full width, one under the other (the files tab). */
-  layout: "inline" | "stacked";
+  /**
+   * "inline": the two boxes side by side (the bar above a fresh composer).
+   * The files' own: "stacked", full width, one under the other (the files
+   * tab); "row", side by side in one row (the files below the sessions).
+   * Both have the files' extras: the activity dot, the worktree hint, the
+   * menus' minimum width.
+   */
+  layout: "inline" | "stacked" | "row";
   context: ProjectWorktreeContext;
   mobile: boolean;
   /** The group's accessible name. */
   label: string;
   /** The project button's text while there is no project. */
   placeholder?: string;
-  /** Shown as ~ in the stacked boxes' paths. */
+  /** Shown as ~ in the boxes' paths. */
   homeDir?: string;
-  /** Running and unread counts by project key: badges in the project menu, and a dot in the stacked project box for activity elsewhere. */
+  /** Running and unread counts by project key: badges in the project menu, and a dot in the files' project box for activity elsewhere. */
   projectActivity?: ReadonlyMap<string, { running: number; unread: number }>;
-  /** Stacked, without a worktree list: a disabled box saying why (a subdirectory, no git, still checking). */
+  /** The files' (stacked or row), without a worktree list: a disabled box saying why (a subdirectory, no git, still checking). */
   worktreeHint?: { label: string; title: string } | null;
   /** The "New worktree…" form's title. */
   newWorktreeTitle: string;
@@ -82,10 +88,10 @@ interface Props {
   onRemoveWorktree?: (project: ProjectChoice, path: string, force: boolean) => Promise<WorktreeRemoval>;
 }
 
-/** Narrower than this, a stacked box's menu keeps this width instead of the box's. */
+/** Narrower than this, a files box's menu keeps this width instead of the box's. */
 const STACKED_MENU_MIN_WIDTH = 220;
 
-/** Substitute the home dir prefix with ~ (display only; the stacked boxes cut the path at its left). */
+/** Substitute the home dir prefix with ~ (display only; the boxes cut the path at its left). */
 function displayPath(path: string, homeDir?: string): string {
   return homeDir && path.startsWith(homeDir) ? `~${path.slice(homeDir.length)}` : path;
 }
@@ -183,7 +189,8 @@ function WorktreeConfirmRow({ busy, onForce, onCancel }: { busy: boolean; onForc
 
 /**
  * The project and worktree in use, and the two menus that change them: the
- * files tab's (stacked) and the bar's above a fresh composer (inline). The
+ * files' (stacked in the files tab, a row below the sessions) and the bar's
+ * above a fresh composer (inline). The
  * owner keeps the cwd; the picker only reports what was chosen. Picking the
  * checkout in use does nothing, and so does picking the project in use while
  * its worktrees are listed: that would move a worktree back to the root.
@@ -221,7 +228,8 @@ export function ProjectWorktreePicker({
   // The newest props for an answer that arrives later.
   const onPickRef = useRef(onPick);
   onPickRef.current = onPick;
-  const stacked = layout === "stacked";
+  // The files' picker, either way its boxes are laid out.
+  const stacked = layout !== "inline";
   // The menus on a desktop look as main's dropdowns did: whole paths,
   // "Custom path…", the "New worktree…" form under the list, a dirty
   // checkout's question in its row. A phone keeps the sheet.
@@ -246,10 +254,14 @@ export function ProjectWorktreePicker({
     const rect = opener.getBoundingClientRect();
     // At least as wide as its box, as main's dropdowns were.
     const width = Math.max(stacked ? STACKED_MENU_MIN_WIDTH : kind === "project" ? 260 : 240, Math.round(rect.width));
+    // In the row the worktree box is the right one, narrower than its menu:
+    // the menu grows leftward from its right edge, over the sidebar rather
+    // than past it over the chat.
+    const align = layout === "row" && kind === "worktree" ? "end" : "start";
     setMenu({
       id: nextId(),
       kind,
-      anchor: { kind: "rect", rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }, align: "start" },
+      anchor: { kind: "rect", rect: { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }, align },
       opener,
       width,
       body: null,
@@ -489,7 +501,7 @@ export function ProjectWorktreePicker({
     // Main showed the projects' field only past 8 of them, the worktrees' from 8.
     ? { placeholder: t("sidebar.filterProjects"), emptyLabel: t("sidebar.noMatchingProjects"), minChoices: classic ? 9 : undefined }
     : { placeholder: t("sidebar.filterWorktrees"), emptyLabel: t("sidebar.noMatchingWorktrees") };
-  // A dot in the stacked project box: something runs or waits in another project.
+  // A dot in the files' project box: something runs or waits in another project.
   const otherActivity = stacked && projectActivity !== undefined && [...projectActivity].some(
     ([key, { running, unread }]) => key !== project?.key && (running > 0 || unread > 0),
   );
@@ -532,7 +544,10 @@ export function ProjectWorktreePicker({
           {/* A linked checkout's branch icon in the accent, as the main checkout's is not. */}
           <BranchIcon size={11} className={current && !current.isMain ? "project-picker-icon is-linked" : "project-picker-icon"} />
           <span className="project-picker-path"><span>{current ? current.branch ?? displayPath(current.path, homeDir) : "…"}</span></span>
-          {current?.isMain && <span className="project-picker-note">{t("sidebar.main")}</span>}
+          {/* Not in the row: there the box is a share of a narrow sidebar
+              and the branch needs the room; the icon (the accent only for
+              a linked checkout) still tells the main one. */}
+          {current?.isMain && layout !== "row" && <span className="project-picker-note">{t("sidebar.main")}</span>}
           {worktrees.length > 1 && <span className="project-picker-note">{worktrees.length}</span>}
           <ChevronIcon size={9} className="project-picker-chevron sidebar-icon-down" />
         </button>
