@@ -2310,14 +2310,17 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   // The files' keys: below the sessions in the files section's header row,
   // in the files tab in the row under the picker. Always the same ones in
-  // the same places; without a folder they wait, disabled.
+  // the same places; without a folder they wait, disabled. Their icons are
+  // 13px in the header row (smaller keys there, beside the label), 14px in the
+  // files tab's row.
+  const keyIconSize = stacked ? 13 : 14;
   const terminalButton = (
     <ToolbarIconButton
       onClick={() => { if (explorerCwd) onOpenTerminal?.(explorerCwd); }}
       disabled={!explorerCwd || !onOpenTerminal}
       title={t("terminal.open")}
     >
-      <TerminalIcon size={14} />
+      <TerminalIcon size={keyIconSize} />
     </ToolbarIconButton>
   );
   const fileManagerButton = (
@@ -2335,7 +2338,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         ? t(fileManager?.reason === "remote" ? "sidebar.openInExplorerRemoteOnly" : "sidebar.openInExplorerUnsupported")
         : fileManagerLabel}
     >
-      <FolderIcon size={14} />
+      <FolderIcon size={keyIconSize} />
     </ToolbarIconButton>
   );
   const uploadButton = (
@@ -2348,7 +2351,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       disabled={!explorerCwd || explorerUploadBusy}
       title={t("sidebar.uploadFilesTitle")}
     >
-      <UploadIcon size={14} />
+      <UploadIcon size={keyIconSize} />
     </ToolbarIconButton>
   );
   const refreshButton = (
@@ -2364,7 +2367,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       title={t("sidebar.refreshExplorer")}
       done={explorerRefreshDone}
     >
-      {explorerRefreshDone ? <CheckIcon size={14} /> : <RefreshIcon size={14} />}
+      {explorerRefreshDone ? <CheckIcon size={keyIconSize} /> : <RefreshIcon size={keyIconSize} />}
     </ToolbarIconButton>
   );
   const ignoredFilesButton = (className?: string) => (
@@ -2379,7 +2382,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       pressed={showIgnoredFiles}
       className={className}
     >
-      <EyeIcon size={14} />
+      <EyeIcon size={keyIconSize} />
     </ToolbarIconButton>
   );
   // The tree's second view, its changes: there without changes too,
@@ -2401,7 +2404,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       title={t("sidebar.changedFiles", { count: changesCount })}
       pressed={!changesKeyDisabled && !changesCollapsed}
     >
-      <ChangesIcon size={14} />
+      <ChangesIcon size={keyIconSize} />
     </ToolbarIconButton>
   );
 
@@ -2665,7 +2668,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                 expanded={fileSearchOpen}
                 controls="file-search-input"
               >
-                <SearchIcon size={14} />
+                <SearchIcon size={13} />
               </ToolbarIconButton>
             </div>
           </div>
