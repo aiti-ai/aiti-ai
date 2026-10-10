@@ -1785,6 +1785,33 @@ pre, code {
   flex: 1 1 0;
 }
 
+/* The files below the sessions: the two boxes side by side in one row, a
+   little lower. The worktree box is as wide as its branch and notes, up to
+   55% of the row (the row is the head's whole width: a share of it, unlike
+   the bar's); the project box takes the rest, its path cut at its left. */
+.project-picker.is-row {
+  flex: none;
+  flex-direction: row;
+}
+
+.project-picker.is-row .project-picker-button {
+  height: 26px;
+}
+
+.project-picker.is-row .project-picker-button.is-project {
+  flex: 1 1 0;
+}
+
+.project-picker.is-row .project-picker-button:not(.is-project) {
+  flex: 0 1 auto;
+  max-width: 55%;
+}
+
+.project-picker.is-row .project-picker-label,
+.project-picker.is-row .project-picker-path {
+  flex: 1 1 0;
+}
+
 @media (pointer: coarse) {
   .project-picker-button {
     min-height: 36px;
