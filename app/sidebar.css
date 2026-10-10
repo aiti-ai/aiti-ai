@@ -1,4 +1,4 @@
-/* Session sidebar: tabs, project groups, session rows, files tab. */
+/* Session sidebar: tabs or the files below the sessions, project groups, session rows, files. */
 
 /*
  * Session tree (components/SessionTree.tsx). Rows are absolutely positioned
@@ -100,7 +100,9 @@
   transform: rotate(90deg);
 }
 
-/* Pinned section header: the whole row toggles the section. */
+/* Pinned section header: the whole row toggles the section. A section
+   header like a project group's: its pin in the groups' icon column, the
+   label where the session titles start. */
 .session-tree-pinned-header {
   align-items: stretch;
 }
@@ -108,12 +110,12 @@
 .session-tree-pinned-toggle {
   display: flex;
   flex: 1;
-  align-items: flex-end;
+  align-items: center;
   gap: 5px;
   min-width: 0;
-  padding: 0 8px 4px calc(var(--session-tree-inset-left) + 8px);
-  color: var(--text-muted);
-  font-size: 11px;
+  padding: 0 8px 0 calc(var(--session-tree-inset-left) + 5px);
+  color: color-mix(in srgb, var(--text) 85%, var(--bg-panel));
+  font-size: 13px;
   text-align: left;
 }
 
@@ -121,13 +123,8 @@
   color: var(--text);
 }
 
-.session-tree-pinned-toggle .session-tree-chevron {
-  margin-bottom: 2px;
-}
-
 .session-tree-pinned-label {
   font-weight: 600;
-  letter-spacing: 0.05em;
 }
 
 .session-tree-pinned-count {
@@ -139,7 +136,6 @@
   flex: none;
   width: 6px;
   height: 6px;
-  margin-bottom: 4px;
   border-radius: 50%;
 }
 
@@ -153,12 +149,13 @@
 
 /* Session row: status slot, title, branch, time; actions take the time's place
    on hover. Hover and selection are a rounded box inset from the sidebar's
-   edges, never a full-width band. */
+   edges, never a full-width band. The title starts under its group's name:
+   the header's 5px padding, 14px icon and 5px gap. */
 .session-tree-session {
   right: var(--session-tree-inset-right);
   left: var(--session-tree-inset-left);
   gap: 2px;
-  padding: 0 4px 0 16px;
+  padding: 0 4px 0 24px;
   border-radius: 7px;
   cursor: pointer;
   overflow: hidden;
@@ -442,7 +439,9 @@
   background: var(--bg-hover);
 }
 
-/* Project group header: the name with its chevron after it, the toggle fills
+/* Project group header: a section header over its rows, not one more row: a
+   folder in its own column, the name in a bolder, larger type than the
+   titles and starting where they do, its chevron after it; the toggle fills
    the row; "+" and ⋯ replace the summary on hover. Same inset box as rows.
    It can be dragged (hooks/useGroupDrag.ts): a long-press on a phone must
    not select its text or open the iOS callout. touch-action stays as it is,
@@ -526,7 +525,7 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
   color: var(--text);
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   white-space: nowrap;
   opacity: 0.92;
   pointer-events: none;
@@ -547,10 +546,10 @@
   gap: 5px;
   min-width: 0;
   height: 100%;
-  padding: 0 0 0 8px;
-  color: var(--text-muted);
-  font-size: 12px;
-  font-weight: 500;
+  padding: 0 0 0 5px;
+  color: color-mix(in srgb, var(--text) 85%, var(--bg-panel));
+  font-size: 13px;
+  font-weight: 600;
   text-align: left;
   white-space: nowrap;
 }
@@ -558,6 +557,17 @@
 .session-tree-group.is-current .session-tree-group-toggle,
 .session-tree-group:hover .session-tree-group-toggle {
   color: var(--text);
+}
+
+/* The section headers' icon column: a project's folder (the current one's in
+   the accent), the pinned section's pin, the archive's folders. */
+.session-tree-group-icon {
+  flex: none;
+  color: var(--text-dim);
+}
+
+.session-tree-group.is-current .session-tree-group-icon {
+  color: var(--accent);
 }
 
 .session-tree-group-name {
@@ -669,7 +679,7 @@
 /* Lined up with the session titles. */
 .session-tree-group-empty,
 .session-tree-more {
-  padding-left: calc(var(--session-tree-inset-left) + 16px);
+  padding-left: calc(var(--session-tree-inset-left) + 24px);
   color: var(--text-dim);
   font-size: 11px;
 }
@@ -739,24 +749,27 @@
   flex: none;
 }
 
-/* Archive view: one label per project above its archived sessions. */
+/* Archive view: one header per project above its archived sessions, in the
+   main tree's section-header look. No spacer row parts the projects, so it
+   sits low in its row, near its own sessions. */
 .session-tree-archive-group {
-  align-items: flex-end;
-  gap: 4px;
-  padding: 0 8px 4px calc(var(--session-tree-inset-left) + 8px);
-  color: var(--text-dim);
-  font-size: 11px;
+  gap: 5px;
+  padding: 6px 8px 0 calc(var(--session-tree-inset-left) + 5px);
+  color: color-mix(in srgb, var(--text) 85%, var(--bg-panel));
+  font-size: 13px;
   white-space: nowrap;
 }
 
 .session-tree-archive-group-name {
   min-width: 0;
   overflow: hidden;
+  font-weight: 600;
   text-overflow: ellipsis;
 }
 
 .session-tree-archive-group-count {
   flex: none;
+  color: var(--text-dim);
 }
 
 /* Phone layout: 44px rows, ⋯ and the group buttons always shown, no archive quick button. */
@@ -820,9 +833,10 @@
 
 /*
  * Sidebar shell (components/SessionSidebar.tsx): header, the Sessions | Files
- * tabs and their panels. Both panels stay mounted; the inactive one has the
- * hidden attribute (display: none from the base styles). The root is the
- * containing block of the undo toast.
+ * tabs and their panels, or (.is-files-below, the desktop default) both
+ * panels in one column, the files under the sessions. Both panels stay
+ * mounted; an inactive tab has the hidden attribute (display: none from the
+ * base styles). The root is the containing block of the undo toast.
  */
 .session-sidebar {
   position: relative;
@@ -836,6 +850,17 @@
 /* While the undo toast is up, the last rows can still scroll out from under it. */
 .session-sidebar.has-toast .session-tree-scroll {
   padding-bottom: 56px;
+}
+
+/* With the files below, the toast sits at the bottom of the sessions, above
+   the files section (its height, or folded its 28px row and its line), so it
+   never covers the file tree. Still the one live region, at the root. */
+.session-sidebar.is-files-below .sidebar-toast-region {
+  bottom: calc(var(--sidebar-files-height, 320px) + 8px);
+}
+
+.session-sidebar.is-files-below.is-files-collapsed .sidebar-toast-region {
+  bottom: 37px;
 }
 
 /* One toolbar row in the cells of the chat's top bar beside it (AppShell):
@@ -918,6 +943,23 @@
   font-weight: 400;
 }
 
+/* With the files below the sessions there is no tab to choose: the
+   sessions' name stands where the tabs were, in a chosen tab's type and
+   place but with no accent line or box (a title, not a choice), its icon
+   dim. Not a cell: no line on its right. */
+.sidebar-title {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border-top: 2px solid transparent;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
 .sidebar-header-spacer {
   flex: 1;
   min-width: 0;
@@ -939,14 +981,16 @@
 
 /* Where the labels do not fit (useHeaderFit measures them: their widths
    change with the language): New keeps its + (data-fit 1), then the tabs
-   their icons (2). A hidden label is still each one's name. */
+   (or the sessions' title) their icons (2). A hidden label is still each
+   one's name. */
 .sidebar-header[data-fit="1"] .sidebar-new-button,
 .sidebar-header[data-fit="2"] .sidebar-new-button {
   width: 36px;
   padding: 0;
 }
 
-.sidebar-header[data-fit="2"] .sidebar-tab {
+.sidebar-header[data-fit="2"] .sidebar-tab,
+.sidebar-header[data-fit="2"] .sidebar-title {
   padding: 0 11px;
 }
 
@@ -965,7 +1009,9 @@
 .sidebar-search-toggle:focus-visible,
 .sidebar-tab:focus-visible,
 .sidebar-archive-back:focus-visible,
-.sidebar-tool-button:focus-visible {
+.sidebar-tool-button:focus-visible,
+.sidebar-files-section-toggle:focus-visible,
+.sidebar-files-section-search:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -977,6 +1023,150 @@
   min-width: 0;
   min-height: 0;
   overflow: hidden;
+}
+
+/* The files below the sessions: the sessions fill what the files leave and
+   keep a few rows (SESSIONS_SECTION_MIN_HEIGHT in SessionSidebar.tsx); the
+   files section is as tall as the separator sets (--sidebar-files-height, on
+   the root), its top border the line between them. A sidebar too short for
+   both (a landscape phone, a short window) shrinks the files, never past
+   their header row: the sessions' zero basis freezes them at their minimum,
+   so the files take the whole shortfall and nothing runs past the root.
+   Folded, it is its header row alone, at the bottom, and the sessions take
+   the rest. */
+.session-sidebar.is-files-below .sidebar-sessions-panel {
+  flex-basis: 0;
+  min-height: 120px;
+}
+
+.session-sidebar.is-files-below .sidebar-files-panel {
+  flex: 0 1 auto;
+  height: var(--sidebar-files-height, 320px);
+  min-height: 29px;
+  border-top: 1px solid var(--border);
+}
+
+.session-sidebar.is-files-below.is-files-collapsed .sidebar-files-panel {
+  flex: none;
+  height: auto;
+}
+
+/* The separator between them: a 12px hit area centred on the files
+   section's top border, which is the line it shows; the sidebar's own
+   handle (app/globals.css, .panel-resize-handle) turned on its side, so
+   hover, focus and a drag look the same. */
+.panel-resize-handle.sidebar-files-resize-handle {
+  width: auto;
+  height: 12px;
+  margin: -6px 0;
+  flex: 0 0 12px;
+  cursor: row-resize;
+}
+
+.panel-resize-handle.sidebar-files-resize-handle::after {
+  top: 5px;
+  right: 0;
+  bottom: auto;
+  left: 0;
+  width: auto;
+  height: 2px;
+}
+
+/* The files section's header row (files below the sessions only), in the
+   project groups' section-header look: the folder in their icon column (the
+   tree's left inset, which a classic scrollbar widens, plus the toggle's
+   5px; SessionTree publishes that scrollbar's width on the sidebar's root),
+   the name in their type, the changed files' count
+   dim, the chevron after them; the whole toggle folds the section. The
+   file search at the right end, on the keys' edge below. At the sidebar's
+   180px minimum the name gives way first. */
+.sidebar-files-section {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px 0 max(6px, var(--session-tree-scrollbar, 0px));
+}
+
+.sidebar-files-section-toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  height: 100%;
+  padding: 0 0 0 5px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: color-mix(in srgb, var(--text) 85%, var(--bg-panel));
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.sidebar-files-section-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.sidebar-files-section-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-files-section-count {
+  flex: none;
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  font-weight: 400;
+}
+
+.sidebar-files-section-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.12s, background 0.12s;
+}
+
+.sidebar-files-section-search:not(:disabled):hover {
+  background: var(--bg-selected);
+  color: var(--text);
+}
+
+.sidebar-files-section-search.is-active,
+.sidebar-files-section-search.is-active:not(:disabled):hover {
+  background: var(--bg-selected);
+  color: var(--accent);
+}
+
+.sidebar-files-section-search:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+/* Under that row (or the whole files tab): the head, then the tree filling
+   the rest. Hidden while the section is folded, never unmounted. */
+.sidebar-files-body {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
 .sidebar-search {
@@ -1168,7 +1358,8 @@
   .sidebar-tab,
   .sidebar-new-button,
   .sidebar-search-toggle,
-  .sidebar-tool-button {
+  .sidebar-tool-button,
+  .sidebar-files-section-search {
     transition: none;
   }
 }
