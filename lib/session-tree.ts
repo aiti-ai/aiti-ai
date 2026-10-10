@@ -56,9 +56,9 @@ export interface SidebarFamilyStatus { running: boolean; awaiting: boolean; unre
 export type SidebarRow =
   | { kind: "pinned-header"; key: "pinned-header"; count: number; collapsed: boolean; running: number; unread: number }
   | { kind: "session"; key: string; family: SessionFamily; context: "pinned" | "group" | "archive"; project: SidebarProject; status: SidebarFamilyStatus; archivedAt: number | null }
-  | { kind: "pinned-more"; key: "pinned-more"; hidden: number; canShowLess: boolean }
+  | { kind: "pinned-more"; key: "pinned-more"; hidden: number; canShowLess: boolean; nextShown: number }
   | { kind: "group"; key: string; project: SidebarProject; expanded: boolean; running: number; unread: number }
-  | { kind: "group-more"; key: string; projectKey: string; hidden: number; canShowLess: boolean }
+  | { kind: "group-more"; key: string; projectKey: string; hidden: number; canShowLess: boolean; nextShown: number }
   | { kind: "group-empty"; key: string; project: SidebarProject }
   | { kind: "spacer"; key: "pinned-spacer" | "footer-spacer" }
   | { kind: "footer-open"; key: "footer-open" }
@@ -313,42 +313,55 @@ function sessionRow(
 }
 
 /**
- * The first `limit` families, any later one that is running, unread or
- * selected, and the next `extra` of the others (sorted order kept). Families
- * that show anyway do not use up `extra`, so each "show more" click reveals
- * exactly SHOW_MORE_STEP more rows (or what is left), and a long project
- * never mounts all of its rows at once. `revealed` counts what `extra` showed.
+ * The first `limit` families, the `shown` positions "show more" opened past
+ * them, and any later family that is running, unread or selected (sorted
+ * order kept). Positions, not a budget: a family that turns selected, unread
+ * or running inside the window keeps its place and frees nothing, so picking
+ * the last revealed row never brings in an older one below it. `revealed`
+ * counts the rows only the window shows (what "show less" would fold);
+ * `nextShown` is the window a "show more" click opens, decided at the click:
+ * SHOW_MORE_STEP more hidden families past this one (those that show anyway
+ * do not use up the click), or all that are left, and a long project never
+ * mounts all of its rows at once.
  */
 function visibleFamilies(
   families: readonly SessionFamily[],
   limit: number,
-  extra: number,
+  shown: number,
   input: FamilyFlagsInput,
-): { visible: SessionFamily[]; revealed: number } {
-  let revealed = 0;
-  const visible = families.filter((family, index) => {
-    if (index < limit) return true;
+): { visible: SessionFamily[]; revealed: number; nextShown: number } {
+  const flagged = families.map((family, index) => {
+    if (index < limit) return false;
     const status = familyStatus(family, input);
-    if (status.running || status.unread || status.selected) return true;
-    if (revealed < extra) {
+    return status.running || status.unread || status.selected;
+  });
+  const end = limit + shown;
+  let revealed = 0;
+  const visible = families.filter((_family, index) => {
+    if (index < limit || flagged[index]) return true;
+    if (index < end) {
       revealed++;
       return true;
     }
     return false;
   });
-  return { visible, revealed };
+  let next = Math.max(limit, Math.min(end, families.length));
+  for (let hidden = 0; next < families.length && hidden < SHOW_MORE_STEP; next++) {
+    if (!flagged[next]) hidden++;
+  }
+  return { visible, revealed, nextShown: next - limit };
 }
 
-/** Families "show more" has revealed for `key` (0 when none or malformed). */
+/** Positions "show more" has opened past the base limit for `key` (0 when none or malformed). */
 export function shownMoreFor(moreShown: Readonly<Record<string, number>>, key: string): number {
   if (!Object.hasOwn(moreShown, key)) return 0;
   const value = moreShown[key];
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
-/** One "show more" click: SHOW_MORE_STEP more families for `key`. */
-export function showMoreFamilies(moreShown: Readonly<Record<string, number>>, key: string): Record<string, number> {
-  return { ...moreShown, [key]: shownMoreFor(moreShown, key) + SHOW_MORE_STEP };
+/** One "show more" click for `key`: the window its more row offers (`nextShown`). */
+export function showMoreFamilies(moreShown: Readonly<Record<string, number>>, key: string, nextShown: number): Record<string, number> {
+  return { ...moreShown, [key]: Math.max(shownMoreFor(moreShown, key), Math.floor(nextShown)) };
 }
 
 /** "Show less": back to the base limit for `key`. */
@@ -419,12 +432,12 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
     }
     rows.push({ kind: "pinned-header", key: "pinned-header", count: sorted.length, collapsed: input.pinnedCollapsed, running, unread });
     if (!input.pinnedCollapsed) {
-      const { visible, revealed } = visibleFamilies(sorted, PINNED_VISIBLE_LIMIT, shownMoreFor(input.moreShown, PINNED_MORE_KEY), input);
+      const { visible, revealed, nextShown } = visibleFamilies(sorted, PINNED_VISIBLE_LIMIT, shownMoreFor(input.moreShown, PINNED_MORE_KEY), input);
       for (const family of visible) {
         rows.push(sessionRow(family, "pinned", resolver.get(familyProjectKey(family)), input, null));
       }
       const more = moreRowState(sorted.length, visible.length, revealed);
-      if (more) rows.push({ kind: "pinned-more", key: "pinned-more", ...more });
+      if (more) rows.push({ kind: "pinned-more", key: "pinned-more", ...more, nextShown });
     }
     rows.push({ kind: "spacer", key: "pinned-spacer" });
   }
@@ -493,10 +506,10 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
       if (groupFamilies.length === 0) {
         rows.push({ kind: "group-empty", key: `empty:${project.key}`, project });
       } else {
-        const { visible, revealed } = visibleFamilies(groupFamilies, GROUP_VISIBLE_LIMIT, shownMoreFor(input.moreShown, project.key), input);
+        const { visible, revealed, nextShown } = visibleFamilies(groupFamilies, GROUP_VISIBLE_LIMIT, shownMoreFor(input.moreShown, project.key), input);
         for (const family of visible) rows.push(sessionRow(family, "group", project, input, null));
         const more = moreRowState(groupFamilies.length, visible.length, revealed);
-        if (more) rows.push({ kind: "group-more", key: `more:${project.key}`, projectKey: project.key, ...more });
+        if (more) rows.push({ kind: "group-more", key: `more:${project.key}`, projectKey: project.key, ...more, nextShown });
       }
     }
   }
