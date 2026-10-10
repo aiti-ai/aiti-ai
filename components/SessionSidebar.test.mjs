@@ -292,13 +292,17 @@ test("the files section folds to its header row, saved per browser, and its sear
   // Its chevron in the chevron column the session tree and the file tree
   // share (6px in, plus the toggle's 5px), its label in the text column (the
   // 12px chevron and the 3px gap after it); the keys end on the session
-  // times' edge (the files' right inset, below).
+  // times' edge (the files' right inset, below). The toggle's 5px on the
+  // right too: its hover box never ends on the count.
   assert.match(sidebarStyles, /\.sidebar-files-section \{[^}]*padding: 0 var\(--sidebar-files-inset-right\) 0 6px;\s*\}/);
-  assert.match(sidebarStyles, /\.sidebar-files-section-toggle \{[^}]*gap: 3px;[^}]*padding: 0 0 0 5px;[^}]*color: var\(--text-muted\);\s*font: inherit;\s*font-size: 11px;/);
+  assert.match(sidebarStyles, /\.sidebar-files-section-toggle \{[^}]*gap: 3px;[^}]*padding: 0 5px;[^}]*color: var\(--text-muted\);\s*font: inherit;\s*font-size: 11px;/);
   assert.doesNotMatch(sidebarStyles, /\.sidebar-files-section-toggle \{[^}]*font-weight/);
-  // The toggle takes only what the keys leave (a zero basis), down to its
-  // chevron: its label gives way before any key narrows.
-  assert.match(sidebarStyles, /\.sidebar-files-section-toggle \{\s*display: flex;\s*flex: 1 1 0;\s*align-items: center;\s*gap: 3px;\s*min-width: 17px;/);
+  // The toggle's content is its basis, and it grows into what the keys
+  // leave at their widest; at its narrowest it keeps its chevron. What does
+  // not fit wraps to a second line, whole, out of view: the chevron's box
+  // is as tall as the row, so the first line is.
+  assert.match(sidebarStyles, /\.sidebar-files-section-toggle \{\s*display: flex;\s*flex: 1 1 auto;\s*flex-wrap: wrap;\s*align-items: center;\s*gap: 3px;\s*min-width: 17px;\s*height: 100%;/);
+  assert.match(sidebarRule(".sidebar-files-section-toggle > .session-tree-chevron"), /^\s*height: 100%;\s*$/);
   // The label in the pinned section label's small capitals, the count in
   // its count's meta; the toggle clips what does not fit.
   assert.match(sidebarStyles, /\.sidebar-files-section-label \{\s*min-width: 0;\s*overflow: hidden;\s*font-weight: 600;\s*letter-spacing: 0\.05em;\s*text-overflow: ellipsis;\s*text-transform: uppercase;\s*\}/);
@@ -475,6 +479,13 @@ test("below the sessions the section's header row holds the files' keys in the f
     "Search files expanded=false",
   ]);
   assert.equal((keys.match(/<button /g) ?? []).length, 7);
+  // Their icons are 13px, a size under the files tab's 14px, in the sidebar
+  // icons' one stroke (the files tab's keys keep 14px:
+  // SessionSidebar.tabs.test.mjs).
+  assert.deepEqual([...keys.matchAll(/<svg width="(\d+)" height="(\d+)"[^>]*stroke-width="(\d+)"/g)].map((match) => match.slice(1).join(",")), Array(7).fill("13,13,2"));
+  assert.match(source, /const keyIconSize = stacked \? 13 : 14;/);
+  assert.equal((source.match(/Icon size=\{keyIconSize\} \/>/g) ?? []).length, 7, "the six shared keys' icons, the refresh's check too");
+  assert.match(source, /<SearchIcon size=\{13\} \/>\s*<\/ToolbarIconButton>\s*<\/div>\s*<\/div>\s*\)\}/);
   // The head under the row is the picker alone: no second row of keys, no
   // search in the toolbar row's place.
   const head = html.slice(html.indexOf('<div class="sidebar-files-head">'), html.indexOf('<div class="sidebar-files-scroll'));
@@ -498,7 +509,7 @@ test("below the sessions the section's header row holds the files' keys in the f
 
   // The same key elements as the files tab's row, rendered in one place at a time.
   const group = between('<div className="sidebar-files-keys" role="group" aria-label={t("sidebar.fileActions")}>', "{/* Everything under that header row");
-  assert.match(group, /^<div className="sidebar-files-keys" role="group" aria-label=\{t\("sidebar\.fileActions"\)\}>\s*\{terminalButton\}\s*\{fileManagerButton\}\s*\{uploadButton\}\s*\{refreshButton\}\s*\{ignoredFilesButton\(\)\}\s*\{changesButton\}\s*<ToolbarIconButton[\s\S]*?<SearchIcon size=\{14\} \/>\s*<\/ToolbarIconButton>\s*<\/div>\s*<\/div>\s*\)\}\s*$/);
+  assert.match(group, /^<div className="sidebar-files-keys" role="group" aria-label=\{t\("sidebar\.fileActions"\)\}>\s*\{terminalButton\}\s*\{fileManagerButton\}\s*\{uploadButton\}\s*\{refreshButton\}\s*\{ignoredFilesButton\(\)\}\s*\{changesButton\}\s*<ToolbarIconButton[\s\S]*?<SearchIcon size=\{13\} \/>\s*<\/ToolbarIconButton>\s*<\/div>\s*<\/div>\s*\)\}\s*$/);
   assert.match(source, /const terminalButton = \(\s*<ToolbarIconButton\s*onClick=\{\(\) => \{ if \(explorerCwd\) onOpenTerminal\?\.\(explorerCwd\); \}\}\s*disabled=\{!explorerCwd \|\| !onOpenTerminal\}/);
   assert.match(source, /disabled=\{!explorerCwd \|\| fileManagerUnavailable\}/);
   assert.match(source, /disabled=\{!explorerCwd \|\| explorerUploadBusy\}/);
@@ -521,7 +532,7 @@ test("below the sessions the section's header row holds the files' keys in the f
   // nothing is changed (or without a folder), pressed while the changes
   // show. Below the sessions a folded section opens on the changes.
   assert.match(source, /const changesKeyDisabled = !explorerCwd \|\| changesCount === 0;/);
-  assert.match(source, /const changesButton = \(\s*<ToolbarIconButton\s*ref=\{changesKeyRef\}\s*onClick=\{\(\) => \{[^}]*if \(stacked && filesCollapsed\) \{\s*setFilesSectionCollapsed\(false\);\s*setChangesCollapsed\(false\);\s*return;\s*\}\s*setChangesCollapsed\(\(collapsed\) => !collapsed\);\s*\}\}\s*disabled=\{changesKeyDisabled\}\s*title=\{t\("sidebar\.changedFiles", \{ count: changesCount \}\)\}\s*pressed=\{!changesKeyDisabled && !changesCollapsed\}\s*>\s*<ChangesIcon size=\{14\} \/>\s*<\/ToolbarIconButton>\s*\);/);
+  assert.match(source, /const changesButton = \(\s*<ToolbarIconButton\s*ref=\{changesKeyRef\}\s*onClick=\{\(\) => \{[^}]*if \(stacked && filesCollapsed\) \{\s*setFilesSectionCollapsed\(false\);\s*setChangesCollapsed\(false\);\s*return;\s*\}\s*setChangesCollapsed\(\(collapsed\) => !collapsed\);\s*\}\}\s*disabled=\{changesKeyDisabled\}\s*title=\{t\("sidebar\.changedFiles", \{ count: changesCount \}\)\}\s*pressed=\{!changesKeyDisabled && !changesCollapsed\}\s*>\s*<ChangesIcon size=\{keyIconSize\} \/>\s*<\/ToolbarIconButton>\s*\);/);
   assert.equal((source.match(/\{changesButton\}/g) ?? []).length, 2);
   assert.equal((source.match(/<ChangesIcon /g) ?? []).length, 1);
   // The count chip is gone: nothing comes and goes among the keys.
@@ -535,38 +546,61 @@ test("below the sessions the section's header row holds the files' keys in the f
   assert.ok(source.indexOf("const sidebarFocusRef = useRef") < source.indexOf("const changesKeyRef = useRef"));
   assert.match(source, /function ToolbarIconButton\(\{\s*ref,[\s\S]*?<button\s*ref=\{ref\}/);
 
-  // The keys: the files tab's square keys, as small here as a group
-  // header's buttons; 32px for a finger. Their group is sized by what the
-  // keys contribute, which is their width, never their flex basis (a basis
-  // alone would squeeze them to their minimum at any sidebar width); its
-  // zero minimum lets them narrow inside it.
-  assert.match(sidebarRule(".sidebar-files-keys"), /^\s*display: flex;\s*flex: 0 1 auto;\s*align-items: center;\s*min-width: 0;\s*$/);
-  assert.match(sidebarRule(".sidebar-files-keys .sidebar-tool-button"), /^\s*flex: 0 1 22px;\s*width: 22px;\s*min-width: 15px;\s*height: 22px;\s*border-radius: 6px;\s*$/);
+  // The keys: the files tab's borderless keys, a step under the row's 28px,
+  // sharing their group's width alike, 18 to 26px each. The group never
+  // shrinks under its seven keys' minimum nor grows past their maximum, and
+  // its grow factor, far above the toggle's (1), gives it the room the
+  // toggle's content leaves before the toggle takes any.
+  const keyRule = sidebarRule(".sidebar-files-keys .sidebar-tool-button");
+  assert.match(keyRule, /^\s*flex: 1 1 0;\s*min-width: 18px;\s*max-width: 26px;\s*height: 26px;\s*border-radius: 6px;\s*$/);
+  const [keyMin] = px(keyRule, "min-width");
+  const [keyMax] = px(keyRule, "max-width");
+  const keysGroup = sidebarRule(".sidebar-files-keys").match(/^\s*display: flex;\s*flex: (\d+) 0 calc\((\d+) \* (\d+)px\);\s*align-items: center;\s*max-width: calc\((\d+) \* (\d+)px\);\s*$/);
+  assert.ok(keysGroup, "the keys' group: a grow factor, no shrink, its keys' minimum and maximum");
+  const [, groupGrow, minCount, groupKeyMin, maxCount, groupKeyMax] = keysGroup.map(Number);
+  assert.ok(groupGrow >= 1000, "the toggle gets a fraction of a pixel until the keys are at their widest");
+  assert.deepEqual([minCount, groupKeyMin, maxCount, groupKeyMax], [7, keyMin, 7, keyMax]);
+  assert.match(sidebarRule(".sidebar-files-section-toggle"), /^\s*display: flex;\s*flex: 1 1 auto;/);
+  // On a coarse pointer the keys come before the label, as they always
+  // did: 32px, the toggle taking only what they leave (a zero basis), down
+  // to its chevron, and only then do they narrow together (to 15px; their
+  // group's basis is their width, its minimum zero).
   const coarse = sidebarStyles.slice(sidebarStyles.lastIndexOf("@media (pointer: coarse) {"));
-  assert.match(coarse, /\.sidebar-files-keys \.sidebar-tool-button \{\s*flex-basis: 32px;\s*width: 32px;\s*height: 32px;\s*\}/);
+  assert.match(coarse, /\.sidebar-files-section-toggle \{\s*flex: 1 1 0;\s*\}\s*\.sidebar-files-keys \{\s*flex: 0 1 auto;\s*min-width: 0;\s*max-width: none;\s*\}\s*\.sidebar-files-keys \.sidebar-tool-button \{\s*flex: 0 1 32px;\s*width: 32px;\s*min-width: 15px;\s*max-width: none;\s*height: 32px;\s*\}/);
 
-  // Nothing overflows at the sidebar's minimum: its width less its line,
-  // less the row's padding (on the right the files' inset beside the
-  // session tree's classic scrollbar, Chromium's 10px); the label and the
-  // count give way first (the toggle keeps its chevron), then the seven
-  // keys narrow together, still 20px wide.
+  // The fit, added up from the CSS: the sidebar's width less its line, the
+  // row's padding (on the right the files' inset beside the session tree's
+  // classic scrollbar, Chromium's 10px) and the gap before the keys; the
+  // toggle's content in Chromium's 11px system font (its 5px on either
+  // side, the 12px chevron, a 3px gap, the label, then a 3px gap and the
+  // count): "Files" 34px, "文件" 24px, "· 123" 26px, "· 2" 14px.
   const [scrollbar] = px(globalStyles.slice(globalStyles.indexOf("::-webkit-scrollbar {")), "width");
   const right = filesInsetRight(scrollbar);
   const [, , , left] = px(sidebarRule(".sidebar-files-section"), "padding");
   const [gap] = px(sidebarRule(".sidebar-files-section"), "gap");
   const [toggleMin] = px(sidebarRule(".sidebar-files-section-toggle"), "min-width");
-  const [toggleInset] = px(sidebarRule(".sidebar-files-section-toggle"), "padding").slice(3);
+  const [, toggleInset] = px(sidebarRule(".sidebar-files-section-toggle"), "padding");
   assert.equal(toggleMin, toggleInset + 12, "the toggle keeps its chevron");
-  const [keyMin] = px(sidebarRule(".sidebar-files-keys .sidebar-tool-button"), "min-width");
-  const [keyWidth] = px(sidebarRule(".sidebar-files-keys .sidebar-tool-button"), "width");
-  const inner = SIDEBAR_MIN_WIDTH - 1 - left - right;
-  assert.ok(toggleMin + gap + 7 * keyMin <= inner, `${toggleMin} + ${gap} + 7 × ${keyMin} fits ${inner}`);
-  assert.ok((inner - toggleMin - gap) / 7 >= 20, "the keys keep 20px at the minimum");
-  // At the default width the keys keep their 22px, and the toggle has room
-  // for "Files · 123" (82px in Chromium's 11px system font: the 5px inset,
-  // the 12px chevron, two 3px gaps, a 34px label and a 25px count).
-  const toggleAtDefault = SIDEBAR_DEFAULT_WIDTH - 1 - left - right - gap - 7 * keyWidth;
-  assert.ok(toggleAtDefault >= 82, `the toggle keeps ${toggleAtDefault}px`);
+  const content = (label, count = 0) => 2 * toggleInset + 12 + 3 + label + (count ? 3 + count : 0);
+  const fit = (width, toggleContent) => {
+    const room = width - 1 - left - right - gap;
+    const key = Math.min(keyMax, Math.max(keyMin, (room - toggleContent) / 7));
+    return { key, toggle: room - 7 * key };
+  };
+  // At the default 260px the toggle keeps all of its content, the keys
+  // wider than at their minimum: about 21px beside "Files · 123", 24px
+  // beside "文件 · 2".
+  const filesCount = fit(SIDEBAR_DEFAULT_WIDTH, content(34, 26));
+  assert.ok(filesCount.key > keyMin && filesCount.toggle >= content(34, 26), `"Files · 123" leaves ${filesCount.key}px keys`);
+  assert.ok(fit(SIDEBAR_DEFAULT_WIDTH, content(24, 14)).key >= 24);
+  // From 300px they are at their widest, whatever the label and count.
+  assert.equal(fit(300, content(34, 26)).key, keyMax);
+  // At the sidebar's 180px minimum they are at their narrowest and nothing
+  // overflows: the toggle keeps more than its chevron (what does not fit
+  // in it wraps out of view, whole).
+  const narrowest = fit(SIDEBAR_MIN_WIDTH, content(34, 26));
+  assert.equal(narrowest.key, keyMin);
+  assert.ok(narrowest.toggle >= toggleMin, `${toggleMin} + ${gap} + 7 × ${keyMin} fits ${SIDEBAR_MIN_WIDTH - 1 - left - right}`);
 });
 
 test("a key disabled under the focus hands it to the nearest key still enabled, the next one first", () => {

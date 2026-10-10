@@ -85,6 +85,8 @@ test("the files tab's keys: the folder's four, then the tree's two views, always
   // The tree's views start at the right end.
   assert.match(row, /title="Show ignored files" aria-label="Show ignored files" aria-pressed="false" class="sidebar-tool-button sidebar-files-views-start"/);
   assert.equal((row.match(/sidebar-files-views-start/g) ?? []).length, 1);
+  // Their icons stay 14px here (the section header row's are 13px).
+  assert.deepEqual([...row.matchAll(/<svg width="(\d+)" height="(\d+)"/g)].map((match) => `${match[1]}x${match[2]}`), Array(6).fill("14x14"));
 
   // Without a terminal (no onOpenTerminal) the other five stay; the files
   // tab leaves it out where the row below the sessions disables it.
