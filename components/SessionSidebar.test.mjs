@@ -941,8 +941,9 @@ test("expanding, collapsing or paging a group never changes the cwd", () => {
   for (const name of ["handleToggleGroup", "handleShowMore", "handleShowLess", "handleTogglePinned", "setAllGroupsExpanded", "handleGroupMenu", "moveProject"]) {
     assert.doesNotMatch(callbackBody(name), /setSelectedCwd|onCwdChange/, `${name} must not switch projects`);
   }
-  // "Show more" adds SHOW_MORE_STEP families a click; "show less" folds back.
-  assert.match(callbackBody("handleShowMore"), /setMoreShown\(\(prev\) => showMoreFamilies\(prev, key\)\);/);
+  // "Show more" opens the window its row offers now (nextShown: by position,
+  // decided at the click); "show less" folds back.
+  assert.match(callbackBody("handleShowMore"), /item\.kind === "group-more" && item\.projectKey === key\)[\s\S]*?item\.kind === "pinned-more" && key === PINNED_MORE_KEY[\s\S]*?setMoreShown\(\(prev\) => showMoreFamilies\(prev, key, row\.nextShown\)\);/);
   assert.match(callbackBody("handleShowLess"), /setMoreShown\(\(prev\) => showLessFamilies\(prev, key\)\);/);
   // A toggle reads what is shown (kept open for the page included) and saves
   // an explicit choice, which replaces the page's for that group.
