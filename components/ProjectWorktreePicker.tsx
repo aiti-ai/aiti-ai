@@ -55,11 +55,12 @@ interface MenuState {
 
 interface Props {
   /**
-   * "inline": the two boxes side by side (the bar above a fresh composer).
+   * "inline": the bar above a fresh composer, the project's name and the
+   * worktree's branch as text on the page (no path, no notes).
    * The files' own: "stacked", full width, one under the other (the files
    * tab); "row", side by side in one row (the files below the sessions).
-   * Both have the files' extras: the activity dot, the worktree hint, the
-   * menus' minimum width.
+   * Both have the files' boxes (the whole path, the worktree's notes) and
+   * extras: the activity dot, the worktree hint, the menus' minimum width.
    */
   layout: "inline" | "stacked" | "row";
   context: ProjectWorktreeContext;
@@ -230,12 +231,18 @@ export function ProjectWorktreePicker({
   onPickRef.current = onPick;
   // The files' picker, either way its boxes are laid out.
   const stacked = layout !== "inline";
+  const inline = !stacked;
   // The menus on a desktop look as main's dropdowns did: whole paths,
   // "Custom path…", the "New worktree…" form under the list, a dirty
   // checkout's question in its row. A phone keeps the sheet.
   const classic = !mobile;
   const { project, worktrees } = context;
   const current = currentWorktreeOf(context);
+  // Inline, the project's name as the menus name it: its display name, else
+  // its folder's, with the parent folder only where two projects share it.
+  const projectName = inline && project
+    ? describeProjectChoices(projectChoices(context)).find(({ choice }) => choice.key === project.key)
+    : undefined;
 
   useEffect(() => {
     mountedRef.current = true;
@@ -517,10 +524,19 @@ export function ProjectWorktreePicker({
         aria-expanded={menu?.kind === "project"}
         onClick={(event) => openMenu("project", event.currentTarget)}
       >
-        {/* The whole path, cut at its left: the folder name at its end is
-            what tells paths apart. No icon and no chevron: the path is the box.
-            A project the user named shows that name; the tooltip keeps the path. */}
-        {project?.alias !== undefined ? (
+        {/* Inline: a folder icon, the name (cut at its end) and a chevron;
+            the tooltip is the path. The files': the whole path, cut at its
+            left (the folder name at its end is what tells paths apart), no
+            icon and no chevron: the path is the box. A project the user
+            named shows that name; the tooltip keeps the path. */}
+        {inline && <FolderIcon size={12} className="project-picker-icon" />}
+        {/* A twin's parent folder is cut before its name, the "/" never. */}
+        {inline && project ? (
+          <span className="project-picker-name">
+            {project.alias === undefined && projectName?.note && <><span className="project-picker-parent">{projectName.note}</span>/</>}
+            <span className="project-picker-leaf">{project.alias ?? projectName?.name ?? projectNameOf(project.root)}</span>
+          </span>
+        ) : project?.alias !== undefined ? (
           <span className="project-picker-label is-alias">{project.alias}</span>
         ) : project ? (
           <span className="project-picker-path"><span>{displayPath(project.root, homeDir)}</span></span>
@@ -530,6 +546,7 @@ export function ProjectWorktreePicker({
         {otherActivity && (
           <span className="project-picker-activity" role="img" title={t("sidebar.newActivity")} aria-label={t("sidebar.newActivity")} />
         )}
+        {inline && <ChevronIcon size={9} className="project-picker-chevron sidebar-icon-down" />}
       </button>
       {worktrees && (
         <button
@@ -544,11 +561,12 @@ export function ProjectWorktreePicker({
           {/* A linked checkout's branch icon in the accent, as the main checkout's is not. */}
           <BranchIcon size={11} className={current && !current.isMain ? "project-picker-icon is-linked" : "project-picker-icon"} />
           <span className="project-picker-path"><span>{current ? current.branch ?? displayPath(current.path, homeDir) : "…"}</span></span>
-          {/* Not in the row: there the box is a share of a narrow sidebar
-              and the branch needs the room; the icon (the accent only for
-              a linked checkout) still tells the main one. */}
-          {current?.isMain && layout !== "row" && <span className="project-picker-note">{t("sidebar.main")}</span>}
-          {worktrees.length > 1 && <span className="project-picker-note">{worktrees.length}</span>}
+          {/* Only in the files tab: in the row the box is a share of a
+              narrow sidebar and the branch needs the room; inline the
+              branch is text on the page. The icon (the accent only for a
+              linked checkout) still tells the main one. */}
+          {current?.isMain && layout === "stacked" && <span className="project-picker-note">{t("sidebar.main")}</span>}
+          {stacked && worktrees.length > 1 && <span className="project-picker-note">{worktrees.length}</span>}
           <ChevronIcon size={9} className="project-picker-chevron sidebar-icon-down" />
         </button>
       )}
