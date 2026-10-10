@@ -24,7 +24,7 @@ export async function showSidebarFiles(page) {
 /** Shows the session rows: the Sessions tab, or nothing to do below the files. */
 export async function showSidebarSessions(page) {
   const tab = page.getByRole("tab", { name: "Sessions", exact: true });
-  await tab.or(page.locator(".sidebar-title")).first().waitFor();
+  await tab.or(page.locator(".sidebar-brand")).first().waitFor();
   if (await tab.count() && await tab.getAttribute("aria-selected") !== "true") await tab.click();
   await page.locator("#session-sidebar-panel-sessions").waitFor({ state: "visible" });
 }
