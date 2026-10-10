@@ -364,6 +364,24 @@ export function showMoreFamilies(moreShown: Readonly<Record<string, number>>, ke
   return { ...moreShown, [key]: Math.max(shownMoreFor(moreShown, key), Math.floor(nextShown)) };
 }
 
+/**
+ * `moreShown` without the windows of the groups an explicit choice folds
+ * (`keys`, the groups it covers; null: every group in `choices`): a group
+ * opened again shows its first rows only, not the window it had. Returns
+ * `moreShown` itself when none of them had one.
+ */
+export function forgetShownMoreOfFolded(
+  moreShown: Readonly<Record<string, number>>,
+  choices: Readonly<Record<string, boolean>>,
+  keys: readonly string[] | null,
+): Record<string, number> {
+  const folded = (keys ?? Object.keys(choices)).filter((key) => choices[key] === false && Object.hasOwn(moreShown, key));
+  if (folded.length === 0) return moreShown as Record<string, number>;
+  const next = { ...moreShown };
+  for (const key of folded) delete next[key];
+  return next;
+}
+
 /** "Show less": back to the base limit for `key`. */
 export function showLessFamilies(moreShown: Readonly<Record<string, number>>, key: string): Record<string, number> {
   if (!Object.hasOwn(moreShown, key)) return moreShown as Record<string, number>;
