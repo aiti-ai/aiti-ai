@@ -769,7 +769,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         }, SESSION_DETAILS_HYDRATION_DELAY_MS);
       });
     } else {
-      void loadSessions(false, true);
+      // Every refreshKey bump follows a change the server already invalidated
+      // the list for (a run's agent_end, a fork, a delete, a name, a new
+      // session). Forcing would rescan again and bump the version, so every
+      // other open tab would reload the list once more.
+      void loadSessions();
     }
 
     return () => {
@@ -945,8 +949,11 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     const hasUnlistedRunningSession = newlyRunning.some(
       (id) => !allSessions.some((session) => session.id === id),
     );
+    // Not forced: a run's agent_end has already invalidated the server's list,
+    // and a forced rescan here, in every tab not showing that session, bumped
+    // the version again and made all the others reload once more.
     if (completedInBackground.length > 0 || hasUnlistedRunningSession) {
-      loadSessions(false, true);
+      void loadSessions();
     }
     if (completedWithNotifications.length > 0) {
       onBackgroundTaskDone?.();
