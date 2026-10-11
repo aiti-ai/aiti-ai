@@ -400,6 +400,7 @@ export const zhTWLocale: LocalePlugin = {
     "sidebar.newWorktreeForSession": "新增 worktree 並在其中新增工作階段",
     "sidebar.projectAndWorktree": "專案和 worktree",
     "sidebar.uiStateFailed": "儲存失敗：{error}",
+    "sidebar.sessionNotFound": "此工作階段已不存在",
     "sidebar.fork": "分叉",
     "sidebar.openInNewTab": "在新分頁開啟",
     "sidebar.forkedToast": "已分叉「{title}」",
