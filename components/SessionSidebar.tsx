@@ -13,6 +13,7 @@ import {
   buildSessionTree,
   effectiveGroupExpansion,
   familiesToArchive,
+  familiesToDelete,
   familyIds,
   forgetKeptOpenGroups,
   forgetShownMoreOfFolded,
@@ -43,6 +44,7 @@ import {
   type SidebarTab,
 } from "@/lib/sidebar-prefs";
 import {
+  deleteProjectSessions,
   forkFailureMessage,
   projectNameMenuEntries,
   projectRenameRequest,
@@ -276,10 +278,10 @@ interface ValidatedProject {
 
 type SessionRow = Extract<SidebarRow, { kind: "session" }>;
 
-/** The one popup menu of the sidebar; kept here, above the virtualized rows. */
+/** The one popup menu of the sidebar; kept here, above the virtualized rows. `askDelete`: a group menu turned into its "Delete all sessions" question. */
 type SidebarMenuState =
   | { kind: "row"; row: SessionRow; anchor: SidebarMenuAnchor; opener: HTMLElement | null }
-  | { kind: "group"; project: SidebarProject; olderCount: number; anchor: SidebarMenuAnchor; opener: HTMLElement };
+  | { kind: "group"; project: SidebarProject; olderCount: number; anchor: SidebarMenuAnchor; opener: HTMLElement; askDelete?: boolean };
 
 const UNREAD_SESSIONS_STORAGE_KEY = "pi-web:unread-session-ids";
 const LAST_CUSTOM_CWD_STORAGE_KEY = "pi-web:last-custom-cwd";
@@ -2008,6 +2010,42 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }));
   }, [archiveFamilies, familyByRootId, treeSelectionInput]);
 
+  // A project's "Delete all sessions…": the menu turns into its question,
+  // focus on Cancel (the sheet's on a phone), so Enter deletes nothing; Cancel
+  // goes back to the list. Delete closes the menu and sends the families the
+  // question counts at that moment, pinned and archived ones included,
+  // running ones kept (the server also keeps one that started since); toasts
+  // say how it went. One run per project at a time.
+  const askProjectDelete = useCallback((projectKey: string, askDelete: boolean) => {
+    setMenu((current) => (current?.kind === "group" && current.project.key === projectKey ? { ...current, askDelete } : current));
+  }, []);
+
+  const deletingProjectsRef = useRef(new Set<string>());
+  const deleteAllProjectSessions = useCallback(async (project: SidebarProject) => {
+    setMenu(null);
+    const { ids } = familiesToDelete(treeSelectionInput, project.key);
+    if (ids.length === 0 || deletingProjectsRef.current.has(project.key)) return;
+    deletingProjectsRef.current.add(project.key);
+    showToast(t("sidebar.deletingSessions"));
+    try {
+      const outcome = await deleteProjectSessions(ids, fetch);
+      for (const id of outcome.deleted) onSessionDeleted?.(id);
+      // The group goes with its last session unless it is current or pinned:
+      // focus that fell to the page with it goes to the tab.
+      void loadSessions().then(() => focusAfterCommit(() => groupHeaderButton(project.key)));
+      if (outcome.error !== null) {
+        showToast(t("sidebar.deleteFailed", { error: outcome.error }));
+        return;
+      }
+      const count = outcome.deletedRoots.length;
+      const parts = [count === 1 ? t("sidebar.deletedOneToast") : t("sidebar.deletedManyToast", { count })];
+      if (outcome.running.length > 0) parts.push(t("sidebar.keptRunningToast", { count: outcome.running.length }));
+      showToast(parts.join(" · "));
+    } finally {
+      deletingProjectsRef.current.delete(project.key);
+    }
+  }, [focusAfterCommit, groupHeaderButton, loadSessions, onSessionDeleted, showToast, t, treeSelectionInput]);
+
   // A group's "+": a new session at once. The current project starts in the
   // sidebar's worktree, another one in its root (the main checkout); the bar
   // above the fresh composer picks another worktree. The group's own key and
@@ -2156,6 +2194,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
 
   const groupMenuItems = (project: SidebarProject, olderCount: number): SidebarMenuItem[] => {
     const archivedCount = archiveIndex.countByProject.get(project.key) ?? 0;
+    const deletable = familiesToDelete(treeSelectionInput, project.key);
     // Within the project's band; disabled at its edges.
     const up = adjacentProjectMove(model.projects, project.key, "up");
     const down = adjacentProjectMove(model.projects, project.key, "down");
@@ -2239,7 +2278,52 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         disabled: archivedCount === 0,
         onSelect: openArchiveView,
       },
+      { type: "separator", id: "separator-delete" },
+      {
+        type: "item",
+        id: "delete-all",
+        label: t("sidebar.deleteProjectSessions", { count: deletable.ids.length }),
+        icon: <TrashIcon />,
+        danger: true,
+        disabled: deletable.ids.length === 0,
+        onSelect: ({ keepOpen }) => {
+          keepOpen();
+          askProjectDelete(project.key, true);
+        },
+      },
     ];
+  };
+
+  // The question behind "Delete all sessions…"; its counts are live.
+  const projectDeleteBody = (project: SidebarProject): ReactNode => {
+    const { ids, running } = familiesToDelete(treeSelectionInput, project.key);
+    return (
+      <div className="sidebar-menu-question">
+        <div className="sidebar-menu-header" title={project.root}>{t("sidebar.deleteProjectSessionsHeading", { name: project.name })}</div>
+        <p className="sidebar-menu-question-text">{t("sidebar.deleteProjectSessionsMessage")}</p>
+        {running > 0 && <p className="sidebar-menu-question-text">{t("sidebar.deleteProjectSessionsRunning", { count: running })}</p>}
+        <div className="sidebar-menu-question-buttons">
+          <button
+            type="button"
+            className="sidebar-menu-question-confirm"
+            disabled={ids.length === 0}
+            onClick={() => { void deleteAllProjectSessions(project); }}
+          >
+            {t("sidebar.deleteCount", { count: ids.length })}
+          </button>
+          {!isMobile && (
+            <button
+              type="button"
+              className="sidebar-menu-question-cancel"
+              data-sidebar-menu-autofocus=""
+              onClick={() => askProjectDelete(project.key, false)}
+            >
+              {t("sidebar.cancel")}
+            </button>
+          )}
+        </div>
+      </div>
+    );
   };
 
   let menuTitle: string | undefined;
@@ -2247,6 +2331,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // Room for "Archive sessions older than 7 days · N".
   let menuWidth: number | undefined;
   let menuItems: SidebarMenuItem[] | undefined;
+  let menuBody: ReactNode = null;
   if (menu?.kind === "row" && menuRow) {
     menuTitle = sessionRowTitle(menuRow.family.root);
     menuLabel = t("sidebar.sessionActions");
@@ -2257,6 +2342,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     menuTitle = project.name;
     menuLabel = t("sidebar.projectActions", { name: project.name });
     menuItems = groupMenuItems(project, menu.olderCount);
+    if (menu.askDelete) menuBody = projectDeleteBody(project);
     menuWidth = 264;
   }
 
@@ -2792,10 +2878,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         title={menuTitle}
         items={menuItems}
         cancelLabel={t("sidebar.cancel")}
+        focusCancel={menuBody !== null}
         onClose={closeMenu}
         returnFocusTo={menu?.opener ?? null}
         width={menuWidth}
-      />
+      >
+        {menuBody}
+      </SidebarMenu>
       <SidebarToast toast={toast} onDismiss={() => setToast(null)} dismissLabel={t("sidebar.dismiss")} />
     </div>
   );
