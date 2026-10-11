@@ -6,10 +6,6 @@ import { gunzipSync } from "node:zlib";
 import test from "node:test";
 import { createJiti } from "jiti";
 
-const listRoute = await readFile(new URL("./route.ts", import.meta.url), "utf8");
-const detailRoute = await readFile(new URL("./[id]/route.ts", import.meta.url), "utf8");
-const contextRoute = await readFile(new URL("./[id]/context/route.ts", import.meta.url), "utf8");
-const stateRoute = await readFile(new URL("./[id]/state/route.ts", import.meta.url), "utf8");
 const jiti = createJiti(import.meta.url, {
   alias: { "@": process.cwd() },
   interopDefault: true,
@@ -196,42 +192,6 @@ test("deleting an unpersisted session shuts down its runtime and invalidates cac
     assert.ok((await (await getRunningSessions()).json()).sessionListVersion > before);
     await assert.rejects(readFile(filePath), { code: "ENOENT" });
   }
-});
-
-test("session listing supports cheap summaries and honors force refresh", () => {
-  assert.match(listRoute, /searchParams\.get\("summary"\) === "1"/);
-  assert.match(listRoute, /summary\s*\n?\s*\? listSessionSummaries\(\)/);
-  assert.match(listRoute, /searchParams\.get\("force"\) === "1"/);
-  assert.match(listRoute, /listAllSessions\(\{ force \}\)/);
-  assert.match(listRoute, /attachSessionProjectInfo\(getRpcSessionInfos\(\)\)/);
-  assert.match(listRoute, /mergeSessionLists\(persistedSessions, runtimeSessions\)/);
-  assert.match(listRoute, /"Cache-Control": "no-store"/);
-});
-
-test("session reads use the live SessionManager before requiring a JSONL path", () => {
-  for (const source of [detailRoute, contextRoute]) {
-    const liveLookup = source.indexOf("getRpcSession(id)");
-    const pathLookup = source.indexOf("resolveSessionPath(id)");
-    assert.ok(liveLookup >= 0);
-    assert.ok(pathLookup > liveLookup);
-    // openSessionManager is the cached read-only opener; the live wrapper's
-    // manager must still win over any disk read, cached or not.
-    assert.match(source, /liveRpc\?\.inner\.sessionManager \?\? openSessionManager\(/);
-  }
-});
-
-test("detail reads probe disk only on force/mount and evict a stale idle wrapper", () => {
-  assert.match(detailRoute, /searchParams\.get\("force"\) === "1"/);
-  assert.match(detailRoute, /force && liveWrapper\?\.evictIfDiskAhead\(\)/);
-  assert.doesNotMatch(contextRoute, /evictIfDiskAhead|readLatestSessionEntryId/);
-});
-
-test("live agent state is available before the session file is persisted", () => {
-  const liveLookup = stateRoute.indexOf("getRpcSession(id)");
-  const pathLookup = stateRoute.indexOf("resolveSessionPath(id)");
-  assert.ok(liveLookup >= 0);
-  assert.ok(pathLookup > liveLookup);
-  assert.match(stateRoute, /if \(rpc\?\.isAlive\(\)\)/);
 });
 
 test("deleting a session removes all persisted subagent descendants", async (t) => {

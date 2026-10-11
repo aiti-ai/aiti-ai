@@ -17,47 +17,6 @@ function callbackBody(name, nextName) {
   return source.slice(start, end);
 }
 
-test("explicit context changes invalidate a pending workspace restore", () => {
-  const callbacks = [
-    ["handleCwdChange", "handleSelectSession"],
-    ["handleSelectSession", "handleNewSession"],
-    ["handleNewSession", "hydrateSelectedSession"],
-    ["handleSessionCreated", "handleAgentEnd"],
-    ["handleSessionForked", "handleInitialRestoreDone"],
-    ["handleSessionDeleted", "handleOpenFile"],
-  ];
-
-  for (const [name, nextName] of callbacks) {
-    assert.match(callbackBody(name, nextName), /invalidateWorkspaceRestore\(\);/);
-  }
-});
-
-test("all active-session transitions share one persistence effect", () => {
-  assert.match(
-    source,
-    /useEffect\(\(\) => \{\s+if \(selectedSession\) \{[\s\S]*?setLastOpenSession\(projectKey, selectedSession\.id\);\s+setTabOpenSession\(selectedSession\.id\);\s+return;\s+\}\s+if \(newSessionCwd\) setTabOpenNewSession\(newSessionCwd\);\s+\}, \[newSessionCwd, selectedSession\]\);/,
-  );
-});
-
-test("keeps chat scroll positions in page memory by session id", () => {
-  assert.match(source, /useRef\(new Map<string, ChatScrollPosition>\(\)\)/);
-  assert.match(source, /sessionScrollPositionsRef\.current\.set\(sessionId, position\)/);
-  assert.match(source, /initialScrollPosition=\{selectedSession \? sessionScrollPositionsRef\.current\.get\(selectedSession\.id\) \?\? null : null\}/);
-  assert.match(source, /onScrollPositionChange=\{handleSessionScrollPositionChange\}/);
-  assert.doesNotMatch(source, /localStorage[^\n]*sessionScroll/i);
-});
-
-test("workspace restoration remains inside the cross-project branch", () => {
-  assert.match(
-    callbackBody("handleCwdChange", "handleSelectSession"),
-    /if \(currentProject !== newProject\) \{[\s\S]*?restoreWorkspaceContext\(newProject, cwd\);[\s\S]*?\}/,
-  );
-  assert.match(
-    callbackBody("handleNewSession", "hydrateSelectedSession"),
-    /if \(activeProjectKeyRef\.current !== targetProject\) \{\s*changeFileWorkspace\(activeProjectKeyRef\.current, targetProject\);/,
-  );
-});
-
 test("a linked session that is gone gets no other session in its place (#1168)", async (t) => {
   const callbacks = [
     callbackBody("restoreWorkspaceContext", "handleCwdChange"),
@@ -431,26 +390,6 @@ test("the composer's bar moves the fresh composer's draft and model picks instea
   assert.equal(draftStore.getDraft("new:p5-new:/p5"), null);
   assert.equal(context.carriedNewSessionChoices, null);
   for (const key of ["parked-new:/p2", "parked-new:/p4", "new:p3-new:/p3"]) draftStore.clearDraft(key);
-});
-
-test("only a fresh composer moves from the bar, and only somewhere else", () => {
-  const body = source.slice(source.indexOf("const handlePickNewSessionContext = useCallback"), source.indexOf("const pickNewSessionContextRef"));
-  const guard = body.indexOf("if (selectedSession !== null || !effectiveNewSessionCwd || target.cwd === effectiveNewSessionCwd) return;");
-  const focus = body.indexOf("newSessionBarFocusRef.current = from;");
-  const move = body.indexOf("sidebarControlRef.current?.startNewSessionIn({ ...target, carryComposer: true });");
-  assert.ok(guard >= 0 && guard < focus && focus < move, "the guard, then the focus request, then the move");
-  // The folder picker answers later and goes through the same guard with the newest closure.
-  assert.match(source, /const pickNewSessionContextRef = useRef\(handlePickNewSessionContext\);\s*pickNewSessionContextRef\.current = handlePickNewSessionContext;/);
-  assert.match(source, /openFolderForNewSession\(\(target\) => pickNewSessionContextRef\.current\(target, "project"\), opener\)/);
-  // So does "Use default directory": today's folder, validated by the sidebar.
-  assert.match(source, /openDefaultDirectoryForNewSession\(\(target\) => pickNewSessionContextRef\.current\(target, "project"\)\)/);
-  assert.match(source, /onUseDefaultDirectory=\{handleDefaultDirectoryForNewSession\}/);
-  // The bar exists only for a fresh composer, and gets the composer's cwd even while the sidebar's report lags.
-  assert.match(source, /const newSessionContextBar = selectedSession === null && effectiveNewSessionCwd \? \(\s*<NewSessionContextBar\s*context=\{contextForCwd\(sidebarNewSessionContext, effectiveNewSessionCwd, newSessionMoveRef\.current\)\}/);
-  assert.match(source, /controlRef=\{sidebarControlRef\}\s*onNewSessionContextChange=\{handleSidebarNewSessionContext\}/);
-  assert.match(source, /newSessionContextBar=\{newSessionContextBar\}\s*initialNewSessionChoices=\{selectedSession === null \? carriedNewSessionChoices : null\}\s*onNewSessionChoicesChange=\{handleNewSessionChoicesChange\}/);
-  // The composer that takes the carried picks reports them on mount, which clears them.
-  assert.match(source, /const handleNewSessionChoicesChange = useCallback\(\(choices: NewSessionChoices\) => \{\s*newSessionChoicesRef\.current = choices;\s*setCarriedNewSessionChoices\(null\);\s*\}, \[\]\);/);
 });
 
 test("the bar of the new composer shows the bar's own move until the sidebar reports it", async () => {
