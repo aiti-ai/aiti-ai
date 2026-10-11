@@ -186,6 +186,15 @@ export function mergeSessionLists(
 
 type ScannedSubagent = NonNullable<ReturnType<typeof readSubagentRun>>;
 
+/**
+ * A fork's or subagent's run, read from its file, per scanned row. The scanner
+ * hands back the same row object while the file's size and mtime stay the same
+ * and a new one once they change, so the row is the cache key: every list
+ * rebuild re-read ~140 subagent files synchronously (~36 ms of blocked event
+ * loop) though only the session that just ran had changed.
+ */
+const scannedSubagentRuns = new WeakMap<ScannedSessionInfo, ScannedSubagent | null>();
+
 function resolveScannedSessionRelation(
   scanned: ScannedSessionInfo,
   pathToId: Map<string, string>,
@@ -195,11 +204,14 @@ function resolveScannedSessionRelation(
     : undefined;
   if (!scanned.parentSessionPath) return { originSessionId, subagent: null };
 
+  const cached = scannedSubagentRuns.get(scanned);
+  if (cached !== undefined) return { originSessionId, subagent: cached };
   try {
     const subagent = readSubagentRun(readSessionRelationEntries(scanned.path), scanned.id, scanned.path);
+    scannedSubagentRuns.set(scanned, subagent);
     return { originSessionId, subagent };
   } catch {
-    // Malformed or concurrently removed session.
+    // Malformed or concurrently removed session: read it again next time.
     return { originSessionId, subagent: null };
   }
 }
