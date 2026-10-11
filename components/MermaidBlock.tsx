@@ -7,6 +7,7 @@ import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { copyText } from "@/lib/clipboard";
+import { takeHighlightBudget, waitForHighlight } from "@/lib/highlight-queue";
 
 interface MermaidBlockProps {
   code: string;
@@ -276,11 +277,20 @@ delete codeBlockDarkTheme['pre[class*="language-"]'].background;
  * While the owning message is still streaming, the block renders as plain
  * monospace text — highlighting a growing block re-tokenizes all of it on
  * every chunk, which is the single most expensive part of streamed rendering.
+ * A finished block past this task's highlight budget (lib/highlight-queue.ts)
+ * renders through the same highlighter as `text` (same lines, numbers and
+ * box, no tokens) until an idle slice lets it take its language.
  */
 export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isStreaming }: CodeBlockProps) {
   const { isDark } = useTheme();
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
+  const [highlighted, setHighlighted] = useState(() => !isStreaming && takeHighlightBudget(code.length));
+
+  useEffect(() => {
+    if (isStreaming || highlighted) return;
+    return waitForHighlight(() => setHighlighted(true));
+  }, [isStreaming, highlighted]);
 
   const copy = () => {
     copyText(code).then(() => {
@@ -318,7 +328,7 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
         </pre>
       ) : (
         <SyntaxHighlighter
-          language={lang || "text"}
+          language={highlighted ? lang || "text" : "text"}
           style={isDark ? codeBlockDarkTheme : vs}
           showLineNumbers
           lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal" }}
