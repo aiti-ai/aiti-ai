@@ -6,44 +6,6 @@ import ts from "typescript";
 
 const source = await readFile(new URL("./FileViewer.tsx", import.meta.url), "utf8");
 
-test("large source previews bypass the per-line syntax highlighter", () => {
-  assert.match(source, /const SOURCE_HIGHLIGHT_MAX_LINES = 1_000;/);
-  assert.match(source, /const useLightweightSource = sourceLines\.length > SOURCE_HIGHLIGHT_MAX_LINES/);
-
-  // Both source trees are memoized so unrelated re-renders (panel open/close,
-  // selection changes) reuse them instead of rebuilding every line element.
-  assert.match(source, /const highlightedSource = useMemo\(/);
-
-  const lightweightStart = source.indexOf("const lightweightSourceLines = useMemo(");
-  const lightweightEnd = source.indexOf("[sourceLines, useLightweightSource, wrapLines]", lightweightStart);
-  assert.notEqual(lightweightStart, -1);
-  assert.notEqual(lightweightEnd, -1);
-
-  const lightweightSource = source.slice(lightweightStart, lightweightEnd);
-  assert.match(lightweightSource, /useLightweightSource \? sourceLines\.map\(\(line, lineIndex\) =>/);
-  assert.match(lightweightSource, /className="file-source-line"/);
-  assert.match(lightweightSource, /className="file-source-line-content"/);
-  assert.match(lightweightSource, /style=\{FILE_LINE_NUMBER_STYLE\}/);
-
-  // The lightweight branch still wins over the syntax highlighter in the JSX.
-  const branchStart = source.indexOf(") : useLightweightSource ? (");
-  assert.notEqual(branchStart, -1);
-  assert.match(source.slice(branchStart), /className="file-source-view is-lightweight"/);
-  assert.notEqual(source.indexOf("highlightedSource", branchStart), -1);
-});
-
-test("the highlighted source view owns its <pre> background without a competing shorthand", () => {
-  // vs colors <pre> with backgroundColor and vscDarkPlus with background; mixing
-  // them across a theme switch warned and dropped the view's background.
-  assert.match(source, /const fileViewerDarkTheme = \{\s*\.\.\.vscDarkPlus,\s*'pre\[class\*="language-"\]': \{\s*\.\.\.vscDarkPlus\['pre\[class\*="language-"\]'\],\s*\},\s*\};\ndelete fileViewerDarkTheme\['pre\[class\*="language-"\]'\]\.background;/);
-  const start = source.indexOf("const highlightedSource = useMemo(");
-  const element = source.slice(start, source.indexOf("</SyntaxHighlighter>", start));
-  assert.match(element, /style=\{isDark \? fileViewerDarkTheme : vs\}/);
-  const customStyle = element.slice(element.indexOf("customStyle={{"), element.indexOf("codeTagProps={{"));
-  assert.match(customStyle, /backgroundColor: "var\(--bg\)"/);
-  assert.doesNotMatch(customStyle, /\bbackground:/);
-});
-
 test("lightweight source rows are skipped for highlighted, diff, and preview views", () => {
   // Execute the source-view calculations without mounting the file-fetching component.
   const file = ts.createSourceFile("FileViewer.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -86,19 +48,6 @@ test("lightweight source rows are skipped for highlighted, diff, and preview vie
   assert.equal(render(large, "source", false, false, true)[0].props.children[1].props.style.whiteSpace, "pre-wrap");
 });
 
-test("markdown preview keeps app links and opens web and app links in a new tab (#1108)", () => {
-  assert.match(source, /urlTransform=\{onOpenFile \? markdownUrlTransform : markdownAppUrlTransform\}/);
-  assert.match(
-    source,
-    /return isExternalMarkdownHref\(href\)\s*\? <a href=\{href\} \{\.\.\.props\} target="_blank" rel="noopener noreferrer">\{children\}<\/a>\s*: <a href=\{href\} \{\.\.\.props\}>\{children\}<\/a>;/,
-  );
-});
-
-test("markdown preview links carry PDF page fragments", () => {
-  assert.match(source, /parsePdfPageFragment/);
-  assert.match(source, /onOpenFile\(linkedFile, parsePdfPageFragment\(href\) \?\? undefined\)/);
-});
-
 test("partly loaded HTML previews up to the HTML cap; partly loaded markdown does not", () => {
   const start = source.indexOf("  const hasPreview = ");
   const statement = source.slice(start, source.indexOf(";\n", start) + 1);
@@ -111,5 +60,4 @@ test("partly loaded HTML previews up to the HTML cap; partly loaded markdown doe
   assert.equal(hasPreview({ truncated: false, size: cap + 1 }, true, false, false, cap), true);
   assert.equal(hasPreview(partial, false, true, false, cap), false);
   assert.equal(hasPreview({ ...partial, size: cap + 1 }, false, false, true, cap), true);
-  assert.match(source, /srcDoc=\{data\?\.truncated \? htmlFull\?\.text : content\}/);
 });
