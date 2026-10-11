@@ -195,21 +195,31 @@ function settleOrphanedRun(run: SubagentRunInfo): SubagentRunInfo {
   return run.status === "running" || run.status === "queued" ? { ...run, status: "interrupted" } : run;
 }
 
+function findSubagentModel(runtime: ModelRuntime, reference: string) {
+  const slash = reference.indexOf("/");
+  if (slash > 0) return runtime.getModel(reference.slice(0, slash), reference.slice(slash + 1));
+  const matches = runtime.getModels().filter((model) => model.id === reference);
+  if (matches.length > 1) throw new Error(`Subagent model is ambiguous; use provider/modelId: ${reference}`);
+  return matches[0];
+}
+
+/**
+ * Reads a model reference as pi's `--model` does: `provider/modelId` or a bare id, optionally
+ * followed by `:<thinking level>`. The whole reference is tried first, so an id that itself
+ * contains a colon (`qwen3:8b`) still matches; a suffix that is no thinking level never matches.
+ */
 function parseSubagentModel(runtime: ModelRuntime, value: string | undefined) {
   if (!value?.trim()) return undefined;
   const requested = value.trim();
-  const slash = requested.indexOf("/");
-  if (slash > 0) {
-    const provider = requested.slice(0, slash);
-    const modelId = requested.slice(slash + 1);
-    const model = runtime.getModel(provider, modelId);
-    if (!model) throw new Error(`Subagent model not found: ${requested}`);
-    return model;
+  const exact = findSubagentModel(runtime, requested);
+  if (exact) return { model: exact };
+  const colon = requested.lastIndexOf(":");
+  const level = requested.slice(colon + 1) as ThinkingLevel;
+  if (colon > 0 && THINKING_LEVELS.has(level)) {
+    const model = findSubagentModel(runtime, requested.slice(0, colon));
+    if (model) return { model, thinkingLevel: level };
   }
-  const matches = runtime.getModels().filter((model) => model.id === requested);
-  if (matches.length === 1) return matches[0];
-  if (matches.length === 0) throw new Error(`Subagent model not found: ${requested}`);
-  throw new Error(`Subagent model is ambiguous; use provider/modelId: ${requested}`);
+  throw new Error(`Subagent model not found: ${requested}`);
 }
 
 function parentContextText(parent: HostSession): string {
@@ -257,10 +267,6 @@ export function createSubagentController(
       const inheritContext = profile.inheritContext;
       // `parseProfileFile` already floors a positive profile `max_turns`, so it is an integer or absent.
       const turnLimit = profile.maxTurns;
-      const thinking = profile.thinking ?? parent.inner.agent.state?.thinkingLevel;
-      if (thinking && !THINKING_LEVELS.has(thinking as ThinkingLevel)) {
-        throw new Error(`Invalid subagent thinking level: ${thinking}`);
-      }
 
       const agentDir = getAgentDir();
       const parentModelRuntime = (parent.inner as unknown as { modelRuntime: ModelRuntime }).modelRuntime;
@@ -401,12 +407,23 @@ export function createSubagentController(
       sessionManager.appendCustomEntry(SUBAGENT_META_TYPE, metadata);
       sessionManager.appendSessionInfo(metadata.description);
 
-      const requestedModel = parseSubagentModel(parentModelRuntime, request.model ?? profile.model);
+      // A `:level` suffix travels with its model. As with pi's `--thinking` over `--model x:level`,
+      // the profile's own `thinking` beats a suffix on the profile's model, while a call naming
+      // a model with a suffix chose both for this run.
+      const callModel = parseSubagentModel(parentModelRuntime, request.model);
+      const profileModel = callModel ? undefined : parseSubagentModel(parentModelRuntime, profile.model);
+      const thinking = callModel?.thinkingLevel
+        ?? profile.thinking
+        ?? profileModel?.thinkingLevel
+        ?? parent.inner.agent.state?.thinkingLevel;
+      if (thinking && !THINKING_LEVELS.has(thinking as ThinkingLevel)) {
+        throw new Error(`Invalid subagent thinking level: ${thinking}`);
+      }
       const parentModel = parent.inner.model as ReturnType<ModelRuntime["getModel"]>;
       const { session: inner } = await createAgentSessionFromServices({
         services,
         sessionManager,
-        model: requestedModel ?? parentModel,
+        model: (callModel ?? profileModel)?.model ?? parentModel,
         ...(thinking ? { thinkingLevel: thinking as ThinkingLevel } : {}),
         ...subagentToolOptions({ tools: activeTools, allExtensionTools, mcp: mcpEnabled }),
       });
