@@ -6,6 +6,7 @@ import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { validateAgentImages } from "./image-attachments";
 import { invalidateModelsCache } from "./models-cache";
+import { invalidateModelRuntimeWithExtensions } from "./model-runtime";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
 import { findDeferredModel, rememberProviderModels } from "./deferred-provider-models";
 import { isBlockingExtensionUiRequest } from "./extension-ui-queue";
@@ -1263,6 +1264,8 @@ export class AgentSessionWrapper {
           this.inner.extensionRunner.setUIContext?.(this.createExtensionUiContext(), "rpc");
         }
         invalidateModelsCache();
+        // /reload is how an edited extension is picked up; the provider lists' runtime follows.
+        invalidateModelRuntimeWithExtensions();
         return { success: true };
       }
 
@@ -2021,6 +2024,8 @@ export class AgentSessionWrapper {
             this.inner.extensionRunner.setUIContext?.(this.createExtensionUiContext(), "rpc");
           },
         });
+        // As the `reload` command: the provider lists' runtime follows.
+        invalidateModelRuntimeWithExtensions();
       },
     };
   }
