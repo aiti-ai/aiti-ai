@@ -11,7 +11,7 @@ import {
   type SubagentProfile,
   type SubagentRunInfo,
 } from "./subagents";
-import { MAX_SUBAGENT_INPUT_FILES } from "./subagent-input";
+import { MAX_SUBAGENT_INPUT_BYTES, MAX_SUBAGENT_INPUT_FILES } from "./subagent-input";
 
 export const HOST_SUBAGENT_EXTENSION_NAME = "pi-web-subagents";
 const HOST_SUBAGENT_EXTENSION_PATH = `<inline:${HOST_SUBAGENT_EXTENSION_NAME}>`;
@@ -176,7 +176,7 @@ export function createSubagentExtension(
           prompt: Type.String({ description: "The complete task for the subagent." }),
           resume: Type.Optional(Type.String({ description: "Existing session ID to continue with its current profile, model, thinking, and context. Omit new-session options." })),
           input_files: Type.Optional(Type.Array(Type.String(), {
-            description: "UTF-8 text files under the session cwd to include with the task.",
+            description: `UTF-8 text files under the session cwd to include with the task. Together they may fill about a tenth of the subagent model's context window, at most ${MAX_SUBAGENT_INPUT_BYTES / 1024} KB. Pass fewer or smaller files, or name the paths in prompt if the subagent can read them.`,
             maxItems: MAX_SUBAGENT_INPUT_FILES,
           })),
           description: Type.String({ description: "Short activity label shown in the UI." }),
