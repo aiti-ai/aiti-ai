@@ -34,7 +34,7 @@ import {
 import type { SessionEntry } from "./types";
 import { buildSubagentPromptPlan } from "./subagent-prompt";
 import { createSubagentSkillsBinding } from "./subagent-skills";
-import { appendSubagentInputFiles, loadSubagentInputFiles } from "./subagent-input";
+import { appendSubagentInputFiles, loadSubagentInputFiles, subagentInputLimits } from "./subagent-input";
 import { projectTrustReloadOptions } from "./project-trust";
 import { createSubagentCodemodeExtension, createSubagentMcpExtensions } from "./builtin-extensions";
 import type { McpHost } from "./mcp-host";
@@ -222,6 +222,27 @@ function parseSubagentModel(runtime: ModelRuntime, value: string | undefined) {
   throw new Error(`Subagent model not found: ${requested}`);
 }
 
+/**
+ * The model the child is expected to run (the call's, else the profile's, else the parent's),
+ * looked up early to size `input_files` before a worktree or child session exists (#1199). It
+ * never throws: the child's model is resolved for real, and a bad reference refused, only after
+ * the child's services have refreshed the shared runtime from models.json and registered its
+ * extensions' providers. A reference this lookup misses leaves the files the flat limit.
+ */
+function expectedSubagentModel(
+  runtime: ModelRuntime,
+  callModel: string | undefined,
+  profileModel: string | undefined,
+  parentModel: AgentSessionLike["model"],
+) {
+  try {
+    const reference = callModel?.trim() || profileModel?.trim();
+    return reference ? parseSubagentModel(runtime, reference)?.model : parentModel;
+  } catch {
+    return undefined;
+  }
+}
+
 function parentContextText(parent: HostSession): string {
   const messages = parent.inner.sessionManager.buildSessionContext().messages;
   const serialized = JSON.stringify(messages);
@@ -260,6 +281,12 @@ export function createSubagentController(
 
       const runInBackground = request.runInBackground ?? profile.runInBackground;
       const isolation = profile.isolation === "off" ? undefined : request.isolation ?? profile.isolation;
+      const parentModelRuntime = (parent.inner as unknown as { modelRuntime: ModelRuntime }).modelRuntime;
+      // Sized by the window of the model expected to read the copy, and refused before a worktree
+      // or child session exists.
+      const inputFiles = loadSubagentInputFiles(parent.cwd, request.inputFiles ?? [], subagentInputLimits(
+        expectedSubagentModel(parentModelRuntime, request.model, profile.model, parent.inner.model),
+      ));
       if (isolation === "worktree") {
         isolatedWorktree = await addWorktree(parent.cwd, `pi-web-agent-${randomUUID()}`);
       }
@@ -269,12 +296,10 @@ export function createSubagentController(
       const turnLimit = profile.maxTurns;
 
       const agentDir = getAgentDir();
-      const parentModelRuntime = (parent.inner as unknown as { modelRuntime: ModelRuntime }).modelRuntime;
       const settingsManager = SettingsManager.create(childCwd, agentDir);
       const inheritedParentContext = inheritContext
         ? `The following is the active conversation context from the parent session. Use it only as background for the delegated task:\n${parentContextText(parent)}`
         : undefined;
-      const inputFiles = loadSubagentInputFiles(parent.cwd, request.inputFiles ?? []);
       const promptPlan = buildSubagentPromptPlan({
         profileSystemPrompt: profile.systemPrompt,
         tools: profile.tools,
