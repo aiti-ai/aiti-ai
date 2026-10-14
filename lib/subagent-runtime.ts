@@ -44,6 +44,7 @@ import { isBuiltInSubagentsEnabled, readSubagentSettings } from "./subagent-sett
 import { SubagentQueue } from "./subagent-queue";
 import { addWorktree, removeWorktree } from "./worktree";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 
 interface HostSession {
   readonly inner: AgentSessionLike;
@@ -660,6 +661,11 @@ export function createSubagentController(
     if (!wrapper?.isAlive()) wrapper = await dependencies.reopenSession(request.sessionId, sessionPath);
     if (!wrapper.isAlive()) throw new Error("Subagent session is no longer available");
     if (wrapper.isRunning()) throw new Error("Subagent is already running");
+    // The run prompts the SDK session directly, past the wrapper's `send()`, so refuse here as
+    // `send()` does: an isolated child's worktree is removed when its run ends, and a run in the
+    // missing folder would only let the model's tools fail (and `write` recreate it outside git).
+    // The error reaches the model, so it also says what to do instead.
+    if (!existsSync(wrapper.cwd)) throw new Error(`Directory does not exist: ${wrapper.cwd}. Start a new subagent instead.`);
 
     const runInBackground = request.runInBackground ?? existing.runInBackground;
     const initialRun: SubagentRunInfo = {
