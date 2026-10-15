@@ -14,6 +14,7 @@ import { checkExtensionDialogSizing, checkExtensionDialogs, extensionSource } fr
 import { checkChatAppearance } from "./chat-appearance.mjs";
 import { checkCodeBackground } from "./code-background.mjs";
 import { checkModelDiscovery } from "./model-discovery.mjs";
+import { checkModelContext } from "./model-context.mjs";
 import { checkFilesPlacement, showSidebarSessions } from "./sidebar.mjs";
 import { checkSessionNavigation } from "./session-navigation.mjs";
 import { checkProjectNavigation, createProjectNavigationFixtures } from "./project-navigation.mjs";
@@ -500,6 +501,7 @@ try {
       console.log("PASS: files below the sessions by default, tabs from Settings and back");
       await checkModelDiscovery(page);
     }
+    await checkModelContext(page);
     await page.goto(`${base}/?session=${CODE_BACKGROUND}`, { waitUntil: "domcontentloaded" });
     await page.locator(".markdown-code-block pre").waitFor();
     await checkCodeBackground(page);
