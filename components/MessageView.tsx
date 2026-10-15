@@ -860,8 +860,10 @@ function AssistantMessageView({
       </div>
 
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {/* Not keyed by the entry id: a message of this run gets one when the file is
+            read again, and its blocks keep their state across that read (#1184). */}
         {blockItems.map(({ block, originalIndex }) => (
-          <BlockView key={`${entryId ?? "stream"}-${originalIndex}`} block={block} searchTarget={block === searchBlock} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
+          <BlockView key={originalIndex} block={block} searchTarget={block === searchBlock} toolResults={toolResults} isStreaming={isStreaming} streamingDuration={streamingDurations.get(originalIndex) ?? (block.type === "thinking" ? thinkingDurationFromFile : undefined)} toolCallDurations={toolCallDurations} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} sessionId={sessionId} entryId={entryId} blockIndex={originalIndex} />
         ))}
       </div>
 
@@ -1018,6 +1020,16 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // The block outlives a change of entry id (a message of this run gets its id
+  // when the file is read again, #1184): what was loaded for another entry goes.
+  const loadKey = `${sessionId}:${entryId}:${blockIndex}`;
+  const [loadedKey, setLoadedKey] = useState(loadKey);
+  if (loadedKey !== loadKey) {
+    setLoadedKey(loadKey);
+    setContent(null);
+    setLoading(false);
+    setError(null);
+  }
   const tRef = useRef(t);
   tRef.current = t;
   const preview = getThinkingPreview(block.thinking);
