@@ -197,7 +197,8 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, durationMs, defaultE
   useLayoutEffect(() => {
     if (reveal) setExpanded(true);
   }, [reveal]);
-  const parts = [t("chat.processDetails"), `${messageCount} ${t(messageCount === 1 ? "chat.message" : "chat.messages")}`];
+  // The chevron already says this folds; the words stay in the accessible name.
+  const parts = [`${messageCount} ${t(messageCount === 1 ? "chat.message" : "chat.messages")}`];
   if (toolCallCount > 0) parts.push(`${toolCallCount} ${t(toolCallCount === 1 ? "chat.toolCall" : "chat.toolCalls")}`);
   if (durationMs !== undefined) parts.push(t("chat.turnDuration", { time: formatTurnDuration(durationMs) }));
 
@@ -206,6 +207,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, durationMs, defaultE
       <button
         type="button"
         aria-expanded={expanded || reveal}
+        aria-label={[t("chat.processDetails"), ...parts].join(" · ")}
         onClick={() => setExpanded((v) => !v)}
         style={{
           display: "flex",
