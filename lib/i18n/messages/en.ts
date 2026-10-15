@@ -592,6 +592,8 @@ export const enLocale: LocalePlugin = {
     "terminal.close": "Terminate terminal",
     "terminal.restart": "Restart terminal",
     "terminal.reconnect": "Reconnect terminal",
+    "terminal.lightTheme": "Switch terminal to light theme",
+    "terminal.darkTheme": "Switch terminal to dark theme",
     "terminal.extraKeys": "Terminal keys",
     "terminal.connecting": "Connecting",
     "terminal.ready": "Connected",

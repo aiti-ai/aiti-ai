@@ -592,6 +592,8 @@ export const zhCNLocale: LocalePlugin = {
     "terminal.close": "终止终端",
     "terminal.restart": "重启终端",
     "terminal.reconnect": "重新连接终端",
+    "terminal.lightTheme": "终端切换为浅色主题",
+    "terminal.darkTheme": "终端切换为深色主题",
     "terminal.extraKeys": "终端按键",
     "terminal.connecting": "连接中",
     "terminal.ready": "已连接",
