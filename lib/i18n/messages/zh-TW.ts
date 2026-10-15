@@ -87,6 +87,7 @@ export const zhTWLocale: LocalePlugin = {
     "skills.bulkFailed": "{total} 個技能中有 {count} 個無法變更：",
     "skills.instructions": "說明",
     "skills.noInstructions": "此技能沒有說明。",
+    "skills.documentBack": "返回",
     "plugins.groupSwitchOff": "啟用 {group} 中的所有套件",
     "plugins.groupSwitchOn": "停用 {group} 中的所有套件。設定了資源篩選的套件會保持啟用，因為停用會清除其篩選設定；請使用它自己的開關。",
     "plugins.bulkKeptFiltered": "{count} 個設定了資源篩選的套件保持啟用：停用會清除其篩選設定，請使用它自己的開關。",
