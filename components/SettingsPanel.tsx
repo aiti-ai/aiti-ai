@@ -85,6 +85,9 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const [shellSaving, setShellSaving] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [cacheMissNotices, setCacheMissNotices] = useState<boolean | null>(null);
+  const [cacheMissNoticesSaving, setCacheMissNoticesSaving] = useState(false);
+  const [cacheMissNoticesError, setCacheMissNoticesError] = useState<string | null>(null);
   const [pushRegistering, setPushRegistering] = useState(false);
   const [pushStatus, setPushStatus] = useState<{ kind: "ok" | "error"; message: string } | null>(null);
   const [webAuthEnabled, setWebAuthEnabled] = useState(false);
@@ -126,6 +129,41 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
       });
     return () => { cancelled = true; };
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetch("/api/cache-miss-notices")
+      .then(async (response) => {
+        const data = await response.json() as { enabled?: boolean; error?: string };
+        if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+        if (!cancelled) setCacheMissNotices(data.enabled === true);
+      })
+      .catch((cause) => {
+        if (!cancelled) setCacheMissNoticesError(cause instanceof Error ? cause.message : String(cause));
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  // pi's showCacheMissNotices (#1265); the open chat is read again to show or drop them.
+  const toggleCacheMissNotices = async (enabled: boolean) => {
+    setCacheMissNoticesSaving(true);
+    setCacheMissNoticesError(null);
+    try {
+      const response = await fetch("/api/cache-miss-notices", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled }),
+      });
+      const data = await response.json() as { enabled?: boolean; error?: string };
+      if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+      setCacheMissNotices(data.enabled === true);
+      if (sessionId) onSessionReloaded();
+    } catch (cause) {
+      setCacheMissNoticesError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setCacheMissNoticesSaving(false);
+    }
+  };
 
   const togglePowerShell = async (enabled: boolean) => {
     setShellSaving(true);
@@ -313,7 +351,19 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               </label>
             </div>
           </div>
+          <div className="settings-chat-option settings-chat-switch-option">
+            <span>{t("settings.cacheMissNotices")}</span>
+            <ConfigSwitch
+              checked={cacheMissNotices === true}
+              loading={(cacheMissNotices === null && !cacheMissNoticesError) || cacheMissNoticesSaving}
+              label={t("settings.cacheMissNotices")}
+              describedBy="settings-cache-miss-notices-description"
+              onChange={(enabled) => void toggleCacheMissNotices(enabled)}
+            />
+          </div>
         </div>
+        <p id="settings-cache-miss-notices-description" className="settings-general-description">{t("settings.cacheMissNoticesDescription")}</p>
+        {cacheMissNoticesError && <p role="alert" className="settings-general-error">{cacheMissNoticesError}</p>}
       </section>
 
       <section className="settings-general-section">
