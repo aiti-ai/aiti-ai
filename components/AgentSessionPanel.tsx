@@ -10,6 +10,10 @@ interface Props {
   selectedSessionId: string;
   runningSessionIds: ReadonlySet<string>;
   onSelectSession: (session: SessionInfo) => void;
+  /** Subagents with a viewer tab in the open right panel. */
+  openSubagentTabIds: ReadonlySet<string>;
+  /** Opens a subagent's read-only viewer tab in the right panel (the `Agent` card's button), or closes it when open. */
+  onToggleSubagentTab: (sessionId: string, label: string) => void;
 }
 
 function sessionTitle(session: SessionInfo): string {
@@ -73,12 +77,16 @@ function AgentRow({
   selected,
   running,
   onSelect,
+  tabShown,
+  onToggleTab,
 }: {
   session: SessionInfo;
   main?: boolean;
   selected: boolean;
   running: boolean;
   onSelect: () => void;
+  tabShown?: boolean;
+  onToggleTab?: () => void;
 }) {
   const { locale, t } = useI18n();
   const relation = session.relation?.kind === "subagent" ? session.relation : null;
@@ -89,68 +97,93 @@ function AgentRow({
     : `${relation?.profile ?? t("agentSwitcher.subagent")} · ${formatRelativeTime(session.modified, locale)}`;
 
   return (
-    <button
-      type="button"
-      role="option"
-      aria-selected={selected}
-      onClick={onSelect}
+    <div
       style={{
-        width: "100%",
-        minHeight: 56,
-        display: "grid",
-        gridTemplateColumns: "28px minmax(0, 1fr) auto",
-        alignItems: "center",
-        gap: 9,
-        padding: "7px 12px",
-        border: "none",
+        display: "flex",
         borderBottom: "1px solid var(--border)",
         borderLeft: selected ? "2px solid var(--accent)" : "2px solid transparent",
         background: selected ? "var(--bg-selected)" : "transparent",
-        color: "var(--text)",
-        cursor: "pointer",
-        textAlign: "left",
-      }}
-      onMouseEnter={(event) => {
-        if (!selected) event.currentTarget.style.background = "var(--bg-hover)";
-      }}
-      onMouseLeave={(event) => {
-        if (!selected) event.currentTarget.style.background = "transparent";
       }}
     >
-      <span style={{ width: 28, height: 28, display: "grid", placeItems: "center", color: main ? "var(--text-muted)" : "var(--accent)" }}>
-        {main ? (
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" />
-          </svg>
-        ) : (
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
-          </svg>
-        )}
-      </span>
-      <span style={{ minWidth: 0 }}>
-        <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, fontWeight: selected ? 600 : 500 }} title={primary}>
-          {primary}
+      <button
+        type="button"
+        role="option"
+        aria-selected={selected}
+        onClick={onSelect}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          minHeight: 56,
+          display: "grid",
+          gridTemplateColumns: "28px minmax(0, 1fr) auto",
+          alignItems: "center",
+          gap: 9,
+          padding: "7px 12px",
+          border: "none",
+          background: "transparent",
+          color: "var(--text)",
+          cursor: "pointer",
+          textAlign: "left",
+        }}
+        onMouseEnter={(event) => {
+          if (!selected) event.currentTarget.style.background = "var(--bg-hover)";
+        }}
+        onMouseLeave={(event) => {
+          if (!selected) event.currentTarget.style.background = "transparent";
+        }}
+      >
+        <span style={{ width: 28, height: 28, display: "grid", placeItems: "center", color: main ? "var(--text-muted)" : "var(--accent)" }}>
+          {main ? (
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" />
+            </svg>
+          ) : (
+            <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
+            </svg>
+          )}
         </span>
-        <span style={{ display: "block", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)", fontSize: 11 }} title={secondary}>
-          {secondary}
+        <span style={{ minWidth: 0 }}>
+          <span style={{ display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 12, fontWeight: selected ? 600 : 500 }} title={primary}>
+            {primary}
+          </span>
+          <span style={{ display: "block", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)", fontSize: 11 }} title={secondary}>
+            {secondary}
+          </span>
         </span>
-      </span>
-      <span style={{ display: "flex", alignItems: "center", gap: 6, color: main && !running ? "var(--text-dim)" : statusColor(status), fontSize: 11, whiteSpace: "nowrap" }}>
-        {main && !running ? (
-          selected ? t("agentSwitcher.current") : null
-        ) : (
-          <>
-            <StatusIcon status={status} />
-            <span>{t(`agentSwitcher.status.${status}`)}</span>
-          </>
-        )}
-      </span>
-    </button>
+        <span style={{ display: "flex", alignItems: "center", gap: 6, color: main && !running ? "var(--text-dim)" : statusColor(status), fontSize: 11, whiteSpace: "nowrap" }}>
+          {main && !running ? (
+            selected ? t("agentSwitcher.current") : null
+          ) : (
+            <>
+              <StatusIcon status={status} />
+              <span>{t(`agentSwitcher.status.${status}`)}</span>
+            </>
+          )}
+        </span>
+      </button>
+      {onToggleTab && (
+        <button
+          type="button"
+          onClick={onToggleTab}
+          title={t(tabShown ? "subagent.closeTab" : "subagent.openTab")}
+          aria-label={t(tabShown ? "subagent.closeTab" : "subagent.openTab")}
+          aria-pressed={tabShown}
+          style={{ width: 36, display: "grid", placeItems: "center", border: "none", borderLeft: "1px solid var(--border)", background: "none", color: tabShown ? "var(--accent)" : "var(--text-muted)", cursor: "pointer", flexShrink: 0 }}
+          onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; if (!tabShown) event.currentTarget.style.color = "var(--text)"; }}
+          onMouseLeave={(event) => { event.currentTarget.style.background = "none"; if (!tabShown) event.currentTarget.style.color = "var(--text-muted)"; }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" />
+            {tabShown && <path d="M15 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4z" fill="currentColor" />}
+          </svg>
+        </button>
+      )}
+    </div>
   );
 }
 
-export function AgentSessionPanel({ rootSession, subagents, selectedSessionId, runningSessionIds, onSelectSession }: Props) {
+export function AgentSessionPanel({ rootSession, subagents, selectedSessionId, runningSessionIds, onSelectSession, openSubagentTabIds, onToggleSubagentTab }: Props) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const sortedSubagents = useMemo(() => [...subagents].sort((a, b) => {
@@ -226,6 +259,11 @@ export function AgentSessionPanel({ rootSession, subagents, selectedSessionId, r
               selected={session.id === selectedSessionId}
               running={runningSessionIds.has(session.id)}
               onSelect={() => onSelectSession(session)}
+              tabShown={openSubagentTabIds.has(session.id)}
+              onToggleTab={() => {
+                const relation = session.relation?.kind === "subagent" ? session.relation : null;
+                onToggleSubagentTab(session.id, relation?.description || relation?.profile || sessionTitle(session));
+              }}
             />
           ))}
           {visibleSubagents.length === 0 && (

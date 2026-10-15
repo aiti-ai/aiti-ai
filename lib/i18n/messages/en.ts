@@ -158,6 +158,7 @@ export const enLocale: LocalePlugin = {
     "agents.scope.project": "project",
     "agents.overridden": "Overridden",
     "subagent.openTab": "View sub-agent work in side panel",
+    "subagent.closeTab": "Close sub-agent side panel",
     "subagent.tabLabel": "Sub-agent {name}",
     "subagent.refresh": "Refresh",
     "subagent.viewer.starting": "Sub-agent session is starting…",

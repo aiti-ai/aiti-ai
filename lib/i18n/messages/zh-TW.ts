@@ -158,6 +158,7 @@ export const zhTWLocale: LocalePlugin = {
     "agents.scope.project": "專案",
     "agents.overridden": "已被覆寫",
     "subagent.openTab": "在側欄面板中檢視子代理工作",
+    "subagent.closeTab": "關閉子代理側欄面板",
     "subagent.tabLabel": "子代理 {name}",
     "subagent.refresh": "重新整理",
     "subagent.viewer.starting": "子代理工作階段正在啟動…",
