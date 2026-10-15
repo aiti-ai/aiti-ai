@@ -2214,6 +2214,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       icon: <RestoreIcon />,
       onSelect: () => { void applyUiState({ action: "rename-project", projectKey: project.key, name: null }); },
     }));
+    // Three groups, by what they act on: the project itself, its place in the
+    // list, its sessions (Delete all last, in red).
     return [
       {
         type: "item",
@@ -2223,6 +2225,22 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         onSelect: () => { void applyUiState({ action: "pin-project", projectKey: project.key, root: project.root, pinned: !project.pinned }); },
       },
       ...nameItems,
+      {
+        type: "item",
+        id: "open-in-files",
+        label: t("sidebar.openInFilesTab"),
+        icon: <FolderIcon />,
+        onSelect: () => openProjectInFiles(project),
+      },
+      {
+        type: "item",
+        id: "open-new-tab",
+        label: t("sidebar.openInNewTab"),
+        icon: <OpenInNewTabIcon />,
+        shortcut: "T",
+        onSelect: () => openProjectInNewTab(project),
+      },
+      { type: "separator", id: "separator-layout" },
       {
         type: "item",
         id: "move-up",
@@ -2240,30 +2258,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         onSelect: () => { if (down) moveProject(project.key, down.anchorKey, down.position); },
       },
       {
-        type: "item",
-        id: "archive-older",
-        label: t("sidebar.archiveOlderThanWeek", { count: olderCount }),
-        icon: <ArchiveIcon />,
-        disabled: olderCount === 0,
-        onSelect: () => archiveOlderSessions(project),
-      },
-      {
-        type: "item",
-        id: "open-in-files",
-        label: t("sidebar.openInFilesTab"),
-        icon: <FolderIcon />,
-        onSelect: () => openProjectInFiles(project),
-      },
-      {
-        type: "item",
-        id: "open-new-tab",
-        label: t("sidebar.openInNewTab"),
-        icon: <OpenInNewTabIcon />,
-        shortcut: "T",
-        onSelect: () => openProjectInNewTab(project),
-      },
-      { type: "separator", id: "separator-groups" },
-      {
         // This project open, every other one closed.
         type: "item",
         id: "collapse-others",
@@ -2280,7 +2274,15 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         disabled: model.projects.every((other) => isGroupExpanded(other, shownGroupExpansion)),
         onSelect: () => setAllGroupsExpanded(() => true),
       },
-      { type: "separator", id: "separator" },
+      { type: "separator", id: "separator-sessions" },
+      {
+        type: "item",
+        id: "archive-older",
+        label: t("sidebar.archiveOlderThanWeek", { count: olderCount }),
+        icon: <ArchiveIcon />,
+        disabled: olderCount === 0,
+        onSelect: () => archiveOlderSessions(project),
+      },
       {
         type: "item",
         id: "view-archived",
@@ -2289,7 +2291,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         disabled: archivedCount === 0,
         onSelect: openArchiveView,
       },
-      { type: "separator", id: "separator-delete" },
       {
         type: "item",
         id: "delete-all",
