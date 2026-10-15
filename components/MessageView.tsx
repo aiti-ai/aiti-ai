@@ -9,6 +9,7 @@ import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, getThinkingPreview, hasAssistantAnswer, isAssistantTruncated, isEmptyThinkingBlock } from "@/lib/message-display";
+import { formatTurnDuration } from "@/lib/turn-duration";
 import { parseUnifiedPatch, type SplitDiffCell, type SplitDiffFile } from "@/lib/patch";
 import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
 import { isApplyPatchToolName, isEditToolName, isWriteToolName } from "@/lib/tool-names";
@@ -210,6 +211,8 @@ interface Props {
    * final answer text-only.
    */
   writtenFiles?: WrittenFile[];
+  /** The whole turn's time, for a final answer with no process details to show it. */
+  turnDurationMs?: number;
   onCompact?: () => void;
   isCompacting?: boolean;
   compactError?: string | null;
@@ -280,12 +283,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSubagent, entryId, searchBlock, onFork, forking, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, onCompact, isCompacting, compactError }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSubagent, entryId, searchBlock, onFork, forking, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnDurationMs, onCompact, isCompacting, compactError }: Props) {
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} turnDurationMs={turnDurationMs} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -319,6 +322,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.showTimestamp === next.showTimestamp
     && prev.prevTimestamp === next.prevTimestamp
     && prev.writtenFiles === next.writtenFiles
+    && prev.turnDurationMs === next.turnDurationMs
     && prev.sessionId === next.sessionId
     && prev.onCompact === next.onCompact
     && prev.isCompacting === next.isCompacting
@@ -649,6 +653,7 @@ function AssistantMessageView({
   entryId,
   searchBlock,
   writtenFiles,
+  turnDurationMs,
   onCompact,
   isCompacting,
   compactError,
@@ -666,6 +671,7 @@ function AssistantMessageView({
   entryId?: string;
   searchBlock?: AssistantContentBlock;
   writtenFiles?: WrittenFile[];
+  turnDurationMs?: number;
   onCompact?: () => void;
   isCompacting?: boolean;
   compactError?: string | null;
@@ -931,9 +937,12 @@ function AssistantMessageView({
       <div style={{
         display: "flex", alignItems: "center", gap: 8, marginTop: 4,
       }}>
-        {message.usage && !isStreaming && (
+        {(message.usage || turnDurationMs !== undefined) && !isStreaming && (
           <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-            {formatUsage(message.usage)}
+            {[
+              message.usage ? formatUsage(message.usage) : null,
+              turnDurationMs !== undefined ? t("chat.turnDuration", { time: formatTurnDuration(turnDurationMs) }) : null,
+            ].filter(Boolean).join(" \u00b7 ")}
           </div>
         )}
         {textContent && !isStreaming && (
