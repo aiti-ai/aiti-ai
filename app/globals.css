@@ -124,6 +124,165 @@ html[data-theme="pine"],
   --bg-subtle: rgba(210,236,219,0.04);
 }
 
+[data-theme="sand"] {
+  color-scheme: light;
+  --bg: #faf6ee;
+  --bg-panel: #f1ebdf;
+  --bg-hover: #ebe3d4;
+  --bg-selected: #e4dac8;
+  --border: #cdbfa6;
+  --text: #2e2a22;
+  --text-muted: #5c5243;
+  --text-dim: #665b4b;
+  --accent: #7a4f10;
+  --accent-hover: #613f0b;
+  --accent-contrast: #ffffff;
+  --user-bg: #f2e8d5;
+  --assistant-bg: #faf6ee;
+  --tool-bg: #f5efe4;
+  --bg-subtle: rgba(92,70,30,0.04);
+}
+
+html[data-theme="slate"],
+[data-theme="slate"] {
+  color-scheme: dark;
+  --bg: #161b26;
+  --bg-panel: #1d2331;
+  --bg-hover: #262d3d;
+  --bg-selected: #2f3749;
+  --border: #435069;
+  --text: #e3e8f2;
+  --text-muted: #bcc5d6;
+  --text-dim: #a7b1c5;
+  --accent: #8ccfe0;
+  --accent-hover: #b3e2ec;
+  --accent-contrast: #0f2229;
+  --user-bg: #232c3f;
+  --assistant-bg: #161b26;
+  --tool-bg: #1b2130;
+  --bg-subtle: rgba(200,215,245,0.04);
+}
+
+html[data-theme="dusk"],
+[data-theme="dusk"] {
+  color-scheme: dark;
+  --bg: #1e1a24;
+  --bg-panel: #26212e;
+  --bg-hover: #302a39;
+  --bg-selected: #3a3345;
+  --border: #54496a;
+  --text: #ebe6f0;
+  --text-muted: #c9c0d4;
+  --text-dim: #b5abc3;
+  --accent: #cdb4f0;
+  --accent-hover: #e0d0f7;
+  --accent-contrast: #261a38;
+  --user-bg: #2e2638;
+  --assistant-bg: #1e1a24;
+  --tool-bg: #241f2b;
+  --bg-subtle: rgba(225,210,245,0.04);
+}
+
+[data-theme="lilac"] {
+  color-scheme: light;
+  --bg: #f8f6fc;
+  --bg-panel: #efebf6;
+  --bg-hover: #e8e2f2;
+  --bg-selected: #e0d8ed;
+  --border: #c4b8d8;
+  --text: #2b2635;
+  --text-muted: #574d68;
+  --text-dim: #625873;
+  --accent: #6a43a8;
+  --accent-hover: #56348c;
+  --accent-contrast: #ffffff;
+  --user-bg: #ece4f7;
+  --assistant-bg: #f8f6fc;
+  --tool-bg: #f3eff9;
+  --bg-subtle: rgba(60,30,110,0.04);
+}
+
+html[data-theme="ember"],
+[data-theme="ember"] {
+  color-scheme: dark;
+  --bg: #1f1a16;
+  --bg-panel: #28211c;
+  --bg-hover: #322a23;
+  --bg-selected: #3d332b;
+  --border: #5a4a3d;
+  --text: #ede4da;
+  --text-muted: #cfc0b0;
+  --text-dim: #bba996;
+  --accent: #e8b27a;
+  --accent-hover: #f2cba0;
+  --accent-contrast: #2b1a0c;
+  --user-bg: #33291f;
+  --assistant-bg: #1f1a16;
+  --tool-bg: #251f1a;
+  --bg-subtle: rgba(245,220,190,0.04);
+}
+
+/* High contrast: every text token reaches WCAG AAA (7:1) on every surface. */
+[data-theme="contrast-light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --bg-panel: #f3f3f3;
+  --bg-hover: #e6e6e6;
+  --bg-selected: #d9d9d9;
+  --border: #5c5c5c;
+  --text: #000000;
+  --text-muted: #1f1f1f;
+  --text-dim: #2e2e2e;
+  --accent: #0034a0;
+  --accent-hover: #002678;
+  --accent-contrast: #ffffff;
+  --user-bg: #eaf0ff;
+  --assistant-bg: #ffffff;
+  --tool-bg: #f7f7f7;
+  --bg-subtle: rgba(0,0,0,0.05);
+}
+
+html[data-theme="contrast-dark"],
+[data-theme="contrast-dark"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --bg-panel: #0f0f0f;
+  --bg-hover: #1f1f1f;
+  --bg-selected: #2e2e2e;
+  --border: #a3a3a3;
+  --text: #ffffff;
+  --text-muted: #ebebeb;
+  --text-dim: #d6d6d6;
+  --accent: #ffd60a;
+  --accent-hover: #ffe566;
+  --accent-contrast: #000000;
+  --user-bg: #1a1a1a;
+  --assistant-bg: #000000;
+  --tool-bg: #0d0d0d;
+  --bg-subtle: rgba(255,255,255,0.06);
+}
+
+/* Zenburn's own colors (Jani Nurminen's low-contrast scheme); dim text lifted for WCAG AA. */
+html[data-theme="zenburn"],
+[data-theme="zenburn"] {
+  color-scheme: dark;
+  --bg: #3f3f3f;
+  --bg-panel: #383838;
+  --bg-hover: #474747;
+  --bg-selected: #4f4f4f;
+  --border: #6f6f6f;
+  --text: #dcdccc;
+  --text-muted: #cfcfbf;
+  --text-dim: #c6c6b6;
+  --accent: #f0dfaf;
+  --accent-hover: #f8eccb;
+  --accent-contrast: #3f3f3f;
+  --user-bg: #4a4a42;
+  --assistant-bg: #3f3f3f;
+  --tool-bg: #3a3a3a;
+  --bg-subtle: rgba(220,220,204,0.04);
+}
+
 /* WebKit reports dvh/innerHeight without the status-bar strip for installed
    home-screen apps even though the layout still starts at the screen's top.
    In standalone mode there is no browser toolbar to make vh unstable, and vh
