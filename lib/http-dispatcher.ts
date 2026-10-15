@@ -138,6 +138,9 @@ export function configureHttpDispatcher(
       // and a provider stream that stalls cannot be cut at the configured time.
       proxyTunnel: true,
       bodyTimeout: normalizedTimeoutMs,
+      // Node's 250 ms default can terminate valid connection attempts on
+      // high-latency routes; the pi CLI's dispatcher waits two seconds here.
+      connect: { autoSelectFamilyAttemptTimeout: 2_000 },
       headersTimeout: normalizedTimeoutMs,
       clientFactory: createUndiciClient,
       factory: createUndiciOriginDispatcher,
