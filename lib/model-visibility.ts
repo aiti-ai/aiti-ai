@@ -7,7 +7,7 @@
  * ModelRuntime through the Next.js multi-module graph, so this explicit filter acts as a
  * fallback. Pure functions, zero host dependencies, easy to unit test.
  */
-import type { ModelsData } from "./models-cache";
+import type { ModelsData } from "./models-cache.ts";
 
 /** Normalized probe/runtime state from the model-check extension: ok=available / rl=rate-limited (429) / err=other errors / unprobed=not probed. */
 export type AvailKind = "ok" | "rl" | "err" | "unprobed";
