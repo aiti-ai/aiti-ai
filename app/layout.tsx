@@ -6,6 +6,8 @@ import { THEME_INIT_SCRIPT } from "@/lib/theme";
 import "katex/dist/katex.min.css";
 import "./globals.css";
 import "./settings.css";
+import "./sidebar.css";
+import "./sidebar-menu.css";
 
 // next/font/google requires fetching Noto Sans Mono from Google Fonts at
 // build time — unreachable on CN networks, so use a local system mono stack
