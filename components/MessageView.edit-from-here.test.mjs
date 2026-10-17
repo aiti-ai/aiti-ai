@@ -47,5 +47,5 @@ test("the edit-from-here pending state highlights the user bubble (boxShadow; bo
 });
 
 test("the actions-area container includes the canEditFromHere branch", () => {
-  assert.match(source, /\{\(canFork \|\| canNavigate \|\| canEditFromHere\) && \(/);
+  assert.match(source, /\{\(canFork \|\| canNavigate \|\| canEditFromHere \|\| canEdit \|\| canCancelEdit\) && \(/); // 合并：本地并入了 canEdit/canCancelEdit 分支
 });
