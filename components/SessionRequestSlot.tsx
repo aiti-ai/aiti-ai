@@ -56,12 +56,14 @@ export function pickSessionRequestCard(
   return winner;
 }
 
-function permissionInputSummary(input: unknown): string {
+/** One-line human summary of an ask payload (shared by the permission card and the body-less
+ *  interaction shapes). Returns "" when nothing matches — callers fall back to raw JSON. */
+function askInputSummary(input: unknown): string {
   if (input == null) return "";
   if (typeof input === "string") return input;
   try {
     const rec = input as Record<string, unknown>;
-    const parts = ["command", "path", "file_path", "url", "pattern", "query", "description"]
+    const parts = ["reason", "command", "path", "file_path", "url", "pattern", "query", "description"]
       .filter((k) => typeof rec[k] === "string" && rec[k])
       .map((k) => `${k}: ${String(rec[k])}`);
     return parts.join("  ");
@@ -140,13 +142,19 @@ export function MinimalRequestCard({ request, onRespond }: {
 }) {
   const isPlan = request.kind === "interaction:plan_approval";
   const isAsk = request.kind === "interaction:ask_user";
+  const isToolAuth = request.kind === "interaction:tool_auth";
+  const isGeneric = request.kind === "interaction:generic";
   const isOpenUrl = request.kind === "interaction:open_url";
+  /** 无专属正文的形态（tool_auth/generic/plan 缺方案正文）→ input 摘要兜底，卡不空跑。 */
+  const showSummary = isToolAuth || isGeneric || (isPlan && !request.plan);
+  /** 没有专属作答动作的形态，一律给默认 拒绝/允许——挂起的 ask 不能没有出口。 */
+  const defaultActions = isToolAuth || isGeneric;
   const openUrlTarget = request.url ?? request.launchUrl;
   const copyUrlTarget = request.launchUrl ?? request.url;
   const { t } = useI18n();
 
   if (request.family === "permission") {
-    const summary = permissionInputSummary(request.input);
+    const summary = askInputSummary(request.input);
     const options = request.options?.length ? request.options : null;
     return (
       <CardShell width="min(480px, 92vw)" borderColor="#f59e0b88" testId="session-request-fallback-card">
@@ -194,11 +202,11 @@ export function MinimalRequestCard({ request, onRespond }: {
     );
   }
 
-  // interaction family (plan_approval / ask_user / open_url / generic)
+  // interaction family (plan_approval / ask_user / tool_auth / open_url / generic)
   return (
     <CardShell width={isPlan ? "min(680px, 94vw)" : "min(560px, 92vw)"} borderColor={isPlan ? "#8b5cf688" : "#3b82f688"} testId="session-request-fallback-card" floatKey="piweb-interaction-card">
-      <CardHeader icon={isPlan ? "📋" : isAsk ? "❓" : isOpenUrl ? "🔐" : "💬"}
-        title={isPlan ? t("sessionReq.planApproval") : isAsk ? t("sessionReq.needInput") : isOpenUrl ? t("sessionReq.loginAuth") : t("sessionReq.interaction")}
+      <CardHeader icon={isPlan ? "📋" : isAsk ? "❓" : (isToolAuth || isOpenUrl) ? "🔐" : "💬"}
+        title={isPlan ? t("sessionReq.planApproval") : isAsk ? t("sessionReq.needInput") : isToolAuth ? t("sessionReq.toolAuth") : isOpenUrl ? t("sessionReq.loginAuth") : t("sessionReq.interaction")}
         toolName={request.toolName} />
       {request.prompt && (
         <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 8, whiteSpace: "pre-wrap" }}>{request.prompt}</div>
@@ -230,8 +238,8 @@ export function MinimalRequestCard({ request, onRespond }: {
           </div>
         </div>
       )}
-      {request.kind === "interaction:generic" && request.input != null && (
-        <pre style={preStyle}>{typeof request.input === "string" ? request.input : JSON.stringify(request.input, null, 2)}</pre>
+      {showSummary && request.input != null && (
+        <pre style={preStyle}>{askInputSummary(request.input) || JSON.stringify(request.input, null, 2)}</pre>
       )}
       <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
         {isOpenUrl && (
@@ -255,9 +263,11 @@ export function MinimalRequestCard({ request, onRespond }: {
           <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>{t("sessionReq.skip")}</button>
           <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>{t("sessionReq.submit")}</button>
         </>)}
-        {request.kind === "interaction:generic" && (<>
+        {defaultActions && (<>
           <button type="button" className={dangerButton} onClick={() => void onRespond({ action: "decline" })}>{t("sessionReq.deny")}</button>
-          <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>{t("sessionReq.accept")}</button>
+          <button type="button" className={primaryButton} onClick={() => void onRespond({ action: "accept" })}>
+            {isToolAuth ? t("sessionReq.allow") : t("sessionReq.accept")}
+          </button>
         </>)}
       </div>
     </CardShell>

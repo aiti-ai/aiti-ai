@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, { mock } from "node:test";
 
 const listeners = new Map();
 globalThis.self = {
@@ -18,7 +18,7 @@ function setScope(scope) {
   self.registration.scope = scope;
 }
 
-function dispatchFetch(url, { method = "GET", mode = "no-cors" } = {}) {
+function dispatchFetchPlain(url, { method = "GET", mode = "no-cors" } = {}) {
   let responded = false;
   let responsePromise = null;
   const request = { url, method, mode };
@@ -69,6 +69,9 @@ function dispatchPush(payload, clients, { existing = [] } = {}) {
     openWindow: async () => assert.fail("push must not open windows"),
   };
   self.registration = {
+    // Keep the scope: later tests (upstream offline/timeout suite) read
+    // self.registration.scope through the SW's getScopePath().
+    scope: self.registration?.scope,
     showNotification: async (title, options) => { shown.push({ title, options }); },
     getNotifications: async () => existing.map((n, i) => ({
       tag: n.tag,
@@ -87,27 +90,28 @@ test("root scope: API and sw.js requests bypass the cache", async () => {
   setScope("https://pi.test/");
   await installFetchHarness();
 
-  assert.equal(dispatchFetch("https://pi.test/api/sessions").responded, false);
-  assert.equal(dispatchFetch("https://pi.test/api/agent/s1/events").responded, false);
-  assert.equal(dispatchFetch("https://pi.test/sw.js?v=test").responded, false);
+  assert.equal(dispatchFetchPlain("https://pi.test/api/sessions").responded, false);
+  assert.equal(dispatchFetchPlain("https://pi.test/api/agent/s1/events").responded, false);
+  assert.equal(dispatchFetchPlain("https://pi.test/sw.js?v=test").responded, false);
 });
 
 test("root scope: static assets are served cache-first", async () => {
   setScope("https://pi.test/");
   await installFetchHarness();
 
-  const staticHit = dispatchFetch("https://pi.test/_next/static/chunks/app.js");
+  const staticHit = dispatchFetchPlain("https://pi.test/_next/static/chunks/app.js");
   assert.equal(staticHit.responded, true);
   await staticHit.responsePromise;
-  assert.equal(dispatchFetch("https://pi.test/icons/icon-192.png").responded, true);
-  assert.equal(dispatchFetch("https://pi.test/manifest.webmanifest").responded, true);
+  assert.equal(dispatchFetchPlain("https://pi.test/icons/icon-192.png").responded, true);
+  // 融合上游语义：manifest 是运行时配置，绕过 SW（不响应、不缓存）
+  assert.equal(dispatchFetchPlain("https://pi.test/manifest.webmanifest").responded, false);
 });
 
 test("root scope: navigations fall back to the offline page", async () => {
   setScope("https://pi.test/");
   await installFetchHarness();
 
-  const nav = dispatchFetch("https://pi.test/?session=abc", { mode: "navigate" });
+  const nav = dispatchFetchPlain("https://pi.test/?session=abc", { mode: "navigate" });
   assert.equal(nav.responded, true);
   await nav.responsePromise;
 });
@@ -116,31 +120,31 @@ test("sub-path scope (/dev): API requests under the scope bypass the cache", asy
   setScope("https://pi.test/dev/");
   await installFetchHarness();
 
-  assert.equal(dispatchFetch("https://pi.test/dev/api/sessions").responded, false);
-  assert.equal(dispatchFetch("https://pi.test/dev/api/sessions/s1/context?leafId=x").responded, false);
-  assert.equal(dispatchFetch("https://pi.test/dev/sw.js?v=test").responded, false);
+  assert.equal(dispatchFetchPlain("https://pi.test/dev/api/sessions").responded, false);
+  assert.equal(dispatchFetchPlain("https://pi.test/dev/api/sessions/s1/context?leafId=x").responded, false);
+  assert.equal(dispatchFetchPlain("https://pi.test/dev/sw.js?v=test").responded, false);
   // Requests outside the scope are left alone, including root-level APIs.
-  assert.equal(dispatchFetch("https://pi.test/api/sessions").responded, false);
-  assert.equal(dispatchFetch("https://pi.test/_next/static/chunks/app.js").responded, false);
+  assert.equal(dispatchFetchPlain("https://pi.test/api/sessions").responded, false);
+  assert.equal(dispatchFetchPlain("https://pi.test/_next/static/chunks/app.js").responded, false);
 });
 
 test("sub-path scope (/dev): static assets under the scope are served cache-first", async () => {
   setScope("https://pi.test/dev/");
   await installFetchHarness();
 
-  const staticHit = dispatchFetch("https://pi.test/dev/_next/static/chunks/app.js");
+  const staticHit = dispatchFetchPlain("https://pi.test/dev/_next/static/chunks/app.js");
   assert.equal(staticHit.responded, true);
   await staticHit.responsePromise;
-  assert.equal(dispatchFetch("https://pi.test/dev/icons/icon-192.png").responded, true);
-  assert.equal(dispatchFetch("https://pi.test/dev/manifest.webmanifest").responded, true);
-  assert.equal(dispatchFetch("https://pi.test/dev/offline.html").responded, true);
+  assert.equal(dispatchFetchPlain("https://pi.test/dev/icons/icon-192.png").responded, true);
+  assert.equal(dispatchFetchPlain("https://pi.test/dev/manifest.webmanifest").responded, false);
+  assert.equal(dispatchFetchPlain("https://pi.test/dev/offline.html").responded, true);
 });
 
 test("sub-path scope (/dev): navigations fall back to the scoped offline page", async () => {
   setScope("https://pi.test/dev/");
   await installFetchHarness();
 
-  const nav = dispatchFetch("https://pi.test/dev/?session=abc", { mode: "navigate" });
+  const nav = dispatchFetchPlain("https://pi.test/dev/?session=abc", { mode: "navigate" });
   assert.equal(nav.responded, true);
   await nav.responsePromise;
 });
@@ -328,11 +332,223 @@ test("push replaces its own tag instead of counting it as a new notification", a
 
 test("service worker session-notification limit mirrors lib/browser-notifications.ts", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [{ SESSION_NOTIFICATION_TAG_PREFIX, SESSION_NOTIFICATION_LIMIT }, source] = await Promise.all([
-    import("../lib/browser-notifications.ts"),
+  // 从源文本正则提取常量而非 import 执行：上游重构后 browser-notifications.ts 的模块链上有
+  // 无后缀相对 import（lib/extension-ui-queue），node strip-types 解析不了；镜像检查只需要常量字面量。
+  const [libSource, source] = await Promise.all([
+    readFile(new URL("../lib/browser-notifications.ts", import.meta.url), "utf8"),
     readFile(new URL("./sw.js", import.meta.url), "utf8"),
   ]);
-  assert.match(source, new RegExp(`const SESSION_NOTIFICATION_TAG_PREFIX = "${SESSION_NOTIFICATION_TAG_PREFIX}"`));
-  assert.match(source, new RegExp(`const SESSION_NOTIFICATION_LIMIT = ${SESSION_NOTIFICATION_LIMIT}\\b`));
+  const prefix = libSource.match(/SESSION_NOTIFICATION_TAG_PREFIX = "([^"]+)"/)?.[1];
+  const limit = libSource.match(/SESSION_NOTIFICATION_LIMIT = (\d+)/)?.[1];
+  assert.ok(prefix, "lib must declare SESSION_NOTIFICATION_TAG_PREFIX");
+  assert.ok(limit, "lib must declare SESSION_NOTIFICATION_LIMIT");
+  assert.match(source, new RegExp(`const SESSION_NOTIFICATION_TAG_PREFIX = "${prefix}"`));
+  assert.match(source, new RegExp(`const SESSION_NOTIFICATION_LIMIT = ${limit}\\b`));
 });
 
+// A reachable port backed by a dead upstream answers nothing at all, so these
+// tests drive fetch() with a stub that only settles once the worker aborts it.
+
+// 本地 basePath 测试可能把 scope 留在 /dev/ —— 上游套件假定 root scope。
+// 顶层 setScope 在模块加载时就执行（太早，本地测试执行时又会改掉），
+// 因此封装成 helper，由本区块首个测试在执行时恢复。
+function restoreRootScope() {
+  setScope("https://pi.test/");
+}
+
+function installOfflineStub() {
+  const offline = new Response("<!doctype html><title>Pi Web is offline</title>", {
+    status: 200,
+    headers: { "Content-Type": "text/html" },
+  });
+  globalThis.caches = {
+    match: async (request) => ((typeof request === "string" ? request : request.url).endsWith("/offline.html")
+      ? offline
+      : undefined),
+    open: async () => ({ put: async () => {} }),
+  };
+}
+
+function dispatchFetch(url, { mode = "cors", method = "GET" } = {}) {
+  let pending;
+  const background = [];
+  const request = new Request(url, { method });
+  Object.defineProperty(request, "mode", { value: mode });
+  listeners.get("fetch")({
+    request,
+    respondWith: (promise) => { pending = promise; },
+    waitUntil: (promise) => { background.push(promise); },
+  });
+  return { pending, background };
+}
+
+test("install precaches offline assets but not the runtime manifest", async () => {
+  restoreRootScope();
+  let pending;
+  let precached;
+  let skipped = false;
+  globalThis.caches = {
+    open: async () => ({ addAll: async (urls) => { precached = urls; } }),
+  };
+  self.skipWaiting = async () => { skipped = true; };
+  listeners.get("install")({ waitUntil: (promise) => { pending = promise; } });
+  await pending;
+
+  assert.deepEqual(precached, [
+    "/offline.html",
+    "/icons/icon-192.png",
+    "/icons/icon-512.png",
+    "/icons/apple-touch-icon.png",
+  ]);
+  assert.equal(skipped, true);
+});
+
+test("manifest requests bypass the worker even with query strings and old cached entries", async () => {
+  const stale = new Response('{"name":"Old Pi"}');
+  let cacheReads = 0;
+  globalThis.caches = {
+    match: async () => { cacheReads++; return stale.clone(); },
+    open: async () => assert.fail("manifest must not be cached"),
+  };
+  const networkRequests = [];
+  globalThis.fetch = async (request) => {
+    networkRequests.push(request.url);
+    return new Response('{"name":"New Pi"}');
+  };
+
+  for (const path of ["/manifest.webmanifest", "/manifest.webmanifest?v=old"]) {
+    for (const mode of ["cors", "navigate"]) {
+      const url = `https://pi.test${path}`;
+      const { pending, background } = dispatchFetch(url, { mode });
+      assert.equal(pending, undefined, "no respondWith: leave the request to the browser");
+      assert.deepEqual(background, []);
+      // Model the browser's normal network fallback when respondWith is absent.
+      const response = await fetch(new Request(url));
+      assert.deepEqual(await response.json(), { name: "New Pi" });
+    }
+  }
+  assert.equal(cacheReads, 0, "old cached manifests must never be read");
+  assert.equal(networkRequests.length, 4);
+});
+
+/** fetch() that never settles until the signal it was handed is aborted. */
+function installHungNetwork() {
+  let aborted = false;
+  globalThis.fetch = (_request, init) =>
+    new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => {
+        aborted = true;
+        reject(new DOMException("The operation was aborted.", "AbortError"));
+      });
+    });
+  return () => aborted;
+}
+
+/**
+ * Let a handler's await chain reach its fetch (and schedule its timer) before
+ * the fake clock is ticked. setImmediate is not faked, unlike setTimeout.
+ */
+const flushMicrotasks = () => new Promise((resolve) => setImmediate(resolve));
+
+test("a stalled navigation falls back to offline.html", async () => {
+  installOfflineStub();
+  const wasAborted = installHungNetwork();
+
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const { pending } = dispatchFetch("https://pi.test/", { mode: "navigate" });
+    await flushMicrotasks();
+    mock.timers.tick(8000);
+    const response = await pending;
+
+    assert.equal(wasAborted(), true, "a hung upstream must be aborted, not awaited forever");
+    assert.match(await response.text(), /Pi Web is offline/);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("a stalled static asset request is bounded as well", async () => {
+  installOfflineStub();
+  const wasAborted = installHungNetwork();
+
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const { pending } = dispatchFetch("https://pi.test/_next/static/chunks/app.js");
+    // cacheFirst awaits the cache lookup before it reaches the network.
+    await flushMicrotasks();
+    mock.timers.tick(8000);
+
+    assert.equal(wasAborted(), true);
+    await assert.rejects(pending, /abort/i);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test("a cache miss responds before the cache write finishes", async () => {
+  let releaseWrite;
+  let writeStarted = false;
+  globalThis.caches = {
+    match: async () => undefined,
+    open: async () => ({
+      put: () => {
+        writeStarted = true;
+        return new Promise((resolve) => { releaseWrite = resolve; });
+      },
+    }),
+  };
+  // fetch() to a same-origin URL yields type "basic"; a constructed Response
+  // defaults to "default", which cacheFirst deliberately skips.
+  globalThis.fetch = async () => {
+    const response = new Response("chunk", {
+      status: 200,
+      headers: { "Content-Type": "text/javascript" },
+    });
+    Object.defineProperty(response, "type", { value: "basic" });
+    return response;
+  };
+
+  const { pending, background } = dispatchFetch("https://pi.test/_next/static/chunks/app.js");
+  const response = await pending;
+
+  // The regression this guards: the SW script URL is versioned, so a version
+  // bump leaves the cache cold and every chunk misses at once. Awaiting each
+  // write held the responses behind Cache Storage I/O, which pushed
+  // navigations past the offline-fallback budget even though the server was
+  // healthy. The response must never wait for the write.
+  assert.equal(await response.text(), "chunk");
+
+  await flushMicrotasks();
+  assert.equal(writeStarted, true, "the write must still happen");
+  assert.equal(background.length, 1, "the write must be kept alive with waitUntil");
+
+  releaseWrite();
+  await background[0];
+});
+
+test("a response that arrives in time is not cut off mid-stream", async () => {
+  installOfflineStub();
+  let signal;
+  globalThis.fetch = async (_request, init) => {
+    signal = init.signal;
+    return new Response("<!doctype html><title>Pi Web</title>", {
+      status: 200,
+      headers: { "Content-Type": "text/html" },
+    });
+  };
+
+  mock.timers.enable({ apis: ["setTimeout"] });
+  try {
+    const { pending } = dispatchFetch("https://pi.test/", { mode: "navigate" });
+    const response = await pending;
+    // The budget only covers time to first byte: a long-lived body keeps
+    // streaming past it (Next.js streams its SSR payload).
+    mock.timers.tick(60000);
+
+    assert.equal(signal.aborted, false);
+    assert.match(await response.text(), /<title>Pi Web<\/title>/);
+  } finally {
+    mock.timers.reset();
+  }
+});

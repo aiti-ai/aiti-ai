@@ -96,6 +96,16 @@ test("SyntaxHighlighterLite highlights code (lazy chunk target)", () => {
   assert.match(html, /const/);
 });
 
+test("CodeBlock owns the pre background without a competing shorthand", () => {
+  for (const isStreaming of [false, true]) {
+    const html = renderCode({ code: "const x = 1;", lang: "javascript", isStreaming });
+    const pre = html.match(/<pre\b[^>]*>/)?.[0];
+    assert.ok(pre);
+    assert.match(pre, /background-color:color-mix/);
+    assert.doesNotMatch(pre, /(?:[;\"]|^)background:/);
+  }
+});
+
 test("CodeBlock renders plain text without tokenization while streaming", () => {
   const html = renderCode({ code: "const x = 1;", lang: "javascript", isStreaming: true });
 

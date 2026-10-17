@@ -5,7 +5,10 @@ import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
+import { usePrismLanguages } from "@/hooks/usePrismLanguages";
 import { copyText } from "@/lib/clipboard";
+import { takeHighlightBudget, waitForHighlight } from "@/lib/highlight-queue";
+import { prismLanguagesLoaded } from "@/lib/prism-languages";
 
 interface MermaidBlockProps {
   code: string;
@@ -28,7 +31,7 @@ const PLAIN_CODE_PRE_STYLE: CSSProperties = {
   fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
   lineHeight: 1.62,
   overflowX: "auto",
-  background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+  backgroundColor: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
 };
 
 export function downloadMermaidSvg(svg: SVGSVGElement): void {
@@ -274,6 +277,17 @@ interface CodeBlockProps {
   messageId?: string;
 }
 
+// Prism's light theme uses backgroundColor, while its dark theme uses the
+// background shorthand. Keep the pre background solely in customStyle so a
+// theme switch cannot remove/update one and reset the other in React's diff.
+const codeBlockDarkTheme = {
+  ...vscDarkPlus,
+  'pre[class*="language-"]': {
+    ...vscDarkPlus['pre[class*="language-"]'],
+  },
+};
+delete codeBlockDarkTheme['pre[class*="language-"]'].background;
+
 /**
  * Syntax-highlighted code block with copy button.
  * Used as the "source" view for mermaid blocks and for all non-mermaid code fences.
@@ -283,11 +297,26 @@ interface CodeBlockProps {
  * While the owning message is still streaming, the block renders as plain
  * monospace text — highlighting a growing block re-tokenizes all of it on
  * every chunk, which is the single most expensive part of streamed rendering.
+ * A finished block past this task's highlight budget (lib/highlight-queue.ts),
+ * or mounted before the Prism languages have loaded (lib/prism-languages.ts),
+ * renders through the same highlighter as `text` (same lines, numbers and
+ * box, no tokens) until an idle slice lets it take its language.
  */
 export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isStreaming, messageRole, cwd, sessionId, messageId }: CodeBlockProps) {
   const { isDark } = useTheme();
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
+  // Loading starts with the first block, streaming or not, so a streamed
+  // reply usually finds the languages ready when it ends.
+  const languagesReady = usePrismLanguages();
+  const [highlighted, setHighlighted] = useState(
+    () => !isStreaming && prismLanguagesLoaded() && takeHighlightBudget(code.length),
+  );
+
+  useEffect(() => {
+    if (isStreaming || highlighted || !languagesReady) return;
+    return waitForHighlight(() => setHighlighted(true));
+  }, [isStreaming, highlighted, languagesReady]);
 
   const copy = () => {
     copyText(code).then(() => {
@@ -312,13 +341,13 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
       </div>
       {isStreaming ? (
         <pre style={PLAIN_CODE_PRE_STYLE}>
-          <code style={{ fontFamily: "var(--font-mono)" }}>{code}</code>
+          <code style={{ fontFamily: "var(--font-mono)", fontWeight: "var(--font-mono-weight)" }}>{code}</code>
         </pre>
       ) : (
         <Suspense
           fallback={
             <pre style={PLAIN_CODE_PRE_STYLE}>
-              <code style={{ fontFamily: "var(--font-mono)" }}>{code}</code>
+              <code style={{ fontFamily: "var(--font-mono)", fontWeight: "var(--font-mono-weight)" }}>{code}</code>
             </pre>
           }
         >
@@ -333,7 +362,7 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
               fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
               lineHeight: 1.62,
               borderRadius: 0,
-              background: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+              backgroundColor: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
             }}
             codeTagProps={{ style: { fontFamily: "var(--font-mono)" } }}
           >

@@ -108,6 +108,19 @@ export interface WrappedSessionLike {
  *  shares that lifetime, so record/clear by any instance is globally visible. */
 const runStartedAtByHandle = new WeakMap<SessionHandle, number>();
 
+/**
+ * "Needs an answer" event families (the session request card state machines on the
+ * frontend). Backends replay outstanding ones synchronously from subscribe() — i.e.
+ * inside this constructor, before the SSE route attaches its listener — so they are
+ * buffered here and delivered to the first consumer instead of being dropped.
+ * Their *_expired counterparts evict the buffered frame (a closed turn must not
+ * resurrect a dead card).
+ */
+const PENDING_ASK_EVENTS = new Set(["interaction_request", "permission_request", "provider_runtime_headers_request"]);
+const PENDING_ASK_EXPIRED = new Set(["interaction_expired", "permission_expired", "provider_headers_expired"]);
+/** Same requestId re-replayed overwrites; a cap keeps a listener-less adapter bounded. */
+const PENDING_ASK_CAP = 16;
+
 export class HandleSessionAdapter implements WrappedSessionLike {
   readonly handle: SessionHandle;
 
@@ -117,6 +130,7 @@ export class HandleSessionAdapter implements WrappedSessionLike {
   private partialText = "";
   private partialActive = false;
   private lastModel: { id: string; provider: string } | undefined;
+  private pendingAsks: unknown[] = [];
 
   readonly source: string;
 
@@ -185,7 +199,29 @@ export class HandleSessionAdapter implements WrappedSessionLike {
       this.lastModel = event.model as { id: string; provider: string };
     }
 
+    if (this.listeners.size === 0) {
+      this.bufferAsk(event, type);
+      return;
+    }
     for (const l of this.listeners) l(event as Parameters<Listener>[0]);
+  }
+
+  /**
+   * No consumer attached yet (adapter construction replays the backend's outstanding
+   * asks; a dropped SSE connection leaves the adapter listener-less too): hold the ask
+   * frames so the next onEvent gets them, and evict the ones an expiry already closed.
+   */
+  private bufferAsk(event: Record<string, unknown>, type: string): void {
+    const requestId = typeof event.requestId === "string" ? event.requestId : "";
+    if (!requestId) return;
+    const kept = this.pendingAsks.filter((e) => (e as { requestId?: string }).requestId !== requestId);
+    if (PENDING_ASK_EXPIRED.has(type)) {
+      this.pendingAsks = kept;
+      return;
+    }
+    if (!PENDING_ASK_EVENTS.has(type)) return;
+    kept.push(event);
+    this.pendingAsks = kept.slice(-PENDING_ASK_CAP);
   }
 
   /** Current backend model (attach/spawn etc. read the handle directly; locally same as lastModel). */
@@ -245,6 +281,15 @@ export class HandleSessionAdapter implements WrappedSessionLike {
 
   onEvent(listener: Listener): () => void {
     this.listeners.add(listener);
+    if (this.pendingAsks.length) {
+      const buffered = this.pendingAsks;
+      this.pendingAsks = [];
+      for (const event of buffered) {
+        try {
+          listener(event as Parameters<Listener>[0]);
+        } catch { /* one failing consumer must not swallow the rest of the backlog */ }
+      }
+    }
     return () => {
       this.listeners.delete(listener);
     };

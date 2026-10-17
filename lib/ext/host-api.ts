@@ -33,7 +33,7 @@ export interface HostApi {
   /** Reveal a directory in the sidebar file tree */
   revealDir?: (absPath: string) => void | Promise<void>;
   /** Currently open tabs ({ id, filePath, kind, pinned }, array order = open order; read-only primitive, no policy). */
-  getFileTabs?: () => { id: string; filePath: string; kind?: "file" | "folder" | "dock"; pinned?: boolean }[];
+  getFileTabs?: () => { id: string; filePath: string; kind?: "file" | "folder" | "dock" | "agent"; pinned?: boolean }[];
   /** Close tabs by id (primitive: only removes from state + reorders activation; dirty-confirm/pinning policies are the caller's responsibility) */
   closeFileTabs?: (ids: string[]) => void;
   /** Append text to the composer (does not send; used for quote-reply prefill) */

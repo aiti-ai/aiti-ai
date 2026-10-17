@@ -5,10 +5,12 @@ import {
   attachSessionProjectInfo,
   getSessionListVersion,
   listAllSessions,
+  listSessionSummaries,
   mergeSessionLists,
   invalidateSessionListCache,
 } from "@/lib/session-reader";
 import {
+  getAwaitingInputRpcSessionIds,
   getCompletionNotificationSuppressedRpcSessionIds,
   getRpcSessionInfos,
   getRunningRpcSessionIds,
@@ -17,19 +19,28 @@ import { getHandleSessionInfos, getRunningHandleIds, getHandle, warmHandleFirstM
 import { getBridgeRunningIds } from "@/lib/session/bridge-running";
 import { getRegistry } from "@/lib/ext/registry";
 import { stampExternalSessions } from "@/lib/session/placeholder";
+import { startServerPerf } from "@/lib/perf";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: Request) {
+  const perf = startServerPerf("GET /api/sessions");
   try {
+    const searchParams = new URL(req.url).searchParams;
     // Extension-triggered mutations (e.g. session-manager archive) change the
     // on-disk list out from under the 5s TTL cache — let callers force a
     // fresh scan instead of waiting for the cache to expire.
-    if (new URL(req.url).searchParams.get("refresh") === "1") {
+    if (searchParams.get("refresh") === "1") {
       invalidateSessionListCache();
     }
-    const force = new URL(req.url).searchParams.get("force") === "1";
-    const persistedSessionsPromise = listAllSessions({ force });
+    const force = searchParams.get("force") === "1";
+    // `summary=1` serves header/stat metadata so the sidebar can paint without
+    // waiting for every session transcript to be parsed.
+    const summary = searchParams.get("summary") === "1";
+    perf?.span("start");
+    const persistedSessionsPromise = summary
+      ? listSessionSummaries()
+      : listAllSessions({ force });
     // Capture before awaiting: mutations during the scan still require a later refresh.
     const sessionListVersion = getSessionListVersion();
     const [persistedSessions, runtimeSessions] = await Promise.all([
@@ -49,6 +60,7 @@ export async function GET(req: Request) {
       mergeSessionLists(persistedSessions as never[], runtimeSessions),
       pathKeyedHandles,
     );
+    perf?.span("scan+projects");
     // Placeholder-row annotation: external-session placeholders found by the disk scan do
     // not carry header extension fields -- fill in the agent label from the registry
     // (frontend badges / external model directory routing depend on it).
@@ -85,15 +97,19 @@ export async function GET(req: Request) {
       sessionListVersion,
       // running = local runtime + backend sessions alive and executing + TUI bridges (visible even when unclaimed)
       runningSessionIds: [...new Set([...getRunningRpcSessionIds(), ...getRunningHandleIds(), ...getBridgeRunningIds()])],
+      awaitingInputSessionIds: getAwaitingInputRpcSessionIds(),
       completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
     };
     const body = JSON.stringify(payload);
     const etag = `"${createHash("sha1").update(body).digest("hex")}"`;
     if (req.headers.get("if-none-match") === etag) {
-      return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-store" } });
+      const notModified = new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-store" } });
+      return perf ? perf.attach(notModified) : notModified;
     }
     // Large lists are gzipped (upstream jsonResponse); the ETag is computed over the uncompressed body to match the client's If-None-Match.
-    return jsonResponse(req, payload, {
+    return perf?.attach(jsonResponse(req, payload, {
+      headers: { ETag: etag, "Cache-Control": "no-store" },
+    })) ?? jsonResponse(req, payload, {
       headers: { ETag: etag, "Cache-Control": "no-store" },
     });
   } catch (error) {

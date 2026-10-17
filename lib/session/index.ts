@@ -198,7 +198,7 @@ function findAttachProviderType(): string | undefined {
  */
 async function shutdownStrayLocalRuntime(sessionId: string, sessionFile: string): Promise<void> {
   try {
-    const { getRpcSession } = await import("../rpc-manager");
+    const { getRpcSession } = await import("../rpc-manager.ts");
     for (const key of new Set([sessionId, sessionFile])) {
       const twin = getRpcSession(key);
       if (twin?.isAlive()) {

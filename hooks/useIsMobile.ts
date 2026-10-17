@@ -21,6 +21,12 @@ function queryMatches(query: string): boolean {
 
 const subscribeMobile = (cb: () => void) => subscribeToQuery(MOBILE_QUERY, cb);
 const getMobileSnapshot = () => queryMatches(MOBILE_QUERY);
+
+/** Imperative breakpoint read (mount effects run against the desktop hydration snapshot). */
+export function isMobileViewport(): boolean {
+  return queryMatches(MOBILE_QUERY);
+}
+
 const subscribeNarrowMobile = (cb: () => void) => subscribeToQuery(NARROW_MOBILE_QUERY, cb);
 const getNarrowMobileSnapshot = () => queryMatches(NARROW_MOBILE_QUERY);
 

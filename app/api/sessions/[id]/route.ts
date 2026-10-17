@@ -1,36 +1,35 @@
 import { NextResponse } from "next/server";
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
-import { dirname, join } from "path";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import { existsSync, statSync } from "fs";
 import {
   attachSessionProjectInfo,
-  listAllSessions,
-  mergeSessionLists,
+  openSessionManager,
   resolveSessionPath,
   resolveSessionIdByPath,
-  invalidateSessionPathCache,
   invalidateSessionListCache,
+  invalidateSessionManagerCache,
   buildSessionContext,
   readSessionHeader,
   findBridgeSessionFileById,
+  invalidateSessionPathCache,
 } from "@/lib/session-reader";
-import { sessionPathKey } from "@/lib/session-path";
-import { abortSubagent, getRpcSession, getRpcSessionInfos, getAliveRpcSessionIds, stopIdleRpcSession } from "@/lib/rpc-manager";
+import { getRpcSession, getAliveRpcSessionIds, stopIdleRpcSession } from "@/lib/rpc-manager";
 import { resolveAnySession, attachIfBridged, handleModelToClient, extractFirstUserText } from "@/lib/session";
 import { normalizeRawMessages } from "@/lib/normalize";
 import { buildExternalPagedContext, clampTailParam } from "@/lib/external-session-paging";
 import { listProviders } from "@/lib/session/providers";
 import { resolvePlaceholderSession, removeHandle } from "@/lib/session";
 import { getPlaceholder, removePlaceholderByUuid } from "@/lib/session/placeholder";
-import { removeQueue } from "@/lib/queue-store";
-import { trashFileSync } from "@/lib/session-trash";
-import { projectTreeForResponse } from "@/lib/project-tree";
+import { projectTreeForResponse, toSummaryTree } from "@/lib/project-tree";
 import { computeSessionTotalActiveMs } from "@/lib/session-timing";
 import { computeSessionStats } from "@/lib/session-stats";
+import { startServerPerf } from "@/lib/perf";
+import { computeSessionRevision } from "@/lib/session-revision";
 import type { SessionEntry } from "@/lib/types";
-import { readSubagentRun, readSubagentSessionResources, SUBAGENT_META_TYPE } from "@/lib/subagents";
+import { readSubagentRun, readSubagentSessionResources } from "@/lib/subagents";
 import { readSessionToolSelection } from "@/lib/session-tool-selection";
 import { jsonResponse } from "@/lib/json-response";
+import { deleteSessions } from "@/lib/session-delete";
+import { attachTranscriptNotices, readSessionTranscriptNotices } from "@/lib/transcript-notices-server";
 
 /**
  * External composite id → canonical id: the real composite id resolved from a lazy-init
@@ -86,12 +85,14 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const perf = startServerPerf("GET /api/sessions/[id]");
   const fresh = new URL(req.url).searchParams.has("fresh");
   // paging params for external backend/bridged sessions (same semantics as local pi sessions; omitted = start from the tail 50)
   const extParams = new URL(req.url).searchParams;
   const extTail = clampTailParam(extParams.get("tail"));
   const extBefore = extParams.get("before");
   try {
+    perf?.span("resolve");
     // bridge-occupancy detection comes first (the TUI owns the file; even a stale local wrapper yields)
     const fpEarly = await resolveSessionPath(id);
     if (fpEarly) {
@@ -243,11 +244,15 @@ export async function GET(
       // (e.g. after a service restart) recover via openExternalSession by id (provider --resume),
       // then return through the wrapped branch; only a failed recovery 404s. Local pi session ids
       // have no ":", so this is skipped at zero cost.
+      let externalOpenError = "";
       if (id.includes(":")) {
         try {
           const { openExternalSession, resolveAnySession: resolveHandle } = await import("@/lib/session");
           const sid = id.slice(id.indexOf(":") + 1);
-          const handle = await openExternalSession(id, { sessionId: sid || undefined }).catch(() => undefined);
+          const handle = await openExternalSession(id, { sessionId: sid || undefined }).catch((e: unknown) => {
+            externalOpenError = e instanceof Error ? e.message : String(e);
+            return undefined;
+          });
           const wrappedAfterOpen = handle?.alive() ? resolveHandle(id) : undefined;
           if (handle && wrappedAfterOpen?.isAlive()) {
             const cid = canonicalExternalId(id, handle.id);
@@ -279,9 +284,18 @@ export async function GET(
               totalActiveMs: 0,
             });
           }
-        } catch { /* recovery failed → fall through to 404 */ }
+          externalOpenError ||= handle
+            ? (handle.alive() ? "handle not registered after open" : "backend process exited while resuming")
+            : "no provider for this agentKey";
+        } catch (e) {
+          externalOpenError = e instanceof Error ? e.message : String(e);
+        }
+        if (externalOpenError) console.warn(`[sessions] external takeover failed for "${id}": ${externalOpenError}`);
       }
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+      return NextResponse.json(
+        { error: "Session not found", ...(externalOpenError ? { reason: externalOpenError } : {}) },
+        { status: 404 },
+      );
     }
     // bridge-occupancy detection: the file is held by a TUI bridge → history comes back via the bridge's get_messages (no local open)
     if (!liveRpc && resolvedPath) {
@@ -318,21 +332,34 @@ export async function GET(
       } catch { /* fall through to local */ }
     }
 
-    const sm = liveRpc?.inner.sessionManager ?? SessionManager.open(resolvedPath!);
+    const sm = liveRpc?.inner.sessionManager ?? openSessionManager(resolvedPath!);
+    perf?.span("open");
     const filePath = liveRpc?.sessionFile || sm.getSessionFile() || resolvedPath || "";
     const entries = sm.getEntries();
     const leafId = sm.getLeafId();
-    const tree = projectTreeForResponse(sm.getTree());
+    const summaryTree = searchParams.get("tree") === "summary";
+    const tree = summaryTree
+      ? toSummaryTree(projectTreeForResponse(sm.getTree()))
+      : projectTreeForResponse(sm.getTree());
+    perf?.span("tree");
     const deferThinking = searchParams.has("deferThinking");
     const deferToolResultImages = searchParams.has("deferMedia");
     const rawTail = Number(searchParams.get("tail"));
     const tail = Number.isFinite(rawTail) && rawTail > 0 ? Math.min(rawTail, 1000) : 50;
-    const context = buildSessionContext(entries as never, leafId, {
+    // pi's showCacheMissNotices (#1265): cache, cost and provider notices on the messages they follow.
+    const transcriptNotices = readSessionTranscriptNotices({
+      entries: entries as unknown as SessionEntry[],
+      cwd: sm.getHeader()?.cwd ?? "",
+      leafId: leafId,
+      models: liveRpc?.inner.modelRuntime,
+    });
+    const context = attachTranscriptNotices(buildSessionContext(entries as never, leafId, {
       deferThinking,
       deferToolResultImages,
       tail,
       sessionId: id, // local: lazy URLs for historical tool-result images
-    });
+    }), transcriptNotices);
+    perf?.span("context");
     // Display-consistency overlay: while the wrapper is alive, model/thinkingLevel come from the
     // real in-process state. Reason: a mid-run set_model appends model_change to whatever message
     // was in flight at the time; a later abort + resend opens a new branch, leaving those entries
@@ -352,6 +379,19 @@ export async function GET(
     // the same aggregation the SDK's getSessionStats() uses. Lets the client
     // keep monotonic token/cost counters across compaction and page reloads.
     const stats = computeSessionStats(entries as unknown as SessionEntry[]);
+    perf?.span("stats");
+    // Opaque freshness token for the session view cache. Derived from the
+    // disk fingerprint and the actual read source; null tells the client the
+    // snapshot is unstable and must not be cached as fresh.
+    const latestEntry = entries[entries.length - 1] as { id?: string } | undefined;
+    const snapshotRevision = computeSessionRevision({
+      filePath,
+      // The notices switch changes the messages without touching the file.
+      sourceId: `${liveRpc ? `runtime:${String(liveRpc.inner.sessionId)}` : "disk"}${transcriptNotices ? "+notices" : ""}`,
+      entryCount: entries.length,
+      latestEntryId: typeof latestEntry?.id === "string" ? latestEntry.id : null,
+      leafId: leafId ?? null,
+    });
     const sessionName = sm.getSessionName();
     const firstUserEntry = entries.find((entry) => entry.type === "message" && entry.message.role === "user");
     const firstUserMessage = firstUserEntry?.type === "message" ? firstUserEntry.message : undefined;
@@ -390,7 +430,7 @@ export async function GET(
       transient: !filePath || !existsSync(filePath),
     }]))[0] : null;
 
-    return jsonResponse(
+    return perf?.attach(jsonResponse(
       req,
       {
         sessionId: id,
@@ -398,6 +438,24 @@ export async function GET(
         info,
         leafId,
         tree,
+        ...(summaryTree ? { treeFormat: "summary" as const } : {}),
+        snapshotRevision,
+        context,
+        stats,
+        totalActiveMs,
+        ...(toolNames !== undefined ? { toolNames } : {}),
+        ...(wrapperRebuilt ? { wrapperRebuilt: true } : {}),
+      },
+    )) ?? jsonResponse(
+      req,
+      {
+        sessionId: id,
+        filePath,
+        info,
+        leafId,
+        tree,
+        ...(summaryTree ? { treeFormat: "summary" as const } : {}),
+        snapshotRevision,
         context,
         stats,
         totalActiveMs,
@@ -437,8 +495,11 @@ export async function PATCH(
         return NextResponse.json({ error: "Session is owned by a TUI bridge; rename not supported by its backend" }, { status: 409 });
       }
     }
-    const sm = SessionManager.open(filePath);
+
+    // PATCH writes via appendSessionInfo — open fresh, bypassing the cache.
+    const sm = openSessionManager(filePath, { mutable: true });
     sm.appendSessionInfo(name.trim());
+    invalidateSessionManagerCache(filePath);
     invalidateSessionListCache();
     return NextResponse.json({ ok: true });
   } catch (error) {
@@ -446,25 +507,27 @@ export async function PATCH(
   }
 }
 
-// DELETE /api/sessions/[id]
+// DELETE /api/sessions/[id] - the session and the subagent sessions below it (lib/session-delete.ts).
 export async function DELETE(
   _req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
   try {
-    const filePath = await resolveSessionPath(id);
-    if (!filePath) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
-    }
-    // single-writer red line: sessions held by a TUI bridge must not be deleted from the web (it would blow up the TUI mid-write)
-    for (const p of listProviders()) {
-      if (!p.ownsFile) continue;
-      try {
-        if (await p.ownsFile(filePath)) {
-          return NextResponse.json({ error: "Session is owned by a running agent bridge; close it there first" }, { status: 409 });
-        }
-      } catch { /* probe failure → treat as not-owned */ }
+    // Local guards before the shared delete engine (lib/session-delete.ts):
+    // single-writer red line (a TUI bridge owns the file -- deleting from the web
+    // would blow up the TUI mid-write), idle-wrapper release, and the placeholder
+    // anchor short-circuit.
+    const deleteTargetPath = await resolveSessionPath(id);
+    if (deleteTargetPath) {
+      for (const p of listProviders()) {
+        if (!p.ownsFile) continue;
+        try {
+          if (await p.ownsFile(deleteTargetPath)) {
+            return NextResponse.json({ error: "Session is owned by a running agent bridge; close it there first" }, { status: 409 });
+          }
+        } catch { /* probe failure → treat as not-owned */ }
+      }
     }
     // A still-alive rpc session in this process: refuse while running; already finished (only the
     // handle lingers) → explicit user delete releases the handle first (shutdown flushes to disk,
@@ -479,18 +542,18 @@ export async function DELETE(
         return NextResponse.json({ error: "Session is still open in this workspace — close it first" }, { status: 409 });
       }
     }
-
-    // Read only the bounded header before deleting.
-    let deleteHeader: { parentSession?: string; extId?: string } | null = null;
-    try {
-      deleteHeader = readSessionHeader(filePath) as unknown as { parentSession?: string; extId?: string } | null;
-    } catch (error) {
-      // Empty runtime sessions have a cached path before their first disk write (upstream #440).
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
     // Placeholder file: delete only the anchor (file + registry entry + live handle); the external
     // raw data (cursor store.db etc.) is never touched; no child sessions hang off a placeholder —
-    // skip the re-parent cascade.
+    // skip the shared cascade engine.
+    let deleteHeader: { extId?: string } | null = null;
+    if (deleteTargetPath) {
+      try {
+        deleteHeader = readSessionHeader(deleteTargetPath) as unknown as { extId?: string } | null;
+      } catch (error) {
+        // Empty runtime sessions have a cached path before their first disk write (upstream #440).
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+    }
     if (deleteHeader?.extId) {
       removePlaceholderByUuid(id); // includes unlinking the placeholder file
       removeHandle(id); // retire the live handle (prevents a zombie transient row)
@@ -498,144 +561,10 @@ export async function DELETE(
       invalidateSessionListCache();
       return NextResponse.json({ ok: true });
     }
-    const parentSessionPath = deleteHeader?.parentSession;
-    let parentSessionId: string | undefined;
-    if (parentSessionPath) {
-      try {
-        // The parent may have been deleted or moved already; treat it as absent.
-        parentSessionId = readSessionHeader(parentSessionPath)?.id;
-      } catch {
-        parentSessionId = undefined;
-      }
+    const { missing } = await deleteSessions([id]);
+    if (missing.length > 0) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
-
-    const targetPathKey = sessionPathKey(filePath);
-    const dir = dirname(filePath);
-    // Deleting a session also deletes every persisted or live subagent below it.
-    const sessions = mergeSessionLists(
-      await listAllSessions({ force: true }),
-      getRpcSessionInfos({ includeTransient: true }),
-    );
-    const childrenByParent = new Map<string, string[]>();
-    for (const session of sessions) {
-      if (session.relation?.kind !== "subagent") continue;
-      const children = childrenByParent.get(session.relation.parentSessionId) ?? [];
-      children.push(session.id);
-      childrenByParent.set(session.relation.parentSessionId, children);
-    }
-    const sessionPaths = new Map(sessions.map((session) => [session.id, session.path]));
-    // Include local files even when the global catalogue is stale or incomplete.
-    try {
-      for (const file of readdirSync(dir).filter((name) => name.endsWith(".jsonl"))) {
-        const childPath = join(dir, file);
-        if (sessionPathKey(childPath) === targetPathKey) continue;
-        try {
-          const lines = readFileSync(childPath, "utf8").split("\n");
-          const header = JSON.parse(lines[0]) as { type?: string; id?: string };
-          if (header.type !== "session" || typeof header.id !== "string") continue;
-          const entries = lines.slice(1).flatMap((line) => {
-            try { return [JSON.parse(line) as SessionEntry]; } catch { return []; }
-          });
-          const subagent = readSubagentRun(entries, header.id, childPath);
-          if (!subagent) continue;
-          const children = childrenByParent.get(subagent.parentSessionId) ?? [];
-          children.push(header.id);
-          childrenByParent.set(subagent.parentSessionId, children);
-          sessionPaths.set(header.id, childPath);
-        } catch { /* skip malformed or concurrently removed sessions */ }
-      }
-    } catch { /* skip if dir unreadable */ }
-    const deletedSessionIds = new Set<string>([id]);
-    const pending = [id];
-    while (pending.length > 0) {
-      const parentId = pending.pop()!;
-      for (const childId of childrenByParent.get(parentId) ?? []) {
-        if (deletedSessionIds.has(childId)) continue;
-        deletedSessionIds.add(childId);
-        pending.push(childId);
-      }
-    }
-    const deletedPaths = new Map<string, string>([[id, filePath]]);
-    for (const deletedId of deletedSessionIds) {
-      const sessionPath = sessionPaths.get(deletedId);
-      if (sessionPath) deletedPaths.set(deletedId, sessionPath);
-    }
-    for (const deletedId of deletedSessionIds) {
-      if (deletedPaths.has(deletedId)) continue;
-      const runtimePath = getRpcSession(deletedId)?.sessionFile;
-      if (runtimePath) deletedPaths.set(deletedId, runtimePath);
-      else {
-        const resolvedPath = await resolveSessionPath(deletedId);
-        if (resolvedPath) deletedPaths.set(deletedId, resolvedPath);
-      }
-    }
-    const deletedPathKeys = new Set([...deletedPaths.values()].map((path) => sessionPathKey(path)));
-
-    // Re-attach all direct children to this session's parent (cascade re-parent)
-    // Scan sibling files in the same directory
-    try {
-      const files = readdirSync(dir).filter(
-        (file) => file.endsWith(".jsonl") && sessionPathKey(join(dir, file)) !== targetPathKey,
-      );
-      for (const file of files) {
-        const childPath = join(dir, file);
-        if (deletedPathKeys.has(sessionPathKey(childPath))) continue;
-        try {
-          const content = readFileSync(childPath, "utf8");
-          const lines = content.split("\n");
-          const header = JSON.parse(lines[0]) as { type?: string; parentSession?: string };
-          if (
-            header.type === "session" &&
-            header.parentSession &&
-            sessionPathKey(header.parentSession) === targetPathKey
-          ) {
-            // Rewrite header with new parentSession
-            header.parentSession = parentSessionPath;
-            lines[0] = JSON.stringify(header);
-            if (parentSessionPath && parentSessionId) {
-              for (let index = 1; index < lines.length; index += 1) {
-                let entry: { type?: string; customType?: string; data?: unknown };
-                try {
-                  entry = JSON.parse(lines[index]);
-                } catch {
-                  continue;
-                }
-                if (
-                  entry.type !== "custom"
-                  || entry.customType !== SUBAGENT_META_TYPE
-                  || typeof entry.data !== "object"
-                  || entry.data === null
-                  || Array.isArray(entry.data)
-                ) continue;
-                entry.data = {
-                  ...entry.data,
-                  parentSessionId,
-                  parentSessionPath,
-                };
-                lines[index] = JSON.stringify(entry);
-                break;
-              }
-            }
-            writeFileSync(childPath, lines.join("\n"));
-          }
-        } catch { /* skip malformed */ }
-      }
-    } catch { /* skip if dir unreadable */ }
-
-    for (const deletedId of [...deletedSessionIds].reverse()) {
-      if (deletedId === id) continue;
-      try { await abortSubagent(deletedId); } catch { /* idle or completed */ }
-      await getRpcSession(deletedId)?.shutdown();
-    }
-    try { await abortSubagent(id); } catch { /* ordinary session */ }
-    await getRpcSession(id)?.shutdown();
-    for (const [deletedId, deletedPath] of deletedPaths) {
-      // session files go to the trash (recoverable after a slip); runtime session files that were never flushed (and thus don't exist) are silently skipped (upstream #440).
-      trashFileSync(deletedPath);
-      removeQueue(deletedPath);
-      invalidateSessionPathCache(deletedId);
-    }
-    invalidateSessionListCache();
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });

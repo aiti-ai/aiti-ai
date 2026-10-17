@@ -97,7 +97,8 @@ test("new-session button is not gated by sessionBusy/first message (visible whil
   // clobbers it again, the test goes red.
   // 2026-09-18: added fork capability gating (local sessions have no caps,
   // unchanged; external backends without fork support hide the button).
-  assert.match(source, /onFork=\{isNew \|\| !sessionCap\("fork"\) \? undefined : handleFork\}/);
+  // 合并适配：onFork 融合形态 = 本地能力门 ∪ 上游 bashRunning 门槛
+  assert.match(source, /onFork=\{bashRunning \|\| isNew \|\| !sessionCap\("fork"\) \? undefined : handleFork\}/);
   assert.doesNotMatch(source, /onFork=\{sessionBusy/);
   assert.doesNotMatch(source, /idx === 0 && msg\.role === "user" \? undefined : handleFork/);
 });
