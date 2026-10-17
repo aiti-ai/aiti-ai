@@ -11,7 +11,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { dataRoot } from "./ext/data-dir";
+import { dataRoot } from "./ext/data-dir.ts";
 
 export interface FxSnapshot {
   /** CNY per 1 USD */
