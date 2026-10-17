@@ -15,7 +15,7 @@
  * All capabilities are true — this is the reference implementation.
  */
 
-import type { AgentSessionWrapper } from "../rpc-manager";
+import type { AgentSessionWrapper } from "../rpc-manager.ts";
 import { FULL_CAPABILITIES, guard } from "./types.ts";
 import type {
   HandleBashResult,

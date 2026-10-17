@@ -1,14 +1,14 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import "./provider-usage/adapters";
-import { queryUsageTargets, resolveUsageTargets } from "./provider-usage/key-pool";
-import { getUsageAdapter } from "./provider-usage/registry";
-import type { ProviderUsageResult, UsageReport } from "./provider-usage/types";
-import type { ProviderUsageId } from "./provider-usage-ids";
+import { queryUsageTargets, resolveUsageTargets } from "./provider-usage/key-pool.ts";
+import { getUsageAdapter } from "./provider-usage/registry.ts";
+import type { ProviderUsageResult, UsageReport } from "./provider-usage/types.ts";
+import type { ProviderUsageId } from "./provider-usage-ids.ts";
 
-export { PROVIDER_USAGE_IDS, isProviderUsageId, type ProviderUsageId } from "./provider-usage-ids";
-export { queryUsageOverview, type UsageOverview, type OverviewEntry } from "./provider-usage/aggregate";
-export { listUsageAdapters, registerUsageAdapter, getUsageAdapter } from "./provider-usage/registry";
-export type { UsageBucket, UsageMetric, UsageReport, ProviderUsageResult, ProviderUsageStatus, UsageAdapter } from "./provider-usage/types";
+export { PROVIDER_USAGE_IDS, isProviderUsageId, type ProviderUsageId } from "./provider-usage-ids.ts";
+export { queryUsageOverview, type UsageOverview, type OverviewEntry } from "./provider-usage/aggregate.ts";
+export { listUsageAdapters, registerUsageAdapter, getUsageAdapter } from "./provider-usage/registry.ts";
+export type { UsageBucket, UsageMetric, UsageReport, ProviderUsageResult, ProviderUsageStatus, UsageAdapter } from "./provider-usage/types.ts";
 
 // Thin facade over the registry (lib/provider-usage/*). Query formats follow
 // @narumitw/pi-usage (MIT, Copyright (c) 2026 narumiruna), but this module

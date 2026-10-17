@@ -1,6 +1,6 @@
-import { registerJsonAdapter } from "../declarative";
-import { clamp, number, record, stringValue, windowLabel } from "../helpers";
-import type { UsageBucket, UsageReport } from "../types";
+import { registerJsonAdapter } from "../declarative.ts";
+import { clamp, number, record, stringValue, windowLabel } from "../helpers.ts";
+import type { UsageBucket, UsageReport } from "../types.ts";
 
 registerJsonAdapter({
   id: "openai-codex",

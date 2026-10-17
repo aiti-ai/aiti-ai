@@ -1,6 +1,6 @@
-import { registerJsonAdapter } from "../declarative";
-import { nonnegative, record, stringValue } from "../helpers";
-import type { UsageBucket, UsageReport } from "../types";
+import { registerJsonAdapter } from "../declarative.ts";
+import { nonnegative, record, stringValue } from "../helpers.ts";
+import type { UsageBucket, UsageReport } from "../types.ts";
 
 // GitHub Copilot (OAuth credentials): quota snapshots per feature
 // (chat / premium_interactions / completions) with entitlement + remaining.

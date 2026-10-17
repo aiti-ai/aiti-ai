@@ -1,6 +1,6 @@
-import { registerJsonAdapter } from "../declarative";
-import { nonnegative, nonnegativeInteger, number, record } from "../helpers";
-import type { UsageBucket, UsageReport } from "../types";
+import { registerJsonAdapter } from "../declarative.ts";
+import { nonnegative, nonnegativeInteger, number, record } from "../helpers.ts";
+import type { UsageBucket, UsageReport } from "../types.ts";
 
 // MiniMax: sk-api- keys use the account balance endpoint, other keys the
 // token-plan remains endpoint (per-model windows).

@@ -1,4 +1,4 @@
-import type { UsageAuth } from "./types";
+import type { UsageAuth } from "./types.ts";
 
 // Hardened fetch for official provider usage endpoints: explicit UA (Cloudflare
 // 1010), origin pinned by the adapter, redirect refused, 15s timeout, 64KB cap,

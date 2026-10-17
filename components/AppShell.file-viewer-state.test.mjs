@@ -31,7 +31,7 @@ test("right panel mounts tabs through TabBody single dispatch (keep-alive pool)"
   // AppShell side: non-terminal tabs go through the keep-alive pool (the N most recent
   // stay mounted, hidden when inactive; tabs outside the pool only mount while active) --
   // still dispatched only through TabBody (no inline FileViewer, no per-tab mounting)
-  assert.match(block, /\.map\(\(tab\) => \(\n\s*<div key=\{tab\.id\} hidden=\{tab\.id !== activeFileTabId\}/);
+  assert.match(block, /\.map\(\(tab\) => \(\n\s*<div key=\{`\$\{fileWorkspaceGeneration\}:\$\{tab\.id\}`\} hidden=\{tab\.id !== activeFileTabId\}/);
   assert.equal(block.match(/<FileViewer/g)?.length ?? 0, 0, "AppShell must not inline FileViewer anymore (dispatch belongs to TabBody)");
   // TabBody side: two mutually exclusive branches (folder kind | file path) -- exactly one viewer at runtime
   assert.equal(tabBody.match(/<FileViewer/g)?.length, 2);
@@ -39,12 +39,30 @@ test("right panel mounts tabs through TabBody single dispatch (keep-alive pool)"
 });
 
 test("the active viewer restores tab state and saves it with a revision", () => {
+  const block = fileContentBlock();
+  // TabBody side (unchanged): the file branch mounts the viewer keyed by tabId+revision,
+  // restores initialState and reports through the bundled ctx (three-arg call).
   assert.match(tabBody, /key=\{`\$\{tab\.id\}:\$\{tab\.viewerRevision \?\? 0\}`\}/);
   assert.match(tabBody, /initialState=\{tab\.viewerState\}/);
   assert.match(tabBody, /ctx\.onStateChange\(tab\.id, tab\.viewerRevision \?\? 0, viewerState\)/);
+  // AppShell side: the workspace generation remounts the content wrapper on a project
+  // switch, so the parked tab's state comes back through a fresh mount; the ctx adapter
+  // stamps the current generation (ref read — stale-closure safe for detached windows)
+  // so the report of a tab being parked goes to its own workspace.
+  assert.match(block, /key=\{`\$\{fileWorkspaceGeneration\}:\$\{tab\.id\}`\}/);
+  assert.match(appShell, /handleFileViewerStateChange\(fileWorkspaceGenerationRef\.current, tabId, viewerRevision, viewerState\)/);
 });
 
 test("closing the file panel pauses the active viewer watcher", () => {
   // panel host: watchEnabled = ctx.panelOpen (the window host is always true -- visible means active)
   assert.match(tabBody, /watchEnabled=\{host === "window" \? true : ctx\.panelOpen\}/);
+});
+
+test("markdown preview links forward a PDF page fragment to the viewer", () => {
+  // Upstream's inline FileViewer JSX became the TabBody dispatch in this fork; the
+  // page hop now lives in the host file-open chain: handleOpenFile accepts page,
+  // openHostFileTab threads it into openFileTab, handleOpenLinkedFile forwards it.
+  assert.match(appShell, /options\?: \{ sourceSessionId\?: string \| null; modeHint\?: "diff"; select\?: boolean; page\?: number \}/);
+  assert.match(appShell, /\{\n      fileName,\n      filePath,\n      modeHint,\n      page,\n      sourceSessionId,\n      tabId,\n    \}\)/);
+  assert.match(appShell, /const handleOpenLinkedFile = useCallback\(\(filePath: string, page\?: number\)/);
 });
