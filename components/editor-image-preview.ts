@@ -1,6 +1,6 @@
 "use client";
 
-import { ensureExtMaterialized } from "./ExtSlots";
+import { ensureExtMaterialized } from "./ExtSlots.tsx";
 
 /**
  * Host bridge from message/composer/markdown images to the file-editor
