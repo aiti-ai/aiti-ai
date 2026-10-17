@@ -9,9 +9,9 @@
  * moments with no ¥ display need (welcome page, sessions without cost) never spend the
  * page-load request budget.
  */
-import { apiUrl } from "./base-path";
-import { getLocalePlugin, getSupportedLocales } from "./i18n/registry";
-import { interpolateMessage } from "./i18n/format";
+import { apiUrl } from "./base-path.ts";
+import { getLocalePlugin, getSupportedLocales } from "./i18n/registry.ts";
+import { interpolateMessage } from "./i18n/format.ts";
 import { useSyncExternalStore } from "react";
 
 export interface FxData { rate: number; source: string; fetchedAt: number }
