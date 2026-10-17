@@ -1,8 +1,8 @@
 import { randomUUID } from "crypto";
 import { homedir } from "os";
 import type { IPty } from "node-pty";
-import { samePath } from "./paths";
-import { publishPageEventToBus } from "./agent-page-events";
+import { samePath } from "./paths.ts";
+import { publishPageEventToBus } from "./agent-page-events.ts";
 
 export type TerminalEvent =
   | { type: "output"; data: string; offset: number; reset?: boolean }
@@ -46,7 +46,9 @@ function registry(): Map<string, TerminalRecord> {
 function shellEnvironment(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined) env[key] = value;
+    // The browser login password guards this server, not the shells it starts.
+    const comparableKey = process.platform === "win32" ? key.toUpperCase() : key;
+    if (value !== undefined && comparableKey !== "PI_WEB_PASSWORD") env[key] = value;
   }
   env.TERM = "xterm-256color";
   env.COLORTERM = "truecolor";
