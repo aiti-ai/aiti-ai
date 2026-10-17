@@ -13,7 +13,7 @@
  * "Fetch only when needed": the request fires only when `ensure()` is called
  * (the first consumer that actually needs the ~ abbreviation).
  */
-import { apiUrl } from "./base-path";
+import { apiUrl } from "./base-path.ts";
 
 /** Shape exposed by the client service (consumed on the extension side). */
 export interface HomeDirService {
