@@ -1,6 +1,6 @@
-import { registerJsonAdapter } from "../declarative";
-import { nonnegative, number, record, stringValue } from "../helpers";
-import type { UsageAdapter, UsageAuth, UsageBucket, UsageMetric, UsageQueryContext, UsageReport } from "../types";
+import { registerJsonAdapter } from "../declarative.ts";
+import { nonnegative, number, record, stringValue } from "../helpers.ts";
+import type { UsageAdapter, UsageAuth, UsageBucket, UsageMetric, UsageQueryContext, UsageReport } from "../types.ts";
 
 // GLM Coding Plan quota: /api/monitor/usage/quota/limit returns window limits
 // (5h/week token windows, MCP monthly bucket) with per-model usage details.

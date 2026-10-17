@@ -1,7 +1,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getAgentDir, type ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { UsageAdapter, UsageAuth, UsageBucket, UsageMetric, UsageReport } from "./types";
+import type { UsageAdapter, UsageAuth, UsageBucket, UsageMetric, UsageReport } from "./types.ts";
 
 // Multi-key rotation pools (models.json `apiKeys[]`, pi-models-combo).
 //
