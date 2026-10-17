@@ -11,9 +11,9 @@
 // connection is actually closed when the last one unsubscribes. The server's 30s heartbeat
 // (named event "heartbeat") serves liveness checks; error broadcasting is left to subscribers
 // (e.g. delayed rebuild after CLOSED goes through broker.reconnect()).
-import { apiUrl } from "./base-path";
-import { isConnStarved } from "./conn-guard";
-import { getEventBus, type BusEventSource } from "./event-bus-client";
+import { apiUrl } from "./base-path.ts";
+import { isConnStarved } from "./conn-guard.ts";
+import { getEventBus, type BusEventSource } from "./event-bus-client.ts";
 
 // The server sends a 30s heartbeat; no frame at all (message/heartbeat) for longer than
 // HEARTBEAT_FRAME_TIMEOUT_MS = the connection is half-dead / frozen by the browser in the
