@@ -1,6 +1,6 @@
-import { registerJsonAdapter } from "../declarative";
-import { clamp, epochSeconds, nonnegative, record } from "../helpers";
-import type { UsageBucket, UsageBucketState, UsageReport } from "../types";
+import { registerJsonAdapter } from "../declarative.ts";
+import { clamp, epochSeconds, nonnegative, record } from "../helpers.ts";
+import type { UsageBucket, UsageBucketState, UsageReport } from "../types.ts";
 
 // OpenCode Go plan windows (rolling/weekly/monthly): {status, percent, resetsAt}.
 // `/zen/go/v1/usage` is the only usage endpoint OpenCode exposes to API keys

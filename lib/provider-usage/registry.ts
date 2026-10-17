@@ -1,5 +1,5 @@
 import type { ProviderUsageId } from "@/lib/provider-usage-ids";
-import type { UsageAdapter } from "./types";
+import type { UsageAdapter } from "./types.ts";
 
 // Registry of usage adapters. Central code only resolves + executes; it never
 // enumerates providers or hardcodes endpoints (adapters self-register at load).

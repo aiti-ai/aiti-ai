@@ -28,7 +28,7 @@
  *   or each other, and are auto-unregistered on extension shutdown/reload.
  */
 
-import type { SessionCapabilities, SessionHandle } from "./types";
+import type { SessionCapabilities, SessionHandle } from "./types.ts";
 
 /** Options accepted by every provider's createSession. */
 export interface CreateSessionOptions {

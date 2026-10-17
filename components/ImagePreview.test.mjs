@@ -7,7 +7,7 @@ const cssSource = await readFile(new URL("../app/globals.css", import.meta.url),
 
 test("composer attachments open in the shared preview with a separate remove button", async () => {
   const inputSource = await readFile(new URL("./ChatInput.tsx", import.meta.url), "utf8");
-  assert.match(inputSource, /import \{ ImagePreview \} from "\.\/ImagePreview"/);
+  assert.match(inputSource, /import \{ ImagePreview \} from "\.\/ImagePreview(\.tsx)?"/);
   assert.match(
     inputSource,
     /<ImagePreview src=\{`data:\${img.mimeType};base64,\${img.data}`} style=\{\{ borderRadius: 6 \}\}>[\s\S]*?<img[\s\S]*?src=\{img\.previewUrl\}[\s\S]*?<\/ImagePreview>\s*<button\s*type="button"\s*onClick=\{\(\) => removeImage\(i\)\}/,

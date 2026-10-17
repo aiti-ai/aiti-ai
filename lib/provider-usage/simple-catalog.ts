@@ -1,6 +1,6 @@
-import { registerJsonAdapter } from "./declarative";
-import { decimal, number, record } from "./helpers";
-import type { UsageReport } from "./types";
+import { registerJsonAdapter } from "./declarative.ts";
+import { decimal, number, record } from "./helpers.ts";
+import type { UsageReport } from "./types.ts";
 
 // Simple balance-style providers: one declaration row per provider/region.
 // Complex window protocols live in adapters/*.ts instead.

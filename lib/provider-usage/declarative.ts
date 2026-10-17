@@ -1,7 +1,7 @@
 import type { ProviderUsageId } from "@/lib/provider-usage-ids";
-import { registerUsageAdapter } from "./registry";
-import { buildAuthHeaders, fetchOfficialJson } from "./secure-fetch";
-import type { UsageAdapter, UsageAuth, UsageNormalizer } from "./types";
+import { registerUsageAdapter } from "./registry.ts";
+import { buildAuthHeaders, fetchOfficialJson } from "./secure-fetch.ts";
+import type { UsageAdapter, UsageAuth, UsageNormalizer } from "./types.ts";
 
 // Factory for JSON-endpoint usage adapters: shared hardened fetch, per-provider
 // URL/auth/normalize. Adding a simple balance provider = one declaration row.

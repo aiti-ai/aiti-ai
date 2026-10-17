@@ -16,7 +16,7 @@
  */
 
 import { getHandle } from "./handle-store.ts";
-import type { SessionHandle } from "./types";
+import type { SessionHandle } from "./types.ts";
 
 export interface RelayResult {
   ok: boolean;

@@ -112,8 +112,8 @@ export interface ExtStatusEntry {
   agentHooks?: string[];
   /** Feature management: declarations + current on/off state (only when the extension declares features). */
   features?: ExtStatusFeature[];
-  /** Static info from the directory's package.json (no code executed). homepage = source/docs URL (written at install time or declared by the author); soul = tagline (shown by the extension manager); protocol = raw aitiExtProtocol declaration. */
-  packageInfo?: { name?: string; version?: string; dependencies?: string[]; homepage?: string; soul?: string; protocol?: string };
+  /** Static info from the directory's package.json (no code executed). homepage = source/docs URL (written at install time or declared by the author); soul = tagline (shown by the extension manager); description = extension description (app-center info sheet fallback); protocol = raw aitiExtProtocol declaration. */
+  packageInfo?: { name?: string; version?: string; description?: string; dependencies?: string[]; homepage?: string; soul?: string; protocol?: string };
   /** Protocol declaration and compatibility state (adjudicated by the host; docs/pi-web-ext-protocol.md). */
   protocol?: ExtProtocolInfo;
   /** Hard dependency declarations (dependency & capability model: elements are extension ids or capability names). */
@@ -156,7 +156,7 @@ function protocolStrict(): boolean {
 }
 
 /** Read an extension directory's package.json without executing code (disabled entries still get name/version/deps/source URL). */
-function readPackageInfo(dir?: string): { name?: string; version?: string; dependencies?: string[]; homepage?: string; soul?: string; protocol?: string } {
+function readPackageInfo(dir?: string): { name?: string; version?: string; description?: string; dependencies?: string[]; homepage?: string; soul?: string; protocol?: string } {
   if (!dir) return {};
   try {
     const p = join(dir, "package.json");
@@ -164,6 +164,7 @@ function readPackageInfo(dir?: string): { name?: string; version?: string; depen
     const parsed = JSON.parse(readFileSync(p, "utf8")) as {
       name?: unknown;
       version?: unknown;
+      description?: unknown;
       dependencies?: unknown;
       homepage?: unknown;
       url?: unknown;
@@ -180,6 +181,7 @@ function readPackageInfo(dir?: string): { name?: string; version?: string; depen
     return {
       name: typeof parsed.name === "string" ? parsed.name : undefined,
       version: typeof parsed.version === "string" ? parsed.version : undefined,
+      description: typeof parsed.description === "string" && parsed.description.trim() ? parsed.description.trim() : undefined,
       dependencies:
         parsed.dependencies && typeof parsed.dependencies === "object"
           ? Object.keys(parsed.dependencies as Record<string, unknown>)
@@ -611,6 +613,7 @@ export class ExtRegistryImpl {
     this.errors.clear();
     this.winners.clear();
     this.candidates.clear();
+    this.pkgDescriptions.clear();
 
     // 1) Collect candidates: enumerate in root-priority order, id → candidate array (array order = root priority).
     const candidates = new Map<string, Array<{ dir: string; source: ExtensionSource }>>();
@@ -1051,31 +1054,54 @@ export class ExtRegistryImpl {
   }
 
   manifest(): ManifestExtension[] {
-    return [...this.extensions.values()].map((e) => ({
-      id: e.id,
-      name: e.name,
-      version: e.version,
-      // clientUrl carries a content hash (?v=<first 12 hex of sha256>): client
-      // update → URL changes → browser forced refetch (no hard refresh/cache clear needed)
-      clientUrl: e.ext.client ? `/api/extensions/${e.id}/assets/${e.ext.client}?v=${this.clientHash(e)}` : null,
-      ui: e.ext.ui ?? null,
-      source: e.source,
-      icon: e.ext.icon ?? null,
-      // App-center category annotation (consumed by the app-center extension; absent
-      // when undeclared — the client falls back to the default category)
-      ...(e.ext.category ? { category: e.ext.category } : {}),
-      // Dependency & capability model (§4 pass-through): runtime-probeable — with
-      // the full manifest a client can tell whether a depended-on capability has
-      // an effective provider / whether an optional extension exists, and decide
-      // whether to enable extra functionality.
-      ...(e.ext.dependsOn?.length ? { dependsOn: [...e.ext.dependsOn] } : {}),
-      ...(e.ext.optionalDependsOn?.length ? { optionalDependsOn: [...e.ext.optionalDependsOn] } : {}),
-      ...(e.ext.provides?.length ? { provides: [...e.ext.provides] } : {}),
-      ...(e.ext.takeover?.length ? { takeover: [...e.ext.takeover] } : {}),
-      // Feature state (managed by the extension manager): fetched together when
-      // the host client loads; extensions read the shared store only, no separate requests
-      features: e.ext.features?.length ? e.ext.features.map((f) => ({ id: f.id, type: f.type, label: f.label, placeholder: f.placeholder, ...(f.category ? { category: f.category } : {}), enabled: this.featureEnabled(e.id, f.id), ...(f.type === "string" || f.type === "textlist" ? { value: String(this.featureValue(e.id, f.id)) } : {}) })) : null,
-    }));
+    return [...this.extensions.values()].map((e) => {
+      const desc = this.extDescription(e);
+      return {
+        id: e.id,
+        name: e.name,
+        version: e.version,
+        // clientUrl carries a content hash (?v=<first 12 hex of sha256>): client
+        // update → URL changes → browser forced refetch (no hard refresh/cache clear needed)
+        clientUrl: e.ext.client ? `/api/extensions/${e.id}/assets/${e.ext.client}?v=${this.clientHash(e)}` : null,
+        ui: e.ext.ui ?? null,
+        source: e.source,
+        icon: e.ext.icon ?? null,
+        // App-center category annotation (consumed by the app-center extension; absent
+        // when undeclared — the client falls back to the default category)
+        ...(e.ext.category ? { category: e.ext.category } : {}),
+        // App-center info sheet description (absent when neither declared nor shipped)
+        ...(desc ? { description: desc } : {}),
+        // Dependency & capability model (§4 pass-through): runtime-probeable — with
+        // the full manifest a client can tell whether a depended-on capability has
+        // an effective provider / whether an optional extension exists, and decide
+        // whether to enable extra functionality.
+        ...(e.ext.dependsOn?.length ? { dependsOn: [...e.ext.dependsOn] } : {}),
+        ...(e.ext.optionalDependsOn?.length ? { optionalDependsOn: [...e.ext.optionalDependsOn] } : {}),
+        ...(e.ext.provides?.length ? { provides: [...e.ext.provides] } : {}),
+        ...(e.ext.takeover?.length ? { takeover: [...e.ext.takeover] } : {}),
+        // Feature state (managed by the extension manager): fetched together when
+        // the host client loads; extensions read the shared store only, no separate requests
+        features: e.ext.features?.length ? e.ext.features.map((f) => ({ id: f.id, type: f.type, label: f.label, ...(f.description ? { description: f.description } : {}), placeholder: f.placeholder, ...(f.category ? { category: f.category } : {}), enabled: this.featureEnabled(e.id, f.id), ...(f.type === "string" || f.type === "textlist" ? { value: String(this.featureValue(e.id, f.id)) } : {}) })) : null,
+      };
+    });
+  }
+
+  private pkgDescriptions = new Map<string, string | undefined>();
+
+  /**
+   * Extension description for the app-center info sheet: the entry declaration wins,
+   * package.json is the fallback (nearly every extension ships one → zero extension
+   * changes needed). Cached per dir — manifest() is fetched on every page load, and
+   * reading it means a sync readFileSync per extension otherwise. loadAll clears the cache,
+   * so a hot reload picks up a replaced package.json.
+   */
+  private extDescription(e: LoadedExtension): string | undefined {
+    const declared = typeof e.ext.description === "string" ? e.ext.description.trim() : "";
+    if (declared) return declared;
+    if (!this.pkgDescriptions.has(e.dir)) {
+      this.pkgDescriptions.set(e.dir, readPackageInfo(e.dir).description);
+    }
+    return this.pkgDescriptions.get(e.dir);
   }
 
   /**
