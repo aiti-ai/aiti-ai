@@ -1,4 +1,4 @@
-import type { QueueEntry, QueueEntryInput, QueueImage, QueueKind } from "./queue-store";
+import type { QueueEntry, QueueEntryInput, QueueImage, QueueKind } from "./queue-store.ts";
 
 /**
  * Client-side helpers for queue export (Markdown / JSON) and import parsing.
