@@ -25,7 +25,7 @@ test("message wrapper div carries the data-chat-msg-role contract", () => {
 test("scroll container carries the data-chat-scroll contract", () => {
   // The other half of the contract: ⏫ jump-to-earliest / ⏬ jump-to-latest / button visibility
   // (atTop/atBottom) all use it to find the scroll container.
-  assert.match(source, /ref=\{handleScrollBoxRef\} data-chat-scroll/);
+  assert.match(source, /ref=\{handleScrollBoxRef\}\s+data-chat-scroll/); // 合并：属性可换行
 });
 
 test("both user and assistant messages remain visible (and thus nav targets)", () => {

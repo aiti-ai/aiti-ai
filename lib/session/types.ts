@@ -111,6 +111,14 @@ export interface SessionCapabilities {
   fileAttachments: boolean;
   /** Switch the permission mode at runtime (cc-connect ModeSwitcher; e.g. CC's set_permission_mode). */
   setPermissionMode: boolean;
+  /**
+   * Are steering entries manageable (recall/move/convert/clear)? True for the local
+   * pi session and pi-protocol backends (their remote queue reinjects on change);
+   * absent/false for CLI backends whose steer entries were already injected into the
+   * peer process — the protocol can't take them back, so the queue panel shows those
+   * rows read-only. Only meaningful together with `steer`.
+   */
+  steerQueueManage?: boolean;
 }
 
 /**
@@ -139,6 +147,7 @@ export const FULL_CAPABILITIES: SessionCapabilities = {
   listModels: true,
   fileAttachments: false,
   setPermissionMode: false,
+  steerQueueManage: true,
 };
 
 /** Build a partial capability set with everything unspecified = false. */

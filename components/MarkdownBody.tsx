@@ -1,39 +1,45 @@
 "use client";
 
-import { memo, useEffect, useId, useMemo, useRef, useState, type JSX, type MouseEvent, type ReactNode } from "react";
+import { createContext, memo, useContext, useEffect, useId, useMemo, useRef, useState, type JSX, type MouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
-import { resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
+import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
 import { buildTicketUrl } from "@/lib/file-tickets";
-import { markdownDataImageUrlTransform, markdownRehypePlugins, markdownRemarkPlugins, markdownUrlTransform, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
+import { createMarkdownUrlTransform, isExternalMarkdownHref, markdownRehypePlugins, markdownRemarkPlugins, markdownUserRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
 import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
-import { MermaidBlock, CodeBlock } from "./MermaidBlock";
+import { ImagePreview } from "./ImagePreview.tsx";
+import { MermaidBlock, CodeBlock } from "./MermaidBlock.tsx";
 import { useI18n } from "@/hooks/useI18n";
-import { useParagraphClickHandlers } from "./ExtSlots";
-import { openImageInEditorViewer } from "./editor-image-preview";
+import { useParagraphClickHandlers } from "./ExtSlots.tsx";
 
 // Minimum interval between two full Markdown parses while streaming: text deltas within
 // 200ms are not re-parsed (about 5 times/s).
 const STREAM_PARSE_INTERVAL_MS = 200;
+
+const MarkdownLinkContext = createContext(false);
 
 interface MarkdownBodyProps {
   children: string;
   className?: string;
   isStreaming?: boolean;
   cwd?: string;
-  onOpenFile?: (filePath: string, fileName?: string) => void;
+  onOpenFile?: (filePath: string, page?: number) => void;
   /** Message role ("user" / "assistant" / undefined) — consumed by the paragraph-click recognizer (e.g. show actions only for user input) */
   messageRole?: string;
   /** Session/message the paragraph belongs to (optional passthrough; filled into ParagraphClickInfo when the extension needs it) */
   sessionId?: string;
   messageId?: string;
+  /** A document reader's own links: relative paths and `#headings` stay in the reader. */
+  onNavigateLink?: (href: string) => void;
+  /** Render every line ending as a line break, for text the user typed. */
+  keepLineBreaks?: boolean;
 }
 
 /** Click candidates among semantic blocks (core only provides the render shell; which tags are clickable is declared via extension handler.tags) */
 const CLICKABLE_TAGS = ["p", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"] as const;
 type ClickableTag = (typeof CLICKABLE_TAGS)[number];
 
-export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, messageRole, sessionId, messageId }: MarkdownBodyProps) {
+export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, onNavigateLink, keepLineBreaks, messageRole, sessionId, messageId }: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => {
     const normalized = normalizeDisplayMath(children);
     // User chat text can start with / embed raw HTML tags as paste artifacts
@@ -72,11 +78,14 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
   // Thin extension point for paragraph clicks: when handlers are registered (extensions loaded) semantic blocks become clickable; without extensions paragraphs render as plain elements.
   const handlers = useParagraphClickHandlers();
   // Math plugins loaded on demand (P1.2): katex/remark-math are not pulled in when the body has no math markers (saves ~300KB on first paint)
+  // Upstream keepLineBreaks (typed line breaks in user messages): swap in the plugin list containing remarkKeepLineBreaks, math plugins are still appended on demand
   const { remark: activeRemarkPlugins, rehype: activeRehypePlugins } = useMathMarkdownPlugins(
     renderText,
-    markdownRemarkPlugins,
+    keepLineBreaks ? markdownUserRemarkPlugins : markdownRemarkPlugins,
     markdownRehypePlugins,
   );
+  // data:image and desktop-app links are allowed in both branches (img src → preview/viewer); file: only when an in-app file handler exists
+  const urlTransform = useMemo(() => createMarkdownUrlTransform(Boolean(onOpenFile)), [onOpenFile]);
   const hasClickHandlers = handlers.length > 0;
   // Clickable tags = union of what extensions declare (handler.tags; defaults to p/li/tr when undeclared). Core hardcodes no business rules —
   // new cases like headings/quote blocks take effect as soon as an extension declares them, no core change needed.
@@ -118,13 +127,26 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     a({ href, children, ...props }) {
       // `node` is react-markdown metadata, not a DOM attribute.
       delete props.node;
+      if (onNavigateLink && href && !isExternalMarkdownHref(href)) {
+        // No href: a middle-click or "Open in new tab" would load the path on the app's own URL.
+        const navigate = () => onNavigateLink(href);
+        return (
+          <MarkdownLinkContext.Provider value={true}>
+            <a {...props} role="link" tabIndex={0} onClick={navigate} onKeyDown={(event) => { if (event.key === "Enter") navigate(); }}>
+              {children}
+            </a>
+          </MarkdownLinkContext.Provider>
+        );
+      }
       const filePath = onOpenFile ? resolveLocalFileHref(href, cwd) : null;
       const openFile = onOpenFile;
       if (!filePath || !openFile) {
         return (
-          <a href={href} {...props} target="_blank" rel="noopener noreferrer">
-            {children}
-          </a>
+          <MarkdownLinkContext.Provider value={true}>
+            <a href={href} {...props} target="_blank" rel="noopener noreferrer">
+              {children}
+            </a>
+          </MarkdownLinkContext.Provider>
         );
       }
 
@@ -133,32 +155,38 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
         const target = event.currentTarget.getAttribute("target");
         if (target && target !== "_self") return;
         event.preventDefault();
-        openFile(filePath);
+        openFile(filePath, parsePdfPageFragment(href) ?? undefined);
       };
 
       return (
-        <a href={href} {...props} onClick={handleClick}>
-          {children}
-        </a>
+        <MarkdownLinkContext.Provider value={true}>
+          <a href={href} {...props} onClick={handleClick}>
+            {children}
+          </a>
+        </MarkdownLinkContext.Provider>
       );
     },
     img({ src, alt, ...props }) {
       delete props.node;
+      // Image inside a link: the link's own navigation wins, no preview click layer added (upstream behavior).
+      const insideLink = useContext(MarkdownLinkContext);
       const filePath = typeof src === "string" ? resolveLocalFileHref(src, cwd) : null;
       if (!filePath) {
-        // Remote / data URL images: click → the file-editor extension's unified viewer (no action when the extension is unavailable / not implemented).
-        const previewable = typeof src === "string";
-        return (
+        // Remote / data URL images: wrap in ImagePreview — click first goes to the file-editor extension's unified viewer,
+        // falls back to the native lightbox when the extension is unavailable (upstream behavior). stopPropagation sits on the wrapper
+        // layer, preventing the paragraph-click recognizer (quote popup) from firing at the same time.
+        const previewable = typeof src === "string" && !insideLink;
+        const image = (
           // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={src}
-            alt={alt ?? ""}
-            loading="lazy"
-            {...props}
-            // stopPropagation: keep the paragraph-click recognizer (quote popup) from firing at the same time
-            onClick={previewable ? (e) => { e.stopPropagation(); void openImageInEditorViewer(src as string, { alt: alt ?? "" }); } : undefined}
-            style={{ ...props.style, ...(previewable ? { cursor: "zoom-in" as const } : null) }}
-          />
+          <img src={src} alt={alt ?? ""} loading="lazy" {...props} />
+        );
+        if (!previewable) return image;
+        return (
+          <span onClick={(event) => event.stopPropagation()}>
+            <ImagePreview src={src} alt={alt ?? ""} className="markdown-image">
+              {image}
+            </ImagePreview>
+          </span>
         );
       }
       // Local images: the path never enters a URL; a short-lived ticket is exchanged for a GET address; click → right-side file panel (same as file links).
@@ -172,6 +200,13 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
           style={{ ...props.style, ...(onOpenFile ? { cursor: "zoom-in" as const } : null) }}
         />
       );
+    },
+    ol({ node, start, style, ...props }) {
+      // An outside marker wider than the list's left padding is clipped by
+      // .markdown-body's overflow-x, so the padding follows the largest number.
+      const items = node?.children.filter((child) => child.type === "element" && child.tagName === "li").length ?? 0;
+      const digits = String(Math.abs((start ?? 1) + Math.max(items, 1) - 1)).length;
+      return <ol start={start} style={{ ...style, ["--ol-marker-digits" as string]: Math.max(digits, 2) }} {...props} />;
     },
     // react-markdown invokes these lowercase render functions as components (createElement(components.p)),
     // so hook order stays stable; rules-of-hooks false-positives purely on the lowercase function name.
@@ -191,21 +226,24 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       return acc;
     }, {} as Record<string, (p: { children?: ReactNode; [k: string]: unknown }) => ReactNode>),
     table({ children }) {
+      // The frame draws the border; the scroller inside it fades its scrolled
+      // edges, which on the bordered box would fade the border too.
       return (
-        <div className="markdown-table-wrap">
-          <table>{children}</table>
+        <div className="markdown-table-frame">
+          <div className="markdown-table-wrap">
+            <table>{children}</table>
+          </div>
         </div>
       );
     },
-  }), [cwd, isStreaming, onOpenFile, messageRole, handlers, clickTags, messageId, sessionId]);
+  }), [cwd, isStreaming, onOpenFile, onNavigateLink, messageRole, handlers, clickTags, messageId, sessionId]);
 
   return (
     <div className={["markdown-body", className].filter(Boolean).join(" ")}>
       <MemoizedMarkdown
         remarkPlugins={activeRemarkPlugins}
         rehypePlugins={activeRehypePlugins}
-        // Both branches allow data:image (img src → the file-editor extension's viewer); file: only when an in-app file handler exists
-        urlTransform={onOpenFile ? markdownUrlTransform : markdownDataImageUrlTransform}
+        urlTransform={urlTransform}
         components={components}
       >
         {renderText}

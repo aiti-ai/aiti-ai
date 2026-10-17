@@ -5,7 +5,7 @@ export async function register(): Promise<void> {
   // NEXT_RUNTIME branch. An early `return` instead of this `if` would leave the
   // Node calls in the Edge module.
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    const { registerNodeInstrumentation } = await import("./instrumentation-node");
+    const { registerNodeInstrumentation } = await import("./instrumentation-node.ts");
     registerNodeInstrumentation();
 
     // Stamp an env marker on everything this server (indirectly) spawns, so port
@@ -25,7 +25,10 @@ export async function register(): Promise<void> {
       const rootsEnv = process.env.PI_WEB_ALLOWED_ROOTS;
       if (rootsEnv) {
         const { allowFileRoot } = await import("@/lib/file-access");
-        for (const r of rootsEnv.split(/[;:]/).filter(Boolean)) allowFileRoot(r);
+        // win32 splits on ; only (: is the drive-letter colon — splitting there yields "C" + "\repo", a useless root);
+        // POSIX keeps the legacy [;:] for compatibility.
+        const sep = process.platform === "win32" ? ";" : /[;:]/;
+        for (const r of rootsEnv.split(sep).filter(Boolean)) allowFileRoot(r);
       }
     }
 

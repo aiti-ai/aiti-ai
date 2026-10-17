@@ -93,6 +93,34 @@ test("MinimalRequestCard: permission without options → allow/reject fallback; 
   assert.doesNotMatch(permHtml, /data-ext-float=/); // the permission card, originally in core, has no floating-window contract — stays attribute-free
 });
 
+test("MinimalRequestCard: an ask with no dedicated body still shows the input summary and default answer actions (SSR)", () => {
+  const respond = async () => true;
+  const authHtml = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(MinimalRequestCard, {
+    request: {
+      requestId: "ta1", kind: "interaction:tool_auth", family: "interaction", capability: "respondInteraction",
+      toolName: "EnterPlanMode", input: { reason: "enter plan mode first" },
+    },
+    onRespond: respond,
+  })));
+  assert.match(authHtml, /Tool authorization request/);
+  assert.match(authHtml, /EnterPlanMode/);
+  // a pending ask must never render a card with no way out
+  assert.match(authHtml, /reason: enter plan mode first/);
+  assert.match(authHtml, /Deny/);
+  assert.match(authHtml, /Allow/);
+
+  const emptyPlanHtml = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(MinimalRequestCard, {
+    request: {
+      requestId: "ta2", kind: "interaction:plan_approval", family: "interaction", capability: "respondInteraction",
+      toolName: "ExitPlanMode", input: { allowedPrompts: [{ prompt: "run tests", tool: "Bash" }] },
+    },
+    onRespond: respond,
+  })));
+  assert.match(emptyPlanHtml, /Plan approval/);
+  assert.match(emptyPlanHtml, /run tests/);
+  assert.match(emptyPlanHtml, /Approve plan/);
+});
+
 test("MinimalRequestCard: plan_approval renders markdown text directly + ask_user lists options + provider_headers without SDK offers only cancel", () => {
   const respond = async () => true;
   const planHtml = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(MinimalRequestCard, {
