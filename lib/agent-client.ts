@@ -1,4 +1,4 @@
-import { apiUrl } from "./base-path";
+import { apiUrl } from "./base-path.ts";
 // Client-side helper for POST /api/agent/[id].
 //
 // Every /api/agent/[id] route returns one of:

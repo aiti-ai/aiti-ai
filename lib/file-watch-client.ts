@@ -10,8 +10,8 @@
 // to the original SSE), so the caller's connected/change/error listeners need zero changes.
 // Lifecycle: close() unsubscribes + POSTs /api/files/watch-stop (the server also auto-stops after 30min
 // idle as a backstop).
-import { getEventBus, type BusEventSource } from "./event-bus-client";
-import { apiUrl } from "./base-path";
+import { getEventBus, type BusEventSource } from "./event-bus-client.ts";
+import { apiUrl } from "./base-path.ts";
 
 export function openFileWatchBus(filePath: string): BusEventSource | null {
   const bus = getEventBus(`/api/files/watch?path=${encodeURIComponent(filePath)}`, {

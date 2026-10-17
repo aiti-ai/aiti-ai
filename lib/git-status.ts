@@ -1,4 +1,4 @@
-import type { GitFileStatus } from "./git-types";
+import type { GitFileStatus } from "./git-types.ts";
 
 export interface GitPorcelainEntry {
   path: string;
