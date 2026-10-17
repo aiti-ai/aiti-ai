@@ -1,5 +1,5 @@
-import type { SessionInfo } from "./types";
-import { workspaceKeyOf } from "./workspace-memory";
+import type { SessionInfo } from "./types.ts";
+import { workspaceKeyOf } from "./workspace-memory.ts";
 
 export interface RecentProject {
   /** Stable server-provided identity used for comparison and Map keys. */
@@ -43,11 +43,4 @@ export function getProjectActivity(
     if (unreadSessionIds.has(session.id)) entry.unread++;
   }
   return counts;
-}
-
-export function sessionsForProject(
-  sessions: readonly SessionInfo[],
-  projectKey: string,
-): SessionInfo[] {
-  return sessions.filter((session) => workspaceKeyOf(session) === projectKey);
 }
