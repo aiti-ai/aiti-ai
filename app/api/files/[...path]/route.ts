@@ -2,12 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
 import path from "path";
 import {
+  allowFileRoot,
   getAllowedFileRoots,
   isExistingFilePathAllowed,
   isFilePathAllowed,
   isWindowsAbsolutePath,
   normalizeSlashes,
 } from "@/lib/file-access";
+import { checkLinkedDirectoryApproval, withOutsideLinkTargets } from "@/lib/linked-directory";
 import {
   DOCX_PREVIEW_MAX_BYTES,
   IMAGE_PREVIEW_MAX_BYTES,
@@ -19,12 +21,14 @@ import {
   getVideoMime,
 } from "@/lib/file-types";
 import { resolveDirentIsDirectory } from "@/lib/file-dirent";
+import { getFileTreeHiddenReasons } from "@/lib/file-tree-visibility";
 import { isFilePathReferencedBySession } from "@/lib/session-file-references";
-import { isApiRequestAllowed } from "@/lib/request-security";
+import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { getParentDirectory } from "@/lib/directory-browser";
 import {
   inspectUploadTargets,
   parseUploadConflictStrategy,
+  replaceUploadFile,
   validateUploadFileNames,
 } from "@/lib/file-upload";
 import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounded-form-data";
@@ -32,14 +36,10 @@ import { filePathFromApiSegments, samePath } from "@/lib/paths";
 import { issueFileTicket, redeemFileTicket } from "@/lib/file-ticket";
 import { readTextPreviewChunk } from "@/lib/text-preview";
 import { startFileWatch, stopFileWatch } from "@/lib/file-watch-registry";
+import { isIgnored } from "@/lib/file-ignore";
 
-const IGNORED_NAMES = new Set([
-  "node_modules", ".git", ".next", "dist", "build", "__pycache__",
-  ".turbo", ".cache", "coverage", ".pytest_cache", ".mypy_cache",
-  "target", "vendor", ".DS_Store", ".git",
-]);
-
-const IGNORED_SUFFIXES = [".pyc"];
+// 忽略规则已改为纯文件驱动（.gitignore + .aitignore，见 lib/file-ignore.ts）——
+// 不再有硬编码忽略集合；无 ignore 文件时全部显示（所见即磁盘）。
 
 const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch"] as const;
 type FileRequestType = typeof FILE_REQUEST_TYPES[number];
@@ -49,17 +49,28 @@ const MAX_UPLOAD_TOTAL_BYTES = 100 * 1024 * 1024;
 // Multipart boundaries and headers are not file bytes, but must be bounded too.
 const MAX_UPLOAD_REQUEST_BYTES = MAX_UPLOAD_TOTAL_BYTES + 1024 * 1024;
 
+// The source view highlights every language here but text, pdf and word with
+// the Prism grammar of that name (refractor/all); a name it lacks renders
+// plain. "html" and "markdown" also turn on FileViewer's Preview, so templates
+// that are not pages take "markup". `.m` stays plain: Objective-C and MATLAB
+// both use it.
 const EXT_TO_LANGUAGE: Record<string, string> = {
-  ts: "typescript", tsx: "typescript", js: "javascript", jsx: "javascript",
-  mjs: "javascript", cjs: "javascript", py: "python", rb: "ruby",
-  go: "go", rs: "rust", java: "java", kt: "kotlin", swift: "swift",
-  c: "c", cpp: "cpp", h: "c", hpp: "cpp", cs: "csharp",
-  html: "html", htm: "html", css: "css", scss: "css", less: "css",
+  ts: "typescript", tsx: "tsx", mts: "typescript", cts: "typescript",
+  js: "javascript", jsx: "jsx", mjs: "javascript", cjs: "javascript",
+  py: "python", rb: "ruby", php: "php", lua: "lua", pl: "perl", r: "r",
+  go: "go", rs: "rust", java: "java", kt: "kotlin", kts: "kotlin", swift: "swift",
+  scala: "scala", groovy: "groovy", gradle: "groovy", dart: "dart", zig: "zig",
+  c: "c", cpp: "cpp", h: "c", hpp: "cpp", cs: "csharp", mm: "objectivec",
+  ex: "elixir", exs: "elixir", hs: "haskell", ml: "ocaml", clj: "clojure", nix: "nix",
+  html: "html", htm: "html", vue: "markup", svelte: "markup", astro: "markup",
+  css: "css", scss: "scss", less: "less",
   json: "json", jsonl: "json", yaml: "yaml", yml: "yaml",
-  toml: "toml", xml: "xml", md: "markdown", mdx: "markdown",
+  toml: "toml", ini: "ini", cfg: "ini", properties: "properties",
+  xml: "xml", md: "markdown", mdx: "markdown", tex: "latex",
   sh: "bash", bash: "bash", zsh: "bash", fish: "bash",
-  sql: "sql", graphql: "graphql", gql: "graphql",
-  dockerfile: "dockerfile", tf: "hcl", hcl: "hcl",
+  ps1: "powershell", psm1: "powershell", bat: "batch", cmd: "batch",
+  sql: "sql", graphql: "graphql", gql: "graphql", proto: "protobuf",
+  dockerfile: "dockerfile", tf: "hcl", hcl: "hcl", diff: "diff", patch: "diff",
   env: "bash", gitignore: "bash", txt: "text",
   pdf: "pdf", docx: "word",
 };
@@ -135,6 +146,32 @@ async function validateUploadDirectory(directory: string): Promise<
   return { directory: realDirectory };
 }
 
+// A directory link whose target is outside the allowed roots is listed but not
+// browsable. Allowing it is the operator's explicit choice, the same one as
+// selecting that directory as a workspace, and lasts until the server restarts.
+async function allowLinkedDirectory(
+  request: NextRequest,
+  segments: string[],
+): Promise<NextResponse> {
+  if (!hasJsonContentType(request)) {
+    return NextResponse.json({ error: "Content-Type must be application/json" }, { status: 415 });
+  }
+  const body = await request.json().catch(() => null) as { target?: unknown } | null;
+  if (typeof body?.target !== "string" || !body.target) {
+    return NextResponse.json({ error: "target must be the link target shown in the listing" }, { status: 400 });
+  }
+  const approval = checkLinkedDirectoryApproval(
+    filePathFromApiSegments(segments),
+    body.target,
+    await getAllowedFileRoots(),
+  );
+  if (!approval.ok) {
+    return NextResponse.json({ error: approval.error }, { status: approval.status });
+  }
+  if (!approval.alreadyAllowed) allowFileRoot(approval.target);
+  return NextResponse.json({ path: approval.target });
+}
+
 function parseUploadFileNames(value: unknown): string[] | null {
   if (!Array.isArray(value) || !value.every((item) => typeof item === "string")) return null;
   return value;
@@ -149,7 +186,26 @@ export async function POST(
   }
 
   try {
-    const { path: segments } = await params;
+    let { path: segments } = await params;
+    // allow-link（上游符号链目录授权）：type=allow-link + 段路径 → 授权后才能浏览根外目标
+    if (request.nextUrl.searchParams.get("type") === "allow-link") {
+      return allowLinkedDirectory(request, segments);
+    }
+
+    // Upstream wire form (lib/file-upload-client uploadFiles / upload-check): the
+    // directory rides in the URL path with a `type` query param selecting the
+    // channel (/api/files/<dir>?type=upload-check|upload&conflict=...). Normalize
+    // it to the local path form below (directory then comes from urlDir) so both
+    // clients work against one handler.
+    let urlDir: string | undefined;
+    {
+      const uploadType = request.nextUrl.searchParams.get("type");
+      if ((uploadType === "upload-check" || uploadType === "upload") && segments.length > 0) {
+        urlDir = segments.join("/");
+        segments = [uploadType, ...segments];
+      }
+    }
+
     // POST /api/files/ticket → two modes:
     //   { ticket } → redeem: return the ticket payload (for the /viewer handshake; not consumed, reusable within TTL)
     //   { path, type?, kind?, cwd? } → issue a short-lived ticket (5-minute TTL, random and irreversible).
@@ -240,7 +296,7 @@ export async function POST(
 
     if (segments[0] === "upload-check") {
       const body = await request.json().catch(() => null) as { directory?: unknown; fileNames?: unknown } | null;
-      const vd = await resolveUploadDirectory(body?.directory);
+      const vd = await resolveUploadDirectory(body?.directory ?? urlDir);
       if ("response" in vd) return vd.response;
       const fileNames = parseUploadFileNames(body?.fileNames);
       if (!fileNames) {
@@ -267,7 +323,7 @@ export async function POST(
         }
         throw error;
       }
-      const vd = await resolveUploadDirectory(formData.get("directory"));
+      const vd = await resolveUploadDirectory(formData.get("directory") ?? urlDir);
       if ("response" in vd) return vd.response;
       const { directory } = vd;
       const files = formData.getAll("files").filter((entry): entry is File => typeof entry !== "string");
@@ -317,17 +373,14 @@ export async function POST(
           continue;
         }
 
-        if (conflictSet.has(file.name)) {
-          try {
-            fs.unlinkSync(destination);
-          } catch (error) {
-            errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
-            continue;
-          }
-        }
-
+        // 上游修复（#1039）：冲突替换改走 lib 的 replaceUploadFile（临时文件+rename），
+        // 写失败时不再先删后写、丢失原文件
         try {
-          fs.writeFileSync(destination, bytes, { flag: "wx" });
+          if (conflictSet.has(file.name)) {
+            replaceUploadFile(destination, bytes);
+          } else {
+            fs.writeFileSync(destination, bytes, { flag: "wx" });
+          }
           uploaded.push(file.name);
         } catch (error) {
           errors.push({ name: file.name, error: error instanceof Error ? error.message : String(error) });
@@ -580,6 +633,26 @@ async function handleFileRequest(
     if (!allowedByRoot && !allowedBySessionReference) {
       return NextResponse.json({ error: "Access denied" }, { status: 403 });
     }
+    if (allowedByRoot) {
+      // Symlink-escape protection (same containment the upload channel enforces):
+      // `root/link/../beside` is lexically inside the root, but the OS walks the
+      // link before resolving `..`, landing outside it. Authorize the real path
+      // against the real roots — what we authorize must be what we serve.
+      let realPath: string;
+      try {
+        realPath = fs.realpathSync(filePath);
+      } catch {
+        realPath = filePath;
+      }
+      if (realPath !== filePath) {
+        const realRoots = new Set([...allowedRoots].map((root) => {
+          try { return fs.realpathSync(root); } catch { return root; }
+        }));
+        if (!isFilePathAllowed(realPath, realRoots)) {
+          return NextResponse.json({ error: "Access denied" }, { status: 403 });
+        }
+      }
+    }
 
     let stat: fs.Stats | undefined;
     try {
@@ -782,16 +855,23 @@ async function handleFileRequest(
       return NextResponse.json({ error: "Not a directory" }, { status: 400 });
     }
 
+    // `hidden=1`（探索器“显示隐藏项”开关，上游引入；本地客户端同参数）：返回被忽略/排除项并带原因标记。
+    // 本地策略：.git 不再无条件 always，改随 hidden 开关显隐（默认隐藏≠禁止查看）；.DS_Store 等仍始终隐藏。
+    const showHidden = request.nextUrl.searchParams.get("hidden") === "1";
     // Avoid per-entry stat calls for normal files and directories. Symlinks and
     // filesystems without directory type information use the stat fallback.
     const dirents = fs.readdirSync(filePath, { withFileTypes: true });
+    const hiddenReason = await getFileTreeHiddenReasons(filePath, dirents.map((d) => d.name));
     const entries = dirents
-      .filter((d) => !IGNORED_NAMES.has(d.name) && !IGNORED_SUFFIXES.some((s) => d.name.endsWith(s)))
       .flatMap((d) => {
         const isDir = resolveDirentIsDirectory(d, path.join(filePath, d.name));
-        return isDir === null
-          ? []
-          : [{ name: d.name, isDir, size: 0, modified: "" }];
+        if (isDir === null) return [];
+        // 本地引擎（.git 特判 + .aitignore + 非 git 目录 .gitignore）优先，上游 git/name-list 判定兑底；
+        // 本地引擎命中时统一归入 ignored 原因（.git 由此获得随开关显隐能力）
+        const hidden = isIgnored(filePath, d.name, isDir) ? "ignored" : hiddenReason(d.name);
+        if (hidden === "always" || (hidden && !showHidden)) return [];
+        const entry = { name: d.name, isDir, size: 0, modified: "" };
+        return [hidden ? { ...entry, hidden } : entry];
       })
       .sort((a, b) => {
         // Dirs first, then files, both alphabetically
@@ -800,14 +880,18 @@ async function handleFileRequest(
       });
 
     // The ascendable parent directory (present only within allowed file roots, otherwise null) — the boundary
-    // reference for the folder browser's "parent directory" button: when the parent itself is outside the
+    // reference for the folder browser's "parent directory" button (本地): when the parent itself is outside the
     // allowed set (e.g. above the project root into workspace/home), treat it as non-ascendable.
     const parentPath = (() => {
       const parent = getParentDirectory(filePath);
       return parent && isFilePathAllowed(parent, allowedRoots) ? parent : null;
     })();
 
-    return NextResponse.json({ entries, path: filePath, parentPath });
+    return NextResponse.json({
+      entries: withOutsideLinkTargets(filePath, entries, dirents, allowedRoots),
+      path: filePath,
+      parentPath,
+    });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });
   }
