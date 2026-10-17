@@ -10,7 +10,7 @@
  * recreates modules; the process-global survives.
  */
 
-import type { SessionHandle } from "./types";
+import type { SessionHandle } from "./types.ts";
 import { hasPlaceholder } from "./placeholder.ts";
 
 // ============================================================================

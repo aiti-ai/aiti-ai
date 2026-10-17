@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react"
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { ExtSlot } from "./ExtSlots";
+import type { SelectorRowStar } from "./SelectorRow";
 
 export interface ModelSelectorOption {
   provider: string;
@@ -38,6 +39,10 @@ interface ModelSelectorProps {
   onRefresh?: () => void;
   /** Refresh in progress: the refresh row spins and is disabled, and the other options are disabled too to avoid mis-clicks. */
   refreshing?: boolean;
+  /** The model new sessions start with; its row gets a filled star. */
+  defaultValue?: { provider: string; modelId: string } | null;
+  /** Shows a star on every row that saves it as the default. */
+  onSetDefault?: (provider: string, modelId: string) => void;
 }
 
 const MODEL_FILTER_THRESHOLD = 8;
@@ -121,7 +126,6 @@ export function computePanelGeometry(
   return { openAbove, maxHeight, top: topEdge };
 }
 export const RECENT_MODELS_LIMIT = 8;
-const MODEL_OPTION_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 
 export interface RecentModelEntry {
   provider: string;
@@ -179,11 +183,6 @@ export function pickRecentOptions(
   return picked;
 }
 
-function compareModelOptions(a: ModelSelectorOption, b: ModelSelectorOption): number {
-  return MODEL_OPTION_COLLATOR.compare(a.name || a.modelId, b.name || b.modelId)
-    || MODEL_OPTION_COLLATOR.compare(a.provider, b.provider)
-    || MODEL_OPTION_COLLATOR.compare(a.modelId, b.modelId);
-}
 
 export function filterModelOptions(options: ModelSelectorOption[], query: string): ModelSelectorOption[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
@@ -232,6 +231,8 @@ export function ModelSelector({
   hideIcon = false,
   onRefresh,
   refreshing = false,
+  defaultValue,
+  onSetDefault,
 }: ModelSelectorProps) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
@@ -244,9 +245,10 @@ export function ModelSelector({
   const [filter, setFilter] = useState("");
   const [recentList, setRecentList] = useState<RecentModelEntry[]>([]);
   const locked = disabled || busy;
-  const sortedOptions = useMemo(() => [...options].sort(compareModelOptions), [options]);
-  const filteredOptions = filterModelOptions(sortedOptions, filter);
-  const showFilter = sortedOptions.length > MODEL_FILTER_THRESHOLD;
+  // Options arrive in pi's /model order (orderSelectorModels() upstream, lib/model-scope.ts);
+  // never re-sort them here (#783) — a models.json provider loses the order its file gives.
+  const filteredOptions = filterModelOptions(options, filter);
+  const showFilter = options.length > MODEL_FILTER_THRESHOLD;
 
   // Re-read recents each time the panel opens (other windows / other ModelSelector instances may have updated them)
   useEffect(() => {
@@ -284,8 +286,8 @@ export function ModelSelector({
 
   // Recents → ordered by use time desc, keeping only models still available (deleted/removed ones disappear automatically)
   const recentOptions = useMemo(
-    () => pickRecentOptions(recentList, sortedOptions, { open, filter }),
-    [open, filter, sortedOptions, recentList],
+    () => pickRecentOptions(recentList, options, { open, filter }),
+    [open, filter, options, recentList],
   );
   // Entries already shown in the recents section are removed from the main list (each model appears once; while filtering recentOptions=[] so nothing is removed)
   const mainOptions = useMemo(
@@ -301,8 +303,8 @@ export function ModelSelector({
   }
 
   const currentName = selectedLabel ?? (value
-    ? sortedOptions.find((option) => option.modelId === value.modelId && option.provider === value.provider)?.name ?? value.modelId
-    : emptyLabel ?? (sortedOptions.length > 0 ? "Select model" : "No models"));
+    ? options.find((option) => option.modelId === value.modelId && option.provider === value.provider)?.name ?? value.modelId
+    : emptyLabel ?? (options.length > 0 ? "Select model" : "No models"));
 
   useEffect(() => {
     const handleOutsideClick = (event: MouseEvent) => {
@@ -371,6 +373,23 @@ export function ModelSelector({
     if (!active || isAutoSelection) onChange(option.provider, option.modelId);
   };
 
+  const saveDefault = (option: ModelSelectorOption) => {
+    setOpen(false);
+    setFilter("");
+    onSetDefault?.(option.provider, option.modelId);
+  };
+
+  // Upstream (#930/#1125): the default model's row carries a static star, other rows offer a
+  // hover-revealed "save as default" star (rendered by ModelOptionButton, SelectorRow's contract).
+  const starFor = (option: ModelSelectorOption): SelectorRowStar | undefined => onSetDefault
+    ? {
+        isDefault: option.modelId === defaultValue?.modelId && option.provider === defaultValue?.provider,
+        saveLabel: t("chat.saveDefaultModel"),
+        defaultLabel: t("chat.defaultModel"),
+        onSave: () => saveDefault(option),
+      }
+    : undefined;
+
   return (
     <div
       ref={rootRef}
@@ -392,7 +411,7 @@ export function ModelSelector({
         aria-expanded={open}
         aria-busy={busy || undefined}
         disabled={locked}
-        title={busy ? "Switching model" : locked ? currentName : sortedOptions.length > 0 || onClear ? "Change model" : "No available models"}
+        title={busy ? "Switching model" : locked ? currentName : options.length > 0 || onClear ? "Change model" : "No available models"}
         style={buttonStyle}
         onClick={() => {
           setOpen((current) => {
@@ -535,7 +554,7 @@ export function ModelSelector({
                 />
               )}
               {onClear && !filter.trim() && (
-                <ModelOptionButton active={!value} label={emptyLabel ?? "Default"} disabled={refreshing} onClick={() => {
+                <ModelOptionButton active={!value} label={emptyLabel ?? "Default"} disabled={refreshing} gutter={Boolean(onSetDefault)} onClick={() => {
                   if (refreshing) return;
                   setOpen(false);
                   setFilter("");
@@ -556,6 +575,8 @@ export function ModelSelector({
                       hint={option.provider}
                       status={option.status}
                       disabled={refreshing}
+                      gutter={Boolean(onSetDefault)}
+                      star={starFor(option)}
                       onClick={() => choose(option)}
                     />
                   ))}
@@ -583,6 +604,8 @@ export function ModelSelector({
                       hint={option.provider}
                       status={option.status}
                       disabled={refreshing}
+                      gutter={Boolean(onSetDefault)}
+                      star={starFor(option)}
                       onClick={() => choose(option)}
                     />
                   ))}
@@ -607,8 +630,13 @@ export function ModelSelector({
 }
 
 /** Option row (exported solely for unit-test render assertions): name + provider suffix + availability status; the same information on desktop and small screens. */
-export function ModelOptionButton({ active, label, hint, status, disabled = false, onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; disabled?: boolean; onClick: () => void }) {
+export function ModelOptionButton({ active, label, hint, status, disabled = false, star, gutter = Boolean(star), onClick }: { active: boolean; label: string; hint?: string; status?: ModelSelectorOption["status"]; disabled?: boolean; /** Upstream star contract (SelectorRow): static star on the default row, hover/focus-revealed save button elsewhere. */ star?: SelectorRowStar; /** Reserve the star gutter so every row of a star menu lines up. */ gutter?: boolean; onClick: () => void }) {
   const { t } = useI18n();
+  const isMobile = useIsMobile();
+  const [hovered, setHovered] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const canSave = Boolean(star && !star.isDefault);
+  const showSave = canSave && (hovered || focused || isMobile);
   const statusMark = status === "rl"
     ? <span style={{ flexShrink: 0, fontSize: 9, fontWeight: 700, color: "#b45309", padding: "0 6px", borderRadius: 999, border: "1px solid rgba(245,158,11,.55)", background: "rgba(245,158,11,.14)" }} title={t("modelSel.rlTitle")}>429</span>
     : status === "err"
@@ -617,15 +645,22 @@ export function ModelOptionButton({ active, label, hint, status, disabled = fals
         ? <span style={{ flexShrink: 0, fontSize: 9, color: "var(--text-dim)", padding: "0 6px", borderRadius: 999, border: "1px solid var(--border)", background: "var(--bg-subtle,#f5f5f5)" }} title={t("modelSel.unprobedTitle")}>{t("modelSel.unprobedBadge")}</span>
         : null;
   return (
+    <div
+      style={{ position: "relative" }}
+      onFocus={() => setFocused(true)}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setFocused(false);
+      }}
+    >
     <button
       type="button"
       role="option"
       aria-selected={active}
       disabled={disabled || undefined}
       onClick={onClick}
-      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "7px 12px", border: "none", background: active ? "var(--bg-selected)" : "none", color: active ? "var(--text)" : "var(--text-muted)", cursor: disabled ? "default" : "pointer", fontSize: 12, fontWeight: active ? 600 : 400, textAlign: "left", whiteSpace: "nowrap", opacity: disabled && !active ? 0.55 : undefined }}
-      onMouseEnter={(event) => { if (!active) event.currentTarget.style.background = "var(--bg-hover)"; }}
-      onMouseLeave={(event) => { if (!active) event.currentTarget.style.background = "none"; }}
+      style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", padding: gutter ? "7px 36px 7px 12px" : "7px 12px", border: "none", background: active ? "var(--bg-selected)" : "none", color: active ? "var(--text)" : "var(--text-muted)", cursor: disabled ? "default" : "pointer", fontSize: 12, fontWeight: active ? 600 : 400, textAlign: "left", whiteSpace: "nowrap", opacity: disabled && !active ? 0.55 : undefined }}
+      onMouseEnter={(event) => { setHovered(true); if (!active) event.currentTarget.style.background = "var(--bg-hover)"; }}
+      onMouseLeave={(event) => { setHovered(false); if (!active) event.currentTarget.style.background = "none"; }}
     >
       {active
         ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }} aria-hidden="true"><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
@@ -641,6 +676,42 @@ export function ModelOptionButton({ active, label, hint, status, disabled = fals
         <span style={{ marginLeft: "auto", flexShrink: 0, paddingLeft: 14, maxWidth: "45%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", fontSize: 10, fontWeight: 400, color: "var(--text-dim)", opacity: 0.8 }} title={hint}>{hint}</span>
       ) : null}
     </button>
+    {star?.isDefault && (
+      <span
+        role="img"
+        aria-label={star.defaultLabel}
+        title={star.defaultLabel}
+        style={{ position: "absolute", top: "50%", right: 6, transform: "translateY(-50%)", display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, color: "var(--text-dim)" }}
+      >
+        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}><polygon points="12 2.5 14.9 8.6 21.5 9.4 16.6 13.9 17.9 20.5 12 17.2 6.1 20.5 7.4 13.9 2.5 9.4 9.1 8.6" /></svg>
+      </span>
+    )}
+    {star && canSave && (
+      <button
+        type="button"
+        title={star.saveLabel}
+        aria-label={star.saveLabel}
+        tabIndex={showSave ? 0 : -1}
+        onClick={(event) => {
+          event.stopPropagation();
+          star.onSave();
+        }}
+        style={{ position: "absolute", top: "50%", right: 6, transform: "translateY(-50%)", display: "flex", alignItems: "center", justifyContent: "center", width: 24, height: 24, padding: 0, background: "var(--bg-hover)", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: "pointer", opacity: showSave ? 1 : 0, pointerEvents: showSave ? "auto" : "none", transition: "opacity 0.1s, background 0.12s, color 0.12s, border-color 0.12s" }}
+        onMouseEnter={(event) => {
+          event.currentTarget.style.background = "var(--bg-selected)";
+          event.currentTarget.style.color = "var(--accent)";
+          event.currentTarget.style.borderColor = "rgba(37,99,235,0.35)";
+        }}
+        onMouseLeave={(event) => {
+          event.currentTarget.style.background = "var(--bg-hover)";
+          event.currentTarget.style.color = "var(--text-muted)";
+          event.currentTarget.style.borderColor = "var(--border)";
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}><polygon points="12 2.5 14.9 8.6 21.5 9.4 16.6 13.9 17.9 20.5 12 17.2 6.1 20.5 7.4 13.9 2.5 9.4 9.1 8.6" /></svg>
+      </button>
+    )}
+    </div>
   );
 }
 
