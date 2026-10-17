@@ -10,18 +10,14 @@ import {
   isWindowsAbsolutePath,
 } from "@/lib/file-access";
 import { buildEntriesFromFiles, filterFileEntries, type FileIndexEntry } from "@/lib/file-fuzzy";
+import { isIgnored, isAitIgnored } from "@/lib/file-ignore";
 
 const execFileAsync = promisify(execFile);
 
-// Same skip lists as /api/files — only used for the non-git readdir fallback.
-// Git-tracked repos rely on .gitignore instead (matches the TUI's fd behavior).
-const IGNORED_NAMES = new Set([
-  "node_modules", ".git", ".next", "dist", "build", "__pycache__",
-  ".turbo", ".cache", "coverage", ".pytest_cache", ".mypy_cache",
-  "target", "vendor", ".DS_Store",
-]);
+// 忽略规则已改为纯文件驱动（.gitignore + .aitignore，见 lib/file-ignore.ts）——
+// 不再有硬编码忽略集合；git 仓库内 .gitignore 由 git ls-files --exclude-standard 承担，
+// .aitignore 由 lib/file-ignore 叠加（git 不认识 .aitignore）；非 git 目录 walk 走同一引擎。
 
-const IGNORED_SUFFIXES = [".pyc"];
 
 /** Cap on the plain (no-query) response used as the client-side index */
 const MAX_FILES = 5000;
@@ -67,10 +63,12 @@ async function listWithGit(cwd: string): Promise<FileListing | null> {
       { timeout: 10_000, maxBuffer: 64 * 1024 * 1024, env: { ...process.env, LC_ALL: "C" } },
     );
     const all = stdout.split("\0").filter(Boolean);
-    if (all.length > GIT_HARD_CAP) {
-      return { files: all.slice(0, GIT_HARD_CAP), hardTruncated: true };
+    // .gitignore 层由 --exclude-standard 承担；此处叠加 .aitignore（git 不认识它）
+    const filtered = all.filter((f) => !isAitIgnored(cwd, f));
+    if (filtered.length > GIT_HARD_CAP) {
+      return { files: filtered.slice(0, GIT_HARD_CAP), hardTruncated: true };
     }
-    return { files: all, hardTruncated: false };
+    return { files: filtered, hardTruncated: false };
   } catch {
     // Not a git repo (or git unavailable) — caller falls back to readdir walk.
     return null;
@@ -90,7 +88,7 @@ function listWithWalk(cwd: string): FileListing {
       continue;
     }
     for (const d of dirents) {
-      if (IGNORED_NAMES.has(d.name) || IGNORED_SUFFIXES.some((s) => d.name.endsWith(s))) continue;
+      if (isIgnored(abs, d.name, d.isDirectory())) continue;
       const childRel = rel ? `${rel}/${d.name}` : d.name;
       if (d.isDirectory()) {
         if (depth + 1 <= MAX_WALK_DEPTH) {
