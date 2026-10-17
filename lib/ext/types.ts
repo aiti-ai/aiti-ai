@@ -405,6 +405,9 @@ export type ExtSlotName =
   | "composerTools"  // Control row under the input box (compact/stop/import-queue on the same row; the git-trace extension: timeline main entry, etc.)
   | "queuePanel"    // Queue panel slot (de-fork P3: the queue-manager extension takes over the full queue UI;
                     //   without takeover the core renders a fallback banner — see the queue-cluster extension plan)
+  | "recoveryDialog" // Queue-recovery dialog slot (de-fork B3: the recovery extension takes it over; injected live
+                    //   props — items/onResolve/onExport/onImport/onDismiss/mode, render condition stays in core,
+                    //   sole-owner so there is no core fallback)
   | "workspacePickerActions" // Action area at the bottom of the CWD picker dropdown (session-manager: manage the workspace list —
                     //   select/hide/delete; the core only renders the dropdown list, all management UI lives in the extension)
   | "modelSelector"  // Chat input model button takeover (e.g. the model-wizard extension): once registered it replaces the native
@@ -949,6 +952,11 @@ export interface PiWebExtension {
    * (meta.category / ui item category) and feature-level tags take precedence over this value.
    */
   category?: string;
+  /**
+   * One-line extension description (input side: entry declaration, optional). The app center's info sheet reads it;
+   * absent → the host falls back to the extension's package.json `description`. Passed through on `manifest()`.
+   */
+  description?: string;
   /** Feature management declaration: the list of features the extension exposes that users can enable/disable (see ExtFeature). */
   features?: ExtFeature[];
   /**
@@ -1048,6 +1056,8 @@ export interface ManifestExtension {
   takeover?: string[];
   /** App-center category tag (passed through from PiWebExtension.category; absent = untagged). */
   category?: string;
+  /** Extension description (app-center info sheet): entry declaration first, package.json `description` as fallback; absent when neither exists. */
+  description?: string;
   /** Feature states (extension-manager managed): fetched together when the host client loads; extensions read a shared store, no separate requests. */
-  features?: { id: string; type?: "boolean" | "string" | "textlist"; label?: string; placeholder?: string; category?: string; enabled: boolean; value?: string }[] | null;
+  features?: { id: string; type?: "boolean" | "string" | "textlist"; label?: string; description?: string; placeholder?: string; category?: string; enabled: boolean; value?: string }[] | null;
 }
