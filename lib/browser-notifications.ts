@@ -1,4 +1,5 @@
-import type { BlockingExtensionUiRequest, ExtensionUiRequest } from "./types";
+import { isBlockingExtensionUiRequest } from "./extension-ui-queue.ts";
+import type { BlockingExtensionUiRequest, ExtensionUiRequest } from "./types.ts";
 
 interface WindowNotificationLike {
   onclick: Notification["onclick"];
@@ -106,21 +107,9 @@ export function shouldShowBrowserNotification(
   return attentionState.visibilityState !== "visible" || !attentionState.hasFocus();
 }
 
-export function isBlockingExtensionUiRequest(
-  request: ExtensionUiRequest,
-): request is BlockingExtensionUiRequest {
-  switch (request.method) {
-    case "select":
-    case "confirm":
-    case "input":
-    case "editor":
-      return true;
-    case "custom":
-      return request.closed !== true;
-    default:
-      return false;
-  }
-}
+// The classification lives with the request queues (lib/extension-ui-queue.ts),
+// where the server's awaiting-input snapshot shares it.
+export { isBlockingExtensionUiRequest };
 
 export function claimExtensionAttentionNotification(
   request: ExtensionUiRequest,
