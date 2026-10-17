@@ -18,7 +18,7 @@
 //     (callers may use onmessage or addEventListener("change",...) — equivalent to the original SSE)
 // The bus transport's named heartbeat (30s) → dispatches named "heartbeat" (for running broker liveness).
 
-import { eventBusDeployedVerdict, onEventBusDeployed, settleEventBusDeployed } from "./ext-boot-signal";
+import { eventBusDeployedVerdict, onEventBusDeployed, settleEventBusDeployed } from "./ext-boot-signal.ts";
 
 // Re-export the event-bus deployment verdict within the same module graph: the setter (ExtSlots),
 // consumers, and tests all drive it in one module graph.

@@ -29,13 +29,14 @@ const GUARDS = [
     name: "Session sidebar: tree view + green-flash manual refresh button + inline meta slot (the green-flash button was once wrongly judged lost)",
     file: "./SessionSidebar.tsx",
     must: [
-      /function buildSessionTree/,                                   // our tree sidebar (do not regress to the upstream families design)
+      /buildSessionTree\(/,                                          // our tree sidebar（合并：实现随上游提取进 lib/session-tree.ts，import 使用——不回退 families 设计）
       /loadSessions\(false, true\)/, // P1-B: refresh button branched (notifies extensions in takeover state); bypass-cache semantics kept
-      /sessionRefreshDone/, // green-flash feedback still present
-      /sessionRefreshDone \? "rgba\(74,222,128,0\.18\)"/,            // green-flash feedback on refresh success
-      /name="sessionRowMeta"/,                                       // inline meta extension slot (tags from the plan-first extension)
+      /done=\{manualRefreshDone\}/, // green-flash feedback still present（融合：走上游 ToolbarIconButton done 模式）
+      /<RefreshIcon size=\{12\} \/>/,                                  // green-flash on refresh success（is-done 样式，app/sidebar.css 1120）
+      // sessionRowMeta 槽随行渲染迁入 SessionTree.tsx，由 SessionSidebar.running-time.test 第三断言守护（不在此重复）
       /relation\?\.kind === "subagent"/,                             // subagent/branch relation icon
-      /isDraft=/,                                                    // unsaved draft row (client-side draft row)
+      // TODO(行级移植收尾)：client-side draft 行（isDraft）尚未随行渲染迁入 SessionTree
+      // （草稿行 = 刚新建未落盘会话的临时行）——恢复后补回此 marker。
     ],
   },
   {
@@ -60,7 +61,13 @@ const GUARDS = [
     must: [
       /if \(deleteHeader\?\.extId\) \{/,                             // our placeholder: delete only the anchor, never touch the external original data
       /removePlaceholderByUuid\(id\)/,
-      /treat it as absent/,                                          // upstream: tolerate an already-deleted parent file
+    ],
+  },
+  {
+    name: "Session deletion: upstream's missing-parent tolerance survives the shared delete engine (#659)",
+    file: "../lib/session-delete.ts",
+    must: [
+      /treat it as absent/,                                          // tolerate an already-deleted parent file
     ],
   },
   {
@@ -145,7 +152,7 @@ const GUARDS = [
     must: [
       /<SessionRequestCardHost/,                                     // session request card seam (guard 2026-09-16: card UI moved to an extension; the seam + fallback must stay in core)
       /backendUsage: isEmptyNew \? null : backendUsage/,             // usage badge passed through to chatOverlay (display owned by the provider-usage extension)
-      /<QueueRecoveryDialog/,                                        // queue recovery/import
+      /name="recoveryDialog"/,                                       // queue recovery dialog slot (UI owned by the aiti-recovery extension; core keeps the render condition)
       /onExportQueue\?\./,                                           // queue export to AppShell
       /scrollToBottom/,                                              // our scroll pin-to-bottom (coexists with upstream scrollToMessage)
       /scrollToMessage/,                                             // upstream search jump (union sample for merges)
@@ -233,6 +240,35 @@ const GUARDS = [
     file: "./ChatWindow.tsx",
     must: [
       /onForkNew=\{isNew \|\| sessionCapabilities \? undefined : handleForkNew\}/,
+    ],
+  },
+  {
+    name: "Steer 按能力门控：无 steer 注入面的后端（qoder/codex/cursor/…）不画「插队」，点了静默变排队的假承诺不得回归",
+    file: "./ChatWindow.tsx",
+    must: [
+      /onSteer=\{agentRunning && sessionCap\("steer"\) \? handleSteer : undefined\}/,
+      /onQueueSteerSend=\{sessionCap\("steer"\) \? handleSteer : undefined\}/,
+    ],
+  },
+  {
+    name: "队列面板 steer 行只读由能力派生（不得退回 sessionId 前缀猜测——那会把 pi 协议后端可重注入的 steering 队列也锁成只读）",
+    file: "./ChatInput.tsx",
+    must: [
+      /steerReadonly: computeQueueSteerReadonly\(sessionCapabilities\)/,
+      /queueOnlyBackend \? t\("chat\.queueOnlyPlaceholder"\) : t\("chat\.steerPlaceholder"\)/,
+    ],
+    not: [
+      /steerReadonly: \/\^\(\?!new:\)/,                              // 前缀正则旧实现
+    ],
+  },
+  {
+    name: "队列面板 steerSend 只在有 steer 面时下发（存在性=能力；无条件包一层会让扩展删掉条目却什么都没发）",
+    file: "./ChatInput.tsx",
+    must: [
+      /steerSend: onQueueSteerSend \?/,
+    ],
+    not: [
+      /steerSend: \(text, images\) => onQueueSteerSend\?\./,         // 旧的空操作包装
     ],
   },
   {

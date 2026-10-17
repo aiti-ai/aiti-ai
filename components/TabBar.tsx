@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { getFileIcon, FolderIcon } from "./FileIcons";
+import { getFileIcon, FolderIcon } from "./FileIcons.tsx";
 import { useI18n } from "@/hooks/useI18n";
 import type { FileViewerDisplayMode, FileViewerState } from "@/lib/file-viewer-state";
 
@@ -140,11 +140,12 @@ export interface Tab {
   id: string;
   label: string;
   filePath: string;
-  /** "file" (default) or "folder"/"terminal"/"dock" — folder tabs render a FolderViewer,
+  /** "file" (default) or "folder"/"terminal"/"dock"/"agent" — folder tabs render a FolderViewer,
    *  terminal tabs render TerminalPanelBridge (T2 takeover: workspace terminals are hosted by
    *  the command extension),
-   *  dock tabs render a docked extension panel (floating-dock extension v0.5.0: id "dock:<extId>:<itemId>") */
-  kind?: "file" | "folder" | "terminal" | "dock";
+   *  dock tabs render a docked extension panel (floating-dock extension v0.5.0: id "dock:<extId>:<itemId>"),
+   *  agent tabs render the read-only subagent transcript viewer (right-panel tab) */
+  kind?: "file" | "folder" | "terminal" | "dock" | "agent";
   /** Pinned marker (maintained by the extension; core only passes it through — no eviction/close policy in core) */
   pinned?: boolean;
   /** Close/restart in progress (terminal tab: the raw "close"/"restart" value is passed through
@@ -156,6 +157,8 @@ export interface Tab {
   restored?: boolean;
   sourceSessionId?: string | null;
   initialDisplayMode?: FileViewerDisplayMode;
+  /** PDF page requested by the link that opened this tab (`#page=N`). */
+  page?: number;
   viewerState?: FileViewerState;
   viewerRevision?: number;
 }
@@ -398,9 +401,14 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
     <div
       role="tablist"
       style={{
+        // The tabs fill the scrollport, not a fixed 36px: once they overflow,
+        // the app's scrollbar (globals.css) takes its height out of the bar,
+        // and 36px tabs were pushed up past its top and clipped (#1225).
         display: "flex",
-        alignItems: "center",
+        alignItems: "stretch",
         background: "var(--bg-panel)",
+        overflowX: "auto",
+        overflowY: "hidden",
         flexShrink: 0,
         height: 36,
       }}
@@ -442,7 +450,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
             key={tab.id}
             data-tab-id={tab.id}
             role="tab"
-            aria-label={tab.kind === "terminal" ? t("terminal.tabLabel", { name: tab.label }) : tab.label}
+            aria-label={tab.kind === "terminal" ? t("terminal.tabLabel", { name: tab.label }) : tab.kind === "agent" ? t("subagent.tabLabel", { name: tab.label }) : tab.label}
             aria-selected={isActive}
             tabIndex={isActive || (!activeTabId && tabs[0].id === tab.id) ? 0 : -1}
             onKeyDown={(event) => {
@@ -480,7 +488,6 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
               display: "flex",
               alignItems: "center",
               gap: 6,
-              height: 36,
               paddingLeft: 12,
               paddingRight: 6,
               borderRight: "1px solid var(--border)",
@@ -506,6 +513,10 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <rect x="3" y="3" width="8" height="8" rx="1" /><rect x="13" y="3" width="8" height="8" rx="1" />
                   <rect x="3" y="13" width="8" height="8" rx="1" /><rect x="13" y="13" width="8" height="8" rx="1" />
+                </svg>
+              ) : tab.kind === "agent" ? (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
                 </svg>
               ) : getFileIcon(tab.label, 13)}
             </span>
