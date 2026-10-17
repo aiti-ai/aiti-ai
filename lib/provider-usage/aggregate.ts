@@ -1,8 +1,8 @@
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import "./adapters";
-import { queryUsageTargets, resolveUsageTargets } from "./key-pool";
-import { getUsageAdapter, listUsageAdapters } from "./registry";
-import type { ProviderUsageResult, UsageReport } from "./types";
+import { queryUsageTargets, resolveUsageTargets } from "./key-pool.ts";
+import { getUsageAdapter, listUsageAdapters } from "./registry.ts";
+import type { ProviderUsageResult, UsageReport } from "./types.ts";
 
 // Overview aggregation: enumerate configured + adaptable providers, query each
 // with bounded concurrency (allSettled — one failure never blocks the rest),

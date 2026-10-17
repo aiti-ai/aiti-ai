@@ -55,3 +55,11 @@ test-server.log
 # local e2e scratch scripts
 e2e_*.mjs
 
+
+# internal dev-instance runtime noise (pi-web only, not for the public fork)
+/.pi/
+/trend
+.next-dev-console.log
+# --- aiti managed (loose trace) ---
+.aiti-trace/
+# --- end aiti managed (loose trace) ---

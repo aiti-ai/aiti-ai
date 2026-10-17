@@ -18,7 +18,7 @@
  * registrants register inside their extension client bundle's effect and hold the
  * disposer (precisely removes the old gate on HMR reload).
  */
-import type { SessionForkGate, SessionForkGateInfo } from "./types";
+import type { SessionForkGate, SessionForkGateInfo } from "./types.ts";
 
 export type { SessionForkGate, SessionForkGateInfo };
 

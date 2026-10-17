@@ -3,8 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { apiUrl } from "@/lib/base-path";
+import { formatUpdatedTime } from "@/lib/i18n/format";
 import { isProviderUsageId } from "@/lib/provider-usage-ids";
-import { ProviderUsageReportView, formatUpdated, type UsageReport } from "./ProviderUsageReportView";
+import { ProviderUsageReportView, type UsageReport } from "./ProviderUsageReportView";
 
 const STORAGE_PREFIX = "pi-web:provider-usage:";
 // Server overview cache is 5min; piggyback on it to avoid duplicate queries.
@@ -24,7 +25,7 @@ function ProviderUsageContent({ providerId }: { providerId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [refreshDone, setRefreshDone] = useState(false);
   const refreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { t } = useI18n();
+  const { locale, t } = useI18n();
 
   useEffect(() => {
     setReport(null);
@@ -34,8 +35,9 @@ function ProviderUsageContent({ providerId }: { providerId: string }) {
       const cached = localStorage.getItem(`${STORAGE_PREFIX}${providerId}`);
       if (cached) {
         const parsed = JSON.parse(cached) as { at?: number; response?: UsageResponse };
-        if (parsed?.response?.status === "ready" && parsed.response.report && parsed.at && Date.now() - parsed.at < LOCAL_REUSE_MS) {
-          setReport(parsed.response.report);
+        const report = parsed?.response?.report;
+        if (parsed?.response?.status === "ready" && report && Array.isArray(report.buckets) && Array.isArray(report.metrics) && parsed.at && Date.now() - parsed.at < LOCAL_REUSE_MS) {
+          setReport(report);
         }
       }
     } catch {
@@ -108,7 +110,11 @@ function ProviderUsageContent({ providerId }: { providerId: string }) {
             </svg>
           )}
         </button>
-        {report && <span style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{t("providerUsage.updated", { time: formatUpdated(report.capturedAt) })}</span>}
+        {report && (
+          <span title={new Date(report.capturedAt).toLocaleString(locale)} style={{ fontSize: 11, color: "var(--text-dim)", whiteSpace: "nowrap" }}>
+            {t("providerUsage.updated", { time: formatUpdatedTime(report.capturedAt, locale) })}
+          </span>
+        )}
       </div>
 
       {!report && !error && <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("providerUsage.loading")}</span>}

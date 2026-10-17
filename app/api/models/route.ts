@@ -1,5 +1,5 @@
-import { stat } from "fs/promises";
 import { existsSync, readFileSync } from "fs";
+import { stat } from "fs/promises";
 import { resolve, join } from "path";
 import { createAgentSessionServices, getAgentDir, type SettingsManager } from "@earendil-works/pi-coding-agent";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
@@ -9,24 +9,15 @@ import {
   withSafeModelLoadFailure,
   type ModelsData,
 } from "@/lib/models-cache";
-import { resolveVisibleModels, selectInitialModelScope } from "@/lib/model-scope";
+import { orderSelectorModels, resolveVisibleModels, selectInitialModelScope } from "@/lib/model-scope";
 import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-access";
 import { projectTrustReloadOptions } from "@/lib/project-trust";
 import { readModelsConfig } from "@/lib/models-config-store";
 import { annotateVisibleModels, parseModelCheckState, type AvailKind } from "@/lib/model-visibility";
+import { rememberProviderModels, withDeferredProviderModels } from "@/lib/deferred-provider-models";
+import { inferRemovedWorktree } from "@/lib/worktree";
 
 export const dynamic = "force-dynamic";
-
-const modelNameCollator = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
-
-function compareModelEntries(
-  a: { id: string; name: string; provider: string },
-  b: { id: string; name: string; provider: string }
-): number {
-  return modelNameCollator.compare(a.name || a.id, b.name || b.id)
-    || modelNameCollator.compare(a.provider, b.provider)
-    || modelNameCollator.compare(a.id, b.id);
-}
 
 /** Probed/runtime availability state of the model-check extension (state.json on disk).
  *  Returns provider/model → availability. Display hints only (429/errors); never used
@@ -47,10 +38,9 @@ function readModelCheckAvail(): Map<string, AvailKind> {
     return new Map();
   }
 }
-
 async function loadModels(cwd: string): Promise<ModelsData> {
   const nameMap = new Map<string, string>();
-  let modelList: { id: string; name: string; provider: string }[] = [];
+  let modelList: ModelsData["modelList"] = [];
   let defaultModel: { provider: string; modelId: string } | null = null;
   const thinkingLevels: Record<string, string[]> = {};
   const thinkingLevelMaps: Record<string, Record<string, string | null>> = {};
@@ -67,22 +57,37 @@ async function loadModels(cwd: string): Promise<ModelsData> {
   });
   const modelError = services.modelRuntime.getError();
   const settings: SettingsManager = services.settingsManager;
+  await rememberProviderModels(services.modelRuntime);
   // `enabledModels` supports globs and fuzzy patterns, so resolve it the same
   // way the CLI does instead of comparing pattern strings literally (#307).
   const scope = await resolveVisibleModels(
-    services.modelRuntime,
+    withDeferredProviderModels(services.modelRuntime),
     settings.getEnabledModels(),
   );
   const { visible, thinkingLevelPins, warnings } = scope;
-  // Temporarily disabled (enabled:false in models.json) → hidden from the picker:
-  // filter at both provider and model level (pure logic lives in lib/model-visibility,
-  // including availability annotation; pure functions are unit-testable).
+  // pi's /model order drives the selector order (upstream #783 — never re-sort by
+  // name: a models.json provider loses the order its file gives). Local model
+  // visibility rides on that order: models.json enabled:false entries are filtered
+  // out at provider and model level, and the model-check extension's availability
+  // is annotated (pure logic in lib/model-visibility; unit-testable).
   const modelsCfg = readModelsConfig();
   const providersCfg = (modelsCfg.providers ?? {}) as Record<string, unknown>;
-  const annotated = annotateVisibleModels(visible, providersCfg, readModelCheckAvail());
-  modelList = annotated.sort(compareModelEntries);
-  const visibleModels = visible.filter((m) => annotated.some((a) => a.provider === m.provider && a.id === m.id));
-  for (const m of visibleModels) {
+  modelList = annotateVisibleModels(
+    orderSelectorModels(scope).map((m) => ({
+      id: m.id,
+      name: m.name,
+      provider: m.provider,
+      input: m.input,
+    })),
+    providersCfg,
+    readModelCheckAvail(),
+  );
+  // Name map / thinking levels cover the picker-visible models only — a model
+  // hidden by enabled:false keeps rendering historical messages from raw ids
+  // rather than pretending it is still selectable.
+  const pickerVisible = new Set(modelList.map((m) => `${m.provider}:${m.id}`));
+  for (const m of visible) {
+    if (!pickerVisible.has(`${m.provider}:${m.id}`)) continue;
     const key = `${m.provider}:${m.id}`;
     nameMap.set(key, m.name);
     thinkingLevels[key] = getSupportedThinkingLevels(m);
@@ -112,6 +117,7 @@ async function loadModels(cwd: string): Promise<ModelsData> {
       modelList,
       defaultModel,
       defaultThinkingLevel,
+      savedDefaultThinkingLevel: settings.getDefaultThinkingLevel() ?? null,
       thinkingLevels,
       thinkingLevelMaps,
       thinkingLevelPins,
@@ -126,13 +132,23 @@ const EMPTY_MODELS: ModelsData = {
   modelList: [],
   defaultModel: null,
   defaultThinkingLevel: null,
+  savedDefaultThinkingLevel: null,
   thinkingLevels: {},
   thinkingLevelMaps: {},
   thinkingLevelPins: {},
 };
 
 async function handleModels(requestedCwd: string | null): Promise<Response> {
-  const cwd = resolve(requestedCwd || process.cwd());
+  const resolvedCwd = resolve(requestedCwd || process.cwd());
+  // A subagent run isolated in a worktree has that worktree removed when the run
+  // finishes, yet its session file still records the worktree as its cwd. Fall back
+  // to the main repo it branched from, so opening a finished subagent resolves the
+  // same models a non-isolated one would. The roots check below runs on the folder
+  // actually answered from, so the fallback reaches no project that was not allowed
+  // by name already.
+  const cwd = existsSync(resolvedCwd)
+    ? resolvedCwd
+    : inferRemovedWorktree(resolvedCwd)?.projectRoot ?? resolvedCwd;
 
   let cwdStat;
   try {

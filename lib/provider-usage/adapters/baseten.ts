@@ -1,6 +1,6 @@
-import { registerJsonAdapter } from "../declarative";
-import { nonnegative, record } from "../helpers";
-import type { UsageReport } from "../types";
+import { registerJsonAdapter } from "../declarative.ts";
+import { nonnegative, record } from "../helpers.ts";
+import type { UsageReport } from "../types.ts";
 
 // Baseten billing: rated spend for a window (30 days). Money in cents.
 
