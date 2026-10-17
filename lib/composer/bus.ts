@@ -14,7 +14,7 @@ import type {
   ComposerEnhancement,
   ComposerSnapshot,
   ComposerWriter,
-} from "./types";
+} from "./types.ts";
 
 export type { ComposerEnhancement, ComposerSnapshot, ComposerWriter };
 

@@ -9,7 +9,7 @@
  * content is unchanged), and subscribe notifies when items may have changed.
  */
 import { useSyncExternalStore } from "react";
-import type { RecoveryItemsProvider } from "./types";
+import type { RecoveryItemsProvider } from "./types.ts";
 
 export type { RecoveryItemsProvider };
 
