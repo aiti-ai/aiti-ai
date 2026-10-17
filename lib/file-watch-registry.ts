@@ -14,7 +14,7 @@
 import { watch, type FSWatcher } from "fs";
 import { statSync } from "fs";
 import { basename, dirname } from "path";
-import { publishPageEventToBus } from "./agent-page-events";
+import { publishPageEventToBus } from "./agent-page-events.ts";
 
 interface WatchRecord {
   target: string;
