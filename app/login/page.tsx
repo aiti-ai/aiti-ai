@@ -4,10 +4,11 @@ import Image from "next/image";
 import { useState, type FormEvent } from "react";
 import { I18nProvider, useI18n } from "@/hooks/useI18n";
 import { apiUrl, withBasePath } from "@/lib/base-path";
+import { safeLoginDestination } from "@/lib/login-destination";
 
 function safeDestination(): string {
   const destination = new URLSearchParams(window.location.search).get("next");
-  return destination?.startsWith("/") && !destination.startsWith("//") ? destination : "/";
+  return safeLoginDestination(destination, window.location.origin);
 }
 
 function LoginForm() {
@@ -37,7 +38,10 @@ function LoginForm() {
         setError(await failureMessage(response));
         return;
       }
-      window.location.replace(withBasePath(safeDestination()));
+      // safeLoginDestination may return an absolute same-origin URL (open-redirect guard);
+      // only relative paths carry the configured base path.
+      const target = safeDestination();
+      window.location.replace(/^https?:\/\//i.test(target) ? target : withBasePath(target));
     } catch {
       setError(t("auth.loginFailed"));
     } finally {

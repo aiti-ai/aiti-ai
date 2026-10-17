@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { existsSync, readFileSync, statSync } from "fs";
-import { basename, dirname, extname, join, relative } from "path";
+import { basename, dirname, extname, join, relative, sep } from "node:path";
 import {
   DefaultPackageManager,
   getAgentDir,
@@ -13,6 +13,7 @@ import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-acces
 import { hasJsonContentType, isApiRequestAllowed } from "@/lib/request-security";
 import { getProjectTrustStatus } from "@/lib/project-trust";
 import { isPluginSourceCheckable } from "@/lib/plugin-updates";
+import { invalidateModelRuntimeWithExtensions } from "@/lib/model-runtime";
 import type {
   PluginDiagnostic,
   PluginPackageInfo,
@@ -21,7 +22,9 @@ import type {
   PluginResourceKind,
   PluginScope,
   PluginStandaloneExtensionInfo,
+  PluginsBulkResponse,
   PluginsResponse,
+  PluginToggleResult,
 } from "@/lib/api-types";
 
 export const dynamic = "force-dynamic";
@@ -65,18 +68,50 @@ function getDisabledPackages(settingsManager: SettingsManager): Map<string, bool
   return disabled;
 }
 
-function setPackageDisabled(
+/**
+ * An enabled entry that is an object: it filters the package's resources, or
+ * sets `autoload`. Disabling replaces its resource lists, and Pi Web keeps no
+ * copy, so enabling it again cannot bring the filters back.
+ */
+function hasEntrySettings(entry: PackageSource): boolean {
+  return typeof entry === "object" && !isDisabledPackage(entry);
+}
+
+const FILTERED_PACKAGE_ERROR =
+  "Has resource filters, which disabling would remove; use the package's own switch";
+
+/**
+ * Disables or re-enables the given packages of one scope with a single
+ * settings write. Returns the sources that scope does not configure, and with
+ * `keepEntrySettings` the ones left enabled because disabling would drop
+ * their filters.
+ *
+ * An entry already in the requested state is left exactly as it is, and
+ * enabling keeps every key except the emptied resource lists (`autoload` on a
+ * project entry, say), so neither drops what the entry configures.
+ */
+function setPackagesDisabled(
   settingsManager: SettingsManager,
-  source: string,
+  sources: readonly string[],
   scope: PluginScope,
   disabled: boolean,
-): boolean {
+  { keepEntrySettings = false }: { keepEntrySettings?: boolean } = {},
+): { missing: Set<string>; kept: Set<string> } {
   const current = scope === "project"
     ? settingsManager.getProjectSettings().packages ?? []
     : settingsManager.getGlobalSettings().packages ?? [];
+  const missing = new Set(sources);
+  const kept = new Set<string>();
   let changed = false;
   const next = current.map((entry): PackageSource => {
-    if (getPackageSource(entry) !== source) return entry;
+    const source = getPackageSource(entry);
+    if (!sources.includes(source)) return entry;
+    missing.delete(source);
+    if (isDisabledPackage(entry) === disabled) return entry;
+    if (disabled && keepEntrySettings && hasEntrySettings(entry)) {
+      kept.add(source);
+      return entry;
+    }
     changed = true;
     if (disabled) {
       return {
@@ -87,12 +122,78 @@ function setPackageDisabled(
         themes: [],
       };
     }
-    return getPackageSource(entry);
+    if (typeof entry === "string") return source;
+    const rest = { ...entry };
+    delete rest.extensions;
+    delete rest.skills;
+    delete rest.prompts;
+    delete rest.themes;
+    return Object.keys(rest).length > 1 ? rest : source;
   });
-  if (!changed) return false;
-  if (scope === "project") settingsManager.setProjectPackages(next);
-  else settingsManager.setPackages(next);
-  return true;
+  if (changed) {
+    if (scope === "project") settingsManager.setProjectPackages(next);
+    else settingsManager.setPackages(next);
+  }
+  return { missing, kept };
+}
+
+/**
+ * The bulk form of enable/disable behind the panel's "Enable all" /
+ * "Disable all". Each package gets its own result, so one the route refuses
+ * (an untrusted project, a package removed since the panel loaded, a filtered
+ * package it would have to strip to disable) does not stop the rest.
+ *
+ * SettingsManager never throws a failed load or write: it skips the write,
+ * records the error, and `flush()` still resolves. Those errors are read back
+ * and charged to their scope, or an unreadable settings.json would be reported
+ * as a successful toggle.
+ */
+async function setPackageListDisabled(
+  settingsManager: SettingsManager,
+  packages: readonly { source: string; scope: PluginScope }[],
+  disabled: boolean,
+  projectTrusted: boolean,
+): Promise<PluginToggleResult[]> {
+  const errors = new Map<string, string>();
+  for (const scope of ["global", "project"] as const) {
+    const sources = packages.filter((pkg) => pkg.scope === scope).map((pkg) => pkg.source);
+    if (sources.length === 0) continue;
+    if (scope === "project" && !projectTrusted) {
+      for (const source of sources) {
+        errors.set(keyFor(source, scope), "Project resources must be trusted before modifying project plugins");
+      }
+      continue;
+    }
+    // "Disable all" must not wipe filters the operator set up by hand.
+    const { missing, kept } = setPackagesDisabled(settingsManager, sources, scope, disabled, {
+      keepEntrySettings: true,
+    });
+    for (const source of missing) errors.set(keyFor(source, scope), "Package is not configured");
+    for (const source of kept) errors.set(keyFor(source, scope), FILTERED_PACKAGE_ERROR);
+  }
+  await settingsManager.flush();
+  const settingsErrors = new Map<string, string>();
+  for (const { scope, path, error } of settingsManager.drainErrors()) {
+    if (!settingsErrors.has(scope)) settingsErrors.set(scope, path ? `${path}: ${error.message}` : error.message);
+  }
+  return packages.map((pkg) => {
+    // A settings file that failed to load also reads as "not configured", so
+    // its error wins. An untrusted project is never loaded and records none.
+    const error = settingsErrors.get(pkg.scope) ?? errors.get(keyFor(pkg.source, pkg.scope));
+    return error ? { ...pkg, error } : { ...pkg };
+  });
+}
+
+function readPackageList(value: unknown): { source: string; scope: PluginScope }[] | null {
+  if (!Array.isArray(value)) return null;
+  const packages = new Map<string, { source: string; scope: PluginScope }>();
+  for (const item of value) {
+    const source = typeof item?.source === "string" ? item.source.trim() : "";
+    if (!source) return null;
+    const scope = readScope(item.scope);
+    packages.set(keyFor(source, scope), { source, scope });
+  }
+  return [...packages.values()];
 }
 
 function addCount(counts: PluginResourceCounts, kind: keyof PluginResourceCounts): void {
@@ -114,7 +215,9 @@ function getRelativePath(resource: ResolvedResource): string {
   const baseDir = resource.metadata.baseDir;
   if (!baseDir) return resource.path;
   const rel = relative(baseDir, resource.path);
-  return rel && !rel.startsWith("..") ? rel : resource.path;
+  // Normalize to forward slashes so API output is stable across platforms
+  // (Node's path.relative returns backslashes on Windows).
+  return rel && !rel.startsWith("..") ? rel.split(sep).join("/") : resource.path;
 }
 
 function toResourceInfo(resource: ResolvedResource, kind: PluginResourceKind): PluginResourceInfo {
@@ -144,7 +247,7 @@ function getConfiguredVersion(source: string): string | undefined {
   return undefined;
 }
 
-function readPackageMetadata(installedPath?: string): { packageName?: string; version?: string } {
+function readPackageMetadata(installedPath?: string): { packageName?: string; version?: string; description?: string } {
   if (!installedPath) return {};
   try {
     const stats = statSync(installedPath);
@@ -155,10 +258,12 @@ function readPackageMetadata(installedPath?: string): { packageName?: string; ve
     const parsed = JSON.parse(readFileSync(packageJsonPath, "utf8")) as {
       name?: unknown;
       version?: unknown;
+      description?: unknown;
     };
     return {
       packageName: typeof parsed.name === "string" ? parsed.name : undefined,
       version: typeof parsed.version === "string" ? parsed.version : undefined,
+      description: typeof parsed.description === "string" ? parsed.description : undefined,
     };
   } catch {
     return {};
@@ -278,6 +383,7 @@ async function readPlugins(cwd: string): Promise<PluginsResponse> {
       packageName: packageMetadata.packageName,
       version: packageMetadata.version,
       configuredVersion: getConfiguredVersion(pkg.source),
+      description: packageMetadata.description,
       counts,
       resources,
       status: disabled ? "disabled" : resourceCount > 0 ? "loaded" : pkg.installedPath ? "installed" : "missing",
@@ -316,6 +422,8 @@ export async function GET(req: Request) {
 // POST /api/plugins body: { action, source?, scope?, cwd }
 // Query form: body with only cwd (no action) returns the plugin list, same semantics as GET ?cwd=;
 // cwd travels in the JSON body instead of the URL (kept out of access/proxy logs); new code should use POST.
+// enable/disable also take { packages: [{ source, scope }] } in place of
+// source/scope and add per-package `results` to the response.
 export async function POST(req: Request) {
   if (!isApiRequestAllowed(req)) {
     return NextResponse.json({ error: "Untrusted API request" }, { status: 403 });
@@ -329,6 +437,7 @@ export async function POST(req: Request) {
       action?: PluginAction;
       source?: string;
       scope?: PluginScope;
+      packages?: unknown;
       cwd?: string;
     };
     if (!body.action) {
@@ -352,6 +461,24 @@ export async function POST(req: Request) {
     const settingsManager = SettingsManager.create(body.cwd, agentDir, {
       projectTrusted: projectTrust.trusted,
     });
+
+    if (body.packages !== undefined) {
+      if (body.action !== "enable" && body.action !== "disable") {
+        return NextResponse.json({ error: "packages is only supported by enable and disable" }, { status: 400 });
+      }
+      const packages = readPackageList(body.packages);
+      if (!packages) {
+        return NextResponse.json({ error: "packages must be a list of { source, scope }" }, { status: 400 });
+      }
+      const results = await setPackageListDisabled(
+        settingsManager,
+        packages,
+        body.action === "disable",
+        projectTrust.trusted,
+      );
+      return NextResponse.json({ ...(await readPlugins(body.cwd)), results } satisfies PluginsBulkResponse);
+    }
+
     const scope = readScope(body.scope);
     if (scope === "project" && !projectTrust.trusted) {
       return NextResponse.json(
@@ -383,11 +510,11 @@ export async function POST(req: Request) {
       await packageManager.update(source);
     } else if (body.action === "disable") {
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
-      setPackageDisabled(settingsManager, source, scope, true);
+      setPackagesDisabled(settingsManager, [source], scope, true);
       await settingsManager.flush();
     } else if (body.action === "enable") {
       if (!source) return NextResponse.json({ error: "source required" }, { status: 400 });
-      setPackageDisabled(settingsManager, source, scope, false);
+      setPackagesDisabled(settingsManager, [source], scope, false);
       await settingsManager.flush();
     } else {
       return NextResponse.json({ error: `Unsupported action: ${body.action}` }, { status: 400 });
@@ -396,5 +523,13 @@ export async function POST(req: Request) {
     return NextResponse.json(await readPlugins(body.cwd));
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+  } finally {
+    // The provider lists share one extension-loaded runtime, and a package can
+    // add or drop a provider; an update that failed halfway may have, too. An
+    // in-place update keeps the package's path, so its new code shows after
+    // /reload, or once a session start in a project has moved the SDK's
+    // extension factory cache, when the runtime is next built (at the latest
+    // when it expires).
+    invalidateModelRuntimeWithExtensions();
   }
 }
