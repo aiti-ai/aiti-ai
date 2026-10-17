@@ -2,11 +2,11 @@ import { SessionManager, type SessionInfo } from "@earendil-works/pi-coding-agen
 import { existsSync, mkdirSync, readFileSync } from "fs";
 import { dirname, join } from "path";
 import webpush from "web-push";
-import { writePrivateFileAtomicSync } from "./atomic-file";
-import { runOutcomeNotifies, truncateRunError, type SessionLastRun } from "./run-outcome";
-import { enLocale } from "./i18n/messages/en";
-import { zhCNLocale } from "./i18n/messages/zh-CN";
-import { getAgentDir } from "./session-reader";
+import { writePrivateFileAtomicSync } from "./atomic-file.ts";
+import { runOutcomeNotifies, truncateRunError, type SessionLastRun } from "./run-outcome.ts";
+import { enLocale } from "./i18n/messages/en.ts";
+import { zhCNLocale } from "./i18n/messages/zh-CN.ts";
+import { getAgentDir } from "./session-reader.ts";
 
 export interface PushSubscriptionRecord {
   endpoint: string;
