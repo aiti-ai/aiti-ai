@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { existsSync } from "fs";
-import { addWorktree, removeWorktree } from "@/lib/worktree";
+import { addWorktree, removeWorktree, worktreeRemovalRequiresForce } from "@/lib/worktree";
 import { checkCwdAllowed, queryWorktrees } from "@/lib/worktree-query";
 
 // GET /api/worktrees?cwd= — kept in query-string form for existing callers; new code must use POST /api/worktrees/query (cwd goes in the JSON body, never in the URL/access logs).
@@ -61,9 +61,9 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    // git refuses to remove dirty worktrees without --force; surface that so
-    // the UI can offer a force-remove confirmation.
-    const dirty = /contains modified or untracked files|is dirty/i.test(message);
+    // Git refuses some worktree removals without --force, including worktrees
+    // with submodule state. Surface that so the UI can offer confirmation.
+    const dirty = worktreeRemovalRequiresForce(message);
     return NextResponse.json({ error: message, dirty }, { status: dirty ? 409 : 400 });
   }
 }
