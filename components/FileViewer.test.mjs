@@ -32,17 +32,30 @@ test("large source previews bypass the per-line syntax highlighter", () => {
   assert.notEqual(source.indexOf("highlightedSource", branchStart), -1);
 });
 
+test("the highlighted source view owns its <pre> background without a competing shorthand", () => {
+  // vs colors <pre> with backgroundColor and vscDarkPlus with background; mixing
+  // them across a theme switch warned and dropped the view's background.
+  assert.match(source, /const fileViewerDarkTheme = \{\s*\.\.\.vscDarkPlus,\s*'pre\[class\*="language-"\]': \{\s*\.\.\.vscDarkPlus\['pre\[class\*="language-"\]'\],\s*\},\s*\};\ndelete fileViewerDarkTheme\['pre\[class\*="language-"\]'\]\.background;/);
+  const start = source.indexOf("const highlightedSource = useMemo(");
+  const element = source.slice(start, source.indexOf("</SyntaxHighlighter>", start));
+  assert.match(element, /style=\{isDark \? fileViewerDarkTheme : vs\}/);
+  const customStyle = element.slice(element.indexOf("customStyle={{"), element.indexOf("codeTagProps={{"));
+  assert.match(customStyle, /backgroundColor: "var\(--bg\)"/);
+  assert.doesNotMatch(customStyle, /\bbackground:/);
+});
+
 test("lightweight source rows are skipped for highlighted, diff, and preview views", () => {
   // Execute the source-view calculations without mounting the file-fetching component.
   const file = ts.createSourceFile("FileViewer.tsx", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const viewer = file.statements.find((node) => ts.isFunctionDeclaration(node) && node.name?.text === "TextFileViewer");
   const calculations = viewer.body.statements.filter((node) =>
     ts.isVariableStatement(node) && node.declarationList.declarations.some((declaration) =>
-      ["viewerContent", "sourceLines", "language", "isHtml", "isMarkdown", "hasPreview", "effectiveDisplayMode", "useLightweightSource", "lightweightSourceLines"].includes(declaration.name.getText(file)),
+      ["isDelimitedTable", "viewerContent", "sourceLines", "language", "isHtml", "isMarkdown", "hasPreview", "effectiveDisplayMode", "useLightweightSource", "lightweightSourceLines"].includes(declaration.name.getText(file)),
     ),
   ).map((node) => node.getText(file)).join("\n");
   const { outputText } = ts.transpileModule(`
-    return (data, displayMode, hasGitDiff = false, isDeletedDiff = false, wrapLines = false) => {
+    return (data, displayMode, hasGitDiff = false, isDeletedDiff = false, wrapLines = false, filePath = "/tmp/file.txt") => {
+      const isDelimitedTablePath = (path) => /\\.(csv|tsv)$/i.test(path);
       const SOURCE_HIGHLIGHT_MAX_LINES = 1_000;
       const FILE_LINE_NUMBER_STYLE = {};
       ${calculations}
@@ -58,6 +71,9 @@ test("lightweight source rows are skipped for highlighted, diff, and preview vie
   for (const language of ["html", "markdown"]) {
     assert.equal(render({ ...large, language }, "preview"), null);
   }
+  // A CSV/TSV table previews a loaded prefix too; markdown waits for the whole file.
+  assert.equal(render({ ...large, truncated: true }, "preview", false, false, false, "/tmp/data.csv"), null);
+  assert.equal(render({ ...large, language: "markdown", truncated: true }, "preview").length, 1_001);
   for (const mode of ["source", "diff", "preview"]) {
     const rows = render(large, mode);
     assert.equal(rows.length, 1_001, `${mode} must retain its source fallback`);
@@ -65,4 +81,17 @@ test("lightweight source rows are skipped for highlighted, diff, and preview vie
     assert.equal(rows[0].props.children[1].props.children, "line");
   }
   assert.equal(render(large, "source", false, false, true)[0].props.children[1].props.style.whiteSpace, "pre-wrap");
+});
+
+test("markdown preview keeps app links and opens web and app links in a new tab (#1108)", () => {
+  assert.match(source, /urlTransform=\{onOpenFile \? markdownUrlTransform : markdownAppUrlTransform\}/);
+  assert.match(
+    source,
+    /return isExternalMarkdownHref\(href\)\s*\? <a href=\{href\} \{\.\.\.props\} target="_blank" rel="noopener noreferrer">\{children\}<\/a>\s*: <a href=\{href\} \{\.\.\.props\}>\{children\}<\/a>;/,
+  );
+});
+
+test("markdown preview links carry PDF page fragments", () => {
+  assert.match(source, /parsePdfPageFragment/);
+  assert.match(source, /onOpenFile\(linkedFile, parsePdfPageFragment\(href\) \?\? undefined\)/);
 });

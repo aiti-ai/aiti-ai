@@ -27,8 +27,8 @@ import type {
   QueueImage,
   QueueKind,
   QueueTrashItem,
-} from "../queue-store";
-import type { QueueExportMeta } from "../queue-export";
+} from "../queue-store.ts";
+import type { QueueExportMeta } from "../queue-export.ts";
 
 export type { QueueExportMeta };
 export type {
@@ -79,8 +79,11 @@ export interface QueuePanelActions {
   purge(ids?: string[]): Promise<boolean>;
   /** Recall all (clear the live queue, merge text into the composer). */
   recallAll(): void;
-  /** Send the queue head as a steer (the extension is responsible for afterwards removing the head via remove, permanent). Entries with images send their images along. */
-  steerSend(text: string, images?: QueueImage[]): void;
+  /** Send the queue head as a steer (the extension is responsible for afterwards removing the head via remove, permanent). Entries with images send their images along.
+   *  Optional on purpose: presence *is* the steer capability. Core omits it when the session has no mid-run steer surface (backend declares steer:false, or the
+   *  agent isn't running) — the extension must then hide every "steer this entry" affordance instead of calling through: the entry gets removed but never
+   *  delivered, i.e. silent input loss. */
+  steerSend?(text: string, images?: QueueImage[]): void;
   /** Export (full live + recovery data). */
   exportAll(): Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null>;
   /** Trigger a browser download (md/json; implemented in core, single source). */
@@ -107,13 +110,14 @@ export interface QueuePanelProps {
   isMobile?: boolean;
   /** Coarse-pointer (touch) detection — the extension has no useIsCoarsePointer hook, core passes it in (HTML5 drag vs touch drag). */
   isCoarsePointer?: boolean;
-  /** steer readonly (external agent backends like zcode:/codex:): entries were
-   *  already injected into the backend CLI process's steer queue (auto-consumed
-   *  between tool calls) and the protocol does not support recall/move/convert —
-   *  management ops on these entries always raise AgentCommandError. The
-   *  extension should hide row-level actions for steer entries and display
-   *  only; the core fallback banner is display-only to begin with and
-   *  unaffected. Built-in backends (no prefix / new: drafts) are always false. */
+  /** steer readonly (derived from backend capabilities, not session-id shape):
+   *  entries were already injected into the backend process's steer queue
+   *  (auto-consumed between tool calls) and the protocol does not support
+   *  recall/move/convert — management ops on these entries always raise
+   *  AgentCommandError. The extension should hide row-level actions for steer
+   *  entries and display only; the core fallback banner is display-only to begin
+   *  with and unaffected. Local pi sessions and pi-protocol backends (which
+   *  reinject their remote queue) stay manageable. */
   steerReadonly?: boolean;
 }
 

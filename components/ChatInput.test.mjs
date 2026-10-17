@@ -11,7 +11,8 @@ const jiti = createJiti(import.meta.url, {
 });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, adjacentQueueTarget, buildExtContextSnapshot, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, mergeText, mergeSubmission, modelSupportsImageInput, replaceLinksWithMarkdown, shouldCompressImageFile } = await jiti.import("./ChatInput.tsx");
+const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, RUN_END_CLICK_GUARD_MS, adjacentQueueTarget, buildExtContextSnapshot, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, isRunEndStrayClick, mergeText, mergeSubmission, modelSupportsImageInput, offersBuiltinSlashCommandWhileStreaming, replaceLinksWithMarkdown, replaceTextareaRange, shouldCompressImageFile, submitsSlashCommandOnEnter } = await jiti.import("./ChatInput.tsx");
+const { isBareMcpCommand } = await jiti.import("@/lib/mcp-command.ts");
 const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
@@ -56,26 +57,23 @@ test("streaming Enter queues a follow-up; Alt+Enter is the exact inverse (steer 
     ["empty-input Enter promotes the queue to steer", { }, { value: "" }, "steer"],
     ["no follow-up capability falls back to steer", { }, { onFollowUp: undefined }, "steer"],
     ["Shift+Enter inserts a newline", { shiftKey: true }, {}, "native"],
-    ["Alt+Shift+Enter keeps native behavior (newline wins over Alt)", { altKey: true, shiftKey: true }, {}, "native"],
-    ["composition ref blocks sending", {}, { isComposingRef: { current: true } }, "native"],
-    ["native composition blocks sending", { nativeEvent: { isComposing: true } }, {}, "native"],
-    ["IME keyCode blocks sending", { nativeEvent: { keyCode: 229 } }, {}, "native"],
-    ["composition grace blocks sending", {}, { lastCompositionEndAtRef: { current: 950 } }, "prevented"],
-    ["Alt+composition grace blocks sending", { altKey: true }, { lastCompositionEndAtRef: { current: 950 } }, "prevented"],
-    ["Enter falls back to follow-up when steer is unavailable", { }, { onSteer: undefined }, "followup"],
-    ["Alt+Enter with both capabilities missing falls through to normal send", { altKey: true }, { onSteer: undefined, onFollowUp: undefined }, "send"],
-    ["mobile Alt+Enter steers the same as desktop (no platform branch)", { altKey: true }, { isMobile: true }, "steer"],
-    ["slash completion takes priority", {}, { slashMenuOpen: true, slashQuery: "help" }, "slash"],
-    ["available built-in commands take priority", {}, { slashMenuOpen: true, slashQuery: "copy", value: "/copy", displayedSlashCommands: [{ name: "copy", source: "builtin", availableWhileStreaming: true }] }, "send"],
-    ["file completion takes priority", {}, { atMenuOpen: true, atQuery: {} }, "file"],
-    ["history selection takes priority", {}, { historyMenuOpen: true }, "history"],
+    // Fork pins: plain (no Alt) variants of the IME/grace guards and menu priorities,
+    // plus both-capabilities-missing falling through to a normal send.
+    ["[fork] plain composition ref blocks sending", {}, { isComposingRef: { current: true } }, "native"],
+    ["[fork] plain native composition blocks sending", { nativeEvent: { isComposing: true } }, {}, "native"],
+    ["[fork] plain IME keyCode blocks sending", { nativeEvent: { keyCode: 229 } }, {}, "native"],
+    ["[fork] plain composition grace blocks sending", {}, { lastCompositionEndAtRef: { current: 950 } }, "prevented"],
+    ["[fork] Alt+Enter with both capabilities missing falls through to normal send", { altKey: true }, { onSteer: undefined, onFollowUp: undefined }, "send"],
+    ["[fork] plain slash completion takes priority", {}, { slashMenuOpen: true, slashQuery: "help" }, "slash"],
+    ["[fork] plain file completion takes priority", {}, { atMenuOpen: true, atQuery: {} }, "file"],
+    ["[fork] plain history selection takes priority", {}, { historyMenuOpen: true }, "history"],
   ];
   for (const [name, keys, state, expected] of cases) {
     let action = "native";
     const handler = script.runInNewContext({
       Date: { now: () => 1000 },
       COMPOSITION_END_ENTER_GRACE_MS: 100,
-      isMobile: false, isStreaming: true,
+      isMobile: false, isStreaming: true, enterSendMode: "enter",
       isComposingRef: { current: false }, lastCompositionEndAtRef: { current: 0 },
       recalledRef: { current: false }, historyNavIndexRef: { current: 0 },
       valueRef: { current: "" }, isExactSlashCommand: (v) => false,
@@ -86,6 +84,7 @@ test("streaming Enter queues a follow-up; Alt+Enter is the exact inverse (steer 
       onSteer() {}, onFollowUp() {},
       sendQueued(mode) { action = mode; }, handleSend() { action = "send"; },
       applySlashCommand() { action = "slash"; },
+      submitsSlashCommandOnEnter, value: "", setSlashMenuOpen() {},
       isExactSlashCommand, value: "typed text", setSlashMenuOpen() {},
       applyAtCompletion() { action = "file"; },
       applyHistoryInput() { action = "history"; },
@@ -98,6 +97,102 @@ test("streaming Enter queues a follow-up; Alt+Enter is the exact inverse (steer 
       ...keys,
     });
     assert.equal(action, expected, name);
+  }
+});
+
+test("file mention insertion uses one native undoable edit", () => {
+  const originalDocument = globalThis.document;
+  const calls = [];
+  const textarea = {
+    value: '@"my/"',
+    selectionStart: 5,
+    selectionEnd: 5,
+    focus() { calls.push(["focus"]); },
+    setSelectionRange(start, end) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+      calls.push(["selection", start, end]);
+    },
+  };
+  globalThis.document = {
+    execCommand(command, _showUi, text = "") {
+      calls.push(["command", command, text]);
+      if (command === "delete") {
+        textarea.value = textarea.value.slice(0, --textarea.selectionStart) + textarea.value.slice(textarea.selectionEnd);
+        textarea.selectionEnd = textarea.selectionStart;
+      } else if (command === "insertText") {
+        textarea.value = textarea.value.slice(0, textarea.selectionStart) + text + textarea.value.slice(textarea.selectionEnd);
+        textarea.selectionStart += text.length;
+        textarea.selectionEnd = textarea.selectionStart;
+      } else if (command === "forwardDelete") {
+        textarea.value = textarea.value.slice(0, textarea.selectionStart) + textarea.value.slice(textarea.selectionStart + 1);
+      }
+      return true;
+    },
+  };
+
+  try {
+    replaceTextareaRange(textarea, 0, 6, '@"my dir/"', 9);
+    assert.equal(textarea.value, '@"my dir/"');
+    assert.deepEqual(calls, [
+      ["focus"],
+      ...Array.from({ length: 5 }, () => ["command", "delete", ""]),
+      ["command", "insertText", '@"my dir/"'],
+      ["command", "forwardDelete", ""],
+      ["selection", 9, 9],
+    ]);
+
+    calls.length = 0;
+    Object.assign(textarea, { value: "hello selected", selectionStart: 6, selectionEnd: 14 });
+    replaceTextareaRange(textarea, 6, 14, "@file ");
+    assert.equal(textarea.value, "hello @file ");
+    assert.deepEqual(calls, [
+      ["focus"],
+      ["selection", 6, 14],
+      ["command", "insertText", "@file "],
+    ]);
+
+    const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+    assert.match(source, /insertText\(text: string\)[\s\S]*?replaceTextareaRange\(ta, start, end, sep \+ text\)/);
+    assert.match(source, /const applyAtCompletion[\s\S]*?replaceTextareaRange\(ta, atQuery\.start, replaceEnd, insert\.text, insert\.cursorOffset\)/);
+  } finally {
+    globalThis.document = originalDocument;
+  }
+});
+
+test("file mention insertion falls back to a plain edit when execCommand refuses", () => {
+  const originalDocument = globalThis.document;
+  const events = [];
+  const textarea = {
+    value: "AAA @re BBB",
+    selectionStart: 7,
+    selectionEnd: 7,
+    focus() {},
+    setSelectionRange(start, end) {
+      this.selectionStart = start;
+      this.selectionEnd = end;
+    },
+    setRangeText(text, start, end, mode) {
+      this.value = this.value.slice(0, start) + text + this.value.slice(end);
+      if (mode === "end") this.selectionStart = this.selectionEnd = start + text.length;
+    },
+    dispatchEvent(event) { events.push([event.type, event.bubbles]); return true; },
+  };
+  globalThis.document = { execCommand: () => false };
+
+  try {
+    replaceTextareaRange(textarea, 4, 7, "@readme.md ");
+    assert.equal(textarea.value, "AAA @readme.md  BBB");
+    assert.equal(textarea.selectionStart, 15);
+    assert.deepEqual(events, [["input", true]]);
+
+    events.length = 0;
+    Object.assign(textarea, { value: "hello selected", selectionStart: 6, selectionEnd: 14 });
+    replaceTextareaRange(textarea, 6, 14, "@file ");
+    assert.equal(textarea.value, "hello @file ");
+    assert.deepEqual(events, [["input", true]]);
+  } finally {
+    globalThis.document = originalDocument;
   }
 });
 
@@ -118,7 +213,7 @@ test("file mention arrows wrap around the match list", () => {
     const handler = script.runInNewContext({
       Date: { now: () => 1000 },
       COMPOSITION_END_ENTER_GRACE_MS: 100,
-      isMobile: false, isStreaming: false,
+      isMobile: false, isStreaming: false, enterSendMode: "enter",
       isComposingRef: { current: false }, lastCompositionEndAtRef: { current: 0 },
       historyMenuOpen: false, inputHistory: [], historyActiveIndex: 0,
       slashMenuOpen: false, slashQuery: null, displayedSlashCommands: [], slashActiveIndex: 0,
@@ -173,6 +268,26 @@ test("follow-up button renders with the fork hover-tooltip wrapper", () => {
   // upstream Alt+Enter, hence no keyboard-shortcut title.
   assert.doesNotMatch(html, /aria-keyshortcuts/);
   assert.match(html, /follow-up/i);
+});
+
+test("ignores a pointer click that reaches Stop's slot just as the run ends", () => {
+  assert.equal(isRunEndStrayClick(1, 0), true);
+  assert.equal(isRunEndStrayClick(2, RUN_END_CLICK_GUARD_MS - 1), true);
+  assert.equal(isRunEndStrayClick(1, RUN_END_CLICK_GUARD_MS), false);
+  assert.equal(isRunEndStrayClick(1, Number.POSITIVE_INFINITY), false, "no run has ended yet");
+  assert.equal(isRunEndStrayClick(0, 0), false, "Enter/Space on a focused button is never a stray click");
+  assert.ok(RUN_END_CLICK_GUARD_MS <= 700, "a deliberate click after a run must not wait noticeably");
+
+  // Stop and Compact share the spot left of the sound toggle, so a double click on Stop
+  // put its second click on Compact once the run ended (#1131).
+  const source = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  assert.match(source, /useLayoutEffect\(\(\) => \{\s*if \(!isStreaming\) return;\s*return \(\) => \{ runEndedAtRef\.current = performance\.now\(\); \};\s*\}, \[isStreaming\]\);/);
+  // 合并适配：Compact 按钮为三态单行（compacting→中止 / queued→取消 / idle→压缩），
+  // isCompacting 分支在 handler 内部（语义同上游：isCompacting 时点击=中止压缩）。
+  assert.match(source, /onClick=\{\(e\) => \{\s*if \(isCompacting\) onAbortCompaction\?\.\(\);/);
+  assert.match(source, /if \(!isStrayClick\(e\)\) onCompact\(\);/);
+  assert.match(source, /onClick=\{\(e\) => \{ if \(!isStreaming && !isStrayClick\(e\)\) setToolDropdownOpen\(\(v\) => !v\); \}\}/);
+  assert.match(source, /onClick=\{onAbort\}/, "Stop itself is never delayed");
 });
 
 test("renders the upstream model error", () => {
@@ -297,7 +412,47 @@ test("renders the compact composer with the standard Send button and no session 
   assert.match(html, /<textarea/);
   assert.match(html, />Send<\/button>/);
   assert.equal((html.match(/<button\b/g) ?? []).length, 1);
-  assert.doesNotMatch(html, /type="file"|Attach image|Change tool preset/);
+  assert.doesNotMatch(html, /type="file"|Attach files|Change tool preset/);
+});
+
+test("the attach button takes any file when the chat handles them, and images only otherwise (#1101)", () => {
+  const render = (props) => renderToStaticMarkup(
+    React.createElement(I18nProvider, null, React.createElement(ChatInput, {
+      onSend() {}, onAbort() {}, isStreaming: false, ...props,
+    })),
+  );
+  const fileInput = (html) => html.match(/<input[^>]*type="file"[^>]*>/)?.[0] ?? "";
+
+  const html = render({ onAttachFiles() {} });
+  // 合并适配：本地同能力按钮的文案为 "Attach file (PDF/documents — backend sessions)"
+  // （任意文件、多文件、无 accept 限制——#1101 意图一致）。
+  assert.match(html, /title="Attach file \(PDF\/documents[^"]*"/);
+  assert.match(fileInput(html), /multiple=""/);
+  assert.match(fileInput(html), /multiple=""/);
+  // No accept list and no capture: phones offer files, the photo library and the camera.
+  assert.doesNotMatch(fileInput(html), /accept=|capture=/);
+
+  assert.match(fileInput(render({})), /accept="image\/\*"/);
+});
+
+test("picked files go to the chat's attach handler, or attach as images without one (#1101)", () => {
+  const photo = new File(["x"], "photo.png", { type: "image/png" });
+  const report = new File(["x"], "report.pdf", { type: "application/pdf" });
+  const pick = (context) => {
+    const calls = { attached: [], images: [] };
+    const target = { files: [photo, report], value: "C:\\fakepath\\photo.png" };
+    chatInputCallback("handleFilePick", {
+      processImageFiles: (files) => calls.images.push([...files]),
+      ...context(calls),
+    })({ target });
+    return { ...calls, value: target.value };
+  };
+
+  assert.deepEqual(
+    pick((calls) => ({ onAttachFiles: (files) => calls.attached.push([...files]) })),
+    { attached: [[photo, report]], images: [], value: "" },
+  );
+  assert.deepEqual(pick(() => ({ onAttachFiles: undefined })), { attached: [], images: [[photo, report]], value: "" });
 });
 
 test("shows and locks the optimistic model while a switch is pending", () => {
@@ -498,7 +653,119 @@ test("keeps only read-only built-ins available while a run is active", () => {
   assert.equal(canRunBuiltinSlashCommandWhileStreaming("/copy"), true);
   assert.equal(canRunBuiltinSlashCommandWhileStreaming("/session"), true);
   assert.equal(canRunBuiltinSlashCommandWhileStreaming("/compact"), false);
+  assert.equal(canRunBuiltinSlashCommandWhileStreaming("/auto-compact"), false);
   assert.equal(canRunBuiltinSlashCommandWhileStreaming("/reload"), false);
+});
+
+test("a bare /mcp reaches the built-in handler while a run is active", () => {
+  assert.equal(offersBuiltinSlashCommandWhileStreaming("/mcp"), true);
+  assert.equal(offersBuiltinSlashCommandWhileStreaming("/copy"), true);
+  assert.equal(offersBuiltinSlashCommandWhileStreaming("/compact"), false);
+  // Subcommands act on the session's connections and are queued like any message.
+  assert.equal(offersBuiltinSlashCommandWhileStreaming("/mcp login docs"), false);
+  assert.equal(offersBuiltinSlashCommandWhileStreaming("/mcp:1"), false);
+  // The built-in list itself is unchanged: /mcp is not one of the composer's built-ins.
+  assert.equal(canRunBuiltinSlashCommandWhileStreaming("/mcp"), false);
+});
+
+test("Enter on pi's built-in /mcp submits it at once; other extension commands still complete first", () => {
+  const builtinMcp = { name: "mcp", source: "extension", sourceInfo: { path: "builtin:mcp", source: "builtin", scope: "temporary", origin: "top-level" } };
+  const otherMcp = { ...builtinMcp, sourceInfo: { ...builtinMcp.sourceInfo, path: "/ext/mcp.ts" } };
+  const copy = { name: "copy", description: "", source: "builtin", availableWhileStreaming: true };
+  const compact = { name: "compact", description: "", source: "builtin" };
+
+  assert.equal(submitsSlashCommandOnEnter("/mcp", builtinMcp, false), true);
+  assert.equal(submitsSlashCommandOnEnter("/mcp", builtinMcp, true), true);
+  assert.equal(submitsSlashCommandOnEnter("/mc", builtinMcp, false), false);
+  assert.equal(submitsSlashCommandOnEnter("/mcp", otherMcp, false), false);
+  assert.equal(submitsSlashCommandOnEnter("/deploy", { ...otherMcp, name: "deploy" }, false), false);
+  // The composer's built-ins keep their rule: typed in full, and while streaming only those allowed then.
+  assert.equal(submitsSlashCommandOnEnter("/copy", copy, true), true);
+  assert.equal(submitsSlashCommandOnEnter("/compact", compact, false), true);
+  assert.equal(submitsSlashCommandOnEnter("/compact", compact, true), false);
+  assert.equal(submitsSlashCommandOnEnter("/co", copy, false), false);
+
+  const sourceText = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  assert.match(sourceText, /if \(sendShortcut && submitsSlashCommandOnEnter\(value, selectedCommand, isStreaming\)\) \{/);
+});
+
+function chatInputCallback(name, context) {
+  const sourceText = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  const source = ts.createSourceFile("ChatInput.tsx", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  function findCallback(node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === name) {
+      return node.initializer.arguments[0];
+    }
+    return ts.forEachChild(node, findCallback);
+  }
+  return new Script(ts.transpileModule(findCallback(source).getText(source), {
+    compilerOptions: { target: ts.ScriptTarget.ES2020 },
+  }).outputText).runInNewContext(context);
+}
+
+test("while a run streams, a bare /mcp opens Settings or is queued as before", async () => {
+  const run = async (value, handled, { mode = "steer", images = [] } = {}) => {
+    const calls = { builtin: [], prompts: [], cleared: 0 };
+    const sendQueued = chatInputCallback("sendQueued", {
+      value,
+      recalledRef: { current: null },
+      setRecalledVisible() {},
+      applyChatHooks: (text) => text, runComposerSubmit: (msg) => ({ text: msg, images: [] }),
+      attachedFiles: [], setAttachedFiles() {},
+      attachedImages: images,
+      onAudioUnlock() {},
+      clearInput() { calls.cleared += 1; },
+      onBuiltinCommand: async () => ({ handled }),
+      canRunBuiltinSlashCommandWhileStreaming,
+      isBareMcpCommand,
+      runBuiltinCommand: async (message) => { calls.builtin.push(message); return handled; },
+      onPromptWithStreamingBehavior: (message, behavior, attached) => calls.prompts.push([message, behavior, attached?.length ?? 0]),
+      onSteer() { throw new Error("slash messages are prompts"); },
+      onFollowUp() { throw new Error("slash messages are prompts"); },
+    });
+    sendQueued(mode);
+    await new Promise((resolve) => setImmediate(resolve));
+    return calls;
+  };
+
+  // Owned: Settings opened, nothing queued, the handler clears the input itself.
+  assert.deepEqual(await run("/mcp", true), { builtin: ["/mcp"], prompts: [], cleared: 0 });
+  // Another extension's /mcp: queued exactly as before.
+  assert.deepEqual(await run("/mcp", false), { builtin: ["/mcp"], prompts: [["/mcp", "steer", 0]], cleared: 1 });
+  assert.deepEqual(await run("/mcp", false, { mode: "followup" }), { builtin: ["/mcp"], prompts: [["/mcp", "followUp", 0]], cleared: 1 });
+  // Subcommands and a /mcp with images never reach the handler.
+  assert.deepEqual(await run("/mcp login docs", true), { builtin: [], prompts: [["/mcp login docs", "steer", 0]], cleared: 1 });
+  assert.deepEqual(await run("/mcp", true, { images: [{}] }), { builtin: [], prompts: [["/mcp", "steer", 1]], cleared: 1 });
+  // The composer's own built-ins are unchanged.
+  assert.deepEqual(await run("/copy", true), { builtin: ["/copy"], prompts: [], cleared: 0 });
+});
+
+test("handleSend lets a handled /mcp through while streaming and sends an unowned one when idle", async () => {
+  const run = async (value, { isStreaming, handled }) => {
+    const calls = { builtin: [], sent: [] };
+    const handleSend = chatInputCallback("handleSend", {
+      value,
+      recalledRef: { current: null }, setRecalledVisible() {},
+      applyChatHooks: (submitted) => (submitted && typeof submitted === "object" ? submitted.text : submitted),
+      chatHooksRef: { current: [] },
+      runComposerSubmit: (msg) => ({ text: msg, images: [] }),
+      onQueueFollowUp() {}, onQueueSteerSend() {},
+      attachedImages: [], attachedFiles: [], setAttachedFiles() {},
+      onAudioUnlock() {},
+      isStreaming,
+      offersBuiltinSlashCommandWhileStreaming,
+      runBuiltinCommand: async (message) => { calls.builtin.push(message); return handled; },
+      clearInput() {},
+      onSend: (message) => calls.sent.push(message),
+    });
+    await handleSend();
+    return calls;
+  };
+  assert.deepEqual(await run("/mcp", { isStreaming: true, handled: true }), { builtin: ["/mcp"], sent: [] });
+  assert.deepEqual(await run("/mcp", { isStreaming: false, handled: true }), { builtin: ["/mcp"], sent: [] });
+  assert.deepEqual(await run("/mcp", { isStreaming: false, handled: false }), { builtin: ["/mcp"], sent: ["/mcp"] });
+  // Streaming without steer handlers keeps any other message in the composer, as before.
+  assert.deepEqual(await run("/mcp login", { isStreaming: true, handled: false }), { builtin: [], sent: [] });
 });
 
 test("restores text and base64 images when editing a user message", () => {
@@ -639,6 +906,26 @@ test("renders compact errors above the input as a wrapping alert", () => {
   assert.match(html, /&lt;html&gt;request forbidden&lt;\/html&gt;/);
   assert.match(html, /white-space:pre-wrap/);
   assert.ok(html.indexOf('role="alert"') < html.indexOf("<textarea"));
+});
+
+test("a compact error can be dismissed when the composer is given a handler", () => {
+  const render = (props) => renderToStaticMarkup(
+    React.createElement(
+      I18nProvider,
+      null,
+      React.createElement(ChatInput, {
+        onSend() {},
+        onAbort() {},
+        onCompact() {},
+        isStreaming: false,
+        compactError: "Nothing to compact (session too small)",
+        ...props,
+      }),
+    ),
+  );
+
+  assert.match(render({ onDismissCompactError() {} }), /aria-label="Dismiss compaction error"/);
+  assert.doesNotMatch(render({}), /Dismiss compaction error/);
 });
 
 test("modelSupportsImageInput warns only when modality info is known and lacks image", () => {
@@ -799,4 +1086,49 @@ test("mobile bottom row pinned to both ends: the model fills the middle space (f
   assert.match(source, /minWidth: 0, flexShrink: 1, flexGrow: \(isMobile && mobileExpanded\)/);
   const hideIconCount = (source.match(/\bhideIcon\b/g) || []).length;
   assert.ok(hideIconCount >= 2, `both mobile ModelSelectors need hideIcon (found ${hideIconCount})`);
+});
+
+test("only the chat composer offers saving a default model or reasoning level", () => {
+  const chatInputSource = readFileSync(new URL("./ChatInput.tsx", import.meta.url), "utf8");
+  const agentsConfigSource = readFileSync(new URL("./AgentsConfig.tsx", import.meta.url), "utf8");
+  assert.match(chatInputSource, /<ModelSelector[\s\S]*?defaultValue=\{defaultModel\}[\s\S]*?onSetDefault=\{onSetDefaultModel\}/);
+  // "auto" means "use the default", so it never gets a star of its own.
+  assert.match(chatInputSource, /star=\{onSetDefaultThinkingLevel && lvl !== "auto"/);
+  // A subagent profile's model is not the default for new chats.
+  assert.doesNotMatch(agentsConfigSource, /onSetDefault/);
+});
+
+test("selector rows keep the default star and the floating save button in one gutter", async () => {
+  const { SelectorRow } = await jiti.import("./SelectorRow.tsx");
+  const star = (isDefault) => ({ isDefault, saveLabel: "Save as default", defaultLabel: "Default", onSave: () => {} });
+  const row = (props) => renderToStaticMarkup(React.createElement(SelectorRow, {
+    active: false,
+    onSelect: () => {},
+    ...props,
+  }, "Alpha"));
+
+  const savable = row({ star: star(false) });
+  assert.match(savable, /role="option"/);
+  assert.match(savable, /aria-label="Save as default"/);
+  // Hidden until hover or focus, but kept out of the row's text by the gutter.
+  assert.match(savable, /opacity:0/);
+  assert.match(savable, /tabindex="-1"/);
+  assert.match(savable, /padding:7px 36px 7px 12px/);
+  assert.doesNotMatch(savable, /aria-label="Default"/);
+
+  // The default row shows a static marker in the same spot and no button.
+  const saved = row({ star: star(true) });
+  assert.match(saved, /role="img" aria-label="Default"/);
+  assert.match(saved, /fill="currentColor"/);
+  assert.doesNotMatch(saved, /Save as default/);
+
+  const plain = row({});
+  assert.doesNotMatch(plain, /Save as default|aria-label="Default"/);
+  assert.match(plain, /padding:7px 12px/);
+  // Rows without a star still line up with starred ones in the same menu.
+  assert.match(row({ gutter: true }), /padding:7px 36px 7px 12px/);
+
+  const active = row({ active: true });
+  assert.match(active, /aria-selected="true"/);
+  assert.doesNotMatch(active, /border-left/);
 });

@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { resolveSessionPath, buildSessionContext } from "@/lib/session-reader";
+import { resolveSessionPath, openSessionManager, buildSessionContext } from "@/lib/session-reader";
 import { getRpcSession } from "@/lib/rpc-manager";
 import { resolveAttachBySessionId, attachIfBridged, handleModelToClient, resolveAnySession, resolveExternalCompositeSession } from "@/lib/session";
 import { buildExternalPagedContext } from "@/lib/external-session-paging";
+import { attachTranscriptNotices, readSessionTranscriptNotices } from "@/lib/transcript-notices-server";
+import type { SessionEntry } from "@/lib/types";
 
 type MsgHandle = { send(c: unknown): Promise<unknown>; getModel?(): { id: string; provider: string } | undefined };
 
@@ -96,16 +97,23 @@ export async function GET(
       return NextResponse.json({ error: "Session not found" }, { status: 404 });
     }
 
-    const sm = liveRpc?.inner.sessionManager ?? SessionManager.open(filePath!);
+    const sm = liveRpc?.inner.sessionManager ?? openSessionManager(filePath!);
     // `before` is the oldest entry already on the client; fetch its ancestors
     // only (excludeLeaf) so prepending the page does not duplicate `before`.
-    const context = buildSessionContext(sm.getEntries() as never, before ?? leafId, {
+    const entries = sm.getEntries();
+    const transcriptNotices = readSessionTranscriptNotices({
+      entries: entries as unknown as SessionEntry[],
+      cwd: sm.getHeader()?.cwd ?? "",
+      leafId: leafId ?? sm.getLeafId(),
+      models: liveRpc?.inner.modelRuntime,
+    });
+    const context = attachTranscriptNotices(buildSessionContext(entries as never, before ?? leafId, {
       deferThinking,
       deferToolResultImages,
       tail,
       excludeLeaf: Boolean(before),
       sessionId: id,
-    });
+    }), transcriptNotices);
     // Display-consistency overlay: same semantics as the detail route (8857674) -- while
     // the wrapper is alive, model/thinkingLevel come from the real in-process state. The
     // frontend loadContext replaces data.context wholesale (including model), so without
