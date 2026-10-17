@@ -185,7 +185,7 @@ export interface ExtClientContext {
   /** Reveals a directory in the sidebar file tree */
   revealDir?(absPath: string): void | Promise<void>;
   /** Reads the currently open tabs (array order = open order; kind/pinned passed through) — the primitive for bulk close / capacity control. */
-  getFileTabs?(): { id: string; filePath: string; kind?: "file" | "folder" | "dock"; pinned?: boolean }[];
+  getFileTabs?(): { id: string; filePath: string; kind?: "file" | "folder" | "dock" | "agent"; pinned?: boolean }[];
   /** Closes the given tabs (state removal + active-tab reindex only; dirty confirmation / pinned protection are the extension's responsibility) */
   closeFileTabs?(ids: string[]): void;
   /** Appends text to the composer without sending (used to prefill quote replies) */

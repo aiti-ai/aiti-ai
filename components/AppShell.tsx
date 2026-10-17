@@ -16,7 +16,7 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { TabBody, type TabBodyCtx } from "./TabBody";
 import { DetachedTabWindow } from "./DetachedTabWindow";
-import { openFileTab, openFolderTab, saveFileViewerState, findDormantFileFacePath } from "./file-tab-state";
+import { openFileTab, openFolderTab, saveFileViewerState, findDormantFileFacePath, saveParkedFileViewerState, switchFileWorkspace, type ParkedFileWorkspace } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import dynamic from "next/dynamic";
 import { ExtSlotsProvider, ExtSlot, TakeoverSlot, useExtSlotItems, useExtMetas, dispatchChatSend, ExtItemBoundary, registerExtClientService, ensureExtMaterialized } from "./ExtSlots";
@@ -74,20 +74,25 @@ function replaceLocationIfChanged(
 }
 import { registerHostApi } from "@/lib/ext/host-api";
 import { HOST_UI_SERVICE } from "@/lib/ext/host-ui-contract";
-import { ProjectTrustDialog } from "./ProjectTrustDialog";
-import { RestartRecoveryWizard } from "./RestartRecoveryWizard";
+import { ProjectTrustDialog, type ProjectTrustFailure } from "./ProjectTrustDialog";
 import { BackendConnBanner } from "./BackendConnBanner";
+// 上游 SessionSidebarControl/SelectSessionOptions 仅类型引用：组件本体走下方
+// SessionSidebarLazy 动态加载（接管态不进主包），type-only import 运行时擦除、无打包代价。
+import type { SelectSessionOptions, SessionSidebarControl } from "./SessionSidebar";
+import { NewSessionContextBar, type NewSessionContextControl } from "./NewSessionContextBar";
 import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
 import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentSessionPanel } from "./AgentSessionPanel";
+import { SubagentViewer } from "./SubagentViewer";
 import { TerminalPanelBridge } from "./TerminalPanelBridge";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
 import { useTheme } from "@/hooks/useTheme";
+import { useFontPreferences } from "@/hooks/useFontPreferences";
 import { THEME_OPTIONS } from "@/lib/theme";
 import { ThemeIcon } from "./ThemeIcon";
 import { useI18n } from "@/hooks/useI18n";
-import { useIsCompact, useIsMobile, useIsNarrowMobile } from "@/hooks/useIsMobile";
+import { isMobileViewport, useIsCompact, useIsMobile, useIsNarrowMobile } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useOverlayBack } from "@/hooks/useOverlayBack";
 import { acquireOverlayBack } from "@/lib/overlay-back";
@@ -105,7 +110,17 @@ import {
 } from "@/lib/browser-notifications";
 import { setupPushSubscription } from "@/lib/push-client";
 import { runOutcomeNotifies, truncateRunError } from "@/lib/run-outcome";
-import { getInitialNavigation, type InitialNavigation } from "@/lib/initial-navigation";
+import { getInitialNavigation, withTabOpen, type InitialNavigation } from "@/lib/initial-navigation";
+import { clearTabOpenSession, getTabOpen, setTabOpenNewSession, setTabOpenSession } from "@/lib/tab-session";
+import { mergeCatalogRow } from "./session-catalog-helpers";
+import {
+  contextForCwd,
+  type NewSessionContext,
+  type NewSessionMove,
+  type NewSessionOptions,
+  type NewSessionTarget,
+  type ProjectChoice,
+} from "@/lib/new-session-context";
 import {
   SEPARATOR,
   TOPBAR_HIDDEN_KEY,
@@ -148,19 +163,20 @@ import {
   SIDEBAR_MIN_WIDTH,
 } from "@/lib/panel-layout";
 import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
-import type { ProjectTrustStatus } from "@/lib/api-types";
+import type { McpErrorResponse, ProjectTrustStatus } from "@/lib/api-types";
 import type { ChatInputHandle } from "./ChatInput";
+import type { AgentEndInfo, NewSessionChoices } from "@/hooks/useAgentSession";
 import type { SessionStatsInfo } from "@/lib/pi-types";
 import type { QueueEntry } from "@/lib/queue-store";
 import { ExportDialog } from "./ExportDialog";
 import { SessionNameDialog } from "./SessionNameDialog";
 import type { FileExplorerHandle } from "./FileExplorer";
 import type { FileViewerState } from "@/lib/file-viewer-state";
-import type { ToolEntry } from "@/lib/tool-presets";
+import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
 import { getSessionFamily } from "@/lib/session-family";
 import { getRecentProjects } from "@/lib/project-groups";
 import { skillExpansionToCommand } from "@/lib/slash-display";
-import { getLastSettingsSection, type SettingsSection } from "@/lib/settings-navigation";
+import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 type AutoNameStatus =
@@ -194,6 +210,9 @@ declare global {
 
 const TOP_BAR_ICON_BUTTON_SIZE = 36;
 const AGENT_PANEL_WIDTH = 420;
+// pi's built-in tools that never change a file; any other tool may (#1144).
+const READ_ONLY_TOOL_NAMES = new Set(PRESET_READ_ONLY);
+const TOOL_END_REFRESH_MS = 1000;
 const SELECTION_MENU_WIDTH = 176;
 /** Right-panel tab keep-alive pool cap (see the right-dock keep-alive plan doc);
  *  a localStorage override of 0 = evict everything (back to pure tombstone semantics). */
@@ -331,6 +350,28 @@ registerExtClientService("pi-web", "pi-web.overlayBack", {
   acquire: (close: () => void) => acquireOverlayBack(close),
 });
 
+function parkedNewSessionDraftKey(cwd: string): string {
+  return `parked-new:${cwd}`;
+}
+
+/** [新会话上下文栏 × 本地 draft-keeper 契约] 上游 #1047/#1107 的草稿驻留/搬回原实现是
+ *  lib/draft-store 直用；本地草稿存储已整体由 draft-keeper 扩展接管（composer 契约：
+ *  core 只声明意图），故物理搬移/探测统一走 DraftApi —— keeper 缺省时优雅降级为
+ *  no-op（搬运的是空草稿，无损失；bar 的 live 文本由 carryComposer 的 ChatInput
+ *  值通道携带，不依赖此处）。 */
+function apiRekeyDraft(previousKey: string, nextKey: string): void {
+  getDraftApi()?.rekeyDraft?.(previousKey, nextKey);
+}
+function apiHasDraft(key: string): boolean {
+  return Boolean(getDraftApi()?.getDraft(key));
+}
+
+/** Panel tab id of the last sub-agent tab, or null when there is none. */
+function lastAgentTabId(tabs: readonly { sessionId: string }[]): string | null {
+  const last = tabs.at(-1);
+  return last ? `agent:${last.sessionId}` : null;
+}
+
 export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record<string, string[]> | null } = {}) {
   // Hydration-complete signal: extensions (e.g. the draft-keeper extension) must
   // apply their startup restore only after hydration, otherwise a dev-mode
@@ -349,12 +390,20 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const [initialNavigation, setInitialNavigation] = useState<InitialNavigation>(() => getInitialNavigation(searchParams));
   useEffect(() => {
     if (typeof window !== "undefined") {
-      setInitialNavigation(getInitialNavigation(new URLSearchParams(window.location.search)));
+      const nav = getInitialNavigation(new URLSearchParams(window.location.search));
+      setInitialNavigation(nav);
+      // Post-hydration the location is authoritative. A ?session= param means the
+      // URL restore is still pending: initialSessionRestored started true (SSR
+      // searchParams are empty), so reset it here or a refresh would render the
+      // placeholder/new-session page before jumping to the target conversation.
+      setInitialSessionRestored(!nav.sessionId);
     }
   }, []);
   const { preference, setThemePreference } = useTheme();
   const themeLabelKey = `theme.${preference}`;
   const { locale, setLocale, t: translate, supportedLocales } = useI18n();
+  // Restore fonts even when Settings and the chat composer have not been opened.
+  useFontPreferences();
   const isMobile = useIsMobile();
   const isCompact = useIsCompact();
   // Icon buttons are uniformly 36px wide (matching extension buttons); icon size is
@@ -395,9 +444,21 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     if (soundEnabledRef.current) playDoneSound();
   }, [playDoneSound, soundEnabledRef]);
   const [selectedSession, setSelectedSession] = useState<SessionInfo | null>(null);
+  // Latest selection readable from async callbacks whose captured state is
+  // stale (e.g. a delete that completes after the user navigated away).
+  const selectedSessionRef = useRef(selectedSession);
+  selectedSessionRef.current = selectedSession;
   const [sessionCatalog, setSessionCatalog] = useState<SessionInfo[]>([]);
   const handleSessionsChange = useCallback((sessions: SessionInfo[]) => {
     setSessionCatalog(sessions);
+    // The sidebar hydrates metadata after the selected session has already
+    // mounted. Merge that update into the active session without changing the
+    // ChatWindow key or restarting its history load.
+    setSelectedSession((current) => {
+      if (!current) return current;
+      const refreshed = sessions.find((session) => session.id === current.id);
+      return refreshed ? mergeCatalogRow(current, refreshed) : current;
+    });
   }, []);
   const sessionsWithSelection = useMemo(() => {
     if (!selectedSession) return sessionCatalog;
@@ -426,6 +487,27 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const [newSessionWorkspace, setNewSessionWorkspace] = useState<string | null>(null);
   const [newSessionDraftId, setNewSessionDraftId] = useState("initial");
   const activeNewSessionDraftKeyRef = useRef<string | null>(null);
+  // The bar above a fresh composer (NewSessionContextBar): the sidebar reports
+  // what it shows and carries out its moves, which remount the composer. Its
+  // model and reasoning picks, as it last reported them, go along with the
+  // draft to the composer that replaces it, which takes them once.
+  const sidebarControlRef = useRef<SessionSidebarControl | null>(null);
+  const [sidebarNewSessionContext, setSidebarNewSessionContext] = useState<NewSessionContext | null>(null);
+  // The bar's last move until the sidebar reports that cwd (a commit later),
+  // so the bar of the new composer shows the target's project, and a worktree
+  // it just created, from its first frame.
+  const newSessionMoveRef = useRef<NewSessionMove | null>(null);
+  const handleSidebarNewSessionContext = useCallback((context: NewSessionContext | null) => {
+    if (context && context.cwd === newSessionMoveRef.current?.cwd) newSessionMoveRef.current = null;
+    setSidebarNewSessionContext(context);
+  }, []);
+  const newSessionBarFocusRef = useRef<NewSessionContextControl | null>(null);
+  const newSessionChoicesRef = useRef<NewSessionChoices | null>(null);
+  const [carriedNewSessionChoices, setCarriedNewSessionChoices] = useState<NewSessionChoices | null>(null);
+  const handleNewSessionChoicesChange = useCallback((choices: NewSessionChoices) => {
+    newSessionChoicesRef.current = choices;
+    setCarriedNewSessionChoices(null);
+  }, []);
   const [initialCwdStatus, setInitialCwdStatus] = useState<"idle" | "validating" | "ready" | "error">(
     () => initialNavigation.requestedCwd ? "validating" : "idle",
   );
@@ -452,12 +534,13 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const [moreOpen, setMoreOpen] = useState(false);
   const exportQueueDataRef = useRef<(() => Promise<{ live: QueueEntry[]; recovery: QueueEntry[] } | null>) | null>(null);
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
-  const [projectTrustError, setProjectTrustError] = useState<string | null>(null);
+  const [projectTrustError, setProjectTrustError] = useState<ProjectTrustFailure | null>(null);
   // "Directory does not exist" notice bar (made visible on trust-check 400
   // "Directory does not exist", replacing a silent console error)
   const [cwdMissingNotice, setCwdMissingNotice] = useState<string | null>(null);
   // Upstream #712: collapse the sidebar initially when embedding with ?sidebar=collapsed
   const [sidebarOpen, setSidebarOpen] = useState(() => !initialNavigation.sidebarCollapsed);
+  const desktopSidebarOpenRef = useRef(!initialNavigation.sidebarCollapsed);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
   const rightPanelFullWidth = rightPanelOpen && rightPanelExpanded && !isMobile;
@@ -520,8 +603,9 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const reclampRightPanelWidth = rightPanelResizer.reclampWidth;
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
   // is visible on load. Runs once the breakpoint resolves after hydration.
+  // Mobile drawer actions must not change the remembered desktop preference.
   useEffect(() => {
-    if (isMobile) setSidebarOpen(false);
+    setSidebarOpen(isMobile ? false : desktopSidebarOpenRef.current);
   }, [isMobile]);
   useEffect(() => {
     setMobileSidebarReady(true);
@@ -554,12 +638,14 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
   const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
   const [branchActiveLeafId, setBranchActiveLeafId] = useState<string | null>(null);
+  const [branchSwitchLocked, setBranchSwitchLocked] = useState(false);
   const branchLeafChangeFnRef = useRef<((leafId: string | null) => void) | null>(null);
   const sessionHasBranches = hasSessionBranches(branchTree);
 
-  const handleBranchDataChange = useCallback((tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void) => {
+  const handleBranchDataChange = useCallback((tree: SessionTreeNode[], activeLeafId: string | null, onLeafChange: (leafId: string | null) => void, locked: boolean) => {
     setBranchTree(tree);
     setBranchActiveLeafId(activeLeafId);
+    setBranchSwitchLocked(locked);
     branchLeafChangeFnRef.current = onLeafChange;
   }, []);
 
@@ -749,11 +835,20 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     setSessionStatsRefresh(() => refresher);
   }, []);
 
+  // The composer opens Settings too: a bare /mcp opens Settings › MCP (useAgentSession).
+  const openSettingsSection = useCallback((section: SettingsSection) => {
+    setSettingsSection(section);
+  }, []);
+
   const handleSidebarToggle = useCallback(() => {
     if (isMobile) {
       setActiveTopPanel(null);
     }
-    setSidebarOpen((open) => !open);
+    setSidebarOpen((open) => {
+      const next = !open;
+      if (!isMobile) desktopSidebarOpenRef.current = next;
+      return next;
+    });
   }, [isMobile]);
 
   const handleMobileToolbarMoreToggle = useCallback(() => {
@@ -852,6 +947,12 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
 
   // Files unmount when inactive; workspace terminals stay mounted until closed.
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
+
+  // Subagent work tabs are session-scoped and transient: no persistence, and
+  // they are dropped when the project changes (they belong to its sessions).
+  // [上游 #1107 file workspace parking + #1129 subagent tab 融合] 驻留态与 agent 标签
+  // 与本地 detached/keep-alive 体系并存：agent 项进 panelTabs，不进 detached 语义。
+  const [agentTabs, setAgentTabs] = useState<{ sessionId: string; label: string }[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
   // Tab-bar auto-reveal token (TabBar revealToken): incremented only on
   // "user-initiated open/activate" paths — opening a file/folder (select:true),
@@ -946,9 +1047,9 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
             .map(([key]) => `dock:${key}`);
           setActiveFileTabId((cur) => {
             if (cur !== `dock:${detail.key}`) return cur;
-            return remainingDockIds.at(-1) ?? fileTabs.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? null;
+            return remainingDockIds.at(-1) ?? fileTabs.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? lastAgentTabId(agentTabs) ?? null;
           });
-          if (wasRightPanelTab && remainingDockIds.length === 0 && fileTabs.length === 0 && terminalTabs.length === 0) {
+          if (wasRightPanelTab && remainingDockIds.length === 0 && fileTabs.length === 0 && terminalTabs.length === 0 && agentTabs.length === 0) {
             setRightPanelOpen(false);
           }
         } else {
@@ -961,8 +1062,15 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       // right panel will not wrongly re-expand it): auto-expand the right panel and
       // activate the corresponding dock tab.
       if (detail.state === "docked:right-panel") {
-        setRightPanelOpen(true);
-        revealFileTabOnOpen(); // dock panel opened from the toolbar/extension → bring the target tab into view
+        // auto = restorative re-dock (persisted file/folder instances replayed against
+        // their dockpref after refresh): the small-screen right panel is a full-screen
+        // overlay, so loading must not pull it up — same gating as the sidebar branch
+        // and onActivate below. The tab is still activated, so whatever the user opens
+        // by hand shows the restored content.
+        if (!(detail.auto && isMobile)) {
+          setRightPanelOpen(true);
+          revealFileTabOnOpen(); // dock panel opened from the toolbar/extension → bring the target tab into view
+        }
         setActiveFileTabId(`dock:${detail.key}`);
       }
       // Left-panel dock coupling (right-panel semantics mirrored for the left): when a
@@ -1013,7 +1121,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       window.removeEventListener("piwe-float-present-change", onPresent);
       window.removeEventListener("piwe-float-present-activate", onActivate);
     };
-  }, [fileTabs, terminalTabs, revealFileTabOnOpen]);
+  }, [fileTabs, terminalTabs, agentTabs, isMobile, revealFileTabOnOpen]);
   // ═══ [floating-dialog extension dock batch A re-add end] ═══
 
   const panelTabs: Tab[] = [
@@ -1035,11 +1143,25 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     ...rightDockItems
       .filter((it) => dockPanelStates.get(it.id) === "docked:right-panel")
       .map((it) => ({ id: `dock:${it.id}`, label: it.meta?.title || it.meta?.label || it.extId || it.id, filePath: "", kind: "dock" as const })),
+    // [上游 #1129] 子代理工作 tab：panel 承载与 handleOpenSubagentTab 挂载同源
+    ...agentTabs.map((tab) => ({
+      id: `agent:${tab.sessionId}`,
+      label: tab.label,
+      filePath: tab.label,
+      kind: "agent" as const,
+    })),
   ];
 
   // Detached-window list = existing tabs ∩ detached (file/folder/terminal; dock tab
   // detaching goes through the state machine's present float, not this list). Removing
   // a tab removes its window (performCloseFileTab need not know about detached).
+  const fileWorkspaceStatesRef = useRef(new Map<string, ParkedFileWorkspace>());
+  // Bumped on every workspace switch. The active viewer reports its state as
+  // it unmounts, tagged with the generation it rendered in, so the report of a
+  // tab just parked goes to its workspace, not to a same-path tab restored.
+  const [fileWorkspaceGeneration, setFileWorkspaceGeneration] = useState(0);
+  const fileWorkspaceGenerationRef = useRef(0);
+
   const detachedWindows: Tab[] = [
     ...fileTabs,
     ...terminalTabs.map((tab) => ({
@@ -1097,7 +1219,10 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       setTerminalTabs(saved.tabs);
       if (saved.activeId) {
         setActiveFileTabId(saved.activeId);
-        setRightPanelOpen(saved.open);
+        // Small screens: the right panel is a full-screen overlay drawer — remembered
+        // open state must not pull it up on load (isMobile is still the desktop
+        // hydration snapshot here, hence the imperative query).
+        setRightPanelOpen(saved.open && !isMobileViewport());
       }
     } catch { /* storage is optional */ }
     setTerminalsRestored(true);
@@ -1115,12 +1240,37 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   }, [terminalTabs, activeFileTabId, rightPanelOpen, terminalsRestored]);
 
   const handleFileViewerStateChange = useCallback((
+    generation: number,
     tabId: string,
     viewerRevision: number,
     viewerState: FileViewerState,
   ) => {
+    if (generation !== fileWorkspaceGenerationRef.current) {
+      saveParkedFileViewerState(fileWorkspaceStatesRef.current, generation, tabId, viewerRevision, viewerState);
+      return;
+    }
     setFileTabs((prev) => saveFileViewerState(prev, tabId, viewerRevision, viewerState));
   }, []);
+
+  const changeFileWorkspace = useCallback((currentKey: string | null, nextKey: string) => {
+    if (currentKey === nextKey) return;
+    const activeFileId = activeFileTabId?.startsWith("file:") ? activeFileTabId : null;
+    const next = switchFileWorkspace(fileWorkspaceStatesRef.current, currentKey, nextKey, {
+      tabs: fileTabs,
+      activeTabId: activeFileId,
+      open: rightPanelOpen && Boolean(activeFileId),
+    }, fileWorkspaceGenerationRef.current);
+    fileWorkspaceGenerationRef.current += 1;
+    setFileWorkspaceGeneration(fileWorkspaceGenerationRef.current);
+    setFileTabs(next.tabs);
+    // Subagent tabs belong to the previous project's sessions: dropped, not parked.
+    setAgentTabs([]);
+    // Terminal tabs span workspaces and keep control of the panel while active.
+    if (!activeFileTabId || activeFileId || activeFileTabId.startsWith("agent:")) {
+      setActiveFileTabId(next.activeTabId);
+      setRightPanelOpen(next.open);
+    }
+  }, [activeFileTabId, fileTabs, rightPanelOpen]);
 
   // Same @mention format as the chat input's @ autocomplete, so the agent's
   // read tool resolves it the same way (it strips the @ prefix).
@@ -1155,6 +1305,15 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const activeProjectKeyRef = useRef<string | null>(null);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
+  // sessionStorage is empty during SSR. Applying the tab's remembered session
+  // in the useState initializer made the first client tree differ from the
+  // server HTML (sidebar "select project" vs ""). Restore after mount instead.
+  useLayoutEffect(() => {
+    const next = withTabOpen(initialNavigation, getTabOpen());
+    if (next === initialNavigation) return;
+    setInitialNavigation(next);
+    if (next.sessionId) setInitialSessionRestored(false);
+  }, [initialNavigation]);
   // Suppresses sessionKey bump in handleCwdChange during the initial URL restore
   const suppressCwdBumpRef = useRef(false);
   // The session restored from ?session= is the authoritative pick for this page
@@ -1214,13 +1373,21 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // Persist every active-session transition, including new and forked sessions
   // that bypass the sidebar selection handler. Transient sessions do not yet
   // carry projectKey, so use the active project identity until hydration.
+  // The workspace memory is shared by every tab; the tab memory keeps this
+  // tab's own session so a reload does not follow another tab's last pick.
+  // New session is a selection too: remember the composer cwd so reload stays
+  // on that UI instead of resurrecting the previous chat.
   useEffect(() => {
-    if (!selectedSession) return;
-    const projectKey = selectedSession.projectKey
-      ?? activeProjectKeyRef.current
-      ?? workspaceKeyOf(selectedSession);
-    setLastOpenSession(projectKey, selectedSession.id);
-  }, [selectedSession]);
+    if (selectedSession) {
+      const projectKey = selectedSession.projectKey
+        ?? activeProjectKeyRef.current
+        ?? workspaceKeyOf(selectedSession);
+      setLastOpenSession(projectKey, selectedSession.id);
+      setTabOpenSession(selectedSession.id);
+      return;
+    }
+    if (newSessionCwd) setTabOpenNewSession(newSessionCwd);
+  }, [newSessionCwd, selectedSession]);
 
   // Expose the current session cwd for the global emergency indicator
   // (ExtErrorIndicator 🚑 → /api/emergency); null when there is no session
@@ -1264,6 +1431,9 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         activeNewSessionDraftKeyRef.current = `new:${draftId}:${data.cwd}`;
         setNewSessionCwd(data.cwd);
         setInitialCwdStatus("ready");
+        if (!new URLSearchParams(window.location.search).get("cwd")) {
+          router.replace(`?cwd=${encodeURIComponent(data.cwd)}`, { scroll: false });
+        }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -1272,7 +1442,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       });
 
     return () => controller.abort();
-  }, [initialNavigation]);
+  }, [initialNavigation, router]);
 
   // Restore the workspace's last open session after switching to it. Called
   // from handleCwdChange once the outgoing context has been reset. The session
@@ -1288,39 +1458,53 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     const token = ++workspaceRestoreTokenRef.current;
     const lastOpenSessionId = getLastOpenSession(projectKey);
     if (!lastOpenSessionId) return;
+    const adopt = (d: { sessions: SessionInfo[] } | null) => {
+      if (token !== workspaceRestoreTokenRef.current) return; // stale switch
+      const s = d?.sessions.find((x) => x.id === lastOpenSessionId);
+      if (!s) {
+        // The list loaded but the remembered session is gone — forget it.
+        // When the list itself failed (d === null) keep the memory so a
+        // later switch retries the restore.
+        if (d) clearLastOpen(projectKey);
+        return;
+      }
+      if (workspaceKeyOf(s) !== projectKey) {
+        // Defensive: the remembered session drifted out of this workspace.
+        clearLastOpen(projectKey);
+        return;
+      }
+      // Keep the temporary composer's draft in its cwd, even when the
+      // remembered session belongs to another worktree of this project
+      // (upstream #1107; via the keeper's rekey).
+      const activeDraftKey = activeNewSessionDraftKeyRef.current;
+      if (activeDraftKey) {
+        apiRekeyDraft(activeDraftKey, parkedNewSessionDraftKey(cwd));
+      }
+      activeNewSessionDraftKeyRef.current = null;
+      sessionSourceRef.current = "restore";
+      // Selecting the session must remount the chat with the session
+      // present: useAgentSession loads content in a mount-only effect, so
+      // the null-session welcome mount from the switch would never load
+      // the restored session's messages.
+      setSelectedSession(s);
+      setSessionKey((k) => k + 1);
+      if (new URLSearchParams(window.location.search).get("session") !== s.id) {
+        replaceLocationIfChanged(router, `?session=${encodeURIComponent(s.id)}`, { scroll: false });
+      }
+    };
+    // Fast path: the sidebar already delivered the catalogue — restore
+    // without waiting on a fresh /api/sessions round trip.
+    if (sessionCatalog.length > 0) {
+      adopt({ sessions: sessionCatalog });
+      return;
+    }
     void fetch(apiUrl("/api/sessions"))
       .then((r) => (r.ok ? (r.json() as Promise<{ sessions: SessionInfo[] }>) : null))
-      .then((d) => {
-        if (token !== workspaceRestoreTokenRef.current) return; // stale switch
-        const s = d?.sessions.find((x) => x.id === lastOpenSessionId);
-        if (!s) {
-          // The list loaded but the remembered session is gone — forget it.
-          // When the list itself failed (d === null) keep the memory so a
-          // later switch retries the restore.
-          if (d) clearLastOpen(projectKey);
-          return;
-        }
-        if (workspaceKeyOf(s) !== projectKey) {
-          // Defensive: the remembered session drifted out of this workspace.
-          clearLastOpen(projectKey);
-          return;
-        }
-        activeNewSessionDraftKeyRef.current = null;
-        sessionSourceRef.current = "restore";
-        // Selecting the session must remount the chat with the session
-        // present: useAgentSession loads content in a mount-only effect, so
-        // the null-session welcome mount from the switch would never load
-        // the restored session's messages.
-        setSelectedSession(s);
-        setSessionKey((k) => k + 1);
-        if (new URLSearchParams(window.location.search).get("session") !== s.id) {
-          replaceLocationIfChanged(router, `?session=${encodeURIComponent(s.id)}`, { scroll: false });
-        }
-      })
+      .then(adopt)
       .catch(() => {
         // Network hiccup: keep the remembered session for a later retry.
       });
-  }, [router]);
+  }, [router, sessionCatalog]);
 
   const handleCwdChange = useCallback((
     cwd: string | null,
@@ -1328,6 +1512,12 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     projectKey?: string | null,
   ) => {
     invalidateWorkspaceRestore();
+    // URL 恢复挂起中：任何 cwd 通知都不得推进右侧 UI。handleCwdChange 开头的
+    // setActiveCwd 会让 effectiveNewSessionCwd 成立 → selectedSession 仍为 null 时
+    // 先渲染新会话 composer（「正在打开会话 → 新会话 → 会话」闪现的元凶之一：
+    // session-manager 默认项目自动选 / cwd 镜像在恢复期间都可能送达 cwd）。恢复
+    // 完成后由 handleSelectSession 权威决定 cwd，此间 cwd 一律忽略。
+    if (initialSessionId && !initialSessionRestored) return;
     const currentFreshCwd = newSessionCwd ?? activeCwd;
     setActiveCwd(cwd);
     // Skip if cwd is null (initial mount).
@@ -1364,10 +1554,18 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     const isUserProjectSwitch = currentProject !== null && currentProject !== newProject;
     // Close any session that belongs to a different project — it no longer
     // matches the selected project directory.
+    // Park the outgoing fresh composer's draft in its cwd, then bring back the
+    // one parked for the workspace we are entering (upstream #1107; via the
+    // keeper's rekey so the on-disk flush/restore cycle stays single-owner).
+    const previousDraftKey = activeNewSessionDraftKeyRef.current;
+    if (previousDraftKey && currentFreshCwd) {
+      apiRekeyDraft(previousDraftKey, parkedNewSessionDraftKey(currentFreshCwd));
+    }
     const draftId = typeof crypto.randomUUID === "function"
       ? crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     const draftKey = `new:${draftId}:${cwd}`;
+    apiRekeyDraft(parkedNewSessionDraftKey(cwd), draftKey);
     setNewSessionDraftId(draftId);
     activeNewSessionDraftKeyRef.current = draftKey;
     // source attribution only on a genuine user project switch (the cold-start
@@ -1383,18 +1581,16 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     setSessionKey((k) => k + 1);
     setBranchTree([]);
     setBranchActiveLeafId(null);
+    setBranchSwitchLocked(false);
     setSystemPrompt(null);
     setSystemTools(null);
     setSystemInfoLoading(false);
     setActiveTopPanel(null);
     if (isUserProjectSwitch) {
-      // File tabs are keyed by absolute path, so tabs opened in the previous
-      // project must not linger. Same-project worktree switches keep them.
-      setFileTabs([]);
-      if (!activeFileTabId || activeFileTabId.startsWith("file:")) {
-        setActiveFileTabId(null);
-        setRightPanelOpen(false);
-      }
+      // Keep #281's project isolation, but park each workspace's file tabs
+      // instead of discarding them so they return when the user switches back.
+      // [上游 #1107 融合] 丢弃改驻留：切回原工作区时文件标签原样恢复。
+      changeFileWorkspace(currentProject, newProject);
       // A genuinely different cwd is a real user project move: from here on
       // the last-open restore of the new workspace applies again.
       if (urlRestoredSessionRef.current?.cwd && cwd !== urlRestoredSessionRef.current.cwd) {
@@ -1404,28 +1600,15 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       // the default welcome page when none is remembered.
       restoreWorkspaceContext(newProject, cwd);
     }
-    // Do not erase a pending ?session= param here: the takeover/fallback
-    // sidebar handoff can route a cold-start cwd notification through this
-    // handler before the URL restore consumed the id (store channels arrive
-    // in batches). Rewriting to "/" at that point destroys the restore input
-    // and refresh silently ignores the session URL. Once restore is resolved,
-    // clear only a param that no longer matches the selected session — the
-    // param of the session the user is actually viewing must survive so a
-    // later refresh restores the same conversation.
     if (initialSessionRestored || !initialSessionId) {
       const urlSession = new URLSearchParams(window.location.search).get("session");
       if (!urlSession || urlSession !== selectedSession?.id) {
         replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
       }
     }
-  }, [activeCwd, activeFileTabId, initialSessionId, initialSessionRestored, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
+  }, [activeCwd, activeFileTabId, changeFileWorkspace, initialSessionId, initialSessionRestored, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
 
-  const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number) => {
-    sessionSourceRef.current = isRestore ? "url" : "select";
-    // URL restore wins for this page load; a user pick hands authority back
-    // to explicit selections (last-open restores apply again afterwards).
-    urlRestoredSessionRef.current = isRestore ? { id: session.id, cwd: session.cwd } : null;
-    setNewSessionWorkspace(null); // picking an existing session → drop the new-session page's staged target
+  const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
     // Advance the project identity to the selected session's project BEFORE the
     // sidebar cwd-sync effect fires. Otherwise handleCwdChange sees a project
@@ -1434,15 +1617,19 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     // would always fail and only a second click (same project) would stick.
     activeProjectKeyRef.current = workspaceKeyOf(session);
     invalidateWorkspaceRestore();
+    setNewSessionWorkspace(null); // explicit session pick clears the staged target workspace
+    // Leaving a fresh composer for a session parks its draft in that cwd (restored
+    // by "New" there later) — upstream #1107 semantics, via the keeper's rekey.
+    const activeDraftKey = activeNewSessionDraftKeyRef.current;
+    const activeDraftCwd = newSessionCwd ?? (selectedSession === null ? activeCwd : null);
+    if (activeDraftKey && activeDraftCwd) {
+      apiRekeyDraft(activeDraftKey, parkedNewSessionDraftKey(activeDraftCwd));
+    }
     activeNewSessionDraftKeyRef.current = null;
     // Adopt an explicitly selected session before the sidebar reports its cwd.
     const projectKey = workspaceKeyOf(session);
     if (activeProjectKeyRef.current !== projectKey) {
-      setFileTabs([]);
-      if (!activeFileTabId || activeFileTabId.startsWith("file:")) {
-        setActiveFileTabId(null);
-        setRightPanelOpen(false);
-      }
+      changeFileWorkspace(activeProjectKeyRef.current, projectKey);
       setActiveTopPanel(null);
     }
     activeProjectKeyRef.current = projectKey;
@@ -1454,6 +1641,16 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       const sameProject =
         workspaceKeyOf(selectedSession) === workspaceKeyOf(session);
       if (selectedSession.id === session.id && sameProject) {
+        // 重开「当前已打开的会话」不重建聊天，但仍要纠正地址栏。外链 agent 会话
+        // （qodercn/cursor…）在接管/创建时会把临时占位 id `<agent>:new-<uuid>` 写进
+        // ?session=，其后的 canonicalization 只在「URL 仍等于该占位 id」时才改写为真
+        // 实 id——一旦中途切过会话，URL 就滞留在这个刷新后无法复原的占位/旧 id 上，
+        // 用户点当前会话行命中本早退分支、永不自愈 → 刷新打开旧会话。这里补一次纠偏：
+        // 仅写真实（非 :new- 占位）id，占位 id 不可恢复故不回写。
+        const urlSession = new URLSearchParams(window.location.search).get("session");
+        if (urlSession !== session.id && !session.id.includes(":new-")) {
+          replaceLocationIfChanged(router, `?session=${encodeURIComponent(session.id)}`, { scroll: false });
+        }
         if (isMobile) setSidebarOpen(false);
         return;
       }
@@ -1463,24 +1660,28 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     setSessionKey((k) => k + 1);
     setBranchTree([]);
     setBranchActiveLeafId(null);
+    setBranchSwitchLocked(false);
     branchLeafChangeFnRef.current = null;
     setSystemPrompt(null);
     setSystemTools(null);
     setSystemInfoLoading(false);
     setInitialSessionRestored(true);
-    // On mobile, collapse the overlay drawer so the chat is revealed after pick.
-    if (isMobile && !isRestore) setSidebarOpen(false);
+    // On mobile, collapse the overlay drawer so the chat is revealed after pick
+    // (unless the sidebar still has something to show: a fork's row and toast).
+    if (isMobile && !isRestore && !options?.keepSidebarOpen) setSidebarOpen(false);
     if (isRestore) {
       // Suppress the redundant sessionKey bump that would come from the
       // onCwdChange effect firing after setSelectedCwd in the sidebar
       suppressCwdBumpRef.current = true;
     }
-    // Skip router.replace when restoring from URL — the param is already correct
-    // and calling replace in production Next.js triggers a Suspense remount loop
-    if (!isRestore) {
+    // Skip router.replace when the URL already has this session — calling
+    // replace in production Next.js triggers a Suspense remount loop.
+    // Tab-memory restore lands on `/` and must write `?session=` so reload
+    // and copy-link keep this session.
+    if (!isRestore || new URLSearchParams(window.location.search).get("session") !== session.id) {
       replaceLocationIfChanged(router, `?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
-  }, [activeCwd, activeFileTabId, invalidateWorkspaceRestore, router, isMobile, newSessionCwd, selectedSession]);
+  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, router, isMobile, newSessionCwd, selectedSession]);
 
   // [extension] Extension-client open-session channel: pi-web:open-session { id } → resolve
   // by id and reuse handleSelectSession (in-SPA switch, no full page navigation).
@@ -1534,11 +1735,39 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     return () => navigator.serviceWorker.removeEventListener("message", onSwMessage);
   }, []);
 
-  const handleNewSession = useCallback((sessionId: string, cwd: string) => {
+  const handleNewSession = useCallback((sessionId: string, cwd: string, projectKey?: string | null, options?: NewSessionOptions) => {
     invalidateWorkspaceRestore();
     sessionSourceRef.current = "cwd-switch";
     setNewSessionWorkspace(null); // explicit new session → return to the current workspace, do not inherit a stale staged target
     const draftKey = `new:${sessionId}:${cwd}`;
+    // Leaving a fresh composer for another cwd parks its draft there, as a
+    // workspace switch does; New in the same cwd still starts empty. The bar
+    // above the composer moves the composer instead: its draft (the live
+    // text, as promoteNewSession takes it) and its model picks go along.
+    // [本地融合] 物理草稿搬移走 draft-keeper 契约（DraftApi.rekeyDraft，可缺省）。
+    const activeDraftKey = activeNewSessionDraftKeyRef.current;
+    const activeDraftCwd = newSessionCwd ?? (selectedSession === null ? activeCwd : null);
+    if (options?.carryComposer && selectedSession === null && activeDraftKey) {
+      // A mounted composer moves its own live text (what promoteNewSession uses
+      // too); no composer mounted ( SSR / test) falls back to the stored slot.
+      const input = chatInputRef.current;
+      if (input) input.rekeyDraft(activeDraftKey, draftKey);
+      else apiRekeyDraft(activeDraftKey, draftKey);
+      setCarriedNewSessionChoices(newSessionChoicesRef.current);
+    } else if (activeDraftKey && activeDraftCwd && activeDraftCwd !== cwd) {
+      apiRekeyDraft(activeDraftKey, parkedNewSessionDraftKey(activeDraftCwd));
+    }
+    // Adopt the target project before the sidebar reports its cwd, as an
+    // explicit session pick does. Without a key (Ctrl+Alt+N) the current cwd
+    // keeps its project.
+    const targetProject = projectKey ?? (cwd === activeCwd ? activeProjectKeyRef.current : null) ?? cwd;
+    if (activeProjectKeyRef.current !== targetProject) {
+      changeFileWorkspace(activeProjectKeyRef.current, targetProject);
+    }
+    activeProjectKeyRef.current = targetProject;
+    // A draft parked in this cwd comes back, unless one was carried here: it
+    // stays parked for the next time, never merged into what was carried.
+    if (!apiHasDraft(draftKey)) apiRekeyDraft(parkedNewSessionDraftKey(cwd), draftKey);
     activeNewSessionDraftKeyRef.current = draftKey;
     setNewSessionDraftId(sessionId);
     setSelectedSession(null);
@@ -1546,13 +1775,14 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     setSessionKey((k) => k + 1);
     setBranchTree([]);
     setBranchActiveLeafId(null);
+    setBranchSwitchLocked(false);
     setSystemPrompt(null);
     setSystemTools(null);
     setSystemInfoLoading(false);
     setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
-    replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
-  }, [invalidateWorkspaceRestore, router, isMobile]);
+    replaceLocationIfChanged(router, `?cwd=${encodeURIComponent(cwd)}`, { scroll: false });
+  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, isMobile, newSessionCwd, router, selectedSession]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
@@ -1763,12 +1993,13 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     }
   }, [handleSelectSession, locale]);
 
-  const handleAgentEnd = useCallback(() => {
+  const handleAgentEnd = useCallback((end: AgentEndInfo) => {
     setRefreshKey((k) => k + 1);
     setExplorerRefreshKey((k) => k + 1);
     if (selectedSession) hydrateSelectedSession(selectedSession.id);
 
-    if (selectedSession?.relation?.kind === "subagent") return;
+    if (end.aborted || selectedSession?.relation?.kind === "subagent") return;
+    if (!shouldShowBrowserNotification()) return;
     const targetSession = selectedSession;
     // Include session context: title = task name (name/first-message summary), body =
     // project(+branch) + status text, so the notification shows at a glance "which task
@@ -1919,6 +2150,20 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     setExplorerRefreshKey((k) => k + 1);
   }, []);
 
+  // A run's writes show in the file tree as they happen, not only when it ends
+  // (#1144): at most one refresh a second, after any tool but the read-only ones.
+  const toolEndRefreshTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleToolEnd = useCallback((toolName: string) => {
+    if (READ_ONLY_TOOL_NAMES.has(toolName) || toolEndRefreshTimerRef.current) return;
+    toolEndRefreshTimerRef.current = setTimeout(() => {
+      toolEndRefreshTimerRef.current = null;
+      setExplorerRefreshKey((k) => k + 1);
+    }, TOOL_END_REFRESH_MS);
+  }, []);
+  useEffect(() => () => {
+    if (toolEndRefreshTimerRef.current) clearTimeout(toolEndRefreshTimerRef.current);
+  }, []);
+
   const handleSessionForked = useCallback((newSessionId: string) => {
     invalidateWorkspaceRestore();
     sessionSourceRef.current = "fork";
@@ -1962,9 +2207,15 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     getDraftApi()?.clearAllDrafts(sessionId);
     invalidateWorkspaceRestore();
     setRefreshKey((k) => k + 1);
-    if (selectedSession?.id === sessionId) {
+    // The DELETE can outlive a session switch: this callback's captured
+    // selectedSession is from the delete click. Read the latest selection
+    // and only fall back to the empty composer when the user is still on
+    // the deleted session at the moment removal completes.
+    const active = selectedSessionRef.current;
+    if (active?.id === sessionId) {
       sessionSourceRef.current = "deleted";
-      const cwd = selectedSession.cwd;
+      clearTabOpenSession(sessionId);
+      const cwd = active.cwd;
       const draftId = typeof crypto.randomUUID === "function"
         ? crypto.randomUUID()
         : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
@@ -1976,27 +2227,30 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       setSessionKey((k) => k + 1);
       setBranchTree([]);
       setBranchActiveLeafId(null);
+      setBranchSwitchLocked(false);
       setSystemPrompt(null);
       setSystemTools(null);
       setSystemInfoLoading(false);
       setActiveTopPanel(null);
-      replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
+      replaceLocationIfChanged(router, cwd ? `?cwd=${encodeURIComponent(cwd)}` : inAppPathname("/"), { scroll: false });
     }
-  }, [invalidateWorkspaceRestore, selectedSession, router]);
+  }, [invalidateWorkspaceRestore, router]);
 
   const openHostFileTab = useCallback((
     filePath: string,
     fileName: string,
-    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean },
+    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number },
   ) => {
     const sourceSessionId = options?.sourceSessionId;
     const modeHint = options?.modeHint;
     const select = options?.select !== false; // default true
+    const page = options?.page;
     const tabId = `file:${filePath}`;
     setFileTabs((prev) => openFileTab(prev, {
       fileName,
       filePath,
       modeHint,
+      page,
       sourceSessionId,
       tabId,
     }));
@@ -2013,7 +2267,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const handleOpenFile = useCallback((
     filePath: string,
     fileName: string,
-    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean },
+    options?: { sourceSessionId?: string | null; modeHint?: "diff"; select?: boolean; page?: number },
   ) => {
     // File dock face guard (file-editor extension file-dock, 2026-09-16): the path is
     // alive as a dock face (float window / left-panel block / right-panel dock tab) →
@@ -2052,8 +2306,8 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     openHostFileTab(filePath, fileName, options);
   }, [isMobile, revealFileTabOnOpen, openHostFileTab]);
 
-  const handleOpenLinkedFile = useCallback((filePath: string) => {
-    handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null });
+  const handleOpenLinkedFile = useCallback((filePath: string, page?: number) => {
+    handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null, page });
   }, [handleOpenFile, selectedSession?.id]);
 
   // "Open in file panel" for message images: the image tab mechanism was removed
@@ -2088,9 +2342,14 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     // legacy tab when the extension is not deployed/mounted. openFolderDocked
     // internally presents dock:right-panel → the host auto-expands the right panel and
     // activates the tab via piwe-float-present-change (including idempotent activate).
-    const dockApi = (window as unknown as { __aitiFolder?: { openFolderDocked?: (p: string, z: string) => void } }).__aitiFolder;
+    // select:false = restorative background open (the editor's tombstone restore) →
+    // forwarded as the state machine's auto marker, so it neither pulls up the
+    // small-screen panel nor steals the active tab (mirrors the legacy branch below).
+    const dockApi = (window as unknown as {
+      __aitiFolder?: { openFolderDocked?: (p: string, z: string, opts?: { auto?: boolean }) => void };
+    }).__aitiFolder;
     if (dockApi && typeof dockApi.openFolderDocked === "function") {
-      dockApi.openFolderDocked(folderPath, "right-panel");
+      dockApi.openFolderDocked(folderPath, "right-panel", { auto: options?.select === false });
       recordFolder(folderPath, "add");
       return;
     }
@@ -2248,6 +2507,15 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // process to die before creating the new one — docs/terminal.md Lifecycle); in
   // takeover mode there is no restart, so closing is always "close" (local removal
   // suffices; shell lifecycle belongs to the command-terminal extension).
+
+  // Subagent work opens in a right-panel tab instead of hijacking the main chat.
+  const handleOpenSubagentTab = useCallback((sessionId: string, label: string) => {
+    setAgentTabs((prev) => prev.some((tab) => tab.sessionId === sessionId) ? prev : [...prev, { sessionId, label }]);
+    setActiveFileTabId(`agent:${sessionId}`);
+    setRightPanelOpen(true);
+    if (isMobile) setSidebarOpen(false);
+  }, [isMobile]);
+
   const handleTerminalClosed = (tab: TerminalTab) => {
     const replacement = tab.closing === "restart" ? newTerminalTab(tab.cwd) : null;
     const remaining = terminalTabs.filter((item) => item.id !== tab.id);
@@ -2262,8 +2530,8 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         return next;
       });
     }
-    setActiveFileTabId((current) => current !== tab.id ? current : replacement?.id ?? remaining.at(-1)?.id ?? fileTabs.at(-1)?.id ?? null);
-    if (!replacement && !remaining.length && !fileTabs.length) setRightPanelOpen(false);
+    setActiveFileTabId((current) => current !== tab.id ? current : replacement?.id ?? remaining.at(-1)?.id ?? fileTabs.at(-1)?.id ?? lastAgentTabId(agentTabs) ?? null);
+    if (!replacement && !remaining.length && !fileTabs.length && !agentTabs.length) setRightPanelOpen(false);
   };
 
   // Native fallback layer: restart = finalize close with a restart marker
@@ -2281,17 +2549,27 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     if (closing?.kind === "folder" && closing.filePath) {
       recordFolder(closing.filePath, "remove");
     }
+    if (tabId.startsWith("agent:")) {
+      const remainingAgents = agentTabs.filter((tab) => `agent:${tab.sessionId}` !== tabId);
+      setAgentTabs(remainingAgents);
+      setActiveFileTabId((cur) => {
+        if (cur !== tabId) return cur;
+        return fileTabs.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? lastAgentTabId(remainingAgents);
+      });
+      if (fileTabs.length === 0 && terminalTabs.length === 0 && remainingAgents.length === 0) setRightPanelOpen(false);
+      return;
+    }
     setFileTabs((prev) => {
       const next = prev.filter((t) => t.id !== tabId);
-      if (next.length === 0 && terminalTabs.length === 0) setRightPanelOpen(false);
+      if (next.length === 0 && terminalTabs.length === 0 && agentTabs.length === 0) setRightPanelOpen(false);
       return next;
     });
     setActiveFileTabId((cur) => {
       if (cur !== tabId) return cur;
       const remaining = fileTabs.filter((t) => t.id !== tabId);
-      return remaining.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? null;
+      return remaining.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? lastAgentTabId(agentTabs);
     });
-  }, [fileTabs, terminalTabs, recordFolder]);
+  }, [fileTabs, terminalTabs, recordFolder, agentTabs]);
 
   const handleCloseFileTab = useCallback((tabId: string) => {
     // dock tab (floating-dialog extension dock v0.5.0): ✕ = state-machine close
@@ -2399,7 +2677,10 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     gitRefreshKey: explorerRefreshKey,
     panelOpen: rightPanelOpen,
     selectedSessionId: selectedSession?.id ?? null,
-    onStateChange: handleFileViewerStateChange,
+    // [上游 #1107 融合适配] TabBody 按三参调用；generation 取 ref 当前值（分离窗口
+    // 可能持有旧 ctx，读 ref 保证驻留判定不落到陈旧闭包）。
+    onStateChange: (tabId, viewerRevision, viewerState) =>
+      handleFileViewerStateChange(fileWorkspaceGenerationRef.current, tabId, viewerRevision, viewerState),
     onLineMention: handleFileLineMention,
     onAtMention: handleAtMention,
     openFile: handleOpenFile,
@@ -2465,6 +2746,55 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   useLayoutEffect(() => {
     activeNewSessionDraftKeyRef.current = newSessionDraftKey;
   }, [newSessionDraftKey]);
+
+  // The bar above a fresh composer. Only a fresh composer moves, and only
+  // somewhere else: the folder in use would remount it for nothing. The
+  // control the move came from takes focus in the bar of the new composer.
+  const handlePickNewSessionContext = useCallback((target: NewSessionTarget, from: NewSessionContextControl) => {
+    if (selectedSession !== null || !effectiveNewSessionCwd || target.cwd === effectiveNewSessionCwd) return;
+    newSessionBarFocusRef.current = from;
+    // A worktree just created already left its move, with the branch.
+    if (target.projectKey && target.projectRoot && newSessionMoveRef.current?.cwd !== target.cwd) {
+      newSessionMoveRef.current = { cwd: target.cwd, project: { key: target.projectKey, root: target.projectRoot }, branch: null };
+    }
+    sidebarControlRef.current?.startNewSessionIn({ ...target, carryComposer: true });
+  }, [effectiveNewSessionCwd, selectedSession]);
+  // The folder picker answers later: its pick runs the newest closure, guard included.
+  const pickNewSessionContextRef = useRef(handlePickNewSessionContext);
+  pickNewSessionContextRef.current = handlePickNewSessionContext;
+  const handleOpenFolderForNewSession = useCallback((opener: HTMLElement | null) => {
+    sidebarControlRef.current?.openFolderForNewSession((target) => pickNewSessionContextRef.current(target, "project"), opener);
+  }, []);
+  const handleDefaultDirectoryForNewSession = useCallback(() => {
+    sidebarControlRef.current?.openDefaultDirectoryForNewSession((target) => pickNewSessionContextRef.current(target, "project"));
+  }, []);
+  const handleRefreshNewSessionWorktrees = useCallback(() => {
+    sidebarControlRef.current?.refreshWorktrees();
+  }, []);
+  const handleCreateNewSessionWorktree = useCallback(async (project: ProjectChoice, branch: string) => {
+    const control = sidebarControlRef.current;
+    if (!control) throw new Error("The session sidebar is not mounted");
+    const result = await control.createWorktree(project, branch);
+    // The bar moves there next, before any report lists it.
+    if ("path" in result) newSessionMoveRef.current = { cwd: result.path, project, branch };
+    return result;
+  }, []);
+  const handleNewSessionBarFocusDone = useCallback(() => {
+    newSessionBarFocusRef.current = null;
+  }, []);
+  const newSessionContextBar = selectedSession === null && effectiveNewSessionCwd ? (
+    <NewSessionContextBar
+      context={contextForCwd(sidebarNewSessionContext, effectiveNewSessionCwd, newSessionMoveRef.current)}
+      mobile={isMobile}
+      initialFocus={newSessionBarFocusRef.current}
+      onInitialFocusDone={handleNewSessionBarFocusDone}
+      onPick={handlePickNewSessionContext}
+      onUseDefaultDirectory={handleDefaultDirectoryForNewSession}
+      onOpenFolder={handleOpenFolderForNewSession}
+      onRefreshWorktrees={handleRefreshNewSessionWorktrees}
+      onCreateWorktree={handleCreateNewSessionWorktree}
+    />
+  ) : null;
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
   const projectTrustCwd = selectedSession?.cwd ?? targetNewSessionCwd;
   // While restoring initial session from URL, don't show the placeholder
@@ -2513,20 +2843,39 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: projectTrustCwd }),
       });
-      const data = await response.json() as ProjectTrustStatus & { error?: string };
-      if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+      const data = await response.json() as ProjectTrustStatus & Partial<McpErrorResponse>;
+      if (!response.ok || data.error) {
+        // The dialog translates the reason; the English error is only its diagnostic.
+        setProjectTrustError({ error: data.error ?? `HTTP ${response.status}`, ...(data.reason ? { reason: data.reason } : {}) });
+        return;
+      }
       setProjectTrust(data);
       setProjectTrustDialogOpen(false);
       setModelsRefreshKey((key) => key + 1);
       setSessionKey((key) => key + 1);
     } catch (error) {
-      setProjectTrustError(error instanceof Error ? error.message : String(error));
+      setProjectTrustError({ error: error instanceof Error ? error.message : String(error) });
     } finally {
       setProjectTrustBusy(false);
     }
   }, [projectTrustBusy, projectTrustCwd]);
 
+  // The restricted-mode banner and Settings › MCP's trust notice open the same dialog.
+  const openProjectTrustDialog = useCallback(() => {
+    setProjectTrustError(null);
+    setProjectTrustDialogOpen(true);
+  }, []);
+
+  // Settings › MCP added a project server: `.pi/mcp.json` alone makes a folder require trust, and a
+  // fresh folder was trusted in the same step. Every mounted section reloads in place on the new
+  // status (projectTrustReloadKey); nothing was rebuilt, so the chat needs no new session key.
+  const handleProjectTrustChanged = useCallback((cwd: string, status: ProjectTrustStatus) => {
+    if (cwd === projectTrustCwd) setProjectTrust(status);
+  }, [projectTrustCwd]);
+
   const activeFileTab = fileTabs.find((tab) => tab.id === activeFileTabId) ?? null;
+  // Subagent work tabs: like files, only the active one is mounted.
+  const activeAgentTab = agentTabs.find((tab) => `agent:${tab.sessionId}` === activeFileTabId) ?? null;
   const activeCwdName = activeCwd ? getFileName(activeCwd) || activeCwd : null;
   const windowTitle = activeCwdName ? `${activeCwdName} - Pi Web` : "Pi Web";
 
@@ -3436,7 +3785,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         ["models", translate("common.models")],
         ["skills", translate("common.skills")],
       ] as const).map(([section, label]) => {
-        const disabled = section !== "models" && !projectTrustCwd;
+        const disabled = settingsSectionRequiresProject(section) && !projectTrustCwd;
         return (
           <button
             key={section}
@@ -3593,6 +3942,8 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
             selectedSession={selectedSession}
             onSelectSession={handleSelectSession}
             onNewSession={handleNewSession}
+            controlRef={sidebarControlRef}
+            onNewSessionContextChange={handleSidebarNewSessionContext}
             initialSessionId={initialSessionId}
             skipInitialProjectSelection={initialNavigation.requestedCwd !== null}
             onInitialRestoreDone={handleInitialRestoreDone}
@@ -3907,6 +4258,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
             tree={branchTree}
             activeLeafId={branchActiveLeafId}
             onLeafChange={handleBranchLeafChange}
+            locked={branchSwitchLocked}
             inline
             containerRef={topBarRef}
             open={activeTopPanel === "branches"}
@@ -4286,10 +4638,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
           {showChat && projectTrust?.requiresTrust && !projectTrust.trusted && (
             <button
               type="button"
-              onClick={() => {
-                setProjectTrustError(null);
-                setProjectTrustDialogOpen(true);
-              }}
+              onClick={openProjectTrustDialog}
               title={translate("trust.resourcesNotLoaded")}
               aria-label={translate("trust.resourcesNotLoaded")}
               style={{
@@ -4502,6 +4851,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               tree={branchTree}
               activeLeafId={branchActiveLeafId}
               onLeafChange={handleBranchLeafChange}
+              locked={branchSwitchLocked}
               inline
               compact
               buttonHidden
@@ -5157,7 +5507,11 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               workspaceOptions={newSessionWorkspaceOptions}
               onNewSessionWorkspaceChange={handleNewSessionWorkspaceChange}
               newSessionDraftKey={newSessionDraftKey}
+              newSessionContextBar={newSessionContextBar}
+              initialNewSessionChoices={selectedSession === null ? carriedNewSessionChoices : null}
+              onNewSessionChoicesChange={handleNewSessionChoicesChange}
               onAgentEnd={handleAgentEnd}
+              onToolEnd={handleToolEnd}
               onAttentionNeeded={handleAttentionNeeded}
               onSessionCreated={handleSessionCreated}
               onSessionForked={handleSessionForked}
@@ -5170,13 +5524,15 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               onSystemInfoLoaderChange={handleSystemInfoLoaderChange}
               onSessionStatsChange={handleSessionStatsChange}
               onSessionStatsPanelOpen={openSessionStatsPanel}
+              onOpenSettings={openSettingsSection}
               onSessionStatsRefresherRegister={handleSessionStatsRefresherRegister}
               onCompactControlsRegister={setCompactControls}
               onContextUsageChange={handleContextUsageChange}
               onDisplayModelChange={setCurrentModelInfo}
               onExportQueue={(resolver) => { exportQueueDataRef.current = resolver; }}
               onOpenFile={handleOpenLinkedFile}
-              onOpenSession={handleOpenSession}
+              onFilesUploaded={handleExplorerRefresh}
+              onOpenSubagent={handleOpenSubagentTab}
               onAskInNewChat={handleAskInNewChat}
               quoteSelectionEnabled={quoteSelectionEnabled}
               initialPrompt={pendingQuotePrompt?.sessionId === selectedSession?.id ? pendingQuotePrompt?.text : undefined}
@@ -5206,6 +5562,13 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
                 {initialNavigation.requestedCwd}
               </div>
               <div style={{ maxWidth: 720, fontSize: 12 }}>{initialCwdError}</div>
+            </div>
+          ) : !initialSessionRestored && initialSessionId ? (
+            <div
+              role="status"
+              style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 8, padding: 24, color: "var(--text-muted)", textAlign: "center" }}
+            >
+              <div style={{ fontSize: 14, color: "var(--text)" }}>{translate("workspace.openingSession")}</div>
             </div>
           ) : showPlaceholder ? (
             activeCwd ? (
@@ -5368,15 +5731,17 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
           {/* [tab-detach v0.6.0] content dispatch extracted into TabBody (three branches: file/folder/dock),
               structurally identical to the detached window — behavior-equivalent refactor; before changing
               render semantics, use this comment as the regression baseline */}
+          {/* [Upstream #1107/#1129 fusion] agent tabs go through the SubagentViewer's dedicated mount (below), excluded from TabBody;
+              wrapper key includes fileWorkspaceGeneration: remount the content area on workspace switch, parked state (viewerState) is regained via mount initialState. */}
           {panelTabs
-            .filter((t) => t.kind !== "terminal")
+            .filter((t) => t.kind !== "terminal" && t.kind !== "agent")
             .filter((t) => t.id === activeFileTabId || panelKeepAlive.includes(t.id))
             .map((tab) => (
-              <div key={tab.id} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%" }}>
+              <div key={`${fileWorkspaceGeneration}:${tab.id}`} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%" }}>
                 <TabBody tab={tab} host="panel" ctx={tabBodyCtx} />
               </div>
             ))}
-          {!activeTabForBody && !terminalTabs.some((tab) => tab.id === activeFileTabId) ? (
+          {!activeTabForBody && !terminalTabs.some((tab) => tab.id === activeFileTabId) && !activeAgentTab ? (
             <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, color: "var(--text-dim)", fontSize: 12 }}>
                {fileTabs.length > 0
                  ? translate("files.clickTabToOpen")
@@ -5417,6 +5782,15 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               />
             </div>
           ))}
+          {activeAgentTab && (
+            <SubagentViewer
+              key={activeAgentTab.sessionId}
+              sessionId={activeAgentTab.sessionId}
+              fallbackLabel={activeAgentTab.label}
+              running={runningSessionIds.has(activeAgentTab.sessionId)}
+              onOpenFile={handleOpenLinkedFile}
+            />
+          )}
         </div>
       </div>
     </div>
@@ -5454,8 +5828,12 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
           setModelsRefreshKey((key) => key + 1);
         }}
         onSessionReloaded={() => setSessionKey((key) => key + 1)}
+        projectTrust={projectTrust}
+        onOpenTrustDialog={openProjectTrustDialog}
+        onProjectTrustChanged={handleProjectTrustChanged}
       />
     )}
+    {/* After Settings, so it opens above it (z-index 1100 over 1000) when Settings › MCP asks for it. */}
     {projectTrustDialogOpen && projectTrustCwd && (
       <ProjectTrustDialog
         cwd={projectTrustCwd}
@@ -5465,13 +5843,14 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
           if (!projectTrustBusy) setProjectTrustDialogOpen(false);
         }}
         onConfirm={() => void handleTrustProject()}
+        onStatus={setProjectTrust}
       />
     )}
     {/* The tunnel-ports dialog moved out with the tunnel-panels extension (rendered
         via <ExtSlot name="dialogs" />) */}
-    {/* Restart recovery wizard: sessions that were running when the previous process
-        was interrupted + queue (renders null when there is no interruption) */}
-    <RestartRecoveryWizard />
+    {/* Restart recovery UI is owned by the aiti-recovery extension via the dialogs
+        slot (defork B3, sole-owner); the scanning/orchestration machinery
+        (running-journal / queue-store) stays in core. */}
     {/* Backend disconnect/restore banner: prompts "please refresh" during a backend
         restart window (SSE broker liveness check; renders null when connected) */}
     <BackendConnBanner />
