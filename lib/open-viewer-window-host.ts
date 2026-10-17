@@ -10,7 +10,7 @@
  * handshake (same-origin, trusted).
  */
 
-import { apiUrl } from "./base-path";
+import { apiUrl } from "./base-path.ts";
 
 function viewerWindowFeatures(): string {
   const scr = window.screen;
