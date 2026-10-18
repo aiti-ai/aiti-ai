@@ -426,17 +426,11 @@ function ProviderDetail({ name, editingName, provider, onChange, onEditingNameCh
       <Field label="Base URL">
         <TextInput value={provider.baseUrl ?? ""} onChange={(v) => set("baseUrl", v || undefined)}
           placeholder="https://api.example.com/v1" mono />
-        <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
-          Leave empty for a built-in provider to use the endpoint pi ships
-        </span>
       </Field>
 
       <Field label="API Key">
         <SecretTextInput value={provider.apiKey ?? ""} onChange={(v) => set("apiKey", v || undefined)}
-          placeholder="ENV_VAR_NAME, !shell-command, or literal key" mono />
-        <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
-          Prefix with <code style={{ fontFamily: "var(--font-mono)" }}>!</code> to run a shell command, or use an env var name
-        </span>
+          placeholder={t("models.apiKeyPlaceholder")} mono />
       </Field>
 
       <Field label="API">
@@ -448,9 +442,6 @@ function ProviderDetail({ name, editingName, provider, onChange, onEditingNameCh
           headers={provider.headers}
           onChange={(headers) => set("headers", headers)}
         />
-        <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
-          Added to every request from this provider (e.g. User-Agent). Useful for gateways with bot detection.
-        </span>
       </Field>
 
       <div style={{ borderTop: "1px solid var(--border)", paddingTop: 14, display: "flex", flexDirection: "column", gap: 10 }}>
@@ -1261,9 +1252,6 @@ function ModelDetail({
             <Field label={t("models.baseUrlOverride")}>
               <TextInput value={model.baseUrl ?? ""} onChange={(v) => set("baseUrl", v.trim() || undefined)}
                 placeholder={provider.baseUrl ?? t("models.providerDefaults")} mono />
-              <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
-                {t("models.baseUrlHelp")}
-              </span>
             </Field>
 
             <Field label={t("models.apiOverride")}>
