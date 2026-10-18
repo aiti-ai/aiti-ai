@@ -1359,6 +1359,7 @@ export const zhTWLocale: LocalePlugin = {
     "models.compatibility": "相容性",
     "models.deepSeekThinkingCompat": "DeepSeek 思考相容性",
     "models.developerRole": "使用 developer role 傳遞系統提示詞",
+    "models.adaptiveThinking": "Claude 自適應思考（effort 等級）",
     "models.thinkingLevelMap": "思考層級對應",
     "models.clearAll": "全部清除",
     "models.enabledSection": "可用模型",
