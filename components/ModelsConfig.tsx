@@ -17,6 +17,7 @@ import {
   savedModelIds,
   serializeHeaderRows,
   setCompatBool,
+  setCompatFlag,
   trackAddedModels,
   collectModelRenames,
   renameProviderEntry,
@@ -1292,6 +1293,18 @@ function ModelDetail({
                   checked={effectiveCompat(provider, model)["supportsDeveloperRole"] !== false}
                   onChange={(v) => onChange(setCompatBool(model, "supportsDeveloperRole", v))}
                 />
+                {(model.api ?? provider.api) === "anthropic-messages" && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                    <Check
+                      label={t("models.adaptiveThinking")}
+                      checked={effectiveCompat(provider, model)["forceAdaptiveThinking"] === true}
+                      onChange={(v) => onChange(setCompatFlag(model, "forceAdaptiveThinking", v, provider.compat?.["forceAdaptiveThinking"] === true))}
+                    />
+                    <code style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", paddingLeft: 19 }}>
+                      compat.forceAdaptiveThinking
+                    </code>
+                  </div>
+                )}
                 <div style={{ marginTop: 4 }}>
                   <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
                     <SectionTitle>{t("models.thinkingLevelMap")}</SectionTitle>
