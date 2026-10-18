@@ -16,6 +16,9 @@
 - The terminal header's sun/moon button switches the terminal alone between dark (the default) and light, apart from the app theme. The choice is per browser in `localStorage` (`pi-web:terminal-theme`), shared by every open terminal and synced across tabs by the `storage` event.
 - A switch sets `terminal.options.theme` on the live xterm, never recreating it, so the shell and its SSE stream stay. The panel's chrome reads `--terminal-*` variables that `.terminal-panel[data-terminal-theme="light"]` overrides; `--terminal-bg` must match each xterm palette's `background`.
 
+## Terminal font size (`terminalFontSize()` in `hooks/useChatAppearance.ts`)
+- The terminal has no size setting of its own (#1277): it follows General's chat font size the way code blocks do, the same step from its own 13px at the 14px default (`terminalFontSize()`: chat − 1, so 11–23px). A slider move sets `terminal.options.fontSize` on the live xterm and refits through the panel's `fitAndResize`; the refit's `onResize` sends the new cols/rows to the PTY, the same path as a window resize.
+
 ## Sidebar breakpoint (`components/AppShell.tsx`)
 - The mobile drawer starts closed on entering the mobile breakpoint. Desktop open state is remembered separately, seeded from the URL's initial `sidebarCollapsed` value and updated only by explicit desktop toggles. Returning to desktop restores that preference; mobile drawer toggles, backdrop clicks and toolbar actions must not replace it.
 
