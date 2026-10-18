@@ -1359,6 +1359,7 @@ export const enLocale: LocalePlugin = {
     "models.compatibility": "Compatibility",
     "models.deepSeekThinkingCompat": "DeepSeek thinking compatibility",
     "models.developerRole": "Use the developer role for the system prompt",
+    "models.adaptiveThinking": "Claude adaptive thinking (effort levels)",
     "models.thinkingLevelMap": "Thinking level map",
     "models.clearAll": "Clear all",
     "models.enabledSection": "Available models",

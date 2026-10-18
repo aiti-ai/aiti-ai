@@ -54,6 +54,19 @@ export function setCompatBool<T extends CompatEntry>(entry: T, key: string, valu
   };
 }
 
+/**
+ * Sets a compat flag whose default is off. The entry keeps the key only while
+ * it differs from what the entry inherits (the provider's value, else off), so
+ * switching it back leaves no override behind.
+ */
+export function setCompatFlag<T extends CompatEntry>(entry: T, key: string, value: boolean, inherited = false): T {
+  if (value !== inherited) return setCompatBool(entry, key, value);
+  if (!entry.compat || !Object.prototype.hasOwnProperty.call(entry.compat, key)) return entry;
+  const rest = { ...entry.compat };
+  delete rest[key];
+  return { ...entry, compat: Object.keys(rest).length ? rest : undefined };
+}
+
 export function updateHeaderRow(
   rows: readonly HeaderRow[],
   id: number,
