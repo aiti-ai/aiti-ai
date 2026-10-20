@@ -103,6 +103,8 @@ interface LastAssistantTextResponse {
 type AgentStateResponse = {
   model?: { provider: string; id: string };
   contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null } | null;
+  /** Active time over the live wrapper's entries (the snapshot carries the same field). */
+  totalActiveMs?: number;
   systemPrompt?: string;
   thinkingLevel?: string;
   isStreaming?: boolean;
@@ -399,6 +401,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [liveThinkingLevel, setLiveThinkingLevel] = useState<ConcreteThinkingLevel | null>(null);
   const [retryInfo, setRetryInfo] = useState<{ attempt: number; maxAttempts: number; errorMessage?: string } | null>(null);
   const [contextUsage, setContextUsage] = useState<{ percent: number | null; contextWindow: number; tokens: number | null } | null>(null);
+  // Active time read from the live state, with the session it belongs to: the
+  // panel's snapshot is older than the transcript on screen, and this is what
+  // keeps the value current while a run appends entries (#1334).
+  const [liveTotalActiveMs, setLiveTotalActiveMs] = useState<{ sessionId: string; value: number } | null>(null);
   const contextUsageRequestIdRef = useRef(0);
   // Highest request id whose reply was applied. A reply applies only when it
   // is newer, so a failed newer read never discards an older good one.
@@ -625,10 +631,22 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const cancelEdit = useCallback(() => setEdit(null), [setEdit]);
 
   const sessionStats = useMemo(() => {
+    // Active time is a monotone sum over the session's entries, so of the two
+    // readings the larger one is the newer one: the live state leads while a run
+    // appends entries behind the panel's snapshot, and the snapshot leads after
+    // a compaction or a reload, which install a newer one without reading the
+    // state (#1334).
+    const snapshotActiveMs = data?.totalActiveMs;
+    const liveActiveMs = liveTotalActiveMs && liveTotalActiveMs.sessionId === data?.sessionId
+      ? liveTotalActiveMs.value
+      : undefined;
+    const totalActiveMs = snapshotActiveMs === undefined && liveActiveMs === undefined
+      ? undefined
+      : Math.max(snapshotActiveMs ?? 0, liveActiveMs ?? 0);
     if (sessionStatsOverride) {
       return {
         ...sessionStatsOverride,
-        totalActiveMs: data?.totalActiveMs,
+        totalActiveMs,
         ...(contextUsage ? { contextUsage } : {}),
       };
     }
@@ -640,16 +658,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       sessionId: sessionIdRef.current ?? session?.id ?? "",
       sessionName: session?.name,
       ...stats,
-      totalActiveMs: data?.totalActiveMs,
+      totalActiveMs,
       ...(contextUsage ? { contextUsage } : {}),
     } satisfies SessionStatsInfo;
-  }, [messages, sessionStatsOverride, contextUsage, data?.context.messages, data?.filePath, data?.totalActiveMs, data?.stats, session?.id, session?.name]);
+  }, [messages, sessionStatsOverride, contextUsage, liveTotalActiveMs, data?.sessionId, data?.context.messages, data?.filePath, data?.totalActiveMs, data?.stats, session?.id, session?.name]);
 
-  const applyContextUsage = useCallback((state: AgentStateResponse | undefined, sid: string, runId: number, requestId: number) => {
+  const applyLiveUsage = useCallback((state: AgentStateResponse | undefined, sid: string, runId: number, requestId: number) => {
     if (!sessionHookMountedRef.current || sessionIdRef.current !== sid
       || promptRunIdRef.current !== runId || requestId <= contextUsageAppliedIdRef.current) return;
     contextUsageAppliedIdRef.current = requestId;
     if (state?.contextUsage !== undefined) setContextUsage(state.contextUsage ?? null);
+    if (typeof state?.totalActiveMs === "number") setLiveTotalActiveMs({ sessionId: sid, value: state.totalActiveMs });
   }, []);
 
   const refreshContextUsage = useCallback(async (sid: string) => {
@@ -659,11 +678,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const res = await fetch(agentStatusUrl(sid));
       if (!res.ok) return;
       const data = await res.json() as { state?: AgentStateResponse };
-      applyContextUsage(data.state, sid, runId, requestId);
+      applyLiveUsage(data.state, sid, runId, requestId);
     } catch {
       // A later message or the running-state poll retries the usage read.
     }
-  }, [applyContextUsage]);
+  }, [applyLiveUsage]);
 
   const loadSession = useCallback(async (sid: string, showLoading = false, includeState = false, options?: { force?: boolean }) => {
     // Single-flight: concurrent reads for the same session (mount + SSE settle +
@@ -797,7 +816,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const liveState = agentState.state;
         syncLiveModel(liveState);
         if (liveState) {
-          applyContextUsage(liveState, sid, runId, usageRequestId);
+          applyLiveUsage(liveState, sid, runId, usageRequestId);
           if (liveState.systemPrompt !== undefined) setSystemPrompt(liveState.systemPrompt ?? null);
           if (liveState.extensionStatuses !== undefined) setExtensionStatuses(liveState.extensionStatuses ?? []);
           if (liveState.extensionWidgets !== undefined) setExtensionWidgets(liveState.extensionWidgets ?? []);
@@ -823,7 +842,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (loadFlightsRef.current.get(flightKey) === flight) loadFlightsRef.current.delete(flightKey);
     });
     return await flight;
-  }, [applyContextUsage, setToolPresetState, syncLiveModel]);
+  }, [applyLiveUsage, setToolPresetState, syncLiveModel]);
 
   const loadContext = useCallback(async (sid: string, leafId: string | null, before?: string | null, options?: { tail?: number; signal?: AbortSignal }) => {
     try {
@@ -1441,7 +1460,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // flight) — everything in it is stale, drop it.
       if (sessionIdRef.current !== sid || promptRunIdRef.current !== runId) return;
       const state = data.state;
-      applyContextUsage(state, sid, runId, usageRequestId);
+      applyLiveUsage(state, sid, runId, usageRequestId);
       syncLiveModel(state);
       // Mirror compaction state unconditionally: a missed compaction_end
       // would otherwise leave the "Stop compaction" UI stuck. No state
@@ -1473,7 +1492,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch {
       // Network still down — the next poll / visibility / online tick retries.
     }
-  }, [applyContextUsage, finishPromptWithoutStream, syncLiveModel]);
+  }, [applyLiveUsage, finishPromptWithoutStream, syncLiveModel]);
 
   // Recovery net for missed SSE events: while the agent is running, verify
   // against the server periodically and whenever the tab returns to the
@@ -1555,7 +1574,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             .then((d: { state?: AgentStateResponse } | null) => {
               if (!d || !sessionHookMountedRef.current || sessionIdRef.current !== sid || promptRunIdRef.current !== runId) return;
               syncLiveModel(d.state);
-              applyContextUsage(d.state, sid, runId, usageRequestId);
+              applyLiveUsage(d.state, sid, runId, usageRequestId);
               if (d.state?.systemPrompt !== undefined) setSystemPrompt(d.state.systemPrompt ?? null);
               if (d.state?.extensionStatuses !== undefined) setExtensionStatuses(d.state.extensionStatuses ?? []);
               if (d.state?.extensionWidgets !== undefined) setExtensionWidgets(d.state.extensionWidgets ?? []);
@@ -1794,7 +1813,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setExtensionDialogs((queue) => removeExtensionUiRequest(queue, event.id as string));
         break;
     }
-  }, [addNotice, applyContextUsage, cancelEventStreamGrace, dispatch, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onToolEnd, refreshContextUsage, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
+  }, [addNotice, applyLiveUsage, cancelEventStreamGrace, dispatch, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onToolEnd, refreshContextUsage, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
