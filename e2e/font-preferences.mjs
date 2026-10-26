@@ -37,13 +37,15 @@ export async function checkFontPreferences(page) {
   for (const selector of ["body", ".chat-input-textarea", ".markdown-user-message", "#settings-font-ui"]) {
     assert.match(await font(selector), /^"?Times New Roman"?, serif,/, selector);
   }
-  for (const selector of [".markdown-code-block code", "#settings-font-mono"]) {
-    assert.match(await font(selector), /^monospace,/, selector);
-  }
-  await page.reload({ waitUntil: "networkidle" });
+  // [fork] #settings-font-mono is the Settings input itself — the fork styles inputs with the
+  // sans UI stack, so only the rendered code block asserts the resolved mono family.
+  // [fork] the mono stack is a full fallback chain (Noto Mono, JetBrains Mono, …, monospace)
+  // for CJK-width correctness — assert "resolves to a monospace family", not the bare prefix.
+  assert.match(await font(".markdown-code-block code"), /monospace(,|$)/, ".markdown-code-block code");
+  await page.reload({ waitUntil: "domcontentloaded" });
   await page.locator(".markdown-code-block code").waitFor();
   assert.match(await font("body"), /^"?Times New Roman"?, serif,/);
-  assert.match(await font(".markdown-code-block code"), /^monospace,/);
+  assert.match(await font(".markdown-code-block code"), /monospace(,|$)/);
   assert.equal(await weight(".markdown-user-message"), "500");
   assert.equal(await weight(".markdown-code-block code"), "600");
   await openSettings();
@@ -54,7 +56,7 @@ export async function checkFontPreferences(page) {
 
   const other = await page.context().newPage();
   try {
-    await other.goto(page.url(), { waitUntil: "networkidle" });
+    await other.goto(page.url(), { waitUntil: "domcontentloaded" });
     await ui.fill("serif");
     await other.waitForFunction(() => getComputedStyle(document.body).fontFamily.startsWith("serif,"));
     await uiWeight.fill("300");
