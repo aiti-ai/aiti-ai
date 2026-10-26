@@ -560,7 +560,7 @@ try {
       // Returning from the mobile breakpoint restores the desktop sidebar preference in an effect, so wait for the toggle to settle.
       const hideSidebar = page.getByRole("button", { name: "Hide sidebar", exact: true });
       const showSidebar = page.getByRole("button", { name: "Show sidebar", exact: true });
-      await hideSidebar.or(showSidebar).waitFor({ state: "visible" });
+      await hideSidebar.or(showSidebar).first().waitFor({ state: "visible" });
       // That effect can also open the sidebar between the visible check and the click, so "Show sidebar" is
       // gone and the click waits its full 30s for a button that will not come back. Retry against a short
       // deadline: only the click's own timeout is ignored, and the wait below still fails if the sidebar
@@ -583,7 +583,11 @@ try {
     try {
       await checkModelContext(page);
     } catch (error) {
-      console.log("SKIP-FORK: managed-provider context fields (" + error.message.slice(0, 60) + ")");
+      // [fork] semantic divergence: the fork's maxTokens probe (models.dev calibration,
+      // applyProbeResult) runs when a model detail opens and overwrites the mocked
+      // contextWindow override — upstream's mock-assertion flow assumes a static catalog.
+      // The wiring itself is fixed and unit-covered (see ModelsConfig contextSettings).
+      console.log("SKIP-FORK: probe calibration overrides the mock flow (" + error.message.slice(0, 60) + ")");
     }
     await page.goto(`${base}/?session=${CODE_BACKGROUND}`, { waitUntil: "domcontentloaded" });
     await page.locator(".markdown-code-block pre").waitFor();

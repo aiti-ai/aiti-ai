@@ -60,6 +60,8 @@ import { providerBadgeLabel } from "./enabled-models-helpers";
 import { OAuthPastePanel } from "./OAuthPastePanel";
 import { ProviderIcon } from "./ProviderIcon";
 import { ProviderUsageSummary } from "./ProviderUsageSummary";
+import { normalizeContextWindowOverrides, withContextWindowOverride } from "@/lib/model-context";
+import { ModelContextWindow, type ModelContextSettings } from "./ModelContextWindow";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1376,8 +1378,8 @@ function ModelDetail({
 
 // ── OAuth detail ──────────────────────────────────────────────────────────────
 
-function OAuthDetail({ provider, onRefresh, enabledModels }: {
-  provider: OAuthProvider; onRefresh: () => void; enabledModels: EnabledModelsController;
+function OAuthDetail({ provider, onRefresh, enabledModels, contextSettings }: {
+  provider: OAuthProvider; onRefresh: () => void; enabledModels: EnabledModelsController; contextSettings: ModelContextSettings;
 }) {
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
   const { t } = useI18n();
@@ -1626,15 +1628,15 @@ function OAuthDetail({ provider, onRefresh, enabledModels }: {
 
       <ProviderUsageSummary providerId={provider.id} enabled={provider.loggedIn} />
 
-      {provider.loggedIn && <EnabledModelsSection providerId={provider.id} controller={enabledModels} />}
+      {provider.loggedIn && <EnabledModelsSection providerId={provider.id} controller={enabledModels} contextSettings={contextSettings} />}
     </div>
   );
 }
 
 // ── API Key detail ────────────────────────────────────────────────────────────
 
-function ApiKeyDetail({ provider, onRefresh, enabledModels }: {
-  provider: ApiKeyProvider; onRefresh: () => void; enabledModels: EnabledModelsController;
+function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
+  provider: ApiKeyProvider; onRefresh: () => void; enabledModels: EnabledModelsController; contextSettings: ModelContextSettings;
 }) {
   const [apiKey, setApiKey] = useState("");
   const [saving, setSaving] = useState(false);
@@ -1761,7 +1763,7 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels }: {
 
       <ProviderUsageSummary providerId={provider.id} enabled={provider.configured} />
 
-      {provider.configured && <EnabledModelsSection providerId={provider.id} controller={enabledModels} />}
+      {provider.configured && <EnabledModelsSection providerId={provider.id} controller={enabledModels} contextSettings={contextSettings} />}
     </div>
   );
 }
@@ -2014,6 +2016,22 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     if (selection) setLastSettingsSelection("models", JSON.stringify(selection));
   }, [selection]);
 
+  // Upstream (#1288 era): per-model context-window overrides for managed providers, edited
+  // inline in EnabledModelsSection and written to providers[id].modelOverrides on Save.
+  const contextSettings = useCallback((providerId: string): ModelContextSettings => ({
+    overrides: config.providers?.[providerId]?.modelOverrides,
+    disabled: loading || saving || loadError !== null,
+    onChange: (modelId, value) => {
+      try {
+        setConfig(withContextWindowOverride(config, providerId, modelId, value));
+        setSavedOk(false);
+        setSaveError(null);
+      } catch (error) {
+        setSaveError(String(error));
+      }
+    },
+  }), [config, loading, saving, loadError]);
+
   const addCustomProvider = useCallback(() => {
     let finalName = "new-provider";
     let n = 1;
@@ -2259,10 +2277,13 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
       const savedDraft = providerNameDraft && pendingName && latest.providers?.[providerNameDraft.provider]
         ? applyProviderRename(latest, providerNameDraft.provider, pendingName) ?? latest
         : latest;
+      // Upstream: context-window overrides normalize on save (string → positive integer,
+      // "500k" and other junk throw ContextWindowError before reaching the writer).
+      const normalizedDraft = normalizeContextWindowOverrides(savedDraft);
       const res = await fetch(apiUrl("/api/models-config"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(savedDraft),
+        body: JSON.stringify(normalizedDraft),
       });
       const d = await res.json() as { success?: boolean; error?: string };
       if (!res.ok || d.error) setSaveError(d.error ?? `HTTP ${res.status}`);
@@ -2301,12 +2322,12 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     if (selection.type === "oauth") {
       const p = oauthProviders.find((p) => p.id === selection.providerId);
       if (!p) return null;
-      return <OAuthDetail key={p.id} provider={p} onRefresh={refreshAuthProviders} enabledModels={enabledModels} />;
+      return <OAuthDetail key={p.id} provider={p} onRefresh={refreshAuthProviders} enabledModels={enabledModels} contextSettings={contextSettings(p.id)} />;
     }
     if (selection.type === "apikey") {
       const p = apiKeyProviders.find((p) => p.id === selection.providerId);
       if (!p) return null;
-      return <ApiKeyDetail key={p.id} provider={p} onRefresh={refreshAuthProviders} enabledModels={enabledModels} />;
+      return <ApiKeyDetail key={p.id} provider={p} onRefresh={refreshAuthProviders} enabledModels={enabledModels} contextSettings={contextSettings(p.id)} />;
     }
     if (selection.type === "provider") {
       const provider = config.providers?.[selection.name];
