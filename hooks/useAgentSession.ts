@@ -1761,21 +1761,31 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   // Fork: the 30s lease renewal loop, now driving upstream's single-flight
   // requestLease() (one shared in-flight request for the interval tick, the
-  // visibility bounce and the hidden-page release check). The endpoint renews
-  // the per-page holder lease and reports what is under way; a keep-alive miss
-  // lets the server reap the wrapper and the next reconcile reconnects.
+  // visibility bounce and the hidden-page release check). Upstream semantics:
+  // a released page whose lease reply shows anything under way reopens the
+  // stream at once; a page that comes back reopens it and renews immediately.
   useEffect(() => {
     const sid = session?.id;
     if (!sid) return;
-
-    const interval = setInterval(() => void requestLease(sid), SESSION_LEASE_RENEW_INTERVAL_MS);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void requestLease(sid);
+    let disposed = false;
+    const renew = async () => {
+      const reply = await requestLease(sid);
+      if (disposed || document.visibilityState !== "hidden") return;
+      if (sessionLeaseShowsActivity(reply)) reattachEventStreamRef.current(sid);
     };
-    document.addEventListener("visibilitychange", onVisible);
+    void renew();
+    const interval = setInterval(() => void renew(), SESSION_LEASE_RENEW_INTERVAL_MS);
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      reattachEventStreamRef.current(sid);
+      // A frozen background page renewed nothing; coming back renews at once.
+      void renew();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
     return () => {
+      disposed = true;
       clearInterval(interval);
-      document.removeEventListener("visibilitychange", onVisible);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [requestLease, session?.id]);
 
@@ -1790,8 +1800,15 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // dialog, a subagent whose end starts a turn here); the check repeats each
   // grace while hidden. A run that settles while hidden starts the grace again,
   // which also covers extension follow-ups right after prompt_done.
+  // [fork fix] Only blocking dialogs (select/confirm/input/editor cards the user
+  // must see) hold the stream. Upstream also counts extensionCustomUis, but in
+  // the fork's extension ecosystem those are long-lived slot renders (debug
+  // bridges, picker panels) that never close — counting them suppressed the
+  // release permanently, reinstating the very connection-pool exhaustion #1283
+  // fixes. Nothing is lost by letting go: on reattach the server replays its
+  // pending UI requests and the client re-syncs via pendingExtensionUiIds.
   const eventStreamIdle = !agentRunning && !bashRunning && !isCompacting
-    && extensionDialogs.length === 0 && extensionCustomUis.length === 0;
+    && extensionDialogs.length === 0;
   useEffect(() => {
     const sid = session?.id;
     if (!sid || !eventStreamIdle) return;

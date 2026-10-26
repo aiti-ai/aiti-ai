@@ -461,9 +461,12 @@ test("keeps the selected session warm while idle and renews its lease", () => {
   assert.match(source, /SESSION_LEASE_RENEW_INTERVAL_MS = 30_000/);
   // 合并适配：lease URL 提为 sessionLeaseUrl()（holder 语义，上游 #1283）。
   assert.match(source, /fetch\(sessionLeaseUrl\(sid\)/);
-  // 合并适配：续约循环改驱动上游单飞 requestLease（服务端 lease 已是 SessionLeaseReply
-  // 形态，renewed===0 分支随之退役；回收后的重连由 reconcile 兜底）。
-  assert.match(source, /setInterval\(\(\) => void requestLease\(sid\), SESSION_LEASE_RENEW_INTERVAL_MS\)/);
+  // 合并适配：续约循环复用上游单飞 requestLease，且带完整上游语义——
+  // 隐藏期 renew 时有活动即重开流（sessionLeaseShowsActivity → reattach）、
+  // visible 回来立即 reattach + renew（上游 #1283 的重连一半）。
+  assert.match(source, /const renew = async \(\) => \{[\s\S]*?requestLease\(sid\)[\s\S]*?sessionLeaseShowsActivity\(reply\)[\s\S]*?reattachEventStreamRef\.current\(sid\)/);
+  assert.match(source, /setInterval\(\(\) => void renew\(\), SESSION_LEASE_RENEW_INTERVAL_MS\)/);
+  assert.match(source, /if \(document\.visibilityState !== "visible"\) return;\s*reattachEventStreamRef\.current\(sid\);/);
   assert.doesNotMatch(source, /renewed === 0/);
   assert.match(source, /if \(sessionPropIdRef\.current === sid\) \{[\s\S]*?cancelEventStreamGrace\(\);[\s\S]*?return;/);
   assert.match(source, /maintainEventsConnected\(sid\)/);
