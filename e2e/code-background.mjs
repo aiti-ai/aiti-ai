@@ -14,8 +14,11 @@ export async function checkCodeBackground(page) {
   const blocks = page.locator(".markdown-code-block pre");
   await blocks.nth(1).waitFor();
   try {
+    // [fork] the theme picker pins a named theme (data-theme=<name>, user choice wins over
+    // prefers-color-scheme), so emulateMedia colorScheme never flips data-theme. Drive the
+    // same code path directly: set data-theme light/dark and probe the color-mix response.
     for (const colorScheme of ["light", "dark", "light", "dark", "light"]) {
-      await page.emulateMedia({ colorScheme });
+      await page.evaluate((theme) => { document.documentElement.dataset.theme = theme; }, colorScheme);
       await page.waitForFunction((theme) => document.documentElement.dataset.theme === theme, colorScheme);
       await page.waitForFunction(() => {
         const probe = document.createElement("div");
@@ -34,7 +37,7 @@ export async function checkCodeBackground(page) {
     assert.deepEqual(warnings, [], "Theme switches must not mix background shorthand and backgroundColor");
   } finally {
     page.off("console", onConsole);
-    await page.emulateMedia({ colorScheme: "light" });
+    await page.evaluate(() => { document.documentElement.dataset.theme = "light"; });
   }
   console.log("PASS: code and Mermaid source backgrounds survive repeated theme switches");
 }
