@@ -424,8 +424,9 @@ test("delegates event stream readiness and hides an empty agent phase", () => {
   assert.match(source, /shouldMaintain: \(sid\)[\s\S]*?sessionIdRef\.current === sid/);
   assert.match(ensureSource, /eventConnectionRef\.current!\.ensureConnected\(sid\)/);
   assert.match(ensureSource, /eventConnectionRef\.current!\.maintain\(sid\)/);
-  // 合并适配：上游把 isCompacting 并进同一占位（agentPhase || isCompacting）
-  assert.match(chatWindowSource, /agentRunning && !hasStreamingContent && \(agentPhase \|\| isCompacting\)/);
+  // 合并适配：上游把 isCompacting 并进同一占位（agentPhase || isCompacting）；
+  // fork 另加 settling（agent_end 后未 settle 的“收尾中”非旋转芯片）。
+  assert.match(chatWindowSource, /agentRunning && !hasStreamingContent && \(agentPhase \|\| isCompacting \|\| settling\)/);
   assert.match(chatWindowSource, /return null;/);
 });
 
@@ -1181,7 +1182,7 @@ test("queued continuation after stop never sticks on \"stopping\": aborting move
   assert.doesNotMatch(chatWindowSource, /const \[aborting, setAborting\] = useState\(false\);/);
   assert.doesNotMatch(chatWindowSource, /if \(!sessionBusy\) setAborting\(false\);/);
   // ChatWindow destructures aborting from the hook and forwards it to ChatInput
-  assert.match(chatWindowSource, /agentRunning, bashRunning, pendingBash, aborting,/);
+  assert.match(chatWindowSource, /agentRunning, settling, bashRunning, pendingBash, aborting,/);
   assert.match(chatWindowSource, /aborting=\{aborting\}/);
   assert.doesNotMatch(chatWindowSource, /setAborting\(true\);/);
 });
