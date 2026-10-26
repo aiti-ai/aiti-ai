@@ -20,6 +20,8 @@ interface ModelSelectorProps {
   options: ModelSelectorOption[];
   value?: { provider: string; modelId: string } | null;
   onChange: (provider: string, modelId: string) => void;
+  /** Live sessions can reapply saved metadata by choosing their current model again. */
+  onReselect?: (provider: string, modelId: string) => void;
   onClear?: () => void;
   emptyLabel?: string;
   selectedLabel?: string;
@@ -190,7 +192,7 @@ export function filterModelOptions(options: ModelSelectorOption[], query: string
 
   // provider participates in matching: the provider suffix is shown inline, so searching a provider name should hit its models
   return options.filter((option) => (
-    `${option.provider} ${option.name} ${option.modelId}`
+    `${option.name} ${option.modelId} ${option.provider}/${option.modelId}`
       .toLocaleLowerCase()
       .includes(normalizedQuery)
   ));
@@ -218,6 +220,7 @@ export function ModelSelector({
   options,
   value,
   onChange,
+  onReselect,
   onClear,
   emptyLabel,
   selectedLabel,
@@ -320,6 +323,31 @@ export function ModelSelector({
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
 
+  // While the picker is open, a phone keyboard shrinks the app height
+  // (useViewportHeight writes the root's style, sometimes with no viewport
+  // event) and moves the trigger; follow it instead of the rect from the tap.
+  useEffect(() => {
+    if (!open) return;
+    const remeasure = () => {
+      const rect = rootRef.current?.querySelector("button")?.getBoundingClientRect();
+      // A new object even for an unmoved trigger: the panel also reads the
+      // visual viewport, which may have changed alone.
+      if (rect?.height) setAnchorRect({ top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width });
+    };
+    const viewport = window.visualViewport;
+    const rootObserver = new MutationObserver(remeasure);
+    rootObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "data-keyboard-open"] });
+    window.addEventListener("resize", remeasure);
+    viewport?.addEventListener("resize", remeasure);
+    viewport?.addEventListener("scroll", remeasure);
+    return () => {
+      rootObserver.disconnect();
+      window.removeEventListener("resize", remeasure);
+      viewport?.removeEventListener("resize", remeasure);
+      viewport?.removeEventListener("scroll", remeasure);
+    };
+  }, [open]);
+
   useEffect(() => {
     if (!locked) return;
     setOpen(false);
@@ -371,6 +399,7 @@ export function ModelSelector({
     setOpen(false);
     setFilter("");
     if (!active || isAutoSelection) onChange(option.provider, option.modelId);
+    else onReselect?.(option.provider, option.modelId);
   };
 
   const saveDefault = (option: ModelSelectorOption) => {
@@ -469,6 +498,8 @@ export function ModelSelector({
         // v4 7th review (user decision): the small-screen model panel goes fullscreen full-height —
         // an anchored popup squashed by maxHeight is unusable on small screens;
         // desktop (!isMobile) keeps the original anchored geometry unchanged.
+        // (Upstream #1294's keyboard-avoidance geometry not ported: it targets the anchored
+        // popup; the fullscreen panel does not anchor to the trigger.)
         const geometry = computePanelGeometry(anchor, measurePanelViewport(), placement);
         const horizontalPosition: CSSProperties = { left: anchor.left, width: "max-content", minWidth: anchor.width, maxWidth: Math.max(anchor.width, (window.visualViewport?.width ?? window.innerWidth) - anchor.left - 8) };
 

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
+import { terminalFontSize, useChatAppearance } from "@/hooks/useChatAppearance";
 import { useI18n } from "@/hooks/useI18n";
 import { setTerminalTheme, useTerminalTheme } from "@/hooks/useTerminalTheme";
 import { subscribeFontPreferences } from "@/hooks/useFontPreferences";
@@ -50,6 +51,10 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
   const theme = useTerminalTheme();
   const themeRef = useRef(theme);
   themeRef.current = theme;
+  const fontSize = terminalFontSize(useChatAppearance().fontSize);
+  const fontSizeRef = useRef(fontSize);
+  fontSizeRef.current = fontSize;
+  const refitRef = useRef<() => void>(() => {});
 
   const consumeModifiers = useCallback(() => {
     const current = modifiersRef.current;
@@ -95,7 +100,7 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
     const terminal = new Terminal({
       cursorBlink: true,
       ...readTerminalFont(),
-      fontSize: 13,
+      fontSize: fontSizeRef.current,
       lineHeight: 1.25,
       scrollback: 8000,
       screenReaderMode: true,
@@ -133,6 +138,7 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
       if (!connected || exited || inputFailed) return;
       writer.resize(Math.max(2, cols), Math.max(2, rows));
     });
+    refitRef.current = fitAndResize;
     const resizeObserver = new ResizeObserver(fitAndResize);
     resizeObserver.observe(container);
     const updateFont = () => {
@@ -284,12 +290,21 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
       window.removeEventListener("online", connect);
       terminal.dispose();
       terminalRef.current = null;
+      refitRef.current = () => {};
     };
   }, [id, cwd, restored, reconnectKey, consumeModifiers]);
 
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.options.theme = TERMINAL_XTERM_THEMES[theme];
   }, [theme]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal || terminal.options.fontSize === fontSize) return;
+    // A refit sends the new cols/rows to the shell through onResize, as a font change does.
+    terminal.options.fontSize = fontSize;
+    refitRef.current();
+  }, [fontSize]);
 
   useEffect(() => {
     if (active) terminalRef.current?.focus();

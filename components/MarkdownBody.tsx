@@ -5,6 +5,8 @@ import { createPortal } from "react-dom";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
 import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
 import { buildTicketUrl } from "@/lib/file-tickets";
+import { encodeFilePathForApi } from "@/lib/file-paths";
+import { isAudioPath, isVideoPath } from "@/lib/file-types";
 import { createMarkdownUrlTransform, isExternalMarkdownHref, markdownRehypePlugins, markdownRemarkPlugins, markdownUserRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
 import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
 import { ImagePreview } from "./ImagePreview.tsx";
@@ -138,6 +140,16 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
           </MarkdownLinkContext.Provider>
         );
       }
+      if (href?.startsWith("#")) {
+        // An in-page link: never a second tab of Pi Web.
+        return (
+          <MarkdownLinkContext.Provider value={true}>
+            <a href={href} {...props} onClick={jumpToMarkdownFragment}>
+              {children}
+            </a>
+          </MarkdownLinkContext.Provider>
+        );
+      }
       const filePath = onOpenFile ? resolveLocalFileHref(href, cwd) : null;
       const openFile = onOpenFile;
       if (!filePath || !openFile) {
@@ -168,6 +180,22 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
     },
     img({ src, alt, ...props }) {
       delete props.node;
+      // Audio/video inline playback (upstream #1280): `![take 2](out/take2.wav)` is how a model
+      // shows a sound or clip it made, and an <img> cannot play it. The file API already streams
+      // both kinds with range requests, so pick the element by the file's kind. Local paths go
+      // through the ticket contract like every other file URL (fork rule: paths never enter URLs) —
+      // a hook may not run inside this callback, so the local case delegates to <LocalMedia>.
+      const mediaHref = typeof src === "string" ? src : undefined;
+      const mediaFilePath = mediaHref ? resolveLocalFileHref(mediaHref, cwd) : null;
+      const mediaPath = mediaFilePath ?? mediaHref?.split(/[?#]/, 1)[0] ?? "";
+      if (isAudioPath(mediaPath) || isVideoPath(mediaPath)) {
+        const label = alt?.trim() ? alt : undefined;
+        if (mediaFilePath) {
+          return <LocalMedia filePath={mediaFilePath} kind={isAudioPath(mediaPath) ? "audio" : "video"} alt={label} />;
+        }
+        if (isAudioPath(mediaPath)) return <audio controls preload="metadata" src={mediaHref} aria-label={label} />;
+        return <video controls playsInline preload="metadata" src={mediaHref} aria-label={label} />;
+      }
       // Image inside a link: the link's own navigation wins, no preview click layer added (upstream behavior).
       const insideLink = useContext(MarkdownLinkContext);
       const filePath = typeof src === "string" ? resolveLocalFileHref(src, cwd) : null;
@@ -278,6 +306,22 @@ function LocalImage({ filePath, alt, ...props }: { filePath: string; alt: string
   }, [filePath]);
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src ?? undefined} alt={alt} loading="lazy" {...props} />;
+}
+
+/** Local audio/video player (upstream #1280 × fork ticket contract): the media src is a
+ *  short-lived ticket URL, same as LocalImage's — never a plaintext path. */
+function LocalMedia({ filePath, kind, alt }: { filePath: string; kind: "audio" | "video"; alt?: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    buildTicketUrl(filePath, "read")
+      .then((u) => { if (alive) setSrc(u); })
+      .catch(() => { if (alive) setSrc(null); });
+    return () => { alive = false; };
+  }, [filePath]);
+  return kind === "audio"
+    ? <audio controls preload="metadata" src={src ?? undefined} aria-label={alt} />
+    : <video controls playsInline preload="metadata" src={src ?? undefined} aria-label={alt} />;
 }
 
 function ClickableParagraph({ children, as = "p", messageRole, cwd, sessionId, messageId }: { children: ReactNode; as?: ClickableTag; messageRole?: string; cwd?: string; sessionId?: string; messageId?: string }) {

@@ -1,9 +1,11 @@
 import {
+  AGENT_EVENT_HEARTBEAT_MS,
   isEventIncludedInSnapshot,
   toClientAgentEvent,
   type AgentEventLike,
 } from "./agent-event-wire.ts";
 import { acquireSessionLivenessLease } from "./session-liveness.ts";
+import { withoutMessageSignatures } from "./message-signatures.ts";
 
 export interface AgentEventStreamSession {
   readonly isStreaming: boolean;
@@ -14,8 +16,6 @@ export interface AgentEventStreamSession {
    *  Optional: when absent, the connected frame falls back to isStreaming. */
   isRunning?(): boolean;
 }
-
-const HEARTBEAT_INTERVAL_MS = 30_000;
 
 /**
  * Backpressure for one SSE connection. The client is often a phone: when it
@@ -185,7 +185,6 @@ export function createAgentEventStream(
   sessionPromise: Promise<AgentEventStreamSession>,
 ): ReadableStream<Uint8Array> {
   let cancelStream: (closeController: boolean | "error") => void = () => {};
-  let releaseLease: () => void = () => {};
 
   return new ReadableStream<Uint8Array>({
     start(controller) {
@@ -193,6 +192,7 @@ export function createAgentEventStream(
       let closed = false;
       let heartbeat: ReturnType<typeof setInterval> | null = null;
       let unsubscribe: (() => void) | null = null;
+  let releaseLease: () => void = () => {}; // set when the session subscribes (fork liveness lease)
       let abortHandler: (() => void) | null = null;
       // Latest `tool_execution_update` per tool call id, waiting for the flush.
       const pendingToolUpdates = new Map<unknown, AgentEventLike>();
@@ -209,12 +209,11 @@ export function createAgentEventStream(
       const cleanup = (closeController: boolean | "error", reason?: Error) => {
         if (closed) return;
         closed = true;
-        releaseLease();
-        releaseLease = () => {};
         activeStreamClosers.delete(cleanup);
         if (heartbeat !== null) clearInterval(heartbeat);
         if (toolUpdateTimer !== null) clearTimeout(toolUpdateTimer);
         pendingToolUpdates.clear();
+        releaseLease();
         unsubscribe?.();
         unsubscribe = null;
         if (abortHandler) req.signal.removeEventListener("abort", abortHandler);
@@ -225,6 +224,8 @@ export function createAgentEventStream(
         }
       };
       cancelStream = cleanup;
+      // Fork: the stream holds a session-liveness lease while subscribed (the
+      // idle reaper must not tear down a wrapper a visible page is watching).
       releaseLease = acquireSessionLivenessLease(sessionId).release;
       activeStreamClosers.add(cleanup);
 
@@ -336,7 +337,7 @@ export function createAgentEventStream(
           // gets mutated in-place by subsequent thinking_delta events.
           const rawSnapshot = session.streamingMessage;
           const snapshot = (rawSnapshot !== undefined && rawSnapshot !== null)
-            ? structuredClone(rawSnapshot)
+            ? withoutMessageSignatures(structuredClone(rawSnapshot))
             : rawSnapshot;
           // Canonical id echo: when the handle resolved from an alias/placeholder id (zcode:new-* etc.)
           // has been rebound to the real composite id, tell the client via the connected frame —
@@ -408,8 +409,11 @@ export function createAgentEventStream(
       // The heartbeat must be a perceivable data event, not a comment line: comment lines (":\n\n")
       // don't trigger EventSource.onmessage, so the client can't use them to judge channel liveness
       // and would fall back to high-frequency state polling. A data event lets the client reliably
-      // treat "silence past the threshold" as a dead channel.
-      heartbeat = setInterval(() => encode({ type: "ping", ts: Date.now() }), HEARTBEAT_INTERVAL_MS);
+      // treat "silence past the threshold" as a dead channel. droppable (upstream): under backpressure
+      // the heartbeat is the first thing to drop — liveness resumes with the next real event.
+      // (Event type "heartbeat" per upstream; the fork's AgentEventConnection refreshes its
+      // activity stamp on it just the same.)
+      heartbeat = setInterval(() => encode({ type: "heartbeat" }, { droppable: true }), AGENT_EVENT_HEARTBEAT_MS);
 
       // Force the response headers through without claiming that the agent is
       // ready. The client waits for the later `connected` data event.

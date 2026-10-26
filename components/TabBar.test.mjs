@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { createJiti } from "jiti";
 
@@ -23,6 +24,22 @@ function metrics(overrides) {
     itemRight: 180,
     ...overrides,
   };
+}
+
+function renderTabBar(count) {
+  const tabs = Array.from({ length: count }, (_, index) => ({ id: `t${index}`, label: `file-${index}.ts`, filePath: `/p/file-${index}.ts` }));
+  return renderToStaticMarkup(React.createElement(I18nProvider, null,
+    React.createElement(TabBar, { tabs, activeTabId: "t0", onSelectTab() {}, onCloseTab() {} })));
+}
+
+/** The inline style of every element with that role, as property maps. */
+function styles(html, role) {
+  // 合并适配：fork 的 tab div 带 data-tab-id 前缀属性，role 不再紧跟 <div。
+  return [...html.matchAll(new RegExp(`<div[^>]*role="${role}"[^>]* style="([^"]*)"`, "g"))].map(([, style]) =>
+    Object.fromEntries(style.split(";").filter(Boolean).map((declaration) => {
+      const colon = declaration.indexOf(":");
+      return [declaration.slice(0, colon), declaration.slice(colon + 1)];
+    })));
 }
 
 test("fully visible tabs do not move the strip", () => {
@@ -157,3 +174,25 @@ test("reveal is gated by host revealToken so background opens never scroll", () 
   // callers that pass no token keep the old behavior (after skipping the gate, still reveal directly)
   assert.match(source, /if \(revealToken !== undefined\)[\s\S]{0,200}?\}\s*\n\s*revealActiveTab\(4\);/);
 });
+
+test("overflowing tabs keep the whole 36px bar: the strip has no scrollbar", () => {
+  // The app's 10px (6px on touch) scrollbar took its height out of the 36px
+  // bar: 36px tabs were clipped (#1225), stretched ones squeezed to 26px.
+  const html = renderTabBar(12);
+  assert.match(html, /<div role="tablist" class="tabbar-scroll"/);
+  const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /\.tabbar-scroll \{\s*scrollbar-width: none;\s*\}/);
+  assert.match(css, /\.tabbar-scroll::-webkit-scrollbar \{\s*display: none;\s*\}/);
+  const [list] = styles(html, "tablist");
+  assert.equal(list.height, "36px");
+  assert.equal(list["overflow-x"], "auto");
+  assert.equal(list["overflow-y"], "hidden");
+  assert.equal(list["align-items"], "stretch");
+  const tabs = styles(html, "tab");
+  assert.equal(tabs.length, 12);
+  for (const tab of tabs) {
+    assert.equal(tab.height, undefined);
+    assert.equal(tab["align-items"], "center");
+  }
+});
+

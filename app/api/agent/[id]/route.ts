@@ -202,10 +202,12 @@ export async function GET(
       return NextResponse.json({ running: false });
     }
 
-    const state = await session.send({ type: "get_state" });
-    if (light && state && typeof state === "object") {
-      const { systemPrompt: _stripped, ...lightState } = state as Record<string, unknown>;
-      return NextResponse.json({ running: true, state: lightState });
+    const state = await session.send({ type: "get_state" }) as Record<string, unknown>;
+    // Status reads leave out the system prompt, most of the reply: fork `?light=1`,
+    // upstream `?systemPrompt=0` (agentStatusUrl()). Same field, two spellings.
+    const url = new URL(req.url);
+    if (url.searchParams.get("systemPrompt") === "0" || url.searchParams.get("light") === "1") {
+      delete state.systemPrompt;
     }
     return NextResponse.json({ running: true, state });
   } catch (error) {
