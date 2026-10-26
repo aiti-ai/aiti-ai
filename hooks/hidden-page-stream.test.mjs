@@ -331,6 +331,28 @@ test("a pending extension dialog keeps the stream of a hidden page", async () =>
   }
 });
 
+test("a long-lived custom UI does not keep the stream of a hidden page (fork: slot renders never close)", async () => {
+  // [fork fix] Upstream counts extensionCustomUis toward eventStreamIdle, but the fork's
+  // extension ecosystem keeps slot renders (debug bridges, picker panels) open for hours —
+  // counting them suppressed the #1283 release permanently. Only blocking dialogs hold.
+  // Nothing is lost: reattach replays the server's pending UI requests.
+  const state = await setup();
+  try {
+    await connectIdle(state, { pendingExtensionUiIds: [] });
+    const source = state.open()[0];
+    source.emit({ type: "extension_ui_request", id: "panel-1", method: "custom", lines: ["bridge attached"] });
+    await settle();
+    state.hook.flush();
+    assert.equal(state.hook.result.extensionCustomUi?.id, "panel-1");
+
+    state.hide();
+    await state.tick(HIDDEN_PAGE_GRACE_MS);
+    assert.equal(state.open().length, 0, "a slot-render custom UI must not hold the stream");
+  } finally {
+    await teardown(state);
+  }
+});
+
 test("a released page opens the stream again while hidden once a run starts there, and lets go after it", async () => {
   const state = await setup();
   try {
