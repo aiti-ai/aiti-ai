@@ -306,6 +306,38 @@ test("uses a generic preview label when a markdown image has no alt text", () =>
   assert.doesNotMatch(html, /Preview image:/);
 });
 
+test("plays a markdown audio or video file inline instead of showing a broken image", () => {
+  const audioHtml = renderMarkdown("![take 2](out/take2.wav)");
+  // 合并适配：fork 的票证契约 —— 本地媒体 src 由客户端异步换取（SSR HTML 永不含明文路径，
+  // 与 LocalImage 同一安全形态）；audio 元素本体 + controls/preload/aria 在 SSR 即可断言。
+  assert.match(
+    audioHtml,
+    /<audio (?=[^>]*controls="")(?=[^>]*preload="metadata")(?=[^>]*aria-label="take 2")[^>]*>/,
+  );
+  assert.doesNotMatch(audioHtml, /<img|<button|\snode=/);
+  assert.doesNotMatch(audioHtml, /out\/take2\.wav/); // 路径不进 SSR HTML
+
+  const videoHtml = renderMarkdown("![](https://example.com/clip.mp4?v=2)");
+  assert.match(
+    videoHtml,
+    /<video (?=[^>]*controls="")(?=[^>]*playsInline="")(?=[^>]*preload="metadata")(?=[^>]*src="https:\/\/example\.com\/clip\.mp4\?v=2")[^>]*>/,
+  );
+  assert.doesNotMatch(videoHtml, /aria-label|<img|<button/);
+
+  // A linked clip stays a plain player inside its link, as a linked image does.
+  const linkedHtml = renderMarkdown("[![demo](out/demo.webm)](https://example.com/demo)");
+  assert.match(linkedHtml, /<a [^>]*href="https:\/\/example\.com\/demo"[^>]*><video [^>]*><\/video><\/a>/);
+  assert.doesNotMatch(linkedHtml, /demo\.webm/); // 同上：票证化
+
+  // Images keep their preview.
+  // 合并适配：fork 的本地图走 LocalImage（票证 src + 点击开右侧文件面板，cursor:zoom-in），
+  // 只有远程图才包 ImagePreview 按钮（基线 @305 的钉子）；上游测试假定的本地图按钮不存在。
+  const localImgHtml = renderMarkdown("![chart](out/chart.png)");
+  assert.match(localImgHtml, /<img alt="chart" loading="lazy" style="cursor:zoom-in"/);
+  assert.doesNotMatch(localImgHtml, /out\/chart\.png/); // 路径不进 SSR HTML
+  assert.match(renderMarkdown("![chart](https://example.com/chart.png)"), /<button[^>]+aria-label="Preview image: chart"/);
+});
+
 test("keeps CJK prose out of an autolinked URL", () => {
   const html = renderMarkdown("开 http://localhost:4321，或直接开 library/x.png。");
 
