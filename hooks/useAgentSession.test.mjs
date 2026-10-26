@@ -43,7 +43,8 @@ test("keeps the session event stream open through the idle grace window", () => 
   assert.match(source, /const EVENT_STREAM_IDLE_GRACE_MS = 30_000/);
   assert.match(graceSource, /setTimeout\(\(\) => void checkServerIdle\(\), EVENT_STREAM_IDLE_GRACE_MS\)/);
   // The idle probe may go through apiUrl() (basePath support) or be a bare fetch.
-  assert.match(graceSource, /fetch\((?:apiUrl\()?`?\/api\/agent\/\$\{encodeURIComponent\(sid\)\}`?\)?\)/);
+  // 合并适配：status 读取统一走 agentStatusUrl()（?systemPrompt=0，上游 #1302 + basePath 包装）。
+  assert.match(graceSource, /fetch\(agentStatusUrl\(sid\)\)/);
   assert.match(graceSource, /closeEvents\(\)/);
   assert.match(finishSource, /scheduleEventStreamClose\(sid\)/);
   assert.doesNotMatch(finishSource, /closeEvents\(\)/);
@@ -458,9 +459,12 @@ test("keeps the selected session warm while idle and renews its lease", () => {
   );
   assert.match(source, /sessionPropIdRef\.current === sid/);
   assert.match(source, /SESSION_LEASE_RENEW_INTERVAL_MS = 30_000/);
-  assert.match(source, /fetch\(`\/api\/agent\/\$\{encodeURIComponent\(sid\)\}\/lease`/);
-  assert.match(source, /setInterval\(\(\) => void renewLease\(\), SESSION_LEASE_RENEW_INTERVAL_MS\)/);
-  assert.match(source, /result\.renewed === 0[\s\S]*?closeEvents\(\)[\s\S]*?maintainEventsConnected\(sid\)/);
+  // 合并适配：lease URL 提为 sessionLeaseUrl()（holder 语义，上游 #1283）。
+  assert.match(source, /fetch\(sessionLeaseUrl\(sid\)/);
+  // 合并适配：续约循环改驱动上游单飞 requestLease（服务端 lease 已是 SessionLeaseReply
+  // 形态，renewed===0 分支随之退役；回收后的重连由 reconcile 兜底）。
+  assert.match(source, /setInterval\(\(\) => void requestLease\(sid\), SESSION_LEASE_RENEW_INTERVAL_MS\)/);
+  assert.doesNotMatch(source, /renewed === 0/);
   assert.match(source, /if \(sessionPropIdRef\.current === sid\) \{[\s\S]*?cancelEventStreamGrace\(\);[\s\S]*?return;/);
   assert.match(source, /maintainEventsConnected\(sid\)/);
   assert.doesNotMatch(source, /void connectEvents\(/);
@@ -481,7 +485,7 @@ test("opens the selected session's event stream even when Strict Mode re-runs ef
     source.indexOf("  // Keep the selected session warm even while its agent is idle."),
     source.indexOf("    const renewLease = async () => {"),
   );
-  assert.match(warmSource, /sessionHookMountedRef\.current = true;\s*maintainEventsConnected\(sid\);/);
+  assert.match(warmSource, /sessionHookMountedRef\.current = true;\s*(eventStreamReleasedRef\.current = false;\s*)?maintainEventsConnected\(sid\);/);
   assert.ok(
     warmSource.indexOf("sessionHookMountedRef.current = true;")
       < warmSource.indexOf("maintainEventsConnected(sid);"),
@@ -622,7 +626,8 @@ test("keeps calls a tool made itself out of the running tools", () => {
     assert.notEqual(guard, -1, `${from} must skip nested tool events`);
     assert.ok(guard < caseSource.indexOf("const id = event.toolCallId"), `${from} must skip them before using the id`);
   }
-  assert.match(source, /import \{ isNestedToolExecutionEvent, isSystemMessageEvent \} from "@\/lib\/agent-event-wire";/);
+  // 合并适配：AGENT_EVENT_HEARTBEAT_MS 与守卫同源导入（hidden-page stream 释放需要心跳周期）。
+  assert.match(source, /import \{[^}]*isNestedToolExecutionEvent, isSystemMessageEvent[^}]*\} from "@\/lib\/agent-event-wire";/);
 });
 
 test("plays the enabled sound once when an extension dialog appears over an empty slot", () => {

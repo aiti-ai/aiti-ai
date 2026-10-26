@@ -292,6 +292,8 @@ export interface ChatInputHandle {
   clearInput: () => void;
   /** Force the queue panel to expand (used after recovery/import resolution). */
   expandQueue: () => void;
+  /** Focus the composer (upstream #1317: a fresh session focuses the composer; AppShell rAF-calls it). */
+  focus: () => void;
 }
 
 // "configured" sends no override, so the session follows settings.json defaultTools.
@@ -529,6 +531,18 @@ export function isRunEndStrayClick(detail: number, msSinceRunEnd: number): boole
 
 export function canClearBuiltinCommandInput(message: string, imageCount: number, submittedMessage: string): boolean {
   return imageCount === 0 && message.trim() === submittedMessage;
+}
+
+/**
+ * Whether the composer box stacks its draft above its buttons instead of sitting
+ * them side by side. A phone has no room for the steer and follow-up buttons next
+ * to the draft: in one row the two of them take more than half the width and the
+ * placeholder is cut to "立即引导 / 排队后...". So while a run streams they move to
+ * their own right-aligned row below the draft. Quote mode (`compact`) stacks for
+ * its own reason: it is a short excerpt, not a full composer.
+ */
+export function stacksComposerLayout(compact: boolean, isMobile: boolean, isStreaming: boolean): boolean {
+  return compact || (isMobile && isStreaming);
 }
 
 const SLASH_SOURCES: SlashCommandSource[] = ["builtin", "extension", "prompt", "skill"];
@@ -1934,6 +1948,13 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         ta.style.height = `${Math.min(ta.scrollHeight, 200)}px`;
         ta.scrollTop = ta.scrollHeight;
       });
+    },
+    // The caret goes after a draft that came back, so typing continues it.
+    focus() {
+      const ta = textareaRef.current;
+      if (!ta) return;
+      ta.focus();
+      ta.setSelectionRange(ta.value.length, ta.value.length);
     },
     insertText(text: string) {
       const ta = textareaRef.current;
@@ -5234,6 +5255,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   refreshing={modelsRefreshing}
                   defaultValue={defaultModel}
                   onSetDefault={onSetDefaultModel}
+                  onReselect={onModelChange}
                 />
               )
             )}

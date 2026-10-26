@@ -244,6 +244,9 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
 
   // Horizontal scrolling: when tabs overflow, show left/right scroll buttons at both ends.
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  // Outer tablist shell (upstream #1225 structure): carries the fixed 36px bar;
+  // all scrolling logic below stays on the inner scrollRef (fork's button/reveal system).
+  const listRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
@@ -399,11 +402,12 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
 
   return (
     <div
+      ref={listRef}
       role="tablist"
+      className="tabbar-scroll"
       style={{
-        // The tabs fill the scrollport, not a fixed 36px: once they overflow,
-        // the app's scrollbar (globals.css) takes its height out of the bar,
-        // and 36px tabs were pushed up past its top and clipped (#1225).
+        // The scrollbar is hidden (globals.css): it would take its height out
+        // of the 36px bar, squeezing the tabs or clipping their tops (#1225).
         display: "flex",
         alignItems: "stretch",
         background: "var(--bg-panel)",

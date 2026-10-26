@@ -87,7 +87,10 @@ test("collapses secondary composer chrome while the mobile keyboard is open", ()
   assert.match(extensionStatusBarSource, /className=\{`extension-status-shelf/);
   assert.match(chatWindowSource, /className="chat-content /);
   // Phone landscape exceeds the 640px breakpoint but has the least height.
-  assert.match(cssSource, /@media \(max-width: 640px\), \(pointer: coarse\) and \(max-height: 500px\) \{\s*html\[data-keyboard-open\] \.chat-input-controls,\s*html\[data-keyboard-open\] \.extension-status-shelf \{\s*display: none !important;/);
+  // 合并适配：上游 #1271 把 controls 行拆成带 :has 排除的独立规则（model picker 打开时
+  // 不隐藏——picker 的过滤框正是键盘目标），不再与 shelf 并组。
+  assert.match(cssSource, /@media \(max-width: 640px\), \(pointer: coarse\) and \(max-height: 500px\) \{\s*html\[data-keyboard-open\] \.extension-status-shelf \{\s*display: none !important;/);
+  assert.match(cssSource, /html\[data-keyboard-open\] \.chat-input-controls:not\(:has\(\.model-selector \[role="listbox"\]\)\) \{\s*display: none !important;/);
   assert.match(cssSource, /html\[data-keyboard-open\] \.chat-content \{\s*padding-bottom: 0 !important;/);
   assert.match(cssSource, /html\[data-keyboard-open\] \.chat-input-shell \{\s*padding-bottom: 6px !important;/);
   // A fresh composer's project bar goes too, in a rule of its own inside the same query.

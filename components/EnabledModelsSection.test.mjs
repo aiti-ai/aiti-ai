@@ -254,6 +254,9 @@ test("the saved-model slots mirror every move the draft makes", () => {
   assert.match(modelsConfigSource, /savedModelIdsRef\.current = savedModelIds\(savedDraft\)/); // 合并：保存 post-probe 快照
   assert.match(modelsConfigSource, /trackAddedModels\(savedModelIdsRef\.current, providerName, 1\)/);
   assert.match(modelsConfigSource, /savedModelIdsRef\.current\.get\(providerName\)\?\.splice\(index, 1\)/);
-  assert.match(modelsConfigSource, /savedModelIdsRef\.current\.delete\(name\)/);
+  // 合并适配：provider 删除的槽位清理已上游 helper 化（deleteProviderEntry 内部
+  // 对 slots 做 delete + rename 遗忘），主组件不再直呼 .delete(name)。
+  assert.match(modelsConfigSource, /slots: savedModelIdsRef\.current,[\s\S]{0,200}\}, name\)/);
+  assert.match(modelsConfigSource, /deleteProviderEntry/);
   assert.match(modelsConfigSource, /slots: savedModelIdsRef\.current,/);
 });

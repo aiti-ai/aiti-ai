@@ -186,6 +186,60 @@ export function renewSessionLivenessLeases(sessionId: string): number {
   return renewed;
 }
 
+
+// ── Upstream #1283: per-page-holder keep-alive leases (POST /api/agent/[id]/lease).
+// Independent store: the fork's acquire/renew machinery below owns its own lease
+// records (session→Set), different in shape — the two must not share a namespace.
+interface UpstreamLeaseRecord {
+  expiresAt: number;
+  released: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+  release: () => void;
+}
+const upstreamLeaseStore = new Map<string, UpstreamLeaseRecord>();
+
+/**
+ * Keep a session alive while a page has it selected: one lease per page (`holder`, an id the
+ * page makes up) and session, created or renewed by each call (POST /api/agent/[id]/lease) and
+ * released a TTL after the page's last call. It does not depend on the page's event stream, which
+ * a page hidden for a while lets go of (#1283).
+ */
+export function holdSessionLivenessLease(sessionId: string, holder: string): void {
+  const leases = upstreamLeaseStore;
+  const key = `${holder}\n${sessionId}`;
+  const existing = leases.get(key);
+  if (existing && !existing.released && existing.expiresAt > Date.now()) {
+    existing.expiresAt = Date.now() + SESSION_LIVENESS_LEASE_TTL_MS;
+    scheduleLeaseExpiry(existing);
+    return;
+  }
+  existing?.release();
+  const providerRelease = registerSessionLivenessProvider({
+    name: "pi-web-selected-session",
+    sessionId,
+    isActive: () => !lease.released && lease.expiresAt > Date.now(),
+  });
+  const lease: LeaseRecord = {
+    expiresAt: Date.now() + SESSION_LIVENESS_LEASE_TTL_MS,
+    released: false,
+    timer: null,
+    release: () => {
+      if (lease.released) return;
+      lease.released = true;
+      if (lease.timer) clearTimeout(lease.timer);
+      providerRelease();
+      if (leases.get(key) === lease) leases.delete(key);
+    },
+  };
+  leases.set(key, lease);
+  scheduleLeaseExpiry(lease);
+}
+
+/**
+ * Register session-scoped work that must survive pi-web's automatic idle eviction.
+ * Explicit shutdown and runtime replacement still take precedence.
+ */
+
 /**
  * Register session-scoped work that must survive pi-web's automatic idle eviction.
  * Explicit shutdown and runtime replacement still take precedence.

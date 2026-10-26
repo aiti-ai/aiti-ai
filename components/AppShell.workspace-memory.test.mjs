@@ -95,6 +95,7 @@ test("New restores the draft after session navigation and workspace auto-restore
         ...draftStore,
         crypto: globalThis.crypto,
         queueMicrotask,
+        requestAnimationFrame: () => {},
         URLSearchParams,
         window: { location: { pathname: "/", search: "" } },
         router: { replace() {} },
@@ -111,6 +112,8 @@ test("New restores the draft after session navigation and workspace auto-restore
         branchLeafChangeFnRef: { current: null },
         liveFollowFrameRef: { current: null },
         bashRecoveryIdRef: { current: 0 },
+        chatInputRef: { current: null },
+        newSessionBarFocusRef: { current: null },
         cancelEventStreamGrace() {},
         closeEvents() {},
         changeFileWorkspace() {},
@@ -233,6 +236,9 @@ test("New in another project adopts it up front and parks the composer's draft",
     workspaceRestoreTokenRef: { current: 0 },
     suppressCwdBumpRef: { current: false },
     branchLeafChangeFnRef: { current: null },
+    chatInputRef: { current: null },
+    newSessionBarFocusRef: { current: null },
+    requestAnimationFrame: () => {},
     isMobile: false,
     activeCwd: "/p1",
     activeFileTabId: fileTab.id,
@@ -331,6 +337,8 @@ test("the composer's bar moves the fresh composer's draft and model picks instea
     suppressCwdBumpRef: { current: false },
     branchLeafChangeFnRef: { current: null },
     chatInputRef: { current: null },
+    newSessionBarFocusRef: { current: null },
+    requestAnimationFrame: () => {},
     newSessionChoicesRef: { current: choices },
     carriedNewSessionChoices: null,
     isMobile: false,
@@ -505,4 +513,93 @@ test("the bar of the new composer shows the bar's own move until the sidebar rep
   context.bar.handlePickNewSessionContext({ cwd: "/work/app", projectKey: app.key, projectRoot: app.root }, "worktree");
   assert.equal(context.newSessionMoveRef.current, null);
   assert.equal(starts.length, 2);
+});
+
+test("a new session puts the caret in the fresh composer on desktop only (#1313)", () => {
+  const callbacks = [
+    callbackBody("restoreWorkspaceContext", "handleCwdChange"),
+    callbackBody("handleCwdChange", "handleSelectSession"),
+    callbackBody("handleSelectSession", "handleNewSession"),
+    callbackBody("handleNewSession", "hydrateSelectedSession"),
+  ].join("\n");
+  const parkedKeyHelper = source.slice(source.indexOf("function parkedNewSessionDraftKey"), source.indexOf("export function AppShell"));
+  const frames = [];
+  const focused = [];
+  const context = vm.createContext({
+    ...draftStore,
+    crypto: globalThis.crypto,
+    URLSearchParams,
+    window: { location: { pathname: "/", search: "" } },
+    router: { replace() {} },
+    fetch: () => new Promise(() => {}),
+    getLastOpenSession: () => null,
+    clearLastOpen() {},
+    workspaceKeyOf: (value) => value.projectKey ?? value.cwd,
+    useCallback: (callback) => callback,
+    useGlobalKeyboardShortcuts() {},
+    activeNewSessionDraftKeyRef: { current: "new:first:/p1" },
+    activeProjectKeyRef: { current: "/p1" },
+    workspaceRestoreTokenRef: { current: 0 },
+    suppressCwdBumpRef: { current: false },
+    skipWorkspaceRestoreRef: { current: false },
+    branchLeafChangeFnRef: { current: null },
+    chatInputRef: { current: { focus: () => focused.push("composer"), rekeyDraft: () => {} } },
+    newSessionBarFocusRef: { current: null },
+    newSessionChoicesRef: { current: null },
+    requestAnimationFrame: (cb) => frames.push(cb),
+    document: { activeElement: null },
+    isMobile: false,
+    activeCwd: "/p1",
+    activeFileTabId: null,
+    newSessionCwd: "/p1",
+    newSessionDraftId: "first",
+    selectedSession: null,
+    sessionCatalog: [],
+    sessionKey: 0,
+    // 合并适配：上游 5a2f991b 在 handleCwdChange 里加了初始恢复期的短路读。
+    initialSessionId: null, initialSessionRestored: true,
+    useRef: (v) => ({ current: v }),
+    useEffect: () => {}, useCallback: (fn) => fn, useMemo: (fn) => fn(), useState: (v) => [{ current: typeof v === "function" ? v() : v }, () => {}],
+    sessionSourceRef: { current: null }, urlRestoredSessionRef: { current: null },
+    invalidateWorkspaceRestore() {}, inAppPathname: (p) => p,
+    replaceLocationIfChanged() {},
+    setNewSessionWorkspace() {}, setCarriedNewSessionChoices() {}, newSessionChoicesRef: { current: null },
+    apiRekeyDraft() {}, apiHasDraft: () => false, parkedNewSessionDraftKey: (cwd) => `parked:${cwd}`,
+    getDraftApi: () => ({ rekeyDraft() {}, has() { return false; }, getDraft: () => null, setDraft() {}, parkedKeyOf: (cwd) => `parked:${cwd}` }),
+  });
+  context.invalidateWorkspaceRestore = () => context.workspaceRestoreTokenRef.current++;
+  for (const [setter] of callbacks.matchAll(/\bset[A-Z]\w*(?=\()/g)) {
+    const state = setter[3].toLowerCase() + setter.slice(4);
+    context[setter] = (value) => {
+      context[state] = typeof value === "function" ? value(context[state]) : value;
+    };
+  }
+  context.changeFileWorkspace = () => {};
+  vm.runInContext(stripTypeScriptTypes(`${parkedKeyHelper}\n${callbacks}
+    globalThis.navigate = { handleNewSession };
+  `), context);
+
+  // Ctrl+Alt+N: the fresh composer takes the caret once it renders.
+  context.navigate.handleNewSession("kb-1", "/p1");
+  assert.equal(frames.length, 1);
+  frames.splice(0).forEach((cb) => cb());
+  assert.deepEqual(focused, ["composer"]);
+
+  // A dialog still open over the page (Settings) keeps the focus.
+  context.document.activeElement = { closest: (selector) => selector === "[aria-modal='true']" ? {} : null };
+  context.navigate.handleNewSession("kb-dialog", "/p1");
+  frames.splice(0).forEach((cb) => cb());
+  assert.deepEqual(focused, ["composer"]);
+  context.document.activeElement = null;
+
+  // The bar's move keeps its control, so no caret request is made for it.
+  context.newSessionBarFocusRef.current = "worktree";
+  context.navigate.handleNewSession("p2-new", "/p2", "/p2-key", { carryComposer: true });
+  assert.equal(frames.length, 0);
+  context.newSessionBarFocusRef.current = null;
+
+  // A phone never raises the keyboard uninvited.
+  context.isMobile = true;
+  context.navigate.handleNewSession("kb-2", "/p1");
+  assert.equal(frames.length, 0);
 });

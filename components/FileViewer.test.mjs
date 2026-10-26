@@ -87,7 +87,9 @@ test("markdown preview keeps app links and opens web and app links in a new tab 
   assert.match(source, /urlTransform=\{onOpenFile \? markdownUrlTransform : markdownAppUrlTransform\}/);
   assert.match(
     source,
-    /return isExternalMarkdownHref\(href\)\s*\? <a href=\{href\} \{\.\.\.props\} target="_blank" rel="noopener noreferrer">\{children\}<\/a>\s*: <a href=\{href\} \{\.\.\.props\}>\{children\}<\/a>;/,
+    // 合并适配：非外链分支升级为页内锚点跳转（上游 2cefb72f 的 jumpToMarkdownFragment，
+    // fork 融合后自然覆盖旧的无 onClick 形态）。
+    /return isExternalMarkdownHref\(href\)\s*\? <a href=\{href\} \{\.\.\.props\} target="_blank" rel="noopener noreferrer">\{children\}<\/a>\s*: <a href=\{href\} \{\.\.\.props\} onClick=\{jumpToMarkdownFragment\}>\{children\}<\/a>;/,
   );
 });
 
