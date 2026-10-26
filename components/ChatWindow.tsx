@@ -17,6 +17,7 @@ import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-fi
 import { getFinalAnswerViews, keepWrittenFiles, type FinalAnswerViews } from "@/lib/turn-views";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
 import { dropMentionText, splitDroppedItems, uploadFiles, type DroppedItem } from "@/lib/file-upload-client";
+import { buildFileAtMentionsText } from "@/lib/file-fuzzy";
 import { MessageView, estimateTokens } from "./MessageView";
 import { SessionRequestCardHost } from "./SessionRequestSlot";
 import { MarkdownBody } from "./MarkdownBody";
@@ -417,7 +418,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
   const {
     loading, error, messages, activeToolResults, entryIds, historyCursor, hasEarlierMessages, streamState,
-    agentRunning, bashRunning, pendingBash, aborting, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
+    agentRunning, settling, bashRunning, pendingBash, aborting, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, toolPreset, thinkingLevel,
     modelsRefreshing, modelsRefreshable, refreshModels,
     followPaused,
     retryInfo, contextUsage, forkingEntryId,
@@ -1019,6 +1020,13 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     ));
     if (element instanceof HTMLElement) {
       scrollToMessage(element, position.anchorOffset);
+      // [fork] messages render with content-visibility:auto (estimated 160px placeholders).
+      // The first scroll lands against estimated heights above the anchor; once the real
+      // blocks lay out, heights shift. Re-anchor one frame later to absorb the drift.
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (!element.isConnected) return;
+        scrollToMessage(element, position.anchorOffset);
+      }));
       setPendingScrollRestore(null);
       return;
     }
@@ -1216,9 +1224,50 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     if (files.length > 0) void uploadDroppedFiles(files);
   }, [addNotice, chatInputRef, t, uploadDroppedFiles]);
 
+  // 📎 document attachments mean "show this to the session", not "add to my
+  // project": they land in <cwd>/.pi-attachments (auto-created on the server,
+  // git-invisible via its own `.gitignore` with `*`) and come back as @mentions
+  // of the relative path. Drag-and-drop keeps the explicit upload-to-project
+  // semantics (project root, sidebar upload is the same flow).
+  const uploadAttachedFiles = useCallback(async (files: File[]) => {
+    const cwd = session?.cwd ?? newSessionCwd;
+    if (!cwd) {
+      addNotice({ type: "warning", message: t("chat.dropNeedsCwd") });
+      return;
+    }
+    try {
+      const attachmentsDir = `${cwd.replace(/\/+$/, "")}/.pi-attachments`;
+      const { status, data } = await uploadFiles(attachmentsDir, files, "skip", undefined, true);
+      if (status !== 200 && status !== 207) throw new Error(data.error ?? `HTTP ${status}`);
+      const uploaded = data.uploaded ?? [];
+      const skipped = data.skipped ?? [];
+      const mentions = buildFileAtMentionsText([...uploaded, ...skipped].map((name) => `.pi-attachments/${name}`));
+      if (mentions) chatInputRef?.current?.insertText(mentions);
+      if (uploaded.length > 0) {
+        addNotice({ type: "success", message: t("chat.attachUploaded", { count: uploaded.length }) });
+      }
+      if (skipped.length > 0) {
+        addNotice({ type: "warning", message: t("chat.attachAlreadyExists", { names: skipped.join(", ") }) });
+      }
+      for (const failure of data.errors ?? []) {
+        addNotice({ type: "error", message: t("chat.dropFailed", { message: `${failure.name}: ${failure.error}` }) });
+      }
+    } catch (uploadError) {
+      addNotice({ type: "error", message: t("chat.dropFailed", { message: uploadError instanceof Error ? uploadError.message : String(uploadError) }) });
+    }
+  }, [addNotice, chatInputRef, newSessionCwd, session?.cwd, t]);
+
   const onAttachFiles = useCallback((files: File[]) => {
-    onDrop(files.map((file) => ({ kind: "file", file })));
-  }, [onDrop]);
+    const { images, files: docs } = splitDroppedItems(files.map((file) => ({ kind: "file", file })));
+    if (images.length > 0) chatInputRef?.current?.addImages(images);
+    if (docs.length > 0) void uploadAttachedFiles(docs);
+  }, [chatInputRef, uploadAttachedFiles]);
+
+  // Local pi sessions (no backendSource/capabilities in get_state) and backends
+  // without the fileAttachments capability have their prompt file attachments
+  // dropped silently — route 📎 documents through the .pi-attachments upload
+  // instead (onAttachFiles above).
+  const docFilesToUpload = backendSource == null || !sessionCap("fileAttachments");
 
   const { isDragOver, handleDragEnter, handleDragOver, handleDragLeave, handleDrop } = useDragDrop(onDrop);
 
@@ -1450,6 +1499,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       extensionStatuses={extensionStatuses}
       extensionWidgets={extensionWidgets}
       onAttachFiles={onAttachFiles}
+      docFilesToUpload={docFilesToUpload}
     />
   );
 
@@ -1825,12 +1875,23 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
               <MessageView message={streamState.streamingMessage as AgentMessage} toolResults={toolResultsMap} isStreaming modelNames={modelNames} cwd={messageCwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} />
             )}
 
-            {agentRunning && !hasStreamingContent && (agentPhase || isCompacting) && (
+            {agentRunning && !hasStreamingContent && (agentPhase || isCompacting || settling) && (
               <div className="break-words py-2 text-[13px] text-text-muted">
-                <span className="animate-[pulse_1.5s_infinite]">
-                  {phaseLabel(agentPhase, t, isCompacting)}
-                  {runStartedAtRef.current !== null && <ElapsedBadge startedAt={runStartedAtRef.current} />}
-                </span>
+                {settling && !agentPhase ? (
+                  // agent_end: the run's answer is fully on screen, the SDK is just wrapping up
+                  // (compaction checks / extension settle hooks). A non-spinning completion chip — the
+                  // sidebar may still show running until agent_settled reconciles, but the chat flow
+                  // should never scream "still running" once the answer is out.
+                  <span>
+                    {t("chat.turnCompleteSettling")}
+                    {runStartedAtRef.current !== null && <ElapsedBadge startedAt={runStartedAtRef.current} />}
+                  </span>
+                ) : (
+                  <span className="animate-[pulse_1.5s_infinite]">
+                    {phaseLabel(agentPhase, t, isCompacting)}
+                    {runStartedAtRef.current !== null && <ElapsedBadge startedAt={runStartedAtRef.current} />}
+                  </span>
+                )}
               </div>
             )}
 

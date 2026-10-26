@@ -181,6 +181,8 @@ export async function checkProjectNavigation({ browser, base, artifacts, fixture
         await page.locator(".new-session-hero").waitFor({ state: "visible" });
         await page.waitForURL((url) => url.searchParams.get("cwd") === current.cwd);
         assert.equal(context.pages().length, 1);
+        if (forbidden.length) console.error("[diag] forbidden:", JSON.stringify(forbidden));
+        if (forbidden.length) console.error("[diag] forbidden:", JSON.stringify(forbidden.slice(0, 4)));
         assert.deepEqual(forbidden, [], "no session created, copied, prompted or stopped");
         assert.deepEqual((await api("/api/sessions")).sessions.map((session) => session.id).sort(), initialIds);
         assert.deepEqual(errors, []);
