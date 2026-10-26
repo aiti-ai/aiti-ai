@@ -319,7 +319,7 @@ test("Save applies a provider name typed without pressing Rename", () => {
     source.indexOf("const providers = Object.entries(config.providers"),
   );
   assert.match(save, /applyProviderRename\(config, providerNameDraft\.provider, pendingName\)/);
-  assert.match(save, /body: JSON\.stringify\(savedDraft\)/); // 合并：保存 post-probe 快照
+  assert.match(save, /body: JSON\.stringify\(normalizedDraft\)/); // 合并：保存 post-probe 快照
   assert.match(save, /collectModelRenames\(savedDraft,/); // 合并：savedDraft);
 });
 
