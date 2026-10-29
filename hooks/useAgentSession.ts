@@ -251,27 +251,27 @@ const EVENT_STREAM_RECONNECT_DELAY_MS = 1_000;
 const SESSION_LEASE_RENEW_INTERVAL_MS = 30_000;
 // A ready stream silent for two and a half heartbeats is dead (AgentEventConnection reconnects).
 const EVENT_STREAM_STALE_MS = AGENT_EVENT_HEARTBEAT_MS * 2.5;
-// This page's id for the lease that keeps its selected session alive (holdSessionLivenessLease()),
-// also the label of its event streams on the server's debug view. On the window, not in this
+// This page's id: the label of its event streams (`?holder=`) on the server's debug view, and
+// how the debug panel tells this page's streams from another's. On the window, not in this
 // module: a Fast Refresh re-evaluates the module while the open stream keeps the id it was opened
-// with, and a new id would make the page's own stream and lease look like another page's.
-const PAGE_LEASE_HOLDER_KEY = Symbol.for("pi-web:page-lease-holder");
+// with, and a new id would make the page's own stream look like another page's.
+const PAGE_ID_KEY = Symbol.for("pi-web:page-id");
 type SessionLeaseOutcome = SessionLeaseReply | "unanswered" | null;
-function pageLeaseHolderId(): string {
+function pageId(): string {
   const store = globalThis as Record<PropertyKey, unknown>;
-  const existing = store[PAGE_LEASE_HOLDER_KEY];
+  const existing = store[PAGE_ID_KEY];
   if (typeof existing === "string") return existing;
-  const holder = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  store[PAGE_LEASE_HOLDER_KEY] = holder;
-  return holder;
+  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  store[PAGE_ID_KEY] = id;
+  return id;
 }
-/** This page's holder id without creating it: null before its first lease request or event stream. */
-export function peekPageLeaseHolder(): string | null {
-  const holder = (globalThis as Record<PropertyKey, unknown>)[PAGE_LEASE_HOLDER_KEY];
-  return typeof holder === "string" ? holder : null;
+/** This page's id without creating it: null before its first event stream. */
+export function peekPageId(): string | null {
+  const id = (globalThis as Record<PropertyKey, unknown>)[PAGE_ID_KEY];
+  return typeof id === "string" ? id : null;
 }
 function sessionLeaseUrl(sid: string): string {
-  return `/api/agent/${encodeURIComponent(sid)}/lease?holder=${pageLeaseHolderId()}`;
+  return `/api/agent/${encodeURIComponent(sid)}/lease`;
 }
 // Retry temporary model-list failures without requiring a page refresh.
 const MODELS_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
@@ -556,7 +556,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     eventConnectionRef.current = new AgentEventConnection({
       createSource: (sid) => trackEventSource(
         "agent",
-        new EventSource(`/api/agent/${encodeURIComponent(sid)}/events?holder=${encodeURIComponent(pageLeaseHolderId())}`),
+        new EventSource(`/api/agent/${encodeURIComponent(sid)}/events?holder=${encodeURIComponent(pageId())}`),
         sid,
       ),
       onEvent: (event) => handleAgentEventRef.current?.(event as AgentEvent),
@@ -1131,8 +1131,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, []);
 
   // Keep the selected session's stream open even while its agent is idle. The
-  // session itself stays alive on the page's lease (below), which expires if
-  // the browser disappears.
+  // session itself stays alive on the page's lease renewals (below), which stop
+  // if the browser disappears.
   useEffect(() => {
     const sid = session?.id;
     if (!sid) return;
@@ -1149,7 +1149,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     };
   }, [maintainEventsConnected, session?.id]);
 
-  // One lease request (holdSessionLivenessLease()): it keeps the session alive
+  // One lease request: it resets the session's idle countdown (renewIdleTimer())
   // and reports what is under way there (SessionLeaseReply). A reply that does
   // not come within SESSION_LEASE_TIMEOUT_MS, or no network, is "unanswered";
   // an error reply is null.
@@ -2748,10 +2748,11 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     });
   };
 
-  // The page keeps its selected session alive with a lease of its own, renewed
-  // every SESSION_LEASE_RENEW_INTERVAL_MS whether or not it holds the event
-  // stream: a hidden page lets go of the stream (#1283), not of the session, so
-  // the idle wrapper and an extension's timer in it live on. A released page
+  // The page keeps its selected session alive with a lease renewal every
+  // SESSION_LEASE_RENEW_INTERVAL_MS, each one resetting the session's idle
+  // countdown, whether or not it holds the event stream: a hidden page lets go
+  // of the stream (#1283), not of the session, so the idle wrapper and an
+  // extension's timer in it live on. A released page
   // reads each reply and opens the stream again as soon as something is under
   // way (sessionLeaseShowsActivity()); one that comes back opens it at once. A
   // dead stream is the connection's heartbeat watchdog's to notice.
@@ -2900,6 +2901,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const lease = leaseDebugRef.current;
     const reattached = reattachDebugRef.current;
     return {
+      pageId: peekPageId(),
       sessionId: sid,
       selectedSessionId: sessionPropIdRef.current,
       mounted: sessionHookMountedRef.current,
@@ -2917,7 +2919,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         dialogs: extensionUiCountRef.current,
       },
       lease: {
-        holder: peekPageLeaseHolder(),
         renewIntervalMs: SESSION_LEASE_RENEW_INTERVAL_MS,
         renewStartedAt: lease.renewStartedAt,
         inFlightSince: lease.inFlightSince,

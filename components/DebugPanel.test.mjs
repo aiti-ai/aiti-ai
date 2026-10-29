@@ -81,6 +81,7 @@ const SERVER = 9_000_000;
 
 function client(extra = {}) {
   return {
+    pageId: "page-mine-123",
     sessionId: "s1",
     selectedSessionId: "s1",
     mounted: true,
@@ -109,7 +110,6 @@ function client(extra = {}) {
     graceDueAt: null,
     run: { agentRunning: false, bashRunning: false, compacting: false, dialogs: 0 },
     lease: {
-      holder: "page-mine-123",
       renewIntervalMs: 15 * SECOND,
       renewStartedAt: LOCAL - 20 * SECOND,
       inFlightSince: null,
@@ -142,7 +142,7 @@ function page(extra = {}) {
 function summary(sessionId, extra = {}) {
   return {
     sessionId, state: "alive", running: false, awaitingInput: false, subagent: false,
-    eventStreams: 0, activeLeases: 0, providers: 0, nextIdleCheckAt: null, forcedByStop: false, starts: 1, ...extra,
+    eventStreams: 0, providers: 0, nextIdleCheckAt: null, forcedByStop: false, starts: 1, ...extra,
   };
 }
 
@@ -164,7 +164,6 @@ function reply() {
     server: {
       startedAt: SERVER - 2 * 60 * MINUTE,
       idleTimeoutMs: 10 * MINUTE,
-      leaseTtlMs: 45 * SECOND,
       heartbeatMs: 15 * SECOND,
       wrappers: { alive: 3, closing: 1, starting: 0 },
       eventStreams: { total: 3, byHolder: [{ holder: "page-other-456", count: 2 }, { holder: "page-mine-123", count: 1 }] },
@@ -173,8 +172,8 @@ function reply() {
     },
     sessions: [
       summary("other-session", { state: "closing" }),
-      summary("notes-1", { awaitingInput: true, eventStreams: 1, activeLeases: 1, nextIdleCheckAt: SERVER + 3 * MINUTE }),
-      summary("s1", { eventStreams: 2, activeLeases: 2, providers: 1, nextIdleCheckAt: SERVER + 8 * MINUTE + 30 * SECOND }),
+      summary("notes-1", { awaitingInput: true, eventStreams: 1, nextIdleCheckAt: SERVER + 3 * MINUTE }),
+      summary("s1", { eventStreams: 2, providers: 1, nextIdleCheckAt: SERVER + 8 * MINUTE + 30 * SECOND }),
       summary("sub-xyz-789", { subagent: true, running: true, eventStreams: 1 }),
     ],
     session: {
@@ -182,10 +181,6 @@ function reply() {
       wrapper: wrapper(),
       lifecycle: { starts: 2, firstStartedAt: SERVER - 30 * MINUTE, lastStartedAt: SERVER - 6 * MINUTE, lastClosedAt: SERVER - 7 * MINUTE },
       starting: false,
-      leases: [
-        { holder: "page-other-456", expiresAt: SERVER - 10 * SECOND, active: false, createdAt: null, renewedAt: null, renewals: null },
-        { holder: "page-mine-123", expiresAt: SERVER + 40 * SECOND, active: true, createdAt: SERVER - 5 * MINUTE, renewedAt: SERVER - 5 * SECOND, renewals: 20 },
-      ],
       providers: [{ name: "keepalive-ext", active: true, byFile: true }],
       eventStreams: [
         { holder: "page-other-456", openedAt: SERVER - 6 * MINUTE, connectedAt: SERVER - 6 * MINUTE, lastWriteAt: SERVER - 3 * SECOND, droppedEvents: 0, queuedBytes: 0 },
@@ -270,12 +265,10 @@ test("server countdowns run on the server's clock plus the time since its answer
   const html = render();
   const text = visibleText(html);
   // 8m 30s left when the server answered, 10 s ago: 8m 20s, whatever the browser's clock says.
-  assert.ok(text.includes("next check in 8m 20s"), text);
+  assert.ok(text.includes("Reap countdown 8m 20s"), text);
   const all = titles(html);
-  assert.ok(all.includes("this page page-min · expires in 30s · 20 renewals"), all.join("\n"));
-  assert.ok(all.includes("other page page-oth · expired 20s ago"));
   assert.ok(all.includes("started 2× · last 6m 10s ago · closed 7m 10s ago"));
-  assert.ok(all.includes("timeout 10m 00s · reset 1m 40s ago"), "the idle bar's scale in its tooltip");
+  assert.ok(all.includes(`timeout 10m 00s · reset 1m 40s ago · ${t("debug.server.idleHint")}`), "the idle bar's scale in its tooltip");
   assert.ok(text.includes("Uptime 2h 00m"));
   assert.ok(text.includes("↻2"));
   // The browser's own times run on its own clock: next renewal 10 s after the 30 s mark.
@@ -284,7 +277,7 @@ test("server countdowns run on the server's clock plus the time since its answer
   assert.ok(text.includes("Last renewal answered · 18 ms · 5s ago"));
 });
 
-test("one boxed word per stream, lease and provider: this page's first and filled, other pages' outlined", () => {
+test("one boxed word per stream and provider: this page's first and filled, other pages' outlined", () => {
   const html = render();
   // The chat's badges sit in its row of the list, where every other session's are.
   const list = section(html, "sessions", "global");
@@ -292,14 +285,12 @@ test("one boxed word per stream, lease and provider: this page's first and fille
   assert.doesNotMatch(section(html, "session", "sessions"), /debug-badge/, "none left in the card");
   const labels = ariaLabels(card);
   assert.ok(labels.includes("SSE: 2 (this page 1, other page 1)"), labels.join("\n"));
-  assert.ok(labels.includes("Lease: 2 (this page 1, other page 1)"));
+  assert.ok(!labels.some((label) => label.startsWith("Lease")), "the server keeps no leases to show");
   assert.ok(labels.includes("Liveness providers: 1"));
-  // The badges say what they are: no "SSE" or "Lease" label before them, no icon in them.
+  // The badges say what they are: no "SSE" label before them, no icon in them.
   assert.match(card, /<span class="debug-row-badges"><span class="debug-run" title="SSE: 2 [^"]*" role="img" aria-label="SSE: 2 [^"]*"><span class="debug-badge is-accent is-filled" title="this page page-min · connected 5m 10s ago · last write 13s ago">SSE<\/span><span class="debug-badge is-muted" title="other page page-oth · connected 6m 10s ago · last write 13s ago">SSE<\/span><\/span><span class="debug-run"/);
   assert.doesNotMatch(card, /debug-mini-label/);
-  // Each lease's gauge under its badge, as wide as it; a lapsed lease dim and faint, its gauge empty.
-  assert.match(card, /<span class="debug-cell"><span class="debug-badge is-accent is-filled" title="this page page-min · expires in 30s · 20 renewals">Lease<\/span><span class="debug-bar is-accent" style="width:100%;height:2px"/);
-  assert.match(card, /<span class="debug-cell"><span class="debug-badge is-dim is-faded" title="other page page-oth · expired 20s ago">Lease<\/span><span class="debug-bar is-dim" style="width:100%;height:2px" aria-hidden="true"><span class="debug-bar-fill" style="width:0%">/);
+  assert.doesNotMatch(card, />Lease</);
   // A provider's badge is its name.
   assert.match(card, /<span class="debug-badge is-name is-muted" title="keepalive-ext · active · by file">keepalive-ext<\/span>/);
 
@@ -310,7 +301,7 @@ test("one boxed word per stream, lease and provider: this page's first and fille
   assert.ok(strip.indexOf("this page page-min") < strip.indexOf("other page page-oth"), "this page's streams first");
   assert.match(strip, /aria-label="File watches: 1"><span class="debug-badge is-muted" title="File watches: 1">File<\/span><\/span>/);
   assert.match(strip, /aria-label="Terminals: 1 [^"]*"><span class="debug-badge is-muted" title="Terminals: 1 [^"]*">Term<\/span><\/span>/);
-  assert.ok(titles(strip).some((title) => title.startsWith("Timers: idle 10m 00s · lease 45s · heartbeat 15s\n3 alive · 1 closing · 0 starting")));
+  assert.ok(titles(strip).some((title) => title.startsWith("Timers: idle 10m 00s · heartbeat 15s\n3 alive · 1 closing · 0 starting")));
 });
 
 test("a starting stream is dashed amber, one dropping events amber; past the cap the rest is a count", () => {
@@ -332,9 +323,9 @@ test("a starting stream is dashed amber, one dropping events amber; past the cap
   assert.equal(run.match(/is-filled/g).length, 1, "only this page's is filled");
 });
 
-test("a session row: up to three SSE, two Lease and one Provider badge, then counts; this page's streams filled", () => {
+test("a session row: up to three SSE and one Provider badge, then counts; this page's streams filled", () => {
   const answer = reply();
-  answer.sessions = answer.sessions.map((entry) => (entry.sessionId === "notes-1" ? { ...entry, eventStreams: 5, activeLeases: 3, providers: 2 } : entry));
+  answer.sessions = answer.sessions.map((entry) => (entry.sessionId === "notes-1" ? { ...entry, eventStreams: 5, providers: 2 } : entry));
   const grace = { id: 3, kind: "agent", label: "notes-1", state: "open", createdAt: LOCAL - MINUTE, opens: 1, errors: 0, lastOpenAt: null, lastErrorAt: null };
   const list = section(render({ page: page({ sources: [...page().sources, grace] }), server: server({ reply: answer }) }), "sessions", "global");
   const from = list.indexOf('<div class="debug-row" title="notes-1');
@@ -347,10 +338,6 @@ test("a session row: up to three SSE, two Lease and one Provider badge, then cou
     '<span class="debug-badge is-muted" title="5 event streams">SSE</span>',
     '<span class="debug-badge is-muted" title="5 event streams">SSE</span>',
     '<span class="debug-run-more">+2</span></span>',
-    '<span class="debug-run" title="3 active leases" role="img" aria-label="3 active leases">',
-    '<span class="debug-badge is-muted" title="3 active leases">Lease</span>',
-    '<span class="debug-badge is-muted" title="3 active leases">Lease</span>',
-    '<span class="debug-run-more">+1</span></span>',
     '<span class="debug-run" title="2 liveness providers" role="img" aria-label="2 liveness providers">',
     '<span class="debug-badge is-muted" title="2 liveness providers">Provider</span>',
     '<span class="debug-run-more">+1</span></span>',
@@ -385,7 +372,7 @@ test("the meter's slots say what holds them: SSE, File, Term; a connecting one d
   ]);
   assert.match(meter, /title="Terminal · app · connecting · opened 1× · 0 errors · 30s ago">Term</);
   assert.match(panelSource, /\.debug-slot\.is-empty \{\s*border: 1px dotted var\(--border\);/);
-  // The words follow the language; "SSE" and "Lease" stay as they are.
+  // The words follow the language; "SSE" stays as it is.
   const zh = (key, params) => interpolateMessage(zhCNLocale.messages[key], params);
   const zhHtml = render({ page: page({ sources }), t: zh });
   const zhFrom = zhHtml.indexOf('<span class="debug-meter"');
@@ -404,13 +391,12 @@ test("sessions on the server: grouped by project, the chat's first and not repea
     "other-se",
   ]);
   const list = section(render(), "sessions", "global");
-  assert.match(list, /class="debug-row is-current" title="this chat · s1 · alive · 2 event streams · 2 active leases · 1 liveness providers · idle check in 8m">/);
+  assert.match(list, /class="debug-row is-current" title="this chat · s1 · alive · 2 event streams · 1 liveness providers · reap countdown 8m">/);
   // The chat's row: the sidebar's short bar instead of a status dot, and its badges with their holders.
   const current = list.slice(list.indexOf("debug-row is-current"), list.indexOf("debug-row is-sub"));
   assert.match(current, /<span class="debug-row-status"><\/span>/);
   assert.match(current, /aria-label="SSE: 2 \(this page 1, other page 1\)"/);
   assert.match(panelSource, /\.debug-row\.is-current::before \{\s*content: "";\s*position: absolute;\s*top: 5px;\s*left: 0;\s*width: 3px;\s*height: 14px;/);
-  assert.match(list, /aria-label="1 event streams"[^]*?aria-label="1 active leases"/);
   assert.match(list, /<span class="session-tree-awaiting" role="img" aria-label="awaiting input" title="awaiting input"><\/span>/, "the sidebar's awaiting dot");
   assert.match(list, /<span class="debug-status is-accent" title="running"><svg[^>]*class="sidebar-spin"/, "the sidebar's spinner");
   assert.match(list, /<span class="debug-status-ring is-closing"><\/span>/);
@@ -526,7 +512,8 @@ test("notable states show in place and leave the verdict at OK", () => {
   const card = section(html, "session", "sessions");
   assert.match(card, /<span class="debug-status-ring is-closing"><\/span>/);
   assert.match(card, /<span class="debug-chip is-warning">closing 13s ago<\/span>/);
-  assert.match(card, /<span class="debug-value is-warning"[^>]*>closes in 30s \(after Stop\)<\/span>/);
+  // Closing after Stop: the stop square, then the time alone, amber.
+  assert.match(card, /<span class="debug-row-forced is-warning" role="img" aria-label="Stopped: [^"]*" title="Stopped: [^"]*"><\/span><span class="debug-value is-warning"[^>]*>30s<\/span>/);
   const stream = section(html, "stream", "lease");
   assert.match(stream, /<span class="debug-chip is-accent">released while hidden<\/span><span class="debug-chip is-accent">Grace before close in 24s<\/span>/);
 });
@@ -601,8 +588,12 @@ test("the panel keeps to the theme and to Safari 16.2: tokens, the three state c
   assert.doesNotMatch(panelSource, /AbortSignal\.(any|timeout)|\(\?<[=!]/, "Safari 16.2");
   const css = panelSource.slice(panelSource.indexOf("const DEBUG_PANEL_CSS"));
   assert.doesNotMatch(css, /:has\(|&|transition/);
-  // Rules are flat: only the container query holds rules inside braces.
-  const outside = css.replace(/@container debug-panel \(max-width: 520px\) \{[^]*?\n {2}\}\n/, "");
+  // Rules are flat: only the container queries hold rules inside braces.
+  const outside = css.replace(/@container debug-panel \(max-width: \d+px\) \{[^]*?\n {2}\}\n/g, "");
+  // Four tiles in a row, two on a narrower panel, one on a phone; the bars keep one width.
+  assert.match(css, /\.debug-tiles \{\s*display: grid;\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\) minmax\(0, 1\.3fr\);/);
+  assert.match(css, /@container debug-panel \(max-width: 900px\) \{\s*\.debug-tiles \{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(css, /@container debug-panel \(max-width: 520px\) \{\s*\.debug-tiles \{\s*grid-template-columns: minmax\(0, 1fr\);/);
   assert.doesNotMatch(outside, /\{[^}]*\{/, "no nested rule");
   assert.match(css, /container-type: inline-size;\s*container-name: debug-panel;/);
   assert.match(css, /@container debug-panel \(max-width: 520px\)/);

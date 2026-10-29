@@ -9,8 +9,8 @@ const MAX_SESSION_ID_LENGTH = 512;
 
 // GET /api/agent/debug?session=<id> - The debug panel's server view: the global layer and the
 // selected session's detail in one request, since over HTTP/1.1 each request competes for the
-// browser's six connections. Reads only (lib/debug-snapshot.ts): never starts a wrapper, takes
-// a lease, opens a stream or moves an idle timer.
+// browser's six connections. Reads only (lib/debug-snapshot.ts): never starts a wrapper, opens
+// a stream or moves an idle timer.
 export async function GET(req: Request) {
   const requested = new URL(req.url).searchParams.get("session");
   const sessionId = requested && requested.length <= MAX_SESSION_ID_LENGTH ? requested : null;

@@ -45,7 +45,6 @@ import {
   groupDebugSessions,
   holderGroupLabel,
   joinParts as join,
-  leaseGaugeTone,
   mcpServerTone,
   nextLeaseRenewalAt,
   pageAgentStreamCount,
@@ -253,7 +252,7 @@ interface Ctx {
   now: number;
   /** Server times, on the server's clock; null before an answer. */
   clock: DebugServerClock | null;
-  /** This page's id: its streams and leases are the filled ones. */
+  /** This page's id: its streams are the filled ones. */
   myHolder: string | null;
   titleOf: DebugTitleOf;
 }
@@ -268,7 +267,7 @@ export function DebugPanelView({ page, server, samples = EMPTY_DEBUG_SAMPLES, se
   // An answer about the session the panel shows: the poll drops the others, but one may still be
   // on screen for a second after the chat moved on.
   const detail = reply?.session && reply.session.sessionId === targetSessionId ? reply.session : null;
-  const myHolder = client?.lease?.holder ?? null;
+  const myHolder = client?.pageId ?? null;
   const byId = useMemo(() => new Map(sessions.map((session) => [session.id, session])), [sessions]);
   const titleOf = useMemo<DebugTitleOf>(() => (id) => {
     const info = byId.get(id);
@@ -292,13 +291,14 @@ export function DebugPanelView({ page, server, samples = EMPTY_DEBUG_SAMPLES, se
       {page !== null && (
         <div className="debug-panel-scroll">
           {issues.length > 0 && <IssueList issues={issues} />}
+          {/* The chat at a glance, four tiles side by side; the server's sessions and totals below, full width. */}
           <div className="debug-tiles">
             <PageTile page={page} samples={samples} ctx={ctx} />
             <StreamTile page={page} reply={reply} ctx={ctx} />
             <LeaseTile page={page} ctx={ctx} />
+            <SessionCard reply={reply} detail={detail} targetSessionId={targetSessionId} ctx={ctx} />
           </div>
           <div className="debug-server">
-            <SessionCard reply={reply} detail={detail} targetSessionId={targetSessionId} ctx={ctx} />
             <SessionList reply={reply} detail={detail} groups={groups} sources={page.sources} ctx={ctx} />
           </div>
           <GlobalStrip reply={reply} ctx={ctx} />
@@ -362,8 +362,6 @@ interface BadgeItem {
   title: string;
   /** The badge's own word when it is not the run's: a liveness provider's name. */
   text?: string;
-  /** A small bar under the badge, as wide as it (a lease's time to live). */
-  gauge?: { fraction: number; tone: DebugTone };
 }
 
 /** A badge's classes: the tone sets its color; filled, dashed and faint say whose it is and how it stands. */
@@ -374,7 +372,7 @@ function badgeClass(item: Pick<BadgeItem, "tone" | "filled" | "dashed" | "faded"
 }
 
 /**
- * One boxed word per item ("SSE", "Lease", a provider's name), each with its own tooltip, up to
+ * One boxed word per item ("SSE", a provider's name), each with its own tooltip, up to
  * `cap`, then "+n". The run is an image named `label`; `plain` drops the role when an enclosing
  * group already names it. No items, nothing.
  */
@@ -388,20 +386,11 @@ function BadgeRun({ text, items, cap, label, plain = false }: {
   if (items.length === 0) return null;
   return (
     <span className="debug-run" title={label} {...(plain ? {} : { role: "img", "aria-label": label })}>
-      {items.slice(0, cap).map((item, index) => {
-        const badge = (
-          <span className={badgeClass(item, item.text !== undefined ? "is-name" : undefined)} title={item.title}>
-            {item.text ?? text}
-          </span>
-        );
-        if (!item.gauge) return <Fragment key={index}>{badge}</Fragment>;
-        return (
-          <span key={index} className="debug-cell">
-            {badge}
-            <Bar fraction={item.gauge.fraction} tone={item.gauge.tone} width="100%" height={2} />
-          </span>
-        );
-      })}
+      {items.slice(0, cap).map((item, index) => (
+        <span key={index} className={badgeClass(item, item.text !== undefined ? "is-name" : undefined)} title={item.title}>
+          {item.text ?? text}
+        </span>
+      ))}
       {items.length > cap && <span className="debug-run-more">{`+${items.length - cap}`}</span>}
     </span>
   );
@@ -432,6 +421,9 @@ function Bar({ fraction, tone, width, height = 4, notches, title, className }: {
     </span>
   );
 }
+
+// One width for the panel's bars and sparklines: a wide panel keeps a value next to its bar.
+const BAR_WIDTH = 120;
 
 const RING_LENGTH = 56.55; // 2π × 9
 
@@ -740,7 +732,7 @@ function FreshnessRow({ connection, freshness, heartbeatMs, ctx }: {
   return (
     <div className="debug-measures">
       <span className="debug-label">{t("debug.stream.lastData")}</span>
-      <Bar fraction={barFraction(ageMs, staleAfterMs) ?? 0} tone={tone} width="100%" notches={notches} title={title} />
+      <Bar fraction={barFraction(ageMs, staleAfterMs) ?? 0} tone={tone} width={BAR_WIDTH} notches={notches} title={title} />
       <span className={`debug-value is-${tone}`} title={title}>{formatDebugDuration(ageMs, t)}</span>
     </div>
   );
@@ -749,10 +741,11 @@ function FreshnessRow({ connection, freshness, heartbeatMs, ctx }: {
 function LeaseTile({ page, ctx }: { page: DebugPageReading; ctx: Ctx }) {
   const { t, now } = ctx;
   const lease = page.client?.lease ?? null;
+  const pageId = page.client?.pageId ?? null;
   let body: ReactNode;
   if (!lease) {
     body = <div className="debug-empty">{page.clientFailed ? "—" : t("debug.stream.noChat")}</div>;
-  } else if (lease.holder === null && lease.requests === 0) {
+  } else if (lease.requests === 0) {
     body = <div className="debug-empty">{t("debug.lease.noHolder")}</div>;
   } else {
     const last = lease.last;
@@ -763,7 +756,7 @@ function LeaseTile({ page, ctx }: { page: DebugPageReading; ctx: Ctx }) {
     const ringLabel = join([
       t("debug.lease.every", { time: formatDebugDuration(lease.renewIntervalMs, t) }),
       counts,
-      lease.holder !== null && `${t("debug.holder.thisPage")} ${shortDebugId(lease.holder)}`,
+      pageId !== null && `${t("debug.holder.thisPage")} ${shortDebugId(pageId)}`,
     ]);
     body = (
       <>
@@ -884,11 +877,11 @@ function ListenerMismatch({ detail, t }: { detail: DebugSessionDetail; t: Transl
 }
 
 /**
- * The chat's row in the list: one badge per event stream ("SSE"), lease ("Lease") and liveness
- * provider (its name) the server holds for the session, with the holders the other rows' summaries
- * lack: this page's first and filled, a lease's time to live under it. Same caps as the other rows.
+ * The chat's row in the list: one badge per event stream ("SSE") and liveness provider (its name)
+ * the server holds for the session, with the holders the other rows' summaries lack: this page's
+ * first and filled. Same caps as the other rows.
  */
-function DetailBadges({ reply, detail, clock, ctx }: { reply: DebugSnapshotResponse; detail: DebugSessionDetail; clock: DebugServerClock; ctx: Ctx }) {
+function DetailBadges({ detail, clock, ctx }: { detail: DebugSessionDetail; clock: DebugServerClock; ctx: Ctx }) {
   const { t, myHolder } = ctx;
   const ago = (at: number) => formatAgo(clock.age(at), t);
   const streams = thisPageFirst([...detail.eventStreams].sort((a, b) => a.openedAt - b.openedAt), myHolder);
@@ -904,22 +897,6 @@ function DetailBadges({ reply, detail, clock, ctx }: { reply: DebugSnapshotRespo
         stream.lastWriteAt !== null && t("debug.server.lastWrite", { time: ago(stream.lastWriteAt) }),
         stream.droppedEvents > 0 && t("debug.server.dropped", { count: stream.droppedEvents }),
         stream.queuedBytes > 0 && t("debug.server.queued", { size: formatBytes(stream.queuedBytes) }),
-      ]),
-    };
-  });
-  const ttl = reply.server.leaseTtlMs;
-  const leaseItems: BadgeItem[] = thisPageFirst(detail.leases, myHolder).map((lease) => {
-    const remaining = clock.remaining(lease.expiresAt);
-    const tone: DebugTone = lease.active ? debugHolderTone(lease.holder, myHolder) : "dim";
-    return {
-      tone,
-      filled: lease.holder !== null && lease.holder === myHolder,
-      faded: !lease.active,
-      gauge: { fraction: lease.active ? barFraction(remaining, ttl) ?? 0 : 0, tone: leaseGaugeTone(remaining, ttl, lease.active) ?? tone },
-      title: join([
-        debugHolderLabel(lease.holder, myHolder, t),
-        lease.active ? t("debug.lease.expiresIn", { time: formatCountdown(remaining, t) }) : t("debug.lease.expired", { time: formatAgo(-remaining, t) }),
-        lease.renewals !== null && t("debug.lease.renewals", { count: lease.renewals }),
       ]),
     };
   });
@@ -940,12 +917,6 @@ function DetailBadges({ reply, detail, clock, ctx }: { reply: DebugSnapshotRespo
   return (
     <>
       <BadgeRun text="SSE" items={streamItems} cap={3} label={holderGroupLabel("SSE", streams.map((stream) => stream.holder), myHolder, t)} />
-      <BadgeRun
-        text="Lease"
-        items={leaseItems}
-        cap={2}
-        label={holderGroupLabel(t("debug.section.lease"), detail.leases.map((lease) => lease.holder), myHolder, t)}
-      />
       <BadgeRun
         text={t("debug.box.provider")}
         items={providerItems}
@@ -989,7 +960,10 @@ function CardRun({ detail, clock, ctx }: { detail: DebugSessionDetail; clock: De
   const idleTitle = join([
     idle.timeoutMs > 0 && t("debug.server.idleTimeout", { time: formatDebugDuration(idle.timeoutMs, t) }),
     idle.lastResetAt !== null && t("debug.server.idleReset", { time: ago(idle.lastResetAt) }),
+    t(idle.forcedByStop ? "debug.server.idleForced" : "debug.server.idleHint"),
   ]);
+  // Only the time: the label says what it counts down to, the title what moves it.
+  const idleTime = remaining > 0 ? formatDebugDuration(remaining, t) : t("debug.time.due");
   const activity = join([
     wrapper.lastEvent && `${t("debug.server.lastEvent")} ${wrapper.lastEvent.type} ${ago(wrapper.lastEvent.at)}`,
     wrapper.lastCommand && `${t("debug.server.lastCommand")} ${wrapper.lastCommand.type} ${ago(wrapper.lastCommand.at)}`,
@@ -1006,11 +980,11 @@ function CardRun({ detail, clock, ctx }: { detail: DebugSessionDetail; clock: De
         <div className="debug-idle-row">
           <span className="debug-label">{t("debug.server.idle")}</span>
           {idleFraction !== null && (
-            <Bar fraction={idleFraction} tone={idle.forcedByStop ? "warning" : "dim"} width={160} title={idleTitle} className="debug-idle-bar" />
+            <Bar fraction={idleFraction} tone={idle.forcedByStop ? "warning" : "dim"} width={BAR_WIDTH} title={idleTitle} className="debug-idle-bar" />
           )}
-          <span className={`debug-value is-${idle.forcedByStop ? "warning" : "muted"}`} title={idleTitle || undefined}>
-            {t(idle.forcedByStop ? "debug.server.closes" : "debug.server.nextCheck", { time: formatCountdown(remaining, t) })}
-          </span>
+          {/* Closing after Stop: the list rows' stop square, not the amber alone. */}
+          {idle.forcedByStop && <span className="debug-row-forced is-warning" role="img" aria-label={t("debug.server.idleForced")} title={t("debug.server.idleForced")} />}
+          <span className={`debug-value is-${idle.forcedByStop ? "warning" : "muted"}`} title={idleTitle}>{idleTime}</span>
         </div>
       )}
       {activity && <div className="debug-line">{activity}</div>}
@@ -1147,7 +1121,7 @@ function SessionList({ reply, detail, groups, sources, ctx }: {
             clock={clock}
             ctx={ctx}
             badges={row.current && detail?.sessionId === row.id
-              ? <DetailBadges reply={reply} detail={detail} clock={clock} ctx={ctx} />
+              ? <DetailBadges detail={detail} clock={clock} ctx={ctx} />
               : undefined}
           />
         ))}
@@ -1220,8 +1194,6 @@ function SessionRowCells({ summary, mine, remaining, idleTimeoutMs, t, badges }:
     index < ours ? { tone: "accent", filled: true, title: streamsLabel } : { tone: "muted", title: streamsLabel }
   ));
   // The summary holds no holders and no provider names: outlined, and the generic word.
-  const leasesLabel = t("debug.overlay.leases", { count: summary.activeLeases });
-  const leases: BadgeItem[] = Array.from({ length: summary.activeLeases }, () => ({ tone: "muted", title: leasesLabel }));
   const providersLabel = t("debug.overlay.providers", { count: summary.providers });
   const providers: BadgeItem[] = Array.from({ length: summary.providers }, () => ({ tone: "muted", title: providersLabel }));
   const idleShown = remaining !== null && (idleTimeoutMs > 0 || summary.forcedByStop);
@@ -1229,12 +1201,11 @@ function SessionRowCells({ summary, mine, remaining, idleTimeoutMs, t, badges }:
   const forcedLabel = remaining !== null ? t("debug.overlay.closesIn", { time: formatShortDebugDuration(remaining, t) }) : undefined;
   return (
     <>
-      {/* One cell for all three runs: a second line under the title in a narrow panel. */}
+      {/* One cell for both runs: a second line under the title in a narrow panel. */}
       <span className="debug-row-badges">
         {badges ?? (
           <>
             <BadgeRun text="SSE" items={streams} cap={3} label={streamsLabel} />
-            <BadgeRun text="Lease" items={leases} cap={2} label={leasesLabel} />
             <BadgeRun text={t("debug.box.provider")} items={providers} cap={1} label={providersLabel} />
           </>
         )}
@@ -1271,7 +1242,6 @@ function GlobalStrip({ reply, ctx }: { reply: DebugSnapshotResponse | null; ctx:
   const wrappers = t("debug.global.wrappersValue", { ...global.wrappers });
   const timers = `${t("debug.global.timers")}: ${t("debug.global.timersValue", {
     idle: global.idleTimeoutMs > 0 ? formatDebugDuration(global.idleTimeoutMs, t) : t("debug.server.idleDisabled"),
-    lease: formatDebugDuration(global.leaseTtlMs, t),
     heartbeat: formatDebugDuration(global.heartbeatMs, t),
   })}\n${wrappers}`;
   const holders = thisPageFirst(global.eventStreams.byHolder, myHolder);
@@ -1417,9 +1387,9 @@ const DEBUG_PANEL_CSS = `
     min-height: 0;
     flex: 1;
     flex-direction: column;
-    gap: 16px;
+    gap: 12px;
     overflow: auto;
-    padding: 12px 16px 16px;
+    padding: 10px 16px 12px;
     font-size: 12px;
     line-height: 1.5;
   }
@@ -1483,10 +1453,11 @@ const DEBUG_PANEL_CSS = `
     overflow-wrap: anywhere;
   }
 
+  /* Four tiles in a row, the session's a little wider; two per row on a narrower panel, one on a phone. */
   .debug-tiles {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
-    gap: 12px 24px;
+    grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 1.3fr);
+    gap: 10px 20px;
   }
   .debug-tile,
   .debug-card,
@@ -1517,7 +1488,8 @@ const DEBUG_PANEL_CSS = `
   }
   .debug-measures {
     display: grid;
-    grid-template-columns: max-content minmax(0, 1fr) max-content;
+    grid-template-columns: max-content max-content max-content;
+    justify-content: start;
     align-items: center;
     gap: 4px 8px;
   }
@@ -1543,7 +1515,7 @@ const DEBUG_PANEL_CSS = `
     white-space: nowrap;
   }
 
-  /* A boxed word: "SSE", "Lease", a provider's name, File, Term. Filled is this page's own. */
+  /* A boxed word: "SSE", a provider's name, File, Term. Filled is this page's own. */
   .debug-badge {
     display: inline-flex;
     height: 16px;
@@ -1568,12 +1540,6 @@ const DEBUG_PANEL_CSS = `
     background-color: var(--dbg-warn);
     color: var(--bg-panel);
   }
-  /* This page's, lapsed: a lease of its own past its time to live. */
-  .debug-panel .debug-badge.is-filled.is-dim {
-    border-color: var(--text-dim);
-    background-color: var(--text-dim);
-    color: var(--bg-panel);
-  }
   .debug-badge.is-dashed {
     border-style: dashed;
   }
@@ -1593,11 +1559,6 @@ const DEBUG_PANEL_CSS = `
     align-items: flex-start;
     gap: 3px;
     vertical-align: middle;
-  }
-  .debug-cell {
-    display: inline-flex;
-    flex-direction: column;
-    gap: 1px;
   }
   .debug-run-more {
     color: var(--text-dim);
@@ -1621,7 +1582,7 @@ const DEBUG_PANEL_CSS = `
   }
   .debug-slot {
     display: inline-flex;
-    min-width: 34px;
+    min-width: 32px;
     height: 18px;
     box-sizing: border-box;
     align-items: center;
@@ -1716,10 +1677,7 @@ const DEBUG_PANEL_CSS = `
   }
 
   .debug-server {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(380px, 100%), 1fr));
-    gap: 16px 24px;
-    padding-top: 12px;
+    padding-top: 10px;
     border-top: 1px solid var(--border);
   }
   .debug-card-head {
@@ -1943,7 +1901,7 @@ const DEBUG_PANEL_CSS = `
     flex-wrap: wrap;
     align-items: center;
     gap: 6px 16px;
-    padding-top: 12px;
+    padding-top: 10px;
     border-top: 1px solid var(--border);
     color: var(--text-dim);
     font-size: 11px;
@@ -1963,7 +1921,15 @@ const DEBUG_PANEL_CSS = `
     background: var(--border);
   }
 
+  @container debug-panel (max-width: 900px) {
+    .debug-tiles {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
   @container debug-panel (max-width: 520px) {
+    .debug-tiles {
+      grid-template-columns: minmax(0, 1fr);
+    }
     .debug-card-id {
       display: none;
     }

@@ -6,14 +6,15 @@ import { createJiti } from "jiti";
 // A page hidden for HIDDEN_PAGE_GRACE_MS lets go of the selected session's idle
 // event stream (#1283): over HTTP/1.1 every open stream holds one of the
 // browser's six connections per origin, shared by all tabs. The page's lease
-// request, renewed every 30 s either way, says what is under way in the session:
+// request, renewed every 30 s either way, resets the session's idle countdown and
+// says what is under way in it:
 // a run, an extension dialog or a subagent left to finish keeps the stream, and
 // opens a released one again while the page is still hidden. The page's return
 // reopens it and shows what the server has under way.
 const shimPath = fileURLToPath(new URL("./__fixtures__/react-hook-shim.mjs", import.meta.url));
 const jiti = createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath } });
 const { renderHook } = await import(shimPath);
-const { peekPageLeaseHolder, useAgentSession } = await jiti.import("./useAgentSession.ts");
+const { peekPageId, useAgentSession } = await jiti.import("./useAgentSession.ts");
 const { HIDDEN_PAGE_GRACE_MS } = await jiti.import("./usePageHidden.ts");
 // useAgentSession's SESSION_LEASE_RENEW_INTERVAL_MS.
 const SESSION_LEASE_RENEW_MS = 30_000;
@@ -69,7 +70,7 @@ async function setup() {
       return json({ filePath: "/s1.jsonl", leafId: null, tree: [], treeFormat: "summary", context: { messages: [], entryIds: [], oldestEntryId: null, hasMore: false } });
     }
     if (url === "/api/sessions/s1/state") return json({ running: true, state: server.state });
-    if (url.startsWith("/api/agent/s1/lease?holder=")) {
+    if (url === "/api/agent/s1/lease") {
       if (server.answer === "never") {
         return new Promise((_resolve, reject) => {
           init.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
@@ -98,7 +99,7 @@ async function setup() {
   // Lease requests since hiding: the renewal tick and the release check share one.
   let mark = 0;
   const hide = () => { mark = requests.length; setVisibility("hidden"); };
-  const checks = () => requests.slice(mark).filter((url) => url.startsWith("/api/agent/s1/lease?holder=")).length;
+  const checks = () => requests.slice(mark).filter((url) => url === "/api/agent/s1/lease").length;
   const reads = () => requests.filter((url) => url.startsWith("/api/sessions/s1?")).length;
   const tick = async (ms) => { mock.timers.tick(ms); await settle(); hook.flush(); };
   const read = () => reader?.() ?? null;
@@ -142,11 +143,11 @@ test("a page hidden past the grace closes the idle stream and its return reopens
   }
 });
 
-test("the page holds the session's lease the whole time, with or without its stream", async () => {
+test("the page renews the session the whole time, with or without its stream", async () => {
   const state = await setup();
   try {
-    const holds = () => state.requests.filter((url) => /^\/api\/agent\/s1\/lease\?holder=[\w-]+$/.test(url)).length;
-    assert.equal(holds(), 1, "taken as soon as the session is selected");
+    const holds = () => state.requests.filter((url) => url === "/api/agent/s1/lease").length;
+    assert.equal(holds(), 1, "sent as soon as the session is selected");
     await connectIdle(state);
     await state.tick(SESSION_LEASE_RENEW_MS);
     assert.equal(holds(), 2);
@@ -411,15 +412,16 @@ test("the debug reader asks nothing and opens nothing, however often it reads", 
     assert.equal(snapshot.connection.opens, 1);
     assert.deepEqual(snapshot.run, { agentRunning: false, bashRunning: false, compacting: false, dialogs: 0 });
 
-    const holder = peekPageLeaseHolder();
-    assert.match(holder, /^[\w-]+$/);
-    assert.equal(snapshot.lease.holder, holder);
-    assert.equal(state.sources[0].url, `/api/agent/s1/events?holder=${encodeURIComponent(holder)}`, "the stream is labelled with the page's id");
-    assert.ok(state.requests.includes(`/api/agent/s1/lease?holder=${holder}`), "the same id holds the lease");
+    const pageId = peekPageId();
+    assert.match(pageId, /^[\w-]+$/);
+    assert.equal(snapshot.pageId, pageId);
+    assert.equal(state.sources[0].url, `/api/agent/s1/events?holder=${encodeURIComponent(pageId)}`, "the stream is labelled with the page's id");
+    assert.ok(state.requests.includes("/api/agent/s1/lease"), "the lease request carries no page id");
+    assert.ok(!state.requests.some((url) => url.startsWith("/api/agent/s1/lease?")));
     // A Fast Refresh evaluates the module again; the page, and its open stream, keep their id.
     const reloaded = await createJiti(import.meta.url, { tsconfigPaths: true, alias: { react: shimPath }, moduleCache: false })
       .import("./useAgentSession.ts");
-    assert.equal(reloaded.peekPageLeaseHolder(), holder);
+    assert.equal(reloaded.peekPageId(), pageId);
     assert.equal(snapshot.lease.requests, 1);
     assert.equal(snapshot.lease.inFlightSince, null);
     assert.equal(snapshot.lease.renewIntervalMs, SESSION_LEASE_RENEW_MS);

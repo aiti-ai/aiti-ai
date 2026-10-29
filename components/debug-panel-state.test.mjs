@@ -27,7 +27,6 @@ function summary(sessionId, extra = {}) {
     awaitingInput: false,
     subagent: false,
     eventStreams: 0,
-    activeLeases: 0,
     providers: 0,
     nextIdleCheckAt: null,
     forcedByStop: false,
@@ -42,14 +41,13 @@ function snapshot(extra = {}) {
     server: {
       startedAt: 1_000_000 - HOUR,
       idleTimeoutMs: 10 * MINUTE,
-      leaseTtlMs: 45 * SECOND,
       heartbeatMs: 15 * SECOND,
       wrappers: { alive: 1, closing: 0, starting: 0 },
       eventStreams: { total: 1, byHolder: [{ holder: "page-1", count: 1 }] },
       fileWatches: 0,
       terminals: { count: 0, listeners: 0, detached: 0, exited: 0, nextCleanupAt: null },
     },
-    sessions: [summary("s1", { eventStreams: 1, activeLeases: 1, nextIdleCheckAt: 1_000_000 + 8 * MINUTE + 30 * SECOND })],
+    sessions: [summary("s1", { eventStreams: 1, nextIdleCheckAt: 1_000_000 + 8 * MINUTE + 30 * SECOND })],
     session: null,
     ...extra,
   };
@@ -103,7 +101,6 @@ test("only an answer of the snapshot's shape is rendered", () => {
     wrapper: null,
     lifecycle: null,
     starting: false,
-    leases: [],
     providers: null,
     eventStreams: [],
     subagents: { active: false, runs: [], notifications: [] },
@@ -117,7 +114,7 @@ test("only an answer of the snapshot's shape is rendered", () => {
     snapshot({ now: "1" }),
     snapshot({ sessions: [{ sessionId: 1 }] }),
     snapshot({ session: undefined }),
-    snapshot({ session: { ...detail, leases: null } }),
+    snapshot({ session: { ...detail, eventStreams: null } }),
     snapshot({ session: { ...detail, wrapper: { state: "alive" } } }),
     snapshot({ session: { ...detail, mcp: { servers: "x" } } }),
     snapshot({ server: { ...snapshot().server, eventStreams: { total: 1 } } }),
@@ -154,6 +151,7 @@ const OTHER = "page-other-456";
 
 function client(extra = {}) {
   return {
+    pageId: MINE,
     sessionId: "s1",
     selectedSessionId: "s1",
     mounted: true,
@@ -182,7 +180,6 @@ function client(extra = {}) {
     graceDueAt: null,
     run: { agentRunning: false, bashRunning: false, compacting: false, dialogs: 0 },
     lease: {
-      holder: MINE,
       renewIntervalMs: 30 * SECOND,
       renewStartedAt: LOCAL - 20 * SECOND,
       inFlightSince: null,
@@ -230,7 +227,6 @@ function detail(extra = {}) {
     wrapper: wrapper(),
     lifecycle: { starts: 1, firstStartedAt: SERVER - 6 * MINUTE, lastStartedAt: SERVER - 6 * MINUTE, lastClosedAt: null },
     starting: false,
-    leases: [{ holder: MINE, expiresAt: SERVER + 80 * SECOND, active: true, createdAt: null, renewedAt: null, renewals: 3 }],
     providers: [],
     eventStreams: [{ holder: MINE, openedAt: SERVER - 5 * MINUTE, connectedAt: SERVER - 5 * MINUTE, lastWriteAt: null, droppedEvents: 0, queuedBytes: 0 }],
     subagents: { active: false, runs: [], notifications: [] },
@@ -295,8 +291,6 @@ const ISSUE_CASES = [
     { id: "lease", tone: "error", text: "Lease · failed · HTTP 500 · 3s ago" }],
   ["the lease went unanswered", { lease: { last: { at: LOCAL - 12 * SECOND, durationMs: 5000, outcome: "unanswered", httpStatus: null, reply: null } } },
     { id: "lease", tone: "warning", text: "Lease · unanswered · 12s ago" }],
-  ["the server has no lease from this page", { detail: { leases: [] } },
-    { id: "noServerLease", tone: "warning", text: t("debug.issue.noServerLease") }],
   ["extensions failed to bind", { detail: { wrapper: wrapper({ extensions: "failed" }) } },
     { id: "extensions", tone: "error", text: "Extensions · failed" }],
   ["a liveness provider threw", { detail: { providers: [{ name: "keepalive", active: "error", byFile: false }, { name: "fine", active: true, byFile: false }] } },
@@ -366,10 +360,6 @@ test("notable states are shown in place, never as issues", () => {
         idle: { timeoutMs: 10 * MINUTE, nextCheckAt: SERVER + 30 * SECOND, lastResetAt: null, forcedByStop: true },
         eventListeners: 4,
       }),
-      leases: [
-        ...detail().leases,
-        { holder: OTHER, expiresAt: SERVER + 5 * SECOND, active: true, createdAt: null, renewedAt: null, renewals: 1 },
-      ],
       eventStreams: [
         ...detail().eventStreams,
         { holder: OTHER, openedAt: SERVER, connectedAt: null, lastWriteAt: null, droppedEvents: 0, queuedBytes: 0 },
@@ -395,23 +385,8 @@ test("the cross-checks only judge what the page had before the answer's request 
   assert.deepEqual(issuesOf({ connection: { sessionId: "s2" }, detail: { eventStreams: [] } }), []);
   assert.deepEqual(issuesOf({ connection: { state: "connecting" }, detail: { eventStreams: [] } }), []);
 
-  // A lease answered after the request left; one from before this session's renewal loop.
-  assert.deepEqual(issuesOf({ lease: { last: { ...client().lease.last, at: LOCAL - 500 } }, detail: { leases: [] } }), []);
-  assert.deepEqual(issuesOf({ lease: { renewStartedAt: LOCAL - 2 * SECOND }, detail: { leases: [] } }), []);
-  // The page's own lease lapsed on the server: as good as none.
-  assert.equal(issuesOf({ detail: { leases: [{ ...detail().leases[0], active: false }] } })[0].id, "noServerLease");
-  // A reply from before the answering server started (a restart): the next renewal recreates it.
-  const restarted = snapshot({ server: { ...snapshot().server, startedAt: 1_000_000 - 3 * SECOND } });
-  const before = { ...client().lease.last, at: LOCAL - 10 * SECOND };
-  assert.deepEqual(issuesOf({ server: { reply: restarted }, lease: { last: before }, detail: { leases: [] } }), []);
-  assert.equal(issuesOf({ lease: { last: before }, detail: { leases: [] } })[0].id, "noServerLease", "the same reply to a server up for an hour");
-  // A renewal on its way: the overdue poll after a sleep may land before it.
-  assert.deepEqual(issuesOf({ lease: { inFlightSince: LOCAL - 200 }, detail: { leases: [] } }), []);
-  // A reply far older than the lease's time to live still counts: the renewals stopped.
-  assert.equal(issuesOf({ lease: { renewStartedAt: LOCAL - 20 * MINUTE, last: { ...client().lease.last, at: LOCAL - 15 * MINUTE } }, detail: { leases: [] } })[0].id, "noServerLease");
-  // Another session selected, no holder yet, or no answer about this session: nothing to compare.
-  assert.deepEqual(issuesOf({ client: { selectedSessionId: "s2" }, detail: { leases: [] } }), []);
-  assert.deepEqual(issuesOf({ lease: { holder: null }, detail: { leases: [], eventStreams: [] } }), []);
+  // No page id yet, or no answer about this session: nothing to compare.
+  assert.deepEqual(issuesOf({ client: { pageId: null }, detail: { eventStreams: [] } }), []);
   assert.deepEqual(state.debugIssues({ page: page(), server: server(), detail: null, t }), []);
 });
 
@@ -525,7 +500,7 @@ test("the sparkline's scale: the 5 s timeout is full height, on a square root", 
   assert.deepEqual([px(20), px(200), px(2000)], [1, 3, 9]);
 });
 
-test("bars, freshness and lease gauges by their thresholds", () => {
+test("bars and freshness by their thresholds", () => {
   assert.equal(state.barFraction(5, 0), null);
   assert.equal(state.barFraction(-1, 10), 0);
   assert.equal(state.barFraction(20, 10), 1);
@@ -538,10 +513,6 @@ test("bars, freshness and lease gauges by their thresholds", () => {
   assert.equal(state.streamFreshness({ ...client().connection, watchdogArmed: false }, LOCAL), null, "no watchdog, no bar");
   assert.equal(state.streamFreshness({ ...client().connection, state: "retrying" }, LOCAL), null);
   assert.equal(state.streamFreshness({ ...client().connection, staleAfterMs: 0 }, LOCAL), null);
-
-  assert.equal(state.leaseGaugeTone(30_001, 90_000, true), null, "the key's own tone");
-  assert.equal(state.leaseGaugeTone(29_999, 90_000, true), "warning", "two renewals missed");
-  assert.equal(state.leaseGaugeTone(80_000, 90_000, false), "dim");
 });
 
 test("MCP servers, holders and status slots", () => {
@@ -569,8 +540,8 @@ test("MCP servers, holders and status slots", () => {
 
 test("a session row's tooltip names everything the server holds for it", () => {
   assert.equal(
-    state.debugSessionTitle(summary("root", { eventStreams: 1, activeLeases: 1, running: true }), 8 * MINUTE + 30 * SECOND, t),
-    "root · alive · running · 1 event streams · 1 active leases · idle check in 8m",
+    state.debugSessionTitle(summary("root", { eventStreams: 1, running: true }), 8 * MINUTE + 30 * SECOND, t),
+    "root · alive · running · 1 event streams · reap countdown 8m",
   );
   assert.equal(state.debugSessionTitle(summary("forced", { forcedByStop: true, starts: 3 }), 30 * SECOND, t), "forced · alive · closes in 30s (after Stop) · started 3×");
   assert.equal(state.debugSessionTitle(summary("sub-1", { subagent: true, eventStreams: 2, providers: 1 }), null, t), "sub-1 (subagent) · alive · 2 event streams · 1 liveness providers");
