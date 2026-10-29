@@ -123,7 +123,7 @@ test("the debug route only reads: no wrapper started, no liveness registered, th
     ["(none)", "page-debug"],
   );
   assert.ok(withStreams.session.eventStreams.every((stream) => typeof stream.connectedAt === "number"));
-  assert.ok(withStreams.server.eventStreams.byHolder.some((row) => row.holder === "page-debug" && row.count === 1));
+  assert.ok(withStreams.server.pages.some((row) => row.holder === "page-debug" && row.agent === 1));
   assert.equal(hasActiveSessionLivenessProvider({ sessionId: id }), false, "a stream registers no liveness");
   assert.deepEqual(listRegisteredSessionLivenessProviders(), providersBefore);
   labelled.abort();
