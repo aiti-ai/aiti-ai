@@ -98,7 +98,7 @@ type StoredSubagentExecution = {
 };
 
 /** A background run's completion `notifyParent()` is delivering; `since` is absent on one added before a hot reload. */
-type ParentNotification = Pick<SubagentRunInfo, "sessionId" | "parentSessionId"> & { since?: number };
+type ParentNotification = Pick<SubagentRunInfo, "sessionId" | "parentSessionId" | "completedAt"> & { since?: number };
 
 declare global {
   var __piSubagentRuns: Map<string, StoredSubagentExecution> | undefined;
@@ -160,8 +160,22 @@ function getSubagentRuns(): Map<string, StoredSubagentExecution> {
 }
 
 /**
+ * Take a run out of the run map unless a newer run of that session took its place; true when it
+ * was still there. Runs call it from `finally` too: a throw before the result entry is written (a
+ * session file append failing) must not leave it there, where it would read as running and keep
+ * `hasUnsettledSubagentRun()` true for its parent until the server restarts.
+ */
+function dropSubagentRun(sessionId: string, stored: StoredSubagentExecution): boolean {
+  const runs = getSubagentRuns();
+  if (runs.get(sessionId) !== stored) return false;
+  runs.delete(sessionId);
+  return true;
+}
+
+/**
  * Background runs whose completion `notifyParent()` is still delivering: the run has left the
- * run map, but the parent's turn starts only once the parent is ready and idle.
+ * run map, but the parent's turn starts only once the parent is ready and idle. An entry leaves
+ * as soon as that turn starts, since the parent is running from then on.
  */
 function getParentNotifications(): Set<ParentNotification> {
   globalThis.__piSubagentParentNotifications ??= new Set();
@@ -169,14 +183,28 @@ function getParentNotifications(): Set<ParentNotification> {
 }
 
 /**
+ * Runs that can still start a turn in their parent: those in the run map, and notifications
+ * not yet delivered whose result the parent has not collected with `get_subagent_result`
+ * (`deliverParentNotification()` drops a collected one without a turn).
+ */
+function unsettledSubagentRuns(): ParentNotification[] {
+  const consumed = getConsumedSubagentResults();
+  return [
+    ...[...getSubagentRuns().values()].map((stored) => stored.run),
+    ...[...getParentNotifications()].filter((run) => !run.completedAt || consumed.get(run.sessionId) !== run.completedAt),
+  ];
+}
+
+/**
  * Whether a subagent run under this session, at any depth, is still unsettled: its end can
  * start a turn there (`notifyParent()`, `triggerTurn`). A run counts from dispatch until its
- * result is written (the run map), then until its parent notification is delivered or fails.
- * A hidden page keeps the session's event stream while this holds (#1283).
+ * result is written (the run map), then until the turn its parent notification triggers starts,
+ * or the delivery is dropped or fails. A hidden page keeps the session's event stream while this
+ * holds (#1283), and a main session's run that ends meanwhile announces no completion: the
+ * turn a report starts decides that (#1434).
  */
 export function hasUnsettledSubagentRun(sessionId: string): boolean {
-  const runs = [...[...getSubagentRuns().values()].map((stored) => stored.run), ...getParentNotifications()];
-  return subagentFamily(sessionId, runs).size > 1;
+  return subagentFamily(sessionId, unsettledSubagentRuns()).size > 1;
 }
 
 /** `sessionId` and every session under it, at any depth, by the rows' direct parents. */
@@ -224,6 +252,11 @@ export function subagentDebugSnapshot(sessionId?: string): { runs: DebugSubagent
       since: typeof row.since === "number" ? row.since : null,
     })),
   };
+}
+
+/** Every session `hasUnsettledSubagentRun()` holds for: the parents of the unsettled runs. */
+export function getSessionIdsWithUnsettledSubagentRuns(): string[] {
+  return [...new Set(unsettledSubagentRuns().map((run) => run.parentSessionId))];
 }
 
 function getSubagentQueue(): SubagentQueue<SubagentRunInfo> {
@@ -618,7 +651,7 @@ export function createSubagentController(
       };
       if (!runInBackground) request.signal?.addEventListener("abort", handleParentAbort, { once: true });
 
-      const execute = async (): Promise<SubagentRunInfo> => {
+      const runToResult = async (): Promise<SubagentRunInfo> => {
         // Reached only when the abort fires while the run is being queued, before `cancelQueued`
         // is set; a run aborted later in the queue ends in `finishQueuedAbort`.
         if (stored.abortRequested) {
@@ -725,34 +758,53 @@ export function createSubagentController(
         dependencies.invalidateSessionList();
         return result;
       };
+      const execute = async (): Promise<SubagentRunInfo> => {
+        try {
+          return await runToResult();
+        } finally {
+          if (dropSubagentRun(initialRun.sessionId, stored)) dependencies.invalidateSessionList();
+        }
+      };
 
       const finishQueuedAbort = async () => {
         if (stored.run.status !== "queued") return;
-        const result: SubagentRunInfo = { ...initialRun, status: "aborted", completedAt: new Date().toISOString() };
-        const cleanupError = await cleanupWorktree(parent.cwd, isolatedWorktree);
-        const finalResult = recordResult(sessionManager, cleanupError ? { ...result, worktreeCleanupError: cleanupError } : result);
-        stored.run = finalResult;
-        request.onUpdate?.(finalResult);
-        getSubagentRuns().delete(initialRun.sessionId);
-        dependencies.invalidateSessionList();
-        resolveCompletion(finalResult);
-      };
-      const queued = getSubagentQueue().enqueue(
-        parentSessionId,
-        readSubagentSettings().maxConcurrent,
-        execute,
-        (state) => {
-          if (state === "queued") {
-            sessionManager.appendCustomEntry(SUBAGENT_STATUS_TYPE, { version: 1, status: "queued" });
-          }
-          request.onUpdate?.({ ...stored.run, status: state });
-          stored.run = { ...stored.run, status: state };
+        try {
+          const result: SubagentRunInfo = { ...initialRun, status: "aborted", completedAt: new Date().toISOString() };
+          const cleanupError = await cleanupWorktree(parent.cwd, isolatedWorktree);
+          const finalResult = recordResult(sessionManager, cleanupError ? { ...result, worktreeCleanupError: cleanupError } : result);
+          stored.run = finalResult;
+          request.onUpdate?.(finalResult);
+          getSubagentRuns().delete(initialRun.sessionId);
           dependencies.invalidateSessionList();
-        },
-        finishQueuedAbort,
-      );
+          resolveCompletion(finalResult);
+        } finally {
+          if (dropSubagentRun(initialRun.sessionId, stored)) dependencies.invalidateSessionList();
+        }
+      };
+      let queued: ReturnType<SubagentQueue<SubagentRunInfo>["enqueue"]>;
+      try {
+        queued = getSubagentQueue().enqueue(
+          parentSessionId,
+          readSubagentSettings().maxConcurrent,
+          execute,
+          (state) => {
+            if (state === "queued") {
+              sessionManager.appendCustomEntry(SUBAGENT_STATUS_TYPE, { version: 1, status: "queued" });
+            }
+            request.onUpdate?.({ ...stored.run, status: state });
+            stored.run = { ...stored.run, status: state };
+            dependencies.invalidateSessionList();
+          },
+          finishQueuedAbort,
+        );
+      } catch (error) {
+        request.signal?.removeEventListener("abort", handleParentAbort);
+        if (dropSubagentRun(initialRun.sessionId, stored)) dependencies.invalidateSessionList();
+        throw error;
+      }
       stored.cancelQueued = queued.cancel;
       void queued.promise.then(resolveCompletion, (error) => {
+        if (dropSubagentRun(initialRun.sessionId, stored)) dependencies.invalidateSessionList();
         resolveCompletion({ ...initialRun, status: "failed", completedAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) });
       });
 
@@ -818,7 +870,7 @@ export function createSubagentController(
     };
     if (!runInBackground) request.signal?.addEventListener("abort", handleParentAbort, { once: true });
 
-    const execute = async (): Promise<SubagentRunInfo> => {
+    const runToResult = async (): Promise<SubagentRunInfo> => {
       if (stored.abortRequested) {
         const result = recordResult(manager, { ...initialRun, status: "aborted", completedAt: new Date().toISOString() });
         stored.run = result;
@@ -861,23 +913,44 @@ export function createSubagentController(
       dependencies.invalidateSessionList();
       return result;
     };
+    const execute = async (): Promise<SubagentRunInfo> => {
+      try {
+        return await runToResult();
+      } finally {
+        if (dropSubagentRun(request.sessionId, stored)) dependencies.invalidateSessionList();
+      }
+    };
     const finishQueuedAbort = () => {
       if (stored.run.status !== "queued") return;
-      const result = recordResult(manager, { ...initialRun, status: "aborted", completedAt: new Date().toISOString() });
-      stored.run = result;
-      request.onUpdate?.(result);
-      getSubagentRuns().delete(request.sessionId);
-      dependencies.invalidateSessionList();
-      resolveCompletion(result);
+      try {
+        const result = recordResult(manager, { ...initialRun, status: "aborted", completedAt: new Date().toISOString() });
+        stored.run = result;
+        request.onUpdate?.(result);
+        getSubagentRuns().delete(request.sessionId);
+        dependencies.invalidateSessionList();
+        resolveCompletion(result);
+      } finally {
+        if (dropSubagentRun(request.sessionId, stored)) dependencies.invalidateSessionList();
+      }
     };
-    const queued = getSubagentQueue().enqueue(parentSessionId, readSubagentSettings().maxConcurrent, execute, (state) => {
-      if (state === "queued") manager.appendCustomEntry(SUBAGENT_STATUS_TYPE, { version: 1, status: "queued" });
-      stored.run = { ...stored.run, status: state };
-      request.onUpdate?.(stored.run);
-      dependencies.invalidateSessionList();
-    }, finishQueuedAbort);
+    let queued: ReturnType<SubagentQueue<SubagentRunInfo>["enqueue"]>;
+    try {
+      queued = getSubagentQueue().enqueue(parentSessionId, readSubagentSettings().maxConcurrent, execute, (state) => {
+        if (state === "queued") manager.appendCustomEntry(SUBAGENT_STATUS_TYPE, { version: 1, status: "queued" });
+        stored.run = { ...stored.run, status: state };
+        request.onUpdate?.(stored.run);
+        dependencies.invalidateSessionList();
+      }, finishQueuedAbort);
+    } catch (error) {
+      request.signal?.removeEventListener("abort", handleParentAbort);
+      if (dropSubagentRun(request.sessionId, stored)) dependencies.invalidateSessionList();
+      throw error;
+    }
     stored.cancelQueued = queued.cancel;
-    void queued.promise.then(resolveCompletion, (error) => resolveCompletion({ ...initialRun, status: "failed", completedAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) }));
+    void queued.promise.then(resolveCompletion, (error) => {
+      if (dropSubagentRun(request.sessionId, stored)) dependencies.invalidateSessionList();
+      resolveCompletion({ ...initialRun, status: "failed", completedAt: new Date().toISOString(), error: error instanceof Error ? error.message : String(error) });
+    });
     return { run: stored.run, completion };
   }
 
@@ -910,16 +983,17 @@ export function createSubagentController(
   }
 
   async function notifyParent(run: SubagentRunInfo): Promise<void> {
-    const pending = { sessionId: run.sessionId, parentSessionId: run.parentSessionId, since: Date.now() };
-    getParentNotifications().add(pending);
+    const pending = { sessionId: run.sessionId, parentSessionId: run.parentSessionId, completedAt: run.completedAt, since: Date.now() };
+    const notifications = getParentNotifications();
+    notifications.add(pending);
     try {
-      await deliverParentNotification(run);
+      await deliverParentNotification(run, () => notifications.delete(pending));
     } finally {
-      getParentNotifications().delete(pending);
+      notifications.delete(pending);
     }
   }
 
-  async function deliverParentNotification(run: SubagentRunInfo): Promise<void> {
+  async function deliverParentNotification(run: SubagentRunInfo, onTurnStarted: () => void): Promise<void> {
     if (takeResultConsumed(run)) return;
     let parent = dependencies.getSession(run.parentSessionId);
     if (!parent?.isAlive()) {
@@ -938,12 +1012,16 @@ export function createSubagentController(
     }
     if (takeResultConsumed(run)) return;
     if (!parent.isAlive()) throw new Error(`Parent session is no longer available: ${run.parentSessionId}`);
-    await parent.inner.sendCustomMessage({
+    const delivery = parent.inner.sendCustomMessage({
       customType: "pi-web:subagent-notification",
       content: subagentNotificationText(run),
       display: true,
       details: subagentToolDetails(run),
     }, { deliverAs: "followUp", triggerTurn: true });
+    // pi starts the turn before its first await, and resolves only once that turn settled. From
+    // here the parent's own run stands for this result: its end must not see the result as pending.
+    if (parent.isRunning()) onTurnStarted();
+    await delivery;
   }
 
   async function abort(sessionId: string): Promise<void> {
