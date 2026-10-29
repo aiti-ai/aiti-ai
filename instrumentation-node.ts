@@ -1,7 +1,11 @@
 import { configureHttpDispatcher, readHttpIdleTimeoutMs } from "@/lib/http-dispatcher";
 import { closeAllAgentEventStreams } from "@/lib/agent-event-stream";
+import { applyCodemodeWorkerDefault } from "@/lib/codemode-workers";
 
 export function registerNodeInstrumentation(): void {
+  // Before any session can run a codemode script (lib/codemode-workers.ts).
+  applyCodemodeWorkerDefault();
+
   // The pi CLI applies settings' `httpIdleTimeoutMs` to the same undici
   // body/header timeouts, so a Web UI session gets the timeout the user
   // configured. Without it the built-in five minutes aborts a provider stream
