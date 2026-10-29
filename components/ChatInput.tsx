@@ -58,6 +58,8 @@ interface Props {
   modelNames?: Record<string, string>;
   modelList?: { id: string; name: string; provider: string; input?: string[] }[];
   modelError?: string | null;
+  /** The session's folder, when it no longer exists (moved or renamed): said instead of a model error (#1422). */
+  missingCwd?: string | null;
   /** Diagnostics from resolving `enabledModels`, e.g. a pattern that matched nothing. */
   modelScopeWarnings?: string[];
   onModelChange?: (provider: string, modelId: string) => void;
@@ -635,6 +637,13 @@ function ModelNoticeBanner({ tone, title, body, onClose }: { tone: "error" | "wa
   );
 }
 
+/** The session's folder no longer exists: nothing was sent, and no model was asked (#1422). */
+export function MissingCwdBanner({ cwd }: { cwd?: string | null }) {
+  const { t } = useI18n();
+  if (!cwd) return null;
+  return <ModelNoticeBanner tone="error" title={t("chat.cwdMissingTitle")} body={t("chat.cwdMissingBody", { cwd })} />;
+}
+
 export function ModelErrorBanner({ error }: { error?: string | null }) {
   const { t } = useI18n();
   if (!error) return null;
@@ -668,7 +677,7 @@ export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
 // Memoized: its props hold still while a reply streams or a tool runs, and the
 // chat around it re-renders through both.
 export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatInput({
-  onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, modelScopeWarnings, onModelChange, modelSwitching,
+  onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, missingCwd, modelScopeWarnings, onModelChange, modelSwitching,
   defaultModel, onSetDefaultModel,
   onCompact, onAbortCompaction, isCompacting, compactError, onDismissCompactError, compactResult, toolPreset, onToolPresetChange,
   thinkingLevel, isAutoThinkingSelection = false, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
@@ -1741,6 +1750,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
         onChange={handleFilePick}
       />}
       <div style={{ ...(compact ? undefined : { display: "flex", flexDirection: "column", minHeight: 0, width: "100%" }), maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
+        <MissingCwdBanner cwd={missingCwd} />
         <ModelErrorBanner error={modelError} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
         {showImageUnsupportedWarning && (() => {
