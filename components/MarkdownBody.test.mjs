@@ -10,7 +10,7 @@ const jiti = createJiti(import.meta.url, {
   tsconfigPaths: true,
 });
 const { MarkdownBody } = await jiti.import("./MarkdownBody.tsx");
-const { normalizeDisplayMath, markdownPreviewRemarkPlugins, markdownPreviewRehypePlugins } = await jiti.import("../lib/markdown.ts");
+const { normalizeDisplayMath, markdownPreviewRemarkPlugins, markdownPreviewRehypePlugins, markdownRemarkPlugins, markdownRehypePlugins } = await jiti.import("../lib/markdown.ts");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
 
 function renderMarkdown(markdown, props = {}) {
@@ -414,6 +414,34 @@ test("leaves code and math line endings alone when keeping line breaks", () => {
   assert.doesNotMatch(math, /<br/);
   assert.match(math, /<annotation encoding="application\/x-tex">x = 1\ny = 2<\/annotation>/);
   assert.match(emphasis, /<em>one<br\/>two<\/em>/);
+});
+
+test("display math gets a Copy button for its LaTeX source; inline math does not", () => {
+  const copyButtons = (html) => (html.match(/markdown-math-copy/g) ?? []).length;
+  const markdown = "$$\n\\frac{a}{b} < c\n$$\n\n```math\na^2\n```\n\nInline $x$ and $$y$$ stay plain.";
+  for (const props of [{}, { onNavigateLink() {} }, { isStreaming: true }]) {
+    const html = renderMarkdown(markdown, props);
+    assert.equal(copyButtons(html), 2);
+    assert.equal((html.match(/class="katex-display"/g) ?? []).length, 2);
+    assert.doesNotMatch(html, /data-math-source/);
+  }
+  // The source is the Markdown's, kept before KaTeX writes its glyphs.
+  const sources = [];
+  renderToStaticMarkup(React.createElement(ReactMarkdown, {
+    remarkPlugins: markdownRemarkPlugins,
+    rehypePlugins: markdownRehypePlugins,
+    components: {
+      div({ node, children }) {
+        sources.push(node.properties.dataMathSource);
+        return React.createElement("div", null, children);
+      },
+    },
+  }, markdown));
+  assert.deepEqual(sources, ["\\frac{a}{b} < c", "a^2"]);
+  // A half-streamed formula renders KaTeX's error text and still copies.
+  assert.equal(copyButtons(renderMarkdown("$$\n\\frac{a", { isStreaming: true })), 1);
+  // A user's own HTML cannot carry the attribute: the sanitizer drops it.
+  assert.equal(copyButtons(renderMarkdown('<div data-math-source="x">hi</div>')), 0);
 });
 
 test("shows a user message's HTML as the text typed, like pi's TUI", () => {
