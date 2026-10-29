@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useState, useRef, useEffect, useMemo, type CSSProperties } from "react";
+import { Fragment, memo, useState, useRef, useEffect, useMemo, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import { MarkdownBody } from "./MarkdownBody";
 import { ImagePreview } from "./ImagePreview";
@@ -754,6 +754,12 @@ function AssistantMessageView({
     .map((b) => b.text)
     .join("\n");
 
+  const stats = message.usage ? formatUsage(message.usage) : [];
+  if (turnDurationMs !== undefined) {
+    if (stats.length > 0) stats.push("·");
+    stats.push(t("chat.turnDuration", { time: formatTurnDuration(turnDurationMs) }));
+  }
+
   const copyContent = () => {
     copyText(textContent).then(() => {
       setCopied(true);
@@ -944,12 +950,13 @@ function AssistantMessageView({
       <div style={{
         display: "flex", alignItems: "center", gap: 8, marginTop: 4,
       }}>
-        {(message.usage || turnDurationMs !== undefined) && !isStreaming && (
-          <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
-            {[
-              message.usage ? formatUsage(message.usage) : null,
-              turnDurationMs !== undefined ? t("chat.turnDuration", { time: formatTurnDuration(turnDurationMs) }) : null,
-            ].filter(Boolean).join(" \u00b7 ")}
+        {stats.length > 0 && !isStreaming && (
+          // One item per count: a single space at 11px ran them together. The
+          // spaces stay in the text for copying; the flex gap draws the room.
+          <div style={{ display: "flex", flexWrap: "wrap", columnGap: 7, fontSize: 11, color: "var(--text-dim)", fontVariantNumeric: "tabular-nums" }}>
+            {stats.map((part, index) => (
+              <Fragment key={index}>{index > 0 && " "}<span>{part}</span></Fragment>
+            ))}
           </div>
         )}
         {textContent && !isStreaming && (
@@ -2228,7 +2235,7 @@ function formatUsage(usage: {
   cacheRead: number;
   cacheWrite: number;
   cost: { total: number };
-}): string {
+}): string[] {
   // pi's TUI footer: ↑1.2k ↓567 R8.9k W12, with its formatTokens().
   const parts = [];
   if (usage.input) parts.push(`↑${formatNoticeTokens(usage.input)}`);
@@ -2236,7 +2243,7 @@ function formatUsage(usage: {
   if (usage.cacheRead) parts.push(`R${formatNoticeTokens(usage.cacheRead)}`);
   if (usage.cacheWrite) parts.push(`W${formatNoticeTokens(usage.cacheWrite)}`);
   if (usage.cost?.total) parts.push(`$${usage.cost.total.toFixed(4)}`);
-  return parts.join(" ");
+  return parts;
 }
 
 function BashExecutionView({ message, sessionId }: { message: BashExecutionMessage; sessionId?: string }) {
