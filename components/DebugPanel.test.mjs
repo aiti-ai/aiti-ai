@@ -64,7 +64,14 @@ function section(html, key, nextKey) {
 /** The server column's head: its totals. */
 function serverHead(html) {
   const column = section(html, "server");
-  return column.slice(0, column.indexOf('<div class="debug-list">'));
+  return column.slice(0, column.indexOf("</div>") + "</div>".length);
+}
+
+/** The connected pages, between the server's head and its sessions. */
+function pageList(html) {
+  const from = html.indexOf('<div class="debug-pages">');
+  assert.notEqual(from, -1);
+  return html.slice(from, html.indexOf('<div class="debug-list">', from));
 }
 
 /** The server's sessions, below its head, without the stylesheet. */
@@ -197,7 +204,13 @@ function reply() {
       idleTimeoutMs: 10 * MINUTE,
       heartbeatMs: 15 * SECOND,
       wrappers: { alive: 3, closing: 1, starting: 0 },
-      eventStreams: { total: 3, byHolder: [{ holder: "page-other-456", count: 2 }, { holder: "page-mine-123", count: 1 }] },
+      eventStreams: {
+        total: 3,
+        byHolder: [
+          { holder: "page-other-456", count: 2, address: "192.168.1.20", client: "Safari · iOS" },
+          { holder: "page-mine-123", count: 1, address: "127.0.0.1", client: "Chrome · macOS" },
+        ],
+      },
       fileWatches: 1,
       terminals: { count: 1, listeners: 1, detached: 0, exited: 0, nextCleanupAt: null },
     },
@@ -214,8 +227,8 @@ function reply() {
       starting: false,
       providers: [{ name: "keepalive-ext", active: true, byFile: true }],
       eventStreams: [
-        { holder: "page-other-456", openedAt: SERVER - 6 * MINUTE, connectedAt: SERVER - 6 * MINUTE, lastWriteAt: SERVER - 3 * SECOND, droppedEvents: 0, queuedBytes: 0 },
-        { holder: "page-mine-123", openedAt: SERVER - 5 * MINUTE, connectedAt: SERVER - 5 * MINUTE, lastWriteAt: SERVER - 3 * SECOND, droppedEvents: 0, queuedBytes: 0 },
+        { holder: "page-other-456", address: "192.168.1.20", client: "Safari · iOS", openedAt: SERVER - 6 * MINUTE, connectedAt: SERVER - 6 * MINUTE, lastWriteAt: SERVER - 3 * SECOND, droppedEvents: 0, queuedBytes: 0 },
+        { holder: "page-mine-123", address: "127.0.0.1", client: "Chrome · macOS", openedAt: SERVER - 5 * MINUTE, connectedAt: SERVER - 5 * MINUTE, lastWriteAt: SERVER - 3 * SECOND, droppedEvents: 0, queuedBytes: 0 },
       ],
       subagents: { active: false, runs: [], notifications: [] },
       mcp: null,
@@ -331,21 +344,35 @@ test("one boxed word per stream and provider: this page's first and filled, othe
   assert.ok(labels.includes("SSE: 2 (this page 1, other page 1)"), labels.join("\n"));
   assert.ok(!labels.some((label) => label.startsWith("Lease")), "the server keeps no leases to show");
   assert.ok(labels.includes("Liveness providers: 1"));
-  // The badges say what they are: no "SSE" label before them, no icon in them.
-  assert.match(card, /<span class="debug-row-badges"><span class="debug-run" title="SSE: 2 [^"]*" role="img" aria-label="SSE: 2 [^"]*"><span class="debug-badge is-accent is-filled" title="this page page-min · connected 5m 10s ago · last write 13s ago">SSE<\/span><span class="debug-badge is-muted" title="other page page-oth · connected 6m 10s ago · last write 13s ago">SSE<\/span><\/span><span class="debug-run"/);
+  // The badges say what they are: no "SSE" label before them, no icon in them; their titles say
+  // which page, its browser and system, and its address.
+  assert.doesNotMatch(card, /debug-client/);
+  assert.match(card, /<span class="debug-row-badges"><span class="debug-run" title="SSE: 2 [^"]*" role="img" aria-label="SSE: 2 [^"]*"><span class="debug-badge is-accent is-filled" title="this page page-min · Chrome · macOS · 127.0.0.1 · connected 5m 10s ago · last write 13s ago">SSE<\/span><span class="debug-badge is-muted" title="other page page-oth · Safari · iOS · 192.168.1.20 · connected 6m 10s ago · last write 13s ago">SSE<\/span><\/span><span class="debug-run"/);
   assert.doesNotMatch(card, /debug-mini-label/);
   assert.doesNotMatch(card, />Lease</);
   // A provider's badge is its name.
   assert.match(card, /<span class="debug-badge is-name is-muted" title="keepalive-ext · active · by file">keepalive-ext<\/span>/);
 
+  // The pages holding the server's streams, one row each, this page first on the current tint:
+  // marks, browser and system, address, page, count; the server's total in the head.
+  const pages = pageList(html);
+  const icons = /<span class="debug-client" aria-hidden="true">(<svg [^>]*>.*?<\/svg>)+<\/span>/g;
+  const rows = [...pages.replace(icons, "<icons>").matchAll(/<div class="(debug-page-row[^"]*)"[^>]*>(.*?)<\/div>/g)]
+    .map((match) => `${match[1]}: ${visibleText(match[2])}`);
+  assert.deepEqual(rows, [
+    "debug-page-row debug-list-head: Connected pages 2 SSE 3 total",
+    "debug-page-row is-current: Chrome · macOS 127.0.0.1 this page 1",
+    "debug-page-row: Safari · iOS 192.168.1.20 page-oth 2",
+  ]);
+  assert.equal(pages.match(icons)?.length, 2, "two marks each, hidden from screen readers");
+  assert.ok(titles(pages).includes("other page page-oth · Safari · iOS · 192.168.1.20 · 2 streams"));
+  // A page opened without a page id or a known browser still gets its row.
+  const bare = reply();
+  bare.server.eventStreams = { total: 1, byHolder: [{ holder: null, count: 1, address: null, client: null }] };
+  const bareRow = pageList(render({ server: server({ reply: bare }) }));
+  assert.match(bareRow, /<span class="debug-page-icons"><\/span><span class="debug-page-client is-dim">unknown browser<\/span><span class="debug-page-address">—<\/span><span class="debug-page-holder">no page id<\/span>/);
   const strip = serverHead(html);
-  assert.match(strip, /<span class="debug-badge is-accent is-filled" title="this page page-min · 1 streams">SSE<\/span>/);
-  assert.match(strip, /<span class="debug-badge is-muted" title="other page page-oth · 2 streams">SSE<\/span><span class="debug-badge is-muted" title="other page page-oth · 2 streams">SSE<\/span>/);
-  assert.ok(ariaLabels(strip).includes("SSE: 3 from 2 pages"));
-  assert.ok(strip.indexOf("this page page-min") < strip.indexOf("other page page-oth"), "this page's streams first");
-  // One run of badges, no divider between pages, then the server's total; the page's own column
-  // counts nothing, its meter shows it.
-  assert.match(strip, /<\/span><\/span><span class="debug-server-count">3 total<\/span>/);
+  assert.doesNotMatch(strip, />SSE</, "the head no longer lists streams");
   assert.doesNotMatch(html, /debug-divider/);
   assert.doesNotMatch(visibleText(section(html, "page", "server")), /\d\/6/);
   assert.match(strip, /aria-label="File watches: 1"><span class="debug-badge is-muted" title="File watches: 1">File<\/span><\/span>/);
@@ -658,9 +685,11 @@ test("the panel keeps to the theme and to Safari 16.2: tokens, the three state c
   assert.doesNotMatch(css, /:has\(|&|transition/);
   // Rules are flat: only the container queries hold rules inside braces.
   const outside = css.replace(/@container debug-panel \(max-width: \d+px\) \{[^]*?\n {2}\}\n/g, "");
-  // Two columns, the page's as wide as its table; one above the other on a narrower panel.
-  assert.match(css, /\.debug-cols \{\s*display: grid;\s*grid-template-columns: minmax\(320px, max-content\) minmax\(0, 1fr\);/);
-  assert.match(css, /@container debug-panel \(max-width: 760px\) \{\s*\.debug-cols \{\s*grid-template-columns: minmax\(0, 1fr\);/);
+  // Three columns on a wide panel, each but the page's capped; the sessions under the server's
+  // pages on a narrower one (its height going to their row); one above the other on a phone.
+  assert.match(css, /\.debug-cols \{\s*display: grid;\s*grid-template-areas: "page server sessions";\s*grid-template-columns: minmax\(320px, max-content\) minmax\(340px, 480px\) minmax\(360px, 560px\);/);
+  assert.match(css, /@container debug-panel \(max-width: 1239px\) \{\s*\.debug-cols \{\s*grid-template-areas: "page server" "page sessions";\s*grid-template-columns: minmax\(320px, max-content\) minmax\(0, 560px\);\s*grid-template-rows: auto 1fr;/);
+  assert.match(css, /@container debug-panel \(max-width: 760px\) \{\s*\.debug-cols \{\s*grid-template-areas: "page" "server" "sessions";\s*grid-template-columns: minmax\(0, 1fr\);/);
   // A measure's details wrap in the table instead of widening it.
   assert.match(css, /\.debug-measure-sub,\s*\.debug-measure-empty \{\s*grid-column: 2 \/ -1;\s*width: 0;\s*min-width: 100%;/);
   assert.doesNotMatch(outside, /\{[^}]*\{/, "no nested rule");
