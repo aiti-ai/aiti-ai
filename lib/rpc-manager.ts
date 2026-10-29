@@ -47,7 +47,7 @@ import {
   subagentToolOptions,
   SUBAGENT_CONTROL_TOOL_NAMES,
 } from "./subagents";
-import { createSubagentController, getLiveSubagentStatus } from "./subagent-runtime";
+import { createSubagentController, getLiveSubagentStatus, hasUnsettledSubagentRun } from "./subagent-runtime";
 import { isBuiltInSubagentsEnabled } from "./subagent-settings";
 import { resolveShellTools } from "./powershell-settings";
 import { CHAT_ONLY_RESOURCE_LOADER_OPTIONS, contextFilesSystemPrompt } from "./chat-only";
@@ -581,7 +581,11 @@ export class AgentSessionWrapper {
         // Prompts parked while compaction ran go out now, FIFO, whatever its outcome (as the TUI).
         this.flushParkedPrompts();
       }
-      this.emit(event.type === "message_end" ? this.withTranscriptNotices(event) : event);
+      this.emit(
+        event.type === "message_end" ? this.withTranscriptNotices(event)
+          : event.type === "agent_settled" ? this.withSubagentsActive(event)
+            : event,
+      );
       if (event.type === "agent_settled") this.notifyAgentRunCompleteIfIdle();
     });
     this.resetIdleTimer();
@@ -638,6 +642,9 @@ export class AgentSessionWrapper {
     this.agentRunNeedsCompletion = false;
     // A stopped run did not finish a task, as pi's own status reporting has it: nothing to announce.
     if (this.suppressCompletionNotifications || this.lastRunAborted) return;
+    // A subagent of this session is still at work: each report starts a run here, and the run
+    // after the last one is the end of the task (#1434).
+    if (hasUnsettledSubagentRun(this.sessionId)) return;
     try {
       this.onAgentRunComplete?.(this.sessionId, this.inner.sessionManager.getSessionName());
     } catch (error) {
@@ -645,9 +652,17 @@ export class AgentSessionWrapper {
     }
   }
 
-  /** `prompt_done`, saying `aborted` when the prompt's run was stopped rather than finished. */
+  /**
+   * `prompt_done`, saying `aborted` when the prompt's run was stopped rather than finished, and
+   * `subagentsActive` while a subagent under this session can still start another run here.
+   */
   private promptDoneEvent(): AgentEvent {
-    return { type: "prompt_done", ...(this.lastRunAborted ? { aborted: true } : {}) };
+    return this.withSubagentsActive({ type: "prompt_done", ...(this.lastRunAborted ? { aborted: true } : {}) });
+  }
+
+  /** The end of a run of this session's, marked when its subagents keep the task going: no chime yet. */
+  private withSubagentsActive(event: AgentEvent): AgentEvent {
+    return hasUnsettledSubagentRun(this.sessionId) ? { ...event, subagentsActive: true } : event;
   }
 
   /** Parked prompts as queue rows: a plain one is a steer, as the TUI parks Enter during compaction. */
