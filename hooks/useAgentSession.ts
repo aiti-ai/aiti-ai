@@ -22,7 +22,7 @@ import {
   setSessionViewSnapshot,
   snapshotCoversLoadedEntries,
 } from "@/lib/session-view-cache";
-import { clearDraft, getDraft, rekeyDraft, restoreDraftSubmission } from "@/lib/draft-store";
+import { clearDraft, getDraft, parkedNewSessionDraftKey, rekeyDraft, restoreDraftSubmission } from "@/lib/draft-store";
 import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-preset-preference";
 import { CONFIGURED_TOOL_PRESET, getPresetFromToolNames, getToolNamesForPreset, type ToolEntry, type ToolPreset } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -39,6 +39,7 @@ import {
 import { HIDDEN_PAGE_GRACE_MS } from "@/hooks/usePageHidden";
 import type { DebugClientLease, DebugClientSession, DebugEventConnectionSnapshot, DebugStreamCloseReason } from "@/lib/debug-types";
 import { trackEventSource } from "@/lib/page-debug";
+import type { TranslationParams } from "@/lib/i18n/types";
 import { AGENT_EVENT_HEARTBEAT_MS, isNestedToolExecutionEvent, isSystemMessageEvent } from "@/lib/agent-event-wire";
 import { runStatePhase } from "@/lib/chat-phase-label";
 import { getToolExecutionProgress } from "@/lib/tool-execution-progress";
@@ -124,6 +125,18 @@ type AgentStateResponse = {
 export interface QueuedMessages {
   steering: string[];
   followUp: string[];
+}
+
+/** The messages without that one (by identity, its last occurrence); the same array when it is absent. */
+function withoutMessage(messages: AgentMessage[], message: AgentMessage): AgentMessage[] {
+  const index = messages.lastIndexOf(message);
+  return index === -1 ? messages : [...messages.slice(0, index), ...messages.slice(index + 1)];
+}
+
+function countUserMessages(messages: readonly AgentMessage[], key: string): number {
+  return messages.reduce((count, message) => (
+    message.role === "user" && userMessageKey(message) === key ? count + 1 : count
+  ), 0);
 }
 
 function normalizeQueuedMessages(q?: { steering?: string[]; followUp?: string[] } | null): QueuedMessages {
@@ -221,6 +234,8 @@ export interface UseAgentSessionOptions {
   initialNewSessionChoices?: NewSessionChoices | null;
   /** A fresh composer reports its own model and reasoning picks, on mount and as they change. */
   onNewSessionChoicesChange?: (choices: NewSessionChoices) => void;
+  /** The page's translator, for the notices the hook writes itself. */
+  t: (key: string, params?: TranslationParams) => string;
 }
 
 export type ThinkingLevelOption = "auto" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -365,6 +380,29 @@ export interface AttachedImage {
 }
 
 type SelectedModel = { provider: string; modelId: string };
+/**
+ * A normal send whose prompt request failed without the server's refusal (#1432):
+ * what to give back should the server turn out never to have got it.
+ */
+type UnconfirmedSend = {
+  runId: number;
+  sid: string;
+  message: string;
+  images?: AttachedImage[];
+  draftKey: string | undefined;
+  /** A fresh composer's: the cwd's parked draft, which the next fresh composer there takes back. */
+  parkedDraftKey: string | null;
+  /** The view's last saved entry when the prompt was sent: the prompt can only show up after it. */
+  lastEntryIdAtSend: string | null;
+  /** User messages with the same text the view already had after that entry (sent before, not saved yet when read). */
+  sameTextAfterSend: number;
+  /** The optimistic bubble, dropped with its text's return once a read shows the prompt is not there. */
+  bubble: AgentMessage;
+  /** userMessageKey() of the optimistic bubble: the user message the prompt becomes. */
+  key: string;
+  /** A slash command: an extension command or template need not become that user message. */
+  command: boolean;
+};
 /** `clear_queue` and `abort`: queued texts, plus the images of prompts parked behind a compaction. */
 type RecalledPrompts = { steering?: string[]; followUp?: string[]; images?: Array<{ data: string; mimeType: string }> };
 type ModelEntry = { id: string; name: string; provider: string };
@@ -528,6 +566,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const defaultThinkingLevelRef = useRef<ConcreteThinkingLevel | null>(null);
   const promptRunIdRef = useRef(0);
   const optimisticUserMessageKeyRef = useRef<string | null>(null);
+  // The run whose prompt the server is known to have got: one of its events
+  // (agent_start, prompt_done, queue_update, its user message) arrived, maybe
+  // before its request failed. Later ones clear the unconfirmed record itself.
+  const landedPromptRunIdRef = useRef<number | null>(null);
+  const unconfirmedSendRef = useRef<UnconfirmedSend | null>(null);
+  // The context the newest session read found, and the order its request
+  // started in: only a read started after the run settled can settle it.
+  const sessionReadSeqRef = useRef(0);
+  const lastReadContextRef = useRef<{ sid: string; seq: number; messages: AgentMessage[]; entryIds: string[] } | null>(null);
+  const markPromptLanded = useCallback(() => {
+    landedPromptRunIdRef.current = promptRunIdRef.current;
+    if (unconfirmedSendRef.current?.runId === promptRunIdRef.current) unconfirmedSendRef.current = null;
+  }, []);
   const modelSwitchPendingRef = useRef(false);
   const draftKeyAliasesRef = useRef(new Map<string, string>());
   const sessionHookMountedRef = useRef(true);
@@ -747,6 +798,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     if (inflight) return await inflight;
   const flight = (async (): Promise<unknown> => {
     let messagesLoaded = false;
+    const readSeq = ++sessionReadSeqRef.current;
     try {
       if (showLoading) setLoading(true);
       const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1", tree: "summary" });
@@ -769,6 +821,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const d = await res.json() as SessionData;
       if (sessionIdRef.current !== sid) return null;
+      if ((lastReadContextRef.current?.seq ?? 0) < readSeq) {
+        lastReadContextRef.current = { sid, seq: readSeq, messages: d.context.messages, entryIds: d.context.entryIds ?? [] };
+      }
       // Freshness check: when the disk snapshot is unchanged (same opaque
       // revision), keep any history the user already paged in instead of
       // collapsing back to the fresh 50-entry window. The state hooks then
@@ -1330,6 +1385,81 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       },
     });
   }, []);
+  const translateRef = useRef(opts.t);
+  translateRef.current = opts.t;
+  const translate = useCallback((key: string, params?: TranslationParams) => translateRef.current(key, params), []);
+  // A steer or follow-up whose request failed without the server's refusal (the
+  // network dropped, a proxy answered) may still have been accepted. Its text
+  // goes back to the composer all the same (restoreSubmission merges it in front
+  // of anything typed since) and is never sent again on its own; this notice
+  // says the send is unconfirmed rather than failed.
+  const addUnconfirmedSendNotice = useCallback(() => {
+    addNotice({ type: "warning", message: translate("chat.sendUnconfirmed") });
+  }, [addNotice, translate]);
+
+  // A normal send keeps its bubble while unconfirmed (#1432). Once the server is
+  // idle, a session read started after that settles it: the prompt arrived only
+  // if the read shows it, one more user message with its text past the view's
+  // last saved entry at the send than the view already had there. Otherwise
+  // the text goes back, as not received when the read ends on that entry, else
+  // as unconfirmed: a read that moved on (messages the view had not saved, or
+  // more than its window), failed, or a command, whose prompt need not become
+  // that user message. Any of the run's events clears the record first
+  // (markPromptLanded()).
+  // The text is back in the composer and the prompt is not in the transcript:
+  // its bubble goes, from the view and from the session's cached view. A read of
+  // a file the prompt never changed keeps the view's messages (the snapshot
+  // revision is the same), so it would never drop the bubble itself.
+  const dropUnconfirmedBubble = useCallback((pending: UnconfirmedSend) => {
+    if (sessionHookMountedRef.current) setMessages((prev) => withoutMessage(prev, pending.bubble));
+    const snapshot = getSessionViewSnapshot(pending.sid);
+    if (snapshot?.messages.includes(pending.bubble)) {
+      setSessionViewSnapshot({ ...snapshot, messages: withoutMessage(snapshot.messages, pending.bubble) });
+    }
+  }, []);
+  const settleUnconfirmedSend = useCallback((sid: string, runId: number, readSeqBefore: number) => {
+    const pending = unconfirmedSendRef.current;
+    if (!pending || pending.runId !== runId || pending.sid !== sid) return;
+    unconfirmedSendRef.current = null;
+    const read = lastReadContextRef.current;
+    const reread = read?.sid === sid && read.seq > readSeqBefore ? read : null;
+    // Where the read goes past the send's last entry; -1 when that entry fell out of its window.
+    const start = !reread ? -1
+      : pending.lastEntryIdAtSend === null ? 0
+        : reread.entryIds.indexOf(pending.lastEntryIdAtSend) + 1 || -1;
+    if (reread && start >= 0) {
+      const sameText = countUserMessages(reread.messages.slice(start), pending.key);
+      if (sameText > pending.sameTextAfterSend) return;
+    }
+    restoreSubmission(pending.message, pending.images, pending.draftKey);
+    // A failed read leaves the view stale: the bubble stays with "could not confirm".
+    if (reread) dropUnconfirmedBubble(pending);
+    addNotice(reread && !pending.command && start === reread.entryIds.length
+      ? { type: "error", message: translate("chat.sendNotReceived") }
+      : { type: "warning", message: translate("chat.sendUnconfirmed") });
+  }, [addNotice, dropUnconfirmedBubble, restoreSubmission, translate]);
+  // The hook unmounts (a session switch) with a send still unconfirmed: nothing
+  // here will settle it, so its text goes back unless one of the run's events
+  // cleared the record. With the stream closed, a prompt that did arrive is
+  // given back too, without a notice. A fresh composer's goes to its cwd's
+  // parked draft: its session has no row and no draft of its own until a
+  // prompt reaches it (getRpcSessionInfos()). The cached view loses the bubble:
+  // coming back, a read of an unchanged file keeps that view, and a changed
+  // one replaces it with the prompt if it did arrive.
+  const releaseUnconfirmedSend = useCallback(() => {
+    const pending = unconfirmedSendRef.current;
+    unconfirmedSendRef.current = null;
+    if (!pending) return;
+    if (pending.parkedDraftKey) {
+      const images = pending.images?.map(({ data, mimeType }) => ({ data, mimeType }));
+      restoreDraftSubmission(pending.parkedDraftKey, pending.message, images);
+    } else {
+      restoreSubmission(pending.message, pending.images, pending.draftKey);
+    }
+    dropUnconfirmedBubble(pending);
+  }, [dropUnconfirmedBubble, restoreSubmission]);
+  const releaseUnconfirmedSendRef = useRef(releaseUnconfirmedSend);
+  releaseUnconfirmedSendRef.current = releaseUnconfirmedSend;
 
   const handleExtensionUiRequest = useCallback((request: ExtensionUiRequest) => {
     if (isBlockingExtensionUiRequest(request)) onAttentionNeeded?.(request);
@@ -1469,10 +1599,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     // Bail out before loadSession too: a stale finish for a previous run
     // must not overwrite the messages of the run currently streaming.
     if (promptRunIdRef.current !== runId) return;
+    const readSeqBefore = sessionReadSeqRef.current;
     try {
       if (sid) await loadSession(sid);
     } finally {
       if (promptRunIdRef.current !== runId) return;
+      // The server is idle: an unconfirmed send of this run either is in the
+      // read just made or never arrived.
+      if (sid) settleUnconfirmedSend(sid, runId, readSeqBefore);
       const promptWasPending = rpcPromptPendingRef.current;
       const agentWasActive = sdkAgentActiveRef.current;
       rpcPromptPendingRef.current = false;
@@ -1486,7 +1620,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       if (sid) scheduleEventStreamClose(sid);
     }
-  }, [loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage]);
+  }, [loadSession, notifyPromptStage, onAgentEnd, scheduleEventStreamClose, settleUiStage, settleUnconfirmedSend]);
 
   const waitForPromptSettlement = useCallback(async (sid: string, runId?: number) => {
     await delay(PROMPT_SETTLE_INITIAL_DELAY_MS);
@@ -1647,6 +1781,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       }
       case "agent_start":
+        markPromptLanded();
         cancelEventStreamGrace();
         sdkAgentActiveRef.current = true;
         agentRunningRef.current = true;
@@ -1706,6 +1841,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       case "prompt_done":
         {
+          markPromptLanded();
           const runId = promptRunIdRef.current;
           const promptWasPending = rpcPromptPendingRef.current;
           rpcPromptPendingRef.current = false;
@@ -1788,6 +1924,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           const deliveredKey = userMessageKey(delivered);
           const optimisticKey = optimisticUserMessageKeyRef.current;
           optimisticUserMessageKeyRef.current = null;
+          // While the run's own bubble waits, a delivered user message is its prompt.
+          if (optimisticKey) markPromptLanded();
           setMessages((prev) => {
             const last = prev[prev.length - 1];
             if (optimisticKey && last?.role === "user" && userMessageKey(last) === optimisticKey) {
@@ -1882,6 +2020,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         break;
       }
       case "queue_update":
+        markPromptLanded();
         setQueuedMessages({
           steering: [...((event.steering as string[] | undefined) ?? [])],
           followUp: [...((event.followUp as string[] | undefined) ?? [])],
@@ -1917,7 +2056,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setExtensionDialogs((queue) => removeExtensionUiRequest(queue, event.id as string));
         break;
     }
-  }, [addNotice, applyLiveUsage, cancelEventStreamGrace, dispatch, handleExtensionUiRequest, loadSession, notifyPromptStage, onAgentEnd, onToolEnd, refreshContextUsage, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
+  }, [addNotice, applyLiveUsage, cancelEventStreamGrace, dispatch, handleExtensionUiRequest, loadSession, markPromptLanded, notifyPromptStage, onAgentEnd, onToolEnd, refreshContextUsage, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
   handleAgentEventRef.current = handleAgentEvent;
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
@@ -1964,8 +2103,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         : message,
       timestamp: Date.now(),
     };
+    // What the view holds before the bubble: its last saved entry, and the same
+    // text already sent since (the run messages the stream added), for #1432.
+    const userKey = userMessageKey(userMsg);
+    const savedViewIds = entryIdsRef.current;
+    const lastEntryIdAtSend = savedViewIds.at(-1) ?? null;
+    const sameTextAfterSend = countUserMessages(messagesRef.current.slice(savedViewIds.length), userKey);
     setMessages((prev) => [...prev, userMsg]);
-    optimisticUserMessageKeyRef.current = userMessageKey(userMsg);
+    optimisticUserMessageKeyRef.current = userKey;
     promptRunIdRef.current = promptRunId;
     agentRunningRef.current = true;
     setAgentRunning(true);
@@ -2040,18 +2185,31 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       const definitivelyRejected = !promptRequestStarted || isPromptRejectedError(e);
       // A transport/proxy failure after dispatch is ambiguous: the server may
       // have accepted the prompt before the response was lost. Keep SSE alive
-      // until server state confirms the run is idle.
+      // and the bubble until server state confirms the run is idle; the text
+      // goes back only if the server never got it (settleUnconfirmedSend).
+      // Nothing is sent again (#1432).
       if (!definitivelyRejected && sentSessionId) {
+        if (landedPromptRunIdRef.current !== promptRunId) {
+          unconfirmedSendRef.current = {
+            runId: promptRunId,
+            sid: sentSessionId,
+            message,
+            images,
+            draftKey: composerDraftKey,
+            parkedDraftKey: isNew && newSessionCwd ? parkedNewSessionDraftKey(newSessionCwd) : null,
+            lastEntryIdAtSend,
+            sameTextAfterSend,
+            bubble: userMsg,
+            key: userKey,
+            command: isSlashCommandPrompt,
+          };
+          if (!sessionHookMountedRef.current) releaseUnconfirmedSend();
+        }
         void waitForPromptSettlement(sentSessionId, promptRunId);
         return;
       }
       rpcPromptPendingRef.current = false;
-      setMessages((prev) => {
-        const optimisticIndex = prev.lastIndexOf(userMsg);
-        return optimisticIndex === -1
-          ? prev
-          : [...prev.slice(0, optimisticIndex), ...prev.slice(optimisticIndex + 1)];
-      });
+      setMessages((prev) => withoutMessage(prev, userMsg));
       // A folder that no longer exists never reached the model: the composer's
       // banner names it (translated) instead of the server's English notice.
       if (e instanceof AgentCommandError && e.missingCwd) setPromptMissingCwd(e.missingCwd);
@@ -2071,7 +2229,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setAgentPhase(null);
       dispatch({ type: "end" });
     }
-  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, cancelEventStreamGrace, closeEvents, composerDraftKey, dispatch, reconcileAgentState, restoreSubmission, editEntryId, setEdit]);
+  }, [isNew, newSessionCwd, newSessionModel, session, ensureNewSession, ensureEventsConnected, promoteNewSession, waitForPromptSettlement, addNotice, releaseUnconfirmedSend, cancelEventStreamGrace, closeEvents, composerDraftKey, dispatch, reconcileAgentState, restoreSubmission, editEntryId, setEdit]);
 
   const executeBash = useCallback(async (command: string, excludeFromContext: boolean) => {
     if (agentRunningRef.current || bashRunningRef.current) return;
@@ -2548,20 +2706,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       });
     } catch (e) {
       console.error("Failed to submit streaming prompt:", e);
+      restore();
       // A transport failure after dispatch is ambiguous: the server may have
-      // accepted the queued prompt before the response was lost. Restoring in
-      // that case would invite a duplicate turn.
-      if (isPromptRejectedError(e)) restore();
+      // accepted the queued prompt before the response was lost, so the notice
+      // says the send is unconfirmed instead of failed (#1432).
       if (e instanceof AgentCommandError && e.missingCwd) {
         setPromptMissingCwd(e.missingCwd);
         return;
       }
-      addNotice({
-        type: "error",
-        message: e instanceof Error ? e.message : String(e),
-      });
+      if (isPromptRejectedError(e)) addNotice({ type: "error", message: e.message });
+      else addUnconfirmedSendNotice();
     }
-  }, [addNotice, composerDraftKey, editEntryId, restoreSubmission]);
+  }, [addNotice, addUnconfirmedSendNotice, composerDraftKey, editEntryId, restoreSubmission]);
 
   const handleSteer = useCallback(async (message: string, images?: AttachedImage[]) => {
     await sendStreamingPrompt(message, "steer", images);
@@ -2928,6 +3084,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           deleteSessionViewSnapshot(sid);
         }
       }
+      // After the snapshot above, so the bubble of a send given back leaves it.
+      releaseUnconfirmedSendRef.current();
       if (liveFollowFrameRef.current !== null) {
         cancelAnimationFrame(liveFollowFrameRef.current);
         liveFollowFrameRef.current = null;
