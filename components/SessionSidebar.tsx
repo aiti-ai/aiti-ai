@@ -53,7 +53,9 @@ import {
   projectRenameRequest,
   sessionMenuEntries,
   type SessionMenuActionId,
+  worktreeCreateFailure,
 } from "@/lib/sidebar-actions";
+import { shortenPath } from "@/lib/display-path";
 import { splitBeforeForkSuffix } from "@/lib/session-fork-name";
 import {
   mergeProjectChoices,
@@ -1275,8 +1277,13 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: project.root, branch }),
       });
-      const data = await res.json().catch(() => ({})) as { path?: string; error?: string };
-      if (!res.ok || data.error || !data.path) return { error: data.error ?? `HTTP ${res.status}` };
+      const data = await res.json().catch(() => ({})) as { path?: string; error?: string; code?: string; branch?: string; worktreePath?: string };
+      if (!res.ok || data.error || !data.path) {
+        const failure = worktreeCreateFailure(data, res.status);
+        return "key" in failure
+          ? { error: t(failure.key, { ...failure.params, path: shortenPath(failure.params.path) }) }
+          : failure;
+      }
       const path = data.path;
       setWorktreeState((prev) => (prev && prev.projectKey === project.key && !prev.worktrees.some((worktree) => worktree.path === path)
         ? { ...prev, worktrees: [...prev.worktrees, { path, branch, isMain: false }] }
@@ -1286,7 +1293,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     } catch (e) {
       return { error: e instanceof Error ? e.message : String(e) };
     }
-  }, []);
+  }, [t]);
 
   // The files tab's remove button. A checkout with changes answers "dirty",
   // and the picker asks before retrying with force.

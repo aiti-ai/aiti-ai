@@ -524,6 +524,8 @@ export const zhTWLocale: LocalePlugin = {
     "sidebar.newWorktree": "新增 worktree…",
     "sidebar.branchName": "分支名稱",
     "sidebar.creating": "建立中…",
+    "sidebar.worktreeBranchInUse": "分支「{branch}」已在 {path} 簽出。",
+    "sidebar.worktreeBranchMissing": "分支「{branch}」仍屬於一個資料夾已不存在的 worktree（{path}）。執行 git worktree prune 即可清除。",
     "sidebar.create": "建立",
     "sidebar.uploadFilesTitle": "將檔案上傳到專案根目錄",
     "sidebar.uploadFiles": "上傳檔案",
