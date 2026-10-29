@@ -6,6 +6,7 @@ import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { isDeepStrictEqual } from "util";
 import { validateAgentImages } from "./image-attachments";
+import { cwdMissingError } from "./missing-cwd";
 import { invalidateModelsCache } from "./models-cache";
 import { invalidateModelRuntimeWithExtensions } from "./model-runtime";
 import { resolveVisibleModels, selectInitialModelScope } from "./model-scope";
@@ -1123,8 +1124,9 @@ export class AgentSessionWrapper {
       // run there would reach the model only for its tools to fail (and `write`
       // to recreate the folder). The pi CLI does not resume such a session
       // either; refuse as /api/agent/new does. (A `!` command already refuses.)
+      // Typed, so the route names the folder for the composer (#1422).
       if (type === "prompt" && !existsSync(this.cwd)) {
-        throw new Error(`Directory does not exist: ${this.cwd}`);
+        throw cwdMissingError(this.cwd);
       }
 
       switch (type) {

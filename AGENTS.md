@@ -101,6 +101,7 @@ app/api/
 
 lib/
   agent-client.ts           typed fetch helper for /api/agent commands
+  missing-cwd.ts            client-safe `reason: "cwd-missing"` refusal of a folder that no longer exists: error class, body fields, parsing
   debug-types.ts            client-safe shapes of the Debug panel: GET /api/agent/debug and the page's own snapshot
   debug-snapshot.ts         buildDebugSnapshot(): the debug route's synchronous field reads, each source guarded
   page-debug.ts             client: the page's EventSources, visibility history, protocol and running-poll record (Debug panel)
