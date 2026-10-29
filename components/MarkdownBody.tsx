@@ -11,6 +11,7 @@ import { isExternalMarkdownHref, jumpToMarkdownFragment, markdownAppUrlTransform
 import { splitMarkdownBlocks } from "@/lib/markdown-blocks";
 import { ImagePreview } from "./ImagePreview";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock";
+import { SvgBlock } from "./SvgBlock";
 
 const MarkdownLinkContext = createContext(false);
 
@@ -130,6 +131,9 @@ export const MarkdownBody = memo(function MarkdownBody({ children, className, is
               defaultPreview
             />
           );
+        }
+        if (lang === "svg") {
+          return <SvgBlock code={raw.replace(/\n$/, "")} isStreaming={isStreaming} />;
         }
         return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} />;
       }
