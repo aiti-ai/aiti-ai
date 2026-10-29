@@ -2,7 +2,6 @@ import { AGENT_EVENT_HEARTBEAT_MS } from "./agent-event-wire";
 import { countAgentEventStreams, listAgentEventStreams } from "./agent-event-stream";
 import type {
   DebugEventStream,
-  DebugLease,
   DebugParentNotification,
   DebugServerGlobal,
   DebugSessionDetail,
@@ -18,12 +17,7 @@ import {
   SESSION_IDLE_TIMEOUT_MS,
   type RpcSessionDebugEntry,
 } from "./rpc-manager";
-import {
-  listRegisteredSessionLivenessProviders,
-  listSessionLivenessLeases,
-  listSessionLivenessProviders,
-  SESSION_LIVENESS_LEASE_TTL_MS,
-} from "./session-liveness";
+import { listRegisteredSessionLivenessProviders, listSessionLivenessProviders } from "./session-liveness";
 import { hasUnsettledSubagentRun, subagentDebugSnapshot } from "./subagent-runtime";
 import { getTerminalStats } from "./terminal-manager";
 
@@ -46,11 +40,6 @@ function subagentRunIds(): Set<string> {
 }
 
 // Field by field, so a row never carries more than the contract names.
-function toLease(lease: DebugLease): DebugLease {
-  const { holder, expiresAt, active, createdAt, renewedAt, renewals } = lease;
-  return { holder, expiresAt, active, createdAt, renewedAt, renewals };
-}
-
 function toEventStream(stream: DebugEventStream): DebugEventStream {
   const { holder, openedAt, connectedAt, lastWriteAt, droppedEvents, queuedBytes } = stream;
   return { holder, openedAt, connectedAt, lastWriteAt, droppedEvents, queuedBytes };
@@ -66,7 +55,6 @@ function buildDetail(
   sessionId: string,
   entry: RpcSessionDebugEntry | undefined,
   starting: readonly string[],
-  leases: readonly (DebugLease & { sessionId: string })[],
   streams: readonly (DebugEventStream & { sessionId: string })[],
 ): DebugSessionDetail {
   const subagents = read<{ runs: DebugSubagentRun[]; notifications: DebugParentNotification[] }>(
@@ -78,7 +66,6 @@ function buildDetail(
     wrapper: entry?.snapshot ?? null,
     lifecycle: read(() => getRpcSessionLifecycle(sessionId), null),
     starting: starting.includes(sessionId),
-    leases: leases.filter((lease) => lease.sessionId === sessionId).map(toLease),
     // The only place extension code runs: each of this session's providers says whether it is active.
     providers: read(
       () => listSessionLivenessProviders({ sessionId, ...(entry?.sessionFile ? { sessionFile: entry.sessionFile } : {}) })
@@ -98,13 +85,12 @@ function buildDetail(
 /**
  * What `GET /api/agent/debug` answers (lib/debug-types.ts): the server's registries as counts,
  * states and times, with `sessionId`'s detail. Synchronous and read-only: it starts no wrapper,
- * takes or renews no lease, opens no stream, moves no idle timer and never calls `send()`.
- * `sessions` holds every id with a wrapper, an active lease or an event stream.
+ * opens no stream, moves no idle timer and never calls `send()`.
+ * `sessions` holds every id with a wrapper or an event stream.
  */
 export function buildDebugSnapshot(sessionId: string | null, now = Date.now()): DebugSnapshotResponse {
   const wrappers = read(() => getRpcSessionDebugSnapshots(), []);
   const starting = read(() => getRpcStartingSessionIds(), []);
-  const leases = read(() => listSessionLivenessLeases(now), []);
   // Registered, not asked: a summary runs no extension code.
   const providers = read(() => listRegisteredSessionLivenessProviders(), null) ?? [];
   const streams = read(() => listAgentEventStreams(), []);
@@ -114,13 +100,10 @@ export function buildDebugSnapshot(sessionId: string | null, now = Date.now()): 
   for (const entry of wrappers) {
     if (!wrapperById.has(entry.snapshot.sessionId)) wrapperById.set(entry.snapshot.sessionId, entry);
   }
-  const activeLeases = leases.filter((lease) => lease.active);
-  const leasesBySession = countBy(activeLeases, (lease) => lease.sessionId);
   const streamsBySession = countBy(streams, (stream) => stream.sessionId);
 
   const ids = new Set<string>([
     ...wrapperById.keys(),
-    ...activeLeases.map((lease) => lease.sessionId),
     ...streams.map((stream) => stream.sessionId),
   ]);
   const sessions: DebugSessionSummary[] = [...ids].map((id) => {
@@ -134,7 +117,6 @@ export function buildDebugSnapshot(sessionId: string | null, now = Date.now()): 
       awaitingInput: snapshot?.awaitingInput ?? false,
       subagent: snapshot?.subagent === true || subagentIds.has(id),
       eventStreams: streamsBySession.get(id) ?? 0,
-      activeLeases: leasesBySession.get(id) ?? 0,
       providers: providers.filter((provider) => provider.sessionId === id
         || (sessionFile !== null && provider.sessionFile === sessionFile)).length,
       nextIdleCheckAt: snapshot?.idle.nextCheckAt ?? null,
@@ -149,7 +131,6 @@ export function buildDebugSnapshot(sessionId: string | null, now = Date.now()): 
   const server: DebugServerGlobal = {
     startedAt: Math.round(now - process.uptime() * 1000),
     idleTimeoutMs: SESSION_IDLE_TIMEOUT_MS,
-    leaseTtlMs: SESSION_LIVENESS_LEASE_TTL_MS,
     heartbeatMs: AGENT_EVENT_HEARTBEAT_MS,
     wrappers: {
       alive: wrappers.filter((entry) => entry.snapshot.state === "alive").length,
@@ -171,6 +152,6 @@ export function buildDebugSnapshot(sessionId: string | null, now = Date.now()): 
     sessions,
     session: sessionId === null
       ? null
-      : buildDetail(sessionId, wrapperById.get(sessionId), starting, leases, streams),
+      : buildDetail(sessionId, wrapperById.get(sessionId), starting, streams),
   };
 }

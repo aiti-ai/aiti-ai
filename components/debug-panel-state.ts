@@ -231,7 +231,6 @@ function isSummary(value: unknown): boolean {
     && typeof value.sessionId === "string"
     && typeof value.state === "string"
     && isNumber(value.eventStreams)
-    && isNumber(value.activeLeases)
     && isNumberOrNull(value.nextIdleCheckAt);
 }
 
@@ -242,7 +241,6 @@ function isDetail(value: unknown): boolean {
   const mcp = value.mcp;
   return (wrapper === null || (isObject(wrapper) && typeof wrapper.state === "string" && isObject(wrapper.run) && isObject(wrapper.idle)))
     && (value.lifecycle === null || isObject(value.lifecycle))
-    && Array.isArray(value.leases)
     && (value.providers === null || Array.isArray(value.providers))
     && Array.isArray(value.eventStreams)
     && isObject(subagents) && Array.isArray(subagents.runs) && Array.isArray(subagents.notifications)
@@ -507,7 +505,7 @@ export type DebugTitleOf = (sessionId: string) => string | null;
 /** The panel's parts of one line, the empty ones left out. */
 export const joinParts = (parts: readonly (string | null | false | undefined)[]) => parts.filter(Boolean).join(" · ");
 
-/** A stream's or a lease's tone by the page holding it: this page accent, another page muted, none dim. */
+/** A stream's tone by the page holding it: this page accent, another page muted, none dim. */
 export function debugHolderTone(holder: string | null, myHolder: string | null): DebugTone {
   if (holder === null) return "dim";
   return holder === myHolder ? "accent" : "muted";
@@ -579,16 +577,6 @@ export function freshnessTone(ageMs: number, staleAfterMs: number): "dim" | "war
   if (!(staleAfterMs > 0)) return "dim";
   if (ageMs >= staleAfterMs) return "error";
   return ageMs >= staleAfterMs / 2 ? "warning" : "dim";
-}
-
-/**
- * A lease's gauge under its key: dim once it lapsed, amber below a third of its time to live (two
- * renewals missed), else null: the key's own tone.
- */
-export function leaseGaugeTone(remainingMs: number, ttlMs: number, active: boolean): DebugTone | null {
-  if (!active) return "dim";
-  const fraction = barFraction(remainingMs, ttlMs);
-  return fraction !== null && fraction < 1 / 3 ? "warning" : null;
 }
 
 /** An MCP server's dot: filled for a settled state, a ring while it connects or after it was let go. */
@@ -753,7 +741,7 @@ export function sparkStats(samples: readonly DebugSample[]): { count: number; me
 export interface DebugIssue {
   id:
     | "poll" | "reader" | "runningPoll" | "pool" | "source" | "stream" | "streamSilent" | "noServerStream"
-    | "dropped" | "lease" | "noServerLease" | "extensions" | "provider" | "mcp";
+    | "dropped" | "lease" | "extensions" | "provider" | "mcp";
   tone: "warning" | "error";
   text: string;
 }
@@ -844,12 +832,8 @@ export function debugIssues({ page, server, detail, t, titleOf }: DebugIssueInpu
   }
 
   // Cross-checks with the server: only about what the page had before the answer's request left.
-  const myHolder = client?.lease.holder ?? null;
+  const myHolder = client?.pageId ?? null;
   const requestStartedAt = server.receivedAt !== null ? server.receivedAt - (server.roundTripMs ?? 0) : null;
-  // When the answering server process started, on the browser's clock: what the page sent before
-  // then went to a process that is gone (a restart), and the next renewal sends it again.
-  const reply = server.reply;
-  const serverStartedAt = reply && server.receivedAt !== null ? server.receivedAt - (reply.now - reply.server.startedAt) : null;
   if (
     detail && myHolder && connection && requestStartedAt !== null
     && connection.state === "connected"
@@ -879,21 +863,6 @@ export function debugIssues({ page, server, detail, t, titleOf }: DebugIssueInpu
       ]);
     } else if (last?.outcome === "unanswered") {
       add("lease", "warning", [t("debug.section.lease"), t(DEBUG_LEASE_OUTCOME_KEYS.unanswered), formatAgo(now - last.at, t)]);
-    }
-    // Not while a renewal is on its way (after a sleep the overdue poll can land first), and not
-    // about a reply from before this server process started. A lease that merely aged past its
-    // time to live still counts: that is a renewal loop that stopped.
-    if (
-      detail && myHolder && client && requestStartedAt !== null
-      && client.selectedSessionId === detail.sessionId
-      && last?.outcome === "reply"
-      && lease.inFlightSince === null
-      && lease.renewStartedAt !== null && last.at >= lease.renewStartedAt
-      && serverStartedAt !== null && last.at > serverStartedAt
-      && last.at < requestStartedAt
-      && !detail.leases.some((entry) => entry.active && entry.holder === myHolder)
-    ) {
-      add("noServerLease", "warning", [t("debug.issue.noServerLease")]);
     }
   }
 
@@ -1080,7 +1049,7 @@ export function groupDebugSessions(
   return groups;
 }
 
-/** A session row's tooltip: "a1b2c3d4 · alive · running · 2 event streams · 1 active leases · idle check in 8m · started 2×". */
+/** A session row's tooltip: "a1b2c3d4 · alive · running · 2 event streams · idle check in 8m · started 2×". */
 export function debugSessionTitle(summary: DebugSessionSummary, idleInMs: number | null, t: Translate): string {
   const parts = [
     summary.subagent ? t("debug.overlay.subagentId", { id: shortDebugId(summary.sessionId) }) : shortDebugId(summary.sessionId),
@@ -1089,7 +1058,6 @@ export function debugSessionTitle(summary: DebugSessionSummary, idleInMs: number
   if (summary.running) parts.push(t("debug.overlay.running"));
   if (summary.awaitingInput) parts.push(t("debug.overlay.awaiting"));
   if (summary.eventStreams > 0) parts.push(t("debug.overlay.streams", { count: summary.eventStreams }));
-  if (summary.activeLeases > 0) parts.push(t("debug.overlay.leases", { count: summary.activeLeases }));
   if (summary.providers > 0) parts.push(t("debug.overlay.providers", { count: summary.providers }));
   if (idleInMs !== null) {
     parts.push(t(summary.forcedByStop ? "debug.overlay.closesIn" : "debug.overlay.idle", { time: formatShortDebugDuration(idleInMs, t) }));

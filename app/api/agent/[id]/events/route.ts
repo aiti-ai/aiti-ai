@@ -6,7 +6,7 @@ import { isValidLivenessHolder } from "@/lib/session-liveness";
 export const dynamic = "force-dynamic";
 
 // GET /api/agent/[id]/events?holder=<page id> - SSE stream of agent events. The holder only
-// labels the stream for the debug panel: the page's lease route keeps the session alive, never
+// labels the stream for the debug panel: the page's lease renewals keep the session alive, never
 // the stream (#1283).
 export async function GET(
   req: Request,
