@@ -394,6 +394,8 @@ export const zhCNLocale: LocalePlugin = {
     "debug.holder.thisPage": "本页面",
     "debug.holder.otherPage": "其他页面",
     "debug.holder.none": "无页面 ID",
+    "debug.pages.title": "连接的页面",
+    "debug.pages.unknownClient": "未知浏览器",
     "debug.state.alive": "存活",
     "debug.state.closing": "关闭中",
     "debug.state.none": "无 Wrapper",

@@ -111,6 +111,8 @@ const STREAM_INFO_REGISTRY: symbol = Symbol.for("pi-web.agentEventStreamInfos");
 interface AgentEventStreamInfo {
   sessionId: string;
   holder: string | null;
+  address: string | null;
+  client: string | null;
   openedAt: number;
   connectedAt: number | null;
   lastWriteAt: number | null;
@@ -135,6 +137,8 @@ export function listAgentEventStreams(): (DebugEventStream & { sessionId: string
       listed.push({
         sessionId: info.sessionId,
         holder: info.holder,
+        address: info.address,
+        client: info.client,
         openedAt: info.openedAt,
         connectedAt: info.connectedAt,
         lastWriteAt: info.lastWriteAt,
@@ -160,13 +164,14 @@ function errorMessage(error: unknown): string {
 /**
  * Open the SSE transport immediately, then publish the session snapshot only
  * after the agent is ready and its event listener has been installed.
- * `meta.holder` (the page's id) only labels the stream for the debug panel.
+ * `meta` (the page's id, the request's reported address and browser label) only labels the
+ * stream for the debug panel.
  */
 export function createAgentEventStream(
   req: Request,
   sessionId: string,
   sessionPromise: Promise<AgentEventStreamSession>,
-  meta?: { holder?: string | null },
+  meta?: { holder?: string | null; address?: string | null; client?: string | null },
 ): ReadableStream<Uint8Array> {
   let cancelStream: (closeController: boolean | "error") => void = () => {};
 
@@ -214,6 +219,8 @@ export function createAgentEventStream(
       const info: AgentEventStreamInfo = {
         sessionId,
         holder: meta?.holder ?? null,
+        address: meta?.address ?? null,
+        client: meta?.client ?? null,
         openedAt: Date.now(),
         connectedAt: null,
         lastWriteAt: null,

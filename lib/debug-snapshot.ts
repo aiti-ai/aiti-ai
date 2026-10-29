@@ -41,8 +41,8 @@ function subagentRunIds(): Set<string> {
 
 // Field by field, so a row never carries more than the contract names.
 function toEventStream(stream: DebugEventStream): DebugEventStream {
-  const { holder, openedAt, connectedAt, lastWriteAt, droppedEvents, queuedBytes } = stream;
-  return { holder, openedAt, connectedAt, lastWriteAt, droppedEvents, queuedBytes };
+  const { holder, address, client, openedAt, connectedAt, lastWriteAt, droppedEvents, queuedBytes } = stream;
+  return { holder, address: address ?? null, client: client ?? null, openedAt, connectedAt, lastWriteAt, droppedEvents, queuedBytes };
 }
 
 function countBy<T>(rows: readonly T[], key: (row: T) => string): Map<string, number> {
@@ -125,8 +125,12 @@ export function buildDebugSnapshot(sessionId: string | null, now = Date.now()): 
     };
   });
 
-  const byHolder = new Map<string | null, number>();
-  for (const stream of streams) byHolder.set(stream.holder, (byHolder.get(stream.holder) ?? 0) + 1);
+  const byHolder = new Map<string | null, { count: number; address: string | null; client: string | null }>();
+  for (const stream of streams) {
+    const entry = byHolder.get(stream.holder);
+    if (entry) entry.count += 1;
+    else byHolder.set(stream.holder, { count: 1, address: stream.address ?? null, client: stream.client ?? null });
+  }
 
   const server: DebugServerGlobal = {
     startedAt: Math.round(now - process.uptime() * 1000),
@@ -140,7 +144,7 @@ export function buildDebugSnapshot(sessionId: string | null, now = Date.now()): 
     eventStreams: {
       // The closer registry also counts streams opened before a hot reload of the stream module.
       total: read(() => countAgentEventStreams(), streams.length),
-      byHolder: [...byHolder].map(([holder, count]) => ({ holder, count })),
+      byHolder: [...byHolder].map(([holder, entry]) => ({ holder, ...entry })),
     },
     fileWatches: read(() => countFileWatches(), 0),
     terminals: read(() => getTerminalStats(now), NO_TERMINALS),

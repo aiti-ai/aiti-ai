@@ -394,6 +394,8 @@ export const enLocale: LocalePlugin = {
     "debug.holder.thisPage": "this page",
     "debug.holder.otherPage": "other page",
     "debug.holder.none": "no page id",
+    "debug.pages.title": "Connected pages",
+    "debug.pages.unknownClient": "unknown browser",
     "debug.state.alive": "alive",
     "debug.state.closing": "closing",
     "debug.state.none": "no wrapper",
