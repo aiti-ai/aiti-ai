@@ -13,6 +13,27 @@ import type {
  * whatever its handlers close over (a terminal's scrollback, a viewer's last file).
  */
 
+// This page's id: the label of its event streams (`?holder=`) on the server's debug view, and
+// how the debug panel tells this page's streams from another's. On the window, not in a module:
+// a Fast Refresh re-evaluates the module while the open stream keeps the id it was opened with,
+// and a new id would make the page's own stream look like another page's.
+const PAGE_ID_KEY = Symbol.for("pi-web:page-id");
+
+export function pageId(): string {
+  const store = globalThis as Record<PropertyKey, unknown>;
+  const existing = store[PAGE_ID_KEY];
+  if (typeof existing === "string") return existing;
+  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  store[PAGE_ID_KEY] = id;
+  return id;
+}
+
+/** This page's id without creating it: null before its first event stream. */
+export function peekPageId(): string | null {
+  const id = (globalThis as Record<PropertyKey, unknown>)[PAGE_ID_KEY];
+  return typeof id === "string" ? id : null;
+}
+
 interface EventSourceLike {
   readonly readyState: number;
   addEventListener?(type: "open" | "error", listener: () => void): void;

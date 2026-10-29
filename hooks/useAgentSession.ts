@@ -38,7 +38,7 @@ import {
 } from "@/lib/agent-event-connection";
 import { HIDDEN_PAGE_GRACE_MS } from "@/hooks/usePageHidden";
 import type { DebugClientLease, DebugClientSession, DebugEventConnectionSnapshot, DebugStreamCloseReason } from "@/lib/debug-types";
-import { trackEventSource } from "@/lib/page-debug";
+import { pageId, peekPageId, trackEventSource } from "@/lib/page-debug";
 import type { TranslationParams } from "@/lib/i18n/types";
 import { AGENT_EVENT_HEARTBEAT_MS, isNestedToolExecutionEvent, isSystemMessageEvent } from "@/lib/agent-event-wire";
 import { runStatePhase } from "@/lib/chat-phase-label";
@@ -272,25 +272,9 @@ const EVENT_STREAM_RECONNECT_DELAY_MS = 1_000;
 const SESSION_LEASE_RENEW_INTERVAL_MS = 30_000;
 // A ready stream silent for two and a half heartbeats is dead (AgentEventConnection reconnects).
 const EVENT_STREAM_STALE_MS = AGENT_EVENT_HEARTBEAT_MS * 2.5;
-// This page's id: the label of its event streams (`?holder=`) on the server's debug view, and
-// how the debug panel tells this page's streams from another's. On the window, not in this
-// module: a Fast Refresh re-evaluates the module while the open stream keeps the id it was opened
-// with, and a new id would make the page's own stream look like another page's.
-const PAGE_ID_KEY = Symbol.for("pi-web:page-id");
 type SessionLeaseOutcome = SessionLeaseReply | "unanswered" | null;
-function pageId(): string {
-  const store = globalThis as Record<PropertyKey, unknown>;
-  const existing = store[PAGE_ID_KEY];
-  if (typeof existing === "string") return existing;
-  const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-  store[PAGE_ID_KEY] = id;
-  return id;
-}
-/** This page's id without creating it: null before its first event stream. */
-export function peekPageId(): string | null {
-  const id = (globalThis as Record<PropertyKey, unknown>)[PAGE_ID_KEY];
-  return typeof id === "string" ? id : null;
-}
+// This page's id, the `?holder=` of its event streams: lib/page-debug.ts.
+export { peekPageId };
 function sessionLeaseUrl(sid: string): string {
   return `/api/agent/${encodeURIComponent(sid)}/lease`;
 }
