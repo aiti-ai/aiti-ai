@@ -1313,6 +1313,26 @@ pre, code {
 .markdown-body .katex {
   font-size: 1.05em;
 }
+/* A display formula's Copy button (MarkdownBody's MathDisplay): on hover or
+   keyboard focus where the pointer can hover, always shown on touch screens. */
+.markdown-math-display {
+  position: relative;
+}
+.markdown-math-copy {
+  position: absolute;
+  top: 2px;
+  right: 0;
+}
+@media (hover: hover) {
+  .markdown-math-copy {
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .markdown-math-display:hover .markdown-math-copy,
+  .markdown-math-copy:focus-visible {
+    opacity: 1;
+  }
+}
 .markdown-user-message p {
   white-space: pre-wrap;
 }
