@@ -61,13 +61,44 @@ function section(html, key, nextKey) {
   return html.slice(from, to);
 }
 
+/** The server column's head: its totals. */
+function serverHead(html) {
+  const column = section(html, "server");
+  return column.slice(0, column.indexOf('<div class="debug-list">'));
+}
+
+/** The server's sessions, below its head, without the stylesheet. */
+function sessionList(html) {
+  const from = html.indexOf('<div class="debug-list">');
+  assert.notEqual(from, -1);
+  return html.slice(from, html.indexOf("<style>", from));
+}
+
+/** The chat's details under its row, up to the next row. */
+function detailOf(html) {
+  const from = html.indexOf('<div class="debug-detail">');
+  assert.notEqual(from, -1);
+  const to = html.indexOf('<div class="debug-row', from);
+  return html.slice(from, to === -1 ? html.length : to);
+}
+
+/** One measure of the page's table, from its name to the next one's. */
+function measure(html, key) {
+  const from = html.indexOf(`<span class="debug-label">${t(`debug.section.${key}`)}</span>`);
+  assert.notEqual(from, -1, key);
+  const next = html.indexOf('<span class="debug-measure-name"', from);
+  return html.slice(from, next === -1 ? html.indexOf("debug-col-server", from) : next);
+}
+
 /** The session list as lines: "# group", then rows "[sub ]name[ · this chat]" ("this chat": the row with the sidebar's bar). */
 function sessionLines(html) {
-  const list = section(html, "sessions", "global");
+  const list = sessionList(html);
   const lines = [];
-  for (const match of list.matchAll(/class="debug-group-name">([^<]*)<|class="(debug-row(?: is-[a-z-]+)*)"|class="debug-row-name">([^<]*)</g)) {
+  for (const match of list.matchAll(/class="debug-group-name">([^<]*)<|class="(debug-row(?: [a-z-]+)*)"|class="debug-row-name">([^<]*)</g)) {
     if (match[1] !== undefined) lines.push(`# ${match[1]}`);
-    else if (match[2] !== undefined) lines.push({ classes: match[2] });
+    else if (match[2] !== undefined) {
+      if (!match[2].includes("debug-list-head")) lines.push({ classes: match[2] });
+    }
     else lines[lines.length - 1].name = match[3];
   }
   return lines.map((line) => (typeof line === "string"
@@ -173,7 +204,7 @@ function reply() {
     sessions: [
       summary("other-session", { state: "closing" }),
       summary("notes-1", { awaitingInput: true, eventStreams: 1, nextIdleCheckAt: SERVER + 3 * MINUTE }),
-      summary("s1", { eventStreams: 2, providers: 1, nextIdleCheckAt: SERVER + 8 * MINUTE + 30 * SECOND }),
+      summary("s1", { eventStreams: 2, providers: 1, nextIdleCheckAt: SERVER + 8 * MINUTE + 30 * SECOND, starts: 2 }),
       summary("sub-xyz-789", { subagent: true, running: true, eventStreams: 1 }),
     ],
     session: {
@@ -228,7 +259,7 @@ test("a quiet page reads OK: no issue list, the meter's scale in its label, ever
   assert.doesNotMatch(html, /<ul/, "no issues, no list");
   // The meter's name says what its slots count: the slots' own titles are not read inside an image.
   assert.ok(ariaLabels(html).includes("http/1.1 · six connections per origin, shared by all tabs · 2/6 · Agent 1 · File watch 1"), ariaLabels(html).join("\n"));
-  for (const key of ["page", "stream", "lease", "session", "global", "sessions"]) {
+  for (const key of ["page", "stream", "lease", "server"]) {
     assert.ok(html.includes(`>${t(`debug.section.${key}`)}<`), key);
   }
   // Constants are scales and tooltips, never rows: the sentence is not on screen.
@@ -264,25 +295,38 @@ test("a timeout: the verdict counts it and its sentence is written once", () => 
 test("server countdowns run on the server's clock plus the time since its answer", () => {
   const html = render();
   const text = visibleText(html);
-  // 8m 30s left when the server answered, 10 s ago: 8m 20s, whatever the browser's clock says.
-  assert.ok(text.includes("Reap countdown 8m 20s"), text);
+  // 8m 30s left when the server answered, 10 s ago: 8m 20s, whatever the browser's clock says. The
+  // chat's row shows minutes like every row; its tooltip has the seconds and what moves them.
   const all = titles(html);
-  assert.ok(all.includes("started 2× · last 6m 10s ago · closed 7m 10s ago"));
-  assert.ok(all.includes(`timeout 10m 00s · reset 1m 40s ago · ${t("debug.server.idleHint")}`), "the idle bar's scale in its tooltip");
+  assert.ok(all.includes(`Reap countdown 8m 20s · timeout 10m 00s · reset 1m 40s ago · ${t("debug.server.idleHint")}`), all.join("\n"));
+  assert.ok(all.includes("started 2× · last 6m 10s ago · closed 7m 10s ago"), "the chat's ↻ says when");
   assert.ok(text.includes("Uptime 2h 00m"));
   assert.ok(text.includes("↻2"));
   // The browser's own times run on its own clock: next renewal 10 s after the 30 s mark.
-  assert.match(html, /aria-label="every 15s · 2 sent · 0 unanswered · 0 failed · this page page-min"/);
-  assert.ok(text.includes("Next renewal in 10s"));
-  assert.ok(text.includes("Last renewal answered · 18 ms · 5s ago"));
+  assert.ok(all.includes("Next renewal in 10s · every 15s · 2 sent · 0 unanswered · 0 failed · this page page-min"));
+  assert.ok(text.includes("Lease renews in 10s Last renewal answered · 18 ms · 5s ago"), text);
+  // Both bars fill as time passes: the stream's toward its watchdog, the lease's toward its renewal
+  // (5 s of 15 gone).
+  assert.match(measure(html, "lease"), /<span class="debug-bar-fill" style="width:33\.33[0-9]*%">/);
+  assert.match(measure(html, "stream"), /<span class="debug-bar-fill" style="width:6\.66[0-9]*%">/);
+  // Their times in whole seconds, never ms: an age rounds down, a countdown up. A round trip keeps its ms.
+  const fresh = render({
+    page: page({ client: client({
+      connection: { ...client().connection, lastSeenAt: LOCAL - 400, lastHeartbeatAt: LOCAL - 400 },
+      lease: { ...client().lease, renewStartedAt: LOCAL - 29_700, last: { ...client().lease.last, at: LOCAL - 300 } },
+    }) }),
+  });
+  assert.match(measure(fresh, "stream"), /<span class="debug-value is-[a-z]+" title="[^"]*">data 0s ago<\/span>/);
+  assert.match(measure(fresh, "lease"), /<span class="debug-value is-muted" title="[^"]*">renews in 1s<\/span>/);
+  assert.ok(visibleText(measure(fresh, "lease")).includes("Last renewal answered · 18 ms · 0s ago"));
 });
 
 test("one boxed word per stream and provider: this page's first and filled, other pages' outlined", () => {
   const html = render();
   // The chat's badges sit in its row of the list, where every other session's are.
-  const list = section(html, "sessions", "global");
-  const card = list.slice(list.indexOf("debug-row is-current"), list.indexOf("debug-row is-sub"));
-  assert.doesNotMatch(section(html, "session", "sessions"), /debug-badge/, "none left in the card");
+  const list = sessionList(html);
+  const card = list.slice(list.indexOf("debug-row is-current"), list.indexOf("debug-detail"));
+  assert.doesNotMatch(detailOf(html), /debug-badge/, "none in the details under it");
   const labels = ariaLabels(card);
   assert.ok(labels.includes("SSE: 2 (this page 1, other page 1)"), labels.join("\n"));
   assert.ok(!labels.some((label) => label.startsWith("Lease")), "the server keeps no leases to show");
@@ -294,11 +338,16 @@ test("one boxed word per stream and provider: this page's first and filled, othe
   // A provider's badge is its name.
   assert.match(card, /<span class="debug-badge is-name is-muted" title="keepalive-ext · active · by file">keepalive-ext<\/span>/);
 
-  const strip = section(html, "global");
+  const strip = serverHead(html);
   assert.match(strip, /<span class="debug-badge is-accent is-filled" title="this page page-min · 1 streams">SSE<\/span>/);
   assert.match(strip, /<span class="debug-badge is-muted" title="other page page-oth · 2 streams">SSE<\/span><span class="debug-badge is-muted" title="other page page-oth · 2 streams">SSE<\/span>/);
   assert.ok(ariaLabels(strip).includes("SSE: 3 from 2 pages"));
   assert.ok(strip.indexOf("this page page-min") < strip.indexOf("other page page-oth"), "this page's streams first");
+  // One run of badges, no divider between pages, then the server's total; the page's own column
+  // counts nothing, its meter shows it.
+  assert.match(strip, /<\/span><\/span><span class="debug-server-count">3 total<\/span>/);
+  assert.doesNotMatch(html, /debug-divider/);
+  assert.doesNotMatch(visibleText(section(html, "page", "server")), /\d\/6/);
   assert.match(strip, /aria-label="File watches: 1"><span class="debug-badge is-muted" title="File watches: 1">File<\/span><\/span>/);
   assert.match(strip, /aria-label="Terminals: 1 [^"]*"><span class="debug-badge is-muted" title="Terminals: 1 [^"]*">Term<\/span><\/span>/);
   assert.ok(titles(strip).some((title) => title.startsWith("Timers: idle 10m 00s · heartbeat 15s\n3 alive · 1 closing · 0 starting")));
@@ -311,7 +360,7 @@ test("a starting stream is dashed amber, one dropping events amber; past the cap
     stream("page-other-456", SERVER - 6 * MINUTE, { droppedEvents: 2 }),
     ...[5, 4, 3, 2, 1, 0].map((index) => stream(`page-x-${index}`, SERVER - index * SECOND)),
   ];
-  const list = section(render({ server: withDetail({ eventStreams }) }), "sessions", "global");
+  const list = sessionList(render({ server: withDetail({ eventStreams }) }));
   const from = list.indexOf('<span class="debug-run" title="SSE: 8 (this page 1, other page 7)"');
   assert.notEqual(from, -1);
   const run = list.slice(from, list.indexOf('<span class="debug-run"', from + 1));
@@ -327,7 +376,7 @@ test("a session row: up to three SSE and one Provider badge, then counts; this p
   const answer = reply();
   answer.sessions = answer.sessions.map((entry) => (entry.sessionId === "notes-1" ? { ...entry, eventStreams: 5, providers: 2 } : entry));
   const grace = { id: 3, kind: "agent", label: "notes-1", state: "open", createdAt: LOCAL - MINUTE, opens: 1, errors: 0, lastOpenAt: null, lastErrorAt: null };
-  const list = section(render({ page: page({ sources: [...page().sources, grace] }), server: server({ reply: answer }) }), "sessions", "global");
+  const list = sessionList(render({ page: page({ sources: [...page().sources, grace] }), server: server({ reply: answer }) }));
   const from = list.indexOf('<div class="debug-row" title="notes-1');
   const row = list.slice(from, list.indexOf("</div>", from));
   const badges = row.slice(row.indexOf('<span class="debug-row-badges">'), row.indexOf('<span class="debug-row-idle'));
@@ -345,11 +394,11 @@ test("a session row: up to three SSE and one Provider badge, then counts; this p
   ].join(""));
   // A wide panel's two columns leave the list narrow: the title keeps room, the badges wrap.
   const wide = panelSource.slice(0, panelSource.indexOf("@container debug-panel (max-width: 520px)"));
-  assert.match(wide, /\.debug-row \{[^}]*grid-template-columns: 14px minmax\(96px, 1fr\) auto 76px;/);
+  assert.match(wide, /\.debug-row \{[^}]*grid-template-columns: 14px minmax\(96px, 1fr\) auto 104px;/);
   assert.match(wide, /\.debug-row-badges \{[^}]*flex-wrap: wrap;\s*justify-content: flex-end;/);
   // A narrow panel puts them on a line of their own under the title, which keeps its width.
   const narrow = panelSource.slice(panelSource.indexOf("@container debug-panel (max-width: 520px)"));
-  assert.match(narrow, /\.debug-row \{\s*grid-template-columns: 14px minmax\(0, 1fr\) 32px;/);
+  assert.match(narrow, /\.debug-row \{\s*grid-template-columns: 14px minmax\(0, 1fr\) 64px;/);
   assert.match(narrow, /\.debug-row-badges \{\s*grid-column: 2 \/ -1;\s*grid-row: 2;\s*flex-wrap: wrap;/);
 });
 
@@ -358,7 +407,7 @@ test("the meter's slots say what holds them: SSE, File, Term; a connecting one d
   const [chat, watch] = page().sources;
   const sources = [chat, extra(3, "agent", "notes-1", LOCAL - 4 * MINUTE), watch, extra(4, "terminal", "/work/app", LOCAL - 30 * SECOND, "connecting")];
   const html = render({ page: page({ sources }) });
-  const tile = section(html, "page", "stream");
+  const tile = section(html, "page", "server");
   const meterFrom = tile.indexOf('<span class="debug-meter"');
   const meter = tile.slice(meterFrom, tile.indexOf("</div>", meterFrom));
   const slots = [...meter.matchAll(/<span class="(debug-(?:badge|slot)[^"]*)"[^>]*>([^<]*)<\/span>/g)].map((match) => `${match[1]}: ${match[2]}`);
@@ -390,27 +439,32 @@ test("sessions on the server: grouped by project, the chat's first and not repea
     "# Not in the session list",
     "other-se",
   ]);
-  const list = section(render(), "sessions", "global");
-  assert.match(list, /class="debug-row is-current" title="this chat · s1 · alive · 2 event streams · 1 liveness providers · reap countdown 8m">/);
-  // The chat's row: the sidebar's short bar instead of a status dot, and its badges with their holders.
+  const list = sessionList(render());
+  assert.match(list, /class="debug-row is-current has-detail" title="this chat · s1 · alive · 2 event streams · 1 liveness providers · reap countdown 8m · started 2×">/);
+  // The chat's row: the sidebar's short bar beside its status, its badges with their holders, its
+  // details below it on the same tint.
   const current = list.slice(list.indexOf("debug-row is-current"), list.indexOf("debug-row is-sub"));
-  assert.match(current, /<span class="debug-row-status"><\/span>/);
+  assert.match(current, /<span class="debug-row-status"><span class="debug-status" role="img" aria-label="alive"/);
   assert.match(current, /aria-label="SSE: 2 \(this page 1, other page 1\)"/);
+  assert.match(current, /<\/div><div class="debug-detail"><div class="debug-detail-line"><span class="debug-detail-id">s1<\/span>/);
+  assert.match(panelSource, /\.debug-row\.has-detail \{\s*border-radius: 4px 4px 0 0;/);
   assert.match(panelSource, /\.debug-row\.is-current::before \{\s*content: "";\s*position: absolute;\s*top: 5px;\s*left: 0;\s*width: 3px;\s*height: 14px;/);
   assert.match(list, /<span class="session-tree-awaiting" role="img" aria-label="awaiting input" title="awaiting input"><\/span>/, "the sidebar's awaiting dot");
   assert.match(list, /<span class="debug-status is-accent" title="running"><svg[^>]*class="sidebar-spin"/, "the sidebar's spinner");
   assert.match(list, /<span class="debug-status-ring is-closing"><\/span>/);
   assert.match(list, /title="1 event streams" role="img" aria-label="1 event streams"><span class="debug-badge is-muted" title="1 event streams">SSE<\/span><\/span>/);
   // 3 min left when the server answered, 10 s ago.
-  assert.match(list, /<span class="debug-row-idle-text">2m<\/span>/);
+  assert.match(list, /<span class="debug-row-idle-text">2m 50s<\/span>/, "to the second");
+  // A head says what the columns are, above the first group.
+  assert.match(list, /^<div class="debug-list"><div class="debug-row debug-list-head" aria-hidden="true"><span><\/span><span>Session<\/span><span class="debug-list-head-holders">Held by<\/span><span class="debug-list-head-idle">Reap countdown<\/span><\/div><div class="debug-group">/);
 });
 
 test("a chat that moved on waits for its own answer; a hidden page pauses", () => {
   // The chat moved to s2: the answer about s1 still on screen is not s2's.
   const moved = render({ page: page({ client: client({ sessionId: "s2" }) }), selectedSessionId: "s2" });
-  const card = section(moved, "session", "sessions");
-  assert.ok(card.includes(`<div class="debug-empty">${t("debug.poll.waiting")}</div>`));
-  assert.doesNotMatch(card, /debug-card-head/);
+  const list = sessionList(moved);
+  assert.ok(list.startsWith(`<div class="debug-list"><div class="debug-empty">${t("debug.poll.waiting")}</div>`));
+  assert.doesNotMatch(list, /debug-detail/);
 
   const hidden = render({ page: page({ visibility: { ...page().visibility, state: "hidden" } }) });
   assert.match(hidden, /<span class="debug-panel-status is-dim"><span class="debug-dot is-dim is-ring" aria-hidden="true"><\/span><span class="debug-panel-status-text">Paused while the page is hidden<\/span>/);
@@ -471,7 +525,7 @@ test("an MCP server's state is never the dot's hue alone: words after the name, 
   const html = render({
     server: withDetail({ mcp: { active: true, disposed: false, runActive: false, idleMs: 0, idleReleaseAt: null, problems: 1, servers } }),
   });
-  const card = section(html, "session", "sessions");
+  const card = detailOf(html);
   const pill = (name) => card.match(new RegExp(`<span class="debug-pill" role="img"[^>]*>(?:(?!</span></span>).)*?>${name}</span>.*?</span>(?=<span class="debug-(?:pill|chip)|</div>)`))?.[0];
   assert.match(pill("github"), /^<span class="debug-pill" role="img" aria-label="github \(global\) · Connected" title="github \(global\) · Connected"><span class="debug-dot is-ok" aria-hidden="true"><\/span><span>github<\/span><\/span>$/);
   assert.match(pill("linear"), /aria-label="linear \(project\) · Needs sign-in"[^>]*><span class="debug-dot is-warning" aria-hidden="true"><\/span><span>linear<\/span><span class="debug-pill-state">· Needs sign-in<\/span><\/span>$/);
@@ -488,33 +542,47 @@ test("the run's chips show only what is true: no chip row while idle, amber for 
   const withRun = (run) => {
     const answer = reply();
     answer.session.wrapper = { ...answer.session.wrapper, run: { ...answer.session.wrapper.run, ...run } };
-    return section(render({ server: server({ reply: answer }) }), "session", "sessions");
+    answer.sessions = answer.sessions.map((entry) => (entry.sessionId === "s1" ? { ...entry, running: run.running ?? entry.running } : entry));
+    return sessionList(render({ server: server({ reply: answer }) }));
   };
-  assert.doesNotMatch(section(render(), "session", "sessions"), /debug-chips/);
+  assert.doesNotMatch(detailOf(render()), /debug-chip/);
   const busy = withRun({ running: true, streaming: true, promptRunning: true, pendingPrompts: 1, retrying: true });
-  assert.match(busy, /<div class="debug-chips"><span class="debug-chip is-dim">streaming<\/span><span class="debug-chip is-dim">prompt<\/span><span class="debug-chip is-warning">1 more prompts in flight<\/span><span class="debug-chip is-warning">retrying<\/span><\/div>/);
-  assert.match(busy, /<span class="debug-status is-accent" title="running · Started 6m 10s ago">/, "running is the status slot, not a chip");
+  assert.match(detailOf(busy), /<span class="debug-chip is-dim">streaming<\/span><span class="debug-chip is-dim">prompt<\/span><span class="debug-chip is-warning">1 more prompts in flight<\/span><span class="debug-chip is-warning">retrying<\/span><span class="debug-line">/);
+  const row = busy.slice(busy.indexOf("debug-row is-current"), busy.indexOf("debug-detail"));
+  assert.match(row, /<span class="debug-status is-accent" title="running">/, "running is the status slot, not a chip");
 });
+
+/** The chat's wrapper closing after Stop, its row's summary saying so too. */
+function closingAfterStop() {
+  const answer = reply();
+  answer.session = {
+    ...answer.session,
+    wrapper: wrapper({
+      state: "closing",
+      closingAt: SERVER - 3 * SECOND,
+      idle: { timeoutMs: 10 * MINUTE, nextCheckAt: SERVER + 40 * SECOND, lastResetAt: null, forcedByStop: true },
+    }),
+  };
+  answer.sessions = answer.sessions.map((entry) => (entry.sessionId === "s1"
+    ? { ...entry, state: "closing", forcedByStop: true, nextIdleCheckAt: SERVER + 40 * SECOND }
+    : entry));
+  return server({ reply: answer });
+}
 
 test("notable states show in place and leave the verdict at OK", () => {
   const html = render({
     page: page({ client: client({ released: { active: true, count: 1, lastAt: LOCAL - MINUTE }, graceDueAt: LOCAL + 24 * SECOND }) }),
-    server: withDetail({
-      wrapper: wrapper({
-        state: "closing",
-        closingAt: SERVER - 3 * SECOND,
-        idle: { timeoutMs: 10 * MINUTE, nextCheckAt: SERVER + 40 * SECOND, lastResetAt: null, forcedByStop: true },
-      }),
-    }),
+    server: closingAfterStop(),
   });
   assert.match(html, /<span class="debug-panel-status-text">OK<\/span>/);
   assert.doesNotMatch(html, /<ul/);
-  const card = section(html, "session", "sessions");
-  assert.match(card, /<span class="debug-status-ring is-closing"><\/span>/);
-  assert.match(card, /<span class="debug-chip is-warning">closing 13s ago<\/span>/);
-  // Closing after Stop: the stop square, then the time alone, amber.
-  assert.match(card, /<span class="debug-row-forced is-warning" role="img" aria-label="Stopped: [^"]*" title="Stopped: [^"]*"><\/span><span class="debug-value is-warning"[^>]*>30s<\/span>/);
-  const stream = section(html, "stream", "lease");
+  const list = sessionList(html);
+  const row = list.slice(list.indexOf("debug-row is-current"), list.indexOf("debug-detail"));
+  assert.match(row, /<span class="debug-status-ring is-closing"><\/span>/);
+  assert.match(detailOf(html), /<span class="debug-chip is-warning">closing 13s ago<\/span>/);
+  // Closing after Stop: the stop square, then the time alone, amber; the tooltip says why.
+  assert.match(row, /<span class="debug-row-idle is-warning" title="Reap countdown 30s · timeout 10m 00s · Stopped: [^"]*">[^]*?<span class="debug-row-forced" role="img" aria-label="closes in 30s \(after Stop\)"[^>]*><\/span><span class="debug-row-idle-text">30s<\/span>/);
+  const stream = measure(html, "stream");
   assert.match(stream, /<span class="debug-chip is-accent">released while hidden<\/span><span class="debug-chip is-accent">Grace before close in 24s<\/span>/);
 });
 
@@ -522,13 +590,13 @@ test("a session closing after Stop carries a stop square, not the amber alone", 
   const rowOf = (forcedByStop) => {
     const answer = reply();
     answer.sessions = answer.sessions.map((entry) => (entry.sessionId === "notes-1" ? { ...entry, awaitingInput: false, running: true, forcedByStop } : entry));
-    const list = section(render({ server: server({ reply: answer }) }), "sessions", "global");
+    const list = sessionList(render({ server: server({ reply: answer }) }));
     const from = list.indexOf('<div class="debug-row" title="notes-1');
     return list.slice(from, list.indexOf("</div>", from));
   };
   const forced = rowOf(true);
   const normal = rowOf(false);
-  assert.match(forced, /<span class="debug-row-idle is-warning">[^]*?<span class="debug-row-forced" role="img" aria-label="closes in 2m \(after Stop\)" title="closes in 2m \(after Stop\)"><\/span><span class="debug-row-idle-text">2m<\/span>/);
+  assert.match(forced, /<span class="debug-row-idle is-warning">[^]*?<span class="debug-row-forced" role="img" aria-label="closes in 2m 50s \(after Stop\)" title="closes in 2m 50s \(after Stop\)"><\/span><span class="debug-row-idle-text">2m 50s<\/span>/);
   assert.doesNotMatch(normal, /debug-row-forced/);
   // More than a class name apart: with every class dropped, the two rows still differ.
   const shape = (html) => html.replace(/ class="[^"]*"/g, "").replace(/ title="[^"]*"/g, "");
@@ -559,7 +627,7 @@ test("the sparklines draw the poll samples against the 5 s timeout", () => {
   assert.ok(labels.includes("40 polls · 1 failed · not yet"));
   // A faint baseline under the bars, the chart's full width: a few short answers are no dashed line.
   assert.match(html, /<svg width="120" height="15" viewBox="0 0 120 15" aria-hidden="true"><rect x="0" y="14" width="120" height="1" style="fill:var\(--border\)"><\/rect><rect class="is-dim"/);
-  const empty = section(html, "page", "stream").split('aria-label="40 polls')[1];
+  const empty = section(html, "page", "server").split('aria-label="40 polls')[1];
   assert.match(empty, /^[^>]*><svg[^>]*><rect x="0" y="14" width="120" height="1" style="fill:var\(--border\)"><\/rect><\/svg>/, "drawn before the first sample");
   // Newest on the right, standing on the baseline; 41 ms and 20 ms are 1px stubs, 1 s is 6px, a failure is a full bar.
   assert.match(html, /<rect class="is-dim" x="105" y="13" width="3" height="1" fill="currentColor"><\/rect>/);
@@ -590,10 +658,11 @@ test("the panel keeps to the theme and to Safari 16.2: tokens, the three state c
   assert.doesNotMatch(css, /:has\(|&|transition/);
   // Rules are flat: only the container queries hold rules inside braces.
   const outside = css.replace(/@container debug-panel \(max-width: \d+px\) \{[^]*?\n {2}\}\n/g, "");
-  // Four tiles in a row, two on a narrower panel, one on a phone; the bars keep one width.
-  assert.match(css, /\.debug-tiles \{\s*display: grid;\s*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\) minmax\(0, 1\.3fr\);/);
-  assert.match(css, /@container debug-panel \(max-width: 900px\) \{\s*\.debug-tiles \{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
-  assert.match(css, /@container debug-panel \(max-width: 520px\) \{\s*\.debug-tiles \{\s*grid-template-columns: minmax\(0, 1fr\);/);
+  // Two columns, the page's as wide as its table; one above the other on a narrower panel.
+  assert.match(css, /\.debug-cols \{\s*display: grid;\s*grid-template-columns: minmax\(320px, max-content\) minmax\(0, 1fr\);/);
+  assert.match(css, /@container debug-panel \(max-width: 760px\) \{\s*\.debug-cols \{\s*grid-template-columns: minmax\(0, 1fr\);/);
+  // A measure's details wrap in the table instead of widening it.
+  assert.match(css, /\.debug-measure-sub,\s*\.debug-measure-empty \{\s*grid-column: 2 \/ -1;\s*width: 0;\s*min-width: 100%;/);
   assert.doesNotMatch(outside, /\{[^}]*\{/, "no nested rule");
   assert.match(css, /container-type: inline-size;\s*container-name: debug-panel;/);
   assert.match(css, /@container debug-panel \(max-width: 520px\)/);
@@ -611,6 +680,15 @@ function between(source, start, end) {
   assert.notEqual(to, -1, end);
   return source.slice(from, to);
 }
+
+test("a tooltip holds the view still: the mouse on a titled element freezes what the panel shows", () => {
+  const hold = between(panelSource, "const [held, setHeld] = useState<HeldView | null>(null);", "useEffect(() => {\n    disposedRef.current = false;");
+  assert.match(hold, /if \(event\.pointerType !== "mouse"\) return;/, "touch shows no tooltips");
+  assert.match(hold, /event\.target\.closest\("\[title\]"\)/);
+  assert.match(hold, /setHeld\(target \? liveRef\.current : null\);/);
+  assert.match(hold, /section\.addEventListener\("pointerleave", onPointerLeave\);/);
+  assert.match(panelSource, /const shown = held \?\? \{ page, server, samples \};/);
+});
 
 test("the Debug button only toggles its panel, left of the session stats", () => {
   const button = between(shellSource, "const renderDebugButton = (mobile: boolean) => {", "const renderMainFileToggle");

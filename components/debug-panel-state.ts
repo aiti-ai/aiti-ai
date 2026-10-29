@@ -167,6 +167,20 @@ export function formatAgo(ms: number, t: Translate): string {
   return t("debug.time.ago", { time: formatDebugDuration(ms, t) });
 }
 
+/**
+ * The page table's stream and lease times: whole seconds, never ms, which flickered by each second.
+ * An age rounds down ("0s" just after a byte), a countdown up ("in 1s" until it is due).
+ */
+export function formatDebugSeconds(ms: number, t: Translate, round: "floor" | "ceil" = "floor"): string {
+  const seconds = Math[round](clampMs(ms) / SECOND);
+  return seconds < 60 ? t("debug.duration.seconds", { count: seconds }) : formatDebugDuration(seconds * SECOND, t);
+}
+
+/** formatCountdown() in whole seconds. */
+export function formatSecondsCountdown(ms: number, t: Translate): string {
+  return ms > 0 ? t("debug.time.in", { time: formatDebugSeconds(ms, t, "ceil") }) : t("debug.time.due");
+}
+
 /** "in 8m 05s", or "due" once the time has come (the next answer says what happened). */
 export function formatCountdown(ms: number, t: Translate): string {
   return ms > 0 ? t("debug.time.in", { time: formatDebugDuration(ms, t) }) : t("debug.time.due");
