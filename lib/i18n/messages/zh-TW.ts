@@ -394,6 +394,8 @@ export const zhTWLocale: LocalePlugin = {
     "debug.holder.thisPage": "本頁面",
     "debug.holder.otherPage": "其他頁面",
     "debug.holder.none": "無頁面 ID",
+    "debug.pages.title": "連線的頁面",
+    "debug.pages.unknownClient": "未知瀏覽器",
     "debug.state.alive": "存活",
     "debug.state.closing": "關閉中",
     "debug.state.none": "無 Wrapper",

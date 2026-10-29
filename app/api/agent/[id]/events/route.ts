@@ -2,12 +2,13 @@ import { createAgentEventStream } from "@/lib/agent-event-stream";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getRpcSession, startRpcSession } from "@/lib/rpc-manager";
 import { isValidLivenessHolder } from "@/lib/session-liveness";
+import { describeStreamClient } from "@/lib/stream-client";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/agent/[id]/events?holder=<page id> - SSE stream of agent events. The holder only
-// labels the stream for the debug panel: the page's lease renewals keep the session alive, never
-// the stream (#1283).
+// GET /api/agent/[id]/events?holder=<page id> - SSE stream of agent events. The holder, the
+// request's reported address and its browser label only label the stream for the debug panel: the
+// page's lease renewals keep the session alive, never the stream (#1283).
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
@@ -31,7 +32,7 @@ export async function GET(
     sessionPromise = startRpcSession(id, filePath, undefined).then((result) => result.session);
   }
 
-  const stream = createAgentEventStream(req, id, sessionPromise, { holder });
+  const stream = createAgentEventStream(req, id, sessionPromise, { holder, ...describeStreamClient(req.headers) });
 
   return new Response(stream, {
     headers: {
