@@ -101,6 +101,16 @@ export interface DebugEventStream {
   queuedBytes: number;
 }
 
+/** One page holding event streams on the server, labelled by its first stream's request. */
+export interface DebugServerPage {
+  holder: string | null;
+  address: string | null;
+  client: string | null;
+  agent: number;
+  terminal: number;
+  fileWatch: number;
+}
+
 export interface DebugSubagentRun {
   sessionId: string;
   parentSessionId: string;
@@ -192,9 +202,11 @@ export interface DebugServerGlobal {
   eventStreams: {
     /** Every open agent event stream, from all pages and browsers. */
     total: number;
-    /** Streams per page id (null: opened without one), with its first stream's address and label. */
-    byHolder: { holder: string | null; count: number; address: string | null; client: string | null }[];
   };
+  /** Every open SSE response, each a connection of its browser's pool: agent, terminal, file watch. */
+  sseTotal: number;
+  /** The pages holding them (opened with `?holder=`; null: without one), by kind. */
+  pages: DebugServerPage[];
   fileWatches: number;
   terminals: {
     count: number;

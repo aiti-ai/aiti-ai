@@ -43,7 +43,9 @@ function snapshot(extra = {}) {
       idleTimeoutMs: 10 * MINUTE,
       heartbeatMs: 15 * SECOND,
       wrappers: { alive: 1, closing: 0, starting: 0 },
-      eventStreams: { total: 1, byHolder: [{ holder: "page-1", count: 1 }] },
+      eventStreams: { total: 1 },
+      sseTotal: 1,
+      pages: [{ holder: "page-1", address: null, client: null, agent: 1, terminal: 0, fileWatch: 0 }],
       fileWatches: 0,
       terminals: { count: 0, listeners: 0, detached: 0, exited: 0, nextCleanupAt: null },
     },
@@ -117,7 +119,8 @@ test("only an answer of the snapshot's shape is rendered", () => {
     snapshot({ session: { ...detail, eventStreams: null } }),
     snapshot({ session: { ...detail, wrapper: { state: "alive" } } }),
     snapshot({ session: { ...detail, mcp: { servers: "x" } } }),
-    snapshot({ server: { ...snapshot().server, eventStreams: { total: 1 } } }),
+    snapshot({ server: { ...snapshot().server, pages: undefined } }),
+    snapshot({ server: { ...snapshot().server, sseTotal: "1" } }),
   ]) {
     assert.equal(state.isDebugSnapshotResponse(broken), false, JSON.stringify(broken));
   }
