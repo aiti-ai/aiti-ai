@@ -15,6 +15,7 @@ import {
   DEBUG_POLL_MS,
   DEBUG_REATTACH_REASON_KEYS,
   DEBUG_RUN_STATUS_KEYS,
+  DEBUG_SOURCE_KIND_KEYS,
   DEBUG_SAMPLE_COUNT,
   DEBUG_STATUS_KEYS,
   DEBUG_STREAM_ERROR_KEYS,
@@ -438,8 +439,9 @@ function BadgeRun({ text, items, cap, label, plain = false }: {
   );
 }
 
-// Small marks for a stream's browser and system, 24-grid strokes in currentColor like Glyph. Drawn
-// to be told apart at 10px, not as the makers' logos; the title says the words.
+// Small marks for a page's browser and system, 24-grid strokes in currentColor like Glyph, drawn
+// to be told apart at 12px; the title says the words. The systems are filled shapes (Simple
+// Icons, CC0), which read at that size where outlines blur.
 const CLIENT_GLYPHS: Record<string, ReactNode> = {
   Chrome: (
     <>
@@ -474,7 +476,7 @@ const CLIENT_GLYPHS: Record<string, ReactNode> = {
   ),
   macOS: <AppleMark />,
   iOS: <AppleMark />,
-  Windows: <path d="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" />,
+  Windows: <path fill="currentColor" stroke="none" d="M0 0h11.377v11.372H0zm12.623 0H24v11.372H12.623zM0 12.623h11.377V24H0zm12.623 0H24V24H12.623z" />,
   Android: <path d="M4.5 18a7.5 7.5 0 0 1 15 0zM8 12 6.5 9.5M16 12l1.5-2.5M9.5 15h.01M14.5 15h.01" />,
   Linux: <path d="m4 17 6-5-6-5M12 19h8" />,
   ChromeOS: (
@@ -487,10 +489,11 @@ const CLIENT_GLYPHS: Record<string, ReactNode> = {
 
 function AppleMark() {
   return (
-    <>
-      <path d="M12 7.5c-1.2-1-2.8-1.3-4.2-.7C5.6 7.7 4.8 10.6 5.6 13.6 6.4 16.6 8.4 20 10 20c.9 0 1.2-.5 2-.5s1.1.5 2 .5c1.6 0 3.6-3.4 4.4-6.4-1.8-.8-2.6-3.3-.6-5.3-1.2-1.3-3-1.6-4.3-1.1-.6.2-1 .3-1.5.3z" />
-      <path d="M12 7.5c.2-1.8 1.3-3.2 3-3.8" />
-    </>
+    <path
+      fill="currentColor"
+      stroke="none"
+      d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"
+    />
   );
 }
 
@@ -974,37 +977,45 @@ function ServerHead({ reply, ctx }: { reply: DebugSnapshotResponse | null; ctx: 
 
 /**
  * The pages holding the server's event streams, one row each: who it is (browser and system
- * marks and words, its reported address), which page, and how many streams it holds, with the
+ * marks and words, its reported address), which page, and how many SSE connections it holds of
+ * every kind (the agent's, terminals', file watches'; each takes one of the browser's), with the
  * server's total in the head. This page first, on the current row's tint. What a page is lives
  * here once rather than in every badge of every session it holds.
  */
 function PageList({ reply, ctx }: { reply: DebugSnapshotResponse | null; ctx: Ctx }) {
   const { t, myHolder } = ctx;
   if (!reply) return null;
-  const streams = reply.server.eventStreams;
-  if (streams.total === 0) return null;
-  const holders = thisPageFirst(streams.byHolder, myHolder);
+  const { pages, sseTotal } = reply.server;
+  if (sseTotal === 0 && pages.length === 0) return null;
+  const holders = thisPageFirst(pages, myHolder);
   return (
     <div className="debug-pages">
       <div className="debug-page-row debug-list-head">
         <span className="debug-pages-title">{`${t("debug.pages.title")} ${holders.length}`}</span>
-        <span className="debug-page-count">{`SSE ${t("debug.global.streamTotal", { count: streams.total })}`}</span>
+        <span className="debug-page-count">{`SSE ${t("debug.global.streamTotal", { count: sseTotal })}`}</span>
       </div>
       {holders.map((entry, index) => {
         const mine = entry.holder !== null && entry.holder === myHolder;
         const page = debugHolderLabel(entry.holder, myHolder, t);
+        const count = entry.agent + entry.terminal + entry.fileWatch;
+        // By kind, as the page's own meter counts them.
+        const kinds = join([
+          entry.agent > 0 && `${t(DEBUG_SOURCE_KIND_KEYS.agent)} ${entry.agent}`,
+          entry.terminal > 0 && `${t(DEBUG_SOURCE_KIND_KEYS.terminal)} ${entry.terminal}`,
+          entry.fileWatch > 0 && `${t(DEBUG_SOURCE_KIND_KEYS["file-watch"])} ${entry.fileWatch}`,
+        ]);
         return (
           <div
             key={`${entry.holder ?? ""}:${index}`}
             className={`debug-page-row${mine ? " is-current" : ""}`}
-            title={join([page, entry.client, entry.address, t("debug.global.streamCount", { count: entry.count })])}
+            title={join([page, entry.client, entry.address, `SSE ${count}`, kinds])}
           >
             <span className="debug-page-icons"><ClientIcons client={entry.client} /></span>
             <span className={`debug-page-client${entry.client ? "" : " is-dim"}`}>{entry.client ?? t("debug.pages.unknownClient")}</span>
             <span className="debug-page-address">{entry.address ?? "—"}</span>
             {/* "this page", or another page's short id: the column says the rest. */}
             <span className="debug-page-holder">{mine ? t("debug.holder.thisPage") : entry.holder !== null ? shortDebugId(entry.holder) : t("debug.holder.none")}</span>
-            <span className="debug-page-count">{entry.count}</span>
+            <span className="debug-page-count">{count}</span>
           </div>
         );
       })}
@@ -1765,7 +1776,7 @@ const DEBUG_PANEL_CSS = `
     position: relative;
     display: grid;
     min-height: 22px;
-    grid-template-columns: 26px minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) 32px;
+    grid-template-columns: 30px minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) 32px;
     align-items: center;
     column-gap: 8px;
     padding: 0 4px;
@@ -1797,8 +1808,8 @@ const DEBUG_PANEL_CSS = `
     color: var(--text-muted);
   }
   .debug-page-icons svg {
-    width: 11px;
-    height: 11px;
+    width: 12px;
+    height: 12px;
   }
   .debug-page-client,
   .debug-page-address,
@@ -2243,7 +2254,7 @@ const DEBUG_PANEL_CSS = `
       display: none;
     }
     .debug-page-row {
-      grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr) 24px;
+      grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1fr) 24px;
     }
     .debug-row-idle-bar {
       display: none;
