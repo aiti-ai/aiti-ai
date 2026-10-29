@@ -653,6 +653,8 @@ export const zhTWLocale: LocalePlugin = {
     "files.insertPath": "將路徑插入聊天",
     "files.mention": "提及",
     "files.download": "下載檔案",
+    "files.binary": "二進位",
+    "files.binaryNoPreview": "二進位檔案，無法預覽。下載後開啟。",
     "files.outsideLink": "連結到專案外部：{target}",
     "files.outsideLinkEncloses": "此資料夾包含目前的專案或你的主目錄。",
     "files.allowOutsideLink": "允許瀏覽",
