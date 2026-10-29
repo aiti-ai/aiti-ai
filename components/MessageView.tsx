@@ -25,7 +25,7 @@ import { CodemodeCallList } from "./CodemodeToolView";
 import { toolFieldsOfInput, type ToolField } from "@/lib/tool-fields";
 import { mcpToolLabel, prettyMcpResultText } from "@/lib/mcp-tool-display";
 import { streamRateKey, streamRateStart, streamTokensPerSecond, type StreamRateStart } from "@/lib/stream-token-rate";
-import { getTranscriptNotices } from "@/lib/transcript-notices";
+import { formatNoticeTokens, getTranscriptNotices } from "@/lib/transcript-notices";
 import { TRANSCRIPT_NOTICE_WARNING_COLOR, transcriptNoticeText } from "@/components/TranscriptNotices";
 import type {
   AgentMessage,
@@ -946,7 +946,7 @@ function AssistantMessageView({
         {(message.usage || turnDurationMs !== undefined) && !isStreaming && (
           <div style={{ fontSize: 11, color: "var(--text-dim)" }}>
             {[
-              message.usage ? formatUsage(message.usage, t) : null,
+              message.usage ? formatUsage(message.usage) : null,
               turnDurationMs !== undefined ? t("chat.turnDuration", { time: formatTurnDuration(turnDurationMs) }) : null,
             ].filter(Boolean).join(" \u00b7 ")}
           </div>
@@ -2225,14 +2225,15 @@ function formatUsage(usage: {
   cacheRead: number;
   cacheWrite: number;
   cost: { total: number };
-}, t: (key: string, params?: Record<string, string | number>) => string): string {
+}): string {
+  // pi's TUI footer: ↑1.2k ↓567 R8.9k W12, with its formatTokens().
   const parts = [];
-  if (usage.input) parts.push(t("chat.usageInput", { count: usage.input.toLocaleString() }));
-  if (usage.output) parts.push(t("chat.usageOutput", { count: usage.output.toLocaleString() }));
-  if (usage.cacheRead) parts.push(t("chat.usageCacheRead", { count: usage.cacheRead.toLocaleString() }));
-  if (usage.cacheWrite) parts.push(t("chat.usageCacheWrite", { count: usage.cacheWrite.toLocaleString() }));
+  if (usage.input) parts.push(`↑${formatNoticeTokens(usage.input)}`);
+  if (usage.output) parts.push(`↓${formatNoticeTokens(usage.output)}`);
+  if (usage.cacheRead) parts.push(`R${formatNoticeTokens(usage.cacheRead)}`);
+  if (usage.cacheWrite) parts.push(`W${formatNoticeTokens(usage.cacheWrite)}`);
   if (usage.cost?.total) parts.push(`$${usage.cost.total.toFixed(4)}`);
-  return parts.join(" · ");
+  return parts.join(" ");
 }
 
 function BashExecutionView({ message, sessionId }: { message: BashExecutionMessage; sessionId?: string }) {
