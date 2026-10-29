@@ -14,6 +14,7 @@ import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffCell, 
 import { applyPatchPreviewToFiles, applyPatchResultHasFailures, extractApplyPatchPaths, getApplyPatchInputText, parseApplyPatchInput } from "@/lib/apply-patch";
 import { isApplyPatchToolName, isEditToolName, isWriteToolName } from "@/lib/tool-names";
 import { toolFieldsOfInput, type ToolField } from "@/lib/tool-fields";
+import { parse as parsePartialJson } from "partial-json";
 import { isToolCallExpanded, setToolCallExpanded } from "@/lib/tool-call-expansion";
 import { isThinkingExpandedByDefault, THINKING_EXPANDED_EVENT } from "@/lib/thinking-expansion-preference";
 import { TurnWrittenFiles } from "./TurnWrittenFiles";
@@ -1110,8 +1111,12 @@ function ToolCallBlock({ block, result, duration, onOpenSession }: { block: Tool
   const patchFiles = getApplyPatchFiles(block, result);
   // Flat arguments as rows instead of a JSON blob, unless the card has a view of
   // its own (a write's file text, an applied patch). See `lib/tool-fields.ts`.
+  // Input still streaming is parsed as far as it goes (the app uses pi's
+  // parseStreamingJson, which wraps the same partial-json parser).
   const toolFields =
-    !isStreamingInput && writtenFileText === null && patchFiles === null ? toolFieldsOfInput(block.input) : null;
+    expanded && writtenFileText === null && patchFiles === null
+      ? toolFieldsOfInput(isStreamingInput ? parseStreamedInput(block.rawInput) : block.input)
+      : null;
   const patchLabel = isApplyPatchToolName(block.toolName)
     ? summarizeApplyPatchInput(block)
     : null;
@@ -1980,6 +1985,14 @@ function safeJson(value: unknown): string {
 
 export function getToolCallInputText(block: ToolCallContent): string {
   return block.rawInput ?? JSON.stringify(block.input, null, 2);
+}
+
+function parseStreamedInput(rawInput: string | undefined): unknown {
+  try {
+    return rawInput ? parsePartialJson(rawInput) : null;
+  } catch {
+    return null;
+  }
 }
 
 const WRITE_VIEW_KEYS = new Set(["path", "file_path", "content"]);
