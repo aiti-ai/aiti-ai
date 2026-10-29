@@ -33,6 +33,7 @@ import { filePathFromApiSegments, samePath } from "@/lib/paths";
 import { hasParentDirectorySegment } from "@/lib/path-security";
 import { readTextPreviewChunk } from "@/lib/text-preview";
 import { registerFileWatch } from "@/lib/file-watch-registry";
+import { pageStreamLabel, registerPageStream } from "@/lib/page-stream-registry";
 
 const FILE_REQUEST_TYPES = ["list", "read", "download", "meta", "preview", "watch"] as const;
 type FileRequestType = typeof FILE_REQUEST_TYPES[number];
@@ -648,7 +649,13 @@ export async function GET(
               releaseWatch?.();
               try { controller.close(); } catch { /* ignore */ }
             });
-            releaseWatch = registerFileWatch();
+            // Counted, and listed under the page that opened it (`?holder=`).
+            const releaseCount = registerFileWatch();
+            const releasePage = registerPageStream(pageStreamLabel("file-watch", request));
+            releaseWatch = () => {
+              releaseCount();
+              releasePage();
+            };
             // A client gone without a cancel (a phone off the network) would keep
             // the watcher, and its place in the debug panel's count, forever.
             const onAbort = () => {

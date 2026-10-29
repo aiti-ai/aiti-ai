@@ -265,7 +265,7 @@ function isServerGlobal(value: unknown): boolean {
   return isObject(value)
     && isNumber(value.startedAt)
     && isObject(value.wrappers)
-    && isObject(value.eventStreams) && Array.isArray(value.eventStreams.byHolder)
+    && isObject(value.eventStreams) && isNumber(value.sseTotal) && Array.isArray(value.pages)
     && isObject(value.terminals);
 }
 
