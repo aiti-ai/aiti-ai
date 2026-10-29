@@ -88,6 +88,10 @@ export interface DebugLivenessProvider {
 export interface DebugEventStream {
   /** The page id the stream was opened with (`?holder=`); null for an older page. */
   holder: string | null;
+  /** The request's reported address (`x-forwarded-for`, which Next fills from the socket); a label, not an identity. */
+  address: string | null;
+  /** Its browser and system read from the user agent ("Chrome · macOS"); never the user agent itself. */
+  client: string | null;
   openedAt: number;
   /** When `connected` was written; null while the stream still starts the wrapper. */
   connectedAt: number | null;
@@ -188,8 +192,8 @@ export interface DebugServerGlobal {
   eventStreams: {
     /** Every open agent event stream, from all pages and browsers. */
     total: number;
-    /** Streams per page id (null: opened without one). */
-    byHolder: { holder: string | null; count: number }[];
+    /** Streams per page id (null: opened without one), with its first stream's address and label. */
+    byHolder: { holder: string | null; count: number; address: string | null; client: string | null }[];
   };
   fileWatches: number;
   terminals: {

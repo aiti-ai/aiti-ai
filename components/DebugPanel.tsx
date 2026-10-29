@@ -330,12 +330,17 @@ export function DebugPanelView({ page, server, samples = EMPTY_DEBUG_SAMPLES, se
       {page !== null && (
         <div className="debug-panel-scroll">
           {issues.length > 0 && <IssueList issues={issues} />}
-          {/* Two columns: what this page holds and measures; what the server holds, its totals in the
-              column's head and the chat's details under its own row. One above the other when narrow. */}
+          {/* What this page holds and measures; what the server holds (its totals and the pages
+              connected to it); the sessions it holds, the chat's details under its own row. Three
+              columns on a wide panel, the sessions under the server's on a narrower one, all one
+              above the other on a phone. */}
           <div className="debug-cols">
             <PageColumn page={page} samples={samples} reply={reply} ctx={ctx} />
             <div className="debug-col debug-col-server">
               <ServerHead reply={reply} ctx={ctx} />
+              <PageList reply={reply} ctx={ctx} />
+            </div>
+            <div className="debug-col debug-col-sessions">
               <SessionList reply={reply} detail={detail} groups={groups} targetSessionId={targetSessionId} sources={page.sources} ctx={ctx} />
             </div>
           </div>
@@ -429,6 +434,87 @@ function BadgeRun({ text, items, cap, label, plain = false }: {
         </span>
       ))}
       {items.length > cap && <span className="debug-run-more">{`+${items.length - cap}`}</span>}
+    </span>
+  );
+}
+
+// Small marks for a stream's browser and system, 24-grid strokes in currentColor like Glyph. Drawn
+// to be told apart at 10px, not as the makers' logos; the title says the words.
+const CLIENT_GLYPHS: Record<string, ReactNode> = {
+  Chrome: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <circle cx="12" cy="12" r="4" />
+      <path d="M21.17 8H12M3.95 6.06 8.54 14M10.88 21.94 15.46 14" />
+    </>
+  ),
+  Safari: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M16.24 7.76 14.12 14.12 7.76 16.24 9.88 9.88z" />
+    </>
+  ),
+  Firefox: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 17a3.5 3.5 0 0 0 3.5-3.5c0-2.5-2-3.5-2.5-6-1.5 1.5-1 3-2 3.5-.5-.5-1-1-1-2-1.5 1-1.5 2.5-1.5 4.5A3.5 3.5 0 0 0 12 17z" />
+    </>
+  ),
+  Edge: (
+    <>
+      <path d="M21 12a9 9 0 1 0-4.5 7.8" />
+      <path d="M7 13.5c0-3 2.5-5 5.5-5 2.5 0 4.5 1.5 4.5 3.5 0 1.3-1 2-2.5 2H10" />
+    </>
+  ),
+  Opera: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <ellipse cx="12" cy="12" rx="4" ry="7" />
+    </>
+  ),
+  macOS: <AppleMark />,
+  iOS: <AppleMark />,
+  Windows: <path d="M3 3h8v8H3zM13 3h8v8h-8zM3 13h8v8H3zM13 13h8v8h-8z" />,
+  Android: <path d="M4.5 18a7.5 7.5 0 0 1 15 0zM8 12 6.5 9.5M16 12l1.5-2.5M9.5 15h.01M14.5 15h.01" />,
+  Linux: <path d="m4 17 6-5-6-5M12 19h8" />,
+  ChromeOS: (
+    <>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M2 20h20" />
+    </>
+  ),
+};
+
+function AppleMark() {
+  return (
+    <>
+      <path d="M12 7.5c-1.2-1-2.8-1.3-4.2-.7C5.6 7.7 4.8 10.6 5.6 13.6 6.4 16.6 8.4 20 10 20c.9 0 1.2-.5 2-.5s1.1.5 2 .5c1.6 0 3.6-3.4 4.4-6.4-1.8-.8-2.6-3.3-.6-5.3-1.2-1.3-3-1.6-4.3-1.1-.6.2-1 .3-1.5.3z" />
+      <path d="M12 7.5c.2-1.8 1.3-3.2 3-3.8" />
+    </>
+  );
+}
+
+/** The browser's and the system's marks, in that order; nothing for a label it does not know. */
+function ClientIcons({ client }: { client: string | null | undefined }) {
+  const parts = client ? client.split(" · ").filter((part) => part in CLIENT_GLYPHS) : [];
+  if (parts.length === 0) return null;
+  return (
+    <span className="debug-client" aria-hidden="true">
+      {parts.map((part) => (
+        <svg
+          key={part}
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2.2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          {CLIENT_GLYPHS[part]}
+        </svg>
+      ))}
     </span>
   );
 }
@@ -573,7 +659,7 @@ function PageColumn({ page, samples, reply, ctx }: { page: DebugPageReading; sam
   const pool = poolSlots(page.sources, page.protocol, page.client?.connection?.sessionId ?? null);
   const running = page.runningPoll;
   return (
-    <div className="debug-col">
+    <div className="debug-col debug-col-page">
       <div className="debug-col-head">
         <span className="debug-section-title">{t("debug.section.page")}</span>
       </div>
@@ -823,11 +909,9 @@ function LeaseRows({ page, ctx }: { page: DebugPageReading; ctx: Ctx }) {
 
 // ── C2. Server: totals in the head ──
 
-/** Stream badges in the server's head before the rest is a "+N"; the total follows them. */
-const SERVER_STREAM_CAP = 8;
 
 function ServerHead({ reply, ctx }: { reply: DebugSnapshotResponse | null; ctx: Ctx }) {
-  const { t, clock, myHolder } = ctx;
+  const { t, clock } = ctx;
   const title = <span className="debug-section-title">{t("debug.section.server")}</span>;
   if (!reply || !clock) {
     return (
@@ -843,13 +927,6 @@ function ServerHead({ reply, ctx }: { reply: DebugSnapshotResponse | null; ctx: 
     idle: global.idleTimeoutMs > 0 ? formatDebugDuration(global.idleTimeoutMs, t) : t("debug.server.idleDisabled"),
     heartbeat: formatDebugDuration(global.heartbeatMs, t),
   })}\n${wrappers}`;
-  const holders = thisPageFirst(global.eventStreams.byHolder, myHolder);
-  const streamsLabel = `SSE: ${t("debug.global.streamsValue", { total: global.eventStreams.total, pages: global.eventStreams.byHolder.length })}`;
-  const streamItems: BadgeItem[] = holders.flatMap((entry) => {
-    const title = join([debugHolderLabel(entry.holder, myHolder, t), t("debug.global.streamCount", { count: entry.count })]);
-    const tone = debugHolderTone(entry.holder, myHolder);
-    return Array.from({ length: entry.count }, () => ({ tone, filled: entry.holder !== null && entry.holder === myHolder, title }));
-  });
   const terminals = global.terminals;
   const terminalsLabel = join([
     `${t("debug.global.terminals")}: ${t("debug.global.terminalsValue", {
@@ -884,14 +961,6 @@ function ServerHead({ reply, ctx }: { reply: DebugSnapshotResponse | null; ctx: 
           {starting > 4 && <span className="debug-run-more">{`+${starting - 4}`}</span>}
         </span>
       )}
-      {/* Every stream the server holds, this page's first and filled, then the total: the count
-          that matters on a shared HTTP/1.1 pool. */}
-      {global.eventStreams.total > 0 && (
-        <span className="debug-server-item">
-          <BadgeRun text="SSE" items={streamItems} cap={SERVER_STREAM_CAP} label={streamsLabel} />
-          <span className="debug-server-count">{t("debug.global.streamTotal", { count: global.eventStreams.total })}</span>
-        </span>
-      )}
       <BadgeRun
         text={t("debug.box.file")}
         items={Array.from({ length: global.fileWatches }, () => ({ tone: "muted" as const, title: watchesLabel }))}
@@ -899,6 +968,46 @@ function ServerHead({ reply, ctx }: { reply: DebugSnapshotResponse | null; ctx: 
         label={watchesLabel}
       />
       <BadgeRun text={t("debug.box.terminal")} items={terminalItems} cap={4} label={terminalsLabel} />
+    </div>
+  );
+}
+
+/**
+ * The pages holding the server's event streams, one row each: who it is (browser and system
+ * marks and words, its reported address), which page, and how many streams it holds, with the
+ * server's total in the head. This page first, on the current row's tint. What a page is lives
+ * here once rather than in every badge of every session it holds.
+ */
+function PageList({ reply, ctx }: { reply: DebugSnapshotResponse | null; ctx: Ctx }) {
+  const { t, myHolder } = ctx;
+  if (!reply) return null;
+  const streams = reply.server.eventStreams;
+  if (streams.total === 0) return null;
+  const holders = thisPageFirst(streams.byHolder, myHolder);
+  return (
+    <div className="debug-pages">
+      <div className="debug-page-row debug-list-head">
+        <span className="debug-pages-title">{`${t("debug.pages.title")} ${holders.length}`}</span>
+        <span className="debug-page-count">{`SSE ${t("debug.global.streamTotal", { count: streams.total })}`}</span>
+      </div>
+      {holders.map((entry, index) => {
+        const mine = entry.holder !== null && entry.holder === myHolder;
+        const page = debugHolderLabel(entry.holder, myHolder, t);
+        return (
+          <div
+            key={`${entry.holder ?? ""}:${index}`}
+            className={`debug-page-row${mine ? " is-current" : ""}`}
+            title={join([page, entry.client, entry.address, t("debug.global.streamCount", { count: entry.count })])}
+          >
+            <span className="debug-page-icons"><ClientIcons client={entry.client} /></span>
+            <span className={`debug-page-client${entry.client ? "" : " is-dim"}`}>{entry.client ?? t("debug.pages.unknownClient")}</span>
+            <span className="debug-page-address">{entry.address ?? "—"}</span>
+            {/* "this page", or another page's short id: the column says the rest. */}
+            <span className="debug-page-holder">{mine ? t("debug.holder.thisPage") : entry.holder !== null ? shortDebugId(entry.holder) : t("debug.holder.none")}</span>
+            <span className="debug-page-count">{entry.count}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1088,8 +1197,11 @@ function DetailBadges({ detail, clock, ctx }: { detail: DebugSessionDetail; cloc
       tone: starting || stream.droppedEvents > 0 ? "warning" : debugHolderTone(stream.holder, myHolder),
       filled: stream.holder !== null && stream.holder === myHolder,
       dashed: starting,
+      // Which page, then where it says it is: a browser label and an address tell pages apart.
       title: join([
         debugHolderLabel(stream.holder, myHolder, t),
+        stream.client,
+        stream.address,
         stream.connectedAt !== null ? t("debug.server.streamConnected", { time: ago(stream.connectedAt) }) : t("debug.server.streamStarting"),
         stream.lastWriteAt !== null && t("debug.server.lastWrite", { time: ago(stream.lastWriteAt) }),
         stream.droppedEvents > 0 && t("debug.server.dropped", { count: stream.droppedEvents }),
@@ -1487,11 +1599,13 @@ const DEBUG_PANEL_CSS = `
     overflow-wrap: anywhere;
   }
 
-  /* The page's column as wide as its table, the server's the rest; one above the other when narrow. */
+  /* Three columns when the panel is wide: the page's as wide as its table, the server's and the
+     sessions' each capped, so names never stretch and push the badges to the far edge. */
   .debug-cols {
     display: grid;
-    grid-template-columns: minmax(320px, max-content) minmax(0, 1fr);
-    gap: 10px 0;
+    grid-template-areas: "page server sessions";
+    grid-template-columns: minmax(320px, max-content) minmax(340px, 480px) minmax(360px, 560px);
+    gap: 0;
   }
   .debug-col {
     display: flex;
@@ -1499,7 +1613,17 @@ const DEBUG_PANEL_CSS = `
     flex-direction: column;
     gap: 8px;
   }
+  .debug-col-page {
+    grid-area: page;
+  }
   .debug-col-server {
+    grid-area: server;
+  }
+  .debug-col-sessions {
+    grid-area: sessions;
+  }
+  .debug-col-server,
+  .debug-col-sessions {
     margin-left: 20px;
     padding-left: 20px;
     border-left: 1px solid var(--border);
@@ -1620,6 +1744,89 @@ const DEBUG_PANEL_CSS = `
     max-width: calc(12ch + 10px);
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* A page's browser and system marks. */
+  .debug-client {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+  }
+  .debug-client svg {
+    display: block;
+    flex-shrink: 0;
+  }
+
+  /* The connected pages: marks, browser and system, address, page, its stream count. */
+  .debug-pages {
+    display: flex;
+    flex-direction: column;
+  }
+  .debug-page-row {
+    position: relative;
+    display: grid;
+    min-height: 22px;
+    grid-template-columns: 26px minmax(0, 1.2fr) minmax(0, 1fr) minmax(0, 1fr) 32px;
+    align-items: center;
+    column-gap: 8px;
+    padding: 0 4px;
+    border-radius: 4px;
+    font-size: 11px;
+  }
+  .debug-page-row.debug-list-head {
+    min-height: 18px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    color: var(--text-dim);
+    font-size: 10px;
+  }
+  .debug-page-row.is-current {
+    background: var(--bg-selected);
+  }
+  .debug-page-row.is-current::before {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: 0;
+    width: 3px;
+    height: 14px;
+    border-radius: 0 2px 2px 0;
+    background: var(--accent);
+  }
+  .debug-page-icons {
+    display: inline-flex;
+    padding-left: 4px;
+    color: var(--text-muted);
+  }
+  .debug-page-icons svg {
+    width: 11px;
+    height: 11px;
+  }
+  .debug-page-client,
+  .debug-page-address,
+  .debug-page-holder {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .debug-page-client {
+    color: var(--text);
+  }
+  .debug-page-address {
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+  }
+  .debug-page-holder {
+    color: var(--text-dim);
+  }
+  .debug-page-count {
+    justify-self: end;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .debug-list-head .debug-page-count {
+    color: var(--text-dim);
   }
   .debug-run {
     display: inline-flex;
@@ -1981,21 +2188,34 @@ const DEBUG_PANEL_CSS = `
     align-items: center;
     gap: 3px 4px;
   }
-  .debug-server-count {
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
 
+  /* Narrower: the sessions under the server's pages, one border down both; the page's column
+     beside them, its height going to the sessions' row rather than opening a gap under the pages. */
+  @container debug-panel (max-width: 1239px) {
+    .debug-cols {
+      grid-template-areas: "page server" "page sessions";
+      grid-template-columns: minmax(320px, max-content) minmax(0, 560px);
+      grid-template-rows: auto 1fr;
+    }
+    .debug-col-sessions {
+      padding-top: 10px;
+    }
+  }
   @container debug-panel (max-width: 760px) {
     .debug-cols {
+      grid-template-areas: "page" "server" "sessions";
       grid-template-columns: minmax(0, 1fr);
+      grid-template-rows: none;
     }
     .debug-col-server {
-      margin-left: 0;
+      margin-top: 10px;
       padding-top: 10px;
-      padding-left: 0;
       border-top: 1px solid var(--border);
+    }
+    .debug-col-server,
+    .debug-col-sessions {
+      margin-left: 0;
+      padding-left: 0;
       border-left: 0;
     }
   }
@@ -2018,8 +2238,12 @@ const DEBUG_PANEL_CSS = `
       padding-left: 16px;
     }
     .debug-row-badges:empty,
-    .debug-list-head-holders {
+    .debug-list-head-holders,
+    .debug-page-holder {
       display: none;
+    }
+    .debug-page-row {
+      grid-template-columns: 26px minmax(0, 1fr) minmax(0, 1fr) 24px;
     }
     .debug-row-idle-bar {
       display: none;
