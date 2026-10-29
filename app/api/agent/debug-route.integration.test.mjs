@@ -12,7 +12,7 @@ const jiti = createJiti(import.meta.url, {
 
 // The debug panel polls this every two seconds while it is open: reading must leave the
 // session exactly as it was, and an id the server holds nothing for must stay that way.
-test("the debug route only reads: no wrapper started, no lease taken, the idle timer untouched", async (t) => {
+test("the debug route only reads: no wrapper started, no liveness registered, the idle timer untouched", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "pi-web-agent-debug-"));
   const previousDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
@@ -30,7 +30,7 @@ test("the debug route only reads: no wrapper started, no lease taken, the idle t
   const { getRpcSession, startRpcSession } = await jiti.import("../../../lib/rpc-manager.ts");
   const {
     hasActiveSessionLivenessProvider,
-    listSessionLivenessLeases,
+    listRegisteredSessionLivenessProviders,
   } = await jiti.import("../../../lib/session-liveness.ts");
   const { GET } = await jiti.import("./debug/route.ts");
   const started = await startRpcSession("__new__agent-debug", "", cwd, {});
@@ -45,7 +45,7 @@ test("the debug route only reads: no wrapper started, no lease taken, the idle t
 
   // An id the server holds nothing for.
   const unknown = "00000000-0000-4000-8000-000000000000";
-  const leasesBefore = listSessionLivenessLeases();
+  const providersBefore = listRegisteredSessionLivenessProviders();
   const missing = await read(`?session=${unknown}`);
   assert.equal(missing.status, 200);
   assert.equal(missing.cacheControl, "no-store");
@@ -54,8 +54,8 @@ test("the debug route only reads: no wrapper started, no lease taken, the idle t
   assert.equal(missingBody.session.wrapper, null);
   assert.equal(missingBody.session.starting, false);
   assert.equal(getRpcSession(unknown), undefined, "a debug read never starts a wrapper");
-  assert.equal(hasActiveSessionLivenessProvider({ sessionId: unknown }), false, "nor takes a lease");
-  assert.deepEqual(listSessionLivenessLeases(), leasesBefore);
+  assert.equal(hasActiveSessionLivenessProvider({ sessionId: unknown }), false, "nor registers liveness");
+  assert.deepEqual(listRegisteredSessionLivenessProviders(), providersBefore);
 
   // A live wrapper: its idle timer object, deadline and last command stay as they were.
   const sendCalls = [];
@@ -83,7 +83,7 @@ test("the debug route only reads: no wrapper started, no lease taken, the idle t
   assert.deepEqual(session.getDebugSnapshot().idle, before.idle);
   assert.deepEqual(session.getDebugSnapshot().lastCommand, before.lastCommand);
   assert.equal(session.getDebugSnapshot().eventListeners, before.eventListeners, "no stream was opened");
-  assert.deepEqual(listSessionLivenessLeases(), leasesBefore);
+  assert.deepEqual(listRegisteredSessionLivenessProviders(), providersBefore);
   assert.equal(hasActiveSessionLivenessProvider({ sessionId: id }), false);
 
   // Counts, states and times only: neither the system prompt nor a path.
@@ -98,8 +98,8 @@ test("the debug route only reads: no wrapper started, no lease taken, the idle t
   assert.equal(JSON.parse((await read(`?session=${"x".repeat(513)}`)).text).session, null);
   assert.equal(JSON.parse((await read("?session=")).text).session, null);
 
-  // The events route labels a stream with the page's holder id (an invalid one with none) and
-  // takes no lease for it: the page's lease route does that.
+  // The events route labels a stream with the page's id (an invalid one with none) and keeps
+  // nothing alive for it: the page's lease renewals do that.
   const { GET: openEvents } = await jiti.import("./[id]/events/route.ts");
   const openStream = async (holder) => {
     const abortController = new AbortController();
@@ -124,8 +124,8 @@ test("the debug route only reads: no wrapper started, no lease taken, the idle t
   );
   assert.ok(withStreams.session.eventStreams.every((stream) => typeof stream.connectedAt === "number"));
   assert.ok(withStreams.server.eventStreams.byHolder.some((row) => row.holder === "page-debug" && row.count === 1));
-  assert.equal(hasActiveSessionLivenessProvider({ sessionId: id }), false, "a stream takes no lease");
-  assert.deepEqual(listSessionLivenessLeases(), leasesBefore);
+  assert.equal(hasActiveSessionLivenessProvider({ sessionId: id }), false, "a stream registers no liveness");
+  assert.deepEqual(listRegisteredSessionLivenessProviders(), providersBefore);
   labelled.abort();
   unlabelled.abort();
   assert.deepEqual(JSON.parse((await read(`?session=${encodeURIComponent(id)}`)).text).session.eventStreams, []);

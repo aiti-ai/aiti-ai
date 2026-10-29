@@ -428,6 +428,18 @@ export class AgentSessionWrapper {
   }
 
   /**
+   * A page that has this session selected renews it (POST /api/agent/[id]/lease): the idle
+   * countdown starts over at the full timeout, so a closed tab's session is reaped one idle
+   * timeout after its last renewal. Not a command: lastCommand and the mutating count stay as
+   * they are. A closing wrapper gets no new timer, and resetIdleTimer() leaves Stop's forced
+   * deadline where it is.
+   */
+  renewIdleTimer(): void {
+    if (!this.isAlive()) return;
+    this.resetIdleTimer();
+  }
+
+  /**
    * Drop this idle wrapper when the on-disk JSONL has an entry the in-memory
    * index never saw (another pi process appended). Rechecks isRunning() so a
    * prompt that started during the probe cannot be disposed.

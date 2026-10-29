@@ -160,7 +160,7 @@ function errorMessage(error: unknown): string {
 /**
  * Open the SSE transport immediately, then publish the session snapshot only
  * after the agent is ready and its event listener has been installed.
- * `meta.holder` (the page's lease holder id) only labels the stream for the debug panel.
+ * `meta.holder` (the page's id) only labels the stream for the debug panel.
  */
 export function createAgentEventStream(
   req: Request,
