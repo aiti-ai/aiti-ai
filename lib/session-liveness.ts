@@ -1,11 +1,7 @@
-import type { DebugLease, DebugLivenessProvider } from "./debug-types";
+import type { DebugLivenessProvider } from "./debug-types";
 
 const SESSION_LIVENESS_PROTOCOL_VERSION = 1;
 export const SESSION_LIVENESS_REGISTRY_KEY = "@agegr/pi-web/session-liveness/v1";
-export const SESSION_LIVENESS_LEASE_TTL_MS = 90_000;
-const SESSION_LIVENESS_LEASES_KEY = "@agegr/pi-web/session-liveness-leases/v2";
-/** The provider each page lease registers; the debug panel lists leases apart from extensions. */
-export const SESSION_LEASE_PROVIDER_NAME = "pi-web-selected-session";
 const LIVENESS_HOLDER_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 export interface SessionLivenessProvider {
@@ -38,20 +34,6 @@ interface SessionLivenessRegistry {
    */
   list?(): ListedLivenessProvider[];
 }
-
-interface LeaseRecord {
-  expiresAt: number;
-  released: boolean;
-  timer: ReturnType<typeof setTimeout> | null;
-  release(): void;
-  // Debug panel bookkeeping; optional because records made before a hot reload lack them.
-  createdAt?: number;
-  renewedAt?: number | null;
-  renewals?: number;
-}
-
-// One lease per page and session, keyed `${holder}\n${sessionId}`.
-type LeaseStore = Map<string, LeaseRecord>;
 
 function assertNonEmptyString(value: unknown, field: string): asserts value is string {
   if (typeof value !== "string" || value.trim().length === 0) {
@@ -139,111 +121,18 @@ function getRegistry(): SessionLivenessRegistry {
 
 const registry = getRegistry();
 
-function getLeaseStore(): LeaseStore {
-  const store = globalThis as Record<PropertyKey, unknown>;
-  const key = Symbol.for(SESSION_LIVENESS_LEASES_KEY);
-  const existing = store[key];
-  if (existing instanceof Map) return existing as LeaseStore;
-  const leases: LeaseStore = new Map();
-  store[key] = leases;
-  return leases;
-}
-
-function readLeaseStore(): LeaseStore | null {
-  const existing = (globalThis as Record<PropertyKey, unknown>)[Symbol.for(SESSION_LIVENESS_LEASES_KEY)];
-  return existing instanceof Map ? existing as LeaseStore : null;
-}
-
-function scheduleLeaseExpiry(lease: LeaseRecord): void {
-  if (lease.timer) clearTimeout(lease.timer);
-  lease.timer = setTimeout(() => {
-    if (!lease.released && lease.expiresAt <= Date.now()) lease.release();
-    else if (!lease.released) scheduleLeaseExpiry(lease);
-  }, Math.max(1, lease.expiresAt - Date.now()));
-  const unref = (lease.timer as unknown as { unref?: () => void }).unref;
-  unref?.call(lease.timer);
-}
-
-/**
- * Keep a session alive while a page has it selected: one lease per page (`holder`, an id the
- * page makes up) and session, created or renewed by each call (POST /api/agent/[id]/lease) and
- * released a TTL after the page's last call. It does not depend on the page's event stream, which
- * a page hidden for a while lets go of (#1283).
- */
-export function holdSessionLivenessLease(sessionId: string, holder: string): void {
-  const leases = getLeaseStore();
-  const key = `${holder}\n${sessionId}`;
-  const existing = leases.get(key);
-  if (existing && !existing.released && existing.expiresAt > Date.now()) {
-    existing.expiresAt = Date.now() + SESSION_LIVENESS_LEASE_TTL_MS;
-    existing.renewedAt = Date.now();
-    existing.renewals = (existing.renewals ?? 0) + 1;
-    scheduleLeaseExpiry(existing);
-    return;
-  }
-  existing?.release();
-  const providerRelease = registerSessionLivenessProvider({
-    name: SESSION_LEASE_PROVIDER_NAME,
-    sessionId,
-    isActive: () => !lease.released && lease.expiresAt > Date.now(),
-  });
-  const lease: LeaseRecord = {
-    expiresAt: Date.now() + SESSION_LIVENESS_LEASE_TTL_MS,
-    released: false,
-    timer: null,
-    release: () => {
-      if (lease.released) return;
-      lease.released = true;
-      if (lease.timer) clearTimeout(lease.timer);
-      providerRelease();
-      if (leases.get(key) === lease) leases.delete(key);
-    },
-    createdAt: Date.now(),
-    renewedAt: null,
-    renewals: 0,
-  };
-  leases.set(key, lease);
-  scheduleLeaseExpiry(lease);
-}
-
-/** A page's lease holder id (POST /api/agent/[id]/lease?holder=), also the label of its event streams. */
+/** A page's id, the label of its event streams (GET /api/agent/[id]/events?holder=). */
 export function isValidLivenessHolder(value: unknown): value is string {
   return typeof value === "string" && LIVENESS_HOLDER_PATTERN.test(value);
 }
 
-/**
- * Every page lease, for the debug panel. A record lingers between its expiry and its unref'd
- * timer, so `active` is computed here; nothing is released, renewed or rescheduled.
- */
-export function listSessionLivenessLeases(now = Date.now()): (DebugLease & { sessionId: string })[] {
-  const leases = readLeaseStore();
-  if (!leases) return [];
-  const listed: (DebugLease & { sessionId: string })[] = [];
-  for (const [key, lease] of leases) {
-    // The holder never holds a newline; a session id might.
-    const split = key.indexOf("\n");
-    if (split < 0 || typeof lease?.expiresAt !== "number") continue;
-    listed.push({
-      sessionId: key.slice(split + 1),
-      holder: key.slice(0, split),
-      expiresAt: lease.expiresAt,
-      active: !lease.released && lease.expiresAt > now,
-      createdAt: typeof lease.createdAt === "number" ? lease.createdAt : null,
-      renewedAt: typeof lease.renewedAt === "number" ? lease.renewedAt : null,
-      renewals: typeof lease.renewals === "number" ? lease.renewals : null,
-    });
-  }
-  return listed;
-}
-
 function listExtensionProviders(): ListedLivenessProvider[] | null {
-  if (typeof registry.list !== "function") return null;
-  return registry.list().filter((provider) => provider.name !== SESSION_LEASE_PROVIDER_NAME);
+  return typeof registry.list === "function" ? registry.list() : null;
 }
 
 /**
- * The extensions' liveness providers (pi-web's own leases left out), without asking any of them
- * whether it is active: that runs extension code. Null when the registry cannot list.
+ * The extensions' liveness providers, without asking any of them whether it is active: that
+ * runs extension code. Null when the registry cannot list.
  */
 export function listRegisteredSessionLivenessProviders(): { name: string; sessionId: string; sessionFile: string | null }[] | null {
   return listExtensionProviders()?.map((provider) => ({

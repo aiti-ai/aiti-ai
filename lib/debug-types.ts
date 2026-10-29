@@ -32,8 +32,9 @@ export interface DebugWrapperIdle {
   /** `PI_WEB_IDLE_TIMEOUT_MS` in effect; 0 = disabled (Stop still arms its forced deadline). */
   timeoutMs: number;
   /**
-   * When the idle timer fires next. A check, not a close: a run, a lease or an extension's
-   * liveness provider re-arms a full timeout then, unless `forcedByStop`. Null: not armed.
+   * When the idle timer fires next. A check, not a close: a run or an extension's liveness
+   * provider re-arms a full timeout then, unless `forcedByStop`; a page's lease renewal moves it
+   * a full timeout on. Null: not armed.
    */
   nextCheckAt: number | null;
   lastResetAt: number | null;
@@ -74,18 +75,7 @@ export interface DebugSessionLifecycle {
   lastClosedAt: number | null;
 }
 
-/** A page's liveness lease (`POST /api/agent/[id]/lease?holder=`). */
-export interface DebugLease {
-  holder: string;
-  expiresAt: number;
-  /** `!released && expiresAt > now`. */
-  active: boolean;
-  createdAt: number | null;
-  renewedAt: number | null;
-  renewals: number | null;
-}
-
-/** An extension's entry in the liveness registry (pi-web's own leases are listed as leases). */
+/** An extension's entry in the liveness registry. */
 export interface DebugLivenessProvider {
   name: string;
   /** What its `isActive()` answered just now; "error" when it threw or returned a non-boolean. */
@@ -154,7 +144,6 @@ export interface DebugSessionDetail {
   lifecycle: DebugSessionLifecycle | null;
   /** A `startRpcSession()` under way for this id. */
   starting: boolean;
-  leases: DebugLease[];
   /** Null: the registry predates this server code (dev hot reload) and cannot list. */
   providers: DebugLivenessProvider[] | null;
   eventStreams: DebugEventStream[];
@@ -168,7 +157,7 @@ export interface DebugSessionDetail {
   mcp: DebugMcpHost | null;
 }
 
-/** One session the server holds something for: a wrapper, a lease or an event stream. */
+/** One session the server holds something for: a wrapper or an event stream. */
 export interface DebugSessionSummary {
   sessionId: string;
   state: "alive" | "closing" | "none";
@@ -176,7 +165,6 @@ export interface DebugSessionSummary {
   awaitingInput: boolean;
   subagent: boolean;
   eventStreams: number;
-  activeLeases: number;
   /**
    * Extension liveness providers registered for the session. Only the detail asks them whether
    * they are active: a summary runs no extension code.
@@ -191,7 +179,6 @@ export interface DebugServerGlobal {
   /** Process start, so a server restart reads apart from a reaped wrapper. */
   startedAt: number;
   idleTimeoutMs: number;
-  leaseTtlMs: number;
   heartbeatMs: number;
   /**
    * `starting`: `startRpcSession()` calls under way with no alive wrapper yet, a fresh composer's
@@ -282,8 +269,6 @@ export interface DebugLeaseReplySummary {
 }
 
 export interface DebugClientLease {
-  /** This page's lease holder id; null until the first lease request. */
-  holder: string | null;
   renewIntervalMs: number;
   /** When the renewal interval started (the next renewal is a multiple of the interval later). */
   renewStartedAt: number | null;
@@ -302,6 +287,8 @@ export interface DebugClientLease {
 }
 
 export interface DebugClientSession {
+  /** This page's id (the `?holder=` of its event streams); null until the page first made one. */
+  pageId: string | null;
   /** The id the chat works on (a fresh composer's session before its prop catches up). */
   sessionId: string | null;
   selectedSessionId: string | null;
