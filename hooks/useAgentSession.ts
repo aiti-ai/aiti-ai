@@ -14,7 +14,8 @@ import type {
 } from "@/lib/types";
 import { isBlockingExtensionUiRequest } from "@/lib/browser-notifications";
 import { normalizeToolCalls } from "@/lib/normalize";
-import { agentStatusUrl, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
+import { AgentCommandError, agentStatusUrl, isPromptRejectedError, sendAgentCommand } from "@/lib/agent-client";
+import { missingCwdFromBody } from "@/lib/missing-cwd";
 import {
   deleteSessionViewSnapshot,
   getSessionViewSnapshot,
@@ -415,6 +416,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [modelNames, setModelNames] = useState<Record<string, string>>({});
   const [modelList, setModelList] = useState<ModelEntry[]>([]);
   const [modelError, setModelError] = useState<string | null>(null);
+  // The session's or composer's folder, once a route said it no longer exists (#1422).
+  // Kept apart by source: a model list read from a removed worktree's main repo
+  // succeeds, and must not clear what a refused prompt reported.
+  const [modelsMissingCwd, setModelsMissingCwd] = useState<string | null>(null);
+  const [promptMissingCwd, setPromptMissingCwd] = useState<string | null>(null);
+  const missingCwd = promptMissingCwd ?? modelsMissingCwd;
   const [modelScopeWarnings, setModelScopeWarnings] = useState<string[]>([]);
   const [modelThinkingLevels, setModelThinkingLevels] = useState<Record<string, string[]>>({});
   const [modelThinkingLevelMaps, setModelThinkingLevelMaps] = useState<Record<string, Record<string, string | null>>>({});
@@ -1005,7 +1012,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         // The server's reason (a project folder that no longer exists, a model Chat only
         // cannot load) beats a bare status.
         const body = await res.json().catch(() => null) as { error?: unknown } | null;
-        throw new Error(typeof body?.error === "string" ? body.error : `HTTP ${res.status}`);
+        const message = typeof body?.error === "string" ? body.error : `HTTP ${res.status}`;
+        const cwdGone = missingCwdFromBody(body);
+        throw cwdGone ? new AgentCommandError(message, res.status, undefined, undefined, cwdGone) : new Error(message);
       }
       const result = await res.json() as {
         sessionId: string;
@@ -2022,6 +2031,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       } else {
         throw new Error("No active session for the prompt");
       }
+      setPromptMissingCwd(null);
       if (isSlashCommandPrompt && sentSessionId) {
         void waitForPromptSettlement(sentSessionId, promptRunId);
       }
@@ -2042,7 +2052,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           ? prev
           : [...prev.slice(0, optimisticIndex), ...prev.slice(optimisticIndex + 1)];
       });
-      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      // A folder that no longer exists never reached the model: the composer's
+      // banner names it (translated) instead of the server's English notice.
+      if (e instanceof AgentCommandError && e.missingCwd) setPromptMissingCwd(e.missingCwd);
+      else addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
       restoreSubmission(message, images, composerDraftKey);
       optimisticUserMessageKeyRef.current = null;
       // Rejection only describes this submission. Another tab or an event we
@@ -2259,6 +2272,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
     const modelsUrl = modelCwd ? `/api/models?cwd=${encodeURIComponent(modelCwd)}` : "/api/models";
     let d: ModelsResponse;
+    let cwdGone: string | null = null;
     try {
       const res = await fetch(modelsUrl, signal ? { signal } : undefined);
       if (!res.ok) {
@@ -2268,6 +2282,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           if (body && typeof body === "object" && "error" in body && typeof body.error === "string") {
             detail = body.error;
           }
+          cwdGone = missingCwdFromBody(body);
         } catch (e) {
           if (e instanceof DOMException && e.name === "AbortError") throw e;
           // Non-JSON error responses fall back to the HTTP status.
@@ -2278,10 +2293,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       signal?.throwIfAborted();
     } catch (e) {
       if (!signal?.aborted && !(e instanceof DOMException && e.name === "AbortError")) {
-        setModelError(e instanceof Error ? e.message : String(e));
+        // A moved or deleted project folder is not a model problem (#1422).
+        setModelsMissingCwd(cwdGone);
+        setModelError(cwdGone ? null : e instanceof Error ? e.message : String(e));
       }
       throw e;
     }
+    setModelsMissingCwd(null);
     setModelNames(d.models);
     setModelError(d.modelError ?? null);
     setModelScopeWarnings(d.modelScopeWarnings ?? []);
@@ -2534,6 +2552,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // accepted the queued prompt before the response was lost. Restoring in
       // that case would invite a duplicate turn.
       if (isPromptRejectedError(e)) restore();
+      if (e instanceof AgentCommandError && e.missingCwd) {
+        setPromptMissingCwd(e.missingCwd);
+        return;
+      }
       addNotice({
         type: "error",
         message: e instanceof Error ? e.message : String(e),
@@ -3097,7 +3119,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   return {
     // State
     data, loading, error, activeLeafId, messages, activeToolResults, entryIds, messageKeys, historyCursor, hasEarlierMessages, earlierTurnCount, streamingStore,
-    agentRunning, modelNames, modelList, modelError, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
+    agentRunning, modelNames, modelList, modelError, missingCwd, modelScopeWarnings, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching, sessionStats, autoCompactionEnabled,
     slashCommands, slashCommandsLoading, queuedMessages,
