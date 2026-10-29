@@ -6,6 +6,7 @@ import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model
 import type { DiscoveredModel } from "@/lib/model-discovery";
 import { ContextWindowError, normalizeContextWindowOverrides, withContextWindowOverride } from "@/lib/model-context";
 import { checkProviderEntries, ProviderEntryError, type ProviderEntryProblem } from "@/lib/model-provider-check";
+import { checkImageMaxBytes, DEFAULT_IMAGE_MAX_BYTES, formatImageBytes, ImageMaxBytesError, imageMaxBytes, parseImageMaxBytes, withImageMaxBytes } from "@/lib/model-image-limits";
 import type { ModelContextSettings } from "./ModelContextWindow";
 import {
   getLastSettingsSelection,
@@ -102,6 +103,7 @@ interface ModelEntry {
   reasoning?: boolean;
   thinkingLevelMap?: Record<string, string | null>;
   input?: string[];
+  inputLimits?: Record<string, unknown>;
   contextWindow?: number;
   maxTokens?: number;
   cost?: { input?: number; output?: number; cacheRead?: number; cacheWrite?: number; tiers?: unknown };
@@ -297,8 +299,9 @@ function SecretTextInput({
   );
 }
 
-function NumInput({ value, onChange, placeholder }: { value: string; onChange: (v: string) => void; placeholder?: string }) {
-  return <input type="number" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} style={inputStyle} />;
+function NumInput({ value, onChange, placeholder, invalid }: { value: string; onChange: (v: string) => void; placeholder?: string; invalid?: boolean }) {
+  return <input type="number" value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+    aria-invalid={invalid || undefined} style={invalid ? { ...inputStyle, borderColor: "#ef4444" } : inputStyle} />;
 }
 
 function Select({ value, onChange, options, required }: { value: string; onChange: (v: string) => void; options: readonly string[]; required?: boolean }) {
@@ -1043,6 +1046,8 @@ function ModelDetail({
     remainingCompatKeys.delete("supportsDeveloperRole");
   }
   compatibilityOverrideCount += remainingCompatKeys.size;
+  const imageLimit = imageMaxBytes(model);
+  const parsedImageLimit = parseImageMaxBytes(imageLimit);
   const advancedSummaryParts = [
     model.baseUrl ? t("models.baseUrlOverride") : null,
     model.api ? `API: ${model.api}` : null,
@@ -1054,6 +1059,9 @@ function ModelDetail({
       : null,
     Object.keys(model.thinkingLevelMap ?? {}).length
       ? t("models.thinkingSummary", { count: Object.keys(model.thinkingLevelMap ?? {}).length })
+      : null,
+    parsedImageLimit !== undefined
+      ? t("models.imageMaxBytesSummary", { size: formatImageBytes(parsedImageLimit) })
       : null,
   ].filter((part): part is string => Boolean(part));
   const advancedSummary = advancedSummaryParts.length
@@ -1287,6 +1295,24 @@ function ModelDetail({
                 {t("models.headersHelp")}
               </span>
             </Field>
+
+            {(model.input?.includes("image") || imageLimit !== undefined) && (
+              <Field label={t("models.imageMaxBytes")}>
+                <NumInput
+                  value={imageLimit === undefined ? "" : String(imageLimit)}
+                  onChange={(v) => onChange(withImageMaxBytes(model, v.trim() || undefined))}
+                  placeholder={String(DEFAULT_IMAGE_MAX_BYTES)}
+                  invalid={parsedImageLimit === undefined && imageLimit !== undefined}
+                />
+                <span style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 2 }}>
+                  {parsedImageLimit !== undefined && `${formatImageBytes(parsedImageLimit)} · `}
+                  {t("models.imageMaxBytesHelp", { size: formatImageBytes(DEFAULT_IMAGE_MAX_BYTES) })}
+                </span>
+                <code style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                  inputLimits.images.resize.maxBytes
+                </code>
+              </Field>
+            )}
 
             {model.reasoning && (
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
@@ -2106,6 +2132,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     try {
       draft = normalizeContextWindowOverrides(draft);
       checkProviderEntries(draft);
+      checkImageMaxBytes(draft);
       const res = await fetch("/api/models-config", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -2131,7 +2158,8 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
         setSaveError(t(PROVIDER_ENTRY_MESSAGES[e.problem], { provider: e.provider }));
         // pi would not load the entry: show it, to be filled in or deleted.
         setSelection({ type: "provider", name: e.provider });
-      } else setSaveError(e instanceof ContextWindowError ? t("models.contextInvalid", { model: e.model }) : String(e));
+      } else if (e instanceof ContextWindowError) setSaveError(t("models.contextInvalid", { model: e.model }));
+      else setSaveError(e instanceof ImageMaxBytesError ? t("models.imageMaxBytesInvalid", { model: e.model }) : String(e));
     } finally {
       setSaving(false);
     }
