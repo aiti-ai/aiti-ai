@@ -413,13 +413,14 @@ test("a reply's usage line reads like pi's TUI footer, then the turn's time", ()
     { role: "assistant", provider: "anthropic", model: "claude-test", content: [{ type: "text", text: "Done." }], stopReason: "stop", usage },
     { turnDurationMs: 10_000 },
   );
-  assert.match(html, />↑1\.2k ↓567 R85k W12 \$0\.0036 · took 10s</);
+  // Each count is its own span; the spaces between them stay in the text.
+  assert.match(html, /<span>↑1\.2k<\/span> <span>↓567<\/span> <span>R85k<\/span> <span>W12<\/span> <span>\$0\.0036<\/span> <span>·<\/span> <span>took 10s<\/span>/);
   // Zero counts are left out, as in the footer.
   const bare = renderMessage({
     role: "assistant", provider: "anthropic", model: "claude-test", content: [{ type: "text", text: "Done." }], stopReason: "stop",
     usage: { input: 12_000_000, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
   });
-  assert.match(bare, />↑12M</);
+  assert.match(bare, /<span>↑12M<\/span><\/div>/);
 });
 
 test("renders a provider error when the assistant message has no content", () => {
