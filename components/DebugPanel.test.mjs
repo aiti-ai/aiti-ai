@@ -204,13 +204,12 @@ function reply() {
       idleTimeoutMs: 10 * MINUTE,
       heartbeatMs: 15 * SECOND,
       wrappers: { alive: 3, closing: 1, starting: 0 },
-      eventStreams: {
-        total: 3,
-        byHolder: [
-          { holder: "page-other-456", count: 2, address: "192.168.1.20", client: "Safari · iOS" },
-          { holder: "page-mine-123", count: 1, address: "127.0.0.1", client: "Chrome · macOS" },
-        ],
-      },
+      eventStreams: { total: 3 },
+      sseTotal: 5,
+      pages: [
+        { holder: "page-other-456", address: "192.168.1.20", client: "Safari · iOS", agent: 2, terminal: 1, fileWatch: 0 },
+        { holder: "page-mine-123", address: "127.0.0.1", client: "Chrome · macOS", agent: 1, terminal: 0, fileWatch: 1 },
+      ],
       fileWatches: 1,
       terminals: { count: 1, listeners: 1, detached: 0, exited: 0, nextCleanupAt: null },
     },
@@ -360,15 +359,18 @@ test("one boxed word per stream and provider: this page's first and filled, othe
   const rows = [...pages.replace(icons, "<icons>").matchAll(/<div class="(debug-page-row[^"]*)"[^>]*>(.*?)<\/div>/g)]
     .map((match) => `${match[1]}: ${visibleText(match[2])}`);
   assert.deepEqual(rows, [
-    "debug-page-row debug-list-head: Connected pages 2 SSE 3 total",
-    "debug-page-row is-current: Chrome · macOS 127.0.0.1 this page 1",
-    "debug-page-row: Safari · iOS 192.168.1.20 page-oth 2",
+    "debug-page-row debug-list-head: Connected pages 2 SSE 5 total",
+    "debug-page-row is-current: Chrome · macOS 127.0.0.1 this page 2",
+    "debug-page-row: Safari · iOS 192.168.1.20 page-oth 3",
   ]);
+  // Every SSE kind counts, each a connection of the browser's pool; the title says which.
   assert.equal(pages.match(icons)?.length, 2, "two marks each, hidden from screen readers");
-  assert.ok(titles(pages).includes("other page page-oth · Safari · iOS · 192.168.1.20 · 2 streams"));
+  assert.ok(titles(pages).includes("other page page-oth · Safari · iOS · 192.168.1.20 · SSE 3 · Agent 2 · Terminal 1"), titles(pages).join("\n"));
+  assert.ok(titles(pages).includes("this page page-min · Chrome · macOS · 127.0.0.1 · SSE 2 · Agent 1 · File watch 1"));
   // A page opened without a page id or a known browser still gets its row.
   const bare = reply();
-  bare.server.eventStreams = { total: 1, byHolder: [{ holder: null, count: 1, address: null, client: null }] };
+  bare.server.sseTotal = 1;
+  bare.server.pages = [{ holder: null, address: null, client: null, agent: 1, terminal: 0, fileWatch: 0 }];
   const bareRow = pageList(render({ server: server({ reply: bare }) }));
   assert.match(bareRow, /<span class="debug-page-icons"><\/span><span class="debug-page-client is-dim">unknown browser<\/span><span class="debug-page-address">—<\/span><span class="debug-page-holder">no page id<\/span>/);
   const strip = serverHead(html);
