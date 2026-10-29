@@ -289,6 +289,20 @@ test("shows the follow-up shortcut in the button tooltip", () => {
   assert.match(html, /aria-keyshortcuts="Alt\+Enter"/);
 });
 
+test("scrolls a long queue inside its own box, under the count and Recall (#1428)", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(I18nProvider, null, React.createElement(ChatInput, {
+      onSend() {}, onAbort() {}, onSteer() {}, onFollowUp() {}, onRecallQueue() {}, isStreaming: true,
+      queuedMessages: { steering: Array.from({ length: 19 }, (_, i) => `steer-${i}`), followUp: ["follow-up-0"] },
+    })),
+  );
+  const rows = html.match(/<div style="max-height:min\(180px[^"]*overflow-y:auto[^"]*">(.*)$/s);
+  assert.ok(rows, "queued rows sit in a capped scroll box");
+  assert.match(html.slice(0, rows.index), /Queued · 20<\/span>.*Recall to input<\/button>/s);
+  assert.deepEqual([...rows[1].matchAll(/<div title="([^"]+)"/g)].map((match) => match[1]),
+    [...Array.from({ length: 19 }, (_, i) => `steer-${i}`), "follow-up-0"]);
+});
+
 test("the composer stays editable while compacting and says messages queue", () => {
   const html = renderToStaticMarkup(
     React.createElement(I18nProvider, null, React.createElement(ChatInput, {
