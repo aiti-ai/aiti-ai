@@ -373,7 +373,7 @@ test("subagent completion stays silent and never becomes unread", () => {
   assert.match(source, /completionNotificationSuppressedSessionIds\?: string\[\]/);
   assert.match(
     source,
-    /completedWithNotifications = completedInBackground\.filter\([\s\S]*?!previousSuppressedCompletionSessionIdsRef\.current\.has\(id\)[\s\S]*?!knownSubagentIds\.has\(id\)/,
+    /completedWithNotifications = finishedInBackground\.filter\([\s\S]*?!previousSuppressedCompletionSessionIdsRef\.current\.has\(id\)[\s\S]*?!knownSubagentIds\.has\(id\)/,
   );
   assert.match(source, /completedWithNotifications\.forEach\(\(id\) => next\.add\(id\)\)/);
   assert.match(source, /if \(completedWithNotifications\.length > 0\) \{\s*onBackgroundTaskDone\?\.\(\)/);
@@ -512,11 +512,12 @@ test("the composer's bar moves through a handle made once, with the newest closu
   // A created worktree is listed at once and refetched, whether or not anyone moves there.
   const create = callbackBody("createWorktree");
   assert.match(create, /body: JSON\.stringify\(\{ cwd: project\.root, branch \}\)/);
-  assert.match(create, /if \(!res\.ok \|\| data\.error \|\| !data\.path\) return \{ error: data\.error \?\? `HTTP \$\{res\.status\}` \};/);
+  assert.match(create, /if \(!res\.ok \|\| data\.error \|\| !data\.path\) \{[\s\S]{0,220}?worktreeCreateFailure\(data, res\.status\)/);
   const listed = create.indexOf("prev.projectKey === project.key && !prev.worktrees.some((worktree) => worktree.path === path)");
   const refetch = create.indexOf("setWtRefreshKey((k) => k + 1);\n      return { path };");
   assert.ok(listed >= 0 && listed < refetch, "listed, then refetched, then handed back");
-  assert.match(create, /return \{ error: e instanceof Error \? e\.message : String\(e\) \};\s*\}\s*\}, \[\]\);/);
+  // 合并适配：fork 的 createWorktree 依赖 t（worktreeCreateFailure 的本地化文案）。
+  assert.match(create, /return \{ error: e instanceof Error \? e\.message : String\(e\) \};\s*\}\s*\}, \[t\]\);/);
   assert.match(source, /controlRef\?: Ref<SessionSidebarControl>;/);
 });
 

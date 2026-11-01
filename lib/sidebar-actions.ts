@@ -99,3 +99,72 @@ export function forkFailureMessage(code: string | undefined, error: string): { k
     default: return { key: "sidebar.forkFailed", params: { error } };
   }
 }
+
+/**
+ * A refused "New worktree…" (POST /api/worktrees): a branch another worktree
+ * has checked out names that checkout in the user's language (git checks a
+ * branch out once), or says its folder is gone and `git worktree prune`
+ * clears it; anything else is the server's error, as before.
+ */
+export function worktreeCreateFailure(
+  data: { error?: string; code?: string; branch?: string; worktreePath?: string },
+  status: number,
+): { key: string; params: { branch: string; path: string } } | { error: string } {
+  const key = data.code === "branch_in_use" ? "sidebar.worktreeBranchInUse"
+    : data.code === "branch_worktree_missing" ? "sidebar.worktreeBranchMissing"
+    : null;
+  if (key && data.branch && data.worktreePath) {
+    return { key, params: { branch: data.branch, path: data.worktreePath } };
+  }
+  return { error: data.error ?? `HTTP ${status}` };
+}
+
+/** Root ids per POST /api/sessions/delete (the route's MAX_SESSION_DELETE_IDS). */
+export const PROJECT_DELETE_IDS_PER_REQUEST = 500;
+
+/** What a project's "Delete all sessions" did, summed over its requests. */
+export interface ProjectSessionsDeleteOutcome {
+  /** The root ids deleted; their subagent sessions went with them. */
+  deletedRoots: string[];
+  /** Every session id deleted, subagent sessions included. */
+  deleted: string[];
+  /** Root ids kept because they started running after the confirmation. */
+  running: string[];
+  /** Why a request failed; the parts sent before it were deleted. */
+  error: string | null;
+}
+
+/**
+ * Deletes the root ids a project's confirmation showed, in parts of
+ * PROJECT_DELETE_IDS_PER_REQUEST, one request at a time. A refused part ends
+ * the run: what was deleted until then is reported with the error.
+ */
+export async function deleteProjectSessions(
+  ids: readonly string[],
+  fetchImpl: typeof fetch,
+): Promise<ProjectSessionsDeleteOutcome> {
+  const outcome: ProjectSessionsDeleteOutcome = { deletedRoots: [], deleted: [], running: [], error: null };
+  for (let start = 0; start < ids.length; start += PROJECT_DELETE_IDS_PER_REQUEST) {
+    const part = ids.slice(start, start + PROJECT_DELETE_IDS_PER_REQUEST);
+    try {
+      const res = await fetchImpl("/api/sessions/delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: part }),
+      });
+      const data = await res.json().catch(() => ({})) as { deleted?: string[]; running?: string[]; error?: string };
+      if (!res.ok || !Array.isArray(data.deleted)) {
+        outcome.error = data.error ?? `HTTP ${res.status}`;
+        break;
+      }
+      const deleted = new Set(data.deleted);
+      outcome.deleted.push(...data.deleted);
+      outcome.deletedRoots.push(...part.filter((id) => deleted.has(id)));
+      outcome.running.push(...(data.running ?? []));
+    } catch (error) {
+      outcome.error = error instanceof Error ? error.message : String(error);
+      break;
+    }
+  }
+  return outcome;
+}

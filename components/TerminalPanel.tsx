@@ -11,6 +11,7 @@ import { readFontWeight } from "@/lib/font-preferences";
 import { createTerminalWriter, terminalRequest } from "@/lib/terminal-client";
 import { onConnStarvation } from "@/lib/conn-guard";
 import { getEventBus, type BusEventSource } from "@/lib/event-bus-client";
+import { pageId, trackEventSource } from "@/lib/page-debug";
 import {
   applyTerminalModifiers,
   NO_TERMINAL_MODIFIERS,
@@ -219,7 +220,10 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
         };
         return;
       }
-      events = new EventSource(`/api/terminal/${encodeURIComponent(id)}/events${offset === undefined ? "" : `?after=${offset}`}`);
+      // `holder`: the page, for the Debug panel's connected pages.
+      const query = new URLSearchParams({ holder: pageId() });
+      if (offset !== undefined) query.set("after", String(offset));
+      events = trackEventSource("terminal", new EventSource(`/api/terminal/${encodeURIComponent(id)}/events?${query}`), cwd);
       events.onmessage = (message) => {
         handleEvent(JSON.parse(message.data) as TerminalEvent);
       };

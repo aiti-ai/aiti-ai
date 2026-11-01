@@ -172,9 +172,16 @@ function AgentRow({
   const relation = session.relation?.kind === "subagent" ? session.relation : null;
   const status: SubagentSessionStatus = running ? "running" : relation?.status ?? "completed";
   const primary = main ? t("agentSwitcher.main") : relation?.description || sessionTitle(session);
-  const secondary = main
-    ? sessionTitle(session)
-    : `${relation?.profile ?? t("agentSwitcher.subagent")} · ${formatRelativeTime(session.modified, locale)}`;
+  const profile = relation?.profile ?? t("agentSwitcher.subagent");
+  const modelId = usage?.model?.modelId;
+  const thinkingLevel = usage?.thinkingLevel && usage.thinkingLevel !== "off" ? usage.thinkingLevel : undefined;
+  const secondary = main ? sessionTitle(session) : profile;
+  const secondaryTitle = main ? secondary : [
+    profile,
+    usage?.model ? `${usage.model.provider}/${usage.model.modelId}` : undefined,
+    thinkingLevel,
+    formatRelativeTime(session.modified, locale),
+  ].filter(Boolean).join(" · ");
 
   return (
     <button

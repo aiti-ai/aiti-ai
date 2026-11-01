@@ -35,8 +35,9 @@ import { parseFormDataWithinLimit, RequestBodyTooLargeError } from "@/lib/bounde
 import { filePathFromApiSegments, samePath } from "@/lib/paths";
 import { issueFileTicket, redeemFileTicket } from "@/lib/file-ticket";
 import { readTextPreviewChunk } from "@/lib/text-preview";
-import { startFileWatch, stopFileWatch } from "@/lib/file-watch-registry";
+import { registerFileWatch, startFileWatch, stopFileWatch } from "@/lib/file-watch-registry";
 import { isIgnored } from "@/lib/file-ignore";
+import { pageStreamLabel, registerPageStream } from "@/lib/page-stream-registry";
 
 // 忽略规则已改为纯文件驱动（.gitignore + .aitignore，见 lib/file-ignore.ts）——
 // 不再有硬编码忽略集合；无 ignore 文件时全部显示（所见即磁盘）。
@@ -101,21 +102,45 @@ function resolveBodyPath(raw: unknown): string | null {
 }
 
 /** Parse and validate the upload directory from the POST body (JSON field or FormData field; includes symlink-escape protection). */
-async function resolveUploadDirectory(raw: unknown): Promise<
+async function resolveUploadDirectory(raw: unknown, ensure = false): Promise<
   { directory: string } | { response: NextResponse }
 > {
   const directory = resolveBodyPath(raw);
   if (!directory) return { response: NextResponse.json({ error: "path must be absolute" }, { status: 400 }) };
 
-  return validateUploadDirectory(directory);
+  return validateUploadDirectory(directory, ensure);
 }
 
-async function validateUploadDirectory(directory: string): Promise<
+/**
+ * Best-effort: keep an auto-created attachments directory invisible to git.
+ * An untracked `.gitignore` containing `*` also matches itself, so the whole
+ * directory (files included) stays out of `git status` without touching the
+ * repo's .gitignore or info/exclude. Cosmetic only — never blocks the upload.
+ */
+function hideFromGit(directory: string): void {
+  try {
+    fs.writeFileSync(path.join(directory, ".gitignore"), "*\n", { flag: "wx" });
+  } catch {
+    // Already there, or a read-only location — either is fine.
+  }
+}
+
+async function validateUploadDirectory(directory: string, ensure = false): Promise<
   { directory: string } | { response: NextResponse }
 > {
   const allowedRoots = await getAllowedFileRoots();
   if (!isFilePathAllowed(directory, allowedRoots)) {
     return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
+  }
+
+  // ensure=1 (📎 attachments): create the directory on demand. Only after the
+  // lexical root check above — nothing touches the disk outside allowed roots.
+  if (ensure) {
+    try {
+      fs.mkdirSync(directory, { recursive: true });
+    } catch (error) {
+      return { response: NextResponse.json({ error: `Cannot create directory: ${error instanceof Error ? error.message : String(error)}` }, { status: 500 }) };
+    }
   }
 
   let stat: fs.Stats;
@@ -142,6 +167,10 @@ async function validateUploadDirectory(directory: string): Promise<
   if (!isFilePathAllowed(realDirectory, realRoots)) {
     return { response: NextResponse.json({ error: "Access denied" }, { status: 403 }) };
   }
+
+  // Only after the symlink-safe realpath check: the .gitignore must never land
+  // outside the allowed roots via a symlinked directory.
+  if (ensure) hideFromGit(realDirectory);
 
   return { directory: realDirectory };
 }
@@ -311,6 +340,9 @@ export async function POST(
 
     if (segments[0] === "upload") {
       const strategy = parseUploadConflictStrategy(request.nextUrl.searchParams.get("conflict"));
+      // ensure=1: create the target directory on demand (📎 attachments land in
+      // <cwd>/.pi-attachments, which does not exist until first use).
+      const ensureDir = request.nextUrl.searchParams.get("ensure") === "1";
       if (!strategy) {
         return NextResponse.json({ error: "Invalid conflict strategy" }, { status: 400 });
       }
@@ -323,7 +355,7 @@ export async function POST(
         }
         throw error;
       }
-      const vd = await resolveUploadDirectory(formData.get("directory") ?? urlDir);
+      const vd = await resolveUploadDirectory(formData.get("directory") ?? urlDir, ensureDir);
       if ("response" in vd) return vd.response;
       const { directory } = vd;
       const files = formData.getAll("files").filter((entry): entry is File => typeof entry !== "string");
@@ -780,6 +812,8 @@ async function handleFileRequest(
         return NextResponse.json({ error: "Not a file" }, { status: 400 });
       }
       let watcher: fs.FSWatcher | null = null;
+      // The debug panel's count of open watches; released when the watcher fails or the client cancels.
+      let releaseWatch: (() => void) | null = null;
       let lastMtimeMs = stat?.mtimeMs ?? 0;
       let lastCtimeMs = stat?.ctimeMs ?? 0;
       let lastIno = stat?.ino ?? 0;
@@ -828,8 +862,29 @@ async function handleFileRequest(
             watcher.on("error", () => {
               try { watcher?.close(); } catch { /* ignore */ }
               watcher = null;
+              releaseWatch?.();
               try { controller.close(); } catch { /* ignore */ }
             });
+            // Counted, and listed under the page that opened it (`?holder=`).
+            const releaseCount = registerFileWatch();
+            const releasePage = registerPageStream(pageStreamLabel("file-watch", request));
+            releaseWatch = () => {
+              releaseCount();
+              releasePage();
+            };
+            // A client gone without a cancel (a phone off the network) would keep
+            // the watcher, and its place in the debug panel's count, forever.
+            const onAbort = () => {
+              try { watcher?.close(); } catch { /* ignore */ }
+              watcher = null;
+              releaseWatch?.();
+              try { controller.close(); } catch { /* ignore */ }
+            };
+            if (request.signal.aborted) {
+              onAbort();
+              return;
+            }
+            request.signal.addEventListener("abort", onAbort, { once: true });
             // The client snapshots only after this event, so emit it after the
             // watcher exists to avoid dropping changes between those steps.
             send("connected", { filePath });
@@ -840,6 +895,7 @@ async function handleFileRequest(
         },
         cancel() {
           try { watcher?.close(); } catch { /* ignore */ }
+          releaseWatch?.();
         },
       });
       return new Response(stream, {

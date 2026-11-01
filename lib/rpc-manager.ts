@@ -10,6 +10,7 @@ import { existsSync, realpathSync, writeFileSync } from "fs";
 import { resolve } from "path";
 import { isDeepStrictEqual } from "util";
 import { validateAgentImages } from "./image-attachments.ts";
+import { cwdMissingError } from "./missing-cwd.ts";
 import {
   createQueueEntry,
   loadQueueFile,
@@ -50,6 +51,7 @@ import type {
   SessionEntry,
   SessionInfo,
   SessionMessageEntry,
+  SubagentSessionStatus,
 } from "./types.ts";
 import { getRegistry as getExtRegistry } from "./ext/registry.ts";
 import type { AgentSessionInfo } from "./ext/types.ts";
@@ -65,11 +67,12 @@ import {
   hasSubagentResourceSnapshot,
   readSubagentRun,
   readSubagentSessionResources,
+  settleOrphanedSubagentStatus,
   subagentExtensionLoaderOptions,
   subagentToolOptions,
   SUBAGENT_CONTROL_TOOL_NAMES,
 } from "./subagents.ts";
-import { createSubagentController } from "./subagent-runtime.ts";
+import { createSubagentController, getLiveSubagentStatus, hasUnsettledSubagentRun } from "./subagent-runtime.ts";
 import { isBuiltInSubagentsEnabled } from "./subagent-settings.ts";
 import { resolveShellTools } from "./powershell-settings.ts";
 import { CHAT_ONLY_RESOURCE_LOADER_OPTIONS, contextFilesSystemPrompt } from "./chat-only.ts";
@@ -81,6 +84,7 @@ import { createReadOnlyMcpPolicyExtension, createSubagentMcpPolicyExtension } fr
 import { createSubagentSkillsBinding } from "./subagent-skills.ts";
 import { isNestedToolExecutionEvent } from "./agent-event-wire.ts";
 import { collectLiveAssistantNotices, readShowCacheMissNotices, withSessionPrices } from "./transcript-notices-server.ts";
+import type { DebugMcpHost, DebugSessionLifecycle, DebugWrapperSnapshot } from "./debug-types.ts";
 import {
   appendClearedSessionToolSelection,
   appendSessionToolSelection,
@@ -98,7 +102,32 @@ export interface AgentEvent {
 }
 
 type EventListener = (event: AgentEvent) => void;
-type AgentRunCompleteListener = (sessionId: string, outcome?: SessionLastRun) => void;
+
+/**
+ * A prompt parked while a manual compaction runs. pi's SDK refuses prompts then
+ * ("Cannot submit a prompt while compaction is in progress"), so the wrapper
+ * holds the submission and flushes it FIFO at compaction end, as pi's TUI
+ * `compactionQueuedMessages` does (interactive-mode.js).
+ */
+type ParkedPrompt = {
+  message: string;
+  images?: Array<{ type: "image"; data: string; mimeType: string }>;
+  /** The composer's steer / followUp; undefined: sent as a fresh prompt, parked as steer (the TUI's Enter). */
+  streamingBehavior?: "steer" | "followUp";
+  /** Settles the admission's `pendingPromptCount` (idempotent): on delivery, recall, Stop or a failed send. */
+  settle: () => void;
+  /** A flush is waiting for its admission; it stays a queue row (Recall, Stop) until then. */
+  delivering?: boolean;
+};
+
+/** What Recall and Stop hand back to the composer: the texts by queue, and the parked prompts' images. */
+type RecalledPrompts = {
+  steering: string[];
+  followUp: string[];
+  images?: Array<{ data: string; mimeType: string }>;
+};
+/** `sessionName`: the live session's own title (its newest `session_info`), read without a disk scan; `outcome`: the fork's run outcome for the completion push. */
+type AgentRunCompleteListener = (sessionId: string, sessionName: string | undefined, outcome?: SessionLastRun) => void;
 
 type PendingUiResponse = {
   resolve: (response: ExtensionUiResponse) => void;
@@ -150,13 +179,16 @@ type ExtensionCommandContextActionsLike = {
   reload: () => Promise<void>;
 };
 
+// `debugSnapshot` is optional: a host built before a hot reload lacks it.
+type WrapperMcpHost = Pick<McpHost, "prepareForPrompt" | "dispose"> & Partial<Pick<McpHost, "debugSnapshot">>;
+
 type AgentSessionWrapperOptions = {
   exactSystemPrompt?: () => string;
   chatOnly?: boolean;
   onAgentRunComplete?: AgentRunCompleteListener;
   suppressCompletionNotifications?: boolean;
   /** Connects the session's MCP servers before a prompt starts a run, and lets go of them when it closes (lib/mcp-host.ts). */
-  mcpHost?: Pick<McpHost, "prepareForPrompt" | "dispose">;
+  mcpHost?: WrapperMcpHost;
   /** Chat only: the extension-provided model the session wanted, named when a prompt finds no model. */
   chatOnlyExtensionModel?: { provider: string; id: string };
 };
@@ -201,7 +233,8 @@ export function resolveSessionIdleTimeoutMs(
   return DEFAULT_SESSION_IDLE_TIMEOUT_MS;
 }
 
-const SESSION_IDLE_TIMEOUT_MS = resolveSessionIdleTimeoutMs();
+/** Resolved once: the debug panel reads it rather than resolving the variable again, which warns. */
+export const SESSION_IDLE_TIMEOUT_MS = resolveSessionIdleTimeoutMs();
 
 const DEFAULT_SESSION_SHUTDOWN_DEADLINE_MS = 5_000;
 
@@ -351,6 +384,11 @@ export function resolveActiveToolNames(
   return [...new Set([...selectedToolNames, ...carriedToolNames])];
 }
 
+/** pi's "Cannot submit a prompt while compaction is in progress" rejection. */
+function isCompactionInProgressError(error: unknown): boolean {
+  return error instanceof Error && /compaction is in progress/i.test(error.message);
+}
+
 // ============================================================================
 // AgentSessionWrapper
 // Wraps AgentSession with the same interface the rest of the app expects
@@ -384,6 +422,8 @@ export class AgentSessionWrapper {
   private pendingPromptCount = 0;
   /** True while runAgentContinue is delivering a queued follow-up as a prompt. */
   private promptRunning = false;
+  // Prompts waiting for the running compaction to finish (ParkedPrompt above).
+  private parkedDuringCompaction: ParkedPrompt[] = [];
   private activeMutatingCommands = 0;
   private sessionReplacement: "fork" | "clone" | null = null;
   private agentRunNeedsCompletion = false;
@@ -397,7 +437,7 @@ export class AgentSessionWrapper {
   private readonly chatOnly: boolean;
   private readonly onAgentRunComplete?: AgentRunCompleteListener;
   private readonly suppressCompletionNotifications: boolean;
-  private readonly mcpHost?: Pick<McpHost, "prepareForPrompt" | "dispose">;
+  private readonly mcpHost?: WrapperMcpHost;
   private readonly chatOnlyExtensionModel?: { provider: string; id: string };
   private mcpHostDisposed = false;
   // The MCP wait of the prompt being admitted; Stop ends it.
@@ -436,6 +476,18 @@ export class AgentSessionWrapper {
   // Set when shutdown() starts. The SDK session stays usable until destroy(),
   // but lookups must treat the wrapper as gone from this point on.
   private closing = false;
+  // Bookkeeping for the debug panel (getDebugSnapshot()): times and type names only, written
+  // beside the code they describe and read nowhere else.
+  private readonly createdAt = Date.now();
+  private startedAt: number | null = null;
+  private closingAt: number | null = null;
+  // When the armed idle timer fires; idleTimer itself is never set back to null.
+  private idleDeadlineAt: number | null = null;
+  private idleLastResetAt: number | null = null;
+  private lastEventType: string | null = null;
+  private lastEventAt: number | null = null;
+  private lastCommandType: string | null = null;
+  private lastCommandAt: number | null = null;
 
   constructor(
     public readonly inner: AgentSessionLike,
@@ -510,6 +562,18 @@ export class AgentSessionWrapper {
   }
 
   /**
+   * A page that has this session selected renews it (POST /api/agent/[id]/lease): the idle
+   * countdown starts over at the full timeout, so a closed tab's session is reaped one idle
+   * timeout after its last renewal. Not a command: lastCommand and the mutating count stay as
+   * they are. A closing wrapper gets no new timer, and resetIdleTimer() leaves Stop's forced
+   * deadline where it is.
+   */
+  renewIdleTimer(): void {
+    if (!this.isAlive()) return;
+    this.resetIdleTimer();
+  }
+
+  /**
    * Drop this idle wrapper when the on-disk JSONL has an entry the in-memory
    * index never saw (another pi process appended). Rechecks isRunning() so a
    * prompt that started during the probe cannot be disposed.
@@ -532,8 +596,72 @@ export class AgentSessionWrapper {
     return this.suppressCompletionNotifications;
   }
 
+  /**
+   * What the debug panel shows of this wrapper: its fields and the SDK's plain getters, as
+   * counts, flags and times. Never send(): that moves the idle timer, waits for extensions and
+   * renders the system prompt.
+   */
+  getDebugSnapshot(): DebugWrapperSnapshot {
+    const inner = this.inner;
+    return {
+      sessionId: this.sessionId,
+      state: this.isAlive() ? "alive" : "closing",
+      stale: false,
+      subagent: this.suppressCompletionNotifications,
+      chatOnly: this.chatOnly,
+      createdAt: this.createdAt,
+      startedAt: this.startedAt,
+      closingAt: this.closingAt,
+      extensions: this.extensionBindingError !== null
+        ? "failed"
+        : this.extensionsBound
+          ? "bound"
+          : this.extensionBindingPromise ? "binding" : "none",
+      run: {
+        running: this.isRunning(),
+        streaming: inner.isStreaming === true,
+        promptRunning: this.pendingPromptCount > 0,
+        // The running prompt holds one count until its run ends; a queued steer or follow-up
+        // drops its own at once and reads in queuedMessages instead.
+        pendingPrompts: Math.max(0, this.pendingPromptCount - 1),
+        bashRunning: inner.isBashRunning === true,
+        compacting: inner.isCompacting === true,
+        retrying: inner.isRetrying === true,
+        queuedMessages: typeof inner.pendingMessageCount === "number" ? inner.pendingMessageCount : 0,
+        waitingForMcp: this.mcpPromptWait !== null,
+        runningTools: this.activeToolEvents.size,
+        mutatingCommands: this.activeMutatingCommands,
+        replacement: this.sessionReplacement,
+      },
+      idle: {
+        timeoutMs: SESSION_IDLE_TIMEOUT_MS,
+        nextCheckAt: this.idleDeadlineAt,
+        lastResetAt: this.idleLastResetAt,
+        forcedByStop: this.forceShutdownOnIdle && this.idleDeadlineAt !== null,
+      },
+      awaitingInput: this.isAwaitingInput(),
+      pendingUiRequests: this.pendingUiRequests.size,
+      customUis: this.activeCustomUis.size,
+      eventListeners: this.listeners.size,
+      lastEvent: this.lastEventType !== null && this.lastEventAt !== null
+        ? { type: this.lastEventType, at: this.lastEventAt }
+        : null,
+      lastCommand: this.lastCommandType !== null && this.lastCommandAt !== null
+        ? { type: this.lastCommandType, at: this.lastCommandAt }
+        : null,
+    };
+  }
+
+  /** The MCP host's state for the debug panel; null without a host (Chat only, MCP unavailable). */
+  getMcpDebugSnapshot(): DebugMcpHost | null {
+    return this.mcpHost?.debugSnapshot?.() ?? null;
+  }
+
   start(): void {
+    this.startedAt = Date.now();
     this.unsubscribe = this.inner.subscribe((event: AgentEvent) => {
+      this.lastEventType = typeof event.type === "string" ? event.type : null;
+      this.lastEventAt = Date.now();
       if (event.type === "agent_start") {
         this.agentRunNeedsCompletion = true;
         this.lastRunAborted = false;
@@ -596,7 +724,15 @@ export class AgentSessionWrapper {
         void this.runAgentContinue();
       }
       if (IDLE_RESET_EVENT_TYPES.has(event.type)) this.resetIdleTimer();
-      this.emit(event.type === "message_end" ? this.withTranscriptNotices(event) : event);
+      if (event.type === "compaction_end") {
+        // Prompts parked while compaction ran go out now, FIFO, whatever its outcome (as the TUI).
+        this.flushParkedPrompts();
+      }
+      this.emit(
+        event.type === "message_end" ? this.withTranscriptNotices(event)
+          : event.type === "agent_settled" ? this.withSubagentsActive(event)
+            : event,
+      );
       if (event.type === "agent_settled") this.notifyAgentRunCompleteIfIdle();
     });
     this.resetIdleTimer();
@@ -936,16 +1072,143 @@ export class AgentSessionWrapper {
     this.agentRunNeedsCompletion = false;
     // A stopped run did not finish a task, as pi's own status reporting has it: nothing to announce.
     if (this.suppressCompletionNotifications || this.lastRunAborted) return;
+    // A subagent of this session is still at work: each report starts a run here, and the run
+    // after the last one is the end of the task (#1434).
+    if (hasUnsettledSubagentRun(this.sessionId)) return;
     try {
-      this.onAgentRunComplete?.(this.sessionId, this.lastRunOutcome());
+      this.onAgentRunComplete?.(this.sessionId, this.inner.sessionManager.getSessionName(), this.lastRunOutcome());
     } catch (error) {
       console.error("[pi-web] completion listener failed:", error instanceof Error ? error.message : error);
     }
   }
 
-  /** `prompt_done`, saying `aborted` when the prompt's run was stopped rather than finished. */
+  /**
+   * `prompt_done`, saying `aborted` when the prompt's run was stopped rather than finished, and
+   * `subagentsActive` while a subagent under this session can still start another run here.
+   */
   private promptDoneEvent(): AgentEvent {
-    return { type: "prompt_done", ...(this.lastRunAborted ? { aborted: true } : {}) };
+    return this.withSubagentsActive({ type: "prompt_done", ...(this.lastRunAborted ? { aborted: true } : {}) });
+  }
+
+  /** The end of a run of this session's, marked when its subagents keep the task going: no chime yet. */
+  private withSubagentsActive(event: AgentEvent): AgentEvent {
+    return hasUnsettledSubagentRun(this.sessionId) ? { ...event, subagentsActive: true } : event;
+  }
+
+  /** Parked prompts as queue rows: a plain one is a steer, as the TUI parks Enter during compaction. */
+  private parkedQueueMessages(entries: readonly ParkedPrompt[]): { steering: string[]; followUp: string[] } {
+    const steering: string[] = [];
+    const followUp: string[] = [];
+    for (const entry of entries) {
+      (entry.streamingBehavior === "followUp" ? followUp : steering).push(entry.message);
+    }
+    return { steering, followUp };
+  }
+
+  /** pi's own queue plus the prompts parked during compaction, as the TUI's `getAllQueuedMessages()`. */
+  private mergedQueuedMessages(): { steering: string[]; followUp: string[] } {
+    const parked = this.parkedQueueMessages(this.parkedDuringCompaction);
+    return {
+      steering: [...this.inner.getSteeringMessages(), ...parked.steering],
+      followUp: [...this.inner.getFollowUpMessages(), ...parked.followUp],
+    };
+  }
+
+  private emitQueueUpdate(): void {
+    this.emit({ type: "queue_update", ...this.mergedQueuedMessages() });
+  }
+
+  private parkDuringCompaction(entry: ParkedPrompt): void {
+    this.parkedDuringCompaction.push(entry);
+    this.emitQueueUpdate();
+  }
+
+  /**
+   * Take every parked prompt back (Recall, Stop), those a flush has not handed to
+   * the SDK yet included: their admissions settle, the texts and images return to
+   * the composer.
+   */
+  private recallParkedPrompts(): RecalledPrompts {
+    const parked = this.parkedDuringCompaction;
+    if (parked.length === 0) return { steering: [], followUp: [] };
+    this.parkedDuringCompaction = [];
+    for (const entry of parked) entry.settle();
+    this.emitQueueUpdate();
+    // A plain prompt's client waits for prompt_done; nothing ran.
+    if (parked.some((entry) => entry.streamingBehavior === undefined)) this.emit({ type: "prompt_done", aborted: true });
+    const images = parked.flatMap((entry) => entry.images ?? []).map(({ data, mimeType }) => ({ data, mimeType }));
+    return { ...this.parkedQueueMessages(parked), ...(images.length ? { images } : {}) };
+  }
+
+  /**
+   * Deliver the prompts parked while compaction ran, FIFO: pi's TUI
+   * `flushCompactionQueue()` in the wrapper. Each goes through the prompt
+   * admission chain like any prompt, so the SDK decides start-or-join for one
+   * submission at a time and a prompt sent after compaction_end queues behind
+   * them. Each carries a `streamingBehavior` (a plain one as steer), so the
+   * first starts a run when idle and the rest join it. An entry stays listed
+   * until its delivery holds admission, so Recall and Stop still take it back.
+   */
+  private flushParkedPrompts(): void {
+    for (const entry of this.parkedDuringCompaction) {
+      if (entry.delivering) continue;
+      entry.delivering = true;
+      void this.deliverParkedPrompt(entry);
+    }
+  }
+
+  private async deliverParkedPrompt(entry: ParkedPrompt): Promise<void> {
+    const releaseAdmission = await this.acquirePromptAdmission();
+    entry.delivering = false;
+    const index = this.parkedDuringCompaction.indexOf(entry);
+    if (index === -1) {
+      // Recalled (Recall, Stop) while it waited.
+      releaseAdmission();
+      return;
+    }
+    this.parkedDuringCompaction.splice(index, 1);
+    this.emitQueueUpdate();
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      releaseAdmission();
+    };
+    let disposition: "handled" | "queued" | "started" | undefined;
+    let failure: unknown;
+    try {
+      await this.inner.prompt(entry.message, {
+        ...(entry.images?.length ? { images: entry.images } : {}),
+        source: "rpc",
+        streamingBehavior: entry.streamingBehavior ?? "steer",
+        preflightResult: (result) => {
+          disposition = result;
+          release();
+        },
+      });
+    } catch (error) {
+      failure = error;
+    }
+    release();
+    if (failure !== undefined && disposition === undefined && isCompactionInProgressError(failure)) {
+      // Another compaction started first: wait for that one's end.
+      this.parkDuringCompaction(entry);
+      return;
+    }
+    entry.settle();
+    if (failure !== undefined) {
+      // Refused unsent: keep it as a queue row for Recall or the next compaction end, as the TUI's restoreQueue().
+      if (disposition === undefined) this.parkDuringCompaction(entry);
+      this.emit({
+        type: "prompt_error",
+        errorMessage: failure instanceof Error ? failure.message : String(failure),
+      });
+    }
+    // The client of a plain prompt waits for prompt_done; the delivery that started
+    // the run sends it when that run ends, one that joined a run rides that run's.
+    if (disposition === "started" || (disposition !== "queued" && entry.streamingBehavior === undefined)) {
+      this.emit(this.promptDoneEvent());
+    }
   }
 
   beginExtensionBinding(options?: { forceEmptySystemPrompt?: boolean }): void {
@@ -1087,8 +1350,9 @@ export class AgentSessionWrapper {
   /**
    * pi restores the target branch's loadout from its transcript when it navigates the tree,
    * which can bring back coding tools the pinned preset leaves out and drop codemode, so a
-   * normal session applies its selection again. Chat only declares no tools, and a
-   * subagent's tools are fixed by its profile; both keep what pi restored.
+   * normal session applies its selection again when the set changed, and otherwise keeps the
+   * order the prompt was in. Chat only declares no tools, and a subagent's tools are fixed by
+   * its profile; both keep what pi restored.
    */
   private async navigateTreeKeepingToolSelection(
     targetId: string,
@@ -1101,10 +1365,17 @@ export class AgentSessionWrapper {
     const entries = this.inner.sessionManager.getEntries() as unknown as SessionEntry[];
     if (!readSubagentSessionResources(entries)) {
       const activeAfter = this.inner.getActiveToolNames();
-      this.setActiveToolSelection(
-        readSessionToolSelection(entries) ?? activeAfter,
-        [...activeAfter, ...activeBefore.filter((name) => SESSION_TOOL_NAMES.has(name))],
-      );
+      const isToolChanged = activeBefore.length !== activeAfter.length
+        || activeBefore.some((name) => !activeAfter.includes(name));
+      if (isToolChanged) {
+        this.setActiveToolSelection(
+          readSessionToolSelection(entries) ?? activeAfter,
+          [...activeAfter, ...activeBefore.filter((name) => SESSION_TOOL_NAMES.has(name))],
+        );
+      } else if (activeBefore.some((name, index) => name !== activeAfter[index])) {
+        // Same tools, other order: pi declares them in this order, so keep the previous one.
+        this.inner.setActiveToolsByName(activeBefore);
+      }
     }
     return { cancelled: false };
   }
@@ -1136,6 +1407,7 @@ export class AgentSessionWrapper {
   private resetIdleTimer(): void {
     if (!this._alive) {
       if (this.idleTimer) clearTimeout(this.idleTimer);
+      this.idleDeadlineAt = null;
       return;
     }
     if (!this.isRunning()) this.forceShutdownOnIdle = false;
@@ -1150,8 +1422,14 @@ export class AgentSessionWrapper {
     const timeoutMs = SESSION_IDLE_TIMEOUT_MS
       || (this.forceShutdownOnIdle ? DEFAULT_SESSION_IDLE_TIMEOUT_MS : 0);
     this.forcedIdleTimerArmed = timeoutMs !== 0 && this.forceShutdownOnIdle;
-    if (timeoutMs === 0) return;
+    this.idleLastResetAt = Date.now();
+    if (timeoutMs === 0) {
+      this.idleDeadlineAt = null;
+      return;
+    }
+    this.idleDeadlineAt = this.idleLastResetAt + timeoutMs;
     this.idleTimer = setTimeout(() => {
+      this.idleDeadlineAt = null;
       if (!this.forceShutdownOnIdle && (this.isRunning() || hasActiveSessionLivenessProvider({
         sessionId: this.sessionId,
         sessionFile: this.sessionFile || undefined,
@@ -1364,6 +1642,12 @@ export class AgentSessionWrapper {
 
   async send(command: Record<string, unknown>): Promise<unknown> {
     const type = command.type as string;
+    // A status read (the chat's reconciliation, every few seconds while it runs) would hide the
+    // last command that did something; it never resets the idle timer either.
+    if (type !== "get_state") {
+      this.lastCommandType = typeof type === "string" ? type : null;
+      this.lastCommandAt = Date.now();
+    }
     const allowedDuringReplacement = COMMANDS_ALLOWED_DURING_SESSION_REPLACEMENT.has(type);
     if (this.sessionReplacement && !allowedDuringReplacement) {
       throw new Error("Session is being copied to a new session");
@@ -1391,8 +1675,9 @@ export class AgentSessionWrapper {
       // run there would reach the model only for its tools to fail (and `write`
       // to recreate the folder). The pi CLI does not resume such a session
       // either; refuse as /api/agent/new does. (A `!` command already refuses.)
+      // Typed, so the route names the folder for the composer (#1422).
       if (type === "prompt" && !existsSync(this.cwd)) {
-        throw new Error(`Directory does not exist: ${this.cwd}`);
+        throw cwdMissingError(this.cwd);
       }
 
       switch (type) {
@@ -1416,32 +1701,11 @@ export class AgentSessionWrapper {
           const streamingBehavior = command.streamingBehavior as "steer" | "followUp" | undefined;
           const text = command.message as string;
 
-          // pi rejects plain prompts while compaction runs. Queue the message as
-          // a follow-up so it is delivered once compaction finishes (the
-          // compaction_end listener kicks off delivery via runAgentContinue).
-          // Extension commands still go through inner.prompt() so they execute
-          // immediately, matching pi's own behavior during compaction.
-          const queueAsFollowUp = this.inner.isCompacting && !this.isRegisteredExtensionCommand(text);
-          if (queueAsFollowUp) {
-            // Record image attachments so they survive queue mirroring.
-            this.hintQueueImages("followUp", promptImages);
-            this.pendingPromptCount += 1;
-            notifyRunningChange();
-            void this.inner.followUp(text, promptImages?.length ? promptImages : undefined)
-              .catch((error) => {
-                invalidateSessionListCache();
-                this.emit({
-                  type: "prompt_error",
-                  errorMessage: error instanceof Error ? error.message : String(error),
-                });
-              })
-              .finally(() => {
-                this.pendingPromptCount = Math.max(0, this.pendingPromptCount - 1);
-                this.resetIdleTimer();
-                notifyRunningChange();
-              });
-            return null;
-          }
+          // pi rejects prompts while a manual compaction runs: the preflight
+          // refusal below parks the submission and flushes it at compaction end
+          // (the TUI's compactionQueuedMessages). Extension commands still go
+          // through inner.prompt() so they execute immediately, matching pi's
+          // own behavior during compaction.
 
           const queuesMessage = Boolean(streamingBehavior) && this.inner.isStreaming;
           if (queuesMessage) {
@@ -1452,16 +1716,19 @@ export class AgentSessionWrapper {
           let preflightAccepted = false;
           let preflightSettled = false;
           let promptSettled = false;
+          // A prompt parked behind compaction is answered with `{ queued: true }`:
+          // the message is not a sent one yet.
+          let parked = false;
           let acceptPreflight!: () => void;
           let rejectPreflight!: (error: unknown) => void;
           const preflight = new Promise<void>((resolve, reject) => {
+            // Acceptance owes no completion: only a run does, and its agent_start says so.
+            // An extension command pi handles, or input an extension swallows, starts
+            // none, and a run the command starts itself may begin after this (#1345).
             acceptPreflight = () => {
               preflightAccepted = true;
-              this.agentRunNeedsCompletion = true;
               if (preflightSettled) return;
               preflightSettled = true;
-              // A new prompt, not one queued into a run: what an earlier run's Stop said is over.
-              if (!streamingBehavior) this.lastRunAborted = false;
               resolve();
             };
             rejectPreflight = (error) => {
@@ -1514,6 +1781,10 @@ export class AgentSessionWrapper {
           }
           // Execution starts (isRunning flips true): broadcast the running set so the sidebar shows the running marker right away.
           notifyRunningChange();
+          // A new prompt, not one queued into a run: what an earlier run's Stop said is over.
+          // Not at acceptance: pi accepts a command that awaits a run of its own after that
+          // run settled, and the run's Stop must still keep its push and chime away.
+          if (!streamingBehavior) this.lastRunAborted = false;
           let prompt: Promise<void>;
           try {
             prompt = this.inner.prompt(command.message as string, {
@@ -1538,6 +1809,25 @@ export class AgentSessionWrapper {
             finishPrompt();
             if (!streamingBehavior) this.emit(this.promptDoneEvent());
           }, (error) => {
+            // pi's SDK refuses prompts while a manual compaction runs. Park the
+            // submission and flush it at compaction end (the TUI's
+            // compactionQueuedMessages). An extension command typed meanwhile
+            // still runs: the SDK executes commands before it refuses. The parked
+            // prompt keeps this admission's count outstanding until it settles,
+            // so the wrapper cannot idle out from under it.
+            if (!preflightAccepted && isCompactionInProgressError(error)) {
+              this.parkDuringCompaction({
+                message: command.message as string,
+                images: promptImages,
+                streamingBehavior,
+                settle: finishPrompt,
+              });
+              parked = true;
+              acceptPreflight();
+              // The refusal can land after that compaction's end already flushed.
+              if (!this.inner.isCompacting) this.flushParkedPrompts();
+              return;
+            }
             rejectPreflight(error);
             finishPrompt();
             invalidateSessionListCache();
@@ -1558,13 +1848,13 @@ export class AgentSessionWrapper {
           });
 
           await preflight;
-          return null;
+          return parked ? { queued: true } : null;
         } finally {
           releaseAdmission();
         }
       }
 
-      case "abort":
+      case "abort": {
         this.forceShutdownOnIdle = true;
         // Arm the forced cleanup now: the reset above ran before this flag,
         // and the final reset only runs once the SDK run has unwound.
@@ -1577,12 +1867,17 @@ export class AgentSessionWrapper {
           wait.controller.abort();
           await wait.done;
         }
+        // Stop ends the compaction, whose end would send the parked prompts:
+        // they go back to the composer instead, as the TUI's abort restores
+        // queued messages to the editor.
+        const recalled = this.recallParkedPrompts();
         try {
           await this.withFinalIdleReset(() => this.inner.abort());
-          return null;
+          return recalled.steering.length || recalled.followUp.length ? recalled : null;
         } finally {
           if (!this.isRunning()) this.forceShutdownOnIdle = false;
         }
+      }
 
       case "get_state": {
         const model = this.inner.model;
@@ -1607,14 +1902,27 @@ export class AgentSessionWrapper {
           messageCount: 0,
           pendingMessageCount: this.inner.pendingMessageCount,
           queuedMessages: {
-            steering: this.queueMirror.filter((e) => e.kind === "steer").map((e) => e.text),
-            followUp: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => e.text),
+            steering: [
+              ...this.queueMirror.filter((e) => e.kind === "steer").map((e) => e.text),
+              ...this.parkedDuringCompaction.filter((e) => e.streamingBehavior !== "followUp").map((e) => e.message),
+            ],
+            followUp: [
+              ...this.queueMirror.filter((e) => e.kind === "followUp").map((e) => e.text),
+              ...this.parkedDuringCompaction.filter((e) => e.streamingBehavior === "followUp").map((e) => e.message),
+            ],
             // Parallel attachment markers (same indexes as steering/followUp):
             // for queue-row icons — pi's queue_update reports text only; the
             // real attachment info lives only in the local queueMirror and is
-            // delivered with the state projection.
-            steeringHasImages: this.queueMirror.filter((e) => e.kind === "steer").map((e) => Boolean(e.images?.length)),
-            followUpHasImages: this.queueMirror.filter((e) => e.kind === "followUp").map((e) => Boolean(e.images?.length)),
+            // delivered with the state projection. Parked prompts carry their
+            // own images.
+            steeringHasImages: [
+              ...this.queueMirror.filter((e) => e.kind === "steer").map((e) => Boolean(e.images?.length)),
+              ...this.parkedDuringCompaction.filter((e) => e.streamingBehavior !== "followUp").map((e) => Boolean(e.images?.length)),
+            ],
+            followUpHasImages: [
+              ...this.queueMirror.filter((e) => e.kind === "followUp").map((e) => Boolean(e.images?.length)),
+              ...this.parkedDuringCompaction.filter((e) => e.streamingBehavior === "followUp").map((e) => Boolean(e.images?.length)),
+            ],
           },
           pendingRecovery: this.getPendingRecoveryView(),
           queueTrash: this.getQueueTrashView(),
@@ -1904,14 +2212,22 @@ export class AgentSessionWrapper {
         // races against the agent loop pulling messages mid-flight. This is a
         // user-initiated destructive action, so it is a SOFT delete: the
         // cleared entries move to the trash and stay recoverable until the
-        // user purges them.
+        // user purges them. Prompts parked during compaction come back too,
+        // as the TUI's clearAllQueues().
         if (this.queueMirror.length > 0) {
           this.queueTrash.push(...this.queueMirror);
         }
         this.queueMirror = [];
         this.pendingQueueHints = { steer: [], followUp: [], composer: [] };
         this.persistQueue();
-        return this.inner.clearQueue();
+        const cleared = this.inner.clearQueue();
+        if (this.parkedDuringCompaction.length === 0) return cleared;
+        const recalled = this.recallParkedPrompts();
+        return {
+          steering: [...cleared.steering, ...recalled.steering],
+          followUp: [...cleared.followUp, ...recalled.followUp],
+          ...(recalled.images ? { images: recalled.images } : {}),
+        };
       }
 
       case "move_queue": {
@@ -2588,11 +2904,13 @@ export class AgentSessionWrapper {
   destroy(reason: AgentWrapperEndReason = "shutdown"): void {
     if (!this._alive) return;
     this._alive = false;
+    this.closingAt ??= Date.now();
     this.disposeMcpHost();
     // Tell attached SSE listeners to drop this instance so the browser
     // EventSource errors and reconnects instead of staying OPEN on a dead wrapper.
     this.emit({ type: "session_shutdown" });
     if (this.idleTimer) clearTimeout(this.idleTimer);
+    this.idleDeadlineAt = null;
     if (this.inner.isBashRunning) this.inner.abortBash();
     this.unsubscribe?.();
     for (const pending of this.pendingUiResponses.values()) pending.cancel();
@@ -2606,6 +2924,8 @@ export class AgentSessionWrapper {
       try {
         this.inner.dispose();
       } finally {
+        // Here rather than in the registry's onDestroy callback, which a replacement swaps out.
+        recordSessionClosed(this);
         this.resolveDisposed();
         try {
           this.onDestroyCallback?.(reason);
@@ -2651,6 +2971,7 @@ export class AgentSessionWrapper {
     // Closing starts before the first await, so a request that arrives while
     // extensions shut down starts a fresh wrapper instead of prompting this one.
     this.closing = true;
+    this.closingAt ??= Date.now();
 
     this.shutdownPromise = (async () => {
       try {
@@ -3322,6 +3643,8 @@ declare global {
   var __piRunningSnapshot: string | undefined;
   var __piSessions: Map<string, AgentSessionWrapper> | undefined;
   var __piStartLocks: Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> | undefined;
+  /** Debug panel: the id a `__new__…`/`__recreate__…` start registered its wrapper under, while its lock is held. */
+  var __piStartRegisteredIds: Map<string, string> | undefined;
   var __piStartingSessionCwds: Map<string, number> | undefined;
   var __piStartingSessionIds: Set<string> | undefined;
 }
@@ -3329,7 +3652,7 @@ declare global {
 function getRegistry(): Map<string, AgentSessionWrapper> {
   if (!globalThis.__piSessions) {
     globalThis.__piSessions = new Map();
-    const destroy = () => globalThis.__piSessions?.forEach((session) => session.destroy());
+    const destroy = () => globalThis.__piSessions?.forEach((session) => typeof session.destroy === "function" && session.destroy());
     const shutdown = () => {
       const sessions = Array.from(globalThis.__piSessions?.values() ?? []);
       void Promise.allSettled(sessions.map((session) => session.shutdown()));
@@ -3341,6 +3664,56 @@ function getRegistry(): Map<string, AgentSessionWrapper> {
     process.once("SIGTERM", shutdown);
   }
   return globalThis.__piSessions;
+}
+
+/**
+ * Each session id's wrapper starts and last close, for the debug panel: a wrapper reaped and
+ * rebuilt reads apart from one that stayed up. On globalThis, as the registry, so a hot reload
+ * keeps it; bounded, oldest first, never dropping an id that still has a wrapper.
+ */
+const SESSION_LIFECYCLE_KEY = Symbol.for("pi-web:session-lifecycle");
+const SESSION_LIFECYCLE_LIMIT = 1000;
+
+function readSessionLifecycles(): Map<string, DebugSessionLifecycle> | null {
+  const existing = (globalThis as Record<PropertyKey, unknown>)[SESSION_LIFECYCLE_KEY];
+  return existing instanceof Map ? existing as Map<string, DebugSessionLifecycle> : null;
+}
+
+// Bookkeeping only: a failure here must never keep a wrapper from starting.
+function recordSessionStart(sessionId: string): void {
+  try {
+    let lifecycles = readSessionLifecycles();
+    if (!lifecycles) {
+      lifecycles = new Map();
+      (globalThis as Record<PropertyKey, unknown>)[SESSION_LIFECYCLE_KEY] = lifecycles;
+    }
+    const now = Date.now();
+    const previous = lifecycles.get(sessionId);
+    lifecycles.delete(sessionId);
+    lifecycles.set(sessionId, {
+      starts: (typeof previous?.starts === "number" ? previous.starts : 0) + 1,
+      firstStartedAt: typeof previous?.firstStartedAt === "number" ? previous.firstStartedAt : now,
+      lastStartedAt: now,
+      lastClosedAt: typeof previous?.lastClosedAt === "number" ? previous.lastClosedAt : null,
+    });
+    const sessions = globalThis.__piSessions;
+    for (const id of lifecycles.keys()) {
+      if (lifecycles.size <= SESSION_LIFECYCLE_LIMIT) break;
+      if (id !== sessionId && !sessions?.has(id)) lifecycles.delete(id);
+    }
+  } catch {
+    // The panel shows no history for this id.
+  }
+}
+
+// Called from finishDispose(): it must never throw past resolveDisposed().
+function recordSessionClosed(wrapper: { readonly sessionId: string }): void {
+  try {
+    const lifecycle = readSessionLifecycles()?.get(wrapper.sessionId);
+    if (lifecycle) lifecycle.lastClosedAt = Date.now();
+  } catch {
+    // The panel shows no close time for this id.
+  }
 }
 
 function registerRpcWrapper(wrapper: AgentSessionWrapper): void {
@@ -3358,6 +3731,7 @@ function registerRpcWrapper(wrapper: AgentSessionWrapper): void {
   if (previous && previous !== wrapper && typeof previous.onDestroy === "function") {
     previous.onDestroy(() => {});
   }
+  recordSessionStart(sessionId);
   registry.set(sessionId, wrapper);
   wrapper.start();
   if (!wrapper.isChatOnly()) wrapper.beginExtensionBinding();
@@ -3399,6 +3773,26 @@ export function abortSubagent(sessionId: string) {
 function getLocks(): Map<string, Promise<{ session: AgentSessionWrapper; realSessionId: string }>> {
   if (!globalThis.__piStartLocks) globalThis.__piStartLocks = new Map();
   return globalThis.__piStartLocks;
+}
+
+// Bookkeeping for getRpcStartingSessionIds() only: a failure here must never fail a start.
+function recordStartRegisteredId(startKey: string, realSessionId: string): void {
+  try {
+    if (startKey === realSessionId) return;
+    if (!(globalThis.__piStartRegisteredIds instanceof Map)) globalThis.__piStartRegisteredIds = new Map();
+    globalThis.__piStartRegisteredIds.set(startKey, realSessionId);
+  } catch {
+    // The panel counts this start as starting until its lock goes.
+  }
+}
+
+function forgetStartRegisteredId(startKey: string): void {
+  try {
+    const registered = globalThis.__piStartRegisteredIds;
+    if (registered instanceof Map) registered.delete(startKey);
+  } catch {
+    // Nothing reads a key whose lock is gone.
+  }
 }
 
 const CLOSING_SESSION_WAIT_MARGIN_MS = 1_000;
@@ -3473,6 +3867,31 @@ function trackStartingSession(cwd: string): () => void {
 
 export function getRpcSession(sessionId: string): AgentSessionWrapper | undefined {
   return getRegistry().get(sessionId);
+}
+
+/**
+ * The sidebar's rename (#1388). A session a wrapper holds is renamed through
+ * `AgentSession.setSessionName()`, as pi's `/name`, so the `session_info` entry hangs off the live
+ * leaf and extensions get `session_info_changed`; appended to the file from outside, it was a dead
+ * branch the running session never saw. Like the `set_session_name` command it does not wait for
+ * session_start: handlers are registered at load, and a session_start that never settles (an
+ * unanswered dialog) must not hold the rename. A start in flight is awaited (its `SessionManager`
+ * has already read the file), as is a wrapper shutting down (its extensions may still append from
+ * its leaf). With no wrapper and no start, `writeToDisk` runs synchronously right after that check,
+ * so nothing can open the file between the two. Resolves what `writeToDisk` returns, or true.
+ */
+export async function renameRpcSession(sessionId: string, name: string, writeToDisk: () => boolean): Promise<boolean> {
+  for (;;) {
+    const wrapper = getRegistry().get(sessionId);
+    if (wrapper?.isAlive()) {
+      wrapper.inner.setSessionName(name);
+      invalidateSessionListCache();
+      return true;
+    }
+    const pending = getLocks().get(sessionId) ?? closingRpcSessionWait(sessionId);
+    if (!pending) return writeToDisk();
+    await pending.catch(() => undefined);
+  }
 }
 
 export interface SetRpcSessionToolsResult {
@@ -3579,6 +3998,26 @@ function runtimeMessageActivityMs(entry: SessionMessageEntry): number | undefine
 }
 
 /**
+ * A subagent's status as the session list and viewer show it. Only this process can finish a
+ * run, so a running wrapper or the live run map decides; a persisted `running` / `queued` with
+ * neither was left by a process that stopped mid-run and reads as `interrupted`, as
+ * `get_subagent_result` reports it. Applied per response, never to the cached scan.
+ */
+export function subagentDisplayStatus(sessionId: string, persisted: SubagentSessionStatus): SubagentSessionStatus {
+  if (getRegistry().get(sessionId)?.isRunning()) return "running";
+  return getLiveSubagentStatus(sessionId) ?? settleOrphanedSubagentStatus(persisted);
+}
+
+export function withSubagentDisplayStatus(sessions: SessionInfo[]): SessionInfo[] {
+  return sessions.map((session) => {
+    const relation = session.relation;
+    if (relation?.kind !== "subagent") return session;
+    const status = subagentDisplayStatus(session.id, relation.status);
+    return status === relation.status ? session : { ...session, relation: { ...relation, status } };
+  });
+}
+
+/**
  * Return live sessions that should be visible in the session list. Pi delays
  * the first JSONL flush until an assistant message exists, so an accepted new
  * prompt must temporarily be described from its in-memory SessionManager.
@@ -3643,7 +4082,7 @@ export function hasBusyRpcSessionForCwd(cwd: string): boolean {
   const targetCwd = normalizeRpcCwd(cwd);
   if (getStartingSessionCwds().has(targetCwd)) return true;
   return Array.from(getRegistry().values()).some(
-    (session) => normalizeRpcCwd(session.cwd) === targetCwd && session.isRunning(),
+    (session) => normalizeRpcCwd(session.cwd) === targetCwd && typeof session.isRunning === "function" && session.isRunning(),
   );
 }
 
@@ -3659,7 +4098,7 @@ export async function destroyRpcSessionsForCwd(cwd: string): Promise<number> {
 export function getRunningRpcSessionIds(): string[] {
   const ids = new Set<string>();
   for (const [sessionId, session] of getRegistry()) {
-    if (session.isRunning()) ids.add(session.sessionId || sessionId);
+    if (typeof session.isRunning === "function" && session.isRunning()) ids.add(session.sessionId || sessionId);
   }
   // Starting (not yet registered) old sessions: the wrapper is not in the
   // registry yet but startup has begun — count them in the running set (the
@@ -3733,6 +4172,125 @@ export async function stopIdleRpcSession(
     console.error("[pi-web] stopIdleRpcSession shutdown failed:", error instanceof Error ? error.message : error);
   }
   return wrapper.isAlive() ? "still-alive" : "stopped";
+}
+
+/** One registered wrapper as the debug panel reads it (lib/debug-snapshot.ts). */
+export interface RpcSessionDebugEntry {
+  snapshot: DebugWrapperSnapshot;
+  /** Matches liveness providers registered by file; never sent to the browser. */
+  sessionFile: string | null;
+  /** The MCP host's state; read for the session the panel shows only. */
+  readMcp(): DebugMcpHost | null;
+}
+
+type MaybeStaleWrapper = Partial<Pick<AgentSessionWrapper, "isAlive" | "isRunning" | "getDebugSnapshot" | "getMcpDebugSnapshot">>;
+
+/** A wrapper built before a hot reload has no getDebugSnapshot(): only state and running are known. */
+function staleWrapperSnapshot(sessionId: string, wrapper: MaybeStaleWrapper): DebugWrapperSnapshot {
+  let alive = false;
+  let running = false;
+  try { alive = typeof wrapper.isAlive === "function" && wrapper.isAlive() === true; } catch { /* unknown: closing */ }
+  try { running = typeof wrapper.isRunning === "function" && wrapper.isRunning() === true; } catch { /* unknown: idle */ }
+  return {
+    sessionId,
+    state: alive ? "alive" : "closing",
+    stale: true,
+    subagent: false,
+    chatOnly: false,
+    createdAt: null,
+    startedAt: null,
+    closingAt: null,
+    extensions: "none",
+    run: {
+      running,
+      streaming: false,
+      promptRunning: false,
+      pendingPrompts: 0,
+      bashRunning: false,
+      compacting: false,
+      retrying: false,
+      queuedMessages: 0,
+      waitingForMcp: false,
+      runningTools: 0,
+      mutatingCommands: 0,
+      replacement: null,
+    },
+    idle: { timeoutMs: SESSION_IDLE_TIMEOUT_MS, nextCheckAt: null, lastResetAt: null, forcedByStop: false },
+    awaitingInput: false,
+    pendingUiRequests: 0,
+    customUis: 0,
+    eventListeners: 0,
+    lastEvent: null,
+    lastCommand: null,
+  };
+}
+
+/**
+ * Every registered wrapper, closing ones included, for the debug panel. Reads the registry
+ * global itself (getRegistry() installs process handlers) and only reads each wrapper: one
+ * that fails to describe itself is listed as stale rather than failing the rest.
+ */
+export function getRpcSessionDebugSnapshots(): RpcSessionDebugEntry[] {
+  const registry = globalThis.__piSessions;
+  if (!(registry instanceof Map)) return [];
+  const entries: RpcSessionDebugEntry[] = [];
+  for (const [key, session] of registry) {
+    const wrapper = session as MaybeStaleWrapper & { readonly sessionFile?: unknown };
+    let snapshot: DebugWrapperSnapshot;
+    try {
+      snapshot = typeof wrapper.getDebugSnapshot === "function"
+        ? wrapper.getDebugSnapshot()
+        : staleWrapperSnapshot(key, wrapper);
+    } catch {
+      snapshot = staleWrapperSnapshot(key, wrapper);
+    }
+    if (!snapshot.sessionId) snapshot = { ...snapshot, sessionId: key };
+    let sessionFile: string | null = null;
+    try {
+      sessionFile = typeof wrapper.sessionFile === "string" && wrapper.sessionFile ? wrapper.sessionFile : null;
+    } catch { /* matched by id only */ }
+    entries.push({
+      snapshot,
+      sessionFile,
+      readMcp: () => typeof wrapper.getMcpDebugSnapshot === "function" ? wrapper.getMcpDebugSnapshot() : null,
+    });
+  }
+  return entries;
+}
+
+/** The start and close history of a session id; null when no wrapper was started for it. */
+export function getRpcSessionLifecycle(sessionId: string): DebugSessionLifecycle | null {
+  const lifecycle = readSessionLifecycles()?.get(sessionId);
+  if (!lifecycle || typeof lifecycle.starts !== "number") return null;
+  return {
+    starts: lifecycle.starts,
+    firstStartedAt: lifecycle.firstStartedAt,
+    lastStartedAt: lifecycle.lastStartedAt,
+    lastClosedAt: lifecycle.lastClosedAt ?? null,
+  };
+}
+
+/**
+ * The startRpcSession() calls under way with no alive wrapper yet: a lock outlives the
+ * wrapper's registration while a deferred model is switched to. `__new__…` and
+ * `__recreate__…` keys name a start whose id pi has not chosen yet; once its wrapper is
+ * registered, the key is looked up under that id.
+ */
+export function getRpcStartingSessionIds(): string[] {
+  const locks = globalThis.__piStartLocks;
+  if (!(locks instanceof Map)) return [];
+  const sessions = globalThis.__piSessions;
+  const registered = globalThis.__piStartRegisteredIds;
+  const ids: string[] = [];
+  for (const key of locks.keys()) {
+    const registeredId = registered instanceof Map ? registered.get(key) : undefined;
+    const id = typeof registeredId === "string" && registeredId ? registeredId : key;
+    const wrapper = sessions instanceof Map ? sessions.get(id) as MaybeStaleWrapper | undefined : undefined;
+    let alive = false;
+    try { alive = typeof wrapper?.isAlive === "function" && wrapper.isAlive() === true; } catch { /* starting */ }
+    if (!alive) ids.push(key);
+  }
+  return ids;
 }
 
 export function getCompletionNotificationSuppressedRpcSessionIds(): string[] {
@@ -4159,7 +4717,7 @@ export async function startRpcSession(
     const wrapper = new AgentSessionWrapper(inner, {
       exactSystemPrompt,
       chatOnly,
-      onAgentRunComplete: (completedSessionId, outcome) => {
+      onAgentRunComplete: (completedSessionId, _sessionName, outcome) => {
         void notifySessionComplete(completedSessionId, outcome).catch((error) => {
           console.error("[pi-web] failed to send completion push:", error instanceof Error ? error.message : error);
         });
@@ -4202,6 +4760,7 @@ export async function startRpcSession(
     if (previousWrapper && previousWrapper !== wrapper && typeof previousWrapper.onDestroy === "function") {
       previousWrapper.onDestroy(() => {});
     }
+    recordSessionStart(realSessionId);
     registry.set(realSessionId, wrapper);
     // When all tools are disabled, clear the system prompt entirely.
     // pi's buildSystemPrompt always produces a non-empty prompt even with no tools;
@@ -4212,6 +4771,9 @@ export async function startRpcSession(
     wrapper.loadQueueRecovery();
     wrapper.start();
     wrapper.beginExtensionBinding({ forceEmptySystemPrompt: toolNames?.length === 0 });
+    // Registered after start(): the debug panel's starting-lock reads isAlive
+    // through it, and a start whose wrapper is up must no longer count as starting.
+    recordStartRegisteredId(sessionId, realSessionId);
 
     if (!chatOnly) {
       if (deferredModel) {
@@ -4259,6 +4821,7 @@ export async function startRpcSession(
     return { session: wrapper, realSessionId };
   })().finally(() => {
     locks.delete(sessionId);
+    forgetStartRegisteredId(sessionId);
     finishStartingSession();
     // Startup-outcome finalizing broadcast: on success the wrapper is
     // registered (isRunning takes over; snapshot dedup prevents a duplicate

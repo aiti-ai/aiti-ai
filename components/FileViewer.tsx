@@ -17,15 +17,18 @@ import ReactMarkdown from "react-markdown";
 import { useTheme } from "@/hooks/useTheme";
 import {
   DOCX_PREVIEW_MAX_BYTES,
+  HTML_PREVIEW_MAX_BYTES,
   getFileExt,
   isAudioPath,
   isDocumentPreviewPath,
   isImagePath,
   isVideoPath,
 } from "@/lib/file-types";
+import { usePrismLanguages } from "@/hooks/usePrismLanguages";
 import { encodeFilePathForApi, getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { fileVersion, fileVersionChanged } from "@/lib/file-version";
 import { HIDDEN_PAGE_GRACE_MS, usePageHiddenFor } from "@/hooks/usePageHidden";
+import { pageId, trackEventSource } from "@/lib/page-debug";
 import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
 import { getExtUiItems, subscribeExtUi, hasExtRender, type ExtUiItemRegistered } from "@/lib/ext-ui-store";
 import { ExtItemBoundary, ensureExtSlotMaterialized } from "./ExtSlots";
@@ -75,6 +78,8 @@ interface FileData {
   size: number;
   nextOffset: number;
   truncated: boolean;
+  // A NUL in the first bytes (lib/text-preview.ts): no text view, only the download.
+  binary?: boolean;
 }
 
 const SOURCE_HIGHLIGHT_MAX_LINES = 1_000;
@@ -253,6 +258,7 @@ function SourceCodeRenderer({ rows, stylesheet, useInlineStyles, wrapLines }: So
 import { buildTicketUrl, fetchFileGet } from "@/lib/file-tickets";
 
 /** React hook: resolve a short-lived ticket URL for consumers that can only use GET URLs (<img>/<video>/EventSource). */
+
 function useTicketUrl(
   filePath: string | undefined,
   type: "read" | "download" | "preview" | "watch",
@@ -653,7 +659,7 @@ function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
               const img = e.currentTarget;
               setNaturalSize({ w: img.naturalWidth, h: img.naturalHeight });
             }}
-            onError={() => setError("Failed to load image")}
+            onError={() => setError(t("files.imageLoadFailed"))}
             style={{
               maxWidth: "100%",
               maxHeight: "100%",
@@ -841,7 +847,7 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
             preload="metadata"
             src={src ?? undefined}
             onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-            onError={() => setError("Failed to load audio")}
+            onError={() => setError(t("files.audioLoadFailed"))}
             style={{ width: "100%" }}
           />
         </div>
@@ -1018,7 +1024,7 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
             preload="metadata"
             src={src ?? undefined}
             onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
-            onError={() => setError("Failed to load video")}
+            onError={() => setError(t("files.videoLoadFailed"))}
             style={{ maxWidth: "100%", maxHeight: "100%" }}
           />
         </div>
@@ -1238,6 +1244,12 @@ export function FileViewer({
   onStateChange,
   watchEnabled: watchRequested = true,
 }: Props) {
+  // A page hidden past the grace lets go of its file watch (#1283: one browser
+  // connection each); the watch's `connected` on return re-reads the file if it
+  // changed meanwhile.
+  const pageHidden = usePageHiddenFor(HIDDEN_PAGE_GRACE_MS);
+  const watchEnabled = watchRequested && !pageHidden;
+
   // —— Extension takeover trampoline (the file-editor extension): when a fileViewer slot item's
   //    meta.match(filePath) hits, hand rendering to the extension's takeover component; on no
   //    hit (unregistered / not taking over) → fall through to the original viewer logic below,
@@ -1289,11 +1301,6 @@ export function FileViewer({
       </div>
     );
   }
-  // A page hidden past the grace lets go of its file watch (#1283: one browser
-  // connection each); the watch's `connected` on return re-reads the file if it
-  // changed meanwhile.
-  const pageHidden = usePageHiddenFor(HIDDEN_PAGE_GRACE_MS);
-  const watchEnabled = watchRequested && !pageHidden;
   if (isImagePath(filePath)) {
     return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} watchEnabled={watchEnabled} />;
   }
@@ -1562,7 +1569,8 @@ function TextFileViewer({
     void fetchGitDiff(filePath);
   }, [fetchGitDiff, filePath, gitRefreshKey]);
 
-  const isDelimitedTable = isDelimitedTablePath(filePath);
+  const isBinary = data?.binary === true;
+  const isDelimitedTable = !isBinary && isDelimitedTablePath(filePath);
 
   useEffect(() => {
     // HTML gets the same rendered-first treatment as markdown: a generated page
@@ -1573,7 +1581,12 @@ function TextFileViewer({
     if (
       defaultPreviewEligibleRef.current
       && data
-      && (isDelimitedTable || (!data.truncated && (data.language === "markdown" || data.language === "html")))
+      && !data.binary
+      && (
+        isDelimitedTable
+        || (data.language === "markdown" && !data.truncated)
+        || (data.language === "html" && (!data.truncated || data.size <= HTML_PREVIEW_MAX_BYTES))
+      )
     ) {
       defaultPreviewEligibleRef.current = false;
       updateDisplayMode("preview");
@@ -1615,10 +1628,15 @@ function TextFileViewer({
   const viewerContent = data?.content ?? "";
   const sourceLines = useMemo(() => viewerContent.split("\n"), [viewerContent]);
   const language = data?.language ?? "text";
-  const isHtml = language === "html";
-  const isMarkdown = language === "markdown";
-  // A table shows a loaded prefix too, without its cut last record.
-  const hasPreview = isDelimitedTable || (!data?.truncated && (isHtml || isMarkdown));
+  // Plain text needs no Prism languages; any other file loads them once.
+  const prismReady = usePrismLanguages(Boolean(data) && language !== "text");
+  const isHtml = !isBinary && language === "html";
+  const isMarkdown = !isBinary && language === "markdown";
+  // A table shows a loaded prefix too, without its cut last record; an HTML
+  // preview fetches the whole file up to HTML_PREVIEW_MAX_BYTES.
+  const hasPreview = isDelimitedTable || (isHtml
+    ? !!data && (!data.truncated || data.size <= HTML_PREVIEW_MAX_BYTES)
+    : isMarkdown && !data?.truncated);
   const effectiveDisplayMode = isDeletedDiff ? "diff" : displayMode;
   const useLightweightSource = sourceLines.length > SOURCE_HIGHLIGHT_MAX_LINES
     && !(effectiveDisplayMode === "diff" && hasGitDiff)
@@ -1804,7 +1822,9 @@ function TextFileViewer({
       ];
   const metadata = isDeletedDiff
     ? t("files.deleted")
-    : `${language} · ${lines.length} lines · ${formatSize(data!.size)}`;
+    : isBinary
+      ? `${t("files.binary")} · ${formatSize(data!.size)}`
+      : `${language} · ${lines.length} lines · ${formatSize(data!.size)}`;
 
   return (
     <div className="file-viewer-shell" style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden", position: "relative" }}>
@@ -1914,7 +1934,7 @@ function TextFileViewer({
                 <MentionIcon />
               </button>
             )}
-            {effectiveDisplayMode === "source" && (
+            {effectiveDisplayMode === "source" && !isBinary && (
               <>
                 <button
                   type="button"
@@ -2068,6 +2088,19 @@ function TextFileViewer({
             complete={!data?.truncated}
             scrollRef={contentRef}
           />
+        ) : isBinary ? (
+          // Decoded bytes are noise; opening a file never downloads it on its own (#1401).
+          <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24, color: "var(--text-muted)", fontSize: 13, textAlign: "center" }}>
+            <span>{t("files.binaryNoPreview")}</span>
+            <button
+              type="button"
+              onClick={() => { void downloadViaTicket(filePath).catch(() => {}); }}
+              className="file-viewer-mode-button"
+              style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", textDecoration: "none", background: "none", cursor: "pointer" }}
+            >
+              {t("files.download")}
+            </button>
+          </div>
         ) : useLightweightSource ? (
           <div
             className="file-source-view is-lightweight"
