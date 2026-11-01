@@ -323,30 +323,9 @@ export function ModelSelector({
     return () => document.removeEventListener("mousedown", handleOutsideClick);
   }, []);
 
-  // While the picker is open, a phone keyboard shrinks the app height
-  // (useViewportHeight writes the root's style, sometimes with no viewport
-  // event) and moves the trigger; follow it instead of the rect from the tap.
-  useEffect(() => {
-    if (!open) return;
-    const remeasure = () => {
-      const rect = rootRef.current?.querySelector("button")?.getBoundingClientRect();
-      // A new object even for an unmoved trigger: the panel also reads the
-      // visual viewport, which may have changed alone.
-      if (rect?.height) setAnchorRect({ top: rect.top, right: rect.right, bottom: rect.bottom, left: rect.left, width: rect.width });
-    };
-    const viewport = window.visualViewport;
-    const rootObserver = new MutationObserver(remeasure);
-    rootObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["style", "data-keyboard-open"] });
-    window.addEventListener("resize", remeasure);
-    viewport?.addEventListener("resize", remeasure);
-    viewport?.addEventListener("scroll", remeasure);
-    return () => {
-      rootObserver.disconnect();
-      window.removeEventListener("resize", remeasure);
-      viewport?.removeEventListener("resize", remeasure);
-      viewport?.removeEventListener("scroll", remeasure);
-    };
-  }, [open]);
+  // [fork] upstream's keyboard-follow remeasure (setAnchorRect effect) is not ported:
+  // the fullscreen panel re-measures via viewportTick + computePanelGeometry on every
+  // render and does not anchor to the trigger rect.
 
   useEffect(() => {
     if (!locked) return;

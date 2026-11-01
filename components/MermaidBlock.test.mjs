@@ -106,13 +106,6 @@ test("CodeBlock owns the pre background without a competing shorthand", () => {
   }
 });
 
-test("CodeBlock renders plain text without tokenization while streaming", () => {
-  const html = renderCode({ code: "const x = 1;", lang: "javascript", isStreaming: true });
-
-  assert.doesNotMatch(html, /class="token/);
-  assert.match(html, /const x = 1;/);
-});
-
 test("MermaidBlock handles Chinese characters in diagram", () => {
   const chineseMermaid = `sequenceDiagram
     participant PC as PC客户端

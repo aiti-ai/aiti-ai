@@ -81,7 +81,6 @@ test("New restores the draft after session navigation and workspace auto-restore
     callbackBody("handleSelectSession", "handleNewSession"),
     callbackBody("handleNewSession", "hydrateSelectedSession"),
   ].join("\n");
-  const parkedKeyHelper = source.slice(source.indexOf("function parkedNewSessionDraftKey"), source.indexOf("export function AppShell"));
   const hookSource = await readFile(new URL("../hooks/useAgentSession.ts", import.meta.url), "utf8");
   const cleanupStart = hookSource.indexOf("    return () => {", hookSource.indexOf("  // Load session on mount"));
   const cleanupEnd = hookSource.indexOf("    // eslint-disable-next-line", cleanupStart);
@@ -147,13 +146,14 @@ test("New restores the draft after session navigation and workspace auto-restore
           context[state] = typeof value === "function" ? value(context[state]) : value;
         };
       }
-      vm.runInContext(stripTypeScriptTypes(`${parkedKeyHelper}\n${callbacks}
+      vm.runInContext(stripTypeScriptTypes(`${callbacks}
         globalThis.navigate = { handleCwdChange, handleSelectSession, handleNewSession };
       `), context);
       // Run the actual hook cleanup with the outgoing mount's captured draft key.
       const makeCleanup = vm.runInContext(stripTypeScriptTypes(`((isNew, newSessionDraftKey) => {
         const sessionHookMountedRef = { current: true };
         const newSessionPromotedRef = { current: false };
+        const releaseUnconfirmedSendRef = { current() {} };
         const sessionIdRef = { current: null };
         const dataRef = { current: null };
         const messagesRef = { current: [] };
@@ -217,7 +217,6 @@ test("New in another project adopts it up front and parks the composer's draft",
     callbackBody("handleSelectSession", "handleNewSession"),
     callbackBody("handleNewSession", "hydrateSelectedSession"),
   ].join("\n");
-  const parkedKeyHelper = source.slice(source.indexOf("function parkedNewSessionDraftKey"), source.indexOf("export function AppShell"));
   const fileTab = { id: "file:/p1/notes.md", filePath: "/p1/notes.md" };
   const context = vm.createContext({
     ...draftStore,
@@ -276,7 +275,7 @@ test("New in another project adopts it up front and parks the composer's draft",
     context.activeFileTabId = null;
     context.rightPanelOpen = false;
   };
-  vm.runInContext(stripTypeScriptTypes(`${parkedKeyHelper}\n${callbacks}
+  vm.runInContext(stripTypeScriptTypes(`${callbacks}
     globalThis.navigate = { handleCwdChange, handleSelectSession, handleNewSession };
   `), context);
   const draft = { value: "half-written in p1", images: [] };
@@ -316,7 +315,6 @@ test("the composer's bar moves the fresh composer's draft and model picks instea
     callbackBody("handleSelectSession", "handleNewSession"),
     callbackBody("handleNewSession", "hydrateSelectedSession"),
   ].join("\n");
-  const parkedKeyHelper = source.slice(source.indexOf("function parkedNewSessionDraftKey"), source.indexOf("export function AppShell"));
   const fileTab = { id: "file:/p1/notes.md", filePath: "/p1/notes.md" };
   const choices = { model: { provider: "custom", modelId: "fast" }, thinkingLevel: "high" };
   const context = vm.createContext({
@@ -378,7 +376,7 @@ test("the composer's bar moves the fresh composer's draft and model picks instea
     context.activeFileTabId = null;
     context.rightPanelOpen = false;
   };
-  vm.runInContext(stripTypeScriptTypes(`${parkedKeyHelper}\n${callbacks}
+  vm.runInContext(stripTypeScriptTypes(`${callbacks}
     globalThis.navigate = { handleCwdChange, handleNewSession };
   `), context);
   const draft = { value: "half-written in p1", images: [{ data: "aGVsbG8=", mimeType: "image/png" }] };
@@ -522,7 +520,6 @@ test("a new session puts the caret in the fresh composer on desktop only (#1313)
     callbackBody("handleSelectSession", "handleNewSession"),
     callbackBody("handleNewSession", "hydrateSelectedSession"),
   ].join("\n");
-  const parkedKeyHelper = source.slice(source.indexOf("function parkedNewSessionDraftKey"), source.indexOf("export function AppShell"));
   const frames = [];
   const focused = [];
   const context = vm.createContext({
@@ -575,7 +572,7 @@ test("a new session puts the caret in the fresh composer on desktop only (#1313)
     };
   }
   context.changeFileWorkspace = () => {};
-  vm.runInContext(stripTypeScriptTypes(`${parkedKeyHelper}\n${callbacks}
+  vm.runInContext(stripTypeScriptTypes(`${callbacks}
     globalThis.navigate = { handleNewSession };
   `), context);
 

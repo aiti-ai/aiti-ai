@@ -7,7 +7,8 @@ const agentEventStreamSource = await readFile(new URL("../../../lib/agent-event-
 const agentPostSource = await readFile(new URL("./[id]/route.ts", import.meta.url), "utf8");
 
 test("agent SSE lazily creates the runtime: opening a session does not cold-start; attaches via broadcast once the wrapper appears", () => {
-  assert.match(agentEventsSource, /createAgentEventStream\(req, id, sessionPromise\)/);
+  // 合并适配：fork 的桥接分支传 Promise.resolve(bridged)，上游传 sessionPromise。
+  assert.match(agentEventsSource, /createAgentEventStream\(req, id, /);
   // A local session without a wrapper must not startRpcSession (opening a session is
   // view-only and must not pull up a runtime); attach a lazy handle instead — the real
   // wrapper is brought up by subsequent real interactions and attaches via the running broadcast.

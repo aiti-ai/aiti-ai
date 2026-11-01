@@ -7,6 +7,7 @@ import ts from "typescript";
 
 const jiti = createJiti(import.meta.url);
 const { dropMentionText, splitDroppedItems } = await jiti.import("../lib/file-upload-client.ts");
+const { buildFileAtMentionsText } = await jiti.import("../lib/file-fuzzy.ts");
 
 const sourceText = readFileSync(new URL("./ChatWindow.tsx", import.meta.url), "utf8");
 const source = ts.createSourceFile("ChatWindow.tsx", sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -28,8 +29,8 @@ const photo = new File(["x"], "photo.png", { type: "image/png" });
 const report = new File(["x"], "report.pdf", { type: "application/pdf" });
 const log = new File(["x"], "server.log", { type: "" });
 
-/** Picks files with the composer's attach button, through ChatWindow's real drop path. */
-async function attach(files, { cwd = "/project", response } = {}) {
+/** Shared scope stubbing the composer ref, notices, and the upload API. */
+function makeScope({ cwd = "/project", response } = {}) {
   const calls = { images: [], uploads: [], mentions: [], notices: [], refreshed: 0 };
   const scope = {
     session: null,
@@ -45,31 +46,50 @@ async function attach(files, { cwd = "/project", response } = {}) {
     onFilesUploaded: () => { calls.refreshed += 1; },
     splitDroppedItems,
     dropMentionText,
-    uploadFiles: async (target, uploads, strategy) => {
-      calls.uploads.push([target, uploads.map((file) => file.name), strategy]);
+    buildFileAtMentionsText,
+    uploadFiles: async (target, uploads, strategy, _onProgress, ensureDir) => {
+      calls.uploads.push([target, uploads.map((file) => file.name), strategy, ensureDir === true]);
       return response;
     },
   };
+  scope.uploadAttachedFiles = chatWindowCallback("uploadAttachedFiles", scope);
   scope.uploadDroppedFiles = chatWindowCallback("uploadDroppedFiles", scope);
   scope.onDrop = chatWindowCallback("onDrop", scope);
-  chatWindowCallback("onAttachFiles", scope)(files);
+  scope.onAttachFiles = chatWindowCallback("onAttachFiles", scope);
+  return { scope, calls };
+}
+
+/** Picks files with the composer's attach button. */
+async function attach(files, options) {
+  const { scope, calls } = makeScope(options);
+  scope.onAttachFiles(files);
   await new Promise((resolve) => setImmediate(resolve));
   return calls;
 }
 
-test("the attach button sends picked files down the chat drop path (#1101)", async () => {
+/** Drops files onto the chat area. */
+async function drop(files, options) {
+  const { scope, calls } = makeScope(options);
+  scope.onDrop(files.map((file) => ({ kind: "file", file })));
+  await new Promise((resolve) => setImmediate(resolve));
+  return calls;
+}
+
+test("the attach button sends images to the composer and documents to .pi-attachments (#1101)", async () => {
   const mixed = await attach([photo, report, log], {
     response: { status: 207, data: { uploaded: ["report.pdf"], skipped: ["server.log"] } },
   });
-  // Images attach to the prompt; the rest are uploaded like a drop: never replacing a file, then mentioned.
+  // Images attach to the prompt; documents land in the session's git-hidden
+  // attachments directory (auto-created server-side) and are mentioned there.
   assert.deepEqual(mixed.images, [photo]);
-  assert.deepEqual(mixed.uploads, [["/project", ["report.pdf", "server.log"], "skip"]]);
-  assert.deepEqual(mixed.mentions, ["@report.pdf @server.log "]);
+  assert.deepEqual(mixed.uploads, [["/project/.pi-attachments", ["report.pdf", "server.log"], "skip", true]]);
+  assert.deepEqual(mixed.mentions, ["@.pi-attachments/report.pdf @.pi-attachments/server.log "]);
   assert.deepEqual(mixed.notices, [
-    ["success", 'chat.dropUploaded {"count":1}'],
-    ["warning", 'chat.dropAlreadyExists {"names":"server.log"}'],
+    ["success", 'chat.attachUploaded {"count":1}'],
+    ["warning", 'chat.attachAlreadyExists {"names":"server.log"}'],
   ]);
-  assert.equal(mixed.refreshed, 1);
+  // The file explorer keeps hiding .pi-attachments (its own .gitignore), so no refresh is needed.
+  assert.equal(mixed.refreshed, 0);
 
   const imagesOnly = await attach([photo]);
   assert.deepEqual(imagesOnly.images, [photo]);
@@ -82,6 +102,17 @@ test("without a working directory, picked files behave like a drop there (#1101)
   assert.deepEqual(calls.images, [photo]);
   assert.deepEqual(calls.uploads, []);
   assert.deepEqual(calls.notices, [["warning", "chat.dropNeedsCwd"]]);
+});
+
+test("drag-and-drop keeps uploading into the project root (#1101)", async () => {
+  const calls = await drop([report], {
+    response: { status: 200, data: { uploaded: ["report.pdf"] } },
+  });
+  // Dropping is the explicit "add to my project" flow: project root, no ensure, no auto git hiding.
+  assert.deepEqual(calls.uploads, [["/project", ["report.pdf"], "skip", false]]);
+  assert.deepEqual(calls.mentions, ["@report.pdf "]);
+  assert.deepEqual(calls.notices, [["success", 'chat.dropUploaded {"count":1}']]);
+  assert.equal(calls.refreshed, 1);
 });
 
 test("wires the attach handler into the main composer only", () => {

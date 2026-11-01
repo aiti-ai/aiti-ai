@@ -14,6 +14,7 @@ import {
   getCompletionNotificationSuppressedRpcSessionIds,
   getRpcSessionInfos,
   getRunningRpcSessionIds,
+  withSubagentDisplayStatus,
 } from "@/lib/rpc-manager";
 import { getHandleSessionInfos, getRunningHandleIds, getHandle, warmHandleFirstMessages } from "@/lib/session";
 import { getBridgeRunningIds } from "@/lib/session/bridge-running";
@@ -56,10 +57,11 @@ export async function GET(req: Request) {
     const backendRows = await attachSessionProjectInfo(getHandleSessionInfos());
 
     const pathKeyedHandles = backendRows.filter((r) => !r.id.startsWith("/"));
-    const sessions = mergeSessionLists(
+    // Subagent rows carry their actual model / thinking depth for the sidebar (#1440).
+    const sessions = withSubagentDisplayStatus(mergeSessionLists(
       mergeSessionLists(persistedSessions as never[], runtimeSessions),
       pathKeyedHandles,
-    );
+    ));
     perf?.span("scan+projects");
     // Placeholder-row annotation: external-session placeholders found by the disk scan do
     // not carry header extension fields -- fill in the agent label from the registry

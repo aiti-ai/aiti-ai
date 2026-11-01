@@ -22,8 +22,8 @@ function setup() {
   const context = createContext({
     agentRunningRef: { current: true }, sdkAgentActiveRef: { current: true }, sessionIdRef: { current: null },
     setRetryInfo: (value) => { banner.current = value; },
-    cancelEventStreamGrace() {}, setAgentRunning() {}, setAgentPhase() {}, dispatch() {},
-    setAborting() {}, dispatchStream() {}, closeEvents() {}, maintainEventsConnected() {}, apiUrl: (p) => p,
+    cancelEventStreamGrace() {}, setAgentRunning() {}, setAgentPhase() {}, dispatch() {}, markPromptLanded() {},
+    setAborting() {}, setSettling() {}, reconcileNowRef: { current: null }, refreshContextUsage() {}, setExtensionStatuses() {}, setExtensionWidgets() {}, applyLiveUsage() {}, dispatchStream() {}, closeEvents() {}, maintainEventsConnected() {}, apiUrl: (p) => p,
     adoptRunStartedAt() {}, applyQueuedSnapshot() {}, setPendingRecovery() {}, loadSession: async () => {}, loadFlightsRef: { current: new Map() },
   });
   return { handle: handler.runInContext(context), banner };

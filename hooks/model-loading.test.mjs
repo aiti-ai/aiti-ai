@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { Script } from "node:vm";
 import ts from "typescript";
+import { createJiti } from "jiti";
+
+const jiti = createJiti(import.meta.url, { interopDefault: true, moduleCache: false });
+const { missingCwdFromBody } = await jiti.import("../lib/missing-cwd.ts");
 
 const source = ts.createSourceFile(
   "useAgentSession.ts",
@@ -52,6 +56,7 @@ function setup(fetchImpl, opts = {}) {
     thinkingLevelPinsRef: { current: {} }, defaultThinkingLevelRef: { current: null },
     asConcreteThinkingLevel: (value) => (!value || value === "auto" ? null : value),
     fetch: fetchImpl,
+    missingCwdFromBody,
     delay: async (ms) => { delays.push(ms); },
   };
   // These snippets must be evaluated on the **same context object**: free variables of the
@@ -61,7 +66,7 @@ function setup(fetchImpl, opts = {}) {
   context.modelsShared = script(`(${sharedMapDecl.initializer.getText(source)})`).runInNewContext(context);
   context.MODELS_SHARED_TTL_MS = script(`(${sharedTtlDecl.initializer.getText(source)})`).runInNewContext(context);
   context.fetchModelsShared = script(`(${sharedFn.getText(source)})`).runInNewContext(context);
-  for (const name of ["ModelError", "ModelNames", "ModelScopeWarnings", "ModelThinkingLevels", "ModelThinkingLevelMaps", "ModelList", "NewSessionDefaultModel", "NewSessionDefaultThinkingLevel", "SavedDefaultThinkingLevel", "NewSessionModel"]) {
+  for (const name of ["ModelError", "ModelsMissingCwd", "ModelNames", "ModelScopeWarnings", "ModelThinkingLevels", "ModelThinkingLevelMaps", "ModelList", "NewSessionDefaultModel", "NewSessionDefaultThinkingLevel", "SavedDefaultThinkingLevel", "NewSessionModel"]) {
     context[`set${name}`] = (value) => writes.push([name, value]);
   }
   // Client-side cache layer: by default no cache hits / no writes (existing tests unaffected);
@@ -122,7 +127,8 @@ test("model-load failures stay visible through bounded retries and clear on reco
     const state = setup(fetchImpl);
     await state.run();
     assert.deepEqual(state.delays, [2_000, 5_000, 10_000]);
-    assert.deepEqual(state.writes, Array.from({ length: 4 }, () => ["ModelError", expected]));
+    assert.deepEqual(state.writes.filter(([name]) => name === "ModelError"), Array.from({ length: 4 }, () => ["ModelError", expected]));
+    assert.deepEqual(state.writes.filter(([name]) => name === "ModelsMissingCwd"), Array.from({ length: 4 }, () => ["ModelsMissingCwd", null]));
   }
 
   let attempts = 0;
@@ -142,6 +148,26 @@ test("model-load failures stay visible through bounded retries and clear on reco
   assert.ok(recovered.writes.some(([name, value]) => name === "ModelList" && value[0].id === "test"));
   assert.ok(recovered.writes.some(([name, value]) => name === "NewSessionDefaultModel" && value.modelId === "test"));
   assert.ok(recovered.writes.some(([name, value]) => name === "NewSessionDefaultThinkingLevel" && value === "high"));
+});
+
+test("a folder that no longer exists is reported as such, not as a model error (#1422)", async () => {
+  let attempts = 0;
+  const state = setup(async () => {
+    if (++attempts <= 2) {
+      return Response.json({ error: "Directory does not exist: /old/app", reason: "cwd-missing", cwd: "/old/app" }, { status: 400 });
+    }
+    return Response.json({ models: {}, modelList: [] });
+  });
+  await state.run();
+  assert.equal(attempts, 3);
+  assert.deepEqual(state.writes.filter(([name]) => name === "ModelsMissingCwd" || name === "ModelError"), [
+    ["ModelsMissingCwd", "/old/app"], ["ModelError", null],
+    ["ModelsMissingCwd", "/old/app"], ["ModelError", null],
+    ["ModelsMissingCwd", null], ["ModelError", null],
+  ]);
+  // A load answered from a removed worktree's main repo succeeds while the folder
+  // is still gone: it never clears what a refused prompt reported.
+  assert.equal(loader.getText(source).includes("setPromptMissingCwd"), false);
 });
 
 test("cancelling model loads prevents state writes and further retries", async () => {
