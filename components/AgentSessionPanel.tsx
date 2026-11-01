@@ -160,13 +160,19 @@ function AgentRow({
   main,
   selected,
   running,
+  usage,
   onSelect,
+  tabShown,
+  onToggleTab,
 }: {
   session: SessionInfo;
   main?: boolean;
   selected: boolean;
   running: boolean;
+  usage?: SessionUsageSummary;
   onSelect: () => void;
+  tabShown?: boolean;
+  onToggleTab?: () => void;
 }) {
   const { locale, t } = useI18n();
   const relation = session.relation?.kind === "subagent" ? session.relation : null;
@@ -345,6 +351,7 @@ export function AgentSessionPanel({ rootSession, subagents, selectedSessionId, r
             main
             selected={rootSession.id === selectedSessionId}
             running={runningSessionIds.has(rootSession.id)}
+            usage={usage[rootSession.id]}
             onSelect={() => onSelectSession(rootSession)}
           />
           {visibleSubagents.map((session) => (
@@ -353,6 +360,7 @@ export function AgentSessionPanel({ rootSession, subagents, selectedSessionId, r
               session={session}
               selected={session.id === selectedSessionId}
               running={runningSessionIds.has(session.id)}
+              usage={usage[session.id]}
               onSelect={() => onSelectSession(session)}
             />
           ))}
