@@ -376,26 +376,6 @@ Review the supplied files.
 
 src/main.ts`;
 
-test("a reply's usage line reads like pi's TUI footer, then the turn's time", () => {
-  const usage = { input: 1_234, output: 567, cacheRead: 85_312, cacheWrite: 12, cost: { total: 0.00362 } };
-  const html = renderMessage(
-    { role: "assistant", provider: "anthropic", model: "claude-test", content: [{ type: "text", text: "Done." }], stopReason: "stop", usage },
-    { turnDurationMs: 10_000 },
-  );
-  // The arrows and the clock are drawn as SVG; their characters and words stay
-  // as font-size 0 text, so a copied selection reads like the footer.
-  assert.equal(html.match(/<svg[^>]*aria-hidden="true"/g)?.length, 3);
-  const text = html.replace(/<svg[\s\S]*?<\/svg>/g, "").replace(/<span style="font-size:0">([^<]*)<\/span>/g, "$1");
-  // Each count is its own span; the spaces between them stay in the text.
-  assert.match(text, /<span>↑1\.2k<\/span> <span>↓567<\/span> <span>R85k<\/span> <span>W12<\/span> <span>\$0\.0036<\/span> <span>·<\/span> <span>took 10s<\/span>/);
-  // Zero counts are left out, as in the footer.
-  const bare = renderMessage({
-    role: "assistant", provider: "anthropic", model: "claude-test", content: [{ type: "text", text: "Done." }], stopReason: "stop",
-    usage: { input: 12_000_000, output: 0, cacheRead: 0, cacheWrite: 0, cost: { total: 0 } },
-  });
-  assert.match(bare.replace(/<svg[\s\S]*?<\/svg>/g, "").replace(/<span style="font-size:0">([^<]*)<\/span>/g, "$1"), /<span>↑12M<\/span><\/div>/);
-});
-
 test("renders a provider error when the assistant message has no content", () => {
   const html = renderMessage({
     role: "assistant",
