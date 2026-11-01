@@ -45,18 +45,21 @@ test("keeps the session event stream open through the idle grace window", () => 
   // The idle probe may go through apiUrl() (basePath support) or be a bare fetch.
   // 合并适配：status 读取统一走 agentStatusUrl()（?systemPrompt=0，上游 #1302 + basePath 包装）。
   assert.match(graceSource, /fetch\(agentStatusUrl\(sid\)\)/);
-  assert.match(graceSource, /closeEvents\(\)/);
+  // 合并适配：closeEvents 现在带 close 原因参数（上游 debug 快照记账）。
+  assert.match(graceSource, /closeEvents\(/);
   assert.match(finishSource, /scheduleEventStreamClose\(sid\)/);
-  assert.doesNotMatch(finishSource, /closeEvents\(\)/);
-  assert.doesNotMatch(agentEndSource, /closeEvents\(\)/);
+  assert.doesNotMatch(finishSource, /closeEvents\(/);
+  assert.doesNotMatch(agentEndSource, /closeEvents\(/);
   assert.match(agentStartSource, /cancelEventStreamGrace\(\)/);
   assert.match(agentSettledSource, /scheduleEventStreamClose\(sid\)/);
   // A stopped run ends quietly: the event says so (pi 1.1's agent_settled.aborted, carried on prompt_done).
-  assert.match(agentSettledSource, /onAgentEnd\?\.\(\{ aborted: event\.aborted === true \}\)/);
-  assert.match(promptDoneSource, /notifyPromptStage\(runId, event\.aborted === true\)/);
+  // A stopped run ends quietly: the event says so (pi 1.1's agent_settled.aborted).
+  // 合并适配：fork 在此处附加 subagentsActive 标记。
+  assert.match(agentSettledSource, /onAgentEnd\?\.\(\{ aborted: event\.aborted === true, \.\.\.\(event\.subagentsActive === true \? \{ subagentsActive: true \} : \{\}\) \}\)/);
+  assert.match(promptDoneSource, /notifyPromptStage\(runId, event\.aborted === true(, event\.subagentsActive === true)?\)/);
   assert.match(promptDoneSource, /scheduleEventStreamClose\(sid\)/);
   assert.match(sendSource, /if \(!definitivelyRejected && sentSessionId\) \{[\s\S]*?waitForPromptSettlement/);
-  assert.match(sendSource, /if \(!definitivelyRejected && sentSessionId\) \{[\s\S]*?return;[\s\S]*?\}[\s\S]*?closeEvents\(\)/);
+  assert.match(sendSource, /if \(!definitivelyRejected && sentSessionId\) \{[\s\S]*?closeEvents\(/);
 });
 
 test("a rejected submission preserves a different run reported by the server", () => {
@@ -385,7 +388,8 @@ test("streaming submissions cannot be stranded in an idle direct queue", () => {
 
   assert.match(queueSource, /type: "prompt"/);
   assert.match(queueSource, /streamingBehavior: behavior/);
-  assert.match(queueSource, /if \(isPromptRejectedError\(e\)\) restore\(\)/);
+  // 合并适配：拒绝/歧义分流——拒绝给 error 文案，歧义给 unconfirmed warning（文本均已即时 restore）。
+  assert.match(queueSource, /if \(isPromptRejectedError\(e\)\) \{/);
   assert.doesNotMatch(queueSource, /type: "steer"/);
   assert.doesNotMatch(queueSource, /type: "follow_up"/);
 });
@@ -465,9 +469,9 @@ test("keeps the selected session warm while idle and renews its lease", () => {
   // 合并适配：续约循环复用上游单飞 requestLease，且带完整上游语义——
   // 隐藏期 renew 时有活动即重开流（sessionLeaseShowsActivity → reattach）、
   // visible 回来立即 reattach + renew（上游 #1283 的重连一半）。
-  assert.match(source, /const renew = async \(\) => \{[\s\S]*?requestLease\(sid\)[\s\S]*?sessionLeaseShowsActivity\(reply\)[\s\S]*?reattachEventStreamRef\.current\(sid\)/);
+  assert.match(source, /const renew = async \(\) => \{[\s\S]*?requestLease\(sid\)[\s\S]*?sessionLeaseShowsActivity\(reply\)[\s\S]*?reattachEventStreamRef\.current\(sid, "activity"\)/);
   assert.match(source, /setInterval\(\(\) => void renew\(\), SESSION_LEASE_RENEW_INTERVAL_MS\)/);
-  assert.match(source, /if \(document\.visibilityState !== "visible"\) return;\s*reattachEventStreamRef\.current\(sid\);/);
+  assert.match(source, /if \(document\.visibilityState !== "visible"\) return;\s*reattachEventStreamRef\.current\(sid, "visible"\);/);
   assert.doesNotMatch(source, /renewed === 0/);
   assert.match(source, /if \(sessionPropIdRef\.current === sid\) \{[\s\S]*?cancelEventStreamGrace\(\);[\s\S]*?return;/);
   assert.match(source, /maintainEventsConnected\(sid\)/);
@@ -702,7 +706,7 @@ test("drops queued extension UI when a tool change rebuilds the wrapper", () => 
   // so their extension_ui_closed events never reach this hook.
   assert.match(
     setToolsSource,
-    /if \(activeSessionId !== sid \|\| result\?\.recreated\) \{[\s\S]*?closeEvents\(\);[\s\S]*?setExtensionDialogs\(\[\]\);\s+setExtensionCustomUis\(\[\]\);[\s\S]*?maintainEventsConnected\(activeSessionId\)/,
+    /if \(activeSessionId !== sid \|\| result\?\.recreated\) \{[\s\S]*?closeEvents\("set_tools"\);[\s\S]*?setExtensionDialogs\(\[\]\);\s+setExtensionCustomUis\(\[\]\);[\s\S]*?maintainEventsConnected\(activeSessionId\)/,
   );
   // A tool change that keeps the wrapper keeps its pending requests on screen.
   const unconditional = setToolsSource.slice(setToolsSource.indexOf("      setSlashCommands([]);"));

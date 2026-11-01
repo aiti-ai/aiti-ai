@@ -42,6 +42,27 @@ function tooManyAttempts(retryAfterMs: number): NextResponse {
 // requests fall through to the core gates. A throwing hook is fail-closed.
 
 export async function proxy(request: NextRequest) {
+  // Extension middleware hooks: extensions (service-tunnels service vhosts +
+  // allowlocal gate, aiti-ui-env VNC/RDP-on-web rewrites, …) own their
+  // host/path namespaces. Run before the core security gates below; unhandled
+  // requests fall through. A throwing hook is fail-closed.
+  // NOTE: restored after the 2026-10-10 v0.11.0 merge (888e29d0) dropped this
+  // aiti-fork hook — without it extension middleware (VNC/RDP-on-web proxy,
+  // tunnel vhosts) silently no-ops and their paths 404.
+  const extRegistry = globalThis.__piWebExt;
+  if (extRegistry) {
+    try {
+      const extRes = await extRegistry.middleware(request);
+      if (extRes.handled) return extRes.response;
+    } catch (err) {
+      console.error("[pi-web] extension middleware failed:", err);
+      return new NextResponse("extension middleware error", {
+        status: 403,
+        headers: { "cache-control": "no-store" },
+      });
+    }
+  }
+
   const isApiRequest = request.nextUrl.pathname === "/api"
     || request.nextUrl.pathname.startsWith("/api/");
   // Extension static assets (/api/extensions/<id>/<file>.<js|html|...>): script/img tags

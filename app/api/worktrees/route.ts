@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { existsSync } from "fs";
-import { addWorktree, removeWorktree, worktreeRemovalRequiresForce } from "@/lib/worktree";
+import { addWorktree, removeWorktree, WorktreeBranchInUseError, worktreeRemovalRequiresForce } from "@/lib/worktree";
 import { checkCwdAllowed, queryWorktrees } from "@/lib/worktree-query";
 
 // GET /api/worktrees?cwd= — kept in query-string form for existing callers; new code must use POST /api/worktrees/query (cwd goes in the JSON body, never in the URL/access logs).
@@ -21,6 +21,8 @@ export async function GET(req: Request) {
 }
 
 // POST /api/worktrees  body: { cwd, branch }  →  { path, branch }
+//   409 { code: "branch_in_use", branch, worktreePath } when another worktree has the branch,
+//   code "branch_worktree_missing" when that worktree's folder is gone (git worktree prune clears it)
 export async function POST(req: Request) {
   try {
     const body = await req.json() as { cwd?: string; branch?: string };
@@ -40,6 +42,17 @@ export async function POST(req: Request) {
     return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof WorktreeBranchInUseError) {
+      return NextResponse.json(
+        {
+          error: message,
+          code: error.missing ? "branch_worktree_missing" : "branch_in_use",
+          branch: error.branch,
+          worktreePath: error.worktreePath,
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: message }, { status: 400 });
   }
 }

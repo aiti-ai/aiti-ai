@@ -11,9 +11,8 @@ const jiti = createJiti(import.meta.url, {
 });
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
-const { ChatInput, ModelErrorBanner, ModelScopeWarningBanner, RUN_END_CLICK_GUARD_MS, adjacentQueueTarget, buildExtContextSnapshot, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, compressImageFile, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageText, getUserMessageDraftImages, isExactSlashCommand, isRunEndStrayClick, mergeText, mergeSubmission, modelSupportsImageInput, offersBuiltinSlashCommandWhileStreaming, replaceLinksWithMarkdown, replaceTextareaRange, shouldCompressImageFile, submitsSlashCommandOnEnter } = await jiti.import("./ChatInput.tsx");
-const { isBareMcpCommand } = await jiti.import("@/lib/mcp-command.ts");
-const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
+const { adjacentQueueTarget, autoGrowTextarea, buildExtContextSnapshot, canClearBuiltinCommandInput, canRestoreUserMessage, canRunBuiltinSlashCommandWhileStreaming, ChatInput, cycleListIndex, filterModelOptions, getUpwardMenuMaxHeight, getUserMessageDraftImages, getUserMessageText, isExactSlashCommand, isRunEndStrayClick, mergeSubmission, mergeText, ModelErrorBanner, ModelScopeWarningBanner, modelSupportsImageInput, offersBuiltinSlashCommandWhileStreaming, readImageFile, replaceLinksWithMarkdown, replaceTextareaRange, RUN_END_CLICK_GUARD_MS, stacksComposerLayout, submitsSlashCommandOnEnter } = await jiti.import("./ChatInput.tsx");
+const { isBareMcpCommand } = await jiti.import("@/lib/mcp-command.ts");const { ModelSelector } = await jiti.import("./ModelSelector.tsx");
 const { I18nProvider } = await jiti.import("../hooks/useI18n.tsx");
 
 test("preserves pasted HTML links as Markdown without changing plain text layout", () => {
@@ -268,6 +267,32 @@ test("follow-up button renders with the fork hover-tooltip wrapper", () => {
   // upstream Alt+Enter, hence no keyboard-shortcut title.
   assert.doesNotMatch(html, /aria-keyshortcuts/);
   assert.match(html, /follow-up/i);
+});
+
+test("scrolls a long queue inside its own box, under the count and Recall (#1428)", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(I18nProvider, null, React.createElement(ChatInput, {
+      onSend() {}, onAbort() {}, onSteer() {}, onFollowUp() {}, onRecallQueue() {}, isStreaming: true,
+      queuedMessages: { steering: Array.from({ length: 19 }, (_, i) => `steer-${i}`), followUp: ["follow-up-0"] },
+    })),
+  );
+  const rows = html.match(/<div style="max-height:min\(180px[^"]*overflow-y:auto[^"]*">(.*)$/s);
+  assert.ok(rows, "queued rows sit in a capped scroll box");
+  // 合并适配：fork 的 Recall 按钮 title 是完整描述文案（i18n chat.recallTitle）。
+  assert.match(html.slice(0, rows.index), /Queued · 20<\/span>.*<button/s);
+  assert.deepEqual([...rows[1].matchAll(/<div title="([^"]+)"/g)].map((match) => match[1]),
+    [...Array.from({ length: 19 }, (_, i) => `steer-${i}`), "follow-up-0"]);
+});
+
+test("the composer stays editable while compacting and says messages queue", () => {
+  const html = renderToStaticMarkup(
+    React.createElement(I18nProvider, null, React.createElement(ChatInput, {
+      onSend() {}, isCompacting: true,
+    })),
+  );
+
+  assert.doesNotMatch(html, /<textarea[^>]*\bdisabled\b/);
+  assert.match(html, /placeholder="Compacting… messages queue until it finishes"/);
 });
 
 test("ignores a pointer click that reaches Stop's slot just as the run ends", () => {
@@ -536,25 +561,12 @@ test("file mention menu remeasures when its layout container shifts the anchor",
   assert.match(block, /anchorObserver\?\.observe\(layoutContainer\)/);
 });
 
-test("compresses large images while preserving small images and GIFs", async () => {
-  assert.equal(shouldCompressImageFile({ size: 1024 * 1024, type: "image/png" }), false);
-  assert.equal(shouldCompressImageFile({ size: 1024 * 1024 + 1, type: "image/png" }), true);
-  assert.equal(shouldCompressImageFile({ size: 2 * 1024 * 1024, type: "image/gif" }), false);
-
+test("reads attached images unchanged, leaving resizing to pi", async () => {
   const originals = {
     FileReader: globalThis.FileReader,
     createImageBitmap: globalThis.createImageBitmap,
-    document: globalThis.document,
   };
   let bitmapCalls = 0;
-  let closed = false;
-  const canvas = {
-    width: 0,
-    height: 0,
-    getContext: () => ({ fillStyle: "", fillRect() {}, drawImage() {} }),
-    toDataURL: () => "data:image/jpeg;base64,COMPRESSED",
-  };
-
   globalThis.FileReader = class {
     readAsDataURL() {
       this.result = "data:image/png;base64,ORIGINAL";
@@ -563,27 +575,18 @@ test("compresses large images while preserving small images and GIFs", async () 
   };
   globalThis.createImageBitmap = async () => {
     bitmapCalls += 1;
-    return { width: 2048, height: 1024, close() { closed = true; } };
+    return { width: 6000, height: 4000, close() {} };
   };
-  globalThis.document = { createElement: () => canvas };
 
   try {
-    assert.deepEqual(await compressImageFile({ size: 1024, type: "image/png" }), {
+    assert.deepEqual(await readImageFile({ size: 8 * 1024 * 1024, type: "image/png" }, "image/png"), {
       data: "ORIGINAL",
       mimeType: "image/png",
     });
-    assert.deepEqual(await compressImageFile({ size: 2 * 1024 * 1024, type: "image/png" }), {
-      data: "COMPRESSED",
-      mimeType: "image/jpeg",
-    });
-    assert.equal(bitmapCalls, 1);
-    assert.equal(canvas.width, 1024);
-    assert.equal(canvas.height, 512);
-    assert.equal(closed, true);
+    assert.equal(bitmapCalls, 0);
   } finally {
     globalThis.FileReader = originals.FileReader;
     globalThis.createImageBitmap = originals.createImageBitmap;
-    globalThis.document = originals.document;
   }
 });
 

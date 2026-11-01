@@ -55,6 +55,12 @@ export function createLocalHandle(wrapper: AgentSessionWrapper): SessionHandle {
     },
 
     async prompt(text: string, options?: PromptOptions): Promise<void> {
+      // pi's prompt has no file-attachment channel (images only). Fail loud
+      // instead of silently dropping attachments (2026-10: 📎 doc chips on a
+      // local session vanished without a trace — message went out, file gone).
+      if (options?.files?.length) {
+        throw new Error("Local pi sessions do not support file attachments (images only); upload the file to the session directory and mention it instead");
+      }
       await wrapper.send({
         type: "prompt",
         message: text,

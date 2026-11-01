@@ -237,7 +237,8 @@ test("the /mcp case returns before anything a prompt does, and the list ref has 
 
 test("AppShell opens Settings on the section the chat asks for", () => {
   assert.match(chatWindowSource, /onOpenSettings\?: \(section: SettingsSection\) => void;/);
-  assert.match(chatWindowSource, /onSessionStatsPanelOpen,\n\s+onOpenSettings,\n\s+deferInitialScroll/);
+  // 合并适配：合并件的解构序含 onDebugSnapshotReaderChange。
+  assert.match(chatWindowSource, /onSessionStatsPanelOpen,\n\s+onOpenSettings, onDebugSnapshotReaderChange, t,\n\s+deferInitialScroll/);
   assert.match(appShellSource, /const openSettingsSection = useCallback\(\(section: SettingsSection\) => \{\n\s+setSettingsSection\(section\);/);
   assert.match(appShellSource, /onOpenSettings=\{openSettingsSection\}/);
 });

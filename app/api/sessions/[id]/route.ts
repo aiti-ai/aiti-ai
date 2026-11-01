@@ -12,7 +12,7 @@ import {
   findBridgeSessionFileById,
   invalidateSessionPathCache,
 } from "@/lib/session-reader";
-import { getRpcSession, getAliveRpcSessionIds, stopIdleRpcSession } from "@/lib/rpc-manager";
+import { getRpcSession, getAliveRpcSessionIds, renameRpcSession, stopIdleRpcSession, subagentDisplayStatus } from "@/lib/rpc-manager";
 import { resolveAnySession, attachIfBridged, handleModelToClient, extractFirstUserText } from "@/lib/session";
 import { normalizeRawMessages } from "@/lib/normalize";
 import { buildExternalPagedContext, clampTailParam } from "@/lib/external-session-paging";
@@ -423,7 +423,7 @@ export async function GET(
         : "(no messages)",
       parentSessionId,
       ...(subagent
-        ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description, status: liveRpc?.isRunning() ? "running" as const : subagent.status } }
+        ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description, status: subagentDisplayStatus(header.id, subagent.status) } }
         : header.parentSession
           ? { relation: { kind: "fork" as const, ...(parentSessionId ? { originSessionId: parentSessionId } : {}) } }
           : {}),
@@ -483,24 +483,30 @@ export async function PATCH(
       return NextResponse.json({ error: "name is required" }, { status: 400 });
     }
     const filePath = await resolveSessionPath(id);
-    if (!filePath) {
-      return NextResponse.json({ error: "Session not found" }, { status: 404 });
-    }
-    // single-writer red line: when a TUI bridge holds the file, refuse local rewrites (rename from the TUI instead)
-    {
+    const trimmed = name.trim();
+    // single-writer red line: when a TUI bridge holds the file, it renames through the bridge
+    // (set_session_name), never on disk behind the TUI's back.
+    if (filePath) {
       const bridged = await attachIfBridged(filePath);
       if (bridged?.isAlive()) {
-        const r = (await bridged.send({ type: "set_session_name", name: name.trim() }).catch(() => null)) as { success?: boolean } | null;
+        const r = (await bridged.send({ type: "set_session_name", name: trimmed }).catch(() => null)) as { success?: boolean } | null;
         if (r?.success) return NextResponse.json({ ok: true, via: "bridge" });
         return NextResponse.json({ error: "Session is owned by a TUI bridge; rename not supported by its backend" }, { status: 409 });
       }
     }
-
-    // PATCH writes via appendSessionInfo — open fresh, bypassing the cache.
-    const sm = openSessionManager(filePath, { mutable: true });
-    sm.appendSessionInfo(name.trim());
-    invalidateSessionManagerCache(filePath);
-    invalidateSessionListCache();
+    // A session a wrapper holds is renamed in it, never on disk behind its back (#1388).
+    const renamed = await renameRpcSession(id, trimmed, () => {
+      if (!filePath) return false;
+      // No wrapper: appendSessionInfo on a fresh manager, bypassing the cache.
+      const sm = openSessionManager(filePath, { mutable: true });
+      sm.appendSessionInfo(trimmed);
+      invalidateSessionManagerCache(filePath);
+      invalidateSessionListCache();
+      return true;
+    });
+    if (!renamed) {
+      return NextResponse.json({ error: "Session not found" }, { status: 404 });
+    }
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json({ error: String(error) }, { status: 500 });

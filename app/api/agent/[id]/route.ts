@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { resolveSessionPath } from "@/lib/session-reader";
 import { getOfflineSessionStats, startRpcSession, getRpcSession, setRpcSessionTools } from "@/lib/rpc-manager";
+import { cwdMissingBody, missingCwdFromBody } from "@/lib/missing-cwd";
 import { resolveAnySession, resolveAttachBySessionId, attachIfBridged, resolvePlaceholderSession, resolveExternalCompositeSession } from "@/lib/session";
 import { sendWithAcceptWindow } from "@/lib/agent-command-accept";
 
@@ -141,6 +142,8 @@ export async function POST(
     });
     return await sendAccepted(session, body, () => { promptAccepted = body.type === "prompt"; });
   } catch (error) {
+    // Read by its fields: the wrapper that threw may come from another route's bundle.
+    const missingCwd = missingCwdFromBody(error);
     // single-writer hard rule: an occupancy rejection is a semantic conflict, not a server fault
     if ((error as { name?: string }).name === "BridgeOccupiedError") {
       return NextResponse.json({
@@ -151,6 +154,7 @@ export async function POST(
     }
     return NextResponse.json({
       error: error instanceof Error ? error.message : String(error),
+      ...(missingCwd ? cwdMissingBody(missingCwd) : {}),
       ...(commandType === "prompt" && !promptAccepted
         ? { code: "prompt_rejected", accepted: false }
         : {}),

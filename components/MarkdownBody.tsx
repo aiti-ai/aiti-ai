@@ -7,11 +7,13 @@ import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } 
 import { buildTicketUrl } from "@/lib/file-tickets";
 import { encodeFilePathForApi } from "@/lib/file-paths";
 import { isAudioPath, isVideoPath } from "@/lib/file-types";
-import { createMarkdownUrlTransform, isExternalMarkdownHref, markdownRehypePlugins, markdownRemarkPlugins, markdownUserRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
+import { createMarkdownUrlTransform, isExternalMarkdownHref, jumpToMarkdownFragment, markdownRehypePlugins, markdownRemarkPlugins, markdownUserRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
 import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
 import { ImagePreview } from "./ImagePreview.tsx";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock.tsx";
+import { SvgBlock } from "./SvgBlock.tsx";
 import { useI18n } from "@/hooks/useI18n";
+import { copyText } from "@/lib/clipboard";
 import { useParagraphClickHandlers } from "./ExtSlots.tsx";
 
 // Minimum interval between two full Markdown parses while streaming: text deltas within
@@ -33,13 +35,37 @@ interface MarkdownBodyProps {
   messageId?: string;
   /** A document reader's own links: relative paths and `#headings` stay in the reader. */
   onNavigateLink?: (href: string) => void;
-  /** Render every line ending as a line break, for text the user typed. */
+  /** Text the user typed: every line ending is a line break and raw HTML shows as text, as in pi's TUI. */
   keepLineBreaks?: boolean;
 }
 
 /** Click candidates among semantic blocks (core only provides the render shell; which tags are clickable is declared via extension handler.tags) */
 const CLICKABLE_TAGS = ["p", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"] as const;
 type ClickableTag = (typeof CLICKABLE_TAGS)[number];
+
+/**
+ * A display formula with a Copy button for its LaTeX, as code fences have
+ * (#1380). The button sits outside KaTeX's scroller, so it stays put while a
+ * wide formula scrolls; it shows on hover where there is one (app/globals.css).
+ */
+function MathDisplay({ source, children }: { source: string; children: ReactNode }) {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    copyText(source).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    });
+  };
+  return (
+    <div className="markdown-math-display">
+      {children}
+      <button type="button" onClick={copy} className="markdown-code-action markdown-math-copy">
+        {copied ? t("i18n.copied") : t("i18n.copy")}
+      </button>
+    </div>
+  );
+}
 
 export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, onNavigateLink, keepLineBreaks, messageRole, sessionId, messageId }: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => {
@@ -112,8 +138,10 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
             />
           );
         }
-        return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId} />;
-      }
+        if (lang === "svg") {
+          return <SvgBlock code={raw.replace(/\n$/, "")} isStreaming={isStreaming} />;
+        }
+        return <CodeBlock code={raw.replace(/\n$/, "")} lang={lang} isStreaming={isStreaming} messageRole={messageRole} cwd={cwd} sessionId={sessionId} messageId={messageId} />;      }
       return (
         <code
           className="markdown-inline-code"
@@ -253,6 +281,11 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
       };
       return acc;
     }, {} as Record<string, (p: { children?: ReactNode; [k: string]: unknown }) => ReactNode>),
+    div({ node, children, ...props }) {
+      const source = (node as { properties?: { dataMathSource?: unknown } } | undefined)?.properties?.dataMathSource;
+      if (typeof source === "string") return <MathDisplay source={source}>{children}</MathDisplay>;
+      return <div {...(props as React.ComponentProps<"div">)}>{children}</div>;
+    },
     table({ children }) {
       // The frame draws the border; the scroller inside it fades its scrolled
       // edges, which on the bordered box would fade the border too.

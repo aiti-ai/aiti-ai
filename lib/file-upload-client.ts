@@ -24,6 +24,9 @@ export interface UploadResponse {
  * @param files The files, written under their own names
  * @param strategy What the server does with a name that already exists
  * @param onProgress Upload progress in percent, when the browser reports it
+ * @param ensureDir Create the directory on demand (for auto-managed dirs like
+ *   the session's `.pi-attachments/`); the server also drops a `.gitignore`
+ *   (`*`) inside so the directory stays out of `git status`
  * @returns The HTTP status and the parsed response body
  */
 export function uploadFiles(
@@ -31,6 +34,7 @@ export function uploadFiles(
   files: File[],
   strategy: UploadConflictStrategy,
   onProgress?: (progress: number) => void,
+  ensureDir = false,
 ): Promise<{ status: number; data: UploadResponse }> {
   return new Promise((resolve, reject) => {
     const formData = new FormData();
@@ -39,7 +43,7 @@ export function uploadFiles(
     const xhr = new XMLHttpRequest();
     xhr.open(
       "POST",
-      `/api/files/${encodeFilePathForApi(targetDirectory)}?type=upload&conflict=${strategy}`,
+      `/api/files/${encodeFilePathForApi(targetDirectory)}?type=upload&conflict=${strategy}${ensureDir ? "&ensure=1" : ""}`,
     );
     xhr.upload.onprogress = (event) => {
       if (onProgress && event.lengthComputable && event.total > 0) {

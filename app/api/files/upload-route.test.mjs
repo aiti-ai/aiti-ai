@@ -30,12 +30,12 @@ function fixture() {
   return { directory, destination };
 }
 
-async function upload(directory, strategy = "overwrite", names = ["important.txt"]) {
+async function upload(directory, strategy = "overwrite", names = ["important.txt"], ensure = false) {
   // 合并契约（本地演化版）：POST /api/files/upload?conflict=…，directory 走 multipart 字段而非 URL 段
   const form = new FormData();
   form.append("directory", directory);
   for (const name of names) form.append("files", new File(["replacement"], name));
-  return POST(new NextRequest(`http://localhost/api/files/upload?conflict=${strategy}`, {
+  return POST(new NextRequest(`http://localhost/api/files/upload?conflict=${strategy}${ensure ? "&ensure=1" : ""}`, {
     method: "POST", headers: { host: "localhost" }, body: form,
   }), { params: Promise.resolve({ path: ["upload"] }) });
 }
@@ -135,4 +135,38 @@ test("overwrite refuses directories and directory links without touching their t
   assert.deepEqual(body.errors.map((entry) => entry.name), ["folder", "linked"]);
   assert.equal(fs.lstatSync(path.join(directory, "linked")).isSymbolicLink(), true);
   assert.equal(fs.readFileSync(path.join(outside, "secret.txt"), "utf8"), "private contents");
+});
+
+test("ensure=1 creates the attachments directory on demand with a self-hiding .gitignore", async () => {
+  const { directory } = fixture();
+  const attachments = path.join(directory, ".pi-attachments");
+  assert.equal(fs.existsSync(attachments), false);
+  const response = await upload(attachments, "skip", ["spec.pdf"], true);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { uploaded: ["spec.pdf"], skipped: [], errors: [] });
+  // Directory auto-created; the inner .gitignore makes the whole directory —
+  // itself included — invisible to git status without touching the repo's own ignore files.
+  assert.equal(fs.readFileSync(path.join(attachments, "spec.pdf"), "utf8"), "replacement");
+  assert.equal(fs.readFileSync(path.join(attachments, ".gitignore"), "utf8"), "*\n");
+});
+
+test("ensure=1 never overwrites an existing .gitignore and stays symlink-safe", async () => {
+  const { directory } = fixture();
+  const attachments = path.join(directory, ".pi-attachments");
+  fs.mkdirSync(attachments);
+  fs.writeFileSync(path.join(attachments, ".gitignore"), "*.log\n");
+  const response = await upload(attachments, "skip", ["spec.pdf"], true);
+  assert.equal(response.status, 200);
+  // User-authored ignore rules are never touched (write flag wx).
+  assert.equal(fs.readFileSync(path.join(attachments, ".gitignore"), "utf8"), "*.log\n");
+
+  // A directory symlink pointing outside the allowed roots: rejected before
+  // anything (upload or the auto-.gitignore) lands outside.
+  fs.rmSync(attachments, { recursive: true });
+  const outside = fs.mkdtempSync(path.join(base, "outside-"));
+  fs.writeFileSync(path.join(outside, "secret.txt"), "private contents");
+  fs.symlinkSync(outside, attachments, process.platform === "win32" ? "junction" : "dir");
+  const escaped = await upload(attachments, "skip", ["spec.pdf"], true);
+  assert.equal(escaped.status, 403);
+  assert.deepEqual(fs.readdirSync(outside), ["secret.txt"]);
 });

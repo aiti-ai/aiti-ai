@@ -9,6 +9,7 @@ import { getRunningHandleIds } from "@/lib/session/handle-store";
 import { getBridgeRunningIds } from "@/lib/session/bridge-running";
 import { ensureRunningBroadcast } from "@/lib/running-broadcast";
 import { getSessionUiStateRevision } from "@/lib/session-ui-state";
+import { getSessionIdsWithUnsettledSubagentRuns } from "@/lib/subagent-runtime";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +26,8 @@ function runningSessionIds(): string[] {
 // GET /api/agent/running - Lightweight snapshot for visible-tab polling.
 // sessionUiStateRevision (null when unreadable) tells the sidebar its pins and
 // archive changed elsewhere; it costs one stat while the file is unchanged.
+// subagentsActiveSessionIds: sessions whose subagents can still start a run
+// there, so the sidebar announces their completion only after the last one.
 export async function GET() {
   // Fallback activation of the running-set broadcast (three-way changes → bus
   // running frames; normally registered by the instrumentation startup section,
@@ -37,6 +40,7 @@ export async function GET() {
       runningSessionIds: runningSessionIds(),
       awaitingInputSessionIds: getAwaitingInputRpcSessionIds(),
       completionNotificationSuppressedSessionIds: getCompletionNotificationSuppressedRpcSessionIds(),
+      subagentsActiveSessionIds: getSessionIdsWithUnsettledSubagentRuns(),
       sessionUiStateRevision: getSessionUiStateRevision(),
     },
     { headers: { "Cache-Control": "no-store" } },

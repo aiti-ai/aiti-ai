@@ -6,6 +6,7 @@ import {
 } from "./agent-event-wire.ts";
 import { acquireSessionLivenessLease } from "./session-liveness.ts";
 import { withoutMessageSignatures } from "./message-signatures.ts";
+import type { DebugEventStream } from "./debug-types.ts";
 
 export interface AgentEventStreamSession {
   readonly isStreaming: boolean;
@@ -106,11 +107,59 @@ type StreamCloser = (closeController: boolean | "error") => void;
 const activeStreamClosers: Set<StreamCloser> =
   ((globalThis as Record<symbol, Set<StreamCloser>>)[CLOSER_REGISTRY] ??= new Set<StreamCloser>());
 
+/**
+ * What the debug panel lists of each live stream, keyed by its closer. A registry of its own:
+ * older module copies share the closer Set's shape, and a stream opened before a hot reload of
+ * this file is counted there but not listed here.
+ */
+const STREAM_INFO_REGISTRY: symbol = Symbol.for("pi-web.agentEventStreamInfos");
+interface AgentEventStreamInfo {
+  sessionId: string;
+  holder: string | null;
+  address: string | null;
+  client: string | null;
+  openedAt: number;
+  connectedAt: number | null;
+  lastWriteAt: number | null;
+  droppedEvents(): number;
+  queuedBytes(): number;
+}
+const streamInfos: Map<StreamCloser, AgentEventStreamInfo> =
+  ((globalThis as Record<symbol, Map<StreamCloser, AgentEventStreamInfo>>)[STREAM_INFO_REGISTRY] ??= new Map());
+
 /** Close every live SSE stream (called on process shutdown signals). */
 export function closeAllAgentEventStreams(): void {
   for (const close of [...activeStreamClosers]) {
     try { close("error"); } catch { /* stream already closed */ }
   }
+}
+
+/** The live streams, for the debug panel: times and counts, never the request or a payload. */
+export function listAgentEventStreams(): (DebugEventStream & { sessionId: string })[] {
+  const listed: (DebugEventStream & { sessionId: string })[] = [];
+  for (const info of streamInfos.values()) {
+    try {
+      listed.push({
+        sessionId: info.sessionId,
+        holder: info.holder,
+        address: info.address,
+        client: info.client,
+        openedAt: info.openedAt,
+        connectedAt: info.connectedAt,
+        lastWriteAt: info.lastWriteAt,
+        droppedEvents: info.droppedEvents(),
+        queuedBytes: info.queuedBytes(),
+      });
+    } catch {
+      // An entry another version of this file left behind.
+    }
+  }
+  return listed;
+}
+
+/** Every live agent event stream, those opened before a hot reload of this file included. */
+export function countAgentEventStreams(): number {
+  return activeStreamClosers.size;
 }
 
 function errorMessage(error: unknown): string {
@@ -178,11 +227,14 @@ export function createPendingAgentSessionHandle(
 /**
  * Open the SSE transport immediately, then publish the session snapshot only
  * after the agent is ready and its event listener has been installed.
+ * `meta` (the page's id, the request's reported address and browser label) only labels the
+ * stream for the debug panel.
  */
 export function createAgentEventStream(
   req: Request,
   sessionId: string,
   sessionPromise: Promise<AgentEventStreamSession>,
+  meta?: { holder?: string | null; address?: string | null; client?: string | null },
 ): ReadableStream<Uint8Array> {
   let cancelStream: (closeController: boolean | "error") => void = () => {};
 
@@ -210,6 +262,7 @@ export function createAgentEventStream(
         if (closed) return;
         closed = true;
         activeStreamClosers.delete(cleanup);
+        streamInfos.delete(cleanup);
         if (heartbeat !== null) clearInterval(heartbeat);
         if (toolUpdateTimer !== null) clearTimeout(toolUpdateTimer);
         pendingToolUpdates.clear();
@@ -231,6 +284,18 @@ export function createAgentEventStream(
 
       const backlogLimitBytes = resolveBacklogLimitBytes();
       let droppedEvents = 0;
+      const info: AgentEventStreamInfo = {
+        sessionId,
+        holder: meta?.holder ?? null,
+        address: meta?.address ?? null,
+        client: meta?.client ?? null,
+        openedAt: Date.now(),
+        connectedAt: null,
+        lastWriteAt: null,
+        droppedEvents: () => droppedEvents,
+        queuedBytes: () => Math.max(0, STREAM_HIGH_WATER_MARK_BYTES - (controller.desiredSize ?? STREAM_HIGH_WATER_MARK_BYTES)),
+      };
+      streamInfos.set(cleanup, info);
       const enqueueText = (text: string, options?: { droppable?: boolean }) => {
         if (closed) return;
         const desiredSize = controller.desiredSize;
@@ -254,6 +319,7 @@ export function createAgentEventStream(
         }
         try {
           controller.enqueue(encoder.encode(text));
+          info.lastWriteAt = Date.now();
         } catch {
           cleanup(false);
         }
@@ -364,6 +430,7 @@ export function createAgentEventStream(
               .filter((event) => event.type === "extension_ui_request" && typeof event.id === "string")
               .map((event) => event.id as string),
           });
+          info.connectedAt = Date.now();
           // [Root-cause fix for duplicated first characters] Events in the buffer (arriving between
           // listener installation and snapshot publication) are already fully reflected in the snapshot
           // (a clone of the live partialMessage): pi applies deltas to partialMessage before emitting
