@@ -1,0 +1,23 @@
+{
+  "name": "@aiti-ai/aiti-ai-speek",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "pi-web「跟读模式」扩展：AI 输出语音朗读（可切音色/暂停/跳过/停止；默认浏览器 Web Speech，可选 edge-tts）",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs",
+    "test": "node --test tools/*.test.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "你打字，它读给你听。",
+  "aitiConfigs": {
+    "configFiles": [
+      "steer-injected.json",
+      "edge-auto-enabled.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}
