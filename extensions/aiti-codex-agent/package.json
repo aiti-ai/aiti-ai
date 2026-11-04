@@ -1,0 +1,19 @@
+{
+  "name": "@aiti-ai/aiti-codex-agent",
+  "version": "0.1.1",
+  "description": "OpenAI Codex CLI driver (exec --json + resume)",
+  "soul": "Codex 在哪儿跑，面板就在哪儿看。",
+  "scripts": {
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "zcode-api-key.json",
+      "controlled-login.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.7"
+  }
+}
