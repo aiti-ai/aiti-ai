@@ -1,0 +1,25 @@
+{
+  "name": "@aiti-ai/aiti-cmd",
+  "type": "module",
+  "description": "命令管理器 —— 真 TTY 终端（node-pty，实时帧走事件总线主题）+ 常用命令收藏夹（CRUD 与 {参数} 占位符）+ 消息识别命令；执行全程 append-only 审计落盘",
+  "devDependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "esbuild": "^0.24.2"
+  },
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.3",
+    "command-exists": "^1.2.9",
+    "node-pty": "^1.1.0",
+    "shell-quote": "^1.10.0"
+  },
+  "soul": "大脑留给思考，命令交给收藏夹。",
+  "version": "0.1.1",
+  "aitiConfigs": {
+    "configFiles": [
+      "commands.json",
+      "dict.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}
