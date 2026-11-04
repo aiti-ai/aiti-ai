@@ -942,6 +942,10 @@ export default {
         auth: [
           { kind: "file", path: [".codex", "auth.json"], label: "~/.codex/auth.json" },
           { kind: "env", path: ["OPENAI_API_KEY"], label: "env OPENAI_API_KEY" },
+          // 2026-11-05：auth.json 之外的常见用法——config.toml 指向 openrouter 等
+          // 第三方 provider（requires_openai_auth=false），key 走 env_key 指定的环境变量。
+          // openrouter.ai 与 OpenAI 域不同，连通性独立，命中即 ready。
+          { kind: "env", path: ["OPENROUTER_API_KEY"], label: "env OPENROUTER_API_KEY（openrouter provider）" },
         ],
         accountSlots: (c: { home: string }) => [
           { key: "codex-auth", label: "OAuth 凭据", path: join(c.home, ".codex", "auth.json") },
