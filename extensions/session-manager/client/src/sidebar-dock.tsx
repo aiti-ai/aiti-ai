@@ -349,8 +349,12 @@ export function SidebarList(props: SidebarDockProps) {
   }, [validatedProject, worktreeRt, workspaceEntries, allSessions]);
 
   const selectedProject = projectFor(selectedCwd);
-  // loading 定义（TDZ 安全：selectedProject 已声明）：当前项目 scoped 列表未落地 = 加载中
-  const loading = !isProjectSessionsLoaded(selectedProject?.key ?? "");
+  // loading 定义（TDZ 安全：selectedProject 已声明）：当前项目 scoped 列表未落地 = 加载中。
+  // [空环境兜底 2026-11-04] selectedProject 为 null（无 cwd 上下文——全新部署零会话/零项目，
+  // 宿主未下发 cwd）时**不进 Loading**：isProjectSessionsLoaded("") 恒 false 会让 Loading
+  // 永驻（空数据环境下 scoped 拉取永不触发）。此时直接渲染空态（SessionTree emptyLabel
+  // "No recent sessions" + 选项目引导），用户绑定项目后 key 非空才走真实加载期。
+  const loading = Boolean(selectedProject) && !isProjectSessionsLoaded(selectedProject?.key ?? "");
   // 未落盘草稿行（不绑定选中态）：选中会话不在任何列表 → 记入 store.pendingDrafts
   //（切到其他会话仍保留显示，落盘后被 /sessions 列出 → reconcile 自动转正）。
   // 注意排除 archived 桶：归档残留选中态（宿主 onSessionDeleted 收尾前）不能误记成草稿。
