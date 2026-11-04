@@ -65,3 +65,26 @@ if [ -d "$BUILD_HOME/.pi/web/extensions" ]; then
 else
   echo "[deploy-ext] ERROR: 未找到部署产物 $BUILD_HOME/.pi/web/extensions"; exit 1
 fi
+
+# ── webRoot 级运行时依赖 reconcile（构建期等价于宿主 extman reconcile）──────────
+# 部署拷贝不带扩展 node_modules；扩展运行时依赖（@aiti-ai/ext-shared / command-exists /
+# shell-quote / node-pty …）装进 <webRoot>/node_modules 供 jiti walk-up 解析。
+# 收集各已部署扩展 package.json 的 dependencies，合并为一次 npm install。
+echo "[deploy-ext] reconciling runtime deps into webRoot node_modules ..."
+WEBROOT="$(dirname "$DEST")"
+DEP_LIST=$(node -e '
+  const fs = require("fs"), path = require("path");
+  const root = process.argv[1], deps = {};
+  for (const id of fs.readdirSync(root)) {
+    const f = path.join(root, id, "package.json");
+    if (!fs.existsSync(f)) continue;
+    try { const p = JSON.parse(fs.readFileSync(f, "utf8")); Object.assign(deps, p.dependencies || {}); } catch {}
+  }
+  process.stdout.write(Object.keys(deps).join(" "));
+' "$DEST")
+if [ -n "$DEP_LIST" ]; then
+  (cd "$WEBROOT" && npm install $DEP_LIST --omit=dev --no-audit --no-fund --loglevel=error) \
+    >"/tmp/deps-webroot-reconcile.log" 2>&1 \
+    || echo "[deploy-ext] WARN webRoot reconcile failed（日志 /tmp/deps-webroot-reconcile.log）"
+  echo "[deploy-ext] reconciled: $DEP_LIST"
+fi
