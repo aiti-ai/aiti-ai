@@ -1,0 +1,10 @@
+[Unit]
+Description=aiti docker image daily rebuild timer
+
+[Timer]
+OnCalendar=*-*-* 04:00:00
+Persistent=true
+RandomizedDelaySec=600
+
+[Install]
+WantedBy=timers.target
