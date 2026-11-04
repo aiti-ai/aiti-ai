@@ -1,0 +1,24 @@
+{
+  "name": "@aiti-ai/aiti-git-trace",
+  "version": "0.2.3",
+  "type": "module",
+  "description": "编外 AI 变更追踪扩展（.git/aiti 追踪仓 + 关注路径 + 回撤/部分回滚）—— JSX + vite 构建 client bundle",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs",
+    "test": "node --test trace-core.test.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "config.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.3"
+  }
+}
