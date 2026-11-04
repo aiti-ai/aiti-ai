@@ -162,7 +162,10 @@ try {
   const base = `http://127.0.0.1:${port}`;
   server = spawn(process.execPath, [join(root, "node_modules/next/dist/bin/next"), mode, "-H", "127.0.0.1", "-p", String(port)], {
     cwd: root,
-    env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_WEB_PASSWORD: "", NEXT_TELEMETRY_DISABLED: "1" },
+    // [fork] bundled extensions live at <repoRoot>/extensions in this repo (ported aiti
+    // packages). The fixture environment must stay clean: point the bundled tier at an
+    // empty dir so the e2e server loads only the fixture extension below.
+    env: { ...process.env, PI_CODING_AGENT_DIR: agentDir, PI_WEB_PASSWORD: "", NEXT_TELEMETRY_DISABLED: "1", PI_WEB_BUNDLED_EXTENSIONS_DIR: join(agentDir, "bundled-empty") },
     stdio: ["ignore", "pipe", "pipe"],
   });
   server.once("error", (error) => { serverError = error; });
