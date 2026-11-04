@@ -1,0 +1,772 @@
+{
+  "_comment": "国内 AI 提供商补充目录（aiti-model-wizard）。models.dev 只有英文名+api+doc，这里补中文名/注册说明/领 token 地址/api 类型/已知模型。baseUrl 为可直接写入 models.json 的完整地址。aliases 支持中文/拼音/常用叫法搜索。",
+  "providers": {
+    "deepseek": {
+      "cnName": "深度求索",
+      "name": "DeepSeek",
+      "aliases": [
+        "deepseek",
+        "深度求索",
+        "深色求索",
+        "DS",
+        "V3",
+        "R1"
+      ],
+      "baseUrl": "https://api.deepseek.com/v1",
+      "apiType": "openai-completions",
+      "doc": "https://api-docs.deepseek.com/",
+      "signupUrl": "https://platform.deepseek.com/sign_up",
+      "tokenUrl": "https://platform.deepseek.com/api_keys",
+      "register": "官网 platform.deepseek.com 注册（手机/邮箱）→ 实名认证 → 控制台「API Keys」创建 sk- 开头的 key。新用户送少量体验额度，充值后可用满血模型。",
+      "env": "DEEPSEEK_API_KEY",
+      "models": [
+        "deepseek-chat",
+        "deepseek-reasoner",
+        "deepseek-v4-flash",
+        "deepseek-v4-pro"
+      ]
+    },
+    "zhipu": {
+      "cnName": "智谱 AI（GLM·BigModel）",
+      "name": "Zhipu AI / BigModel",
+      "aliases": [
+        "zhipu",
+        "bigmodel",
+        "智谱",
+        "智谱清言",
+        "GLM",
+        "glm",
+        "清言",
+        "chatglm",
+        "cogview"
+      ],
+      "baseUrl": "https://open.bigmodel.cn/api/paas/v4",
+      "apiType": "openai-completions",
+      "doc": "https://open.bigmodel.cn/dev/api",
+      "signupUrl": "https://open.bigmodel.cn/usercenter/login",
+      "tokenUrl": "https://open.bigmodel.cn/usercenter/apikeys",
+      "register": "open.bigmodel.cn 注册并实名 → 控制台「API Keys」创建 key（id.secret 格式）。GLM 系列有免费额度（如 glm-4-flash），新账号常送 glm-4-air 等体验包。",
+      "env": "ZHIPUAI_API_KEY",
+      "models": [
+        "glm-4.7",
+        "glm-4.6",
+        "glm-4.6v",
+        "glm-4-plus",
+        "glm-4-air",
+        "glm-4-flash",
+        "glm-z1",
+        "glm-4v-flash"
+      ]
+    },
+    "zai": {
+      "cnName": "智谱海外版 Z.AI",
+      "name": "Z.AI (International)",
+      "aliases": [
+        "zai",
+        "z.ai",
+        "智谱海外",
+        "GLM 国际"
+      ],
+      "baseUrl": "https://api.z.ai/api/paas/v4",
+      "apiType": "openai-completions",
+      "doc": "https://docs.z.ai/",
+      "signupUrl": "https://z.ai/",
+      "tokenUrl": "https://platform.z.ai/account/api-key",
+      "register": "z.ai 注册 → 控制台创建 API key。智谱海外站，需能访问国际网络。",
+      "env": "Z_AI_API_KEY",
+      "models": [
+        "glm-4.7",
+        "glm-4.6",
+        "glm-5",
+        "glm-z1"
+      ]
+    },
+    "moonshot": {
+      "cnName": "月之暗面 Kimi",
+      "name": "Moonshot AI (Kimi)",
+      "aliases": [
+        "moonshot",
+        "kimi",
+        "月之暗面",
+        "暗面",
+        "K2"
+      ],
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "apiType": "openai-completions",
+      "doc": "https://platform.moonshot.cn/docs",
+      "signupUrl": "https://platform.moonshot.cn/",
+      "tokenUrl": "https://platform.moonshot.cn/console/api-keys",
+      "register": "platform.moonshot.cn 注册（微信/手机）→ 控制台「API Keys」创建 sk- 开头 key。Kimi 开放平台有免费额度（moonshot-v1-8k 等）。",
+      "env": "MOONSHOT_API_KEY",
+      "models": [
+        "kimi-k2",
+        "kimi-k2-turbo",
+        "k3",
+        "moonshot-v1-8k",
+        "moonshot-v1-32k",
+        "moonshot-v1-128k"
+      ]
+    },
+    "kimi-for-coding": {
+      "cnName": "Kimi For Coding",
+      "name": "Kimi For Coding",
+      "aliases": [
+        "kimi coding",
+        "kfc",
+        "coding plan"
+      ],
+      "baseUrl": "https://api.kimi.com/coding/v1",
+      "apiType": "openai-completions",
+      "doc": "https://platform.kimi.com/docs",
+      "signupUrl": "https://platform.kimi.com/",
+      "tokenUrl": "https://platform.kimi.com/api-keys",
+      "register": "platform.kimi.com 注册 → 开通「Kimi For Coding」订阅 → 控制台创建 API key（sk-kimi- 开头）。编程专用模型 k3。",
+      "env": "KIMI_API_KEY",
+      "models": [
+        "k3"
+      ]
+    },
+    "alibaba": {
+      "cnName": "阿里云百炼（通义千问 Qwen）",
+      "name": "Alibaba DashScope (Qwen)",
+      "aliases": [
+        "alibaba",
+        "qwen",
+        "通义",
+        "通义千问",
+        "百炼",
+        "dashscope",
+        "阿里",
+        "阿里云",
+        "灵积",
+        "bailian"
+      ],
+      "baseUrl": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "apiType": "openai-completions",
+      "doc": "https://help.aliyun.com/zh/model-studio/",
+      "signupUrl": "https://dashscope.console.aliyun.com/",
+      "tokenUrl": "https://dashscope.console.aliyun.com/apiKey",
+      "register": "阿里云账号登录百炼控制台 → 开通「模型服务」→ 右上角「API-KEY」创建（sk- 开头）。部分模型有免费额度（qwen-turbo 等）。",
+      "env": "DASHSCOPE_API_KEY",
+      "models": [
+        "qwen-max",
+        "qwen-plus",
+        "qwen-turbo",
+        "qwen3-max",
+        "qwen3-coder",
+        "qwen-vl-max",
+        "qwen2.5-coder-32b-instruct"
+      ]
+    },
+    "ark": {
+      "cnName": "火山方舟（豆包 Doubao）",
+      "name": "Volcengine Ark (Doubao)",
+      "aliases": [
+        "ark",
+        "volcengine",
+        "火山方舟",
+        "豆包",
+        "doubao",
+        "字节",
+        "字节跳动",
+        "volces"
+      ],
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/v3",
+      "apiType": "openai-completions",
+      "doc": "https://www.volcengine.com/docs/82379",
+      "signupUrl": "https://console.volcengine.com/ark",
+      "tokenUrl": "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
+      "register": "火山引擎注册 → 开通方舟大模型服务平台 → 创建 API Key（需实名）。模型用「推理接入点 ID」或端点 ID 调用。",
+      "env": "ARK_API_KEY",
+      "models": [
+        "doubao-pro-32k",
+        "doubao-pro-128k",
+        "doubao-seed-1-6",
+        "doubao-seed-1-6-thinking",
+        "deepseek-v3.2"
+      ]
+    },
+    "tencent-hunyuan": {
+      "cnName": "腾讯混元",
+      "name": "Tencent Hunyuan",
+      "aliases": [
+        "hunyuan",
+        "腾讯",
+        "混元",
+        "tencent",
+        "t1",
+        "turbos"
+      ],
+      "baseUrl": "https://api.hunyuan.cloud.tencent.com/v1",
+      "apiType": "openai-completions",
+      "doc": "https://cloud.tencent.com/document/product/1729",
+      "signupUrl": "https://cloud.tencent.com/product/hunyuan",
+      "tokenUrl": "https://console.cloud.tencent.com/hunyuan",
+      "register": "腾讯云注册并实名 → 开通大模型知识引擎/混元 → 控制台创建 SecretId/SecretKey（API Key 用 SK 或直接生成访问密钥）。",
+      "env": "HUNYUAN_API_KEY",
+      "models": [
+        "hunyuan-turbos-latest",
+        "hunyuan-t1-latest",
+        "hunyuan-lite",
+        "hunyuan-pro"
+      ]
+    },
+    "baidu-qianfan": {
+      "cnName": "百度千帆（文心 ERNIE）",
+      "name": "Baidu Qianfan (ERNIE)",
+      "aliases": [
+        "qianfan",
+        "baidu",
+        "百度",
+        "千帆",
+        "文心",
+        "ernie",
+        "文言一心"
+      ],
+      "baseUrl": "https://qianfan.baidubce.com/v2",
+      "apiType": "openai-completions",
+      "doc": "https://cloud.baidu.com/doc/WENXINWORKSHOP/index.html",
+      "signupUrl": "https://console.bce.baidu.com/qianfan/overview",
+      "tokenUrl": "https://console.bce.baidu.com/iam/#/iam/accesskey",
+      "register": "百度智能云注册并实名 → 千帆大模型平台开通 → 「应用接入」创建 API Key（AK）与 Secret Key（SK）。部分模型有免费额度。",
+      "env": "QIANFAN_API_KEY",
+      "models": [
+        "ernie-4.5-turbo",
+        "ernie-4.0-8k",
+        "ernie-speed-8k",
+        "ernie-lite-8k",
+        "ernie-tiny-8k"
+      ]
+    },
+    "minimax": {
+      "cnName": "MiniMax",
+      "name": "MiniMax",
+      "aliases": [
+        "minimax",
+        "海螺",
+        "hailuo",
+        "abab"
+      ],
+      "baseUrl": "https://api.minimaxi.com/v1",
+      "apiType": "openai-completions",
+      "doc": "https://platform.minimaxi.com/docs",
+      "signupUrl": "https://platform.minimaxi.com/",
+      "tokenUrl": "https://platform.minimaxi.com/user-center/basic-information/interface-key",
+      "register": "platform.minimaxi.com 注册（手机）→ 实名 → 「接口密钥」创建。MiniMax 提供免费推理额度（abab6.5s / MiniMax-M1 等）。",
+      "env": "MINIMAX_API_KEY",
+      "models": [
+        "MiniMax-M2",
+        "MiniMax-M2-thinking",
+        "MiniMax-M1",
+        "MiniMax-Text-01",
+        "abab6.5s",
+        "abab7-chat"
+      ]
+    },
+    "stepfun": {
+      "cnName": "阶跃星辰 StepFun",
+      "name": "StepFun (China)",
+      "aliases": [
+        "stepfun",
+        "阶跃",
+        "阶跃星辰",
+        "step",
+        "跃问"
+      ],
+      "baseUrl": "https://api.stepfun.com/v1",
+      "apiType": "openai-completions",
+      "doc": "https://platform.stepfun.com/docs",
+      "signupUrl": "https://platform.stepfun.com/",
+      "tokenUrl": "https://platform.stepfun.com/api-key",
+      "register": "platform.stepfun.com 注册并实名 → 控制台「API Key」创建（sk- 开头）。step-1 系列有免费额度。",
+      "env": "STEPFUN_API_KEY",
+      "models": [
+        "step-2-16k",
+        "step-2-thinking",
+        "step-1-8k",
+        "step-1-32k",
+        "step-1v-32k",
+        "step-1o"
+      ]
+    },
+    "siliconflow": {
+      "cnName": "硅基流动",
+      "name": "SiliconFlow",
+      "aliases": [
+        "siliconflow",
+        "硅基流动",
+        "硅基",
+        "silicon",
+        "sf"
+      ],
+      "baseUrl": "https://api.siliconflow.cn/v1",
+      "apiType": "openai-completions",
+      "doc": "https://docs.siliconflow.cn/",
+      "signupUrl": "https://cloud.siliconflow.cn/",
+      "tokenUrl": "https://cloud.siliconflow.cn/account/ak",
+      "register": "cloud.siliconflow.cn 注册（手机/邮箱）→ 控制台「API 密钥」创建（sk- 开头）。聚合大量开源模型，新用户常送免费额度。",
+      "env": "SILICONFLOW_API_KEY",
+      "models": [
+        "deepseek-ai/DeepSeek-V3",
+        "deepseek-ai/DeepSeek-R1",
+        "Qwen/Qwen2.5-72B-Instruct",
+        "THUDM/glm-4-9b-chat"
+      ]
+    },
+    "lingyiwanwu": {
+      "cnName": "零一万物 01.AI（Yi）",
+      "name": "01.AI (Yi / LingYi)",
+      "aliases": [
+        "lingyi",
+        "lingyiwanwu",
+        "零一",
+        "零一万物",
+        "01.ai",
+        "yi",
+        "yizhiliu"
+      ],
+      "baseUrl": "https://api.lingyiwanwu.com/v1",
+      "apiType": "openai-completions",
+      "doc": "https://platform.lingyiwanwu.com/docs",
+      "signupUrl": "https://platform.lingyiwanwu.com/",
+      "tokenUrl": "https://platform.lingyiwanwu.com/api-keys",
+      "register": "platform.lingyiwanwu.com 注册 → 控制台「API Keys」创建。Yi-Lightning 主打高性价比。",
+      "env": "YI_API_KEY",
+      "models": [
+        "yi-lightning",
+        "yi-large",
+        "yi-medium",
+        "yi-vision"
+      ]
+    },
+    "baichuan": {
+      "cnName": "百川智能",
+      "name": "Baichuan AI",
+      "aliases": [
+        "baichuan",
+        "百川",
+        "百川智能",
+        "baichuan4"
+      ],
+      "baseUrl": "https://api.baichuan-ai.com/v1",
+      "apiType": "openai-completions",
+      "doc": "https://platform.baichuan-ai.com/docs",
+      "signupUrl": "https://platform.baichuan-ai.com/",
+      "tokenUrl": "https://platform.baichuan-ai.com/console/api-key",
+      "register": "platform.baichuan-ai.com 注册并实名 → 「API Key」创建。Baichuan4 / Baichuan3-Turbo 系列。",
+      "env": "BAICHUAN_API_KEY",
+      "models": [
+        "Baichuan4",
+        "Baichuan3-Turbo",
+        "Baichuan3-Turbo-128k"
+      ]
+    },
+    "iflytek-spark": {
+      "cnName": "讯飞星火",
+      "name": "iFlytek Spark",
+      "aliases": [
+        "iflytek",
+        "讯飞",
+        "星火",
+        "spark",
+        "xfyun",
+        "科大讯飞"
+      ],
+      "baseUrl": "https://spark-api-open.xf-yun.com/v1",
+      "apiType": "openai-completions",
+      "doc": "https://www.xfyun.cn/doc/spark/HTTP%E8%B0%83%E7%94%A8%E6%96%87%E6%A1%A3.html",
+      "signupUrl": "https://console.xfyun.cn/",
+      "tokenUrl": "https://console.xfyun.cn/services/bm35",
+      "register": "讯飞开放平台注册（手机）→ 实名 → 控制台开通「星火大模型」→ 服务认证信息里取 APIKey/APISecret 拼成 Bearer key。",
+      "env": "SPARK_API_KEY",
+      "models": [
+        "spark-max",
+        "spark-pro",
+        "spark-lite",
+        "spark4.0-ultra",
+        "generalv3.5"
+      ]
+    },
+    "skywork": {
+      "cnName": "昆仑天工",
+      "name": "Kunlun Skywork / Tiangong",
+      "aliases": [
+        "skywork",
+        "昆仑",
+        "天工",
+        "tiangong",
+        "kunlun"
+      ],
+      "baseUrl": "https://api.skywork.cn/v1",
+      "apiType": "openai-completions",
+      "doc": "https://model-platform.tiangong.cn/",
+      "signupUrl": "https://model-platform.tiangong.cn/",
+      "tokenUrl": "https://model-platform.tiangong.cn/account/apikey",
+      "register": "昆仑万维「天工」模型开放平台注册 → 控制台创建 API Key。",
+      "env": "SKYWORK_API_KEY",
+      "models": [
+        "Skywork-13B",
+        "Tiangong-2.5"
+      ]
+    },
+    "infini-ai": {
+      "cnName": "无问芯穹",
+      "name": "Infini-AI (Megatron)",
+      "aliases": [
+        "infini",
+        "无问芯穹",
+        "芯穹",
+        "infini-ai"
+      ],
+      "baseUrl": "https://cloud.infini-ai.com/maas/v1",
+      "apiType": "openai-completions",
+      "doc": "https://cloud.infini-ai.com/maas/docs",
+      "signupUrl": "https://cloud.infini-ai.com/maas",
+      "tokenUrl": "https://cloud.infini-ai.com/maas/user-center/api-keys",
+      "register": "cloud.infini-ai.com 注册 → 开通 MaaS → 「API 密钥」创建。聚合开源模型，部分免费。",
+      "env": "INFINI_API_KEY",
+      "models": [
+        "Qwen2.5-72B-Instruct",
+        "DeepSeek-R1",
+        "GLM-4-9B"
+      ]
+    },
+    "sensenova": {
+      "cnName": "商汤日日新",
+      "name": "SenseNova",
+      "aliases": [
+        "sensenova",
+        "商汤",
+        "日日新",
+        "sense"
+      ],
+      "baseUrl": "https://token.sensenova.cn/v1",
+      "apiType": "openai-completions",
+      "doc": "https://console.sensenova.cn/",
+      "signupUrl": "https://console.sensenova.cn/",
+      "tokenUrl": "https://console.sensenova.cn/",
+      "register": "商汤大装置 console.sensenova.cn 注册并实名 → 控制台创建 API Key。",
+      "env": "SENSENOVA_API_KEY",
+      "models": [
+        "sensenova-6.8-flash-lite",
+        "sensenova-6.7-flash-lite",
+        "sensenova-u1-fast",
+        "sensenova-u1.5-lite",
+        "deepseek-v4-flash",
+        "glm-5.2"
+      ]
+    },
+    "q360": {
+      "cnName": "360 智脑",
+      "name": "360 GPT (Qihoo)",
+      "aliases": [
+        "360",
+        "360gpt",
+        "智脑",
+        "qihoo",
+        "360智脑"
+      ],
+      "baseUrl": "https://api.360.cn/v1",
+      "apiType": "openai-completions",
+      "doc": "https://ai.360.cn/",
+      "signupUrl": "https://ai.360.cn/",
+      "tokenUrl": "https://ai.360.cn/",
+      "register": "360 智脑开放平台注册 → 创建 API Key。",
+      "env": "Q360_API_KEY",
+      "models": [
+        "360gpt-pro",
+        "360gpt-turbo",
+        "360gpt-turbo-128k"
+      ]
+    },
+    "openrouter": {
+      "cnName": "OpenRouter（聚合·国际）",
+      "name": "OpenRouter",
+      "aliases": [
+        "openrouter",
+        "路由",
+        "or"
+      ],
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "apiType": "openai-completions",
+      "doc": "https://openrouter.ai/docs",
+      "signupUrl": "https://openrouter.ai/",
+      "tokenUrl": "https://openrouter.ai/settings/keys",
+      "register": "openrouter.ai 注册（邮箱/GitHub）→ Settings → Keys 创建 sk-or- 开头 key。一个 key 可调几乎所有主流模型，按量计费。",
+      "env": "OPENROUTER_API_KEY",
+      "models": [
+        "openai/gpt-4o",
+        "anthropic/claude-3.7-sonnet",
+        "deepseek/deepseek-chat",
+        "qwen/qwen-2.5-coder-32b"
+      ]
+    },
+    "q302ai": {
+      "cnName": "302.AI（聚合）",
+      "name": "302.AI",
+      "aliases": [
+        "302",
+        "302ai",
+        "302.ai"
+      ],
+      "baseUrl": "https://api.302.ai/v1",
+      "apiType": "openai-completions",
+      "doc": "https://302.ai/docs",
+      "signupUrl": "https://302.ai/",
+      "tokenUrl": "https://302.ai/user?tab=token",
+      "register": "302.ai 注册 → 用户中心「Token」页创建 API key。聚合 300+ 模型，一个 key 全调。",
+      "env": "TWO302_API_KEY",
+      "models": [
+        "gpt-4o",
+        "claude-3.5-sonnet",
+        "deepseek-chat",
+        "qwen-max"
+      ]
+    },
+    "aihubmix": {
+      "cnName": "AIHubMix（聚合）",
+      "name": "AIHubMix",
+      "aliases": [
+        "aihubmix",
+        "hubmix",
+        "混合"
+      ],
+      "baseUrl": "https://api.aihubmix.com/v1",
+      "apiType": "openai-completions",
+      "doc": "https://aihubmix.com/docs",
+      "signupUrl": "https://aihubmix.com/",
+      "tokenUrl": "https://aihubmix.com/token",
+      "register": "aihubmix.com 注册 → 控制台创建 API key。聚合多模型，兼容 OpenAI 格式。",
+      "env": "AIHUBMIX_API_KEY",
+      "models": [
+        "gpt-4o",
+        "claude-3.5-sonnet",
+        "deepseek-chat",
+        "glm-4-plus"
+      ]
+    },
+    "jiayan": {
+      "cnName": "京东言犀",
+      "name": "JD Yanxi",
+      "aliases": [
+        "jiayan",
+        "言犀",
+        "京东",
+        "jd"
+      ],
+      "baseUrl": "https://api-gw-gx.onebox.cn/v1",
+      "apiType": "openai-completions",
+      "doc": "https://yanxi.jd.com/",
+      "signupUrl": "https://yanxi.jd.com/",
+      "tokenUrl": "https://yanxi.jd.com/console",
+      "register": "京东言犀开放平台注册（企业为主）→ 控制台创建 API Key。",
+      "env": "YANXI_API_KEY",
+      "models": [
+        "yanxi-large",
+        "yanxi-pro"
+      ]
+    },
+    "zhipu-coding-plan": {
+      "cnName": "智谱 GLM Coding Plan",
+      "name": "Zhipu AI Coding Plan",
+      "aliases": [
+        "glm coding",
+        "智谱编程",
+        "coding plan"
+      ],
+      "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+      "apiType": "openai-completions",
+      "doc": "https://open.bigmodel.cn/dev/api/coding-plan",
+      "signupUrl": "https://open.bigmodel.cn/usercenter/login",
+      "tokenUrl": "https://open.bigmodel.cn/usercenter/apikeys",
+      "register": "智谱开放平台开通「GLM Coding Plan」订阅 → 用 coding 专用 key（v4 端点）调 glm-4.7/glm-5 编程模型。",
+      "env": "ZHIPUAI_API_KEY",
+      "models": [
+        "glm-5.3",
+        "glm-5.3-flash",
+        "glm-5-turbo",
+        "glm-5.1",
+        "glm-5.2",
+        "glm-4.7",
+        "glm-4.6",
+        "glm-4.5v"
+      ],
+      "modelMeta": {
+        "glm-5.3-flash": {
+          "name": "GLM-5.3-Flash",
+          "reasoning": true,
+          "contextWindow": 1000000,
+          "maxTokens": 131072,
+          "input": ["text", "image"],
+          "cost": { "input": 0.15, "output": 0.5, "cacheRead": 0.03, "cacheWrite": 0 },
+          "thinkingLevelMap": { "low": "low", "high": "high", "max": "max" },
+          "compat": { "supportsStore": false, "supportsDeveloperRole": false, "supportsReasoningEffort": true, "maxTokensField": "max_tokens", "thinkingFormat": "zai", "zaiToolStream": true, "requiresReasoningContentOnAssistantMessages": true },
+          "note": "多模态(文本+图片)；强制思考开，仅支持 max/high/low；1M上下文/128K输出。参数源：z.ai定价页+核心参数文档+probe-cap实测。models.dev未收录，本目录内嵌参数供反填。reasoning_content 回传：智谱 thinking+tool_calls 必须回传 reasoning_content，否则 400001。"
+        }
+      }
+    },
+    "tencent-coding-plan": {
+      "cnName": "腾讯 Coding Plan（LKEAP）",
+      "name": "Tencent Coding Plan (China)",
+      "aliases": [
+        "tencent coding",
+        "lkeap",
+        "腾讯编程"
+      ],
+      "baseUrl": "https://api.lkeap.cloud.tencent.com/coding/v3",
+      "apiType": "openai-completions",
+      "doc": "https://cloud.tencent.com/document/product/1729",
+      "signupUrl": "https://cloud.tencent.com/product/hunyuan",
+      "tokenUrl": "https://console.cloud.tencent.com/hunyuan",
+      "register": "腾讯云开通「腾讯编程助手 Coding Plan」→ 生成 API key（coding/v3 端点）。",
+      "env": "TENCENT_CODING_API_KEY",
+      "models": [
+        "hunyuan-turbos-latest",
+        "hunyuan-t1-latest"
+      ]
+    },
+    "alibaba-coding-plan": {
+      "cnName": "阿里 Coding Plan",
+      "name": "Alibaba Coding Plan (China)",
+      "aliases": [
+        "alibaba coding",
+        "通义编程",
+        "coding plan cn"
+      ],
+      "baseUrl": "https://coding.dashscope.aliyuncs.com/v1",
+      "apiType": "openai-completions",
+      "doc": "https://help.aliyun.com/zh/model-studio/coding-plan",
+      "signupUrl": "https://dashscope.console.aliyun.com/",
+      "tokenUrl": "https://dashscope.console.aliyun.com/apiKey",
+      "register": "阿里云百炼开通「通义编程 Coding Plan」→ 用 coding 专用 key 调 qwen3-coder 等。",
+      "env": "DASHSCOPE_API_KEY",
+      "models": [
+        "qwen3-coder",
+        "qwen3-max",
+        "qwen-coder-plus"
+      ]
+    },
+    "ark-coding-plan": {
+      "cnName": "火山方舟 Coding 套餐",
+      "name": "Volcengine Ark Coding Plan",
+      "aliases": [
+        "ark coding",
+        "ark-coding",
+        "火山 coding",
+        "方舟 coding",
+        "coding plan",
+        "编程套餐",
+        "api/coding",
+        "coding/v3"
+      ],
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3",
+      "apiType": "openai-completions",
+      "doc": "https://www.volcengine.com/docs/82379/1925114",
+      "signupUrl": "https://console.volcengine.com/ark",
+      "tokenUrl": "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
+      "register": "火山引擎开通方舟「Coding 套餐」（订阅制）：与按量服务（api/v3）相互独立，coding key 不适用于按量端点。同一套餐支持 OpenAI 兼容（/api/coding/v3/chat/completions）与 Responses 兼容（/api/coding/v3/responses）；Anthropic 兼容形式需支持该形式的 key。有 5 小时用量配额。",
+      "env": "ARK_API_KEY",
+      "models": [
+        "deepseek-v4-pro-ga-260813",
+        "deepseek-v4-flash-ga-260731",
+        "doubao-seed-2-0-code-preview-260215",
+        "glm-5-2-260617"
+      ]
+    },
+    "ark-agent": {
+      "cnName": "火山方舟 Agent 套餐（豆包 aagent）",
+      "name": "Volcengine Ark Agent Plan",
+      "aliases": [
+        "ark agent",
+        "aagent",
+        "火山 agent",
+        "方舟 agent",
+        "agent 套餐",
+        "api/plan",
+        "plan/v3",
+        "agent plan"
+      ],
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+      "apiType": "openai-completions",
+      "doc": "https://www.volcengine.com/docs/82379/2366394",
+      "signupUrl": "https://console.volcengine.com/ark",
+      "tokenUrl": "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey",
+      "register": "火山引擎开通方舟「Agent 套餐」（豆包 aagent，订阅制）：独立于按量（api/v3）与 Coding 套餐（api/coding/v3），key 互不通用。端点 https://ark.cn-beijing.volces.com/api/plan/v3（OpenAI 兼容）。",
+      "env": "ARK_API_KEY",
+      "models": []
+    },
+    "modelscope": {
+      "cnName": "魔搭社区（ModelScope）",
+      "name": "ModelScope",
+      "aliases": [
+        "modelscope",
+        "魔搭",
+        "魔搭社区",
+        "ms",
+        "api-inference"
+      ],
+      "baseUrl": "https://api-inference.modelscope.cn/v1",
+      "apiType": "openai-completions",
+      "doc": "https://modelscope.cn/docs/model-service/API-Inference/intro",
+      "signupUrl": "https://modelscope.cn/register",
+      "tokenUrl": "https://modelscope.cn/my/myaccesstoken",
+      "register": "modelscope.cn 注册（阿里云账号直接登录最快）→ 完成个人实名认证 → 头像「访问令牌」新建并复制（ms- 开头）。免费：实名用户每日 2000 次调用（全模型加和），覆盖 Qwen/DeepSeek/GLM/MiniMax 等开源模型。",
+      "env": "MODELSCOPE_API_KEY",
+      "excludeModels": [
+        "ZhipuAI/GLM-4.5",
+        "ZhipuAI/GLM-4.6",
+        "Qwen/Qwen3-30B-A3B-Instruct-2507"
+      ],
+      "models": [
+        "ZhipuAI/GLM-5.2",
+        "deepseek-ai/DeepSeek-V4-Pro-0813",
+        "Qwen/Qwen3.5-397B-A17B",
+        "MiniMax/MiniMax-M1-80k"
+      ]
+    },
+    "qoder": {
+      "cnName": "阿里 Qoder（国际）",
+      "name": "Qoder",
+      "aliases": [
+        "qoder",
+        "qoder global",
+        "通义灵码国际",
+        "ali qoder"
+      ],
+      "authType": "oauth",
+      "oauthProviderId": "qoder",
+      "doc": "https://docs.qoder.com",
+      "signupUrl": "https://qoder.com/en",
+      "register": "🔐 订阅登录型（无需 token）。订阅后两种方式接入：① 本页点「登录」走浏览器设备码；② 本机安装 qodercli 并登录 → 向导自动导入凭据。注意：Free 账号无 credits，付费订阅额度才可推理。模型清单以登录后网关实时返回为准（id 为厂商混淆别名，随版本变动；下方目录仅未登录时的兜底预览）。",
+      "models": [
+        "qmodel_latest",
+        "qmodel",
+        "qfmodel",
+        "qmodel_38max"
+      ]
+    },
+    "qoder-cn": {
+      "cnName": "阿里 Qoder CN（国内）",
+      "name": "Qoder CN",
+      "aliases": [
+        "qodercn",
+        "qoder 国内",
+        "qoder中国",
+        "qoder cn"
+      ],
+      "authType": "oauth",
+      "oauthProviderId": "qoder-cn",
+      "doc": "https://docs.qoder.com",
+      "signupUrl": "https://qoder.com.cn",
+      "tokenUrl": "https://qoder.com.cn/account/integrations",
+      "register": "🔐 订阅登录型（无需传统 token）。Pro+/免费 credits 在国内区。接入：① 创建 PAT（账号页 → 集成 → 个人访问令牌）→ 本页点「PAT 登录」粘贴；② 本机安装 qoderclicn 并登录 → 自动导入。仅限本人账号自用，禁止共享/转售（ToS 限制）。模型清单以登录后网关实时返回为准（id 为厂商混淆别名，随版本变动；下方目录仅未登录时的兜底预览，DeepSeek/GLM/Kimi/MiniMax 等非 Qwen 模型实际注册在 qoder-local 下）。",
+      "models": [
+        "qwen3.7-max",
+        "qwen3.7-plus",
+        "qwen3.6-flash",
+        "q37fmodel",
+        "qmodel_38max"
+      ]
+    }
+  }
+}
