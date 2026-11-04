@@ -64,6 +64,7 @@
     "demo",
     "extensions",
     "packages",
-    "pi-plugins"
+    "pi-plugins",
+    "integrations"
   ]
 }
