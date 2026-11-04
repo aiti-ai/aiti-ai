@@ -1,0 +1,13 @@
+{
+  "name": "@aiti-ai/aiti-devtools",
+  "version": "0.2.2",
+  "private": true,
+  "type": "module",
+  "description": "pi-web 扩展：aiti 页面内 AI 调试助手（launcher 注入 + 桥 + agent 进程内 MCP 工具）",
+  "homepage": "https://aiti.pw/extensions/aiti-devtools.html",
+  "soul": "AI 不该对着屏幕瞎猜，它该真正看见页面。",
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/aiti-bridge": "^0.2.4"
+  }
+}
