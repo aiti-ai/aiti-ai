@@ -1649,7 +1649,7 @@ const renderCommandRow = (c, depth) =>
                 ),
               ),
               !isSmall && h("span", { style: { ...smallStyle, fontSize: 12, lineHeight: 1, flexShrink: 0, whiteSpace: "nowrap" } }, "🤖 " + piRunning + "/" + piCmds.length + " · 🖥 " + ptyRunning),
-              h("button", { onClick: curPty ? () => newShellAt(curPty) : newShell, disabled: newTermBusy, title: newTermBusy ? "正在创建终端会话…" : (curPty ? "＋ 新终端：再开一个 shell（目录 = 当前终端 📁 实时路径）" : "＋ 新终端：开一个交互式 shell（无沙箱）"), style: { ...btnStyle, padding: isSmall ? "0 6px" : "0 8px", fontSize: 12, height: 20, lineHeight: "18px", background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", flexShrink: 0, opacity: newTermBusy ? 0.6 : 1, cursor: newTermBusy ? "wait" : "pointer" } }, newTermBusy ? (isSmall ? "⏳" : "⏳ 开启中…") : (isSmall ? "＋" : "＋ 新终端")),
+              h("button", { onClick: curPty ? () => newShellAt(curPty) : () => newShell(), disabled: newTermBusy, title: newTermBusy ? "正在创建终端会话…" : (curPty ? "＋ 新终端：再开一个 shell（目录 = 当前终端 📁 实时路径）" : "＋ 新终端：开一个交互式 shell（无沙箱）"), style: { ...btnStyle, padding: isSmall ? "0 6px" : "0 8px", fontSize: 12, height: 20, lineHeight: "18px", background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", flexShrink: 0, opacity: newTermBusy ? 0.6 : 1, cursor: newTermBusy ? "wait" : "pointer" } }, newTermBusy ? (isSmall ? "⏳" : "⏳ 开启中…") : (isSmall ? "＋" : "＋ 新终端")),
               // 会话已结束则隐藏中止（点了也只能 409）；PTY 结束态经 sessions 列表感知
               view.kind === "pty" && sessions.find((x) => x.id === view.id)?.status === "running" && (() => {
                 const kb = killBusy.has(view.id);
@@ -1661,7 +1661,7 @@ const renderCommandRow = (c, depth) =>
                 h("b", { style: { fontSize: 13, whiteSpace: "nowrap", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 } }, Ic(13, ICONS.list), "运行总览"),
                 h("span", { style: { ...smallStyle, fontSize: 12, lineHeight: 1, flex: 1, minWidth: 140 } },
                   "🤖 agent " + piRunning + " 条在跑" + (piCmds.length > piRunning ? "（共 " + piCmds.length + "）" : "") + " · 🖥 终端 " + ptyRunning + " 个在跑" + (ptyQueued ? "（" + ptyQueued + " 排队）" : "") + " · 点行看详情"),
-                h("button", { onClick: newShell, disabled: newTermBusy, title: newTermBusy ? "正在创建终端会话…" : "＋ 新终端：开一个交互式 shell（无沙箱）", style: { ...btnStyle, fontSize: 12, height: 20, lineHeight: "18px", padding: "0 10px", background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", marginLeft: "auto", flexShrink: 0, opacity: newTermBusy ? 0.6 : 1, cursor: newTermBusy ? "wait" : "pointer" } }, newTermBusy ? "⏳ 开启中…" : "＋ 新终端"),
+                h("button", { onClick: () => newShell(), disabled: newTermBusy, title: newTermBusy ? "正在创建终端会话…" : "＋ 新终端：开一个交互式 shell（无沙箱）", style: { ...btnStyle, fontSize: 12, height: 20, lineHeight: "18px", padding: "0 10px", background: "var(--accent)", color: "#fff", borderTop: "none", borderRight: "none", borderBottom: "none", borderLeft: "none", marginLeft: "auto", flexShrink: 0, opacity: newTermBusy ? 0.6 : 1, cursor: newTermBusy ? "wait" : "pointer" } }, newTermBusy ? "⏳ 开启中…" : "＋ 新终端"),
               );
           // dock 单实例：该终端会话被工作区页签持有（未 detach）时，弹窗渲染占位卡——
           // 视图此刻归页签；「拉回窗口」切归属（detached 标记）后这里恢复 TerminalView。
