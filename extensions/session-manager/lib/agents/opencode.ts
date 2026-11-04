@@ -8,8 +8,10 @@
  *      message/<sesId>/msg_*.json               → {role, model{modelID}, time}
  *      part/<msgId>/prt_*.json                  → {type:"text"|"tool"|"reasoning"|...}
  *  - modern: ~/.local/share/opencode/opencode.db (SQLite, same entities).
- *    The local db was empty; the SQL path is written defensively against the
- *    schema observed on disk (session / message / part tables with data JSON).
+ *    1.18 以前观测到的 session_message 单表（data 内嵌 parts）在 1.19.5 已停写
+ *    （表还在但恒空）——1.19.5 起消息写 message + part 两表（part.data 与 legacy
+ *    JSON part 同形，message.data 带 role/modelID/time）。两代 SQL 形状都读，
+ *    主路径 message+part，session_message 留作旧 modern 兜底。
  */
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -198,31 +200,43 @@ export function createOpencodeAdapter(homeOverrideArg?: string): AgentAdapter {
         try { watermarkMs = Math.max(watermarkMs, statSync(dbPath).mtimeMs); } catch { /* raced */ }
         // WAL：写入先进 -wal，主文件 mtime 只在 checkpoint 时才动 —— 同 zcode 修复（probe 水位停滞 → 同步延迟不可控）
         try { watermarkMs = Math.max(watermarkMs, statSync(dbPath + "-wal").mtimeMs); } catch { /* no wal */ }
+        // 库内会话计数（1.19.5 起新会话只写 db，legacy 计数不再代表全量；
+        // 迁移会话两源并存时粗估允许重复——probe.count 契约即 rough estimate）
+        const db = openModernDb();
+        if (db) {
+          try { count += db.prepare("SELECT COUNT(*) AS c FROM session").get().c; }
+          catch { /* schema drift */ } finally { db.close(); }
+        }
       }
       return { ok: count > 0 || existsSync(dbPath), count, watermarkMs };
     },
 
     listFresh() { return statFreshList(this.list()); },
     list() {
-      const out = legacyList();
       // modern db sessions（防御式——schema 可能漂移）。直读源 db（2026-09-12 去 copyDb），
       // rev = time_updated：syncExt 按 per-session 版本水位判变。
-      if (!out.length) {
-        const db = openModernDb();
-        if (db) {
-          try {
-            const rows = db.prepare("SELECT id, time_updated FROM session").all() as
-              Array<{ id: string; time_updated?: number | null }>;
-            for (const row of rows) {
-              out.push({
-                sid: row.id,
-                path: `${join(ROOT(), "opencode.db")}#session:${row.id}`,
-                ...(typeof row.time_updated === "number" && row.time_updated > 0 ? { rev: row.time_updated } : {}),
-              });
-            }
-            cleanupLegacyCopyDir();
-          } catch { /* unreadable */ } finally { db.close(); }
-        }
+      // 1.19.5 起新会话只写 db（legacy JSON 停写）→ 恒合并两源，db 优先去重
+      // （opencode 迁移会把旧会话搬进库；legacy 文件残留时以库为准）。
+      const out: ExtSessionRef[] = [];
+      const seen = new Set<string>();
+      const db = openModernDb();
+      if (db) {
+        try {
+          const rows = db.prepare("SELECT id, time_updated FROM session").all() as
+            Array<{ id: string; time_updated?: number | null }>;
+          for (const row of rows) {
+            seen.add(row.id);
+            out.push({
+              sid: row.id,
+              path: `${join(ROOT(), "opencode.db")}#session:${row.id}`,
+              ...(typeof row.time_updated === "number" && row.time_updated > 0 ? { rev: row.time_updated } : {}),
+            });
+          }
+          cleanupLegacyCopyDir();
+        } catch { /* unreadable */ } finally { db.close(); }
+      }
+      for (const r of legacyList()) {
+        if (!seen.has(r.sid)) out.push(r);
       }
       return out;
     },
@@ -272,6 +286,22 @@ export function createOpencodeAdapter(homeOverrideArg?: string): AgentAdapter {
   };
 }
 
+interface DbMessageRec { id?: string; data: string | null; timeCreated?: number | null }
+
+/** 1.19.5+ schema：message 表（role/modelID 在 data JSON）+ part 表（data 与 legacy JSON part 同形）。 */
+function dbMessagesModern(db: DatabaseSync, sid: string): DbMessageRec[] {
+  return db.prepare(
+    "SELECT id, data, time_created AS timeCreated FROM message WHERE session_id = ? ORDER BY time_created, id",
+  ).all(sid) as DbMessageRec[];
+}
+
+/** 旧 modern schema（1.18- 观测）：session_message 单表，data 内嵌 parts。1.19.5 起恒空，留作兜底。 */
+function dbMessagesInlineParts(db: DatabaseSync, sid: string): DbMessageRec[] {
+  return db.prepare(
+    "SELECT data FROM session_message WHERE session_id = ? ORDER BY seq",
+  ).all(sid) as DbMessageRec[];
+}
+
 function parseModernDb(ref: ExtSessionRef): ParsedResult {
   const [dbPath] = ref.path.split("#");
   let db: DatabaseSync;
@@ -281,31 +311,55 @@ function parseModernDb(ref: ExtSessionRef): ParsedResult {
     const sessRow = db.prepare("SELECT directory, title, time_created, time_updated FROM session WHERE id = ?").get(sid) as
       { directory?: string; title?: string; time_created?: number; time_updated?: number } | undefined;
     if (!sessRow) return null;
-    const msgRows = db.prepare(
-      "SELECT data FROM session_message WHERE session_id = ? ORDER BY seq",
-    ).all(sid) as Array<{ data: string | null }>;
+    // 主路径：message + part 两表（1.19.5+）；message 表不存在时退回 session_message 内嵌形状
+    let hasMessageTable = true;
+    try { db.prepare("SELECT 1 FROM message LIMIT 1").get(); } catch { hasMessageTable = false; }
+    interface MsgRow { id?: string; role: "user" | "assistant"; model?: string; ts: number | null; parts: Array<Record<string, unknown>> }
+    const msgRows: MsgRow[] = [];
+    if (hasMessageTable) {
+      for (const r of dbMessagesModern(db, sid)) {
+        let role: "user" | "assistant" = "user";
+        let model: string | undefined;
+        let ts: number | null = r.timeCreated ?? null;
+        try {
+          const d = JSON.parse(r.data ?? "{}") as Record<string, unknown>;
+          if (d.role === "assistant") role = "assistant";
+          if (typeof d.modelID === "string") model = d.modelID;
+          const t = d.time as { created?: unknown } | undefined;
+          if (typeof t?.created === "number") ts = t.created;
+        } catch { /* keep defaults */ }
+        const prows = db.prepare("SELECT data FROM part WHERE message_id = ? ORDER BY id").all(r.id ?? "") as
+          Array<{ data: string | null }>;
+        const parts = prows.map((p) => { try { return JSON.parse(p.data ?? "{}") as Record<string, unknown>; } catch { return {}; } });
+        msgRows.push({ id: r.id, role, model, ts, parts });
+      }
+    } else {
+      for (const r of dbMessagesInlineParts(db, sid)) {
+        if (!r.data) continue;
+        let d: Record<string, unknown>;
+        try { d = JSON.parse(r.data) as Record<string, unknown>; } catch { continue; }
+        msgRows.push({
+          role: d.role === "assistant" ? "assistant" : "user",
+          parts: Array.isArray(d.parts) ? d.parts as Array<Record<string, unknown>> : [],
+          ts: null,
+        });
+      }
+    }
     let seq = 0, firstMessage = "", lastMessage = "";
     const messages: IndexedMessage[] = [];
     for (const row of msgRows) {
-      if (!row.data) continue;
-      let d: Record<string, unknown>;
-      try { d = JSON.parse(row.data) as Record<string, unknown>; } catch { continue; }
-      const role = d.role === "assistant" ? "assistant" : "user";
-      const parts = Array.isArray(d.parts) ? d.parts as Array<Record<string, unknown>> : [];
-      for (const p of parts) {
-        const t = p.type as string;
-        let text = "", toolName: string | undefined;
-        if (t === "text" && typeof p.text === "string") text = p.text;
-        else if (t === "tool" && typeof p.tool === "string") {
-          toolName = p.tool;
-          const state = p.state as Record<string, unknown> | undefined;
-          text = `🛠 ${p.tool} ${JSON.stringify(state?.input ?? {}).slice(0, 300)}`;
-        } else continue;
-        if (!text.trim()) continue;
-        seq++;
-        if (!firstMessage && role === "user") firstMessage = text.slice(0, 500);
-        lastMessage = text;
-        messages.push({ entryId: `${seq}`, role, ts: null, model: undefined, toolName, text });
+      const folded = foldOpencodeFamilyParts(row.parts);
+      const { messages: foldedMsgs, nextSeq } = foldedPartsToMessages(folded, {
+        role: row.role,
+        ts: typeof row.ts === "number" && row.ts > 0 ? new Date(row.ts).toISOString() : null,
+        model: row.role === "assistant" ? row.model : undefined,
+        seqStart: seq,
+      });
+      seq = nextSeq;
+      messages.push(...foldedMsgs);
+      for (const fm of foldedMsgs) {
+        if (!firstMessage && fm.role === "user") firstMessage = fm.text.slice(0, 500);
+        lastMessage = fm.text;
       }
     }
     if (!messages.length) return null;
