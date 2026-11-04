@@ -1,0 +1,64 @@
+{
+  "name": "@aiti-ai/aiti-ui-env",
+  "version": "0.1.0",
+  "description": "pi-web 扩展：UI 环境管理（桌面/无头虚拟屏）——4 态模式裁决新启动 MCP/应用的显示环境 + Xvfb/openbox/AT-SPI/VNC-on-web",
+  "type": "module",
+  "aiti": {
+    "kind": "ext",
+    "tier": "full",
+    "systemDeps": {
+      "linux-apt": [
+        "xvfb",
+        "openbox",
+        "x11vnc",
+        "novnc",
+        "dbus-x11",
+        "at-spi2-core",
+        "xauth",
+        "x11-utils",
+        "xdotool",
+        "wmctrl",
+        "xterm"
+      ],
+      "darwin": "原生桌面即显示（macOS 支持：Aqua 会话探测 + 屏幕共享）"
+    },
+    "services": [
+      {
+        "name": "vnc",
+        "port": 5900,
+        "phase": "gui",
+        "cmd": "x11vnc -display :N -localhost -forever -shared"
+      },
+      {
+        "name": "vnc-web",
+        "port": 6080,
+        "phase": "gui",
+        "cmd": "node vnc-bridge --port 6080 --vnc 5900"
+      }
+    ]
+  },
+  "homepage": "https://aiti.pw/extensions/aiti-ui-env.html",
+  "license": "MIT",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "dependencies": {
+    "justget": "^0.2.4"
+  },
+  "soul": "没有显示器，也可以有舞台。",
+  "aitiConfigs": {
+    "configFiles": [
+      "env-mode.json",
+      "display-config.json",
+      "vnc-token",
+      "rdp-token",
+      "vnc-rfb-passwd"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}
