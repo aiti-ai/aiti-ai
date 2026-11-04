@@ -24,6 +24,7 @@ TAG=""
 PLATFORM=""
 CN=0
 PRIVREG="${AITI_PRIVATE_REGISTRY:-}"
+NPM_REG="${NPM_REG:-}"   # 覆盖全局 registry（私源为代理型仓库时可直指，覆盖公共+私有全部依赖）
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --target) TARGET="$2"; shift 2;;
@@ -31,6 +32,7 @@ while [[ $# -gt 0 ]]; do
     --platform) PLATFORM="$2"; shift 2;;
     --cn) CN=1; shift;;
     --private-registry) PRIVREG="$2"; shift 2;;
+    --npm-registry) NPM_REG="$2"; shift 2;;
     *) echo "unknown arg $1"; exit 1;;
   esac
 done
@@ -57,6 +59,10 @@ if [[ "$CN" = "1" || "${AITI_CN:-0}" = "1" ]]; then
 else
   echo "[build] 官方源模式（境外网络/GitHub/正式发布；国内构建请加 --cn）"
 fi
+if [[ -n "$NPM_REG" ]]; then
+  EXTRA_ARGS+=(--build-arg "NPM_MIRROR=${NPM_REG}")
+  echo "[build] 全局 registry 覆盖：${NPM_REG}"
+fi
 PRIV_ARGS=()
 if [[ -n "$PRIVREG" ]]; then
   EXTRA_ARGS+=(--build-arg "AITI_NPM_REGISTRY=${PRIVREG}")
@@ -75,8 +81,8 @@ rsync -a --delete \
   --exclude 'node_modules' --exclude '.next' --exclude '.next-*' --exclude '.git' \
   --exclude '.docker-build-context' --exclude 'dist' \
   --exclude '.aiti-trace' --exclude 'tsconfig.tsbuildinfo' \
-  --exclude 'extensions' --exclude 'pi-plugins' --exclude 'packages' \
-  --exclude 'docker' --exclude 'test-results' \
+  --exclude '/extensions' --exclude '/pi-plugins' --exclude '/packages' \
+  --exclude '/docker' --exclude '/test-results' \
   "$PI_WEB_SRC/" "$STAGE/pi-web/"
 rsync -a --delete \
   --exclude 'node_modules' --exclude '.git' \
