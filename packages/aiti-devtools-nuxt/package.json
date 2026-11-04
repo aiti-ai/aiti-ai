@@ -1,0 +1,23 @@
+{
+  "name": "@aiti-ai/aiti-devtools-nuxt",
+  "version": "0.1.0",
+  "description": "aiti-devtools Nuxt module：一行 modules 接入 = dev server 内置 MCP（桥/MCP/launcher 在 /aiti/）+ 自动注入 head + 自动注册 agent 工具",
+  "type": "module",
+  "main": "dist/module.js",
+  "exports": {
+    ".": "./dist/module.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@aiti-ai/aiti-devtools-vite": "^0.1.0"
+  },
+  "peerDependencies": {
+    "nuxt": "^3.0.0 || ^4.0.0"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "esbuild src/module.ts --bundle --format=esm --outfile=dist/module.js --target=es2022 --platform=node --external:@aiti-ai/aiti-devtools-vite --external:nuxt"
+  }
+}

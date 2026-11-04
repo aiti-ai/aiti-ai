@@ -1,0 +1,28 @@
+{
+  "name": "@aiti-ai/aiti-devtools-opencode",
+  "version": "0.3.0",
+  "description": "aiti-devtools → OpenCode 宿主 adapter：插件（16 工具 + 推送注入 + messages.transform 占位符改写）+ web UI AI 窗 client（候选条/交互卡，nginx 反代注入不 fork）",
+  "type": "module",
+  "main": "dist/aiti-devtools-opencode.js",
+  "license": "MIT",
+  "files": [
+    "dist",
+    "src",
+    "tools"
+  ],
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "deploy": "node tools/build.mjs && node tools/deploy.mjs"
+  },
+  "dependencies": {
+    "@aiti-ai/aiti-devtools-agent": "^0.1.1",
+    "@aiti-ai/aiti-devtools-core": "^0.3.9"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.1.51",
+    "esbuild": "^0.24.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.0.0"
+  }
+}

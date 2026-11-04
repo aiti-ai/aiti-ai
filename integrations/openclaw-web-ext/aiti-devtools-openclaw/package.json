@@ -1,0 +1,21 @@
+{
+  "name": "@aiti-ai/aiti-devtools-openclaw",
+  "version": "0.6.3",
+  "description": "aiti-devtools OpenClaw 宿主 adapter：16 个 aiti_* 工具直连桥 REST（跳过 MCP）",
+  "type": "module",
+  "main": "./dist/index.js",
+  "openclaw": {
+    "runtimeExtensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.7.1-2"
+    },
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "scripts": {
+    "build": "node tools/build.mjs"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "name": "@aiti-ai/aiti-devtools-vite",
+  "version": "0.1.0",
+  "description": "aiti-devtools Vite 插件：应用 dev server 上内置 MCP（launcher 注入 + 桥 + MCP 端点 + 操作台，同源 /aiti/），启动自动注册到常见 agent 工具",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./astro": "./dist/astro.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "dependencies": {
+    "@aiti-ai/aiti-devtools-core": "^0.3.5"
+  },
+  "peerDependencies": {
+    "vite": "^5.0.0 || ^6.0.0 || ^7.0.0"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "license": "MIT",
+  "scripts": {
+    "build": "esbuild src/index.ts --bundle --format=esm --outfile=dist/index.js --target=es2022 --platform=node --external:@aiti-ai/aiti-devtools-core --external:vite && esbuild src/astro.ts --bundle --format=esm --outfile=dist/astro.js --target=es2022 --platform=node --external:@aiti-ai/aiti-devtools-core"
+  }
+}

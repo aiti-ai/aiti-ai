@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "skipLibCheck": true,
+    "types": [
+      "node"
+    ],
+    "typeRoots": [
+      "/home/pi/workspace/pi-web/node_modules/@types"
+    ],
+    "paths": {
+      "@earendil-works/pi-coding-agent": [
+        "/home/pi/workspace/pi-prod/node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+      ]
+    },
+    "baseUrl": ".",
+    "ignoreDeprecations": "6.0"
+  },
+  "include": [
+    "pi-web-bridge.ts"
+  ]
+}
