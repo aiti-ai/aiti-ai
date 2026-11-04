@@ -259,6 +259,72 @@ test("hideApp：追加写语义（幂等，不翻转）——与恢复区 toggle
   assert.deepEqual(readHidden(), []);
 });
 
+
+test("panel 卡 run 用宿主全序 id（裸注册 id 补 extId 前缀——present 状态机按全 key 寻址）", () => {
+  const opened = [];
+  const apps = buildApps({
+    exts: [{ id: "sm", name: "SM" }, { id: "ed", name: "ED" }],
+    slotItems: [
+      { slot: "rightFileDock", id: "panel", extId: "sm", meta: { title: "All Sessions" } },
+      { slot: "rightFileDock", id: "file:/tmp/a.png", extId: "ed", meta: { title: "图片预览" } },
+      { slot: "rightFileDock", id: "sm:namespaced", extId: "sm", meta: { title: "已带前缀" } },
+    ],
+    featureState: {},
+    openPanel: (k) => opened.push(k),
+  });
+  const panelCards = apps.filter((a) => a.kind === "panel");
+  assert.deepEqual(panelCards.map((a) => a.id), ["panel:sm:panel", "panel:ed:file:/tmp/a.png", "panel:sm:namespaced"]);
+  panelCards.forEach((a) => a.run());
+  assert.deepEqual(opened, ["sm:panel", "ed:file:/tmp/a.png", "sm:namespaced"]);
+});
+
+test("跨 kind 同扩展同名去重：动作卡 + 面板卡并存时保留面板卡；不同名共存", () => {
+  const apps = buildApps({
+    exts: [{ id: "sched", name: "Sched" }],
+    slotItems: [
+      { slot: "toolbar", id: "sched-open", extId: "sched", meta: { label: "调度", onClick: () => {} } },
+      { slot: "rightFileDock", id: "panel", extId: "sched", meta: { title: "调度" } },
+      { slot: "toolbar", id: "other", extId: "sched", meta: { label: "别的功能", onClick: () => {} } },
+    ],
+    featureState: {},
+    openPanel: () => {},
+  });
+  const sched = apps.filter((a) => a.label === "调度");
+  assert.equal(sched.length, 1, "同扩展同名只留一张卡");
+  assert.equal(sched[0].kind, "panel", "保留面板卡");
+  assert.ok(apps.some((a) => a.label === "别的功能"), "不同名动作卡不受影响");
+  // 位置稳定：调度卡仍在调度动作卡最初出现的位置（同扩展条目相对序保持）
+  assert.ok(apps.indexOf(sched[0]) < apps.findIndex((a) => a.label === "别的功能"));
+});
+
+test("两个扩展都注册裸 id panel 时不再互相吞卡（seen 按全 id 去重）", () => {
+  const apps = buildApps({
+    exts: [{ id: "a1" }, { id: "a2" }],
+    slotItems: [
+      { slot: "rightFileDock", id: "panel", extId: "a1", meta: { title: "甲面板" } },
+      { slot: "rightFileDock", id: "panel", extId: "a2", meta: { title: "乙面板" } },
+    ],
+    featureState: {},
+    openPanel: () => {},
+  });
+  assert.equal(apps.filter((a) => a.kind === "panel").length, 2, "两卡都出现");
+});
+
+
+test("静态面板条目不进卡（声明标记打不中 dock key = 死卡）", () => {
+  const apps = buildApps({
+    exts: [{ id: "ed", name: "ED" }],
+    slotItems: [
+      { slot: "rightFileDock", id: "file", extId: "ed", static: true, meta: { title: "文件" } },
+      { slot: "rightFileDock", id: "image-preview", extId: "ed", meta: { title: "图片预览" } },
+    ],
+    featureState: {},
+    openPanel: () => {},
+  });
+  assert.ok(!apps.some((a) => a.label === "文件" && a.kind === "panel"), "静态死卡不出现");
+  assert.ok(apps.some((a) => a.label === "图片预览"), "动态面板卡保留");
+});
+
 test("disableExtension：ops 请求形态 + HTTP 200 里的 body.error 也算失败", async () => {
   const calls = [];
   let next = { ok: true, status: 200, body: {} };
