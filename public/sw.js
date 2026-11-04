@@ -133,8 +133,7 @@ function sessionNotificationsToClose(existing, incomingTag) {
 
 // Show after closing overflow session-completion notifications (best-effort: never block
 // showing if enumeration is unavailable or fails).
-async function showNotificationWithSessionLimit(title, options) {
-  const tag = options.tag;
+async function closeOverflowSessionNotifications(tag) {
   if (isSessionNotificationTag(tag)) {
     try {
       const open = await self.registration.getNotifications();
@@ -149,7 +148,6 @@ async function showNotificationWithSessionLimit(title, options) {
       void listError;
     }
   }
-  await self.registration.showNotification(title, options);
 }
 
 // Push events may arrive concurrently (several sessions finishing at once) — display serially
@@ -170,17 +168,47 @@ self.addEventListener("push", (event) => {
   // when a service worker handles a push without showing a notification, so
   // suppressing the notification while a window is visible poisons the
   // subscription in the background-delivery case. Notifications sharing a tag
-  // replace each other instead of stacking, and multi-session completions are
-  // capped by showNotificationWithSessionLimit (newest replaces the oldest).
+  // replace each other instead of stacking; multi-session completions are
+  // capped by closeOverflowSessionNotifications (newest replaces the oldest),
+  // and the #1515/#1518 recent-same-tag dedup lives in showPushNotification.
   pushDisplayQueue = pushDisplayQueue
     .catch(() => {})
-    .then(() => showNotificationWithSessionLimit(title, {
-      body,
-      data: { url: typeof url === "string" && url ? url : "/" },
-      ...(typeof tag === "string" && tag ? { tag, renotify: true } : {}),
-    }));
+    .then(async () => {
+      await closeOverflowSessionNotifications(typeof tag === "string" ? tag : undefined);
+      await showPushNotification(title, body, url, tag);
+    });
   event.waitUntil(pushDisplayQueue.catch(() => {}));
 });
+
+// An open page announces a completion itself from its event stream, and the
+// push for the same completion lands a moment later. Both carry the session's
+// tag; with renotify the push replaced the page's notification and alerted a
+// second time (#1515). A same-tag notification shown this recently is that
+// completion's, so the push replaces it quietly. An older one belongs to an
+// earlier task and the push alerts again (#701).
+const RECENT_NOTIFICATION_MS = 10000;
+
+async function showPushNotification(title, body, url, tag) {
+  const shownAt = Date.now();
+  const data = { url: typeof url === "string" && url ? url : "/", shownAt };
+  if (typeof tag !== "string" || !tag) {
+    return self.registration.showNotification(title, { body, data });
+  }
+  const renotify = !(await hasRecentNotification(tag, shownAt));
+  return self.registration.showNotification(title, { body, data, tag, renotify });
+}
+
+async function hasRecentNotification(tag, now) {
+  try {
+    const notifications = await self.registration.getNotifications({ tag });
+    return notifications.some((notification) => {
+      const shownAt = notification.data?.shownAt;
+      return typeof shownAt === "number" && now - shownAt >= 0 && now - shownAt < RECENT_NOTIFICATION_MS;
+    });
+  } catch {
+    return false;
+  }
+}
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();

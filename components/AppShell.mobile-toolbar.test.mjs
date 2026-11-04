@@ -37,9 +37,10 @@ test("keeps action icons inline in medium mobile sidebars", { skip: upstreamStru
 
 test("uses a compact narrow-mobile toolbar with a floating action layer", { skip: upstreamStructSkip }, () => {
   assert.match(source, /data-mobile-toolbar="true"[\s\S]*?flex: 1,[\s\S]*?minWidth: 0/);
+  // 合并注：窄屏布局 = Agents 按钮 + More 按钮并排，浮动层从两者之后开始。
   assert.match(
     source,
-    /data-mobile-toolbar-actions="true"[\s\S]*?position: "absolute"[\s\S]*?right: 0,[\s\S]*?left: TOP_BAR_ICON_BUTTON_SIZE/,
+    /data-mobile-toolbar-actions="true"[\s\S]*?position: "absolute"[\s\S]*?right: 0,[\s\S]*?left: `calc\(2 \* \$\{TOP_BAR_ICON_BUTTON_SIZE\}\)`/,
   );
 
   for (const action of ["history", "name", "agents", "branches", "system", "tools"]) {
@@ -72,7 +73,8 @@ test("only renders branch toolbar controls for sessions with branches", () => {
 
 test("keeps covered statistics and file controls out of interaction and focus", { skip: upstreamStructSkip }, () => {
   assert.match(source, /const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;/);
-  assert.match(source, /disabled=\{!showChat \|\| covered\}[\s\S]*?tabIndex=\{covered \? -1 : undefined\}/);
+  // 合并注：merged renderMainFileToggle 的禁用条件是 covered（fork 顶栏项自定义体系自管 showChat 门控）。
+  assert.match(source, /disabled=\{covered\}[\s\S]*?tabIndex=\{covered \? -1 : undefined\}/);
   assert.match(source, /data-mobile-toolbar-file=\{mobile \? "true" : undefined\}[\s\S]*?visibility: covered \? "hidden" : "visible"/);
   assert.match(source, /aria-hidden=\{covered \? true : undefined\}/);
 });
@@ -98,7 +100,8 @@ test("keeps the mobile action layer open after using an expanded action", { skip
   assert.match(source, /toggleTopPanel\("branches", true\)/);
   assert.match(source, /handleSystemInfoToggle\("system", mobile\)/);
   assert.match(source, /handleSystemInfoToggle\("tools", mobile\)/);
-  assert.match(source, /onClick=\{\(\) => toggleTopPanel\("session"\)\}/);
+  // 合并注：merged 的 session 面板按钮在打开时顺带刷新统计（toggleTopPanel("session") 在块内）。
+  assert.match(source, /toggleTopPanel\("session"\);/);
 });
 
 test("keeps theme and language in settings instead of the chat toolbar", { skip: "upstream assertion contradicts the fork decision (fork top bar keeps theme/language entries instead of settings-panel-only); fork intent positively pinned by the [fork] dual-entry test at the end of this file" }, () => {
@@ -111,15 +114,12 @@ test("keeps theme and language in settings instead of the chat toolbar", { skip:
   assert.match(source, /useTheme\(\);/);
 });
 
-test("prioritizes context and cost when the mobile statistics area narrows", { skip: upstreamStructSkip }, () => {
+test("prioritizes context and cost when the mobile statistics area narrows", { skip: "[fork] .mobile-session-stats 容器查询样式在 fork 顶栏自定义体系里从未落地（main 上该断言一直被 upstreamStructSkip 跳过）；fork 的统计降级由 AppShell.stat-fallback.test.mjs 四条钉住" }, () => {
   assert.match(source, /\.mobile-session-stats \{[\s\S]*?container-type: inline-size/);
-  assert.match(source, /@container \(max-width: 158px\)[\s\S]*?\.mobile-session-stat-io/);
-  assert.match(source, /@container \(max-width: 88px\)[\s\S]*?\.mobile-session-stat-cost/);
-  assert.match(source, /mobileContextText = percent !== null \? `\$\{percent\.toFixed\(0\)\}%` : null/);
 });
 
-test("places trust warnings below the mobile toolbar and the file toggle in toolbar flow", { skip: upstreamStructSkip }, () => {
-  assert.match(source, /\{isMobile && renderProjectTrustWarning\(true\)\}/);
+test("places trust warnings below the mobile toolbar and the file toggle in toolbar flow", { skip: "[fork] fork 的移动端信任横幅（data-mobile-trust-banner）与 renderProjectTrustWarning 在 fork 顶栏自定义体系里从未落地（main 上一直被 upstreamStructSkip 跳过）；fork 的信任警告钉在 AppShell.topbar-dedup.test 的内联 IIFE 断言" }, () => {
+  assert.match(source, /projectTrust\?\.requiresTrust/);
   assert.match(source, /data-mobile-trust-banner=\{mobileBanner \? "true" : undefined\}/);
   assert.doesNotMatch(source, /File panel toggle — always visible at top-right/);
   assert.doesNotMatch(source, /position: "fixed", top: "env\(safe-area-inset-top\)"/);

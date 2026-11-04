@@ -60,10 +60,20 @@ function dispatchNotificationClick(data) {
 }
 
 
-function dispatchPush(payload, clients, { existing = [] } = {}) {
+// 兼容两种注入风格：函数（上游 #1515/#701 用例）或 { existing: [...] }（fork 会话上限用例）。
+// 合并后的 sw.js 会以两种形态调用 getNotifications：无参（会话上限清理）与 { tag }（近期同 tag 检查）。
+function dispatchPush(payload, clients, existingOrGet = {}) {
   let pending;
   const shown = [];
   const closed = [];
+  const provided = typeof existingOrGet === "function" ? [] : (existingOrGet.existing ?? []);
+  const notifications = provided.map((n, i) => ({
+    ...n,
+    close: () => { closed.push(n.tag ?? `#${i}`); },
+  }));
+  const lister = typeof existingOrGet === "function"
+    ? existingOrGet
+    : async (opts) => (opts?.tag ? notifications.filter((n) => n.tag === opts.tag) : notifications);
   self.clients = {
     matchAll: async () => clients,
     openWindow: async () => assert.fail("push must not open windows"),
@@ -73,11 +83,7 @@ function dispatchPush(payload, clients, { existing = [] } = {}) {
     // self.registration.scope through the SW's getScopePath().
     scope: self.registration?.scope,
     showNotification: async (title, options) => { shown.push({ title, options }); },
-    getNotifications: async () => existing.map((n, i) => ({
-      tag: n.tag,
-      timestamp: n.timestamp,
-      close: () => { closed.push(n.tag ?? `#${i}`); },
-    })),
+    getNotifications: lister,
   };
   listeners.get("push")({
     data: { json: () => payload },
@@ -261,16 +267,62 @@ test("push always shows a notification, even when a window is visible", async ()
 
   // iOS revokes the push subscription when a push is handled without a
   // notification, so the notification must never be suppressed.
+  assert.equal(event.shown.length, 1);
+  const shownAt = event.shown[0].options.data.shownAt;
+  assert.equal(typeof shownAt, "number");
   assert.deepEqual(event.shown, [{
     title: "Session complete",
     options: {
       body: "Task finished.",
-      data: { url: "/?session=session-1" },
+      data: { url: "/?session=session-1", shownAt },
       tag: "pi-session-complete:session-1",
       // #701: repeated completion notifications with the same tag need renotify to surface again
       renotify: true,
     },
   }]);
+});
+
+const completionPush = {
+  title: "Session complete",
+  body: "Task finished.",
+  url: "/?session=session-1",
+  tag: "pi-session-complete:session-1",
+};
+
+function existingNotifications(list) {
+  return async ({ tag }) => list.filter((notification) => notification.tag === tag);
+}
+
+test("push quietly replaces the page's notification of the same completion (#1515)", async () => {
+  const event = dispatchPush(completionPush, [], existingNotifications([
+    { tag: "pi-session-complete:session-1", data: { url: "/?session=session-1", shownAt: Date.now() - 600 } },
+  ]));
+  await event.pending;
+
+  // Still shown, which iOS requires, but without a second alert.
+  assert.equal(event.shown.length, 1);
+  assert.equal(event.shown[0].options.tag, "pi-session-complete:session-1");
+  assert.equal(event.shown[0].options.renotify, false);
+});
+
+test("push alerts again over an earlier task's notification (#701)", async () => {
+  const event = dispatchPush(completionPush, [], existingNotifications([
+    { tag: "pi-session-complete:session-1", data: { url: "/?session=session-1", shownAt: Date.now() - 60_000 } },
+    { tag: "pi-session-complete:session-1", data: { url: "/?session=session-1" } },
+    { tag: "pi-session-complete:session-2", data: { url: "/?session=session-2", shownAt: Date.now() } },
+  ]));
+  await event.pending;
+
+  assert.equal(event.shown.length, 1);
+  assert.equal(event.shown[0].options.renotify, true);
+});
+
+test("push alerts when the browser cannot list notifications", async () => {
+  const event = dispatchPush(completionPush, [], async () => { throw new Error("unsupported"); });
+  await event.pending;
+
+  assert.equal(event.shown.length, 1);
+  assert.equal(event.shown[0].options.renotify, true);
 });
 
 test("push ignores malformed payloads", async () => {

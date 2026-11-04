@@ -6,7 +6,7 @@ import { join } from "node:path";
 export interface ModelsData {
   models: Record<string, string>;
   modelList: {
-    id: string; name: string; provider: string; input?: string[];
+    id: string; name: string; provider: string; providerName?: string; input?: string[];
     /** Probe/runtime availability from the model-check extension: ok=available / rl=rate-limited (429) / err=other errors / unprobed=not probed (default=no data) */
     avail?: "ok" | "rl" | "err" | "unprobed";
     /** Whether this provider is rate-limited as a whole (all models currently 429) — display hint only, not auto-disabled */
@@ -24,6 +24,8 @@ export interface ModelsData {
   modelError?: string;
   /** Warnings from resolving the `enabledModels` scope (e.g. a pattern matched nothing). */
   modelScopeWarnings?: string[];
+  /** True when enabledModels is active and restricting the model list. */
+  isScoped?: boolean;
 }
 
 interface ModelsCacheState {

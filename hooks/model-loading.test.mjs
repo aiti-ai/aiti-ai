@@ -53,7 +53,7 @@ function setup(fetchImpl, opts = {}) {
     sessionIdRef: { current: null }, thinkingLevelOverrideRef: { current: null }, newSessionModelOverrideRef: { current: null },
     // The fork wraps API addresses for sub-path deployments (/dev prefix) with apiUrl(); inside the sandbox it passes through.
     apiUrl: (path) => path,
-    thinkingLevelPinsRef: { current: {} }, defaultThinkingLevelRef: { current: null },
+    thinkingLevelPinsRef: { current: {} }, defaultThinkingLevelRef: { current: null }, allModelsLoadRef: { current: null },
     asConcreteThinkingLevel: (value) => (!value || value === "auto" ? null : value),
     fetch: fetchImpl,
     missingCwdFromBody,
@@ -66,7 +66,7 @@ function setup(fetchImpl, opts = {}) {
   context.modelsShared = script(`(${sharedMapDecl.initializer.getText(source)})`).runInNewContext(context);
   context.MODELS_SHARED_TTL_MS = script(`(${sharedTtlDecl.initializer.getText(source)})`).runInNewContext(context);
   context.fetchModelsShared = script(`(${sharedFn.getText(source)})`).runInNewContext(context);
-  for (const name of ["ModelError", "ModelsMissingCwd", "ModelNames", "ModelScopeWarnings", "ModelThinkingLevels", "ModelThinkingLevelMaps", "ModelList", "NewSessionDefaultModel", "NewSessionDefaultThinkingLevel", "SavedDefaultThinkingLevel", "NewSessionModel"]) {
+  for (const name of ["ModelError", "ModelsMissingCwd", "ModelNames", "ModelScopeWarnings", "IsModelScopeActive", "AllModelList", "ModelThinkingLevels", "ModelThinkingLevelMaps", "ModelList", "NewSessionDefaultModel", "NewSessionDefaultThinkingLevel", "SavedDefaultThinkingLevel", "NewSessionModel"]) {
     context[`set${name}`] = (value) => writes.push([name, value]);
   }
   // Client-side cache layer: by default no cache hits / no writes (existing tests unaffected);

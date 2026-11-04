@@ -3,6 +3,8 @@ import type { TabOpen } from "./tab-session.ts";
 export interface InitialNavigation {
   requestedCwd: string | null;
   sessionId: string | null;
+  /** The id came from a remembered tab, not the URL: the sidebar treats it as absent (#1168). */
+  sessionFromTab?: boolean;
   sidebarCollapsed: boolean;
 }
 
@@ -42,4 +44,9 @@ export function withTabOpen(
     return { ...navigation, sessionId: tabOpen.sessionId };
   }
   return { ...navigation, requestedCwd: tabOpen.cwd };
+}
+
+/** The ?session= id the URL asked for, unless it named a tab session (#1168). */
+export function linkedSessionId(navigation: InitialNavigation): string | null {
+  return navigation.sessionFromTab ? null : navigation.sessionId;
 }

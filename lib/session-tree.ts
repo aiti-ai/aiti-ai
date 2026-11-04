@@ -57,7 +57,7 @@ export type SidebarRow =
   | { kind: "spacer"; key: string }
   | { kind: "footer-open"; key: "footer-open" }
   | { kind: "footer-archived"; key: "footer-archived"; count: number }
-  | { kind: "archive-group"; key: string; project: SidebarProject; count: number };
+  | { kind: "archive-group"; key: string; project: SidebarProject; count: number; expanded: boolean };
 
 export interface SessionTreeInput {
   /** The full catalog (allSessions), subagents included. */
@@ -487,7 +487,8 @@ export function nextProjectKeysToRecord(toRecord: readonly string[], sent: Reado
  * Groups by their newest archivedAt (desc), families by archivedAt (desc).
  */
 export function buildArchiveRows(
-  input: Pick<SessionTreeInput, "sessions" | "uiState" | "runningIds" | "awaitingIds" | "unreadIds" | "selectedSessionId" | "currentProject">,
+  input: Pick<SessionTreeInput, "sessions" | "uiState" | "runningIds" | "awaitingIds" | "unreadIds" | "selectedSessionId" | "currentProject">
+    & { collapsed?: ReadonlySet<string> },
 ): SidebarRow[] {
   const { uiState, runningIds } = input;
   const flags: FamilyFlagsInput = input;
@@ -514,7 +515,9 @@ export function buildArchiveRows(
     .sort((a, b) => compareDesc(a.group.newest, b.group.newest) || a.index - b.index);
   for (const { key, group } of ordered) {
     const project = resolver.get(key);
-    rows.push({ kind: "archive-group", key: `archive:${key}`, project, count: group.families.length });
+    const expanded = !input.collapsed?.has(key);
+    rows.push({ kind: "archive-group", key: `archive:${key}`, project, count: group.families.length, expanded });
+    if (!expanded) continue;
     const families = group.families
       .map((entry, index) => ({ ...entry, index }))
       .sort((a, b) => compareDesc(a.archivedAt, b.archivedAt) || a.index - b.index);
@@ -546,6 +549,28 @@ export function familiesToArchive(
     if (status.running || status.unread || status.selected || status.transient) continue;
     const modified = Date.parse(family.latestModified);
     if (Number.isNaN(modified) || modified >= cutoff) continue;
+    ids.push(family.root.id);
+  }
+  return ids;
+}
+
+/**
+ * Root ids of the archived families of `projectKey` (all of them, or those
+ * archived before `archivedBefore`): an archive header's Restore all /
+ * Delete… (upstream #1351 follow-up).
+ */
+export function archivedFamilyIds(
+  input: Pick<SessionTreeInput, "sessions" | "uiState" | "runningIds">,
+  filter: { projectKey?: string; archivedBefore?: number } = {},
+): string[] {
+  const ids: string[] = [];
+  for (const family of listSessionFamilies(input.sessions)) {
+    if (filter.projectKey !== undefined && familyProjectKey(family) !== filter.projectKey) continue;
+    if (!isFamilyArchived(family, input.uiState, input.runningIds)) continue;
+    if (filter.archivedBefore !== undefined) {
+      const archivedAt = finiteNumber(familyEntry(input.uiState, family.root.id)?.archivedAt);
+      if (archivedAt === null || archivedAt >= filter.archivedBefore) continue;
+    }
     ids.push(family.root.id);
   }
   return ids;

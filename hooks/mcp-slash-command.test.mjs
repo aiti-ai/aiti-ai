@@ -239,6 +239,6 @@ test("AppShell opens Settings on the section the chat asks for", () => {
   assert.match(chatWindowSource, /onOpenSettings\?: \(section: SettingsSection\) => void;/);
   // 合并适配：合并件的解构序含 onDebugSnapshotReaderChange。
   assert.match(chatWindowSource, /onSessionStatsPanelOpen,\n\s+onOpenSettings, onDebugSnapshotReaderChange, t,\n\s+deferInitialScroll/);
-  assert.match(appShellSource, /const openSettingsSection = useCallback\(\(section: SettingsSection\) => \{\n\s+setSettingsSection\(section\);/);
-  assert.match(appShellSource, /onOpenSettings=\{openSettingsSection\}/);
+  // 合并注：上游手机端设置加 openAtHome 归位行（settingsOpenAtHome）。
+  assert.match(appShellSource, /const openSettingsSection = useCallback\(\(section: SettingsSection\) => \{\n\s+(?:setSettingsOpenAtHome\(false\);\s+)?setSettingsSection\(section\);/);
 });

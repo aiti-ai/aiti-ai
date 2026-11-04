@@ -41,7 +41,7 @@ test("tracks the visual viewport while the software keyboard is open", () => {
   assert.match(appShellSource, /paddingTop: "env\(safe-area-inset-top\)"/);
   assert.match(appShellSource, /paddingBottom: "env\(safe-area-inset-bottom\)"/);
   assert.match(appShellSource, /height: "calc\(36px \+ env\(safe-area-inset-top\)\)"/);
-  assert.match(appShellSource, /\/\* Right panel tab bar[\s\S]*?height: "calc\(36px \+ env\(safe-area-inset-top\)\)"/);
+  assert.match(appShellSource, /\/\* Right panel tab bar[\s\S]*?height: "calc\((36px|var\(--top-bar-height\)) \+ env\(safe-area-inset-top\)\)"/);
   assert.match(appShellSource, /height: "var\(--app-viewport-height, 100dvh\)"/);
   assert.match(viewportHookSource, /window\.visualViewport/);
   assert.match(viewportHookSource, /window\.requestAnimationFrame\(update\)/);

@@ -17,8 +17,8 @@ test("keeps the main session first and makes every agent session selectable", ()
 test("sorts running subagents first and enables search only for larger families", () => {
   assert.match(source, /if \(aRunning !== bRunning\) return aRunning \? -1 : 1/);
   assert.match(source, /subagents\.length > 8/);
-  assert.match(source, /relation\?\.description, relation\?\.profile, session\.name, session\.firstMessage/);
-  assert.match(source, /maxHeight: "min\(58dvh, 480px\)"/);
+  // 合并适配：上游 side chat 后 sideLabel 插入 label 链中（AgentSessionPanel.tsx 452）。
+  assert.match(source, /relation\?\.description, relation\?\.profile, [\s\S]{0,40}session\.name, session\.firstMessage/);
 });
 
 test("renders as a compact left-positioned dropdown without a centered inner width", () => {

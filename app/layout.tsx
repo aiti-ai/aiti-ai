@@ -64,6 +64,7 @@ export default function RootLayout({
   return (
     <html lang="en" translate="no" className={`${notoSansMono.variable} notranslate`} suppressHydrationWarning>
       <head>
+        <link rel="manifest" href="/manifest.webmanifest" crossOrigin="use-credentials" />
         <meta name="google" content="notranslate" />
         <script
           dangerouslySetInnerHTML={{
