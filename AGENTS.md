@@ -46,7 +46,40 @@ app/api/
   sessions/delete/route.ts         POST { ids } delete sessions and their subagents (a project's Delete all sessions); running ones kept
   sessions/stats/route.ts          POST { ids } each session's tokens, cost, tool calls, active time (the agent switcher's rows)
   sessions/[id]/state/route.ts     GET live wrapper state while running
+  sessions/search/route.ts         GET session search
   sessions/ui-state/route.ts       GET/POST sidebar pins, archive, project order and names (set, restore, pin-project, add-projects, move-project, rename-project)
+  agent/new/route.ts               POST { cwd, message, toolNames?, provider?, modelId? }
+  agent/[id]/route.ts              GET state | POST any command
+  agent/[id]/events/route.ts       GET SSE stream
+  agent/running/route.ts           GET currently-running session ids
+  auth/api-key/[provider]/route.ts POST/DELETE provider API key storage
+  auth/login/[provider]/route.ts   GET OAuth/device-code SSE | POST manual code
+  auth/logout/[provider]/route.ts  POST OAuth logout
+  auth/providers/route.ts          GET OAuth and API-key provider lists
+  cwd/validate/route.ts            POST validate/select a cwd
+  default-cwd/route.ts             POST create ~/pi-cwd-YYYYMMDD
+  files/[...path]/route.ts         GET file contents for viewer
+  home/route.ts                    GET user home directory
+  models/route.ts                  GET { models, modelList, defaultModel }
+  models-config/route.ts           GET/PUT — read/write ~/.pi/agent/models.json
+  models-config/catalog/route.ts   GET models.dev pricing presets
+  models-config/discover/route.ts  POST fetch a configured provider's upstream model list
+  models-config/test/route.ts      POST test a configured model/provider
+  plugins/route.ts                 GET/POST package plugin management
+  plugins/check/route.ts           POST check plugin package updates
+  project-trust/route.ts           GET/POST project trust for package installs
+  skills/route.ts                  GET/PATCH loaded skills and disable-model-invocation
+  skills/install/route.ts          POST install skills through npx skills add
+  skills/search/route.ts           GET/POST skills.sh search
+  subagents/settings/route.ts      GET/PUT built-in subagent feature setting
+  worktrees/route.ts               GET/POST/DELETE git worktrees
+  web-auth/route.ts                GET status | POST login | DELETE logout (browser password)
+  extensions/[...path]/route.ts    GET/POST/PUT/DELETE/PATCH extension api dispatch + assets（门禁后分发，asset 防穿越）
+  extensions/manifest/route.ts     GET client manifest（ui 元数据 + clientUrl + i18n）
+  extensions/status/route.ts       GET 全量状态（含禁用/失败条目 + 插入点/钩子/依赖）；管理操作在 aiti-extman 扩展
+  extensions/reload/route.ts       POST hot reload（shutdown→loadAll→startAll）
+  （扩展管理 UI/安装/在线注册表已迁出 core → 外部 aiti-extman 扩展：
+    /api/extensions/aiti-extman/{status,registry,ops}）
   sessions/[id]/auto-name/route.ts POST generate a session title
   sessions/search/route.ts         GET session search
   agent/new/route.ts               POST { cwd, type: prompt|ensure_session (start only), message?, toolNames?, provider?, modelId?, thinkingLevel? }
@@ -257,6 +290,17 @@ hooks/
   usePrismLanguages.ts     true once the Prism languages are loaded; starts the load for a highlighter
   useTheme.ts              theme state
   useTerminalTheme.ts      the terminal's own dark/light choice (localStorage), apart from the app theme
+  ext/types.ts         PiWebExtension contract（server hooks + ui 元数据 + ExtCoreApi 数据契约）
+  ext/loader.ts        jiti 加载 ~/.pi/web/extensions/<id>/（moduleCache:false 支持 reload）
+  ext/registry.ts      globalThis.__piWebExt 单例：loadAll/startAll/shutdown/reload/api 分发/middleware 链/manifest/assetPath 防穿越
+  ext/core.ts          makeExtCore()：listSessions/getRunningSessionIds/getHomeDir
+  ext/data-dir.ts      代码 ~/.pi/web/extensions、数据 ~/.pi/web/data/<extId>/（PI_WEB_EXTENSIONS_DIR/PI_WEB_DATA_DIR 覆盖）
+  ext-ui-store.ts      client 插槽注册表（window.__piWebExtUI + subscribe 版本号）
+  base-path.ts         client-side basePath helpers (NEXT_PUBLIC_BASE_PATH)
+（注：草稿持久化已迁出 core → aiti-draft-keeper 扩展（composer 契约 v2）；startup-preferences.ts 已随上游改名 default-preferences.ts）
+
+components/（aiti 扩展插槽，合入上游组件清单之后）：
+  ExtSlots.tsx         ExtSlotsProvider（拉 manifest + 动态 import client bundle + register(ctx)）+ <ExtSlot name=.../>（sidebar/sessionRowActions 在 SessionSidebar 内）
 ```
 
 ---
@@ -282,6 +326,97 @@ Design decisions and traps live in `docs/agents/`, one note per area. Read every
 
 ## Old Safari (iOS 16.2)
 
+### Session files can be fully rewritten
+`parentSession` in the header is **display metadata only** — has zero effect on chat content. Safe to `writeFileSync` the entire file (pi does this itself during migrations). Used when cascade-reparenting children on delete.
+
+### ToolCall field normalization
+Pi stores toolCall blocks as `{type:"toolCall", id, name, arguments}` but `ToolCallContent` uses `{toolCallId, toolName, input}`. `normalizeToolCalls()` in `lib/normalize.ts` handles this — called in both `session-reader.ts` (file load) and `handleAgentEvent` in `hooks/useAgentSession.ts` (streaming).
+
+### New session tool preset
+Tool names are passed at session creation (`POST /api/agent/new` -> `toolNames[]`) and persisted in versioned `pi-web:tool-selection` custom entries. No entry means a legacy session and keeps Pi's default behavior; an empty array means Chat only. Chat only resolves before services are created, loads no extensions/skills/prompts/themes, and replaces Pi's base prompt with the ordered contents of Pi's discovered context files. Crossing the Chat-only boundary rebuilds the wrapper; changing between nonempty presets updates it in place. Subagents persist their active tools plus profile-level skill and extension loading switches in `resourceSnapshot`; loaded extensions cannot expose the reserved `Agent`, `get_subagent_result`, or `steer_subagent` tools to a subagent. See `docs/adr/0002-chat-only-tool-selection.md`.
+
+The last preset explicitly selected by the user is stored in browser `localStorage` and initializes fresh-session composers only. Existing sessions never trust that preference; they use their live `get_tools` state or pi's default when no wrapper exists.
+
+### Model defaults for new sessions
+`GET /api/models` returns `defaultModel` read from `~/.pi/agent/settings.json`. `ChatWindow` pre-selects this on mount for new sessions. Explicit browser model/thinking selections are applied atomically during AgentSession construction, then `lib/startup-preferences.ts` persists their effective values without replaying `set_model`/`set_thinking_level`; implicit `enabledModels` fallbacks and thinking pins are not persisted.
+
+### `enabledModels` scoping
+The `enabledModels` setting uses pi's `--models` syntax: minimatch globs against `provider/modelId` or a bare `modelId`, fuzzy matching for non-glob patterns, and an optional `:thinkingLevel` suffix. Never compare those patterns as literal strings — `lib/model-scope.ts` delegates to the SDK's `resolveModelScopeWithDiagnostics()` so pi-web and the TUI agree on the visible model list, and falls back to all available models when patterns resolve to nothing. `startRpcSession()` resolves that scope before creating an AgentSession and passes the selected initial model, thinking pin, and SDK-native `scopedModels` atomically; `GET /api/models` reuses the helper only for selector data, `thinkingLevelPins`, and `modelScopeWarnings` display.
+
+### SSE reconnect on page refresh mid-stream
+On `ChatWindow` mount, `GET /api/agent/[id]` is called. If `state.isStreaming === true`, SSE is reconnected automatically. `thinkingLevel` and `isCompacting` are also synced from this response.
+
+### Compaction SSE events
+Newer pi emits `compaction_start` / `compaction_end`; older versions emitted `auto_compaction_start` / `auto_compaction_end`. `handleAgentEvent` accepts both sets to keep `isCompacting` in sync. Manual compact is a blocking POST — the button stays disabled until the response returns.
+
+### Queue persistence & crash recovery (`lib/queue-store.ts`)
+pi keeps steer/follow-up queues in memory only — a server restart would lose them. The wrapper mirrors every queue mutation to a per-session sidecar `<session>.jsonl.queue.json` (atomic tmp+rename). **The sidecar only saves — it never auto-delivers.**
+
+- Wrapper state: `queueMirror` (live queue w/ images), `queueRecovery` (orphans awaiting user decision), `pendingQueueHints` (FIFO image hints — pi reports queue items by text only and template expansion can rewrite text, so hints are consumed FIFO per kind).
+- Mirror sync: `queue_update` events fire on enqueue / drain (message_start) / clear — `reconcileQueue()` rebuilds the mirror from pi's text arrays.
+- Enqueue points: `send("prompt")` with `streamingBehavior` while streaming, `send("steer")`, `send("follow_up")`, `clear_queue`.
+- **Prompts during compaction become follow-ups**: pi rejects `prompt()` while compaction runs ("Cannot submit a prompt while compaction is in progress"). `case "prompt"` therefore detects `inner.isCompacting` and routes the message through `inner.followUp()` (slash extension commands still go through `prompt()` so they execute immediately, checked via `isRegisteredExtensionCommand`). The client (`handleSend` in `useAgentSession`) mirrors this check via `isCompactingRef` and skips the optimistic bubble/`agentRunning` — the message lives in the queue panel instead. Delivery: a `compaction_end` listener in the wrapper calls `runAgentContinue()`, which promotes the first queued entry to a real prompt and re-queues the rest (identical to recovery's "re-queue & continue"). When auto-compaction runs inside an active agent loop, `runAgentContinue`'s `isStreaming` guard bails and pi's own `hasQueuedMessages()` continuation delivers the queue. Race-proof both ways: a prompt sent just before compaction starts still converts server-side, and a follow-up routed when compaction already finished runs as a normal prompt.
+- After a restart (or wrapper idle-destroy), every sidecar entry becomes a `pendingRecovery` item exposed via `get_state.pendingRecovery` and `GET /api/sessions/[id]/queue-recovery` (lightweight file read — does NOT create an AgentSession; when a wrapper is alive its in-memory recovery list wins).
+- `POST /api/agent/[id]` commands: `resolve_recovery {keep, discard, continueRun}` (keep re-queues via `inner.steer()/followUp()`; `continueRun` invokes `this.inner.agent.continue()` directly — AgentSession has no public continue; events/persistence still flow via its subscriptions), `export_queue`, `import_queue`.
+- UI: `QueueRecoveryDialog` (checklist + re-queue / re-queue & continue / discard / export .md/.json / import / dismiss), export/import buttons in the ChatInput queued banner. `lib/queue-export.ts` is client-safe (blob download + `parseQueueImport` for the round-trip).
+- Deleting a session removes the sidecar (`removeQueue`). Image-only queued messages never leave pi's `_steeringMessages` (contentText("") is falsy) — they may surface as already-delivered in recovery; user discards manually.
+- **Soft delete (trash)**: `remove_queue_item` and `clear_queue` are SOFT by default — the entry moves to the sidecar's `trash` section (file version 2; v1 sidecars migrate on load) instead of being dropped. The UI offers an 8s undo toast (restores at the original position via `restore_trash_item { id, index? }`) plus a trash bin popover (restore appends to its kind / purge with two-step confirm via `purge_trash { ids? }`). `permanent: true` on `remove_queue_item` skips the trash — used by dispatch paths (steer-send) where the entry was *sent*, not deleted, so it must not linger in the trash. Trash survives restarts (`loadQueueRecovery` restores it) and is deleted with the session.
+
+### Running state polling + reconciliation
+- The sidebar polls `/api/agent/running` every 2.5 seconds while the tab is visible and pauses polling in background tabs. The session-list response remains the initial fallback.
+- `useAgentSession` treats per-session SSE as primary for chat events and opens it before each prompt. `prompt_done` completes the current UI stage and notification immediately, but the idle SSE stays open for a 30-second grace window and is reused by the next prompt. `agent_start` cancels that close timer; `agent_settled` finishes extension-injected runs that have no wrapper-level `prompt_done` and starts a fresh grace window. Do not close on the first `agent_end`: retries, compaction, and extension-queued messages can continue the same logical prompt.
+- While a run is active, `useAgentSession` periodically calls `GET /api/agent/[id]` and also reconciles on `visibilitychange`/`online`. This fixes missed terminal events from background tabs or half-open connections.
+- Prompt runs use a monotonic run id; late SSE or slow reconciliation responses from an old run must be ignored so they cannot resurrect stale streaming bubbles.
+
+### Worktrees and project grouping
+- `lib/worktree.ts` resolves linked worktree top-levels back to the main repo `projectRoot`; `listAllSessions()` attaches that to each `SessionInfo` so all worktrees for one repo are grouped together in the sidebar.
+- Worktree operations are served by `/api/worktrees` and guarded by the same allowed-root rules as `/api/files`.
+- New worktrees are created under `<repoRoot>-worktrees/<sanitized-branch>`. Existing branches are reused; otherwise `git worktree add -b` creates the branch.
+- Removing a dirty worktree returns `409` with `{ dirty: true }` so the UI can ask before retrying with `force`.
+- Sessions whose cwd points at a removed worktree are inferred back into the main project instead of becoming a phantom project row.
+- git prints POSIX-style absolute paths even on Windows, so every path read out of git goes through `toNativePath()` (`lib/paths.ts`) before it is compared or returned. Compare paths with `samePath()`, never `===` — raw equality made `isTopLevel` permanently false on Windows and hid the worktree switcher entirely. Branch names are not paths and must keep their forward slashes. Browser code cannot apply Node path rules, so `/api/worktrees` resolves `currentWorktreePath` server-side; the sidebar must use that identity for highlighting and removal fallback.
+
+### File access allow-list
+- `/api/files` is intentionally not a general filesystem browser. Allowed roots come from session cwds, their resolved project roots, `~/pi-cwd-*`, and roots explicitly added with `allowFileRoot()`.
+- `/api/cwd/validate`, `/api/default-cwd`, and `/api/worktrees` call `allowFileRoot()` when they make a new location browsable.
+- Allowed roots are stored slash-normalized, but that is a Set-key convention, not a correctness requirement: `isPathWithinRoots()` (`lib/path-security.ts`, the single implementation behind `isFilePathAllowed()`) re-resolves and case-folds both sides, so either path form authorizes correctly. Keep that one implementation — it is the security boundary.
+- A UNC cwd (`\\host\share\dir`) must survive the `/api/files/[...path]` round-trip. `encodeFilePathForApi()` folds the `//` root into the first segment (`%2F%2Fhost`) because a literal `//` URL prefix is 308-normalized away before routing; `filePathFromApiSegments()` decodes it back. Never split UNC paths into segments and rejoin them — that silently turns `\\host\share` into the relative-looking `host/share` and every allow-check fails with 403.
+
+### Plugins and skills
+- **扩展能力接管（ui.provides）**：扩展在 `ui.provides: string[]` 声明接管内置能力（能力名见 `lib/ext/types.ts` 的 `EXT_PROVIDES`，如 `"session-delete"`）。manifest 原样下发，客户端用 `useExtProvides()` 查询——有人声明时侧栏隐藏内置删除按钮（删除流由扩展接管，如 session-manager 的先归档再删），没人声明则内置按钮照常显示。新增能力：登记进 `EXT_PROVIDES` + 对应内置 UI 加门控。 已登记能力：`session-delete`（会话删除接管）、`session-agent-source`（外部 agent 会话源，session-manager §4.8 slot 契约：manifest/list/session 三端点归一化拉取）。
+- `/api/plugins` uses pi's `SettingsManager` + `DefaultPackageManager` for global/project package install, remove, update, enable, and disable. Disabling writes empty `extensions/skills/prompts/themes` arrays for that package entry.
+- `/api/skills` uses `DefaultResourceLoader` so settings paths, package skills, and project `.agents/skills` are listed the same way the runtime sees them.
+- Skill toggling edits only the `disable-model-invocation` frontmatter key on the target `SKILL.md`; keep that surgical so user formatting survives.
+- `/api/skills/install` shells through `npx skills add ... --agent pi`; project installs run with the selected cwd.
+
+### Built-in subagents
+- The global `builtInEnabled` switch is persisted in `~/.pi/agent/agents/settings.json` and defaults to `false` when the file or field is absent. Malformed settings fail closed; atomic updates preserve unknown fields.
+- The inline built-in extension factory is always present so reloading an existing wrapper can apply setting changes, but it registers no tools while disabled. After changing the switch, the user must explicitly reload the current session.
+- When enabled, only a recognized legacy `pi-subagents` extension that registers any reserved tool (`Agent`, `get_subagent_result`, or `steer_subagent`) is removed. Unrelated extensions remain loaded, and resolved conflict diagnostics are discarded.
+- Runtime `Agent` dispatch checks the setting again so a stale tool call cannot start a subagent after the feature is switched off.
+- See `docs/adr/0003-built-in-subagent-toggle.md` for the precedence and persistence rationale.
+- Agent profile files (`~/.pi/agent/agents/*.md`, project `.pi/agents/*.md`) are shared with other runtimes, so a save round-trips the frontmatter keys this app does not own (`name`, `allowed_subagents`, `exclude_extensions`, `disallowed_tools`, …) and carries foreign `ext:` tool selectors through. Managed keys are exactly `description`, `display_name`, `tools`, `load_skills`, `load_extensions`, `enabled`, `inherit_context`, `run_in_background`, `model`, `thinking`, `max_turns`.
+- The `skills` / `extensions` spellings pi-subagents reads are seeded on first save and kept in step while they are booleans; a hand-authored whitelist such as `extensions: pi-advisor-flow` is never rewritten, and the two flags fall back to those aliases when `load_skills` / `load_extensions` are absent.
+
+### Web password throttling
+- `lib/auth-throttle.ts` is deliberately global, not per-IP: Next 16 route handlers have no socket address and `x-forwarded-for` is spoofable, while the server binds `127.0.0.1` for a single operator. Failures double the delay (1s → 60s cap) for everyone; a success or 5 idle minutes resets it. The reset window must stay longer than the max delay or waiting out one block restarts the burst.
+- State lives on `globalThis` under `Symbol.for("pi-web:auth-throttle")` so it survives hot reload and is shared by every module instance. Tests reset it with `recordAuthSuccess()`.
+- Only `POST /api/web-auth` is throttled. The Basic auth branch in `proxy.ts` is not, because sharing state between the proxy bundle and route handlers has not been verified.
+
+### Auth and model config
+- `ModelsConfig` combines models from `~/.pi/agent/models.json` with provider auth status from pi's `AuthStorage`/`ModelRegistry`.
+- Provider listing is capability-driven, never id-driven: `lib/provider-listing.ts` decides membership from `auth.apiKey.login` / `auth.oauth` plus the stored credential type, so dual-auth providers (anthropic and github-copilot today — which providers declare both changes between SDK releases, so never assume it from an id) appear exactly once and never fall through both lists (#309). `lib/provider-listing-runtime.ts` adapts `ModelRuntime` to those pure helpers.
+- auth.json holds **one** credential per provider and `ModelRuntime.logout()` deletes whichever it is. The delete routes therefore use `removeStoredCredentialIfType()` to compare and delete under the same file lock used by pi's auth storage. `ModelsConfig` also refreshes *both* provider lists after any auth change — refreshing one leaves a dual-auth provider rendered twice.
+- OAuth/device-code/manual-code flows are streamed by `GET /api/auth/login/[provider]`; manual code responses POST back with a short-lived token stored in `globalThis.__piLoginCallbacks`.
+- API-key routes store and remove keys through `AuthStorage`. Status endpoints must never return the raw key.
+- The model test route is `app/api/models-config/test/route.ts`; `app/api/models/test/` is not a real route.
+
+### Completion sound
+- `hooks/useAudio.ts` stores the toggle in `localStorage` as `pi-sound-enabled` and reuses one `AudioContext`.
+- Browser autoplay policy means sound must be unlocked from a user gesture; `ChatInput` calls the unlock hook from interactive controls, and `ChatWindow` plays the tone from `onAgentEnd`.
+
+### Exported session HTML
+- `/api/sessions/[id]/export` delegates to pi's export helper, then patches recursive tree helpers in the generated HTML to iterative versions so very deep linear sessions do not overflow the browser call stack.
 - `/` renders entirely on the client, so one script chunk the browser cannot parse is a blank page. Next 16 targets Safari 16.4+; the `browserslist` in `package.json` lowers Safari and iOS to 16.2 so SWC turns class `static {}` blocks into private static fields. That covers Next's client runtime; other node_modules keep their syntax unless listed in `transpilePackages` (mermaid and `@mermaid-js/parser` are, for their lazy diagram chunks). Keep the other browserslist entries at Next's defaults.
 - Never write a RegExp lookbehind (`(?<=`, `(?<!`) in client code: SWC cannot downlevel it and Safari parses it only from 16.4. `lib/markdown.ts` emulates its leading lookbehinds with `replaceNotPrecededBy()`. A lookbehind built at runtime (`new RegExp("(?<=…)")` in `try`) fails only when run; that is how `lib/gfm-autolink-email-loader.cjs` fixes `mdast-util-gfm-autolink-literal`'s email regex. The loader is registered for webpack and Turbopack in `next.config.ts` and fails the build if that regex changes upstream.
 
@@ -310,6 +445,45 @@ Location: `~/.pi/agent/sessions/<encoded-cwd>/<timestamp>_<uuid>.jsonl`
 --font-mono
 ```
 
+## Service port proxy & expose（已抽离为 service-tunnels 扩展）
+
+服务端口发现 / 虚拟主机代理 / 隧道 / 认证 / 自暴露已全部迁出 core，由
+`service-tunnels` 扩展承载（源码在外部私有工作区，不入本仓库；部署到
+`~/.pi/web/extensions/service-tunnels/`；私有源地址与升级流程属部署环境配置，
+见内部工作区文档）：
+
+- 扩展 `server.startup` 创建库单例（`globalThis.__piServiceTunnels`）；`server.middleware`
+  在核心门禁前处理服务 vhost（`st.proxy.parseHost/resolve`）与 allowlocal 直连门禁；
+  `server.api` 提供 `/api/extensions/service-tunnels/*`（发现/暴露/隧道/用户/TOTP/自暴露）。
+- 扩展依赖走标准 npm（`node_modules` 随扩展目录）；加载器按扩展目录解析裸说明符
+  （`lib/ext/loader.ts` jiti id = 扩展入口），扩展可带标准 node_modules。
+  私有源地址属部署环境配置，不入仓库。
+- **源码公开化（master-plan M0④，2026-10-30 落实）**：源码已随 aiti-ai 发布仓
+  `extensions/service-tunnels/` 公开（脱敏镜像，单向同步自 pi-work，见其
+  `scripts/sync-extensions-to-aiti-ai.mjs` 与 `docs/aiti-ai-extensions-port-plan.md`）；
+  本仓仍不含 service-tunnels 源码，本段注记代替原「不入本仓库」约束。
+- core 只保留通用安全门禁（DNS-rebinding + `PI_WEB_PASSWORD`）；`request-security.ts`
+  仍读扩展写入的 `globalThis.__piWebExposeConfig`/`__piWebAllowHostsOverride` 做 allowHost 例外。
+- 测试服务虚拟主机 `<port><suffix>`（默认 `.pi.localhost`）行为与迁移前一致；扩展未
+  加载时无 vhost/自暴露功能（`/api/extensions/service-tunnels/*` 404），核心不受影响。
+- WebSocket upgrades are NOT proxied by the middleware (Next no-ops non-HMR upgrades) — Vite HMR etc. need direct localhost or a tunnel.
+- `GET /api/services?refresh=1` lists discovered ports + `serviceHostSuffixes`; `GET /api/service-tunnels` returns exposes/status/provider order/default provider/user managers/tool status/allow-download. The top-toolbar globe opens `ServicesDialog` (10s auto-refresh): **Ports** tab = per-port access methods (direct + virtual-host URLs, `window.open` with `noopener,noreferrer`), protocol auto-detect (http/https/tcp), expose form (tunnel type + auth provider, schema-driven), active exposes (stop, nginx logs), allow-tool-download toggle; **Users** tab = provider user management + TOTP 2FA enroll/activate.
+- **Provider knowledge lives in the library**: pi-web consumes `providerOrder`/`defaultProvider`/`userManagers`/`tunnelSchemas`/`tunnelTcpSupport` — no provider names hardcoded in pi-web (tcp exposes carry no auth: the library's tcp path ignores the provider).
+- Tests: `node --test lib/service-ports.test.mjs lib/request-security.test.mjs lib/web-auth.test.mjs` (middleware-safe helpers, discovery cache, gates).
+
+## 代码中禁止出现内部地址
+
+- **代码/测试/注释里一律不得出现真实部署地址**（内网 IP、内部部署域名、
+  生产端口号等）——仓库对外可见（含推送到外部镜像），泄露内部拓扑。
+- 需要示例主机名时用 RFC 2606 保留域名（`example.com`、`web.example.com`、
+  `attacker.example` 等）；端口用通用值（3000/8443/443）；回环 `127.0.0.1`
+  与 RFC 1918 私有网段（`192.168.x.x`）仅作通用示例可用。
+- 部署相关配置只存在于运行时环境（systemd unit 的 `Environment=`、nginx
+  配置、`~/.pi/service-tunnels` 等），不进仓库。
+- 本条同样适用于 AGENTS.md 自身——记录规则时不得点名内部域名。
+
+=======
+>>>>>>> origin/main
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

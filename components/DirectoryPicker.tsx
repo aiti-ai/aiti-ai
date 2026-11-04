@@ -81,7 +81,7 @@ async function loadDirectories(directory?: string): Promise<BrowseResponse> {
 }
 
 async function createDirectory(parentPath: string, name: string): Promise<string> {
-  const response = await fetch("/api/cwd/browse", {
+  const response = await fetch(apiUrl("/api/cwd/browse"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ path: parentPath, name }),

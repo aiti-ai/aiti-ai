@@ -7,6 +7,7 @@
  * everywhere: while the family runs and from the archive too.
  */
 
+import { apiUrl } from "./base-path.ts";
 import { projectNameOf, type SidebarFamilyStatus, type SidebarProject, type SidebarRow } from "./session-tree.ts";
 import type { SessionUiStateRequest } from "./session-ui-state-shared.ts";
 
@@ -147,7 +148,7 @@ export async function deleteProjectSessions(
   for (let start = 0; start < ids.length; start += PROJECT_DELETE_IDS_PER_REQUEST) {
     const part = ids.slice(start, start + PROJECT_DELETE_IDS_PER_REQUEST);
     try {
-      const res = await fetchImpl("/api/sessions/delete", {
+      const res = await fetchImpl(apiUrl("/api/sessions/delete"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: part }),

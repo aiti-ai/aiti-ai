@@ -1175,6 +1175,18 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       // on mobile load" design).
       if (!detail.auto && (detail.state === "docked:sidebar-explorer" || detail.state.startsWith("docked:sidebar:"))) {
         setSidebarOpen(true);
+        // Docking into a COLLAPSED block keeps the panel invisible even with the
+        // sidebar open — expand the target block on first dock (same contract as the
+        // activate branch below; block key = the present key for docked:sidebar:<key>).
+        if (detail.state.startsWith("docked:sidebar:")) {
+          const blockKey = detail.state.slice("docked:sidebar:".length);
+          if (blockKey) {
+            try {
+              localStorage.setItem(`pi:sidebar-dock:collapsed:${blockKey}`, "0");
+              window.dispatchEvent(new CustomEvent("pi:sidebar-dock:collapsed-changed", { detail: { key: blockKey, collapsed: false } }));
+            } catch { /* ignore */ }
+          }
+        }
       }
     };
     window.addEventListener("piwe-float-present-change", onPresent);
@@ -1198,6 +1210,21 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       // (the sidebar has no tab slot; expanding is all that is needed).
       if (detail.state === "docked:sidebar-explorer" || detail.state.startsWith("docked:sidebar:")) {
         setSidebarOpen(true);
+        // The sidebar has no per-panel tab: activation must also EXPAND the target
+        // dock block, or a collapsed block (e.g. the fleet's) swallows the re-open
+        // silently — the panel is "present" but nothing becomes visible. Block
+        // collapse lives in the dock stack's localStorage contract
+        // (pi:sidebar-dock:collapsed:<blockKey> + collapsed-changed event; the block
+        // key equals the present key for docked:sidebar:<key> panels).
+        if (detail.state.startsWith("docked:sidebar:")) {
+          const blockKey = detail.state.slice("docked:sidebar:".length);
+          if (blockKey) {
+            try {
+              localStorage.setItem(`pi:sidebar-dock:collapsed:${blockKey}`, "0");
+              window.dispatchEvent(new CustomEvent("pi:sidebar-dock:collapsed-changed", { detail: { key: blockKey, collapsed: false } }));
+            } catch { /* ignore */ }
+          }
+        }
         return;
       }
       if (!detail.state.startsWith("docked:right-panel")) return;
@@ -6179,7 +6206,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           {/* [Upstream #1107/#1129 fusion] agent tabs go through the SubagentViewer's dedicated mount (below), excluded from TabBody;
               wrapper key includes fileWorkspaceGeneration: remount the content area on workspace switch, parked state (viewerState) is regained via mount initialState. */}
           {panelTabs
-            .filter((t) => t.kind !== "terminal" && t.kind !== "agent")
+            // Merge note (#1469 side chats): "side" tabs mount via the SessionChatPanel
+            // branch below, never through TabBody's file pipeline.
+            .filter((t) => t.kind !== "terminal" && t.kind !== "agent" && t.kind !== "side")
             .filter((t) => t.id === activeFileTabId || panelKeepAlive.includes(t.id))
             .map((tab) => (
               <div key={`${fileWorkspaceGeneration}:${tab.id}`} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%" }}>

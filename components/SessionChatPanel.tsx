@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/base-path";
 import { useEffect, useRef, useState, type ComponentProps } from "react";
 import { ChatWindow } from "./ChatWindow";
 import type { ChatInputHandle } from "./ChatInput";
@@ -33,7 +34,7 @@ export function SessionChatPanel({ sessionId, running, ...chatProps }: Props) {
     let retry: ReturnType<typeof setTimeout> | undefined;
     const load = async () => {
       try {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, { signal: controller.signal, cache: "no-store" });
+        const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), { signal: controller.signal, cache: "no-store" });
         if (res.status === 404) {
           setState("missing");
           if (running) retry = setTimeout(() => void load(), RETRY_MS);

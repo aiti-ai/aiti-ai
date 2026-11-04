@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/base-path";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
@@ -198,7 +199,7 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
           // are deduplicated by offset and join seamlessly; snapshots that are
           // behind are dropped to prevent regressions)
           const snapCursor = offset;
-          fetch(`/api/terminal/${encodeURIComponent(id)}/buffered${snapCursor === undefined ? "" : `?after=${snapCursor}`}`)
+          fetch(apiUrl(`/api/terminal/${encodeURIComponent(id)}/buffered${snapCursor === undefined ? "" : `?after=${snapCursor}`}`))
             .then((r) => (r.ok ? r.json() : null))
             .then((snap: { output?: TerminalEvent & { type: "output" }; exited?: boolean; exitCode?: number | null } | null) => {
               if (disposed || exited || !snap?.output) return;
@@ -223,7 +224,7 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
       // `holder`: the page, for the Debug panel's connected pages.
       const query = new URLSearchParams({ holder: pageId() });
       if (offset !== undefined) query.set("after", String(offset));
-      events = trackEventSource("terminal", new EventSource(`/api/terminal/${encodeURIComponent(id)}/events?${query}`), cwd);
+      events = trackEventSource("terminal", new EventSource(apiUrl(`/api/terminal/${encodeURIComponent(id)}/events?${query}`)), cwd);
       events.onmessage = (message) => {
         handleEvent(JSON.parse(message.data) as TerminalEvent);
       };

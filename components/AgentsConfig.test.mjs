@@ -67,7 +67,7 @@ test("uses the shared enabled status treatment", () => {
 });
 
 test("offers a persisted built-in sub-agent switch with explicit session reload", () => {
-  assert.match(source, /fetch\("\/api\/subagents\/settings"/);
+  assert.match(source, /fetch\(apiUrl\("\/api\/subagents\/settings"\)/);
   assert.match(source, /JSON\.stringify\(\{ enabled \}\)/);
   assert.match(source, /<ConfigSwitch[\s\S]*?checked=\{builtInEnabled\}[\s\S]*?t\("agents\.builtInTitle"\)/);
   assert.match(source, /sendAgentCommand\(sessionId, \{ type: "reload" \}\)/);
@@ -135,7 +135,7 @@ test("persists existing profile toggles immediately without submitting unsaved f
 
 test("reuses the ChatInput model selector with scoped models", () => {
   // cwd moved into the POST body so it never lands in the URL (9968e2f security fix); assertions follow the change — cwd is in the request body, no longer in the URL
-  assert.match(source, /fetch\(`\/api\/models`, \{[\s\S]*?method: "POST"[\s\S]*?body: JSON\.stringify\(\{ cwd \}\)/);
+  assert.match(source, /fetch\(apiUrl\(`\/api\/models`\), \{[\s\S]*?method: "POST"[\s\S]*?body: JSON\.stringify\(\{ cwd \}\)/);
   assert.match(source, /import \{ ModelSelector \} from "\.\/ModelSelector(\.tsx)?"/);
   assert.match(chatInputSource, /import \{ ModelSelector, type ModelSelectorOption \} from "\.\/ModelSelector(\.tsx)?"/);
   assert.match(source, /<ModelSelector[\s\S]*?options=\{modelSelectorOptions\}[\s\S]*?variant="field"/);

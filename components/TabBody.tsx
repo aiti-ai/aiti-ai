@@ -48,6 +48,9 @@ export interface TabBodyCtx {
 }
 
 export function TabBody({ tab, host, ctx }: { tab: Tab; host: "panel" | "window"; ctx: TabBodyCtx }) {
+  // Merge note (#1469 side chats): agent/side tabs mount through their own
+  // branches in AppShell (SessionChatPanel) — never the file pipeline below.
+  if (tab.kind === "agent" || tab.kind === "side") return null;
   if (tab.kind === "dock") {
     // Dock tab: ExtSlot only mounts the active dock item (gated by the state machine inside
     // the item render — not docked → null, structurally preventing double-open). Dock tabs

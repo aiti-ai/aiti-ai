@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/base-path";
 import { useEffect, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import type {
@@ -139,7 +140,7 @@ export function ProjectTrustDialog({
       timedOut = true;
       controller.abort();
     }, MCP_LISTING_TIMEOUT_MS);
-    fetch(`/api/project-trust?cwd=${encodeURIComponent(cwd)}`, { signal: controller.signal, cache: "no-store" })
+    fetch(apiUrl(`/api/project-trust?cwd=${encodeURIComponent(cwd)}`), { signal: controller.signal, cache: "no-store" })
       .then(async (response) => {
         const data = await response.json() as Partial<ProjectTrustResponse & McpErrorResponse>;
         if (!active) return;
