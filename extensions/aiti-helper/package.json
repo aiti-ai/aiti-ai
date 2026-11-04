@@ -1,0 +1,21 @@
+{
+  "name": "@aiti-ai/aiti-helper",
+  "version": "0.5.0",
+  "type": "module",
+  "description": "AI 帮助点聚合 + AI 输入弹窗—— JSX + vite 构建 client bundle",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "AI 的工具该由 AI 自己接线、自己进化——人类的角色是掌舵，不是搬砖。",
+  "aitiConfigs": {
+    "configFiles": [
+      "user-skills"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}
