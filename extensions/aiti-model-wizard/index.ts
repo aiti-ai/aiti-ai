@@ -231,22 +231,18 @@ async function fetchModelsData(req: Request, cwdHint?: string): Promise<any | nu
   return null;
 }
 
-/** 从同进程的 /api/models 拉取「运行时注册」的 provider（如 pi-freeflow 的 freeflow）——
- *  这些 provider 不在 models.json，但已注册进 pi 的 ModelRuntime（/api/models 可见）。
- *  skip：已存在的 provider 集合（models.json / auth.json / 已合并），避免重复。
- *  返回 map：pid → { name, api, baseUrl, apiKey, models:[{id,name,api,baseUrl,contextWindow,maxTokens,input,reasoning}], _runtimeRegistered }。
- *  失败静默返回 {}（运行时 provider 缺失不影响主流程，只是列表补全缺一项）。 */
-async function fetchRuntimeProviders(req: Request, skip: Set<string>, cwdHint?: string): Promise<Record<string, any>> {
+/** /api/models 响应 → 运行时注册 provider 全集 map（不带 skip 过滤——skip 由调用方做，缓存共用全集）。
+ *  pid → { name, api, baseUrl, apiKey, models:[{id,name,api,baseUrl,contextWindow,maxTokens,input,reasoning}], _runtimeRegistered }。 */
+function modelsDataToRuntimeProviders(modelsData: any): Record<string, any> {
   const out: Record<string, any> = {};
-  const modelsData = await fetchModelsData(req, cwdHint);
   if (!modelsData) return out;
   const byProvider = new Map<string, any[]>();
   for (const m of modelsData.modelList || []) {
+    if (!m || !m.provider) continue;
     if (!byProvider.has(m.provider)) byProvider.set(m.provider, []);
     byProvider.get(m.provider)!.push(m);
   }
   for (const [pid, models] of byProvider) {
-    if (skip.has(pid)) continue;
     out[pid] = {
       name: pid,
       api: "openai-completions",
@@ -266,6 +262,72 @@ async function fetchRuntimeProviders(req: Request, skip: Set<string>, cwdHint?: 
     };
   }
   return out;
+}
+
+function filterRuntimeProviders(map: Record<string, any>, skip: Set<string>): Record<string, any> {
+  const out: Record<string, any> = {};
+  for (const pid of Object.keys(map)) {
+    if (!skip.has(pid)) out[pid] = map[pid];
+  }
+  return out;
+}
+
+// ── 运行时 provider 展示合并缓存（stale-while-revalidate，2026-11-04）──
+// /api/models 冷加载（内存缓存 miss 且磁盘快照缺失/超龄）要现场 createAgentSessionServices（全量初始化
+// pi 会话服务），秒级——打开向导面板的 /status 只为「模型列表补全运行时注册 provider」这一展示用途，
+// 不值得每次都同步等它（实测冷路径把面板打开卡到 ~7s）。
+// 内存 TTL 内直接用；过期先回旧值 + 后台 single-flight 刷新（失败保留旧值）；
+// cwdHint 非空（调用方点名 cwd）绕过缓存走实时；无缓存（首冷）同步拉一次落缓存，此后永不再等。
+// 校验类用途（/combos、/combo-save 成员池）不走此缓存——继续实时 getRuntimeEntries。
+let _rtProvCache: { at: number; data: Record<string, any> } | null = null;
+let _rtProvRefresh: Promise<void> | null = null;
+const RT_PROV_TTL_MS = 90_000;
+
+/** 无 Request 时的自取 /api/models（startup 预热路径；同 fetchRuntimeEntriesSelf 的端点逻辑，返回原始 JSON）。 */
+async function fetchModelsDataSelf(): Promise<any | null> {
+  const port = String(process.env.PORT || "");
+  if (!port) return null;
+  try {
+    const envBasePath = String(process.env.PI_WEB_BASE_PATH || "").replace(/\/+$/, "");
+    const res = await fetch(`http://127.0.0.1:${port}${envBasePath}/api/models`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cwd: process.cwd() }),
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch { return null; }
+}
+
+/** 后台刷新运行时 provider 缓存（single-flight；仅成功时覆盖——失败保留旧值下次过期再试）。 */
+function rtProvStartRefresh(req: Request | null, cwdHint?: string): Promise<void> {
+  if (_rtProvRefresh) return _rtProvRefresh;
+  const p = (async () => {
+    try {
+      const d = req ? await fetchModelsData(req, cwdHint) : await fetchModelsDataSelf();
+      if (d) _rtProvCache = { at: Date.now(), data: modelsDataToRuntimeProviders(d) };
+    } catch { /* 失败保留旧值 */ }
+  })().finally(() => { if (_rtProvRefresh === p) _rtProvRefresh = null; });
+  _rtProvRefresh = p;
+  return p;
+}
+
+/** /status 专用的运行时 provider 合并（带 SWR 缓存；skip：已存在的 provider 集合，避免重复）。 */
+async function fetchRuntimeProviders(req: Request, skip: Set<string>, cwdHint?: string): Promise<Record<string, any>> {
+  if (cwdHint) {
+    // 点名 cwd：绕过缓存走实时（不同 cwd 的运行时视图可能不同；也不污染默认 cwd 的缓存）
+    return filterRuntimeProviders(modelsDataToRuntimeProviders(await fetchModelsData(req, cwdHint)), skip);
+  }
+  const cached = _rtProvCache;
+  if (cached) {
+    if (Date.now() - cached.at > RT_PROV_TTL_MS) rtProvStartRefresh(req); // 过期：先回旧值 + 后台刷新
+    return filterRuntimeProviders(cached.data, skip);
+  }
+  // 无缓存（首冷）：同步拉一次落缓存，此后打开面板不再等冷加载
+  const d = await fetchModelsData(req);
+  const data = modelsDataToRuntimeProviders(d);
+  if (d) _rtProvCache = { at: Date.now(), data };
+  return filterRuntimeProviders(data, skip);
 }
 
 /** /api/models 响应 → pi 运行时条目（resolveProviderModels 的 runtime 参数格式） */
@@ -699,6 +761,9 @@ export default {
         saveBatchImpl(ctx, Array.isArray(input?.saves) ? input.saves : []));
       // pi ModelRuntime 快照预热（combo 成员池同源解析：内存 models + models.json；失败静默回退 HTTP /api/models）
       void core.initPiRuntime(cfg).catch(() => {});
+      // 运行时 provider 展示缓存预热（后台自取 /api/models 一次——冷启动后用户首次打开向导面板免等秒级冷加载；
+      // PORT 未设（如 next dev 不导出 PORT）拿不到端点则放弃，首次 /status 同步路径会自行落缓存）
+      void rtProvStartRefresh(null);
       const { index, cache } = getIndex();
       console.log("[aiti-model-wizard] 就绪 · configDir=" + configDir + " · 目录 " + index.length + " 家（models.dev 缓存=" + (cache.from || "none") + (cache.ageMs != null ? " · " + Math.round(cache.ageMs / 3600000) + "h" : "") + (cache.stale ? " · stale" : "") + "）· models.json=" + (cfg.modelsPath || "~/.pi/agent/models.json"));
       startReminderScan();
