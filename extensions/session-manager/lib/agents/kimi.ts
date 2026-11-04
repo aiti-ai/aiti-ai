@@ -43,6 +43,10 @@ interface KimiState {
   archived?: boolean;
   workDir?: string;
   updatedAt?: string | number;
+  // kimi-code 2.5.0（state schema version:2）：workDir→cwd、title 移除（可命名时落 custom.title）、
+  // updatedAt 改 epoch ms（number 分支已有）。两代字段并存读取。
+  cwd?: string;
+  custom?: { title?: string };
 }
 
 interface TranscriptEntry {
@@ -137,8 +141,8 @@ export function createKimiAdapter(): AgentAdapter {
         meta: {
           path: ref.path,
           id: ref.sid,
-          cwd: state.workDir ?? "",
-          name: state.custom_title || state.title || undefined,
+          cwd: state.cwd ?? state.workDir ?? "",
+          name: state.custom?.title || state.custom_title || state.title || undefined,
           created: updatedIso,
           modified: updatedIso,
           messageCount: messages.length,
