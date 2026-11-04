@@ -1,0 +1,24 @@
+{
+  "name": "@aiti-ai/aiti-model-wizard",
+  "version": "0.1.1",
+  "type": "module",
+  "description": "模型添加开机向导扩展——JSX + vite 构建 client bundle",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "地址、token、注册页——散落四方的钥匙，串成一串。",
+  "dependencies": {
+    "@lobehub/icons": "^5.16.0"
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "config.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}
