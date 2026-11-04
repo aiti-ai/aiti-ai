@@ -1,0 +1,8 @@
+{
+  "name": "@aiti-ai/aiti-crash-fatal",
+  "version": "0.0.3",
+  "private": true,
+  "type": "module",
+  "description": "pi-web 扩展：Fatal 崩溃测试（破坏核心文件 → global-error 急救页；dev 隔离专用）",
+  "aitiExtProtocol": "1.0"
+}
