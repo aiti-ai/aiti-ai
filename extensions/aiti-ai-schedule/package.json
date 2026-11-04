@@ -1,0 +1,15 @@
+{
+  "name": "@aiti-ai/aiti-ai-schedule",
+  "version": "0.4.0",
+  "type": "module",
+  "description": "aiti-ai-schedule · pi-web 常驻调度器（JSX + vite 构建 client bundle）",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiExtProtocol": "1.0"
+}

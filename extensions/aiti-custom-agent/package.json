@@ -1,0 +1,19 @@
+{
+  "name": "@aiti-ai/aiti-custom-agent",
+  "version": "0.1.0",
+  "description": "自定义 Agent 注册中心 —— UI 表单注册自定义后端（启动命令/参数前缀/成员 env/桥模式），generic 驱动 one-shot spawn，保存即热生效",
+  "soul": "一行命令，一个后端；docker 里跑 agent，从此不再手写配置。",
+  "aitiConfigs": {
+    "configFiles": [
+      "agents.json"
+    ]
+  },
+  "scripts": {
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('client/src/custom-agent-client.mjs','dist/custom-agent-client.mjs')\"",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.3"
+  }
+}

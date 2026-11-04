@@ -1,0 +1,15 @@
+{
+  "name": "@aiti-ai/aiti-msg-anchor",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "消息锚点横幅扩展（消息区顶部常驻显示当前视口所属的用户输入；滚动跟随；可切换为第一条输入/最近输入/会话标题）—— JSX + vite 构建 client bundle",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "回错了人的话，比叫错名字还尴尬。",
+  "aitiExtProtocol": "1.0"
+}

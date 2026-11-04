@@ -44,11 +44,11 @@ export function buildChangedDirs(files: any[], cwd?: string) {
 
 export interface FolderList { entries: any[]; parentPath: string | null; }
 export async function fetchListRaw(apiUrlFn: (p: string) => string, dirPath: string, showIgnored?: boolean): Promise<FolderList> {
-  const res = await fetch(apiUrlFn(showIgnored ? "/api/files/get?showIgnored=1" : "/api/files/get"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: dirPath, type: "list" }) });
+  const res = await fetch(apiUrlFn(showIgnored ? "/api/files/get?hidden=1" : "/api/files/get"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ path: dirPath, type: "list" }) });
   if (!res.ok) throw new Error("HTTP "+res.status);
   const d = await res.json();
   return {
-    entries: (d.entries||[]).map((e: any)=>({ name:e.name, fullPath:joinPath(dirPath, e.name), isDir:e.isDir, size:e.size, ignored:!!e.ignored, children:e.isDir?[]:undefined, loaded:!e.isDir })),
+    entries: (d.entries||[]).map((e: any)=>({ name:e.name, fullPath:joinPath(dirPath, e.name), isDir:e.isDir, size:e.size, ignored:!!e.ignored || e.hidden==="ignored", children:e.isDir?[]:undefined, loaded:!e.isDir })),
     // 可上溯的父目录：后端返回 parentPath 时以其为边界（null = 已到可浏览边界）；
     // 旧后端未返回该字段则回退 dirOf（保持旧「尽量向上」行为）。「上一个目录」按钮据此显隐。
     parentPath: ("parentPath" in d) ? (d.parentPath == null ? null : d.parentPath) as string | null : dirOf(dirPath),
@@ -71,7 +71,11 @@ export function peekList(dirPath: string, showIgnored?: boolean): FolderList | n
   return entriesCache.get(entriesKey(dirPath, showIgnored))?.list ?? null;
 }
 /** 拉取目录列表（含 parentPath 边界）；force 绕过存活缓存。showIgnored=true 时请求带忽略项
- *  （服务端返回 ignored:true 条目）。 */
+ *  （服务端返回置灰条目）。
+ *  参数/字段适配宿主上游语义（2026-11-04 修复）：开关经 `?hidden=1`（上游 #1092 的参数名，
+ *  9-21 本地版曾用 showIgnored=1，上游合并后被覆盖——发旧参数服务端不识别，忽略项整体消失）；
+ *  置灰标记读 `hidden==="ignored"`（宿主把本地 .gitignore/.aitignore 引擎命中统一归入该原因），
+ *  兼容旧 `ignored:true` 字段。 */
 export async function fetchList(apiUrlFn: (p: string) => string, dirPath: string, opts?: { force?: boolean; showIgnored?: boolean }): Promise<FolderList> {
   const key = entriesKey(dirPath, opts?.showIgnored);
   pruneEntries();

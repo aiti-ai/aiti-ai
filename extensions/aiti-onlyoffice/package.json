@@ -1,0 +1,23 @@
+{
+  "name": "@aiti-ai/aiti-onlyoffice",
+  "version": "0.1.0",
+  "description": "OnlyOffice DocumentServer 深度保真编辑档（Docker 后端）",
+  "main": "index.js",
+  "scripts": {
+    "build": "vite build --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "AGPL-3.0",
+  "type": "commonjs",
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "jwt-secret"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}

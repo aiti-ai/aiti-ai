@@ -1,0 +1,21 @@
+{
+  "name": "@aiti-ai/aiti-prompts",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "aiti prompt 片段收藏库（收藏/会话提取/一键插队排队）—— JSX + vite 构建 client bundle",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "我的输入是我宝贵的财富——好话不说二遍。",
+  "aitiConfigs": {
+    "configFiles": [
+      "prompts.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}

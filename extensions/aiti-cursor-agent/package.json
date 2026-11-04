@@ -1,0 +1,19 @@
+{
+  "name": "@aiti-ai/aiti-cursor-agent",
+  "version": "0.1.0",
+  "description": "Drive Cursor Agent CLI sessions (agentKey: cursor) — stream-json print mode, --resume multi-turn",
+  "soul": "把 Cursor 的 agent 也接进 pi-web 的会话宇宙。",
+  "scripts": {
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "zcode-api-key.json",
+      "controlled-login.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.3"
+  }
+}

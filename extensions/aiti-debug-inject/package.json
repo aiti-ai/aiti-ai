@@ -1,0 +1,10 @@
+{
+  "name": "@aiti-ai/aiti-debug-inject",
+  "version": "0.3.0",
+  "description": "可配置远程调试注入",
+  "soul": "调试器该穿在哪件衣服里，由你说了算。",
+  "scripts": {
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
+  },
+  "aitiExtProtocol": "1.0"
+}

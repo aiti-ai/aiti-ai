@@ -1,0 +1,24 @@
+{
+  "name": "@aiti-ai/aiti-git-review",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Git 代码审核扩展（Monaco diff 工作区 + 标注流水线）—— JSX + vite 构建 client bundle",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "作为人类，这是我对抗ai的最后倔犟了",
+  "aitiConfigs": {
+    "configFiles": [
+      "aiti-git-review/fixtures"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.3"
+  }
+}
