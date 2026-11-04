@@ -14,6 +14,7 @@ import { uiConfirm } from "../../../_shared/ui-dialogs";
 import { api, jsonBody, Ic, ICONS, LINK, genName, fetchNewModelsOnce, fetchNewModelsWithToast, invalidateNewModels } from "./wizard-lib";
 import { ProviderAvatar } from "./provider-icons";
 import { MultiKeyStatusSummary, MultiKeyStatusDialog, MultiKeyStatusRows } from "./multi-key-status";
+import { EnabledScopeBlock, resyncEnabledModels } from "./enabled-scope";
 import { ensureStyles } from "./amw-styles";
 // aiti-float dock v3（P1 批）：显隐收口展示状态机 + 右栏停靠容器
 import { useGate, DockBody, openFloat, closePanel } from "../../../_shared/ext-float-dock";
@@ -474,7 +475,12 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
   const [edit, setEdit] = useState(false);
   const [saving, setSaving] = useState(false);
   const [errMsg, setErrMsg] = useState("");
-  const [draft, setDraft] = useState<any>(() => (data.params ? JSON.parse(JSON.stringify(data.params)) : null));
+  const [draft, setDraft] = useState<any>(() => {
+    if (!data.params) return null;
+    const d0 = JSON.parse(JSON.stringify(data.params));
+    try { d0.imageMaxBytes = d0.inputLimits && d0.inputLimits.images && d0.inputLimits.images.resize ? d0.inputLimits.images.resize.maxBytes : ""; } catch {}
+    return d0;
+  });
   // 🩺 可用性测试（与「模型检查」同款探针 + 同库存储）：测完立即就地展示；探测事件经 availability SSE 同步树上的 可用/限流/异常 点
   const [probeSt, setProbeSt] = useState<any>(null); // null | {busy} | {done:r} | {error}
   const doModelProbe = async () => {
@@ -489,7 +495,12 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
   // 数据是异步拉的（挂载时 params 常为 null）：params 到位/切换模型时重置草稿与编辑态
   // （useState 惰性初始化只跑一次，不重置的话 draft 永远停在 null → 弹窗永不出现）
   useEffect(() => {
-    setDraft(data.params ? JSON.parse(JSON.stringify(data.params)) : null);
+    if (data.params) {
+      const d0 = JSON.parse(JSON.stringify(data.params));
+      // G4：从 inputLimits 派生 imageMaxBytes 展示值（编辑草稿读写同一键）
+      try { d0.imageMaxBytes = d0.inputLimits && d0.inputLimits.images && d0.inputLimits.images.resize ? d0.inputLimits.images.resize.maxBytes : ""; } catch {}
+      setDraft(d0);
+    } else setDraft(null);
     setHdrRows(Object.entries((data.params && data.params.headers) || {}).map(([k, v]: any) => ({ k, v: String(v) })));
     setEdit(!!data.autoEdit);   // autoEdit=true → 直接进编辑态（AI 补参数回填用）
     setErrMsg("");
@@ -555,6 +566,8 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
     try {
       const m: any = { id: draft.id };
       if (String(draft.name || "").trim()) m.name = String(draft.name).trim();
+      // G4：模型级 baseUrl 覆盖（空 = 跟随 provider，不发）
+      if (String(draft.baseUrl || "").trim()) m.baseUrl = String(draft.baseUrl).trim().replace(/\/+$/, "");
       m.reasoning = !!draft.reasoning;
       // 保留 image 之外的模态（如 audio）：只增删 image 位，不整表覆盖
       const baseInput = Array.isArray(draft.input) ? draft.input.filter((x) => x !== "image") : ["text"];
@@ -572,6 +585,21 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
       const headers: any = {};
       for (const r of hdrRows) { if (r.k.trim() && r.v.trim()) headers[r.k.trim()] = r.v.trim(); }
       m.headers = headers;
+      // G4：图片大小上限（inputLimits.images.resize.maxBytes）——空 = 删除覆盖；正整数字节校验
+      const imgRaw = String(draft.imageMaxBytes ?? "").trim();
+      if (imgRaw === "") {
+        // 清理空容器（images/resize/inputLimits 逐级剥）。全空时发 {} 强制覆盖——
+        // 反填链对 undefined 字段会从已存/目录回填（backfillModelMeta 只填 undefined），
+        // 不发会把旧 maxBytes 原样恢复，删除语义失效。
+        const il = (draft.inputLimits && typeof draft.inputLimits === "object") ? JSON.parse(JSON.stringify(draft.inputLimits)) : null;
+        if (il && il.images && il.images.resize) { delete il.images.resize.maxBytes; if (!Object.keys(il.images.resize).length) delete il.images.resize; }
+        if (il && il.images && !Object.keys(il.images).length) delete il.images;
+        m.inputLimits = (il && Object.keys(il).length) ? il : {};
+      } else if (/^\d+$/.test(imgRaw) && Number(imgRaw) >= 1) {
+        const il = (draft.inputLimits && typeof draft.inputLimits === "object") ? JSON.parse(JSON.stringify(draft.inputLimits)) : {};
+        il.images = { ...(il.images || {}), resize: { ...((il.images || {}).resize || {}), maxBytes: Number(imgRaw) } };
+        m.inputLimits = il;
+      } else { setErrMsg("图片大小上限需为正整数字节数（留空=默认 4.5MiB）"); setSaving(false); return; }
       if (draft.api) m.api = draft.api;
       const d = await (await api("/save", { method: "POST", ...jsonBody({ provider: data.provider, baseUrl: data.baseUrl, api: data.api || "openai-completions", keepKey: true, models: [m] }) })).json();
       if (d.ok) { onSaved && onSaved(d); onClose(); }
@@ -626,6 +654,28 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
                 </select>
               </label>
             </div>
+            {/* G4：模型级 baseUrl 覆盖 / 图片大小上限 / Claude 自适应思考（原生高级设置三件套补齐） */}
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+              <div>
+                <label style={lbl}>Base URL 覆盖（留空=跟随 provider）</label>
+                <input className="amw-input" style={{ width: "100%", fontFamily: "ui-monospace,monospace" }} value={draft.baseUrl || ""}
+                  onChange={(e) => D({ baseUrl: e.target.value })} placeholder={(data.baseUrl || "https://api.example.com/v1")} />
+              </div>
+              {((Array.isArray(draft.input) && draft.input.includes("image")) || (draft.inputLimits && draft.inputLimits.images && draft.inputLimits.images.resize && draft.inputLimits.images.resize.maxBytes !== undefined)) ? (
+                <div>
+                  <label style={lbl}>图片大小上限（字节，留空=默认 4.5MiB）</label>
+                  <input className="amw-input" style={{ width: "100%" }} type="text" inputMode="numeric" value={draft.imageMaxBytes ?? ""}
+                    onChange={(e) => D({ imageMaxBytes: e.target.value })} placeholder="4718592" />
+                  <span style={{ fontSize: 10, color: "var(--text-subtle,#666)" }}>单张图片 base64 后的上限 · <code>inputLimits.images.resize.maxBytes</code></span>
+                </div>
+              ) : null}
+            </div>
+            {(draft.api || data.api) === "anthropic-messages" && !!draft.reasoning ? (
+              <label style={{ fontSize: 12, display: "inline-flex", gap: 5, alignItems: "center" }}>
+                <input type="checkbox" checked={!!(draft.compat && draft.compat.forceAdaptiveThinking)} onChange={(e) => setCompat({ forceAdaptiveThinking: e.target.checked || undefined })} />
+                Claude 自适应思考（effort 等级）<code className="amw-mono" style={{ fontSize: 10, color: "var(--text-subtle,#666)" }}>compat.forceAdaptiveThinking</code>
+              </label>
+            ) : null}
             <div>
               <div className="amw-section" style={{margin: "0 0 4px"}}>成本（$/M tokens，四项都填才生效）</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 8 }}>
@@ -671,6 +721,7 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
             ["id", "模型 id"], ["name", "名称"], ["reasoning", "推理"],
             ["contextWindow", "上下文窗口（contextWindow）"], ["maxTokens", "最大输出（maxTokens）"],
             ["input", "输入（input）"], ["cost", "成本（cost）"], ["compat", "兼容（compat）"],
+            ["inputLimits", "输入限制（inputLimits）"],
             ["thinkingLevelMap", "思考级别映射"], ["samplingParams", "采样参数"], ["api", "API 覆盖"], ["baseUrl", "Base URL"],
           ];
           return FIELDS.map(([k, label]) => {
@@ -784,7 +835,8 @@ function EditHeadersEditor({ initialHeaders, initialMasked, onChange }: {
   );
 }
 
-export function App({ open, onClose, initialTab, initialProvider, embedded }: { open: boolean; onClose: () => void; initialTab?: string; initialProvider?: string | null; embedded?: boolean }) {
+export function App({ open, onClose, initialTab, initialProvider, embedded, variant, cwd }: { open: boolean; onClose: () => void; initialTab?: string; initialProvider?: string | null; embedded?: boolean; variant?: "float" | "settings"; cwd?: string | null }) {
+  const isSettings = variant === "settings"; // 设置页签接管态：剥头部关闭按钮（外层设置面板有自己的 ✕）；cwd 供启用作用域（项目 scope）
   // C 阶段：tab 语义 = 主视图 + 当前打开的浮层（status=无浮层；add/subs/combo/check=对应浮层）。
   // 主视图恒为双栏（renderStatus）；旧页签内容全部转浮层，旧 setTab("combo") 等跳转语义自动变为「打开对应浮层」。
   const [tab, setTab] = useState(initialTab || "status");
@@ -1420,7 +1472,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded }: { 
       // api 默认 openai-completions（可在详情改）；key 保存后模型清单由运行时自动加载。
       setSel({ id: p.id, name: p.name, cnName: "", baseUrl: "", apiType: "openai-completions", doc: p.doc || "", signupUrl: "", tokenUrl: "", register: "", models: [], native: true, modelCount: p.modelCount });
       setToken(""); setTestRes(null); setChecked([]); setManual(""); setSavedMsg(""); setSearchDetect(null); setDiscMsg("");
-      setMsg("pi 内置 provider —— 填 Base URL（见官方文档）与 API Key 后保存，模型清单由运行时加载");
+      setMsg("pi 内置 provider —— 填 API Key 保存即可（存 auth.json 托管），模型清单由 pi 内置目录自动加载");
       return;
     }
     const base = p.reverseInputUrl || p.baseUrl;   // 反向命中 → 保留用户贴的地址（套餐防混，探测再权威确认）
@@ -1631,6 +1683,8 @@ export function App({ open, onClose, initialTab, initialProvider, embedded }: { 
         setUndoInfo("已编辑「" + newName + "」");
         const ids = models.map((m: any) => m.id);
         if (replaced && ids.length) void runProbeCaps(newName, ids); // 新勾选的模型实测上限
+        // G6 改名跟随：enabledModels 模式同步重写（宿主 resync op；失败静默不阻塞改名主流程）
+        if (newName !== provider) void resyncEnabledModels([{ from: provider, to: newName }], cwd ?? null);
         // 缺参数模型 → 自动弹 ai-helper 补全（同 doSave）
         const miss = Array.isArray(d.missingParams) ? d.missingParams.filter((m: any) => m && m.id) : [];
         if (miss.length) {
@@ -2194,11 +2248,66 @@ export function App({ open, onClose, initialTab, initialProvider, embedded }: { 
     "qoder": "Qoder 国际订阅 · 浏览器设备码 / PAT。Free 无 credits，付费额度才可推理",
     "qoder-cn": "Qoder CN 国内 · Pro+ credits 在此区。PAT 入口：账号页 → 集成；本机 qoderclicn 登录可自动导入。仅限本人自用",
   };
+  // ── G3 凭据管理（docs/aiti-model-wizard-settings-takeover-plan.md）：apiKey 型内置 provider 的
+  // auth.json key 管理（宿主 /api/auth/api-key/<id> POST 保存·更换 / DELETE 移除）。
+  // native provider 添加流与状态页 api_key 详情共用 saveAuthKey/removeAuthKey。 ──
+  const [akList, setAkList] = useState<any[] | null>(null);        // apiKeyProviders（/api/auth/providers）
+  const [akDraft, setAkDraft] = useState<Record<string, string>>({}); // pid → 新 key 草稿（不回显旧值）
+  const [akBusy, setAkBusy] = useState<string>("");                // 进行中的 pid
+  const [akMsg, setAkMsg] = useState<Record<string, string>>({});  // pid → 行内反馈
+  const saveAuthKey = async (id: string, key: string): Promise<boolean> => {
+    const k = (key || "").trim();
+    if (!k) { setAkMsg((m) => ({ ...m, [id]: "❌ 先填 API Key" })); return false; }
+    setAkBusy(id); setAkMsg((m) => ({ ...m, [id]: "" }));
+    try {
+      const r = await fetch(apiUrl("/api/auth/api-key/" + encodeURIComponent(id)), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ apiKey: k }) });
+      const d = await r.json() as { success?: boolean; error?: string };
+      if (!r.ok || d.error) { setAkMsg((m) => ({ ...m, [id]: "❌ " + (d.error || "HTTP " + r.status) })); return false; }
+      setAkDraft((prev) => { const { [id]: _drop, ...rest } = prev; return rest; });
+      setAkMsg((m) => ({ ...m, [id]: "✅ 已保存（auth.json）——模型清单已生效" }));
+      try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
+      void loadStatus();
+      return true;
+    } catch (e: any) { setAkMsg((m) => ({ ...m, [id]: "❌ " + (e.message || e) })); return false; }
+    finally { setAkBusy(""); }
+  };
+  const removeAuthKey = async (id: string): Promise<boolean> => {
+    setAkBusy(id); setAkMsg((m) => ({ ...m, [id]: "" }));
+    try {
+      const r = await fetch(apiUrl("/api/auth/api-key/" + encodeURIComponent(id)), { method: "DELETE" });
+      const d = await r.json() as { success?: boolean; error?: string };
+      if (!r.ok || d.error) { setAkMsg((m) => ({ ...m, [id]: "❌ " + (d.error || "HTTP " + r.status) })); return false; }
+      setAkMsg((m) => ({ ...m, [id]: "✅ 已移除——该 provider 模型已下线" }));
+      try { window.dispatchEvent(new CustomEvent("pi-web:models-changed")); } catch {}
+      void loadStatus();
+      return true;
+    } catch (e: any) { setAkMsg((m) => ({ ...m, [id]: "❌ " + (e.message || e) })); return false; }
+    finally { setAkBusy(""); }
+  };
+  // apiKey 型行内编辑器（订阅页 / 状态页 api_key 详情共用）
+  const apiKeyRow = (id: string, displayName: string, configured: boolean, compact?: boolean) => (
+    <div style={compact ? { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginTop: 6 } : { display: "flex", gap: 6, alignItems: "center", marginTop: 6 }}>
+      <span style={{ width: 7, height: 7, borderRadius: "50%", background: configured ? "#4ade80" : "var(--border,#ddd)", flexShrink: 0 }} title={configured ? "已配置" : "未配置"} />
+      <input className="amw-input" style={{ flex: 1, minWidth: 160, fontFamily: "ui-monospace,monospace" }} type="password"
+        placeholder={configured ? "输入新 key 更换…" : "sk-…"} value={akDraft[id] || ""}
+        onChange={(e) => setAkDraft((prev) => ({ ...prev, [id]: e.target.value }))}
+        onKeyDown={(e: any) => { if (e.key === "Enter" && (akDraft[id] || "").trim()) void saveAuthKey(id, akDraft[id]); }} />
+      <button className="amw-btn" style={{ background: "var(--accent,#2563eb)", color: "#fff", flexShrink: 0 }} disabled={akBusy === id || !(akDraft[id] || "").trim()}
+        onClick={() => void saveAuthKey(id, akDraft[id])}>{akBusy === id ? "保存中…" : "保存"}</button>
+      {configured ? (
+        <button className="amw-btn" style={{ color: "#dc2626", flexShrink: 0 }} disabled={akBusy === id} title="移除该 provider 的 key（auth.json），其全部模型立即不可用"
+          onClick={() => void removeAuthKey(id)}>{akBusy === id ? "…" : "移除"}</button>
+      ) : null}
+      {akMsg[id] ? <span style={{ fontSize: 11, color: akMsg[id].startsWith("✅") ? "#16a34a" : "#dc2626", flexBasis: "100%" }}>{akMsg[id]}</span> : null}
+    </div>
+  );
+
   const loadSubs = useCallback(async () => {
     try {
       const d = await (await fetch(apiUrl("/api/auth/providers"), { cache: "no-store" })).json();
       setSubList(Array.isArray(d.providers) ? d.providers : []);
-    } catch { setSubList([]); }
+      setAkList(Array.isArray(d.apiKeyProviders) ? d.apiKeyProviders : []);
+    } catch { setSubList([]); setAkList([]); }
   }, []);
   // initialTab==='subs' 直开订阅 tab 时也必须拉列表（此前只有手动点 tab 才触发 → 永远「加载中…」）。
   // 独立 effect 放在 loadSubs 定义之后——塞进上面的开屏 effect 会因 deps 提前求值撞 TDZ。
@@ -2242,9 +2351,11 @@ export function App({ open, onClose, initialTab, initialProvider, embedded }: { 
 
   const renderSubscriptions = () => {
     if (!subList) return <div className="amw-note">加载中…</div>;
-    if (!subList.length) return <div className="amw-note">未发现订阅登录型提供商。</div>;
+    const oauthEmpty = !subList.length;
     return (
       <div>
+        {oauthEmpty ? <div className="amw-note">未发现订阅登录型提供商。</div> : (
+        <>
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
           <span className="amw-section" style={{margin: 0, flex: 1}}>{"🔐 订阅登录型提供商（" + subList.length + "）—— 无需 API token，点登录获取凭据"}</span>
           <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={() => { loadSubs(); checkOauthStatus(subActive ? [subActive] : []); }}>刷新列表</button>
@@ -2303,6 +2414,30 @@ export function App({ open, onClose, initialTab, initialProvider, embedded }: { 
             </div>
           );
         })}
+        </>
+        )}
+        {/* ── G3：API Key 型内置 provider（auth.json key 托管）——凭据管理段（docs/aiti-model-wizard-settings-takeover-plan.md）── */}
+        <div style={{ marginTop: 14, borderTop: "1px solid var(--border,#eee)", paddingTop: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+            <span className="amw-section" style={{ margin: 0, flex: 1 }}>{"🔑 API Key 型提供商（" + ((akList && akList.length) || 0) + "）—— key 存 auth.json（pi 托管）"}</span>
+            <button className="amw-btn" style={{ padding: "2px 10px", fontSize: 11 }} onClick={loadSubs}>刷新列表</button>
+          </div>
+          <div className="amw-note">pi 内置 provider（openai / anthropic / google 等）的 API key 管理入口：保存后模型清单由 pi 内置目录自动加载，与订阅登录型并列；已配置的在左树/选择器直接可见。</div>
+          {!akList ? <div className="amw-note">加载中…</div>
+            : !akList.length ? <div className="amw-note">没有 apiKey 型内置 provider（本机 pi 版本未声明，或全部已由自定义 provider 覆盖）。</div>
+            : akList.map((pr: any) => (
+              <div key={pr.id} className="amw-card" style={{ marginBottom: 6 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <ProviderAvatar id={pr.id} name={pr.displayName || pr.id} size={24} radius={7} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 650, fontSize: 12.5 }}>{pr.displayName || pr.id}</div>
+                    <div style={{ color: "var(--text-subtle,#666)", fontSize: 10.5 }}>{(pr.modelCount === 1 ? "1 个模型" : (pr.modelCount || 0) + " 个模型") + (pr.supportsOAuth ? " · 也可订阅登录" : "")}</div>
+                  </div>
+                </div>
+                {apiKeyRow(pr.id, pr.displayName || pr.id, !!pr.configured, true)}
+              </div>
+            ))}
+        </div>
       </div>
     );
   };
@@ -2394,6 +2529,20 @@ export function App({ open, onClose, initialTab, initialProvider, embedded }: { 
   const credTestSave = (p: any) => {
     const validKeyRows = keyRows.filter((r) => (r.key || "").trim());
     const hdrs = p.id === "custom" && headersTouched ? rowsToHeaders(provHeaders) : undefined;
+    // G3：pi 内置 provider（apiKey 型）走 auth.json 托管——不落 models.json、无需选模型；
+    // 模型清单由 pi 内置目录自动加载（Bedrock/Azure 等特殊端点形态由此正常工作）。
+    if (p.native) {
+      return (
+        <div>
+          <div className="amw-section" style={{ margin: "12px 0 6px" }}>{"🔑 " + (p.name || p.id) + "（pi 内置 · 托管凭据）"}</div>
+          <div className="amw-note">key 保存进 auth.json（pi 托管，同订阅登录型位置）；模型清单由 pi 内置目录自动加载，无需手选。需要自定义 baseUrl / 多 key 轮转请改用「🛠 自定义端点」。</div>
+          {apiKeyRow(p.id, p.name || p.id, false)}
+          <div style={{ marginTop: 12, paddingTop: 10, borderTop: "1px solid var(--border,#eee)" }}>
+            <span style={{ fontSize: 11, color: "var(--text-subtle,#666)" }}>保存后回「模型列表」即可看到该 provider 与其全部模型。</span>
+          </div>
+        </div>
+      );
+    }
     return (
     <div>
       {p.id === "custom" ? (
@@ -3297,7 +3446,15 @@ export function App({ open, onClose, initialTab, initialProvider, embedded }: { 
           {p.runtime ? (
             <div className="amw-note" style={{ marginBottom: 0 }}>⚡ 运行时注册 provider：由 pi 扩展（如 pi-freeflow）动态注册，模型经 /api/models 实时可见；不受 models.json 管理，这里只读展示。</div>
           ) : null}
+          {p.authType === "api_key" ? (
+            <div className="amw-note" style={{ marginBottom: 0 }}>
+              🔑 API Key 型内置 provider：凭据存 auth.json（pi 托管）——下方可更换 / 移除；「订阅」页有全部同类 provider 的汇总管理。
+              {apiKeyRow(p.provider, p.provider, true, true)}
+            </div>
+          ) : null}
           {!p.combo ? renderEditControls(p) : null}
+          {/* G1+G2 启用作用域（G5 cwd 由宿主 settingsModels 契约透传；浮窗态 cwd=null=全局 scope） */}
+          <EnabledScopeBlock providerId={p.provider} cwd={cwd ?? null} />
         </div>
       </div>
     );
@@ -3967,7 +4124,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded }: { 
               ＋<span className="amw-tb-label"> 添加<span className="amw-label-long"> provider</span></span>
             </button>
           )}
-          <button className="amw-btn" onClick={onClose} aria-label="关闭" title="关闭模型管理面板"><Ic size={12} paths={ICONS.x} /></button>
+          {isSettings ? null : <button className="amw-btn" onClick={onClose} aria-label="关闭" title="关闭模型管理面板"><Ic size={12} paths={ICONS.x} /></button>}
         </div>
       </div>
       <div key={"body-" + tab} className="amw-body" style={bodyStyle}>

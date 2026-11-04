@@ -1627,7 +1627,12 @@ function providersStatus(configDir, cfg) {
   // 解析逻辑走工作区共享实现 resolveProviderModels（与聚合成员池/引擎槽位单一同源）。
   const { data: store } = loadModelsStore(configDir, cfg);
   const resolved = resolveProviderModels({ providers: data.providers || {}, store: store || null });
-  const providers = Object.entries(data.providers || {}).map(([name, p]) => {
+  // overrides-only 条目（仅 modelOverrides 一键——原生 isOverridesOnly 同判定）：managed provider 的
+  // 上下文覆盖载体，不是独立 provider——树上不展示（否则 G2 覆盖编辑会产生幽灵空行）
+  const isOverridesOnly = (p) => p && typeof p === "object"
+    && Object.keys(p).length === 1
+    && p.modelOverrides && typeof p.modelOverrides === "object" && Object.keys(p.modelOverrides).length > 0;
+  const providers = Object.entries(data.providers || {}).filter(([name, p]) => !isOverridesOnly(p)).map(([name, p]) => {
     const entry = resolved.get(name);
     const baseUrl = (entry && entry.baseUrl) || p.baseUrl || "";
     const models = entry ? entry.models.map((m) => ({ id: m.id, enabled: m.enabled !== false })) : [];
@@ -1856,7 +1861,7 @@ function providerScanParams(configDir, cfg) {
 }
 
 // 模型元数据字段：写 models.json 时全量保留（避免剥掉 contextWindow/maxTokens/compat/cost/input/thinkingLevelMap）
-const MODEL_META_FIELDS = ["api", "baseUrl", "reasoning", "thinkingLevelMap", "input", "cost", "contextWindow", "maxTokens", "samplingParams", "compat", "headers"];
+const MODEL_META_FIELDS = ["api", "baseUrl", "reasoning", "thinkingLevelMap", "input", "cost", "contextWindow", "maxTokens", "samplingParams", "compat", "headers", "inputLimits"];
 /** 取某 provider 在内置模型目录（models-store.json）里的模型数组 */
 function storeModelsFor(store, provider) {
   const p = store && store[provider];
@@ -2118,6 +2123,32 @@ function upsertProviderData(data, input) {
     .filter((m) => m.contextWindow == null || m.maxTokens == null)
     .map((m) => ({ id: String(m.id || m.model || ""), name: m.name ? String(m.name) : "" }));
   return { ok: true, data, provider, modelCount: Array.isArray(prov.models) ? prov.models.length : 0, fills, missingParams };
+}
+/** 纯变换：写/删 modelOverrides.contextWindow（G2）——managed provider 无模型条目时的唯一写口。
+ *  contextWindow 传 null/undefined 删除覆盖；覆盖集空则整键删除；provider 条目空则整条删除（pi 拒收空条目）。 */
+function setModelOverrideData(data, provider, modelId, contextWindow) {
+  if (!data.providers || typeof data.providers !== "object") data.providers = {};
+  const prov = data.providers[provider] || (data.providers[provider] = {});
+  const ov = (prov.modelOverrides && typeof prov.modelOverrides === "object" && !Array.isArray(prov.modelOverrides)) ? { ...prov.modelOverrides } : {};
+  const prev = (ov[modelId] && typeof ov[modelId] === "object" && !Array.isArray(ov[modelId])) ? { ...ov[modelId] } : {};
+  if (contextWindow === undefined || contextWindow === null) delete prev.contextWindow;
+  else prev.contextWindow = contextWindow;
+  if (Object.keys(prev).length) ov[modelId] = prev; else delete ov[modelId];
+  if (Object.keys(ov).length) prov.modelOverrides = ov; else delete prov.modelOverrides;
+  if (!Object.keys(prov).length) delete data.providers[provider];
+  return { ok: true, data, provider, model: modelId };
+}
+/** 读取某 provider 的 modelOverrides（仅 contextWindow 键；overrides-only 条目也返回）。 */
+function getModelOverrides(data, provider) {
+  const prov = data.providers && data.providers[provider];
+  const ov = prov && prov.modelOverrides;
+  const out = {};
+  if (ov && typeof ov === "object" && !Array.isArray(ov)) {
+    for (const [mid, v] of Object.entries(ov)) {
+      if (v && typeof v === "object" && !Array.isArray(v) && v.contextWindow !== undefined) out[mid] = v.contextWindow;
+    }
+  }
+  return out;
 }
 /** 纯变换：删除 provider（models 数据层面）。 */
 function deleteProviderData(data, provider) {
@@ -2772,7 +2803,7 @@ module.exports = {
   loadChinaCatalog, buildIndex, searchProviders,
   normalizeBaseUrl, reverseMatch, reverseDetect, extractUrls, detectBrands, probeOpenApi, brandFromText, brandFromModels,
   detectApi, endpointApiHint, normalizeBaseForApi, testConnection, discoverModels, probeModelCap, knownMaxTokensCap, MODEL_MAX_OUTPUT_TOKEN_CORRECTIONS, resolveSecretValue, parseMaxTokensFromError, stripEndpointPath,
-  loadModelsJson, saveModelsJson, loadModelsStore, modelsStorePath, providersStatus, modelParams, providerScanParams, upsertProvider, deleteProvider, upsertProviderData, deleteProviderData, comboPageData, comboSaveProviderData, modelsJsonPath, initPiRuntime, piReady, piError, runtimeEntries,
+  loadModelsJson, saveModelsJson, loadModelsStore, modelsStorePath, providersStatus, modelParams, providerScanParams, upsertProvider, deleteProvider, upsertProviderData, deleteProviderData, setModelOverrideData, getModelOverrides, comboPageData, comboSaveProviderData, modelsJsonPath, initPiRuntime, piReady, piError, runtimeEntries,
   extractDomain, buildDomainIndex, domainProviderGuess, resetDomainIndex, probeServerHeaders,
   stashUndo, loadUndo, restoreUndoData, undoPath,
   maskKey, maskHeaderValue, SENSITIVE_HEADER_RE, httpGet, httpPostJson, expandPath, fmtTime, fmtDur,
