@@ -256,8 +256,19 @@ export function buildApps(input: {
     // 条目无法异位重放）；面板卡走 openPanel（present），不依赖 onClick。
     if (!isPanel && typeof it.meta?.onClick !== "function") continue;
     if (it.slot === "dialogs") continue; // v1：dialogs 不进（非 float 自绘弹窗 present 无响应 = 死卡；float 面板主场景已被 rightFileDock 覆盖）
+    // feature 门控关闭的条目不进卡（宿主工具条等消费方都会隐藏它——抽屉里留着 = 永远
+    // 点不出东西的死卡，如 ACP 的 behavior.showAcpManager 默认关）
+    const feat = (it as { feature?: string }).feature;
+    if (feat && input.featureState[`${extId}:${feat}`] === false) continue;
+    // 静态条目（懒加载清单声明）不进面板卡：其 id 是声明标记（如 aiti-editor 的 "file"，
+    // 真实 dock key 是按实例的 "file:<path>"），对它 present 永远打不中 = 死卡；动态注册
+    // 的同名条目出现后静态条目本就退休，能留下来的静态面板条目都是打不中的。
+    if (isPanel && (it as { static?: boolean }).static) continue;
     const kind: AppKind = isPanel ? "panel" : (it.slot === "sidebarFooter" ? "manage" : "action");
-    const id = `${kind}:${it.id}`;
+    // 面板卡 key 与卡 id 必须用宿主全序 id（`<extId>:<注册 id>`——dock present 状态机按这个 key
+    // 寻址；注册侧的裸 id（如 session-manager 的 "panel"）不带前缀时 present 打到不存在的 key = 死卡）
+    const fullId = it.id.startsWith(`${extId}:`) ? it.id : `${extId}:${it.id}`;
+    const id = `${kind}:${fullId}`;
     if (seen.has(id)) continue;
     seen.add(id);
     const label = String(it.meta?.label ?? it.meta?.title ?? (colon > 0 ? it.id.slice(colon + 1) : it.id));
@@ -274,7 +285,7 @@ export function buildApps(input: {
       icon: it.meta?.icon as AppDescriptor["icon"],
       keywords: [...(APP_OVERRIDES[extId]?.keywords ?? [])],
       run: isPanel
-        ? () => input.openPanel(it.id)
+        ? () => input.openPanel(fullId)
         : () => { try { it.meta!.onClick!(undefined); } catch { /* ignore */ } },
     });
   }
@@ -302,7 +313,19 @@ export function buildApps(input: {
       });
     }
   }
-  return out;
+  // 同扩展同名去重（跨 kind）：toolbar/sidebarFooter 动作卡与 rightFileDock 面板卡描述同一
+  // 功能时（如 调度/显示环境/文档/邮件/扩展/服务端口 双卡），保留面板卡（present 状态机语义
+  // 最全：浮动/停靠/关闭 + 位置持久化），面板缺席时保留原动作卡。首个出现位次保留。
+  const rank = (k: AppKind) => (k === "panel" ? 0 : k === "toggle" ? 1 : 2);
+  const best = new Map<string, AppDescriptor>();
+  const order: string[] = [];
+  for (const a of out) {
+    const key = `${a.kind === "toggle" ? "t" : "e"}\n${a.extId}\n${a.label}`;
+    const prev = best.get(key);
+    if (!prev) { best.set(key, a); order.push(key); continue; }
+    if (rank(a.kind) < rank(prev.kind)) best.set(key, a);
+  }
+  return order.map((k) => best.get(k)!);
 }
 
 /** extman ops set-feature（boolean）；成功后按 extman 同款 detail 广播 → 宿主 feature store 原地 patch（插槽条目即时显隐）。 */
