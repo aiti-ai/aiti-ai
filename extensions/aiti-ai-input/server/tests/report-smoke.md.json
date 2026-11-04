@@ -1,0 +1,52 @@
+[
+  {
+    "file": "vad_20260905_155613.wav",
+    "dur": 7.92,
+    "qwen3-0.6b": {
+      "text": "国务院发展研究中心市场经济研究所副所长，邓玉松认为。",
+      "ms": 19728,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "国务院发展研究中心市场经济研究所副所长邓郁松认为",
+      "ms": 26735,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "国务院发展研究中心市场经济研究所副所长邓玉松认为",
+      "ms": 2415,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_155847.wav",
+    "dur": 13.56,
+    "qwen3-0.6b": {
+      "text": "我们现在来说说我们这边的专业术语：AIT、DevTools、IT、AI、CM、CMB、认领、拉、review。",
+      "ms": 19193,
+      "repeat": false,
+      "hit": [
+        "devtools",
+        "认领"
+      ]
+    },
+    "nano": {
+      "text": "我们现在来说说我们这边专业术语，PI DEVTOOLS IT AI CMC M B COMMAND PLAN REVIEW。",
+      "ms": 2387,
+      "repeat": false,
+      "hit": [
+        "devtools",
+        "pi"
+      ]
+    },
+    "sensevoice": {
+      "text": "for external high double i t a i c m c m b amount plan review",
+      "ms": 382,
+      "repeat": false,
+      "hit": []
+    }
+  }
+]
