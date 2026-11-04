@@ -64,3 +64,8 @@ e2e_*.mjs
 # --- aiti managed (loose trace) ---
 .aiti-trace/
 # --- end aiti managed (loose trace) ---
+
+# ported extension packages (extensions/) build artifacts
+extensions/**/node_modules/
+extensions/**/dist/
+extensions/**/*.tsbuildinfo
