@@ -2187,7 +2187,8 @@ function restoreUndoData(data, undo) {
 let resolveProviderModels;
 let normModelId;
 try { ({ resolveProviderModels, normModelId } = require("./effective-models.cjs")); }
-catch { ({ resolveProviderModels, normModelId } = require("../shared/effective-models.cjs")); }
+catch { try { ({ resolveProviderModels, normModelId } = require("./vendor/effective-models.cjs")); }
+  catch { ({ resolveProviderModels, normModelId } = require("../shared/effective-models.cjs")); } }  // 源码仓→vendor/（d6b635c1 后共享层退役）；部署态第一跳已命中
 
 // ---- pi ModelRuntime 快照（combo 成员池与引擎同源：内存 models + models.json 统一解析） ----
 // combo 成员可以是运行时注册的 provider（如 pi-freeflow 的 freeflow，不在 models.json）——

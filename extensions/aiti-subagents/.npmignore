@@ -1,0 +1,1 @@
+# npm 用 .npmignore 取代 .gitignore——补回构建产物目录 dist/（产物统一 dist/ 不入 git，但发布需随包；docs/git-tracked-build-chunks-cleanup-plan.md §7）

@@ -52,7 +52,7 @@ export interface FolderEntry { p: string; pin?: 1 }
 
 /* ── 显示忽略项（单 folder 粒度，与钉住同构：root 路径 → 开关；跨 bundle 收敛同款）──
  *  localStorage `pi:folder:show-ignored` = { [rootPath]: 1 }，每个 folder 面板独立；
- *  开启后目录列表请求带 showIgnored=1（服务端返回 ignored:true 条目置灰显示）。 */
+ *  开启后目录列表请求带 hidden=1（宿主上游参数名；置灰条目前端按 hidden==="ignored" 识别）。 */
 const SHOW_IGNORED_KEY = "pi:folder:show-ignored";
 export const SHOW_IGNORED_EVENT = "pi:folder:show-ignored-changed";
 

@@ -1,0 +1,19 @@
+{
+  "name": "@aiti-ai/aiti-recovery",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "恢复 UI 扩展（队列恢复对话框 + 重启恢复向导）——pi-web 去 fork 化 B3 外迁",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "中断不可怕，可怕的是找不到回去的路。",
+  "aitiConfigs": {
+    "configFiles": []
+  },
+  "aitiExtProtocol": "1.0"
+}
