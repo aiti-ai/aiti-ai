@@ -111,7 +111,9 @@ test("M1: services run 缺省 source=service、显式 source 保留、unwrap 纯
   const kl = await svc.kill(r2.sessionId);
   assert.ok(!(kl instanceof Response), "kill 应解包为纯数据");
   assert.equal(kl.ok, true);
-  assert.deepEqual(svc.sessions(), svc.list(), "sessions 应与 list 同源");
+  // durationMs 是存活计时（两次调用间隔内必然走表，负载下 1ms 抖动即 deepEqual 失败）——剥离后比同源性
+  const stripTiming = (rows) => (rows ?? []).map(({ durationMs, ...rest }) => rest);
+  assert.deepEqual(stripTiming(svc.sessions()), stripTiming(svc.list()), "sessions 应与 list 同源");
 
   // 清场
   await svc.kill(r1.sessionId);
