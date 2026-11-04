@@ -100,7 +100,7 @@ test("ui-confirm-alert-prompt", async (t) => {
 
   await t.test("confirm：确定 → true", async () => {
     const p = mod.uiConfirm({ message: "删除分组 X？" });
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 150));
     const panel = overlayOf(body).children[0];
     const btns = buttons(panel);
     assert.equal(btns.length, 2);
@@ -111,7 +111,7 @@ test("ui-confirm-alert-prompt", async (t) => {
 
   await t.test("confirm：取消 → false；danger 红按钮 + warn 图标 + 契约属性", async () => {
     const p = mod.uiConfirm({ message: "确认执行？", detail: "$ rm -rf /", danger: true });
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 150));
     const overlay = overlayOf(body);
     const panel = overlay.children[0];
     // 契约属性
@@ -132,7 +132,7 @@ test("ui-confirm-alert-prompt", async (t) => {
 
   await t.test("confirm：Esc → false", async () => {
     const p = mod.uiConfirm("继续吗？");
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 150));
     const panel = overlayOf(body).children[0];
     panel.keydown("Escape");
     assert.equal(await p, false);
@@ -140,13 +140,13 @@ test("ui-confirm-alert-prompt", async (t) => {
 
   await t.test("alert：字符串快捷 + kind error", async () => {
     const p1 = mod.uiAlert("已完成");
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 150));
     let panel = overlayOf(body).children[0];
     buttons(panel).at(-1).click();
     assert.equal(await p1, undefined);
 
     const p2 = mod.uiAlert({ message: "保存失败", kind: "error" });
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 150));
     panel = overlayOf(body).children[0];
     // error 图标为 svg（head 的首个子元素）
     const svg = panel.querySelector("svg") ?? panel.children[0].children[0];
@@ -157,7 +157,7 @@ test("ui-confirm-alert-prompt", async (t) => {
 
   await t.test("prompt：确定回值 / 取消 → null / Esc → null / 默认值聚焦全选", async () => {
     const p1 = mod.uiPrompt({ message: "输入名称：", value: "草稿" });
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 150));
     const panel = overlayOf(body).children[0];
     const input = panel.children.find((c) => c.tag === "input");
     assert.ok(input, "应有输入框");
@@ -167,12 +167,12 @@ test("ui-confirm-alert-prompt", async (t) => {
     assert.equal(await p1, "新名字");
 
     const p2 = mod.uiPrompt("再输入：");
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 150));
     buttons(overlayOf(body).children[0])[0].click();
     assert.equal(await p2, null);
 
     const p3 = mod.uiPrompt("Esc 取消：");
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 150));
     overlayOf(body).children[0].keydown("Escape");
     assert.equal(await p3, null);
   });
@@ -180,7 +180,7 @@ test("ui-confirm-alert-prompt", async (t) => {
   await t.test("队列串行：一次只显示一个", async () => {
     const p1 = mod.uiConfirm("第一个");
     const p2 = mod.uiConfirm("第二个");
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 150));
     assert.equal(body.children.length, 1, "同时只有一个 overlay");
     const panel1 = overlayOf(body).children[0];
     // 第一个面板的正文应是「第一个」（panel.children = [head, msg, foot]）
@@ -188,7 +188,7 @@ test("ui-confirm-alert-prompt", async (t) => {
     assert.ok((msg1?.textContent || "").includes("第一个"), "先显示第一个弹窗");
     buttons(panel1).at(-1).click();
     assert.equal(await p1, true);
-    await new Promise((r) => setTimeout(r, 10));
+    await new Promise((r) => setTimeout(r, 150));
     assert.equal(body.children.length, 1, "第一个结束后第二个才出现");
     const panel2 = overlayOf(body).children[0];
     assert.notEqual(panel2, panel1, "第二个是新实例");
