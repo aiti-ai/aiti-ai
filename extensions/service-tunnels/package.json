@@ -1,0 +1,35 @@
+{
+  "name": "@aiti-ai/service-tunnels",
+  "version": "0.3.0",
+  "type": "module",
+  "aiti": {
+    "kind": "ext",
+    "tier": "full",
+    "systemDeps": {
+      "linux-apt": [],
+      "note": "隧道二进制（cloudflared/ngrok/frpc）由运行时 justget 多源下载，不走 apt"
+    }
+  },
+  "description": "pi-web 扩展：服务端口发现 / 虚拟主机代理 / 隧道 / 认证 / 自暴露（从 pi-web core 剥离的完整载体）",
+  "homepage": "https://aiti.pw/extensions/service-tunnels.html",
+  "license": "MIT",
+  "dependencies": {
+    "service-tunnels": "^0.3.78"
+  },
+  "scripts": {
+    "build:client": "node tools/build-client.mjs",
+    "deploy": "node tools/deploy.mjs",
+    "test": "node --test server/*.test.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "qrcode": "^1.5.4"
+  },
+  "soul": "本地服务不该被防火墙关起来——在哪都应该可以安全访问。",
+  "aitiConfigs": {
+    "configFiles": [
+      "expose-inject.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}
