@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>aiti devtools · 设置</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="wrap">
+    <h1>🛠 aiti devtools 设置</h1>
+    <p class="sub">任意网页（无需目标应用改造）注入页面内 AI 调试助手。配置保存后<b>刷新页面</b>生效。</p>
+
+    <div class="card">
+      <label class="field">
+        <span class="k">全局注入</span>
+        <span class="switch"><input type="checkbox" id="enabled"><span class="slider"></span></span>
+      </label>
+    </div>
+
+    <div class="card">
+      <label class="field">
+        <span class="k">桥地址（MCP bridge base）</span>
+        <input type="text" id="bridgeUrl" placeholder="http://127.0.0.1:8777/aiti" spellcheck="false">
+      </label>
+      <p class="tip">launcher 连接的 MCP 桥基地址。默认本地独立桥（aiti-bridge，127.0.0.1:8777/aiti）；可填远程 pi-web 桥。</p>
+
+      <label class="field">
+        <span class="k">AI 窗地址</span>
+        <input type="text" id="aiUrl" placeholder="http://127.0.0.1:8777/cockpit.html" spellcheck="false">
+      </label>
+      <p class="tip">AI 调试窗 URL。默认与桥同源的 cockpit（本地桥自带）；可指向 pi-web AI 窗。</p>
+    </div>
+
+    <div class="card">
+      <label class="field">
+        <span class="k">排除站点（每行一个正则）</span>
+        <textarea id="excludes" rows="5" placeholder="例如：&#10;https:\\/\\/.*\\.bank\\.com\\/.*" spellcheck="false"></textarea>
+      </label>
+      <p class="tip">命中任一正则的 URL 不注入 launcher。</p>
+    </div>
+
+    <div class="card">
+      <label class="field">
+        <span class="k">agent 端接入（AITI_BRIDGE_URL）</span>
+        <div class="mono-row"><code id="shimUrl">—</code><button class="btn mini" id="copyShim">复制</button></div>
+      </label>
+      <p class="tip">外部 agent（pi / claude / opencode）经 stdio shim 接入时，把 env <code>AITI_BRIDGE_URL</code> 设为该桥地址（URL 不落 MCP 配置）。</p>
+    </div>
+
+    <div class="actions">
+      <button class="btn primary" id="save">保存</button>
+      <button class="btn" id="reset">恢复默认</button>
+      <span class="status" id="status"></span>
+    </div>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

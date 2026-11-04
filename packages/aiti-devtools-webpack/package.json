@@ -1,0 +1,22 @@
+{
+  "name": "@aiti-ai/aiti-devtools-webpack",
+  "version": "0.1.0",
+  "description": "aiti-devtools webpack-dev-server 插件（载体 2）：dev server 内置 MCP（launcher 注入 + 桥 + MCP 端点 + 操作台，同源 /aiti/），启动自动注册到常见 agent 工具。复用 aiti-devtools-core 全部公共能力",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "files": [
+    "src"
+  ],
+  "dependencies": {
+    "@aiti-ai/aiti-devtools-core": "^0.3.5"
+  },
+  "peerDependencies": {
+    "webpack": "^5.0.0",
+    "webpack-dev-server": "^4.0.0 || ^5.0.0",
+    "html-webpack-plugin": "^5.0.0"
+  },
+  "license": "MIT"
+}

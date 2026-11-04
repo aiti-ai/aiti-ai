@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Demo B · aiti-devtools opencode 导航测试</title>
+<style>body{font-family:sans-serif;padding:2rem;line-height:1.8}button{font-size:1rem;padding:.5rem 1.2rem;margin:.4rem;cursor:pointer}</style>
+<script>
+window.__AITI_BASE__ = "https://opencode.localhost:8442";
+</script>
+</head>
+<body>
+<h1>Demo B</h1>
+<p>本页 id = <b>page-b</b>（与 A 互跳，测试帧管理）。</p>
+<button onclick="location.href='page-a.html'">➡️ 跳回 Demo A</button>
+<button onclick="history.back()">⬅️ 返回</button>
+<button onclick="triggerError()">💥 抛一个错误</button>
+<script>
+  function triggerError() {
+    try {
+      JSON.parse('{故意不是json');
+    } catch (e) {
+      console.error('【Demo B · 故意错误】', e);
+      throw e;
+    }
+  }
+</script>
+<script>
+  const BASE = window.__AITI_BASE__;
+  const s = document.createElement('script');
+  s.src = BASE + "/aiti/aiti-launcher.js";
+  s.setAttribute("data-bridge-url", BASE + "/aiti");
+  s.setAttribute("data-ai-url", BASE + "/");
+  document.body.appendChild(s);
+</script>
+</body>
+</html>

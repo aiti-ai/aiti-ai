@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Demo pi-web · aiti-devtools 错误候选测试</title>
+<style>body{font-family:sans-serif;padding:2rem;line-height:1.8}button{font-size:1rem;padding:.5rem 1.2rem;margin:.4rem;cursor:pointer}</style>
+<script>
+// 桥/AI 窗基址：pi-web dev 实例（⚠️ 需浏览器已登录 pi.example.com —— Authelia 在前；未登录会 302，launcher 不加载）
+// 想测生产实例改回 "https://pi.example.com:8443"
+window.__AITI_BASE__ = "https://pi.example.com:8443/dev";
+</script>
+</head>
+<body>
+<h1>Demo pi-web（错误候选测试）</h1>
+<p>本页 id = <b>page-piweb</b>，launcher 从 pi-web dev 扩展资产加载（<span id="base"></span>）。
+用于测试 <b>pi-web 场景</b>的错误候选链路：页面错误 → launcher 捕获 → AI 窗（pi-web 页面）候选条 [错误N] → 发送替换。</p>
+<button onclick="alert('piweb demo clicked')">本地按钮</button>
+<button onclick="throwErr()">💥 触发错误（throw）</button>
+<button onclick="rejectPromise()">💥 触发错误（Promise）</button>
+<button onclick="throwTypeError()">💥 触发错误（TypeError）</button>
+<button onclick="resourceErr()">💥 触发错误（资源加载 404）</button>
+<script>
+  function throwErr() { throw new Error('piweb 手动触发错误：同步处理失败'); }
+  function rejectPromise() { Promise.reject(new Error('piweb 手动触发错误：异步加载失败')); }
+  function throwTypeError() { null.piwebBoom(); }
+  function resourceErr() { var i = new Image(); i.src = '/definitely-missing-' + Date.now() + '.png'; }
+</script>
+<script>
+  document.getElementById('base').textContent = window.__AITI_BASE__;
+  const BASE = window.__AITI_BASE__;
+  const EXT = BASE + "/api/extensions/aiti-devtools";
+  const s = document.createElement('script');
+  s.src = EXT + "/aiti-launcher.js";
+  s.setAttribute("data-bridge-url", EXT + "/mcp");
+  s.setAttribute("data-ai-url", BASE + "/");
+  document.body.appendChild(s);
+</script>
+</body>
+</html>

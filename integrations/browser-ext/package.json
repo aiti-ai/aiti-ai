@@ -1,0 +1,12 @@
+{
+  "name": "@aiti-ai/aiti-devtools-browser-ext",
+  "version": "0.1.0",
+  "private": true,
+  "description": "aiti-devtools 浏览器扩展：任意网页（无需目标应用改造）注入页面内 AI 调试助手（FAB + Inspector + AI 窗），支持 Chrome / Edge / Firefox（含 Firefox Android）",
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "package": "node scripts/package.mjs"
+  },
+  "license": "MIT"
+}

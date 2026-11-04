@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Demo A · aiti-devtools 导航测试</title>
+<style>body{font-family:sans-serif;padding:2rem;line-height:1.8}button{font-size:1rem;padding:.5rem 1.2rem;margin:.4rem;cursor:pointer}</style>
+<script>
+// 桥/AI 窗基址：默认 DSH 域名（也可改成 http://127.0.0.1:3080 走本地）
+window.__AITI_BASE__ = "https://dsh.pi.example.com:8443";
+</script>
+</head>
+<body>
+<h1>Demo A</h1>
+<p>本页 id = <b>page-a</b>，已注入 aiti-devtools launcher（来自 <span id="base"></span>）。</p>
+<p>用途：测试 launcher 在 <b>页面跳转</b> 中的帧管理 —— 跳到 Demo B 再返回，观察桥里页面会话/帧树变化。</p>
+<button onclick="location.href='page-b.html'">➡️ 跳转到 Demo B</button>
+<button onclick="history.back()">⬅️ 返回</button>
+<button onclick="triggerError()">💥 抛一个错误</button>
+<script>
+  function triggerError() {
+    try {
+      const x = undefined;
+      x.nonexistentProperty = 1;
+    } catch (e) {
+      // 让 aiti-devtools 的 page_error 捕获到：console.error + 重新 throw
+      console.error('【Demo A · 故意错误】', e);
+      throw e;
+    }
+  }
+</script>
+<script>
+  // 注入 launcher：src / data-bridge-url 用可配置基址
+  const BASE = window.__AITI_BASE__;
+  document.getElementById('base').textContent = BASE;
+  const s = document.createElement('script');
+  s.src = BASE + "/aiti/aiti-launcher.js";
+  s.setAttribute("data-bridge-url", BASE + "/aiti");
+  s.setAttribute("data-ai-url", BASE + "/");
+  document.body.appendChild(s);
+</script>
+</body>
+</html>

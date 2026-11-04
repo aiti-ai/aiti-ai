@@ -1,0 +1,42 @@
+{
+  "id": "aiti-devtools",
+  "name": "aiti-devtools",
+  "description": "页面内 AI 调试助手（aiti_* 工具：页面执行/选区/人机交互/文件/消息），execute 直连 aiti 桥 REST（非 MCP）",
+  "contracts": {
+    "tools": [
+      "aiti_page_exec",
+      "aiti_page_snapshot",
+      "aiti_self_ui",
+      "aiti_form_fill",
+      "aiti_bridge_status",
+      "aiti_page_logs",
+      "aiti_page_network",
+      "aiti_user_pick_element",
+      "aiti_user_confirm",
+      "aiti_user_choose",
+      "aiti_user_input",
+      "aiti_user_presence",
+      "aiti_user_notify",
+      "aiti_aiti_hello",
+      "aiti_file_stat",
+      "aiti_aiti_inbox"
+    ],
+    "gatewayMethodDispatch": [
+      "authenticated-request"
+    ]
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "bridgeUrl": {
+        "type": "string",
+        "default": "http://127.0.0.1:8777",
+        "description": "aiti-devtools 桥地址（独立桥 aiti-bridge.service 默认 127.0.0.1:8777）"
+      }
+    }
+  }
+}
