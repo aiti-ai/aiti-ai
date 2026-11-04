@@ -1,0 +1,766 @@
+/**
+ * speaker —— 跟读模式核心 store + 播放器（模块级单例，非 React）
+ *
+ * 架构（极简版）：
+ *   - msgList[sessionId] = [{ id, key }] —— 持久消息索引，只存 id+要点标记
+ *   - textCache[sessionId][id] = text —— 按需从服务端拉的文本缓存
+ *   - 当前播放位置 = state.curIndex（msgList 中的索引）+ state.curSeg（当前句索引）
+ *   - 切消息 = 改 curIndex，调 playAt(idx)
+ *   - 切句子 = 改 curSeg，调 playCur()
+ *   - 播放器：默认浏览器 Web Speech，可选 edge-tts（<audio>）
+ *   - SSE 订阅：收到 settled → 追加到 msgList 末尾 + 立即入播
+ *
+ * 组件经 subscribe() 订阅变化（React useSyncExternalStore / useState+useEffect）。
+ */
+
+import { toSpeechSegments, filterSegments } from "./toSpeechText.js";
+
+const LS_SETTINGS = "aiti-ai-speek:settings";
+const LS_FOLLOW = "aiti-ai-speek:follow";
+const LS_BAR = "aiti-ai-speek:bar";
+const LS_PROGRESS = "aiti-ai-speek:progress";
+const LS_READPOS = "aiti-ai-speek:readpos";
+
+const DEFAULT_SETTINGS = {
+  voice: "",
+  rate: 1,
+  mode: "full",
+  engine: "browser",
+  minChars: 8,
+  steer: true,
+  backgroundContinue: false,
+};
+
+const READ_LIMIT = 20; // 单次最多连续播的条数（防止巨长会话一次入播太深）
+
+const state = {
+  followOn: false,
+  barVisible: false,
+  settings: { ...DEFAULT_SETTINGS },
+  // 会话消息索引 { [sessionId]: [{ id, key }] } —— 持久，切换 session 时释放
+  msgList: {},
+  allMessagesLoaded: {}, // { [sessionId]: boolean }
+  // 文本缓存 { [sessionId]: { [id]: text } } —— 切换 session 时释放
+  textCache: {},
+  // 当前播放位置（-1 = 未开始）
+  curIndex: -1,        // msgList[activeSessionId] 中的索引
+  curSeg: 0,           // 当前消息的第几句
+  curSegs: [],         // 当前消息分好的句子（避免每次重切都重算）
+  playing: false,
+  paused: false,
+  starting: false,
+  audio: null,         // edge 引擎的 <audio>
+  edgePool: {},        // { [key]: { loaded, loading, errored, audioSrc } }  edge 预取池
+  scrollListener: null,    // 滚动事件监听器句柄
+  voices: [],
+  edgeVoices: [],
+  edgeAvailable: false,
+  browserUnsupported: false,
+  engineAuto: false,
+  processOn: false,
+  processLoaded: false,
+  backlog: 0,
+  lastError: null,
+  pageFocused: true,
+  apiUrl: (p) => p,
+};
+
+const listeners = new Set();
+function notify() {
+  try {
+    const seg = state.curSegs[state.curSeg] || null;
+    window.__speekDebug = {
+      curIndex: state.curIndex, curSeg: state.curSeg,
+      curId: curId(), segText: seg ? seg.text : null, segMatch: seg ? seg.match : null,
+      msgListLen: activeSessionId ? (state.msgList[activeSessionId] || []).length : 0,
+      followOn: state.followOn, playing: state.playing,
+      sseSettledCount: typeof sseSettledCount === "number" ? sseSettledCount : -1,
+      sseConnectedMs: sseConnectedAt ? (Date.now() - sseConnectedAt) : -1,
+      esClosed: !esRef,
+    };
+  } catch { /* noop */ }
+  for (const l of [...listeners]) l();
+}
+export function subscribe(fn) { listeners.add(fn); return () => { listeners.delete(fn); }; }
+export function getState() { return state; }
+export function setApiUrl(fn) { state.apiUrl = fn; }
+
+function persist() {
+  try { localStorage.setItem(LS_SETTINGS, JSON.stringify(state.settings)); } catch { /* noop */ }
+  try { localStorage.setItem(LS_FOLLOW, state.followOn ? "1" : "0"); } catch { /* noop */ }
+  try { localStorage.setItem(LS_BAR, state.barVisible ? "1" : "0"); } catch { /* noop */ }
+}
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(LS_SETTINGS) || "null");
+    if (s && typeof s === "object") state.settings = { ...DEFAULT_SETTINGS, ...s };
+  } catch { /* 损坏回落默认 */ }
+  try { state.followOn = localStorage.getItem(LS_FOLLOW) === "1"; } catch { /* noop */ }
+  try { state.barVisible = localStorage.getItem(LS_BAR) === "1"; } catch { /* noop */ }
+}
+load();
+
+export function setSettings(patch) {
+  state.settings = { ...state.settings, ...patch };
+  persist();
+  notify();
+}
+export function setFollow(on) {
+  state.followOn = !!on;
+  if (on) { state.barVisible = true; }
+  else { stop(); state.barVisible = false; }
+  persist();
+  notify();
+}
+export function setBarVisible(v) {
+  state.barVisible = !!v;
+  persist();
+  notify();
+}
+export function toggleFollow() {
+  if (!state.followOn) { setFollow(true); return; }
+  if (!state.barVisible && state.playing) { setBarVisible(true); return; }
+  setFollow(false);
+}
+export function setEdgeInfo(available, voices) {
+  state.edgeAvailable = !!available;
+  if (Array.isArray(voices)) state.edgeVoices = voices;
+  notify();
+}
+export async function fetchFeatures() {
+  try {
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/features"));
+    if (!res.ok) return;
+    const d = await res.json();
+    if (d && typeof d.process === "boolean") { state.processOn = d.process; state.processLoaded = true; notify(); }
+    if (d && typeof d.edge === "boolean") setEdgeInfo(d.edge, state.edgeVoices);
+  } catch { /* 静默 */ }
+}
+export async function toggleProcess() {
+  const next = !state.processOn;
+  state.processOn = next; state.processLoaded = true; notify();
+  try {
+    await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/feature"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "process.enabled", enabled: next }),
+    });
+  } catch { /* noop */ }
+}
+export function setVoices(voices) { state.voices = Array.isArray(voices) ? voices : []; notify(); }
+
+// ── 会话与当前会话 ──
+let activeSessionId = null;
+let resumeOnFocusReturn = false;
+let readerBC = null;
+const MY_ID = Math.random().toString(36).slice(2);
+
+// ── 句级进度（停止时记录，下次续读从该句继续） ──
+let progress = {};
+function loadProgress() {
+  try { return JSON.parse(localStorage.getItem(LS_PROGRESS) || "{}") || {}; } catch { return {}; }
+}
+function saveProgress() { try { localStorage.setItem(LS_PROGRESS, JSON.stringify(progress)); } catch { /* noop */ } }
+progress = loadProgress();
+
+// ── 消息级书签（续读用） ──
+let lastReadPos = {}; // { [sessionId]: sourceId }
+function loadLastReadPos() {
+  try { const o = JSON.parse(localStorage.getItem(LS_READPOS) || "{}"); if (o && typeof o === "object") lastReadPos = o; } catch { /* noop */ }
+}
+function saveLastReadPos() { try { localStorage.setItem(LS_READPOS, JSON.stringify(lastReadPos)); } catch { /* noop */ } }
+loadLastReadPos();
+
+function recordProgress() {
+  const id = curId();
+  if (id) { progress[id] = state.curSeg; saveProgress(); }
+}
+function clearProgressFor(id) {
+  if (id && progress[id] != null) { delete progress[id]; saveProgress(); }
+}
+
+// ── 工具 ──
+function curId() {
+  const list = activeSessionId ? state.msgList[activeSessionId] : null;
+  if (!list || state.curIndex < 0 || state.curIndex >= list.length) return null;
+  return list[state.curIndex].id;
+}
+
+/** 设置滚动追踪监听器 */
+function setupScrollTracking() {
+  // 移除旧监听器（防止重复）
+  if (scrollListener) {
+    window.removeEventListener('scroll', scrollListener);
+  }
+  
+  scrollListener = () => {
+    trackScrollPosition();
+  };
+  
+  window.addEventListener('scroll', scrollListener, { passive: true });
+}
+
+/** 轨道滚动位置 - 实时追踪当前播放元素位置 */
+function trackScrollPosition() {
+  const id = curId();
+  if (!id) return;
+  
+  const list = state.msgList[activeSessionId] || [];
+  const item = list.find((it) => it.id === id);
+  if (!item) return;
+  
+  // 重新定位元素（使用最新的 DOM 位置）
+  const element = document.querySelector(`[data-entry-id="${item.id}"]`);
+  if (!element) return;
+  
+  try {
+    const rect = element.getBoundingClientRect();
+    
+    // 只有当元素超出视口时才滚动
+    const viewportHeight = window.innerHeight;
+    const scrollTop = window.pageYOffset || document.documentElement.scrollTop;
+    
+    if (rect.top < 0 || rect.bottom > viewportHeight) {
+      // 将元素滚动到视口中部
+      const targetTop = rect.top + scrollTop - (viewportHeight - rect.height) / 2;
+      window.scrollTo({
+        top: targetTop,
+        behavior: 'auto' // instant，不动画
+      });
+    }
+  } catch (e) {
+    // 元素可能已被移除，忽略错误
+  }
+}
+
+/** 移除滚动追踪监听器 */
+function removeScrollTracking() {
+  if (scrollListener) {
+    window.removeEventListener('scroll', scrollListener);
+    scrollListener = null;
+  }
+}
+
+/** 清除率 (速度裁剪) */
+function clampRate(r) { const n = parseFloat(r) || 1; return Math.min(2, Math.max(0.5, n)); }
+
+// ── 服务端交互 ──
+/** 拉取消息索引（id + key 标记），持久到 msgList[sessionId] */
+function ensureSessionLoaded(sessionId) {
+  return new Promise((resolve) => {
+    if (state.allMessagesLoaded[sessionId] && Array.isArray(state.msgList[sessionId])) {
+      resolve(state.msgList[sessionId]);
+      return;
+    }
+    fetch(state.apiUrl("/api/extensions/aiti-ai-speek/messages") + "?session=" + encodeURIComponent(sessionId) + "&idsOnly=1")
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (!d || !d.ok || !Array.isArray(d.messages)) { resolve([]); return; }
+        const ids = d.messages.filter((it) => it && it.id).map((it) => ({ id: it.id, key: !!it.key }));
+        state.msgList[sessionId] = ids;
+        state.allMessagesLoaded[sessionId] = true;
+        notify();
+        resolve(ids);
+      })
+      .catch(() => resolve(state.msgList[sessionId] || []));
+  });
+}
+
+/** 按 id 批量取文本（按 mode 过滤），结果缓存到 textCache */
+function fetchTextBatch(sessionId, ids) {
+  return new Promise((resolve) => {
+    if (!sessionId || !ids || !ids.length) return resolve({});
+    if (!state.textCache[sessionId]) state.textCache[sessionId] = {};
+    const cache = state.textCache[sessionId];
+    const missing = ids.filter((id) => !(id in cache));
+    if (!missing.length) {
+      const out = {}; ids.forEach((id) => { out[id] = cache[id]; }); return resolve(out);
+    }
+    fetch(state.apiUrl("/api/extensions/aiti-ai-speek/messages-content"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: sessionId, ids: missing, mode: state.settings.mode === "essentials" ? "essentials" : "full" }),
+    })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (d && d.ok && Array.isArray(d.items)) {
+          for (const it of d.items) { if (it && it.id && typeof it.text === "string") cache[it.id] = it.text; }
+        }
+        const out = {}; ids.forEach((id) => { out[id] = cache[id] || ""; }); resolve(out);
+      })
+      .catch(() => { const out = {}; ids.forEach((id) => { out[id] = cache[id] || ""; }); resolve(out); });
+  });
+}
+
+/** 把 msgList 中 [from, from+READ_LIMIT] 一批文本入「待播」（拉文本 → 分句 → 推入 curSegs 链） */
+function loadRangeIntoCur(sessionId, from) {
+  const list = state.msgList[sessionId] || [];
+  if (!list.length) return;
+  if (from < 0) from = Math.max(0, list.length - READ_LIMIT);
+  const slice = list.slice(from, from + READ_LIMIT);
+  const ids = slice.map((it) => it.id);
+  fetchTextBatch(sessionId, ids).then((textMap) => {
+    // 把这些消息的句合并到 curSegs（保持连续播放体验）
+    const allSegs = [];
+    const idOrder = [];
+    const segStartMap = {}; // id → 在 allSegs 中的起始句索引
+    for (const it of slice) {
+      const raw = textMap[it.id];
+      if (!raw) continue;
+      const segs = filterSegments(toSpeechSegments(raw), state.settings.mode);
+      if (!segs.length) continue;
+      segStartMap[it.id] = allSegs.length;
+      idOrder.push(it.id);
+      for (const s of segs) allSegs.push({ ...s, _id: it.id });
+    }
+    if (!allSegs.length) { stop(); return; }
+    // 切到 first seg（按 progress 续读）
+    const firstId = idOrder[0];
+    const startSeg = (firstId && progress[firstId] != null) ? Math.min(progress[firstId], allSegs.length - 1) : (segStartMap[firstId] || 0);
+    state.curSegs = allSegs;
+    state.curSeg = startSeg;
+    state.curIndex = from; // 标记当前 msgList 起始位置（仅作大致指示，prev/skip 走 segStartMap）
+    state.curSegStartMap = segStartMap;
+    state.curSegIds = idOrder;
+    state.curSegFrom = from;
+    lastReadPos[sessionId] = firstId; saveLastReadPos();
+    playCurrentSeg();
+  });
+}
+
+// ── 三个对外入口 ──
+/** 进入/切 session：从上次读完位置续读 */
+export function resumeSessionFromLastPos(sessionId) {
+  if (!sessionId) return;
+  const lastPos = lastReadPos[sessionId];
+  if (lastPos) playAtSourceId(sessionId, lastPos);
+  else startFollowFromPageTop(sessionId);
+}
+
+/** 跟读按钮：从当前页可见的第一条 assistant 消息开始读 */
+export function startFollowFromPageTop(sessionId) {
+  if (!sessionId) return;
+  ensureSessionLoaded(sessionId).then(() => {
+    const vis = visibleEntryId();
+    if (vis) playAtSourceId(sessionId, vis);
+    else if (state.msgList[sessionId] && state.msgList[sessionId].length) {
+      playAtSourceId(sessionId, state.msgList[sessionId][state.msgList[sessionId].length - 1].id);
+    }
+  });
+}
+
+/** 点击「朗读这条」：从指定消息开始读 */
+export function readMessageFrom(text, sourceId, sessionId) {
+  if (!sourceId || !sessionId) return;
+  if (!state.pageFocused) { pendingReadOnFocus = sessionId; return; }
+  lastReadPos[sessionId] = sourceId; saveLastReadPos();
+  playAtSourceId(sessionId, sourceId);
+}
+
+/** 核心：从 msgList 里 sourceId 对应的位置开始播一整批（READ_LIMIT 条） */
+export function playAtSourceId(sessionId, sourceId) {
+  if (!sessionId || !sourceId) return;
+  if (!state.pageFocused) { pendingReadOnFocus = sessionId; return; }
+  if (activeSessionId && sessionId !== activeSessionId) return;
+  // 停旧播放
+  try { if (state.audio) { state.audio.pause(); state.audio = null; } window.speechSynthesis?.cancel(); } catch { /* noop */ }
+  state.playing = false; state.paused = false; state.starting = false;
+  state.curIndex = -1; state.curSeg = 0; state.curSegs = [];
+  ensureSessionLoaded(sessionId).then(() => {
+    const list = state.msgList[sessionId] || [];
+    if (!list.length) return;
+    let from = list.findIndex((it) => it.id === sourceId);
+    if (from < 0) { const vis = visibleEntryId(); if (vis) { const i = list.findIndex((it) => it.id === vis); if (i >= 0) from = i; } }
+    if (from < 0) from = Math.max(0, list.length - READ_LIMIT);
+    if (state.settings.mode === "essentials") {
+      // 仅要点：找最近一个 key=true 的位置
+      let focus = -1;
+      for (let i = from; i < list.length; i++) if (list[i].key) { focus = i; break; }
+      if (focus < 0) focus = Math.max(from, 0);
+      loadRangeIntoCur(sessionId, focus);
+    } else {
+      loadRangeIntoCur(sessionId, from);
+    }
+  });
+}
+
+/** 旧名兼容：组件层仍可能调 readCurrentSession → 转发到 playAtSourceId */
+export function readCurrentSession(sessionId, sourceId) { playAtSourceId(sessionId, sourceId); }
+
+// ── 播放器：句级 ──
+async function playCurrentSeg() {
+  const seg = state.curSegs[state.curSeg];
+  if (!seg) { advanceToNextMessage(); return; }
+  state.playing = true; state.paused = false; state.starting = true;
+  if (!readerBC) { /* 首次进入播放时声明一次 */ }
+  else broadcastClaim();
+  // 播放开始时设置滚动追踪：用户滚动页面时实时追踪高亮位置
+  setupScrollTracking();
+  const useEdge = (state.settings.engine === "edge" && state.edgeAvailable) || (state.browserUnsupported && state.edgeAvailable);
+  if (useEdge) {
+    await prefetchSegEdge(seg);
+  }
+  state.starting = false;
+  notify();
+  speakSeg(seg);
+}
+
+function speakSeg(seg) {
+  const useEdge = (state.settings.engine === "edge" && state.edgeAvailable) || (state.browserUnsupported && state.edgeAvailable);
+  if (useEdge) speakEdge(seg);
+  else speakBrowser(seg);
+}
+
+function speakBrowser(seg) {
+  try {
+    const synth = window.speechSynthesis;
+    if (!synth) throw new Error("speechSynthesis 不可用");
+    const u = new SpeechSynthesisUtterance(seg.text);
+    const v = pickBrowserVoice();
+    if (v) u.voice = v;
+    u.lang = v?.lang || "zh-CN";
+    u.rate = clampRate(state.settings.rate);
+    u.pitch = 1;
+    u.onend = () => { if (state.playing) advanceSeg(); };
+    u.onerror = () => { if (state.playing) advanceSeg(); };
+    synth.speak(u);
+    notify();
+  } catch (e) {
+    state.lastError = String(e && e.message ? e.message : e);
+    advanceSeg();
+    notify();
+  }
+}
+
+function pickBrowserVoice() {
+  const list = state.voices || [];
+  const want = state.settings.voice;
+  if (want) { const hit = list.find((v) => v.name === want || v.voiceURI === want); if (hit) return hit; }
+  return list.find((v) => /zh/i.test(v.lang || "")) || list[0] || null;
+}
+
+function advanceSeg() {
+  state.curSeg++;
+  if (state.curSeg >= state.curSegs.length) {
+    advanceToNextMessage();
+    return;
+  }
+  notify();
+  playCurrentSeg();
+}
+
+/** 当前批播完 → 推进 msgList 索引到下一批（避免一次性把 100 条全入 curSegs 占内存） */
+function advanceToNextMessage() {
+  const id = curId();
+  if (id) { clearProgressFor(id); lastReadPos[activeSessionId] = id; saveLastReadPos(); }
+  if (!activeSessionId) { state.playing = false; notify(); return; }
+  const list = state.msgList[activeSessionId] || [];
+  // 找到当前 id 在 list 中的下一个
+  const curIdxInList = list.findIndex((it) => it.id === id);
+  const nextListIdx = curIdxInList + 1;
+  if (nextListIdx >= list.length) {
+    // 已到最后一条 → 等 SSE 新消息或用户手动操作
+    state.playing = false;
+    state.curIndex = -1; state.curSeg = 0; state.curSegs = [];
+    notify();
+    return;
+  }
+  // 把 msgList 窗口往后推（从 nextListIdx 起再取 READ_LIMIT 条），重新加载到 curSegs
+  loadRangeIntoCur(activeSessionId, nextListIdx);
+}
+
+// ── edge-tts 预取与播放 ──
+function prefetchSegEdge(seg) {
+  return new Promise((resolve) => {
+    const key = `edge|${state.settings.voice || "zh-CN-XiaoxiaoNeural"}|${state.settings.rate}|${seg.text}`;
+    if (state.edgePool[key] && state.edgePool[key].loaded) { resolve(); return; }
+    state.edgePool[key] = { loaded: false, loading: true, errored: false };
+    const startedAt = Date.now();
+    const poll = () => {
+      const p = state.edgePool[key];
+      if (!p || p.loaded || p.errored || Date.now() - startedAt > 8000) { resolve(); return; }
+      setTimeout(poll, 50);
+    };
+    fetch(state.apiUrl("/api/extensions/aiti-ai-speek/tts-batch"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ texts: [seg.text], voice: state.settings.voice || "zh-CN-XiaoxiaoNeural", rate: state.settings.rate }),
+    })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        const p = state.edgePool[key];
+        if (!d || !d.ok || !Array.isArray(d.items) || !d.items[0] || !d.items[0].cached) {
+          if (p) { p.loaded = true; p.loading = false; p.errored = true; }
+          resolve();
+          return;
+        }
+        if (p) { p.loaded = true; p.loading = false; p.audioSrc = state.apiUrl("/api/extensions/aiti-ai-speek/tts-cache/" + d.items[0].key); }
+        resolve();
+      })
+      .catch(() => { const p = state.edgePool[key]; if (p) { p.loaded = true; p.loading = false; p.errored = true; } resolve(); });
+    poll();
+  });
+}
+
+function speakEdge(seg) {
+  const key = `edge|${state.settings.voice || "zh-CN-XiaoxiaoNeural"}|${state.settings.rate}|${seg.text}`;
+  const p = state.edgePool[key];
+  if (p && p.audioSrc) {
+    try {
+      const audio = new Audio(p.audioSrc);
+      state.audio = audio;
+      audio.onended = () => { if (state.playing) advanceSeg(); };
+      audio.onerror = () => { if (state.playing) advanceSeg(); };
+      audio.play().catch(() => advanceSeg());
+      return;
+    } catch { /* fallback below */ }
+  }
+  speakBrowser(seg);
+}
+
+// ── prev / skip ──
+function readAdjacent(delta) {
+  if (!activeSessionId) return;
+  const list = state.msgList[activeSessionId] || [];
+  if (!list.length) return;
+  ensureSessionLoaded(activeSessionId).then(() => {
+    const l = state.msgList[activeSessionId] || [];
+    if (!l.length) return;
+    const cur = curId();
+    let curIdx = cur ? l.findIndex((it) => it.id === cur) : state.curIndex;
+    if (curIdx < 0) curIdx = l.length - 1;
+    const step = delta > 0 ? 1 : -1;
+    let target = -1;
+    for (let i = curIdx + step; i >= 0 && i < l.length; i += step) {
+      if (state.settings.mode === "essentials" ? l[i].key : true) { target = i; break; }
+    }
+    console.log('[speek][adj]', { delta, cur, curIdx, target, listLen: l.length, mode: state.settings.mode });
+    if (target < 0) { console.log('[speek][adj] no target'); notify(); return; }
+    const t = l[target];
+    if (!t) return;
+    delete progress[t.id];
+    // 停旧播放
+    try { if (state.audio) { state.audio.pause(); state.audio = null; } window.speechSynthesis?.cancel(); } catch { /* noop */ }
+    state.playing = false; state.paused = false; state.starting = false;
+    state.curIndex = -1; state.curSeg = 0; state.curSegs = [];
+    console.log('[speek][adj] loadRangeIntoCur', target);
+    loadRangeIntoCur(activeSessionId, target);
+  }).catch((e) => { console.log('[speek][adj] err', e); notify(); });
+}
+export function prev() { console.log('[speek][prev] clicked', { activeSessionId, msgListLen: state.msgList[activeSessionId] ? state.msgList[activeSessionId].length : -1 }); readAdjacent(-1); }
+export function skip() {
+  try { if (state.audio) { state.audio.pause(); state.audio = null; } window.speechSynthesis?.cancel(); } catch { /* noop */ }
+  readAdjacent(1);
+}
+
+// ── 暂停 / 继续 / 停止 ──
+export function pause() {
+  if (!state.playing) return;
+  if (state.settings.engine === "edge" && state.audio) { state.audio.pause(); state.paused = true; notify(); return; }
+  try { window.speechSynthesis.pause(); state.paused = true; notify(); } catch { /* noop */ }
+}
+export function resume() {
+  if (!state.playing || !state.paused) return;
+  if (state.settings.engine === "edge" && state.audio) { state.audio.play().catch(() => {}); state.paused = false; notify(); return; }
+  try { window.speechSynthesis.resume(); state.paused = false; notify(); } catch { /* noop */ }
+}
+export function stop() {
+  recordProgress();
+  try { if (state.audio) { state.audio.pause(); state.audio = null; } window.speechSynthesis?.cancel(); } catch { /* noop */ }
+  state.curIndex = -1; state.curSeg = 0; state.curSegs = [];
+  state.playing = false; state.paused = false; state.starting = false;
+  // 停止播放时移除滚动追踪（防止内存泄漏）
+  removeScrollTracking();
+  notify();
+}
+
+// ── 当前会话门控 ──
+let pendingReadOnFocus = null;
+export function setPageFocused(focused) {
+  const f = !!focused;
+  if (state.pageFocused === f) return;
+  state.pageFocused = f;
+  if (!f) {
+    // 允许后台继续读：不停止，也不标记恢复（根本没停，回到前台无需重开）
+    if (!state.settings.backgroundContinue) {
+      resumeOnFocusReturn = state.followOn && state.playing;
+      stop();
+    }
+  } else {
+    const wantRead = resumeOnFocusReturn || pendingReadOnFocus;
+    resumeOnFocusReturn = false;
+    const target = pendingReadOnFocus || activeSessionId;
+    pendingReadOnFocus = null;
+    if (wantRead && state.followOn && target) resumeSessionFromLastPos(target);
+  }
+  notify();
+}
+export function bindFocusGating() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const update = () => {
+    let focused = false;
+    try { focused = !document.hidden && (typeof document.hasFocus === "function" ? document.hasFocus() : true); } catch { focused = true; }
+    setPageFocused(focused);
+  };
+  window.addEventListener("focus", update);
+  window.addEventListener("blur", update);
+  document.addEventListener("visibilitychange", update);
+  update();
+}
+export function bindReaderCoordination() {
+  try {
+    readerBC = new BroadcastChannel("aiti-ai-speek:reader");
+    readerBC.onmessage = (e) => {
+      const m = e && e.data;
+      if (!m || m.type !== "claim" || m.from === MY_ID) return;
+      if (state.playing && !state.pageFocused && !state.settings.backgroundContinue) stop();
+    };
+  } catch { /* noop */ }
+}
+function broadcastClaim() {
+  try { readerBC?.postMessage({ type: "claim", from: MY_ID, sessionId: activeSessionId, ts: Date.now() }); } catch { /* noop */ }
+}
+
+// ── SSE 订阅 ──
+let esRef = null;
+let esSessionId = null;
+let sseSettledCount = 0;
+let sseConnectedAt = 0;
+export function subscribeSession(sessionId) {
+  if (!sessionId || !state.followOn) { unsubscribeSession(); return; }
+  if (esRef && esSessionId === sessionId) return;
+  unsubscribeSession();
+  esSessionId = sessionId;
+  try {
+    const url = state.apiUrl("/api/extensions/aiti-ai-speek/events") + "?session=" + encodeURIComponent(sessionId);
+    const es = new EventSource(url);
+    esRef = es;
+    sseConnectedAt = Date.now();
+    es.onopen = () => { try { window.__sseOpen = Date.now(); } catch { /* noop */ } };
+    es.addEventListener("settled", (ev) => {
+      sseSettledCount++;
+      try {
+        const d = JSON.parse(ev.data || "{}");
+        const text = d && d.text;
+        if (!text) return;
+        const newId = d.id || d.sourceId || ("sse-" + Date.now());
+        // 追加到 msgList
+        const list = state.msgList[sessionId] || (state.msgList[sessionId] = []);
+        if (!list.some((it) => it.id === newId)) {
+          list.push({ id: newId, key: false });
+          // 立即缓存文本（不依赖服务端再拉）
+          if (!state.textCache[sessionId]) state.textCache[sessionId] = {};
+          state.textCache[sessionId][newId] = text;
+          notify();
+        }
+        // 若当前未在播，且未到末尾（curIndex === -1 表示已播完或停）→ 立即开读这条
+        if (!state.playing) {
+          playAtSourceId(sessionId, newId);
+        } else {
+          // 在播：把新句追加到 curSegs 末尾
+          const segs = filterSegments(toSpeechSegments(text), state.settings.mode);
+          for (const s of segs) state.curSegs.push({ ...s, _id: newId });
+        }
+      } catch { /* 坏帧忽略 */ }
+    });
+    es.onerror = () => { /* EventSource 自愈重连 */ };
+  } catch (e) {
+    state.lastError = String(e && e.message ? e.message : e);
+    notify();
+  }
+}
+export function unsubscribeSession() {
+  if (esRef) { try { esRef.close(); } catch { /* noop */ } esRef = null; }
+  esSessionId = null;
+}
+
+// ── steer 注入（每会话一次） ──
+const LS_STEER = "aiti-ai-speek:steer";
+function steerDone(sessionId) { try { const rec = JSON.parse(localStorage.getItem(LS_STEER) || "{}") || {}; return !!rec[sessionId]; } catch { return false; } }
+function markSteerDone(sessionId) { try { const rec = JSON.parse(localStorage.getItem(LS_STEER) || "{}") || {}; rec[sessionId] = Date.now(); localStorage.setItem(LS_STEER, JSON.stringify(rec)); } catch { /* noop */ } }
+export async function steerSession(sessionId) {
+  if (!sessionId || !state.settings.steer) return;
+  if (steerDone(sessionId)) return;
+  try {
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/steer"), {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId }),
+    });
+    const d = await res.json().catch(() => null);
+    if (d && d.ok && (d.injected === true || d.injected === false)) markSteerDone(sessionId);
+  } catch { /* noop */ }
+}
+
+// ── edge-tts 可用性 ──
+export async function fetchEdgeInfo() {
+  try {
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/voices"));
+    if (!res.ok) return;
+    const d = await res.json();
+    if (d && d.ok) setEdgeInfo(d.edgeAvailable, d.voices || []);
+  } catch { /* noop */ }
+}
+export function browserSpeechSupported() {
+  try { return typeof window !== "undefined" && "speechSynthesis" in window && typeof window.SpeechSynthesisUtterance === "function"; } catch { return false; }
+}
+export async function autoSelectEngine() {
+  const supported = browserSpeechSupported();
+  if (supported) { state.browserUnsupported = false; state.engineAuto = false; return; }
+  state.browserUnsupported = true;
+  await fetchEdgeInfo();
+  if (state.edgeAvailable) {
+    try { await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/feature"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "tts.edge", enabled: true }) }); } catch { /* noop */ }
+    state.settings.engine = "edge"; state.engineAuto = true;
+    state.lastError = "浏览器不支持本地朗读，已自动切换到服务端语音生成。";
+    persist();
+  } else {
+    state.engineAuto = false;
+    state.lastError = "浏览器不支持本地朗读，且服务端语音（edge-tts）未就绪，无法朗读。";
+  }
+  notify();
+}
+
+// ── 兼容旧名（组件层可能仍引用） ──
+/** 旧 enqueue 接口：直接以单条文本塞入当前 curSegs 末尾 */
+export function enqueue(text, sessionId, sourceId, startSeg) {
+  const raw = String(text || "").trim();
+  if (!raw) return;
+  if (activeSessionId && sessionId && sessionId !== activeSessionId) return;
+  if (!state.pageFocused) return;
+  const segs = filterSegments(toSpeechSegments(raw), state.settings.mode);
+  if (!segs.length) return;
+  const id = sourceId || ("enq-" + Date.now());
+  for (const s of segs) state.curSegs.push({ ...s, _id: id });
+  if (!state.playing) {
+    state.curSeg = 0;
+    if (!state.curSegs.length) return;
+    playCurrentSeg();
+  } else notify();
+}
+export function currentSourceId() { return curId(); }
+export function replayCurrentPage(sessionId) { startFollowFromPageTop(sessionId); }
+export function consumeReadOnFollow() { return false; }
+export function speakMessage(text, sourceId, sessionId) { readMessageFrom(text, sourceId, sessionId); }
+
+// ── 诊断 ──
+if (typeof window !== "undefined") {
+  window.__speek = { state, playAtSourceId, prev, skip, stop, resumeSessionFromLastPos };
+}
+
+export function setCurrentSession(sessionId) {
+  const next = sessionId || null;
+  // 只有 sessionId 真的变化时，才释放旧缓存
+  if (next !== activeSessionId) {
+    // 只有当旧 session 存在时才删除，防止都为 null 时也删
+    if (activeSessionId) {
+      delete state.msgList[activeSessionId];
+      delete state.allMessagesLoaded[activeSessionId];
+      delete state.textCache[activeSessionId];
+    }
+    activeSessionId = next;
+  } else {
+    // 同一个 session，直接 return，不做任何清空
+    return;
+  }
+  stop();
+  // 自动预加载当前 session 的消息索引（只拉 id+key，不拉文本），保证 prev/skip 按钮始终可用
+  if (next) ensureSessionLoaded(next);
+  notify();
+}

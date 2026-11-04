@@ -1,0 +1,1761 @@
+let _ctx = null;
+function __setCtx(ctx) {
+  _ctx = ctx;
+}
+function c(name) {
+  return _ctx?.[name] ?? (() => void 0);
+}
+function createElement(...args) {
+  return c("h").call(null, ...args);
+}
+function mergeKey(args) {
+  const [type, props, key, ...rest] = args;
+  if (props && typeof props === "object") {
+    const merged = { ...props };
+    if (key !== void 0 && key !== null) merged.key = key;
+    return [type, merged, ...rest];
+  }
+  return args;
+}
+const jsx = (...args) => createElement(...mergeKey(args));
+const jsxs = (...args) => {
+  const props = args[1];
+  const children = props?.children;
+  if (Array.isArray(children)) {
+    for (const ch of children) {
+      if (ch && typeof ch === "object" && ch._store) {
+        ch._store.validated = 1;
+      }
+    }
+  }
+  return createElement(...mergeKey(args));
+};
+const useState = (init) => c("useState")(init);
+const useEffect = (fn, deps) => c("useEffect")(fn, deps);
+const useRef = (v) => c("useRef")(v);
+function createPortal(children, container) {
+  const fn = _ctx?.createPortal;
+  return typeof fn === "function" ? fn(children, container) : children;
+}
+function t(key, params) {
+  const fn = _ctx?.t;
+  return typeof fn === "function" ? fn(key, params) : key;
+}
+const SEG = { SUMMARY: "summary", QUESTION: "question", HEADING: "heading", NOTE: "note", BODY: "body" };
+const SUMMARY_KEYWORDS = ["总结", "结论", "要点", "综上", "小结", "回顾", "总之", "关键", "核心", "一句话", "简单说", "概括", "最后"];
+const QUESTION_KEYWORDS = ["您觉得", "你怎么看", "请告诉", "请问", "能否", "是否", "可不可以", "需要我", "要我", "帮我", "请回答", "你说呢", "你觉得呢", "你觉得", "可以吗", "行吗"];
+const CN_NUM = ["一", "二", "三", "四", "五", "六", "七", "八", "九", "十"];
+function leanText$1(text) {
+  return String(text || "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/__([^_]+)__/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/^#{1,6}\s+/gm, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/^>\s+/gm, "").replace(/^[-*_]{3,}\s*$/gm, "").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/…/g, "…").replace(/([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])[ \t\u00a0\u3000]+/g, "$1").replace(/[ \t\u00a0\u3000]+([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])/g, "$1").replace(/\n{3,}/g, "\n\n").trim();
+}
+function verbalize$1(text) {
+  return String(text || "").replace(/√/g, "根号").replace(/≥/g, "大于等于").replace(/≤/g, "小于等于").replace(/≠/g, "不等于").replace(/≈/g, "约等于").replace(/×/g, "乘").replace(/÷/g, "除以");
+}
+function cleanMarkdown$1(text) {
+  return verbalize$1(leanText$1(text));
+}
+function splitSentences(text) {
+  const out = [];
+  let cur = "";
+  for (const ch of String(text || "")) {
+    cur += ch;
+    if (/[。！？!?…；;]/.test(ch) || ch === "\n") {
+      const t2 = cur.replace(/\n+/g, " ").trim();
+      if (t2) out.push(t2);
+      cur = "";
+    }
+  }
+  const tail = cur.replace(/\n+/g, " ").trim();
+  if (tail) out.push(tail);
+  return out;
+}
+function classifySentence(s) {
+  const t2 = String(s || "").trim();
+  if (!t2) return SEG.BODY;
+  if (QUESTION_KEYWORDS.some((k) => t2.includes(k)) || /[？?]$/.test(t2)) return SEG.QUESTION;
+  if (SUMMARY_KEYWORDS.some((k) => t2.includes(k))) return SEG.SUMMARY;
+  return SEG.BODY;
+}
+function tableNote(blockLines) {
+  const rows = [];
+  for (const raw of blockLines) {
+    let line = raw.trim();
+    if (line.startsWith("|")) line = line.slice(1);
+    if (line.endsWith("|")) line = line.slice(0, -1);
+    const cells = line.split("|").map((c2) => cleanMarkdown$1(c2).trim());
+    if (cells.every((c2) => /^:?-{2,}:?$/.test(c2))) continue;
+    rows.push(cells);
+  }
+  if (!rows.length) return "（空表格）";
+  const n = rows.length, m = Math.max(...rows.map((r) => r.length));
+  const header = rows[0] || [];
+  const body = rows.slice(1);
+  const first = body[0] || [];
+  const last = body[body.length - 1] || [];
+  const parts = [`这是一张 ${n} 行 ${m} 列的表格`];
+  if (header.length) parts.push(`表头：${header.filter(Boolean).join("、")}`);
+  if (first.length) parts.push(`例如：${first.filter(Boolean).slice(0, 4).join("、")}`);
+  if (last.length) parts.push(`结论：${last.filter(Boolean).slice(0, 4).join("、")}`);
+  parts.push("细节请看屏幕");
+  return parts.join("；") + "。";
+}
+function codeNote(lang, codeLines) {
+  const langName = (lang || "代码").trim() || "代码";
+  let hint = "";
+  for (const l of codeLines) {
+    const t2 = l.trim();
+    if (!t2) continue;
+    const comment = /^(?:\/\/|#|--|\/\*|\*)\s*(.+)$/.exec(t2);
+    if (comment) {
+      hint = comment[1].slice(0, 24);
+      break;
+    }
+    const fn = /(?:function|def|const|let|var|export)\s+([A-Za-z0-9_$]+)\s*(?:\(|\s*=)/.exec(t2);
+    if (fn) {
+      hint = "函数 " + fn[1];
+      break;
+    }
+    if (!hint) hint = t2.slice(0, 16);
+  }
+  const lineDesc = codeLines.length > 1 ? `${codeLines.length} 行` : "1 行";
+  return `接下来是一段${langName}代码，约${lineDesc}${hint ? `，主要实现${hint}` : ""}；细节请看屏幕。`;
+}
+function listSegments(items, ordered, startNum) {
+  const segs = [];
+  let n = startNum || 1;
+  for (const raw of items) {
+    const content = leanText$1(raw).trim();
+    if (!content) {
+      n++;
+      continue;
+    }
+    const spoken = verbalize$1(content);
+    let text;
+    if (ordered) {
+      text = n <= 10 && CN_NUM[n - 1] ? `${CN_NUM[n - 1]}，${spoken}` : `第${n}项，${spoken}`;
+    } else {
+      text = spoken;
+    }
+    segs.push({ kind: SEG.BODY, text, match: content });
+    n++;
+  }
+  return segs;
+}
+function toSpeechSegments(md) {
+  const lines = String(md || "").split(/\r?\n/);
+  const segs = [];
+  let i = 0;
+  let headingCount = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (/^\s*```/.test(line)) {
+      const lang = line.replace(/^\s*```\s*/, "").trim();
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !/^\s*```/.test(lines[i])) {
+        codeLines.push(lines[i]);
+        i++;
+      }
+      i++;
+      const note = codeNote(lang, codeLines);
+      if (note) segs.push({ kind: SEG.NOTE, text: note });
+      continue;
+    }
+    const hm = /^(#{1,6})\s+(.+?)\s*#*\s*$/.exec(line);
+    if (hm) {
+      headingCount++;
+      const title = leanText$1(hm[2]).trim();
+      if (title) {
+        const isSum = SUMMARY_KEYWORDS.some((k) => title.includes(k));
+        segs.push({ kind: isSum ? SEG.SUMMARY : SEG.HEADING, text: `第${headingCount}部分：${verbalize$1(title)}`, match: title });
+      }
+      i++;
+      continue;
+    }
+    if (line.trim().startsWith("|")) {
+      const block = [];
+      while (i < lines.length && lines[i].trim().startsWith("|")) {
+        block.push(lines[i].trim());
+        i++;
+      }
+      segs.push({ kind: SEG.NOTE, text: tableNote(block) });
+      continue;
+    }
+    const LIST_RE = /^\s*(?:(-|\*|\+)\s+|(\d+)[.、)]\s+)/;
+    const ITEM_STRIP_RE = /^\s*(?:(-|\*|\+)\s+|(\d+)[.、)]\s+)/;
+    if (LIST_RE.test(line)) {
+      const ordered = /^\s*\d+[.、)]\s+/.test(line);
+      const items = [];
+      let startNum = 1, first = true;
+      while (i < lines.length && LIST_RE.test(lines[i])) {
+        const m = ITEM_STRIP_RE.exec(lines[i]);
+        if (first && ordered && m && m[2]) startNum = parseInt(m[2], 10) || 1;
+        first = false;
+        items.push(lines[i].replace(ITEM_STRIP_RE, ""));
+        i++;
+      }
+      const segs2 = listSegments(items, ordered, startNum);
+      for (const s of segs2) {
+        if (s.text) segs.push(s);
+      }
+      continue;
+    }
+    if (/^\s*[-*_]{3,}\s*$/.test(line)) {
+      i++;
+      continue;
+    }
+    if (!line.trim()) {
+      i++;
+      continue;
+    }
+    const para = [];
+    while (i < lines.length && lines[i].trim() && !/^\s*```/.test(lines[i]) && !/^\s*#{1,6}\s/.test(lines[i]) && !lines[i].trim().startsWith("|") && !/^\s*(?:[-*+]\s+|\d+[.、)]\s+)/.test(lines[i]) && !/^\s*[-*_]{3,}\s*$/.test(lines[i])) {
+      para.push(lines[i]);
+      i++;
+    }
+    const text = leanText$1(para.join("\n"));
+    if (text) {
+      for (const s of splitSentences(text)) {
+        segs.push({ kind: classifySentence(s), text: verbalize$1(s), match: s });
+      }
+    }
+  }
+  return segs;
+}
+function filterSegments(segs, mode) {
+  if (mode !== "essentials") return segs;
+  return segs.filter((s) => s.kind === SEG.SUMMARY || s.kind === SEG.QUESTION || s.kind === SEG.HEADING);
+}
+const LS_SETTINGS = "aiti-ai-speek:settings";
+const LS_FOLLOW = "aiti-ai-speek:follow";
+const LS_BAR = "aiti-ai-speek:bar";
+const LS_PROGRESS = "aiti-ai-speek:progress";
+const LS_READPOS = "aiti-ai-speek:readpos";
+const DEFAULT_SETTINGS = {
+  voice: "",
+  rate: 1,
+  mode: "full",
+  engine: "browser",
+  minChars: 8,
+  steer: true
+};
+const READ_LIMIT = 20;
+const state = {
+  followOn: false,
+  barVisible: false,
+  settings: { ...DEFAULT_SETTINGS },
+  // 会话消息索引 { [sessionId]: [{ id, key }] } —— 持久，切换 session 时释放
+  msgList: {},
+  allMessagesLoaded: {},
+  // { [sessionId]: boolean }
+  // 文本缓存 { [sessionId]: { [id]: text } } —— 切换 session 时释放
+  textCache: {},
+  // 当前播放位置（-1 = 未开始）
+  curIndex: -1,
+  // msgList[activeSessionId] 中的索引
+  curSeg: 0,
+  // 当前消息的第几句
+  curSegs: [],
+  // 当前消息分好的句子（避免每次重切都重算）
+  playing: false,
+  paused: false,
+  starting: false,
+  audio: null,
+  // edge 引擎的 <audio>
+  edgePool: {},
+  // { [key]: { loaded, loading, errored, audioSrc } }  edge 预取池
+  voices: [],
+  edgeVoices: [],
+  edgeAvailable: false,
+  browserUnsupported: false,
+  engineAuto: false,
+  processOn: false,
+  processLoaded: false,
+  backlog: 0,
+  lastError: null,
+  pageFocused: true,
+  apiUrl: (p) => p
+};
+const listeners = /* @__PURE__ */ new Set();
+function notify() {
+  try {
+    const seg = state.curSegs[state.curSeg] || null;
+    window.__speekDebug = {
+      curIndex: state.curIndex,
+      curSeg: state.curSeg,
+      curId: curId(),
+      segText: seg ? seg.text : null,
+      segMatch: seg ? seg.match : null,
+      msgListLen: activeSessionId ? (state.msgList[activeSessionId] || []).length : 0,
+      followOn: state.followOn,
+      playing: state.playing,
+      sseSettledCount: typeof sseSettledCount === "number" ? sseSettledCount : -1,
+      sseConnectedMs: sseConnectedAt ? Date.now() - sseConnectedAt : -1,
+      esClosed: !esRef
+    };
+  } catch {
+  }
+  for (const l of [...listeners]) l();
+}
+function subscribe(fn) {
+  listeners.add(fn);
+  return () => {
+    listeners.delete(fn);
+  };
+}
+function getState() {
+  return state;
+}
+function setApiUrl(fn) {
+  state.apiUrl = fn;
+}
+function persist() {
+  try {
+    localStorage.setItem(LS_SETTINGS, JSON.stringify(state.settings));
+  } catch {
+  }
+  try {
+    localStorage.setItem(LS_FOLLOW, state.followOn ? "1" : "0");
+  } catch {
+  }
+  try {
+    localStorage.setItem(LS_BAR, state.barVisible ? "1" : "0");
+  } catch {
+  }
+}
+function load() {
+  try {
+    const s = JSON.parse(localStorage.getItem(LS_SETTINGS) || "null");
+    if (s && typeof s === "object") state.settings = { ...DEFAULT_SETTINGS, ...s };
+  } catch {
+  }
+  try {
+    state.followOn = localStorage.getItem(LS_FOLLOW) === "1";
+  } catch {
+  }
+  try {
+    state.barVisible = localStorage.getItem(LS_BAR) === "1";
+  } catch {
+  }
+}
+load();
+function setSettings(patch) {
+  state.settings = { ...state.settings, ...patch };
+  persist();
+  notify();
+}
+function setFollow(on) {
+  state.followOn = !!on;
+  if (on) {
+    state.barVisible = true;
+  } else {
+    stop();
+    state.barVisible = false;
+  }
+  persist();
+  notify();
+}
+function setBarVisible(v) {
+  state.barVisible = !!v;
+  persist();
+  notify();
+}
+function toggleFollow() {
+  if (!state.followOn) {
+    setFollow(true);
+    return;
+  }
+  if (!state.barVisible && state.playing) {
+    setBarVisible(true);
+    return;
+  }
+  setFollow(false);
+}
+function setEdgeInfo(available, voices) {
+  state.edgeAvailable = !!available;
+  if (Array.isArray(voices)) state.edgeVoices = voices;
+  notify();
+}
+async function fetchFeatures() {
+  try {
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/features"));
+    if (!res.ok) return;
+    const d = await res.json();
+    if (d && typeof d.process === "boolean") {
+      state.processOn = d.process;
+      state.processLoaded = true;
+      notify();
+    }
+    if (d && typeof d.edge === "boolean") setEdgeInfo(d.edge, state.edgeVoices);
+  } catch {
+  }
+}
+async function toggleProcess() {
+  const next = !state.processOn;
+  state.processOn = next;
+  state.processLoaded = true;
+  notify();
+  try {
+    await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/feature"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "process.enabled", enabled: next })
+    });
+  } catch {
+  }
+}
+function setVoices(voices) {
+  state.voices = Array.isArray(voices) ? voices : [];
+  notify();
+}
+let activeSessionId = null;
+let resumeOnFocusReturn = false;
+let readerBC = null;
+const MY_ID = Math.random().toString(36).slice(2);
+let progress = {};
+function loadProgress() {
+  try {
+    return JSON.parse(localStorage.getItem(LS_PROGRESS) || "{}") || {};
+  } catch {
+    return {};
+  }
+}
+function saveProgress() {
+  try {
+    localStorage.setItem(LS_PROGRESS, JSON.stringify(progress));
+  } catch {
+  }
+}
+progress = loadProgress();
+let lastReadPos = {};
+function loadLastReadPos() {
+  try {
+    const o = JSON.parse(localStorage.getItem(LS_READPOS) || "{}");
+    if (o && typeof o === "object") lastReadPos = o;
+  } catch {
+  }
+}
+function saveLastReadPos() {
+  try {
+    localStorage.setItem(LS_READPOS, JSON.stringify(lastReadPos));
+  } catch {
+  }
+}
+loadLastReadPos();
+function recordProgress() {
+  const id = curId();
+  if (id) {
+    progress[id] = state.curSeg;
+    saveProgress();
+  }
+}
+function clearProgressFor(id) {
+  if (id && progress[id] != null) {
+    delete progress[id];
+    saveProgress();
+  }
+}
+function curId() {
+  const list = activeSessionId ? state.msgList[activeSessionId] : null;
+  if (!list || state.curIndex < 0 || state.curIndex >= list.length) return null;
+  return list[state.curIndex].id;
+}
+function visibleEntryId() {
+  try {
+    const vh = window.innerHeight;
+    const bodies = Array.from(document.querySelectorAll(".markdown-body:not(.markdown-user-message)"));
+    const hit = bodies.find((b) => {
+      const r = b.getBoundingClientRect();
+      return r.height > 0 && r.bottom > 0 && r.top < vh;
+    }) || bodies.find((b) => {
+      const r = b.getBoundingClientRect();
+      return r.height > 0;
+    });
+    if (!hit) return null;
+    const wrap = hit.closest("[data-entry-id]") || hit;
+    return wrap.getAttribute("data-entry-id") || null;
+  } catch {
+    return null;
+  }
+}
+function clampRate(r) {
+  const n = parseFloat(r) || 1;
+  return Math.min(2, Math.max(0.5, n));
+}
+function ensureSessionLoaded(sessionId) {
+  return new Promise((resolve) => {
+    if (state.allMessagesLoaded[sessionId] && Array.isArray(state.msgList[sessionId])) {
+      resolve(state.msgList[sessionId]);
+      return;
+    }
+    fetch(state.apiUrl("/api/extensions/aiti-ai-speek/messages") + "?session=" + encodeURIComponent(sessionId) + "&idsOnly=1").then((r) => r.ok ? r.json() : null).then((d) => {
+      if (!d || !d.ok || !Array.isArray(d.messages)) {
+        resolve([]);
+        return;
+      }
+      const ids = d.messages.filter((it) => it && it.id).map((it) => ({ id: it.id, key: !!it.key }));
+      state.msgList[sessionId] = ids;
+      state.allMessagesLoaded[sessionId] = true;
+      notify();
+      resolve(ids);
+    }).catch(() => resolve(state.msgList[sessionId] || []));
+  });
+}
+function fetchTextBatch(sessionId, ids) {
+  return new Promise((resolve) => {
+    if (!sessionId || !ids || !ids.length) return resolve({});
+    if (!state.textCache[sessionId]) state.textCache[sessionId] = {};
+    const cache = state.textCache[sessionId];
+    const missing = ids.filter((id) => !(id in cache));
+    if (!missing.length) {
+      const out = {};
+      ids.forEach((id) => {
+        out[id] = cache[id];
+      });
+      return resolve(out);
+    }
+    fetch(state.apiUrl("/api/extensions/aiti-ai-speek/messages-content"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ session: sessionId, ids: missing, mode: state.settings.mode === "essentials" ? "essentials" : "full" })
+    }).then((r) => r.ok ? r.json() : null).then((d) => {
+      if (d && d.ok && Array.isArray(d.items)) {
+        for (const it of d.items) {
+          if (it && it.id && typeof it.text === "string") cache[it.id] = it.text;
+        }
+      }
+      const out = {};
+      ids.forEach((id) => {
+        out[id] = cache[id] || "";
+      });
+      resolve(out);
+    }).catch(() => {
+      const out = {};
+      ids.forEach((id) => {
+        out[id] = cache[id] || "";
+      });
+      resolve(out);
+    });
+  });
+}
+function loadRangeIntoCur(sessionId, from) {
+  const list = state.msgList[sessionId] || [];
+  if (!list.length) return;
+  if (from < 0) from = Math.max(0, list.length - READ_LIMIT);
+  const slice = list.slice(from, from + READ_LIMIT);
+  const ids = slice.map((it) => it.id);
+  fetchTextBatch(sessionId, ids).then((textMap) => {
+    const allSegs = [];
+    const idOrder = [];
+    const segStartMap = {};
+    for (const it of slice) {
+      const raw = textMap[it.id];
+      if (!raw) continue;
+      const segs = filterSegments(toSpeechSegments(raw), state.settings.mode);
+      if (!segs.length) continue;
+      segStartMap[it.id] = allSegs.length;
+      idOrder.push(it.id);
+      for (const s of segs) allSegs.push({ ...s, _id: it.id });
+    }
+    if (!allSegs.length) {
+      stop();
+      return;
+    }
+    const firstId = idOrder[0];
+    const startSeg = firstId && progress[firstId] != null ? Math.min(progress[firstId], allSegs.length - 1) : segStartMap[firstId] || 0;
+    state.curSegs = allSegs;
+    state.curSeg = startSeg;
+    state.curIndex = from;
+    state.curSegStartMap = segStartMap;
+    state.curSegIds = idOrder;
+    state.curSegFrom = from;
+    lastReadPos[sessionId] = firstId;
+    saveLastReadPos();
+    playCurrentSeg();
+  });
+}
+function resumeSessionFromLastPos(sessionId) {
+  if (!sessionId) return;
+  const lastPos = lastReadPos[sessionId];
+  if (lastPos) playAtSourceId(sessionId, lastPos);
+  else startFollowFromPageTop(sessionId);
+}
+function startFollowFromPageTop(sessionId) {
+  if (!sessionId) return;
+  ensureSessionLoaded(sessionId).then(() => {
+    const vis = visibleEntryId();
+    if (vis) playAtSourceId(sessionId, vis);
+    else if (state.msgList[sessionId] && state.msgList[sessionId].length) {
+      playAtSourceId(sessionId, state.msgList[sessionId][state.msgList[sessionId].length - 1].id);
+    }
+  });
+}
+function readMessageFrom(text, sourceId, sessionId) {
+  if (!sourceId || !sessionId) return;
+  if (!state.pageFocused) {
+    pendingReadOnFocus = sessionId;
+    return;
+  }
+  lastReadPos[sessionId] = sourceId;
+  saveLastReadPos();
+  playAtSourceId(sessionId, sourceId);
+}
+function playAtSourceId(sessionId, sourceId) {
+  if (!sessionId || !sourceId) return;
+  if (!state.pageFocused) {
+    pendingReadOnFocus = sessionId;
+    return;
+  }
+  if (activeSessionId && sessionId !== activeSessionId) return;
+  try {
+    if (state.audio) {
+      state.audio.pause();
+      state.audio = null;
+    }
+    window.speechSynthesis?.cancel();
+  } catch {
+  }
+  state.playing = false;
+  state.paused = false;
+  state.starting = false;
+  state.curIndex = -1;
+  state.curSeg = 0;
+  state.curSegs = [];
+  ensureSessionLoaded(sessionId).then(() => {
+    const list = state.msgList[sessionId] || [];
+    if (!list.length) return;
+    let from = list.findIndex((it) => it.id === sourceId);
+    if (from < 0) {
+      const vis = visibleEntryId();
+      if (vis) {
+        const i = list.findIndex((it) => it.id === vis);
+        if (i >= 0) from = i;
+      }
+    }
+    if (from < 0) from = Math.max(0, list.length - READ_LIMIT);
+    if (state.settings.mode === "essentials") {
+      let focus = -1;
+      for (let i = from; i < list.length; i++) if (list[i].key) {
+        focus = i;
+        break;
+      }
+      if (focus < 0) focus = Math.max(from, 0);
+      loadRangeIntoCur(sessionId, focus);
+    } else {
+      loadRangeIntoCur(sessionId, from);
+    }
+  });
+}
+async function playCurrentSeg() {
+  const seg = state.curSegs[state.curSeg];
+  if (!seg) {
+    advanceToNextMessage();
+    return;
+  }
+  state.playing = true;
+  state.paused = false;
+  state.starting = true;
+  if (!readerBC) ;
+  else broadcastClaim();
+  const useEdge = state.settings.engine === "edge" && state.edgeAvailable || state.browserUnsupported && state.edgeAvailable;
+  if (useEdge) {
+    await prefetchSegEdge(seg);
+  }
+  state.starting = false;
+  notify();
+  speakSeg(seg);
+}
+function speakSeg(seg) {
+  const useEdge = state.settings.engine === "edge" && state.edgeAvailable || state.browserUnsupported && state.edgeAvailable;
+  if (useEdge) speakEdge(seg);
+  else speakBrowser(seg);
+}
+function speakBrowser(seg) {
+  try {
+    const synth = window.speechSynthesis;
+    if (!synth) throw new Error("speechSynthesis 不可用");
+    const u = new SpeechSynthesisUtterance(seg.text);
+    const v = pickBrowserVoice();
+    if (v) u.voice = v;
+    u.lang = v?.lang || "zh-CN";
+    u.rate = clampRate(state.settings.rate);
+    u.pitch = 1;
+    u.onend = () => {
+      if (state.playing) advanceSeg();
+    };
+    u.onerror = () => {
+      if (state.playing) advanceSeg();
+    };
+    synth.speak(u);
+    notify();
+  } catch (e) {
+    state.lastError = String(e && e.message ? e.message : e);
+    advanceSeg();
+    notify();
+  }
+}
+function pickBrowserVoice() {
+  const list = state.voices || [];
+  const want = state.settings.voice;
+  if (want) {
+    const hit = list.find((v) => v.name === want || v.voiceURI === want);
+    if (hit) return hit;
+  }
+  return list.find((v) => /zh/i.test(v.lang || "")) || list[0] || null;
+}
+function advanceSeg() {
+  state.curSeg++;
+  if (state.curSeg >= state.curSegs.length) {
+    advanceToNextMessage();
+    return;
+  }
+  notify();
+  playCurrentSeg();
+}
+function advanceToNextMessage() {
+  const id = curId();
+  if (id) {
+    clearProgressFor(id);
+    lastReadPos[activeSessionId] = id;
+    saveLastReadPos();
+  }
+  if (!activeSessionId) {
+    state.playing = false;
+    notify();
+    return;
+  }
+  const list = state.msgList[activeSessionId] || [];
+  const curIdxInList = list.findIndex((it) => it.id === id);
+  const nextListIdx = curIdxInList + 1;
+  if (nextListIdx >= list.length) {
+    state.playing = false;
+    state.curIndex = -1;
+    state.curSeg = 0;
+    state.curSegs = [];
+    notify();
+    return;
+  }
+  loadRangeIntoCur(activeSessionId, nextListIdx);
+}
+function prefetchSegEdge(seg) {
+  return new Promise((resolve) => {
+    const key = `edge|${state.settings.voice || "zh-CN-XiaoxiaoNeural"}|${state.settings.rate}|${seg.text}`;
+    if (state.edgePool[key] && state.edgePool[key].loaded) {
+      resolve();
+      return;
+    }
+    state.edgePool[key] = { loaded: false, loading: true, errored: false };
+    const startedAt = Date.now();
+    const poll = () => {
+      const p = state.edgePool[key];
+      if (!p || p.loaded || p.errored || Date.now() - startedAt > 8e3) {
+        resolve();
+        return;
+      }
+      setTimeout(poll, 50);
+    };
+    fetch(state.apiUrl("/api/extensions/aiti-ai-speek/tts-batch"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ texts: [seg.text], voice: state.settings.voice || "zh-CN-XiaoxiaoNeural", rate: state.settings.rate })
+    }).then((r) => r.ok ? r.json() : null).then((d) => {
+      const p = state.edgePool[key];
+      if (!d || !d.ok || !Array.isArray(d.items) || !d.items[0] || !d.items[0].cached) {
+        if (p) {
+          p.loaded = true;
+          p.loading = false;
+          p.errored = true;
+        }
+        resolve();
+        return;
+      }
+      if (p) {
+        p.loaded = true;
+        p.loading = false;
+        p.audioSrc = state.apiUrl("/api/extensions/aiti-ai-speek/tts-cache/" + d.items[0].key);
+      }
+      resolve();
+    }).catch(() => {
+      const p = state.edgePool[key];
+      if (p) {
+        p.loaded = true;
+        p.loading = false;
+        p.errored = true;
+      }
+      resolve();
+    });
+    poll();
+  });
+}
+function speakEdge(seg) {
+  const key = `edge|${state.settings.voice || "zh-CN-XiaoxiaoNeural"}|${state.settings.rate}|${seg.text}`;
+  const p = state.edgePool[key];
+  if (p && p.audioSrc) {
+    try {
+      const audio = new Audio(p.audioSrc);
+      state.audio = audio;
+      audio.onended = () => {
+        if (state.playing) advanceSeg();
+      };
+      audio.onerror = () => {
+        if (state.playing) advanceSeg();
+      };
+      audio.play().catch(() => advanceSeg());
+      return;
+    } catch {
+    }
+  }
+  speakBrowser(seg);
+}
+function readAdjacent(delta) {
+  if (!activeSessionId) return;
+  const list = state.msgList[activeSessionId] || [];
+  if (!list.length) return;
+  ensureSessionLoaded(activeSessionId).then(() => {
+    const l = state.msgList[activeSessionId] || [];
+    if (!l.length) return;
+    const cur = curId();
+    let curIdx = cur ? l.findIndex((it) => it.id === cur) : state.curIndex;
+    if (curIdx < 0) curIdx = l.length - 1;
+    const step = delta > 0 ? 1 : -1;
+    let target = -1;
+    for (let i = curIdx + step; i >= 0 && i < l.length; i += step) {
+      if (state.settings.mode === "essentials" ? l[i].key : true) {
+        target = i;
+        break;
+      }
+    }
+    if (target < 0) return;
+    const t2 = l[target];
+    if (!t2) return;
+    delete progress[t2.id];
+    try {
+      if (state.audio) {
+        state.audio.pause();
+        state.audio = null;
+      }
+      window.speechSynthesis?.cancel();
+    } catch {
+    }
+    state.playing = false;
+    state.paused = false;
+    state.starting = false;
+    state.curIndex = -1;
+    state.curSeg = 0;
+    state.curSegs = [];
+    loadRangeIntoCur(activeSessionId, target);
+  });
+}
+function prev() {
+  readAdjacent(-1);
+}
+function skip() {
+  try {
+    if (state.audio) {
+      state.audio.pause();
+      state.audio = null;
+    }
+    window.speechSynthesis?.cancel();
+  } catch {
+  }
+  readAdjacent(1);
+}
+function pause() {
+  if (!state.playing) return;
+  if (state.settings.engine === "edge" && state.audio) {
+    state.audio.pause();
+    state.paused = true;
+    notify();
+    return;
+  }
+  try {
+    window.speechSynthesis.pause();
+    state.paused = true;
+    notify();
+  } catch {
+  }
+}
+function resume() {
+  if (!state.playing || !state.paused) return;
+  if (state.settings.engine === "edge" && state.audio) {
+    state.audio.play().catch(() => {
+    });
+    state.paused = false;
+    notify();
+    return;
+  }
+  try {
+    window.speechSynthesis.resume();
+    state.paused = false;
+    notify();
+  } catch {
+  }
+}
+function stop() {
+  recordProgress();
+  try {
+    if (state.audio) {
+      state.audio.pause();
+      state.audio = null;
+    }
+    window.speechSynthesis?.cancel();
+  } catch {
+  }
+  state.curIndex = -1;
+  state.curSeg = 0;
+  state.curSegs = [];
+  state.playing = false;
+  state.paused = false;
+  state.starting = false;
+  notify();
+}
+let pendingReadOnFocus = null;
+function setPageFocused(focused) {
+  const f = !!focused;
+  if (state.pageFocused === f) return;
+  state.pageFocused = f;
+  if (!f) {
+    resumeOnFocusReturn = state.followOn && state.playing;
+    stop();
+  } else {
+    const wantRead = resumeOnFocusReturn || pendingReadOnFocus;
+    resumeOnFocusReturn = false;
+    const target = pendingReadOnFocus || activeSessionId;
+    pendingReadOnFocus = null;
+    if (wantRead && state.followOn && target) resumeSessionFromLastPos(target);
+  }
+  notify();
+}
+function bindFocusGating() {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const update = () => {
+    let focused = false;
+    try {
+      focused = !document.hidden && (typeof document.hasFocus === "function" ? document.hasFocus() : true);
+    } catch {
+      focused = true;
+    }
+    setPageFocused(focused);
+  };
+  window.addEventListener("focus", update);
+  window.addEventListener("blur", update);
+  document.addEventListener("visibilitychange", update);
+  update();
+}
+function bindReaderCoordination() {
+  try {
+    readerBC = new BroadcastChannel("aiti-ai-speek:reader");
+    readerBC.onmessage = (e) => {
+      const m = e && e.data;
+      if (!m || m.type !== "claim" || m.from === MY_ID) return;
+      if (state.playing && !state.pageFocused) stop();
+    };
+  } catch {
+  }
+}
+function broadcastClaim() {
+  try {
+    readerBC?.postMessage({ type: "claim", from: MY_ID, sessionId: activeSessionId, ts: Date.now() });
+  } catch {
+  }
+}
+let esRef = null;
+let esSessionId = null;
+let sseSettledCount = 0;
+let sseConnectedAt = 0;
+function subscribeSession(sessionId) {
+  if (!sessionId || !state.followOn) {
+    unsubscribeSession();
+    return;
+  }
+  if (esRef && esSessionId === sessionId) return;
+  unsubscribeSession();
+  esSessionId = sessionId;
+  try {
+    const url = state.apiUrl("/api/extensions/aiti-ai-speek/events") + "?session=" + encodeURIComponent(sessionId);
+    const es = new EventSource(url);
+    esRef = es;
+    sseConnectedAt = Date.now();
+    es.onopen = () => {
+      try {
+        window.__sseOpen = Date.now();
+      } catch {
+      }
+    };
+    es.addEventListener("settled", (ev) => {
+      sseSettledCount++;
+      try {
+        const d = JSON.parse(ev.data || "{}");
+        const text = d && d.text;
+        if (!text) return;
+        const newId = d.id || d.sourceId || "sse-" + Date.now();
+        const list = state.msgList[sessionId] || (state.msgList[sessionId] = []);
+        if (!list.some((it) => it.id === newId)) {
+          list.push({ id: newId, key: false });
+          if (!state.textCache[sessionId]) state.textCache[sessionId] = {};
+          state.textCache[sessionId][newId] = text;
+          notify();
+        }
+        if (!state.playing) {
+          playAtSourceId(sessionId, newId);
+        } else {
+          const segs = filterSegments(toSpeechSegments(text), state.settings.mode);
+          for (const s of segs) state.curSegs.push({ ...s, _id: newId });
+        }
+      } catch {
+      }
+    });
+    es.onerror = () => {
+    };
+  } catch (e) {
+    state.lastError = String(e && e.message ? e.message : e);
+    notify();
+  }
+}
+function unsubscribeSession() {
+  if (esRef) {
+    try {
+      esRef.close();
+    } catch {
+    }
+    esRef = null;
+  }
+  esSessionId = null;
+}
+const LS_STEER = "aiti-ai-speek:steer";
+function steerDone(sessionId) {
+  try {
+    const rec = JSON.parse(localStorage.getItem(LS_STEER) || "{}") || {};
+    return !!rec[sessionId];
+  } catch {
+    return false;
+  }
+}
+function markSteerDone(sessionId) {
+  try {
+    const rec = JSON.parse(localStorage.getItem(LS_STEER) || "{}") || {};
+    rec[sessionId] = Date.now();
+    localStorage.setItem(LS_STEER, JSON.stringify(rec));
+  } catch {
+  }
+}
+async function steerSession(sessionId) {
+  if (!sessionId || !state.settings.steer) return;
+  if (steerDone(sessionId)) return;
+  try {
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/steer"), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ sessionId })
+    });
+    const d = await res.json().catch(() => null);
+    if (d && d.ok && (d.injected === true || d.injected === false)) markSteerDone(sessionId);
+  } catch {
+  }
+}
+async function fetchEdgeInfo() {
+  try {
+    const res = await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/voices"));
+    if (!res.ok) return;
+    const d = await res.json();
+    if (d && d.ok) setEdgeInfo(d.edgeAvailable, d.voices || []);
+  } catch {
+  }
+}
+function browserSpeechSupported() {
+  try {
+    return typeof window !== "undefined" && "speechSynthesis" in window && typeof window.SpeechSynthesisUtterance === "function";
+  } catch {
+    return false;
+  }
+}
+async function autoSelectEngine() {
+  const supported = browserSpeechSupported();
+  if (supported) {
+    state.browserUnsupported = false;
+    state.engineAuto = false;
+    return;
+  }
+  state.browserUnsupported = true;
+  await fetchEdgeInfo();
+  if (state.edgeAvailable) {
+    try {
+      await fetch(state.apiUrl("/api/extensions/aiti-ai-speek/feature"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: "tts.edge", enabled: true }) });
+    } catch {
+    }
+    state.settings.engine = "edge";
+    state.engineAuto = true;
+    state.lastError = "浏览器不支持本地朗读，已自动切换到服务端语音生成。";
+    persist();
+  } else {
+    state.engineAuto = false;
+    state.lastError = "浏览器不支持本地朗读，且服务端语音（edge-tts）未就绪，无法朗读。";
+  }
+  notify();
+}
+function currentSourceId() {
+  return curId();
+}
+function replayCurrentPage(sessionId) {
+  startFollowFromPageTop(sessionId);
+}
+function speakMessage(text, sourceId, sessionId) {
+  readMessageFrom(text, sourceId, sessionId);
+}
+if (typeof window !== "undefined") {
+  window.__speek = { state, playAtSourceId, prev, skip, stop, resumeSessionFromLastPos };
+}
+function setCurrentSession(sessionId) {
+  const next = sessionId || null;
+  if (next !== activeSessionId) {
+    if (activeSessionId) {
+      delete state.msgList[activeSessionId];
+      delete state.allMessagesLoaded[activeSessionId];
+      delete state.textCache[activeSessionId];
+    }
+    activeSessionId = next;
+  } else {
+    return;
+  }
+  stop();
+  notify();
+}
+let layer = null;
+function normKey(s) {
+  return String(s || "").replace(/[\s]+/g, "");
+}
+function leanText(text) {
+  return String(text || "").replace(/\*\*([^*]+)\*\*/g, "$1").replace(/__([^_]+)__/g, "$1").replace(/\*([^*]+)\*/g, "$1").replace(/_([^_]+)_/g, "$1").replace(/^#{1,6}\s+/gm, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").replace(/!\[([^\]]*)\]\([^)]+\)/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/^>\s+/gm, "").replace(/^[-*_]{3,}\s*$/gm, "").replace(/[“”]/g, '"').replace(/[‘’]/g, "'").replace(/…/g, "…").replace(/([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])[ \t\u00a0\u3000]+/g, "$1").replace(/[ \t\u00a0\u3000]+([\u4e00-\u9fff\u3000-\u303f\uff00-\uffef])/g, "$1").replace(/\n{3,}/g, "\n\n").trim();
+}
+function verbalize(text) {
+  return String(text || "").replace(/√/g, "根号").replace(/≥/g, "大于等于").replace(/≤/g, "小于等于").replace(/≠/g, "不等于").replace(/≈/g, "约等于").replace(/×/g, "乘").replace(/÷/g, "除以");
+}
+function cleanMarkdown(text) {
+  return verbalize(leanText(text));
+}
+function extractDOMRows(sourceId) {
+  console.log("[aiti-ai-speek][hl] STEP2 start", { sourceId });
+  const rows = [];
+  const el = sourceId ? document.querySelector('[data-entry-id="' + sourceId + '"]') : null;
+  if (!el) {
+    console.log("[aiti-ai-speek][hl] STEP2 no element", { sourceId });
+    return { status: "no-element", rows: [] };
+  }
+  const body = el.querySelector(".markdown-body") || el;
+  const blocks = Array.from(body.querySelectorAll("p,li,h1,h2,h3,h4,h5,h6,pre,tr,td"));
+  if (!blocks.length) {
+    blocks.push(body);
+  }
+  console.log("[aiti-ai-speek][hl] STEP2 blocks", { count: blocks.length });
+  for (let bi = 0; bi < blocks.length; bi++) {
+    const block = blocks[bi];
+    const text = (block.textContent || "").trim();
+    if (!text) continue;
+    const clean = leanText(text);
+    let rect = { left: 0, top: 0, width: 0, height: 0 };
+    try {
+      const br = block.getBoundingClientRect();
+      if (br.width > 0 && br.height > 0) {
+        rect = { left: br.left, top: br.top, width: br.width, height: br.height };
+      }
+    } catch (e) {
+    }
+    const row = {
+      lineIndex: bi,
+      text,
+      lean: clean,
+      coordinates: rect,
+      element: block
+      // 保留 DOM 元素引用，供每帧重读坐标
+    };
+    rows.push(row);
+    console.log("[aiti-ai-speek][hl] STEP2 row", {
+      index: bi,
+      text: text.slice(0, 60),
+      lean: clean.slice(0, 60),
+      x: rect.left,
+      y: rect.top,
+      w: rect.width,
+      h: rect.height
+    });
+  }
+  console.log("[aiti-ai-speek][hl] STEP2 done", {
+    totalRows: rows.length,
+    firstRow: rows[0] ? { text: rows[0].text.slice(0, 40), x: rows[0].coordinates.left, y: rows[0].coordinates.top } : null
+  });
+  return { status: "ok", rows, body, element: el };
+}
+function locateInMessages(text, sourceId, rawMarkdown) {
+  console.log("[aiti-ai-speek][hl] locateInMessages start", { sourceId, textLen: (text || "").length });
+  if (sourceId && rawMarkdown) {
+    const el = document.querySelector('[data-entry-id="' + sourceId + '"]');
+    if (el) {
+      console.log("[aiti-ai-speek][hl] locateInMessages use new algorithm", { sourceId });
+      const step2 = extractDOMRows(sourceId);
+      if (step2.status === "ok" && step2.rows.length) {
+        const curNorm = normKey(cleanMarkdown(text || ""));
+        if (curNorm) {
+          let best = null, bestScore = 0;
+          for (const row of step2.rows) {
+            const rowNorm = normKey(cleanMarkdown(row.text));
+            if (!rowNorm) continue;
+            let score = 0;
+            if (rowNorm === curNorm) score = 1;
+            else if (rowNorm.includes(curNorm) || curNorm.includes(rowNorm)) score = 0.9;
+            else {
+              let p = 0;
+              const L = Math.min(rowNorm.length, curNorm.length);
+              while (p < L && rowNorm[p] === curNorm[p]) p++;
+              score = L ? p / L : 0;
+            }
+            if (score > bestScore) {
+              bestScore = score;
+              best = row;
+            }
+          }
+          if (best && bestScore >= 0.6) {
+            console.log("[aiti-ai-speek][hl] locateInMessages matched row", {
+              rowIndex: best.lineIndex,
+              score: bestScore,
+              coordinates: best.coordinates,
+              rowText: best.text.slice(0, 30),
+              curText: text.slice(0, 30)
+            });
+            return {
+              rects: [{ ...best.coordinates }],
+              rowElement: best.element || null,
+              // 匹配行的 DOM 元素（每帧重读坐标用）
+              startNode: null,
+              body: step2.body
+            };
+          } else {
+            console.log("[aiti-ai-speek][hl] locateInMessages no row match", { bestScore, curText: text.slice(0, 30), rowCount: step2.rows.length });
+          }
+        }
+      }
+    }
+  }
+  return null;
+}
+function mergeRowRects(rects) {
+  if (!rects.length) return [];
+  const norm = rects.filter((r) => r && typeof r.left === "number" && typeof r.top === "number" && r.width > 0 && r.height > 0).map((r) => ({ ...r, right: r.left + r.width })).sort((a, b) => a.top - b.top || a.left - b.left);
+  if (!norm.length) return [];
+  const merged = [];
+  let row = { ...norm[0] };
+  for (let i = 1; i < norm.length; i++) {
+    const r = norm[i];
+    const sameRow = Math.abs(r.top - row.top) < 4 && Math.abs(r.height - row.height) < 4;
+    if (sameRow && r.left <= row.right + 4) {
+      row.right = Math.max(row.right, r.right);
+      row.width = row.right - row.left;
+      row.height = Math.max(row.height, r.height);
+    } else {
+      merged.push(row);
+      row = { ...r };
+    }
+  }
+  merged.push(row);
+  return merged.map(({ right, ...rest }) => rest);
+}
+function drawLayer(rects) {
+  if (!layer) {
+    layer = document.createElement("div");
+    layer.setAttribute("data-aiti-speek-hl", "1");
+    layer.style.cssText = "position:fixed;inset:0;pointer-events:none;z-index:2147482000;";
+    document.body.appendChild(layer);
+  }
+  layer.innerHTML = "";
+  const merged = mergeRowRects(rects);
+  for (const r of merged) {
+    if (!r.width || !r.height) continue;
+    const box = document.createElement("div");
+    box.style.cssText = `position:fixed;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px;border-radius:3px;background:color-mix(in srgb,var(--accent,#3b82f6) 24%,transparent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent,#3b82f6) 55%,transparent);`;
+    layer.appendChild(box);
+  }
+  try {
+    console.log("[aiti-ai-speek][hl] drawLayer", { rectCount: rects.length, mergedCount: merged.length, first: rects[0] || null });
+  } catch {
+  }
+}
+function findScrollableContainer(el) {
+  let current = el.parentElement;
+  while (current) {
+    const style = window.getComputedStyle(current);
+    const overflowY = style.overflowY;
+    if ((overflowY === "auto" || overflowY === "scroll") && current.scrollHeight > current.clientHeight) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+let hlCtx = null;
+let hlRaf = 0;
+let hlTick = 0;
+const HL_MAX_TICKS = 180;
+function recomputeAndDraw() {
+  if (!hlCtx) return;
+  let drawRects = [];
+  if (hlCtx.rowElement) {
+    try {
+      const r = hlCtx.rowElement.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) {
+        drawRects = [{ left: r.left, top: r.top, width: r.width, height: r.height }];
+      }
+    } catch {
+    }
+  }
+  if (!drawRects.length && hlCtx.coordinates) {
+    drawRects = [hlCtx.coordinates];
+  }
+  if (!drawRects.length) {
+    const br = hlCtx.body.getBoundingClientRect();
+    if (br.width && br.height) drawRects = [{ left: br.left, top: br.top, width: br.width, height: br.height }];
+  }
+  if (!drawRects.length) return;
+  drawLayer(drawRects);
+}
+function highlightSegment(text, sourceId, rawMarkdown) {
+  clearHighlight();
+  if (!text) return false;
+  const hit = locateInMessages(text, sourceId, rawMarkdown);
+  if (!hit) return false;
+  const rowEl = hit.rowElement || hit.body;
+  if (rowEl) {
+    try {
+      const container = findScrollableContainer(rowEl);
+      if (container) {
+        const containerRect = container.getBoundingClientRect();
+        const rowRect = rowEl.getBoundingClientRect();
+        const rowCenterY = rowRect.top + rowRect.height / 2;
+        const targetTop = rowCenterY - containerRect.top - containerRect.height / 2;
+        container.scrollTo({ top: container.scrollTop + targetTop, behavior: "auto" });
+      } else {
+        const rowRect = rowEl.getBoundingClientRect();
+        const rowCenterY = rowRect.top + rowRect.height / 2;
+        window.scrollTo(0, window.scrollY + (rowCenterY - window.innerHeight / 2));
+      }
+    } catch {
+    }
+  }
+  hlCtx = { body: hit.body, text, sourceId, coordinates: hit.rects[0], rowElement: hit.rowElement || null };
+  cancelAnimationFrame(hlRaf);
+  hlTick = 0;
+  const tick = () => {
+    recomputeAndDraw();
+    hlTick++;
+    if (hlTick < HL_MAX_TICKS) {
+      hlRaf = requestAnimationFrame(tick);
+    } else {
+      hlCtx = null;
+    }
+  };
+  setTimeout(() => {
+    hlRaf = requestAnimationFrame(tick);
+  }, 0);
+  return true;
+}
+function clearHighlight() {
+  if (layer) {
+    try {
+      layer.remove();
+    } catch {
+    }
+    layer = null;
+  }
+  hlCtx = null;
+  hlTick = 0;
+  if (hlRaf) {
+    cancelAnimationFrame(hlRaf);
+    hlRaf = 0;
+  }
+}
+let styleInjected = false;
+function ensureStyles() {
+  if (styleInjected) return;
+  styleInjected = true;
+  const el = document.createElement("style");
+  el.setAttribute("data-aiti-speek", "1");
+  el.textContent = `
+  .aisp-btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;width:28px;height:28px;border:none;border-radius:5px;background:transparent;color:var(--text-muted,#777);cursor:pointer;transition:background .12s,color .12s;position:relative;}
+  /* toolbar 专用：宿主容器 36px 高 + align-items:stretch，按钮需填满并内容居中，才不偏顶 */
+  .aisp-btn-tb{display:flex;align-items:center;justify-content:center;width:36px;height:36px;border:none;background:transparent;color:var(--text-muted,#777);cursor:pointer;transition:background .12s,color .12s;position:relative;flex-shrink:0;padding:0;}
+  .aisp-btn-tb:hover{color:var(--text,#222);}
+  .aisp-btn-tb.on{color:var(--accent,#3b82f6);}
+  .aisp-btn-tb.on.muted{color:var(--text-dim,#999);}
+  .aisp-btn:hover{background:var(--bg-hover,#eee);color:var(--text,#222);}
+  .aisp-btn.on{color:var(--accent,#3b82f6);}
+  .aisp-btn.on.muted{color:var(--text-dim,#999);}
+  .aisp-dot{position:absolute;right:4px;top:4px;width:7px;height:7px;border-radius:50%;background:var(--accent,#3b82f6);}
+  .aisp-bar{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:2147483101;display:flex;align-items:center;gap:6px;padding:6px 10px;border-radius:10px;border:1px solid var(--border,#ddd);background:var(--bg-panel,#fff);box-shadow:0 8px 28px rgba(0,0,0,.16);font-size:12px;color:var(--text,#222);max-width:calc(100vw - 16px);}
+  .aisp-grip{display:inline-flex;align-items:center;color:var(--text-dim,#999);cursor:grab;font-size:13px;user-select:none;touch-action:none;padding:0 2px;}
+  .aisp-grip:active{cursor:grabbing;}
+  .aisp-ctl{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:none;border-radius:6px;background:transparent;color:var(--text,#222);cursor:pointer;transition:background .12s;}
+  .aisp-ctl:hover{background:var(--bg-hover,#eee);}
+  .aisp-ctl:disabled{opacity:.4;cursor:default;}
+  .aisp-ctl.stop{color:#ef4444;}
+  .aisp-sel{font-size:12px;padding:3px 6px;border:1px solid var(--border,#ddd);border-radius:6px;background:var(--bg,#fff);color:var(--text,#222);max-width:150px;}
+  .aisp-queue{color:var(--text-dim,#999);white-space:nowrap;font-size:11px;}
+  .aisp-badge{display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:99px;background:color-mix(in srgb,var(--accent,#3b82f6) 14%,transparent);color:var(--accent,#3b82f6);font-size:11px;white-space:nowrap;}
+  .aisp-dlg-overlay{position:fixed;inset:0;z-index:2147483000;background:rgba(0,0,0,.28);display:flex;align-items:center;justify-content:center;}
+  .aisp-dlg{width:min(560px,calc(100vw - 24px));max-height:86vh;background:var(--bg-panel,#fff);border:1px solid var(--border,#ddd);border-radius:12px;box-shadow:0 16px 48px rgba(0,0,0,.2);display:flex;flex-direction:column;}
+  .aisp-dlg-hd{display:flex;align-items:center;justify-content:space-between;padding:12px 14px;border-bottom:1px solid var(--border,#ddd);font-weight:600;font-size:13px;color:var(--text,#222);}
+  .aisp-dlg-bd{padding:14px;overflow-y:auto;display:flex;flex-direction:column;gap:12px;}
+  .aisp-row{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;font-size:12px;color:var(--text,#222);}
+  .aisp-row > label{flex:1;min-width:0;color:var(--text-muted,#666);line-height:1.4;}
+  .aisp-row > label + *{flex-shrink:0;margin-top:1px;}
+  .aisp-seg{display:inline-flex;border:1px solid var(--border,#ddd);border-radius:6px;overflow:hidden;}
+  .aisp-seg button{font-size:11px;padding:3px 8px;border:none;background:transparent;color:var(--text-muted,#777);cursor:pointer;}
+  .aisp-seg button.on{background:var(--accent,#3b82f6);color:#fff;}
+  `;
+  document.head.appendChild(el);
+}
+function useSpeekState() {
+  const [, setV] = useState(0);
+  useEffect(() => subscribe(() => setV((x) => x + 1)), []);
+  return getState();
+}
+ensureStyles();
+function Icon({ d, size = 14, filled = false }) {
+  return /* @__PURE__ */ jsx("svg", { width: size, height: size, viewBox: "0 0 24 24", fill: filled ? "currentColor" : "none", stroke: "currentColor", strokeWidth: 2, strokeLinecap: "round", strokeLinejoin: "round", "aria-hidden": true, children: /* @__PURE__ */ jsx("path", { d }) });
+}
+const ICON = {
+  volume: "M11 5 6 9H2v6h4l5 4V5Z M15.54 8.46a5 5 0 0 1 0 7.07",
+  play: "m6 3 14 9-14 9V3z",
+  pause: "M7 4h4v16H7z M13 4h4v16h-4z",
+  prev: "M11 17l-5-5 5-5 M18 17l-5-5 5-5",
+  next: "M4 17l5-5-5-5 M13 17l5-5-5-5",
+  stop: "M6 6h12v12H6z",
+  gear: "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"
+};
+function FollowToggle(props) {
+  const st = useSpeekState();
+  const on = st.followOn;
+  const readingHidden = on && st.playing && !st.barVisible;
+  const stateCls = !on ? "" : readingHidden ? " on muted" : " on";
+  const title = !on ? t("speek.followOff") : readingHidden ? t("speek.followHidden") + "（点按恢复播放条）" : t("speek.followOn") + "（点按关闭跟读）";
+  return /* @__PURE__ */ jsxs(
+    "button",
+    {
+      className: "aisp-btn-tb" + stateCls,
+      title,
+      "aria-pressed": on,
+      onClick: () => toggleFollow(),
+      children: [
+        /* @__PURE__ */ jsx(Icon, { d: ICON.volume, size: 16, filled: on }),
+        readingHidden && /* @__PURE__ */ jsx("span", { className: "aisp-dot" })
+      ]
+    }
+  );
+}
+function AssistantMessageAction(props) {
+  const st = useSpeekState();
+  const text = props?.text || "";
+  const sourceId = props?.entryId || props?.messageId || null;
+  const sessionId = props?.sessionId || null;
+  const readingThis = !!sourceId && currentSourceId() === sourceId && st.playing;
+  if (!text || !text.trim()) return null;
+  return /* @__PURE__ */ jsxs(
+    "button",
+    {
+      onClick: () => speakMessage(text, sourceId, sessionId),
+      title: readingThis ? t("speek.stopReading") : t("speek.readThis"),
+      style: {
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "3px 8px",
+        height: 22,
+        background: "none",
+        border: "none",
+        borderRadius: 5,
+        color: readingThis ? "var(--accent,#3b82f6)" : "var(--text-dim,#999)",
+        cursor: "pointer",
+        fontSize: 11,
+        fontWeight: 400,
+        whiteSpace: "nowrap",
+        transition: "color 0.12s"
+      },
+      onMouseEnter: (e) => {
+        e.currentTarget.style.color = "var(--accent,#3b82f6)";
+      },
+      onMouseLeave: (e) => {
+        e.currentTarget.style.color = readingThis ? "var(--accent,#3b82f6)" : "var(--text-dim,#999)";
+      },
+      children: [
+        readingThis ? /* @__PURE__ */ jsx(Icon, { d: ICON.stop, size: 11, filled: true }) : /* @__PURE__ */ jsx(Icon, { d: ICON.volume, size: 11, filled: false }),
+        readingThis ? t("speek.stopReading") : t("speek.readThis")
+      ]
+    }
+  );
+}
+const BAR_POS_KEY = "aiti-ai-speek:bar-pos";
+function loadBarPos() {
+  try {
+    const v = JSON.parse(localStorage.getItem(BAR_POS_KEY) || "null");
+    if (v && typeof v.x === "number" && typeof v.y === "number") return { x: v.x, y: v.y };
+  } catch {
+  }
+  return null;
+}
+function saveBarPos(p) {
+  try {
+    localStorage.setItem(BAR_POS_KEY, JSON.stringify(p));
+  } catch {
+  }
+}
+let settingsOpen = false;
+const settingsListeners = /* @__PURE__ */ new Set();
+function openSettings(v) {
+  settingsOpen = !!v;
+  for (const l of settingsListeners) l();
+}
+function useSettingsOpen() {
+  const [open, setOpen] = useState(settingsOpen);
+  useEffect(() => {
+    const l = () => setOpen(settingsOpen);
+    settingsListeners.add(l);
+    return () => settingsListeners.delete(l);
+  }, []);
+  return open;
+}
+let barSlotTaken = false;
+function PlaybackBar(props) {
+  const st = useSpeekState();
+  const sessionId = props?.currentSession?.id || null;
+  const primaryRef = useRef(null);
+  if (primaryRef.current === null) {
+    primaryRef.current = !barSlotTaken;
+    barSlotTaken = true;
+  }
+  const primary = primaryRef.current;
+  const barRef = useRef(null);
+  const [pos, setPos] = useState(loadBarPos);
+  const posRef = useRef(pos);
+  posRef.current = pos;
+  const prevFollowOnRef = useRef(st.followOn);
+  useEffect(() => {
+    const justTurnedOn = !prevFollowOnRef.current && st.followOn;
+    prevFollowOnRef.current = st.followOn;
+    setCurrentSession(sessionId);
+    if (st.followOn && sessionId) {
+      subscribeSession(sessionId);
+      steerSession(sessionId);
+      {
+        justTurnedOn ? startFollowFromPageTop(sessionId) : resumeSessionFromLastPos(sessionId);
+      }
+    } else {
+      unsubscribeSession();
+    }
+    return () => unsubscribeSession();
+  }, [st.followOn, sessionId]);
+  const curItem = st.queue.find((q) => q.id === st.itemId) || null;
+  const curSeg = curItem?.segs[st.segIdx] || null;
+  useEffect(() => {
+    if (!st.followOn || !st.playing || !curSeg) {
+      clearHighlight();
+      return;
+    }
+    const ok = highlightSegment(curSeg.match ?? curSeg.text, curItem?.sourceId || null, curItem?.raw || "");
+    if (!ok) clearHighlight();
+  }, [st.followOn, st.playing, curItem?.id, st.segIdx]);
+  useEffect(() => {
+    if (!st.followOn || !st.playing) clearHighlight();
+  }, [st.followOn, st.playing]);
+  if (!primary) return null;
+  if (!st.followOn || !st.barVisible) return null;
+  const item = st.queue.find((q) => q.id === st.itemId) || null;
+  const queueInfo = st.starting ? "启动中…" : item ? `${st.segIdx + 1}/${item.segs.length}` : st.queue.length ? `0/${st.queue.length}` : "等待";
+  const extra = st.backlog > 0 ? ` +${st.backlog}` : "";
+  const ctl = (title, fn, d, cls, disabled) => /* @__PURE__ */ jsx("button", { className: "aisp-ctl" + (cls ? " " + cls : ""), title, disabled: disabled !== void 0 ? disabled : !st.playing, onClick: fn, children: /* @__PURE__ */ jsx(Icon, { d, size: 14, filled: title === "pause" || title === "stop" }) });
+  const onGripDown = (e) => {
+    if (e.button !== 0) return;
+    const bar = barRef.current;
+    if (!bar) return;
+    e.preventDefault();
+    const rect = bar.getBoundingClientRect();
+    const startX = e.clientX, startY = e.clientY;
+    const base = posRef.current || { x: rect.left, y: rect.top };
+    let moved = false;
+    const move = (ev) => {
+      const dx = ev.clientX - startX, dy = ev.clientY - startY;
+      if (Math.abs(dx) + Math.abs(dy) > 3) moved = true;
+      bar.style.transform = "translate3d(" + dx + "px," + dy + "px,0)";
+    };
+    const up = (ev) => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", up);
+      bar.style.transform = "";
+      if (!moved) return;
+      const next = {
+        x: base.x + (ev.clientX - startX),
+        y: base.y + (ev.clientY - startY)
+      };
+      if (next.x < 8) next.x = 8;
+      if (next.y < 8) next.y = 8;
+      if (next.x > window.innerWidth - rect.width - 8) next.x = window.innerWidth - rect.width - 8;
+      if (next.y > window.innerHeight - rect.height - 8) next.y = window.innerHeight - rect.height - 8;
+      setPos(next);
+      saveBarPos(next);
+    };
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", up);
+  };
+  const onGripDbl = () => {
+    setPos(null);
+    try {
+      localStorage.removeItem(BAR_POS_KEY);
+    } catch {
+    }
+  };
+  const barStyle = pos ? { left: pos.x, top: pos.y, bottom: "auto", transform: "none" } : void 0;
+  const body = /* @__PURE__ */ jsxs("div", { ref: barRef, className: "aisp-bar", style: barStyle, children: [
+    /* @__PURE__ */ jsx("span", { className: "aisp-grip", title: "拖动移动 · 双击复位", "aria-hidden": true, onPointerDown: onGripDown, onDoubleClick: onGripDbl, children: "⠿" }),
+    ctl(t("speek.prev"), prev, ICON.prev, "", !(st.msgList[sessionId] && st.msgList[sessionId].length)),
+    st.paused ? ctl(t("speek.play"), resume, ICON.play) : st.playing ? ctl(t("speek.pause"), pause, ICON.pause) : ctl(t("speek.replay"), () => {
+      if (sessionId) replayCurrentPage(sessionId);
+    }, ICON.play, "", false),
+    ctl(t("speek.next"), skip, ICON.next, "", !(st.msgList[sessionId] && st.msgList[sessionId].length)),
+    ctl(t("speek.stop"), () => setFollow(false), ICON.stop, "stop", false),
+    /* @__PURE__ */ jsxs("span", { className: "aisp-queue", children: [
+      queueInfo,
+      extra
+    ] }),
+    /* @__PURE__ */ jsx("button", { className: "aisp-btn", title: t("speek.settings"), onClick: () => openSettings(true), children: /* @__PURE__ */ jsx(Icon, { d: ICON.gear, size: 14 }) }),
+    /* @__PURE__ */ jsx("button", { className: "aisp-btn", title: "隐藏播放条（跟读继续）", onClick: () => setBarVisible(false), children: /* @__PURE__ */ jsx(Icon, { d: "M18 6 6 18 M6 6l12 12", size: 14 }) })
+  ] });
+  return createPortal(body, document.body);
+}
+function SettingsDialog() {
+  const open = useSettingsOpen();
+  const st = useSpeekState();
+  const s = st.settings;
+  useEffect(() => {
+    try {
+      const synth = window.speechSynthesis;
+      if (!synth) return;
+      const load2 = () => setVoices(synth.getVoices().filter((v) => /zh/i.test(v.lang || "")));
+      load2();
+      synth.addEventListener?.("voiceschanged", load2);
+      return () => synth.removeEventListener?.("voiceschanged", load2);
+    } catch {
+    }
+  }, []);
+  useEffect(() => {
+    if (s.engine === "edge") fetchEdgeInfo();
+  }, [s.engine]);
+  useEffect(() => {
+    if (!st.processLoaded) fetchFeatures();
+  }, [st.processLoaded]);
+  const browserVoices = st.voices || [];
+  const edgeVoices = st.edgeVoices || [];
+  const voices = s.engine === "edge" ? edgeVoices.map((v) => ({ name: v.id, label: v.label })) : browserVoices.map((v) => ({ name: v.name, label: v.name }));
+  if (!open) return null;
+  const close = () => openSettings(false);
+  return createPortal(
+    /* @__PURE__ */ jsx("div", { className: "aisp-dlg-overlay", onClick: close, children: /* @__PURE__ */ jsxs("div", { className: "aisp-dlg", "data-ext-float": "1", "data-ext-float-w": 560, "data-ext-float-autoh": "1", "data-ext-float-full": "1", onClick: (e) => e.stopPropagation(), children: [
+      /* @__PURE__ */ jsxs("div", { className: "aisp-dlg-hd", children: [
+        /* @__PURE__ */ jsxs("span", { children: [
+          "🔊 ",
+          t("speek.settings")
+        ] }),
+        /* @__PURE__ */ jsx("button", { className: "aisp-btn", onClick: close, title: "关闭", children: /* @__PURE__ */ jsx(Icon, { d: "M18 6 6 18 M6 6l12 12", size: 14 }) })
+      ] }),
+      /* @__PURE__ */ jsxs("div", { className: "aisp-dlg-bd", children: [
+        /* @__PURE__ */ jsxs("div", { className: "aisp-row", children: [
+          /* @__PURE__ */ jsx("label", { title: "把 AI 的中间叙述也读出来（如「让我看一下…」「我先确认…」）；跳过思考与工具执行", children: "朗读过程" }),
+          /* @__PURE__ */ jsx("input", { type: "checkbox", checked: !!st.processOn, onChange: () => toggleProcess() })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "aisp-row", children: [
+          /* @__PURE__ */ jsx("label", { children: "朗读内容" }),
+          /* @__PURE__ */ jsxs("span", { className: "aisp-seg", children: [
+            /* @__PURE__ */ jsx("button", { className: s.mode === "full" ? "on" : "", onClick: () => setSettings({ mode: "full" }), children: "全文概要化" }),
+            /* @__PURE__ */ jsx("button", { className: s.mode === "essentials" ? "on" : "", onClick: () => setSettings({ mode: "essentials" }), children: "仅要点" })
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "aisp-row", children: [
+          /* @__PURE__ */ jsx("label", { children: "语速" }),
+          /* @__PURE__ */ jsx("span", { className: "aisp-seg", children: [0.75, 1, 1.25, 1.5, 2].map((r) => /* @__PURE__ */ jsxs("button", { className: s.rate === r ? "on" : "", onClick: () => setSettings({ rate: r }), children: [
+            r,
+            "x"
+          ] }, r)) })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "aisp-row", children: [
+          /* @__PURE__ */ jsx("label", { children: "音色" }),
+          /* @__PURE__ */ jsxs("select", { className: "aisp-sel", value: s.voice || "", onChange: (e) => setSettings({ voice: e.target.value }), children: [
+            /* @__PURE__ */ jsx("option", { value: "", children: s.engine === "edge" ? "晓晓（默认）" : "浏览器默认中文" }),
+            voices.map((v) => /* @__PURE__ */ jsx("option", { value: v.name, children: v.label }, v.name))
+          ] })
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "aisp-row", children: [
+          /* @__PURE__ */ jsx("label", { children: "引擎" }),
+          /* @__PURE__ */ jsxs("span", { className: "aisp-seg", children: [
+            /* @__PURE__ */ jsx("button", { className: s.engine === "browser" ? "on" : "", disabled: st.browserUnsupported, onClick: () => setSettings({ engine: "browser" }), children: "浏览器（零后端）" }),
+            /* @__PURE__ */ jsx("button", { className: s.engine === "edge" ? "on" : "", onClick: () => setSettings({ engine: "edge" }), children: "edge-tts（更自然）" })
+          ] })
+        ] }),
+        st.browserUnsupported && /* @__PURE__ */ jsx("div", { className: "aisp-row", style: { color: "#ef4444", fontSize: 11 }, children: "⚠ 当前浏览器不支持本地朗读（Web Speech），已自动切换到服务端语音生成（edge-tts）。" }),
+        s.engine === "edge" && !st.edgeAvailable && /* @__PURE__ */ jsx("div", { className: "aisp-row", style: { color: "#ef4444", fontSize: 11 }, children: "⚠ edge-tts 后端未就绪（未装或 feature 未开启），将自动回落浏览器朗读。" }),
+        /* @__PURE__ */ jsxs("div", { className: "aisp-row", children: [
+          /* @__PURE__ */ jsx("label", { children: "忽略短回复（少于 N 字不读）" }),
+          /* @__PURE__ */ jsx(
+            "input",
+            {
+              className: "aisp-sel",
+              type: "number",
+              min: 0,
+              max: 200,
+              value: String(s.minChars ?? 8),
+              onChange: (e) => setSettings({ minChars: Math.max(0, parseInt(e.target.value, 10) || 0) })
+            }
+          )
+        ] }),
+        /* @__PURE__ */ jsxs("div", { className: "aisp-row", children: [
+          /* @__PURE__ */ jsx("label", { children: "开启跟读时注入「朗读模式」提示词（让 AI 输出自带朗读优化）" }),
+          /* @__PURE__ */ jsx("input", { type: "checkbox", checked: !!s.steer, onChange: (e) => setSettings({ steer: e.target.checked }) })
+        ] }),
+        /* @__PURE__ */ jsx("div", { className: "aisp-row", style: { fontSize: 11, color: "var(--text-dim,#999)" }, children: "队列语义：新回复进队尾不打断当前朗读；⏹ 停止清队列；关闭 🔊 即恢复纯阅读。" })
+      ] })
+    ] }) }),
+    document.body
+  );
+}
+function register(ctx) {
+  __setCtx(ctx);
+  setApiUrl(typeof ctx.apiUrl === "function" ? ctx.apiUrl : (p) => p);
+  const syncFeatures = () => {
+    const feats = typeof ctx.getFeatures === "function" ? ctx.getFeatures() : {};
+    const patch = {};
+    if (typeof feats["minChars"] === "string" && feats["minChars"] !== "") {
+      patch.minChars = Math.max(0, parseInt(feats["minChars"], 10) || 0);
+    }
+    setSettings(patch);
+  };
+  syncFeatures();
+  if (typeof ctx.onFeatureChange === "function") {
+    ctx.onFeatureChange(syncFeatures);
+  }
+  ctx.registerItems?.("toolbar", [
+    { id: "follow", render: FollowToggle, meta: { label: "跟读模式", title: "跟读模式：AI 回复自动朗读" } }
+  ]);
+  ctx.registerItems?.("assistantMessageActions", [
+    { id: "read", render: AssistantMessageAction, meta: { label: "开始朗读" } }
+  ]);
+  ctx.registerItems?.("sessionTopbar", [
+    { id: "bar", render: PlaybackBar, meta: { label: "跟读播放条" } }
+  ]);
+  ctx.registerItems?.("dialogs", [
+    { id: "settings", render: SettingsDialog, meta: { label: "跟读设置" } }
+  ]);
+  try {
+    console.log("[aiti-ai-speek] 跟读模式已就绪：🔊 开关 + 播放条 + 设置（浏览器 Web Speech 默认）");
+  } catch {
+  }
+  bindFocusGating();
+  bindReaderCoordination();
+  autoSelectEngine();
+}
+export {
+  register as default
+};
