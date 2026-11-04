@@ -53,6 +53,13 @@ RUN set -eux; \
     echo "aiti ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/aiti; \
     chmod 0440 /etc/sudoers.d/aiti
 
+# aiti 用户 npmrc：运行时 pi-web（aiti 用户）安装 settings.packages 需要同款 registry 配置
+# （构建期 npm config set 写的是 root 的 ~/.npmrc；aiti 家目录无配置 → 公源 404 私包 → 模型列表不可用）
+RUN printf 'registry=%s\n@aiti-ai:registry=%s\n' \
+      "${NPM_MIRROR}" \
+      "${AITI_NPM_REGISTRY:-https://registry.npmjs.org/}" > /home/aiti/.npmrc \
+    && chown aiti:aiti /home/aiti/.npmrc
+
 # ── ③ aiti 目录骨架（数据卷挂 /opt/aiti；工作区挂 /workspace）─────────────────
 RUN mkdir -p /opt/aiti/extensions /opt/aiti/data /opt/aiti/agent /workspace \
     && chown -R aiti:aiti /opt/aiti /workspace
