@@ -1,0 +1,120 @@
+# aiti/aiti:full —— all-in-one 版（aiti-docker-image-plan §3.2）
+# core + GUI（Xvfb/openbox/x11vnc/noVNC/dbus/at-spi/xdotool）+ Chromium + ASR（faster-whisper/FunASR）
+# + edge-tts + 隧道二进制（cloudflared/ngrok/frpc）+ ttyd。构建参数与 core 同源。
+FROM aiti/aiti:core
+
+# 镜像源默认官方（GitHub 直用）；国内本地构建经 build.sh --cn 注入（与 core 同源）
+ARG APT_MIRROR=""
+ARG HF_ENDPOINT=https://huggingface.co
+ARG PIP_MIRROR=https://pypi.org/simple
+ENV DEBIAN_FRONTEND=noninteractive
+
+# ── ① GUI 系统组件（aiti-ui-env setup-linux.sh 同款清单，方案 §2.2.1）──────────
+# ⚠ R4 真相（2026-09-10 二次审核纠偏）：ubuntu 26.04 的 chromium-browser/chromium 都是
+# snap 过渡包（2:1snap1-*），apt 装上=假成功，容器内无 snap 不可用——首跑「R4 解除」
+# 是误判（降级链第一环假成功 + 启动静默）。
+# 浏览器：amd64 用 Google 官方直装 deb（不走 apt 仓库——dl.google.com 仓库索引实测
+# Hash Sum mismatch；直装 deb 单文件无索引，依赖从 apt 镜像源解）。arm64 无官方 Chrome
+# deb，退 apt chromium（镜像源若带真 deb 则可用，否则 WARN——arm64 浏览器是已知短板）。
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    if [ -n "$APT_MIRROR" ]; then \
+      sed -i "s|http://archive.ubuntu.com/ubuntu|http://${APT_MIRROR}/ubuntu|g; s|http://security.ubuntu.com/ubuntu|http://${APT_MIRROR}/ubuntu|g" /etc/apt/sources.list.d/ubuntu.sources; \
+    fi; \
+    if [ "$arch" = "amd64" ]; then \
+      wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb \
+        || wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb; \
+      CHROME_DEB="/tmp/chrome.deb"; \
+    fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+      xvfb openbox \
+      x11vnc novnc tigervnc-common \
+      dbus-x11 at-spi2-core \
+      xauth x11-utils xdotool wmctrl \
+      xterm \
+      ${CHROME_DEB:-}; \
+    rm -f /tmp/chrome.deb; \
+    rm -rf /var/lib/apt/lists/*; \
+    if [ "$arch" != "amd64" ]; then \
+      apt-get update && apt-get install -y --no-install-recommends chromium \
+        || echo "[full] WARN: arm64 无官方 Chrome deb 且 apt chromium 不可用（snap 过渡包）——CDP 能力缺失"; \
+      rm -rf /var/lib/apt/lists/*; \
+    fi; \
+    # 构建期硬校验：浏览器真身必须可执行（防 snap 过渡包这类假成功再次静默溜过）
+    google-chrome-stable --version || chromium --version
+
+# ── ② ASR venv + 模型预下载（方案 §2.2.2；HF 走国内镜像）──────────────────────
+# 层序：setup（venv+模型 ~2.7GB，慢）在前、app COPY 在后——改 ASR 应用代码不触发模型重下
+COPY docker/scripts/40-asr-setup.sh /tmp/40-asr-setup.sh
+RUN HF_ENDPOINT="${HF_ENDPOINT}" PIP_MIRROR="${PIP_MIRROR}" /tmp/40-asr-setup.sh && rm /tmp/40-asr-setup.sh
+COPY pi-web-ext/aiti-ai-input/server /opt/aiti-asr/app
+
+# ── ③ edge-tts（方案 §2.2.3：feature tts.edge 默认关，工具预装 + 缓存目录预建）──
+RUN pip3 install --break-system-packages -i "${PIP_MIRROR}" edge-tts \
+    && mkdir -p /home/aiti/.local/bin /opt/aiti/data/aiti-ai-speek/tts-cache \
+    && chown -R aiti:aiti /home/aiti/.local /opt/aiti/data/aiti-ai-speek
+# A12 修复后 speek 按 PATH 查找 edge-tts；容器内 pip 装到 /usr/local/bin（在 PATH）
+
+# ── ④ 隧道二进制 + ttyd（方案 §2.2.4/§2.2.5）──────────────────────────────────
+# 全部 pin 版本（latest 重定向/资产漂移曾致静默缺席）；多源竞速（github 直连 + 3 个
+# gh 镜像，实测单源会抖）；cloudflared/ttyd 四源全失败即构建失败（硬校验），
+# ngrok/frpc 容忍失败（equinox 无镜像可换，WARN 不阻断）。
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64) garch="amd64"; garch_f="amd64";; arm64) garch="aarch64"; garch_f="arm64";; esac; \
+    try_dl() { out="$1"; shift; for u in "$@"; do curl -fsSL --connect-timeout 20 --retry 2 -o "$out" "$u" && return 0; done; return 1; }; \
+    GH="https://github.com"; P1="https://gh-proxy.com/https://github.com"; P2="https://ghproxy.net/https://github.com"; P3="https://ghfast.top/https://github.com"; \
+    # cloudflared（默认隧道，必装）pin 2026.8.3
+    try_dl /usr/local/bin/cloudflared \
+      "$GH/cloudflare/cloudflared/releases/download/2026.8.3/cloudflared-linux-${garch}" \
+      "$P1/cloudflare/cloudflared/releases/download/2026.8.3/cloudflared-linux-${garch}" \
+      "$P2/cloudflare/cloudflared/releases/download/2026.8.3/cloudflared-linux-${garch}" \
+      "$P3/cloudflare/cloudflared/releases/download/2026.8.3/cloudflared-linux-${garch}"; \
+    chmod +x /usr/local/bin/cloudflared; \
+    # ttyd（[term] phase）pin 1.7.7（release 资产是裸二进制；命名=内核风格 x86_64/aarch64，
+    # 非 dpkg 的 amd64/arm64——曾按 amd64 拼 URL 全源 404）
+    case "$arch" in amd64) tarch="x86_64";; arm64) tarch="aarch64";; esac; \
+    try_dl /usr/local/bin/ttyd \
+      "$GH/tsl0922/ttyd/releases/download/1.7.7/ttyd.${tarch}" \
+      "$P1/tsl0922/ttyd/releases/download/1.7.7/ttyd.${tarch}" \
+      "$P2/tsl0922/ttyd/releases/download/1.7.7/ttyd.${tarch}" \
+      "$P3/tsl0922/ttyd/releases/download/1.7.7/ttyd.${tarch}"; \
+    chmod +x /usr/local/bin/ttyd && ttyd --version; \
+    # ngrok（stable 直链，需用户自配 authtoken；失败不阻断）
+    try_dl /tmp/ngrok.tgz "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-${garch}.tgz" \
+      || echo "[full] WARN ngrok 下载失败（可选）"; \
+    (tar -xzf /tmp/ngrok.tgz -C /usr/local/bin ngrok && chmod +x /usr/local/bin/ngrok) || true; rm -f /tmp/ngrok.tgz; \
+    # frpc pin 0.61.1（tar 包内 frpc 单二进制；失败不阻断）
+    try_dl /tmp/frpc.tar.gz \
+      "$GH/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" \
+      "$P1/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" \
+      "$P2/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" \
+      "$P3/fatedier/frp/releases/download/v0.61.1/frp_0.61.1_linux_${garch_f}.tar.gz" \
+      || echo "[full] WARN frpc 下载失败（可选）"; \
+    (tar -xzf /tmp/frpc.tar.gz -C /tmp "frp_0.61.1_linux_${garch_f}/frpc" \
+      && mv "/tmp/frp_0.61.1_linux_${garch_f}/frpc" /usr/local/bin/frpc && chmod +x /usr/local/bin/frpc) || true; \
+    rm -rf /tmp/frpc.tar.gz "/tmp/frp_0.61.1_linux_${garch_f}"; \
+    cloudflared --version; ttyd --version
+
+# ── ⑤ GUI 自启编排脚本（容器无 systemd → entrypoint phases，方案 §3.3 full 分支）──
+COPY docker/scripts/50-gui-start.sh /usr/local/bin/aiti-gui-start
+RUN chmod +x /usr/local/bin/aiti-gui-start
+
+# chromium 容器内非特权用户需 --no-sandbox（方案 §2.1.4）；CDP 默认回环。
+# --no-first-run：headful 全新 profile 首启卡 EULA 对话框等人工点同意——容器内没人点，
+# 浏览器 startup 永远不完成、CDP 端口永不打开（冒烟实证）；headless 跳过首启所以无此症。
+# --user-data-dir：Chrome 136+ 安全变更——remote-debugging-port 在默认 profile 上被静默
+# 忽略，必须配非默认数据目录（冒烟实证：窗口/进程全活但 9222 永不开）。profile 落数据卷
+# 随容器持久化。
+# MODELSCOPE_CACHE 与 40-asr-setup.sh 预下载同目录——运行时（aiti 用户）读同一份模型零重下
+ENV AITI_PHASES=piweb,bridge \
+    AITI_CHROMIUM_FLAGS="--no-sandbox --no-first-run --no-default-browser-check --user-data-dir=/opt/aiti/data/chrome-profile --remote-debugging-port=9222 --remote-allow-origins=*" \
+    AITI_ASR_STREAM_BASE=ws://127.0.0.1:8767 \
+    MODELSCOPE_CACHE=/opt/aiti-asr/models
+
+# full 层标记（entrypoint MODE=auto 探测）
+RUN touch /opt/aiti/.aiti-full
+
+EXPOSE 30142 8777 5900 6080 9222 7681 3389
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

@@ -1,0 +1,6 @@
+# aiti Docker 构建上下文排除（上下文 = build.sh 组装的 staging 根）
+# staging 已由 rsync exclude 掉 node_modules/.git/.next/dist；此处兜底杂项。
+# ⚠ 不要排除 *.png——pi-web/public/icons 的 PWA 图标（icon-192/512 等）是运行时资产。
+.docker-build-context/
+.playwright-mcp/
+*.log

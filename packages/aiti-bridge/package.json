@@ -1,0 +1,23 @@
+{
+  "name": "@aiti-ai/aiti-bridge",
+  "version": "0.2.4",
+  "description": "aiti-devtools 独立桥服务（常驻，不依赖 pi 生命周期）——页面连接/SSE/工具执行/MCP JSON-RPC + 静态资产 + stdio shim（env AITI_BRIDGE_URL 统一接入）；默认 127.0.0.1:8777",
+  "type": "module",
+  "bin": {
+    "aiti-bridge": "bin/aiti-bridge.mjs",
+    "aiti-mcp-shim": "bin/aiti-mcp-shim.cjs",
+    "aiti-mcp-register": "bin/aiti-mcp-register.mjs"
+  },
+  "main": "bin/aiti-bridge.mjs",
+  "license": "MIT",
+  "files": [
+    "README.md",
+    "bin"
+  ],
+  "scripts": {
+    "start": "node bin/aiti-bridge.mjs"
+  },
+  "dependencies": {
+    "@aiti-ai/aiti-devtools-core": "^0.3.9"
+  }
+}

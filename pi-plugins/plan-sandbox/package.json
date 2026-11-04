@@ -1,0 +1,9 @@
+{
+  "name": "@aiti-ai/pi-plan-sandbox",
+  "version": "0.1.0",
+  "description": "Plan-Sandbox mode for pi: full tool access inside a discardable sandbox; deliverables declared via hard protocol, cherry-picked on accept, everything else destroyed. [aiti]",
+  "type": "module",
+  "main": "index.ts",
+  "files": ["*.ts", "README.md"],
+  "pi-extension": true
+}

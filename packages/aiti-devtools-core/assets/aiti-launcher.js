@@ -1,0 +1,11026 @@
+/* aiti-devtools launcher · 单文件注入版（构建产物，勿手改）*/
+(() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __propIsEnum = Object.prototype.propertyIsEnumerable;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __spreadValues = (a, b) => {
+    for (var prop in b || (b = {}))
+      if (__hasOwnProp.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    if (__getOwnPropSymbols)
+      for (var prop of __getOwnPropSymbols(b)) {
+        if (__propIsEnum.call(b, prop))
+          __defNormalProp(a, prop, b[prop]);
+      }
+    return a;
+  };
+
+  // packages/aiti-devtools-inject/src/launcher/config.js
+  var VERSION = "0.2.1";
+  var DEFAULTS = {
+    endpoint: "",
+    // AI 桥前缀（aiUrl 为空时的后备，如 'http://localhost:30141/api/dbg'）
+    sessionId: "",
+    dbgToken: "",
+    aiUrl: "",
+    // AI 聊天界面 iframe 地址；空 = 不创建 AI iframe，走 endpoint/console
+    bridgeBase: "http://localhost:8777/aiti",
+    // MCP 桥地址（页面 client 连接注册；正式路径带 /aiti/ 前缀，nginx location /aiti/ 可代理）
+    bridgeToken: "dev",
+    // MCP 桥 token
+    accent: "#4f46e5",
+    iframeWidth: "min(880px, 92vw)",
+    iframeHeight: "min(560px, 80vh)"
+  };
+
+  // packages/aiti-devtools-inject/src/launcher/dom.js
+  function el(tag, attrs, children) {
+    var node = document.createElement(tag);
+    if (attrs) for (var k in attrs) node.setAttribute(k, attrs[k]);
+    (children || []).forEach(function(c) {
+      node.appendChild(typeof c === "string" ? document.createTextNode(c) : c);
+    });
+    return node;
+  }
+  var SVG_NS = "http://www.w3.org/2000/svg";
+  function elSvg(paths, size, strokeWidth) {
+    var svg = document.createElementNS(SVG_NS, "svg");
+    svg.setAttribute("width", String(size || 16));
+    svg.setAttribute("height", String(size || 16));
+    svg.setAttribute("viewBox", "0 0 24 24");
+    svg.setAttribute("fill", "none");
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-width", String(strokeWidth || 2));
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+    svg.setAttribute("aria-hidden", "true");
+    (paths || []).forEach(function(d) {
+      var p = document.createElementNS(SVG_NS, "path");
+      p.setAttribute("d", d);
+      svg.appendChild(p);
+    });
+    return svg;
+  }
+  var LUCIDE = {
+    crosshair: ["M22 12h-4", "M6 12H2", "M12 6V2", "M12 22v-4", "M12 12"]
+  };
+  function ensureStyles(accent) {
+    if (document.getElementById("__dbg_launcher_css")) return;
+    var css = document.createElement("style");
+    css.id = "__dbg_launcher_css";
+    css.textContent = `
+      /* launcher 整体为最上层覆盖层（z-index 最高，任何 iframe/div 都盖不住）；pointer-events 穿透不挡页面交互 */
+      /* 禁用本工具 UI 的浏览器触摸点击高亮（Android Chrome/HarmonyOS 点圆形按钮会叠淡蓝透明遮罩，看起来像方形背景/整窗遮罩）+ 长按菜单 */
+      #__dbg_launcher, #__dbg_launcher * { -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none; }
+      #__dbg_launcher {
+        all: initial; font: 13px/1.5 system-ui, sans-serif; color: #1f2937;
+        position: fixed; inset: 0; z-index: 2147483647; pointer-events: none;
+      }
+      #__dbg_launcher > * { pointer-events: auto; } /* 交互子元素恢复可点 */
+      /* 信息/提示类覆盖层始终点击穿透：#__dbg_launcher > * 恢复可点会误伤它们（opacity:0 隐藏时仍拦截下方元素点击，block-tip/tooltip 实测挡点击）；
+         hud 抓手 .dbg-hud-grip 子级显式 pointer-events:auto 覆盖继承的 none，仍可拖动 */
+      #__dbg_launcher > .dbg-hud,
+      #__dbg_launcher > .dbg-tooltip,
+      #__dbg_launcher > .dbg-block-tip,
+      #__dbg_launcher > .dbg-pick-toast { pointer-events: none; }
+      #__dbg_launcher *, #__dbg_launcher *::before, #__dbg_launcher *::after { box-sizing: border-box; }
+      .dbg-fab { position: fixed; right: 18px; z-index: 2147483646; display: flex; flex-direction: column; gap: 8px; touch-action: none; user-select: none; -webkit-user-select: none; }
+      .dbg-fab.dbg-horz { flex-direction: row; } /* 贴顶/贴底：按钮左右排列 */
+      .dbg-fab button {
+        display: flex; align-items: center; justify-content: center; gap: 4px; width: 40px; height: 40px; padding: 0;
+        border: 1px solid rgba(0,0,0,.12); border-radius: 50%; cursor: pointer;
+        background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.18); font: inherit; white-space: nowrap; transition: all .2s;
+      }
+      .dbg-fab button::after { content: attr(data-label); font-size: 11px; opacity: 0; max-width: 0; overflow: hidden; transition: all .25s; }
+      .dbg-fab button:hover { transform: translateY(-1px); }
+      /* tooltip 展开文字：固定圆形按钮（40px）后 inline 推不动——left/right 都改绝对定位，不推图标/布局 */
+      .dbg-fab button::after { content: attr(data-label); font-size: 11px; opacity: 0; max-width: 0; overflow: hidden; transition: all .25s; color: inherit; }
+      .dbg-fab button[data-tip='left'], .dbg-fab button[data-tip='right'] { position: relative; }
+      .dbg-fab button[data-tip='left']::after, .dbg-fab button[data-tip='right']::after {
+        position: absolute; top: 50%; transform: translateY(-50%);
+        max-width: 0; opacity: 0; overflow: hidden; white-space: nowrap; transition: all .25s;
+        color: #374151; /* 深字——dbg-on 时按钮 color:#fff，若继承会白字白底看不见 */
+      }
+      .dbg-fab button[data-tip='left']::after { right: calc(100% + 2px); }
+      .dbg-fab button[data-tip='right']::after { left: calc(100% + 2px); }
+      .dbg-fab button[data-tip='left']:hover::after, .dbg-fab button[data-tip='right']:hover::after {
+        max-width: 90px; opacity: 1; padding: 2px 6px; background: rgba(255,255,255,.95); border-radius: 8px;
+      }
+      /* 拖动中：禁用 hover 上浮 + 隐藏 tooltip（避免闪动） */
+      .dbg-fab.dbg-dragging button { transform: none !important; }
+      .dbg-fab.dbg-dragging button::after { opacity: 0 !important; max-width: 0 !important; }
+      .dbg-fab button.dbg-on { background: ${accent}; color: #fff; border-color: ${accent}; }
+      /* 页面错误提醒：AI 按钮红描边 + 角标（红点/数字）+ 脉冲闪烁（每个新错误触发；节奏慢、时长足，保证看得见） */
+      .dbg-fab button.dbg-err { position: relative; border-color: #ef4444; box-shadow: 0 0 0 1px rgba(239,68,68,.35) inset; }
+      .dbg-fab button.dbg-err-pulse { animation: dbg-fab-err-pulse 1.5s ease-out 4; } /* 慢速光晕扩散 4 轮 ≈ 6s */
+      @keyframes dbg-fab-err-pulse {
+        0% { box-shadow: 0 0 0 0 rgba(239,68,68,.7), 0 0 0 1px rgba(239,68,68,.35) inset; }
+        25% { box-shadow: 0 0 0 6px rgba(239,68,68,.35), 0 0 0 1px rgba(239,68,68,.35) inset; }
+        55% { box-shadow: 0 0 0 14px rgba(239,68,68,0), 0 0 0 1px rgba(239,68,68,.35) inset; }
+        100% { box-shadow: 0 0 0 0 rgba(239,68,68,0), 0 0 0 1px rgba(239,68,68,.35) inset; }
+      }
+      .dbg-fab-err-badge {
+        position: absolute; top: -4px; right: -4px; z-index: 2;
+        min-width: 16px; height: 16px; padding: 0 4px; border-radius: 999px;
+        background: #ef4444; color: #fff; font-size: 10px; font-weight: 700; line-height: 16px;
+        display: flex; align-items: center; justify-content: center; border: 1.5px solid #fff;
+      }
+      /* touch 点击：tooltip 立即显示，2s 后消失（touch 无 :hover out，展开会一直挂着） */
+      .dbg-fab button.dbg-tip::after { opacity: 1; max-width: 90px; padding-left: 2px; }
+      .dbg-fab button[data-tip='left'].dbg-tip::after, .dbg-fab button[data-tip='right'].dbg-tip::after { max-width: 90px; opacity: 1; padding: 2px 6px; background: rgba(255,255,255,.95); }
+      .dbg-fab.dbg-nohover button:hover::after, .dbg-fab.dbg-nohover button.dbg-tip::after { opacity: 0 !important; max-width: 0 !important; }
+      /* 触屏：禁用 fab/工具条/菜单按钮的 :hover 视觉（touch 点击后 :hover 残留，形成'hover整个窗口'错乱）——
+         dbg-tip 类显式触发的 tooltip 不受影响（tap 仍显示 2s）；按钮的 :hover 背景/上浮全压掉 */
+      #__dbg_launcher.dbg-touch-ui .dbg-fab button:hover,
+      #__dbg_launcher.dbg-touch-ui .dbg-toolbar button:hover,
+      #__dbg_launcher.dbg-touch-ui .dbg-extreme-menu button:hover,
+      #__dbg_launcher.dbg-touch-ui .dbg-profile-item:hover,
+      #__dbg_launcher.dbg-touch-ui .dbg-ai-bar button:hover,
+      #__dbg_launcher.dbg-touch-ui .dbg-settings button:hover,
+      #__dbg_launcher.dbg-touch-ui .dbg-speed button:hover { background: inherit !important; border-color: inherit !important; transform: none !important; }
+      #__dbg_launcher.dbg-touch-ui .dbg-fab button:hover::after { opacity: 0 !important; max-width: 0 !important; }
+      /* ---- Inspector 工具条（悬浮按钮排：选区微调） ---- */
+      /* 工具条：双行（行1=选区信息稳定，行2=按钮稳定不跳）；色块区分（导航浅灰/✓绿/🖱紫/⏱橙/🔒靛/✕红） */
+      .dbg-toolbar {
+        display: none; flex-direction: column; padding: 4px 6px;
+        background: rgba(255,255,255,.98); border: 1px solid #e2e8f0; border-radius: 10px;
+        font-size: 12px; box-shadow: 0 4px 16px rgba(0,0,0,.14);
+        touch-action: none; user-select: none; -webkit-user-select: none;
+      }
+      .dbg-toolbar.dbg-on { display: flex; }
+      .dbg-toolbar.dbg-floating { position: fixed; z-index: 2147483647; } /* 最高层：确认弹窗（2147483645）打开时工具条仍可点 */
+      .dbg-toolbar-row { display: flex; align-items: center; gap: 2px; white-space: nowrap; }
+      .dbg-toolbar-row.dbg-toolbar-btns { margin-top: 3px; flex-wrap: wrap; }
+      .dbg-toolbar .dbg-sel-label {
+        font-size: 10px; color: #64748b; min-width: 120px; max-width: min(60vw, 360px);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; word-break: break-all; overflow-wrap: anywhere;
+        padding: 1px 4px;
+        background: #f8fafc; border-radius: 5px; cursor: grab;
+      }
+      .dbg-toolbar button {
+        min-width: 26px; height: 26px; padding: 0 5px; border: 0; border-radius: 8px;
+        font-size: 12px; cursor: pointer; color: #334155; background: #f1f5f9; transition: background .15s;
+      }
+      .dbg-toolbar button:hover { background: #e0e7ff; }
+      .dbg-toolbar .dbg-toolbar-sep { width: 1px; height: 22px; background: #e2e8f0; margin: 0 5px; flex: none; }
+      .dbg-toolbar .dbg-nav-ok { background: #dcfce7; color: #15803d; }
+      .dbg-toolbar .dbg-nav-resume { background: #f3e8ff; color: #7e22ce; }
+      .dbg-toolbar .dbg-nav-profile { background: #e0e7ff; color: #4338ca; }
+      .dbg-toolbar .dbg-nav-close { background: #fee2e2; color: #b91c1c; }
+      .dbg-toolbar .dbg-nav-help { background: #fef3c7; color: #b45309; }
+      /* selector 快速选择输入行 */
+      .dbg-sel-input-row { display: none; margin-top: 3px; flex-direction: column; } /* 输入框独占一行，示例指示单独一行 */
+      .dbg-sel-input-row input {
+        width: 100%; box-sizing: border-box; border: 1px solid #c7d2fe; border-radius: 6px; padding: 4px 8px;
+        font: inherit; font-size: 11px; background: #eef2ff;
+      }
+      .dbg-sel-hint { font-size: 10px; color: #94a3b8; line-height: 1.5; margin-top: 2px; }
+      /* 小屏自适应（目标页未适配小屏，工具条自主放大优化）：
+         compact = 视口<768 或触屏 → 按钮 38px/16px；touch = 触屏或 <480 → 按钮 44px/18px（触控标准） */
+      .dbg-toolbar.dbg-compact {
+        padding: 5px 8px; max-width: calc(100vw - 16px); flex-wrap: wrap; gap: 4px;
+      }
+      .dbg-toolbar.dbg-compact button { min-width: 36px; height: 38px; font-size: 16px; padding: 0 8px; }
+      .dbg-toolbar.dbg-compact .dbg-sel-label { min-width: 150px; font-size: 12px; }
+      .dbg-toolbar.dbg-compact .dbg-toolbar-btns { flex-wrap: wrap; }
+      .dbg-toolbar.dbg-touch {
+        padding: 6px 10px; gap: 6px;
+      }
+      .dbg-toolbar.dbg-touch button { min-width: 44px; height: 46px; font-size: 18px; padding: 0 10px; }
+      .dbg-toolbar.dbg-touch .dbg-sel-label { min-width: 170px; font-size: 14px; padding: 4px 8px; }
+      .dbg-toolbar.dbg-touch .dbg-toolbar-btns { gap: 6px; }
+      .dbg-toolbar.dbg-touch .dbg-sel-input-row input { font-size: 14px; padding: 8px 10px; }
+      /* 按钮点击 tooltip（几秒后消失） */
+      .dbg-hud {
+        position: fixed; z-index: 2147483647; /* 最高层：拖动/显示不被任何 UI（fab/工具条/面板）覆盖 */
+        background: rgba(17,24,39,.94); color: #e5e7eb; border-radius: 10px; padding: 7px 12px;
+        font-size: 11px; line-height: 1.65; min-width: 140px;
+        transition: opacity .25s; pointer-events: none; opacity: 0; box-shadow: 0 6px 20px rgba(0,0,0,.4);
+      }
+      /* 小屏/触屏：HUD（按真实屏幕物理视口，layout 980 时媒体查询失效）；图标紧凑（小屏信息密度高不占屏） */
+      #__dbg_launcher.dbg-phys-small .dbg-hud { font-size: 11px; padding: 6px 9px; min-width: 128px; line-height: 1.5; }
+      #__dbg_launcher.dbg-phys-small .dbg-hud-path { max-width: 46vw; }
+      /* 小屏工具条按钮换行（保证最右 ✓ 确认可见）：dbg-phys-small（设备<768）强制 wrap，
+         不依赖 dbg-compact（受 isSmallScreen/isTouchCompact 影响，真机可能未触发） */
+      #__dbg_launcher.dbg-phys-small .dbg-toolbar-btns { flex-wrap: wrap; }
+      /* 小屏 dialog（确认预览弹窗）与 speed（调速/网络/错误）：字体图标放大（响应式，参照 AI 窗；14px 基准） */
+      #__dbg_launcher.dbg-phys-small .dbg-dialog { font-size: 14px; }
+      #__dbg_launcher.dbg-phys-small .dbg-dialog-head { padding: 14px 16px; }
+      #__dbg_launcher.dbg-phys-small .dbg-dialog-head code { font-size: 13px; }
+      #__dbg_launcher.dbg-phys-small .dbg-dialog-head .dbg-loc { font-size: 13px; }
+      #__dbg_launcher.dbg-phys-small .dbg-dialog-head button { min-width: 40px; min-height: 40px; font-size: 17px; }
+      #__dbg_launcher.dbg-phys-small .dbg-dialog-body { padding: 14px 16px; }
+      #__dbg_launcher.dbg-phys-small .dbg-dialog-body textarea { min-height: 80px; font-size: 14px; }
+      #__dbg_launcher.dbg-phys-small .dbg-dialog-foot { padding: 12px 16px; }
+      #__dbg_launcher.dbg-phys-small .dbg-dialog-foot button { min-height: 44px; font-size: 15px; padding: 9px 18px; }
+      #__dbg_launcher.dbg-phys-small .dbg-preview { font-size: 13px; padding: 10px 12px; }
+      #__dbg_launcher.dbg-phys-small .dbg-checks label { font-size: 13px; padding: 6px 10px; }
+      #__dbg_launcher.dbg-phys-small .dbg-speed { font-size: 14px; }
+      #__dbg_launcher.dbg-phys-small .dbg-speed-head { padding: 12px 14px; }
+      #__dbg_launcher.dbg-phys-small .dbg-speed-head button { min-width: 40px; min-height: 40px; font-size: 17px; }
+      #__dbg_launcher.dbg-phys-small .dbg-speed-body { padding: 12px 14px; }
+      #__dbg_launcher.dbg-phys-small .dbg-seg button { min-height: 36px; font-size: 14px; padding: 5px 12px; }
+      #__dbg_launcher.dbg-phys-small .dbg-chk { font-size: 13px; padding: 6px 10px; }
+      #__dbg_launcher.dbg-phys-small .dbg-speed-row > label:first-child { min-width: 72px; }
+      .dbg-hud b { color: #fff; }
+      .dbg-hud i { color: #93c5fd; font-style: normal; }
+      .dbg-hud .dbg-hud-path { color: #94a3b8; word-break: break-all; }
+      /* HUD 本体 pointer-events:none（不拦截页面交互——盖住弹出菜单时下方仍可 hover/点击）；
+         右上角抓手 = 唯一拖动入口；.dbg-open-file 链接单独放行可点击 */
+      .dbg-hud .dbg-hud-grip {
+        position: absolute; top: 2px; right: 4px; z-index: 2;
+        font-size: 10px; line-height: 1; color: #64748b; cursor: grab; user-select: none;
+        padding: 1px 2px; pointer-events: auto;
+        touch-action: none; -webkit-user-select: none; /* 触屏拖动：禁浏览器把手势当滚动（否则 pointercancel → 拖拽中断） */
+      }
+      .dbg-hud .dbg-hud-grip:hover { color: #c7d2fe; }
+      /* pick HUD 按钮行：内容超高滚动时按钮 sticky 贴底始终可见（背景铺满 HUD 底边，不露穿帮） */
+      .dbg-hud .dbg-hud-actions {
+        position: sticky; bottom: 0; margin-top: 6px; margin-left: -12px; margin-right: -12px;
+        padding: 3px 12px 7px; background: rgba(17,24,39,.94); border-radius: 0 0 10px 10px;
+      }
+      #__dbg_launcher.dbg-phys-small .dbg-hud .dbg-hud-actions {
+        margin-left: -9px; margin-right: -9px; padding: 3px 9px 6px;
+      }
+      /* 工具条模拟 hover 按钮（真实事件派发）：开态高亮 */
+      .dbg-toolbar .dbg-nav-hover { background: #ccfbf1; color: #0f766e; }
+      .dbg-toolbar .dbg-nav-hover.dbg-on, .dbg-toolbar .dbg-nav-hover.dbg-on:hover { background: #0f766e; color: #fff; box-shadow: inset 0 0 0 1px rgba(204,251,241,.5); }
+      /* 箭头指向选区（默认在选区下方：箭头朝上指向选区） */
+      .dbg-hud::before {
+        content: ''; position: absolute; top: -8px; left: 18px;
+        width: 0; height: 0; border-left: 8px solid transparent; border-right: 8px solid transparent;
+        border-bottom: 8px solid rgba(17,24,39,.94);
+      }
+      /* 翻到选区上方：箭头在底部指向选区 */
+      .dbg-hud.dbg-hud-up::before {
+        top: auto; bottom: -8px;
+        border-bottom: 0; border-top: 8px solid rgba(17,24,39,.94);
+      }
+      .dbg-hud b { color: #fff; }
+      .dbg-hud i { color: #93c5fd; font-style: normal; }
+      .dbg-hud .dbg-hud-path { color: #94a3b8; }
+      .dbg-tooltip {
+        position: fixed; z-index: 2147483648; background: rgba(17,24,39,.94); color: #e5e7eb; /* hover popup 同款：dark/圆角/多行 */
+        font-size: 11px; line-height: 1.65; padding: 7px 12px; border-radius: 10px; max-width: min(340px, 90vw);
+        transition: opacity .3s; pointer-events: none; opacity: 0; box-shadow: 0 6px 20px rgba(0,0,0,.4);
+      }
+      @media (max-width: 768px), (pointer: coarse) { .dbg-tooltip { font-size: 14px; padding: 9px 14px; } }
+      /* 事件拦截提示条（底部/顶部 toast，闪避鼠标）：纯信息展示 pointer-events 常关——不吞下方元素点击；
+         垂直位置由 showBlockedTip 按拦截点所在半屏写 inline top/bottom（下半屏拦截 → 上半展示），此处仅创建时兑底 */
+      .dbg-block-tip {
+        position: fixed; left: 50%; bottom: 10px; transform: translateX(-50%);
+        z-index: 2147483648; background: rgba(15,23,42,.95); color: #fde68a;
+        border: 1px solid rgba(253,230,138,.45); border-radius: 999px;
+        padding: 7px 16px; font-size: 12px; line-height: 1.5;
+        box-shadow: 0 6px 20px rgba(0,0,0,.35); opacity: 0; pointer-events: none;
+        transition: opacity .25s; max-width: 92vw; white-space: nowrap;
+        overflow: hidden; text-overflow: ellipsis;
+      }
+      .dbg-block-tip b { color: #fff; }
+      .dbg-profile-menu {
+        position: fixed; z-index: 2147483647; min-width: 220px; background: #fff; /* 最高层（与工具条同级，后创建在上）：下拉不被工具条盖 */
+        border: 1px solid rgba(0,0,0,.15); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.2);
+        padding: 4px; font-size: 12px;
+      }
+      .dbg-profile-item { display: flex; justify-content: space-between; gap: 8px; align-items: center; padding: 6px 10px; border-radius: 7px; cursor: pointer; }
+      .dbg-profile-item:hover { background: #eef2ff; }
+      .dbg-profile-item.dbg-on { background: #e0e7ff; font-weight: 600; }
+      /* 放行下拉：常驻动作项「⚙️ 自定义…」+ 分隔线 */
+      .dbg-profile-divider { height: 1px; background: #e2e8f0; margin: 3px 4px; }
+      .dbg-profile-item.dbg-profile-action { color: #4338ca; }
+      .dbg-profile-item.dbg-profile-action:hover { background: #eef2ff; }
+      .dbg-profile-label { font-weight: 600; }
+      .dbg-profile-desc { font-size: 10px; color: #6b7280; }
+      /* 小屏：放行方案下拉字体跟随（原 12px/10px 固定） */
+      #__dbg_launcher.dbg-phys-small .dbg-profile-menu { font-size: 13px; min-width: 250px; }
+      #__dbg_launcher.dbg-phys-small .dbg-profile-item { padding: 8px 11px; }
+      #__dbg_launcher.dbg-phys-small .dbg-profile-desc { font-size: 11px; }
+      /* ❓ 帮助窗（help 子系统）：底部居中浮层，可滚动，头部可拖；z-index 2147483648 盖工具条 */
+      .dbg-help-dialog { position: fixed; z-index: 2147483648; background: #fff; border-radius: 12px;
+        box-shadow: 0 10px 30px rgba(0,0,0,.25); max-height: 70vh;
+        display: flex; flex-direction: column; font-size: 11px; color: #334155; overflow: hidden; }
+      .dbg-help-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px;
+        background: #eef2ff; color: #3730a3; font-weight: 600; cursor: grab; user-select: none; -webkit-user-select: none; flex: none; touch-action: none; }
+      .dbg-help-dialog.dbg-dragging .dbg-help-head { cursor: grabbing; }
+      .dbg-help-head button { border: 0; background: none; cursor: pointer; font-size: 14px; color: #64748b; min-width: 26px; height: 26px; }
+      .dbg-help-body { padding: 10px 12px; overflow-y: auto; line-height: 1.7; }
+      .dbg-help-body h4 { margin: 9px 0 3px; font-size: 11px; color: #3730a3; }
+      .dbg-help-body h4:first-child { margin-top: 0; }
+      .dbg-help-body code { background: #f1f5f9; border-radius: 4px; padding: 0 4px; font-size: 10px; }
+      .dbg-help-body table { border-collapse: collapse; margin: 3px 0; max-width: 100%; }
+      .dbg-help-body td { border: 1px solid #e2e8f0; padding: 2px 7px; vertical-align: top; }
+      .dbg-help-body kbd { background: #f1f5f9; border: 1px solid #cbd5e1; border-bottom-width: 2px; border-radius: 4px;
+        padding: 0 4px; font-family: inherit; font-size: 10px; white-space: nowrap; }
+      .dbg-help-note { font-size: 10px; color: #94a3b8; margin-top: 2px; }
+      .dbg-help-nav-row button { margin: 3px 6px 3px 0; border: 1px solid #c7d2fe; background: #eef2ff;
+        border-radius: 6px; padding: 4px 10px; cursor: pointer; font: inherit; color: #4338ca; }
+      .dbg-help-nav-row button:active { background: #e0e7ff; }
+      #__dbg_launcher.dbg-phys-small .dbg-help-dialog { font-size: 13px; max-height: 78vh; border-radius: 14px; }
+      #__dbg_launcher.dbg-phys-small .dbg-help-body td { padding: 5px 9px; }
+      #__dbg_launcher.dbg-phys-small .dbg-help-body kbd { font-size: 12px; padding: 1px 6px; }
+      #__dbg_launcher.dbg-phys-small .dbg-help-nav-row button { padding: 10px 14px; } /* 触控 44px 目标 */
+      .dbg-toolbar .dbg-sel-label { color: #4f46e5; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: min(60vw, 360px); word-break: break-all; overflow-wrap: anywhere; }
+      .dbg-toolbar button {
+        border: 1px solid #c7d2fe; background: #fff; border-radius: 8px; padding: 2px 8px;
+        cursor: pointer; font: inherit; color: #3730a3;
+      }
+      .dbg-toolbar button:hover { background: #e0e7ff; }
+      .dbg-toolbar .dbg-spacer { flex: 1; }
+      .dbg-panel {
+        position: fixed; right: 18px; bottom: 76px; z-index: 2147483641;
+        width: 360px; background: #fff; border: 1px solid rgba(0,0,0,.15); border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0,0,0,.25); display: none; flex-direction: column;
+      }
+      .dbg-panel.dbg-open { display: flex; }
+      .dbg-panel-head { padding: 10px 12px; font-weight: 600; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; }
+      .dbg-panel-head button { border: 0; background: none; cursor: pointer; font-size: 13px; color: #6b7280; }
+      .dbg-msgs { height: 260px; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+      .dbg-msg { max-width: 85%; padding: 7px 10px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; }
+      .dbg-msg.user { align-self: flex-end; background: ${accent}; color: #fff; }
+      .dbg-msg.ai { align-self: flex-start; background: #f3f4f6; }
+      .dbg-msg.sys { align-self: center; font-size: 11px; color: #9ca3af; }
+      .dbg-input-row { display: flex; gap: 6px; padding: 8px; border-top: 1px solid #e5e7eb; }
+      .dbg-input-row input { flex: 1; border: 1px solid #d1d5db; border-radius: 8px; padding: 7px 9px; font: inherit; }
+      .dbg-input-row button { border: 0; border-radius: 8px; padding: 7px 12px; background: ${accent}; color: #fff; cursor: pointer; font: inherit; }
+      /* ---- AI 悬浮窗（可拖拽/贴边/调宽高） ---- */
+      .dbg-ai-win {
+        position: fixed; z-index: 2147483642; display: none;
+        background: #fff; border: 1px solid rgba(0,0,0,.18); border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0,0,0,.25); overflow: hidden;
+        min-width: 280px; min-height: 200px;
+      }
+      .dbg-ai-win.dbg-dragging { opacity: .85; cursor: grabbing; }
+      .dbg-ai-bar {
+        height: 30px; display: flex; align-items: center; gap: 3px;
+        padding: 0 8px; background: #f9fafb; border-bottom: 1px solid #e5e7eb;
+        font-size: 12px; cursor: grab; user-select: none; -webkit-user-select: none;
+        touch-action: none; /* 触屏拖动：禁止浏览器把手势当滚动（否则 pointercancel → 拖拽中断，pad 实测卡住；pointerdown preventDefault 管不了触屏滚动） */
+        -webkit-touch-callout: none; /* iOS 长按不弹系统菜单 */
+        position: relative; z-index: 3; /* 盖住 resize 手柄（z2）：右缘拖拽条(.dbg-ai-resize-r 14px)会盖到关闭按钮 → 点关闭变拖动（用户实测） */
+      }
+      .dbg-ai-bar .dbg-ai-title { font-weight: 600; margin-right: auto; color: #374151; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 38vw; flex-shrink: 1; display: flex; align-items: center; gap: 5px; }
+      .dbg-ai-bar .dbg-ai-favicon { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+      .dbg-ai-bar button {
+        border: 1px solid #d1d5db; background: #fff;
+        padding: 0; width: 26px; height: 26px; border-radius: 50%;
+        cursor: pointer; font: inherit; font-size: 11px; color: #4b5563;
+      } /* 图标按钮（最大化/新窗口/设置/关闭）正圆 */
+      .dbg-ai-bar button:hover { background: #eef2ff; border-color: #c7d2fe; }
+      .dbg-ai-bar .dbg-ai-close { color: #dc2626; }
+      /* 小屏：AI 窗标题栏精简——默认全屏贴边（最大化），仅 最大化/新窗口/设置/关闭 四钮 */
+      #__dbg_launcher.dbg-phys-small .dbg-ai-bar { height: 34px; padding: 0 6px; font-size: 12px; gap: 4px; }
+      #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-title { font-size: 12px; }
+      #__dbg_launcher.dbg-phys-small .dbg-ai-bar button { min-width: 26px; min-height: 26px; font-size: 12px; padding: 1px 5px; }
+      /* 分组间距：右侧固定组（⛶⧉⚙✕）前留白（不再挤成一团，触屏不易误触） */
+      #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-max { margin-left: 10px; }
+      #__dbg_launcher.dbg-phys-small .dbg-ai-bar .dbg-ai-pop { margin-left: 10px; }
+      #__dbg_launcher.dbg-phys-small .dbg-ai-resize { display: none; } /* 小屏全宽贴边，尺寸自适应，无角柄 */
+      /* 小屏：resize 边缘拖条（右/下/左）隐藏——小屏手势已被 filter:!small 禁用（拖不动），
+         却仍覆盖 iframe 对应边缘（底部 24px 命中区挡住内容点击、点击无效）→ 纯遮挡，隐藏释放边缘 */
+      #__dbg_launcher.dbg-phys-small .dbg-ai-resize-r,
+      #__dbg_launcher.dbg-phys-small .dbg-ai-resize-b,
+      #__dbg_launcher.dbg-phys-small .dbg-ai-resize-l { display: none; }
+      #__dbg_launcher.dbg-phys-small .dbg-ai-win iframe { height: calc(100% - 34px) !important; }
+      .dbg-ai-resize {
+        position: absolute; right: 0; bottom: 0; width: 20px; height: 20px;
+        cursor: nwse-resize; z-index: 2;
+        touch-action: none; -webkit-user-select: none; /* 触屏 resize 手柄同拖动条：禁浏览器滚动手势 */
+      }
+      /* 左缘拖条（镜像右缘）：单轴调宽（左缘跟手、右缘锚定）——小屏也保留（用户实测左下角拖不了，只有右/下有缘条） */
+      .dbg-ai-resize-l {
+        position: absolute; left: 0; top: 0; width: 14px; height: 100%;
+        cursor: ew-resize; z-index: 2; touch-action: none; -webkit-user-select: none;
+      }
+      /* 边缘拖条（右/下）：单轴调宽/调高——触屏只有右下角手柄必须斜拖且贴屏底时落在系统手势区，
+         真实手指很难用；边缘条长且好点。默认透明，hover/触屏加宽命中区（44px）可见提示 */
+      .dbg-ai-resize-r {
+        position: absolute; right: 0; top: 0; width: 14px; height: 100%;
+        cursor: ew-resize; z-index: 2; touch-action: none; -webkit-user-select: none;
+      }
+      .dbg-ai-resize-b {
+        position: absolute; left: 0; bottom: 0; width: 100%; height: 14px;
+        cursor: ns-resize; z-index: 2; touch-action: none; -webkit-user-select: none;
+      }
+      .dbg-ai-resize-r::after, .dbg-ai-resize-b::after, .dbg-ai-resize-l::after {
+        content: ''; position: absolute; border-radius: 3px; background: transparent; transition: background .15s;
+      }
+      .dbg-ai-resize-r::after { right: 3px; top: 25%; bottom: 25%; width: 4px; }
+      .dbg-ai-resize-l::after { left: 3px; top: 25%; bottom: 25%; width: 4px; }
+      .dbg-ai-resize-b::after { bottom: 3px; left: 25%; right: 25%; height: 4px; }
+      /* 只在悬停指示条本身时点亮（原 .dbg-ai-win:hover = 鼠标在窗口任意位置都亮 → 看着"一直显示"，触屏 sticky-hover 更明显）；
+         真正要拖动该位置（指针到边缘条）才提示 */
+      .dbg-ai-resize-r:hover::after, .dbg-ai-resize-b:hover::after, .dbg-ai-resize-l:hover::after { background: rgba(99,102,241,.35); }
+      /* 拖动中才亮（含触屏——替代旧"触屏常显"方案：常显是视觉噪音，用的时候给反馈即可）：
+         dbg-resizing class 由手势层挂/摘（拖动开始加、结束去） */
+      .dbg-ai-win.dbg-resizing .dbg-ai-resize-r::after, .dbg-ai-win.dbg-resizing .dbg-ai-resize-b::after, .dbg-ai-win.dbg-resizing .dbg-ai-resize-l::after, .dbg-ai-win.dbg-resizing .dbg-ai-resize::after { background: rgba(99,102,241,.6); }
+      /* 右下角 L 抓手：默认隐藏，hover 才亮（与边缘条一致——常显是视觉噪音） */
+      .dbg-ai-resize::after {
+        content: ''; position: absolute; right: 3px; bottom: 3px;
+        width: 8px; height: 8px; border-right: 2px solid transparent; border-bottom: 2px solid transparent;
+        border-radius: 2px; transition: border-color .15s;
+      }
+      .dbg-ai-resize:hover::after { border-color: rgba(99,102,241,.6); }
+      /* ---- ⧉ 新窗口布局下拉（Chrome Inspector 式：独立弹窗 / 左右分屏 / 上下分屏） ---- */
+      .dbg-ai-pop-menu {
+        position: fixed; z-index: 2147483647; min-width: 200px;
+        background: #fff; border: 1px solid rgba(0,0,0,.15); border-radius: 10px;
+        box-shadow: 0 8px 32px rgba(0,0,0,.25); padding: 4px; font-size: 12px;
+      }
+      .dbg-ai-pop-menu-item { display: flex; flex-direction: column; gap: 1px; padding: 6px 10px; border-radius: 7px; cursor: pointer; color: #374151; }
+      .dbg-ai-pop-menu-item:hover { background: #eef2ff; }
+      .dbg-ai-pop-menu-item.dbg-on { background: #4f46e5; color: #fff; }
+      .dbg-ai-pop-menu-desc { font-size: 10px; opacity: .72; }
+      /* ---- 调速/拦截面板 ---- */
+      .dbg-speed {
+        position: fixed; right: 18px; bottom: 76px; z-index: 2147483643;
+        width: 340px; max-height: calc(100vh - 96px); overflow-y: auto;
+        background: #fff; border: 1px solid rgba(0,0,0,.15); border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0,0,0,.25); display: none; font-size: 12px;
+      }
+      .dbg-speed.dbg-open { display: block; }
+      .dbg-speed-head { position: sticky; top: 0; background: #fff; z-index: 1; }
+      .dbg-speed-head {
+        display: flex; justify-content: space-between; align-items: center;
+        padding: 8px 12px; font-weight: 600; border-bottom: 1px solid #e5e7eb;
+      }
+      .dbg-speed-head button { border: 0; background: none; cursor: pointer; color: #6b7280; font-size: 13px; }
+      .dbg-speed-body { padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+      .dbg-speed-row { display: flex; align-items: center; gap: 8px; }
+      .dbg-speed-row > label:first-child { min-width: 64px; font-weight: 600; color: #374151; }
+      .dbg-seg { display: flex; gap: 4px; flex-wrap: wrap; }
+      .dbg-seg button {
+        border: 1px solid #d1d5db; background: #fff; border-radius: 6px;
+        padding: 2px 8px; cursor: pointer; font: inherit; font-size: 11px; color: #4b5563;
+      }
+      .dbg-seg button.dbg-on { background: ${accent}; color: #fff; border-color: ${accent}; }
+      .dbg-chk { display: flex; align-items: center; gap: 4px; background: #f3f4f6; border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 11px; }
+      .dbg-release-row { align-items: flex-start; }
+      .dbg-release-row > label:first-child { padding-top: 3px; }
+      .dbg-rel-wrap { display: flex; flex-direction: column; gap: 4px; flex: 1; }
+      /* ---- 危险命令确认卡 ---- */
+      /* AI 窗设置弹窗（⚙）：小屏高度%+贴边 / 大屏宽高+位置；z 高于 AI 窗（2147483642）——不被自身遮挡；浅色主题与 launcher 弹窗一致 */
+      .dbg-ai-settings-pop {
+        position: fixed; z-index: 2147483647; background: #fff; color: #111827;
+        border-radius: 12px; padding: 10px 12px; font-size: 12px; min-width: 210px;
+        box-shadow: 0 10px 40px rgba(0,0,0,.25); border: 1px solid #e5e7eb;
+      }
+      .dbg-confirm-card { max-width: 380px; }
+      .dbg-confirm-note { font-size: 13px; font-weight: 600; color: #b45309; }
+      .dbg-confirm-cmd { font-family: ui-monospace, monospace; font-size: 11px; padding: 6px 8px; word-break: break-all; }
+      .dbg-confirm-countdown { font-size: 11px; color: #d97706; background: rgba(217,119,6,.12); border-radius: 6px; padding: 4px 8px; line-height: 1.5; }
+      .dbg-dialog {
+        position: fixed; inset: 0; z-index: 2147483645; display: none;
+        background: rgba(17,24,39,.45); align-items: center; justify-content: center;
+      }
+      /* 点选/问答/通知面板（aiti-user-*）：右下角浮层——不覆盖全屏、可拖拽可最小化；
+       * 宽度运行时由 placePhysPanel 内联接管（问答面板 520、小屏自动 w-24），CSS 值仅挂载前瞬间生效 */
+      .dbg-pick-dialog {
+        position: fixed; right: 12px; bottom: 12px; z-index: 2147483646; width: 520px; max-width: 92vw;
+        background: linear-gradient(180deg, rgba(30,41,59,.98), rgba(17,24,39,.98)); color: #e5e7eb; border-radius: 14px;
+        border: 1px solid rgba(148,163,184,.22);
+        box-shadow: 0 12px 40px rgba(0,0,0,.5); font-size: 14px; overflow: hidden;
+      }
+      /* 短暂提示（toast）：交互到达时提示用户，几秒自动消失——不阻塞、不弹确认窗 */
+      .dbg-pick-toast {
+        position: fixed; z-index: 2147483648; background: rgba(17,24,39,.95); color: #e5e7eb;
+        border-radius: 10px; padding: 8px 12px; font-size: 12px; line-height: 1.6;
+        box-shadow: 0 8px 30px rgba(0,0,0,.4); text-align: center; pointer-events: none;
+        transition: opacity .4s; word-break: break-all;
+      }
+      .dbg-pick-head { padding: 10px 14px; font-weight: 600; font-size: 14px; display: flex; align-items: center; gap: 8px; cursor: grab; touch-action: none; background: rgba(255,255,255,.045); border-bottom: 1px solid rgba(148,163,184,.16); } /* cursor grab + touch-action:none：头部可拖拽（makePointerDrag，AI 窗同款） */
+      .dbg-pick-dialog.dbg-dragging { cursor: grabbing; opacity: .92; box-shadow: 0 14px 44px rgba(0,0,0,.55); }
+      .dbg-pick-head .dbg-pick-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dbg-pick-head button { border: 1px solid transparent; background: rgba(255,255,255,.12); color: #e5e7eb; border-radius: 6px; padding: 3px 10px; cursor: pointer; font: inherit; font-size: 13px; }
+      .dbg-pick-head button:hover { background: rgba(255,255,255,.2); }
+      .dbg-pick-body { padding: 14px; font-size: 14px; color: #d3d9e0; line-height: 1.6; }
+      .dbg-pick-body input::placeholder { color: #64748b; }
+      .dbg-pick-body .dbg-pick-sel { margin: 6px 0; font-size: 14px; color: #93c5fd; word-break: break-all; }
+      .dbg-pick-body button { border: 0; border-radius: 7px; padding: 9px 14px; cursor: pointer; font: inherit; font-size: 15px; }
+      /* ---- 问答面板（aiti-user-*）视觉契约（2026-09 优化：可读性/配色/宽度/编号/小屏） ----
+       * 问题区（.dbg-ask-prompt）：大字号高对比 + 左侧强调条——AI 的问题是面板最重要信息
+       * 选项区：垂直全宽列表（长文案不挤压换行）+ 数字徽标（1/2/3…，与键盘快捷键 1-9 对应）
+       * 语义配色：主操作（是/确认/我在）绿色渐变；否定/取消红字浅红 hover；「都不适合」虚线灰 */
+      .dbg-ask-prompt { white-space: pre-wrap; font-size: 15px; font-weight: 600; color: #f8fafc; line-height: 1.7; word-break: break-word; background: rgba(96,165,250,.08); border-left: 3px solid #60a5fa; border-radius: 6px; padding: 10px 12px; margin-bottom: 10px; }
+      .dbg-pick-body .dbg-ask-opt { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; justify-content: flex-start; text-align: left; padding: 10px 12px; border-radius: 9px; background: rgba(255,255,255,.07); border: 1px solid rgba(148,163,184,.28); color: #eef2f7; transition: background .12s, border-color .12s; }
+      .dbg-pick-body .dbg-ask-opt:hover { background: rgba(255,255,255,.13); border-color: rgba(165,180,252,.6); }
+      .dbg-ask-num { flex: 0 0 auto; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 6px; background: rgba(99,102,241,.22); border: 1px solid rgba(129,140,248,.5); color: #c7d2fe; font-size: 12px; font-weight: 700; line-height: 1; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+      .dbg-pick-body .dbg-ask-opt.dbg-primary { background: linear-gradient(135deg, #22c55e, #16a34a); border-color: transparent; color: #fff; font-weight: 700; box-shadow: 0 2px 12px rgba(34,197,94,.35); }
+      .dbg-pick-body .dbg-ask-opt.dbg-primary:hover { background: linear-gradient(135deg, #16a34a, #15803d); }
+      .dbg-ask-opt.dbg-primary .dbg-ask-num { background: rgba(255,255,255,.22); border-color: rgba(255,255,255,.5); color: #fff; }
+      .dbg-pick-body .dbg-ask-opt.dbg-ask-no { color: #fca5a5; }
+      .dbg-pick-body .dbg-ask-opt.dbg-ask-no:hover { background: rgba(248,113,113,.12); border-color: rgba(248,113,113,.55); }
+      .dbg-pick-body .dbg-ask-opt.dbg-ask-opt-custom { border-style: dashed; color: #c3cad4; }
+      .dbg-ask-opt.dbg-on { outline: 2px solid #a5b4fc; outline-offset: 1px; }
+      .dbg-pick-body .dbg-ask-opt.dbg-on.dbg-primary { background: linear-gradient(135deg, #16a34a, #15803d); }
+      .dbg-ask-label { display: block; font-size: 13px; color: #94a3b8; margin-top: 10px; }
+      /* 「现在无法处理」拒绝区按钮（原 inline 样式收编进 CSS：跨面板统一） */
+      .dbg-ask-reject { font-size: 13px; padding: 8px 12px; background: rgba(255,255,255,.06); border: 1px solid rgba(148,163,184,.3); color: #e5e7eb; border-radius: 8px; cursor: pointer; }
+      .dbg-ask-reject:hover { background: rgba(255,255,255,.13); }
+      .dbg-pick-ok { background: #4f46e5; color: #fff; }
+      .dbg-pick-cancel { background: rgba(255,255,255,.12); color: #e5e7eb; margin-right: 6px; }
+      /* 问答面板发送按钮（手写输入/多选发送）：亮绿高亮——原无底色透明、深色面板上几乎看不见（用户实测） */
+      .dbg-pick-body .dbg-ask-send {
+        background: linear-gradient(135deg, #22c55e, #16a34a); color: #fff; font-weight: 700; border: 0;
+        box-shadow: 0 2px 12px rgba(34,197,94,.45), inset 0 1px 0 rgba(255,255,255,.25);
+        text-shadow: 0 1px 2px rgba(0,0,0,.3);
+      }
+      .dbg-pick-body .dbg-ask-send:hover { background: linear-gradient(135deg, #16a34a, #15803d); }
+      .dbg-pick-body .dbg-ask-send:disabled { opacity: .4; box-shadow: none; }
+      .dbg-pick-result { background: rgba(79,70,229,.15); border-radius: 8px; padding: 6px 8px; margin-top: 6px; font-size: 11px; word-break: break-all; }
+      .dbg-dialog.dbg-open { display: flex; }
+      .dbg-dialog-card { width: min(460px, 90vw); max-height: 82vh; overflow: auto; background: #fff; border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.35); }
+      .dbg-dialog-head { padding: 12px 14px; font-weight: 600; border-bottom: 1px solid #e5e7eb; display: flex; justify-content: space-between; align-items: center; gap: 8px; cursor: grab; touch-action: none; } /* cursor grab + touch-action:none：头部可拖拽（makeCardDrag） */
+      .dbg-dialog-card.dbg-dragging { cursor: grabbing; opacity: .95; box-shadow: 0 24px 70px rgba(0,0,0,.4); }
+      .dbg-dialog-head code { font-size: 11px; color: ${accent}; background: ${accent}18; padding: 2px 6px; border-radius: 6px; }
+      .dbg-dialog-head .dbg-loc { font-size: 11px; color: #6b7280; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .dbg-dialog-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+      /* ---- 预览界面 ---- */
+      .dbg-preview { border: 1px solid #e5e7eb; border-radius: 8px; background: #f9fafb; padding: 8px 10px; font-size: 11px; }
+      .dbg-preview .dbg-pv-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 4px; }
+      .dbg-preview .dbg-pv-row:last-child { margin-bottom: 0; }
+      .dbg-preview b { color: #374151; }
+      .dbg-preview .dbg-pv-kv { color: #6b7280; background: #fff; border: 1px solid #e5e7eb; border-radius: 4px; padding: 1px 5px; }
+      .dbg-preview .dbg-pv-file { color: #059669; word-break: break-all; }
+      /* 行复制按钮：hover 显示（📋）——iframe 内 Clipboard 失败时经 dbg_copy 协议转发宿主 */
+      .dbg-preview .dbg-pv-copy { opacity: 0; transition: opacity .15s; margin-left: 4px; padding: 0 6px; font-size: 10px; cursor: pointer; border: 1px solid #d1d5db; border-radius: 4px; background: #fff; color: #374151; vertical-align: middle; }
+      .dbg-preview .dbg-pv-row:hover .dbg-pv-copy { opacity: 1; }
+      /* 文件行操作按钮（📂 后台 / 🖥 前端）：同样 hover 才显示，避免默认铺满干扰阅读 */
+      .dbg-preview .dbg-mini-open { opacity: 0; transition: opacity .15s; vertical-align: middle; }
+      .dbg-preview .dbg-pv-row:hover .dbg-mini-open { opacity: 1; }
+      .dbg-open-file { color: #2563eb; text-decoration: underline; cursor: pointer; pointer-events: auto; }
+      .dbg-open-file:hover { color: #1d4ed8; }
+      .dbg-checks { display: flex; flex-wrap: wrap; gap: 6px; }
+      .dbg-checks label { display: flex; align-items: center; gap: 4px; font-size: 12px; background: #f3f4f6; border-radius: 6px; padding: 4px 8px; cursor: pointer; }
+      .dbg-dialog-body textarea { min-height: 60px; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px; font: inherit; resize: vertical; }
+      .dbg-dialog-foot { padding: 10px 14px; border-top: 1px solid #e5e7eb; display: flex; justify-content: flex-end; gap: 8px; }
+      .dbg-dialog-foot button { border-radius: 8px; padding: 7px 14px; cursor: pointer; font: inherit; }
+      .dbg-dialog-foot .dbg-primary { background: ${accent}; color: #fff; border: 0; }
+      .dbg-dialog-foot .dbg-ghost { background: #fff; border: 1px solid #d1d5db; }
+      /* ---- 调试信息窗口（替代临时 toast）+ 设置弹窗 ---- */
+      .dbg-overlay { position: fixed; inset: 0; z-index: 2147483644; background: rgba(17,24,39,0); display: none; } /* 遮罩改透明：不盖页面（用户误认'浅蓝全窗遮罩'）——点击卡片外空白即关闭 */
+      .dbg-overlay.dbg-open { display: block; }
+      .dbg-overlay-card { position: fixed; top: 0; left: 0; background: #fff; border-radius: 14px; box-shadow: 0 20px 60px rgba(0,0,0,.4); max-width: 92vw; display: flex; flex-direction: column; }
+      .dbg-overlay-card .dbg-dialog-body { flex: 1 1 auto; overflow: auto; min-height: 0; } /* 头/尾固定，中间滚动——底部按钮始终可见 */
+      .dbg-debug-info { font: 11px/1.6 ui-monospace,monospace; white-space: pre-wrap; word-break: break-all; background: #0f172a; color: #e5e7eb; border-radius: 8px; padding: 10px 12px; }
+      .dbg-debug-help { font-size: 12px; color: #4b5563; line-height: 1.85; }
+      .dbg-debug-help b { color: #111827; display: block; margin-bottom: 4px; }
+      .dbg-debug-help code { background: #f3f4f6; padding: 1px 5px; border-radius: 4px; font: 11px ui-monospace,monospace; color: #374151; }
+      .dbg-settings { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.2); display: flex; flex-direction: column; gap: 8px; min-width: 200px; }
+      .dbg-settings label { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+      .dbg-settings button { border: 1px solid #d1d5db; background: #fff; border-radius: 6px; padding: 6px 10px; cursor: pointer; font: inherit; font-size: 12px; }
+      .dbg-settings button:hover { background: #f9fafb; }
+      /* hover 调试面板（点 inspect/HUD 后 hover 是否被抑制；可复制贴给 AI） */
+
+      /* ===== 小屏自适应（主页面是否适配小屏不管，我们自己的 UI 适配） ===== */
+      /* 小屏判断按设备物理尺寸（screen.width）加 class——不依赖 layout 视口（移动端 layout=980 会误判）；不用视觉视口（用户缩放会变→小屏误判大屏） */
+      .dbg-fab.dbg-smal button { width: 46px; height: 46px; font-size: 12px; }
+      .dbg-fab.dbg-tiny button { width: 48px; height: 48px; font-size: 13px; }
+      /* 小屏：AI/inspect 按钮被选中（dbg-on）不显示实心方形背景——胶囊/圆形上加 accent 实底看起来像方块。
+         保持透明底 + accent 描边 + 图标即可区分，无方块感 */
+      #__dbg_launcher.dbg-phys-small .dbg-fab button.dbg-on { background: transparent !important; background-color: transparent !important; box-shadow: inset 0 0 0 2px ${accent}; }
+      /* 触屏或窄视口 <768：AI 窗尺寸已由 JS placePhysBox（capVisW/capVisH）精确控制，
+         这里只留 bar/panel 视觉尺寸——移除 .dbg-ai-win 的 !important 宽高（与 placePhysBox 冲突：
+         pointer:coarse 在无 meta 触屏页 100vw=980 → width 960 超屏；响应式页 78vh/100vw 高度也不对） */
+      /* 窄视口 <768 才放大按钮尺寸——用户实测宽触屏（777px）吃 pointer:coarse 档后标题栏图标偏大（首载正常、后来变大）
+         故只按宽度触发；resize 手柄仍单独走 @media (pointer: coarse)（见下） */
+      @media (max-width: 767px) {
+        .dbg-ai-bar { height: 32px; }
+        .dbg-ai-bar button { min-width: 28px; min-height: 28px; font-size: 14px; }
+        .dbg-ai-bar .dbg-ai-title { font-size: 12px; }
+        .dbg-speed { right: 10px; width: calc(100vw - 20px); max-height: calc(100vh - 90px); }
+        .dbg-panel { right: 10px; width: calc(100vw - 20px); }
+      }
+      /* 触屏或 <480：最大触控尺寸 */
+      @media (max-width: 479px) {
+        /* 仅窄屏手机：32px 触控按钮；宽触屏（平板/大屏触控）用上一档 28px——用户实测 38/32px 过大（标题栏图标嫌大） */
+        .dbg-ai-bar button { min-width: 32px; min-height: 32px; font-size: 15px; }
+      }
+      @media (pointer: coarse) {
+        /* resize 手柄/边缘拖条：命中区放大到触控标准（视觉标不变，::after 锚在角落）——
+           否则手指按不到小角落（按到窗外/iframe 上），触屏完全用不了；
+           视觉提示不再常显（旧方案）——拖动中才亮（.dbg-resizing，见上），平时隐形 */
+        /* 角柄热区从角落内移 10px：窗口贴屏缘（全宽/贴边）时角柄压在屏幕角落——Android 系统手势区
+           （back swipe 竖边 + home 横条），真实手指一碰就被系统抢走（pointercancel 提前结束，
+           实测"角柄没反应"）；内移后中心离屏缘 32px 避开手势带（视觉三角仍锚角落） */
+        .dbg-ai-resize { width: 44px; height: 44px; right: 10px; bottom: 10px; }
+        .dbg-ai-resize::after { right: 5px; bottom: 5px; width: 11px; height: 11px; }
+        .dbg-ai-resize-r { width: 24px; }
+        .dbg-ai-resize-b { height: 24px; }
+      }
+    `;
+    document.head.appendChild(css);
+  }
+  function escapeHtml(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  // dbg:dbg-client
+  var MINI_DBG_CLIENT = `(() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __propIsEnum = Object.prototype.propertyIsEnumerable;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __spreadValues = (a, b) => {
+    for (var prop in b || (b = {}))
+      if (__hasOwnProp.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    if (__getOwnPropSymbols)
+      for (var prop of __getOwnPropSymbols(b)) {
+        if (__propIsEnum.call(b, prop))
+          __defNormalProp(a, prop, b[prop]);
+      }
+    return a;
+  };
+
+  // packages/aiti-devtools-inject/src/client/index.js
+  (function() {
+    "use strict";
+    if (window.__dbg && window.__dbg.__version__ && typeof window.__dbg.getSelectionPayload === "function") return;
+    if (window.__dbg && window.__dbg.__version__) {
+      try {
+        if (typeof window.__dbg.exitInspector === "function") window.__dbg.exitInspector();
+      } catch (e) {
+      }
+      try {
+        delete window.__dbg;
+      } catch (e) {
+      }
+    }
+    var OUTLINE_HOVER = "2px solid #4f46e5";
+    var OUTLINE_SEL = "2px dashed #059669";
+    function topUrl() {
+      var isTop = false;
+      try {
+        isTop = window.self === window.top;
+      } catch (e) {
+      }
+      if (isTop) {
+        try {
+          return window.location && window.location.href || "";
+        } catch (e) {
+        }
+      }
+      try {
+        if (window.top && window.top !== window && window.top.location && window.top.location.href) return window.top.location.href;
+      } catch (e) {
+      }
+      try {
+        if (window.parent && window.parent !== window && window.parent.location && window.parent.location.href) return window.parent.location.href;
+      } catch (e) {
+      }
+      try {
+        var r = document.referrer || "";
+        if (r) return r;
+      } catch (e) {
+      }
+      try {
+        return window.location && window.location.href || "";
+      } catch (e) {
+      }
+      return "";
+    }
+    var state = {
+      active: false,
+      engaged: false,
+      // 临时选择状态：点击后进入（hover 停用、工具条保留），✓确认/✕取消退出
+      hovered: null,
+      selected: null,
+      hoverOutline: { node: null },
+      selOutline: { node: null }
+    };
+    var POST = typeof __DBG_POST__ === "function" ? __DBG_POST__ : null;
+    function post(msg) {
+      if (POST) {
+        try {
+          POST(__spreadValues({ __dbg: 1 }, msg));
+        } catch (e) {
+        }
+        return;
+      }
+      try {
+        window.parent.postMessage(JSON.parse(JSON.stringify(__spreadValues({ __dbg: 1 }, msg))), "*");
+      } catch (e) {
+      }
+    }
+    function drawOutline(outline, el, color, bg, marker) {
+      if (!outline.node) {
+        outline.node = document.createElement("div");
+        Object.assign(outline.node.style, {
+          position: "fixed",
+          pointerEvents: "none",
+          zIndex: 2147483646,
+          outline: color,
+          background: bg,
+          borderRadius: "2px",
+          margin: "0"
+        });
+      }
+      var r = el.getBoundingClientRect();
+      Object.assign(outline.node.style, {
+        left: r.left + "px",
+        top: r.top + "px",
+        width: r.width + "px",
+        height: r.height + "px",
+        outline: color,
+        background: bg
+      });
+      if (!outline.node.parentNode) document.body.appendChild(outline.node);
+    }
+    function clearOutline(outline) {
+      if (outline && outline.node && outline.node.parentNode) outline.node.parentNode.removeChild(outline.node);
+      if (outline) outline.node = null;
+    }
+    function xpathOf(el) {
+      if (!el || el.nodeType !== 1) return "";
+      if (el.id) return '//*[@id="' + String(el.id).replace(/"/g, '\\\\"') + '"]';
+      var parts = [];
+      var node = el;
+      while (node && node.nodeType === 1) {
+        var idx = 1;
+        for (var sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
+          if (sib.tagName === node.tagName) idx++;
+        }
+        parts.unshift(node.tagName.toLowerCase() + "[" + idx + "]");
+        node = node.parentElement;
+      }
+      return "/" + parts.join("/");
+    }
+    var CSS_WHITELIST = [
+      "display",
+      "position",
+      "top",
+      "left",
+      "width",
+      "height",
+      "padding",
+      "margin",
+      "border",
+      "borderRadius",
+      "zIndex",
+      "fontFamily",
+      "fontSize",
+      "fontWeight",
+      "lineHeight",
+      "color",
+      "textAlign",
+      "backgroundColor",
+      "backgroundImage",
+      "boxShadow",
+      "opacity",
+      "overflow",
+      "flexDirection",
+      "alignItems",
+      "justifyContent",
+      "gap",
+      "gridTemplateColumns",
+      "gridTemplateRows"
+    ];
+    var SKIP_DEFAULTS = { initial: 1, inherit: 1, normal: 1, auto: 1, none: 1, "0px": 1 };
+    function serialize(el, opts) {
+      opts = opts || {};
+      var out2 = { tag: el.tagName.toLowerCase() };
+      var r = el.getBoundingClientRect();
+      var _sx = window.scrollX || document.documentElement.scrollLeft || document.body.scrollLeft || 0;
+      var _sy = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+      out2.rect = { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) };
+      out2.docRect = { x: Math.round(r.x + _sx), y: Math.round(r.y + _sy), w: out2.rect.w, h: out2.rect.h };
+      out2.scroll = { x: _sx, y: _sy };
+      if (opts.attrs) {
+        out2.attributes = {};
+        var attrs = el.attributes;
+        for (var i = 0; i < attrs.length && i < 30; i++) {
+          out2.attributes[attrs[i].name] = String(attrs[i].value).slice(0, 200);
+        }
+      }
+      if (opts.xpath) out2.xpath = xpathOf(el);
+      if (opts.text) {
+        out2.text = cleanTextOf(el, 512);
+      }
+      if (opts.computed) {
+        out2.computed = {};
+        var cs = getComputedStyle(el);
+        CSS_WHITELIST.forEach(function(k) {
+          var v = cs[k];
+          if (v && !SKIP_DEFAULTS[v]) out2.computed[k] = String(v).slice(0, 300);
+        });
+      }
+      if (opts.framework) out2.framework = fileLocation(el);
+      out2.frame = { src: topUrl(), url: topUrl().slice(0, 200) };
+      return out2;
+    }
+    function findFiber(el) {
+      if (!el) return null;
+      var keys = Object.getOwnPropertyNames(el);
+      for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (k.indexOf("__reactFiber$") === 0 || k.indexOf("__reactInternalInstance$") === 0) return el[k] || null;
+      }
+      if (el._reactRootContainer && el._reactRootContainer._internalRoot) {
+        return el._reactRootContainer._internalRoot.current || null;
+      }
+      return null;
+    }
+    function componentNameOf(type) {
+      if (!type) return null;
+      var n = null;
+      if (typeof type === "function") n = type.displayName || type.name || null;
+      else if (typeof type === "object") {
+        n = type.displayName || type.render && (type.render.displayName || type.render.name) || (type.$$typeof ? null : null) || type.name || null;
+      }
+      if (!n) return null;
+      return cleanComponentName(n);
+    }
+    function cleanComponentName(n) {
+      if (!n) return null;
+      return String(n).replace(/\\.use(Memo|Callback|Effect|Ref|State|Reducer)\\s*\\[[^\\]]*\\]$/, "");
+    }
+    function react19StackSrc(err) {
+      try {
+        var stack = err && err.stack || "";
+        if (!stack) return null;
+        var lines = stack.split("\\n");
+        var firstFn = null;
+        var norm = function(s) {
+          return String(s || "").replace(/\\$([0-9a-fA-F]{2})/g, function(_, h) {
+            return String.fromCharCode(parseInt(h, 16));
+          });
+        };
+        for (var i = 1; i < lines.length; i++) {
+          var ln = lines[i];
+          var fn = null, url = null, line = null, col = null;
+          var m = null;
+          m = ln.match(/^(?:([^@]*)@)?(.*?):(\\d+)(?::(\\d+))?$/);
+          if (m && m[2]) {
+            fn = m[1];
+            url = m[2];
+            line = parseInt(m[3], 10);
+            col = m[4] ? parseInt(m[4], 10) : null;
+          } else {
+            m = ln.match(/^\\s*at ([^\\s(]+) ?\\((.*?):(\\d+)(?::(\\d+))?\\)$/);
+            if (m) {
+              fn = m[1];
+              url = m[2];
+              line = parseInt(m[3], 10);
+              col = m[4] ? parseInt(m[4], 10) : null;
+            } else {
+              m = ln.match(/^\\s*at (.*?):(\\d+)(?::(\\d+))?$/);
+              if (m) {
+                fn = null;
+                url = m[1];
+                line = parseInt(m[2], 10);
+                col = m[3] ? parseInt(m[3], 10) : null;
+              }
+            }
+          }
+          if (!url) continue;
+          var nu = norm(url);
+          var fn0 = (fn || "").replace(/^exports\\.|^Object\\./, "");
+          if (firstFn === null) {
+            firstFn = fn0 || "";
+            if (/^(UnknownOwner)$/.test(firstFn)) return { __unknownOwner: true };
+          }
+          if (/jsx[-.]dev[-.]runtime|jsx[-.]runtime|\\.react-dom|react-dom[./]|scheduler[./]|next[./]dist[./]compiled[./]react[./]|turbopack[./_]|hmr-client|about:\\/\\/React\\/Server|react-server-dom-turbopack|fakeJSXCallSite|root-of-the-server|\\.next[-_]dev|server[./_]chunks/.test(nu)) continue;
+          if (/^(jsxDEV|jsxs|jsx|createElement|react_stack_bottom_frame|react-stack-top-frame|fakeJSXCallSite)$/.test(fn0)) continue;
+          var cname = fn0 || null;
+          if (cname && /^(jsxDEV|jsxs|jsx|createElement|React\\.createElement)$/.test(cname)) cname = null;
+          return { url, line: line || 1, column: col || 1, component: cname };
+        }
+        return null;
+      } catch (e) {
+        return null;
+      }
+    }
+    function chunkNameToPath(chunkUrl) {
+      try {
+        var u = String(chunkUrl || "").split("?")[0];
+        var base = u.split("/").pop() || "";
+        var m = base.match(/^(.+?)_([0-9a-z-]+)\\._\\.js$/);
+        if (!m) return null;
+        var segs = m[1].split("_");
+        var extSeg = segs.pop() || "";
+        if (!/^[a-z]{2,5}$/.test(extSeg)) return null;
+        var dec = function(s) {
+          return s.replace(/\\$([0-9a-fA-F]{2})/g, function(_, h) {
+            return String.fromCharCode(parseInt(h, 16));
+          });
+        };
+        var p = segs.map(dec).join("/") + "." + extSeg;
+        return p || null;
+      } catch (e) {
+        return null;
+      }
+    }
+    var _SM_BASE64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var _smRowsCache = typeof WeakMap !== "undefined" ? /* @__PURE__ */ new WeakMap() : null;
+    function smSegFields(seg) {
+      var fields = [], pos = 0, result, shift, digit;
+      while (pos < seg.length) {
+        result = 0;
+        shift = 0;
+        do {
+          digit = _SM_BASE64.indexOf(seg.charAt(pos++));
+          result += (digit & 31) << shift;
+          shift += 5;
+        } while (digit & 32);
+        var neg = result & 1;
+        fields.push(neg ? -(result >>> 1) : result >>> 1);
+      }
+      return fields;
+    }
+    function smParseMappings(mappings) {
+      var lines = String(mappings || "").split(";");
+      var rows = new Array(lines.length);
+      var srcIdx = 0, srcLine = 0, srcCol = 0;
+      for (var i = 0; i < lines.length; i++) {
+        var segs = lines[i] ? lines[i].split(",") : [];
+        var row = null;
+        var genCol = 0;
+        for (var j = 0; j < segs.length; j++) {
+          if (!segs[j]) continue;
+          var f = smSegFields(segs[j]);
+          genCol += f[0];
+          if (f.length >= 4) {
+            srcIdx += f[1];
+            srcLine += f[2];
+            srcCol += f[3];
+            if (!row) row = [];
+            row.push([genCol, srcIdx, srcLine, srcCol]);
+          }
+        }
+        rows[i] = row;
+      }
+      return rows;
+    }
+    function smLookup(mapData, line0, col0) {
+      if (mapData.sections && mapData.sections.length) {
+        for (var i = 0; i < mapData.sections.length; i++) {
+          var sec = mapData.sections[i];
+          var off = sec.offset || { line: 0, column: 0 };
+          if (line0 >= off.line && sec.map) {
+            var r = smLookup(sec.map, line0 - off.line, col0);
+            if (r) return r;
+          }
+        }
+        return null;
+      }
+      var rows;
+      if (_smRowsCache) {
+        rows = _smRowsCache.get(mapData);
+        if (!rows) {
+          rows = smParseMappings(mapData.mappings || "");
+          _smRowsCache.set(mapData, rows);
+        }
+      } else {
+        rows = smParseMappings(mapData.mappings || "");
+      }
+      if (line0 < 0 || line0 >= rows.length || !rows[line0]) return null;
+      var row = rows[line0], best = null;
+      for (var k = 0; k < row.length; k++) {
+        if (row[k][0] <= col0) best = row[k];
+        else break;
+      }
+      if (!best) return null;
+      var src = (mapData.sources || [])[best[1]];
+      if (!src) return null;
+      return { file: src, line: best[2] + 1, column: best[3] + 1 };
+    }
+    var _chunkMapCache = /* @__PURE__ */ Object.create(null);
+    function fetchChunkMap(chunkUrl) {
+      var u = String(chunkUrl).split("#")[0];
+      var cached = _chunkMapCache[u];
+      if (cached !== void 0) {
+        return cached.then(function(d) {
+          return d ? d : _doFetchMap(u);
+        });
+      }
+      _chunkMapCache[u] = _doFetchMap(u);
+      return _chunkMapCache[u];
+    }
+    function _doFetchMap(u) {
+      return fetch(u.replace(/\\?.*$/, "") + ".map", { cache: "force-cache" }).then(function(r) {
+        return r.ok ? r.json() : fetch(u + ".map", { cache: "force-cache" }).then(function(r2) {
+          return r2.ok ? r2.json() : null;
+        });
+      }).catch(function() {
+        return null;
+      });
+    }
+    function resolveChunkSource(chunkUrl, line, column) {
+      return fetchChunkMap(chunkUrl).then(function(mapData) {
+        if (!mapData) return null;
+        var l0 = Math.max(0, (line || 1) - 1), c0 = Math.max(0, (column || 1) - 1);
+        var hit = smLookup(mapData, l0, c0);
+        if (!hit) {
+          var cands = [[0, 1], [1, 0], [1, 1], [-1, 0], [-1, 1], [2, 0], [2, 1], [-2, 0], [3, 0], [3, 1], [-3, 0], [4, 0], [4, 1], [-4, 0], [0, 2], [0, -1], [0, -2], [0, 3], [0, -3]];
+          for (var ci = 0; ci < cands.length && !hit; ci++) {
+            var nl = l0 + cands[ci][0], nc = c0 + cands[ci][1];
+            if (nl < 0 || nc < 0) continue;
+            hit = smLookup(mapData, nl, nc);
+          }
+        }
+        if (!hit) {
+          for (var dist = 5; dist <= 40 && !hit; dist++) {
+            if (l0 - dist >= 0) hit = smLookup(mapData, l0 - dist, c0);
+            if (!hit) hit = smLookup(mapData, l0 + dist, c0);
+          }
+        }
+        if (!hit) return null;
+        var f = String(hit.file || "").replace(/^file:\\/\\/\\//, "/").replace(/^file:\\/\\//, "").replace(/^webpack:\\/\\//, "").replace(/^\\[project\\]\\//, "");
+        return f ? { file: f, line: hit.line, column: hit.column } : null;
+      }).catch(function() {
+        return null;
+      });
+    }
+    var _compFileCache = null;
+    var _compFilePatternCache = null;
+    function compDefPattern(name) {
+      if (_compFilePatternCache && _compFilePatternCache[name]) return _compFilePatternCache[name];
+      var n = String(name || "").replace(/[.*+?^\${}()|[\\]\\\\]/g, "\\\\$&");
+      var p = new RegExp("function\\\\s+" + n + "\\\\b|(?:const|let|var)\\\\s+" + n + "\\\\b|" + n + "\\\\s*=\\\\s*(?:memo|forwardRef|React\\\\.memo)|export\\\\s+default\\\\s+(?:function|const)\\\\s+" + n + "\\\\b");
+      if (!_compFilePatternCache) _compFilePatternCache = {};
+      _compFilePatternCache[name] = p;
+      return p;
+    }
+    function findComponentInMap(mapData, name) {
+      var pat = compDefPattern(name);
+      var sections = mapData && mapData.sections && mapData.sections.length ? mapData.sections : [{ map: mapData }];
+      for (var si = 0; si < sections.length; si++) {
+        var sm = sections[si] && sections[si].map || {};
+        var sources = sm.sources || [];
+        var contents = sm.sourcesContent || [];
+        for (var j = 0; j < sources.length && j < contents.length; j++) {
+          var c = contents[j];
+          if (c == null) continue;
+          if (pat.test(c)) {
+            return String(sources[j]).replace(/^file:\\/\\/\\//, "/").replace(/^file:\\/\\//, "").replace(/^\\[project\\]\\//, "");
+          }
+        }
+      }
+      return null;
+    }
+    function collectComponentChunkUrls() {
+      var urls = [];
+      var push = function(u) {
+        if (u && urls.indexOf(u) < 0) urls.push(u);
+      };
+      try {
+        (performance.getEntriesByType("resource") || []).forEach(function(e) {
+          var u = e.name || "";
+          if (/\\/_next\\/static\\/chunks\\/components_.*\\._\\.js$/.test(u)) push(u.split("?")[0]);
+        });
+      } catch (e) {
+      }
+      try {
+        document.querySelectorAll("script[src]").forEach(function(s) {
+          var u = s.src || "";
+          if (/\\/_next\\/static\\/chunks\\/components_.*\\._\\.js$/.test(u)) push(u.split("?")[0]);
+        });
+      } catch (e) {
+      }
+      return urls;
+    }
+    function resolveComponentFile(name) {
+      if (!name) return Promise.resolve(null);
+      if (_compFileCache && name in _compFileCache) return Promise.resolve(_compFileCache[name]);
+      var urls = collectComponentChunkUrls();
+      var proms = urls.map(function(u) {
+        return fetchChunkMap(u).then(function(md) {
+          return md ? findComponentInMap(md, name) : null;
+        });
+      });
+      return Promise.all(proms).then(function(results) {
+        var f = null;
+        for (var i = 0; i < results.length; i++) {
+          if (results[i]) {
+            f = results[i];
+            break;
+          }
+        }
+        if (!_compFileCache) _compFileCache = {};
+        _compFileCache[name] = f;
+        return f;
+      });
+    }
+    var _chunkTextCache = null;
+    function fetchChunkText(url) {
+      var u = String(url || "").split("?")[0];
+      if (_chunkTextCache && u in _chunkTextCache) return Promise.resolve(_chunkTextCache[u]);
+      return fetch(u, { cache: "force-cache" }).then(function(r) {
+        return r.ok ? r.text() : null;
+      }).catch(function() {
+        return null;
+      }).then(function(t) {
+        if (!_chunkTextCache) _chunkTextCache = {};
+        _chunkTextCache[u] = t;
+        return t;
+      });
+    }
+    function fnLocSignature(fn) {
+      try {
+        var src = String(fn);
+        var lines = src.split("\\n");
+        var sig = (lines[0] || "").trim().slice(0, 90);
+        var arr = [];
+        for (var b = 1; b < lines.length && arr.length < 3; b++) {
+          var t = (lines[b] || "").trim();
+          if (t.length >= 20) {
+            arr.push(t.slice(0, 90));
+          }
+        }
+        if (sig) arr.push(sig);
+        return arr;
+      } catch (e) {
+        return [];
+      }
+    }
+    function collectChunkTextUrls() {
+      var urls = [];
+      var push = function(u) {
+        if (u && urls.indexOf(u) < 0) urls.push(u);
+      };
+      try {
+        (performance.getEntriesByType("resource") || []).forEach(function(e) {
+          var u = e.name || "";
+          if (/\\/_next\\/static\\/chunks\\/.*\\._\\.js$/.test(u)) push(u.split("?")[0]);
+        });
+      } catch (e) {
+      }
+      return urls.sort(function(a, b) {
+        var ar = /components_/.test(a) ? 0 : 1, br = /components_/.test(b) ? 0 : 1;
+        return ar - br;
+      }).slice(0, 15);
+    }
+    function locateFnSig(text, sig) {
+      var idx = text.indexOf(sig);
+      if (idx < 0) return null;
+      var upTo = text.slice(0, idx);
+      var line0 = upTo.split("\\n").length - 1;
+      return { line1: line0 + 1, col: upTo.split("\\n").pop().length };
+    }
+    function resolveFnLine(fnLocs) {
+      if (!fnLocs || !fnLocs.length) return Promise.resolve(null);
+      var urls = collectChunkTextUrls();
+      function resolveFnLoc(fl) {
+        var sigs = fl.sigs || [];
+        var results = [];
+        function nextSig(si) {
+          if (si >= sigs.length) return Promise.resolve(results);
+          var sig = sigs[si];
+          function nextChunk(ui) {
+            if (ui >= urls.length) return Promise.resolve(null);
+            return fetchChunkText(urls[ui]).then(function(text) {
+              var pos = text ? locateFnSig(text, sig) : null;
+              if (!pos) return nextChunk(ui + 1);
+              return resolveChunkSource(urls[ui], pos.line1, pos.col).then(function(res) {
+                if (res && res.file && !/node_modules/.test(res.file)) return res;
+                return nextChunk(ui + 1);
+              });
+            });
+          }
+          return nextChunk(0).then(function(res) {
+            results.push(res);
+            return nextSig(si + 1);
+          });
+        }
+        return nextSig(0).then(function() {
+          var counts = {};
+          results.forEach(function(r) {
+            if (r && r.file) {
+              var base = r.file.split("/").pop();
+              counts[base] = (counts[base] || 0) + 1;
+            }
+          });
+          var best = null, bestCount = 0;
+          for (var k in counts) {
+            if (counts[k] > bestCount) {
+              bestCount = counts[k];
+              best = k;
+            }
+          }
+          if (bestCount >= 2) {
+            for (var i = 0; i < results.length; i++) {
+              if (results[i] && results[i].file.split("/").pop() === best) return results[i];
+            }
+          }
+          return null;
+        });
+      }
+      function step(fi) {
+        if (fi >= fnLocs.length) return Promise.resolve(null);
+        return resolveFnLoc(fnLocs[fi]).then(function(res) {
+          if (res) return res;
+          return step(fi + 1);
+        });
+      }
+      return step(0);
+    }
+    function resolveFrameworkLoc(fl) {
+      if (!fl || typeof fl !== "object") return Promise.resolve(fl);
+      var fc = fl.react19Chunk, uc = fl.usedAtChunk;
+      if (!fc && !uc) {
+        if (!fl.file && fl.fnLocs) return resolveFnLine(fl.fnLocs).then(function(r) {
+          if (r && r.file) {
+            var o = Object.assign({}, fl);
+            o.file = r.file;
+            o.line = r.line;
+            o.column = r.column;
+            return o;
+          }
+          if (fl.component) return resolveComponentFile(fl.component).then(function(f) {
+            if (f) {
+              var o2 = Object.assign({}, fl);
+              o2.file = f;
+              return o2;
+            }
+            return fl;
+          });
+          return fl;
+        });
+        if (!fl.file && fl.component) {
+          return resolveComponentFile(fl.component).then(function(f) {
+            if (f) {
+              var o = Object.assign({}, fl);
+              o.file = f;
+              return o;
+            }
+            return fl;
+          });
+        }
+        return Promise.resolve(fl);
+      }
+      var out2 = Object.assign({}, fl);
+      var p1 = fc ? resolveChunkSource(fc.url, fc.line, fc.column) : Promise.resolve(null);
+      var p2 = uc ? resolveChunkSource(uc.url, uc.line, uc.column) : Promise.resolve(null);
+      return Promise.all([p1, p2]).then(function(rs) {
+        var r = rs[0], u = rs[1];
+        if (r && r.file) {
+          out2.file = r.file;
+          out2.line = r.line;
+          out2.column = r.column;
+        }
+        if (u && u.file && out2.usedAt) out2.usedAt = Object.assign({}, out2.usedAt, { file: u.file, line: u.line });
+        delete out2.react19Chunk;
+        delete out2.usedAtChunk;
+        if (!out2.file) {
+          if (out2.fnLocs) return resolveFnLine(out2.fnLocs).then(function(r2) {
+            if (r2 && r2.file) {
+              out2.file = r2.file;
+              out2.line = r2.line;
+              out2.column = r2.column;
+              return out2;
+            }
+            if (out2.component) return resolveComponentFile(out2.component).then(function(f) {
+              if (f) out2.file = f;
+              return out2;
+            });
+            return out2;
+          });
+          if (out2.component) return resolveComponentFile(out2.component).then(function(f) {
+            if (f) out2.file = f;
+            return out2;
+          });
+        }
+        return out2;
+      });
+    }
+    var _vInspCache = typeof WeakMap !== "undefined" ? /* @__PURE__ */ new WeakMap() : null;
+    var _vInspTTL = 2e3;
+    function findVInspector(comp, el) {
+      if (!comp || !comp.subTree || !el) return null;
+      if (_vInspCache) {
+        try {
+          var c = _vInspCache.get(el);
+          if (c && Date.now() - c.at < _vInspTTL) return c.insp;
+        } catch (e) {
+        }
+      }
+      var found = null;
+      var queue = [comp.subTree], i = 0;
+      while (i < queue.length && i < 2e4) {
+        var n = queue[i++];
+        if (!n || typeof n !== "object") continue;
+        if (n.el === el) {
+          var p = n.props || {};
+          found = p.__v_inspector || p["data-v-inspector"] || null;
+          break;
+        }
+        var ch = n.children;
+        if (ch && typeof ch === "object") {
+          if (Array.isArray(ch)) {
+            for (var j = 0; j < ch.length; j++) queue.push(ch[j]);
+          } else queue.push(ch);
+        }
+      }
+      if (_vInspCache) {
+        try {
+          _vInspCache.set(el, { insp: found, at: Date.now() });
+        } catch (e) {
+        }
+      }
+      return found;
+    }
+    function fileLocation(el) {
+      if (!el) return null;
+      var loc = null;
+      var fiber = findFiber(el);
+      if (!fiber) {
+        var p = el.parentElement, depth = 0;
+        while (p && depth < 5 && !fiber) {
+          fiber = findFiber(p);
+          p = p.parentElement;
+          depth++;
+        }
+      }
+      if (fiber) {
+        var fw = window.next || window.__NEXT_DATA__ || window.__next_f || document.getElementById("__next") ? "next" : "react";
+        var node = fiber;
+        var prodComp = null;
+        var nearComp = null;
+        var uoStreak = 0;
+        var fnLocs = null;
+        for (var i = 0; node && i < 30; i++) {
+          var src = node._debugSource;
+          var r19 = null;
+          if (!src) {
+            r19 = node._debugStack ? react19StackSrc(node._debugStack) : null;
+            if (r19 && !r19.__unknownOwner) {
+              src = r19;
+              uoStreak = 0;
+            } else {
+              if (++uoStreak > 8) break;
+            }
+          } else {
+            uoStreak = 0;
+          }
+          if (src && src.fileName) {
+            var compFiber = node;
+            while (compFiber && typeof compFiber.type !== "function") compFiber = compFiber.return;
+            var usedAt = null;
+            if (compFiber && compFiber.return) {
+              var pf = compFiber.return;
+              while (pf && typeof pf.type !== "function") pf = pf.return;
+              if (pf && pf._debugSource && pf._debugSource.fileName) {
+                usedAt = { file: pf._debugSource.fileName, line: pf._debugSource.lineNumber, component: componentNameOf(pf.type) };
+              }
+            }
+            loc = {
+              framework: fw,
+              file: src.fileName,
+              line: src.lineNumber,
+              column: src.columnNumber,
+              component: compFiber ? componentNameOf(compFiber.type) : null,
+              usedAt
+            };
+            break;
+          } else if (r19 && r19.url) {
+            var dec = chunkNameToPath(r19.url);
+            loc = {
+              framework: fw,
+              file: dec || r19.url,
+              line: null,
+              column: null,
+              component: cleanComponentName(r19.component) || componentNameOf(node.type),
+              react19Chunk: { url: r19.url, line: r19.line, column: r19.column }
+            };
+            var compFiber2 = node;
+            while (compFiber2 && typeof compFiber2.type !== "function") compFiber2 = compFiber2.return;
+            var ow = compFiber2 && compFiber2._debugOwner;
+            if (ow) {
+              var os = ow._debugStack ? react19StackSrc(ow._debugStack) : null;
+              if (os && os.url && !os.__unknownOwner) {
+                var od = chunkNameToPath(os.url);
+                loc.usedAt = { file: od || os.url, line: null, component: componentNameOf(ow.type) || os.component };
+                loc.usedAtChunk = { url: os.url, line: os.line, column: os.column };
+              }
+            }
+            break;
+          }
+          if (!prodComp && typeof node.type === "function") prodComp = componentNameOf(node.type);
+          if (typeof node.type === "function") {
+            var _nc = componentNameOf(node.type);
+            if (_nc && !/useMemo|useCallback|\\.bind|_this\\d|^[a-z]{1,3}$/.test(_nc)) nearComp = _nc;
+          }
+          if (typeof node.type === "function" && (!fnLocs || fnLocs.length < 2)) {
+            var _sigs = fnLocSignature(node.type);
+            if (_sigs.length) (fnLocs = fnLocs || []).push({ name: componentNameOf(node.type) || null, sigs: _sigs });
+          }
+          node = node.return;
+        }
+        if (!loc && (nearComp || prodComp)) {
+          var pu = null;
+          var cur = fiber;
+          var seen = false;
+          while (cur && cur.return) {
+            if (typeof cur.type === "function") {
+              if (!seen) seen = true;
+              else {
+                pu = { component: componentNameOf(cur.type), file: null, line: null };
+                break;
+              }
+            }
+            cur = cur.return;
+          }
+          loc = { framework: fw, file: null, line: null, column: null, component: nearComp || prodComp, usedAt: pu, fnLocs: fnLocs || null };
+        }
+      }
+      if (!loc && el.__vueParentComponent && el.__vueParentComponent.type) {
+        var vp = el.__vueParentComponent.type;
+        var vpFile = vp.__file || null;
+        var vpName = vp.__name || vp.name || null;
+        if (vpFile || vpName) {
+          var inspLine = null, inspCol = null, inspRel = null;
+          try {
+            var _insp = findVInspector(el.__vueParentComponent, el);
+            if (_insp) {
+              var _im = String(_insp).match(/^(.*?):(\\d+)(?::(\\d+))?$/);
+              if (_im && _im[1] && _im[2]) {
+                inspRel = _im[1];
+                inspLine = parseInt(_im[2], 10);
+                inspCol = _im[3] ? parseInt(_im[3], 10) : null;
+              }
+            }
+          } catch (e) {
+          }
+          var absFile = vpFile || null;
+          if (inspRel) {
+            var _rel2 = inspRel.replace(/^\\.\\//, "");
+            if (absFile) {
+              if (absFile.slice(-_rel2.length) !== _rel2) {
+                var _li = absFile.lastIndexOf("/" + _rel2);
+                if (_li >= 0) absFile = absFile.slice(0, _li) + "/" + _rel2;
+              }
+            } else {
+              absFile = inspRel;
+            }
+          }
+          var vu = vp.__usedAt || null;
+          if (!vu && el.__vueParentComponent.parent && el.__vueParentComponent.parent.type) {
+            var vpt = el.__vueParentComponent.parent.type;
+            var vptName = vpt.__name || vpt.name || null;
+            if (vpt && (vpt.__file || vptName)) {
+              vu = { file: vpt.__file || null, component: vptName, line: null };
+            }
+          }
+          loc = { framework: "vue", file: absFile, line: inspLine, column: inspCol, component: vpName, usedAt: vu };
+        }
+      }
+      if (!loc && el.__vue__ && el.__vue__.$options) {
+        var o = el.__vue__.$options;
+        var oName = o.name || null;
+        if (o.__file || oName) {
+          var vu2 = null;
+          if (el.__vue__.$parent && el.__vue__.$parent.$options) {
+            var op = el.__vue__.$parent.$options;
+            var opName = op.name || null;
+            if (op.__file || opName) vu2 = { file: op.__file || null, component: opName, line: null };
+          }
+          loc = { framework: "vue", file: o.__file || null, component: oName, usedAt: vu2 };
+        }
+      }
+      if (!loc && el.__svelte_meta && el.__svelte_meta.loc) {
+        var sMeta = el.__svelte_meta;
+        var su = el.__svelte_used_at || null;
+        if (!su && sMeta.parent) {
+          var st = sMeta.parent;
+          while (st && st.type !== "component") st = st.parent;
+          if (st && st.file) {
+            su = { component: st.componentTag || null, file: st.file, line: st.line, column: st.column };
+          }
+        }
+        loc = { framework: "svelte", file: sMeta.loc.file, line: sMeta.loc.line, column: sMeta.loc.column, component: sMeta.component || null, usedAt: su };
+      }
+      if (!loc && el.__dbg_component && (el.__dbg_component.file || el.__dbg_component.component || el.__dbg_component.usedAt)) {
+        var _dc = el.__dbg_component;
+        loc = {
+          framework: _dc.framework || "custom",
+          file: _dc.file || null,
+          line: _dc.line != null ? _dc.line : null,
+          column: _dc.column != null ? _dc.column : null,
+          component: _dc.component || null,
+          usedAt: _dc.usedAt || null
+        };
+      }
+      return loc;
+    }
+    function probeDomFrameworks() {
+      var found = { react: false, svelte: false };
+      var stack = [document.body || document.documentElement];
+      var count = 0;
+      while (stack.length && count < 120) {
+        var el = stack.pop();
+        if (!el || el.nodeType !== 1) continue;
+        count++;
+        if (!found.react) {
+          var ks = Object.getOwnPropertyNames(el);
+          for (var i = 0; i < ks.length; i++) {
+            var k = ks[i];
+            if (k.indexOf("__reactFiber$") === 0 || k.indexOf("__reactInternalInstance$") === 0) {
+              found.react = true;
+              break;
+            }
+          }
+        }
+        if (!found.svelte && el.__svelte_meta) found.svelte = true;
+        if (found.react && found.svelte) break;
+        var kids = el.children;
+        for (var j = kids.length - 1; j >= 0; j--) stack.push(kids[j]);
+      }
+      return found;
+    }
+    var _fwCache = { t: 0, v: null };
+    function detectFrameworks() {
+      var now = Date.now();
+      if (_fwCache.v && now - _fwCache.t < 1500) return _fwCache.v;
+      var fw = [];
+      var w = window;
+      var pf = probeDomFrameworks();
+      if (pf.react || w.React || document.querySelector("[data-reactroot]")) fw.push("react");
+      if (w.Vue && w.Vue.version || w.__VUE_DEVTOOLS_GLOBAL_HOOK__ || document.querySelector("[data-v-app]")) fw.push("vue");
+      if (w.next || w.__NEXT_DATA__ || w.__next_f || document.getElementById("__next")) fw.push("next");
+      if (pf.svelte) fw.push("svelte");
+      _fwCache = { t: now, v: fw };
+      return fw;
+    }
+    function setHovered(el, mouseX, mouseY) {
+      if (state.engaged) return;
+      if (state.hovered === el) return;
+      clearOutline(state.hoverOutline);
+      state.hovered = el;
+      if (!el) return;
+      try {
+        var _hr = el.getBoundingClientRect();
+        var _hw = document.documentElement && document.documentElement.clientWidth || innerWidth;
+        var _hh = document.documentElement && document.documentElement.clientHeight || innerHeight;
+        if (_hr.width > _hw * 0.85 && _hr.height > _hh * 0.85) {
+          state.hovered = null;
+          return;
+        }
+      } catch (e) {
+      }
+      drawOutline(state.hoverOutline, el, OUTLINE_HOVER, "", "HOVER");
+      var fl = fileLocation(el);
+      var r = el.getBoundingClientRect();
+      var mx = typeof mouseX === "number" ? mouseX : Math.round(r.x + r.width / 2);
+      var my = typeof mouseY === "number" ? mouseY : Math.round(r.y + r.height / 2);
+      var cs = getComputedStyle(el);
+      var txt = cleanTextOf(el, 60);
+      post({
+        type: "dbg_element_hover",
+        payload: {
+          tag: el.tagName.toLowerCase(),
+          component: fl && fl.component,
+          file: fl && fl.file,
+          line: fl && fl.line,
+          usedAt: fl && fl.usedAt,
+          // 完整 framework（含 react19Chunk/usedAtChunk）：悬停载荷也会成为 lastSelfPayload → 确认发送给 AI 时
+          // 经 picksAddElement→resolveElLoc 做 sourcemap 解析，缺了它 chunk URL 就无法还原成真实源文件
+          framework: fl,
+          frameworks: detectFrameworks(),
+          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+          mouseX: mx,
+          mouseY: my,
+          // 鼠标坐标（HUD 以鼠标位置为中心）
+          xpath: xpathOf(el),
+          text: txt,
+          bg: cs.backgroundColor,
+          color: cs.color,
+          fontSize: cs.fontSize
+        }
+      });
+    }
+    var _hoverSimEl = null;
+    function dispatchHoverEvents(el, enter) {
+      if (!el) return;
+      var needFreeze = !!state.active;
+      if (needFreeze) {
+        var hadRelease = Object.prototype.hasOwnProperty.call(released, "hover");
+        var oldRelease = released.hover;
+        released.hover = Infinity;
+        installFreeze();
+      }
+      try {
+        var r = el.getBoundingClientRect();
+        var cx = Math.round(r.x + r.width / 2), cy = Math.round(r.y + r.height / 2);
+        var opts = { bubbles: true, cancelable: true, clientX: cx, clientY: cy, view: window };
+        var noBubble = {};
+        for (var k in opts) noBubble[k] = opts[k];
+        noBubble.bubbles = false;
+        if (enter) {
+          if (window.PointerEvent) {
+            try {
+              el.dispatchEvent(new PointerEvent("pointerover", opts));
+            } catch (e) {
+            }
+            try {
+              el.dispatchEvent(new PointerEvent("pointerenter", noBubble));
+            } catch (e) {
+            }
+          }
+          try {
+            el.dispatchEvent(new MouseEvent("mouseover", opts));
+          } catch (e) {
+          }
+          try {
+            el.dispatchEvent(new MouseEvent("mouseenter", noBubble));
+          } catch (e) {
+          }
+        } else {
+          if (window.PointerEvent) {
+            try {
+              el.dispatchEvent(new PointerEvent("pointerout", opts));
+            } catch (e) {
+            }
+            try {
+              el.dispatchEvent(new PointerEvent("pointerleave", noBubble));
+            } catch (e) {
+            }
+          }
+          try {
+            el.dispatchEvent(new MouseEvent("mouseout", opts));
+          } catch (e) {
+          }
+          try {
+            el.dispatchEvent(new MouseEvent("mouseleave", noBubble));
+          } catch (e) {
+          }
+        }
+      } finally {
+        if (needFreeze) {
+          if (hadRelease) released.hover = oldRelease;
+          else delete released.hover;
+          installFreeze();
+        }
+      }
+    }
+    function simulateHover(el) {
+      var target = el || state.selected || state.hovered;
+      if (!target) return { ok: false, error: "no element" };
+      if (_hoverSimEl && _hoverSimEl !== target) dispatchHoverEvents(_hoverSimEl, false);
+      dispatchHoverEvents(target, true);
+      _hoverSimEl = target;
+      return { ok: true, enter: true, tag: target.tagName.toLowerCase() };
+    }
+    function simulateHoverOff() {
+      if (_hoverSimEl) dispatchHoverEvents(_hoverSimEl, false);
+      _hoverSimEl = null;
+      return { ok: true };
+    }
+    function aiPickPayload(el) {
+      var fl = fileLocation(el);
+      var r = el.getBoundingClientRect();
+      var txt = cleanTextOf(el, 512);
+      var cs = getComputedStyle(el);
+      var computed = {};
+      CSS_WHITELIST.forEach(function(k) {
+        var v = cs[k];
+        if (v && !SKIP_DEFAULTS[v]) computed[k] = String(v).slice(0, 300);
+      });
+      var attrs = {};
+      var _attrs = el.attributes;
+      for (var i = 0; i < _attrs.length && i < 20; i++) attrs[_attrs[i].name] = String(_attrs[i].value).slice(0, 120);
+      var _sx2 = window.scrollX || document.documentElement.scrollLeft || document.body.scrollLeft || 0;
+      var _sy2 = window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0;
+      return {
+        tag: el.tagName.toLowerCase(),
+        rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+        docRect: { x: Math.round(r.x + _sx2), y: Math.round(r.y + _sy2), w: Math.round(r.width), h: Math.round(r.height) },
+        scroll: { x: _sx2, y: _sy2 },
+        selector: cssSelectorOf(el),
+        xpath: xpathOf(el),
+        text: txt,
+        attributes: attrs,
+        computed,
+        framework: fl,
+        component: fl && fl.component,
+        file: fl && fl.file,
+        line: fl && fl.line,
+        usedAt: fl && fl.usedAt,
+        // 页面上下文：url/title + pageId（MCP 桥 instanceId/frameId；桥未连时为 null，宿主侧补全）
+        frame: { url: topUrl().slice(0, 500), title: (document.title || "").slice(0, 200) },
+        pageId: null
+      };
+    }
+    function cssSelectorOf(el) {
+      if (!el || el.nodeType !== 1) return "";
+      if (el.id) return "#" + CSS.escape(el.id);
+      var parts = [];
+      var node = el;
+      while (node && node.nodeType === 1 && node !== document.body && node !== document.documentElement) {
+        var part = node.tagName.toLowerCase();
+        if (node.className && typeof node.className === "string") {
+          var cls = node.className.trim().split(/\\s+/).slice(0, 3);
+          if (cls.length) part += "." + cls.map(function(c) {
+            return CSS.escape(c);
+          }).join(".");
+        }
+        var parent = node.parentElement;
+        if (parent) {
+          var sibs = parent.children;
+          if (sibs.length > 1) {
+            for (var i = 0; i < sibs.length; i++) {
+              if (sibs[i] === node) {
+                part += ":nth-child(" + (i + 1) + ")";
+                break;
+              }
+            }
+          }
+        }
+        parts.unshift(part);
+        node = parent;
+      }
+      return parts.join(" > ");
+    }
+    function isDbgEl(el) {
+      if (!el || el.nodeType !== 1) return false;
+      try {
+        if (el.closest && el.closest("#__dbg_launcher")) return true;
+        if (el.id === "__dbg_launcher_css") return true;
+        if (el.tagName === "SCRIPT" || el.tagName === "STYLE") return true;
+        var st = el.style;
+        if (st && st.position === "fixed" && String(st.zIndex) === "2147483646") return true;
+      } catch (e) {
+      }
+      return false;
+    }
+    function cleanTextOf(el, max) {
+      if (isDbgEl(el)) return "";
+      var full = "";
+      try {
+        full = (el.innerText || el.textContent || "").trim();
+      } catch (e) {
+      }
+      try {
+        if (full) {
+          var lr = document.getElementById("__dbg_launcher");
+          if (lr && lr !== el && (el === document.body || el === document.documentElement || el.contains(lr))) {
+            var lt = (lr.innerText || lr.textContent || "").trim();
+            if (lt && full.indexOf(lt) >= 0) {
+              full = full.split(lt).join(" ").replace(/\\s{2,}/g, " ").trim();
+            }
+          }
+        }
+      } catch (e) {
+      }
+      return full.slice(0, max || 512);
+    }
+    function stripAitiText(s) {
+      if (!s || typeof s !== "string") return s;
+      try {
+        var lr = document.getElementById("__dbg_launcher");
+        if (lr) {
+          var lt = (lr.innerText || lr.textContent || "").trim();
+          if (lt && s.indexOf(lt) >= 0) s = s.split(lt).join(" ").replace(/\\s{2,}/g, " ").trim();
+        }
+      } catch (e) {
+      }
+      return s;
+    }
+    function neighborInDirection(el, dir) {
+      var r = el.getBoundingClientRect();
+      var best = null, bestScore = Infinity;
+      var all = document.querySelectorAll("body *");
+      for (var i = 0; i < all.length; i++) {
+        var c = all[i];
+        if (c === el) continue;
+        if (isDbgEl(c)) continue;
+        var cr = c.getBoundingClientRect();
+        if (cr.width === 0 || cr.height === 0) continue;
+        var overY = Math.min(cr.bottom, r.bottom) - Math.max(cr.top, r.top);
+        var overX = Math.min(cr.right, r.right) - Math.max(cr.left, r.left);
+        var ok = false, score = Infinity;
+        if (dir === "left" && cr.right <= r.left + 1) {
+          ok = overY > 0;
+          score = r.left - cr.right;
+        } else if (dir === "right" && cr.left >= r.right - 1) {
+          ok = overY > 0;
+          score = cr.left - r.right;
+        } else if (dir === "top" && cr.bottom <= r.top + 1) {
+          ok = overX > 0;
+          score = r.top - cr.bottom;
+        } else if (dir === "bottom" && cr.top >= r.bottom - 1) {
+          ok = overX > 0;
+          score = cr.top - r.bottom;
+        }
+        if (ok && score < bestScore) {
+          bestScore = score;
+          best = c;
+        }
+      }
+      return best;
+    }
+    function stepSelection(dir) {
+      if (!state.active) return;
+      var cur = state.selected || state.hovered;
+      if (isDbgEl(cur)) cur = null;
+      if (!cur) cur = document.body;
+      var next = null;
+      if (dir === "up") {
+        next = cur.parentElement;
+        while (next && isDbgEl(next)) next = next.parentElement;
+        if (!next) next = cur;
+      } else if (dir === "down") {
+        next = cur.firstElementChild;
+        while (next && isDbgEl(next)) next = next.nextElementSibling;
+        if (!next) next = cur;
+      } else if (dir === "downOrNext") {
+        next = cur.firstElementChild;
+        while (next && isDbgEl(next)) next = next.nextElementSibling;
+        if (!next) {
+          var anc = cur;
+          while (anc && !anc.nextElementSibling) anc = anc.parentElement;
+          next = anc ? anc.nextElementSibling : null;
+          while (next && isDbgEl(next)) next = next.nextElementSibling;
+          if (!next) next = cur;
+        }
+      } else if (dir === "prev" || dir === "left") {
+        next = cur.previousElementSibling;
+        while (next && isDbgEl(next)) next = next.previousElementSibling;
+        if (!next) next = cur.parentElement || cur;
+      } else if (dir === "next" || dir === "right") {
+        next = cur.nextElementSibling;
+        while (next && isDbgEl(next)) next = next.nextElementSibling;
+        if (!next) next = cur.parentElement || cur;
+      } else if (dir === "first") {
+        next = cur.firstElementChild;
+        while (next && isDbgEl(next)) next = next.nextElementSibling;
+        if (!next) next = cur;
+      } else if (dir === "last") {
+        next = cur.lastElementChild;
+        while (next && isDbgEl(next)) next = next.previousElementSibling;
+        if (!next) next = cur;
+      } else if (dir === "leftN") next = neighborInDirection(cur, "left") || cur;
+      else if (dir === "rightN") next = neighborInDirection(cur, "right") || cur;
+      else if (dir === "topN") next = neighborInDirection(cur, "top") || cur;
+      else if (dir === "bottomN") next = neighborInDirection(cur, "bottom") || cur;
+      if (!next) return;
+      try {
+        var _sv = window.visualViewport && window.visualViewport.height > 0 ? window.visualViewport.height : window.innerHeight;
+        if (!_sv || _sv <= 0) _sv = 800;
+        var _sr = next.getBoundingClientRect();
+        var _reserve = 96;
+        if (_sr.top < 0 || _sr.bottom > _sv - _reserve) {
+          try {
+            next.scrollIntoView({ block: "center", behavior: "smooth" });
+          } catch (e) {
+            try {
+              next.scrollIntoView(true);
+            } catch (e2) {
+            }
+          }
+        } else {
+          next.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" });
+        }
+        try {
+          var _r2 = next.getBoundingClientRect();
+          var _vh2 = window.visualViewport && window.visualViewport.height > 0 ? window.visualViewport.height : window.innerHeight;
+          if (_vh2 > 0 && _r2.bottom > _vh2 - 8) window.scrollBy({ top: _r2.bottom - (_vh2 - 8), behavior: "smooth" });
+        } catch (e) {
+        }
+      } catch (e) {
+        try {
+          next.scrollIntoView(true);
+        } catch (e2) {
+        }
+      }
+      if (state.selected) {
+        setTouchSelection(next);
+        post({ type: "dbg_element_hover_refresh", payload: null });
+      } else {
+        setHovered(next);
+      }
+    }
+    function selectBySelector(selector) {
+      if (!state.active) return;
+      var el;
+      var s = String(selector || "").trim();
+      try {
+        if (s.indexOf("//") === 0 || s.indexOf("(//") === 0) {
+          var res = document.evaluate(s, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+          el = res.singleNodeValue || null;
+        } else {
+          el = document.querySelector(s);
+        }
+      } catch (e) {
+        el = null;
+      }
+      if (el) {
+        setTouchSelection(el);
+        state.engaged = true;
+      } else {
+        setHovered(null);
+      }
+      return !!el;
+    }
+    function confirmSelection(fallback) {
+      if (!state.active) return;
+      var el = state.hovered || state.selected || fallback;
+      if (!el) {
+        post({ type: "dbg_element_selected", payload: null });
+        return;
+      }
+      state.selected = el;
+      clearOutline(state.hoverOutline);
+      drawOutline(state.selOutline, el, OUTLINE_SEL, "rgba(5,150,105,.08)", "SEL");
+      var _pl = serialize(el, { attrs: 1, xpath: 1, text: 1, computed: 1, framework: 1 });
+      var _fw = _pl && _pl.framework;
+      if (_fw && (_fw.react19Chunk || _fw.usedAtChunk)) {
+        resolveFrameworkLoc(_fw).then(function(fw) {
+          if (fw && _pl) {
+            _pl.framework = fw;
+            _pl.file = fw.file;
+            _pl.line = fw.line;
+            _pl.usedAt = fw.usedAt;
+          }
+          post({ type: "dbg_element_selected", payload: _pl });
+        });
+        return;
+      }
+      post({ type: "dbg_element_selected", payload: _pl });
+    }
+    var OPT = { animSpeed: 1, blockScroll: false, blockWheel: false, slowTimers: 1, darkMode: false, reducedMotion: false, timeOffsetMs: 0, simulateTouch: false };
+    var animObs = null;
+    var _origSetTimeout = window.setTimeout, _origSetInterval = window.setInterval, _origClearTimeout = window.clearTimeout;
+    function applyAnimSpeedOnce() {
+      var anims;
+      try {
+        anims = document.getAnimations();
+      } catch (e) {
+        return;
+      }
+      anims.forEach(function(a) {
+        try {
+          a.playbackRate = OPT.animSpeed;
+        } catch (e) {
+        }
+      });
+    }
+    function startAnimWatch() {
+      if (animObs) return;
+      applyAnimSpeedOnce();
+      try {
+        animObs = new MutationObserver(function() {
+          applyAnimSpeedOnce();
+        });
+        animObs.observe(document.documentElement, { subtree: true, childList: true, attributes: true, attributeFilter: ["class", "style"] });
+      } catch (e) {
+      }
+      var tick = function() {
+        applyAnimSpeedOnce();
+        _origSetTimeout(tick, 400);
+      };
+      _origSetTimeout(tick, 400);
+    }
+    function stopAnimWatch() {
+      if (animObs) {
+        try {
+          animObs.disconnect();
+        } catch (e) {
+        }
+        animObs = null;
+      }
+    }
+    function onScrollBlock(e) {
+      e.stopImmediatePropagation();
+    }
+    function onWheelBlock(e) {
+      if (e.cancelable) e.preventDefault();
+      e.stopImmediatePropagation();
+    }
+    function installTimerSlow() {
+      var slow = OPT.slowTimers;
+      window.setTimeout = function(fn, delay) {
+        return _origSetTimeout(fn, (delay == null ? 0 : delay) * slow);
+      };
+      window.setInterval = function(fn, delay) {
+        return _origSetInterval(fn, (delay == null ? 0 : delay) * slow);
+      };
+    }
+    function restoreTimerSlow() {
+      window.setTimeout = _origSetTimeout;
+      window.setInterval = _origSetInterval;
+    }
+    function applyOptions(opts) {
+      var prevAnim = OPT.animSpeed;
+      if (opts.animSpeed !== void 0) OPT.animSpeed = opts.animSpeed;
+      if (opts.blockScroll !== void 0) OPT.blockScroll = !!opts.blockScroll;
+      if (opts.blockWheel !== void 0) OPT.blockWheel = !!opts.blockWheel;
+      if (opts.slowTimers !== void 0) OPT.slowTimers = opts.slowTimers;
+      if (opts.netDelay !== void 0) NET.delay = opts.netDelay;
+      if (opts.netOffline !== void 0) NET.offline = !!opts.netOffline;
+      if (opts.darkMode !== void 0) OPT.darkMode = !!opts.darkMode;
+      if (opts.reducedMotion !== void 0) OPT.reducedMotion = !!opts.reducedMotion;
+      if (opts.timeOffsetMs !== void 0) OPT.timeOffsetMs = opts.timeOffsetMs;
+      if (opts.simulateTouch !== void 0) OPT.simulateTouch = !!opts.simulateTouch;
+      if (NET.delay > 0 || NET.offline) installNetSim();
+      emulateMedia();
+      installTimeOffset();
+      if (OPT.animSpeed !== prevAnim) {
+        if (OPT.animSpeed === 1) {
+          stopAnimWatch();
+          applyAnimSpeedOnce();
+        } else {
+          applyAnimSpeedOnce();
+          startAnimWatch();
+        }
+      }
+      document[OPT.blockScroll ? "addEventListener" : "removeEventListener"]("scroll", onScrollBlock, true);
+      document[OPT.blockWheel ? "addEventListener" : "removeEventListener"]("wheel", onWheelBlock, true);
+      if (OPT.slowTimers !== 1) installTimerSlow();
+      else restoreTimerSlow();
+    }
+    var NET = { delay: 0, offline: false };
+    var _origFetch = window.fetch;
+    var _origXhrOpen = XMLHttpRequest.prototype.open;
+    var _origXhrSend = XMLHttpRequest.prototype.send;
+    var netSimInstalled = false;
+    function installNetSim() {
+      if (netSimInstalled) return;
+      netSimInstalled = true;
+      window.fetch = function(input, init) {
+        if (NET.offline) return Promise.reject(new TypeError("Failed to fetch（dbg 模拟离线）"));
+        if (NET.delay > 0) {
+          return _origFetch(input, init).then(function(res) {
+            return new Promise(function(resolve) {
+              _origSetTimeout(function() {
+                resolve(res);
+              }, NET.delay);
+            });
+          });
+        }
+        return _origFetch(input, init);
+      };
+      XMLHttpRequest.prototype.open = function(m, u) {
+        this.__dbgUrl = String(u);
+        return _origXhrOpen.apply(this, arguments);
+      };
+      XMLHttpRequest.prototype.send = function() {
+        var self = this, args2 = arguments;
+        if (NET.offline) {
+          _origSetTimeout(function() {
+            try {
+              var ev = new ProgressEvent("error");
+              self.dispatchEvent(ev);
+              if (typeof self.onerror === "function") self.onerror(ev);
+            } catch (e) {
+            }
+          }, 50);
+          return;
+        }
+        if (NET.delay > 0) {
+          _origSetTimeout(function() {
+            _origXhrSend.apply(self, args2);
+          }, NET.delay);
+          return;
+        }
+        _origXhrSend.apply(this, args2);
+      };
+    }
+    function forceError(kind) {
+      var K = kind || "sync";
+      if (K === "sync") _origSetTimeout(function() {
+        throw new Error("[dbg] 强制同步异常 forced sync error");
+      }, 100);
+      else if (K === "promise") _origSetTimeout(function() {
+        Promise.reject(new Error("[dbg] 强制未捕获 Promise 拒绝 forced unhandled rejection"));
+      }, 100);
+      else if (K === "console") console.error("[dbg] 强制 console.error forced console error");
+      else if (K === "resource") {
+        var img = new Image();
+        img.src = "/__dbg_force_404__/" + Date.now() + ".png";
+        document.body.appendChild(img);
+      }
+      return K;
+    }
+    var errSeen = {};
+    function resetErrDedup() {
+      errSeen = {};
+    }
+    function installErrorHook() {
+      if (window.__dbgErrHook) return;
+      window.__dbgErrHook = true;
+      var BENIGN_ERROR_RE = /ResizeObserver loop (completed with undelivered notifications|limit exceeded)/;
+      function report(kind, msg, stack) {
+        var text = String(msg);
+        if (BENIGN_ERROR_RE.test(text)) {
+          pushConsoleLog("error", "[benign] " + text.slice(0, 300));
+          return;
+        }
+        var key = text.slice(0, 80);
+        if (errSeen[key]) return;
+        errSeen[key] = 1;
+        if (kind !== "console.error") {
+          var label = { error: "uncaught", unhandledrejection: "rejection", resource: "resource" }[kind] || kind;
+          pushConsoleLog("error", "[" + label + "] " + String(msg).slice(0, 300));
+        }
+        post({ type: "dbg_page_error", payload: { kind, message: String(msg).slice(0, 300), stack: stack ? String(stack).slice(0, 500) : null } });
+      }
+      window.addEventListener("error", function(e) {
+        var msg = e.message;
+        var meta = "";
+        if (msg === "Script error.") {
+          if (e.filename) meta += " @ " + e.filename + (e.lineno ? ":" + e.lineno + (e.colno ? ":" + e.colno : "") : "");
+          var t = e.target;
+          if (t && t.tagName) meta += (meta ? " · " : "") + "资源=" + (t.tagName + (t.src || t.href || t.currentSrc ? " " + String(t.src || t.href || t.currentSrc).slice(0, 200) : ""));
+          if (meta) meta = "（跨源/加载失败被浏览器遮蔽" + meta + "；可检查页面脚本路径是否含部署前缀，如 /dev/）";
+        }
+        report("error", msg + meta, e.error && e.error.stack);
+      });
+      window.addEventListener("error", function(e) {
+        var t = e.target;
+        if (t && t.tagName && (t.src || t.href)) {
+          report("resource", "资源加载失败 [" + t.tagName + "] " + String(t.src || t.href).slice(0, 300));
+        }
+      }, true);
+      window.addEventListener("unhandledrejection", function(e) {
+        var r = e.reason;
+        report("unhandledrejection", r && (r.message || String(r)) || "Promise rejected", r && r.stack);
+      });
+      var origConsoleError = console.error;
+      console.error = function() {
+        report("console.error", Array.prototype.map.call(arguments, String).join(" "));
+        origConsoleError.apply(console, arguments);
+      };
+    }
+    var CONSOLE_RING = [];
+    var consoleDropped = 0;
+    var _consoleBatch = [];
+    var _consoleTimer = null;
+    var _consoleLevels = ["log", "debug", "info", "warn", "error"];
+    var _origConsoles = {};
+    function fmtArg(a) {
+      if (a == null) return String(a);
+      if (typeof a === "string") return a.slice(0, 300);
+      try {
+        var s = JSON.stringify(a);
+        return s && s.length <= 300 ? s : String(a).slice(0, 300);
+      } catch (e) {
+        return String(a).slice(0, 300);
+      }
+    }
+    function pushConsoleLog(level, text) {
+      var now = Date.now();
+      var last = CONSOLE_RING[CONSOLE_RING.length - 1];
+      if (last && last.level === level && last.text === text && now - last.ts < 500) {
+        last.count = (last.count || 1) + 1;
+        last.ts = now;
+        return;
+      }
+      var item = { ts: now, level, text: String(text).slice(0, 300), count: 1 };
+      CONSOLE_RING.push(item);
+      if (CONSOLE_RING.length > 200) {
+        CONSOLE_RING.shift();
+        consoleDropped++;
+      }
+      _consoleBatch.push(item);
+      if (_consoleBatch.length >= 10) flushConsoleBatch();
+      else if (!_consoleTimer) _consoleTimer = _origSetTimeout(flushConsoleBatch, 100);
+    }
+    function flushConsoleBatch() {
+      if (_consoleTimer) {
+        _origClearTimeout(_consoleTimer);
+        _consoleTimer = null;
+      }
+      if (!_consoleBatch.length) return;
+      _consoleBatch.splice(0);
+    }
+    function installConsoleHook() {
+      if (window.__dbgConsoleHook) return;
+      window.__dbgConsoleHook = true;
+      var _inHook = 0;
+      _consoleLevels.forEach(function(lv) {
+        _origConsoles[lv] = console[lv];
+        console[lv] = function() {
+          if (!_inHook) {
+            _inHook = 1;
+            try {
+              var text = Array.prototype.map.call(arguments, fmtArg).join(" ").slice(0, 300);
+              pushConsoleLog(lv, text);
+            } catch (e) {
+            }
+            _inHook = 0;
+          }
+          _origConsoles[lv].apply(console, arguments);
+        };
+      });
+    }
+    var NET_RING = [];
+    var netDropped = 0;
+    var _netBatch = [];
+    var _netTimer = null;
+    function pushNet(item) {
+      NET_RING.push(item);
+      if (NET_RING.length > 100) {
+        NET_RING.shift();
+        netDropped++;
+      }
+      _netBatch.push(item);
+      if (_netBatch.length >= 10) flushNetBatch();
+      else if (!_netTimer) _netTimer = _origSetTimeout(flushNetBatch, 100);
+    }
+    function flushNetBatch() {
+      if (_netTimer) {
+        _origClearTimeout(_netTimer);
+        _netTimer = null;
+      }
+      if (!_netBatch.length) return;
+      _netBatch.splice(0);
+    }
+    function installNetObserver() {
+      if (window.__dbgNetObserver) return;
+      window.__dbgNetObserver = true;
+      var _oOpen = XMLHttpRequest.prototype.open, _oSend = XMLHttpRequest.prototype.send;
+      XMLHttpRequest.prototype.open = function(m, u) {
+        this.__dbgNet = { m, u: String(u).slice(0, 300), t0: performance.now() };
+        return _oOpen.apply(this, arguments);
+      };
+      XMLHttpRequest.prototype.send = function() {
+        var self = this, net = this.__dbgNet || { m: "", u: "", t0: performance.now() };
+        ["load", "error", "abort", "timeout"].forEach(function(ev) {
+          self.addEventListener(ev, function() {
+            if (net.u.indexOf("/bridge/") >= 0 || net.u.indexOf("/api/extensions/") >= 0 || net.u.indexOf("__dbg") >= 0) return;
+            pushNet({
+              id: "xhr_" + Math.random().toString(36).slice(2, 8),
+              kind: "xhr",
+              method: net.m,
+              url: net.u,
+              status: ev === "load" ? self.status || 0 : null,
+              statusText: ev === "load" ? self.statusText : null,
+              durationMs: Math.round(performance.now() - net.t0),
+              size: ev === "load" && self.responseText ? self.responseText.length : null,
+              error: ev === "load" ? null : ev,
+              ts: Date.now()
+            });
+          });
+        });
+        return _oSend.apply(this, arguments);
+      };
+      var _of = window.fetch;
+      window.fetch = function(input, init) {
+        var _m = init && init.method || input && input.method || "GET";
+        var _u = String(input && input.url || input).slice(0, 300);
+        return _of.apply(this, arguments).then(function(res) {
+          if (_u.indexOf("/bridge/") < 0 && _u.indexOf("/api/extensions/") < 0 && _u.indexOf("__dbg") < 0) {
+            pushNet({
+              id: "f_" + Math.random().toString(36).slice(2, 8),
+              kind: "fetch",
+              method: _m,
+              url: _u,
+              status: res.status,
+              statusText: res.statusText,
+              durationMs: 0,
+              size: null,
+              error: null,
+              ts: Date.now()
+            });
+          }
+          return res;
+        }, function(err) {
+          if (_u.indexOf("/bridge/") < 0 && _u.indexOf("/api/extensions/") < 0 && _u.indexOf("__dbg") < 0) {
+            pushNet({
+              id: "f_" + Math.random().toString(36).slice(2, 8),
+              kind: "fetch",
+              method: _m,
+              url: _u,
+              status: null,
+              statusText: null,
+              durationMs: 0,
+              size: null,
+              error: "fetch rejected",
+              ts: Date.now()
+            });
+          }
+          throw err;
+        });
+      };
+    }
+    var _origMatchMedia = window.matchMedia;
+    var _origDate = window.Date;
+    function emulateMedia() {
+      window.matchMedia = function(query) {
+        var m = _origMatchMedia(query);
+        var q = String(query);
+        var fake = null;
+        if (OPT.darkMode && q.indexOf("prefers-color-scheme") >= 0) fake = q.indexOf("dark") >= 0;
+        if (OPT.reducedMotion && q.indexOf("prefers-reduced-motion") >= 0) fake = q.indexOf("reduce") >= 0;
+        if (OPT.simulateTouch && (q.indexOf("pointer") >= 0 || q.indexOf("hover") >= 0)) {
+          fake = q.indexOf("coarse") >= 0 || q.indexOf("none") >= 0;
+        }
+        if (fake === null) return m;
+        return {
+          matches: fake,
+          media: q,
+          onchange: null,
+          addListener: function(f) {
+            m.addListener(f);
+          },
+          removeListener: function(f) {
+            m.removeListener(f);
+          },
+          addEventListener: function(t, f) {
+            m.addEventListener(t, f);
+          },
+          removeEventListener: function(t, f) {
+            m.removeEventListener(t, f);
+          },
+          dispatchEvent: function(e) {
+            return m.dispatchEvent(e);
+          }
+        };
+      };
+      var old = document.getElementById("__dbg_dark__");
+      if (OPT.darkMode) {
+        if (!old) {
+          var st = document.createElement("style");
+          st.id = "__dbg_dark__";
+          st.textContent = "html { color-scheme: dark !important; }";
+          document.head.appendChild(st);
+        }
+      } else if (old) {
+        old.remove();
+      }
+    }
+    function installTimeOffset() {
+      var offset = OPT.timeOffsetMs;
+      if (!offset) {
+        window.Date = _origDate;
+        return;
+      }
+      window.Date = (function(OrigDate) {
+        function DbgDate() {
+          var d;
+          if (!(this instanceof DbgDate)) return new OrigDate(OrigDate.now() + offset).toString();
+          if (arguments.length === 0) d = new OrigDate(OrigDate.now() + offset);
+          else if (arguments.length === 1) d = new OrigDate(arguments[0]);
+          else d = new OrigDate(arguments[0], arguments[1], arguments[2], arguments[3], arguments[4], arguments[5], arguments[6]);
+          return d;
+        }
+        DbgDate.prototype = OrigDate.prototype;
+        DbgDate.now = function() {
+          return OrigDate.now() + offset;
+        };
+        DbgDate.parse = OrigDate.parse;
+        DbgDate.UTC = OrigDate.UTC;
+        return DbgDate;
+      })(_origDate);
+    }
+    var FROZEN_CATEGORIES = {
+      click: ["mousedown", "mouseup", "click", "dblclick", "pointerdown", "pointerup", "contextmenu"],
+      key: ["keydown", "keyup"],
+      wheel: ["wheel"],
+      scroll: ["scroll"],
+      hover: ["mouseout", "mouseleave"],
+      touch: ["touchstart", "touchmove", "touchend"],
+      focus: ["focusin", "focusout"]
+    };
+    var aiPick = false;
+    var passClick = false;
+    var inspectorMode = "mouse";
+    var released = {};
+    var _frozenEvents = [];
+    var _releaseTimers = {};
+    var _blockReported = {};
+    function allFrozenEvents() {
+      var list = [];
+      Object.keys(FROZEN_CATEGORIES).forEach(function(cat) {
+        if (released[cat]) return;
+        FROZEN_CATEGORIES[cat].forEach(function(t) {
+          if (list.indexOf(t) < 0) list.push(t);
+        });
+      });
+      return list;
+    }
+    function freezeEvent(e) {
+      if (e.target && e.target.closest && e.target.closest("#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings")) return;
+      if (e.button && e.button !== 0) return;
+      if (e.type === "keydown" && e.key === "Escape") return;
+      e.stopImmediatePropagation();
+      if (e.cancelable) e.preventDefault();
+      reportBlocked(e);
+    }
+    function reportBlocked(e) {
+      var cat = null;
+      for (var c in FROZEN_CATEGORIES) {
+        if (FROZEN_CATEGORIES[c].indexOf(e.type) >= 0) {
+          cat = c;
+          break;
+        }
+      }
+      if (!cat) return;
+      var now = Date.now();
+      if (_blockReported[cat] && now - _blockReported[cat] < 2500) return;
+      _blockReported[cat] = now;
+      var _mx = null, _my = null;
+      if (typeof e.clientX === "number") {
+        _mx = Math.round(e.clientX);
+        _my = Math.round(e.clientY);
+      } else if (e.changedTouches && e.changedTouches[0]) {
+        _mx = Math.round(e.changedTouches[0].clientX);
+        _my = Math.round(e.changedTouches[0].clientY);
+      } else if (e.touches && e.touches[0]) {
+        _mx = Math.round(e.touches[0].clientX);
+        _my = Math.round(e.touches[0].clientY);
+      }
+      post({ type: "dbg_event_blocked", payload: { category: cat, type: e.type, mouseX: _mx, mouseY: _my } });
+    }
+    function installFreeze() {
+      uninstallFreeze();
+      _frozenEvents = allFrozenEvents();
+      _frozenEvents.forEach(function(t) {
+        window.addEventListener(t, freezeEvent, true);
+      });
+      ensureUiMousedownGuard();
+    }
+    function uninstallFreeze() {
+      _frozenEvents.forEach(function(t) {
+        window.removeEventListener(t, freezeEvent, true);
+      });
+      _frozenEvents = [];
+      removeUiMousedownGuard();
+    }
+    var _uiMouseBound = false;
+    function uiMousedownGuard(e) {
+      if (e.target && e.target.closest && e.target.closest("#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings")) {
+        if (e.target.closest && e.target.closest("input, textarea, select")) return;
+        e.stopImmediatePropagation();
+        if (e.cancelable) e.preventDefault();
+      }
+    }
+    function ensureUiMousedownGuard() {
+      if (!_uiMouseBound) {
+        _uiMouseBound = true;
+        window.addEventListener("mousedown", uiMousedownGuard, true);
+      }
+    }
+    function removeUiMousedownGuard() {
+      if (_uiMouseBound) {
+        _uiMouseBound = false;
+        window.removeEventListener("mousedown", uiMousedownGuard, true);
+      }
+    }
+    function releaseEvents(categories, durationMs) {
+      var now = Date.now();
+      (categories || []).forEach(function(cat) {
+        if (FROZEN_CATEGORIES[cat]) released[cat] = durationMs > 0 ? now + durationMs : Infinity;
+      });
+      installFreeze();
+      if (durationMs > 0) {
+        var until = now + durationMs;
+        var key = (categories || []).slice().sort().join("+");
+        if (_releaseTimers[key]) clearTimeout(_releaseTimers[key]);
+        _releaseTimers[key] = _origSetTimeout(function() {
+          (categories || []).forEach(function(cat) {
+            if (released[cat] === until) delete released[cat];
+          });
+          installFreeze();
+        }, durationMs);
+      }
+    }
+    function lockEvents() {
+      released = {};
+      installFreeze();
+    }
+    function applyProfile(pf) {
+      released = {};
+      var rel = pf && pf.release || [];
+      for (var i = 0; i < rel.length; i++) {
+        if (FROZEN_CATEGORIES[rel[i]]) released[rel[i]] = Infinity;
+      }
+      installFreeze();
+      return { name: pf && pf.name, released: Object.keys(released) };
+    }
+    function toggleEvent(category, enabled) {
+      if (!FROZEN_CATEGORIES[category]) return { error: "unknown category: " + category };
+      if (enabled) released[category] = Infinity;
+      else delete released[category];
+      installFreeze();
+      return { category, released: !!released[category] };
+    }
+    var lastMoveX = 0, lastMoveY = 0;
+    var _touchBlockHoverUntil = 0;
+    var _realMouseEver = false;
+    var _onTouch = function() {
+      _touchBlockHoverUntil = Date.now() + 800;
+    };
+    document.addEventListener("touchstart", _onTouch, true);
+    document.addEventListener("pointerdown", function(e) {
+      if (e.pointerType === "touch") _onTouch();
+    }, true);
+    function onOver(e) {
+      if (state.active && inspectorMode === "mouse" && !state.engaged) {
+        if (Date.now() < _touchBlockHoverUntil) return;
+        if (e.isTrusted !== false && !_realMouseEver) return;
+        var t = e.target;
+        if (!t || t === document.body || t === document.documentElement) return;
+        if (t.closest && t.closest("#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings")) return;
+        setHovered(t, e.clientX, e.clientY);
+      }
+    }
+    function onMouseMove(e) {
+      if (e.isTrusted && (e.movementX || e.movementY || e.buttons)) _realMouseEver = true;
+      if (!state.active || state.engaged) return;
+      if (Math.abs(e.clientX - lastMoveX) + Math.abs(e.clientY - lastMoveY) < 80) return;
+      lastMoveX = e.clientX;
+      lastMoveY = e.clientY;
+      var el = e.target;
+      if (el && el.closest && el.closest("#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings")) return;
+      if (state.hovered) post({ type: "dbg_mouse_move", payload: { mouseX: e.clientX, mouseY: e.clientY } });
+    }
+    function isDisabledEl(el) {
+      if (!el || el.nodeType !== 1) return false;
+      if (el.disabled === true) return true;
+      var a = el.getAttribute && el.getAttribute("aria-disabled");
+      if (a && a !== "false" && a !== "") return true;
+      try {
+        if (el.closest && el.closest("fieldset[disabled]")) return true;
+      } catch (e) {
+      }
+      return false;
+    }
+    function onPickDisabled(e) {
+      if (!state.active) return;
+      if (e.button && e.button !== 0) return;
+      var t = e.target;
+      if (!t || t.nodeType !== 1) return;
+      if (t.closest && t.closest("#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings")) return;
+      if (released.click) return;
+      if (!isDisabledEl(t)) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (aiPick) {
+        state.engaged = true;
+        setTouchSelection(t, e.clientX, e.clientY);
+        return;
+      }
+      if (inspectorMode === "touch" || state.engaged) {
+        if (state.engaged && state.selected === t) {
+          state.engaged = false;
+          state.selected = null;
+          clearOutline(state.selOutline);
+          state.hovered = null;
+          setHovered(t);
+          post({ type: "dbg_element_hover_refresh", payload: null });
+          return;
+        }
+        setTouchSelection(t, e.clientX, e.clientY);
+      } else {
+        state.engaged = true;
+        setTouchSelection(t, e.clientX, e.clientY);
+      }
+    }
+    function onClick(e) {
+      if (!state.active) return;
+      if (e.button && e.button !== 0) return;
+      if (e.target && e.target.closest && e.target.closest("#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings")) return;
+      if (released.click) {
+        post({ type: "dbg_click_released", payload: {} });
+        return;
+      }
+      if (passClick) {
+        passClick = false;
+        post({ type: "dbg_click_released", payload: {} });
+        setTimeout(function() {
+          installFreeze();
+        }, 600);
+        return;
+      }
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      if (aiPick) {
+        state.engaged = true;
+        setTouchSelection(e.target, e.clientX, e.clientY);
+        return;
+      }
+      if (inspectorMode === "touch" || state.engaged) {
+        if (state.engaged && state.selected === e.target) {
+          state.engaged = false;
+          state.selected = null;
+          clearOutline(state.selOutline);
+          state.hovered = null;
+          setHovered(e.target);
+          post({ type: "dbg_element_hover_refresh", payload: null });
+          return;
+        }
+        setTouchSelection(e.target, e.clientX, e.clientY);
+      } else {
+        state.engaged = true;
+        setTouchSelection(e.target, e.clientX, e.clientY);
+      }
+    }
+    function onScroll() {
+      if (state.hovered && !state.engaged) setHovered(state.hovered);
+    }
+    function setTouchSelection(el, mX, mY) {
+      if (!el) return;
+      state.selected = el;
+      state.hovered = el;
+      clearOutline(state.hoverOutline);
+      drawOutline(state.selOutline, el, OUTLINE_SEL, "rgba(5,150,105,.08)", "SEL");
+      var fl = fileLocation(el);
+      var r = el.getBoundingClientRect();
+      var cs = getComputedStyle(el);
+      var txt = cleanTextOf(el, 60);
+      post({
+        type: "dbg_element_hover",
+        payload: {
+          tag: el.tagName.toLowerCase(),
+          component: fl && fl.component,
+          file: fl && fl.file,
+          line: fl && fl.line,
+          usedAt: fl && fl.usedAt,
+          // 完整 framework（含 react19Chunk/usedAtChunk）：触屏选区同样会变 lastSelfPayload → 确认发送给 AI 时
+          // 经 picksAddElement→resolveElLoc 做 sourcemap 解析；缺了它 chunk URL 无法还原成真实源文件（触屏设备必带）
+          framework: fl,
+          frameworks: detectFrameworks(),
+          touchMode: true,
+          engaged: true,
+          // 点击暂停：工具条显示
+          rect: { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) },
+          mouseX: typeof mX === "number" ? mX : Math.round(r.x + r.width / 2),
+          mouseY: typeof mY === "number" ? mY : Math.round(r.y + r.height / 2),
+          xpath: xpathOf(el),
+          text: txt,
+          bg: cs.backgroundColor,
+          color: cs.color,
+          fontSize: cs.fontSize
+        }
+      });
+    }
+    window.__dbg = {
+      __version__: "__DBG_VERSION__",
+      resetErrorDedup: function() {
+        try {
+          resetErrDedup();
+        } catch (e) {
+        }
+      },
+      // 打开 AI 窗清理 → 同消息下次触发重新上报
+      enterInspector: function(mode) {
+        if (state.active && inspectorMode === (mode || "mouse")) return;
+        if (state.active) window.__dbg.exitInspector();
+        state.active = true;
+        inspectorMode = mode || "mouse";
+        passClick = false;
+        released = {};
+        ["key", "wheel", "scroll", "touch", "focus"].forEach(function(c) {
+          released[c] = Infinity;
+        });
+        if (inspectorMode === "touch") released.touch = Infinity;
+        if (inspectorMode === "mouse") window.addEventListener("mouseover", onOver, true);
+        window.addEventListener("mousemove", onMouseMove, true);
+        window.addEventListener("pointerdown", onPickDisabled, true);
+        window.addEventListener("click", onClick, true);
+        window.addEventListener("scroll", onScroll, true);
+        installFreeze();
+        if (inspectorMode !== "touch") {
+          document.body.style.cursor = "crosshair";
+        }
+      },
+      exitInspector: function() {
+        state.active = false;
+        state.engaged = false;
+        window.removeEventListener("mouseover", onOver, true);
+        window.removeEventListener("mousemove", onMouseMove, true);
+        window.removeEventListener("pointerdown", onPickDisabled, true);
+        window.removeEventListener("click", onClick, true);
+        window.removeEventListener("scroll", onScroll, true);
+        uninstallFreeze();
+        released = {};
+        clearOutline(state.hoverOutline);
+        clearOutline(state.selOutline);
+        try {
+          document.querySelectorAll("body > div").forEach(function(n) {
+            if (n.style && n.style.position === "fixed" && n.style.outline && String(n.style.zIndex) === "2147483646") {
+              if (n.parentNode) n.parentNode.removeChild(n);
+            }
+          });
+        } catch (e) {
+        }
+        state.hovered = null;
+        state.selected = null;
+        document.body.style.cursor = "";
+        try {
+          simulateHoverOff();
+        } catch (e) {
+        }
+      },
+      simulateHover,
+      // 真实派发 mouseover/mouseenter（页面 JS hover 逻辑生效并持久保持）
+      simulateHoverOff,
+      fileLocation,
+      serialize,
+      detectFrameworks,
+      // Turbopack chunk 定位 → 源文件（sourcemap，异步）：launcher 候选/点选补全真实源文件路径用（resolveFrameworkLoc 同源）
+      resolveChunkSource,
+      // 组件名 → 源文件（预算耗尽时无 chunk 定位，按组件名扫 sourcemap sourcesContent 找文件；异步，懒构建缓存）
+      resolveComponentFile,
+      // 组件函数 toString → 定位 chunk 行 → sourcemap 精确源文件+行（预算耗尽兜底拿真实行号）
+      resolveFnLine,
+      setOptions: applyOptions,
+      // 页面调速/拦截选项（动画减速/事件拦截/定时器慢放）
+      resumeHover: function() {
+        state.engaged = false;
+        return { engaged: state.engaged };
+      },
+      pauseHover: function() {
+        state.engaged = true;
+        clearOutline(state.hoverOutline);
+        state.hovered = null;
+        return { engaged: true };
+      },
+      applyProfile,
+      // 放行方案（工具条多态切换 / 调速面板管理）
+      // 当前选区载荷（AI 确认回传用）；__state 调试用——必须挂在 window.__dbg（此前误放 CDP.DOM 表导致
+      // ensureClientFresh 幂等检查 getSelectionPayload 失败 → 每次 enterInspector 重注入 → 旧 message 监听残留 →
+      // dbg_exec 被旧（空 state）client 先处理返回 null（自检⑤⑫ 失败根因）
+      getSelectionPayload: function() {
+        var el = state.selected || state.hovered;
+        return el ? aiPickPayload(el) : null;
+      },
+      __state: function() {
+        return { active: state.active, engaged: state.engaged, hasOver: true, hasClick: true };
+      },
+      // 本地缓冲暴露（方案 F-3：page_logs/page_network 工具通过 CDP Runtime.evaluate 按需拉取，不再实时上报）
+      __consoleRing: CONSOLE_RING,
+      __netRing: NET_RING
+    };
+    function writeEditable(el, text, replace) {
+      if (!el) return { ok: false, error: "no element", tag: null };
+      var value = String(text == null ? "" : text);
+      var isCE = el.isContentEditable || el.tagName !== "INPUT" && el.tagName !== "TEXTAREA" && el.tagName !== "SELECT" && el.hasAttribute && el.hasAttribute("contenteditable");
+      if (isCE) {
+        try {
+          el.focus();
+        } catch (e) {
+        }
+        try {
+          var sel = window.getSelection();
+          if (sel) {
+            var range = document.createRange();
+            range.selectNodeContents(el);
+            if (!replace) range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          }
+        } catch (e) {
+        }
+        var done = false;
+        try {
+          done = document.execCommand("insertText", false, value);
+        } catch (e) {
+        }
+        if (!done) {
+          try {
+            el.textContent = value;
+          } catch (e) {
+          }
+          try {
+            el.dispatchEvent(new InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
+          } catch (e) {
+            try {
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+            } catch (e2) {
+            }
+          }
+        }
+        return { ok: true, editable: true, value: el.innerText != null ? el.innerText : el.textContent || "" };
+      }
+      if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+        try {
+          el.focus();
+        } catch (e) {
+        }
+        var proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+        var desc = Object.getOwnPropertyDescriptor(proto, "value");
+        try {
+          if (desc && desc.set) desc.set.call(el, value);
+          else el.value = value;
+        } catch (e) {
+          try {
+            el.value = value;
+          } catch (e2) {
+          }
+        }
+        try {
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+        } catch (e) {
+        }
+        try {
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch (e) {
+        }
+        return { ok: true, editable: false, value: el.value };
+      }
+      if (el.tagName === "SELECT") {
+        try {
+          el.value = value;
+        } catch (e) {
+        }
+        try {
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        } catch (e) {
+        }
+        return { ok: true, editable: false, value: el.value };
+      }
+      return { ok: false, error: "not an editable element（目标非 input/textarea/select/contenteditable）", tag: el.tagName || null };
+    }
+    var EXCLUDED_PROPS = {
+      constructor: 1,
+      "__proto__": 1,
+      "prototype": 1,
+      "innerHTML": 1,
+      "outerHTML": 1,
+      "hasOwnProperty": 1,
+      "isPrototypeOf": 1,
+      "propertyIsEnumerable": 1,
+      "toString": 1,
+      "valueOf": 1,
+      "toLocaleString": 1,
+      "onclick": 1,
+      "onmouseover": 1,
+      "onload": 1
+    };
+    var evalEnabled = true;
+    function resolveEl(args2) {
+      var el = null;
+      if (args2 && args2.selector) {
+        try {
+          el = document.querySelector(args2.selector);
+        } catch (e) {
+        }
+      }
+      if (!el && args2 && args2.xpath) {
+        try {
+          var r = document.evaluate(args2.xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+          el = r.singleNodeValue;
+        } catch (e) {
+        }
+      }
+      if (!el) el = state.selected || state.hovered || null;
+      return el && isDbgEl(el) ? null : el;
+    }
+    function treeSummary(node, depth) {
+      if (!node || depth <= 0) return null;
+      if (isDbgEl(node)) return null;
+      var out2 = {
+        tag: node.tagName ? node.tagName.toLowerCase() : "#" + node.nodeName,
+        id: node.id || void 0,
+        cls: node.className && typeof node.className === "string" ? node.className.slice(0, 60) : void 0
+      };
+      if (node.children && node.children.length) {
+        out2.children = [];
+        for (var i = 0; i < node.children.length && i < 15; i++) {
+          var c = treeSummary(node.children[i], depth - 1);
+          if (c) out2.children.push(c);
+        }
+        if (node.children.length > 15) out2.children.push({ tag: "…+" + (node.children.length - 15) });
+      }
+      return out2;
+    }
+    var CDP = {
+      DOM: {
+        querySelector: function(args2) {
+          var el = resolveEl(args2);
+          return el ? serialize(el, { attrs: 1, xpath: 1, text: 1, computed: 1, framework: 1 }) : null;
+        },
+        querySelectorAll: function(args2) {
+          if (!args2 || !args2.selector) return [];
+          var els = document.querySelectorAll(args2.selector);
+          var out2 = [];
+          for (var i = 0; i < els.length && out2.length < 20; i++) {
+            if (isDbgEl(els[i])) continue;
+            out2.push({ tag: els[i].tagName.toLowerCase(), id: els[i].id, cls: els[i].className && String(els[i].className).slice(0, 60), text: cleanTextOf(els[i], 80), xpath: xpathOf(els[i]) });
+          }
+          return out2;
+        },
+        getBoxModel: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return null;
+          var r = el.getBoundingClientRect();
+          var cs = getComputedStyle(el);
+          return { content: [r.x, r.y, r.width, r.height], right: r.right, bottom: r.bottom, padding: cs.padding, margin: cs.margin, borderWidth: cs.borderWidth, scroll: { x: el.scrollLeft, y: el.scrollTop } };
+        },
+        getOuterHTML: function(args2) {
+          var el = resolveEl(args2);
+          return el ? el.outerHTML.slice(0, 8e3) : null;
+        },
+        getInnerText: function(args2) {
+          var el = resolveEl(args2);
+          return el ? cleanTextOf(el, 2e3) : null;
+        },
+        removeNode: function(args2) {
+          var el = resolveEl(args2);
+          if (!el || !el.parentNode) return false;
+          el.remove();
+          return true;
+        },
+        setAttribute: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return false;
+          el.setAttribute(args2.name, String(args2.value));
+          return true;
+        },
+        removeAttribute: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return false;
+          el.removeAttribute(args2.name);
+          return true;
+        },
+        clearSelection: function() {
+          state.selected = null;
+          clearOutline(state.selOutline);
+          return true;
+        },
+        getDocument: function(args2) {
+          return treeSummary(document.body, args2 && args2.depth || 3);
+        }
+      },
+      CSS: {
+        getComputedStyle: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return null;
+          var cs = getComputedStyle(el);
+          var out2 = {};
+          var props = args2 && args2.properties ? String(args2.properties).split(",") : CSS_WHITELIST;
+          props.forEach(function(k) {
+            if (cs[k] !== void 0) out2[k] = String(cs[k]).slice(0, 300);
+          });
+          return out2;
+        },
+        getMatchedRules: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return [];
+          var out2 = [];
+          for (var i = 0; i < document.styleSheets.length; i++) {
+            var ss = document.styleSheets[i];
+            var rules;
+            try {
+              rules = ss.cssRules || ss.rules;
+            } catch (e) {
+              continue;
+            }
+            if (!rules) continue;
+            for (var j = 0; j < rules.length; j++) {
+              var rule = rules[j];
+              if (rule.selectorText && el.matches) {
+                var matched = false;
+                try {
+                  matched = el.matches(rule.selectorText);
+                } catch (e) {
+                }
+                if (matched) {
+                  out2.push({ selector: rule.selectorText, cssText: rule.style ? rule.style.cssText.slice(0, 500) : "", source: (ss.href || "inline").split("/").pop() });
+                }
+              }
+            }
+          }
+          return out2.slice(0, 20);
+        },
+        setStyle: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return false;
+          var styles = args2 && args2.styles || {};
+          Object.keys(styles).forEach(function(k) {
+            el.style[k] = String(styles[k]);
+          });
+          return serialize(el, { computed: 1 }).computed;
+        },
+        listStyleSheets: function() {
+          var out2 = [];
+          for (var i = 0; i < document.styleSheets.length; i++) {
+            var ss = document.styleSheets[i];
+            var count = -1;
+            try {
+              count = ss.cssRules ? ss.cssRules.length : 0;
+            } catch (e) {
+            }
+            out2.push({ index: i, href: ss.href || "(inline)", rules: count });
+          }
+          return out2;
+        },
+        getStyleSheetText: function(args2) {
+          try {
+            var ss = document.styleSheets[args2.index];
+            if (!ss || !ss.cssRules) return null;
+            var parts = [];
+            for (var i = 0; i < ss.cssRules.length; i++) parts.push(ss.cssRules[i].cssText);
+            return parts.join("\\n").slice(0, 8e3);
+          } catch (e) {
+            return null;
+          }
+        }
+      },
+      Input: {
+        click: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return false;
+          el.click();
+          return true;
+        },
+        hover: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return false;
+          el.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+          el.dispatchEvent(new MouseEvent("mouseenter", { bubbles: false }));
+          return true;
+        },
+        focus: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return false;
+          el.focus();
+          return true;
+        },
+        blur: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return false;
+          el.blur();
+          return true;
+        },
+        setValue: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return { ok: false, error: "元素未定位" };
+          var r = writeEditable(el, args2 && args2.value !== void 0 ? args2.value : "", true);
+          return { ok: r.ok, editable: !!r.editable, value: r.value, error: r.error };
+        },
+        type: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return { ok: false, error: "元素未定位" };
+          var text = args2 && args2.text !== void 0 ? String(args2.text) : "";
+          var r = writeEditable(el, text, true);
+          return { ok: r.ok, editable: !!r.editable, value: r.value, len: text.length, error: r.error };
+        },
+        // 对齐 CDP Input.insertText：在光标处插入文本（不替换已有内容）——React 受控/富文本通用
+        insertText: function(args2) {
+          var el = resolveEl(args2) || document.activeElement;
+          var text = args2 && args2.text !== void 0 ? String(args2.text) : "";
+          var r = writeEditable(el, text, false);
+          return { ok: r.ok, editable: !!r.editable, value: r.value, error: r.error };
+        },
+        keyPress: function(args2) {
+          var el = resolveEl(args2) || document.activeElement;
+          if (!el) return false;
+          var opts = { key: args2.key || "Enter", code: args2.code || "", bubbles: true, cancelable: true };
+          el.dispatchEvent(new KeyboardEvent("keydown", opts));
+          el.dispatchEvent(new KeyboardEvent("keyup", opts));
+          return true;
+        }
+      },
+      Page: {
+        getMeta: function() {
+          return { url: topUrl().slice(0, 2e3), title: document.title, readyState: document.readyState, referrer: document.referrer.slice(0, 500), ua: navigator.userAgent.slice(0, 200) };
+        },
+        scrollTo: function(args2) {
+          window.scrollTo({ top: args2 && args2.top || 0, left: args2 && args2.left || 0, behavior: args2 && args2.behavior || "auto" });
+          return { top: window.scrollY, left: window.scrollX };
+        },
+        scrollIntoView: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return false;
+          el.scrollIntoView({ block: "center", inline: "nearest", behavior: args2 && args2.smooth ? "smooth" : "auto" });
+          return true;
+        },
+        reload: function() {
+          location.reload();
+          return true;
+        },
+        navigate: function(args2) {
+          if (args2 && args2.url) location.href = args2.url;
+          return true;
+        },
+        // 截屏：直连路径（无手势卡）兜底——有 activation 就能成（Chrome 桌面），
+        // 否则浏览器拒绝 → 提示走 AI 窗手势卡路径（launcher danger.js 同名实现会弹用户确认）
+        captureScreenshot: function() {
+          return Promise.resolve({ error: "Page.captureScreenshot 已由 launcher 截屏卡接管（意图说明→调整页面→预览确认），此直连路径已停用" });
+        },
+        // 页面 frame 树（iframe 嵌套）：同域可读 title/url/readyState；跨域仅 iframe 元素属性（src/name）
+        getFrameTree: function() {
+          function walk(win, path) {
+            var doc = null, frames = [];
+            try {
+              doc = win.document;
+            } catch (e) {
+            }
+            if (doc) {
+              var ifr = doc.querySelectorAll("iframe, frame");
+              for (var i = 0; i < ifr.length; i++) {
+                var f = ifr[i];
+                var info = { id: path + "/" + i, name: f.name || "", src: f.src || f.getAttribute("src") || "", title: f.title || "" };
+                try {
+                  info.sameOrigin = true;
+                  info.url = f.contentWindow.location.href.slice(0, 500);
+                  try {
+                    info.title = f.contentDocument.title;
+                  } catch (e2) {
+                  }
+                  try {
+                    info.readyState = f.contentDocument.readyState;
+                  } catch (e2) {
+                  }
+                  var sub = walk(f.contentWindow, info.id);
+                  if (sub && sub.length) info.childFrames = sub;
+                } catch (e2) {
+                  info.sameOrigin = false;
+                }
+                frames.push(info);
+              }
+            }
+            return frames;
+          }
+          return { frameTree: { id: "frame", url: topUrl().slice(0, 500), title: document.title, readyState: document.readyState, sameOrigin: true, childFrames: walk(window, "frame") } };
+        }
+      },
+      Runtime: {
+        evaluate: function(args) {
+          if (!evalEnabled) return { error: "Runtime.evaluate 已关闭：面板里可重新开启（Runtime.setEvalEnabled {enabled:true}）" };
+          var targetWin = null;
+          if (args && args.contextId) {
+            var _ifrs = document.querySelectorAll("iframe, frame");
+            var _idx = Number(args.contextId) - 1;
+            if (_idx < 0 || _idx >= _ifrs.length) return { error: "contextId " + args.contextId + " 越界（共 " + _ifrs.length + " 个 iframe；contextId 从 1 开始）" };
+            targetWin = _ifrs[_idx].contentWindow;
+          }
+          try {
+            var val = targetWin ? targetWin.eval(String(args.expression)) : eval(String(args.expression));
+            if (args && args.awaitPromise && val && typeof val.then === "function") {
+              return val.then(function(v) {
+                var out2 = { type: typeof v, value: typeof v === "string" ? stripAitiText(v).slice(0, 2e3) : v, awaited: true };
+                post({ type: "dbg_eval_log", payload: { expression: String(args.expression).slice(0, 200), result: JSON.stringify(out2).slice(0, 300), ts: (/* @__PURE__ */ new Date()).toISOString() } });
+                return out2;
+              }).catch(function(e) {
+                return { error: String(e && e.message || e) };
+              });
+            }
+            if (val && typeof val.then === "function") {
+              return { type: "promise", isPromise: true, value: "Promise（如需最终结果传 awaitPromise: true）" };
+            }
+            var out = { type: typeof val, value: typeof val === "string" ? stripAitiText(val).slice(0, 2e3) : val };
+            post({ type: "dbg_eval_log", payload: { expression: String(args.expression).slice(0, 200), result: JSON.stringify(out).slice(0, 300), ts: (/* @__PURE__ */ new Date()).toISOString() } });
+            return out;
+          } catch (e) {
+            return { error: String(e && e.message || e) };
+          }
+        },
+        setEvalEnabled: function(args2) {
+          evalEnabled = !!(args2 && args2.enabled);
+          return { evalEnabled };
+        },
+        fetch: function(args2) {
+          if (!args2 || !args2.url) return { error: "需要 url" };
+          var url = args2.url, init = args2.init || {};
+          return window.fetch(url, init).then(function(res) {
+            return res.text().then(function(text) {
+              return { status: res.status, ok: res.ok, url: String(res.url || url).slice(0, 300), text: text.slice(0, 2e3) };
+            });
+          }).catch(function(e) {
+            return { error: String(e && e.message || e) };
+          });
+        },
+        getProperties: function(args2) {
+          var el = resolveEl(args2);
+          if (!el) return null;
+          var out2 = {};
+          var names = Object.getOwnPropertyNames(el);
+          for (var i = 0; i < names.length && i < 30; i++) {
+            var n = names[i];
+            if (EXCLUDED_PROPS[n]) continue;
+            try {
+              var v = el[n];
+              out2[n] = typeof v === "function" ? "[function]" : typeof v === "object" && v !== null ? "[object]" : String(v).slice(0, 100);
+            } catch (e) {
+              out2[n] = "[unreadable]";
+            }
+          }
+          return out2;
+        }
+      },
+      Storage: {
+        localStorageGet: function(args2) {
+          try {
+            return { key: args2.key, value: localStorage.getItem(args2.key) };
+          } catch (e) {
+            return { error: String(e.message) };
+          }
+        },
+        localStorageSet: function(args2) {
+          try {
+            localStorage.setItem(args2.key, String(args2.value));
+            return true;
+          } catch (e) {
+            return { error: String(e.message) };
+          }
+        },
+        localStorageClear: function() {
+          try {
+            localStorage.clear();
+            return true;
+          } catch (e) {
+            return { error: String(e.message) };
+          }
+        },
+        sessionStorageGet: function(args2) {
+          try {
+            return { key: args2.key, value: sessionStorage.getItem(args2.key) };
+          } catch (e) {
+            return { error: String(e.message) };
+          }
+        },
+        cookies: function() {
+          try {
+            return document.cookie.slice(0, 2e3);
+          } catch (e) {
+            return "";
+          }
+        }
+      },
+      Performance: {
+        getEntries: function(args2) {
+          var n = args2 && args2.count ? args2.count : 10;
+          try {
+            return performance.getEntriesByType("resource").slice(-n).map(function(e) {
+              return { name: e.name.slice(0, 200), type: e.initiatorType, duration: Math.round(e.duration), size: e.transferSize || e.encodedBodySize || 0 };
+            });
+          } catch (err) {
+            return [];
+          }
+        }
+      },
+      // 浏览器受限操作（剪贴板/下载/弹窗/全屏/播放）：程序化执行会被浏览器拦截，需用户真实点击（手势桥）
+      Browser: {
+        copy: function(args2) {
+          return navigator.clipboard.writeText(String(args2.text || "")).then(
+            function() {
+              return { copied: true };
+            },
+            function(e) {
+              return { error: "剪贴板被浏览器拦截（需要用户手势）：" + String(e && e.message || e) };
+            }
+          );
+        },
+        download: function(args2) {
+          var a = document.createElement("a");
+          a.href = args2.dataUrl || "data:text/plain," + encodeURIComponent(String(args2.text || ""));
+          a.download = args2.name || "dbg-download.txt";
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          return { downloaded: a.download };
+        },
+        openWindow: function(args2) {
+          var w = window.open(args2.url || "about:blank", "_blank");
+          return w ? { opened: true } : { error: "弹窗被浏览器拦截（需要用户手势）" };
+        },
+        // 以下三个与宿主手势卡同款（launcher danger.js）：这里仅直连兑底——无 activation 大多被拒，
+        // 报错文本引导重试（经 AI 窗转发的路径会弹确认卡，用户点确认后执行）
+        paste: function() {
+          if (!(navigator.clipboard && navigator.clipboard.readText)) return Promise.resolve({ error: "当前浏览器不支持剪贴板读取" });
+          return navigator.clipboard.readText().then(
+            function(t) {
+              return { text: String(t || "").slice(0, 1e5) };
+            },
+            function(e) {
+              return { error: "剪贴板读取被拒（无用户手势/未授权）：" + String(e && e.message || e) + "——重试（经 AI 窗路径会弹确认卡）" };
+            }
+          );
+        },
+        pickFile: function() {
+          return Promise.resolve({ error: "文件选择器需用户手势（直连路径不可用）——重试（经 AI 窗路径会弹确认卡，用户点确认后弹选择器）" });
+        },
+        share: function() {
+          if (!navigator.share) return Promise.resolve({ error: "当前浏览器不支持 Web Share" });
+          return Promise.resolve({ error: "分享需用户手势（直连路径不可用）——重试（经 AI 窗路径会弹确认卡）" });
+        },
+        fullscreen: function(args2) {
+          var el = resolveEl(args2) || document.documentElement;
+          var p = el.requestFullscreen && el.requestFullscreen();
+          if (!p) return { error: "不支持全屏" };
+          return p.then(function() {
+            return { fullscreen: true };
+          }, function(e) {
+            return { error: "全屏被浏览器拦截：" + String(e && e.message || e) };
+          });
+        },
+        play: function(args2) {
+          var el = resolveEl(args2);
+          if (!el || !el.play) return { error: "未找到可播放元素" };
+          return el.play().then(
+            function() {
+              return { playing: true };
+            },
+            function(e) {
+              return { error: "自动播放被浏览器拦截（需要用户手势）：" + String(e && e.message || e) };
+            }
+          );
+        }
+      }
+    };
+    var CMD_ALIASES = {
+      getInfo: "DOM.querySelector",
+      highlight: "DOM.querySelector",
+      scrollIntoView: "Page.scrollIntoView"
+    };
+    var NAV_KEYS = {
+      ArrowUp: "topN",
+      ArrowDown: "bottomN",
+      ArrowLeft: "leftN",
+      ArrowRight: "rightN",
+      PageUp: "prev",
+      PageDown: "next",
+      Home: "first",
+      End: "last",
+      Backspace: "up",
+      Delete: "up",
+      Enter: "downOrNext"
+    };
+    window.addEventListener("keydown", function(e) {
+      if (!state.active) return;
+      if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+      var k = e.key;
+      if (k === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (aiPick) post({ type: "dbg_ai_escape", payload: {} });
+        else post({ type: "dbg_inspect_escape", payload: {} });
+        return;
+      }
+      var dir = NAV_KEYS[k];
+      if (!dir) return;
+      if (!state.engaged && !state.hovered) return;
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      stepSelection(dir);
+      post({ type: "dbg_key_nav", payload: { dir } });
+    }, true);
+    window.addEventListener("message", function(e) {
+      var m = e.data;
+      if (!m || m.__dbg !== 1) return;
+      switch (m.type) {
+        case "dbg_enter_inspector":
+          window.__dbg.enterInspector(m.payload && m.payload.mode);
+          break;
+        case "dbg_exit_inspector":
+          window.__dbg.exitInspector();
+          break;
+        case "dbg_set_options":
+          applyOptions(m.payload && m.payload.opts || {});
+          break;
+        case "dbg_force_error":
+          forceError(m.payload && m.payload.kind);
+          break;
+        case "dbg_simulate_hover":
+          window.__dbg.simulateHover();
+          break;
+        case "dbg_simulate_hover_off":
+          window.__dbg.simulateHoverOff();
+          break;
+        case "dbg_passthrough_click":
+          passClick = true;
+          window.removeEventListener("click", freezeEvent, true);
+          setTimeout(function() {
+            if (state.active) window.addEventListener("click", freezeEvent, true);
+          }, 600);
+          break;
+        case "dbg_release_events":
+          releaseEvents(m.payload && m.payload.categories || [], m.payload && m.payload.durationMs || 0);
+          break;
+        case "dbg_lock_events":
+          lockEvents();
+          break;
+        case "dbg_toggle_event":
+          toggleEvent(m.payload && m.payload.category, m.payload && m.payload.enabled);
+          break;
+        case "dbg_resume_hover":
+          window.__dbg.resumeHover();
+          break;
+        case "dbg_ai_pick":
+          aiPick = !!(m.payload && m.payload.active);
+          break;
+        case "dbg_pause_hover":
+          window.__dbg.pauseHover();
+          break;
+        case "dbg_set_profile":
+          applyProfile(m.payload && m.payload.profile);
+          break;
+        case "dbg_cancel": {
+          state.selected = null;
+          state.engaged = false;
+          state.hovered = null;
+          clearOutline(state.selOutline);
+          clearOutline(state.hoverOutline);
+          post({ type: "dbg_selection_cancelled", payload: {} });
+          break;
+        }
+        case "dbg_step":
+          stepSelection(m.payload && m.payload.dir);
+          break;
+        case "dbg_select":
+          selectBySelector(m.payload && m.payload.selector);
+          break;
+        case "dbg_ai_confirm": {
+          var aiEl = state.selected || state.hovered;
+          if (aiEl) {
+            var _ap = aiPickPayload(aiEl);
+            if (_ap && _ap.framework && (_ap.framework.react19Chunk || _ap.framework.usedAtChunk)) {
+              resolveFrameworkLoc(_ap.framework).then(function(fw) {
+                if (fw && _ap) {
+                  _ap.framework = fw;
+                  _ap.file = fw.file;
+                  _ap.line = fw.line;
+                  _ap.usedAt = fw.usedAt;
+                }
+                post({ type: "dbg_ai_picked", payload: _ap });
+              });
+            } else {
+              post({ type: "dbg_ai_picked", payload: _ap });
+            }
+          }
+          state.engaged = false;
+          clearOutline(state.selOutline);
+          state.hovered = null;
+          setHovered(aiEl);
+          break;
+        }
+        case "dbg_key_nav": {
+          if (m.payload && m.payload.dir) {
+            addMsg("sys", "↩ 导航: " + m.payload.dir);
+          }
+          break;
+        }
+        case "dbg_current_selector": {
+          var curEl = state.selected || state.hovered;
+          if (curEl) post({ type: "dbg_current_selector", payload: { selector: cssSelectorOf(curEl), xpath: xpathOf(curEl) } });
+          break;
+        }
+        case "dbg_confirm":
+          confirmSelection();
+          break;
+        case "dbg_exec": {
+          var p = m.payload || {};
+          var done = function(ok, result) {
+            post({ type: "dbg_exec_result", payload: { requestId: p.requestId, ok, result } });
+          };
+          try {
+            var cmd = CMD_ALIASES[p.cmd] || p.cmd;
+            var dot = String(cmd).indexOf(".");
+            var domain = dot > 0 ? cmd.slice(0, dot) : "";
+            var method = dot > 0 ? cmd.slice(dot + 1) : "";
+            var handler = CDP[domain] && CDP[domain][method];
+            if (!handler) {
+              done(false, { error: "unknown command: " + p.cmd + "（可用域：DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser；裸 eval 默认禁用）" });
+            } else {
+              Promise.resolve(handler(p.args || {})).then(
+                function(r) {
+                  done(true, r);
+                },
+                function(err) {
+                  done(false, { error: String(err && err.message || err) });
+                }
+              );
+            }
+          } catch (err) {
+            done(false, { error: String(err && err.message || err) });
+          }
+          break;
+        }
+      }
+    });
+    post({ type: "dbg_iframe_ready", payload: { frameworks: detectFrameworks(), url: topUrl().slice(0, 200) } });
+    installErrorHook();
+    installConsoleHook();
+    installNetObserver();
+  })();
+})();
+`;
+
+  // packages/aiti-devtools-inject/src/launcher/viewport.js
+  function getPhysViewport() {
+    var scale = 1, hasVV = false;
+    try {
+      hasVV = !!window.visualViewport && window.visualViewport.scale > 0;
+      if (hasVV) scale = window.visualViewport.scale;
+      if (!isFinite(scale) || scale <= 0) {
+        hasVV = false;
+        scale = 1;
+      }
+    } catch (e) {
+      hasVV = false;
+      scale = 1;
+    }
+    var w = window.innerWidth * scale;
+    var h = window.innerHeight * scale;
+    try {
+      var scr = getPhysScreen();
+      var sw = scr.w, sh = scr.h;
+      if (sw > 0 && window.innerWidth > sw + 50) {
+        var sBase = sw > 0 && window.innerWidth > 0 ? sw / window.innerWidth : 1;
+        var syBase = window.innerHeight > 0 && sh > 0 ? sh / window.innerHeight : sBase;
+        scale = sBase;
+        var scaleY = syBase;
+        try {
+          var vvs = window.visualViewport && window.visualViewport.scale;
+          if (hasVV && isFinite(vvs) && vvs > 0) {
+            var pinch = vvs / sBase;
+            scale = vvs;
+            scaleY = syBase * pinch;
+          }
+        } catch (e) {
+        }
+        if (!isFinite(scale) || scale <= 0) scale = sBase;
+        if (!isFinite(scaleY) || scaleY <= 0) scaleY = scale;
+        w = sw;
+        h = sh;
+        return { w, h, scale, scaleY };
+      }
+    } catch (e) {
+    }
+    return { w, h, scale, scaleY: scale };
+  }
+  function detectCoordSemantics(el2, clientX) {
+    try {
+      var vp = getPhysViewport();
+      var r = el2.getBoundingClientRect();
+      var dLayout = Math.abs(clientX - r.left);
+      var dVisual = Math.abs(clientX - r.left * vp.scale);
+      return dLayout < dVisual;
+    } catch (e) {
+      return false;
+    }
+  }
+  var _fixedVisual = (function() {
+    var ua = String(navigator.userAgent || "");
+    var pf = String(navigator.platform || "");
+    return /iPhone|iPad|iPod/i.test(ua) && (/iPhone|iPad|iPod/i.test(pf) || /MacIntel/i.test(pf));
+  })();
+  function positionPhysical(el2, visX, visY, scale, scaleY) {
+    if (!isFinite(visX)) visX = 0;
+    if (!isFinite(visY)) visY = 0;
+    if (!isFinite(scale) || scale <= 0) scale = 1;
+    if (!isFinite(scaleY) || scaleY <= 0) scaleY = scale;
+    if (_fixedVisual) {
+      el2.style.transform = "";
+      el2.style.transformOrigin = "";
+      el2.style.left = visX + "px";
+      el2.style.top = visY + "px";
+      return;
+    }
+    var offX = 0, offY = 0;
+    try {
+      var vv = window.visualViewport;
+      if (vv) {
+        offX = vv.offsetLeft || 0;
+        offY = vv.offsetTop || 0;
+      }
+    } catch (e) {
+    }
+    if (Math.abs(scale - 1) < 0.01 && offX === 0 && offY === 0 && Math.abs(scaleY - 1) < 0.01) {
+      el2.style.transform = "";
+      el2.style.left = visX + "px";
+      el2.style.top = visY + "px";
+    } else {
+      el2.style.transform = "scale(" + 1 / scale + ")";
+      el2.style.transformOrigin = "top left";
+      el2.style.left = visX / scale + offX + "px";
+      el2.style.top = visY / scaleY + offY + "px";
+    }
+  }
+  function visToCss(visW, visH, scale, scaleY) {
+    if (!isFinite(scale) || scale <= 0) scale = 1;
+    if (!isFinite(scaleY) || scaleY <= 0) scaleY = scale;
+    return { w: visW, h: _fixedVisual ? visH : visH * scale / scaleY };
+  }
+  function capVisW(vp, margin) {
+    return Math.max(160, (vp.w > 0 ? vp.w : window.innerWidth) - margin);
+  }
+  function placePhysBox(el2, visX, visY, visW, visH, scale, scaleY) {
+    var c = visToCss(visW, visH, scale, scaleY);
+    el2.style.width = c.w + "px";
+    el2.style.height = c.h + "px";
+    positionPhysical(el2, visX, visY, scale, scaleY);
+  }
+  function placePhysPanel(el2, opts) {
+    opts = opts || {};
+    var vp = getPhysViewport();
+    var visW = opts.visW != null ? opts.visW : capVisW(vp, 0);
+    var _vvH = window.visualViewport && window.visualViewport.height || window.innerHeight;
+    var visVh = _fixedVisual ? _vvH : Math.min(window.innerHeight * vp.scaleY, Math.max(0, _vvH) * vp.scaleY);
+    var visH = opts.visH;
+    if (visH == null) {
+      el2.style.maxWidth = visW + "px";
+      el2.style.width = "";
+      el2.style.height = "";
+      var cssH = el2.scrollHeight || el2.offsetHeight || 60;
+      visH = _fixedVisual ? cssH : cssH * vp.scaleY / vp.scale;
+    }
+    visH = Math.min(
+      Math.max(visH, opts.minH != null ? opts.minH : Math.round(visVh * 0.3)),
+      opts.maxH != null ? opts.maxH : Math.round(visVh)
+    );
+    var dock = opts.dock || "bottom";
+    var gap = opts.gap != null ? opts.gap : 0;
+    var visY = dock === "top" ? Math.max(0, gap) : Math.max(0, Math.round(visVh - visH - gap - (opts.offsetY || 0)));
+    var visX = opts.visX != null ? opts.visX : Math.max(0, Math.round((vp.w - visW) / 2));
+    el2.style.minWidth = "0";
+    el2.style.maxWidth = opts.maxWidth != null ? opts.maxWidth : "none";
+    el2.style.maxHeight = opts.maxHeight != null ? opts.maxHeight : "none";
+    el2.style.overflowY = opts.overflowY != null ? opts.overflowY : "auto";
+    if (opts.border !== void 0) el2.style.border = opts.border;
+    if (opts.borderRadius !== void 0) el2.style.borderRadius = opts.borderRadius;
+    el2.style.left = "auto";
+    el2.style.right = "auto";
+    el2.style.bottom = "auto";
+    el2.style.top = "auto";
+    el2.style.transform = "";
+    placePhysBox(el2, visX, visY, visW, visH, vp.scale, vp.scaleY);
+    if (opts.keyboard !== false) _trackPhysPanel(el2, opts);
+    return { visX, visY, visW, visH };
+  }
+  function getPhysScreen() {
+    try {
+      if (window.screen && window.screen.width) {
+        var dpr = window.devicePixelRatio || 1;
+        var sw = window.screen.width, sh = window.screen.height;
+        var isPhone = null;
+        try {
+          var uad = navigator.userAgentData;
+          if (uad && typeof uad.mobile === "boolean") isPhone = uad.mobile;
+        } catch (e) {
+        }
+        var needFix = false;
+        if (sw >= 768 && dpr >= 1 && isPhone !== false) {
+          if (window.innerWidth > 0 && sw > window.innerWidth + 50 && sw > window.innerWidth * 1.25) needFix = true;
+          else {
+            var cssLike = 0;
+            if (window.outerWidth && window.outerWidth > 0) cssLike = window.outerWidth;
+            else if (window.screen.availWidth && window.screen.availWidth > 0) cssLike = window.screen.availWidth;
+            if (cssLike > 0) {
+              if (sw / cssLike < 1.05) needFix = false;
+              else needFix = sw / cssLike >= 1.4;
+            } else if (isPhone === true || isMobileUA()) needFix = sw / dpr < 768;
+          }
+        }
+        if (needFix) {
+          sw = sw / dpr;
+          sh = sh / dpr;
+        }
+        return { w: sw, h: sh, dpr };
+      }
+    } catch (e) {
+    }
+    return { w: window.innerWidth, h: window.innerHeight, dpr: window.devicePixelRatio || 1 };
+  }
+  var _isMobileUA = null;
+  function isMobileUA() {
+    if (_isMobileUA === null) {
+      try {
+        var uad = navigator.userAgentData;
+        if (uad && typeof uad.mobile === "boolean") {
+          _isMobileUA = uad.mobile;
+        } else {
+          var ua = String(navigator.userAgent || "");
+          _isMobileUA = /Mobile|Android|iPhone|iPod|Windows Phone|webOS|IEMobile|Silk/i.test(ua);
+        }
+      } catch (e) {
+        _isMobileUA = false;
+      }
+    }
+    return _isMobileUA;
+  }
+  function detectScreenMode() {
+    var scr = getPhysScreen();
+    var vp = getPhysViewport();
+    var d = scr.w;
+    return {
+      small: d < 768,
+      tiny: d < 480,
+      deviceCssW: Math.round(d),
+      screenW: Math.round(scr.w),
+      screenH: Math.round(scr.h),
+      dpr: scr.dpr,
+      vpW: Math.round(vp.w),
+      vpH: Math.round(vp.h),
+      scale: vp.scale,
+      mobileUA: isMobileUA()
+    };
+  }
+  function isTouchDevice() {
+    return "ontouchstart" in window || navigator.maxTouchPoints > 0;
+  }
+  function isSmallScreen() {
+    return detectScreenMode().small || isTouchDevice();
+  }
+  function isTouchCompact() {
+    return isTouchDevice() || detectScreenMode().tiny;
+  }
+  var _physPanels = /* @__PURE__ */ new Set();
+  var _vvWatchInstalled = false;
+  function _trackPhysPanel(el2, opts) {
+    if (!el2) return;
+    var found = false;
+    _physPanels.forEach(function(t) {
+      if (t.el === el2) {
+        t.opts = opts;
+        found = true;
+      }
+    });
+    if (!found) _physPanels.add({ el: el2, opts });
+    _installVvWatch();
+  }
+  function _installVvWatch() {
+    if (_vvWatchInstalled || !window.visualViewport) return;
+    _vvWatchInstalled = true;
+    var timer = null;
+    window.visualViewport.addEventListener("resize", function() {
+      if (timer) return;
+      timer = setTimeout(function() {
+        timer = null;
+        _physPanels.forEach(function(t) {
+          try {
+            if (!t.el || !t.el.isConnected) {
+              _physPanels.delete(t);
+              return;
+            }
+            placePhysPanel(t.el, t.opts);
+          } catch (e) {
+          }
+        });
+      }, 60);
+    });
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/constants.js
+  var DANGER_COMMANDS = {
+    "DOM.removeNode": "删除页面元素（不可恢复）",
+    "Page.reload": "重载目标页面",
+    "Page.navigate": "导航到其他地址",
+    "Storage.localStorageClear": "清空 localStorage（持久数据）",
+    "Storage.localStorageSet": "写入 localStorage（持久数据）"
+  };
+  var GESTURE_COMMANDS = {
+    "Browser.copy": "复制到剪贴板",
+    "Browser.paste": "读取剪贴板内容（浏览器可能弹授权）",
+    "Browser.pickFile": "选择本地文件（弹文件选择器；小文件直接返回内容/小图片转 dataUrl）",
+    "Browser.share": "系统分享面板（标题/文本/链接）",
+    "Browser.download": "下载文件",
+    "Browser.openWindow": "打开新窗口",
+    "Browser.fullscreen": "进入全屏",
+    "Browser.play": "播放音视频（自动播放策略）"
+    // Page.captureScreenshot 不在 gesture/danger 列表：页面渲染截取无需用户手势、无危险副作用——
+    //   直接进 launcher 截屏卡流程（意图说明 → 可先调整页面 → 预览确认才发送）
+  };
+  var HOST_NAV_KEYS = {
+    ArrowUp: "topN",
+    ArrowDown: "bottomN",
+    ArrowLeft: "leftN",
+    ArrowRight: "rightN",
+    PageUp: "prev",
+    PageDown: "next",
+    Home: "first",
+    End: "last",
+    Backspace: "up",
+    Delete: "up",
+    Enter: "downOrNext"
+  };
+  var AI_WIN_DEFAULTS = { left: null, top: 18, right: 18, width: 400, height: 560, smallHeightPct: 0, popupLayout: "float" };
+  var DBG_STATE_KEY = "__dbg_state__";
+  var OPT_KEY = "__dbg_opts__";
+  var DEFAULT_RELEASE_KEY = "__dbg_default_release__";
+  var PROFILES_KEY = "__dbg_profiles__";
+  var AI_WIN_KEY = "__dbg_ai_win__";
+  var DBG_SHOW_KEY = "__dbg_show_debug__";
+
+  // packages/aiti-devtools-inject/src/launcher/storage.js
+  function lsGetJSON(key, fallback) {
+    try {
+      return JSON.parse(localStorage.getItem(key)) || fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+  function lsSetJSON(key, val) {
+    try {
+      localStorage.setItem(key, JSON.stringify(val));
+    } catch (e) {
+    }
+  }
+  function lsGetString(key, fallback) {
+    try {
+      return localStorage.getItem(key) || fallback;
+    } catch (e) {
+      return fallback;
+    }
+  }
+  function lsSetString(key, val) {
+    try {
+      localStorage.setItem(key, val);
+    } catch (e) {
+    }
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/drag.js
+  function makePointerDrag(opts) {
+    var handle = opts.handle;
+    var threshold = opts.threshold || 0;
+    var useRaf = !!opts.raf;
+    var active = null;
+    function applyMove(a, ev) {
+      try {
+        opts.onMove(ev, a.user, ev.clientX - a.sx, ev.clientY - a.sy, a.moved);
+      } catch (e) {
+      }
+    }
+    function finish(ev) {
+      if (!active) return true;
+      var a = active;
+      active = null;
+      if (a.frame) {
+        cancelAnimationFrame(a.frame);
+        a.frame = null;
+        if (a.lastEv && a.moved) applyMove(a, a.lastEv);
+      }
+      try {
+        if (opts.onEnd) opts.onEnd(ev, a.user, a.moved);
+      } catch (e) {
+      }
+      return true;
+    }
+    handle.addEventListener("pointerdown", function(e) {
+      if (e.button !== void 0 && e.button !== 0) return;
+      if (active) return;
+      if (opts.filter && !opts.filter(e)) return;
+      var user = opts.onStart ? opts.onStart(e) : {};
+      if (user === false) return;
+      active = { pid: e.pointerId, sx: e.clientX, sy: e.clientY, user: user == null ? {} : user, moved: threshold <= 0, capped: false, frame: null, lastEv: null };
+      if (opts.capture === "now") {
+        try {
+          handle.setPointerCapture(e.pointerId);
+        } catch (err) {
+        }
+      }
+      if (opts.preventStart) {
+        try {
+          e.preventDefault();
+        } catch (err) {
+        }
+      }
+    });
+    window.addEventListener("pointermove", function(ev) {
+      if (!active || active.pid != null && ev.pointerId !== active.pid) return;
+      if (!active.moved) {
+        if (Math.abs(ev.clientX - active.sx) + Math.abs(ev.clientY - active.sy) <= threshold) return;
+        active.moved = true;
+      }
+      try {
+        ev.preventDefault();
+      } catch (err) {
+      }
+      if (opts.capture === "late" && !active.capped) {
+        active.capped = true;
+        try {
+          handle.setPointerCapture(ev.pointerId);
+        } catch (err) {
+        }
+      }
+      if (!useRaf) {
+        active.lastEv = ev;
+        applyMove(active, ev);
+        return;
+      }
+      active.lastEv = ev;
+      if (active.frame) return;
+      active.frame = requestAnimationFrame(function() {
+        if (!active || !active.frame) return;
+        active.frame = null;
+        if (active.lastEv) applyMove(active, active.lastEv);
+      });
+    }, { passive: false });
+    window.addEventListener("pointerup", function(ev) {
+      if (active && (active.pid == null || ev.pointerId === active.pid)) finish(ev);
+    });
+    window.addEventListener("pointercancel", function(ev) {
+      if (active) finish(ev);
+    });
+    window.addEventListener("blur", function() {
+      finish(null);
+    });
+    handle.addEventListener("pointercancel", function(ev) {
+      if (active && (active.pid == null || ev.pointerId === active.pid)) finish(ev);
+    });
+    handle.addEventListener("lostpointercapture", function(ev) {
+      if (ev.target !== handle) return;
+      if (active && (active.pid == null || ev.pointerId === active.pid)) finish(ev);
+    });
+    return {
+      active: function() {
+        return !!active;
+      },
+      cancel: finish
+      // 主动结束（ESC 等）：与正常结束同链路（冲刷末帧 + onEnd），幂等，返回是否确有手势被结束
+    };
+  }
+  function makeCardDrag(handle, card) {
+    return makePointerDrag({
+      handle,
+      capture: "now",
+      raf: true,
+      preventStart: true,
+      filter: function(e) {
+        return !(e.target && e.target.tagName === "BUTTON");
+      },
+      onStart: function() {
+        var r = card.getBoundingClientRect();
+        card.style.position = "fixed";
+        card.style.left = r.left + "px";
+        card.style.top = r.top + "px";
+        card.style.margin = "0";
+        card.classList.add("dbg-dragging");
+        return { left: r.left, top: r.top };
+      },
+      onMove: function(ev, st, dx, dy) {
+        var nl = Math.min(Math.max(0, st.left + dx), Math.max(40, (window.innerWidth || 0) - 60));
+        var nt = Math.min(Math.max(0, st.top + dy), Math.max(24, (window.innerHeight || 0) - 40));
+        card.style.left = nl + "px";
+        card.style.top = nt + "px";
+      },
+      onEnd: function() {
+        card.classList.remove("dbg-dragging");
+      }
+    });
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/protocol.js
+  function dbgMsg(extra) {
+    return __spreadValues({ __dbg: 1 }, extra);
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/state.js
+  function initState(ctx) {
+    ctx.loadDbgState = function() {
+      return lsGetJSON(DBG_STATE_KEY, {});
+    };
+    ctx.saveDbgState = function() {
+      lsSetJSON(DBG_STATE_KEY, { aiOpen: ctx.aiOpen, aiWin: ctx.aiState ? { left: ctx.aiState.left, top: ctx.aiState.top, width: ctx.aiState.width, height: ctx.aiState.height } : null, targetUrl: ctx.url, profile: ctx.currentProfile, optState: ctx.optState });
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/fab.js
+  function initFab(ctx) {
+    ctx.persistFabPos = function() {
+      try {
+        if (ctx.fabPhys) localStorage.setItem("__dbg_fab__", JSON.stringify({ edge: ctx.fabEdge, x: Math.round(ctx.fabPhys.x), y: Math.round(ctx.fabPhys.y) }));
+      } catch (e) {
+      }
+    };
+    ctx.applyFabOrient = function() {
+      ctx.fab.classList.toggle("dbg-horz", ctx.fabEdge === "top" || ctx.fabEdge === "bottom");
+    };
+    ctx.applyFabResponsive = function() {
+      var m = detectScreenMode();
+      ctx.fab.classList.toggle("dbg-smal", m.small);
+      ctx.fab.classList.toggle("dbg-tiny", m.tiny);
+    };
+    ctx.applyFabTipDir = function() {
+      var btns = ctx.fab.querySelectorAll("button");
+      var dir;
+      if (ctx.fabEdge === "top" || ctx.fabEdge === "bottom") {
+        btns.forEach(function(b, i) {
+          b.setAttribute("data-tip", i === 0 ? "left" : "right");
+        });
+        return;
+      }
+      dir = ctx.fabEdge === "right" ? "left" : "right";
+      btns.forEach(function(b) {
+        b.setAttribute("data-tip", dir);
+      });
+    };
+    ctx.applyFabView = function() {
+      var vp = getPhysViewport();
+      if (!ctx.fabPhys) return;
+      ctx.applyFabResponsive();
+      ctx.applyFabTipDir();
+      ctx.fab.style.right = "auto";
+      ctx.fab.style.bottom = "auto";
+      positionPhysical(ctx.fab, ctx.fabPhys.x, ctx.fabPhys.y, vp.scale, vp.scaleY);
+    };
+    ctx.fabInScreen = function() {
+      try {
+        var r = ctx.fab.getBoundingClientRect();
+        var vp = getPhysViewport();
+        var vL = _fixedVisual ? r.left : r.left * vp.scale;
+        var vT = _fixedVisual ? r.top : r.top * vp.scaleY;
+        var vW = _fixedVisual ? r.width : r.width * vp.scale;
+        var vH = _fixedVisual ? r.height : r.height * vp.scaleY;
+        return !(vL < -2 || vT < -2 || vL + vW > vp.w + 2 || vT + vH > vp.h + 2);
+      } catch (e) {
+        return true;
+      }
+    };
+    ctx.resetFabDefault = function() {
+      var vp = getPhysViewport();
+      ctx.fabEdge = "right";
+      ctx.fabPhys = { x: 0, y: 0.12 * vp.h };
+      ctx.refreshFabAnchor();
+    };
+    ctx.restoreFabPos = function() {
+      var s = null;
+      try {
+        s = localStorage.getItem("__dbg_fab__");
+      } catch (e) {
+      }
+      if (s) {
+        try {
+          var d = JSON.parse(s);
+          if (d && d.edge) {
+            ctx.fabEdge = d.edge;
+            var vp = getPhysViewport();
+            var ratio = typeof d.ratio === "number" ? Math.min(1, Math.max(0, d.ratio)) : null;
+            if (ratio !== null) {
+              if (ctx.fabEdge === "top" || ctx.fabEdge === "bottom") ctx.fabPhys = { x: ratio * vp.w, y: 0 };
+              else ctx.fabPhys = { x: 0, y: ratio * vp.h };
+            } else {
+              ctx.fabPhys = { x: d.x || 0, y: d.y || 0 };
+            }
+            ctx.refreshFabAnchor();
+            requestAnimationFrame(function() {
+              var ok = ctx.fabInScreen();
+              if (!ok) ctx.resetFabDefault();
+              try {
+                var vp2 = getPhysViewport();
+                var rr = ctx.fab.getBoundingClientRect();
+                console.log("[dbg-fab]", JSON.stringify({
+                  scale: +vp2.scale.toFixed(3),
+                  vp: { w: Math.round(vp2.w), h: Math.round(vp2.h) },
+                  screen: { w: screen.width, h: screen.height },
+                  dpr: devicePixelRatio,
+                  inner: { w: innerWidth, h: innerHeight },
+                  stored: JSON.parse(localStorage.getItem("__dbg_fab__") || "null"),
+                  rect: { l: Math.round(rr.left), t: Math.round(rr.top), w: Math.round(rr.width), h: Math.round(rr.height) },
+                  inScreen: ok
+                }));
+              } catch (e) {
+              }
+            });
+            return;
+          }
+        } catch (e) {
+        }
+      }
+      ctx.resetFabDefault();
+    };
+    ctx.refreshFabAnchor = function() {
+      var vp = getPhysViewport();
+      ctx.applyFabOrient();
+      ctx.applyFabResponsive();
+      var w = ctx.fab.offsetWidth, h = ctx.fab.offsetHeight;
+      var x = ctx.fabPhys ? ctx.fabPhys.x : 0, y = ctx.fabPhys ? ctx.fabPhys.y : 0;
+      if (ctx.fabEdge === "left") x = 8;
+      else if (ctx.fabEdge === "right") x = vp.w - w - 8;
+      else if (ctx.fabEdge === "top") y = 8;
+      else if (ctx.fabEdge === "bottom") y = vp.h - h - 16;
+      x = Math.min(Math.max(8, x), Math.max(8, vp.w - w - 8));
+      y = Math.min(Math.max(8, y), Math.max(8, vp.h - h - 16));
+      ctx.fabPhys = { x, y };
+      ctx.applyFabView();
+    };
+    ctx.safeFabRefresh = function() {
+      try {
+        if (ctx.fabEdge && ctx.fabPhys) ctx.refreshFabAnchor();
+      } catch (e) {
+      }
+    };
+    ctx.fabErrNotify = function(n) {
+      try {
+        if (!ctx.aiBtn) return;
+        var badge = ctx.aiBtn.querySelector(".dbg-fab-err-badge");
+        if (!badge) {
+          badge = document.createElement("span");
+          badge.className = "dbg-fab-err-badge";
+          ctx.aiBtn.appendChild(badge);
+        }
+        badge.style.display = "flex";
+        badge.textContent = n > 1 ? String(n) : "";
+        ctx.aiBtn.classList.add("dbg-err");
+        ctx.aiBtn.classList.remove("dbg-err-pulse");
+        void ctx.aiBtn.offsetWidth;
+        ctx.aiBtn.classList.add("dbg-err-pulse");
+        if (ctx.fabErrPulseT) clearTimeout(ctx.fabErrPulseT);
+        ctx.fabErrPulseT = setTimeout(function() {
+          try {
+            ctx.aiBtn.classList.remove("dbg-err-pulse");
+          } catch (e) {
+          }
+        }, 7e3);
+        if (ctx.fabErrAutoT) clearTimeout(ctx.fabErrAutoT);
+        ctx.fabErrAutoT = setTimeout(function() {
+          try {
+            ctx.fabErrClear();
+          } catch (e) {
+          }
+        }, 3 * 60 * 1e3);
+      } catch (e) {
+      }
+    };
+    ctx.fabErrClear = function() {
+      try {
+        if (ctx.fabErrAutoT) {
+          clearTimeout(ctx.fabErrAutoT);
+          ctx.fabErrAutoT = null;
+        }
+        if (ctx.fabErrPulseT) {
+          clearTimeout(ctx.fabErrPulseT);
+          ctx.fabErrPulseT = null;
+        }
+        if (ctx.aiBtn) {
+          ctx.aiBtn.classList.remove("dbg-err", "dbg-err-pulse");
+          var b = ctx.aiBtn.querySelector(".dbg-fab-err-badge");
+          if (b) b.remove();
+        }
+      } catch (e) {
+      }
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/nav.js
+  function initNav(ctx) {
+    ctx.doNav = function(dir) {
+      ctx.navHoldT = Date.now() + 400;
+      ctx.postToFrame(ctx.selFrameId(), { type: "dbg_step", payload: { dir } });
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/target.js
+  function initTarget(ctx) {
+    ctx.ensureClientFresh = function(win, doc) {
+      try {
+        if (win && doc && doc.body && win.__dbg && typeof win.__dbg.getSelectionPayload !== "function") {
+          try {
+            if (typeof win.__dbg.exitInspector === "function") win.__dbg.exitInspector();
+          } catch (e) {
+          }
+          try {
+            delete win.__dbg;
+          } catch (e) {
+          }
+          var s2 = doc.createElement("script");
+          s2.textContent = MINI_DBG_CLIENT.replace("__DBG_VERSION__", VERSION);
+          doc.body.appendChild(s2);
+        }
+      } catch (e) {
+      }
+    };
+    ctx.buildToolbar = function() {
+      var toolbar = el("div", { class: "dbg-toolbar dbg-float-toolbar" });
+      var toolbarRow1 = el("div", { class: "dbg-toolbar-row" });
+      var selLabel = el("span", { class: "dbg-sel-label" }, ["——"]);
+      selLabel.title = "🔍 点击查看详情/预览（发送直接点 ✓）";
+      selLabel.style.cursor = "pointer";
+      selLabel.style.textDecoration = "underline dotted";
+      selLabel.style.textUnderlineOffset = "3px";
+      selLabel.addEventListener("click", function(e) {
+        e.stopPropagation();
+        var _pp = ctx.lastSelfPayload || ctx.lastPayload;
+        if (!_pp) return;
+        ctx.lastPayload = _pp;
+        var _render = function() {
+          ctx.dTag.textContent = (_pp.tag || "?") + (_pp.rect ? " " + _pp.rect.w + "×" + _pp.rect.h : "") + (_pp.text ? " “" + String(_pp.text).trim().slice(0, 30) + "”" : "");
+          var _fwf = _pp.framework && _pp.framework.file || _pp.file || null;
+          var _fwn = _pp.framework && _pp.framework.framework || null;
+          var _fwl = _pp.framework && _pp.framework.line || _pp.line || null;
+          ctx.dLoc.textContent = _fwf ? (_fwn || "") + " · " + String(_fwf).split("/").pop() + (_fwl ? ":" + _fwl : "") : "";
+          ctx.renderPreview(_pp);
+          ctx.showDialog();
+          if (ctx.root) {
+            var _tbEl = ctx.root.querySelector(".dbg-toolbar");
+            if (_tbEl) _tbEl.classList.remove("dbg-on");
+          }
+        };
+        if (typeof ctx.resolveElLoc === "function") ctx.resolveElLoc(_pp).then(_render);
+        else _render();
+      });
+      toolbarRow1.appendChild(selLabel);
+      toolbar.appendChild(toolbarRow1);
+      var toolbarRow2 = el("div", { class: "dbg-toolbar-row dbg-toolbar-btns" });
+      toolbar.appendChild(toolbarRow2);
+      var NAV_DEFS = [
+        ["up", "↖", "父级（DOM 树上一层，↖=向父层）· 快捷键 Backspace / Delete"],
+        ["downOrNext", "↘", "子级/深度遍历（↘=展开树；有子级→进入首子级；无子级→同级 next，一路点遍历整棵 DOM 树）· 快捷键 Enter"],
+        ["leftN", "←", "页面左边相邻元素 · 快捷键 ←"],
+        ["topN", "↑", "页面上边相邻元素 · 快捷键 ↑"],
+        ["bottomN", "↓", "页面下边相邻元素 · 快捷键 ↓"],
+        ["rightN", "→", "页面右边相邻元素 · 快捷键 →"]
+      ];
+      function anchorPopup(popupEl, anchorEl, opts) {
+        opts = opts || {};
+        var vp = getPhysViewport();
+        var r = anchorEl.getBoundingClientRect();
+        var tbEl = ctx.root.querySelector(".dbg-toolbar");
+        var tbRect = tbEl ? tbEl.getBoundingClientRect() : null;
+        var xMul = _fixedVisual ? 1 : vp.scale;
+        var yMul = _fixedVisual ? 1 : vp.scaleY;
+        var anchorBottom = tbRect ? Math.max(r.bottom, tbRect.bottom) : r.bottom;
+        var anchorTop = tbRect ? Math.min(r.top, tbRect.top) : r.top;
+        var vBottom = anchorBottom * yMul, vTop = anchorTop * yMul;
+        var vLeft = Math.max(4, r.left * xMul - (opts.offsetLeft || 0));
+        var estH = opts.estH || 120, estW = opts.estW || 160;
+        var vTop2 = vBottom + (opts.gap != null ? opts.gap : 4);
+        if (vTop2 + estH > vp.h - 8) vTop2 = Math.max(4, vTop - estH - (opts.gap != null ? opts.gap : 4));
+        vLeft = Math.min(vLeft, Math.max(4, vp.w - estW - 4));
+        positionPhysical(popupEl, vLeft, vTop2, vp.scale, vp.scaleY);
+        ctx.root.appendChild(popupEl);
+        requestAnimationFrame(function() {
+          try {
+            if (!popupEl.parentNode) return;
+            var w2 = popupEl.offsetWidth, h2 = popupEl.offsetHeight;
+            var cLeft = Math.min(Math.max(4, vLeft), Math.max(4, vp.w - w2 - 4));
+            var cTop = vTop2;
+            if (cTop + h2 > vp.h - 4) cTop = Math.max(4, vTop - h2 - 4);
+            if (cLeft !== vLeft || cTop !== vTop2) positionPhysical(popupEl, cLeft, cTop, vp.scale, vp.scaleY);
+          } catch (e) {
+          }
+        });
+      }
+      NAV_DEFS.forEach(function(d) {
+        var b = el("button", { "data-tip": d[2], "data-dir": d[0] }, [d[1]]);
+        b.addEventListener("click", function() {
+          ctx.doNav(d[0]);
+        });
+        toolbarRow2.appendChild(b);
+      });
+      var selBtn = el("button", { "data-tip": "快速选择：输入 CSS selector（.card）或 xpath（//div[@class=card]）定位元素" }, ["#"]);
+      selBtn.addEventListener("click", function() {
+        if (selInputRow.style.display === "flex") {
+          selInputRow.style.display = "none";
+          ctx.floatToolbarReAnchor();
+          return;
+        }
+        selInputRow.style.display = "flex";
+        selInput.value = "";
+        selInput.focus();
+        ctx.postToFrame(ctx.selFrameId(), { type: "dbg_current_selector" });
+        ctx.floatToolbarReAnchor();
+      });
+      toolbarRow2.appendChild(selBtn);
+      var selInputRow = el("div", { class: "dbg-toolbar-row dbg-sel-input-row" });
+      var selInput = el("input", { placeholder: "CSS selector 或 XPath，Enter 定位", "aria-label": "selector" });
+      var selHint = el("div", { class: "dbg-sel-hint" }, ['CSS：.card / .card button / #main > li:nth-child(2)　XPath：//div[@class="card"]']);
+      selInput.addEventListener("keydown", function(e) {
+        if (e.key === "Enter") {
+          var v = selInput.value.trim();
+          if (v) {
+            ctx.postToFrame(ctx.selFrameId(), { type: "dbg_select", payload: { selector: v } });
+          }
+          selInputRow.style.display = "none";
+          ctx.floatToolbarReAnchor();
+        } else if (e.key === "Escape") {
+          selInputRow.style.display = "none";
+          ctx.floatToolbarReAnchor();
+        }
+      });
+      selInputRow.appendChild(selInput);
+      selInputRow.appendChild(selHint);
+      toolbar.appendChild(selInputRow);
+      var confirmBtn = el("button", { "data-tip": "确认选中并弹出预览", class: "dbg-nav-ok" }, ["✓"]);
+      confirmBtn.addEventListener("click", function() {
+        if (ctx.pickPanel) {
+          var _pp = ctx.pickPanel;
+          var _pl = _pp.el || (ctx.getPickPayload ? ctx.getPickPayload() : null);
+          if (_pl) {
+            _pp.el = _pl;
+            var _desc = "<" + (_pl.tag || "?") + ">" + (_pl.text ? " " + String(_pl.text).trim().slice(0, 50) : "") + (_pl.xpath ? " · " + String(_pl.xpath).slice(0, 60) : "");
+            _pp.resultDesc = _desc;
+            if (_pp.asyncMode) {
+              try {
+                ctx.picksAddElement(ctx.enrichElPayload ? ctx.enrichElPayload(_pl) : _pl);
+              } catch (e) {
+              }
+              ctx.finishPickPanel({ status: "async", payload: _pl, note: "候选已放入 AI 待选" });
+            } else {
+              var _fin = function(p2) {
+                _pp.el = p2;
+                ctx.finishPickPanel({ status: "answered", payload: p2, selector: p2.xpath || null });
+              };
+              if (typeof ctx.resolveElLoc === "function") ctx.resolveElLoc(_pl).then(function(pl2) {
+                _fin(pl2 || _pl);
+              });
+              else _fin(_pl);
+            }
+          }
+          return;
+        }
+        if (ctx.aiInspectActive) {
+          if (ctx.lastSelfPayload) {
+            var _sp = null;
+            try {
+              if (ctx.selfClient && typeof ctx.selfClient.getSelectionPayload === "function") _sp = ctx.selfClient.getSelectionPayload();
+            } catch (e) {
+            }
+            try {
+              ctx.picksAddElement(ctx.enrichElPayload(_sp || ctx.lastSelfPayload));
+            } catch (e) {
+              ctx.postToAi({ type: "dbg_ai_element", _selfAttrib: !!ctx.selfAiRequested, payload: ctx.enrichElPayload(_sp || ctx.lastSelfPayload) });
+            }
+            if (ctx.selfClient && typeof ctx.selfClient.resumeHover === "function") ctx.selfClient.resumeHover();
+            ctx.selfEngaged = false;
+            ctx.lastSelfPayload = null;
+            try {
+              ctx.exitAiInspect();
+            } catch (e) {
+            }
+            return;
+          }
+          ctx.postToFrame(ctx.selFrameId(), { type: "dbg_ai_confirm" });
+          setTimeout(function() {
+            try {
+              ctx.exitAiInspect();
+            } catch (e) {
+            }
+          }, 600);
+        } else {
+          var _ep = null;
+          if (ctx.lastSelfPayload) _ep = ctx.lastSelfPayload;
+          if (!_ep) {
+            try {
+              if (ctx.selfClient && typeof ctx.selfClient.getSelectionPayload === "function") _ep = ctx.selfClient.getSelectionPayload();
+            } catch (e) {
+            }
+          }
+          if (_ep) {
+            ctx.lastPayload = _ep;
+            try {
+              ctx.picksAddElement(ctx.enrichElPayload ? ctx.enrichElPayload(_ep) : _ep);
+            } catch (e) {
+              ctx.postToAi({ type: "dbg_ai_element", _selfAttrib: !!ctx.selfAiRequested, payload: ctx.enrichElPayload ? ctx.enrichElPayload(_ep) : _ep });
+            }
+          } else {
+            ctx.postToFrame(ctx.selFrameId(), { type: "dbg_confirm" });
+          }
+          ctx.selfEngaged = false;
+          ctx.lastSelfPayload = null;
+          try {
+            ctx.exitInspector();
+          } catch (e) {
+          }
+          return;
+        }
+      });
+      ctx.exitAiInspect = function() {
+        ctx.aiInspectActive = false;
+        try {
+          ctx.postToAi({ type: "dbg_ai_inspect_off", payload: {} });
+        } catch (e) {
+        }
+        try {
+          ctx.broadcast({ type: "dbg_ai_pick", payload: { active: false } });
+        } catch (e) {
+        }
+        try {
+          ctx.broadcast({ type: "dbg_exit_inspector" });
+        } catch (e) {
+        }
+        try {
+          if (window.__dbg && typeof window.__dbg.exitInspector === "function") window.__dbg.exitInspector();
+        } catch (e) {
+        }
+        try {
+          ctx.broadcast({ type: "dbg_exit_inspector" });
+        } catch (e) {
+        }
+        ctx.inspectorOn = false;
+        ctx.inspBtn.classList.remove("dbg-on");
+        ctx.deactivateNestedIframes();
+        if (ctx.root) {
+          var tbEl = ctx.root.querySelector(".dbg-toolbar");
+          if (tbEl) tbEl.classList.remove("dbg-on");
+        }
+        try {
+          if (ctx.cleanupInspectResidue) ctx.cleanupInspectResidue();
+        } catch (e) {
+        }
+        if (!ctx.selfAiRequested && !ctx.selfHostPage) {
+          ctx.aiOpen = true;
+          ctx.ensureAi();
+          ctx.showAi(true);
+          ctx.aiBtn.classList.add("dbg-on");
+        }
+        ctx.selfAiRequested = false;
+      };
+      var resumeBtn = el("button", { "data-tip": "恢复快选：退出临时状态，hover 高亮重新生效（鼠标划过快速预览/切换选区）", class: "dbg-nav-resume" }, ["🖱"]);
+      resumeBtn.addEventListener("click", function() {
+        if (ctx.selfClient && typeof ctx.selfClient.resumeHover === "function") ctx.selfClient.resumeHover();
+        ctx.postToFrame(ctx.selFrameId(), { type: "dbg_resume_hover" });
+        ctx.addMsg("sys", "🖱 已恢复快选：hover 高亮重新生效（划过快速预览，点击即选新位置）。");
+      });
+      toolbarRow2.appendChild(resumeBtn);
+      var hoverSimBtn = el("button", { "data-tip": "模拟 hover（真实派发 mouseover/mouseenter，页面 JS hover 逻辑生效并持久保持；再点或退出清除）", class: "dbg-nav-hover" }, ["👆"]);
+      hoverSimBtn.addEventListener("click", function() {
+        ctx.hudHoverOn = !ctx.hudHoverOn;
+        try {
+          ctx.applyHoverSim();
+        } catch (e) {
+        }
+        hoverSimBtn.classList.toggle("dbg-on", !!ctx.hudHoverOn);
+        ctx.addMsg("sys", "👆 模拟 hover：" + (ctx.hudHoverOn ? "已 pin（mouseover/mouseenter 已派发，持久保持；再点或退出清除）" : "已清除（mouseleave 已派发）") + "。");
+      });
+      toolbarRow2.appendChild(hoverSimBtn);
+      var profileBtn = el("button", { "data-tip": "放行方案（下拉选择）：🔒默认放行 / 🔓全部放行 / ⛔全部冻结 / 自定义方案；下拉末尾「⚙️ 自定义…」打开设置面板管理多个方案。快捷键：空格/Tab=默认放行⇄全部放行一键切换（锁定态生效，页面弹出菜单不收起）", class: "dbg-nav-profile" }, [ctx.RELEASE_PROFILES.default.label]);
+      var profileMenu = null;
+      function closeProfileMenu() {
+        if (profileMenu && profileMenu.parentNode) profileMenu.parentNode.removeChild(profileMenu);
+        profileMenu = null;
+      }
+      profileBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        showTooltip(profileBtn.getAttribute("data-tip"), profileBtn, "click");
+        if (profileMenu) {
+          closeProfileMenu();
+          return;
+        }
+        profileMenu = el("div", { class: "dbg-profile-menu" });
+        ctx.getProfileOrder().forEach(function(name) {
+          var pf = ctx.getProfiles()[name];
+          var item = el("div", { class: "dbg-profile-item" + (name === ctx.currentProfile ? " dbg-on" : "") }, []);
+          item.appendChild(el("span", { class: "dbg-profile-label" }, [pf.label + (name === "default" || name === "all" ? " · 空格/Tab" : "")]));
+          item.appendChild(el("span", { class: "dbg-profile-desc" }, [pf.release.length ? "放行 " + pf.release.join("/") : "全部冻结"]));
+          item.addEventListener("click", function(ev) {
+            ev.stopPropagation();
+            var applied = ctx.applyProfile(name);
+            profileBtn.textContent = applied.label;
+            closeProfileMenu();
+            ctx.addMsg("sys", "已应用放行方案：" + applied.label + "（" + (applied.release.length ? "放行 " + applied.release.join("/") : "全部冻结") + "）");
+          });
+          profileMenu.appendChild(item);
+        });
+        profileMenu.appendChild(el("div", { class: "dbg-profile-divider" }));
+        var pfCustom = el("div", { class: "dbg-profile-item dbg-profile-action" }, []);
+        pfCustom.appendChild(el("span", { class: "dbg-profile-label" }, ["⚙️ 自定义…"]));
+        pfCustom.appendChild(el("span", { class: "dbg-profile-desc" }, ["添加/编辑/删除自定义方案"]));
+        pfCustom.addEventListener("click", function(ev) {
+          ev.stopPropagation();
+          closeProfileMenu();
+          ctx.toggleSpeedPanel();
+        });
+        profileMenu.appendChild(pfCustom);
+        anchorPopup(profileMenu, profileBtn, {
+          // 通用弹出定位（跟随缩放/字体 + 屏内 clamp + 溢出翻面）
+          estH: ctx.getProfileOrder().length * 32 + 51,
+          // +51：divider + ⚙️ 动作项两行（翻面判断不错位）
+          estW: 250 + 40,
+          // min-width 250 + 左移 40（原 left=br.left-40）
+          offsetLeft: 40
+        });
+      });
+      toolbarRow2.appendChild(profileBtn);
+      var helpBtn = el("button", { "data-tip": "使用帮助：按钮说明 / 快捷键总表 / 进阶技巧（含放行工作流、触屏导航入口）", class: "dbg-nav-help" }, ["❓"]);
+      helpBtn.addEventListener("click", function() {
+        ctx.toggleHelpDialog();
+      });
+      toolbarRow2.appendChild(helpBtn);
+      var exitInspBtn = el("button", { "data-tip": "取消选区并退出 Inspector", class: "dbg-nav-close" }, ["✕"]);
+      exitInspBtn.addEventListener("click", function() {
+        if (ctx.selfClientActive) {
+          try {
+            ctx.exitSelfClient();
+          } catch (e) {
+          }
+          ctx.selfClientActive = false;
+        }
+        try {
+          ctx.exitInspector();
+        } catch (e) {
+        }
+        try {
+          if (window.__dbg && typeof window.__dbg.exitInspector === "function") window.__dbg.exitInspector();
+        } catch (e) {
+        }
+        try {
+          ctx.broadcast({ type: "dbg_exit_inspector" });
+        } catch (e) {
+        }
+        if (ctx.hud && ctx.hud.parentNode) {
+          ctx.hud.parentNode.removeChild(ctx.hud);
+          ctx.hud = null;
+        }
+        ctx.sweepTargetOutlinesGlobal();
+        setTimeout(ctx.sweepTargetOutlinesGlobal, 500);
+        setTimeout(ctx.sweepTargetOutlinesGlobal, 1500);
+        ctx.addMsg("sys", "✕ 已退出 Inspector（宿主与全部 iframe 点选已关闭）。");
+      });
+      toolbarRow2.appendChild(el("span", { class: "dbg-toolbar-sep" }));
+      toolbarRow2.appendChild(exitInspBtn);
+      toolbarRow2.appendChild(confirmBtn);
+      window.addEventListener("click", function(e) {
+        if (e.target && e.target.closest && (e.target.closest(".dbg-nav-profile") || e.target.closest(".dbg-profile-item"))) return;
+        closeProfileMenu();
+      }, true);
+      var tooltipEl = null, tooltipTimer = null, tooltipMode = null;
+      var tooltipShownOnce = {};
+      function showTooltip(text, anchorEl, mode) {
+        if (tooltipShownOnce[text]) return;
+        tooltipShownOnce[text] = true;
+        if (!tooltipEl) {
+          tooltipEl = el("div", { class: "dbg-tooltip" });
+          ctx.root.appendChild(tooltipEl);
+        }
+        tooltipEl.textContent = text;
+        var vp = getPhysViewport();
+        var r = anchorEl.getBoundingClientRect();
+        var xMul = _fixedVisual ? 1 : vp.scale;
+        var yMul = _fixedVisual ? 1 : vp.scaleY;
+        var th = tooltipEl.offsetHeight || 28;
+        var vTop = r.top * yMul - th - 8;
+        var openMenu = null;
+        if (profileMenu && profileMenu.parentNode) openMenu = profileMenu;
+        if (openMenu) {
+          var mr = openMenu.getBoundingClientRect();
+          if (mr.top * yMul < r.top * yMul) {
+            vTop = mr.top * yMul - th - 8;
+          }
+        }
+        if (vTop < 2) vTop = r.bottom * yMul + 8;
+        var vLeft = Math.max(4, Math.min(r.left * xMul, vp.w - 180));
+        positionPhysical(tooltipEl, vLeft, vTop, vp.scale, vp.scaleY);
+        tooltipEl.style.opacity = "1";
+        tooltipMode = mode || "hover";
+        clearTimeout(tooltipTimer);
+        if (tooltipMode === "click") {
+          tooltipTimer = setTimeout(function() {
+            hideTooltip();
+          }, 2200);
+        }
+      }
+      function hideTooltip() {
+        if (tooltipEl) {
+          tooltipEl.style.opacity = "0";
+          clearTimeout(tooltipTimer);
+          tooltipTimer = setTimeout(function() {
+            if (tooltipEl && tooltipEl.parentNode) tooltipEl.parentNode.removeChild(tooltipEl);
+            tooltipEl = null;
+          }, 320);
+        }
+        tooltipMode = null;
+      }
+      ctx.removeTooltip = function() {
+        clearTimeout(tooltipTimer);
+        if (tooltipEl && tooltipEl.parentNode) tooltipEl.parentNode.removeChild(tooltipEl);
+        tooltipEl = null;
+        tooltipMode = null;
+      };
+      toolbar.addEventListener("mouseover", function(e) {
+        if (isTouchDevice()) return;
+        var btn = e.target && e.target.closest ? e.target.closest("button, .dbg-sel-label") : null;
+        var tip = btn && btn.getAttribute("data-tip");
+        if (btn && tip) showTooltip(tip, btn, "hover");
+      });
+      toolbar.addEventListener("mouseout", function() {
+        if (!isTouchDevice() && tooltipMode !== "click") hideTooltip();
+      });
+      toolbar.addEventListener("click", function(e) {
+        var btn = e.target && e.target.closest ? e.target.closest("button") : null;
+        var tip = btn && btn.getAttribute("data-tip");
+        if (btn && tip) showTooltip(tip, btn, "click");
+      });
+      toolbar.addEventListener("mouseenter", function() {
+        ctx.toolbarHovering = true;
+        if (ctx.selfClient && typeof ctx.selfClient.pauseHover === "function") ctx.selfClient.pauseHover();
+        ctx.postToFrame(ctx.selFrameId(), { type: "dbg_pause_hover" });
+      });
+      toolbar.addEventListener("mouseleave", function() {
+        ctx.toolbarHovering = false;
+      });
+      ctx.root.appendChild(toolbar);
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/help.js
+  function initHelp(ctx) {
+    ctx.helpDialogOpen = function() {
+      return !!(ctx.helpDialog && ctx.helpDialog.parentNode);
+    };
+    ctx.closeHelpDialog = function() {
+      if (ctx.helpDialog && ctx.helpDialog.parentNode) ctx.helpDialog.parentNode.removeChild(ctx.helpDialog);
+      ctx.helpDialog = null;
+    };
+    ctx.toggleHelpDialog = function() {
+      if (ctx.helpDialogOpen()) {
+        ctx.closeHelpDialog();
+        return;
+      }
+      var d = el("div", { class: "dbg-help-dialog" });
+      var head = el("div", { class: "dbg-help-head" });
+      head.appendChild(el("span", {}, ["❓ 选区工具条 · 使用帮助"]));
+      var hClose = el("button", { title: "关闭（Esc）" }, ["✕"]);
+      hClose.addEventListener("click", function(ev) {
+        ev.stopPropagation();
+        ctx.closeHelpDialog();
+      });
+      head.appendChild(hClose);
+      d.appendChild(head);
+      var body = el("div", { class: "dbg-help-body" });
+      body.innerHTML = [
+        "<h4>这是什么</h4>",
+        "<div>划过页面元素高亮预览，点击锁定后出现这个工具条——用方向键微调选区，<b>✓ 确认发送给 AI</b>。<br>",
+        "💡 点顶部标签行文字（<code>&lt;div&gt; 320×48 …</code>）可打开详情预览弹窗。</div>",
+        "<h4>① 按钮一览</h4>",
+        "<table>",
+        "<tr><td><b>↖ 父级 / ↘ 子级</b></td><td>沿 DOM 树上/下一层（斜向=走树）；子级没有时自动同级下一个</td></tr>",
+        "<tr><td><b>← ↑ ↓ →</b></td><td>页面<b>几何位置</b>相邻元素（与键盘方向键同位）</td></tr>",
+        "<tr><td><b>#</b></td><td>快速选择：输入 CSS selector 或 XPath 定位</td></tr>",
+        "<tr><td><b>🖱 恢复快选</b></td><td>回到「划过即选」（锁定后 hover 快选暂停防误切）</td></tr>",
+        "<tr><td><b>👆 模拟hover</b></td><td>给选中元素派发真实 mouseenter，JS 悬停展开持久保持；再点清除</td></tr>",
+        "<tr><td><b>🔒 放行方案</b></td><td>锁定后页面事件默认冻结；下拉切换方案，末尾「⚙️ 自定义…」打开设置面板管理多个自定义方案</td></tr>",
+        "<tr><td><b>✕ / ✓</b></td><td>取消退出 / 确认发送</td></tr>",
+        "</table>",
+        "<h4>② 快捷键总表</h4>",
+        "<table>",
+        "<tr><td><kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></td><td>页面几何相邻元素</td></tr>",
+        "<tr><td><kbd>Enter</kbd></td><td>子级（无子级→同级 next，一路按遍历整棵 DOM 树）</td></tr>",
+        "<tr><td><kbd>Backspace</kbd> / <kbd>Delete</kbd></td><td>父级</td></tr>",
+        "<tr><td><kbd>PageUp</kbd> / <kbd>PageDown</kbd></td><td>DOM 平级前一个 / 后一个（按钮已收起，仅快捷键）</td></tr>",
+        "<tr><td><kbd>Home</kbd> / <kbd>End</kbd></td><td>子级首个 / 末个（同上）</td></tr>",
+        "<tr><td><kbd>空格</kbd> / <kbd>Tab</kbd></td><td>放行方案一键切换：默认放行 ⇄ 全部放行（两键同效，防系统监控占据空格）</td></tr>",
+        "<tr><td><kbd>Esc</kbd></td><td>关帮助窗 → 取消/退出</td></tr>",
+        "</table>",
+        '<div class="dbg-help-note">快捷键在工具条显示时生效；光标在输入框时不劫持。</div>',
+        "<h4>③ 进阶：点不动页面按钮？「放行 → 触发 → 切回 → 选中」</h4>",
+        "<ol>",
+        "<li>按 <kbd>空格</kbd> 或 <kbd>Tab</kbd> → 切到 🔓 <b>全部放行</b></li>",
+        "<li>点击目标按钮 → 真实事件触发，菜单展开</li>",
+        "<li>再按 <kbd>空格</kbd>/<kbd>Tab</kbd> → 切回 🔒 <b>默认放行</b>（展开的菜单不会收起）</li>",
+        "<li>划过/方向键选中菜单项，<b>✓</b> 发送</li>",
+        "</ol>",
+        '<div>其他：<b>👆 模拟 hover</b> 对付 JS 悬停展开（CSS :hover 除外）；<b># 快速选择</b>支持 <code>.card button</code> 与 <code>//div[@class="card"]</code>。</div>',
+        "<h4>④ 键盘没有时（触屏）：以下方向点按钮直达</h4>",
+        '<div class="dbg-help-nav-row">',
+        '<button data-dir="prev">◀ 前一个</button>',
+        '<button data-dir="next">▶ 后一个</button>',
+        '<button data-dir="first">⏮ 最前</button>',
+        '<button data-dir="last">⏭ 最后</button>',
+        "</div>",
+        '<div class="dbg-help-note">对应快捷键 PageUp/PageDown/Home/End。</div>'
+      ].join("");
+      body.querySelectorAll(".dbg-help-nav-row button").forEach(function(b) {
+        b.addEventListener("click", function() {
+          ctx.doNav(b.getAttribute("data-dir"));
+        });
+      });
+      d.appendChild(body);
+      d.style.zIndex = "2147483648";
+      try {
+        makePointerDrag({
+          handle: head,
+          capture: "now",
+          raf: true,
+          preventStart: true,
+          filter: function(e) {
+            return !(e.target && e.target.tagName === "BUTTON");
+          },
+          onStart: function() {
+            d.classList.add("dbg-dragging");
+            return { left: d.offsetLeft || 0, top: d.offsetTop || 0 };
+          },
+          onMove: function(ev, st, dx, dy) {
+            var nl = Math.min(Math.max(0, st.left + dx), Math.max(0, (window.innerWidth || 0) - 40));
+            var nt = Math.min(Math.max(0, st.top + dy), Math.max(24, (window.innerHeight || 0) - 40));
+            d.style.left = nl + "px";
+            d.style.top = nt + "px";
+            d.style.right = "auto";
+            d.style.bottom = "auto";
+          },
+          onEnd: function() {
+            d.classList.remove("dbg-dragging");
+          }
+        });
+      } catch (e) {
+      }
+      ctx.root.appendChild(d);
+      placePhysPanel(d, { visW: Math.min(480, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, maxWidth: "480px", overflowY: "auto" });
+      ctx.helpDialog = d;
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/options.js
+  function initOptions(ctx) {
+    ctx.loadOptState = function() {
+      return lsGetJSON(OPT_KEY, {});
+    };
+    ctx.saveOptState = function() {
+      lsSetJSON(OPT_KEY, ctx.optState);
+    };
+    ctx.applyOptsToTarget = function() {
+      var frameId = ctx.selFrameId();
+      ctx.postToFrame(frameId, { type: "dbg_set_options", payload: { opts: ctx.optState } });
+      if (frameId !== ctx.T_HOST) {
+        var fr = ctx.listFrames()[parseInt(String(frameId).slice(1), 10) || 0];
+        if (fr && fr.el) {
+          if (ctx.optState.viewportW > 0) {
+            fr.el.style.setProperty("width", ctx.optState.viewportW + "px", "important");
+            fr.el.style.flex = "none";
+          } else {
+            fr.el.style.removeProperty("width");
+            fr.el.style.flex = "";
+          }
+        }
+      }
+    };
+    ctx.toggleSpeedPanel = function() {
+      if (!ctx.speedPanel) ctx.buildSpeedPanel();
+      ctx.speedPanel.classList.toggle("dbg-open");
+      if (ctx.speedPanel.classList.contains("dbg-open") && isSmallScreen()) {
+        var vp = getPhysViewport();
+        var visW = capVisW(vp, 0);
+        var visH = Math.round(vp.h * 0.92);
+        ctx.speedPanel.style.width = visW + "px";
+        ctx.speedPanel.style.right = "auto";
+        ctx.speedPanel.style.bottom = "auto";
+        ctx.speedPanel.style.left = "auto";
+        ctx.speedPanel.style.maxHeight = visH * vp.scale / vp.scaleY + "px";
+        ctx.speedPanel.style.borderRadius = "14px 14px 0 0";
+        ctx.speedPanel.style.zIndex = "2147483648";
+        positionPhysical(ctx.speedPanel, 0, Math.max(0, vp.h - visH), vp.scale, vp.scaleY);
+      }
+    };
+    ctx.buildSpeedPanel = function() {
+      ctx.speedPanel = el("div", { class: "dbg-speed" });
+      var head = el("div", { class: "dbg-speed-head" });
+      head.appendChild(el("span", {}, ["⏱ 调速 / 🌐 网络 / ⚠ 错误"]));
+      var hClose = el("button", {}, ["✕"]);
+      hClose.addEventListener("click", function() {
+        ctx.speedPanel.classList.remove("dbg-open");
+      });
+      head.appendChild(hClose);
+      ctx.speedPanel.appendChild(head);
+      var body = el("div", { class: "dbg-speed-body" });
+      var rowNet = el("div", { class: "dbg-speed-row" });
+      rowNet.appendChild(el("label", {}, ["网络模拟"]));
+      var netBtns = el("div", { class: "dbg-seg", "data-opt": "net" });
+      [[0, "正常"], [500, "500ms"], [1e3, "1s"], [2e3, "2s"]].forEach(function(o) {
+        var b = el("button", { "data-v": String(o[0]) }, [o[1]]);
+        if (ctx.optState.netDelay === o[0] && !ctx.optState.netOffline) b.classList.add("dbg-on");
+        b.addEventListener("click", function() {
+          ctx.optState.netDelay = o[0];
+          ctx.optState.netOffline = false;
+          netBtns.querySelectorAll("button").forEach(function(x) {
+            x.classList.toggle("dbg-on", x === b);
+          });
+          ctx.saveOptState();
+          ctx.applyOptsToTarget();
+        });
+        netBtns.appendChild(b);
+      });
+      var offBtn = el("button", { "data-v": "off", title: "fetch 立即失败 / XHR 触发 error（模拟断网）" }, ["📴 离线"]);
+      if (ctx.optState.netOffline) offBtn.classList.add("dbg-on");
+      offBtn.addEventListener("click", function() {
+        ctx.optState.netOffline = !ctx.optState.netOffline;
+        if (ctx.optState.netOffline) ctx.optState.netDelay = 0;
+        netBtns.querySelectorAll("button").forEach(function(x) {
+          x.classList.toggle("dbg-on", false);
+        });
+        offBtn.classList.toggle("dbg-on", ctx.optState.netOffline);
+        ctx.saveOptState();
+        ctx.applyOptsToTarget();
+      });
+      netBtns.appendChild(offBtn);
+      rowNet.appendChild(netBtns);
+      body.appendChild(rowNet);
+      var rowDanger = el("div", { class: "dbg-speed-row" });
+      rowDanger.appendChild(el("label", {}, ["危险命令", "（无人值守）"]));
+      var dangerBtns = el("div", { class: "dbg-seg", "data-opt": "dangerAutoOkMs" });
+      [[0, "手动确认"], [1e4, "10s"], [3e4, "30s"], [6e4, "60s"]].forEach(function(o) {
+        var b = el("button", { "data-v": String(o[0]), title: o[0] ? "危险命令确认卡弹出后 " + o[0] / 1e3 + " 秒内无人点选 → 自动允许执行（等同点「允许执行」）" : "每次危险命令都等人工点选（默认，最安全）" }, [o[1]]);
+        if ((ctx.optState.dangerAutoOkMs || 0) === o[0]) b.classList.add("dbg-on");
+        b.addEventListener("click", function() {
+          ctx.optState.dangerAutoOkMs = o[0];
+          dangerBtns.querySelectorAll("button").forEach(function(x) {
+            x.classList.toggle("dbg-on", x === b);
+          });
+          ctx.saveOptState();
+          ctx.addMsg("sys", "危险命令：" + (o[0] ? "无响应 " + o[0] / 1e3 + "s 后自动允许执行（无人值守）" : "每次手动确认"));
+        });
+        dangerBtns.appendChild(b);
+      });
+      rowDanger.appendChild(dangerBtns);
+      body.appendChild(rowDanger);
+      var rowErr = el("div", { class: "dbg-speed-row" });
+      rowErr.appendChild(el("label", {}, ["强制报错"]));
+      var errBtns = el("div", { class: "dbg-seg" });
+      [["sync", "⚠ 同步异常"], ["promise", "⚠ Promise"], ["console", "⚠ console.error"], ["resource", "⚠ 资源404"]].forEach(function(o) {
+        var b = el("button", { title: "在目标页触发 " + o[1] + "，错误 hook 捕获后上报" }, [o[1]]);
+        b.addEventListener("click", function() {
+          ctx.postToFrame(ctx.selFrameId(), { type: "dbg_force_error", payload: { kind: o[0] } });
+          ctx.addMsg("sys", "⚡ 已触发强制错误：" + o[1] + "（等待页面错误 hook 上报）");
+        });
+        errBtns.appendChild(b);
+      });
+      rowErr.appendChild(errBtns);
+      body.appendChild(rowErr);
+      var rowScene = el("div", { class: "dbg-speed-row dbg-scene-row" });
+      rowScene.appendChild(el("label", {}, ["场景预设"]));
+      var sceneBtns = el("div", { class: "dbg-seg" });
+      [
+        ["mobile", "📱 窄屏375", { viewportW: 375 }],
+        ["dark", "🌙 深色", { darkMode: true }],
+        ["expired", "⏳ 过期+7天", { timeOffsetMs: 7 * 24 * 3600 * 1e3 }],
+        ["slow", "🐢 弱网", { netDelay: 500, animSpeed: 0.5 }],
+        ["reset", "🔄 重置全部", null]
+      ].forEach(function(o) {
+        var b = el("button", { title: o[0] === "reset" ? "恢复所有模拟为默认" : "一键应用场景：" + o[1] }, [o[1]]);
+        b.addEventListener("click", function() {
+          if (o[0] === "reset") {
+            var keepDangerOk = ctx.optState.dangerAutoOkMs || 0;
+            ctx.optState = Object.assign({}, {
+              animSpeed: 1,
+              blockScroll: false,
+              blockWheel: false,
+              slowTimers: 1,
+              netDelay: 0,
+              netOffline: false,
+              darkMode: false,
+              reducedMotion: false,
+              timeOffsetMs: 0,
+              viewportW: 0
+            }, { dangerAutoOkMs: keepDangerOk });
+            ctx.saveOptState();
+            ctx.applyOptsToTarget();
+            ctx.syncSpeedPanelUI();
+            ctx.addMsg("sys", "🔄 已重置全部模拟条件。");
+            return;
+          }
+          Object.assign(ctx.optState, o[2]);
+          ctx.saveOptState();
+          ctx.applyOptsToTarget();
+          ctx.syncSpeedPanelUI();
+          ctx.addMsg("sys", "🎬 场景已应用：" + o[1] + "（可继续配合网络/错误区微调）");
+        });
+        sceneBtns.appendChild(b);
+      });
+      rowScene.appendChild(sceneBtns);
+      body.appendChild(rowScene);
+      var rowSnap = el("div", { class: "dbg-speed-row" });
+      rowSnap.appendChild(el("label", {}, ["现场快照"]));
+      var snapBtn = el("button", { class: "dbg-snap-btn", title: "把当前出错现场（错误列表+模拟条件+页面状态）打包发给 AI" }, ["📸 捕获现场发 AI"]);
+      snapBtn.addEventListener("click", ctx.captureSceneSend);
+      rowSnap.appendChild(snapBtn);
+      body.appendChild(rowSnap);
+      var PROFILE_CATS = ["click", "hover", "key", "wheel", "scroll", "touch", "focus"];
+      var rowProfile = el("div", { class: "dbg-speed-row dbg-release-row" });
+      rowProfile.appendChild(el("label", {}, ["放行方案"]));
+      var pfWrap = el("div", { class: "dbg-rel-wrap" });
+      var pfBtns = el("div", { class: "dbg-seg" });
+      ctx.getProfileOrder().forEach(function(name) {
+        var b = el("button", { "data-pf": name }, [ctx.getProfiles()[name].label]);
+        b.addEventListener("click", function() {
+          var pf = ctx.applyProfile(name);
+          ctx.addMsg("sys", "已应用放行方案：" + pf.label + "（" + (pf.release.length ? "放行 " + pf.release.join("/") : "全部冻结") + "）");
+        });
+        pfBtns.appendChild(b);
+      });
+      pfWrap.appendChild(pfBtns);
+      var pfEditWrap = el("div", { style: "margin-top:6px;display:flex;flex-direction:column;gap:4px" });
+      var pfEditHeader = el("div", { style: "display:flex;align-items:center;gap:6px;font-size:11px;color:#4f46e5;cursor:pointer;user-select:none;padding:3px 6px;border-radius:6px;background:#eef2ff" }, []);
+      var pfArrow = el("span", {}, ["▸"]);
+      var pfCount = el("span", {}, ["0"]);
+      pfEditHeader.appendChild(pfArrow);
+      pfEditHeader.appendChild(pfCount);
+      pfEditHeader.appendChild(el("span", {}, ["方案编辑（含默认放行，点击展开）"]));
+      var pfEditBody = el("div", { style: "display:none" });
+      pfEditHeader.addEventListener("click", function() {
+        var open = pfEditBody.style.display === "none";
+        pfEditBody.style.display = open ? "flex" : "none";
+        if (open) {
+          pfEditBody.style.flexDirection = "column";
+          pfEditBody.style.gap = "4px";
+        }
+        pfArrow.textContent = open ? "▾" : "▸";
+      });
+      pfEditWrap.appendChild(pfEditHeader);
+      pfEditWrap.appendChild(pfEditBody);
+      function renderUserProfiles() {
+        pfEditBody.innerHTML = "";
+        pfCount.textContent = String(1 + ctx.userProfiles.length);
+        var dpf = ctx.RELEASE_PROFILES.default;
+        var dRow = el("div", { style: "display:flex;align-items:center;gap:4px;flex-wrap:wrap;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;padding:4px 6px" });
+        dRow.appendChild(el("span", { style: "font-weight:600;color:#4f46e5" }, [dpf.label]));
+        var dChecks = el("div", { class: "dbg-checks" });
+        var dboxes = {};
+        PROFILE_CATS.forEach(function(cat) {
+          var l2 = el("label", {}, []);
+          var b2 = el("input", { type: "checkbox" });
+          b2.checked = dpf.release.indexOf(cat) >= 0;
+          dboxes[cat] = b2;
+          l2.appendChild(b2);
+          l2.appendChild(document.createTextNode(cat));
+          dChecks.appendChild(l2);
+        });
+        var dSave = el("button", { style: "border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px" }, ["保存"]);
+        dSave.addEventListener("click", function() {
+          dpf.release = PROFILE_CATS.filter(function(c) {
+            return dboxes[c].checked;
+          });
+          try {
+            localStorage.setItem(DEFAULT_RELEASE_KEY, JSON.stringify(dpf.release));
+          } catch (e) {
+          }
+          if (ctx.currentProfile === "default") ctx.applyProfile("default");
+          ctx.addMsg("sys", "默认放行已保存：放行 " + (dpf.release.join("/") || "（无，=全冻结）"));
+          rebuildProfileUI();
+        });
+        dRow.appendChild(dChecks);
+        dRow.appendChild(dSave);
+        dRow.appendChild(el("span", { style: "font-size:10px;color:#9ca3af" }, ["固定方案（不可删除）"]));
+        pfEditBody.appendChild(dRow);
+        ctx.userProfiles.forEach(function(u) {
+          var row = el("div", { style: "display:flex;align-items:center;gap:4px;flex-wrap:wrap;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:4px 6px" });
+          var nameInput = el("input", { value: u.label, style: "width:70px;border:1px solid #d1d5db;border-radius:6px;padding:2px 5px;font:inherit;font-size:11px" });
+          var catChecks = el("div", { class: "dbg-checks" });
+          var pboxes = {};
+          PROFILE_CATS.forEach(function(cat) {
+            var label = el("label", {}, []);
+            var box = el("input", { type: "checkbox" });
+            box.checked = u.release.indexOf(cat) >= 0;
+            pboxes[cat] = box;
+            label.appendChild(box);
+            label.appendChild(document.createTextNode(cat));
+            catChecks.appendChild(label);
+          });
+          var saveBtn = el("button", { style: "border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px" }, ["保存"]);
+          saveBtn.addEventListener("click", function() {
+            u.label = nameInput.value.trim() || u.label;
+            u.release = PROFILE_CATS.filter(function(c) {
+              return pboxes[c].checked;
+            });
+            ctx.saveUserProfiles();
+            ctx.addMsg("sys", "方案「" + u.label + "」已保存：放行 " + (u.release.join("/") || "（无，=全冻结）"));
+            rebuildProfileUI();
+          });
+          var delBtn = el("button", { style: "border:1px solid #fecaca;background:#fee2e2;border-radius:6px;padding:1px 8px;cursor:pointer;font:inherit;font-size:10px;color:#b91c1c" }, ["删除"]);
+          delBtn.addEventListener("click", function() {
+            ctx.removeUserProfile(u.name);
+            renderUserProfiles();
+            rebuildProfileUI();
+            ctx.addMsg("sys", "已删除方案「" + u.label + "」");
+          });
+          row.appendChild(nameInput);
+          row.appendChild(catChecks);
+          row.appendChild(saveBtn);
+          row.appendChild(delBtn);
+          pfEditBody.appendChild(row);
+        });
+      }
+      var addBtn = el("button", { style: "border:1px solid #a5b4fc;background:#e0e7ff;border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:11px;color:#4338ca;margin-top:4px" }, ["➕ 添加方案"]);
+      addBtn.addEventListener("click", function() {
+        var baseName = "放行方案";
+        var n = 1;
+        var profiles = ctx.getProfiles();
+        while (profiles[baseName + n] || ctx.userProfiles.some(function(u) {
+          return u.label === baseName + n;
+        })) n++;
+        var label = prompt("新方案名称：", baseName + n);
+        if (!label) return;
+        var name = ctx.addUserProfile(label);
+        renderUserProfiles();
+        rebuildProfileUI();
+        ctx.addMsg("sys", "已添加方案「" + label + "」（默认全放行，可编辑类别）。");
+      });
+      pfWrap.appendChild(pfEditWrap);
+      pfWrap.appendChild(addBtn);
+      var pfTip = el("div", { style: "font-size:10px;color:#6b7280" }, ["方案 = 放行哪些事件类别（其余冻结）。默认只锁 click/hover；全放行含 click。自定义方案保存后在工具条下拉可选。锁定态按 空格 在默认放行/全部放行之间一键切换（页面弹出菜单不收起）。"]);
+      pfWrap.appendChild(pfTip);
+      rowProfile.appendChild(pfWrap);
+      body.appendChild(rowProfile);
+      function rebuildProfileUI() {
+        pfBtns.innerHTML = "";
+        ctx.getProfileOrder().forEach(function(name) {
+          var b = el("button", { "data-pf": name }, [ctx.getProfiles()[name].label]);
+          b.addEventListener("click", function() {
+            var pf = ctx.applyProfile(name);
+            ctx.addMsg("sys", "已应用放行方案：" + pf.label);
+          });
+          pfBtns.appendChild(b);
+        });
+        renderUserProfiles();
+      }
+      renderUserProfiles();
+      var rowViewport = el("div", { class: "dbg-speed-row dbg-release-row" });
+      rowViewport.appendChild(el("label", {}, ["视口模拟"]));
+      var vpWrap = el("div", { class: "dbg-rel-wrap" });
+      var vpBtns = el("div", { class: "dbg-seg" });
+      var vpDefs = [[375, "📱 375"], [414, "414"], [768, "平板768"], [1024, "1024"], [1280, "🖥 1280"], [1440, "1440"], [0, "自适应"]];
+      var vpCur = el("span", { style: "font-size:10px;color:#6b7280" }, ["当前 iframe 视口：—"]);
+      vpDefs.forEach(function(o) {
+        var b = el("button", { "data-v": String(o[0]) }, [o[1]]);
+        b.addEventListener("click", function() {
+          ctx.optState.viewportW = o[0];
+          ctx.saveOptState();
+          ctx.applyOptsToTarget();
+          ctx.addMsg("sys", "视口模拟：" + (o[0] ? o[0] + "px" : "自适应（恢复原宽）") + "（大屏↔小屏切换，媒体查询实时生效）");
+        });
+        vpBtns.appendChild(b);
+      });
+      var vpCustom = el("input", { type: "number", placeholder: "自定义px", style: "width:74px;border:1px solid #d1d5db;border-radius:6px;padding:2px 6px;font:inherit;font-size:11px" });
+      var vpGo = el("button", {}, ["应用"]);
+      vpGo.addEventListener("click", function() {
+        var v = parseInt(vpCustom.value, 10);
+        if (v > 0) {
+          ctx.optState.viewportW = v;
+          ctx.saveOptState();
+          ctx.applyOptsToTarget();
+          ctx.addMsg("sys", "视口模拟：" + v + "px");
+        }
+      });
+      var vpTouch = el("label", { class: "dbg-chk", style: "margin-top:4px", title: "模拟触屏设备特征（pointer:coarse / hover:none）" }, []);
+      var vpTouchBox = el("input", { type: "checkbox" });
+      vpTouchBox.checked = !!ctx.optState.simulateTouch;
+      vpTouchBox.addEventListener("change", function() {
+        ctx.optState.simulateTouch = vpTouchBox.checked;
+        ctx.saveOptState();
+        ctx.applyOptsToTarget();
+        ctx.addMsg("sys", "触屏模拟：" + (vpTouchBox.checked ? "开（页面按触屏设备渲染）" : "关"));
+      });
+      vpTouch.appendChild(vpTouchBox);
+      vpTouch.appendChild(document.createTextNode("模拟触屏"));
+      vpWrap.appendChild(vpBtns);
+      var vpRow2 = el("div", { style: "display:flex;gap:4px;margin-top:4px;align-items:center" });
+      vpRow2.appendChild(vpCustom);
+      vpRow2.appendChild(vpGo);
+      vpRow2.appendChild(vpTouch);
+      vpRow2.appendChild(vpCur);
+      vpWrap.appendChild(vpRow2);
+      rowViewport.appendChild(vpWrap);
+      body.appendChild(rowViewport);
+      function refreshViewportLabel() {
+        var tw = (ctx.listFrames()[0] || {}).win;
+        if (tw && vpCur) vpCur.textContent = "当前 iframe 视口：" + (tw.innerWidth || "—") + "px";
+      }
+      setInterval(refreshViewportLabel, 1e3);
+      var rowMcp = el("div", { class: "dbg-speed-row" });
+      rowMcp.appendChild(el("label", {}, ["MCP 桥"]));
+      var mcpWrap = el("div", { class: "dbg-rel-wrap", style: "font-size:11px;color:#6b7280" });
+      mcpWrap.appendChild(document.createTextNode("🔗 连接由 AI 窗口负责：页面 ↔ AI 窗经 postMessage 交互（唯一通道），桥连接（role=ai）在 AI 窗侧。"));
+      rowMcp.appendChild(mcpWrap);
+      body.appendChild(rowMcp);
+      var rowSelTools = el("div", { class: "dbg-speed-row" });
+      rowSelTools.appendChild(el("label", {}, ["选区工具"]));
+      var selTools = el("div", { class: "dbg-seg" });
+      var t1 = el("button", { title: "按 CSS 选择器指定选区" }, ["# 指定"]);
+      var t2 = el("button", { title: "真实点击穿透：放行一次点击让页面打开菜单/弹层（冻结期间菜单不会消失）" }, ["👆 穿透"]);
+      var t3 = el("button", { title: "在宿主页自身点选元素（不进入目标 iframe）" }, ["🖥 宿主页"]);
+      t1.addEventListener("click", function() {
+        var s = prompt("输入 CSS 选择器指定选区，例如 .card:nth-child(2)");
+        if (s) ctx.postToFrame(ctx.selFrameId(), { type: "dbg_select", payload: { selector: s } });
+      });
+      t2.addEventListener("click", function() {
+        ctx.postToFrame(ctx.selFrameId(), { type: "dbg_passthrough_click" });
+        ctx.addMsg("sys", "👆 真实点击：放行一次点击（页面菜单/弹层可正常打开，随后恢复冻结）。");
+      });
+      t3.addEventListener("click", function() {
+        if (ctx.selfClientActive) {
+          ctx.exitSelfClient();
+          ctx.selfClientActive = false;
+          return;
+        }
+        if (ctx.inspectorOn) ctx.exitInspector();
+        ctx.enterSelfClient(isTouchDevice() ? "touch" : "mouse");
+        ctx.selfClientActive = true;
+      });
+      selTools.appendChild(t1);
+      selTools.appendChild(t2);
+      selTools.appendChild(t3);
+      rowSelTools.appendChild(selTools);
+      body.appendChild(rowSelTools);
+      var row1 = el("div", { class: "dbg-speed-row" });
+      row1.appendChild(el("label", {}, ["动画速度"]));
+      var animBtns = el("div", { class: "dbg-seg", "data-opt": "animSpeed" });
+      [[0, "⏸ 暂停"], [0.1, "0.1x"], [0.25, "0.25x"], [0.5, "0.5x"], [1, "1x"]].forEach(function(o) {
+        var b = el("button", { "data-v": String(o[0]) }, [o[1]]);
+        if (ctx.optState.animSpeed === o[0]) b.classList.add("dbg-on");
+        b.addEventListener("click", function() {
+          ctx.optState.animSpeed = o[0];
+          animBtns.querySelectorAll("button").forEach(function(x) {
+            x.classList.toggle("dbg-on", x === b);
+          });
+          ctx.saveOptState();
+          ctx.applyOptsToTarget();
+        });
+        animBtns.appendChild(b);
+      });
+      row1.appendChild(animBtns);
+      body.appendChild(row1);
+      var row3 = el("div", { class: "dbg-speed-row" });
+      row3.appendChild(el("label", {}, ["定时器慢放", "（实验性）"]));
+      var timerBtns = el("div", { class: "dbg-seg", "data-opt": "slowTimers" });
+      [[1, "1x"], [2, "2x"], [5, "5x"]].forEach(function(o) {
+        var b = el("button", { "data-v": String(o[0]) }, [o[1]]);
+        if (ctx.optState.slowTimers === o[0]) b.classList.add("dbg-on");
+        b.addEventListener("click", function() {
+          ctx.optState.slowTimers = o[0];
+          timerBtns.querySelectorAll("button").forEach(function(x) {
+            x.classList.toggle("dbg-on", x === b);
+          });
+          ctx.saveOptState();
+          ctx.applyOptsToTarget();
+        });
+        timerBtns.appendChild(b);
+      });
+      row3.appendChild(timerBtns);
+      body.appendChild(row3);
+      ctx.speedPanel.appendChild(body);
+      ctx.root.appendChild(ctx.speedPanel);
+    };
+    ctx.syncSpeedPanelUI = function() {
+      if (!ctx.speedPanel) return;
+      ctx.speedPanel.querySelectorAll(".dbg-seg[data-opt]").forEach(function(seg) {
+        var key = seg.dataset.opt;
+        seg.querySelectorAll("button").forEach(function(b) {
+          var v = b.dataset.v;
+          b.classList.toggle("dbg-on", key === "net" ? v === "off" ? ctx.optState.netOffline : !ctx.optState.netOffline && String(ctx.optState.netDelay) === v : String(ctx.optState[key]) === v);
+        });
+      });
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/danger.js
+  function initDanger(ctx) {
+    ctx.handleAiCommand = function(p2) {
+      var sendResult = function(ok, result) {
+        ctx.postToAi({ type: "dbg_command_result", payload: { requestId: p2.requestId, cmdHint: p2.cmd, ok, result } });
+      };
+      if (p2.cmd === "__snapshot__") {
+        var snap = {
+          url: location.href.slice(0, 500),
+          targetUrl: (function() {
+            var tw = (ctx.listFrames()[0] || {}).win;
+            return tw && tw.location ? tw.location.href.slice(0, 500) : null;
+          })(),
+          selected: ctx.lastPayload ? { tag: ctx.lastPayload.tag, xpath: ctx.lastPayload.xpath } : null,
+          conditions: { animSpeed: ctx.optState.animSpeed, netDelay: ctx.optState.netDelay, netOffline: ctx.optState.netOffline, darkMode: ctx.optState.darkMode, timeOffsetMs: ctx.optState.timeOffsetMs },
+          errors: ctx.errLog.slice(0, 10)
+          // 页面错误（client 捕获 window.error/unhandledrejection/console.error——含 Vue/React/Next 框架错误）
+        };
+        sendResult(true, snap);
+        return Promise.resolve({ ok: true, result: snap });
+      }
+      if (GESTURE_COMMANDS[p2.cmd]) {
+        return new Promise(function(resolve) {
+          ctx.showGestureCard(p2, function() {
+            var hostResult = ctx.execBrowserInHost(p2.cmd, p2.args);
+            if (hostResult) {
+              hostResult.then(function(r) {
+                sendResult(!r.error, r);
+                resolve({ ok: !r.error, result: r });
+              });
+            } else {
+              ctx.execInPage(p2.cmd, p2.args, ctx.frameIdOf(p2.frameId)).then(function(result) {
+                sendResult(result.ok, result.result);
+                resolve(result);
+              });
+            }
+          }, function() {
+            sendResult(false, { error: "用户取消了手势操作 " + p2.cmd });
+            resolve({ ok: false, result: { error: "用户取消 " + p2.cmd } });
+          });
+        });
+      }
+      if (p2.cmd === "Page.captureScreenshot") {
+        return Promise.resolve(ctx.execBrowserInHost(p2.cmd, p2.args)).then(function(r) {
+          sendResult(!r.error, r);
+          return { ok: !!(r && !r.error), result: r };
+        });
+      }
+      if (DANGER_COMMANDS[p2.cmd] && !ctx.sessionDangerOk) {
+        return new Promise(function(resolve) {
+          ctx.dangerQueue.push({ p2, resolve });
+          ctx.pumpDangerQueue();
+        });
+      }
+      return ctx.execInPage(p2.cmd, p2.args, ctx.frameIdOf(p2.frameId)).then(function(result) {
+        sendResult(result.ok, result.result);
+        return result;
+      });
+    };
+    ctx.execBrowserInHost = function(cmd, args) {
+      args = args || {};
+      if (cmd === "Browser.copy") {
+        return navigator.clipboard.writeText(String(args.text || "")).then(
+          function() {
+            return { copied: true };
+          },
+          function(e) {
+            return { error: "复制失败：" + String(e && e.message || e) };
+          }
+        );
+      }
+      if (cmd === "Browser.download") {
+        var a = document.createElement("a");
+        a.href = args.dataUrl || "data:text/plain," + encodeURIComponent(String(args.text || ""));
+        a.download = args.name || "dbg-download.txt";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        return Promise.resolve({ downloaded: a.download });
+      }
+      if (cmd === "Browser.openWindow") {
+        var w = window.open(args.url || "about:blank", "_blank");
+        return Promise.resolve(w ? { opened: true } : { error: "弹窗被拦截" });
+      }
+      if (cmd === "Browser.paste") {
+        if (!(navigator.clipboard && navigator.clipboard.readText)) {
+          return Promise.resolve({ error: "当前浏览器不支持剪贴板读取（无 navigator.clipboard.readText）" });
+        }
+        return navigator.clipboard.readText().then(
+          function(text) {
+            return { text: String(text || "").slice(0, 1e5) };
+          },
+          function(e) {
+            return { error: "剪贴板读取被拒（需授权 clipboard-read）：" + String(e && e.message || e) };
+          }
+        );
+      }
+      if (cmd === "Browser.pickFile") {
+        return new Promise(function(resolveP) {
+          var inp = document.createElement("input");
+          inp.type = "file";
+          if (args.accept) inp.accept = String(args.accept);
+          inp.multiple = !!args.multiple;
+          inp.style.display = "none";
+          var done2 = false;
+          var finish2 = function(r) {
+            if (done2) return;
+            done2 = true;
+            try {
+              inp.remove();
+            } catch (e2) {
+            }
+            resolveP(r);
+          };
+          inp.onchange = function() {
+            var files = Array.prototype.slice.call(inp.files || []);
+            if (!files.length) return finish2({ error: "未选择文件" });
+            var list = files.map(function(f) {
+              return { name: f.name, size: f.size, type: f.type || "" };
+            });
+            var readFirst = files[0];
+            var isText = /^text\//.test(readFirst.type) || /\.(txt|md|json|log|csv|xml|ya?ml|ini|conf|js|ts|css|html?|py|java|c|cpp|go|rs|sh|toml)$/i.test(readFirst.name);
+            var isImage = /^image\//.test(readFirst.type);
+            if (isText && readFirst.size <= 262144) {
+              readFirst.text().then(function(t) {
+                finish2({ files: list, name: readFirst.name, text: t.slice(0, 2e5) });
+              }, function() {
+                finish2({ files: list });
+              });
+            } else if (isImage && readFirst.size <= 3145728) {
+              var fr = new FileReader();
+              fr.onload = function() {
+                finish2({ files: list, name: readFirst.name, dataUrl: String(fr.result).slice(0, 4194304) });
+              };
+              fr.onerror = function() {
+                finish2({ files: list });
+              };
+              fr.readAsDataURL(readFirst);
+            } else {
+              finish2({ files: list, note: isImage || readFirst.size > 262144 ? "文件过大/非文本：仅返回清单（大图/大文件请让用户手动上传或缩小后重选）" : "" });
+            }
+          };
+          document.body.appendChild(inp);
+          inp.click();
+        });
+      }
+      if (cmd === "Browser.share") {
+        if (!navigator.share) return Promise.resolve({ error: "当前浏览器不支持 Web Share（移动端可用）" });
+        return navigator.share({ title: args.title, text: args.text, url: args.url }).then(
+          function() {
+            return { shared: true };
+          },
+          function(e) {
+            return { error: "分享被取消/拒绝：" + String(e && e.message || e) };
+          }
+        );
+      }
+      if (cmd === "Browser.fullscreen") {
+        var fsEl = (function() {
+          var fr = ctx.listFrames()[parseInt(String(ctx.selFrameId()).slice(1), 10) || 0];
+          return fr && fr.el || document.documentElement;
+        })();
+        if (fsEl && fsEl.requestFullscreen) {
+          return fsEl.requestFullscreen().then(
+            function() {
+              return { fullscreen: true };
+            },
+            function(e) {
+              return { error: "全屏失败：" + String(e && e.message || e) };
+            }
+          );
+        }
+        return Promise.resolve({ error: "不支持全屏" });
+      }
+      if (cmd === "Page.captureScreenshot") {
+        var a2 = args || {};
+        var maxW2 = a2.maxWidth || 1280;
+        var asPng2 = a2.format !== "jpeg";
+        var domShot = function(note) {
+          return new Promise(function(resolveP) {
+            try {
+              var launcherEl = ctx.root;
+              var prevDisplay = launcherEl ? launcherEl.style.display : null;
+              if (launcherEl) launcherEl.style.display = "none";
+              var vw = window.innerWidth || 0, vh = window.innerHeight || 0;
+              if (vw < 40 || vh < 40) {
+                resolveP({ error: "DOM 截屏失败（视口尺寸异常 " + vw + "×" + vh + "）" });
+                return;
+              }
+              var xml = new XMLSerializer().serializeToString(document.documentElement);
+              xml = xml.replace(/<\/(foreignObject)(\s*>)/gi, "<\\/$1$2");
+              var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + vw + '" height="' + vh + '"><foreignObject width="100%" height="100%">' + xml + "</foreignObject></svg>";
+              var img = new Image();
+              var restore = function() {
+                if (launcherEl) {
+                  if (prevDisplay === null) launcherEl.style.removeProperty("display");
+                  else launcherEl.style.display = prevDisplay;
+                }
+              };
+              img.onload = function() {
+                restore();
+                try {
+                  var sc = Math.min(1, maxW2 / vw);
+                  var c = document.createElement("canvas");
+                  c.width = Math.round(vw * sc);
+                  c.height = Math.round(vh * sc);
+                  c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+                  var dataUrl = asPng2 ? c.toDataURL("image/png") : c.toDataURL("image/jpeg", a2.quality || 0.72);
+                  resolveP({ dataUrl, width: c.width, height: c.height, format: asPng2 ? "png" : "jpeg", bytes: Math.round(dataUrl.length * 3 / 4), mode: note || "dom" });
+                } catch (e2) {
+                  resolveP({ error: "DOM 截屏失败：" + String(e2 && e2.message || e2) });
+                }
+              };
+              img.onerror = function() {
+                restore();
+                resolveP({ error: "DOM 截屏失败（页面渲染到 SVG 出错）" });
+              };
+              img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(svg);
+            } catch (e3) {
+              resolveP({ error: "DOM 截屏失败：" + String(e3 && e3.message || e3) });
+            }
+          });
+        };
+        var captureOnce = function(forceDom) {
+          if (forceDom) return domShot("dom（页面渲染模式）");
+          var md = navigator.mediaDevices || {};
+          if (typeof md.getDisplayMedia !== "function") return domShot("dom（无 getDisplayMedia）");
+          var gm = { video: { frameRate: 10 } };
+          try {
+            if (a2.preferCurrentTab) gm.preferCurrentTab = true;
+          } catch (e3) {
+          }
+          return new Promise(function(resG) {
+            var done = false;
+            var hangMs = 4e3, focusMs = 0, lastTs = Date.now(), hangIv = null;
+            var stopHang = function() {
+              if (hangIv) {
+                clearInterval(hangIv);
+                hangIv = null;
+              }
+            };
+            hangIv = setInterval(function() {
+              var now = Date.now();
+              if (document.hasFocus()) focusMs += now - lastTs;
+              lastTs = now;
+              if (focusMs >= hangMs) {
+                stopHang();
+                if (!done) {
+                  done = true;
+                  resG({ hang: true });
+                }
+              }
+            }, 300);
+            md.getDisplayMedia(gm).then(function(stream) {
+              stopHang();
+              if (done) {
+                try {
+                  stream.getTracks().forEach(function(t) {
+                    t.stop();
+                  });
+                } catch (e2) {
+                }
+                return;
+              }
+              done = true;
+              resG({ stream });
+            }, function(e) {
+              stopHang();
+              if (done) return;
+              done = true;
+              resG({ gdmError: e });
+            });
+          }).then(function(g) {
+            if (g && g.hang) return domShot("dom（getDisplayMedia 未弹选择器/无响应）");
+            if (g && g.gdmError) return domShot("dom（getDisplayMedia 被拒：" + String(g.gdmError && g.gdmError.message || g.gdmError) + "）");
+            var stream = g.stream;
+            return new Promise(function(resolveP) {
+              var settled = false;
+              var finish = function(r) {
+                if (settled) return;
+                settled = true;
+                try {
+                  stream.getTracks().forEach(function(t) {
+                    t.stop();
+                  });
+                } catch (e2) {
+                }
+                resolveP(r);
+              };
+              var v = document.createElement("video");
+              v.muted = true;
+              v.playsInline = true;
+              v.autoplay = true;
+              var drawShot = function() {
+                try {
+                  var vw2 = v.videoWidth || 0, vh2 = v.videoHeight || 0;
+                  if (!vw2 || !vh2) return finish({ error: "视频流无画面尺寸" });
+                  var sc = Math.min(1, maxW2 / vw2);
+                  var c = document.createElement("canvas");
+                  c.width = Math.round(vw2 * sc);
+                  c.height = Math.round(vh2 * sc);
+                  c.getContext("2d").drawImage(v, 0, 0, c.width, c.height);
+                  var dataUrl = asPng2 ? c.toDataURL("image/png") : c.toDataURL("image/jpeg", a2.quality || 0.72);
+                  finish({ dataUrl, width: c.width, height: c.height, format: asPng2 ? "png" : "jpeg", bytes: Math.round(dataUrl.length * 3 / 4) });
+                } catch (e2) {
+                  finish({ error: "截屏失败：" + String(e2 && e2.message || e2) });
+                }
+              };
+              v.onloadeddata = function() {
+                v.play().then(function() {
+                  var tries = 0;
+                  var pollIv = setInterval(function() {
+                    if (settled) {
+                      clearInterval(pollIv);
+                      return;
+                    }
+                    tries++;
+                    if (v.currentTime > 0 && v.readyState >= 2) {
+                      clearInterval(pollIv);
+                      requestAnimationFrame(function() {
+                        requestAnimationFrame(function() {
+                          drawShot();
+                        });
+                      });
+                    } else if (tries >= 60) {
+                      clearInterval(pollIv);
+                      finish({ error: "视频首帧就绪超时" });
+                    }
+                  }, 50);
+                }, function(e2) {
+                  finish({ error: "视频流播放失败：" + String(e2 && e2.message || e2) });
+                });
+              };
+              v.onerror = function() {
+                finish({ error: "视频流打开失败" });
+              };
+              v.srcObject = stream;
+              setTimeout(function() {
+                finish({ error: "截屏超时（15s）" });
+              }, 15e3);
+            });
+          });
+        };
+        var buildShotCard = function(titleText) {
+          var card = el("div", { class: "dbg-pick-dialog" });
+          var head = el("div", { class: "dbg-pick-head" });
+          head.appendChild(el("span", { class: "dbg-pick-title" }, [titleText]));
+          var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px;flex-shrink:0;margin-left:auto" }, [""]);
+          head.appendChild(timerSpan);
+          card.appendChild(head);
+          try {
+            makeCardDrag(head, card);
+          } catch (e5) {
+          }
+          return { card, timerSpan };
+        };
+        var placeShotCard = function(card, wantW) {
+          try {
+            var vw = Math.round(getPhysViewport().w) || 360;
+            var visW = Math.min(wantW || 400, vw - 24);
+            placePhysPanel(card, { visW, visX: Math.max(0, vw - visW - 12), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: visW + "px", overflowY: "auto", keyboard: false });
+            var vh = Math.round(window.visualViewport && window.visualViewport.height || window.innerHeight) || 800;
+            card.style.height = "auto";
+            card.style.maxHeight = Math.max(240, vh - 88) + "px";
+          } catch (e5) {
+          }
+        };
+        var startShotCountdown = function(timerSpan, ms, fire) {
+          var deadline = Date.now() + ms;
+          var iv = setInterval(function() {
+            var left = Math.max(0, deadline - Date.now());
+            timerSpan.textContent = left > 0 ? "⏱ " + Math.ceil(left / 1e3) + "s" : "";
+            if (left <= 0) {
+              clearInterval(iv);
+              fire();
+            }
+          }, 250);
+          return function() {
+            if (iv) {
+              clearInterval(iv);
+              iv = null;
+            }
+          };
+        };
+        var runShotCard = function(reason) {
+          return new Promise(function(resAll) {
+            try {
+              var ui = buildShotCard("📸 AI 想截屏");
+              var card = ui.card, timerSpan = ui.timerSpan;
+              var body = el("div", { class: "dbg-pick-body" });
+              card.appendChild(body);
+              ctx.root.appendChild(card);
+              var visW = Math.min(560, (Math.round(getPhysViewport().w) || 560) - 24);
+              placeShotCard(card, 480);
+              var done = false, stopCd = null;
+              var finishAll = function(r) {
+                if (done) return;
+                done = true;
+                if (stopCd) stopCd();
+                if (card.parentNode) card.parentNode.removeChild(card);
+                if (ctx.shotCardCleanup === cleanupHook) ctx.shotCardCleanup = null;
+                resAll(r);
+              };
+              var cleanupHook = function() {
+                finishAll({ error: "已取消（agent 停止）" });
+              };
+              ctx.shotCardCleanup = cleanupHook;
+              var shotCdMs = parseInt(a2.timeout, 10) > 0 ? parseInt(a2.timeout, 10) : 28e4;
+              stopCd = startShotCountdown(timerSpan, shotCdMs, function() {
+                finishAll({ error: "截图流程超时（用户未完成确认）" });
+              });
+              var clearBody = function() {
+                while (body.firstChild) body.removeChild(body.firstChild);
+              };
+              var reasonLine = function() {
+                return el(
+                  "div",
+                  { style: "font-size:12px;color:#e5e7eb;line-height:1.6;background:rgba(79,70,229,.22);border-radius:8px;padding:7px 10px;margin-bottom:8px;word-break:break-all" },
+                  ["🎯 " + (reason || "（AI 未说明截取意图——可取消后让 AI 补充 reason 再试）")]
+                );
+              };
+              var mkBtns = function(defs) {
+                var row = el("div", { style: "display:flex;gap:8px;justify-content:flex-end;margin-top:10px" });
+                defs.forEach(function(d) {
+                  var b = el("button", d[3] ? { class: d[1], style: d[3] } : { class: d[1] }, [d[0]]);
+                  b.onclick = d[2];
+                  row.appendChild(b);
+                });
+                return row;
+              };
+              var renderPrepare = function() {
+                clearBody();
+                body.appendChild(reasonLine());
+                body.appendChild(el("div", { style: "font-size:11px;color:#94a3b8;line-height:1.6" }, ["可先把页面调整到想要的状态：本卡片不遮挡操作、按住标题栏可拖到角落。点「开始截屏」后直接截取当前视口（页面重绘方式，不弹任何系统窗口；截屏瞬间本卡会自动隐藏不入镜）。"]));
+                body.appendChild(mkBtns([
+                  ["✕ 取消", "dbg-pick-cancel", function() {
+                    finishAll({ error: "用户取消截图" });
+                  }],
+                  ["📸 开始截屏", "dbg-pick-ok", function() {
+                    shotOnce();
+                  }]
+                ]));
+                placeShotCard(card, 480);
+              };
+              var renderCapturing = function() {
+                clearBody();
+                body.appendChild(reasonLine());
+                body.appendChild(el("div", { style: "font-size:11px;color:#94a3b8;line-height:1.6" }, ["⏳ 正在截取当前视口……"]));
+                placeShotCard(card, 480);
+              };
+              var renderPreview = function(r) {
+                clearBody();
+                body.appendChild(reasonLine());
+                var isDom = !!(r.mode && r.mode.indexOf("dom") >= 0);
+                if (isDom) body.appendChild(el("div", { style: "font-size:11px;color:#fbbf24;line-height:1.6;background:rgba(251,191,36,.08);border-radius:6px;padding:6px 8px;margin-bottom:6px" }, ["⚠ DOM 渲染截屏：系统屏幕捕获不可用，本次为重绘页面，外部图片/部分样式可能与实际画面有差异。"]));
+                var img = el("img", { src: r.dataUrl, style: "max-width:100%;max-height:52vh;border-radius:8px;object-fit:contain;background:#fff;display:block" });
+                body.appendChild(img);
+                var replan = function() {
+                  if (!done) placeShotCard(card, visW);
+                };
+                if (img.decode) img.decode().then(replan, replan);
+                img.addEventListener("load", replan);
+                if (img.complete) replan();
+                requestAnimationFrame(function() {
+                  requestAnimationFrame(replan);
+                });
+                body.appendChild(mkBtns([
+                  ["🔄 重拍", "dbg-pick-cancel", function() {
+                    shotOnce();
+                  }],
+                  ["✕ 取消", "dbg-pick-cancel", function() {
+                    finishAll({ error: "用户取消发送截图" });
+                  }],
+                  ["✅ 发送", "dbg-ask-send", function() {
+                    finishAll({ result: r });
+                  }, "padding:9px 18px;font-size:14px;font-weight:700"]
+                ]));
+                placeShotCard(card, visW);
+              };
+              var shotOnce = function() {
+                renderCapturing();
+                Promise.resolve(captureOnce(true)).then(function(r) {
+                  if (!r || r.error || !r.dataUrl) {
+                    finishAll(r && r.error ? r : { error: "截屏失败" });
+                    return;
+                  }
+                  renderPreview(r);
+                });
+              };
+              renderPrepare();
+            } catch (e4) {
+              resAll({ error: "截屏卡显示失败：" + String(e4 && e4.message || e4) });
+            }
+          });
+        };
+        var runShot = function() {
+          return runShotCard(a2.reason);
+        };
+        var shotP = runShot();
+        shotP.then(function(r) {
+          try {
+            if (r && r.error) {
+              ctx.showPickToast("❌ 截图失败：" + String(r.error).slice(0, 120), 1e4);
+            } else if (r && r.dataUrl) {
+              var isDom = !!(r.mode && r.mode.indexOf("dom") >= 0);
+              var msg = "✅ 截图成功（" + r.width + "×" + r.height + "）";
+              if (isDom) {
+                var reason = String(r.mode).replace(/^dom[（(]|）\)$/g, "").trim();
+                msg = msg + "<br>⚠ 系统屏幕捕获不可用，已回退到 DOM 渲染截屏" + (reason ? "（" + reason + "）" : "");
+                ctx.showPickToast(msg, 9e3);
+              } else {
+                ctx.showPickToast(msg, 5e3);
+              }
+            }
+          } catch (e) {
+          }
+        });
+        return shotP;
+      }
+      return null;
+    };
+    ctx.showGestureCard = function(p2, onDone, onCancel) {
+      if (!ctx.gestureCard) ctx.buildGestureCard();
+      ctx.gestureCard.querySelector(".dbg-gesture-note").textContent = GESTURE_COMMANDS[p2.cmd] || "浏览器受限操作";
+      ctx.gestureCard.querySelector(".dbg-gesture-cmd").textContent = p2.cmd + " " + JSON.stringify(p2.args || {});
+      ctx.gestureCard.classList.add("dbg-open");
+      ctx.gestureCard.querySelector(".dbg-gesture-ok").onclick = function() {
+        ctx.gestureCard.classList.remove("dbg-open");
+        ctx.addMsg("sys", "🖱 用户点击完成手势：" + p2.cmd);
+        onDone();
+      };
+      ctx.gestureCard.querySelector(".dbg-gesture-cancel").onclick = function() {
+        ctx.gestureCard.classList.remove("dbg-open");
+        ctx.addMsg("sys", "⛔ 用户取消手势：" + p2.cmd);
+        onCancel();
+      };
+    };
+    ctx.buildGestureCard = function() {
+      ctx.gestureCard = el("div", { class: "dbg-dialog" });
+      var card = el("div", { class: "dbg-dialog-card dbg-confirm-card" });
+      var head = el("div", { class: "dbg-dialog-head" });
+      head.appendChild(el("span", {}, ["🖱 需要你的真实点击"]));
+      card.appendChild(head);
+      try {
+        makeCardDrag(head, card);
+      } catch (e) {
+      }
+      var body = el("div", { class: "dbg-dialog-body" });
+      body.appendChild(el("div", { class: "dbg-confirm-note dbg-gesture-note" }));
+      body.appendChild(el("div", { class: "dbg-gesture-cmd dbg-pv-kv" }));
+      body.appendChild(el("div", { style: "font-size:11px;color:#6b7280" }, ["浏览器要求用户手势：AI 程序化执行会被拦截，需你点击下方按钮代为完成。"]));
+      card.appendChild(body);
+      var foot = el("div", { class: "dbg-dialog-foot" });
+      var cancel = el("button", { class: "dbg-ghost dbg-gesture-cancel" }, ["✕ 取消"]);
+      var ok = el("button", { class: "dbg-primary dbg-gesture-ok" }, ["✅ 点击完成此操作"]);
+      foot.appendChild(cancel);
+      foot.appendChild(ok);
+      card.appendChild(foot);
+      ctx.gestureCard.appendChild(card);
+      ctx.root.appendChild(ctx.gestureCard);
+    };
+    ctx.pumpDangerQueue = function() {
+      if (ctx.confirmingDanger || !ctx.dangerQueue.length) return;
+      ctx.confirmingDanger = true;
+      var job = ctx.dangerQueue.shift();
+      var p2 = job.p2;
+      var finish = function(ok, result) {
+        ctx.confirmingDanger = false;
+        ctx.postToAi({ type: "dbg_command_result", payload: { requestId: p2.requestId, cmdHint: p2.cmd, ok, result } });
+        job.resolve({ ok, result });
+        ctx.pumpDangerQueue();
+      };
+      ctx.showDangerConfirm(p2, function() {
+        ctx.execInPage(p2.cmd, p2.args).then(function(r) {
+          finish(r.ok, r.result);
+        });
+      }, function() {
+        finish(false, { error: "用户拒绝执行 " + p2.cmd });
+      });
+    };
+    ctx.showDangerConfirm = function(p2, onAllow, onDeny) {
+      if (!ctx.confirmCard) ctx.buildConfirmCard();
+      ctx.confirmCard.querySelector(".dbg-confirm-cmd").textContent = p2.cmd + " " + JSON.stringify(p2.args || {});
+      ctx.confirmCard.querySelector(".dbg-confirm-note").textContent = DANGER_COMMANDS[p2.cmd] || "危险操作";
+      ctx.confirmCard.classList.add("dbg-open");
+      var allowBtn = ctx.confirmCard.querySelector(".dbg-allow");
+      var denyBtn = ctx.confirmCard.querySelector(".dbg-deny");
+      var rememberBox = ctx.confirmCard.querySelector(".dbg-remember");
+      var cdEl = ctx.confirmCard.querySelector(".dbg-confirm-countdown");
+      var autoMs = parseInt(ctx.optState.dangerAutoOkMs, 10) || 0;
+      var timer = null, deadline = 0;
+      var stopCountdown = function() {
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        if (cdEl) cdEl.style.display = "none";
+      };
+      if (autoMs > 0 && cdEl) {
+        deadline = Date.now() + autoMs;
+        cdEl.style.display = "block";
+        var tick = function() {
+          var left = Math.max(0, deadline - Date.now());
+          cdEl.textContent = "⏳ 无人值守：" + Math.ceil(left / 1e3) + "s 后自动允许执行（也可手动点下方按钮）";
+          if (left <= 0) {
+            allowBtn.onclick(true);
+            return;
+          }
+          timer = setTimeout(tick, 250);
+        };
+        tick();
+      } else if (cdEl) {
+        cdEl.style.display = "none";
+      }
+      allowBtn.onclick = function(auto) {
+        stopCountdown();
+        ctx.confirmCard.classList.remove("dbg-open");
+        if (rememberBox.checked) {
+          ctx.sessionDangerOk = true;
+          ctx.addMsg("sys", "🔓 本次会话已记住：危险命令不再逐个确认（可刷新页面重置）。");
+        }
+        ctx.addMsg("sys", (auto ? "🤖 超时自动允许（无人值守）：" : "✅ 用户允许：") + p2.cmd);
+        onAllow();
+      };
+      denyBtn.onclick = function() {
+        stopCountdown();
+        ctx.confirmCard.classList.remove("dbg-open");
+        ctx.addMsg("sys", "⛔ 用户拒绝：" + p2.cmd);
+        onDeny();
+      };
+    };
+    ctx.buildConfirmCard = function() {
+      ctx.confirmCard = el("div", { class: "dbg-dialog" });
+      var card = el("div", { class: "dbg-dialog-card dbg-confirm-card" });
+      var head = el("div", { class: "dbg-dialog-head" });
+      head.appendChild(el("span", {}, ["⚠ 确认危险操作"]));
+      card.appendChild(head);
+      try {
+        makeCardDrag(head, card);
+      } catch (e) {
+      }
+      var body = el("div", { class: "dbg-dialog-body" });
+      body.appendChild(el("div", { class: "dbg-confirm-note" }));
+      body.appendChild(el("div", { class: "dbg-confirm-cmd dbg-pv-kv" }));
+      body.appendChild(el("div", { class: "dbg-confirm-countdown", style: "display:none" }));
+      var rememberRow = el("label", { class: "dbg-chk", style: "align-self:flex-start" }, []);
+      var box = el("input", { type: "checkbox", class: "dbg-remember" });
+      rememberRow.appendChild(box);
+      rememberRow.appendChild(document.createTextNode("本次会话记住（不再逐个确认）"));
+      body.appendChild(rememberRow);
+      card.appendChild(body);
+      var foot = el("div", { class: "dbg-dialog-foot" });
+      var deny = el("button", { class: "dbg-ghost dbg-deny" }, ["✕ 拒绝"]);
+      var allow = el("button", { class: "dbg-primary dbg-allow" }, ["✓ 允许执行"]);
+      foot.appendChild(deny);
+      foot.appendChild(allow);
+      card.appendChild(foot);
+      ctx.confirmCard.appendChild(card);
+      ctx.root.appendChild(ctx.confirmCard);
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/interact.js
+  function describeAnswer(kind, v) {
+    v = v || {};
+    if (kind === "confirm") return v.approved === false ? "❌ 否" : "✅ 是";
+    if (kind === "choose") {
+      if (Array.isArray(v.indexes)) return v.labels && v.labels.length ? v.labels.join("、") : v.indexes.length + " 项";
+      return v.custom || v.index === -1 ? "✍️ 都不适合" : String(v.label != null ? v.label : v.index);
+    }
+    if (kind === "input") return String(v.text || "");
+    if (kind === "presence") return v.present === false ? "⏳ 稍后" : "🙋 我在";
+    if (kind === "pick_element") {
+      if (v.tag || v.text) return "🎯 <" + (v.tag || "?") + ">" + (v.text ? " " + String(v.text).trim().slice(0, 40) : "");
+      return "🎯 已选元素";
+    }
+    return "✅ 已作答";
+  }
+  function initInteract(ctx) {
+    ctx.hudSmallOffset = 0;
+    try {
+      ctx.hudSmallOffset = parseInt(localStorage.getItem("__dbg_hud_off") || "0", 10) || 0;
+    } catch (e) {
+    }
+    ctx.adjustHudOffset = function(dy) {
+      try {
+        var vp = getPhysViewport();
+        var visVh = _fixedVisual ? window.visualViewport && window.visualViewport.height || window.innerHeight : window.innerHeight * vp.scaleY;
+        var maxOff = Math.max(0, Math.round(visVh) - 120);
+        ctx.hudSmallOffset = Math.min(Math.max((ctx.hudSmallOffset || 0) + dy, 0), maxOff);
+        try {
+          localStorage.setItem("__dbg_hud_off", String(ctx.hudSmallOffset));
+        } catch (e) {
+        }
+      } catch (e) {
+      }
+    };
+    ctx.showPickToast = function(html, ms) {
+      try {
+        var olds = ctx.root.querySelectorAll(".dbg-pick-toast");
+        for (var i = 0; i < olds.length; i++) {
+          if (olds[i].parentNode) olds[i].parentNode.removeChild(olds[i]);
+        }
+        var t = el("div", { class: "dbg-pick-toast" });
+        t.innerHTML = html;
+        ctx.root.appendChild(t);
+        placePhysPanel(t, { visW: Math.min(360, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 30, maxWidth: "360px", overflowY: "" });
+        setTimeout(function() {
+          t.style.opacity = "0";
+          setTimeout(function() {
+            if (t.parentNode) t.parentNode.removeChild(t);
+          }, 450);
+        }, ms || 4500);
+      } catch (e) {
+      }
+    };
+    ctx.showPickHint = function() {
+      try {
+        if (!detectScreenMode().small) return;
+        ctx.showPickToast('🖱 点击页面元素选择<br><span style="color:#a5b4fc;font-size:11px">点选后工具条 ✓ 确认发送</span>');
+      } catch (e) {
+      }
+    };
+    ctx.NOTIFY = { timer: null, origTitle: document.title, audio: null };
+    ctx.notifyUser = function(title, body) {
+      var shown = false;
+      if ("Notification" in window) {
+        if (Notification.permission === "granted") {
+          try {
+            var n = new Notification(title, { body: body || "", tag: "aiti-interact", renotify: true });
+            n.onclick = function() {
+              try {
+                window.focus();
+                n.close();
+              } catch (e) {
+              }
+            };
+            shown = true;
+          } catch (e) {
+          }
+        } else if (Notification.permission !== "denied") {
+          try {
+            Notification.requestPermission().then(function(p) {
+              if (p === "granted") ctx.notifyUser(title, body);
+            });
+          } catch (e) {
+          }
+        }
+      }
+      if (!shown) {
+        try {
+          ctx.showPickToast("🔔 " + title + (body ? "<br>" + body : ""), 6e3);
+        } catch (e) {
+        }
+        if (document.hidden) {
+          ctx.flashTitle("🔔 " + title);
+          ctx.beepAttention();
+        }
+      }
+    };
+    ctx.flashTitle = function(prefix) {
+      var orig = ctx.NOTIFY.origTitle || document.title;
+      var on = true;
+      if (ctx.NOTIFY.timer) clearInterval(ctx.NOTIFY.timer);
+      ctx.NOTIFY.timer = setInterval(function() {
+        document.title = on ? prefix + " · " + orig : orig;
+        on = !on;
+      }, 900);
+      setTimeout(ctx.stopTitleFlash, 3e4);
+    };
+    ctx.stopTitleFlash = function() {
+      if (ctx.NOTIFY.timer) {
+        clearInterval(ctx.NOTIFY.timer);
+        ctx.NOTIFY.timer = null;
+        document.title = ctx.NOTIFY.origTitle || "";
+      }
+    };
+    window.addEventListener("focus", ctx.stopTitleFlash);
+    ctx.beepAttention = function() {
+      try {
+        var AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return;
+        if (!ctx.NOTIFY.audio) ctx.NOTIFY.audio = new AC();
+        var ac = ctx.NOTIFY.audio;
+        if (ac.state === "suspended") ac.resume();
+        [[880, 0, 0.12], [660, 0.16, 0.18]].forEach(function(t) {
+          var o = ac.createOscillator(), g = ac.createGain();
+          o.frequency.value = t[0];
+          g.gain.value = 0.06;
+          o.connect(g);
+          g.connect(ac.destination);
+          o.start(ac.currentTime + t[1]);
+          o.stop(ac.currentTime + t[1] + t[2]);
+        });
+      } catch (e) {
+      }
+    };
+    ctx.sendInteractionResult = function(requestId, result) {
+      var ok = result.status !== "timeout";
+      try {
+        if (global.BridgeClient && typeof global.BridgeClient.postResult === "function") {
+          global.BridgeClient.postResult(requestId, ok, result);
+          return;
+        }
+      } catch (e) {
+      }
+      try {
+        ctx.postToAi(dbgMsg({ type: "dbg_mcp_result", payload: { requestId, ok, result } }));
+      } catch (e) {
+      }
+    };
+    ctx.postBridgeEvent = function(type, payload) {
+      try {
+        ctx.postToAi(dbgMsg({ type: "dbg_bridge_event", payload: { type, payload: payload || {} } }));
+      } catch (e) {
+      }
+    };
+    ctx.sendInteractionControl = function(requestId, action) {
+      try {
+        ctx.postToAi(dbgMsg({ type: "dbg_mcp_interaction_control", payload: { requestId, action } }));
+      } catch (e) {
+      }
+    };
+    ctx.pickPanel = null;
+    ctx.hideAiForPick = function() {
+      ctx.aiOpen = false;
+      ctx.showAi(false);
+      ctx.aiBtn.classList.remove("dbg-on");
+    };
+    ctx.exitPickInspect = function() {
+      try {
+        ctx.postToAi({ type: "dbg_ai_inspect_off", payload: {} });
+      } catch (e) {
+      }
+      try {
+        ctx.broadcast({ type: "dbg_ai_pick", payload: { active: false } });
+      } catch (e) {
+      }
+      try {
+        ctx.broadcast({ type: "dbg_exit_inspector" });
+      } catch (e) {
+      }
+      try {
+        if (window.__dbg && typeof window.__dbg.exitInspector === "function") window.__dbg.exitInspector();
+      } catch (e) {
+      }
+      ctx.aiInspectActive = false;
+      ctx.inspectorOn = false;
+      if (ctx.inspBtn) ctx.inspBtn.classList.remove("dbg-on");
+      try {
+        ctx.deactivateNestedIframes();
+      } catch (e) {
+      }
+      if (ctx.root) {
+        var tbEl = ctx.root.querySelector(".dbg-toolbar");
+        if (tbEl) tbEl.classList.remove("dbg-on");
+      }
+      ctx.aiOpen = true;
+      ctx.ensureAi();
+      ctx.showAi(true);
+      ctx.aiBtn.classList.add("dbg-on");
+    };
+    ctx.getPickPayload = function() {
+      try {
+        var frames = ctx.listFrames();
+        for (var i = 0; i < frames.length; i++) {
+          var fw = frames[i] && frames[i].win;
+          if (fw && fw.__dbg && typeof fw.__dbg.getSelectionPayload === "function") {
+            var p = fw.__dbg.getSelectionPayload();
+            if (p) return p;
+          }
+        }
+      } catch (e) {
+      }
+      try {
+        if (window.__dbg && typeof window.__dbg.getSelectionPayload === "function") {
+          var q = window.__dbg.getSelectionPayload();
+          if (q) return q;
+        }
+      } catch (e) {
+      }
+      return ctx.pickPanel && ctx.pickPanel.el || ctx.lastSelfPayload || ctx.lastPayload || null;
+    };
+    ctx.finishPickPanel = function(result) {
+      if (!ctx.pickPanel) return;
+      var pp = ctx.pickPanel;
+      ctx.pickPanel = null;
+      clearInterval(pp.timer);
+      if (pp.dialog && pp.dialog.parentNode) pp.dialog.parentNode.removeChild(pp.dialog);
+      try {
+        ctx.exitPickInspect();
+      } catch (e) {
+      }
+      if (document.body.style.paddingBottom) document.body.style.paddingBottom = "";
+      if (ctx.hud) {
+        try {
+          ctx.hud.style.opacity = "0";
+        } catch (e) {
+        }
+      }
+      result.tookMs = Date.now() - pp.startedAt;
+      if (pp.silent) return;
+      if (pp.it && pp.it.async) {
+        ctx.addMsg("sys", result.status === "answered" ? "🎯 已选中（候选已放入 AI 待选，点击 [元素N] 发送给 AI）" : result.status === "rejected" ? "✕ 用户取消/拒绝：" + (result.reason || "") : "⏱ 点选超时（用户无响应）");
+        return;
+      }
+      ctx.sendInteractionResult(pp.requestId, result);
+      ctx.addMsg("sys", result.status === "answered" ? "🎯 用户已选元素（回传 AI）" : result.status === "rejected" ? "✕ 用户拒绝选择：" + (result.reason || "") : "⏱ 点选超时（用户无响应）");
+    };
+    ctx.closePickPanel = function(requestId) {
+      var pp = ctx.pickPanel;
+      if (pp && pp.requestId === requestId) {
+        pp.silent = true;
+        ctx.finishPickPanel({ status: "cancelled", error: "AI 已停止" });
+      }
+    };
+    ctx.showPickElementPanel = function(requestId, it) {
+      if (ctx.pickPanel && ctx.pickPanel.requestId === requestId) return;
+      if (ctx.pickPanel) ctx.finishPickPanel({ status: "rejected", reason: "新的交互打断" });
+      try {
+        var _olds = ctx.root.querySelectorAll(".dbg-pick-dialog");
+        for (var _i = 0; _i < _olds.length; _i++) {
+          if (_olds[_i].parentNode) _olds[_i].parentNode.removeChild(_olds[_i]);
+        }
+      } catch (e) {
+      }
+      ctx.selfAiRequested = false;
+      var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0;
+      var startedAt = Date.now();
+      var asyncMode = !!it.async;
+      var dialog = el("div", { class: "dbg-pick-dialog" });
+      var head = el("div", { class: "dbg-pick-head" });
+      head.appendChild(el("span", { class: "dbg-pick-title" }, ["🎯 AI 请你选择页面元素"]));
+      var noTimeout = !(timeoutMs > 0);
+      var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? "♾ 等待操作" : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
+      var pauseBtn = el("button", { title: "暂停倒计时" }, ["⏸"]);
+      if (noTimeout) pauseBtn.style.display = "none";
+      var minBtn = el("button", { title: "暂时隐藏（再点恢复）" }, ["👁 隐藏"]);
+      head.appendChild(timerSpan);
+      head.appendChild(pauseBtn);
+      head.appendChild(minBtn);
+      dialog.appendChild(head);
+      var body = el("div", { class: "dbg-pick-body" });
+      if (it.prompt) body.appendChild(el("div", { style: "white-space:pre-wrap" }, [it.prompt]));
+      body.appendChild(el("div", { style: "color:#94a3b8;line-height:1.5;margin-top:4px" }, ["AI 需要你帮忙在页面上点选一个元素。点「现在开始选择」进入点选——移到元素上高亮、点击锁定，然后在工具条上确认发送。"]));
+      var c = el("div", { style: "margin-top:8px;display:flex;gap:6px;justify-content:center" });
+      var startBtn = el("button", { class: "dbg-pick-ok" }, ["🖱 现在开始选择"]);
+      var laterBtn = el("button", { class: "dbg-pick-cancel" }, ["⏳ 暂不选择"]);
+      c.appendChild(laterBtn);
+      c.appendChild(startBtn);
+      body.appendChild(c);
+      dialog.appendChild(body);
+      ctx.root.appendChild(dialog);
+      dialog.style.zIndex = "2147483648";
+      placePhysPanel(dialog, { visW: Math.min(420, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "420px", overflowY: "auto" });
+      try {
+        ctx.dodgeToolbarAboveDialog(dialog);
+      } catch (e) {
+      }
+      try {
+        makePointerDrag({
+          handle: head,
+          capture: "now",
+          raf: true,
+          preventStart: true,
+          filter: function(e) {
+            return !(e.target && e.target.tagName === "BUTTON");
+          },
+          onStart: function() {
+            dialog.classList.add("dbg-dragging");
+            return { left: dialog.offsetLeft || 0, top: dialog.offsetTop || 0 };
+          },
+          onMove: function(ev, st, dx, dy) {
+            var nl = Math.min(Math.max(0, st.left + dx), Math.max(40, (window.innerWidth || 0) - 60));
+            var nt = Math.min(Math.max(0, st.top + dy), Math.max(24, (window.innerHeight || 0) - 40));
+            dialog.style.left = nl + "px";
+            dialog.style.top = nt + "px";
+            dialog.style.right = "auto";
+            dialog.style.bottom = "auto";
+          },
+          onEnd: function() {
+            dialog.classList.remove("dbg-dragging");
+          }
+        });
+      } catch (e) {
+      }
+      minBtn.addEventListener("click", function() {
+        var hidden = body.style.display === "none";
+        body.style.display = hidden ? "" : "none";
+        minBtn.textContent = hidden ? "👁 隐藏" : "👁 显示";
+        if (dialog.parentNode) placePhysPanel(dialog, { visW: Math.min(420, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "420px", overflowY: "auto" });
+      });
+      function startInspect() {
+        ctx.hideAiForPick();
+        ctx.aiInspectActive = true;
+        ctx.selfEngaged = false;
+        ctx.enterSelfClient(isTouchDevice() ? "touch" : "mouse");
+        ctx.activateNestedIframes(isTouchDevice() ? "touch" : "mouse");
+        ctx.broadcast({ type: "dbg_enter_inspector", payload: { mode: "mouse" } });
+        ctx.broadcast({ type: "dbg_ai_pick", payload: { active: true } });
+        ctx.addMsg("sys", "🎯 点选模式（" + String(it.prompt || "").slice(0, 40) + "）——移到元素高亮、点击锁定，工具条上确认。");
+        try {
+          if (ctx.showPickHint) ctx.showPickHint();
+        } catch (e) {
+        }
+      }
+      startBtn.addEventListener("click", function() {
+        try {
+          if (dialog.parentNode) dialog.parentNode.removeChild(dialog);
+        } catch (e) {
+        }
+        startInspect();
+        ctx.pickPanel.dialog = null;
+      });
+      laterBtn.addEventListener("click", function() {
+        ctx.finishPickPanel({ status: "rejected", reason: "用户暂不选择" });
+      });
+      var deadline = Date.now() + timeoutMs;
+      var paused = false;
+      var remainingMs = timeoutMs;
+      function tickCountdown() {
+        if (paused) return;
+        var left = Math.max(0, deadline - Date.now());
+        if (timerSpan) timerSpan.textContent = "⏱ " + Math.ceil(left / 1e3) + "s";
+        if (left <= 0) ctx.finishPickPanel({ status: "timeout", error: "用户无响应（不在线）" });
+      }
+      if (!noTimeout) pauseBtn.addEventListener("click", function() {
+        paused = !paused;
+        if (paused) {
+          remainingMs = Math.max(0, deadline - Date.now());
+          if (timerSpan) timerSpan.textContent = "⏸ 已暂停（剩 " + Math.ceil(remainingMs / 1e3) + "s）";
+          pauseBtn.textContent = "▶";
+        } else {
+          deadline = Date.now() + remainingMs;
+          if (timerSpan) timerSpan.textContent = "⏱ " + Math.ceil(remainingMs / 1e3) + "s";
+          pauseBtn.textContent = "⏸";
+        }
+        ctx.sendInteractionControl(requestId, paused ? "pause" : "resume");
+      });
+      ctx.pickPanel = { requestId, it, dialog, timerSpan, startedAt, el: null, asyncMode, phase: "confirm" };
+      ctx.pickPanel.timer = noTimeout ? null : setInterval(tickCountdown, 500);
+    };
+    ctx.updatePickPanelLabel = function(p) {
+      if (!ctx.pickPanel || !p) return;
+      ctx.pickPanel.el = p;
+      if (p && p.engaged) {
+        ctx.pickPanel.resultDesc = "<" + (p.tag || "?") + ">" + (p.text ? " " + String(p.text).trim().slice(0, 50) : "") + (p.xpath ? " · " + String(p.xpath).slice(0, 60) : "");
+      }
+    };
+    ctx.showHostAskPanel = function(requestId, it) {
+      if (ctx.hostAskPanels && ctx.hostAskPanels[requestId]) return;
+      var kind = it.kind || "confirm";
+      var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0;
+      var startedAt = Date.now();
+      var seq = ctx.askPanelSeq = (ctx.askPanelSeq || 0) + 1;
+      function reflowPanel() {
+        var w = Math.min(520, Math.round(getPhysViewport().w) - 24);
+        placePhysPanel(dialog, { visW: w, dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: w + "px", overflowY: "auto" });
+      }
+      var dialog = el("div", { class: "dbg-pick-dialog" });
+      var head = el("div", { class: "dbg-pick-head" });
+      var kindTitle = { confirm: "🤖 AI 需要你确认", choose: "🤖 AI 请你选择", input: "✍️ AI 请你输入", presence: "🙋 AI 问你是否在场" };
+      head.appendChild(el("span", { class: "dbg-pick-title" }, [kindTitle[kind] || "🤖 AI 需要你回答"]));
+      var noTimeout = !(timeoutMs > 0);
+      var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? "♾ 等待操作" : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
+      var pauseBtn = el("button", { title: "暂停倒计时" }, ["⏸"]);
+      if (noTimeout) pauseBtn.style.display = "none";
+      var minBtn = el("button", { title: "暂时隐藏（再点恢复）" }, ["👁 隐藏"]);
+      head.appendChild(timerSpan);
+      head.appendChild(pauseBtn);
+      head.appendChild(minBtn);
+      var cancelHead = el("button", { title: "取消（拒绝本次请求）", style: "font-size:15px;font-weight:700;padding:2px 10px" }, ["✕"]);
+      cancelHead.addEventListener("click", function() {
+        finishAsk({ status: "rejected", reason: "用户取消" });
+      });
+      head.appendChild(cancelHead);
+      dialog.appendChild(head);
+      var body = el("div", { class: "dbg-pick-body" });
+      body.appendChild(el("div", { class: "dbg-ask-prompt" }, [it.prompt || ""]));
+      minBtn.addEventListener("click", function() {
+        var hidden = body.style.display === "none";
+        body.style.display = hidden ? "" : "none";
+        minBtn.textContent = hidden ? "👁 隐藏" : "👁 显示";
+        try {
+          reflowPanel();
+        } catch (e) {
+        }
+      });
+      var ctl = el("div", { style: "display:flex;flex-direction:column;gap:6px;margin-top:8px" });
+      var multiple = !!it.multiple;
+      var singleShot = !(kind === "choose" && multiple);
+      if (kind !== "input") {
+        ctl.appendChild(el("div", { class: "dbg-ask-label" }, [singleShot ? "点选项或按数字键 1-9 立即作答：" : "勾选（可多选）后点「发送」："]));
+      }
+      var optWrap = el("div", { style: "display:flex;flex-direction:column;gap:8px;margin-top:8px" });
+      var sel = { v: null, idxs: {}, custom: false };
+      function finishAskCustom() {
+        var comment = commentInp ? commentInp.value.trim() : "";
+        var cv = comment ? { comment } : {};
+        if (sel.custom) {
+          if (kind === "choose") finishAsk({ status: "answered", value: { index: -1, label: comment || "都不适合", custom: true } });
+          else if (kind === "confirm") finishAsk({ status: "answered", value: { approved: null, custom: comment || "都不适合" } });
+          else finishAsk({ status: "answered", value: { present: null, custom: comment || "都不适合" } });
+          return;
+        }
+        if (kind === "choose") {
+          var choices2 = it.choices && it.choices.length ? it.choices : [];
+          if (multiple) {
+            var idxs = Object.keys(sel.idxs).map(Number).sort(function(a, b) {
+              return a - b;
+            });
+            if (!idxs.length && !comment) return;
+            if (!idxs.length) finishAsk({ status: "answered", value: { indexes: [], custom: comment } });
+            else finishAsk({ status: "answered", value: Object.assign({ indexes: idxs, labels: idxs.map(function(i) {
+              return choices2[i] != null ? choices2[i] : String(i);
+            }) }, cv) });
+          } else {
+            if (sel.v === null && !comment) return;
+            if (sel.v === null) finishAsk({ status: "answered", value: { index: -1, label: comment, custom: true } });
+            else {
+              var idx = parseInt(sel.v, 10);
+              finishAsk({ status: "answered", value: Object.assign({ index: idx, label: choices2[idx] != null ? choices2[idx] : sel.v }, cv) });
+            }
+          }
+        } else if (kind === "confirm") {
+          if (sel.v === null && !comment) return;
+          if (sel.v === null) finishAsk({ status: "answered", value: { approved: null, custom: comment } });
+          else finishAsk({ status: "answered", value: Object.assign({ approved: sel.v === "yes" }, cv) });
+        } else if (kind === "presence") {
+          if (sel.v === null && !comment) return;
+          if (sel.v === null) finishAsk({ status: "answered", value: { present: null, custom: comment } });
+          else if (sel.v === "later") finishAsk(__spreadValues({ status: "rejected", reason: "用户暂时不在" }, cv));
+          else finishAsk({ status: "answered", value: Object.assign({ present: true }, cv) });
+        }
+      }
+      function askNum(n) {
+        return el("span", { class: "dbg-ask-num" }, [String(n)]);
+      }
+      if (kind === "confirm") {
+        optWrap.appendChild(el("button", { class: "dbg-primary dbg-ask-opt", "data-v": "yes" }, [askNum(1), "是 / 确认"]));
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-no", "data-v": "no" }, [askNum(2), "否 / 取消"]));
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-opt-custom", "data-custom": "1" }, [askNum(3), "都不适合（输入回答）"]));
+      } else if (kind === "choose") {
+        var choices = it.choices && it.choices.length ? it.choices : ["选项 A", "选项 B"];
+        choices.forEach(function(c, i) {
+          optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt", "data-i": String(i) }, [askNum(i + 1), String(c)]));
+        });
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-opt-custom", "data-custom": "1" }, [askNum(choices.length + 1), "这些都不适合（输入回答）"]));
+      } else if (kind === "presence") {
+        optWrap.appendChild(el("button", { class: "dbg-primary dbg-ask-opt", "data-v": "yes" }, [askNum(1), "我在，继续"]));
+        optWrap.appendChild(el("button", { class: "dbg-ghost dbg-ask-opt dbg-ask-no", "data-v": "later" }, [askNum(2), "稍后 / 不在"]));
+      }
+      if (kind !== "input") ctl.appendChild(optWrap);
+      var commentInp = null, sendBtn = null;
+      if (kind === "confirm" || kind === "choose" || kind === "presence") {
+        ctl.appendChild(el("div", { class: "dbg-ask-label" }, ["📝 补充说明（可选）"]));
+        var commentRow = el("div", { style: "display:flex;gap:6px" });
+        commentInp = el("input", { type: "text", placeholder: singleShot ? "📝 补充说明（可选，填好后点选项一并发送）" : "📝 补充说明（可选）", style: "background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1" });
+        sendBtn = multiple ? null : el("button", { class: "dbg-primary dbg-ask-send", style: (singleShot ? "display:none;" : "") + "flex:1;font-weight:700;font-size:13px;padding:9px 12px" }, ["✓ 发送"]);
+        commentRow.appendChild(commentInp);
+        if (sendBtn) commentRow.appendChild(sendBtn);
+        ctl.appendChild(commentRow);
+      }
+      if (kind === "input") {
+        var inp = el("input", { type: "text", value: it.defaultValue || "", placeholder: "输入你的回答…", style: "background:rgba(255,255,255,.06);border:1px solid rgba(148,163,184,.35);color:#f1f5f9;border-radius:8px;padding:9px 11px;font:inherit;flex:1" });
+        var send = el("button", { class: "dbg-primary dbg-ask-send" }, ["发送"]);
+        var r3 = el("div", { style: "display:flex;gap:6px" });
+        r3.appendChild(inp);
+        r3.appendChild(send);
+        ctl.appendChild(r3);
+        send.addEventListener("click", function() {
+          finishAsk({ status: "answered", value: { text: inp.value } });
+        });
+        inp.addEventListener("keydown", function(e) {
+          if (e.key === "Enter") send.click();
+        });
+      } else {
+        let refreshAskSend = function() {
+          var hasSel = sel.custom || (multiple ? Object.keys(sel.idxs).length > 0 : sel.v !== null);
+          var hasCmt = !!(commentInp && commentInp.value.trim());
+          if (sendBtn) sendBtn.disabled = !(hasSel || hasCmt);
+          if (footSend) {
+            footSend.disabled = !(hasSel || hasCmt);
+            if (multiple) footSend.textContent = "✅ 发送所选（" + Object.keys(sel.idxs).length + "）";
+          }
+        };
+        var optBtns = optWrap.querySelectorAll(".dbg-ask-opt");
+        Array.prototype.forEach.call(optBtns, function(o) {
+          o.addEventListener("click", function() {
+            if (o.hasAttribute("data-custom")) {
+              sel.custom = true;
+              sel.v = null;
+              sel.idxs = {};
+              Array.prototype.forEach.call(optBtns, function(x) {
+                x.classList.toggle("dbg-on", x === o);
+              });
+              if (sendBtn) sendBtn.style.display = "";
+              if (commentInp) {
+                try {
+                  commentInp.focus();
+                } catch (e) {
+                }
+              }
+              refreshAskSend();
+              return;
+            }
+            sel.custom = false;
+            var customBtn = optWrap.querySelector(".dbg-ask-opt-custom");
+            if (customBtn) customBtn.classList.remove("dbg-on");
+            if (kind === "choose" && multiple) {
+              var i = o.getAttribute("data-i");
+              if (sel.idxs[i]) {
+                delete sel.idxs[i];
+                o.classList.remove("dbg-on");
+              } else {
+                sel.idxs[i] = true;
+                o.classList.add("dbg-on");
+              }
+            } else {
+              var ov = o.getAttribute("data-i") !== null ? o.getAttribute("data-i") : o.getAttribute("data-v");
+              sel.v = ov;
+              Array.prototype.forEach.call(optBtns, function(x) {
+                x.classList.toggle("dbg-on", x === o);
+              });
+            }
+            refreshAskSend();
+            if (!(kind === "choose" && multiple)) {
+              setTimeout(finishAskCustom, 0);
+            }
+          });
+        });
+        if (sendBtn) sendBtn.addEventListener("click", finishAskCustom);
+        if (commentInp) {
+          commentInp.addEventListener("input", refreshAskSend);
+          commentInp.addEventListener("keydown", function(e) {
+            if (e.key !== "Enter") return;
+            if (sendBtn && !sendBtn.disabled) sendBtn.click();
+            else if (footSend) footSend.click();
+          });
+        }
+        refreshAskSend();
+      }
+      body.appendChild(ctl);
+      if (it.rejectable !== false && kind !== "presence") {
+        var det2 = el("details", {}, []);
+        det2.appendChild(el("summary", { style: "cursor:pointer;font-size:13px;color:#cbd5e1;margin-top:10px;padding:4px 0;user-select:none" }, ["✕ 现在无法处理（告诉 AI 原因）"]));
+        var rr2 = el("div", { style: "display:flex;flex-wrap:wrap;gap:8px;margin-top:6px" });
+        ["我暂时无法满足你的要求", "暂时找不到/选不了", "等会再处理"].forEach(function(r) {
+          rr2.appendChild(el("button", { class: "dbg-ask-reject", "data-reason": r }, [r]));
+        });
+        det2.appendChild(rr2);
+        body.appendChild(det2);
+        det2.addEventListener("toggle", function() {
+          try {
+            reflowPanel();
+          } catch (e) {
+          }
+        });
+      }
+      dialog.appendChild(body);
+      if (kind === "choose" && multiple) {
+        var footRow = el("div", { style: "display:flex;justify-content:space-between;align-items:center;gap:8px;margin-top:10px" });
+        footRow.appendChild(el("button", { class: "dbg-pick-cancel dbg-ask-cancel" }, ["✕ 取消"]));
+        var footSend = el("button", { class: "dbg-primary dbg-ask-send", style: "flex:1;font-weight:800;font-size:16px;padding:12px 18px;border-radius:10px;letter-spacing:.5px;display:flex;align-items:center;justify-content:center;gap:6px" }, ["✅ 发送所选（0）"]);
+        footSend.disabled = true;
+        footSend.addEventListener("click", finishAskCustom);
+        footRow.appendChild(footSend);
+        body.appendChild(footRow);
+      }
+      ctx.root.appendChild(dialog);
+      dialog.style.zIndex = "2147483648";
+      try {
+        reflowPanel();
+      } catch (e) {
+      }
+      try {
+        ctx.dodgeToolbarAboveDialog(dialog);
+      } catch (e) {
+      }
+      try {
+        makePointerDrag({
+          handle: head,
+          capture: "now",
+          raf: true,
+          preventStart: true,
+          filter: function(e) {
+            return !(e.target && e.target.tagName === "BUTTON");
+          },
+          // 头部按钮（⏸/👁/✕）不触发拖拽
+          onStart: function() {
+            dialog.classList.add("dbg-dragging");
+            return { left: dialog.offsetLeft || 0, top: dialog.offsetTop || 0 };
+          },
+          onMove: function(ev, st, dx, dy) {
+            var nl = Math.min(Math.max(0, st.left + dx), Math.max(40, (window.innerWidth || 0) - 60));
+            var nt = Math.min(Math.max(0, st.top + dy), Math.max(24, (window.innerHeight || 0) - 40));
+            dialog.style.left = nl + "px";
+            dialog.style.top = nt + "px";
+            dialog.style.right = "auto";
+            dialog.style.bottom = "auto";
+          },
+          onEnd: function() {
+            dialog.classList.remove("dbg-dragging");
+          }
+        });
+      } catch (e) {
+      }
+      var done = false;
+      function finishAsk(res) {
+        if (done) return;
+        done = true;
+        delete ctx.hostAskPanels[requestId];
+        clearInterval(timer);
+        document.removeEventListener("keydown", keyHandler);
+        res.tookMs = Date.now() - startedAt;
+        dialog.classList.remove("dbg-open");
+        setTimeout(function() {
+          if (dialog.parentNode) dialog.parentNode.removeChild(dialog);
+        }, 200);
+        try {
+          ctx.floatToolbarReAnchor();
+        } catch (e) {
+        }
+        if (silent) return;
+        if (it.async) {
+          if (res.status === "answered") {
+            var txt = describeAnswer(kind, res.value);
+            ctx.postBridgeEvent("user_answer", { kind, answer: txt, status: "answered" });
+            ctx.addMsg("sys", "💬 用户已回答：" + txt + "（异步——已放入 AI 待选，点击 [回答N] 发送给 AI）");
+          } else {
+            ctx.postBridgeEvent("user_answer", { kind, answer: res.status === "rejected" ? "❌ 拒绝：" + (res.reason || "") : "⏱ 超时", status: res.status === "rejected" ? "rejected" : "timeout", reason: res.reason || "" });
+            ctx.addMsg("sys", res.status === "rejected" ? "✕ 用户拒绝：" + (res.reason || "") + "（异步——已通知 MCP）" : "⏱ 等待超时（用户无响应）");
+          }
+          return;
+        }
+        ctx.sendInteractionResult(requestId, res);
+        ctx.addMsg("sys", res.status === "answered" ? "💬 用户已回答（回传 AI）" : res.status === "rejected" ? "✕ 用户拒绝：" + (res.reason || "") : "⏱ 等待超时（用户无响应）");
+      }
+      ctx.hostAskPanels = ctx.hostAskPanels || {};
+      var silent = false;
+      ctx.hostAskPanels[requestId] = { finishAsk, startedAt };
+      var timer = noTimeout ? null : setInterval(tickCountdown, 500);
+      var deadline = Date.now() + timeoutMs;
+      var paused = false;
+      var remainingMs = timeoutMs;
+      function tickCountdown() {
+        if (paused) return;
+        var left = Math.max(0, deadline - Date.now());
+        timerSpan.textContent = "⏱ " + Math.ceil(left / 1e3) + "s";
+        if (left <= 0) finishAsk({ status: "timeout", error: "用户无响应（不在线）" });
+      }
+      if (!noTimeout) pauseBtn.addEventListener("click", function() {
+        paused = !paused;
+        if (paused) {
+          remainingMs = Math.max(0, deadline - Date.now());
+          timerSpan.textContent = "⏸ 已暂停（剩 " + Math.ceil(remainingMs / 1e3) + "s）";
+          pauseBtn.textContent = "▶ 继续";
+        } else {
+          deadline = Date.now() + remainingMs;
+          timerSpan.textContent = "⏱ " + Math.ceil(remainingMs / 1e3) + "s";
+          pauseBtn.textContent = "⏸ 暂停";
+        }
+        ctx.sendInteractionControl(requestId, paused ? "pause" : "resume");
+      });
+      var keyHandler = function(e) {
+        if (done) return;
+        if (seq !== ctx.askPanelSeq) return;
+        var t = e.target;
+        if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+        var n = parseInt(e.key, 10);
+        if (!(n >= 1) || n > 9) return;
+        var btns = optWrap.querySelectorAll(".dbg-ask-opt");
+        if (btns[n - 1]) {
+          btns[n - 1].click();
+          e.preventDefault();
+        }
+      };
+      document.addEventListener("keydown", keyHandler);
+      dialog.addEventListener("click", function(e) {
+        var t = e.target.closest("button");
+        if (!t) return;
+        if (t.classList.contains("dbg-ask-yes")) {
+          finishAsk(kind === "confirm" ? { status: "answered", value: { approved: true } } : { status: "answered", value: { present: true } });
+        } else if (t.classList.contains("dbg-ask-no")) {
+          finishAsk(kind === "confirm" ? { status: "answered", value: { approved: false } } : { status: "rejected", reason: "用户暂时不在" });
+        } else if (t.classList.contains("dbg-ask-choice")) {
+          var i = parseInt(t.getAttribute("data-i"), 10);
+          var ch = it.choices || [];
+          finishAsk({ status: "answered", value: { index: i, label: ch[i] != null ? ch[i] : String(i) } });
+        } else if (t.classList.contains("dbg-ask-reject")) {
+          finishAsk({ status: "rejected", reason: t.getAttribute("data-reason") });
+        } else if (t.classList.contains("dbg-ask-cancel")) {
+          finishAsk({ status: "rejected", reason: "用户取消" });
+        }
+      });
+      ctx.closeHostAskPanel = function(requestId2) {
+        var p = ctx.hostAskPanels[requestId2];
+        if (p) {
+          silent = true;
+          p.finishAsk({ status: "cancelled", error: "AI 已停止" });
+        }
+      };
+    };
+    ctx.showNotifyPanel = function(requestId, it) {
+      var timeoutMs = parseInt(it.timeoutMs, 10) > 0 ? parseInt(it.timeoutMs, 10) : 0;
+      var dialog = el("div", { class: "dbg-pick-dialog" });
+      var head = el("div", { class: "dbg-pick-head" });
+      head.appendChild(el("span", { class: "dbg-pick-title" }, ["🔔 " + (it.title || "AI 通知")]));
+      var noTimeout = !(timeoutMs > 0);
+      var timerSpan = el("span", { style: "font-weight:400;color:#93c5fd;font-size:11px" }, [noTimeout ? "♾ 常驻" : "⏱ " + Math.ceil(timeoutMs / 1e3) + "s"]);
+      var pauseBtn = el("button", { title: "暂停倒计时" }, ["⏸"]);
+      if (noTimeout) pauseBtn.style.display = "none";
+      head.appendChild(timerSpan);
+      head.appendChild(pauseBtn);
+      var closeBtn = el("button", { title: "关闭", style: "font-size:15px;font-weight:700;padding:2px 10px" }, ["✕"]);
+      head.appendChild(closeBtn);
+      dialog.appendChild(head);
+      var body = el("div", { class: "dbg-pick-body" });
+      body.appendChild(el("div", { style: "white-space:pre-wrap;font-size:14px;line-height:1.7;color:#e5e7eb;word-break:break-word;overflow-wrap:anywhere" }, [it.body || ""]));
+      dialog.appendChild(body);
+      try {
+        makePointerDrag({
+          handle: head,
+          capture: "now",
+          raf: true,
+          preventStart: true,
+          filter: function(e) {
+            return !(e.target && e.target.tagName === "BUTTON");
+          },
+          onStart: function() {
+            dialog.classList.add("dbg-dragging");
+            return { left: dialog.offsetLeft || 0, top: dialog.offsetTop || 0 };
+          },
+          onMove: function(ev, st, dx, dy) {
+            dialog.style.left = Math.min(Math.max(0, st.left + dx), Math.max(40, (window.innerWidth || 0) - 60)) + "px";
+            dialog.style.top = Math.min(Math.max(0, st.top + dy), Math.max(24, (window.innerHeight || 0) - 40)) + "px";
+            dialog.style.right = "auto";
+            dialog.style.bottom = "auto";
+          },
+          onEnd: function() {
+            dialog.classList.remove("dbg-dragging");
+          }
+        });
+      } catch (e) {
+      }
+      var done = false;
+      var closeCard = function() {
+        if (done) return;
+        done = true;
+        clearInterval(timer);
+        if (dialog.parentNode) dialog.parentNode.removeChild(dialog);
+      };
+      var deadline = Date.now() + timeoutMs, paused = false, remainingMs = timeoutMs;
+      var timer = noTimeout ? null : setInterval(function() {
+        if (paused) return;
+        var left = Math.max(0, deadline - Date.now());
+        timerSpan.textContent = "⏱ " + Math.ceil(left / 1e3) + "s";
+        if (left <= 0) closeCard();
+      }, 500);
+      if (!noTimeout) pauseBtn.addEventListener("click", function() {
+        paused = !paused;
+        if (paused) {
+          remainingMs = Math.max(0, deadline - Date.now());
+          timerSpan.textContent = "⏸ 已暂停（剩 " + Math.ceil(remainingMs / 1e3) + "s）";
+          pauseBtn.textContent = "▶ 继续";
+        } else {
+          deadline = Date.now() + remainingMs;
+          timerSpan.textContent = "⏱ " + Math.ceil(remainingMs / 1e3) + "s";
+          pauseBtn.textContent = "⏸ 暂停";
+        }
+      });
+      closeBtn.addEventListener("click", closeCard);
+      ctx.root.appendChild(dialog);
+      try {
+        placePhysPanel(dialog, { visW: Math.min(520, Math.round(getPhysViewport().w) - 24), dock: "bottom", gap: 12, offsetY: 64, minH: 40, maxWidth: "520px", overflowY: "auto" });
+      } catch (e) {
+      }
+    };
+    ctx.handleMcpInteraction = function(payload) {
+      var it = payload && payload.interaction ? payload.interaction : {};
+      var itKind = it.kind || "confirm";
+      if (itKind === "notify") {
+        if (ctx.lastNotifyId === payload.requestId) return;
+        ctx.lastNotifyId = payload.requestId;
+        ctx.notifyUser(it.title || "🤖 AI 有一条消息", it.body || "");
+        ctx.showNotifyPanel(payload.requestId, it);
+        return;
+      }
+      ctx.notifyUser("🤖 AI 需要你", itKind === "pick_element" ? it.prompt || "请点击页面上的一个元素" : it.prompt || "请在页面回答");
+      if (itKind === "pick_element") {
+        ctx.showPickElementPanel(payload.requestId, it);
+      } else {
+        ctx.showHostAskPanel(payload.requestId, it);
+      }
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/profiles.js
+  function initProfiles(ctx) {
+    ctx.loadUserProfiles = function() {
+      return lsGetJSON(PROFILES_KEY, []);
+    };
+    ctx.saveUserProfiles = function() {
+      lsSetJSON(PROFILES_KEY, ctx.userProfiles);
+    };
+    ctx.getProfiles = function() {
+      var out = {};
+      Object.keys(ctx.RELEASE_PROFILES).forEach(function(k) {
+        out[k] = ctx.RELEASE_PROFILES[k];
+      });
+      ctx.userProfiles.forEach(function(u) {
+        out[u.name] = u;
+      });
+      return out;
+    };
+    ctx.getProfileOrder = function() {
+      return ["default", "all", "frozen"].concat(ctx.userProfiles.map(function(u) {
+        return u.name;
+      }));
+    };
+    ctx.addUserProfile = function(label) {
+      ctx.userProfileSeq++;
+      var name = "u" + ctx.userProfileSeq;
+      ctx.userProfiles.push({ name, label, release: ["click", "hover", "key", "wheel", "scroll", "touch", "focus"], builtin: false });
+      ctx.saveUserProfiles();
+      return name;
+    };
+    ctx.removeUserProfile = function(name) {
+      ctx.userProfiles = ctx.userProfiles.filter(function(u) {
+        return u.name !== name;
+      });
+      ctx.saveUserProfiles();
+      if (ctx.currentProfile === name) ctx.applyProfile("default");
+    };
+    ctx.applyProfile = function(name) {
+      var profiles = ctx.getProfiles();
+      ctx.currentProfile = name && profiles[name] ? name : "default";
+      var pf = profiles[ctx.currentProfile] || profiles.default;
+      ctx.postToFrame(ctx.selFrameId(), { type: "dbg_set_profile", payload: { profile: { name: pf.name, release: pf.release } } });
+      if (ctx.selfClient && typeof ctx.selfClient.applyProfile === "function") ctx.selfClient.applyProfile({ name: pf.name, release: pf.release });
+      ctx.saveDbgState();
+      return pf;
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/hud.js
+  function initHud(ctx) {
+    ctx.attachHudDrag = function() {
+      if (!ctx.hud || ctx.hud.__dragBound) return;
+      ctx.hud.__dragBound = true;
+      ctx._hudDragCtl = makePointerDrag({
+        handle: ctx.hud,
+        threshold: 4,
+        capture: "now",
+        filter: function(e) {
+          return !!(e.target && e.target.closest && e.target.closest(".dbg-hud-grip"));
+        },
+        onStart: function(e) {
+          e.stopPropagation();
+          var hv = ctx.hud.__vis || { left: 0, top: 0 };
+          var cl = detectCoordSemantics(ctx.hud, e.clientX);
+          var s = cl ? getPhysViewport().scale : 1;
+          return { ox: e.clientX * s - hv.left, oy: e.clientY * s - hv.top, coordLayout: cl };
+        },
+        onMove: function(ev, st) {
+          var vp = getPhysViewport();
+          var sx = st.coordLayout ? vp.scale : 1;
+          var sy = st.coordLayout ? vp.scaleY : 1;
+          var visX = ev.clientX * sx - st.ox;
+          var visY = ev.clientY * sy - st.oy;
+          ctx.hud.__vis = { left: visX, top: visY };
+          positionPhysical(ctx.hud, visX, visY, vp.scale, vp.scaleY);
+          ctx.hudUserPos = { x: visX, y: visY };
+        }
+      });
+    };
+    ctx.resetHudPos = function() {
+      ctx.hudUserPos = null;
+      if (ctx._hudDragCtl) ctx._hudDragCtl.cancel();
+    };
+    ctx.updateHud = function(p, source) {
+      ctx.lastHud = { p, source };
+      if (!ctx.inspectorOn && !ctx.aiInspectActive && !ctx.hudHoverOn) return;
+      if (!ctx.hud) {
+        ctx.hud = el("div", { class: "dbg-hud" });
+        ctx.root.appendChild(ctx.hud);
+        ctx.attachHudDrag();
+      }
+      var rowHtml = function(s) {
+        return '<span style="display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%">' + s + "</span>";
+      };
+      var rows = [];
+      var head = "<b>🎯 点击选择</b> <b>&lt;" + (p.tag || "?") + "&gt;</b>";
+      if (p.rect) head += " <i>" + p.rect.w + "×" + p.rect.h + "</i>";
+      rows.push(rowHtml(head));
+      if (p.text) rows.push(rowHtml("“" + escapeHtml(p.text.trim().slice(0, 60)) + "”"));
+      var colors = [];
+      if (p.bg && p.bg !== "rgba(0, 0, 0, 0)") colors.push("bg <i>" + escapeHtml(p.bg) + "</i>");
+      if (p.color) colors.push("fg <i>" + escapeHtml(p.color) + "</i>");
+      if (p.fontSize) colors.push("font <i>" + escapeHtml(p.fontSize) + "</i>");
+      if (colors.length) rows.push(rowHtml(colors.join(" · ")));
+      if (p.component || p.file) {
+        var _fl = p.component ? p.component + " · " : "";
+        if (p.file) _fl += '<a class="dbg-open-file" data-file="' + escapeHtml(p.file).replace(/"/g, "&quot;") + '" data-line="' + (p.line || "") + '" title="点击在后台打开">' + escapeHtml(p.file) + (p.line ? ":" + p.line : "") + "</a>";
+        if (p.usedAt && (p.usedAt.file || p.usedAt.component)) {
+          if (p.usedAt.file) {
+            _fl += ' ← 调用于 <a class="dbg-open-file" data-file="' + escapeHtml(p.usedAt.file).replace(/"/g, "&quot;") + '" data-line="' + (p.usedAt.line || "") + '" title="点击在后台打开">' + escapeHtml(p.usedAt.file) + ":" + (p.usedAt.line || "") + "</a>";
+          } else if (p.usedAt.component) {
+            _fl += " ← 调用于 " + escapeHtml(p.usedAt.component);
+          }
+        }
+        rows.push('<span style="display:block;white-space:pre-wrap;word-break:break-all;max-width:100%">📄 ' + _fl + "</span>");
+      }
+      if (p.xpath) rows.push(rowHtml('<span class="dbg-hud-path">' + escapeHtml(p.xpath) + "</span>"));
+      ctx.hud.innerHTML = rows.join("");
+      if (!ctx.hud.querySelector(".dbg-hud-grip")) {
+        ctx.hud.appendChild(el("span", { class: "dbg-hud-grip", title: "拖动固定 HUD（不跟随选区）" }, ["⠿"]));
+      }
+      if (p.rect && !ctx.hudUserPos && Date.now() > ctx.navHoldT) {
+        var vp = getPhysViewport();
+        if (detectScreenMode().small) {
+          var hh = ctx.hud.offsetHeight || 40;
+          var hw = ctx.hud.offsetWidth || 200;
+          var left = Math.max(8, (vp.w - hw) / 2);
+          var top = Math.max(8, vp.h - hh - 8);
+          try {
+            if (p.rect) {
+              var _mx = _fixedVisual ? 1 : vp.scale, _my = _fixedVisual ? 1 : vp.scaleY;
+              var _ey = p.rect.y * _my, _eh = (p.rect.h || 0) * _my, _ex = p.rect.x * _mx;
+              if (source !== "self") {
+                var _fo2 = ctx.frameOffset(source);
+                _ex += _fo2.left * _mx;
+                _ey += _fo2.top * _my;
+              }
+              var _hudTop = vp.h - hh - 8;
+              if (_ey + _eh > _hudTop - 6 && _ey < vp.h - 6) {
+                top = Math.max(8, _ey - hh - 8);
+              }
+            }
+          } catch (e) {
+          }
+          if (!ctx.hud.__openFileBound) {
+            ctx.hud.__openFileBound = true;
+            ctx.hud.addEventListener("click", function(ev) {
+              var a = ev.target && ev.target.closest ? ev.target.closest(".dbg-open-file") : null;
+              if (a) {
+                ev.stopPropagation();
+                ctx.openFileAt(a.getAttribute("data-file"), parseInt(a.getAttribute("data-line"), 10) || null);
+              }
+            });
+          }
+          ctx.hud.__vis = { left, top };
+          ctx.hud.style.top = top + "px";
+          ctx.hud.style.left = left + "px";
+          ctx.hud.style.maxWidth = vp.w - 16 + "px";
+          ctx.hud.style.maxHeight = vp.h - 16 + "px";
+          ctx.hud.style.transform = "none";
+          ctx.applyHudZoom();
+          ctx.hud.style.pointerEvents = "none";
+          document.body.style.paddingBottom = hh * (1 / (window.visualViewport ? window.visualViewport.scale : 1)) + "px";
+          ctx.hud.style.opacity = "1";
+          return;
+        }
+        var offX = 0, offY = 0;
+        if (source !== "self") {
+          var fo = ctx.frameOffset(source);
+          offX = fo.left;
+          offY = fo.top;
+        }
+        var x = (p.rect.x + offX) * vp.scale, y = (p.rect.y + offY) * vp.scale;
+        var elW = (p.rect.w || 0) * vp.scale, elH = (p.rect.h || 0) * vp.scale;
+        ctx.hud.style.maxWidth = "none";
+        ctx.hud.style.whiteSpace = "nowrap";
+        var hudH = ctx.hud.offsetHeight;
+        if (!hudH || hudH < 24) hudH = 24;
+        var hudW = ctx.hud.offsetWidth || 200;
+        var gap = 8;
+        var below = y + elH + gap;
+        var above = y - hudH - gap;
+        var tbEl = ctx.root.querySelector(".dbg-toolbar");
+        var tbOn = tbEl && tbEl.classList.contains("dbg-on");
+        var tbTopN = tbOn ? (parseFloat(tbEl.style.top) || 0) * vp.scale : 0;
+        var toolbarBelowSel = tbOn && tbTopN >= y - 2;
+        var belowOk = !toolbarBelowSel && below >= 4 && below + hudH <= vp.h - 4;
+        var aboveOk = above >= 4 && above + hudH <= vp.h - 4;
+        var top;
+        if (belowOk) {
+          top = below;
+          ctx.hud.classList.remove("dbg-hud-up");
+        } else if (aboveOk) {
+          top = above;
+          ctx.hud.classList.add("dbg-hud-up");
+        } else {
+          top = above >= 4 ? above : Math.min(Math.max(4, below), vp.h - hudH - 4);
+          ctx.hud.classList.add("dbg-hud-up");
+        }
+        top = Math.min(Math.max(4, top), Math.max(4, vp.h - hudH - 4));
+        ctx.hud.style.maxHeight = vp.h - 8 + "px";
+        var mouseX = typeof p.mouseX === "number" ? (p.mouseX + offX) * vp.scale : x + elW / 2;
+        var left = mouseX - hudW / 2;
+        left = Math.min(Math.max(4, left), Math.max(4, vp.w - hudW - 4));
+        if (!ctx.hud.__openFileBound) {
+          ctx.hud.__openFileBound = true;
+          ctx.hud.addEventListener("click", function(ev) {
+            var a = ev.target && ev.target.closest ? ev.target.closest(".dbg-open-file") : null;
+            if (a) {
+              ev.stopPropagation();
+              ctx.openFileAt(a.getAttribute("data-file"), parseInt(a.getAttribute("data-line"), 10) || null);
+            }
+          });
+        }
+        ctx.hud.__vis = { left, top };
+        ctx.hud.style.top = top + "px";
+        var maxHudW = vp.w - 16;
+        ctx.hud.style.maxWidth = maxHudW + "px";
+        ctx.hud.style.whiteSpace = "nowrap";
+        ctx.hud.style.overflowX = "hidden";
+        ctx.hud.style.overflowY = "auto";
+        ctx.hud.style.textOverflow = "ellipsis";
+        ctx.hud.style.left = left + "px";
+        ctx.hud.style.transform = "none";
+        ctx.applyHudZoom();
+      } else if (p.rect) {
+        if (document.body.style.paddingBottom) document.body.style.paddingBottom = "";
+      }
+      ctx.hud.style.opacity = "1";
+    };
+    ctx.applyHudZoom = function() {
+      var vp = getPhysViewport();
+      if (!ctx.hud || !ctx.hud.__vis) return;
+      positionPhysical(ctx.hud, ctx.hud.__vis.left, ctx.hud.__vis.top, vp.scale, vp.scaleY);
+    };
+    ctx.hideHud = function() {
+      if (ctx.hud) {
+        ctx.hud.style.opacity = "0";
+        ctx.hud.style.pointerEvents = "none";
+      }
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/toolbar.js
+  function initToolbar(ctx) {
+    ctx.floatToolbar = function(x, y, w, h) {
+      var tb = ctx.root.querySelector(".dbg-toolbar");
+      if (!tb) return;
+      if (Date.now() < ctx.navHoldT) return;
+      ctx.attachToolbarDrag();
+      if (ctx.toolbarDragged && ctx.lastSelRect && Math.abs(ctx.lastSelRect.x - x) < 4 && Math.abs(ctx.lastSelRect.y - y) < 4) return;
+      ctx.toolbarDragged = false;
+      ctx.lastSelRect = { x, y, w, h: h || 24 };
+      tb.classList.add("dbg-floating");
+      var vp = getPhysViewport();
+      var xv = x * vp.scale, yv = y * vp.scale;
+      var wv = (w || 24) * vp.scale, hv = (h || 24) * vp.scale;
+      var th = tb.offsetHeight || 30, tbw = tb.offsetWidth || 200;
+      var vw = vp.w, vh = vp.h;
+      var top;
+      var upOk = yv - th - 8 >= 4;
+      var downOk = yv + hv + 8 + th <= vh - 4;
+      if (upOk) top = yv - th - 8;
+      else if (downOk) top = yv + hv + 8;
+      else top = Math.max(4, Math.min(yv - th - 8, vh - th - 4));
+      top = Math.min(Math.max(4, top), Math.max(4, vh - th - 4));
+      var hudEl2 = ctx.root.querySelector(".dbg-hud");
+      var hudShown = hudEl2 && hudEl2.style.opacity !== "0" && hudEl2.style.opacity !== "";
+      if (hudShown) {
+        var hr = hudEl2.getBoundingClientRect();
+        var hrTop = hr.top * vp.scale, hrBot = hr.bottom * vp.scale;
+        if (hrTop >= yv - 2 && top <= hrBot + 4 && hrTop <= yv + hv + 4) {
+          if (yv - th - 8 >= 4) top = yv - th - 8;
+          else top = Math.max(4, hrTop - th - 8);
+        }
+      }
+      var left = Math.min(Math.max(4, xv - tbw / 2), Math.max(4, vw - tbw - 8));
+      var _pds = ctx.root.querySelectorAll(".dbg-pick-dialog");
+      for (var _pi = 0; _pi < _pds.length; _pi++) {
+        var _pr = _pds[_pi].getBoundingClientRect();
+        if (!(_pr.width > 2 && _pr.height > 2)) continue;
+        var _pdL = _pr.left * vp.scale, _pdR = _pr.right * vp.scale;
+        var _pdT = _pr.top * vp.scale, _pdB = _pr.bottom * vp.scale;
+        if (left < _pdR + 4 && left + tbw > _pdL - 4 && top < _pdB - 4 && top + th > _pdT + 4) {
+          if (_pdT - th - 8 >= 4) top = Math.max(4, _pdT - th - 8);
+          else if (_pdB + 8 + th <= vh - 4) top = _pdB + 8;
+        }
+      }
+      tb.__vis = { left, top };
+      ctx.applyToolbarZoom();
+    };
+    ctx.floatToolbarReAnchor = function() {
+      if (!ctx.lastSelRect) return;
+      var wasDragged = ctx.toolbarDragged;
+      ctx.toolbarDragged = false;
+      ctx.floatToolbar(ctx.lastSelRect.x, ctx.lastSelRect.y, ctx.lastSelRect.w, ctx.lastSelRect.h);
+      ctx.toolbarDragged = wasDragged;
+    };
+    ctx.dodgeToolbarAboveDialog = function(dialog) {
+      var tb = ctx.root.querySelector(".dbg-toolbar");
+      if (!tb || !tb.classList.contains("dbg-on") || !tb.classList.contains("dbg-floating")) return;
+      if (ctx.lastSelRect) {
+        ctx.floatToolbarReAnchor();
+        return;
+      }
+      try {
+        var vp = getPhysViewport();
+        var tr = tb.getBoundingClientRect(), dr = dialog.getBoundingClientRect();
+        if (!(dr.width > 2 && dr.height > 2)) return;
+        var th = tb.offsetHeight || 30;
+        var tL = tr.left * vp.scale, tR = tr.right * vp.scale;
+        var tT = tb.__vis ? tb.__vis.top : tr.top * vp.scale, tB = tT + th;
+        var dL = dr.left * vp.scale, dR = dr.right * vp.scale;
+        var dT = dr.top * vp.scale, dB = dr.bottom * vp.scale;
+        if (tL < dR + 4 && tR > dL - 4 && tT < dB - 4 && tB > dT + 4) {
+          tb.__vis = { left: tb.__vis ? tb.__vis.left : tL, top: Math.max(4, dT - th - 8) };
+          ctx.applyToolbarZoom();
+        }
+      } catch (e) {
+      }
+    };
+    ctx.applyToolbarZoom = function() {
+      var vp = getPhysViewport();
+      var tb = ctx.root.querySelector(".dbg-toolbar");
+      if (!tb || !tb.__vis) return;
+      positionPhysical(tb, tb.__vis.left, tb.__vis.top, vp.scale, vp.scaleY);
+    };
+    ctx.attachToolbarDrag = function() {
+      var tb2 = ctx.root.querySelector(".dbg-toolbar");
+      if (!tb2 || tb2.__dragBound) return;
+      tb2.__dragBound = true;
+      makePointerDrag({
+        handle: tb2,
+        threshold: 4,
+        capture: "late",
+        filter: function(e) {
+          return !(e.target && e.target.closest && e.target.closest("button"));
+        },
+        // 按钮交互不拖
+        onStart: function(e) {
+          var tv = tb2.__vis || { left: 0, top: 0 };
+          var cl = detectCoordSemantics(tb2, e.clientX);
+          var s = cl ? getPhysViewport().scale : 1;
+          return { ox: e.clientX * s - tv.left, oy: e.clientY * s - tv.top, coordLayout: cl };
+        },
+        onMove: function(ev, st) {
+          tb2.classList.add("dbg-floating");
+          var vpp = getPhysViewport();
+          var tbw2 = tb2.offsetWidth || 200, tbh2 = tb2.offsetHeight || 40;
+          var sx2 = st.coordLayout ? vpp.scale : 1;
+          var sy2 = st.coordLayout ? vpp.scaleY : 1;
+          var nlv = Math.min(Math.max(4, ev.clientX * sx2 - st.ox), Math.max(4, vpp.w - tbw2 - 4));
+          var ntv = Math.min(Math.max(4, ev.clientY * sy2 - st.oy), Math.max(4, vpp.h - tbh2 - 4));
+          tb2.__vis = { left: nlv, top: ntv };
+          ctx.applyToolbarZoom();
+        },
+        onEnd: function(ev, st, moved) {
+          if (moved) {
+            ctx.toolbarDragged = true;
+            ctx.lastSelRect = null;
+          }
+        }
+      });
+    };
+    ctx.resetToolbar = function() {
+      var tb = ctx.root.querySelector(".dbg-toolbar");
+      if (!tb) return;
+      tb.classList.remove("dbg-floating");
+      tb.style.top = "";
+      tb.style.left = "";
+    };
+    ctx.hostKey = function(e) {
+      if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
+      var k = e.key;
+      if (ctx.helpDialogOpen && ctx.helpDialogOpen()) {
+        if (k === "Escape") {
+          e.preventDefault();
+          e.stopPropagation();
+          ctx.closeHelpDialog();
+        }
+        return;
+      }
+      if (k === "Escape") {
+        if (ctx.pickPanel) {
+          ctx.finishPickPanel({ status: "rejected", reason: "用户按 Esc 取消" });
+          return;
+        }
+        if (ctx.dialog.classList.contains("dbg-open")) ctx.closeDialog();
+        else if (ctx.inspectorOn || ctx.aiInspectActive) ctx.exitInspector();
+        else if (ctx.selfClientActive) {
+          ctx.exitSelfClient();
+          ctx.selfClientActive = false;
+        }
+        return;
+      }
+      var tb2 = ctx.root.querySelector(".dbg-toolbar");
+      if (!tb2 || !tb2.classList.contains("dbg-on")) return;
+      if (k === " " || k === "Tab") {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!e.repeat) {
+          var _pBtn = ctx.root.querySelector(".dbg-nav-profile");
+          var _next = ctx.currentProfile === "default" ? "all" : "default";
+          var _pfv = ctx.applyProfile(_next);
+          if (_pBtn) _pBtn.textContent = _pfv.label;
+          ctx.addMsg("sys", "⚡ 已切换：" + _pfv.label + "（" + (_pfv.release.length ? "放行 " + _pfv.release.join("/") : "全部冻结") + "）——空格/Tab 可切回" + (_next === "default" ? "全部放行" : "默认放行") + "，页面弹出菜单保持打开");
+        }
+        return;
+      }
+      var dir = HOST_NAV_KEYS[k];
+      if (!dir) return;
+      e.preventDefault();
+      e.stopPropagation();
+      ctx.doNav(dir);
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/inject.js
+  function initInject(ctx) {
+    ctx.mountRoot = function() {
+      if (!document.body) {
+        document.addEventListener("DOMContentLoaded", ctx.mountRoot);
+        return;
+      }
+      document.body.appendChild(ctx.root);
+      ctx.injectSelfClient();
+      ctx.injectAllIframes();
+      ctx.watchIframes();
+    };
+    ctx.injectSelfClient = function() {
+      if (ctx.selfClient) return;
+      var fn = new Function("__DBG_POST__", MINI_DBG_CLIENT.replace("__DBG_VERSION__", VERSION));
+      fn(function(msg) {
+        ctx.handleClientMessage(msg, "self");
+      });
+      ctx.selfClient = window.__dbg;
+    };
+    ctx.injectOneIframe = function(f) {
+      if (f === ctx.aiIframe) return;
+      if (f.__dbgWatched) return;
+      f.__dbgWatched = true;
+      try {
+        var doc = f.contentDocument;
+        f.addEventListener("load", function() {
+          this.__dbgWatched = false;
+          ctx.injectOneIframe(this);
+        });
+        if (!doc || !doc.defaultView || !doc.body) return;
+        if (!doc.defaultView.__dbg) {
+          var s = doc.createElement("script");
+          s.textContent = MINI_DBG_CLIENT.replace("__DBG_VERSION__", VERSION);
+          doc.body.appendChild(s);
+        }
+        ctx.observeDoc(doc);
+        ctx.injectAllIframes(doc);
+        ctx.sendAiBoot();
+        ctx.sendAiBoot();
+      } catch (e) {
+      }
+    };
+    ctx.injectAllIframes = function(rootDoc) {
+      rootDoc = rootDoc || document;
+      var frames = rootDoc.querySelectorAll("iframe");
+      for (var i = 0; i < frames.length; i++) ctx.injectOneIframe(frames[i]);
+    };
+    ctx.observeDoc = function(doc) {
+      if (!doc || doc.__dbgObserved) return;
+      doc.__dbgObserved = true;
+      var obs = new MutationObserver(function(mutations) {
+        mutations.forEach(function(m) {
+          for (var i = 0; i < m.addedNodes.length; i++) {
+            var n = m.addedNodes[i];
+            if (!n || n.nodeType !== 1) continue;
+            var frames = n.tagName === "IFRAME" ? [n] : n.querySelectorAll ? n.querySelectorAll("iframe") : [];
+            for (var j = 0; j < frames.length; j++) {
+              ctx.injectOneIframe(frames[j]);
+              try {
+                ctx.observeDoc(frames[j].contentDocument);
+              } catch (e) {
+              }
+            }
+          }
+        });
+      });
+      obs.observe(doc, { childList: true, subtree: true });
+      ctx.iframeObservers.push(obs);
+    };
+    ctx.watchIframes = function() {
+      ctx.observeDoc(document);
+    };
+    ctx.enterSelfClient = function(mode) {
+      ctx.injectSelfClient();
+      if (ctx.selfClient) ctx.selfClient.enterInspector(mode);
+    };
+    ctx.exitSelfClient = function() {
+      try {
+        var sc = ctx.selfClient || window.__dbg;
+        if (sc && typeof sc.exitInspector === "function") sc.exitInspector();
+      } catch (e) {
+      }
+      document.body.style.cursor = "";
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/aiwin.js
+  function initAiwin(ctx) {
+    ctx.loadAiState = function() {
+      return lsGetJSON(AI_WIN_KEY, {});
+    };
+    ctx.saveAiState = function() {
+      lsSetJSON(AI_WIN_KEY, ctx.aiState);
+    };
+    ctx.applyAiState = function() {
+      if (!ctx.aiWin) return;
+      ctx.aiWin.style.border = "";
+      ctx.aiWin.style.borderRadius = "";
+      if (detectScreenMode().small) {
+        var _vp = getPhysViewport();
+        var visW = capVisW(_vp, 0);
+        var visVh = _fixedVisual ? window.visualViewport && window.visualViewport.height || window.innerHeight : window.innerHeight * _vp.scaleY;
+        if (!ctx.aiState.smallHeightPct && ctx.aiState.smallHeight) {
+          ctx.aiState.smallHeightPct = Math.round(ctx.aiState.smallHeight / visVh * 100);
+          ctx.aiState.smallHeight = 0;
+          try {
+            ctx.saveAiState();
+          } catch (e) {
+          }
+        }
+        var visH = ctx.aiState.smallHeightPct > 0 ? Math.round(visVh * Math.min(Math.max(ctx.aiState.smallHeightPct, 30), 100) / 100) : visVh;
+        visH = Math.min(Math.max(visH, Math.round(visVh * 0.3)), Math.round(visVh));
+        var _sdock = ctx.aiState.smallDock === "top" ? "top" : "bottom";
+        ctx.aiState.__vis = placePhysPanel(ctx.aiWin, {
+          visW,
+          visH,
+          dock: _sdock,
+          gap: 0,
+          visX: 0,
+          border: "none",
+          borderRadius: "0",
+          overflowY: "",
+          keyboard: false
+          // AI 窗自管位置（applyAiState 已在 vv resize 重放），不进键盘 registry
+        });
+        return;
+      }
+      var w = ctx.aiState.width, h = ctx.aiState.height;
+      if (ctx.aiState.dock && ctx.aiState.dock !== "free") {
+        if (w > window.innerWidth) w = window.innerWidth;
+        if (h > window.innerHeight) h = window.innerHeight;
+        ctx.aiState.width = w;
+        ctx.aiState.height = h;
+      }
+      ctx.aiWin.style.width = w + "px";
+      ctx.aiWin.style.height = h + "px";
+      if (ctx.aiState.dock === "right") {
+        ctx.aiWin.style.left = "auto";
+        ctx.aiWin.style.right = "0";
+        ctx.aiWin.style.bottom = "auto";
+        ctx.aiWin.style.top = (ctx.aiState.top != null ? ctx.aiState.top : 0) + "px";
+      } else if (ctx.aiState.dock === "bottom") {
+        ctx.aiWin.style.top = "auto";
+        ctx.aiWin.style.bottom = "0";
+        ctx.aiWin.style.right = "auto";
+        ctx.aiWin.style.left = (ctx.aiState.left != null ? ctx.aiState.left : 0) + "px";
+      } else if (ctx.aiState.dock === "left") {
+        ctx.aiWin.style.right = "auto";
+        ctx.aiWin.style.left = "0";
+        ctx.aiWin.style.bottom = "auto";
+        ctx.aiWin.style.top = (ctx.aiState.top != null ? ctx.aiState.top : 0) + "px";
+      } else if (ctx.aiState.dock === "top") {
+        ctx.aiWin.style.bottom = "auto";
+        ctx.aiWin.style.top = "0";
+        ctx.aiWin.style.right = "auto";
+        ctx.aiWin.style.left = (ctx.aiState.left != null ? ctx.aiState.left : 0) + "px";
+      } else {
+        ctx.aiWin.style.right = "auto";
+        ctx.aiWin.style.bottom = "auto";
+        ctx.aiWin.style.left = (ctx.aiState.left != null ? ctx.aiState.left : 0) + "px";
+        ctx.aiWin.style.top = (ctx.aiState.top != null ? ctx.aiState.top : 0) + "px";
+      }
+    };
+    ctx.clampAiWindow = function() {
+      if (!ctx.aiState) return;
+      if (detectScreenMode().small) return;
+      ctx.aiState.width = Math.min(Math.max(ctx.aiState.width, 280), window.innerWidth);
+      ctx.aiState.height = Math.min(Math.max(ctx.aiState.height, 200), window.innerHeight);
+      if (ctx.aiState.left != null) ctx.aiState.left = Math.min(Math.max(ctx.aiState.left, 0), window.innerWidth - ctx.aiState.width);
+      if (ctx.aiState.top != null) ctx.aiState.top = Math.min(Math.max(ctx.aiState.top, 0), window.innerHeight - ctx.aiState.height);
+      ctx.applyAiState();
+    };
+    ctx.aiInScreen = function() {
+      try {
+        if (!ctx.aiWin || getComputedStyle(ctx.aiWin).display === "none") return true;
+        var vp = getPhysViewport();
+        var r = ctx.aiWin.getBoundingClientRect();
+        var fx = _fixedVisual ? 1 : vp.scale, fy = _fixedVisual ? 1 : vp.scaleY;
+        var vL = r.left * fx, vT = r.top * fy, vR = vL + r.width * fx, vB = vT + r.height * fy;
+        var visL = Math.max(vL, 0), visT = Math.max(vT, 0), visR = Math.min(vR, vp.w), visB = Math.min(vB, vp.h);
+        var visArea = Math.max(0, visR - visL) * Math.max(0, visB - visT);
+        var winArea = Math.max(1, (vR - vL) * (vB - vT));
+        return visArea / winArea > 0.4;
+      } catch (e) {
+        return true;
+      }
+    };
+    ctx.resetAiDefault = function() {
+      ctx.aiState.left = null;
+      ctx.aiState.top = null;
+      ctx.aiState.dock = void 0;
+      ctx.aiState.width = AI_WIN_DEFAULTS.width;
+      ctx.aiState.height = AI_WIN_DEFAULTS.height;
+      ctx.aiState.smallDock = void 0;
+      ctx.aiState.smallHeightPct = 0;
+      ctx.aiState.__max = null;
+      if (ctx.aiSyncMaxBtn) ctx.aiSyncMaxBtn();
+      ctx.applyAiState();
+      ctx.saveAiState();
+    };
+    ctx.aiToggleMax = function() {
+      if (!ctx.aiWin || !ctx.aiState) return;
+      if (detectScreenMode().small) {
+        var cur = ctx.aiState.smallHeightPct > 0 ? ctx.aiState.smallHeightPct : 100;
+        ctx.aiState.smallHeightPct = cur >= 100 ? 70 : 100;
+      } else if (ctx.aiState.__max) {
+        var m = ctx.aiState.__max;
+        ctx.aiState.width = m.w;
+        ctx.aiState.height = m.h;
+        ctx.aiState.left = m.l;
+        ctx.aiState.top = m.t;
+        ctx.aiState.dock = m.dock;
+        ctx.aiState.__max = null;
+      } else {
+        ctx.aiState.__max = {
+          w: ctx.aiState.width,
+          h: ctx.aiState.height,
+          l: ctx.aiState.left != null ? ctx.aiState.left : ctx.aiWin.offsetLeft,
+          t: ctx.aiState.top != null ? ctx.aiState.top : ctx.aiWin.offsetTop,
+          dock: ctx.aiState.dock
+        };
+        ctx.aiState.dock = "free";
+        ctx.aiState.width = window.innerWidth;
+        ctx.aiState.height = window.innerHeight;
+        ctx.aiState.left = 0;
+        ctx.aiState.top = 0;
+      }
+      if (ctx.aiSyncMaxBtn) ctx.aiSyncMaxBtn();
+      ctx.applyAiState();
+      ctx.saveAiState();
+      ctx.saveDbgState();
+    };
+    ctx.aiSyncMaxBtn = function() {
+      if (!ctx.aiMaxBtn || !ctx.aiState) return;
+      var maxed = detectScreenMode().small ? (ctx.aiState.smallHeightPct > 0 ? ctx.aiState.smallHeightPct : 100) >= 100 : !!ctx.aiState.__max;
+      ctx.aiMaxBtn.textContent = maxed ? "❐" : "⛶";
+      ctx.aiMaxBtn.title = maxed ? "还原窗口（退出最大化）" : "最大化窗口（铺满页面；再点还原）";
+    };
+    ctx.aiDropMax = function() {
+      if (ctx.aiState && ctx.aiState.__max) {
+        ctx.aiState.__max = null;
+        if (ctx.aiSyncMaxBtn) ctx.aiSyncMaxBtn();
+      }
+    };
+    ctx.pageIdentity = function() {
+      var id = "";
+      try {
+        id = localStorage.getItem("__dbg_page_id") || "";
+      } catch (e) {
+      }
+      if (!id) {
+        var letters = "abcdefghijklmnopqrstuvwxyz";
+        id = letters[Math.floor(Math.random() * 26)] + letters[Math.floor(Math.random() * 26)] + String(Math.floor(Math.random() * 900) + 100);
+        try {
+          localStorage.setItem("__dbg_page_id", id);
+        } catch (e) {
+        }
+      }
+      return id;
+    };
+    ctx.aiPageParams = function() {
+      try {
+        var pageId = ctx.pageIdentity() + "/" + (ctx.selFrameId() || ctx.T_HOST);
+        var fr = ctx.listFrames()[0] || null;
+        var targetUrl = "";
+        var targetTitle = "";
+        try {
+          targetUrl = fr && fr.win && fr.win.location ? fr.win.location.href.slice(0, 500) : "";
+        } catch (e) {
+        }
+        try {
+          targetTitle = fr && fr.win && fr.win.document && fr.win.document.title ? fr.win.document.title.slice(0, 200) : "";
+        } catch (e) {
+        }
+        return "&pageId=" + encodeURIComponent(pageId) + (targetUrl ? "&targetUrl=" + encodeURIComponent(targetUrl) : "") + (targetTitle ? "&title=" + encodeURIComponent(targetTitle) : "");
+      } catch (e) {
+        return "";
+      }
+    };
+    ctx.trackedAiUrl = function() {
+      var t = ctx.loadAiUrl();
+      if (!t) return "";
+      var bases = [];
+      try {
+        var c = ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : "";
+        if (c) bases.push(c);
+      } catch (e) {
+      }
+      if (ctx.cfg.aiUrl) bases.push(ctx.cfg.aiUrl);
+      for (var i = 0; i < bases.length; i++) if (t.indexOf(bases[i]) === 0) return t;
+      return "";
+    };
+    ctx.withAiWinMark = function(url) {
+      url = String(url || "");
+      if (url.indexOf("__dbg_aiwin=") >= 0) return url;
+      return url + "#__dbg_aiwin=1";
+    };
+    ctx.aiFallbackUrl = function() {
+      var custom = ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : "";
+      var base = custom || ctx.cfg.aiUrl;
+      if (!base) return "";
+      var sep = base.indexOf("?") >= 0 ? "&" : "?";
+      return ctx.withAiWinMark(base + sep + "_dbg=" + Date.now() + ctx.aiPageParams());
+    };
+    ctx.aiUrlFor = function() {
+      var tracked = ctx.trackedAiUrl();
+      if (tracked) return ctx.withAiWinMark(tracked);
+      return ctx.aiFallbackUrl();
+    };
+    ctx.aiTrackProbe = function(usedTracked) {
+      try {
+        if (ctx._aiTrackT) {
+          clearTimeout(ctx._aiTrackT);
+          ctx._aiTrackT = null;
+        }
+      } catch (e) {
+      }
+      if (!usedTracked) return;
+      ctx._aiTrackT = setTimeout(function() {
+        ctx._aiTrackT = null;
+        try {
+          ctx.clearAiUrl();
+        } catch (e) {
+        }
+        var backUrl = ctx.aiFallbackUrl();
+        try {
+          if (ctx.aiMode === "popup" && ctx.aiPopup && !ctx.aiPopup.closed) ctx.aiPopup.location.href = backUrl;
+          else if (ctx.aiIframe) ctx.aiIframe.src = backUrl;
+        } catch (e) {
+        }
+        ctx.aiReady = false;
+        try {
+          if (ctx.addMsg) ctx.addMsg("sys", "⚠ AI 窗会话 URL 加载失败（10s 无响应）——已回退" + (ctx.loadCustomAiUrl && ctx.loadCustomAiUrl() ? "用户设置地址" : "默认地址") + "（AI 窗导航后将重新追踪）");
+        } catch (e) {
+        }
+      }, 1e4);
+    };
+    ctx.aiUrlWithBridge = function(base, token) {
+      var baseUrl = (ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : "") || ctx.cfg.aiUrl;
+      var sep = baseUrl.indexOf("?") >= 0 ? "&" : "?";
+      return ctx.withAiWinMark(baseUrl + sep + "bridge=" + encodeURIComponent(base) + "&token=" + encodeURIComponent(token) + "&_dbg=" + Date.now() + ctx.aiPageParams());
+    };
+    ctx.aiPopupFeatures = function() {
+      var layout = ctx.aiState && ctx.aiState.popupLayout || "float";
+      var availW = screen.availWidth || 1280, availH = screen.availHeight || 800;
+      var sx = window.screenX || 0, sy = window.screenY || 0;
+      var ow = window.outerWidth || availW, oh = window.outerHeight || availH;
+      var defW = Math.min(560, Math.max(380, Math.round(availW * 0.42)));
+      var w, h, l, t;
+      if (layout === "left") {
+        w = defW;
+        h = Math.round(oh);
+        l = Math.max(0, sx);
+        t = Math.max(0, sy);
+      } else if (layout === "right") {
+        w = defW;
+        h = Math.round(oh);
+        l = Math.min(sx + ow - w, Math.max(0, availW - w));
+        t = Math.max(0, sy);
+      } else if (layout === "bottom") {
+        w = Math.round(ow);
+        h = Math.max(260, Math.round(oh / 2));
+        l = Math.max(0, sx);
+        t = Math.min(sy + oh - h, Math.max(0, availH - h));
+      } else if (layout === "top") {
+        w = Math.round(ow);
+        h = Math.max(260, Math.round(oh / 2));
+        l = Math.max(0, sx);
+        t = Math.max(0, sy);
+      } else {
+        w = defW;
+        h = Math.min(760, Math.max(520, Math.round(availH * 0.82)));
+        l = Math.max(0, Math.round((availW - w) / 2));
+        t = Math.max(0, Math.round((availH - h) / 3));
+      }
+      l = Math.min(Math.max(0, l), Math.max(0, availW - w));
+      t = Math.min(Math.max(0, t), Math.max(0, availH - h));
+      return "popup=yes,width=" + w + ",height=" + h + ",left=" + l + ",top=" + t + ",location=no";
+    };
+    ctx.openAiPopup = function(url) {
+      if (!ctx.cfg.aiUrl) return null;
+      try {
+        if (ctx.aiPopup && !ctx.aiPopup.closed) {
+          try {
+            ctx.aiPopup.focus();
+          } catch (e) {
+          }
+          return ctx.aiPopup;
+        }
+        var effUrl = url || ctx.aiUrlFor();
+        var _tracked = !url && !!(ctx.trackedAiUrl && ctx.trackedAiUrl());
+        var pop = window.open(effUrl, "aiti-ai-popup", ctx.aiPopupFeatures());
+        if (!pop) {
+          ctx.addMsg("sys", "⚠ 浏览器拦截了独立窗口——已退回页面内窗口（点 ⧉ 可再次尝试；直接点击时不会被拦截）");
+          ctx.setAiMode("iframe");
+          ctx.aiOpen = true;
+          try {
+            ctx.showAi(true);
+          } catch (e) {
+          }
+          if (ctx.aiBtn) ctx.aiBtn.classList.add("dbg-on");
+          ctx.saveDbgState();
+          return null;
+        }
+        ctx.aiPopup = pop;
+        ctx.aiReady = false;
+        try {
+          ctx.aiTrackProbe(_tracked);
+        } catch (e) {
+        }
+        clearTimeout(ctx._aiPopupReadyT);
+        ctx._aiPopupReadyT = setTimeout(function() {
+          try {
+            ctx._aiOnReady(false);
+          } catch (e) {
+          }
+        }, 2e3);
+        if (!ctx._aiPopupPoll) {
+          ctx._aiPopupPoll = setInterval(function() {
+            try {
+              if (ctx.aiPopup && ctx.aiPopup.closed) {
+                ctx.aiPopup = null;
+                if (ctx.aiMode === "popup") {
+                  var _wasOpen = ctx.aiOpen;
+                  ctx.setAiMode("iframe");
+                  ctx.addMsg("sys", "🪟 AI 独立窗口已关闭——已回到页面内窗口" + (_wasOpen ? "" : "（点 💬 可重新打开）"));
+                  if (_wasOpen) {
+                    ctx.aiOpen = true;
+                    try {
+                      ctx.showAi(true);
+                    } catch (e) {
+                    }
+                    if (ctx.aiBtn) ctx.aiBtn.classList.add("dbg-on");
+                  }
+                  ctx.saveDbgState();
+                }
+              }
+            } catch (e) {
+            }
+          }, 1500);
+        }
+        return pop;
+      } catch (e) {
+        return null;
+      }
+    };
+    ctx.closeAiPopup = function() {
+      try {
+        if (ctx.aiPopup && !ctx.aiPopup.closed) ctx.aiPopup.close();
+      } catch (e) {
+      }
+      ctx.aiPopup = null;
+      ctx.aiReady = false;
+    };
+    ctx.aiPopupMenu = function(anchor) {
+      try {
+        var existing = ctx.root.querySelector(".dbg-ai-pop-menu");
+        if (existing) {
+          existing.remove();
+          return;
+        }
+        var menu = el("div", { class: "dbg-ai-pop-menu" });
+        menu.style.zIndex = "2147483647";
+        var layout = ctx.aiState && ctx.aiState.popupLayout || "float";
+        [
+          ["float", "⧉ 浮动窗口", "独立小窗，可自由移动、调整大小"],
+          ["left", "⇤ 左侧并排", "贴靠浏览器左缘，与页面左右分屏"],
+          ["right", "⇥ 右侧并排", "贴靠浏览器右缘，与页面左右分屏"],
+          ["bottom", "⇊ 底部横排", "贴靠浏览器底部，上下分屏"],
+          ["top", "⇈ 顶部横排", "贴靠浏览器顶部，上下分屏"]
+        ].forEach(function(d) {
+          var item = el("div", { class: "dbg-ai-pop-menu-item" + (layout === d[0] ? " dbg-on" : "") }, []);
+          item.appendChild(el("span", {}, [d[1]]));
+          item.appendChild(el("span", { class: "dbg-ai-pop-menu-desc" }, [d[2]]));
+          item.addEventListener("click", function(ev) {
+            ev.stopPropagation();
+            ctx.aiState.popupLayout = d[0];
+            try {
+              ctx.saveAiState();
+            } catch (e) {
+            }
+            try {
+              if (menu.parentNode) menu.parentNode.removeChild(menu);
+            } catch (e) {
+            }
+            if (ctx.aiMode === "popup" && ctx.aiPopup && !ctx.aiPopup.closed) {
+              try {
+                ctx.closeAiPopup();
+              } catch (e) {
+              }
+            }
+            ctx.aiOpen = true;
+            if (ctx.aiMode !== "popup") {
+              ctx.setAiMode("popup");
+            } else {
+              try {
+                ctx.ensureAi();
+              } catch (e) {
+              }
+            }
+            try {
+              ctx.showAi(true);
+            } catch (e) {
+            }
+            if (ctx.aiBtn) ctx.aiBtn.classList.add("dbg-on");
+            ctx.saveDbgState();
+            ctx.addMsg("sys", "🪟 AI 已在独立窗口打开（" + d[1] + "）——关闭该窗口即回到页面内");
+          });
+          menu.appendChild(item);
+        });
+        ctx.root.appendChild(menu);
+        try {
+          var _vp = getPhysViewport(), _r = anchor.getBoundingClientRect();
+          var _fx = _fixedVisual ? 1 : _vp.scale, _fy = _fixedVisual ? 1 : _vp.scaleY;
+          var _vL = Math.max(4, _r.right * _fx - 170), _vT = _r.bottom * _fy + 4;
+          positionPhysical(menu, _vL, _vT, _vp.scale, _vp.scaleY);
+          requestAnimationFrame(function() {
+            try {
+              var _r2 = menu.getBoundingClientRect();
+              var _w2 = _r2.width * _fx, _h2 = _r2.height * _fy;
+              var cL = Math.min(Math.max(4, _vL), Math.max(4, _vp.w - _w2 - 4));
+              var cT = _vT + _h2 > _vp.h - 4 ? Math.max(4, _r.top * _fy - _h2 - 4) : _vT;
+              if (cL !== _vL || cT !== _vT) positionPhysical(menu, cL, cT, _vp.scale, _vp.scaleY);
+            } catch (e) {
+            }
+          });
+        } catch (e) {
+        }
+        setTimeout(function() {
+          var close = function(ev) {
+            if (!menu.parentNode) {
+              document.removeEventListener("mousedown", close);
+              return;
+            }
+            if (!menu.contains(ev.target) && !anchor.contains(ev.target)) {
+              try {
+                menu.remove();
+              } catch (e) {
+              }
+              document.removeEventListener("mousedown", close);
+            }
+          };
+          document.addEventListener("mousedown", close);
+        }, 0);
+      } catch (e) {
+      }
+    };
+    ctx.setAiMode = function(mode) {
+      mode = mode === "popup" ? "popup" : "iframe";
+      if (ctx.aiState) ctx.aiState.mode = mode;
+      try {
+        ctx.saveAiState();
+      } catch (e) {
+      }
+      ctx.aiMode = mode;
+      try {
+        var _sp = ctx.root && ctx.root.querySelector(".dbg-ai-settings-pop");
+        if (_sp) _sp.remove();
+      } catch (e) {
+      }
+      if (ctx.aiWin) {
+        try {
+          ctx.closeAiPopup();
+        } catch (e) {
+        }
+        try {
+          if (ctx.aiIframe) ctx.aiIframe.onload = null;
+        } catch (e) {
+        }
+        ctx.aiIframe = null;
+        try {
+          if (ctx.aiWin.parentNode) ctx.aiWin.parentNode.removeChild(ctx.aiWin);
+        } catch (e) {
+        }
+        ctx.aiWin = null;
+        ctx.aiReady = false;
+      }
+      ctx.ensureAi();
+    };
+    ctx._aiOnReady = function(reqUrl) {
+      try {
+        ctx.aiReady = true;
+        if (reqUrl) {
+          try {
+            if (ctx.aiIframe && ctx.aiIframe.contentWindow) ctx.aiIframe.contentWindow.postMessage({ __dbg: 1, type: "dbg_ai_get_url", payload: {} }, "*");
+          } catch (e) {
+          }
+        }
+        ctx.sendAiBoot();
+        var pending = ctx.aiQueue.splice(0);
+        pending.forEach(function(msg) {
+          ctx.postToAi(msg);
+        });
+        [500, 2e3, 4500].forEach(function(d) {
+          setTimeout(function() {
+            try {
+              ctx.sendAiBoot();
+            } catch (e) {
+            }
+          }, d);
+        });
+        if (ctx.picksPendingErrors && ctx.picksPendingErrors.length) {
+          var perr = ctx.picksPendingErrors.slice();
+          [400, 1500, 3500].forEach(function(d) {
+            setTimeout(function() {
+              perr.forEach(function(m) {
+                if (ctx.picksPendingErrors.indexOf(m) >= 0) ctx.postToAi(m);
+              });
+            }, d);
+          });
+        }
+        if (ctx.picksPendingElements && ctx.picksPendingElements.length) {
+          var pel = ctx.picksPendingElements.slice();
+          [400, 1500, 3500].forEach(function(d) {
+            setTimeout(function() {
+              pel.forEach(function(m) {
+                if (ctx.picksPendingElements.indexOf(m) >= 0) ctx.postToAi(m);
+              });
+            }, d);
+          });
+        }
+      } catch (e) {
+      }
+    };
+    ctx.setAiTitle = function(t) {
+      ctx.setAiMeta({ title: t });
+    };
+    ctx.setAiMeta = function(payload) {
+      var t = payload && payload.title || "";
+      var icon = payload && payload.icon;
+      ctx._aiTitle = t || "";
+      var el2 = ctx.aiTitleEl || ctx.root && ctx.root.querySelector(".dbg-ai-title");
+      if (!el2) return;
+      el2.textContent = "";
+      if (icon) {
+        var img = el("img", { class: "dbg-ai-favicon", alt: "" });
+        img.src = icon;
+        el2.appendChild(img);
+      }
+      var txt = el("span", { class: "dbg-ai-txt" });
+      txt.textContent = t || "AI";
+      el2.appendChild(txt);
+    };
+    ctx.ensureAi = function() {
+      if (ctx.selfHostPage) return;
+      if (ctx.aiWin || !ctx.cfg.aiUrl) return;
+      ctx.aiState = Object.assign({}, AI_WIN_DEFAULTS, ctx.loadAiState());
+      ctx.aiMode = ctx.aiState.mode === "popup" ? "popup" : "iframe";
+      if (ctx.aiMode === "popup") {
+        if (ctx._restoringPopup) {
+          ctx._restoringPopup = false;
+          return;
+        }
+        ctx.openAiPopup();
+        return;
+      }
+      var aiSrc = ctx.aiUrlFor();
+      var _trackedUsed = !!(ctx.trackedAiUrl && ctx.trackedAiUrl());
+      ctx.aiWin = el("div", { class: "dbg-ai-win" });
+      var bar = el("div", { class: "dbg-ai-bar" });
+      ctx.aiTitleEl = el("span", { class: "dbg-ai-title" }, ["🤖 AI"]);
+      bar.appendChild(ctx.aiTitleEl);
+      var maxBtn = el("button", { class: "dbg-ai-max" }, ["⛶"]);
+      ctx.aiMaxBtn = maxBtn;
+      maxBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        ctx.aiToggleMax();
+      });
+      bar.appendChild(maxBtn);
+      ctx.aiSyncMaxBtn();
+      var popBtn = el("button", { class: "dbg-ai-pop", title: "AI 新窗口布局：浮动 / 左·右并排 / 底·顶横排（关闭新窗口即回到内嵌模式）" }, ["⧉"]);
+      popBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        if (detectScreenMode().small) {
+          ctx.aiOpen = true;
+          ctx.setAiMode("popup");
+          ctx.aiBtn.classList.add("dbg-on");
+          ctx.saveDbgState();
+          ctx.addMsg("sys", "🪟 AI 已在独立窗口打开——关闭该窗口即回到页面内窗口");
+          return;
+        }
+        ctx.aiPopupMenu(popBtn);
+      });
+      bar.appendChild(popBtn);
+      var setBtn = el("button", { class: "dbg-ai-settings", title: "设置" }, ["⚙"]);
+      setBtn.addEventListener("click", function(e) {
+        e.stopPropagation();
+        ctx.aiWinSettings(setBtn);
+      });
+      bar.appendChild(setBtn);
+      var closeBtn = el("button", { class: "dbg-ai-close", title: "关闭" }, ["✕"]);
+      closeBtn.addEventListener("click", function() {
+        ctx.showAi(false);
+        ctx.aiOpen = false;
+        ctx.aiBtn.classList.remove("dbg-on");
+        ctx.saveDbgState();
+      });
+      bar.appendChild(closeBtn);
+      ctx.aiWin.appendChild(bar);
+      ctx.aiIframe = el("iframe", { src: aiSrc, style: "border:0;width:100%;height:calc(100% - 30px);display:block;background:#fff;" });
+      ctx.aiIframe.addEventListener("load", function() {
+        ctx._aiOnReady(true);
+      });
+      try {
+        ctx.aiTrackProbe(_trackedUsed);
+      } catch (e) {
+      }
+      ctx.aiWin.appendChild(ctx.aiIframe);
+      var resizeR = el("div", { class: "dbg-ai-resize-r" });
+      var resizeB = el("div", { class: "dbg-ai-resize-b" });
+      ctx.aiWin.appendChild(resizeR);
+      ctx.aiWin.appendChild(resizeB);
+      var resizeHandle = el("div", { class: "dbg-ai-resize" });
+      ctx.aiWin.appendChild(resizeHandle);
+      var resizeL = el("div", { class: "dbg-ai-resize-l" });
+      ctx.aiWin.appendChild(resizeL);
+      ctx.root.appendChild(ctx.aiWin);
+      ctx.root.classList.toggle("dbg-phys-small", detectScreenMode().small);
+      ctx.applyAiState();
+      var _wasSmall = !!ctx.__aiWasSmall;
+      ctx.__aiWasSmall = detectScreenMode().small;
+      if (_wasSmall && !ctx.__aiWasSmall) {
+        try {
+          delete ctx.aiState.smallDock;
+          delete ctx.aiState.__max;
+          if (ctx.aiState.width >= window.innerWidth - 4) {
+            ctx.aiState.width = Math.min(AI_WIN_DEFAULTS.width, window.innerWidth - 16);
+          }
+          ctx.aiState.dock = "free";
+          if (ctx.aiState.left == null) ctx.aiState.left = 16;
+          if (ctx.aiSyncMaxBtn) ctx.aiSyncMaxBtn();
+          ctx.saveAiState();
+          ctx.applyAiState();
+        } catch (e) {
+        }
+      } else if (!_wasSmall && ctx.__aiWasSmall) {
+      }
+      var dragCtl = makePointerDrag({
+        handle: bar,
+        capture: "now",
+        raf: true,
+        preventStart: true,
+        filter: function(e) {
+          if (detectScreenMode().small) return false;
+          if (e.target && e.target.tagName === "BUTTON") return false;
+          return true;
+        },
+        onStart: function(e) {
+          ctx.aiDropMax();
+          ctx.aiWin.classList.add("dbg-dragging");
+          ctx.aiWin.style.willChange = "left, top";
+          if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "none";
+          return { left: ctx.aiWin.offsetLeft, top: ctx.aiWin.offsetTop };
+        },
+        onMove: function(ev, st, dx, dy) {
+          st.pl = st.left + dx;
+          st.pt = st.top + dy;
+          ctx.aiState.left = st.pl;
+          ctx.aiState.top = st.pt;
+          ctx.aiState.dock = "free";
+          ctx.aiWin.style.left = ctx.aiState.left + "px";
+          ctx.aiWin.style.right = "auto";
+          ctx.aiWin.style.top = ctx.aiState.top + "px";
+          ctx.aiWin.style.bottom = "auto";
+        },
+        onEnd: function() {
+          ctx.aiWin.classList.remove("dbg-dragging");
+          ctx.aiWin.style.willChange = "";
+          if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "";
+          ctx.clampAiWindow();
+          ctx.saveAiState();
+          ctx.saveDbgState();
+        }
+      });
+      var rsCtl = makePointerDrag({
+        handle: resizeHandle,
+        capture: "now",
+        raf: true,
+        preventStart: true,
+        filter: function(e) {
+          return !detectScreenMode().small;
+        },
+        // 小屏不 resize（全宽贴边尺寸自适应）
+        onStart: function(e) {
+          e.stopPropagation();
+          ctx.aiDropMax();
+          ctx.aiWin.classList.add("dbg-resizing");
+          ctx.aiWin.style.willChange = "width, height";
+          if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "none";
+          return { w: ctx.aiState.width, h: ctx.aiState.height };
+        },
+        onMove: function(ev, st, dx, dy) {
+          st.pw = st.w + dx;
+          st.ph = st.h + dy;
+          ctx.aiState.width = Math.min(Math.max(st.pw, 280), window.innerWidth);
+          ctx.aiState.height = Math.min(Math.max(st.ph, 200), window.innerHeight);
+          ctx.aiWin.style.width = ctx.aiState.width + "px";
+          ctx.aiWin.style.height = ctx.aiState.height + "px";
+        },
+        onEnd: function() {
+          ctx.aiWin.classList.remove("dbg-resizing");
+          ctx.aiWin.style.willChange = "";
+          if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "";
+          ctx.clampAiWindow();
+          ctx.saveAiState();
+          ctx.saveDbgState();
+        }
+      });
+      var edgeEnd = function() {
+        ctx.aiWin.classList.remove("dbg-resizing");
+        ctx.aiWin.style.willChange = "";
+        if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "";
+        ctx.clampAiWindow();
+        ctx.saveAiState();
+        ctx.saveDbgState();
+      };
+      var edgeStart = function(e) {
+        e.stopPropagation();
+        ctx.aiDropMax();
+        ctx.aiWin.classList.add("dbg-resizing");
+        ctx.aiWin.style.willChange = "width, height";
+        if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "none";
+        return { w: ctx.aiState.width, h: ctx.aiState.height };
+      };
+      var rsRCtl = makePointerDrag({
+        handle: resizeR,
+        capture: "now",
+        raf: true,
+        preventStart: true,
+        // 无 small 过滤：小屏（平板）也允许边缘条拖拽（角柄小屏隐藏但边缘条保留——用户平板实测）
+        onStart: edgeStart,
+        onMove: function(ev, st, dx) {
+          ctx.aiState.width = Math.min(Math.max(st.w + dx, 280), window.innerWidth);
+          ctx.aiWin.style.width = ctx.aiState.width + "px";
+        },
+        onEnd: edgeEnd
+      });
+      var rsBCtl = makePointerDrag({
+        handle: resizeB,
+        capture: "now",
+        raf: true,
+        preventStart: true,
+        // 无 small 过滤：同上（小屏允许边缘条拖拽）
+        onStart: edgeStart,
+        onMove: function(ev, st, dx, dy) {
+          ctx.aiState.height = Math.min(Math.max(st.h + dy, 200), window.innerHeight);
+          ctx.aiWin.style.height = ctx.aiState.height + "px";
+        },
+        onEnd: edgeEnd
+      });
+      var rsLCtl = makePointerDrag({
+        handle: resizeL,
+        capture: "now",
+        raf: true,
+        preventStart: true,
+        onStart: function(e) {
+          e.stopPropagation();
+          ctx.aiDropMax();
+          ctx.aiWin.classList.add("dbg-resizing");
+          ctx.aiWin.style.willChange = "width, left";
+          if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "none";
+          return { w: ctx.aiState.width, left: ctx.aiState.left != null ? ctx.aiState.left : ctx.aiWin.offsetLeft };
+        },
+        onMove: function(ev, st, dx) {
+          var right = st.left + st.w;
+          var nw = Math.min(Math.max(st.w - dx, 280), window.innerWidth);
+          ctx.aiState.width = nw;
+          ctx.aiState.left = right - nw;
+          ctx.aiWin.style.width = ctx.aiState.width + "px";
+          ctx.aiWin.style.left = ctx.aiState.left + "px";
+        },
+        onEnd: function() {
+          ctx.aiWin.classList.remove("dbg-resizing");
+          ctx.aiWin.style.willChange = "";
+          if (ctx.aiIframe) ctx.aiIframe.style.pointerEvents = "";
+          ctx.clampAiWindow();
+          ctx.saveAiState();
+          ctx.saveDbgState();
+        }
+      });
+      var barLastTap = { t: 0, x: 0, y: 0 };
+      bar.addEventListener("pointerup", function(e) {
+        if (detectScreenMode().small) return;
+        if (e.target && e.target.closest && e.target.closest("button")) return;
+        var now = Date.now();
+        if (now - barLastTap.t < 350 && Math.abs(e.clientX - barLastTap.x) < 30 && Math.abs(e.clientY - barLastTap.y) < 30) {
+          barLastTap.t = 0;
+          try {
+            ctx.aiToggleMax();
+          } catch (err) {
+          }
+          return;
+        }
+        barLastTap = { t: now, x: e.clientX, y: e.clientY };
+      });
+      window.addEventListener("keydown", function(e) {
+        if (e.key !== "Escape") return;
+        if (!dragCtl.active() && !rsCtl.active() && !rsRCtl.active() && !rsBCtl.active() && !rsLCtl.active()) return;
+        e.preventDefault();
+        e.stopPropagation();
+        dragCtl.cancel();
+        rsCtl.cancel();
+        rsRCtl.cancel();
+        rsBCtl.cancel();
+        rsLCtl.cancel();
+      }, true);
+      var winResizeFrame = null;
+      window.addEventListener("resize", function() {
+        if (!ctx.aiWin) return;
+        if (winResizeFrame) return;
+        winResizeFrame = requestAnimationFrame(function() {
+          winResizeFrame = null;
+          if (ctx.aiState && ctx.aiState.__max && !detectScreenMode().small) {
+            ctx.aiState.width = window.innerWidth;
+            ctx.aiState.height = window.innerHeight;
+            ctx.aiState.left = 0;
+            ctx.aiState.top = 0;
+          }
+          ctx.clampAiWindow();
+        });
+      });
+    };
+    ctx.showAi = function(v) {
+      if (ctx.selfHostPage) return;
+      if (ctx.aiMode === "popup") {
+        if (v) {
+          try {
+            ctx.openAiPopup();
+          } catch (e) {
+          }
+        } else {
+          try {
+            ctx.closeAiPopup();
+          } catch (e) {
+          }
+        }
+      } else {
+        if (!ctx.aiWin) return;
+        ctx.aiWin.style.display = v ? "block" : "none";
+      }
+      try {
+        if (v && ctx.fabErrClear) ctx.fabErrClear();
+      } catch (e) {
+      }
+      if (v) {
+        try {
+          if (ctx.resetErrDedup) ctx.resetErrDedup();
+        } catch (e) {
+        }
+      }
+      if (v) {
+        [700, 2200].forEach(function(d) {
+          setTimeout(function() {
+            try {
+              ctx.sendAiBoot();
+            } catch (e) {
+            }
+          }, d);
+        });
+      }
+      if (v && ctx.picksPendingErrors && ctx.picksPendingErrors.length) {
+        var perr2 = ctx.picksPendingErrors.slice();
+        [600, 2e3, 4e3].forEach(function(d) {
+          setTimeout(function() {
+            perr2.forEach(function(m) {
+              if (ctx.picksPendingErrors.indexOf(m) >= 0) ctx.postToAi(m);
+            });
+          }, d);
+        });
+      }
+      if (v && ctx.picksPendingElements && ctx.picksPendingElements.length) {
+        var pel2 = ctx.picksPendingElements.slice();
+        [600, 2e3, 4e3].forEach(function(d) {
+          setTimeout(function() {
+            pel2.forEach(function(m) {
+              if (ctx.picksPendingElements.indexOf(m) >= 0) ctx.postToAi(m);
+            });
+          }, d);
+        });
+      }
+      if (v) requestAnimationFrame(function() {
+        try {
+          if (!ctx.aiInScreen()) ctx.resetAiDefault();
+        } catch (e) {
+        }
+      });
+    };
+    ctx.aiWinSettings = function(anchorBtn) {
+      try {
+        var existing = ctx.root.querySelector(".dbg-ai-settings-pop");
+        if (existing) {
+          existing.remove();
+          return;
+        }
+        var pop = el("div", { class: "dbg-ai-settings-pop" });
+        pop.style.zIndex = "2147483647";
+        var small = detectScreenMode().small;
+        var sec = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:6px" }, [small ? "📱 小屏（按 % 高度）" : "🖥 大屏（具体尺寸/位置）"]);
+        pop.appendChild(sec);
+        if (small) {
+          var hRow = el("div", { style: "display:flex;align-items:center;gap:8px;font-size:12px" });
+          var pct = ctx.aiState.smallHeightPct > 0 ? ctx.aiState.smallHeightPct : 100;
+          var slider = el("input", { type: "range", min: "30", max: "100", step: "5", value: String(pct), style: "flex:1" });
+          var pctLabel = el("span", { style: "min-width:34px;text-align:right;font-weight:600" }, [pct + "%"]);
+          slider.addEventListener("input", function() {
+            ctx.aiState.smallHeightPct = parseInt(slider.value, 10);
+            pctLabel.textContent = ctx.aiState.smallHeightPct + "%";
+            ctx.saveAiState();
+            ctx.applyAiState();
+          });
+          hRow.appendChild(el("span", {}, ["高度"]));
+          hRow.appendChild(slider);
+          hRow.appendChild(pctLabel);
+          pop.appendChild(hRow);
+          var dRow = el("div", { style: "display:flex;gap:8px;margin-top:8px" });
+          [["bottom", "⬇ 贴底"], ["top", "⬆ 贴顶"]].forEach(function(d) {
+            var b = el("button", { style: "flex:1;border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit;font-size:12px;color:#374151;background:" + (ctx.aiState.smallDock === d[0] ? "#4f46e5;color:#fff" : "#fff") }, [d[1]]);
+            b.addEventListener("click", function() {
+              ctx.aiState.smallDock = d[0];
+              ctx.saveAiState();
+              ctx.applyAiState();
+              ctx.aiWinSettings(anchorBtn);
+            });
+            dRow.appendChild(b);
+          });
+          pop.appendChild(dRow);
+        } else {
+          var whRow = el("div", { style: "display:flex;gap:8px;align-items:center;font-size:12px" });
+          var wInp = el("input", { type: "number", value: String(ctx.aiState.width || 400), min: "280", step: "20", style: "width:64px;border:1px solid #d1d5db;border-radius:5px;padding:2px 5px;font:inherit;color:#111827" });
+          var hInp = el("input", { type: "number", value: String(ctx.aiState.height || 560), min: "200", step: "20", style: "width:64px;border:1px solid #d1d5db;border-radius:5px;padding:2px 5px;font:inherit;color:#111827" });
+          wInp.addEventListener("change", function() {
+            ctx.aiState.width = Math.max(280, parseInt(wInp.value, 10) || 400);
+            ctx.clampAiWindow();
+            ctx.saveAiState();
+            ctx.applyAiState();
+          });
+          hInp.addEventListener("change", function() {
+            ctx.aiState.height = Math.max(200, parseInt(hInp.value, 10) || 560);
+            ctx.clampAiWindow();
+            ctx.saveAiState();
+            ctx.applyAiState();
+          });
+          whRow.appendChild(el("span", {}, ["宽"]));
+          whRow.appendChild(wInp);
+          whRow.appendChild(el("span", {}, ["高"]));
+          whRow.appendChild(hInp);
+          pop.appendChild(whRow);
+          var posRow = el("div", { style: "display:flex;gap:8px;margin-top:8px" });
+          [["left", "⬅ 贴左"], ["right", "➡ 贴右"], ["free", "✥ 自由"]].forEach(function(d) {
+            var cur = ctx.aiState.dock || (d[0] === "right" ? "right" : "");
+            var b = el("button", { style: "flex:1;border:1px solid #d1d5db;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit;font-size:12px;color:#374151;background:" + (cur === d[0] ? "#4f46e5;color:#fff" : "#fff") }, [d[1]]);
+            b.addEventListener("click", function() {
+              ctx.aiState.dock = d[0];
+              if (d[0] === "free") {
+                ctx.aiState.left = 16;
+                ctx.aiState.top = 16;
+              }
+              ctx.clampAiWindow();
+              ctx.saveAiState();
+              ctx.applyAiState();
+              ctx.aiWinSettings(anchorBtn);
+            });
+            posRow.appendChild(b);
+          });
+          pop.appendChild(posRow);
+        }
+        var urlSec = el("div", { style: "margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px" });
+        urlSec.appendChild(el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, ["🔗 AI 地址"]));
+        var urlMono = "font-family:ui-monospace,SFMono-Regular,monospace;font-size:11px;line-height:1.5;word-break:break-all;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;padding:6px 8px;color:#334155;user-select:all";
+        var _reopenSettings = function() {
+          try {
+            pop.remove();
+            ctx.aiWinSettings(anchorBtn);
+          } catch (e) {
+          }
+        };
+        var _navAi = function(u) {
+          try {
+            if (ctx.aiMode === "popup") {
+              if (ctx.aiPopup && !ctx.aiPopup.closed) ctx.aiPopup.location.href = u;
+              else ctx.openAiPopup(u);
+            } else if (ctx.aiIframe) {
+              ctx.aiReady = false;
+              ctx.aiIframe.src = u;
+            }
+          } catch (e) {
+          }
+        };
+        var tracked2 = (ctx.trackedAiUrl ? ctx.trackedAiUrl() : "") || "";
+        var trkRow = el("div", { style: "margin-bottom:8px" });
+        var trkHead = el("div", { style: "display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:11px;color:#6b7280" });
+        trkHead.appendChild(el("span", {}, ["🔁 当前会话（AI 窗上报，优先）"]));
+        var trkClear = el("button", { style: "margin-left:auto;border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, ["✕ 清除"]);
+        trkClear.addEventListener("click", function() {
+          try {
+            ctx.clearAiUrl();
+          } catch (e) {
+          }
+          _navAi(ctx.aiFallbackUrl());
+          try {
+            ctx.addMsg("sys", "✕ 已清除会话追踪 URL——AI 窗已回退" + (ctx.loadCustomAiUrl && ctx.loadCustomAiUrl() ? "用户设置地址（导航后重新追踪）" : "默认地址（导航后重新追踪）"));
+          } catch (e) {
+          }
+          _reopenSettings();
+        });
+        trkHead.appendChild(trkClear);
+        trkRow.appendChild(trkHead);
+        trkRow.appendChild(el("div", { style: urlMono, title: tracked2 || "（无——AI 窗加载/导航后自动记录）" }, [tracked2 || "（无——AI 窗加载/导航后自动记录）"]));
+        urlSec.appendChild(trkRow);
+        var customUrl = (ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : "") || "";
+        var setRow = el("div", {});
+        var setHead = el("div", { style: "display:flex;align-items:center;gap:6px;margin-bottom:3px;font-size:11px;color:#6b7280" });
+        setHead.appendChild(el("span", {}, [customUrl ? "⭐ 用户设置（aiti-agent）" : "默认推断"]));
+        var cpBtn = el("button", { style: "border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, ["📋 复制"]);
+        cpBtn.addEventListener("click", function() {
+          try {
+            navigator.clipboard.writeText(customUrl || ctx.cfg.aiUrl || "").then(function() {
+              cpBtn.textContent = "✓ 已复制";
+              setTimeout(function() {
+                cpBtn.textContent = "📋 复制";
+              }, 1200);
+            }, function() {
+              cpBtn.textContent = "复制失败";
+            });
+          } catch (e) {
+          }
+        });
+        setHead.appendChild(cpBtn);
+        if (customUrl) {
+          var cstClear = el("button", { style: "border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, ["✕ 清除"]);
+          cstClear.addEventListener("click", function() {
+            try {
+              ctx.clearCustomAiUrl();
+            } catch (e) {
+            }
+            var trkLeft = ctx.trackedAiUrl ? ctx.trackedAiUrl() : "";
+            if (!trkLeft) {
+              try {
+                ctx.clearAiUrl();
+              } catch (e) {
+              }
+            }
+            var backUrl = ctx.aiUrlFor();
+            _navAi(backUrl);
+            try {
+              ctx.addMsg("sys", "✕ 已清除用户设置地址——AI 窗回退默认地址" + (trkLeft ? "（当前会话仍保留）" : "（导航后重新追踪）"));
+            } catch (e) {
+            }
+            _reopenSettings();
+          });
+          setHead.appendChild(cstClear);
+        }
+        setRow.appendChild(setHead);
+        setRow.appendChild(el("div", { style: urlMono, title: customUrl || ctx.cfg.aiUrl || "（未配置）" }, [customUrl || ctx.cfg.aiUrl || "（未配置）"]));
+        urlSec.appendChild(setRow);
+        pop.appendChild(urlSec);
+        var setSec = el("div", { style: "margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px" });
+        var setLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, ["⭐ 设置 aiti-agent（第一推荐）"]);
+        setSec.appendChild(setLbl);
+        var aitiLink = el("a", { href: "https://aiti.pw", target: "_blank", rel: "noopener", style: "color:#4f46e5;text-decoration:underline" }, ["aiti.pw ↗"]);
+        setSec.appendChild(el("div", { style: "font-size:11px;color:#6b7280;line-height:1.5;margin-bottom:6px" }, ["带 Web 界面的 AI 助手（", aitiLink, "）——装好后设地址，AI 窗直接由它接管；应用后 10s 协议探测，成功才生效，失败自动回退。"]));
+        var setBtn = el("button", { style: "width:100%;border:1px solid #4f46e5;border-radius:6px;padding:4px 8px;cursor:pointer;font:inherit;font-size:12px;background:#eef2ff;color:#4338ca" }, ["⚙ 设置地址"]);
+        setBtn.addEventListener("click", function() {
+          try {
+            pop.remove();
+          } catch (e) {
+          }
+          if (ctx.aiAgentDlg) ctx.aiAgentDlg();
+        });
+        setSec.appendChild(setBtn);
+        pop.appendChild(setSec);
+        var resetSec = el("div", { style: "margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px" });
+        var resetLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, ["⟲ 重置"]);
+        resetSec.appendChild(resetLbl);
+        var resetBtn = el("button", { style: "width:100%;border:1px solid #fca5a5;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;font-size:12px;background:#fef2f2;color:#b91c1c" }, ["重置位置/尺寸 + URL（新会话）"]);
+        resetBtn.addEventListener("click", function() {
+          ctx.resetAiDefault();
+          ctx.clearAiUrl();
+          try {
+            ctx.clearCustomAiUrl();
+          } catch (e) {
+          }
+          if (ctx.aiMode === "popup") {
+            ctx.openAiPopup();
+          } else if (ctx.aiIframe && ctx.cfg.aiUrl) {
+            var sep = ctx.cfg.aiUrl.indexOf("?") >= 0 ? "&" : "?";
+            ctx.aiIframe.src = ctx.withAiWinMark(ctx.cfg.aiUrl + sep + "_dbg=" + Date.now() + ctx.aiPageParams());
+          }
+          ctx.addMsg("sys", "⟲ 已重置：AI 窗位置/尺寸回默认，URL 回初始（新会话）");
+          try {
+            pop.remove();
+          } catch (e) {
+          }
+        });
+        resetSec.appendChild(resetBtn);
+        pop.appendChild(resetSec);
+        var dbgSec = el("div", { style: "margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px" });
+        var dbgLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:4px" }, ["🔧 调试"]);
+        dbgSec.appendChild(dbgLbl);
+        var lbl = el("label", { style: "display:flex;align-items:center;gap:4px;font-size:12px" }, []);
+        var cb = el("input", { type: "checkbox" });
+        try {
+          cb.checked = ctx.loadShowDebug();
+        } catch (e) {
+        }
+        cb.addEventListener("change", function() {
+          try {
+            ctx.saveShowDebug(cb.checked);
+          } catch (e) {
+          }
+        });
+        lbl.appendChild(cb);
+        lbl.appendChild(document.createTextNode(" 刷新时自动显示调试信息"));
+        dbgSec.appendChild(lbl);
+        var viewBtn = el("button", { style: "margin-top:6px;border:1px solid #94a3b8;border-radius:6px;padding:3px 10px;cursor:pointer;font:inherit;font-size:12px;background:#fff;color:#374151" }, ["📋 查看调试信息"]);
+        viewBtn.addEventListener("click", function() {
+          pop.remove();
+          try {
+            ctx.showDebugPanel();
+          } catch (e) {
+          }
+        });
+        dbgSec.appendChild(viewBtn);
+        pop.appendChild(dbgSec);
+        var inspSec = el("div", { style: "margin-top:10px;border-top:1px solid rgba(255,255,255,.15);padding-top:8px" });
+        var inspLbl = el("div", { style: "font-size:11px;font-weight:600;color:#4f46e5;margin-bottom:6px" }, ["🛠 Inspector 设置"]);
+        inspSec.appendChild(inspLbl);
+        var inspBtn = el("button", { style: "width:100%;border:1px solid #a5b4fc;border-radius:6px;padding:5px 8px;cursor:pointer;font:inherit;font-size:12px;background:#eef2ff;color:#4338ca" }, ["⏱ 调速 / 🌐 网络 / ⚠ 错误（弹出面板）"]);
+        inspBtn.addEventListener("click", function() {
+          try {
+            pop.remove();
+          } catch (e) {
+          }
+          try {
+            ctx.toggleSpeedPanel();
+          } catch (e) {
+          }
+        });
+        inspSec.appendChild(inspBtn);
+        pop.appendChild(inspSec);
+        ctx.root.appendChild(pop);
+        try {
+          var _vp = getPhysViewport(), _r = anchorBtn.getBoundingClientRect();
+          var _fx = _fixedVisual ? 1 : _vp.scale, _fy = _fixedVisual ? 1 : _vp.scaleY;
+          var _vL = Math.max(4, _r.right * _fx - 200), _vT = _r.bottom * _fy + 4;
+          var _visW = Math.min(340, Math.round(_vp.w * 0.92));
+          pop.style.width = _visW + "px";
+          pop.style.maxWidth = "none";
+          pop.style.minWidth = "";
+          positionPhysical(pop, _vL, _vT, _vp.scale, _vp.scaleY);
+          requestAnimationFrame(function() {
+            try {
+              var _r2 = pop.getBoundingClientRect();
+              var _w2 = _r2.width * _fx, _h2 = _r2.height * _fy;
+              var cL = Math.min(Math.max(4, _vL), Math.max(4, _vp.w - _w2 - 4));
+              var cT = _vT + _h2 > _vp.h - 4 ? Math.max(4, _r.top * _fy - _h2 - 4) : _vT;
+              if (cL !== _vL || cT !== _vT) positionPhysical(pop, cL, cT, _vp.scale, _vp.scaleY);
+            } catch (e) {
+            }
+          });
+        } catch (e) {
+        }
+        setTimeout(function() {
+          var close = function(ev) {
+            if (!pop.parentNode) {
+              document.removeEventListener("mousedown", close);
+              return;
+            }
+            if (!pop.contains(ev.target) && !anchorBtn.contains(ev.target)) {
+              pop.remove();
+              document.removeEventListener("mousedown", close);
+            }
+          };
+          document.addEventListener("mousedown", close);
+        }, 0);
+      } catch (e) {
+      }
+    };
+    ctx.aiAgentDlg = function() {
+      try {
+        if (ctx.root) {
+          var _dup = ctx.root.querySelector(".dbg-dialog-card");
+          if (_dup && _dup.innerText.indexOf("设置 aiti-agent") >= 0) return;
+        }
+        var dlg = el("div", { class: "dbg-dialog" });
+        var card = el("div", { class: "dbg-dialog-card", style: "width:min(520px, 90vw)" });
+        var head = el("div", { class: "dbg-dialog-head" });
+        head.appendChild(el("span", {}, ["⭐ 设置 aiti-agent 地址"]));
+        var close = el("button", { style: "border:0;background:none;cursor:pointer;font-size:14px;color:#6b7280" }, ["✕"]);
+        head.appendChild(close);
+        var body = el("div", { class: "dbg-dialog-body" });
+        var aitiLink = el("a", { href: "https://aiti.pw", target: "_blank", rel: "noopener", style: "color:#4f46e5;text-decoration:underline" }, ["aiti.pw ↗"]);
+        body.appendChild(el("div", { style: "font-size:12.5px;color:#374151;line-height:1.6" }, ["带 Web 界面的 AI 助手（", aitiLink, "）——下载安装后，把它的访问地址填到下面，AI 窗将直接由它接管（本窗口不再使用）。"]));
+        body.appendChild(el("div", { style: "font-size:11.5px;color:#6b7280;line-height:1.6" }, ["应用后自动与宿主协商重开 AI 窗，10 秒内协议探测；连接成功才生效（此后重开自动使用），失败自动回退本窗口（可修改重试）。"]));
+        var inp = el("input", { type: "url", spellcheck: "false", placeholder: "https://你的-aiti-agent-地址", value: (ctx.loadCustomAiUrl ? ctx.loadCustomAiUrl() : "") || "", style: "width:100%;box-sizing:border-box;border:1px solid #d1d5db;border-radius:8px;padding:8px 10px;font:inherit;font-size:13px;outline:none" });
+        body.appendChild(inp);
+        var _cur = (ctx.trackedAiUrl ? ctx.trackedAiUrl() : "") || "";
+        if (_cur) {
+          var curRow = el("div", { style: "margin-top:6px;font-size:11px;color:#6b7280;line-height:1.5" });
+          curRow.appendChild(el("span", {}, ["🔁 当前 AI 窗导航："]));
+          var curBtn = el("button", { style: "margin-left:4px;border:1px solid #d1d5db;border-radius:5px;padding:1px 8px;cursor:pointer;font:inherit;font-size:11px;background:#fff;color:#374151" }, ["✍ 填入修改"]);
+          curBtn.addEventListener("click", function() {
+            try {
+              inp.value = String(_cur);
+              inp.focus();
+              try {
+                var u0 = String(_cur);
+                inp.setSelectionRange(u0.length, u0.length);
+              } catch (e) {
+              }
+              curBtn.textContent = "✓ 已填入";
+              setTimeout(function() {
+                curBtn.textContent = "✍ 填入修改";
+              }, 1200);
+            } catch (e) {
+            }
+          });
+          curRow.appendChild(curBtn);
+          var curUrl2 = el("span", { style: "font-family:ui-monospace,SFMono-Regular,monospace;word-break:break-all;user-select:all" }, [_cur.slice(0, 120) + (_cur.length > 120 ? "…" : "")]);
+          curRow.appendChild(curUrl2);
+          body.appendChild(curRow);
+        }
+        var foot = el("div", { class: "dbg-dialog-foot" });
+        var openAiti = el("button", { class: "dbg-ghost" }, ["🔗 打开 aiti.pw"]);
+        var cancelBtn = el("button", { class: "dbg-ghost" }, ["取消"]);
+        var applyBtn = el("button", { class: "dbg-primary" }, ["应用并切换"]);
+        var closeDlg = function() {
+          try {
+            dlg.remove();
+          } catch (e) {
+          }
+        };
+        close.addEventListener("click", closeDlg);
+        dlg.addEventListener("click", function(e) {
+          if (e.target === dlg) closeDlg();
+        });
+        cancelBtn.addEventListener("click", closeDlg);
+        openAiti.addEventListener("click", function() {
+          try {
+            window.open("https://aiti.pw", "_blank");
+          } catch (e) {
+          }
+        });
+        applyBtn.addEventListener("click", function() {
+          var u = (inp.value || "").trim();
+          if (!u) {
+            applyBtn.textContent = "请输入地址";
+            setTimeout(function() {
+              applyBtn.textContent = "应用并切换";
+            }, 1500);
+            return;
+          }
+          if (!/^https?:\/\//i.test(u)) u = "https://" + u;
+          try {
+            var p = new URL(u);
+            if (!p.hostname) throw 0;
+            if (/\s/.test(p.hostname) || p.hostname.indexOf("%") >= 0) throw 1;
+            u = p.href.replace(/\/+$/, "");
+          } catch (e) {
+            applyBtn.textContent = "地址格式不对";
+            setTimeout(function() {
+              applyBtn.textContent = "应用并切换";
+            }, 1500);
+            return;
+          }
+          ctx.applyCustomAiUrl(u);
+          try {
+            ctx.addMsg("sys", "⚙ 已应用 aiti-agent 地址：" + String(u).slice(0, 60) + "（10s 协议探测，成功才生效）");
+          } catch (e) {
+          }
+          closeDlg();
+        });
+        foot.appendChild(openAiti);
+        foot.appendChild(cancelBtn);
+        foot.appendChild(applyBtn);
+        card.appendChild(head);
+        card.appendChild(body);
+        card.appendChild(foot);
+        try {
+          makeCardDrag(head, card);
+        } catch (e) {
+        }
+        dlg.appendChild(card);
+        if (ctx.root) ctx.root.appendChild(dlg);
+        dlg.classList.add("dbg-open");
+        try {
+          if (detectScreenMode().small) {
+            dlg.style.zIndex = "2147483648";
+            card.style.position = "fixed";
+            var _placeVv = function() {
+              try {
+                var _vp2 = getPhysViewport();
+                var _vvh = window.visualViewport && window.visualViewport.height || window.innerHeight;
+                var _visVh = _fixedVisual ? _vvh : _vvh * _vp2.scaleY;
+                placePhysPanel(card, { visW: capVisW(_vp2, 0), dock: "bottom", gap: 0, visX: 0, borderRadius: "14px 14px 0 0", minH: 0, maxH: Math.round(_visVh * 0.92) });
+              } catch (e) {
+              }
+            };
+            _placeVv();
+            if (window.visualViewport) window.visualViewport.addEventListener("resize", _placeVv);
+            var _origClose = closeDlg;
+            closeDlg = function() {
+              _origClose();
+              try {
+                if (window.visualViewport) window.visualViewport.removeEventListener("resize", _placeVv);
+              } catch (e) {
+              }
+            };
+          }
+        } catch (e) {
+        }
+        setTimeout(function() {
+          try {
+            inp.focus();
+          } catch (e) {
+          }
+        }, 60);
+      } catch (e) {
+      }
+    };
+    ctx.bindAiUrlToBridge = function(base, token) {
+      if (!ctx.cfg.aiUrl) return;
+      var savedUrl = ctx.trackedAiUrl ? ctx.trackedAiUrl() : "";
+      if (savedUrl) {
+        return;
+      }
+      if (ctx.aiMode === "popup") {
+        ctx.clearAiUrl();
+        ctx.openAiPopup(ctx.aiUrlWithBridge(base, token));
+        ctx.addMsg("sys", "🔗 AI 窗已绑定桥：" + base + " token=" + token);
+        return;
+      }
+      if (!ctx.aiIframe) return;
+      var sep = ctx.cfg.aiUrl.indexOf("?") >= 0 ? "&" : "?";
+      ctx.aiIframe.src = ctx.withAiWinMark(ctx.cfg.aiUrl + sep + "bridge=" + encodeURIComponent(base) + "&token=" + encodeURIComponent(token) + "&_dbg=" + Date.now() + ctx.aiPageParams());
+      ctx.addMsg("sys", "🔗 AI 窗已绑定桥：" + base + " token=" + token);
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/routing.js
+  function initRouting(ctx) {
+    ctx.captureSceneSend = function() {
+      var tw = (ctx.listFrames()[0] || {}).win;
+      var conditions = {
+        animSpeed: ctx.optState.animSpeed,
+        netDelay: ctx.optState.netDelay,
+        netOffline: ctx.optState.netOffline,
+        darkMode: ctx.optState.darkMode,
+        reducedMotion: ctx.optState.reducedMotion,
+        timeOffsetMs: ctx.optState.timeOffsetMs,
+        viewportW: ctx.optState.viewportW,
+        blockScroll: ctx.optState.blockScroll,
+        blockWheel: ctx.optState.blockWheel,
+        slowTimers: ctx.optState.slowTimers
+      };
+      var scene = {
+        kind: "scene_report",
+        at: (/* @__PURE__ */ new Date()).toISOString(),
+        targetUrl: tw && tw.location ? tw.location.href.slice(0, 500) : ctx.url,
+        conditions,
+        errors: ctx.errLog.slice(0, 10),
+        viewport: tw ? { w: tw.innerWidth, h: tw.innerHeight } : null,
+        selection: ctx.lastPayload || null
+      };
+      var condCount = Object.keys(conditions).filter(function(k) {
+        return conditions[k] && conditions[k] !== 1;
+      }).length;
+      ctx.sendToAi({ kind: "scene_report", report: scene });
+      ctx.addMsg("sys", "📸 现场已发送给 AI：" + ctx.errLog.length + " 条错误 · " + condCount + " 个非默认模拟条件");
+    };
+    ctx.addMsg = function(role, text) {
+      ctx.postToAi({ type: "dbg_system_log", payload: { role, text } });
+      if (!ctx.aiIframe) console.log("[dbg]", role, text);
+    };
+    ctx.showCopyFallback = function(text) {
+      if (!ctx.copyFallbackCard) {
+        ctx.copyFallbackCard = el("div", { class: "dbg-dialog" });
+        var card = el("div", { class: "dbg-dialog-card", style: "width:min(560px, 94%);max-height:90%" });
+        var head = el("div", { class: "dbg-dialog-head" });
+        head.appendChild(el("span", {}, ["📋 复制内容"]));
+        card.appendChild(head);
+        var body = el("div", { class: "dbg-dialog-body" });
+        body.appendChild(el("div", {}, ["剪贴板在 AI 窗不可用——已自动全选下方内容，Ctrl/Cmd+C 直接复制："]));
+        var ta = el("textarea", { readonly: "readonly", spellcheck: "false", style: "width:100%;height:220px;box-sizing:border-box;white-space:pre-wrap;word-break:break-all;color:#0f172a" });
+        body.appendChild(ta);
+        card.appendChild(body);
+        var foot = el("div", { class: "dbg-dialog-foot" });
+        var retry = el("button", { class: "dbg-primary" }, ["📋 再试复制"]);
+        var close = el("button", { class: "dbg-ghost" }, ["关闭"]);
+        foot.appendChild(retry);
+        foot.appendChild(close);
+        card.appendChild(foot);
+        ctx.copyFallbackCard.appendChild(card);
+        ctx.root.appendChild(ctx.copyFallbackCard);
+        close.onclick = function() {
+          ctx.copyFallbackCard.classList.remove("dbg-open");
+        };
+        retry.onclick = function() {
+          try {
+            navigator.clipboard.writeText(ta.value).then(function() {
+              ctx.copyFallbackCard.classList.remove("dbg-open");
+              try {
+                if (ctx.addMsg) ctx.addMsg("sys", "📋 已复制到剪贴板");
+              } catch (e) {
+              }
+            }, function() {
+            });
+          } catch (e) {
+          }
+        };
+        ctx.copyFallbackCard.addEventListener("click", function(e) {
+          if (e.target === ctx.copyFallbackCard) ctx.copyFallbackCard.classList.remove("dbg-open");
+        });
+      }
+      var ta2 = ctx.copyFallbackCard.querySelector("textarea");
+      ta2.value = text;
+      try {
+        var _vp = getPhysViewport();
+        placePhysBox(ctx.copyFallbackCard, 0, 0, _vp.w, _vp.h, _vp.scale, _vp.scaleY);
+      } catch (e) {
+      }
+      ctx.copyFallbackCard.classList.add("dbg-open");
+      ta2.focus();
+      ta2.select();
+    };
+    ctx.selfAiRequested = false;
+    ctx.postToAi = function(msg) {
+      var target = null, toSelf = false;
+      var _type = msg && msg.type;
+      var _isBridgeProto = _type === "dbg_mcp_result" || _type === "dbg_mcp_interaction_control" || _type === "dbg_bridge_event";
+      var _aiBound = _isBridgeProto || _type === "dbg_ai_element" || _type === "dbg_ai_error";
+      var _inPickSession = !!(ctx.inspectorOn || ctx.aiInspectActive || ctx.pickPanel);
+      var _selfReq = !!ctx.selfAiRequested;
+      if (msg && msg._selfAttrib !== void 0) _selfReq = !!msg._selfAttrib;
+      if (_selfReq) {
+        target = window;
+        toSelf = true;
+      } else if (ctx.aiMode === "popup") {
+        if (ctx.aiPopup && !ctx.aiPopup.closed) target = ctx.aiPopup;
+      } else if (_inPickSession && ctx.aiIframe) {
+        target = ctx.aiIframe.contentWindow;
+      } else if (_aiBound && ctx.aiIframe && !ctx.selfHostPage) {
+        target = ctx.aiIframe.contentWindow;
+      } else if (_aiBound && !ctx.selfHostPage && ctx.cfg.aiUrl && !ctx.aiIframe) {
+        try {
+          ctx.ensureAi();
+        } catch (e) {
+        }
+        if (ctx.aiIframe) target = ctx.aiIframe.contentWindow;
+      } else if (window.AitiHostProtocol) {
+        target = window;
+        toSelf = true;
+      } else if (ctx.aiIframe) {
+        target = ctx.aiIframe.contentWindow;
+      }
+      if (!target) {
+        try {
+          if (window.AitiHostProtocol) {
+            target = window;
+            toSelf = true;
+          }
+        } catch (e) {
+        }
+      }
+      if (!target) return;
+      if (toSelf) {
+        var out = dbgMsg(msg);
+        out.__selfLoop = true;
+        try {
+          target.postMessage(out, "*");
+        } catch (e) {
+        }
+        return;
+      }
+      if (!ctx.aiReady) {
+        ctx.aiQueue.push(msg);
+        return;
+      }
+      try {
+        target.postMessage(dbgMsg(msg), "*");
+      } catch (e) {
+      }
+    };
+    ctx.saveAiUrl = function(url) {
+      if (!url) return;
+      try {
+        localStorage.setItem("__dbg_ai_url", String(url).slice(0, 500));
+      } catch (e) {
+      }
+    };
+    ctx.loadAiUrl = function() {
+      try {
+        return localStorage.getItem("__dbg_ai_url") || "";
+      } catch (e) {
+        return "";
+      }
+    };
+    ctx.clearAiUrl = function() {
+      try {
+        localStorage.removeItem("__dbg_ai_url");
+      } catch (e) {
+      }
+    };
+    ctx.saveCustomAiUrl = function(url) {
+      if (!url) return;
+      try {
+        localStorage.setItem("__dbg_ai_url_custom", String(url).slice(0, 500));
+      } catch (e) {
+      }
+    };
+    ctx.loadCustomAiUrl = function() {
+      try {
+        return localStorage.getItem("__dbg_ai_url_custom") || "";
+      } catch (e) {
+        return "";
+      }
+    };
+    ctx.clearCustomAiUrl = function() {
+      try {
+        localStorage.removeItem("__dbg_ai_url_custom");
+      } catch (e) {
+      }
+    };
+    ctx.applyCustomAiUrl = function(url) {
+      if (!url || !/^https?:\/\//i.test(String(url))) return;
+      var prevCustom = ctx.loadCustomAiUrl() || "";
+      try {
+        ctx.clearAiUrl();
+      } catch (e) {
+      }
+      var sep = String(url).indexOf("?") >= 0 ? "&" : "?";
+      var newUrl = ctx.withAiWinMark(String(url) + sep + "_dbg=" + Date.now() + ctx.aiPageParams());
+      var popupMode = ctx.aiMode === "popup" && ctx.aiPopup && !ctx.aiPopup.closed;
+      try {
+        if (popupMode) ctx.aiPopup.location.href = newUrl;
+        else {
+          if (!ctx.aiIframe) {
+            try {
+              ctx.ensureAi();
+            } catch (e) {
+            }
+          }
+          if (ctx.aiIframe) ctx.aiIframe.src = newUrl;
+        }
+      } catch (e) {
+        try {
+          ctx.openAiPopup(newUrl);
+        } catch (e2) {
+        }
+      }
+      ctx.aiReady = false;
+      ctx.aiOpen = true;
+      try {
+        ctx.showAi(true);
+      } catch (e) {
+      }
+      try {
+        if (ctx.addMsg) ctx.addMsg("sys", "⚙ AI 地址已切换：" + String(url).slice(0, 80) + "（10s 协议探测，成功才生效；失败自动回退）");
+      } catch (e) {
+      }
+      clearTimeout(ctx._aiSwapT);
+      ctx._aiSwapUrl = url;
+      ctx._aiSwapPrev = prevCustom;
+      ctx._aiSwapSource = popupMode ? ctx.aiPopup : ctx.aiIframe ? ctx.aiIframe.contentWindow : null;
+      ctx._aiSwapT = setTimeout(function() {
+        if (!ctx._aiSwapUrl) return;
+        if (ctx._aiSwapPrev) ctx.saveCustomAiUrl(ctx._aiSwapPrev);
+        else ctx.clearCustomAiUrl();
+        ctx._aiSwapUrl = null;
+        ctx._aiSwapPrev = null;
+        ctx._aiSwapSource = null;
+        var backUrl = ctx.aiUrlFor();
+        try {
+          if (ctx.aiMode === "popup" && ctx.aiPopup && !ctx.aiPopup.closed) ctx.aiPopup.location.href = backUrl;
+          else if (ctx.aiIframe) ctx.aiIframe.src = backUrl;
+        } catch (e) {
+        }
+        ctx.aiReady = false;
+        try {
+          if (ctx.addMsg) ctx.addMsg("sys", "⚠ AI 地址连接失败（10s 无响应）——已回退本窗口，请确认地址后重试");
+        } catch (e) {
+        }
+      }, 1e4);
+    };
+    ctx.realUrl = function() {
+      var isTop = false;
+      try {
+        isTop = window.self === window.top;
+      } catch (e) {
+      }
+      if (isTop) {
+        try {
+          return window.location && window.location.href || "";
+        } catch (e) {
+        }
+      }
+      try {
+        if (window.top && window.top !== window && window.top.location && window.top.location.href) return window.top.location.href;
+      } catch (e) {
+      }
+      try {
+        if (window.parent && window.parent !== window && window.parent.location && window.parent.location.href) return window.parent.location.href;
+      } catch (e) {
+      }
+      try {
+        var r = document.referrer || "";
+        if (r) return r;
+      } catch (e) {
+      }
+      try {
+        return window.location && window.location.href || "";
+      } catch (e) {
+      }
+      return "";
+    };
+    ctx.sendAiBoot = function() {
+      try {
+        var fr = ctx.listFrames()[0] || null;
+        var targetUrl = "";
+        var targetTitle = "";
+        try {
+          targetUrl = (ctx.realUrl() || "").slice(0, 500) || (fr && fr.win && fr.win.location ? fr.win.location.href.slice(0, 500) : "");
+        } catch (e) {
+          try {
+            targetUrl = fr && fr.win && fr.win.location ? fr.win.location.href.slice(0, 500) : "";
+          } catch (e2) {
+          }
+        }
+        try {
+          targetTitle = document && document.title ? document.title.slice(0, 200) : fr && fr.win && fr.win.document && fr.win.document.title ? fr.win.document.title.slice(0, 200) : "";
+        } catch (e) {
+          try {
+            targetTitle = fr && fr.win && fr.win.document && fr.win.document.title ? fr.win.document.title.slice(0, 200) : "";
+          } catch (e2) {
+          }
+        }
+        ctx.postToAi(dbgMsg({
+          type: "dbg_ai_boot",
+          payload: {
+            pageId: ctx.pageIdentity() + "/" + (ctx.selFrameId() || ctx.T_HOST),
+            instanceId: ctx.pageIdentity(),
+            frameId: ctx.selFrameId() || ctx.T_HOST,
+            bridge: ctx.cfg && ctx.cfg.bridgeBase || null,
+            targetUrl,
+            title: targetTitle,
+            frames: ctx.frameTreeInfos(),
+            // 帧树（host+fN+嵌套）：AI 窗展示/选择 iframe
+            frameTick: ctx._frameTick = (ctx._frameTick || 0) + 1
+            // iframe 变化重发 boot 去重用
+          }
+        }));
+      } catch (e) {
+      }
+    };
+    ctx.enrichElPayload = function(p) {
+      if (!p || typeof p !== "object") return p;
+      try {
+        var fr = ctx.listFrames()[0] || null;
+        var url = p.frame && p.frame.url ? p.frame.url : "";
+        var title = p.frame && p.frame.title ? p.frame.title : "";
+        if (!url) {
+          try {
+            url = (ctx.realUrl() || "").slice(0, 500) || (ctx.url || "");
+          } catch (e) {
+          }
+        }
+        if (!title) {
+          try {
+            title = fr && fr.win && fr.win.document && fr.win.document.title ? fr.win.document.title.slice(0, 200) : "";
+          } catch (e) {
+          }
+        }
+        var pageId = p.pageId || ctx.pageIdentity() + "/" + (ctx.selFrameId() || ctx.T_HOST);
+        var out = Object.assign({}, p);
+        if (pageId) out.pageId = pageId;
+        out.frame = { url, title, pageId: pageId || null };
+        out.bridge = ctx.cfg && ctx.cfg.bridgeBase || null;
+        out.mcp = {
+          tool: "page_exec",
+          pageId: pageId || null,
+          bridge: out.bridge,
+          note: "传 pageId 参数即可操作该页面（MCP: page_exec / 扩展: aiti_page_exec）"
+        };
+        return out;
+      } catch (e) {
+        return p;
+      }
+    };
+    ctx.T_HOST = "host";
+    ctx.listFrames = function() {
+      var out = [];
+      try {
+        [].forEach.call(document.querySelectorAll("iframe"), function(f) {
+          if (f === ctx.aiIframe) return;
+          var src2 = "";
+          try {
+            src2 = (f.getAttribute("src") || "").slice(0, 80);
+          } catch (e) {
+          }
+          out.push({ frameId: "f" + out.length, idx: out.length, src: src2 || "(srcdoc/inline)", win: f.contentWindow, el: f });
+        });
+      } catch (e) {
+      }
+      return out;
+    };
+    ctx.frameClient = function(frameId) {
+      if (!frameId || frameId === ctx.T_HOST) return window.__dbg || null;
+      var fr = ctx.listFrames()[parseInt(String(frameId).slice(1), 10) || 0];
+      return fr && fr.win ? fr.win.__dbg : null;
+    };
+    ctx.frameIdOf = function(frameId) {
+      if (!frameId || frameId === ctx.T_HOST) return ctx.T_HOST;
+      return String(frameId);
+    };
+    ctx.frameTreeInfos = function() {
+      var infos = [];
+      try {
+        infos.push({ id: ctx.T_HOST, parentId: null, title: document.title || "", url: (ctx.realUrl ? ctx.realUrl() : location.href).slice(0, 500) || location.href.slice(0, 500) });
+      } catch (e) {
+        infos.push({ id: ctx.T_HOST, parentId: null });
+      }
+      var frames = ctx.listFrames();
+      (function walk(list, parentId) {
+        for (var i = 0; i < list.length; i++) {
+          var fr = list[i];
+          var id = parentId ? parentId + "/" + i : fr.frameId;
+          var info = { id, parentId: parentId || null };
+          try {
+            var w = fr.win, el2 = fr.el;
+            try {
+              info.name = el2 && (el2.name || "") || "";
+            } catch (e) {
+            }
+            try {
+              info.src = el2 && (el2.getAttribute("src") || el2.src || "") || "";
+            } catch (e) {
+            }
+            try {
+              if (w.location) info.url = w.location.href.slice(0, 500);
+            } catch (e) {
+            }
+            try {
+              if (w.document) info.title = w.document.title;
+            } catch (e) {
+            }
+            if (w && w.document) {
+              var subs = [];
+              [].forEach.call(w.document.querySelectorAll("iframe, frame"), function(sub) {
+                if (sub.closest && sub.closest("#__dbg_launcher, .dbg-ai-win, .dbg-dialog")) return;
+                subs.push({ frameId: "x" + subs.length, win: sub.contentWindow, el: sub });
+              });
+              if (subs.length) walk(subs, id);
+            }
+          } catch (e) {
+          }
+          infos.push(info);
+        }
+      })(frames, null);
+      return infos;
+    };
+    ctx.postToFrame = function(frameId, msg) {
+      if (!frameId) frameId = ctx.T_HOST;
+      if (!frameId || frameId === ctx.T_HOST) {
+        try {
+          window.postMessage(dbgMsg(msg), "*");
+        } catch (e) {
+        }
+        return;
+      }
+      var fr = ctx.listFrames()[parseInt(String(frameId).slice(1), 10) || 0];
+      if (fr && fr.win) fr.win.postMessage(__spreadValues({ __dbg: 1, _f: frameId }, msg), "*");
+    };
+    ctx.applyHoverSim = function() {
+      if (ctx.hudHoverOn) {
+        ctx.postToFrame(ctx.selFrameId(), { type: "dbg_simulate_hover" });
+      } else {
+        ctx.broadcast({ type: "dbg_simulate_hover_off" });
+      }
+    };
+    ctx.openFileAt = function(file, line) {
+      if (!file) return;
+      ctx.postBridgeEvent("open_file", { file, line: line || null });
+      ctx.addMsg("sys", "📂 已请求后台打开：" + file + (line ? ":" + line : ""));
+    };
+    ctx.execInPage = function(cmd, args, frameId) {
+      frameId = frameId || ctx.T_HOST;
+      return new Promise(function(resolve) {
+        var id = "req_" + ++ctx.execInPage._n + "_" + Date.now();
+        ctx.pendingCommands[id] = resolve;
+        ctx.postToFrame(frameId, { type: "dbg_exec", payload: { requestId: id, cmd, args } });
+      });
+    };
+    ctx.currentFrameId = ctx.T_HOST;
+    ctx.sourceFrameId = function(source) {
+      if (source === "self") return ctx.T_HOST;
+      var frames = ctx.listFrames();
+      for (var i = 0; i < frames.length; i++) if (frames[i].win === source) return frames[i].frameId;
+      return ctx.T_HOST;
+    };
+    ctx.selFrameId = function() {
+      if (ctx.currentFrameId) return ctx.currentFrameId;
+      var frames = ctx.listFrames();
+      if (frames.length) return frames[0].frameId;
+      return ctx.T_HOST;
+    };
+    ctx.broadcast = function(msg) {
+      ctx.postToFrame(ctx.T_HOST, msg);
+      var frames = ctx.listFrames();
+      for (var i = 0; i < frames.length; i++) ctx.postToFrame(frames[i].frameId, msg);
+    };
+    ctx.frameOffset = function(source) {
+      if (source === "self") return { left: 0, top: 0 };
+      var frames = ctx.listFrames();
+      for (var i = 0; i < frames.length; i++) {
+        if (frames[i].win === source) {
+          try {
+            var r = frames[i].el.getBoundingClientRect();
+            return { left: r.left, top: r.top };
+          } catch (e) {
+          }
+          return { left: 0, top: 0 };
+        }
+      }
+      return { left: 0, top: 0 };
+    };
+    ctx.sendToAi = function(payload) {
+      if (ctx.cfg.aiUrl) {
+        ctx.ensureAi();
+        ctx.showAi(true);
+        ctx.postToAi({ type: "dbg_user_message", payload });
+      } else {
+        if (ctx.cfg.endpoint && ctx.cfg.sessionId) {
+          fetch(ctx.cfg.endpoint + "/" + ctx.cfg.sessionId + "/report", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "Authorization": "Bearer " + ctx.cfg.dbgToken },
+            body: JSON.stringify(__spreadValues({ type: "element_inspect" }, payload))
+          }).then(function(r) {
+            return r.json();
+          }).catch(function(e) {
+            console.error(e);
+          });
+        } else {
+          console.log("[dbg-launcher] → AI（console 模式）", JSON.stringify(payload, null, 2));
+          ctx.addMsg("sys", "AI 通道未配置（aiUrl/endpoint 为空），已回显到 console。");
+        }
+      }
+    };
+    ctx.sendText = function(text) {
+      if (!text.trim()) return;
+      ctx.sendToAi({ kind: "text", text });
+    };
+    ctx.toggleAi = function() {
+      if (ctx.aiMode === "popup") {
+        ctx.aiOpen = true;
+        ctx.ensureAi();
+        ctx.showAi(true);
+        ctx.aiBtn.classList.add("dbg-on");
+        ctx.saveDbgState();
+        if (ctx.inspectorOn) ctx.exitInspector();
+        return;
+      }
+      ctx.aiOpen = !ctx.aiOpen;
+      ctx.ensureAi();
+      ctx.showAi(ctx.aiOpen);
+      ctx.aiBtn.classList.toggle("dbg-on", ctx.aiOpen);
+      ctx.saveDbgState();
+      if (ctx.inspectorOn) ctx.exitInspector();
+    };
+    ctx.showBlockedTip = function(category, type, evX, evY) {
+      var tip = ctx.root.querySelector(".dbg-block-tip");
+      if (!tip) {
+        tip = el("div", { class: "dbg-block-tip" });
+        ctx.root.appendChild(tip);
+      }
+      var labels = { click: "点击", hover: "悬停", key: "键盘", wheel: "滚轮", scroll: "滚动", touch: "触摸", focus: "聚焦" };
+      var label = labels[category] || category || "";
+      tip.innerHTML = "🛡 已拦截 <b>" + label + "</b> 事件（" + (type || category || "") + "）：页面交互已冻结——放行请用工具条 🔒 放行方案（空格/Tab 一键切换）";
+      try {
+        var _small = ctx.root.classList.contains("dbg-phys-small");
+        var _vh = window.innerHeight || 800;
+        var _side = typeof evY === "number" ? evY >= _vh / 2 ? "top" : "bottom" : tip.__side || "bottom";
+        tip.__side = _side;
+        if (_side === "top") {
+          tip.style.bottom = "auto";
+          tip.style.top = "10px";
+        } else {
+          tip.style.top = "auto";
+          tip.style.bottom = _small ? "68px" : "10px";
+        }
+      } catch (e) {
+      }
+      tip.style.opacity = "1";
+      clearTimeout(tip.__t);
+      clearTimeout(tip.__t2);
+      tip.__t = setTimeout(function() {
+        tip.style.opacity = "0";
+        tip.__t2 = setTimeout(function() {
+          if (tip.parentNode) tip.parentNode.removeChild(tip);
+        }, 260);
+      }, 3e3);
+    };
+    ctx.handleClientMessage = function(m, source) {
+      if (!m || m.__dbg !== 1) return;
+      if (m.__selfLoop) return;
+      if (ctx.aiMode !== "popup" && m.type === "dbg_ai_ready" && source && source !== window && typeof source.close === "function" && !(ctx.aiIframe && source === ctx.aiIframe.contentWindow) && !ctx.listFrames().some(function(f) {
+        return f.win === source;
+      })) {
+        try {
+          source.close();
+        } catch (e) {
+        }
+        try {
+          if (ctx.addMsg) ctx.addMsg("sys", "🪟 已关闭残留的 AI 独立窗口（当前为页面内窗口；需要时可点 ⧉ 重新打开独立窗口）");
+        } catch (e) {
+        }
+      }
+      if (ctx.aiMode === "popup" && !ctx.aiPopup && source && source !== window && typeof source.postMessage === "function") {
+        var _known = ctx.listFrames().some(function(f) {
+          return f.win === source;
+        });
+        if (!_known) {
+          ctx.aiPopup = source;
+          ctx._restoringPopup = false;
+          try {
+            ctx._aiOnReady(false);
+          } catch (e) {
+          }
+          try {
+            if (ctx.addMsg) ctx.addMsg("sys", "🪟 已重新连接 AI 独立窗口（窗口未重载，会话保持）");
+          } catch (e) {
+          }
+        }
+      }
+      switch (m.type) {
+        case "dbg_click_released":
+          if (ctx.hideHud) ctx.hideHud();
+          break;
+        case "dbg_event_blocked":
+          var _bp = m.payload || {};
+          var _bx = null, _by = null;
+          if (typeof _bp.mouseY === "number") {
+            var _bo = ctx.frameOffset(source);
+            _bx = (typeof _bp.mouseX === "number" ? _bp.mouseX : 0) + _bo.left;
+            _by = _bp.mouseY + _bo.top;
+          }
+          ctx.showBlockedTip(_bp.category || "", _bp.type || "", _bx, _by);
+          break;
+        case "dbg_iframe_ready":
+          if (source === "self") break;
+          ctx.addMsg("sys", "iframe 就绪：" + (m.payload && m.payload.url) + (m.payload && m.payload.frameworks && m.payload.frameworks.length ? "（框架：" + m.payload.frameworks.join("/") + "）" : ""));
+          break;
+        case "dbg_ai_confirm": {
+          var aiEl = state.selected || state.hovered;
+          if (aiEl) post({ type: "dbg_ai_picked", payload: aiPickPayload(aiEl) });
+          state.engaged = false;
+          clearOutline(state.selOutline);
+          state.hovered = null;
+          setHovered(aiEl);
+          break;
+        }
+        case "dbg_mouse_move": {
+          if (ctx.hud && ctx.hud.style.opacity === "1" && !ctx.hudUserPos && m.payload) {
+            var vp2 = getPhysViewport();
+            var mvX = (m.payload.mouseX || 0) + ctx.frameOffset(source).left;
+            var hw3 = ctx.hud.offsetWidth || 340;
+            var nl = mvX - hw3 / 2;
+            if (nl < 4) nl = 4;
+            if (nl + hw3 > window.innerWidth - 4) nl = window.innerWidth - hw3 - 4;
+            ctx.hud.__vis = { left: nl, top: parseFloat(ctx.hud.style.top) || 0 };
+            ctx.hud.style.left = (Math.abs(vp2.scale - 1) < 0.01 ? nl : nl / vp2.scale) + "px";
+          }
+          break;
+        }
+        case "dbg_current_selector": {
+          var selRow = ctx.root.querySelector(".dbg-sel-input-row");
+          if (selRow && selRow.style.display === "flex") {
+            var selInput2 = selRow.querySelector("input");
+            var sel2 = m.payload && m.payload.selector || m.payload && m.payload.xpath || "";
+            if (selInput2 && sel2) {
+              selInput2.value = sel2;
+              try {
+                selInput2.setSelectionRange(sel2.length, sel2.length);
+              } catch (e) {
+              }
+            }
+          }
+          break;
+        }
+        case "dbg_selection_cancelled":
+          ctx.root.querySelector(".dbg-sel-label").textContent = "——";
+          ctx.resetToolbar();
+          break;
+        case "dbg_hover_skipped":
+          break;
+        case "dbg_element_hover":
+          if (ctx.pickPanel && m.payload) ctx.updatePickPanelLabel(m.payload);
+          if (!ctx.inspectorOn && !ctx.aiInspectActive) {
+            if (ctx.hud && ctx.hud.parentNode) {
+              ctx.hud.parentNode.removeChild(ctx.hud);
+              ctx.hud = null;
+            }
+            break;
+          }
+          ctx.currentFrameId = ctx.sourceFrameId(source);
+          {
+            var p = m.payload;
+            if (source === "self") {
+              ctx.selfEngaged = !!p.engaged;
+              ctx.lastSelfPayload = p;
+            } else {
+              ctx.selfEngaged = false;
+            }
+            var label = p.tag;
+            if (p.rect) label += " " + p.rect.w + "×" + p.rect.h;
+            if (p.text) label += " “" + p.text.trim().slice(0, 24) + "”";
+            if (p.component) label += " · " + p.component;
+            if (p.file) label += " · " + p.file.split("/").pop() + (p.line ? ":" + p.line : "");
+            var labelEl = ctx.root.querySelector(".dbg-sel-label");
+            labelEl.textContent = label;
+            var tipParts = ["<" + p.tag + ">" + (p.text ? " “" + p.text.trim().slice(0, 60) + "”" : "")];
+            if (p.usedAt && (p.usedAt.file || p.usedAt.component)) tipParts.push("📍 调用于 " + (p.usedAt.file ? p.usedAt.file + (p.usedAt.line ? ":" + p.usedAt.line : "") : String(p.usedAt.component)));
+            if (p.color) tipParts.push("fg " + p.color);
+            if (p.bg && p.bg !== "rgba(0, 0, 0, 0)") tipParts.push("bg " + p.bg);
+            if (p.fontSize) tipParts.push("font " + p.fontSize);
+            if (p.xpath) tipParts.push("path " + p.xpath);
+            labelEl.setAttribute("data-tip", tipParts.join(" · "));
+            ctx.updateHud(p, source);
+            if (typeof ctx.resolveElLoc === "function") {
+              ctx.resolveElLoc(p).then(function() {
+                try {
+                  if (ctx.lastHud && ctx.lastHud.p === p && ctx.hud && ctx.hud.parentNode) {
+                    var _tbOn2 = ctx.root.querySelector(".dbg-toolbar.dbg-on");
+                    if (!_tbOn2) ctx.updateHud(p, source);
+                    var _lbl = ctx.root.querySelector(".dbg-sel-label");
+                    if (_lbl) {
+                      var _l2 = p.tag;
+                      if (p.rect) _l2 += " " + p.rect.w + "×" + p.rect.h;
+                      if (p.text) _l2 += " “" + String(p.text).trim().slice(0, 24) + "”";
+                      if (p.component) _l2 += " · " + p.component;
+                      if (p.file) _l2 += " · " + String(p.file).split("/").pop() + (p.line ? ":" + p.line : "");
+                      _lbl.textContent = _l2;
+                    }
+                  }
+                } catch (e) {
+                }
+              });
+            }
+            if (p.engaged) {
+              if (ctx.selfClient && typeof ctx.selfClient.pauseHover === "function") ctx.selfClient.pauseHover();
+              try {
+                ctx.postToFrame(ctx.selFrameId(), { type: "dbg_pause_hover" });
+              } catch (e) {
+              }
+              ctx.hideHud();
+              ctx.root.querySelector(".dbg-toolbar").classList.add("dbg-on");
+              if (p.rect) {
+                var offX = 0, offY = 0;
+                if (source !== "self") {
+                  var fo = ctx.frameOffset(source);
+                  offX = fo.left;
+                  offY = fo.top;
+                }
+                var tbX = typeof p.mouseX === "number" ? p.mouseX + offX : p.rect.x + offX + p.rect.w / 2;
+                ctx.floatToolbar(tbX, p.rect.y + offY, p.rect.w, p.rect.h);
+              }
+            } else {
+              if (ctx.selfClient && typeof ctx.selfClient.resumeHover === "function") ctx.selfClient.resumeHover();
+              try {
+                ctx.postToFrame(ctx.selFrameId(), { type: "dbg_resume_hover" });
+              } catch (e) {
+              }
+              ctx.root.querySelector(".dbg-toolbar").classList.remove("dbg-on");
+              ctx.resetToolbar();
+            }
+          }
+          break;
+        case "dbg_element_selected": {
+          var payload = m.payload;
+          if (!payload) {
+            ctx.addMsg("sys", "没有可选的元素（页面是空白？）");
+            break;
+          }
+          ctx.lastPayload = payload;
+          ctx.dTag.textContent = payload.tag + (payload.rect ? " " + payload.rect.w + "×" + payload.rect.h : "") + (payload.text ? " “" + payload.text.trim().slice(0, 30) + "”" : "");
+          ctx.dLoc.textContent = payload.framework && payload.framework.file || payload.file ? (payload.framework && payload.framework.framework || "") + " · " + String(payload.framework && payload.framework.file || payload.file).split("/").pop() + (payload.framework && payload.framework.line || payload.line ? ":" + (payload.framework && payload.framework.line || payload.line) : "") : "";
+          ctx.renderPreview(payload);
+          ctx.showDialog();
+          if (ctx.hud && ctx.hud.parentNode) {
+            ctx.hud.parentNode.removeChild(ctx.hud);
+            ctx.hud = null;
+          }
+          if (ctx.root) {
+            var tbEl = ctx.root.querySelector(".dbg-toolbar");
+            if (tbEl) tbEl.classList.remove("dbg-on");
+          }
+          ctx.inspectorOn = false;
+          ctx.inspBtn.classList.remove("dbg-on");
+          try {
+            ctx.broadcast({ type: "dbg_ai_pick", payload: { active: false } });
+          } catch (e) {
+          }
+          try {
+            ctx.broadcast({ type: "dbg_exit_inspector" });
+          } catch (e) {
+          }
+          try {
+            if (window.__dbg && typeof window.__dbg.exitInspector === "function") window.__dbg.exitInspector();
+          } catch (e) {
+          }
+          ctx.deactivateNestedIframes();
+          break;
+        }
+        // ---- AI 侧消息 ----
+        case "dbg_ai_message":
+          ctx.addMsg("ai", m.payload && m.payload.text || "");
+          break;
+        case "dbg_user_text":
+          if (m.payload && m.payload.elements && m.payload.elements.length) {
+            ctx.sendToAi({ kind: "element_report", report: { elements: m.payload.elements, instruction: m.payload.text || "" } });
+          } else {
+            ctx.sendToAi({ kind: "text", text: m.payload && m.payload.text || "" });
+          }
+          break;
+        case "dbg_ai_hide_self":
+          if (ctx.selfAiRequested) break;
+          if (ctx.aiMode === "popup") break;
+          ctx.aiOpen = false;
+          ctx.showAi(false);
+          ctx.aiBtn.classList.remove("dbg-on");
+          break;
+        case "dbg_ai_show_self":
+          if (ctx.selfAiRequested || ctx.selfHostPage) break;
+          ctx.aiOpen = true;
+          ctx.ensureAi();
+          ctx.showAi(true);
+          ctx.aiBtn.classList.add("dbg-on");
+          break;
+        case "dbg_ai_inspect_on": {
+          ctx.selfAiRequested = source === window;
+          ctx.aiInspectActive = true;
+          ctx.selfEngaged = false;
+          ctx.enterSelfClient(isTouchDevice() ? "touch" : "mouse");
+          ctx.activateNestedIframes(isTouchDevice() ? "touch" : "mouse");
+          ctx.broadcast({ type: "dbg_enter_inspector", payload: { mode: "mouse" } });
+          ctx.broadcast({ type: "dbg_ai_pick", payload: { active: true } });
+          ctx.addMsg("sys", "🎯 AI 点选：宿主页与目标页均可 hover 选择（点击 → 工具条 → ✓ 确认回传 AI 窗）。Esc 退出。");
+          try {
+            if (ctx.showPickHint) ctx.showPickHint();
+          } catch (e) {
+          }
+          break;
+        }
+        case "dbg_ai_inspect_off": {
+          ctx.exitAiInspect();
+          break;
+        }
+        case "dbg_ai_url": {
+          var _aiSrcU = ctx.aiMode === "popup" && ctx.aiPopup && !ctx.aiPopup.closed ? ctx.aiPopup : ctx.aiIframe ? ctx.aiIframe.contentWindow : null;
+          if (!_aiSrcU || source !== _aiSrcU) break;
+          try {
+            if (ctx._aiTrackT) {
+              clearTimeout(ctx._aiTrackT);
+              ctx._aiTrackT = null;
+            }
+          } catch (e) {
+          }
+          if (m.payload && m.payload.url) ctx.saveAiUrl(m.payload.url);
+          break;
+        }
+        case "dbg_ai_set_aiurl": {
+          var _aiSrc1 = ctx.aiMode === "popup" && ctx.aiPopup && !ctx.aiPopup.closed ? ctx.aiPopup : ctx.aiIframe ? ctx.aiIframe.contentWindow : null;
+          if (!_aiSrc1 || source !== _aiSrc1) break;
+          try {
+            if (ctx.applyCustomAiUrl) ctx.applyCustomAiUrl(m.payload && m.payload.url || "");
+          } catch (e) {
+          }
+          break;
+        }
+        case "dbg_ai_setup_aiagent": {
+          var _aiSrc2 = ctx.aiMode === "popup" && ctx.aiPopup && !ctx.aiPopup.closed ? ctx.aiPopup : ctx.aiIframe ? ctx.aiIframe.contentWindow : null;
+          if (!_aiSrc2 || source !== _aiSrc2) break;
+          try {
+            if (ctx.aiAgentDlg) ctx.aiAgentDlg();
+          } catch (e) {
+          }
+          break;
+        }
+        case "dbg_ai_title": {
+          try {
+            if (ctx.setAiMeta) ctx.setAiMeta(m.payload);
+            else if (m.payload && m.payload.title && ctx.setAiTitle) ctx.setAiTitle(String(m.payload.title).slice(0, 80));
+          } catch (e) {
+          }
+          break;
+        }
+        case "dbg_ai_copy_fallback": {
+          try {
+            if (ctx.showCopyFallback) ctx.showCopyFallback(m.payload && m.payload.text || "");
+          } catch (e) {
+          }
+          break;
+        }
+        case "dbg_copy": {
+          const _ctxt = m.payload && m.payload.text || "";
+          if (!_ctxt) break;
+          try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+              navigator.clipboard.writeText(_ctxt).then(
+                function() {
+                  try {
+                    ctx.addMsg("sys", "📋 已复制（host）");
+                  } catch (e) {
+                  }
+                },
+                function() {
+                  try {
+                    if (ctx.showCopyFallback) ctx.showCopyFallback(_ctxt);
+                  } catch (e) {
+                  }
+                }
+              );
+            } else {
+              try {
+                if (ctx.showCopyFallback) ctx.showCopyFallback(_ctxt);
+              } catch (e) {
+              }
+            }
+          } catch (e) {
+            try {
+              if (ctx.showCopyFallback) ctx.showCopyFallback(_ctxt);
+            } catch (err) {
+            }
+          }
+          break;
+        }
+        case "dbg_ai_ready": {
+          try {
+            if (ctx._aiTrackT) {
+              clearTimeout(ctx._aiTrackT);
+              ctx._aiTrackT = null;
+            }
+          } catch (e) {
+          }
+          if (ctx._aiSwapUrl) {
+            var swapOk = false;
+            try {
+              if (!ctx._aiSwapSource || source && ctx._aiSwapSource === source) swapOk = true;
+            } catch (e) {
+              swapOk = true;
+            }
+            if (swapOk) {
+              var _okUrl = ctx._aiSwapUrl;
+              ctx._aiSwapUrl = null;
+              ctx._aiSwapSource = null;
+              ctx._aiSwapPrev = null;
+              clearTimeout(ctx._aiSwapT);
+              try {
+                ctx.saveCustomAiUrl(_okUrl);
+              } catch (e) {
+              }
+              try {
+                if (ctx.addMsg) ctx.addMsg("sys", "✅ AI 地址连接成功：" + String(_okUrl).slice(0, 80) + "——由 aiti-agent 接管");
+              } catch (e) {
+              }
+            }
+          }
+          try {
+            if (ctx._aiOnReady) ctx._aiOnReady(false);
+          } catch (e) {
+          }
+          if (m.payload && m.payload.title) {
+            try {
+              if (ctx.setAiTitle) ctx.setAiTitle(String(m.payload.title).slice(0, 80));
+            } catch (e) {
+            }
+          }
+          break;
+        }
+        case "dbg_ai_status": {
+          var st = m.payload && m.payload.state || "";
+          try {
+            if (st === "disconnected" || st === "reconnecting") {
+              if (ctx.aiMode !== "popup" && ctx.aiIframe && ctx.cfg.aiUrl) {
+                if (ctx._aiReloading) {
+                  break;
+                }
+                ctx._aiReloading = true;
+                var _src = ctx.aiUrlFor();
+                var _trk = !!(ctx.trackedAiUrl && ctx.trackedAiUrl());
+                try {
+                  ctx.aiIframe.src = _src;
+                } catch (e) {
+                }
+                try {
+                  ctx.aiTrackProbe(_trk);
+                } catch (e) {
+                }
+                try {
+                  if (ctx.addMsg) ctx.addMsg("sys", "🔁 AI 窗桥连接断开——已自动重载（" + (st === "reconnecting" ? "重连中" : "待重连") + "）");
+                } catch (e) {
+                }
+                setTimeout(function() {
+                  ctx._aiReloading = false;
+                }, 3e3);
+              }
+            } else if (st === "connected") {
+              try {
+                if (ctx._aiOnReady) ctx._aiOnReady(false);
+              } catch (e) {
+              }
+              try {
+                if (ctx.addMsg) ctx.addMsg("sys", "🔗 AI 窗桥连接已恢复");
+              } catch (e) {
+              }
+            }
+          } catch (e) {
+          }
+          break;
+        }
+        case "dbg_ai_picked":
+          if (ctx.pickPanel && m.payload) {
+            ctx.updatePickPanelLabel(m.payload);
+            break;
+          }
+          try {
+            ctx.picksAddElement(ctx.enrichElPayload(m.payload));
+          } catch (e) {
+            ctx.postToAi({ type: "dbg_ai_element", _selfAttrib: !!ctx.selfAiRequested, payload: ctx.enrichElPayload(m.payload) });
+          }
+          break;
+        case "dbg_ai_escape":
+          if (ctx.pickPanel) {
+            ctx.finishPickPanel({ status: "rejected", reason: "用户按 Esc 取消" });
+            break;
+          }
+          ctx.exitAiInspect();
+          break;
+        case "dbg_inspect_escape":
+          try {
+            ctx.exitInspector();
+          } catch (e) {
+          }
+          break;
+        case "dbg_command": {
+          ctx.handleAiCommand(m.payload || {});
+          break;
+        }
+        case "dbg_mcp_interaction": {
+          ctx.handleMcpInteraction(m.payload || {});
+          break;
+        }
+        case "dbg_mcp_result": {
+          var p2 = m.payload || {};
+          if (ctx.closeHostAskPanel) ctx.closeHostAskPanel(p2.requestId);
+          if (ctx.closePickPanel) ctx.closePickPanel(p2.requestId);
+          if (ctx.shotCardCleanup) ctx.shotCardCleanup();
+          break;
+        }
+        // ---- 目标 UI 执行结果（回给 AI） ----
+        case "dbg_exec_result": {
+          var pr = m.payload || {};
+          var res = pr.result;
+          var resolve = ctx.pendingCommands[pr.requestId];
+          if (resolve) {
+            delete ctx.pendingCommands[pr.requestId];
+            resolve({ ok: pr.ok, result: res });
+          } else console.warn("[dbg-exec] 收到 exec_result 但无 pending 命令：", pr.requestId, "· pending=", Object.keys(ctx.pendingCommands).join(","));
+          break;
+        }
+        // ---- 目标页错误上报（错误 hook 捕获） ----
+        case "dbg_page_error": {
+          var pe = m.payload || {};
+          ctx.errLog.unshift({ kind: pe.kind, message: pe.message, stack: pe.stack, at: (/* @__PURE__ */ new Date()).toISOString() });
+          if (ctx.errLog.length > 20) ctx.errLog.pop();
+          ctx.addMsg("sys", "⚠ 页面错误 [" + pe.kind + "] " + pe.message + (pe.stack ? "\n" + pe.stack : ""));
+          try {
+            if (ctx.picksAddError) ctx.picksAddError(pe.kind, pe.message, pe.stack, ctx.sourceFrameId ? ctx.sourceFrameId(source) : null);
+          } catch (e) {
+          }
+          break;
+        }
+        // ---- eval 审计日志（用户可见，防静默执行） ----
+        case "dbg_eval_log": {
+          var elog = m.payload || {};
+          ctx.addMsg("sys", "🧪 eval: " + elog.expression + " → " + elog.result);
+          break;
+        }
+        // ---- console 日志 / 网络采集（方案 F：page_log / page_network → 桥环形缓冲 + MCP 工具可查） ----
+        case "dbg_ai_pull_errors": {
+          if (ctx.picksPendingErrors && ctx.picksPendingErrors.length) {
+            ctx.picksPendingErrors.slice().forEach(function(m2) {
+              ctx.postToAi(m2);
+            });
+          }
+          break;
+        }
+        case "dbg_ai_pull_boot": {
+          try {
+            ctx.sendAiBoot();
+          } catch (e) {
+          }
+          break;
+        }
+        case "dbg_ai_error_ack": {
+          var ak = (m.payload || {}).key;
+          if (ak && ctx.picksPendingErrors) {
+            ctx.picksPendingErrors = ctx.picksPendingErrors.filter(function(e2) {
+              return String(e2.payload && e2.payload.message || "").slice(0, 80) !== ak;
+            });
+          }
+          break;
+        }
+        case "dbg_ai_element_ack": {
+          try {
+            if (ctx.picksElAck) ctx.picksElAck((m.payload || {}).fp);
+          } catch (e) {
+          }
+          break;
+        }
+        // 方案 F-3：日志/网络不再实时上报——数据留在页面本地缓冲，page_logs/page_network 工具按需拉取
+        case "dbg_console_log":
+        case "dbg_console_replay":
+        case "dbg_network":
+        case "dbg_network_replay": {
+          break;
+        }
+      }
+    };
+    ctx.destroy = function() {
+      window.removeEventListener("message", ctx.onHostMessage);
+      try {
+        if (ctx._aiTrackT) {
+          clearTimeout(ctx._aiTrackT);
+          ctx._aiTrackT = null;
+        }
+      } catch (e) {
+      }
+      try {
+        if (ctx._aiPopupPoll) {
+          clearInterval(ctx._aiPopupPoll);
+          ctx._aiPopupPoll = null;
+        }
+      } catch (e) {
+      }
+      try {
+        if (ctx._aiPopupReadyT) {
+          clearTimeout(ctx._aiPopupReadyT);
+          ctx._aiPopupReadyT = null;
+        }
+      } catch (e) {
+      }
+      try {
+        ctx.closeAiPopup();
+      } catch (e) {
+      }
+      ctx.exitSelfClient();
+      if (ctx.inspectorOn) {
+        try {
+          ctx.broadcast({ type: "dbg_exit_inspector" });
+        } catch (e) {
+        }
+      }
+      try {
+        if (iframeObserver) iframeObserver.disconnect();
+      } catch (e) {
+      }
+      try {
+        if (document.__dbgObserved) {
+        }
+      } catch (e) {
+      }
+      try {
+        if (window.__dbg) {
+          try {
+            if (window.__dbg.exitInspector) window.__dbg.exitInspector();
+          } catch (e) {
+          }
+          delete window.__dbg;
+        }
+      } catch (e) {
+      }
+      try {
+        delete window.__dbgErrHook;
+      } catch (e) {
+      }
+      try {
+        delete window.__dbgConsoleHook;
+      } catch (e) {
+      }
+      try {
+        delete window.__dbgNetObserver;
+      } catch (e) {
+      }
+      try {
+        if (ctx.fabErrClear) ctx.fabErrClear();
+      } catch (e) {
+      }
+      if (ctx.root && ctx.root.parentNode) ctx.root.parentNode.removeChild(ctx.root);
+    };
+    ctx.onHostMessage = function(e) {
+      ctx.handleClientMessage(e.data, e.source);
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/inspector.js
+  function initInspector(ctx) {
+    ctx.applyToolbarCompact = function() {
+      var tb = ctx.root.querySelector(".dbg-toolbar");
+      if (!tb) return;
+      tb.classList.toggle("dbg-compact", isSmallScreen());
+      tb.classList.toggle("dbg-touch", isTouchCompact());
+      var vp = getPhysViewport();
+      tb.style.maxWidth = vp.w - 12 + "px";
+      ctx.root.classList.toggle("dbg-phys-small", detectScreenMode().small);
+    };
+    ctx.enterInspector = function() {
+      try {
+        if (ctx.debugPanel) ctx.debugPanel.classList.remove("dbg-open");
+      } catch (e) {
+      }
+      ctx.selfAiRequested = false;
+      ctx.inspectorOn = true;
+      ctx.aiInspectActive = false;
+      ctx.broadcast({ type: "dbg_ai_pick", payload: { active: false } });
+      if (ctx.aiMode !== "popup") {
+        ctx.showAi(false);
+        ctx.aiOpen = false;
+        ctx.aiBtn.classList.remove("dbg-on");
+      }
+      ctx.inspBtn.classList.add("dbg-on");
+      ctx.hudHoverOn = false;
+      try {
+        var _hb = ctx.root.querySelector(".dbg-nav-hover");
+        if (_hb) _hb.classList.remove("dbg-on");
+      } catch (e) {
+      }
+      ctx.applyToolbarCompact();
+      ctx.root.querySelector(".dbg-toolbar").classList.remove("dbg-on");
+      var mode = isTouchDevice() ? "touch" : "mouse";
+      ctx.ensureClientFresh(window, document);
+      ctx.listFrames().forEach(function(fr) {
+        ctx.ensureClientFresh(fr.win, fr.win.document);
+      });
+      ctx.enterSelfClient(mode);
+      ctx.activateNestedIframes(mode);
+      ctx.broadcast({ type: "dbg_enter_inspector", payload: { mode } });
+      ctx.addMsg("sys", "🎯 Inspector（" + (mode === "touch" ? "触屏" : "桌面") + "）：宿主页与目标页均可点选——" + (mode === "touch" ? "点击=移动选区，✓确认。" : "划过高亮，点击选中，Esc 退出。"));
+      try {
+        if (ctx.showPickHint) ctx.showPickHint();
+      } catch (e) {
+      }
+    };
+    ctx.sweepTargetOutlinesGlobal = function() {
+      function sweep(doc) {
+        try {
+          doc.querySelectorAll("body > div").forEach(function(n) {
+            if (n.style && n.style.position === "fixed" && n.style.outline && String(n.style.zIndex) === "2147483646") {
+              if (n.parentNode) n.parentNode.removeChild(n);
+            }
+          });
+        } catch (e) {
+        }
+      }
+      sweep(document);
+      ctx.listFrames().forEach(function(fr) {
+        sweep(fr.win.document);
+      });
+    };
+    ctx.cleanupInspectResidue = function() {
+      try {
+        if (ctx.hideHud) ctx.hideHud();
+      } catch (e) {
+      }
+      try {
+        if (ctx.hud && ctx.hud.parentNode) {
+          ctx.hud.parentNode.removeChild(ctx.hud);
+          ctx.hud = null;
+        }
+      } catch (e) {
+      }
+      try {
+        if (ctx.resetHudPos) ctx.resetHudPos();
+      } catch (e) {
+      }
+      try {
+        var _tip = ctx.root.querySelector(".dbg-block-tip");
+        if (_tip) {
+          clearTimeout(_tip.__t);
+          clearTimeout(_tip.__t2);
+          if (_tip.parentNode) _tip.parentNode.removeChild(_tip);
+        }
+      } catch (e) {
+      }
+      try {
+        if (ctx.removeTooltip) ctx.removeTooltip();
+      } catch (e) {
+      }
+    };
+    ctx.exitInspector = function() {
+      ctx.inspectorOn = false;
+      ctx.inspBtn.classList.remove("dbg-on");
+      if (ctx.hudHoverOn) {
+        ctx.hudHoverOn = false;
+        try {
+          ctx.applyHoverSim();
+        } catch (e) {
+        }
+      }
+      if (ctx.aiInspectActive) {
+        ctx.aiInspectActive = false;
+        try {
+          ctx.postToAi({ type: "dbg_ai_inspect_off", payload: {} });
+        } catch (e) {
+        }
+        if (!ctx.selfAiRequested && !ctx.selfHostPage) {
+          ctx.aiOpen = true;
+          ctx.ensureAi();
+          ctx.showAi(true);
+          ctx.aiBtn.classList.add("dbg-on");
+        }
+      } else if (ctx.aiMode !== "popup") {
+        if (!ctx.selfAiRequested && !ctx.selfHostPage) {
+          ctx.aiOpen = true;
+          try {
+            ctx.ensureAi();
+          } catch (e) {
+          }
+          try {
+            ctx.showAi(true);
+          } catch (e) {
+          }
+          try {
+            ctx.aiBtn.classList.add("dbg-on");
+          } catch (e) {
+          }
+        }
+      }
+      ctx.broadcast({ type: "dbg_ai_pick", payload: { active: false } });
+      ctx.root.querySelector(".dbg-toolbar").classList.remove("dbg-on");
+      ctx.cleanupInspectResidue();
+      if (ctx.dialog) ctx.dialog.classList.remove("dbg-open");
+      ctx.exitSelfClient();
+      ctx.broadcast({ type: "dbg_exit_inspector" });
+      ctx.deactivateNestedIframes();
+      if (document.body.style.paddingBottom) document.body.style.paddingBottom = "";
+      ctx.sweepTargetOutlinesGlobal();
+      ctx.selfAiRequested = false;
+      var _sweepN = 0;
+      var _sweepT = setInterval(function() {
+        ctx.sweepTargetOutlinesGlobal();
+        if (++_sweepN >= 4) clearInterval(_sweepT);
+      }, 500);
+    };
+    ctx.activateNestedIframes = function(mode) {
+      try {
+        document.querySelectorAll("iframe").forEach(function(f) {
+          if (f.closest && f.closest("#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings")) return;
+          try {
+            var w = f.contentWindow;
+            if (w && w.__dbg && typeof w.__dbg.enterInspector === "function") w.__dbg.enterInspector(mode || "mouse");
+          } catch (e) {
+          }
+        });
+      } catch (e) {
+      }
+    };
+    ctx.deactivateNestedIframes = function() {
+      try {
+        document.querySelectorAll("iframe").forEach(function(f) {
+          if (f.closest && f.closest("#__dbg_launcher, .dbg-fab, .dbg-toolbar, .dbg-speed, .dbg-dialog, .dbg-extreme-menu, .dbg-profile-menu, .dbg-tooltip, .dbg-sel-input-row, .dbg-ai-detail-mask, .dbg-ai-win, .dbg-overlay, .dbg-settings")) return;
+          try {
+            var w = f.contentWindow;
+            if (w && w.__dbg && typeof w.__dbg.exitInspector === "function") w.__dbg.exitInspector();
+          } catch (e) {
+          }
+        });
+      } catch (e) {
+      }
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/dialog.js
+  function initDialog(ctx) {
+    function escAttr(s) {
+      return escapeHtml(s).replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+    }
+    function copyToClipboard(text, cb) {
+      var done = function(ok) {
+        if (cb) cb(!!ok);
+      };
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(text).then(function() {
+            done(true);
+          }, function() {
+            fallback();
+          });
+          return;
+        }
+      } catch (e) {
+      }
+      fallback();
+      function fallback() {
+        try {
+          var ta = document.createElement("textarea");
+          ta.value = text;
+          ta.style.position = "fixed";
+          ta.style.opacity = "0";
+          document.body.appendChild(ta);
+          ta.select();
+          var ok = document.execCommand("copy");
+          document.body.removeChild(ta);
+          done(ok);
+        } catch (e) {
+          done(false);
+        }
+      }
+    }
+    ctx.renderPreview = function(p) {
+      ctx.preview.innerHTML = "";
+      var rows = [];
+      var addRow = function(label, html, plain) {
+        rows.push([label, html, plain || ""]);
+      };
+      var _tagPlain = p.tag + (p.rect ? " " + p.rect.w + "×" + p.rect.h : "");
+      addRow("标签", "<b>" + p.tag + "</b> " + (p.rect ? p.rect.w + "×" + p.rect.h : ""), _tagPlain);
+      var fl = p.framework || {};
+      var _fw = fl.framework || null;
+      var _comp = fl.component || p.component || null;
+      var _file = fl.file || p.file || null;
+      var _line = fl.line || p.line || null;
+      var _ua = fl.usedAt || p.usedAt || null;
+      if (_fw || _comp || _file || _ua && (_ua.file || _ua.component)) {
+        var _flTxt = (_fw || "") + (_comp ? (_fw ? " · " : "") + _comp : "");
+        var _miniBtn = function(act, fp, ln) {
+          return ' <button class="dbg-mini-open" style="border:1px solid #c7d2fe;border-radius:5px;padding:0 6px;font-size:10px;cursor:pointer;background:#eef2ff;color:#4338ca;vertical-align:middle" data-act="' + act + '" data-file="' + escAttr(fp) + '" data-line="' + (ln || "") + '">' + (act === "frontend" ? "🖥 前端" : "📂 后台") + "</button>";
+        };
+        if (_file) {
+          _flTxt += '<br>📄 组件源码 <span title="' + escAttr(_file) + '">' + escapeHtml(String(_file).split("/").pop()) + (_line ? ":" + _line : "") + "</span>" + _miniBtn("backend", _file, _line) + _miniBtn("frontend", _file, _line);
+        }
+        if (_ua && (_ua.file || _ua.component)) {
+          if (_ua.file) {
+            _flTxt += '<br>📍 调用于 <span title="' + escAttr(_ua.file) + '">' + escapeHtml(String(_ua.file).split("/").pop()) + (_ua.line ? ":" + _ua.line : "") + "</span>" + _miniBtn("backend", _ua.file, _ua.line) + _miniBtn("frontend", _ua.file, _ua.line);
+          } else if (_ua.component) {
+            _flTxt += "<br>📍 调用于 " + escapeHtml(_ua.component);
+          }
+        }
+        var _flPlain = ((_fw || "") + (_comp ? (_fw ? " " : "") + _comp : "")).trim();
+        if (_file) _flPlain += "\n组件源码: " + _file + (_line ? ":" + _line : "");
+        if (_ua && _ua.file) _flPlain += "\n调用于: " + _ua.file + (_ua.line ? ":" + _ua.line : "");
+        else if (_ua && _ua.component) _flPlain += "\n调用于: " + _ua.component;
+        addRow("框架", '<span class="dbg-pv-file">' + _flTxt + "</span>", _flPlain);
+      }
+      if (p.text) addRow("文本", escapeHtml(p.text.trim().slice(0, 80)), String(p.text).trim().slice(0, 200));
+      if (p.xpath) addRow("path", '<span class="dbg-pv-kv">' + p.xpath + "</span>", p.xpath);
+      if (p.selector) addRow("css selector", '<span class="dbg-pv-kv">' + p.selector + "</span>", p.selector);
+      if (p.attributes) {
+        var _attrBits = [];
+        var _attrPlain = [];
+        var _cls2 = String(p.attributes.class || "").trim().split(/\s+/).filter(Boolean).slice(0, 6);
+        if (p.attributes.id) {
+          _attrBits.push("#" + String(p.attributes.id));
+          _attrPlain.push("#" + String(p.attributes.id));
+        }
+        if (_cls2.length) {
+          _attrBits.push("." + _cls2.join("."));
+          _attrPlain.push("." + _cls2.join("."));
+        }
+        Object.keys(p.attributes).forEach(function(k) {
+          if (/^aria-|^data-/.test(k)) {
+            _attrBits.push(escapeHtml(k + "=" + String(p.attributes[k]).slice(0, 60)));
+            _attrPlain.push(k + "=" + String(p.attributes[k]).slice(0, 60));
+          }
+        });
+        if (_attrBits.length) addRow("属性", '<span class="dbg-pv-kv">' + _attrBits.slice(0, 10).join(" ") + "</span>", _attrPlain.slice(0, 10).join(" "));
+      }
+      if (p.computed) {
+        var bits = [];
+        ["display", "position", "width", "height", "flexDirection", "gap", "padding", "margin", "border", "borderRadius", "fontSize", "fontWeight", "color", "backgroundColor", "opacity", "boxShadow", "zIndex", "overflow"].forEach(function(k) {
+          if (p.computed[k]) bits.push(k + ":" + p.computed[k]);
+        });
+        addRow("样式", bits.map(function(b) {
+          var m = b.match(/^(color|backgroundColor):(.*)$/);
+          if (m) {
+            return '<span class="dbg-pv-kv" style="color:' + m[2] + '"><span style="display:inline-block;width:10px;height:10px;background:' + m[2] + ';border-radius:2px;vertical-align:middle;margin-right:3px;border:1px solid rgba(255,255,255,.3)"></span>' + m[2] + "</span>";
+          }
+          return '<span class="dbg-pv-kv">' + b + "</span>";
+        }).join("<br>"), bits.join("; "));
+      }
+      if (p.color && !(p.computed && p.computed.color)) addRow("前景色", escapeHtml(p.color), p.color);
+      if (p.bg && !(p.computed && p.computed.backgroundColor) && p.bg !== "rgba(0, 0, 0, 0)") addRow("背景色", escapeHtml(p.bg), p.bg);
+      if (p.fontSize && !(p.computed && p.computed.fontSize)) addRow("字号", escapeHtml(p.fontSize), p.fontSize);
+      if (p.frame && p.frame.url) addRow("页面", escapeHtml(String(p.frame.url).slice(0, 200)), String(p.frame.url));
+      if (p.pageId) addRow("pageId", escapeHtml(String(p.pageId)), String(p.pageId));
+      rows.forEach(function(r) {
+        var row = el("div", { class: "dbg-pv-row" });
+        row.innerHTML = "<b>" + r[0] + "</b> " + r[1] + ' <button class="dbg-pv-copy" data-copy="' + escAttr(r[2] || "") + '" title="复制此内容">📋</button>';
+        ctx.preview.appendChild(row);
+      });
+    };
+    ctx.showDialog = function() {
+      if (!ctx.dialog.__openFileBound) {
+        ctx.dialog.__openFileBound = true;
+        ctx.dialog.addEventListener("click", function(ev) {
+          var a = ev.target && ev.target.closest ? ev.target.closest(".dbg-open-file") : null;
+          if (a) {
+            ev.stopPropagation();
+            ctx.openFileAt(a.getAttribute("data-file"), parseInt(a.getAttribute("data-line"), 10) || null);
+            return;
+          }
+          var cc = ev.target && ev.target.closest ? ev.target.closest(".dbg-pv-copy") : null;
+          if (cc) {
+            ev.stopPropagation();
+            var ctxt = cc.getAttribute("data-copy") || "";
+            copyToClipboard(ctxt, function(ok) {
+              if (ok) {
+                try {
+                  ctx.addMsg("sys", "📋 已复制：" + ctxt.slice(0, 40));
+                  if (ctx.showPickToast) ctx.showPickToast("<b>📋 已复制</b>");
+                } catch (e) {
+                }
+              } else {
+                try {
+                  ctx.postToAi({ type: "dbg_copy", payload: { text: ctxt } });
+                  ctx.addMsg("sys", "📋 已转发宿主复制");
+                  if (ctx.showPickToast) ctx.showPickToast("<b>📋 已转发宿主复制</b>");
+                } catch (e) {
+                }
+              }
+            });
+            return;
+          }
+          var b = ev.target && ev.target.closest ? ev.target.closest(".dbg-mini-open") : null;
+          if (b) {
+            ev.stopPropagation();
+            var fp2 = b.getAttribute("data-file");
+            var ln2 = parseInt(b.getAttribute("data-line"), 10) || null;
+            try {
+              ctx.ensureAi();
+              ctx.showAi(true);
+              ctx.aiOpen = true;
+              if (ctx.aiBtn) ctx.aiBtn.classList.add("dbg-on");
+            } catch (e) {
+            }
+            if (b.getAttribute("data-act") === "frontend") {
+              try {
+                ctx.postToAi({ type: "dbg_ai_open_file", payload: { file: fp2, line: ln2 } });
+                ctx.addMsg("sys", "🖥 已请求前端打开（pi-web 文件标签页）：" + fp2 + (ln2 ? ":" + ln2 : ""));
+                if (!ctx.aiReady) ctx.addMsg("sys", "⏳ AI 窗加载中——就绪后自动执行（如长时间无反应，检查 AI 窗是否正常打开）");
+              } catch (e) {
+              }
+            } else {
+              ctx.openFileAt(fp2, ln2);
+              try {
+                if (!ctx.aiReady) ctx.addMsg("sys", "⏳ AI 窗加载中——就绪后自动执行（如长时间无反应，检查 AI 窗是否正常打开）");
+              } catch (e) {
+              }
+            }
+          }
+        });
+      }
+      ctx.dialog.classList.add("dbg-open");
+      if (isSmallScreen()) {
+        ctx.dialog.style.zIndex = "2147483648";
+        var card = ctx.dialog.querySelector(".dbg-dialog-card");
+        if (card) {
+          var vp = getPhysViewport();
+          var visW = capVisW(vp, 0);
+          var visVh = _fixedVisual ? window.visualViewport && window.visualViewport.height || window.innerHeight : window.innerHeight * vp.scaleY;
+          card.style.position = "fixed";
+          card.style.maxHeight = "";
+          placePhysPanel(card, { visW, dock: "bottom", gap: 0, visX: 0, borderRadius: "14px 14px 0 0", minH: 0, maxH: Math.round(visVh * 0.92) });
+        }
+      } else {
+        ctx.dialog.style.alignItems = "";
+        ctx.dialog.style.zIndex = "";
+        var card2 = ctx.dialog.querySelector(".dbg-dialog-card");
+        if (card2) {
+          card2.style.position = "";
+          card2.style.width = "";
+          card2.style.maxWidth = "";
+          card2.style.maxHeight = "";
+          card2.style.borderRadius = "";
+          card2.style.transform = "";
+          card2.style.left = "";
+          card2.style.top = "";
+        }
+      }
+    };
+    ctx.closeDialog = function() {
+      ctx.dialog.classList.remove("dbg-open");
+      ctx.exitInspector();
+      ctx.exitSelfClient();
+    };
+    ctx.closePreview = function() {
+      ctx.dialog.classList.remove("dbg-open");
+      try {
+        if ((ctx.inspectorOn || ctx.aiInspectActive) && ctx.root) {
+          var _tbEl = ctx.root.querySelector(".dbg-toolbar");
+          if (_tbEl) _tbEl.classList.add("dbg-on");
+        }
+      } catch (e) {
+      }
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/picks.js
+  function initPicks(ctx) {
+    ctx.picksErrSeen = {};
+    ctx.picksErrCount = 0;
+    ctx.picksPendingErrors = [];
+    ctx.resetErrDedup = function() {
+      ctx.picksErrSeen = {};
+      ctx.picksErrCount = 0;
+      ctx.picksPendingErrors = [];
+      try {
+        if (window.__dbg && window.__dbg.resetErrorDedup) window.__dbg.resetErrorDedup();
+      } catch (e) {
+      }
+    };
+    ctx.picksAddError = function(kind, message, stack, frameId) {
+      var key = String(message || "").slice(0, 80);
+      if (ctx.picksErrSeen[key]) {
+        if (ctx.picksPendingErrors) {
+          ctx.picksPendingErrors = ctx.picksPendingErrors.filter(function(e2) {
+            return String(e2.payload && e2.payload.message || "").slice(0, 80) !== key;
+          });
+        }
+        try {
+          if (ctx.fabErrNotify) ctx.fabErrNotify(ctx.picksPendingErrors ? ctx.picksPendingErrors.length : 0);
+        } catch (e) {
+        }
+        return;
+      }
+      ctx.picksErrSeen[key] = 1;
+      if (ctx.picksErrCount >= 3) {
+        try {
+          if (ctx.fabErrNotify) ctx.fabErrNotify(ctx.picksPendingErrors ? ctx.picksPendingErrors.length : 0);
+        } catch (e) {
+        }
+        return;
+      }
+      ctx.picksErrCount++;
+      var msg = {
+        type: "dbg_ai_error",
+        _selfAttrib: !!ctx.selfAiRequested,
+        payload: {
+          kind: kind || "error",
+          message: String(message || ""),
+          stack: stack ? String(stack) : null,
+          frameId: frameId || null,
+          at: (/* @__PURE__ */ new Date()).toISOString()
+        }
+      };
+      if (ctx.aiIframe) {
+        ctx.postToAi(msg);
+        ctx.picksPendingErrors.push(msg);
+      } else {
+        ctx.picksPendingErrors.push(msg);
+      }
+      if (ctx.picksPendingErrors.length > 3) ctx.picksPendingErrors.shift();
+      try {
+        if (ctx.fabErrNotify) ctx.fabErrNotify(ctx.picksPendingErrors.length);
+      } catch (e) {
+      }
+      if (!ctx.picksRetryTimer) {
+        ctx.picksRetryTimer = setInterval(function() {
+          if (!ctx.picksPendingErrors || !ctx.picksPendingErrors.length) {
+            clearInterval(ctx.picksRetryTimer);
+            ctx.picksRetryTimer = null;
+            return;
+          }
+          ctx.picksPendingErrors.slice().forEach(function(m) {
+            ctx.postToAi(m);
+          });
+        }, 2e3);
+      }
+      ctx.addMsg("sys", "⚠ 页面错误 [" + (kind || "error") + "] " + String(message || "").slice(0, 80) + " → 已放入 AI 输入框候选区（[错误" + ctx.picksErrCount + "]）");
+    };
+    ctx.picksElSeq = 0;
+    ctx.picksElLastAt = {};
+    ctx.picksPendingElements = [];
+    ctx.picksElFp = function(p) {
+      if (!p || typeof p !== "object") return "";
+      return String(p.xpath || p.selector || "") + "|" + (p.tag || "") + "|" + String(p.text || "").slice(0, 40);
+    };
+    ctx.resolveElLoc = function(payload) {
+      var fw = payload && payload.framework;
+      if (!fw || typeof fw !== "object") return Promise.resolve(payload);
+      var fc = fw.react19Chunk, uc = fw.usedAtChunk;
+      if (!fc && !uc) {
+        if (!fw.file && (fw.fnLocs || fw.component)) {
+          var host = null;
+          try {
+            host = window && window.__dbg ? window.__dbg : null;
+          } catch (e) {
+          }
+          if (host && typeof host.resolveFnLine === "function" && fw.fnLocs) {
+            return host.resolveFnLine(fw.fnLocs).then(function(r) {
+              if (r && r.file) {
+                fw.file = r.file;
+                fw.line = r.line;
+                fw.column = r.column;
+                payload.file = r.file;
+                payload.line = r.line;
+                return payload;
+              }
+              return ctx.resolveElLocCompFallback ? ctx.resolveElLocCompFallback(payload, host) : Promise.resolve(payload);
+            });
+          }
+          return ctx.resolveElLocCompFallback ? ctx.resolveElLocCompFallback(payload, host) : Promise.resolve(payload);
+        }
+        return Promise.resolve(payload);
+      }
+      var host = null;
+      try {
+        host = window && window.__dbg && typeof window.__dbg.resolveChunkSource === "function" ? window.__dbg : null;
+      } catch (e) {
+      }
+      if (!host) return Promise.resolve(payload);
+      var p1 = host.resolveChunkSource(fc.url, fc.line, fc.column);
+      var p2 = uc ? host.resolveChunkSource(uc.url, uc.line, uc.column) : Promise.resolve(null);
+      return Promise.all([p1, p2]).then(function(rs) {
+        var r = rs[0], u = rs[1];
+        if (r && r.file) {
+          fw.file = r.file;
+          fw.line = r.line;
+          fw.column = r.column;
+        }
+        if (u && u.file && fw.usedAt) {
+          fw.usedAt.file = u.file;
+          fw.usedAt.line = u.line;
+        }
+        if (fw.file !== void 0) payload.file = fw.file;
+        if (fw.line !== void 0) payload.line = fw.line;
+        if (fw.usedAt) payload.usedAt = fw.usedAt;
+        delete fw.react19Chunk;
+        delete fw.usedAtChunk;
+        if (!fw.file && (fw.fnLocs || fw.component)) {
+          if (host && typeof host.resolveFnLine === "function" && fw.fnLocs) {
+            return host.resolveFnLine(fw.fnLocs).then(function(r2) {
+              if (r2 && r2.file) {
+                fw.file = r2.file;
+                fw.line = r2.line;
+                fw.column = r2.column;
+                payload.file = r2.file;
+                payload.line = r2.line;
+                return payload;
+              }
+              return ctx.resolveElLocCompFallback ? ctx.resolveElLocCompFallback(payload, host) : Promise.resolve(payload);
+            });
+          }
+          return ctx.resolveElLocCompFallback ? ctx.resolveElLocCompFallback(payload, host) : Promise.resolve(payload);
+        }
+        return payload;
+      });
+    };
+    ctx.resolveElLocCompFallback = function(payload, host) {
+      var fw = payload && payload.framework;
+      if (!fw || !fw.component) return Promise.resolve(payload);
+      if (host && typeof host.resolveComponentFile === "function") {
+        return host.resolveComponentFile(fw.component).then(function(f) {
+          if (f) {
+            fw.file = f;
+            payload.file = f;
+          }
+          return payload;
+        });
+      }
+      return Promise.resolve(payload);
+    };
+    ctx.picksAddElement = function(payload) {
+      var fp0 = ctx.picksElFp(payload);
+      if (!fp0) return null;
+      var last = ctx.picksElLastAt[fp0] || 0;
+      if (Date.now() - last < 500) return null;
+      ctx.picksElLastAt[fp0] = Date.now();
+      var _selfAttrib = !!ctx.selfAiRequested;
+      var _send = function() {
+        var pl = Object.assign({}, payload, { __elfp: fp0 });
+        var fp = fp0 + "#" + ++ctx.picksElSeq;
+        var msg = { type: "dbg_ai_element", payload: pl, fp, ts: Date.now(), _selfAttrib };
+        ctx.picksPendingElements.push(msg);
+        if (ctx.picksPendingElements.length > 5) ctx.picksPendingElements.shift();
+        ctx.postToAi(msg);
+        if (!ctx.picksElRetryTimer) {
+          ctx.picksElRetryTimer = setInterval(function() {
+            if (!ctx.picksPendingElements || !ctx.picksPendingElements.length) {
+              clearInterval(ctx.picksElRetryTimer);
+              ctx.picksElRetryTimer = null;
+              return;
+            }
+            ctx.picksPendingElements.slice().forEach(function(m) {
+              ctx.postToAi(m);
+            });
+          }, 1500);
+        }
+      };
+      ctx.resolveElLoc(payload).then(_send);
+      return null;
+    };
+    ctx.picksElAck = function(fp) {
+      if (!fp) return;
+      ctx.picksPendingElements = (ctx.picksPendingElements || []).filter(function(m) {
+        return m.fp !== fp;
+      });
+      if (!ctx.picksPendingElements.length && ctx.picksElRetryTimer) {
+        clearInterval(ctx.picksElRetryTimer);
+        ctx.picksElRetryTimer = null;
+      }
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/debug.js
+  function initDebug(ctx) {
+    ctx.loadShowDebug = function() {
+      return lsGetString(DBG_SHOW_KEY, "") === "on";
+    };
+    ctx.saveShowDebug = function(v) {
+      lsSetString(DBG_SHOW_KEY, v ? "on" : "off");
+    };
+    ctx._dbgCopy = function(t) {
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t);
+        else {
+          var _ta = document.createElement("textarea");
+          _ta.value = t;
+          _ta.style.cssText = "position:fixed;left:0;top:0;opacity:0";
+          document.body.appendChild(_ta);
+          _ta.focus();
+          _ta.select();
+          document.execCommand("copy");
+          document.body.removeChild(_ta);
+        }
+      } catch (e) {
+      }
+    };
+    ctx.dbgInfoText = function() {
+      var m = detectScreenMode(), vp = getPhysViewport();
+      var vvs = window.visualViewport && window.visualViewport.scale > 0 ? window.visualViewport.scale.toFixed(3) : "∅";
+      var fx = _fixedVisual ? 1 : vp.scale, fy = _fixedVisual ? 1 : vp.scaleY;
+      var uadM = navigator.userAgentData && typeof navigator.userAgentData.mobile === "boolean" ? navigator.userAgentData.mobile : "∅";
+      var L = [];
+      L.push("URL " + (location.href || "∅"));
+      L.push("📱 " + (m.small ? "小屏" : "大屏") + (m.tiny ? "(tiny)" : m.small ? "(smal)" : "") + " · 判定基准 " + m.deviceCssW + "px");
+      L.push("screen " + m.screenW + "×" + m.screenH + " dpr " + m.dpr + " · outerW " + (window.outerWidth || "∅"));
+      L.push("inner " + Math.round(innerWidth) + "×" + Math.round(innerHeight) + " · vv.scale " + vvs + " · UA-CH.mobile " + uadM);
+      L.push("视觉视口 " + m.vpW + "×" + m.vpH + " · " + (m.mobileUA ? "mobile" : "desktop"));
+      L.push("vp " + Math.round(vp.w) + "×" + Math.round(vp.h) + " s " + vp.scale.toFixed(3) + (Math.abs(vp.scale - vp.scaleY) > 1e-3 ? " sy " + vp.scaleY.toFixed(3) : "") + " · FIXED " + (_fixedVisual ? "visual" : "layout"));
+      L.push("platform " + (navigator.platform || "∅") + "\nUA " + (navigator.userAgent || "∅").replace(/\s+/g, " ").slice(0, 140));
+      try {
+        var fr = ctx.fab.getBoundingClientRect();
+        L.push("fab 屏上 " + Math.round(fr.left * fx) + "×" + Math.round(fr.top * fy) + " (" + Math.round(fr.width * fx) + "×" + Math.round(fr.height * fy) + ")" + (ctx.fabInScreen() ? " ✓屏内" : " ✗屏外") + " tr " + (ctx.fab.style.transform || "none"));
+      } catch (e) {
+      }
+      try {
+        if (ctx.aiWin) {
+          var ar = ctx.aiWin.getBoundingClientRect();
+          var iw = ctx.aiIframe && ctx.aiIframe.contentWindow ? ctx.aiIframe.contentWindow.innerWidth : 0;
+          L.push("AI win display " + getComputedStyle(ctx.aiWin).display + " CSS " + ctx.aiWin.style.width + "×" + ctx.aiWin.style.height + " 屏上 " + Math.round(ar.left * fx) + "×" + Math.round(ar.top * fy) + " (" + Math.round(ar.width * fx) + "×" + Math.round(ar.height * fy) + ") iframe " + iw);
+        }
+      } catch (e) {
+      }
+      return L.join("\n");
+    };
+    ctx.placeOverlayCard = function(card) {
+      var vp = getPhysViewport(), small = detectScreenMode().small;
+      var visW = small ? capVisW(vp, 24) : Math.min(480, capVisW(vp, 40));
+      var _c = visToCss(visW, vp.h - 24, vp.scale, vp.scaleY);
+      card.style.width = _c.w + "px";
+      card.style.maxHeight = _c.h + "px";
+      positionPhysical(card, (vp.w - visW) / 2, 12, vp.scale, vp.scaleY);
+    };
+    ctx.showDebugPanel = function() {
+      if (!ctx.debugPanel) {
+        ctx.debugPanel = el("div", { class: "dbg-overlay" });
+        var card = el("div", { class: "dbg-overlay-card" });
+        var head = el("div", { class: "dbg-dialog-head" });
+        head.appendChild(el("span", {}, ["🔍 调试信息（复制给 AI 协助诊断）"]));
+        var x = el("button", { class: "dbg-ghost", style: "border:1px solid #d1d5db;background:#fff;border-radius:6px;padding:2px 8px;cursor:pointer;font:inherit;" }, ["✕"]);
+        x.addEventListener("click", function() {
+          ctx.debugPanel.classList.remove("dbg-open");
+        });
+        head.appendChild(x);
+        card.appendChild(head);
+        var body = el("div", { class: "dbg-dialog-body" });
+        var info = el("div", { class: "dbg-debug-info" });
+        var help = el("div", { class: "dbg-debug-help" });
+        help.innerHTML = "<b>字段说明</b><code>判定基准</code> = screen.width（老 WebView 报物理像素时 ÷dpr 修正；UA-CH mobile=false 的平板不除）；≥768 大屏、&lt;480 tiny<br><code>scale / sy</code> = 布局→视觉 CSS 缩放（屏宽/innerWidth、屏高/innerHeight）；非等比时不同，counter-zoom 用 scale<br><code>FIXED layout/visual</code> = fixed 元素坐标系：layout 需 counter-zoom，visual（iOS）直接视觉坐标<br><code>屏上</code> = 元素实际视觉位置（rect×scale）；✓屏内 = 可见<br><code>AI iframe</code> = ai.html 看到的宽度，应≈视觉宽（移动布局）；过大（900+）= 桌面布局被缩成蚂蚁";
+        body.appendChild(info);
+        body.appendChild(help);
+        card.appendChild(body);
+        var foot = el("div", { class: "dbg-dialog-foot" });
+        var lbl = el("label", { style: "margin-right:auto;display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer;" });
+        var cb = el("input", { type: "checkbox" });
+        cb.checked = !ctx.loadShowDebug();
+        cb.addEventListener("change", function() {
+          ctx.saveShowDebug(!cb.checked);
+        });
+        lbl.appendChild(cb);
+        lbl.appendChild(document.createTextNode("下次不再自动显示"));
+        var copyBtn = el("button", { class: "dbg-primary" }, ["📋 复制"]);
+        copyBtn.addEventListener("click", function() {
+          ctx._dbgCopy(info.textContent);
+          copyBtn.textContent = "✅ 已复制";
+          setTimeout(function() {
+            copyBtn.textContent = "📋 复制";
+          }, 1200);
+        });
+        foot.appendChild(lbl);
+        foot.appendChild(copyBtn);
+        card.appendChild(foot);
+        ctx.debugPanel.appendChild(card);
+        ctx.debugPanel.addEventListener("mousedown", function(ev) {
+          if (ev.target === ctx.debugPanel) ctx.debugPanel.classList.remove("dbg-open");
+        });
+        ctx.root.appendChild(ctx.debugPanel);
+        ctx.debugPanel._card = card;
+        ctx.debugPanel._info = info;
+      }
+      ctx.debugPanel._info.textContent = ctx.dbgInfoText();
+      ctx.debugPanel.classList.add("dbg-open");
+      ctx.placeOverlayCard(ctx.debugPanel._card);
+    };
+    ctx.toggleSettings = function(anchorBtn) {
+      var existing = ctx.root.querySelector(".dbg-settings");
+      if (existing) {
+        existing.remove();
+        return;
+      }
+      var pop = el("div", { class: "dbg-settings" });
+      var lbl = el("label", {}, []);
+      var cb = el("input", { type: "checkbox" });
+      cb.checked = ctx.loadShowDebug();
+      cb.addEventListener("change", function() {
+        ctx.saveShowDebug(cb.checked);
+      });
+      lbl.appendChild(cb);
+      lbl.appendChild(document.createTextNode(" 刷新时自动显示调试信息"));
+      pop.appendChild(lbl);
+      var viewBtn = el("button", {}, ["📋 查看调试信息"]);
+      viewBtn.addEventListener("click", function() {
+        pop.remove();
+        ctx.showDebugPanel();
+      });
+      pop.appendChild(viewBtn);
+      ctx.root.appendChild(pop);
+      var _vp = getPhysViewport(), _r = anchorBtn.getBoundingClientRect();
+      var _fx = _fixedVisual ? 1 : _vp.scale, _fy = _fixedVisual ? 1 : _vp.scaleY;
+      var _vL = Math.max(4, _r.left * _fx), _vT = _r.bottom * _fy + 4;
+      positionPhysical(pop, _vL, _vT, _vp.scale, _vp.scaleY);
+      requestAnimationFrame(function() {
+        try {
+          var _w2 = pop.offsetWidth * _fx, _h2 = pop.offsetHeight * _fy;
+          var cL = Math.min(_vL, Math.max(4, _vp.w - _w2 - 4));
+          var cT = _vT + _h2 > _vp.h - 4 ? Math.max(4, _r.top * _fy - _h2 - 4) : _vT;
+          if (cL !== _vL || cT !== _vT) positionPhysical(pop, cL, cT, _vp.scale, _vp.scaleY);
+        } catch (e) {
+        }
+      });
+      setTimeout(function() {
+        var close = function(ev) {
+          if (!pop.parentNode) {
+            document.removeEventListener("mousedown", close);
+            return;
+          }
+          if (!pop.contains(ev.target) && !anchorBtn.contains(ev.target)) {
+            pop.remove();
+            document.removeEventListener("mousedown", close);
+          }
+        };
+        document.addEventListener("mousedown", close);
+      }, 0);
+    };
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/launcher.js
+  function aiWindowMarkers() {
+    try {
+      return window.name === "aiti-ai-popup" || /[?&]_dbg=/.test(location.search) || /[?&]_dbg=/.test(location.hash) || !!window.__AITI_AI_WIN__;
+    } catch (e) {
+      return false;
+    }
+  }
+  function createDbgLauncher(url, opts) {
+    try {
+      if (aiWindowMarkers()) {
+        if (window.console && console.info) console.info("[aiti] 检测到 AI 窗特征（popup 名/_dbg 参数/共享库对象）——不加载 launcher（防嵌套）");
+        return null;
+      }
+    } catch (e) {
+    }
+    const ctx = {};
+    ctx.url = url;
+    initState(ctx);
+    initFab(ctx);
+    initNav(ctx);
+    initTarget(ctx);
+    initOptions(ctx);
+    initDanger(ctx);
+    initInteract(ctx);
+    initProfiles(ctx);
+    initHud(ctx);
+    initToolbar(ctx);
+    initHelp(ctx);
+    initInject(ctx);
+    initAiwin(ctx);
+    initRouting(ctx);
+    initInspector(ctx);
+    initDialog(ctx);
+    initPicks(ctx);
+    initDebug(ctx);
+    ctx.existingLauncher = window.document && document.getElementById("__dbg_launcher");
+    if (ctx.existingLauncher && ctx.existingLauncher.__dbgLauncher) return ctx.existingLauncher.__dbgLauncher;
+    ctx.cfg = Object.assign({}, DEFAULTS, opts || {});
+    ctx.selfHostPage = !!(opts && opts.selfHostPage);
+    ctx.iframeObservers = [];
+    ensureStyles(ctx.cfg.accent);
+    ctx.dbgState = ctx.loadDbgState();
+    ctx.aiOpen = !!ctx.dbgState.aiOpen;
+    ctx.root = el("div", { id: "__dbg_launcher" });
+    ctx.mountRoot();
+    ctx.fab = el("div", { class: "dbg-fab" });
+    ctx.aiBtn = el("button", { "data-label": "AI 消息" }, ["💬"]);
+    ctx.inspBtn = el("button", { "data-label": "Inspector" }, [elSvg(LUCIDE.crosshair, 15)]);
+    ctx.fab.appendChild(ctx.aiBtn);
+    ctx.fab.appendChild(ctx.inspBtn);
+    if (ctx.selfHostPage) ctx.fab.style.display = "none";
+    ctx.fabEdge = null;
+    ctx.navHoldT = 0;
+    ctx.fabPhys = null;
+    ctx.suppressClick = false;
+    ctx.fab.addEventListener("pointerdown", function(e) {
+      if (e.pointerType === "touch") {
+        ctx.fab.classList.remove("dbg-nohover");
+        ctx.fab.querySelectorAll("button").forEach(function(x) {
+          x.classList.remove("dbg-tip");
+        });
+        var b = e.target && e.target.closest ? e.target.closest("button") : null;
+        if (b) b.classList.add("dbg-tip");
+        if (ctx.fab.__tipT) clearTimeout(ctx.fab.__tipT);
+        ctx.fab.__tipT = setTimeout(function() {
+          ctx.fab.querySelectorAll("button").forEach(function(x) {
+            x.classList.remove("dbg-tip");
+          });
+          ctx.fab.classList.add("dbg-nohover");
+        }, 2e3);
+      }
+    });
+    makePointerDrag({
+      handle: ctx.fab,
+      threshold: 6,
+      capture: "late",
+      onStart: function(e) {
+        var vp0 = getPhysViewport();
+        var coordLayout = detectCoordSemantics(ctx.fab, e.clientX);
+        var xv = e.clientX * (coordLayout ? vp0.scale : 1);
+        var yv = e.clientY * (coordLayout ? vp0.scaleY : 1);
+        return { ox: xv - (ctx.fabPhys ? ctx.fabPhys.x : 0), oy: yv - (ctx.fabPhys ? ctx.fabPhys.y : 0), coordLayout };
+      },
+      onMove: function(ev, st) {
+        ctx.fab.classList.add("dbg-dragging");
+        var vp = getPhysViewport();
+        var sx = st.coordLayout ? vp.scale : 1;
+        var sy = st.coordLayout ? vp.scaleY : 1;
+        ctx.fabPhys = { x: ev.clientX * sx - st.ox, y: ev.clientY * sy - st.oy };
+        ctx.applyFabView();
+      },
+      onEnd: function(ev, st, moved) {
+        ctx.fab.classList.remove("dbg-dragging");
+        if (moved) {
+          ctx.suppressClick = true;
+          setTimeout(function() {
+            ctx.suppressClick = false;
+          }, 80);
+        }
+        if (!moved) return;
+        var vp = getPhysViewport();
+        var r = ctx.fab.getBoundingClientRect();
+        var vw = vp.w, vh = vp.h;
+        var _rm = _fixedVisual ? 1 : vp.scale;
+        var cx = (r.left + r.width / 2) * _rm, cy = (r.top + r.height / 2) * (_fixedVisual ? 1 : vp.scaleY);
+        var dl = cx, dr = vw - cx, dt = cy, db = vh - cy;
+        var minH = Math.min(dl, dr), minV = Math.min(dt, db);
+        ctx.fabEdge = minV <= minH ? dt <= db ? "top" : "bottom" : dl <= dr ? "left" : "right";
+        ctx.fabPhys = { x: cx, y: cy };
+        ctx.applyFabOrient();
+        ctx.refreshFabAnchor();
+        ctx.persistFabPos();
+      }
+    });
+    ctx.fab.addEventListener("click", function(e) {
+      if (ctx.suppressClick) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
+    ["click", "mousedown", "mouseup", "touchstart", "touchend"].forEach(function(t) {
+      ctx.fab.addEventListener(t, function(e) {
+        e.stopPropagation();
+      });
+    });
+    [
+      "mouseup",
+      "mousedown",
+      "click",
+      "dblclick",
+      "contextmenu",
+      "pointerdown",
+      "touchstart",
+      "touchmove",
+      "touchend",
+      "touchcancel",
+      "mouseover",
+      "mouseout",
+      "mousemove",
+      "wheel",
+      "keydown",
+      "keyup",
+      "focusin",
+      "focusout",
+      "input",
+      "change"
+    ].forEach(function(t) {
+      ctx.root.addEventListener(t, function(e) {
+        e.stopPropagation();
+      });
+    });
+    ctx.root.addEventListener("mousedown", function(e) {
+      if (e.target && e.target.closest && e.target.closest("input, textarea, select")) return;
+      try {
+        e.preventDefault();
+      } catch (err) {
+      }
+    }, true);
+    ctx.root.appendChild(ctx.fab);
+    ctx.restoreFabPos();
+    requestAnimationFrame(function() {
+      if (ctx.fabEdge) ctx.refreshFabAnchor();
+    });
+    [150, 600, 2e3].forEach(function(ms) {
+      setTimeout(ctx.safeFabRefresh, ms);
+    });
+    window.addEventListener("load", ctx.safeFabRefresh);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", function() {
+        ctx.refreshFabAnchor();
+        ctx.applyFabView();
+        ctx.applyToolbarZoom();
+        ctx.applyToolbarCompact();
+        ctx.applyHudZoom();
+        ctx.applyAiState();
+      });
+      window.visualViewport.addEventListener("scroll", function() {
+        ctx.refreshFabAnchor();
+        ctx.applyFabView();
+        ctx.applyToolbarZoom();
+        ctx.applyToolbarCompact();
+        ctx.applyHudZoom();
+        ctx.applyAiState();
+      });
+    }
+    window.addEventListener("resize", function() {
+      ctx.refreshFabAnchor();
+      ctx.applyToolbarZoom();
+    });
+    ctx.aiIframe;
+    ctx.inspectorOn = false;
+    ctx.hudHoverOn = false;
+    ctx.pendingCommands = {};
+    ctx.optState = Object.assign({
+      animSpeed: 1,
+      blockScroll: false,
+      blockWheel: false,
+      slowTimers: 1,
+      netDelay: 0,
+      netOffline: false,
+      darkMode: false,
+      reducedMotion: false,
+      timeOffsetMs: 0,
+      viewportW: 0,
+      simulateTouch: false,
+      dangerAutoOkMs: 3e4
+      // 危险命令无人值守默认 30s：确认卡弹出后无响应 30s 自动允许执行（调速面板可改 0/10/30/60s）
+    }, ctx.loadOptState());
+    ctx.errLog = [];
+    ctx.aiInspectActive = false;
+    ctx.selfEngaged = false;
+    ctx.lastSelfPayload = null;
+    ctx.speedPanel = null;
+    ;
+    ;
+    ctx.gestureCard = null;
+    ctx.sessionDangerOk = false;
+    ctx.confirmCard = null;
+    ctx.simReqN = 0;
+    ctx.dangerQueue = [];
+    ctx.confirmingDanger = false;
+    ctx.RELEASE_PROFILES = {
+      default: { name: "default", label: "⚡ 默认放行", release: ["key", "wheel", "scroll", "touch", "focus"], builtin: true },
+      all: { name: "all", label: "⚡⚡ 全部放行", release: ["click", "hover", "key", "wheel", "scroll", "touch", "focus"], builtin: true },
+      frozen: { name: "frozen", label: "⛔ 全部冻结", release: [], builtin: true }
+    };
+    try {
+      var _dr = localStorage.getItem(DEFAULT_RELEASE_KEY);
+      if (_dr) {
+        var _arr = JSON.parse(_dr);
+        if (Array.isArray(_arr)) {
+          var _valid = ["click", "hover", "key", "wheel", "scroll", "touch", "focus"].filter(function(c) {
+            return _arr.indexOf(c) >= 0;
+          });
+          ctx.RELEASE_PROFILES.default.release = _valid;
+        }
+      }
+    } catch (e) {
+    }
+    ctx.userProfiles = ctx.loadUserProfiles();
+    ctx.userProfileSeq = 0;
+    ctx.currentProfile = "default";
+    ctx.toolbarHovering = false;
+    ctx.hud = null;
+    ctx.hudUserPos = null;
+    ctx.lastHud = null;
+    window.addEventListener("resize", function() {
+      if (ctx.hud && ctx.hud.style.opacity === "1" && ctx.lastHud) {
+        if (!ctx.hudUserPos) ctx.updateHud(ctx.lastHud.p, ctx.lastHud.source);
+        else {
+          var _vp = getPhysViewport();
+          var _r = ctx.hud.getBoundingClientRect();
+          var _ux = ctx.hudUserPos.x, _uy = ctx.hudUserPos.y;
+          _ux = Math.min(Math.max(4, _ux), Math.max(4, _vp.w - Math.min(_r.width * _vp.scale, 60) - 4));
+          _uy = Math.min(Math.max(4, _uy), Math.max(4, _vp.h - Math.min(_r.height * _vp.scale, 60) - 4));
+          ctx.hudUserPos = { x: _ux, y: _uy };
+          ctx.hud.__vis = { left: _ux, top: _uy };
+          ctx.applyHudZoom();
+        }
+      }
+    });
+    ctx.toolbarDragged = false;
+    ctx.lastSelRect = null;
+    ctx.attachToolbarDrag();
+    ctx.selfClient = null;
+    ctx.selfClientActive = false;
+    ctx.aiReady = false;
+    ctx.aiQueue = [];
+    ctx.aiWin = null;
+    ctx.aiState = null;
+    ctx.execInPage._n = 0;
+    ctx.aiBtn.addEventListener("click", ctx.toggleAi);
+    ctx.root.classList.toggle("dbg-touch-ui", isTouchDevice());
+    ctx.root.classList.toggle("dbg-touch-ui", isTouchDevice());
+    window.addEventListener("resize", function() {
+      ctx.applyToolbarCompact();
+    });
+    ctx.inspBtn.addEventListener("click", function(e) {
+      e.stopPropagation();
+      ctx.inspectorOn ? ctx.exitInspector() : ctx.enterInspector();
+    });
+    ctx.dialog = el("div", { class: "dbg-dialog" });
+    ctx.cardDlg = el("div", { class: "dbg-dialog-card" });
+    ctx.dHead = el("div", { class: "dbg-dialog-head" });
+    ctx.dTag = el("code", {}, ["?"]);
+    ctx.dLoc = el("span", { class: "dbg-loc" }, [""]);
+    ctx.dHead.appendChild(ctx.dTag);
+    ctx.dHead.appendChild(ctx.dLoc);
+    ctx.dClose = el("button", {}, ["✕"]);
+    ctx.dHead.appendChild(ctx.dClose);
+    ctx.dBody = el("div", { class: "dbg-dialog-body" });
+    ctx.preview = el("div", { class: "dbg-preview" });
+    ctx.dBody.appendChild(ctx.preview);
+    ctx.checks = el("div", { class: "dbg-checks" });
+    ctx.checkDefs = [
+      ["text", "文本"],
+      ["computed", "样式"],
+      ["attrs", "属性"],
+      ["xpath", "定位"],
+      ["framework", "框架/文件位置"]
+    ];
+    ctx.checkBoxes = {};
+    ctx.checkDefs.forEach(function(c) {
+      var label = el("label", {}, []);
+      var box = el("input", { type: "checkbox" });
+      box.checked = true;
+      ctx.checkBoxes[c[0]] = box;
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(c[1]));
+      ctx.checks.appendChild(label);
+    });
+    ctx.dBody.appendChild(ctx.checks);
+    ctx.dFoot = el("div", { class: "dbg-dialog-foot" });
+    ctx.dCancel = el("button", { class: "dbg-ghost" }, ["取消"]);
+    ctx.dSend = el("button", { class: "dbg-primary" }, ["发送给 AI"]);
+    ctx.dFoot.appendChild(ctx.dCancel);
+    ctx.dFoot.appendChild(ctx.dSend);
+    ctx.cardDlg.appendChild(ctx.dHead);
+    ctx.cardDlg.appendChild(ctx.dBody);
+    ctx.cardDlg.appendChild(ctx.dFoot);
+    ctx.dialog.appendChild(ctx.cardDlg);
+    ctx.root.appendChild(ctx.dialog);
+    ctx.lastPayload = null;
+    ctx.dClose.addEventListener("click", ctx.closePreview);
+    ctx.dCancel.addEventListener("click", ctx.closePreview);
+    ctx.dSend.addEventListener("click", function() {
+      if (!ctx.lastPayload) return;
+      ctx.closeDialog();
+      try {
+        ctx.ensureAi();
+        ctx.showAi(true);
+        ctx.aiOpen = true;
+        ctx.aiBtn.classList.add("dbg-on");
+      } catch (e) {
+      }
+      try {
+        ctx.picksAddElement(ctx.enrichElPayload ? ctx.enrichElPayload(ctx.lastPayload) : ctx.lastPayload);
+      } catch (e) {
+        ctx.postToAi({ type: "dbg_ai_element", _selfAttrib: false, payload: ctx.lastPayload });
+      }
+      ctx.addMsg("sys", "已发送选中元素（" + ctx.lastPayload.tag + "）给 AI——输入框已放入 [元素N]，点发送即达。");
+    });
+    window.addEventListener("message", ctx.onHostMessage);
+    ;
+    document.addEventListener("keydown", function(e) {
+      ctx.hostKey(e);
+    });
+    try {
+      ctx.buildToolbar();
+    } catch (e) {
+    }
+    try {
+      ctx._restoringPopup = !!(ctx.dbgState.aiOpen && (ctx.loadAiState ? ctx.loadAiState().mode === "popup" : false));
+    } catch (e) {
+      ctx._restoringPopup = false;
+    }
+    if (ctx.selfHostPage) {
+      ctx.aiOpen = false;
+    } else {
+      try {
+        ctx.ensureAi();
+      } catch (e) {
+      }
+      if (ctx.dbgState.aiOpen) {
+        if (ctx.aiMode === "popup") {
+          ctx.aiOpen = true;
+          ctx.aiBtn.classList.add("dbg-on");
+          ctx.saveDbgState();
+          ctx.addMsg("sys", "🔄 正在恢复 AI 独立窗口（等待窗口回应…）");
+          setTimeout(function() {
+            try {
+              if (ctx.aiPopup && !ctx.aiPopup.closed) {
+                ctx.showAi(true);
+                return;
+              }
+              ctx._restoringPopup = false;
+              ctx.openAiPopup();
+            } catch (e) {
+            }
+          }, 1e4);
+        } else {
+          try {
+            ctx.showAi(true);
+            ctx.aiOpen = true;
+            ctx.aiBtn.classList.add("dbg-on");
+            ctx.addMsg("sys", "🔄 已恢复调试会话（刷新前 AI 窗口开着，现已自动重开）。");
+          } catch (e) {
+            ctx.addMsg("sys", "⚠ AI 窗口自动恢复失败：" + (e && e.message || e) + "（可在 AI 窗口就地反馈给 AI 修复）");
+          }
+        }
+      }
+    }
+    ctx.saveDbgState();
+    ctx.debugPanel = null;
+    if (ctx.loadShowDebug()) {
+      try {
+        ctx.showDebugPanel();
+        [150, 600, 2e3].forEach(function(ms) {
+          setTimeout(function() {
+            try {
+              if (ctx.debugPanel && ctx.debugPanel.classList.contains("dbg-open")) ctx.debugPanel._info.textContent = ctx.dbgInfoText();
+            } catch (e) {
+            }
+          }, ms);
+        });
+      } catch (e) {
+      }
+    }
+    ctx.root.__dbgLauncher = {
+      url: ctx.url,
+      version: VERSION,
+      cfg: ctx.cfg,
+      enterInspector: ctx.enterInspector,
+      exitInspector: ctx.exitInspector,
+      enterSelfClient: ctx.enterSelfClient,
+      exitSelfClient: ctx.exitSelfClient,
+      applyProfile: ctx.applyProfile,
+      // 放行方案切换（default/all/p1/p2/p3/frozen）
+      applyViewport: function(v) {
+        ctx.optState.viewportW = v;
+        ctx.saveOptState();
+        ctx.saveDbgState();
+        ctx.applyOptsToTarget();
+      },
+      // 视口模拟（改 iframe 宽度）
+      open: ctx.toggleAi,
+      sendMessage: ctx.sendText,
+      execInPage: ctx.execInPage,
+      // 目标路由层（方案 C）：T_HOST / listFrames / frameClient / postToFrame
+      T_HOST: ctx.T_HOST,
+      listFrames: ctx.listFrames,
+      frameClient: ctx.frameClient,
+      postToFrame: ctx.postToFrame,
+      selFrameId: ctx.selFrameId,
+      currentFrameId: ctx.currentFrameId,
+      openAi: function() {
+        ctx.aiOpen = true;
+        ctx.ensureAi();
+        ctx.showAi(true);
+        ctx.aiBtn.classList.add("dbg-on");
+        ctx.saveDbgState();
+      },
+      // 自动弹 AI 窗（不退出 Inspector，与 toggleAi 互斥逻辑区分）
+      postToAi: ctx.postToAi,
+      broadcast: ctx.broadcast,
+      // 兼容：targetWindow() = 第一个宿主 iframe 的 window（hub 摆的目标页）
+      targetWindow: function() {
+        return (ctx.listFrames()[0] || {}).win || null;
+      },
+      captureSceneSend: ctx.captureSceneSend,
+      simulateAiCommand: function(cmd, args) {
+        return ctx.handleAiCommand({ cmd, args: args || {}, requestId: "sim_" + ++ctx.simReqN });
+      },
+      // 模拟 AI 发命令（含危险确认）；自检/测试用
+      destroy: ctx.destroy
+    };
+    var _nestN = 0, _nestIv = setInterval(function() {
+      _nestN++;
+      if (aiWindowMarkers()) {
+        clearInterval(_nestIv);
+        _nestIv = null;
+        try {
+          if (window.console && console.warn) console.warn("[aiti] 运行期检测到 AI 窗特征——launcher 自毁（防嵌套）");
+        } catch (e) {
+        }
+        try {
+          ctx.destroy();
+        } catch (e) {
+        }
+        try {
+          if (ctx.aiIframe) {
+            ctx.aiIframe.src = "about:blank";
+            ctx.aiIframe.remove();
+            ctx.aiIframe = null;
+          }
+        } catch (e) {
+        }
+        try {
+          var _r = document.getElementById("__dbg_launcher");
+          if (_r && _r.parentNode) _r.parentNode.removeChild(_r);
+        } catch (e) {
+        }
+      } else if (_nestN > 40) {
+        clearInterval(_nestIv);
+        _nestIv = null;
+      }
+    }, 250);
+    return ctx.root.__dbgLauncher;
+  }
+
+  // packages/aiti-devtools-inject/src/launcher/index.js
+  window.createDbgLauncher = createDbgLauncher;
+  window.__dbgLauncherVersion = VERSION;
+
+  // packages/aiti-devtools-inject/src/standalone.js
+  (function() {
+    const myScript = (function() {
+      try {
+        if (document.currentScript && document.currentScript.src) return document.currentScript;
+        return [...document.querySelectorAll("script")].find((x) => (x.src || "").indexOf("aiti-launcher") >= 0) || null;
+      } catch (e) {
+        return null;
+      }
+    })();
+    function takeoverCrossInstance() {
+      try {
+        if (!myScript || !myScript.src) return false;
+        if (myScript.dataset && myScript.dataset.aitiSelfInject === "1") return false;
+        if (window.__dbgLauncherSelfHost !== true) return false;
+        const prev = document.getElementById("__dbg_launcher");
+        try {
+          if (prev && prev.__dbgLauncher && prev.__dbgLauncher.destroy) prev.__dbgLauncher.destroy();
+        } catch (e) {
+        }
+        if (prev && prev.parentNode) prev.parentNode.removeChild(prev);
+        window.__dbgLauncherInstalled = false;
+        try {
+          window.postMessage({ __dbg: 1, type: "dbg_ai_inspect_off", payload: {} }, "*");
+        } catch (e) {
+        }
+        if (window.console && console.info) console.info("[aiti] 跨实例 launcher 接管：已重置同源 self 宿主实例（恢复 FAB/AI 窗）");
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+    if (window.__dbgLauncherInstalled && !takeoverCrossInstance()) return;
+    window.__dbgLauncherInstalled = true;
+    function findScript() {
+      if (myScript) return myScript;
+      try {
+        if (document.currentScript && document.currentScript.src) return document.currentScript;
+        const s = [...document.querySelectorAll("script")].find((x) => (x.src || "").indexOf("aiti-launcher") >= 0);
+        return s || null;
+      } catch (e) {
+        return null;
+      }
+    }
+    function aiUrlFromScript() {
+      try {
+        const s = findScript();
+        if (s && s.getAttribute("data-ai-url")) return s.getAttribute("data-ai-url");
+        if (window.__AITI_AI_URL) return window.__AITI_AI_URL;
+        if (s && s.src && /\/api\/extensions\/aiti-devtools\//.test(s.src)) {
+          const idx = s.src.indexOf("/api/extensions/");
+          if (idx > 0) return s.src.slice(0, idx) + "/";
+        }
+        if (s && s.src) return new URL("cockpit.html", s.src).href;
+      } catch (e) {
+      }
+      return DEFAULTS.aiUrl || "";
+    }
+    function bridgeUrlFromScript() {
+      try {
+        const s = findScript();
+        if (s && s.getAttribute("data-bridge-url")) return s.getAttribute("data-bridge-url");
+        if (window.__AITI_BRIDGE_URL) return window.__AITI_BRIDGE_URL;
+        if (s && s.src && /\/api\/extensions\//.test(s.src)) return new URL("mcp", s.src).href;
+      } catch (e) {
+      }
+      return DEFAULTS.bridgeBase;
+    }
+    function isSelfHostPage() {
+      try {
+        return !!(myScript && myScript.dataset && myScript.dataset.aitiSelfInject === "1");
+      } catch (e) {
+        return false;
+      }
+    }
+    function boot() {
+      try {
+        const opts = {
+          aiUrl: aiUrlFromScript(),
+          bridgeBase: bridgeUrlFromScript(),
+          selfHostPage: isSelfHostPage()
+        };
+        const inst = window.createDbgLauncher(location.href, opts);
+        if (inst === null) {
+          window.__dbgLauncherInstalled = false;
+          return;
+        }
+        window.__dbgLauncherSelfHost = !!opts.selfHostPage;
+        if (window.console && console.info) console.info("[aiti] launcher v" + VERSION + " 已启用（aiUrl=" + opts.aiUrl + " bridge=" + opts.bridgeBase + (opts.selfHostPage ? " self宿主" : "") + "）");
+      } catch (e) {
+        window.__dbgLauncherInstalled = false;
+        if (window.console) console.error("[aiti] 启动失败：", e);
+      }
+    }
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+    else boot();
+  })();
+})();
