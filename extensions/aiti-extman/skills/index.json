@@ -1,0 +1,10 @@
+[
+  "extman-recommend",
+  "extman-status",
+  "extman-install",
+  "extman-toggle",
+  "ext-create",
+  "ext-modify",
+  "ext-publish",
+  "ext-protocol-upgrade"
+]

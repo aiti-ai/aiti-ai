@@ -1,0 +1,14 @@
+{
+  "name": "@aiti-ai/aiti-wintrace",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "wintrace 面板 —— Windows 原生 API/COM 追踪可视面（broker 进程/会话/挂钩/事件流）",
+  "scripts": {
+    "build:client": "node tools/build-client.mjs",
+    "watch": "node tools/build-client.mjs --watch"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiExtProtocol": "1.0"
+}

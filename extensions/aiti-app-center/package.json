@@ -1,0 +1,16 @@
+{
+  "name": "@aiti-ai/aiti-app-center",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "应用中心 —— 左栏 DockStack 全折叠空白态的应用抽屉（开始菜单）：收编全部扩展入口，应用视图（动作/面板/管理卡，hover 快速钉住、编辑模式排序/隐藏、信息页看描述与版本并可一键禁用）与开关视图（feature 开关按扩展分组）双视图切换；tag 式分类（内部固定分类 + 自定义 + 默认 other）、搜索；经 aiti-app-center.api 服务交付 session-manager 编排器渲染进 DockStack filler",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "所有插件入口的家——折叠即开始菜单。",
+  "aitiExtProtocol": "1.0"
+}

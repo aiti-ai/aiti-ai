@@ -1,0 +1,18 @@
+{
+  "name": "@aiti-ai/aiti-word-docx-preview",
+  "version": "0.1.0",
+  "description": "Word 文档预览（docx-preview 高保真只读）",
+  "main": "index.js",
+  "scripts": {
+    "build": "vite build --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiExtProtocol": "1.0"
+}

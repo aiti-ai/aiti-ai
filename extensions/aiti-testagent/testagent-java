@@ -1,0 +1,75 @@
+#!/usr/bin/env bash
+# testagent-java —— 启动 Java 应用并自动挂载 TestAgent（环境变量驱动，注册到发现机制）
+#
+# AI / 脚本 / 人启动 Java 后端时用它代替 `java`，设置环境变量即自动挂载 agent + 注册 session：
+#
+#   TESTAGENT_ENABLE=1 TESTAGENT_HTTP_PORT=18570 testagent-java java -jar app.jar
+#
+# 环境变量：
+#   TESTAGENT_ENABLE        =1 挂载 TestAgent（默认 0 不挂载）
+#   TESTAGENT_HTTP_PORT     HTTP API 端口（默认 8564；不设则 agent 默认）
+#   TESTAGENT_CONF          conf 目录（默认 /tmp/testagent-conf，自动创建）
+#   TESTAGENT_JAR           agent jar 路径（默认工作区构建产物）
+#   TESTAGENT_SESSIONS_DIR  会话发现目录（默认 ~/.cache/testagent/sessions）
+#   TESTAGENT_TOKEN         HTTP token（可选）
+#   TESTAGENT_EXTRA         额外 JVM 参数（可选，追加到 -javaagent 后）
+#
+# 挂载后：ta_discover（MCP）直接列出该进程（httpPort/session），无需再 attach。
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${TESTAGENT_JAR:-}" ]; then
+  AGENT_JAR="$TESTAGENT_JAR"
+elif [ -f "$SCRIPT_DIR/testagent-1.0.jar" ]; then
+  AGENT_JAR="$SCRIPT_DIR/testagent-1.0.jar"
+else
+  AGENT_JAR="/home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/testagent-1.0.jar"
+fi
+CONF="${TESTAGENT_CONF:-/tmp/testagent-conf}"
+ENABLED="${TESTAGENT_ENABLE:-0}"
+
+# 兼容两种调用：testagent-java java -jar app.jar 或 testagent-java -jar app.jar
+if [ "$1" = "java" ]; then
+  shift
+fi
+
+if [ "$ENABLED" != "1" ]; then
+  # 未启用：透传
+  exec java "$@"
+fi
+
+mkdir -p "$CONF"
+
+# 模式：jar=自己拼 -javaagent（默认）；jto=导出 JAVA_TOOL_OPTIONS（后续任何 java 进程——脚本/嵌套/子进程——自动挂载）
+MODE="${TESTAGENT_MODE:-jar}"
+
+if [ "$MODE" = "jto" ]; then
+  JTO="-javaagent:$AGENT_JAR=$CONF"
+  if [ -n "${TESTAGENT_HTTP_PORT:-}" ]; then JTO="$JTO -Dtestagent.httpPort=$TESTAGENT_HTTP_PORT"; fi
+  if [ -n "${TESTAGENT_TOKEN:-}" ]; then JTO="$JTO -Dtestagent.token=$TESTAGENT_TOKEN"; fi
+  if [ -n "${TESTAGENT_SESSIONS_DIR:-}" ]; then JTO="$JTO -Dtestagent.sessionsDir=$TESTAGENT_SESSIONS_DIR"; fi
+  if [ -n "${JAVA_TOOL_OPTIONS:-}" ]; then JTO="$JAVA_TOOL_OPTIONS $JTO"; fi
+  echo "[testagent-java] JAVA_TOOL_OPTIONS 模式：$JTO" >&2
+  export JAVA_TOOL_OPTIONS="$JTO"
+  exec java "$@"
+fi
+
+JVM_OPTS=("-javaagent:$AGENT_JAR=$CONF")
+if [ -n "${TESTAGENT_HTTP_PORT:-}" ]; then
+  JVM_OPTS+=("-Dtestagent.httpPort=$TESTAGENT_HTTP_PORT")
+fi
+if [ -n "${TESTAGENT_TOKEN:-}" ]; then
+  JVM_OPTS+=("-Dtestagent.token=$TESTAGENT_TOKEN")
+fi
+if [ -n "${TESTAGENT_SESSIONS_DIR:-}" ]; then
+  JVM_OPTS+=("-Dtestagent.sessionsDir=$TESTAGENT_SESSIONS_DIR")
+fi
+# 额外参数（如内存/GC 设置），按空白分词
+if [ -n "${TESTAGENT_EXTRA:-}" ]; then
+  read -r -a EXTRA_ARGS <<< "$TESTAGENT_EXTRA"
+  JVM_OPTS+=("${EXTRA_ARGS[@]}")
+fi
+
+echo "[testagent-java] 挂载 TestAgent → httpPort=${TESTAGENT_HTTP_PORT:-8564} conf=$CONF jar=$AGENT_JAR" >&2
+exec java "${JVM_OPTS[@]}" "$@"
