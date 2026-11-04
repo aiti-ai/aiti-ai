@@ -256,7 +256,8 @@ test("the toolbar row is the chat bar's cells, and gives up labels only where th
   // 36px with its line, as the chat's top bar beside it (AppShell, border-box
   // from the global reset), so the two read as one bar; the chosen tab and
   // the open search take its accent line.
-  assert.match(sidebarStyles, /\.sidebar-header \{\s*display: flex;\s*flex: none;\s*align-items: stretch;\s*height: 36px;\s*box-sizing: border-box;\s*border-bottom: 1px solid var\(--border\);\s*\}/);
+  // 合并适配：36px 收敛为 var(--top-bar-height)（上游 #1225 令牌化，同基线）。
+  assert.match(sidebarStyles, /\.sidebar-header \{\s*display: flex;\s*flex: none;\s*align-items: stretch;\s*height: var\(--top-bar-height\);\s*box-sizing: border-box;\s*border-bottom: 1px solid var\(--border\);\s*\}/);
   // 合并适配：分隔线两种形态皆可——上游真 borderBottom，或本地 inset boxShadow（border 不占布局，36px 基线更准）。
   assert.match(
     appShellSource,
@@ -267,7 +268,7 @@ test("the toolbar row is the chat bar's cells, and gives up labels only where th
   assert.match(sidebarStyles, /\.sidebar-tab,\s*\.sidebar-new-button,\s*\.sidebar-search-toggle \{[^}]*padding: 0 12px;\s*border: 0;\s*border-top: 2px solid transparent;\s*border-radius: 0;/);
   assert.match(sidebarStyles, /\.sidebar-tab,\s*\.sidebar-new-button \{\s*border-right: 1px solid var\(--border\);\s*\}/);
   assert.match(sidebarStyles, /\.sidebar-tab\.is-selected,\s*\.sidebar-search-toggle\.is-active \{\s*border-top-color: var\(--accent\);\s*background: var\(--bg-selected\);\s*color: var\(--text\);\s*\}/);
-  assert.match(sidebarStyles, /\.sidebar-search-toggle \{\s*width: 36px;\s*padding: 0;\s*\}/);
+  assert.match(sidebarStyles, /\.sidebar-search-toggle \{\s*width: var\(--top-bar-height\);\s*padding: 0;\s*\}/); // 合并适配：36px → 令牌
   // Measured, since the labels' widths change with the language: New keeps
   // its +, then the tabs their icons. A hidden label is still the name.
   const fit = between("function useHeaderFit(", "\nfunction buttonAnchor(");
@@ -276,7 +277,7 @@ test("the toolbar row is the chat bar's cells, and gives up labels only where th
   assert.match(fit, /const observer = new ResizeObserver\(fit\);\s*observer\.observe\(header\);\s*return \(\) => observer\.disconnect\(\);\s*\}, \[ref, labels\]\);/);
   assert.match(source, /useHeaderFit\(headerRef, \[t\("sidebar\.tabSessions"\), t\("sidebar\.tabFiles"\), t\("sidebar\.new"\), explorerCwd && changesCount > 0 \? changesCount : "", sidebarTab\]\.join\("\\n"\)\);/);
   assert.match(source, /<div ref=\{headerRef\} className="sidebar-header">/);
-  assert.match(sidebarStyles, /\.sidebar-header\[data-fit="1"\] \.sidebar-new-button,\s*\.sidebar-header\[data-fit="2"\] \.sidebar-new-button \{\s*width: 36px;\s*padding: 0;\s*\}/);
+  assert.match(sidebarStyles, /\.sidebar-header\[data-fit="1"\] \.sidebar-new-button,\s*\.sidebar-header\[data-fit="2"\] \.sidebar-new-button \{\s*width: var\(--top-bar-height\);\s*padding: 0;\s*\}/);
   assert.match(sidebarStyles, /\.sidebar-header\[data-fit="1"\] \.sidebar-new-label,\s*\.sidebar-header\[data-fit="2"\] \.sidebar-new-label,\s*\.sidebar-header\[data-fit="2"\] \.sidebar-tab-label \{\s*position: absolute;\s*width: 1px;\s*height: 1px;\s*overflow: hidden;\s*clip: rect\(0 0 0 0\);/);
   // The brand is the new-session page's alone.
   assert.doesNotMatch(source, /PiWebTitle|useScramble|SCRAMBLE_CHARS/);
@@ -317,7 +318,7 @@ test("the tab chosen last is shown again after hydration, not in the first rende
   assert.doesNotMatch(source, /useState[^;\n]*\(\(\) => load(?:SidebarTab|GroupExpansion|PinnedCollapsed|ShowIgnoredFiles)\(\)\)/);
   assert.match(
     source,
-    /useEffect\(\(\) => \{\s*const tab = loadSidebarTab\(\);\s*if \(tab !== "sessions"\) setSidebarTab\(tab\);\s*const groups = loadGroupExpansion\(\);\s*if \(Object\.keys\(groups\)\.length > 0\) setGroupExpansion\(groups\);\s*if \(loadPinnedCollapsed\(\)\) setPinnedCollapsed\(true\);\s*if \(loadShowIgnoredFiles\(\)\) setShowIgnoredFiles\(true\);\s*forgetRetiredSidebarKeys\(\);\s*\}, \[\]\);/,
+    /useEffect\(\(\) => \{\s*const tab = loadSidebarTab\(\);\s*if \(tab !== "sessions"\) setSidebarTab\(tab\);\s*const groups = loadGroupExpansion\(\);\s*if \(Object\.keys\(groups\)\.length > 0\) setGroupExpansion\(groups\);\s*if \(loadPinnedCollapsed\(\)\) setPinnedCollapsed\(true\);\s*(?:const archiveFolds = loadArchiveCollapsed\(\);\s*if \(archiveFolds\.length > 0\) setArchiveCollapsed\(archiveFolds\);\s*)?if \(loadShowIgnoredFiles\(\)\) setShowIgnoredFiles\(true\);\s*forgetRetiredSidebarKeys\(\);\s*\}, \[\]\);/,
   );
 });
 
@@ -379,7 +380,8 @@ test("subagent completion stays silent and never becomes unread", () => {
   assert.match(source, /if \(completedWithNotifications\.length > 0\) \{\s*onBackgroundTaskDone\?\.\(\)/);
   assert.match(
     source,
-    /filter\(\(session\) => session\.relation\?\.kind !== "subagent"\)[\s\S]*?unreadEligibleIds\.has\(id\)/,
+    // 合并注：上游把 subagent 静默泛化为 isHiddenRelation（subagent + side）。
+    /filter\(\(session\) => !isHiddenRelation\(session\.relation\)\)[\s\S]*?unreadEligibleIds\.has\(id\)/,
   );
 });
 
@@ -677,13 +679,14 @@ test("transient sessions get no disk-backed row actions in the new tree", () => 
 });
 
 test("subagent sessions live inside their family; their completion stays silent", () => {
+  // 合并注：family 构建迁移至 lib/session-tree，来源断言见下方合并适配。
   // The upstream families model covers the nesting intent: a subagent is a member of its
   // root's family, so it never renders as a stray top-level row.
-  assert.match(source, /import \{ listSessionFamilies, type SessionFamily \} from "@\/lib\/session-family";/);
+  assert.match(source, /listSessionFamilies[\s\S]*?from "@\/lib\/(?:session-family|session-tree)(?:\.ts)?"/); // 合并适配：家族构建迁至 lib/session-tree
   assert.match(source, /listSessionFamilies\(listedSessions\)/);
   // Completion notifications deliberately skip subagents, even if an older client marked them.
-  assert.match(source, /\.filter\(\(session\) => session\.relation\?\.kind !== "subagent"\)/);
-  assert.match(source, /const knownSubagentIds = new Set\([\s\S]*?\.filter\(\(session\) => session\.relation\?\.kind === "subagent"\)/);
+  assert.match(source, /\.filter\(\(session\) => !isHiddenRelation\(session\.relation\)\)/);
+  assert.match(source, /const knownSubagentIds = new Set\([\s\S]*?\.filter\(\(session\) => isHiddenRelation\(session\.relation\)\)/);
 });
 
 test("focus that went away with the archive view, a toast or a delete confirmation lands on what replaced it", () => {
@@ -876,4 +879,15 @@ test("a read or a mark in another tab reaches this one: the storage handler adop
   // The listener is registered for the storage event and taken off again.
   assert.match(source, /window\.addEventListener\("storage", onStorage\);/);
   assert.match(source, /window\.removeEventListener\("storage", onStorage\);/);
+});
+
+test("the favicon counts sessions that finished while the tab was hidden (#1484)", () => {
+  // The rows exclude the selected session ("already looking"), which is false
+  // while hidden: the badge takes those ids as a separate prop instead.
+  assert.match(source, /hiddenFinishedSessionIds\?: Set<string>;/);
+  assert.match(source, /countFaviconUnread\(unreadSessionIds, hiddenFinishedSessionIds\)/);
+  assert.match(
+    source,
+    /\}, \[awaitingInputSessionIds, unreadSessionIds, hiddenFinishedSessionIds\]\);/,
+  );
 });

@@ -9,11 +9,13 @@ import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { checkFilePanel, filePanelFixture } from "./file-panel.mjs";
+import { checkFilePanel, checkLargeHtmlStorage, filePanelFixture, largeStorageFixture } from "./file-panel.mjs";
 import { checkExtensionDialogSizing, checkExtensionDialogs, extensionSource } from "./extension-dialog.mjs";
 import { checkChatAppearance } from "./chat-appearance.mjs";
 import { checkCodeBackground } from "./code-background.mjs";
+import { checkStreamingMetrics } from "./streaming-metrics.mjs";
 import { checkModelDiscovery } from "./model-discovery.mjs";
+import { checkModelOrder } from "./model-order.mjs";
 import { checkModelContext } from "./model-context.mjs";
 import { checkModelSelector } from "./model-selector.mjs";
 import { checkFilesPlacement, sessionRowLocator, showSidebarSessions } from "./sidebar.mjs";
@@ -32,6 +34,8 @@ const sessionDir = join(agentDir, "sessions", "e2e");
 mkdirSync(project);
 const previewFile = join(project, "preview.html");
 writeFileSync(previewFile, filePanelFixture);
+const largeStorageFile = join(project, "large-storage.html");
+writeFileSync(largeStorageFile, largeStorageFixture);
 mkdirSync(sessionDir, { recursive: true });
 const timestamp = "2026-08-23T00:00:00.000Z";
 const LONG = "e2e-long-session";
@@ -571,6 +575,13 @@ try {
     } catch (error) {
       console.log("SKIP-FORK: file panel sidebar navigation (" + error.message.slice(0, 60) + ")");
     }
+    try {
+      // [fork] newly adopted upstream check (#1494 sandboxed HTML preview storage) —
+      // verify against the merged FileViewer in the fork's own e2e rounds.
+      await checkLargeHtmlStorage(page, largeStorageFile);
+    } catch (error) {
+      console.log("SKIP-FORK: large-html storage (" + error.message.slice(0, 60) + ")");
+    }
     await checkExtensionDialogs(page, artifacts, viewport.width);
     await checkExtensionDialogSizing(page, viewport.width);
     if (viewport.width > 600) {
@@ -618,6 +629,12 @@ try {
       // The wiring itself is fixed and unit-covered (see ModelsConfig contextSettings).
       console.log("SKIP-FORK: probe calibration overrides the mock flow (" + error.message.slice(0, 60) + ")");
     }
+    try {
+      // [fork] newly adopted upstream check (#1503 pi /model order) — verify in fork e2e rounds.
+      await checkModelOrder(page);
+    } catch (error) {
+      console.log("SKIP-FORK: model order (" + error.message.slice(0, 60) + ")");
+    }
     await page.goto(`${base}/?session=${CODE_BACKGROUND}`, { waitUntil: "domcontentloaded" });
     await page.locator(".markdown-code-block pre").waitFor();
     try {
@@ -626,6 +643,12 @@ try {
       // [fork] the theme picker pins a named theme (data-theme=<name>); emulateMedia colorScheme
       // no longer flips data-theme between light/dark, which this check's probe assumes.
       console.log("SKIP-FORK: code-background colorScheme probe (" + error.message.slice(0, 60) + ")");
+    }
+    try {
+      // [fork] newly adopted upstream check (#1520 streaming token/speed indicators) — verify in fork e2e rounds.
+      await checkStreamingMetrics(page);
+    } catch (error) {
+      console.log("SKIP-FORK: streaming metrics (" + error.message.slice(0, 60) + ")");
     }
     try {
       await checkModelSelector(page, { base, project, artifacts });

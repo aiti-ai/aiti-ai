@@ -84,9 +84,9 @@ interface FileScan {
   size: number;
   /** File body contains `import.meta`. */
   usesMeta: boolean;
-  /** The file itself has a relative dynamic import (`import("./x")`) — a split-bundle signal. */
+  /** The file itself has a relative dynamic import (`import("./x.ts")`) — a split-bundle signal. */
   selfLazyChunk: boolean;
-  /** The file's own static relative dependency specifiers (`from "./x"` / `import "./x"`), for closure walks. */
+  /** The file's own static relative dependency specifiers (`from "./x.ts"` / `import "./x"`), for closure walks. */
   staticRel: string[];
 }
 /** "sensitive" = unreadable/over the size limit: conservatively treated as sensitive (excluded from the batch bundle). */
@@ -153,7 +153,7 @@ function resolveStaticImport(fromFile: string, spec: string): string | null {
 
 /**
  * Split-bundle detection: does the entry's own static relative dependency closure
- * contain a **relative dynamic import** (`import("./x")`)?
+ * contain a **relative dynamic import** (`import("./x.ts")`)?
  *
  * A hit = the "thin shell + lazy chunks" shape (vite lib code-splitting output):
  * the entry stub statically imports a shared chunk, and the shared chunk dynamically

@@ -140,12 +140,13 @@ export interface Tab {
   id: string;
   label: string;
   filePath: string;
-  /** "file" (default) or "folder"/"terminal"/"dock"/"agent" — folder tabs render a FolderViewer,
+  /** "file" (default) or "folder"/"terminal"/"dock"/"agent"/"side" — folder tabs render a FolderViewer,
    *  terminal tabs render TerminalPanelBridge (T2 takeover: workspace terminals are hosted by
    *  the command extension),
    *  dock tabs render a docked extension panel (floating-dock extension v0.5.0: id "dock:<extId>:<itemId>"),
-   *  agent tabs render the read-only subagent transcript viewer (right-panel tab) */
-  kind?: "file" | "folder" | "terminal" | "dock" | "agent";
+   *  agent tabs render the read-only subagent transcript viewer (right-panel tab),
+   *  side tabs render the upstream side-chat panel (SessionChatPanel, #1469) */
+  kind?: "file" | "folder" | "terminal" | "dock" | "agent" | "side";
   /** Pinned marker (maintained by the extension; core only passes it through — no eviction/close policy in core) */
   pinned?: boolean;
   /** Close/restart in progress (terminal tab: the raw "close"/"restart" value is passed through
@@ -190,6 +191,8 @@ interface Props {
    *  undefined, keeping the old behavior (scroll on any activeTabId / tabsKey change, for
    *  callers that do not use the token). */
   revealToken?: number;
+  /** Drag-reorder tabs (upstream #1511): source/target ids + whether the drop landed after the target. */
+  onReorderTab?: (source: string, target: string, after: boolean) => void;
 }
 
 /** Context menu items (tab-detach v0.6.2): file/folder/terminal → detach into a window;
@@ -202,9 +205,11 @@ interface CtxMenu {
   y: number;
 }
 
-export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab, onOpenViewerWindow, onDockFileTab, revealToken }: Props) {
+export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab, onOpenViewerWindow, onDockFileTab, revealToken, onReorderTab }: Props) {
   const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
+  const draggedId = useRef<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; after: boolean } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<CtxMenu | null>(null);
   /** File tab ⇱ position menu (2026-09-16): a dock tab's ⇱ goes through the floating-dock
    *  extension; a file tab is not a dock face and has no swappable dock position — the menu
@@ -407,14 +412,14 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
       className="tabbar-scroll"
       style={{
         // The scrollbar is hidden (globals.css): it would take its height out
-        // of the 36px bar, squeezing the tabs or clipping their tops (#1225).
+        // of the bar (--top-bar-height), squeezing the tabs or clipping their tops (#1225).
         display: "flex",
         alignItems: "stretch",
         background: "var(--bg-panel)",
         overflowX: "auto",
         overflowY: "hidden",
         flexShrink: 0,
-        height: 36,
+        height: "var(--top-bar-height)",
       }}
     >
       {canScrollLeft && (
@@ -454,8 +459,37 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
             key={tab.id}
             data-tab-id={tab.id}
             role="tab"
-            aria-label={tab.kind === "terminal" ? t("terminal.tabLabel", { name: tab.label }) : tab.kind === "agent" ? t("subagent.tabLabel", { name: tab.label }) : tab.label}
+            aria-label={tab.kind === "terminal" ? t("terminal.tabLabel", { name: tab.label }) : tab.kind === "agent" ? t("subagent.tabLabel", { name: tab.label }) : tab.kind === "side" ? t("sideChat.tabLabel") : tab.label}
             aria-selected={isActive}
+            draggable={Boolean(onReorderTab)}
+            onDragStart={(event) => {
+              if (!onReorderTab) return;
+              draggedId.current = tab.id;
+              event.dataTransfer.effectAllowed = "move";
+              event.dataTransfer.setData("text/plain", tab.id);
+            }}
+            onDragOver={(event) => {
+              if (!draggedId.current || draggedId.current === tab.id) return;
+              event.preventDefault();
+              event.dataTransfer.dropEffect = "move";
+              const rect = event.currentTarget.getBoundingClientRect();
+              const after = event.clientX >= rect.left + rect.width / 2;
+              setDropTarget((prev) => prev?.id === tab.id && prev.after === after ? prev : { id: tab.id, after });
+            }}
+            onDrop={(event) => {
+              if (!draggedId.current || draggedId.current === tab.id) return;
+              event.preventDefault();
+              event.stopPropagation();
+              const rect = event.currentTarget.getBoundingClientRect();
+              onReorderTab?.(draggedId.current, tab.id, event.clientX >= rect.left + rect.width / 2);
+              draggedId.current = null;
+              setDropTarget(null);
+            }}
+            onDragLeave={(event) => {
+              if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+              setDropTarget((prev) => prev?.id === tab.id ? null : prev);
+            }}
+            onDragEnd={() => { draggedId.current = null; setDropTarget(null); }}
             tabIndex={isActive || (!activeTabId && tabs[0].id === tab.id) ? 0 : -1}
             onKeyDown={(event) => {
               if (event.target !== event.currentTarget) return;
@@ -505,6 +539,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
               flexShrink: 0,
               userSelect: "none",
               transition: "background 0.1s, color 0.1s",
+              boxShadow: dropTarget?.id === tab.id ? `inset ${dropTarget.after ? "-2px" : "2px"} 0 var(--accent)` : undefined,
             }}
           >
             <span style={{ flexShrink: 0, opacity: isActive ? 1 : 0.7, display: "flex", alignItems: "center" }}>
@@ -521,6 +556,10 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
               ) : tab.kind === "agent" ? (
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
+                </svg>
+              ) : tab.kind === "side" ? (
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M21 12a8 8 0 0 1-8 8H5.5a2 2 0 0 1-1.4-3.4A8 8 0 1 1 21 12z" />
                 </svg>
               ) : getFileIcon(tab.label, 13)}
             </span>
@@ -604,6 +643,8 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onDetachTab
               </button>
             )}
             <button
+              draggable={false}
+              onDragStart={(event) => event.stopPropagation()}
               disabled={Boolean(tab.closing)}
               onClick={(e) => { e.stopPropagation(); onCloseTab(tab.id); }}
               onMouseEnter={() => setHoveredClose(tab.id)}

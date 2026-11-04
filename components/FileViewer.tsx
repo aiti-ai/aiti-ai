@@ -27,6 +27,7 @@ import {
 import { usePrismLanguages } from "@/hooks/usePrismLanguages";
 import { encodeFilePathForApi, getFileDirectory, getFileName, getRelativeFilePath } from "@/lib/file-paths";
 import { fileVersion, fileVersionChanged } from "@/lib/file-version";
+import { injectSandboxedHtmlPolyfill } from "@/lib/html-sandbox-polyfill";
 import { HIDDEN_PAGE_GRACE_MS, usePageHiddenFor } from "@/hooks/usePageHidden";
 import { pageId, trackEventSource } from "@/lib/page-debug";
 import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
@@ -46,6 +47,7 @@ import { useConnStarvation } from "@/hooks/useConnStarvation";
 import { openFileWatchBus } from "@/lib/file-watch-client";
 import {
   resolveInitialFileDisplayMode,
+  resolveInitialWrapLines,
   type FileViewerDisplayMode as DisplayMode,
   type FileViewerState,
 } from "@/lib/file-viewer-state";
@@ -129,6 +131,20 @@ const FILE_LINE_NUMBER_STYLE: CSSProperties = {
   userSelect: "none",
   flexShrink: 0,
   verticalAlign: "top",
+};
+
+// The pinned gutter is the same column, pinned to the left edge of the
+// viewer's `overflow: auto` content box above the tokens that slide behind it.
+// The browser repositions every sticky number on each scroll, vertical too, so
+// only views of at most SOURCE_HIGHLIGHT_MAX_LINES rows pin it: the highlighted
+// Source view and a diff that short. Pinned, a 24,000-line log in the plain
+// fallback scrolled with 50-67 ms frames; it and longer diffs keep the plain
+// gutter.
+const FILE_PINNED_LINE_NUMBER_STYLE: CSSProperties = {
+  ...FILE_LINE_NUMBER_STYLE,
+  position: "sticky",
+  left: 0,
+  zIndex: 1,
 };
 
 type SourceCodeRendererProps = Parameters<NonNullable<SyntaxHighlighterProps["renderer"]>>[0] & {
@@ -343,7 +359,7 @@ function diffLines(patch: string): Array<DiffLine | DiffGap> {
   return files.flatMap(unifiedDiffLines);
 }
 
-function DiffView({ patch }: { patch: string }) {
+function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
   const { t } = useI18n();
   const diff = diffLines(patch);
 
@@ -366,6 +382,9 @@ function DiffView({ patch }: { patch: string }) {
       visible.add(j);
     }
   }
+  const lineNumberStyle = visible.size <= SOURCE_HIGHLIGHT_MAX_LINES
+    ? FILE_PINNED_LINE_NUMBER_STYLE
+    : FILE_LINE_NUMBER_STYLE;
 
   // Collapsed lines and the lines the patch leaves out between hunks share one
   // marker; its count is unknown when a gap's is.
@@ -397,7 +416,7 @@ function DiffView({ patch }: { patch: string }) {
     <div
       className="file-diff-view"
       style={{
-        width: "max-content",
+        width: wrapLines ? "100%" : "max-content",
         minWidth: "100%",
         ...FILE_CODE_STYLE,
       }}
@@ -449,7 +468,7 @@ function DiffView({ patch }: { patch: string }) {
               }}
             >
               <span
-                style={FILE_LINE_NUMBER_STYLE}
+                style={lineNumberStyle}
               >
                 {line.type === "removed" ? line.oldLineNo : line.newLineNo}
               </span>
@@ -468,9 +487,11 @@ function DiffView({ patch }: { patch: string }) {
               <span
                 className="file-diff-line-content"
                 style={{
-                  flexShrink: 0,
+                  flexShrink: wrapLines ? 1 : 0,
+                  minWidth: 0,
                   padding: "0 8px 0 0",
-                  whiteSpace: "pre",
+                  whiteSpace: wrapLines ? "pre-wrap" : "pre",
+                  overflowWrap: wrapLines ? "anywhere" : "normal",
                   color: "var(--text)",
                 }}
               >
@@ -1353,7 +1374,7 @@ function TextFileViewer({
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestedInitialDisplayMode = resolveInitialFileDisplayMode(initialState, initialDisplayMode);
-  const initialWrapLines = initialState?.wrapLines ?? false;
+  const initialWrapLines = resolveInitialWrapLines(initialState, filePath);
   const initialScrollTop = initialState?.scrollTop ?? 0;
   const initialScrollLeft = initialState?.scrollLeft ?? 0;
   const [displayMode, setDisplayMode] = useState<DisplayMode>(requestedInitialDisplayMode);
@@ -1381,6 +1402,8 @@ function TextFileViewer({
   });
   const onStateChangeRef = useRef(onStateChange);
   const [selectedLineRange, setSelectedLineRange] = useState<SelectedLineRange | null>(null);
+  // Whole file for an HTML preview whose source view is still chunked (upstream #1494).
+  const [htmlFull, setHtmlFull] = useState<{ text?: string; error?: string } | null>(null);
 
   onStateChangeRef.current = onStateChange;
 
@@ -1593,6 +1616,31 @@ function TextFileViewer({
     }
   }, [data, isDelimitedTable, updateDisplayMode]);
 
+  // Large HTML: the source view loads chunks, but a half document cannot
+  // render, so the preview fetches the whole file once (upstream #1494; fork
+  // channel: the ticket contract's download type — the path never enters a URL).
+  const needsHtmlFull = displayMode === "preview"
+    && data?.language === "html"
+    && data.truncated
+    && data.size <= HTML_PREVIEW_MAX_BYTES;
+  useEffect(() => {
+    if (!needsHtmlFull) {
+      setHtmlFull(null);
+      return;
+    }
+    let alive = true;
+    fetchFileGet(filePath, "download", sourceSessionId)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const text = await r.text();
+        if (alive) setHtmlFull({ text });
+      })
+      .catch((e) => {
+        if (alive) setHtmlFull({ error: String(e) });
+      });
+    return () => { alive = false; };
+  }, [needsHtmlFull, data, filePath, sourceSessionId]);
+
   const hasGitDiff = gitDiff?.supported === true && typeof gitDiff.patch === "string";
   const isDeletedDiff = hasGitDiff && gitDiff.status === "deleted";
 
@@ -1638,6 +1686,13 @@ function TextFileViewer({
     ? !!data && (!data.truncated || data.size <= HTML_PREVIEW_MAX_BYTES)
     : isMarkdown && !data?.truncated);
   const effectiveDisplayMode = isDeletedDiff ? "diff" : displayMode;
+  const rawHtml = data?.truncated ? htmlFull?.text : viewerContent;
+  const htmlPreview = useMemo(
+    () => isHtml && effectiveDisplayMode === "preview" ? injectSandboxedHtmlPolyfill(rawHtml ?? "") : "",
+    [isHtml, effectiveDisplayMode, rawHtml],
+  );
+  // A partly loaded HTML file previews whole, so Load more belongs to its source view.
+  const showLoadMore = !!data?.truncated && !(isHtml && effectiveDisplayMode === "preview");
   const useLightweightSource = sourceLines.length > SOURCE_HIGHLIGHT_MAX_LINES
     && !(effectiveDisplayMode === "diff" && hasGitDiff)
     && !(effectiveDisplayMode === "preview" && hasPreview);
@@ -1659,7 +1714,7 @@ function TextFileViewer({
         style={isDark ? fileViewerDarkTheme : vs}
         showLineNumbers
         lineNumberStyle={{
-          ...FILE_LINE_NUMBER_STYLE,
+          ...FILE_PINNED_LINE_NUMBER_STYLE,
         }}
         customStyle={{
           margin: 0,
@@ -1934,7 +1989,7 @@ function TextFileViewer({
                 <MentionIcon />
               </button>
             )}
-            {effectiveDisplayMode === "source" && !isBinary && (
+            {(effectiveDisplayMode === "source" || effectiveDisplayMode === "diff") && !isBinary && (
               <>
                 <button
                   type="button"
@@ -1963,7 +2018,7 @@ function TextFileViewer({
         </div>
       </div>
 
-      {data?.truncated && (
+      {showLoadMore && data?.truncated && (
         <div
           className="file-viewer-load-more"
           style={{
@@ -2001,13 +2056,17 @@ function TextFileViewer({
           viewerStateRef.current.scrollTop = event.currentTarget.scrollTop;
           viewerStateRef.current.scrollLeft = event.currentTarget.scrollLeft;
         }}
-        style={{ flex: 1, overflow: "auto", background: "var(--bg)", paddingBottom: data?.truncated ? 48 : undefined }}
+        style={{ flex: 1, overflow: "auto", background: "var(--bg)", paddingBottom: showLoadMore ? 48 : undefined }}
       >
         {effectiveDisplayMode === "diff" && hasGitDiff ? (
-          <DiffView patch={gitDiff.patch!} />
+          <DiffView patch={gitDiff.patch!} wrapLines={wrapLines} />
+        ) : isHtml && effectiveDisplayMode === "preview" && data?.truncated && !htmlFull?.text ? (
+          <div style={{ padding: 24, color: "var(--text-dim)", fontSize: 12 }}>
+            {htmlFull?.error ?? t("i18n.loading")}
+          </div>
         ) : isHtml && effectiveDisplayMode === "preview" ? (
           <iframe
-            srcDoc={content}
+            srcDoc={htmlPreview}
             sandbox="allow-scripts"
             style={{ width: "100%", height: "100%", border: "none", background: "var(--bg)" }}
              title={t("i18n.htmlPreview")}

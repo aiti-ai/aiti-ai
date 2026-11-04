@@ -7,7 +7,7 @@ import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } 
 import { buildTicketUrl } from "@/lib/file-tickets";
 import { encodeFilePathForApi } from "@/lib/file-paths";
 import { isAudioPath, isVideoPath } from "@/lib/file-types";
-import { createMarkdownUrlTransform, isExternalMarkdownHref, jumpToMarkdownFragment, markdownRehypePlugins, markdownRemarkPlugins, markdownUserRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
+import { createMarkdownUrlTransform, isExternalMarkdownHref, jumpToMarkdownFragment, markdownDocumentRehypePlugins, markdownRehypePlugins, markdownRemarkPlugins, markdownTextLayoutRemarkPlugins, markdownUserRemarkPlugins, normalizeDisplayMath, escapeRawHtmlTags } from "@/lib/markdown";
 import { useMathMarkdownPlugins } from "@/lib/use-math-plugins";
 import { ImagePreview } from "./ImagePreview.tsx";
 import { MermaidBlock, CodeBlock } from "./MermaidBlock.tsx";
@@ -37,6 +37,8 @@ interface MarkdownBodyProps {
   onNavigateLink?: (href: string) => void;
   /** Text the user typed: every line ending is a line break and raw HTML shows as text, as in pi's TUI. */
   keepLineBreaks?: boolean;
+  /** An extension's custom message: keepLineBreaks, plus each paragraph line's indent, as in pi's TUI. */
+  keepTextLayout?: boolean;
 }
 
 /** Click candidates among semantic blocks (core only provides the render shell; which tags are clickable is declared via extension handler.tags) */
@@ -67,7 +69,7 @@ function MathDisplay({ source, children }: { source: string; children: ReactNode
   );
 }
 
-export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, onNavigateLink, keepLineBreaks, messageRole, sessionId, messageId }: MarkdownBodyProps) {
+export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile, onNavigateLink, keepLineBreaks, keepTextLayout, messageRole, sessionId, messageId }: MarkdownBodyProps) {
   const normalizedMarkdown = useMemo(() => {
     const normalized = normalizeDisplayMath(children);
     // User chat text can start with / embed raw HTML tags as paste artifacts
@@ -109,8 +111,8 @@ export function MarkdownBody({ children, className, isStreaming, cwd, onOpenFile
   // Upstream keepLineBreaks (typed line breaks in user messages): swap in the plugin list containing remarkKeepLineBreaks, math plugins are still appended on demand
   const { remark: activeRemarkPlugins, rehype: activeRehypePlugins } = useMathMarkdownPlugins(
     renderText,
-    keepLineBreaks ? markdownUserRemarkPlugins : markdownRemarkPlugins,
-    markdownRehypePlugins,
+    keepTextLayout ? markdownTextLayoutRemarkPlugins : keepLineBreaks ? markdownUserRemarkPlugins : markdownRemarkPlugins,
+    onNavigateLink ? markdownDocumentRehypePlugins : markdownRehypePlugins,
   );
   // data:image and desktop-app links are allowed in both branches (img src → preview/viewer); file: only when an in-app file handler exists
   const urlTransform = useMemo(() => createMarkdownUrlTransform(Boolean(onOpenFile)), [onOpenFile]);
