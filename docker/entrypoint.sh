@@ -67,8 +67,8 @@ elif [ ! -f "$AGENT_DIR/settings.json" ]; then
   "packages": [
     "npm:pi-mcp-adapter",
     "npm:@aiti-ai/pi-subagents",
-    "npm:pi-models-combo",
-    "npm:pi-git-trace",
+    "npm:@aiti-ai/pi-models-combo",
+    "/opt/aiti/pi-plugins/pi-git-trace",
     "npm:pi-opencode-free",
     "npm:pi-freeflow"
   ]

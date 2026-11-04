@@ -83,6 +83,8 @@ RUN cd /opt/aiti/app \
 COPY pi-web-ext /opt/aiti/src/pi-web-ext
 COPY packages /opt/aiti/src/packages
 COPY pi-ext /opt/aiti/src/pi-ext
+# pi 插件源持久化（本地路径安装用；pi-git-trace 从未发 npm，settings 六件以本地路径引用）
+COPY pi-ext /opt/aiti/pi-plugins
 COPY docker/scripts/deploy-extensions.sh /opt/aiti/src/deploy-extensions.sh
 # demo/demo-lazy/crash-fatal/dev-exts 等开发样例不进生产镜像（方案 §8.1 白名单排除）
 RUN cd /opt/aiti/src && bash deploy-extensions.sh /opt/aiti/extensions \
