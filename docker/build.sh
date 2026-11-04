@@ -16,7 +16,7 @@ REPO_ROOT="$(cd "$HERE/.." && pwd)"
 PI_WEB_SRC="${PI_WEB_SRC:-$REPO_ROOT}"           # app 源码 = 本仓根
 PI_WEB_EXT_SRC="${PI_WEB_EXT_SRC:-$REPO_ROOT/extensions}"  # 扩展 = 本仓移植镜像
 PACKAGES_SRC="${PACKAGES_SRC:-$REPO_ROOT/packages}"        # aiti-bridge 链
-PI_EXT_SRC="${PI_EXT_SRC:-$REPO_ROOT/pi-plugins}"          # pi 插件（models-combo/git-trace/plan-sandbox/private-plugin）
+PI_EXT_SRC="${PI_EXT_SRC:-$REPO_ROOT/pi-plugins}"          # pi 插件（models-combo/git-trace/plan-sandbox；qoder 系私有插件保留在 pi-work，不入本仓）
 JUSTGET_SRC="${JUSTGET_SRC:-$HOME/workspace/justget}"
 
 TARGET="core"
