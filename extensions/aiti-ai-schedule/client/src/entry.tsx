@@ -6,10 +6,16 @@
  */
 import { __setCtx } from "./host-shim";
 import { SchedulePageSlot, ScheduleDockRight, ScheduleDockSidebar, SCHED_KEY } from "./schedule-app";
-import { seedDockDefault, sidebarZoneOf, declareDockZones } from "../../../_shared/ext-float-dock";
+import { seedDockDefault, sidebarZoneOf, declareDockZones, presentState, present } from "../../../_shared/ext-float-dock";
 
 const OPEN_EVENT = "aiti-ai-schedule:open";
 function requestOpen(prefill?: Record<string, unknown>) {
+  // 事件只被「已挂载的 face」接收（pages/dock face 组件内监听）。面板从未打开过时
+  // 没有任何 face 在听——工具条/应用中心入口必须先经 present 状态机把 dock face 拉起
+  // （DockStack 按 present 态按需挂载 face），再广播事件（已挂载 face 消费 prefill）。
+  try {
+    if (presentState(SCHED_KEY) === "closed") present(SCHED_KEY, `dock:${sidebarZoneOf(SCHED_KEY)}`);
+  } catch { /* 忽略（降级层缺席时仍走事件） */ }
   try { window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: prefill || null })); } catch { /* 忽略 */ }
 }
 
