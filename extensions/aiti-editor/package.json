@@ -1,0 +1,37 @@
+{
+  "name": "@aiti-ai/aiti-editor",
+  "version": "1.0.0",
+  "description": "文件编辑器 —— 接管 fileViewer 插槽的可扩展编辑器（Monaco 编辑文本类文件，非文本交回核心查看器）+ 保存冲突 409 与白名单/大小校验",
+  "main": "index.js",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs",
+    "check:vendor": "node tools/check-vendor-version.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.3",
+    "exifr": "^7.1.3",
+    "js-yaml": "^5.3.0",
+    "sql-formatter": "^15.8.2",
+    "tar-stream": "^3.2.0",
+    "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "marked": "15.0.12",
+    "mermaid": "11.16.1",
+    "monaco-editor": "^0.56.0",
+    "vite": "^6.4.3"
+  },
+  "soul": "看到不对的代码，当场就能改——不用切出去开 IDE。",
+  "aitiConfigs": {
+    "configFiles": [
+      "editor-prefs.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}
