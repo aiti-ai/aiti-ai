@@ -311,6 +311,17 @@ components/（aiti 扩展插槽，合入上游组件清单之后）：
 
 ---
 
+## extensions/（移植的 pi-web 扩展包）
+
+`extensions/` 是从内部开发仓 pi-work（`pi-web-ext/`）单向镜像来的 pi-web 扩展包集合（aiti 生态：外部 agent 接入、service-tunnels、session-manager、编辑器、终端等），供 extman 以本地路径/git 来源安装。**不是本 Next.js 应用的一部分**：tsc/eslint 均已排除（`tsconfig.json` exclude、`eslint.config.mjs` ignores），`next build` 不触及。
+
+- **单向快照，禁止手改**：修 bug 一律回 pi-work 源仓改，再跑其 `scripts/sync-extensions-to-aiti-ai.mjs` 重新镜像（同步时自动做机械脱敏：私有 registry URL、内部域名/IP/端口/用户路径中性化）。
+- **目录形态**：每扩展独立 package（`node_modules`/`dist` 已 gitignore）；使用前先在各扩展目录 `npm install && npm run build:client`（如有 client）。
+- `_shared/` 是扩展共享层（`@aiti-ai/ext-shared`，多扩展运行时依赖），`sm-demo-source/` 是 session-manager 第三方 agent source 接入模板。
+- service-tunnels 曾约定不入本仓，已随 master-plan M0④「公开化」解除。
+
+---
+
 ## Topic Notes
 
 Design decisions and traps live in `docs/agents/`, one note per area. Read every note whose files a change touches before making it. Add new notes to the area's file, not here.
