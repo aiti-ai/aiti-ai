@@ -1,0 +1,23 @@
+{
+  "name": "@aiti-ai/aiti-acp-agent",
+  "version": "0.3.0",
+  "type": "module",
+  "description": "Generic ACP driver — one adapter for all Agent Client Protocol agents",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "协议统一了，适配器只需要写一次。",
+  "aitiConfigs": {
+    "configFiles": [
+      "acp-agents.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0",
+  "dependencies": {
+    "@aiti-ai/ext-shared": "^0.1.7"
+  }
+}
