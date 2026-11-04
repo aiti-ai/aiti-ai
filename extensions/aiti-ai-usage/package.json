@@ -1,0 +1,20 @@
+{
+  "name": "@aiti-ai/aiti-ai-usage",
+  "version": "0.1.0",
+  "type": "module",
+  "homepage": "https://aiti.pw/extensions/session-manager.html",
+  "description": "AI token 用量统计扩展（provider/model/key/session 四维报表，日/月双粒度）",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "用量不是账单来了才知道——每一枚 token 都该有去向。",
+  "aitiConfigs": {
+    "configFiles": []
+  },
+  "aitiExtProtocol": "1.0"
+}
