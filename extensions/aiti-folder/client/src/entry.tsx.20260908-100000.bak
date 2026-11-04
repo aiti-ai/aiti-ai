@@ -1,0 +1,59 @@
+/**
+ * aiti-folder · client 入口（JSX + TypeScript + vite 构建）。
+ *
+ * 注册两项（均复用核心端点）：
+ *  - fileViewer 项 aiti-folder：match kind==="folder" → FolderBrowser
+ *  - pathPicker 项 aiti-folder-picker：FolderSwitcher（能力，不切 cwd）
+ *
+ * 开放点：window.__aitiFolder.registerAction（其他扩展注册目录级工具条按钮）
+ * [懒加载 v2 D3] 薄入口拆包：FolderBrowser（~113K）按需 import()；本文件 + pathPicker
+ * + registerAction 开放点为薄入口（~8K），随启动物化即时可用。
+ *
+ * 构建：node tools/build-client.mjs   （或 npm run build:client）
+ * 部署：node tools/deploy.mjs         （自动先构建再拷贝）
+ */
+import { useState, useEffect } from "react";
+import { __setCtx } from "./host-shim";
+import { registerAction } from "./folder-actions";
+import { FolderSwitcher } from "./folder-switcher";
+
+// [懒加载 v2 D3 拆包] FolderBrowser（目录树/预览，~113K 大头）按需 import()：
+// 薄入口（本文件 + pathPicker + registerAction 开放点）随启动物化即时可用；
+// 首次真正渲染目录 tab 时才拉重 chunk（加载期返回 null——接管判定已由 match 先行命中）。
+let FolderBrowserComp: ((props: Record<string, unknown>) => unknown) | null = null;
+function FolderBrowserLazy(props: Record<string, unknown>) {
+  const [, force] = useState(0);
+  useEffect(() => {
+    // 每个实例独立等 import 完成后各自唤醒（同 URL 模块加载浏览器天然去重；
+    // 不设全局 loading 标志——否则并发挂载的第二个实例永远等不到重渲染）
+    let alive = true;
+    import("./folder-browser").then((m) => {
+      if (!alive) return;
+      FolderBrowserComp = (p: Record<string, unknown>) => m.FolderBrowser(p);
+      force((n) => n + 1);
+    });
+    return () => { alive = false; };
+  }, []);
+  return FolderBrowserComp ? FolderBrowserComp(props) : null;
+}
+
+// 开放点暴露（其他扩展注册目录级工具条按钮；aiti-git-review 的「审此目录」用它）
+try { (window as any).__aitiFolder = { registerAction }; } catch { /* noop */ }
+
+export default function register(ctx: Record<string, unknown>) {
+  // 重要：必须在任何 JSX 组件渲染前调用（host-shim 模块级持 ctx）
+  __setCtx(ctx);
+
+  ctx.registerItems?.("fileViewer", [{
+    id: "aiti-folder",
+    render: (props: Record<string, unknown>) => <FolderBrowserLazy {...props} />,
+    meta: { label: "文件夹", title: "aiti-folder: folder browser", match: (_fp: unknown, opts: any) => opts && opts.kind === "folder" },
+  }]);
+  ctx.registerItems?.("pathPicker", [{
+    id: "aiti-folder-picker",
+    render: (props: Record<string, unknown>) => <FolderSwitcher {...(props as any)} />,
+    meta: { label: "目录选择", title: "aiti-folder: directory switcher (no cwd change)" },
+  }]);
+
+  try { console.log("[aiti-folder] client 已挂载（fileViewer 文件夹接管 + pathPicker 目录选择器 + registerAction 开放点）"); } catch { /* noop */ }
+}
