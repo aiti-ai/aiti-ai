@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-store">
+<title>创建调试会话 · aiti-cpu-meter</title>
+<style>
+  :root { color-scheme: dark; }
+  body { font-family: ui-monospace, Menlo, Consolas, monospace; margin: 0; min-height: 100vh;
+         display: flex; align-items: center; justify-content: center; background: #0a0a0a; color: #7CFF7C; }
+  .card { max-width: 480px; width: min(480px, 92vw); margin: 24px; padding: 28px 26px;
+          background: rgba(16,16,16,.96); border: 1px solid #1a3; border-radius: 12px;
+          box-shadow: 0 8px 30px rgba(0,0,0,.55); text-shadow: 0 0 4px rgba(124,255,124,.35); }
+  h1 { font-size: 17px; margin: 0 0 10px; }
+  p { font-size: 13px; line-height: 1.7; color: rgba(124,255,124,.85); margin: 0 0 8px; word-break: break-all; }
+  .sub { font-size: 11px; color: rgba(255,255,255,.45); }
+  #err { display: none; font-size: 12px; line-height: 1.6; color: #FF7B7B;
+         background: rgba(255,60,60,.08); border: 1px solid rgba(255,120,120,.35);
+         border-radius: 8px; padding: 10px 12px; margin: 10px 0 4px; white-space: pre-wrap; word-break: break-all; }
+  button { cursor: pointer; border: 1px solid rgba(124,255,124,.5); background: rgba(20,120,40,.3);
+           color: #7CFF7C; border-radius: 7px; padding: 7px 14px; font: 12px ui-monospace, Menlo, monospace; margin: 10px 8px 0 0; }
+  button:hover { background: rgba(20,120,40,.55); color: #fff; }
+  .spin { display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(124,255,124,.3);
+          border-top-color: #7CFF7C; border-radius: 50%; animation: sp 1s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes sp { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1 id="h"><span class="spin"></span>正在创建调试会话…</h1>
+  <p id="msg">已通过登录认证，正在与发起页面握手获取检测数据。</p>
+  <p class="sub">aiti-cpu-meter · 页面卡顿调试——本页仅把你在检测器里填写的内容转发给已登录的 AI 服务。</p>
+  <div id="err"></div>
+  <button id="retry" hidden type="button">重试</button>
+  <button id="close" hidden type="button">关闭此页</button>
+</div>
+<script>
+(function () {
+  'use strict';
+  var h = document.getElementById('h'), msg = document.getElementById('msg'), err = document.getElementById('err');
+  function fail(text) {
+    h.textContent = '❌ 创建失败';
+    msg.textContent = '';
+    err.style.display = 'block'; err.textContent = text;
+    document.getElementById('retry').hidden = false;
+    document.getElementById('close').hidden = false;
+  }
+  document.getElementById('close').addEventListener('click', function () { try { window.close(); } catch (e) {} });
+  document.getElementById('retry').addEventListener('click', function () { location.reload(); });
+
+  // 数据经 postMessage 从发起页（opener）获取——prompt/report 不进 URL（nginx 日志/历史记录零残留）。
+  // 握手：本页 ready → opener 回 payload（校验 source===opener，防第三方窗口塞数据）。
+  // 未登录场景：Authelia 302 登录页 → 登录后 rd 回跳本页 → opener 引用跨导航保留 → 握手照常。
+  function start(d) {
+    var prompt = String(d.prompt || '').slice(0, 4000);
+    if (!prompt) { fail('缺少 prompt——请从检测器「问 AI」弹窗重新发起。'); return; }
+    h.innerHTML = '<span class="spin"></span>正在创建调试会话…';
+    msg.textContent = '已通过登录认证，正在建立 AI 调试会话。';
+    // 同源 POST（相对路径自动带 basePath；credentials 同源默认带会话 cookie）
+    fetch('ask-ai', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        prompt: prompt,
+        report: String(d.report || '{}'),
+        url: String(d.url || ''),
+        title: String(d.title || ''),
+        scriptUrl: String(d.scriptUrl || ''),
+        base: location.origin,
+        ts: Number(d.ts) || Date.now(),
+      }),
+    }).then(function (r) {
+      return r.json().catch(function () { return { ok: false, error: 'HTTP ' + r.status }; });
+    }).then(function (d2) {
+      if (d2 && d2.ok && d2.url) {
+        h.textContent = '✅ 会话已创建';
+        msg.textContent = '正在跳转 AI 调试会话…';
+        setTimeout(function () { location.href = d2.url; }, 600);
+      } else {
+        fail((d2 && d2.error) || '未知错误');
+      }
+    }).catch(function (e) {
+      fail('网络失败：' + String(e).slice(0, 140));
+    });
+  }
+
+  function onPayload(ev) {
+    if (ev.source !== window.opener) return; // 只认发起窗口（防任意页面塞数据）
+    var d = ev.data;
+    // 消息命名空间化（type 不用裸词，防与页面其他 message 监听撞车）；nonce 防多窗口/重发错配
+    if (!d || d.source !== 'aiti-cpu-meter-gate-ack' || d.type !== 'aiti-cpu-meter:gate-payload' || d.nonce !== nonce) return;
+    window.removeEventListener('message', onPayload);
+    clearTimeout(readyT);
+    start(d);
+  }
+  window.addEventListener('message', onPayload);
+
+  if (!window.opener || window.opener.closed) {
+    fail('本页需从检测器「问 AI」弹窗发起——请回到来源页面重新操作。');
+    return;
+  }
+  // ready + 重发兜底（opener 监听器安装/消息丢失竞态；同 boot 补发先例）——收到 payload 即停
+  var tries = 0, readyT = 0;
+  var nonce = Math.random().toString(36).slice(2) + Date.now().toString(36);
+  function announce() {
+    if (tries >= 4) return;
+    tries++;
+    try { window.opener.postMessage({ source: 'aiti-cpu-meter-gate', type: 'aiti-cpu-meter:gate-ready', nonce: nonce }, '*'); } catch (e) {}
+    readyT = setTimeout(announce, 1200);
+  }
+  announce();
+})();
+</script>
+</body>
+</html>
