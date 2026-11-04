@@ -3,7 +3,10 @@ import typescript from "eslint-config-next/typescript";
 
 const eslintConfig = [
   // demo/ is a separate Next.js project with its own lint config.
-  { ignores: ["demo/**"] },
+  // extensions/ hosts the ported pi-web extension packages (aiti-packages mirror from
+// aiti-ai). They are independent projects with their own build/lint lifecycle —
+// same policy as demo/. See AGENTS.md "extensions/".
+  { ignores: ["demo/**", "extensions/**"] },
   ...coreWebVitals,
   ...typescript,
   {
