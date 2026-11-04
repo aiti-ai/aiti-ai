@@ -69,3 +69,6 @@ e2e_*.mjs
 extensions/**/node_modules/
 extensions/**/dist/
 extensions/**/*.tsbuildinfo
+
+# docker build staging (assembled by docker/build.sh)
+.docker-build-context/
