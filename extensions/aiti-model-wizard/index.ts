@@ -1470,6 +1470,46 @@ export default {
           return json({ ok: false, error: "写 models.json 失败: " + ((e && e.message) || e) }, 500);
         }
       }
+      // GET /model-override?provider=X → 该 provider 的 modelOverrides（仅 contextWindow 键）——启用作用域区块覆盖编辑读值用
+      // POST /model-override {provider, model, contextWindow?} → 写/删 providers[id].modelOverrides.contextWindow（G2）：
+      //   managed/builtin provider（订阅/key 型，模型清单运行时定义）无 models.json 模型条目时的唯一写口；
+      //   contextWindow 缺省=删除覆盖；正整数校验（非法 400，原生 ContextWindowError 同语义）；
+      //   空 provider 条目自动清理；一级撤销 + 代理刷新。
+      //   ⚠️ 不设 isOauthManaged 守卫——原生允许订阅登录型 provider 存 overrides-only 条目（isOverridesOnly 归属托管 provider）。
+      if (p[0] === "model-override" && req.method === "GET") {
+        const provider = String(ctx.searchParams.get("provider") || "").trim();
+        if (!provider) return json({ ok: false, error: "需要 provider" }, 400);
+        try {
+          const data: any = (await ctx.core.readModelsConfig()) || { providers: {} };
+          return json({ ok: true, provider, overrides: core.getModelOverrides(data, provider) });
+        } catch (e: any) {
+          return json({ ok: false, error: "读取失败: " + ((e && e.message) || e) }, 500);
+        }
+      }
+      if (p[0] === "model-override" && req.method === "POST") {
+        const b = body || {};
+        const provider = String(b.provider || "").trim();
+        const modelId = String(b.model || "").trim();
+        if (!provider || !modelId) return json({ ok: false, error: "需要 provider + model" }, 400);
+        const raw = b.contextWindow;
+        let value: number | undefined;
+        if (raw !== undefined && raw !== null && raw !== "") {
+          const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+          if (!Number.isSafeInteger(n) || n < 1) return json({ ok: false, error: "上下文窗口需为正整数 tokens（model: " + modelId + "）" }, 400);
+          value = n;
+        }
+        try {
+          const data: any = (await ctx.core.readModelsConfig()) || { providers: {} };
+          const prov = data.providers && data.providers[provider];
+          core.stashUndo(configDir, { [provider]: prov ? JSON.parse(JSON.stringify(prov)) : null });
+          const r = core.setModelOverrideData(data, provider, modelId, value);
+          await ctx.core.writeModelsConfig(r.data);
+          refreshProxiesViaCombo(provider);
+          return json({ ok: true, provider, model: modelId, contextWindow: value ?? null, removed: value === undefined });
+        } catch (e: any) {
+          return json({ ok: false, error: "写 modelOverrides 失败: " + ((e && e.message) || e) }, 500);
+        }
+      }
       // GET /keys?provider= → 某 provider 的 keys（打码，models.json provider.apiKeys）
       // POST /keys {provider, keys: [...]} → 整体替换（空数组=清空）；{provider, action:"remove", name} → 删一个
       if (p[0] === "keys" && req.method === "GET") {

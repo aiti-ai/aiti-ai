@@ -184,6 +184,27 @@ function ManageModelsRow({ onClose }: { onClose?: () => void }) {
   );
 }
 
+/** 设置面板「模型」页签接管（settingsModels 插槽，宿主跳板已实现原地渲染）。
+ *
+ * 薄壳启动即注册零重 chunk 依赖；settingsModels 是 INTERACTIVE_SLOT——设置面板打开才 materialize，
+ * 本组件挂载时才按需 loadHeavy()（向导重 chunk ~480K），加载中给占位。
+ * App embedded=true 铺满 .settings-section-host（height:100% flex 容器，amw-styles 既有规则）；
+ * variant="settings" 剥头部关闭按钮（外层设置面板有自己的 ✕）；cwd 透传（项目作用域 parity，宿主契约 G5）。 */
+function SettingsModelsFace(props: { currentSession?: unknown; cwd?: string | null; onClose?: () => void }) {
+  const [Heavy, setHeavy] = useState<{ App: any } | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let dead = false;
+    loadHeavy()
+      .then((m: any) => { if (!dead) setHeavy({ App: m.App }); })
+      .catch(() => { if (!dead) setFailed(true); });
+    return () => { dead = true; };
+  }, []);
+  if (failed) return <div style={{ padding: 16, fontSize: 12, color: "var(--text-subtle,#888)" }}>模型向导加载失败——刷新页面重试，或在扩展管理检查 aiti-model-wizard 状态。</div>;
+  if (!Heavy) return <div style={{ padding: 16, fontSize: 12, color: "var(--text-subtle,#888)" }}>模型向导加载中…</div>;
+  return <Heavy.App open={true} initialTab="status" initialProvider={null} embedded variant="settings" cwd={props.cwd ?? null} onClose={props.onClose} />;
+}
+
 export default function register(ctx: Record<string, unknown>) {
   // 重要：必须在任何 JSX 组件渲染前调用（host-shim 模块级持 ctx；重 chunk 经 getCtx 读取）
   __setCtx(ctx);
@@ -195,5 +216,8 @@ export default function register(ctx: Record<string, unknown>) {
   // 会话信息插槽条目：薄壳直连版（重 chunk initHeavySlots 注册同 id 完整版幂等覆盖升级）——
   // 没点过 🧙 的会话打开「会话信息」也能看到聚合 / 多key 运行状态。
   ctx.registerItems?.("sessionStats", [{ id: "aiti-model-wizard-multikey-status", render: SessionStatsShell, meta: { label: "聚合 / 多key运行状态" } }]);
+  // 设置面板「模型」页签接管：原地渲染向导（宿主跳板——未注册时原生 ModelsConfig 自动兜底零回归）。
+  // 与工具条 🧙 / modelSelectorFooter 同一打开通路之外的独立入口；重 chunk 首次渲染按需加载。
+  ctx.registerItems?.("settingsModels", [{ id: "aiti-model-wizard-settings", render: SettingsModelsFace, meta: { label: "模型向导" } }]);
   try { console.log("[aiti-model-wizard] 薄壳已挂载（🧙 按钮 + 徽标 + 会话信息聚合/多key状态；向导重 chunk 首次交互按需加载）"); } catch {}
 }
