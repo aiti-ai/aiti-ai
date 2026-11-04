@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Demo A · aiti-devtools opencode 导航测试</title>
+<style>body{font-family:sans-serif;padding:2rem;line-height:1.8}button{font-size:1rem;padding:.5rem 1.2rem;margin:.4rem;cursor:pointer}</style>
+<script>
+// 桥/AI 窗基址：默认 opencode 调试口（免认证直通；8443 为 Authelia 生产口）
+// 本地桥测试可改 http://127.0.0.1:8777（launcher/资产同源，AI 窗退化为 cockpit）
+window.__AITI_BASE__ = "https://opencode.localhost:8442";
+</script>
+</head>
+<body>
+<h1>Demo A</h1>
+<p>本页 id = <b>page-a</b>，已注入 aiti-devtools launcher（来自 <span id="base"></span>）。</p>
+<p>用途：测试 launcher + <b>opencode web UI AI 窗</b> 的完整链路 —— 候选条/占位符/交互卡。</p>
+<button onclick="location.href='page-b.html'">➡️ 跳转到 Demo B</button>
+<button onclick="history.back()">⬅️ 返回</button>
+<button onclick="triggerError()">💥 抛一个错误</button>
+<button onclick="rejectedPromise()">💥 Promise 拒绝</button>
+<script>
+  function triggerError() {
+    try {
+      const x = undefined;
+      x.nonexistentProperty = 1;
+    } catch (e) {
+      console.error('【Demo A · 故意错误】', e);
+      throw e;
+    }
+  }
+  function rejectedPromise() {
+    Promise.reject(new Error('Demo A · 未处理的 Promise 拒绝'));
+  }
+</script>
+<script>
+  const BASE = window.__AITI_BASE__;
+  document.getElementById('base').textContent = BASE;
+  const s = document.createElement('script');
+  s.src = BASE + "/aiti/aiti-launcher.js";
+  s.setAttribute("data-bridge-url", BASE + "/aiti");
+  s.setAttribute("data-ai-url", BASE + "/");
+  document.body.appendChild(s);
+</script>
+</body>
+</html>
