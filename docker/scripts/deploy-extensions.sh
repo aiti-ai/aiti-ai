@@ -26,6 +26,14 @@ if [ ! -d "$SRC_ROOT/node_modules" ]; then
 fi
 BUILD_HOME=/tmp/deploy-home
 mkdir -p "$BUILD_HOME" "$DEST"
+# HOME 重定向后 npm 读不到构建期的全局 ~/.npmrc（registry/@scope 配置丢失 → 私有包 404，
+# 如 service-tunnels 运行时自引用依赖）——按当前 npm 配置落一份等价 .npmrc
+{
+  echo "registry=$(npm config get registry)"
+  _scope=$(npm config get @aiti-ai:registry 2>/dev/null || true)
+  [ -n "$_scope" ] && [ "$_scope" != "null" ] && [ "$_scope" != "undefined" ] && echo "@aiti-ai:registry=$_scope"
+  echo "legacy-peer-deps=true"
+} > "$BUILD_HOME/.npmrc"
 
 # 白名单排除（方案 §8.1）：开发样例/隔离专用/基础设施不进生产镜像
 EXCLUDE="^(_shared|shared|templates|ai-configs|sm-demo-source|demo|demo-lazy|aiti-crash-fatal)$"
