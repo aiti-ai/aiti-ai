@@ -1,0 +1,21 @@
+{
+  "name": "@aiti-ai/aiti-model-check",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "模型可用性管理 UI—— JSX + vite 构建 client bundle",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "模型在不在家，敲门问问它。",
+  "aitiConfigs": {
+    "configFiles": [
+      "config.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}

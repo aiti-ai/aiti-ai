@@ -51,7 +51,7 @@ for (const extDir of targets) {
     console.log("[deploy] 源码 → " + resolve(extDir, f));
   }
   // 工作区共享模块（生效模型清单解析）：与 core.cjs 同目录分发
-  copyFileSync(resolve(root, "../shared/effective-models.cjs"), resolve(extDir, "effective-models.cjs"));
+  copyFileSync(resolve(root, "vendor/effective-models.cjs"), resolve(extDir, "effective-models.cjs"));
   console.log("[deploy] shared/effective-models.cjs → " + resolve(extDir, "effective-models.cjs"));
   // [D1 拆包] 拷主 bundle + 全部 hash 分块（wizard-app 按需 chunk），并清理目标陈旧分块
   {
