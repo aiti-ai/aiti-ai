@@ -5,11 +5,13 @@
  * ACP 兼容 agent，无需逐个适配：
  *
  *   已知后端（启动时探测 PATH，装了才注册——装机才接原则）：
- *     claude-code  claude-code-acp          agentKey "claude"
+ *     claude-code  claude-agent-acp          agentKey "claude"（0.16 旧包名 claude-code-acp 兜底）
  *     gemini       gemini --experimental-acp agentKey "gemini"
  *     opencode     opencode acp              agentKey "opencode"
  *
- * 协议面（v1，2026-08 经 claude-code-acp 0.16 实测）：
+ * 协议面（v1，2026-08 经 claude-code-acp 0.16 实测；2026-11-05 复测
+ * @agentclientprotocol/claude-agent-acp 0.100.0 全握手通过——initialize
+ * image=true、session/new modes、agent_message_chunk/end_turn/usage 同形）：
  *   client→agent: initialize / session/new / session/prompt / session/cancel
  *   agent→client: session/update(update.sessionUpdate="agent_message_chunk")
  *                 session/request_permission（工具授权，client 必须应答）
@@ -115,7 +117,11 @@ const ACP_AGENTS: Array<{
   agentKey?: string;
   resolve?: () => { bin: string; args: string[] } | null;
 }> = [
-  { name: "claude-code", bin: "claude-code-acp", args: [], agentKey: "claude" },
+  // Claude Code ACP：@agentclientprotocol/claude-agent-acp（0.100.0 全握手实证
+  // 2026-11-05：initialize image=true / session/new modes / prompt chunk+end_turn）。
+  // 包已由 @zed-industries/claude-code-acp 更名（bin claude-code-acp → claude-agent-acp），
+  // 新 bin 优先、旧 bin 兜底（旧包未卸的机器照常可接）。
+  { name: "claude-code", bin: "claude-agent-acp", args: [], agentKey: "claude", resolve: resolveClaudeCodeAcp },
   { name: "gemini", bin: "gemini", args: ["--experimental-acp"], agentKey: "gemini" },
   { name: "copilot", bin: "copilot", args: ["--acp"], agentKey: "copilot" },
   { name: "opencode", bin: "opencode", args: ["acp"], agentKey: "opencode" },
@@ -163,6 +169,14 @@ function resolveCodebuddyAcp(): { bin: string; args: string[] } | null {
     return { bin: process.execPath, args: [npxCli, "-y", "@tencent-ai/codebuddy-code", "--acp"] };
   }
   return null;
+}
+
+/** Claude Code ACP 解析：新包名 claude-agent-acp 优先，旧包名 claude-code-acp 兜底。 */
+function resolveClaudeCodeAcp(): { bin: string; args: string[] } | null {
+  const next = which("claude-agent-acp");
+  if (next) return { bin: next, args: [] };
+  const legacy = which("claude-code-acp");
+  return legacy ? { bin: legacy, args: [] } : null;
 }
 
 interface UserAcpAgent {
