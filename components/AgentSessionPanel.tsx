@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/base-path";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { countRunningSubagents, sideChatTitle } from "@/lib/session-family";
@@ -56,7 +57,7 @@ function useAgentUsage(ids: readonly string[], runningKey: string): Record<strin
       if (inFlight) return;
       inFlight = true;
       try {
-        const res = await fetch("/api/sessions/stats", {
+        const res = await fetch(apiUrl("/api/sessions/stats"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ ids: requested }),

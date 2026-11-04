@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/base-path";
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -218,7 +219,7 @@ export function AgentsConfig({
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`/api/subagents/profiles`, {
+      const response = await fetch(apiUrl(`/api/subagents/profiles`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd }),
@@ -257,7 +258,7 @@ export function AgentsConfig({
     setSettingsError(null);
     void (async () => {
       try {
-        const response = await fetch("/api/subagents/settings", {
+        const response = await fetch(apiUrl("/api/subagents/settings"), {
           cache: "no-store",
           signal: controller.signal,
         });
@@ -293,7 +294,7 @@ export function AgentsConfig({
     setModelsError(null);
     void (async () => {
       try {
-        const response = await fetch(`/api/models`, {
+        const response = await fetch(apiUrl(`/api/models`), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cwd }),
@@ -351,7 +352,7 @@ export function AgentsConfig({
     setError(null);
     setSavedOk(false);
     try {
-      const response = await fetch("/api/subagents/profiles", {
+      const response = await fetch(apiUrl("/api/subagents/profiles"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd, scope: targetScope, profile: draft }),
@@ -374,7 +375,7 @@ export function AgentsConfig({
     setSaving(true);
     setError(null);
     try {
-      const response = await fetch("/api/subagents/profiles", {
+      const response = await fetch(apiUrl("/api/subagents/profiles"), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd, scope: selected.scope, name: selected.name }),
@@ -430,7 +431,7 @@ export function AgentsConfig({
     setToggling(true);
     setError(null);
     try {
-      const response = await fetch("/api/subagents/profiles", {
+      const response = await fetch(apiUrl("/api/subagents/profiles"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd, scope: selected.scope, name: selected.name, enabled }),
@@ -451,7 +452,7 @@ export function AgentsConfig({
     setSettingsSaving(true);
     setSettingsError(null);
     try {
-      const response = await fetch("/api/subagents/settings", {
+      const response = await fetch(apiUrl("/api/subagents/settings"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -473,7 +474,7 @@ export function AgentsConfig({
     setMaxConcurrent(value);
     setSettingsError(null);
     try {
-      const response = await fetch("/api/subagents/settings", {
+      const response = await fetch(apiUrl("/api/subagents/settings"), {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ maxConcurrent: value }),

@@ -577,8 +577,8 @@ test("archive keeps an undo snapshot and clears unread markers", () => {
 
 test("lifecycle refreshes bypass the cache while cross-window polling reuses it", () => {
   assert.match(source, /function sessionListUrl\(summary: boolean, force: boolean\)/);
-  assert.match(source, /if \(summary\) return "\/api\/sessions\?summary=1"/);
-  assert.match(source, /if \(force\) return "\/api\/sessions\?force=1"/);
+  assert.match(source, /if \(summary\) return apiUrl\("\/api\/sessions\?summary=1"\)/);
+  assert.match(source, /if \(force\) return apiUrl\("\/api\/sessions\?force=1"\)/);
   assert.match(source, /cache: "no-store"/);
   // First paint uses the cheap summary listing, then hydrates after a delay.
   assert.match(source, /loadSessions\(true, false, true\)/);
@@ -720,7 +720,7 @@ test("Fork copies the row's session on the server and opens the copy where its r
   // a transient session, never through an AgentSession.
   assert.match(source, /const forkingIdsRef = useRef\(new Set<string>\(\)\);/);
   assert.match(fork, /if \(source\.transient \|\| forkingIdsRef\.current\.has\(source\.id\)\) return;\s*forkingIdsRef\.current\.add\(source\.id\);/);
-  assert.match(fork, /fetch\(`\/api\/sessions\/\$\{encodeURIComponent\(source\.id\)\}\/fork`, \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json" \},\s*body: "\{\}",/);
+  assert.match(fork, /fetch\(apiUrl\(`\/api\/sessions\/\$\{encodeURIComponent\(source\.id\)\}\/fork`\), \{\s*method: "POST",\s*headers: \{ "Content-Type": "application\/json" \},\s*body: "\{\}",/);
   assert.doesNotMatch(fork, /sendAgentCommand|handleSessionForked|\/api\/agent/);
   assert.match(fork, /finally \{\s*forkingIdsRef\.current\.delete\(source\.id\);\s*\}/);
   // A refusal says why; a source deleted elsewhere leaves the tree. No forced rescan.

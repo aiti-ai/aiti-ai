@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/base-path";
 import { useEffect, useState, type ReactNode } from "react";
 import { useI18n } from "@/hooks/useI18n";
 import { formatRelativeTime } from "@/lib/i18n/format";
@@ -31,7 +32,7 @@ export function SessionSearch({ open, query, children, selectedSessionId, onSele
     setState({ query: search });
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/sessions/search?${new URLSearchParams({ q: search })}`, { signal: controller.signal });
+        const res = await fetch(apiUrl(`/api/sessions/search?${new URLSearchParams({ q: search })}`), { signal: controller.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json() as SessionSearchResponse;
         if (!controller.signal.aborted) setState({ query: search, response: data });

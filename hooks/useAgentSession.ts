@@ -439,7 +439,7 @@ type SessionLeaseOutcome = SessionLeaseReply | "unanswered" | null;
 // This page's id, the `?holder=` of its event streams: lib/page-debug.ts.
 export { peekPageId };
 function sessionLeaseUrl(sid: string): string {
-  return `/api/agent/${encodeURIComponent(sid)}/lease`;
+  return apiUrl(`/api/agent/${encodeURIComponent(sid)}/lease`);
 }
 // Retry temporary model-list failures without requiring a page refresh.
 const MODELS_RETRY_DELAYS_MS = [2_000, 5_000, 10_000];
@@ -2415,7 +2415,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         if (state.extensionStatuses !== undefined) setExtensionStatuses(state.extensionStatuses ?? []);
         if (state.extensionWidgets !== undefined) setExtensionWidgets(state.extensionWidgets ?? []);
         // The poll leaves the prompt out: read the one the run ended with once, as agent_end does.
-        fetch(`/api/agent/${encodeURIComponent(sid)}`)
+        fetch(apiUrl(`/api/agent/${encodeURIComponent(sid)}`))
           .then((r) => r.ok ? r.json() : null)
           .then((d: { state?: AgentStateResponse } | null) => {
             if (!d || !sessionHookMountedRef.current || sessionIdRef.current !== sid) return;
@@ -4056,7 +4056,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     const load = {};
     allModelsLoadRef.current = load;
     const modelCwd = newSessionCwd ?? session?.cwd ?? "";
-    fetch(`/api/models?scope=all${modelCwd ? `&cwd=${encodeURIComponent(modelCwd)}` : ""}`)
+    fetch(apiUrl(`/api/models?scope=all${modelCwd ? `&cwd=${encodeURIComponent(modelCwd)}` : ""}`))
       .then(async (res) => {
         if (!res.ok) throw new Error(`Failed to load models (HTTP ${res.status})`);
         const d = await res.json() as ModelsResponse;
@@ -4086,7 +4086,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     edit: { provider: string; modelId: string } | { thinkingLevel: ConcreteThinkingLevel },
   ) => {
     const cwd = newSessionCwd ?? session?.cwd;
-    const res = await fetch("/api/models/default", {
+    const res = await fetch(apiUrl("/api/models/default"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...(cwd ? { cwd } : {}), ...edit }),

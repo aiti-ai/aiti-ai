@@ -676,7 +676,7 @@ export function PluginsConfig({
     setCheckingUpdates((current) => new Set([...current, ...keys]));
     if (!pkg) setCheckingAll(true);
     try {
-      const res = await fetch("/api/plugins/check", {
+      const res = await fetch(apiUrl("/api/plugins/check"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -715,7 +715,7 @@ export function PluginsConfig({
     setActionMessage(null);
     setUpdateError(null);
     try {
-      const res = await fetch("/api/plugins", {
+      const res = await fetch(apiUrl("/api/plugins"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action: "update", cwd }),
@@ -805,7 +805,7 @@ export function PluginsConfig({
     const action = enabled ? "enable" : "disable";
     setBusyKey(`bulk:${scope}`);
     try {
-      const res = await fetch("/api/plugins", {
+      const res = await fetch(apiUrl("/api/plugins"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
