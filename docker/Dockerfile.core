@@ -1,0 +1,143 @@
+# aiti/aiti:core —— base 版（aiti-docker-image-plan §3.2）
+# ubuntu:26.04 + Node 22 + 基础工具 + aiti 产物（fork pi-web 生产构建 + 全部扩展 + pi 引擎 + justget + aiti-bridge）
+# 预检已实证（2026-09-08，48 主机）：docker pull ubuntu:26.04 经 registry-mirror 可用——无需 24.04 兜底。
+#
+# 构建上下文 = build.sh 组装的 staging 目录（含 pi-web 源码 / pi-web-ext / packages / justget），
+# 布局见 build.sh 头注释。构建参数见下方 ARG。
+FROM ubuntu:26.04
+
+# 镜像源（默认官方源——GitHub CI/正式发布直用；国内本地构建用 `./docker/build.sh --cn`）。
+# AITI_NPM_REGISTRY = @aiti-ai scope 私仓，**临时**——仅本地测试期使用（私包尚未发公网 npm）：
+#   测试期：build.sh --private-registry https://npm.alot.pw/（或 env AITI_PRIVATE_REGISTRY）
+#   正式发布：不传 = 不配置私仓，@aiti-ai/* 走公网 npm
+ARG APT_MIRROR=""
+ARG NPM_MIRROR=https://registry.npmjs.org
+ARG AITI_NPM_REGISTRY=""
+ARG NODE_MAJOR=22
+ARG TARGETPLATFORM
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8
+
+# ── ① apt 源切国内镜像 + 基础工具 + NodeSource node22 ─────────────────────────
+# ubuntu 26.04 起 apt 源格式为 deb822（/etc/apt/sources.list.d/ubuntu.sources）
+COPY docker/scripts/10-apt-mirror.sh /tmp/10-apt-mirror.sh
+RUN /tmp/10-apt-mirror.sh "${APT_MIRROR}" && rm /tmp/10-apt-mirror.sh
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl wget git unzip zip tar xz-utils \
+      build-essential make g++ python3 python3-dev python3-venv python3-pip openssh-client jq \
+      vim nano htop tmux procps \
+      fonts-noto-cjk \
+      gosu \
+      sudo \
+      locales \
+    && rm -rf /var/lib/apt/lists/* \
+    # LANG=zh_CN.UTF-8 必须真生成（否则 GUI 组件 openbox 等刷 "Couldn't set locale"）
+    && locale-gen zh_CN.UTF-8 && update-locale LANG=zh_CN.UTF-8
+
+# Node 22（NodeSource 官方源；Ubuntu 自带 nodejs 太老。pi-web engines >=22.19）
+RUN curl -fsSL "https://deb.nodesource.com/setup_${NODE_MAJOR}.x" | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && npm config set registry "${NPM_MIRROR}" \
+    # 私仓仅在测试期注入（AITI_NPM_REGISTRY 非空才写 scope 配置；正式发布为空=公网 npm）
+    && if [ -n "${AITI_NPM_REGISTRY}" ]; then npm config set "@aiti-ai:registry" "${AITI_NPM_REGISTRY}"; fi \
+    && node -v
+
+# ── ② 运行用户 aiti（可经 UID/GID env 覆盖；entrypoint 兜底重建）＋ 免密 sudo ──
+# ubuntu 24.04+ 基础镜像自带 uid/gid 1000 的 ubuntu 用户（首跑实锤断点）——改名复用防冲突
+RUN set -eux; \
+    if getent passwd 1000 >/dev/null; then usermod -l aiti -d /home/aiti -m "$(id -nu 1000)"; else useradd -m -u 1000 -s /bin/bash aiti; fi; \
+    if [ "$(id -gn aiti)" != "aiti" ]; then groupmod -n aiti "$(id -gn aiti)"; fi; \
+    echo "aiti ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/aiti; \
+    chmod 0440 /etc/sudoers.d/aiti
+
+# ── ③ aiti 目录骨架（数据卷挂 /opt/aiti；工作区挂 /workspace）─────────────────
+RUN mkdir -p /opt/aiti/extensions /opt/aiti/data /opt/aiti/agent /workspace \
+    && chown -R aiti:aiti /opt/aiti /workspace
+
+# ── ④ pi-web（fork）源码 → /opt/aiti/app：npm ci + next build（standalone 进镜像）──
+# 2026-09-10 瘦身：NEXT_OUTPUT_STANDALONE=1 产出 .next/standalone 最小依赖树
+# （162M）替代整棵 node_modules（1.6G）——core 镜像 -1.4GB。启动路径见 entrypoint
+# start_piweb（standalone/server.js 优先，AITI_DEV 源码模式仍走 next dev）。
+COPY pi-web /opt/aiti/app
+# TODO(首跑校准 2026-09-08)：pi-web lock 与 package.json 曾现漂移（@xterm/xterm）——ci 失败回落
+# install；lock 同步纪律建立后收回纯 npm ci（可复现性）。
+RUN cd /opt/aiti/app \
+    && npm config set registry "${NPM_MIRROR}" \
+    && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund) \
+    && NEXT_OUTPUT_STANDALONE=1 npm run build \
+    && cp -r .next/static .next/standalone/.next/static \
+    && cp -r public .next/standalone/public \
+    # 瘦身关键：standalone 自含最小依赖树——node_modules 与 .next 主体同层删除才真省体积
+    && rm -rf node_modules .next/cache \
+    && find .next -maxdepth 1 -mindepth 1 ! -name standalone -exec rm -rf {} + \
+    && chown -R aiti:aiti /opt/aiti/app
+# 生产启动：`next start`（entrypoint 覆盖 -H 0.0.0.0 -p 30142；AITI_DEV=1 时挂源码走 next dev，见 §3.3 R8）
+
+# ── ⑤ 扩展部署产物 → /opt/aiti/extensions（PI_WEB_EXTENSIONS_DIR 指向，镜像内只读）──
+# 现阶段走各扩展 tools/deploy.mjs（HOME 重定向到构建目录后拷出；deploy commit/reload
+# 在构建容器内允许失败——deploy.mjs 本就容忍）；S4 npm 化发布链就绪后改为
+# `aiti-ext-install @aiti-ai/* --dir /opt/aiti/extensions`（方案 §3.2 ③ 决策点）。
+COPY pi-web-ext /opt/aiti/src/pi-web-ext
+COPY packages /opt/aiti/src/packages
+COPY pi-ext /opt/aiti/src/pi-ext
+COPY docker/scripts/deploy-extensions.sh /opt/aiti/src/deploy-extensions.sh
+# demo/demo-lazy/crash-fatal/dev-exts 等开发样例不进生产镜像（方案 §8.1 白名单排除）
+RUN cd /opt/aiti/src && bash deploy-extensions.sh /opt/aiti/extensions \
+    && rm -rf /opt/aiti/src \
+    && chown -R aiti:aiti /opt/aiti/extensions
+
+# ── ⑥ pi 引擎 + pi 侧扩展包 → /opt/aiti/agent（PI_CODING_AGENT_DIR）──────────
+COPY docker/scripts/30-install-pi.sh /tmp/30-install-pi.sh
+RUN /tmp/30-install-pi.sh "${NPM_MIRROR}" && rm /tmp/30-install-pi.sh \
+    && chown -R aiti:aiti /opt/aiti/agent
+
+# ── ⑦ justget 工具市场 + aiti-bridge → /usr/local/bin ────────────────────────
+COPY justget /opt/aiti/src-justget
+# ⚠ 用 wrapper 不用 symlink（冒烟实证）：justget 是 ESM 主模块守卫
+# （import.meta.url === pathToFileURL(argv[1])）——经 symlink 调用 argv[1] 是链接路径，
+# 守卫不成立 → 静默 exit 0。wrapper exec node <真实路径> 让守卫命中。
+RUN printf '#!/bin/sh\nexec node /opt/aiti/src-justget/dist/cli.js "$@"\n' > /usr/local/bin/justget \
+    && chmod +x /usr/local/bin/justget \
+    && cd /opt/aiti/src-justget \
+    && npm config set registry "${NPM_MIRROR}" \
+    && (npm ci --no-audit --no-fund || npm install --no-audit --no-fund) \
+    && rm -rf /opt/aiti/src-justget/node_modules/.cache \
+    && justget --version
+COPY packages/aiti-bridge /opt/aiti/bridge
+# bridge.mjs 以 ../../aiti-devtools-core 相对路径引用核心源——按同构布局拷贝并装依赖
+COPY packages/aiti-devtools-core /opt/aiti/aiti-devtools-core
+# ⚠ bridge 实际 import 的是相对路径的 core 源码（src/index.ts）；npm 侧依赖仅参与安装树
+# 解析。本地 WIP 的 core 版本可能领先私仓发布（实测 0.3.5 工作树 vs registry 0.3.4 →
+# ^0.3.5 ETARGET 断构建）——镜像内放宽为 *，registry 解析旧版 dist 即可（无人按名 import）。
+RUN node -e "const fs=require('fs');const f='/opt/aiti/bridge/package.json';const j=JSON.parse(fs.readFileSync(f,'utf8'));if(j.dependencies&&j.dependencies['@aiti-ai/aiti-devtools-core'])j.dependencies['@aiti-ai/aiti-devtools-core']='*';fs.writeFileSync(f,JSON.stringify(j,null,2))" \
+    && printf '#!/bin/sh\nexec node /opt/aiti/bridge/bin/aiti-bridge.mjs "$@"\n' > /usr/local/bin/aiti-bridge \
+    && chmod +x /usr/local/bin/aiti-bridge \
+    && cd /opt/aiti/bridge && (npm ci --no-audit --no-fund --omit=dev 2>/dev/null || npm install --no-audit --no-fund --omit=dev) \
+    && cd /opt/aiti/aiti-devtools-core && (npm install --no-audit --no-fund --omit=dev --loglevel=error || true)
+
+# ── ⑧ entrypoint + 环境变量（方案 §2.1.3）────────────────────────────────────
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+ENV PI_WEB_EXTENSIONS_DIR=/opt/aiti/extensions \
+    PI_WEB_DATA_DIR=/opt/aiti/data \
+    PI_CODING_AGENT_DIR=/opt/aiti/agent \
+    AITI_PHASES=piweb,bridge \
+    AITI_PIWEB_PORT=30142 \
+    LANG=zh_CN.UTF-8
+
+# 层标记：entrypoint/full 以此探测模式（方案 §3.3 MODE）
+RUN touch /opt/aiti/.aiti-core
+
+WORKDIR /workspace
+EXPOSE 30142 8777
+# /api/models 在全新容器必 403（allowed-roots 只放行既有会话 cwd，新容器无会话）——
+# 用 /api/home（轻量 JSON，无会话依赖）。README「首跑实录 6」的旧诊断（request-security
+# 拒容器外探针）不准，实为 allowed-roots 语义。
+HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=5 \
+  CMD curl -fsS "http://127.0.0.1:${AITI_PIWEB_PORT}/api/home" >/dev/null || exit 1
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

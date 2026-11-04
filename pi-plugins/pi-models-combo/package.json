@@ -1,0 +1,35 @@
+{
+  "name": "@aiti-ai/pi-models-combo",
+  "version": "0.4.4",
+  "description": "Keep your model list tidy: for providers with an explicit models list in models.json, only those models stay visible. A pi package.",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "pi-extension",
+    "pi-coding-agent",
+    "model-filter",
+    "models"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
+  "files": [
+    "src"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  }
+}
