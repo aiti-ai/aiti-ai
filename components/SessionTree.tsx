@@ -127,6 +127,12 @@ export interface SessionTreeProps {
   /** A group's "+": a new session in that project at once. */
   onGroupNew(project: SidebarProject): void;
   onGroupMenu(project: SidebarProject, opener: HTMLElement): void;
+  /** An unpinned empty group's "Pin to keep": without sessions, only a pin keeps it listed. */
+  onPinEmptyGroup(project: SidebarProject): void;
+  /** An archive header's toggle; `all` (Alt+click): every archive group follows this one. */
+  onToggleArchiveGroup?(projectKey: string, all: boolean): void;
+  /** An archive header's ⋯: Restore all, Delete…. */
+  onArchiveGroupMenu?(project: SidebarProject, opener: HTMLElement): void;
   onOpenOtherProject(opener: HTMLElement): void;
   onOpenArchive(): void;
   /** Scroll a row into view (and maybe focus it); see SessionTreeReveal. */
@@ -419,7 +425,7 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
     }
   }, [visibleIndices]);
 
-  const hasTreeRows = rows.some((row) => row.kind === "session" || row.kind === "group");
+  const hasTreeRows = rows.some((row) => row.kind === "session" || row.kind === "group" || row.kind === "archive-group");
   const showEmpty = !loading && !error && emptyLabel !== null && !hasTreeRows;
   // While dragging: the group's block is dimmed in place (groups never fold
   // up under the pointer), a line marks the drop, and a pill with the
@@ -469,6 +475,9 @@ export function SessionTree(props: SessionTreeProps): ReactNode {
                     handlers={handlersRef}
                   />
                 );
+              }
+              if (row.kind === "archive-group") {
+                return <ArchiveGroupRowView key={row.key} row={row} top={top} height={height} menuOpen={menuOpen} handlers={handlersRef} />;
               }
               if (row.kind === "group") {
                 const renaming = row.project.key === renamingProjectKey;
@@ -780,7 +789,8 @@ function RenameInput({
   );
 }
 
-function DeleteConfirm({
+/** A row's delete confirmation; also a side chat's in the Agents switcher (AgentSessionPanel). */
+export function DeleteConfirm({
   label,
   deleteLabel,
   cancelLabel,
@@ -1066,7 +1076,16 @@ const PlainRowView = memo(function PlainRowView({
     case "group-empty":
       return (
         <div className="session-tree-row session-tree-group-empty" style={style} data-row-key={row.key}>
-          {t("sidebar.noLiveSessions")}
+          <span className="session-tree-group-empty-label">{t("sidebar.noLiveSessions")}</span>
+          {!row.project.pinned && (
+            <button
+              type="button"
+              className="session-tree-more-toggle"
+              onClick={() => handlers.current.onPinEmptyGroup(row.project)}
+            >
+              {t("sidebar.pinToKeep")}
+            </button>
+          )}
         </div>
       );
     case "footer-open":
@@ -1092,12 +1111,63 @@ const PlainRowView = memo(function PlainRowView({
           </button>
         </div>
       );
-    case "archive-group":
-      return (
-        <div className="session-tree-row session-tree-archive-group" style={style} data-row-key={row.key} title={row.project.root}>
-          <span className="session-tree-archive-group-name">{row.project.name}</span>
-          <span className="session-tree-archive-group-count">· {row.count}</span>
-        </div>
-      );
   }
+});
+
+/**
+ * An archive view's project header: folds its family rows (upstream #1351
+ * follow-up). The chevron toggles the fold (Alt: every group follows); the ⋯
+ * offers Restore all / Delete….
+ */
+const ArchiveGroupRowView = memo(function ArchiveGroupRowView({
+  row,
+  top,
+  height,
+  menuOpen,
+  handlers,
+}: {
+  row: Extract<SidebarRow, { kind: "archive-group" }>;
+  top: number;
+  height: number;
+  menuOpen: boolean;
+  handlers: Handlers;
+}) {
+  const { t } = useI18n();
+  const { project, expanded } = row;
+  const className = [
+    "session-tree-row session-tree-group session-tree-archive-group",
+    project.current ? "is-current" : "",
+    menuOpen ? "is-active" : "",
+  ].filter(Boolean).join(" ");
+  return (
+    <div className={className} style={rowStyle(top, height)} data-row-key={row.key}>
+      <button
+        type="button"
+        className="session-tree-group-toggle"
+        aria-expanded={expanded}
+        title={project.root}
+        onClick={(event) => handlers.current.onToggleArchiveGroup?.(project.key, event.altKey)}
+      >
+        <ChevronIcon size={12} strokeWidth={3} className={`session-tree-chevron${expanded ? " is-open" : ""}`} />
+        <span className="session-tree-group-name">{project.name}</span>
+        <span className="session-tree-archive-group-count">· {row.count}</span>
+      </button>
+      <span className="session-tree-group-actions">
+        <button
+          type="button"
+          className={`session-tree-group-action${menuOpen ? " is-active" : ""}`}
+          aria-label={t("sidebar.archivedProjectActions", { name: project.name })}
+          title={t("sidebar.archivedProjectActions", { name: project.name })}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          onClick={(event) => {
+            event.stopPropagation();
+            handlers.current.onArchiveGroupMenu?.(project, event.currentTarget);
+          }}
+        >
+          <MoreIcon size={13} />
+        </button>
+      </span>
+    </div>
+  );
 });

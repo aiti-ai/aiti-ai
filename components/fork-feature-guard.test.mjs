@@ -34,7 +34,9 @@ const GUARDS = [
       /done=\{manualRefreshDone\}/, // green-flash feedback still present（融合：走上游 ToolbarIconButton done 模式）
       /<RefreshIcon size=\{12\} \/>/,                                  // green-flash on refresh success（is-done 样式，app/sidebar.css 1120）
       // sessionRowMeta 槽随行渲染迁入 SessionTree.tsx，由 SessionSidebar.running-time.test 第三断言守护（不在此重复）
-      /relation\?\.kind === "subagent"/,                             // subagent/branch relation icon
+      // 合并注（v0.15 上游合并）：上游把「subagent 静默完成」泛化为 isHiddenRelation
+      // （subagent + side chat 都静默），语义是 fork 原语的超集，采纳上游写法。
+      /isHiddenRelation\(session\.relation\)|relation\?\.kind === "subagent"/, // subagent/branch relation 静默过滤
       // TODO(行级移植收尾)：client-side draft 行（isDraft）尚未随行渲染迁入 SessionTree
       // （草稿行 = 刚新建未落盘会话的临时行）——恢复后补回此 marker。
     ],

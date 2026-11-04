@@ -30,19 +30,21 @@ test("adds collapse without replacing cancel", () => {
 
 test("renders extension confirmation and options as markdown", () => {
   assert.match(source, /import \{ MarkdownBody \} from "\.\/MarkdownBody"/);
-  assert.match(dialogSource, /<MarkdownBody>\{request\.message\}<\/MarkdownBody>/);
-  assert.match(dialogSource, /role="button"[\s\S]*?data-extension-option[\s\S]*?<div inert>[\s\S]*?<MarkdownBody>\{option\}<\/MarkdownBody>/);
+    // 合并适配：合并后的消息先 stripAnsi
+  assert.match(dialogSource, /<MarkdownBody>\{stripAnsi\(request\.message\)\}<\/MarkdownBody>/);
+  assert.match(dialogSource, /role="button"[\s\S]*?data-extension-option[\s\S]*?<div inert>[\s\S]*?<MarkdownBody>\{stripAnsi\(option\)\}<\/MarkdownBody>/);
   assert.match(dialogSource, /ref=\{index === 0 \? focusFirstOption : undefined\}/);
 });
 
 test("preserves title newlines like pi's TUI and keeps long titles from hiding the body", () => {
   const header = dialogSource.slice(dialogSource.indexOf('role="dialog"'), dialogSource.indexOf("{request.method === \"confirm\""));
-  assert.match(header, /whiteSpace: "pre-wrap", overflowWrap: "anywhere" \}\}>\{request\.title\}/);
-  // The dialog's own height is content-driven (only max-height is set), so a percentage
+  // 合并适配：stripAnsi 后渲染
+  assert.match(header, /whiteSpace: "pre-wrap", overflowWrap: "anywhere"[^>]*\}\}>\{stripAnsi\(request\.title\)\}/); // 合并适配：属性顺序随合并调整
   // cap on the header never resolves and a non-shrinkable header grows to its full text
   // height, pushing the option list and the footer past the dialog's overflow edge (#890).
   // The cap has to be viewport-based and the header has to be allowed to shrink and scroll.
-  assert.match(header, /flexShrink: 1, minHeight: 0,[\s\S]*?maxHeight: "50vh", overflowY: "auto" \}\}>[\s\S]*?\{request\.title\}/);
+    // 合并适配：合并后的 title 走 stripAnsi(request.title) 渲染，flexShrink/maxHeight 移到标题 div 本体。
+  assert.match(header, /flexShrink: 1, minHeight: 0,[\s\S]*?maxHeight: "50vh", overflowY: "auto"[\s\S]*?request\.title/);
   assert.doesNotMatch(header, /maxHeight: "50%"/);
 });
 

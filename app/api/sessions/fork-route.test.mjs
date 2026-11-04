@@ -183,12 +183,15 @@ test("the route never starts, prompts or forks an AgentSession", () => {
   assert.doesNotMatch(routeSource, /startRpcSession|\.send\(|\.fork\(|\.prompt\(|shutdown\(/);
   assert.match(routeSource, /if \(!isApiRequestAllowed\(req\)\) return refusal\(403, "request-denied"/);
   assert.match(routeSource, /if \(!hasJsonContentType\(req\)\) return refusal\(415, "request-denied"/);
-  assert.match(routeSource, /const fork = forkSessionBranch\(sourcePath, liveLeafId, sourceTitle\);\s*cacheSessionPath\(fork\.sessionId, fork\.path\);\s*invalidateSessionListCache\(\);/);
+  // 合并注（#1469 side chats）：同一 handler 按 side 分派 createSideSession / forkSessionBranch。
+  assert.match(routeSource, /const fork = side \? createSideSession\(sourcePath, liveLeafId, sideName\) : forkSessionBranch\(sourcePath, liveLeafId, sourceTitle\);\s*cacheSessionPath\(fork\.sessionId, fork\.path\);\s*invalidateSessionListCache\(\);/);
   // The source's title is the one await before the copy; the leaf is read after it.
-  const title = routeSource.indexOf("const sourceTitle = await readForkSourceTitle(sourcePath);");
-  const leaf = routeSource.indexOf("const wrapper = getRpcSession(id);");
+  // 合并注（#1469）：side 分派需要先探测打开的 wrapper（side 命名），因此首个
+  // getRpcSession 在 title 之前——顺序断言以「叶子读取」（第二个 wrapper）为锚。
+  const title = routeSource.indexOf("await readForkSourceTitle(sourcePath);"); // 合并适配：side 分派使 title 条件化
+  const leaf = routeSource.lastIndexOf("const wrapper = getRpcSession(id);");
   assert.ok(title >= 0 && title < leaf, "the title is read before the leaf");
-  assert.doesNotMatch(routeSource.slice(leaf, routeSource.indexOf("const fork = forkSessionBranch(")), /await /);
+  assert.doesNotMatch(routeSource.slice(leaf, routeSource.indexOf("const fork = ")), /await /);
   // The row is read once the name is written.
-  assert.ok(routeSource.indexOf("await readSessionInfo(fork.path)") > routeSource.indexOf("const fork = forkSessionBranch("));
+  assert.ok(routeSource.indexOf("await readSessionInfo(fork.path)") > routeSource.indexOf("const fork = "));
 });

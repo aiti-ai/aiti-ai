@@ -1,13 +1,13 @@
 diff --git a/node_modules/next/dist/server/dev/next-dev-server.js b/node_modules/next/dist/server/dev/next-dev-server.js
-index 64966ab..cbfd190 100644
+index fbbcbb3..a61a365 100644
 --- a/node_modules/next/dist/server/dev/next-dev-server.js
 +++ b/node_modules/next/dist/server/dev/next-dev-server.js
-@@ -566,6 +566,14 @@ class DevServer extends _nextserver.default {
+@@ -523,6 +523,14 @@ class DevServer extends _nextserver.default {
      // })
      }
      async getStaticPaths({ pathname, urlPathname, requestHeaders, page, isAppPath }) {
 +        // [pi-web patch] Route handlers (/api/*) can never be SSG pages: they have no
-+        // generateStaticParams, so staticPaths is always empty. But Next 16.3.1 dev
++        // generateStaticParams, so staticPaths is always empty. But Next 16.x dev
 +        // forks + destroys a jest-worker child process for EVERY dynamic-route request
 +        // here (one page load fires 100+ API requests => 100+ child-process forks),
 +        // dominating dev-server CPU and refresh latency. Short-circuit instead.

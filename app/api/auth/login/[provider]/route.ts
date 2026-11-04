@@ -2,6 +2,7 @@ import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
 import { getModelRuntimeWithExtensions } from "@/lib/model-runtime-ext";
 import { randomUUID } from "node:crypto";
 import { invalidateModelsCache } from "@/lib/models-cache";
+import { createLoginOptions, createModelRuntimeWithExtensions } from "@/lib/model-runtime";
 
 export const dynamic = "force-dynamic";
 
@@ -120,6 +121,7 @@ export async function GET(
       // Also cancel on client disconnect
       abort.signal.addEventListener("abort", cleanup);
 
+      const loginOptions = createLoginOptions();
       try {
         await modelRuntime.login(provider, "oauth", {
           prompt: async (prompt: AuthPrompt) => {
@@ -165,7 +167,7 @@ export async function GET(
             }
           },
           signal: abort.signal,
-        });
+        }, loginOptions.options);
 
         invalidateModelsCache();
         send(controller, { type: "success" });
@@ -178,6 +180,7 @@ export async function GET(
         }
       } finally {
         cleanup();
+        await loginOptions.flush();
         controller.close();
       }
     },

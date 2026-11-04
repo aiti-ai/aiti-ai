@@ -539,6 +539,8 @@ export interface ModelSelectorFooterSlotProps {
 export interface SettingsModelsSlotProps {
   /** Current session (the settings panel is instance-level, not session-level; the host always passes null — same shape as ExtRenderProps, reserved for extensions). */
   currentSession?: { id: string; cwd: string; name?: string; firstMessage?: string } | null;
+  /** Project cwd backing this settings panel (projectTrustCwd; null without a trusted project). The native ModelsConfig uses it for project-scope enabledModels editing; the takeover render gets the same value for parity. */
+  cwd?: string | null;
   onClose: () => void;
 }
 

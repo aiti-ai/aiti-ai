@@ -31,6 +31,7 @@ import { readSubagentRun, SUBAGENT_META_TYPE } from "./subagents.ts";
 import { removeQueue } from "./queue-store.ts";
 import { trashFileSync } from "./session-trash.ts";
 import type { SessionEntry } from "./types.ts";
+import { readSideRelation } from "./side-session.ts";
 
 /** Most ids one POST /api/sessions/delete takes; the sidebar sends a bigger project in parts. */
 export const MAX_SESSION_DELETE_IDS = 500;
@@ -90,7 +91,9 @@ export async function deleteSessions(
   );
   const childrenByParent = new Map<string, string[]>();
   for (const session of sessions) {
-    if (session.relation?.kind === "subagent") addChild(childrenByParent, session.relation.parentSessionId, session.id);
+    if (session.relation?.kind === "subagent" || session.relation?.kind === "side") {
+      addChild(childrenByParent, session.relation.parentSessionId, session.id);
+    }
   }
   const sessionPaths = new Map(sessions.map((session) => [session.id, session.path]));
   // Include local files even when the global catalogue is stale or incomplete.
@@ -107,9 +110,16 @@ export async function deleteSessions(
             try { return [JSON.parse(line) as SessionEntry]; } catch { return []; }
           });
           const subagent = readSubagentRun(entries, header.id, childPath);
-          if (!subagent) continue;
-          addChild(childrenByParent, subagent.parentSessionId, header.id);
-          sessionPaths.set(header.id, childPath);
+          if (subagent) {
+            addChild(childrenByParent, subagent.parentSessionId, header.id);
+            sessionPaths.set(header.id, childPath);
+            continue;
+          }
+          const side = readSideRelation(entries);
+          if (side) {
+            addChild(childrenByParent, side.parentSessionId, header.id);
+            sessionPaths.set(header.id, childPath);
+          }
         } catch { /* skip malformed or concurrently removed sessions */ }
       }
     } catch { /* skip if dir unreadable */ }

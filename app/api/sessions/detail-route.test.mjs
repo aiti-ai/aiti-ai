@@ -26,7 +26,9 @@ test("detail route parses ?tail: default 50, NaN-safe, capped at 1000", () => {
   assert.match(routeSrc, /Math\.min\(rawTail, 1000\)/);
   assert.match(routeSrc, /Number\.isFinite\(rawTail\) && rawTail > 0 \? Math\.min\(rawTail, 1000\) : 50/);
   assert.match(routeSrc, /buildSessionContext\(entries as never, leafId, \{[^}]*tail,[^}]*sessionId: id[^}]*\}\)/);
-  assert.match(routeSrc, /computeSessionStats\(entries as unknown as SessionEntry\[\]\)/);
+  // Merge note (#1469): stats aggregate the side chat's own entries, not the inherited history.
+  assert.match(routeSrc, /const ownEntries = sideOwnEntries\(entries\) as typeof entries/);
+  assert.match(routeSrc, /computeSessionStats\(ownEntries as unknown as SessionEntry\[\]\)/);
   assert.match(routeSrc, /messageCount: stats\.totalMessages/);
   assert.match(routeSrc, /stats,/);
 });

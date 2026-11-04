@@ -36,6 +36,8 @@ export interface AnnotatedModelEntry {
   id: string;
   name: string;
   provider: string;
+  /** Display name of the owning provider (upstream #1514); passthrough from the route */
+  providerName?: string;
   input?: string[];
   /** Current availability — display hint only, never auto-disable based on it */
   avail?: AvailKind;
@@ -97,10 +99,7 @@ export function annotateVisibleModels<T extends { id: string; name: string; prov
     if (c.total > 0 && c.rl === c.total) providerRL.add(pid);
   }
   return visibleModels.map((m) => ({
-    id: m.id,
-    name: m.name,
-    provider: m.provider,
-    input: m.input,
+    ...m,
     avail: avail.get(`${m.provider}/${m.id}`),
     ...(providerRL.has(m.provider) ? { providerRL: true } : {}),
   }));

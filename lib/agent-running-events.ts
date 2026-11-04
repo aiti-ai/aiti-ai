@@ -173,7 +173,7 @@ export function subscribeRunningEvents(listener: Listener): () => void {
         // frames flow again.
         const armFrameWatchdog = () => {
           if (b!.frameWatchdog) clearTimeout(b!.frameWatchdog);
-          b!.frameWatchdog = setTimeout(() => {
+          const t = setTimeout(() => {
             b!.frameWatchdog = null;
             if (b!.dead) return;
             if (Date.now() - b!.lastFrameAt >= HEARTBEAT_FRAME_TIMEOUT_MS) {
@@ -184,6 +184,10 @@ export function subscribeRunningEvents(listener: Listener): () => void {
               armFrameWatchdog(); // a frame just arrived; the timer merely fired late — keep watching
             }
           }, HEARTBEAT_FRAME_TIMEOUT_MS);
+          // Internal keepalive timer: must not hold the process open (node test/SSR exits
+          // otherwise hang the full 75s on an already-unsubscribed broker; browsers unaffected).
+          (t as unknown as { unref?: () => void }).unref?.();
+          b!.frameWatchdog = t;
         };
         const markFrame = () => {
           b!.lastFrameAt = Date.now();
@@ -222,6 +226,34 @@ export function subscribeRunningEvents(listener: Listener): () => void {
             b!.connOffline = false;
             broadcastConnState("online");
           }
+          pullSnapshot();
+        };
+        // Onopen snapshot align (2026-11-04 "list spinner takes minutes to stop" fix):
+        // running frames are only broadcast when the set CHANGES — frames missed during a
+        // disconnect window (e.g. agent_end) are never replayed, and after reconnect the
+        // heartbeat alone makes the channel look healthy, so neither the session-manager
+        // fallback poll (skipped while healthy) nor anything else corrects the stale set;
+        // it stays wrong until the next unrelated running change (observed: the sidebar
+        // spinner keeps spinning minutes after the turn actually ended). Pulling one
+        // authoritative snapshot on every connection (re)establishment closes that gap:
+        // reconnect = aligned, zero wait. Dedupe is IN-FLIGHT only (not time-based): a
+        // time throttle would swallow exactly the fastest reconnects — the ones that most
+        // need the snapshot. Failures are silent; frames and the existing fallback polls
+        // remain the correctness backstop.
+        let snapshotInFlight = false;
+        const pullSnapshot = () => {
+          if (snapshotInFlight) return;
+          snapshotInFlight = true;
+          fetch(apiUrl("/api/agent/running"), { cache: "no-store" })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((data: { runningSessionIds?: string[] } | null) => {
+              snapshotInFlight = false;
+              if (!data || b!.dead) return;
+              const frame = { type: "running", runningSessionIds: data.runningSessionIds ?? [] } as RunningFrame;
+              b!.listeners.forEach((f) => { try { f("message", frame); } catch { /* subscriber errors must not propagate */ } });
+              b!.frameListeners.forEach((f) => { try { f(frame as Record<string, unknown>); } catch { /* noop */ } });
+            })
+            .catch(() => { snapshotInFlight = false; /* network failure: silent, fallback polls remain */ });
         };
         source.onmessage = (e: MessageEvent) => {
           markFrame();

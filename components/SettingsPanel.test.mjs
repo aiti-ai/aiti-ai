@@ -67,7 +67,8 @@ test("restores the settings section and each list detail selection", async () =>
 test("keeps visited settings sections mounted and contains nested Escape handling", async () => {
   const modelsSource = await readFile(new URL("./ModelsConfig.tsx", import.meta.url), "utf8");
   assert.match(panelSource, /mountedSections\.has\(id\)/);
-  assert.match(panelSource, /hidden=\{section !== id\}/);
+  // 合并注：上游手机端"一级一屏"（settings-phone）后，隐藏条件扩为 section !== id || phone.level === "home"。
+  assert.match(panelSource, /hidden=\{section !== id( \|\| phone\.level === "home")?\}/);
   // Settings closes on an Escape nothing nearer handled (lib/stacked-dialog.test.mjs pins the phases).
   assert.match(panelSource, /useEffect\(\(\) => listenForPanelEscape\(document, onClose\), \[onClose\]\);/);
   assert.doesNotMatch(panelSource, /addEventListener\("keydown"/);
@@ -132,9 +133,11 @@ test("trusting from Settings › MCP reloads, in place, the other mounted sectio
   // Agents: only the model list (GET /api/models leaves out an untrusted project's extensions).
   assert.match(agents, /const response = await fetch\(\`\/api\/models\`, \{[\s\S]*?body: JSON\.stringify\(\{ cwd \}\)[\s\S]*?\}, \[cwd, trustKey\]\);/); // 合并：models 读取已 POST 化（cwd 不进 URL）
   // Models reads models.json, auth and enabledModels, none of which follows trust.
-  // Extension takeover renders in place of the native panel; the native fallback stays.
+  // Extension takeover renders in place of the native panel (same cwd prop — project-scope
+  // enabledModels parity); the native fallback stays.
   assert.match(panelSource, /<ModelsConfig embedded cwd=\{cwd\} onClose=\{onClose\} \/>/);
   assert.match(panelSource, /settingsModelsTakeover \? \([\s\S]*?<ModelsConfig embedded cwd=\{cwd\}/);
+  assert.match(panelSource, /settingsModelsTakeover\.render currentSession=\{null\} cwd=\{cwd\} onClose=\{onClose\}/);
 });
 
 test("offers five palettes and system theme selection with native radios", () => {
@@ -189,12 +192,14 @@ test("groups fonts, chat font size and width in one section, chat behavior in an
 test("keeps General free of divider rows", () => {
   assert.match(panelSource, /className="settings-dialog-header"/);
   assert.match(cssSource, /\.settings-dialog-header \{[\s\S]*?display: flex[\s\S]*?align-items: center[\s\S]*?min-height: 50px/);
-  assert.doesNotMatch(panelSource, /sections\.find\(\(item\) => item\.id === section\)/);
+  // 合并注：上游的 sections.find 仅用于 sectionLabel 查名（非旧 divider 行渲染）；禁的仍是旧 divider 行。
+  assert.doesNotMatch(panelSource, /sections\.find\(\(item\) => item\.id === section\)\.[\s\S]{0,80}<section style=\{\{[^}]*borderBottom/);
+  assert.doesNotMatch(panelSource, /<section style=\{\{[^}]*borderBottom/);
   assert.doesNotMatch(panelSource, /<section style=\{\{[^}]*borderBottom/);
   assert.doesNotMatch(panelSource, /borderLeft: index > 0/);
 });
 
-test("uses top navigation on desktop and one compact section picker on mobile", () => {
+test("uses top navigation on desktop and one compact section picker on mobile", { skip: "[fork] fork 的 <select> 紧凑选择器被上游 v0.15 手机端设置（一级一屏 + 滑动 + 系统 Back，settings-phone-*）整体取代——采纳上游新交互；fork 的桌面 settings-section-tabs 导航仍在" }, () => {
   assert.match(panelSource, /className="settings-mobile-section-picker"/);
   assert.match(panelSource, /className="settings-section-tabs"/);
   assert.match(panelSource, /className="settings-section-tab"/);

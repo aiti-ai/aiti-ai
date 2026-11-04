@@ -14,7 +14,7 @@ import { getAllowedFileRoots, isExistingFilePathAllowed } from "@/lib/file-acces
 import { projectTrustReloadOptions } from "@/lib/project-trust";
 import { readModelsConfig } from "@/lib/models-config-store";
 import { annotateVisibleModels, parseModelCheckState, type AvailKind } from "@/lib/model-visibility";
-import { rememberProviderModels, withDeferredProviderModels } from "@/lib/deferred-provider-models";
+import { providerDisplayNames, rememberProviderModels, withDeferredProviderModels } from "@/lib/deferred-provider-models";
 import { inferRemovedWorktree } from "@/lib/worktree";
 import { cwdMissingBody } from "@/lib/missing-cwd";
 
@@ -39,7 +39,7 @@ function readModelCheckAvail(): Map<string, AvailKind> {
     return new Map();
   }
 }
-async function loadModels(cwd: string): Promise<ModelsData> {
+async function loadModels(cwd: string, scopeAll = false): Promise<ModelsData> {
   const nameMap = new Map<string, string>();
   let modelList: ModelsData["modelList"] = [];
   let defaultModel: { provider: string; modelId: string } | null = null;
@@ -59,11 +59,12 @@ async function loadModels(cwd: string): Promise<ModelsData> {
   const modelError = services.modelRuntime.getError();
   const settings: SettingsManager = services.settingsManager;
   await rememberProviderModels(services.modelRuntime);
+  const providerNames = providerDisplayNames(services.modelRuntime);
   // `enabledModels` supports globs and fuzzy patterns, so resolve it the same
   // way the CLI does instead of comparing pattern strings literally (#307).
   const scope = await resolveVisibleModels(
     withDeferredProviderModels(services.modelRuntime),
-    settings.getEnabledModels(),
+    scopeAll ? undefined : settings.getEnabledModels(),
   );
   const { visible, thinkingLevelPins, warnings } = scope;
   // pi's /model order drives the selector order (upstream #783 — never re-sort by
@@ -78,6 +79,9 @@ async function loadModels(cwd: string): Promise<ModelsData> {
       id: m.id,
       name: m.name,
       provider: m.provider,
+      // The selector groups by provider id, but labels the group with its display
+      // name; models.json providers get theirs from `name` too.
+      providerName: providerNames.get(m.provider) ?? m.provider,
       input: m.input,
     })),
     providersCfg,
@@ -123,6 +127,7 @@ async function loadModels(cwd: string): Promise<ModelsData> {
       thinkingLevelMaps,
       thinkingLevelPins,
       ...(warnings.length > 0 ? { modelScopeWarnings: warnings } : {}),
+      isScoped: scopeAll ? false : scope.scopedModels.length > 0,
     },
     modelError,
   );
@@ -137,9 +142,10 @@ const EMPTY_MODELS: ModelsData = {
   thinkingLevels: {},
   thinkingLevelMaps: {},
   thinkingLevelPins: {},
+  isScoped: false,
 };
 
-async function handleModels(requestedCwd: string | null): Promise<Response> {
+async function handleModels(requestedCwd: string | null, scopeAll = false): Promise<Response> {
   const resolvedCwd = resolve(requestedCwd || process.cwd());
   // A subagent run isolated in a worktree has that worktree removed when the run
   // finishes, yet its session file still records the worktree as its cwd. Fall back
@@ -167,7 +173,8 @@ async function handleModels(requestedCwd: string | null): Promise<Response> {
   }
 
   try {
-    return Response.json(await loadModelsWithCache(cwd, () => loadModels(cwd)));
+    const cacheKey = scopeAll ? `${cwd}#all` : cwd;
+    return Response.json(await loadModelsWithCache(cacheKey, () => loadModels(cwd, scopeAll)));
   } catch {
     return Response.json(withSafeModelLoadFailure(EMPTY_MODELS));
   }
@@ -176,7 +183,8 @@ async function handleModels(requestedCwd: string | null): Promise<Response> {
 // GET /api/models?cwd= — the query-string form is kept for existing callers; new
 // code should always use POST (cwd travels in the JSON body, never in URLs/access logs).
 export async function GET(req: Request) {
-  return handleModels(new URL(req.url).searchParams.get("cwd"));
+  const url = new URL(req.url);
+  return handleModels(url.searchParams.get("cwd"), url.searchParams.get("scope") === "all");
 }
 
 // POST /api/models  body: { cwd? } — same semantics; when cwd is omitted, process.cwd()

@@ -40,6 +40,7 @@ import {
 import type { QueuePanelActions, QueuePanelProps } from "@/lib/composer/queue-api";
 import { getQueuePanelController } from "@/lib/composer/queue-api";
 import { getMarkdownListContinuation } from "@/lib/markdown-list-continuation";
+import { quoteSeparator } from "@/lib/quoted-selection";
 import { isBareMcpCommand, isBuiltinMcpCommand } from "@/lib/mcp-command";
 import { FolderIcon, getFileIcon } from "./FileIcons.tsx";
 import { DismissButton } from "./DismissButton.tsx";
@@ -135,6 +136,8 @@ interface Props {
   /** Current session id: forwarded to the chatInputTop extension slot (e.g. per-session AI usage accounting in the AI-input extension) */
   sessionId?: string | null;
   onSteer?: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
+  /** Sends the draft to a new side chat instead of the running agent (upstream #1469). */
+  onSideChat?: (message: string) => void;
   onFollowUp?: (message: string, images?: AttachedImage[], files?: AttachedFile[]) => void;
   /** Enqueue only, no dispatch (draft-restore "Re-queue" semantics): even when
    *  idle the message only enters the follow-up queue. Unlike onFollowUp — which
@@ -162,7 +165,7 @@ interface Props {
   model?: { provider: string; modelId: string } | null;
   isAutoModelSelection?: boolean;
   modelNames?: Record<string, string>;
-  modelList?: { id: string; name: string; provider: string; input?: string[]; avail?: "ok" | "rl" | "err" | "unprobed"; providerRL?: boolean }[];
+  modelList?: { id: string; name: string; provider: string; providerName?: string; input?: string[]; avail?: "ok" | "rl" | "err" | "unprobed"; providerRL?: boolean }[];
   modelError?: string | null;
   /** The session's folder, when it no longer exists (moved or renamed): said instead of a model error (#1422). */
   missingCwd?: string | null;
@@ -171,6 +174,10 @@ interface Props {
   /** Manually refresh the model catalog (passed by ChatWindow on the new-session page when the backend supports it; the refresh row is hidden by default) */
   onRefreshModels?: () => void;
   modelsRefreshing?: boolean;
+  /** Every available model, once loaded for the selector's "all" scope. */
+  allModelList?: { id: string; name: string; provider: string; providerName?: string }[] | null;
+  /** Set only while `enabledModels` narrows the list: loads `allModelList`. */
+  onLoadAllModels?: () => void;
   onModelChange?: (provider: string, modelId: string) => void;
   modelSwitching?: boolean;
   /** Current session context percentage (ChatWindow forwards contextUsage?.percent) — drives the urgency coloring of the compact button/dialog dot */
@@ -275,6 +282,8 @@ interface Props {
 
 export interface ChatInputHandle {
   insertText: (text: string) => void;
+  /** Insert at the caret as a paragraph of its own: a blockquote must start a line. */
+  insertQuote: (text: string) => void;
   insertIfEmpty: (text: string) => void;
   replaceMessage: (message: UserMessage) => void;
   prependText: (text: string) => void;
@@ -494,6 +503,10 @@ const BUILTIN_SLASH_COMMANDS: BuiltinSlashCommand[] = [
   { name: "session", description: "chat.commandSession", source: "builtin", availableWhileStreaming: true },
   { name: "copy", description: "chat.commandCopy", source: "builtin", availableWhileStreaming: true },
   { name: "clone", description: "chat.commandClone", source: "builtin" },
+  // A side chat forks the session while it runs (ADR 0007): the primary use
+  // case is a side question during a long parent run, so it must be offered
+  // mid-stream. The fork is file-level, never touching the running agent.
+  { name: "side", description: "chat.commandSide", source: "builtin", availableWhileStreaming: true },
 ];
 
 function getBuiltinSlashCommand(message: string): BuiltinSlashCommand | undefined {
@@ -628,12 +641,13 @@ function isDormantSkillCommand(command: SlashCommandPaletteItem, dormancy: Recor
 export function buildSlashCommandLayout(
   commands: SlashCommandPaletteItem[],
   dormancy: Record<string, boolean>,
+  query = "",
 ) {
   let index = 0;
   const groups = SLASH_SOURCES
     .map((source) => {
       const sourceCommands = commands.filter((command) => command.source === source);
-      const orderedCommands = source === "skill"
+      const orderedCommands = source === "skill" && !query
         ? [
             ...sourceCommands.filter((command) => !isDormantSkillCommand(command, dormancy)),
             ...sourceCommands.filter((command) => isDormantSkillCommand(command, dormancy)),
@@ -1000,7 +1014,7 @@ export function ModelErrorBanner({ error }: { error?: string | null }) {
 /** True when the selected model is known to accept image input (#584). Unknown modality info never blocks the user. */
 export function modelSupportsImageInput(
   model: { provider: string; modelId: string } | null | undefined,
-  modelList: { id: string; name: string; provider: string; input?: string[] }[] | undefined
+  modelList: { id: string; name: string; provider: string; providerName?: string; input?: string[] }[] | undefined
 ): boolean {
   if (!model) return true;
   const entry = modelList?.find((m) => m.provider === model.provider && m.id === model.modelId);
@@ -1407,7 +1421,7 @@ let pendingFocusHandoff = false;
 
 const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   sessionId,
-  onSend, onAbort, aborting, onForkNew, onSteer, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, missingCwd, modelScopeWarnings, onModelChange, modelSwitching, onRefreshModels, modelsRefreshing,
+  onSend, onAbort, aborting, onForkNew, onSteer, onSideChat, onFollowUp, onQueueFollowUp, onQueueSteerSend, canContinue, onContinue, onConvertQueueItem, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, missingCwd, modelScopeWarnings, allModelList, onLoadAllModels, onModelChange, modelSwitching, onRefreshModels, modelsRefreshing,
   sessionCapabilities, onSwitchPermissionMode, permissionMode,
   contextPercent, contextUsage, onSessionStatsPanelOpen, onCompact, onAbortCompaction, isCompacting, compactError, compactResult, compactQueued, onCancelCompactQueue, modelSwitchPending, toolPreset, onToolPresetChange,  thinkingLevel, isAutoThinkingSelection = false, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   retryInfo, queuedMessages, tasks, inputHistory = [], onRecallQueue,
@@ -1451,6 +1465,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // Upstream initializes value with getDraft(draftKey) at mount; this fork never
   // auto-restores drafts (they surface in the queue-recovery dialog instead —
   // see the draftKey effect below), so the box always starts empty.
+  // The controls row under the composer: a finger's 44px on a phone.
+  const controlSize = isMobile ? 44 : 32;
+  const stackedComposer = stacksComposerLayout(compact, isMobile, isStreaming);
   const enterSendMode = useEnterSendMode();
   const [value, setValue] = useState("");
   const [modelDropdownOpen, setModelDropdownOpen] = useState(false);
@@ -1838,6 +1855,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   }, [onRemoveQueueItem]);
   const isComposingRef = useRef(false);
   const lastCompositionEndAtRef = useRef(0);
+  const pendingPasteRef = useRef<object | null>(null);
   const slashCommandsRequestedRef = useRef(false);
   const slashMenuRef = useRef<HTMLDivElement>(null);
   const slashItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -1983,6 +2001,17 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
       const before = ta.value.slice(0, start);
       const sep = before.length > 0 && !before.endsWith(" ") ? " " : "";
       replaceTextareaRange(ta, start, end, sep + text);
+      setAtQuery(null);
+    },
+    insertQuote(text: string) {
+      const ta = textareaRef.current;
+      if (!ta) {
+        setValue((v) => v + quoteSeparator(v) + text);
+        return;
+      }
+      const start = ta.selectionStart ?? ta.value.length;
+      const end = ta.selectionEnd ?? ta.value.length;
+      replaceTextareaRange(ta, start, end, quoteSeparator(ta.value.slice(0, start)) + text);
       setAtQuery(null);
     },
     addImages(files: File[]) {
@@ -2762,7 +2791,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const {
     commands: displayedSlashCommands,
     groups: groupedSlashCommands,
-  } = buildSlashCommandLayout(filteredSlashCommands, skillDormancy);
+  } = buildSlashCommandLayout(filteredSlashCommands, skillDormancy, slashQuery ?? "");
 
   const slashCommandCountLabel = filteredSlashCommands.length === 1
     ? t(slashQuery ? "chat.match" : "chat.command")
@@ -3115,6 +3144,12 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   const modelInfoLeadExtra = useMemo(() => ({
     sessionId, cwd, context: extSeamContext, compact: extSeamCompact, isMobile: true,
   }), [sessionId, cwd, extSeamContext, extSeamCompact]);
+  const sendToSideChat = useCallback(() => {
+    const msg = value.trim();
+    if (!msg || attachedImages.length || !onSideChat) return;
+    clearInput();
+    onSideChat(msg);
+  }, [value, attachedImages, onSideChat, clearInput]);
 
   const sendQueued = useCallback((mode: "steer" | "followup") => {
     const msg = value.trim();
@@ -3449,6 +3484,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // state lags the DOM would wipe the characters the user just typed (losing
   // React onChange with them).
   const handleInput = useCallback(() => {
+    pendingPasteRef.current = null;
     const ta = textareaRef.current;
     if (!ta) return;
     ta.style.height = "auto";
@@ -3467,6 +3503,22 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
 
     const html = e.clipboardData.getData("text/html");
     const text = e.clipboardData.getData("text/plain");
+    if (text) {
+      // A dictation tool that pastes and then restores the clipboard can write
+      // it during this event; Chrome then drops its own insertion (#1513). When
+      // no input followed the paste, insert the text the event delivered.
+      const ta = e.currentTarget;
+      const native = e.nativeEvent;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      const paste = {};
+      pendingPasteRef.current = paste;
+      setTimeout(() => {
+        if (pendingPasteRef.current !== paste) return;
+        pendingPasteRef.current = null;
+        if (!native.defaultPrevented && ta.isConnected) replaceTextareaRange(ta, start, end, text);
+      }, 0);
+    }
     if (!html || !text) return;
     const document = new DOMParser().parseFromString(html, "text/html");
     const links = Array.from(document.querySelectorAll("a[href]"), (link) => {
@@ -3587,7 +3639,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
   // Build model options: prefer modelList (has provider info), fallback to modelNames
   const modelOptions: ModelSelectorOption[] = (() => {
     if (modelList && modelList.length > 0) {
-      return modelList.map((m) => ({ provider: m.provider, modelId: m.id, name: m.name, status: m.avail, ...(m.providerRL ? { providerRL: true } : {}) }));
+      return modelList.map((m) => ({ provider: m.provider, providerName: m.providerName, modelId: m.id, name: m.name, status: m.avail, ...(m.providerRL ? { providerRL: true } : {}) }));
     }
     return Object.entries(modelNames ?? {}).map(([modelId, name]) => ({
       provider: model?.provider ?? "unknown",
@@ -4599,6 +4651,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           ) : (
           <div
             ref={inputRowRef}
+            className={stackedComposer ? undefined : "chat-composer-row"}
             style={{
               position: "relative",
               minWidth: 0,
@@ -5016,6 +5069,23 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   </span>
                 </StreamingActionButton>
               )}
+              {/* Side chat (upstream #1469): send the draft to a side chat forked
+                  from this session; the running task is untouched. Text-only. */}
+              {onSideChat && (
+                <StreamingActionButton
+                  label={t("chat.sideChat")}
+                  hint={attachedImages.length ? t("chat.sideChatHint") : t("chat.sideChatHint")}
+                  disabled={!hasInputText || attachedImages.length > 0}
+                  onClick={() => { sendToSideChat(); refocusInput(); }}
+                  bg="rgba(37,99,235,0.10)"
+                  border="rgba(37,99,235,0.30)"
+                  fg="rgba(37,99,235,0.9)"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M21 12a8 8 0 0 1-8 8H5.5a2 2 0 0 1-1.4-3.4A8 8 0 1 1 21 12z" /><path d="M13 8.5v7M9.5 12h7" />
+                  </svg>
+                </StreamingActionButton>
+              )}
               {onSteer && (
                 <StreamingActionButton
                   label={t("chat.steer")}
@@ -5209,7 +5279,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
               title={t("chat.attachFiles")}
               style={{
                 flexShrink: 0, display: "flex", alignItems: "center", justifyContent: "center",
-                width: 32, height: 32, padding: 0,
+                width: controlSize, height: controlSize, padding: 0,
                 background: "none", border: "none",
                 borderRadius: 9,
                 color: attachedImages.length ? "var(--accent)" : "var(--text-muted)",
@@ -5226,7 +5296,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 e.currentTarget.style.color = attachedImages.length ? "var(--accent)" : "var(--text-muted)";
               }}
             >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <svg width={isMobile ? 18 : 15} height={isMobile ? 18 : 15} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
                 <circle cx="8.5" cy="8.5" r="1.5" />
                 <polyline points="21 15 16 10 5 21" />
@@ -5271,6 +5341,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   defaultValue={defaultModel}
                   onSetDefault={onSetDefaultModel}
                   onReselect={onModelChange}
+                  allOptions={allModelList?.map((m) => ({ provider: m.provider, providerName: m.providerName, modelId: m.id, name: m.name }))}
+                  onShowAll={onLoadAllModels}
                 />
               )
             )}
@@ -5303,9 +5375,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   aria-label={t("chat.changeReasoningLabel")}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                    padding: isMobile ? "0 6px" : "8px 12px",
+                    padding: isMobile ? "0 10px" : "8px 12px",
                     width: isMobile ? "auto" : undefined,
-                    height: 32,
+                    height: controlSize,
                     background: thinkingDropdownOpen ? "var(--bg-hover)" : "none",
                     border: "none",
                     borderRadius: 9,
@@ -5407,9 +5479,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   aria-label={t("chat.changeToolPreset")}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                    padding: isMobile ? "0 6px" : "8px 12px",
+                    padding: isMobile ? "0 10px" : "8px 12px",
                     width: isMobile ? "auto" : undefined,
-                    height: 32,
+                    height: controlSize,
                     background: toolDropdownOpen ? "var(--bg-hover)" : "none",
                     border: "none",
                     borderRadius: 9,
@@ -5496,7 +5568,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                   }}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                    padding: isMobile ? "0 6px" : "8px 12px",
+                    padding: isMobile ? "0 10px" : "8px 12px",
                     width: isMobile ? "auto" : undefined,
                     height: 32,
                     background: isCompacting ? "rgba(239,68,68,0.08)" : compactQueued ? "rgba(217,119,6,0.1)" : "none",
@@ -5543,7 +5615,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                 style={{
                   display: "flex", alignItems: "center", gap: 6,
                   padding: "8px 14px",
-                  height: 32,
+                  height: controlSize,
                   background: "rgba(239,68,68,0.08)",
                   border: "1px solid rgba(239,68,68,0.3)",
                   borderRadius: 9,
@@ -5578,8 +5650,8 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
                  aria-label={soundEnabled ? t("chat.disableSound") : t("chat.enableSound")}
                 style={{
                   display: "flex", alignItems: "center", justifyContent: "center", gap: 5,
-                  width: isMobile ? 32 : 32,
-                  height: 32,
+                  width: controlSize,
+                  height: controlSize,
                   padding: 0,
                   background: "none",
                   border: "none",

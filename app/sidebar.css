@@ -414,8 +414,9 @@
   white-space: nowrap;
 }
 
-.session-tree .session-tree-confirm-delete,
-.session-tree .session-tree-confirm-cancel {
+/* Also the Agents switcher's side-chat Delete (AgentSessionPanel), outside the tree. */
+.session-tree-confirm-delete,
+.session-tree-confirm-cancel {
   display: flex;
   flex: none;
   align-items: center;
@@ -426,23 +427,24 @@
   border-radius: 6px;
   font-size: 12px;
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.session-tree .session-tree-confirm-delete {
+.session-tree-confirm-delete {
   border: 1px solid #ef4444;
   background: #ef4444;
   color: #fff;
   font-weight: 600;
 }
 
-.session-tree .session-tree-confirm-cancel {
+.session-tree-confirm-cancel {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-muted);
   font-weight: 500;
 }
 
-.session-tree .session-tree-confirm-cancel:hover {
+.session-tree-confirm-cancel:hover {
   background: var(--bg-hover);
 }
 
@@ -684,6 +686,20 @@
   font-size: 11px;
 }
 
+/* "No sessions yet" and an unpinned group's "Pin to keep" side by side. */
+.session-tree-group-empty-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-tree-group-empty .session-tree-more-toggle {
+  flex: none;
+  margin-left: 14px;
+}
+
 /* "Show more · N" and, once more is shown, "Show less" side by side. A lone
    button takes the whole row; on a narrow sidebar "show more" gives way so
    "Show less" is never clipped. */
@@ -855,7 +871,7 @@
   display: flex;
   flex: none;
   align-items: stretch;
-  height: 36px;
+  height: var(--top-bar-height);
   box-sizing: border-box;
   border-bottom: 1px solid var(--border);
 }
@@ -938,7 +954,7 @@
 }
 
 .sidebar-search-toggle {
-  width: 36px;
+  width: var(--top-bar-height);
   padding: 0;
 }
 
@@ -952,7 +968,7 @@
    their icons (2). A hidden label is still each one's name. */
 .sidebar-header[data-fit="1"] .sidebar-new-button,
 .sidebar-header[data-fit="2"] .sidebar-new-button {
-  width: 36px;
+  width: var(--top-bar-height);
   padding: 0;
 }
 

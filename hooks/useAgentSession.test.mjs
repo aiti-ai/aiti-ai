@@ -723,11 +723,14 @@ test("suppresses sounds and browser attention for the active subagent session", 
     appShellSource.indexOf("  const handleAutoName = useCallback"),
   );
 
-  assert.match(chatWindowSource, /completionNotificationsEnabled = session\?\.relation\?\.kind !== "subagent"/);
+  // 合并注：上游泛化到 side chat（isHiddenRelation 超集）。
+  assert.match(chatWindowSource, /completionNotificationsEnabled = (?:session\?\.relation\?\.kind !== "subagent"|!isHiddenRelation\(session\?\.relation\))/);
   assert.match(chatWindowSource, /completionNotificationsEnabled && soundEnabledRef\.current/);
   assert.match(chatWindowSource, /!completionNotificationsEnabled \|\| !surfaced/);
-  assert.match(completionSource, /selectedSession\?\.relation\?\.kind === "subagent"\) return/);
-  assert.match(attentionSource, /selectedSession\?\.relation\?\.kind === "subagent"\) return/);
+  // 合并注：上游泛化后由 completionNotificationsEnabled 门控（isHiddenRelation 超集）。
+    // 合并注：上游 #1484 的完成门控就是 isHiddenRelation（fork 原语的超集）。
+  assert.match(completionSource, /(?:selectedSession\?\.relation\?\.kind === "subagent"|isHiddenRelation\(selectedSession\?\.relation\))\) return/);
+    assert.match(attentionSource, /(?:isHiddenRelation\(session\?\.relation\)|isHiddenRelation\(selectedSession\?\.relation\))\) return/);
 });
 
 test("routes blocking extension requests through deduplicated browser attention notifications", () => {

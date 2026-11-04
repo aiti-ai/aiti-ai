@@ -46,7 +46,8 @@ test("passes a grouped turn's MessageViews the same copies on every render (#100
 
 test("skips custom messages without display and counts them nowhere (#1043)", () => {
   // pi's TUI never renders them; one card per idle session restart flooded the chat.
-  assert.match(source, /const msg = options\.messageOverride \?\? messages\[idx\];\s*if \(isHiddenCustomMessage\(msg\)\) return null;/);
+    // 合并注：上游 side-chat 分界（SideChatDivider）插在 hidden-custom 判断之前。
+  assert.match(source, /const msg = options\.messageOverride \?\? messages\[idx\];\s*if \(msg\.role === "custom" && msg\.customType === SIDE_BOUNDARY_MESSAGE_TYPE\) return <SideChatDivider key="side-chat-divider" \/>;\s*if \(isHiddenCustomMessage\(msg\)\) return null;/);
   assert.match(
     source,
     /if \(processMessage\.role === "custom"\) \{[^}]*?if \(isHiddenCustomMessage\(processMessage\)\) continue;/,

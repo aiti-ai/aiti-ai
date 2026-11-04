@@ -64,7 +64,8 @@ test("branch navigation cancels the pending mark automatically", () => {
   //  refresh of a stopped session, also unrelated; the regex allows any
   //  trailing destructured fields after activeLeafId so new fields don't turn
   //  the test red.)
-  assert.match(source, /loadSlashCommands, scrollToBottom, scrollUserMsgToTop,\n\s+loadContext, activeLeafId(?:, \w+)*,\n\s+\} = useAgentSession\(/);
+  // 合并注：上游 scope 切换的 loadAllModels 插在中间。
+  assert.match(source, /loadSlashCommands(?:, loadAllModels)?, scrollToBottom, scrollUserMsgToTop,\n\s+loadContext, activeLeafId(?:, \w+)*,\n\s+\} = useAgentSession\(/);
 });
 
 test("suppresses composer draft writes while a pending mark is active", () => {

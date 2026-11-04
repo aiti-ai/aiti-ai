@@ -205,7 +205,7 @@ function ViewerBody() {
       // This window has no chat input: @ mention write actions forward to the
       // opener's (main panel) composer
       appendText: (text) => { forwardComposerToOpener("append", text); },
-      getFileTabs: () => stateRef.current.tabs.map((tb) => ({ id: tb.id, filePath: tb.filePath, kind: (tb.kind === "terminal" ? "file" : tb.kind) ?? "file", pinned: tb.pinned })),
+      getFileTabs: () => stateRef.current.tabs.map((tb) => ({ id: tb.id, filePath: tb.filePath, kind: (tb.kind === "terminal" || tb.kind === "side" ? (tb.kind === "side" ? "agent" : "file") : tb.kind) ?? "file", pinned: tb.pinned })),
       closeFileTabs: (ids) => {
         setTabs((prev) => {
           const next = prev.filter((tb) => !ids.includes(tb.id));

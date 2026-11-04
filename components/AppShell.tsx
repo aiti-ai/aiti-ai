@@ -16,6 +16,7 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { TabBody, type TabBodyCtx } from "./TabBody";
 import { DetachedTabWindow } from "./DetachedTabWindow";
+import { movePanelTab, orderPanelTabs } from "@/lib/panel-tab-order";
 import { openFileTab, openFolderTab, saveFileViewerState, findDormantFileFacePath, saveParkedFileViewerState, switchFileWorkspace, type ParkedFileWorkspace } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import dynamic from "next/dynamic";
@@ -86,8 +87,11 @@ import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentSessionPanel } from "./AgentSessionPanel";
 import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
 import { SubagentViewer } from "./SubagentViewer";
+import { SessionChatPanel } from "./SessionChatPanel";
 import { TerminalPanelBridge } from "./TerminalPanelBridge";
+import { TerminalPanel } from "./TerminalPanel";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
+import { appendSideTab, restoreSideTabs, sideTabsKey } from "./side-tab-state";
 import { useTheme } from "@/hooks/useTheme";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
 import { THEME_OPTIONS } from "@/lib/theme";
@@ -113,7 +117,7 @@ import { setupPushSubscription } from "@/lib/push-client";
 import { startPageVisibilityTracking } from "@/lib/page-debug";
 import type { DebugClientSession } from "@/lib/debug-types";
 import { runOutcomeNotifies, truncateRunError } from "@/lib/run-outcome";
-import { getInitialNavigation, withTabOpen, type InitialNavigation } from "@/lib/initial-navigation";
+import { getInitialNavigation, linkedSessionId, withTabOpen, type InitialNavigation } from "@/lib/initial-navigation";
 import { clearTabOpenSession, getTabOpen, setTabOpenNewSession, setTabOpenSession } from "@/lib/tab-session";
 import { mergeCatalogRow } from "./session-catalog-helpers";
 import {
@@ -176,7 +180,8 @@ import { SessionNameDialog } from "./SessionNameDialog";
 import type { FileExplorerHandle } from "./FileExplorer";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
-import { getAgentsBadge, getFoldedMoreAgentsBadge, getSessionFamily } from "@/lib/session-family";
+import { createSideChat, deleteSideChat } from "@/lib/side-chat-client";
+import { getAgentsBadge, getFoldedMoreAgentsBadge, getSessionFamily, isHiddenRelation, sideChatTitle } from "@/lib/session-family";
 import { getRecentProjects } from "@/lib/project-groups";
 import { skillExpansionToCommand } from "@/lib/slash-display";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
@@ -212,7 +217,8 @@ declare global {
   }
 }
 
-const TOP_BAR_ICON_BUTTON_SIZE = 36;
+// app/globals.css: 36px, 44px on a phone or touch screen.
+const TOP_BAR_ICON_BUTTON_SIZE = "var(--top-bar-height)";
 const AGENT_PANEL_WIDTH = 420;
 // pi's built-in tools that never change a file; any other tool may (#1144).
 const READ_ONLY_TOOL_NAMES = new Set(PRESET_READ_ONLY);
@@ -426,7 +432,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // Audio ownership lives here (not in ChatWindow) so the completion tone can
   // also fire for tasks finishing in a non-active workspace whose ChatWindow
   // is not mounted. ChatWindow receives the audio callbacks as props.
-  const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio, soundEnabledRef } = useAudio();
+  const { soundEnabled, onSoundToggle, playDoneSound, unlockAudio, holdAudio, soundEnabledRef } = useAudio();
   const [quoteSelectionEnabled, setQuoteSelectionEnabled] = useState(false);
   useEffect(() => {
     try {
@@ -444,6 +450,11 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     }
   }, []);
   const notifiedAttentionRequestIdsRef = useRef(new Set<string>());
+  // Sessions that finished while the tab was out of sight (#1484): the browser
+  // Notification fires for the selected session, which the sidebar's unread
+  // markers exclude ("already looking" — false while hidden). The favicon keeps
+  // their badge until the tab is opened again; never persisted, never dotted.
+  const [hiddenFinishedSessionIds, setHiddenFinishedSessionIds] = useState<Set<string>>(new Set());
   const handleBackgroundTaskDone = useCallback(() => {
     if (soundEnabledRef.current) playDoneSound();
   }, [playDoneSound, soundEnabledRef]);
@@ -453,8 +464,10 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const selectedSessionRef = useRef(selectedSession);
   selectedSessionRef.current = selectedSession;
   const [sessionCatalog, setSessionCatalog] = useState<SessionInfo[]>([]);
+  const [catalogLoaded, setCatalogLoaded] = useState(false);
   const handleSessionsChange = useCallback((sessions: SessionInfo[]) => {
     setSessionCatalog(sessions);
+    setCatalogLoaded(true);
     // The sidebar hydrates metadata after the selected session has already
     // mounted. Merge that update into the active session without changing the
     // ChatWindow key or restarting its history load.
@@ -475,7 +488,6 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     () => getSessionFamily(sessionsWithSelection, selectedSession?.id),
     [selectedSession?.id, sessionsWithSelection],
   );
-  const hasSubagentSessions = Boolean(activeSessionFamily?.subagents.length);
   const [runningSessionIds, setRunningSessionIds] = useState<Set<string>>(() => new Set());
   const handleRunningSessionIdsChange = useCallback((ids: Set<string>) => {
     setRunningSessionIds((previous) => {
@@ -484,6 +496,35 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     });
   }, []);
   const agentsBadge = activeSessionFamily ? getAgentsBadge(activeSessionFamily.subagents, runningSessionIds) : null;
+  const hasSubagentSessions = Boolean(activeSessionFamily?.subagents.length);
+const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: boolean) => (
+    <span
+      aria-hidden="true"
+      style={{
+        position: "relative",
+        minWidth: 15, height: 15, padding: "0 4px", display: "grid", placeItems: "center",
+        borderRadius: 7,
+        background: badge.running ? "color-mix(in srgb, var(--accent) 22%, var(--bg-panel))" : "var(--bg-selected)",
+        color: "var(--accent)",
+        fontSize: 10, lineHeight: 1, fontVariantNumeric: "tabular-nums",
+        fontWeight: badge.running ? 600 : undefined,
+        ...(mobile ? { position: "absolute", top: 3, right: 3, minWidth: 13, height: 13, padding: "0 3px", fontSize: 9 } : {}),
+      }}
+    >
+      {badge.running && (
+        <svg
+          className="animate-spin motion-reduce:animate-none"
+          viewBox="0 0 24 24" fill="none" aria-hidden="true"
+          style={{ position: "absolute", top: -3, left: -3, width: "calc(100% + 6px)", height: "calc(100% + 6px)", pointerEvents: "none" }}
+        >
+          <circle cx="12" cy="12" r="11" stroke="currentColor" strokeWidth="2" opacity="0.2" />
+          <path d="M23 12a11 11 0 0 0-11-11" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      )}
+      {badge.count}
+    </span>
+  );
+
   const agentsButtonLabel = agentsBadge?.running
     ? translate("agentSwitcher.titleRunning", { count: agentsBadge.count })
     : translate("agentSwitcher.title");
@@ -535,6 +576,8 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const [settingsSection, setSettingsSection] = useState<SettingsSection | null>(null);
   const [mobileToolbarMoreOpen, setMobileToolbarMoreOpen] = useState(false);
   const mobileToolbarRef = useRef<HTMLDivElement>(null);
+  // The plain Settings button opens a phone's Settings on its list of sections; shortcuts open theirs.
+  const [settingsOpenAtHome, setSettingsOpenAtHome] = useState(false);
   const [modelsRefreshKey, setModelsRefreshKey] = useState(0);
   const [projectTrust, setProjectTrust] = useState<ProjectTrustStatus | null>(null);
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
@@ -644,6 +687,9 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     }
   }, [rightPanelOpen]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
+  // `/side <prompt>`: the text that seeds the side chat's composer, until its panel consumes it.
+  const [sideChatPrompts, setSideChatPrompts] = useState<Record<string, string>>({});
+  /** Quote-popover "Ask in new chat": the fork_branch's id → the composer prompt it replays (fork feature). */
   const [pendingQuotePrompt, setPendingQuotePrompt] = useState<{ sessionId: string; text: string } | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
   const themeBtnRef = useRef<HTMLButtonElement>(null);
@@ -788,10 +834,10 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   }, [sessionHasBranches]);
 
   useEffect(() => {
-    if (!hasSubagentSessions) {
+    if (!activeSessionFamily) {
       setActiveTopPanel((panel) => panel === "agents" ? null : panel);
     }
-  }, [hasSubagentSessions]);
+  }, [activeSessionFamily]);
 
   useEffect(() => {
     if (rightPanelFullWidth) setActiveTopPanel(null);
@@ -874,6 +920,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
 
   // The composer opens Settings too: a bare /mcp opens Settings › MCP (useAgentSession).
   const openSettingsSection = useCallback((section: SettingsSection) => {
+    setSettingsOpenAtHome(false);
     setSettingsSection(section);
   }, []);
 
@@ -989,7 +1036,12 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // they are dropped when the project changes (they belong to its sessions).
   // [上游 #1107 file workspace parking + #1129 subagent tab 融合] 驻留态与 agent 标签
   // 与本地 detached/keep-alive 体系并存：agent 项进 panelTabs，不进 detached 语义。
-  const [agentTabs, setAgentTabs] = useState<{ sessionId: string; label: string }[]>([]);
+  const [agentTabs, setAgentTabs] = useState<{ sessionId: string; label: string; side?: boolean }[]>([]);
+  // Upstream side-tab persistence refs (#1469): side tabs follow their main session.
+  const sideTabOwnerRef = useRef<string | null>(null);
+  const sideTabsReadyRef = useRef(false);
+  const sideTabsSavedOnWorkspaceSwitchRef = useRef(false);
+  const [panelTabOrder, setPanelTabOrder] = useState<string[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
   // Tab-bar auto-reveal token (TabBar revealToken): incremented only on
   // "user-initiated open/activate" paths — opening a file/folder (select:true),
@@ -1161,7 +1213,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   }, [fileTabs, terminalTabs, agentTabs, isMobile, revealFileTabOnOpen]);
   // ═══ [floating-dialog extension dock batch A re-add end] ═══
 
-  const panelTabs: Tab[] = [
+  const panelTabs: Tab[] = orderPanelTabs([
     // detached tabs stay out of the right-panel render surface (rendered only once in
     // the detached window — single-instance invariant §3)
     ...fileTabs.filter((t) => !detachedTabIds.has(t.id)),
@@ -1180,15 +1232,24 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     ...rightDockItems
       .filter((it) => dockPanelStates.get(it.id) === "docked:right-panel")
       .map((it) => ({ id: `dock:${it.id}`, label: it.meta?.title || it.meta?.label || it.extId || it.id, filePath: "", kind: "dock" as const })),
-    // [上游 #1129] 子代理工作 tab：panel 承载与 handleOpenSubagentTab 挂载同源
-    ...agentTabs.map((tab) => ({
-      id: `agent:${tab.sessionId}`,
-      label: tab.label,
-      filePath: tab.label,
-      kind: "agent" as const,
-    })),
-  ];
-
+    // [上游 #1129/#1469] 子代理工作 tab + side chat tab：panel 承载与 handleOpenSubagentTab 挂载同源
+    ...agentTabs.map((tab) => {
+      const session = tab.side ? sessionCatalog.find((item) => item.id === tab.sessionId) : undefined;
+      const label = session ? sideChatTitle(session, translate("agentSwitcher.sideChat"), activeSessionFamily?.subagents ?? []) : tab.label;
+      return {
+        id: `agent:${tab.sessionId}`,
+        label,
+        filePath: label,
+        kind: (tab.side ? "side" : "agent") as "agent" | "side",
+      };
+    }),
+  ], panelTabOrder);
+  // A closed tab leaves the saved order, so reopening it appends it like any new tab.
+  const panelTabIds = panelTabs.map((tab) => tab.id).join("\n");
+  useEffect(() => {
+    const open = new Set(panelTabIds.split("\n"));
+    setPanelTabOrder((order) => order.every((id) => open.has(id)) ? order : order.filter((id) => open.has(id)));
+  }, [panelTabIds]);
   // Detached-window list = existing tabs ∩ detached (file/folder/terminal; dock tab
   // detaching goes through the state machine's present float, not this list). Removing
   // a tab removes its window (performCloseFileTab need not know about detached).
@@ -1276,6 +1337,22 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     } catch { /* storage is optional */ }
   }, [terminalTabs, activeFileTabId, rightPanelOpen, terminalsRestored]);
 
+  const rememberSideTabs = useCallback((key: string) => {
+    try {
+      const tabs = agentTabs.filter((tab) => tab.side);
+      // A session without side tabs keeps no entry: one per visited session otherwise.
+      if (!tabs.length) {
+        window.sessionStorage.removeItem(sideTabsKey(key));
+        return;
+      }
+      window.sessionStorage.setItem(sideTabsKey(key), JSON.stringify({
+        tabs,
+        activeId: tabs.some((tab) => `agent:${tab.sessionId}` === activeFileTabId) ? activeFileTabId : null,
+        open: rightPanelOpen,
+      }));
+    } catch { /* storage is optional */ }
+  }, [agentTabs, activeFileTabId, rightPanelOpen]);
+
   const handleFileViewerStateChange = useCallback((
     generation: number,
     tabId: string,
@@ -1300,14 +1377,18 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     fileWorkspaceGenerationRef.current += 1;
     setFileWorkspaceGeneration(fileWorkspaceGenerationRef.current);
     setFileTabs(next.tabs);
-    // Subagent tabs belong to the previous project's sessions: dropped, not parked.
-    setAgentTabs([]);
+    // Subagent tabs are project-scoped; side tabs are saved under their main session.
+    setAgentTabs((tabs) => tabs.filter((tab) => tab.side));
+    if (sideTabsReadyRef.current && sideTabOwnerRef.current) {
+      rememberSideTabs(sideTabOwnerRef.current);
+      sideTabsSavedOnWorkspaceSwitchRef.current = true;
+    }
     // Terminal tabs span workspaces and keep control of the panel while active.
     if (!activeFileTabId || activeFileId || activeFileTabId.startsWith("agent:")) {
       setActiveFileTabId(next.activeTabId);
       setRightPanelOpen(next.open);
     }
-  }, [activeFileTabId, fileTabs, rightPanelOpen]);
+  }, [activeFileTabId, fileTabs, rememberSideTabs, rightPanelOpen]);
 
   // Same @mention format as the chat input's @ autocomplete, so the agent's
   // read tool resolves it the same way (it strips the @ prefix).
@@ -1340,8 +1421,34 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // was invalid).
   const sessionSourceRef = useRef<PiWebSessionSource>(initialNavigation.sessionId ? "url" : "initial");
   const activeProjectKeyRef = useRef<string | null>(null);
+  const initialLinkedSessionId = linkedSessionId(initialNavigation);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
+  const sideTabOwner = activeSessionFamily?.root.id ?? null;
+  useEffect(() => {
+    if (!catalogLoaded || !initialSessionRestored) return;
+    const previous = sideTabOwnerRef.current;
+    if (!sideTabsReadyRef.current || previous !== sideTabOwner) {
+      if (sideTabsReadyRef.current && previous && !sideTabsSavedOnWorkspaceSwitchRef.current) rememberSideTabs(previous);
+      sideTabsSavedOnWorkspaceSwitchRef.current = false;
+      sideTabsReadyRef.current = true;
+      sideTabOwnerRef.current = sideTabOwner;
+      let restored = { tabs: [] as { sessionId: string; label: string; side: true }[], activeId: null as string | null, open: false };
+      if (sideTabOwner) {
+        try { restored = restoreSideTabs(window.sessionStorage.getItem(sideTabsKey(sideTabOwner)), sideTabOwner, sessionCatalog); }
+        catch { /* storage is optional */ }
+      }
+      setAgentTabs((tabs) => [...tabs.filter((tab) => !tab.side), ...restored.tabs]);
+      const nextId = restored.activeId === `agent:${selectedSession?.id}` ? null : restored.activeId;
+      if (nextId || activeFileTabId?.startsWith("agent:") || !activeFileTabId) {
+        setActiveFileTabId(nextId ?? fileTabs.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? null);
+        setRightPanelOpen(nextId ? restored.open : Boolean(fileTabs.length || terminalTabs.length) && rightPanelOpen);
+      }
+      return;
+    }
+    if (sideTabOwner) rememberSideTabs(sideTabOwner);
+    sideTabsSavedOnWorkspaceSwitchRef.current = false;
+  }, [activeFileTabId, catalogLoaded, fileTabs, initialSessionRestored, rememberSideTabs, rightPanelOpen, selectedSession?.id, sessionCatalog, sideTabOwner, terminalTabs]);
   // sessionStorage is empty during SSR. Applying the tab's remembered session
   // in the useState initializer made the first client tree differ from the
   // server HTML (sidebar "select project" vs ""). Restore after mount instead.
@@ -2046,9 +2153,17 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     setExplorerRefreshKey((k) => k + 1);
     if (selectedSession) hydrateSelectedSession(selectedSession.id);
 
-    if (end.aborted || end.subagentsActive || selectedSession?.relation?.kind === "subagent") return;
+    if (end.aborted || end.subagentsActive || isHiddenRelation(selectedSession?.relation)) return;
     if (!shouldShowBrowserNotification()) return;
     const targetSession = selectedSession;
+    if (targetSession) {
+      setHiddenFinishedSessionIds((prev) => {
+        if (prev.has(targetSession.id)) return prev;
+        const next = new Set(prev);
+        next.add(targetSession.id);
+        return next;
+      });
+    }
     // Include session context: title = task name (name/first-message summary), body =
     // project(+branch) + status text, so the notification shows at a glance "which task
     // in which project" and its result.
@@ -2102,8 +2217,23 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
       });
   }, [deliverSessionNotification, hydrateSelectedSession, selectedSession, translate]);
 
+  // The badge is for an unseen tab: opening it puts the finished chat on screen.
+  useEffect(() => {
+    const clearIfSeen = () => {
+      if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+      setHiddenFinishedSessionIds((prev) => (prev.size === 0 ? prev : new Set()));
+    };
+    clearIfSeen();
+    document.addEventListener("visibilitychange", clearIfSeen);
+    window.addEventListener("focus", clearIfSeen);
+    return () => {
+      document.removeEventListener("visibilitychange", clearIfSeen);
+      window.removeEventListener("focus", clearIfSeen);
+    };
+  }, []);
+
   const handleAttentionNeeded = useCallback((request: BlockingExtensionUiRequest) => {
-    if (selectedSession?.relation?.kind === "subagent") return;
+    if (isHiddenRelation(selectedSession?.relation)) return;
     if (!shouldShowBrowserNotification()) return;
     if (!claimExtensionAttentionNotification(request, notifiedAttentionRequestIdsRef.current)) return;
 
@@ -2229,6 +2359,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     replaceLocationIfChanged(router, `?session=${encodeURIComponent(newSessionId)}`, { scroll: false });
   }, [invalidateWorkspaceRestore, router, hydrateSelectedSession]);
 
+  // The sidebar calls this when the initial session is not in its list.
   const handleAskInNewChat = useCallback(async (
     prompt: string,
     sourceSessionId: string,
@@ -2440,7 +2571,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   const handleGetFileTabs = useCallback(() =>
     // fileTabs excludes terminal tabs (terminals are stored separately in
     // terminalTabs); kind is narrowed to the two states declared by the host API.
-    fileTabs.map((t) => ({ id: t.id, filePath: t.filePath, kind: (t.kind === "terminal" ? "file" : t.kind) ?? "file", pinned: t.pinned })),
+    fileTabs.map((t) => ({ id: t.id, filePath: t.filePath, kind: (t.kind === "terminal" || t.kind === "side" ? (t.kind === "side" ? "agent" : "file") : t.kind) ?? "file", pinned: t.pinned })),
   [fileTabs]);
   // closeFileTabs: remove from state only + re-seat activation; policies such as
   // dirty confirmation / pin protection are the caller's (extension's) responsibility.
@@ -2557,12 +2688,66 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // suffices; shell lifecycle belongs to the command-terminal extension).
 
   // Subagent work opens in a right-panel tab instead of hijacking the main chat.
-  const handleOpenSubagentTab = useCallback((sessionId: string, label: string) => {
-    setAgentTabs((prev) => prev.some((tab) => tab.sessionId === sessionId) ? prev : [...prev, { sessionId, label }]);
+  const handleOpenSubagentTab = useCallback((sessionId: string, label: string, side?: boolean) => {
+    setAgentTabs((prev) => prev.some((tab) => tab.sessionId === sessionId)
+      ? prev
+      : [...prev, { sessionId, label, ...(side ? { side: true } : {}) }]);
     setActiveFileTabId(`agent:${sessionId}`);
     setRightPanelOpen(true);
     if (isMobile) setSidebarOpen(false);
   }, [isMobile]);
+
+  // The agent switcher's side-panel button: opens a subagent's tab, or closes
+  // it when the open panel already has it (the panel closes with its last tab).
+  // The switcher stays open beside the panel, except on phones, where the
+  // panel covers the chat.
+  const openSubagentTabIds = useMemo(
+    () => new Set(rightPanelOpen ? agentTabs.map((tab) => tab.sessionId) : []),
+    [agentTabs, rightPanelOpen],
+  );
+  const handleToggleSubagentTab = (sessionId: string, label: string, side?: boolean) => {
+    if (openSubagentTabIds.has(sessionId)) {
+      handleCloseFileTab(`agent:${sessionId}`);
+      return;
+    }
+    if (isMobile) setActiveTopPanel(null);
+    handleOpenSubagentTab(sessionId, label, side);
+  };
+
+  // `/side` landed (hooks/useAgentSession): open the forked chat's tab, seed
+  // its composer when the command carried a prompt, and refresh the list so
+  // the family's badge folds the new member in.
+  const handleSideSession = useCallback((session: SessionInfo, prompt: string | null) => {
+    if (prompt) setSideChatPrompts((prev) => ({ ...prev, [session.id]: prompt }));
+    setSessionCatalog((prev) => [session, ...prev.filter((item) => item.id !== session.id)]);
+    const label = translate("agentSwitcher.sideChat");
+    const parentId = session.relation?.kind === "side" ? session.relation.parentSessionId : null;
+    if (parentId && parentId !== sideTabOwnerRef.current) {
+      // The fork landed after the main chat moved on: the tab waits with its own session.
+      try {
+        const key = sideTabsKey(parentId);
+        window.sessionStorage.setItem(key, appendSideTab(window.sessionStorage.getItem(key), session.id, label));
+      } catch { /* storage is optional */ }
+    } else {
+      handleOpenSubagentTab(session.id, label, true);
+    }
+    setRefreshKey((key) => key + 1);
+  }, [handleOpenSubagentTab, translate]);
+
+  // The switcher's New side chat, on the main agent's row, whichever family member the main chat shows.
+  const handleNewSideChat = useCallback(async (rootSessionId: string) => {
+    const result = await createSideChat(rootSessionId, translate);
+    if ("error" in result) return result.error;
+    if (isMobile) setActiveTopPanel(null);
+    handleSideSession(result.session, null);
+    return null;
+  }, [handleSideSession, isMobile, translate]);
+
+  // A side chat's first prompt names it: read the name when a run in an open tab starts or ends.
+  const runningSideTabs = agentTabs.filter((tab) => tab.side && runningSessionIds.has(tab.sessionId)).map((tab) => tab.sessionId).join();
+  useEffect(() => {
+    if (runningSideTabs) setRefreshKey((key) => key + 1);
+  }, [runningSideTabs]);
 
   const handleTerminalClosed = (tab: TerminalTab) => {
     const replacement = tab.closing === "restart" ? newTerminalTab(tab.cwd) : null;
@@ -2743,6 +2928,28 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
   // terminal is active (its always-mounted container handles it; see the hidden
   // container list below).
   const activeTabForBody: Tab | null = panelTabs.find((t) => t.id === activeFileTabId) ?? null;
+
+  // The Agents switcher's Delete on a side chat: its tab goes with it, and the
+  // main chat showing it goes back to the parent, as the Main agent row does
+  // (`handleSessionDeleted` would leave the family for a fresh composer).
+  const handleDeleteSideChat = useCallback(async (sessionId: string, root: SessionInfo): Promise<string | null> => {
+    const result = await deleteSideChat(sessionId);
+    if (result) return result.error;
+    handleCloseFileTab(`agent:${sessionId}`);
+    if (selectedSessionRef.current?.id === sessionId) {
+      handleSelectSession(root);
+      setRefreshKey((key) => key + 1);
+    } else {
+      handleSessionDeleted(sessionId);
+    }
+    return null;
+  }, [handleCloseFileTab, handleSelectSession, handleSessionDeleted]);
+
+  // One session, one chat: opening a subagent or side chat in the main chat closes its tab.
+  const selectedSessionId = selectedSession?.id;
+  useEffect(() => {
+    if (agentTabs.some((tab) => tab.sessionId === selectedSessionId)) handleCloseFileTab(`agent:${selectedSessionId}`);
+  }, [agentTabs, handleCloseFileTab, selectedSessionId]);
 
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
@@ -4097,6 +4304,41 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
     </button>
   );
 
+  // The Agents switcher's button. A narrow phone shows it left of the More button instead of
+  // folding it into that menu: the bar has the room, and the badge stays in sight.
+  const renderAgentsButton = (mobile: boolean) => (
+    <button
+      type="button"
+      // On a narrow phone it sits outside the More menu, so it leaves that menu as it is.
+      onClick={() => toggleTopPanel("agents", mobile && !isNarrowMobile)}
+      disabled={!activeSessionFamily}
+      title={agentsButtonLabel}
+      aria-label={agentsButtonLabel}
+      aria-pressed={activeTopPanel === "agents"}
+      style={{
+        position: "relative",
+        display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+        width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
+        height: "100%", padding: mobile ? 0 : "0 12px",
+        background: activeTopPanel === "agents" ? "var(--bg-selected)" : "none",
+        border: "none",
+        borderTop: activeTopPanel === "agents" ? "2px solid var(--accent)" : "2px solid transparent",
+        borderRight: "1px solid var(--border)",
+        color: activeTopPanel === "agents" ? "var(--text)" : activeSessionFamily ? "var(--text-muted)" : "var(--text-dim)",
+        cursor: activeSessionFamily ? "pointer" : "not-allowed", opacity: activeSessionFamily ? 1 : 0.45,
+        flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+        transition: "color 0.1s, background 0.1s",
+      }}
+      data-mobile-toolbar-action={mobile ? "agents" : undefined}
+    >
+      <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
+      </svg>
+      {!mobile && <span>{translate("agentSwitcher.title")}</span>}
+      {agentsBadge && agentsBadge.count > 0 && renderAgentsBadge(agentsBadge, mobile)}
+    </button>
+  );
+
   const renderChatToolbarActions = (mobile: boolean) => {
     if (!mobile && !showChat) return null;
     return (
@@ -4142,8 +4384,8 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
           data-mobile-toolbar-action={mobile ? "history" : undefined}
         >
           <svg
-            width="12"
-            height="12"
+            width={mobile ? 16 : 12}
+            height={mobile ? 16 : 12}
             viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
@@ -4222,16 +4464,16 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               data-mobile-toolbar-action={mobile ? "name" : undefined}
             >
               {autoNameStatus.kind === "naming" ? (
-                <svg className="animate-spin" width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <svg className="animate-spin" width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" aria-hidden="true">
                   <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="2" opacity="0.25" />
                   <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
                 </svg>
               ) : isSuccess ? (
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               ) : (
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="m15 4 5 5L7 22l-5-5Z" />
                   <path d="m14 5 5 5" />
                   <path d="M6 4V2M5 3H3M19 19v3M17.5 20.5h3" />
@@ -4314,7 +4556,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
             }}
             data-mobile-toolbar-action="branches"
           >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: branchTree.length > 0 ? "var(--accent)" : "var(--text-dim)" }} aria-hidden="true">
+            <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: branchTree.length > 0 ? "var(--accent)" : "var(--text-dim)" }} aria-hidden="true">
               <line x1="6" y1="3" x2="6" y2="15" />
               <circle cx="18" cy="6" r="3" />
               <circle cx="6" cy="18" r="3" />
@@ -4364,7 +4606,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
           }}
           data-mobile-toolbar-action={mobile ? "system" : undefined}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
+          <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
             <polyline points="14 2 14 8 20 8" />
             <line x1="8" y1="13" x2="16" y2="13" />
@@ -4401,7 +4643,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
           }}
           data-mobile-toolbar-action={mobile ? "tools" : undefined}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemTools?.some((tool) => tool.active) ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
+          <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemTools?.some((tool) => tool.active) ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
             <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" />
           </svg>
           {!mobile && <span>{translate("tools.label")}</span>}
@@ -4441,7 +4683,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         }}
         data-mobile-toolbar-action={mobile ? "debug" : undefined}
       >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: open ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
+        <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: open ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
           <path d="M8 2l1.9 1.9M16 2l-1.9 1.9M9 7.1v-1a3 3 0 0 1 6 0v1" />
           <path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6zM12 20v-9" />
           <path d="M6.5 9C4.6 8.8 3 7.1 3 5M6 13H2M3 21c0-2.1 1.7-3.9 3.8-4M21 5c0 2.1-1.6 3.8-3.5 4M22 13h-4M17.2 17c2.1.1 3.8 1.9 3.8 4" />
@@ -4682,7 +4924,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         <div
           ref={topBarRef}
           style={{
-            display: "flex", alignItems: "center", flexShrink: 0,
+            display: "flex", alignItems: "center", flexShrink: 0, position: "relative",
             // The divider is drawn with an inset box-shadow (takes no layout space):
             // with global box-sizing: border-box, a 1px border would eat 1px of the
             // content area → the container had to be 37px; with the inset shadow the
@@ -4783,6 +5025,82 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               {!isMobile && <span>{translate("trust.resourcesNotLoaded")}</span>}
             </button>
           )}
+          <div
+            data-mobile-toolbar="true"
+            style={{
+              position: "relative",
+              display: "flex",
+              alignItems: "stretch",
+              flex: 1,
+              minWidth: 0,
+              height: "100%",
+            }}
+          >
+          {isNarrowMobile && renderAgentsButton(true)}
+          {isNarrowMobile && (
+            <button
+              type="button"
+              onClick={handleMobileToolbarMoreToggle}
+                  title={moreControlsLabel}
+                  aria-label={moreControlsLabel}
+                  aria-controls="mobile-toolbar-actions"
+                  aria-expanded={mobileToolbarMoreOpen}
+                  data-mobile-toolbar-more="true"
+                  style={{
+                    position: "relative",
+                    zIndex: mobileToolbarMoreOpen ? 21 : undefined,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
+                    background: mobileToolbarMoreOpen ? "var(--bg-selected)" : "none",
+                    border: "none", borderRight: "1px solid var(--border)",
+                    color: mobileToolbarMoreOpen ? "var(--text)" : "var(--text-muted)",
+                    cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
+                  }}
+                >
+                  {mobileToolbarMoreOpen ? (
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                      <line x1="5" y1="5" x2="19" y2="19" /><line x1="19" y1="5" x2="5" y2="19" />
+                    </svg>
+                  ) : (
+                    <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                      <circle cx="5" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="19" cy="12" r="1.5" />
+                    </svg>
+                  )}
+                </button>
+              )}
+              {isNarrowMobile && mobileToolbarMoreOpen && (
+                <div
+                  id="mobile-toolbar-actions"
+                  role="toolbar"
+                  aria-label={translate("chat.moreControls")}
+                  data-mobile-toolbar-actions="true"
+                  style={{
+                    position: "absolute",
+                    top: 0,
+                    right: 0,
+                    bottom: 0,
+                    // Right of the Agents and More buttons, which stay in place.
+                    left: `calc(2 * ${TOP_BAR_ICON_BUTTON_SIZE})`,
+                    zIndex: 20,
+                    display: "flex",
+                    alignItems: "stretch",
+                    // More buttons than a 320px phone fits (the Debug button made seven): scroll, never clip.
+                    overflowX: "auto",
+                    overflowY: "hidden",
+                    scrollbarWidth: "none",
+                    background: "color-mix(in srgb, var(--bg-panel) 94%, var(--bg))",
+                    boxShadow: "4px 0 18px rgba(0,0,0,0.12)",
+                    backdropFilter: "blur(10px)",
+                  }}
+                >
+                  {renderChatToolbarActions(true)}
+                  {renderDebugButton(true)}
+                </div>
+              )}
+              {!isNarrowMobile && renderChatToolbarActions(true)}
+              {!isNarrowMobile && renderDebugButton(true)}
+              {renderMainFileToggle(true)}
+          </div>
           {/* Session stats — right-aligned in top bar */}
           {showChat && (sessionStats || contextUsage) && (() => {
              const tokens = sessionStats?.tokens;
@@ -5105,6 +5423,10 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
                   selectedSessionId={selectedSession.id}
                   runningSessionIds={runningSessionIds}
                   onSelectSession={handleSelectSession}
+                  openSubagentTabIds={openSubagentTabIds}
+                  onToggleSubagentTab={handleToggleSubagentTab}
+                  onNewSideChat={() => handleNewSideChat(activeSessionFamily.root.id)}
+                  onDeleteSideChat={(sessionId) => handleDeleteSideChat(sessionId, activeSessionFamily.root)}
                 />
               )}
               {activeTopPanel === "system" && (
@@ -5636,6 +5958,10 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               onSessionCreated={handleSessionCreated}
               onSessionForked={handleSessionForked}
               onSessionIdCanonicalized={handleSessionIdCanonicalized}
+              onInitialPromptConsumed={() => setPendingQuotePrompt((prev) => (prev && prev.sessionId === selectedSession?.id ? null : prev))}
+              onSideSession={handleSideSession}
+              onAskInNewChat={handleAskInNewChat}
+              initialPrompt={pendingQuotePrompt?.sessionId === selectedSession?.id ? pendingQuotePrompt?.text : undefined}
               modelsRefreshKey={modelsRefreshKey}
               chatInputRef={chatInputRef}
               onBranchDataChange={handleBranchDataChange}
@@ -5654,10 +5980,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               onOpenFile={handleOpenLinkedFile}
               onFilesUploaded={handleExplorerRefresh}
               onOpenSubagent={handleOpenSubagentTab}
-              onAskInNewChat={handleAskInNewChat}
               quoteSelectionEnabled={quoteSelectionEnabled}
-              initialPrompt={pendingQuotePrompt?.sessionId === selectedSession?.id ? pendingQuotePrompt?.text : undefined}
-              onInitialPromptConsumed={() => setPendingQuotePrompt(null)}
               soundEnabled={soundEnabled}
               onSoundToggle={onSoundToggle}
               playDoneSound={playDoneSound}
@@ -5750,7 +6073,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
           display: "flex",
           alignItems: "center",
           flexShrink: 0,
-          height: "calc(36px + env(safe-area-inset-top))",
+          height: "calc(var(--top-bar-height) + env(safe-area-inset-top))",
           paddingTop: "env(safe-area-inset-top)",
           background: "var(--bg-panel)",
           borderBottom: "none",
@@ -5766,6 +6089,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
               onDetachTab={handleTabDoubleClick}
               onOpenViewerWindow={(tab) => { openViewerWindowHost(tab.filePath, activeCwd); }}
               onDockFileTab={handleDockFileTab}
+              onReorderTab={(source, target, after) => setPanelTabOrder(movePanelTab(panelTabs.map((tab) => tab.id), source, target, after))}
             />
           </div>
           {(() => {
@@ -5904,12 +6228,33 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
             </div>
           ))}
           {activeAgentTab && (
-            <SubagentViewer
+            <SessionChatPanel
               key={activeAgentTab.sessionId}
               sessionId={activeAgentTab.sessionId}
-              fallbackLabel={activeAgentTab.label}
               running={runningSessionIds.has(activeAgentTab.sessionId)}
+              initialPrompt={sideChatPrompts[activeAgentTab.sessionId]}
+              onInitialPromptConsumed={() => setSideChatPrompts((prev) => {
+                if (!(activeAgentTab.sessionId in prev)) return prev;
+                const next = { ...prev };
+                delete next[activeAgentTab.sessionId];
+                return next;
+              })}
+              modelsRefreshKey={modelsRefreshKey}
+              quoteSelectionEnabled={quoteSelectionEnabled}
               onOpenFile={handleOpenLinkedFile}
+              onOpenSubagent={handleOpenSubagentTab}
+              onSessionForked={(newSessionId) => {
+                if (isMobile) setRightPanelOpen(false);
+                handleSessionForked(newSessionId);
+              }}
+              onOpenSettings={openSettingsSection}
+              onToolEnd={handleToolEnd}
+              onFilesUploaded={handleExplorerRefresh}
+              soundEnabled={soundEnabled}
+              onSoundToggle={onSoundToggle}
+              playDoneSound={playDoneSound}
+              unlockAudio={unlockAudio}
+              holdAudio={holdAudio}
             />
           )}
         </div>
@@ -5942,6 +6287,7 @@ export function AppShell({ extSlotDeclarations }: { extSlotDeclarations?: Record
         cwd={projectTrustCwd}
         sessionId={selectedSession?.id ?? null}
         initialSection={settingsSection}
+        openAtHome={settingsOpenAtHome}
         quoteSelectionEnabled={quoteSelectionEnabled}
         onQuoteSelectionChange={handleQuoteSelectionChange}
         onClose={() => {

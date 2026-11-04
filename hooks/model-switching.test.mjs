@@ -31,7 +31,8 @@ test("session reloads cannot clear an in-flight optimistic model", () => {
 });
 
 test("a completed model switch reloads canonical session state and reports failures", () => {
-  assert.match(switchSource, /modelSwitchPendingRef\.current = false;\s*await loadSession\(sid\)/);
+  // 合并注：fork 的运行中切换走 live-state 同步分支（midRun → syncLiveState），空闲仍回放会话。
+  assert.match(switchSource, /modelSwitchPendingRef\.current = false;\s*(?:if \(midRun\) \{[\s\S]{0,220}?await syncLiveState\(\);\s*\} else \{[\s\S]{0,260}?await loadSession\(sid\);[\s\S]{0,200}?\}|await loadSession\(sid\))/);
   assert.match(switchSource, /setCurrentModelOverride\(previousOverride\)[\s\S]*?await loadSession\(sid, false, true\)/);
   assert.match(switchSource, /setCurrentModelOverride\(previousOverride\)/);
   assert.match(switchSource, /Failed to switch model:/);
