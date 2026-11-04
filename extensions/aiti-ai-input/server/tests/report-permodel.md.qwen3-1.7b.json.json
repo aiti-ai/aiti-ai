@@ -1,0 +1,912 @@
+[
+  {
+    "file": "vad_20260905_155613.wav",
+    "dur": 7.92,
+    "qwen3-0.6b": {
+      "text": "国务院发展研究中心市场经济研究所副所长，邓玉松认为。",
+      "ms": 21233,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "国务院发展研究中心市场经济研究所副所长邓玉松认为。",
+      "ms": 18253,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "国务院发展研究中心市场经济研究所副所长邓郁松认为",
+      "ms": 28012,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "国务院发展研究中心市场经济研究所副所长邓玉松认为",
+      "ms": 2944,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_155847.wav",
+    "dur": 13.56,
+    "qwen3-0.6b": {
+      "text": "我们现在来说说我们这边的专业术语：AIT、DevTools、IT、AI、CM、CMB、认领、拉、review。",
+      "ms": 3418,
+      "repeat": false,
+      "hit": [
+        "devtools",
+        "认领"
+      ]
+    },
+    "qwen3-1.7b": {
+      "text": "我们现在来说说我们这边专业术语：Aitai Devtools, AIT AI, CMD CMD, Plan Plan, Review.",
+      "ms": 5815,
+      "repeat": false,
+      "hit": [
+        "devtools"
+      ]
+    },
+    "nano": {
+      "text": "我们现在来说说我们这边专业术语，PI DEVTOOLS IT AI CMC M B COMMAND PLAN REVIEW。",
+      "ms": 3294,
+      "repeat": false,
+      "hit": [
+        "devtools",
+        "pi"
+      ]
+    },
+    "sensevoice": {
+      "text": "for external high double i t a i c m c m b amount plan review",
+      "ms": 527,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_155902.wav",
+    "dur": 9.21,
+    "qwen3-0.6b": {
+      "text": "我再说一遍，我们有aiti、folder、file、plan，以及有sandbox、devtools、kernel。",
+      "ms": 2531,
+      "repeat": false,
+      "hit": [
+        "aiti",
+        "devtools"
+      ]
+    },
+    "qwen3-1.7b": {
+      "text": "我再说一遍，我们有 aiti folder file plan view sandbox devtools nano。",
+      "ms": 3759,
+      "repeat": false,
+      "hit": [
+        "aiti",
+        "devtools"
+      ]
+    },
+    "nano": {
+      "text": "我再说一遍，我们有IT FOLDER FILE PLAN，有193的BOX STEP FOUR，有NINE OF。",
+      "ms": 3666,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "我再说一遍我们有 i t plan review review sandbox that",
+      "ms": 351,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_155917.wav",
+    "dur": 11.09,
+    "qwen3-0.6b": {
+      "text": "我们现在有大量的专业术语，包括 AIITI、Input、Session、Service Manager。",
+      "ms": 2015,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "我们现在有大量的专业术语，包括 aiti、ai input session、this service manager。",
+      "ms": 3863,
+      "repeat": false,
+      "hit": [
+        "aiti"
+      ]
+    },
+    "nano": {
+      "text": "我们现在有大量的专业术语，包括ANTI、AI、INPUT、SESSION、C、SERVICE、MANAGER。",
+      "ms": 3144,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "我们现在有大量的专业数据包括 anti a i input session service manager",
+      "ms": 419,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_155928.wav",
+    "dur": 5.63,
+    "qwen3-0.6b": {
+      "text": "Processor IT is LSP和PM。",
+      "ms": 1112,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "Processor AIT is else it's a DRM.",
+      "ms": 2426,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "Processor I T E S else receive G R M",
+      "ms": 1803,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "processor i e else it g r m",
+      "ms": 436,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_155937.wav",
+    "dur": 2.22,
+    "qwen3-0.6b": {
+      "text": "I L Four。",
+      "ms": 770,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "Hi, DevTools.",
+      "ms": 1544,
+      "repeat": false,
+      "hit": [
+        "devtools"
+      ]
+    },
+    "nano": {
+      "text": "I have four.",
+      "ms": 755,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "i没错",
+      "ms": 126,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_155952.wav",
+    "dur": 1.96,
+    "qwen3-0.6b": {
+      "text": "我用了几段。",
+      "ms": 909,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "我用了几段。",
+      "ms": 1644,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "我弄了几段。",
+      "ms": 914,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "我用了几段",
+      "ms": 150,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160002.wav",
+    "dur": 2.99,
+    "qwen3-0.6b": {
+      "text": "还是大量直接触屏审核。",
+      "ms": 1304,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "还是大量直接出去审核。",
+      "ms": 1739,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "还是大量直接退出审核。",
+      "ms": 1070,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "还是大量直接出去审核",
+      "ms": 186,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160505.wav",
+    "dur": 16.64,
+    "qwen3-0.6b": {
+      "text": "怎么部署？我要怎么开发一个快扩展？我这个React的，我要其实称为模型之部署，什么模型组件。UI显示就控制。",
+      "ms": 4404,
+      "repeat": false,
+      "hit": [
+        "扩展",
+        "模型"
+      ]
+    },
+    "qwen3-1.7b": {
+      "text": "怎么部署？我要怎么开发一个扩展？我这个 respond 反格提示词模型是复数，查什么？ UI 形式就后缀。",
+      "ms": 16922,
+      "repeat": false,
+      "hit": [
+        "扩展",
+        "模型"
+      ]
+    },
+    "nano": {
+      "text": "我该怎么部署？我要怎么开发一个PAI扩展呢？我这个REFUND返回的提示词模型是复数，查模型组名UI显示就凑出来了。",
+      "ms": 13604,
+      "repeat": false,
+      "hit": [
+        "扩展",
+        "模型"
+      ]
+    },
+    "sensevoice": {
+      "text": "怎么我要怎么开发一个快扩展我这个 refund 法关提示词模型支付处查模型 u i 显示就",
+      "ms": 747,
+      "repeat": false,
+      "hit": [
+        "扩展",
+        "模型"
+      ]
+    }
+  },
+  {
+    "file": "vad_20260905_160523.wav",
+    "dur": 11.52,
+    "qwen3-0.6b": {
+      "text": "我再说一下这个项目，这个aiit，现在已经覆盖了过。",
+      "ms": 4778,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "我再说一下这项，Aiti CMD 应付的过。",
+      "ms": 8020,
+      "repeat": false,
+      "hit": [
+        "aiti"
+      ]
+    },
+    "nano": {
+      "text": "我再说一下这个项目，就是这个系统I T C M D已经部署了，跟boss。",
+      "ms": 3456,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "tuah sexwayia jack i s d c m p in two and ten four",
+      "ms": 471,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160532.wav",
+    "dur": 5.97,
+    "qwen3-0.6b": {
+      "text": "嗨，老婆，AITI自动厢壁票卡。",
+      "ms": 3231,
+      "repeat": false,
+      "hit": [
+        "aiti"
+      ]
+    },
+    "qwen3-1.7b": {
+      "text": "Hi，DevTools，IT酷，相地跳板。",
+      "ms": 6973,
+      "repeat": false,
+      "hit": [
+        "devtools"
+      ]
+    },
+    "nano": {
+      "text": "I F word I D是相闭漂白",
+      "ms": 4872,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "hi that work i t cook c m help",
+      "ms": 1124,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160537.wav",
+    "dur": 2.05,
+    "qwen3-0.6b": {
+      "text": "嗨，扩展。",
+      "ms": 2240,
+      "repeat": false,
+      "hit": [
+        "扩展"
+      ]
+    },
+    "qwen3-1.7b": {
+      "text": "派扩展。",
+      "ms": 3334,
+      "repeat": false,
+      "hit": [
+        "扩展"
+      ]
+    },
+    "nano": {
+      "text": "PAI扩展",
+      "ms": 1909,
+      "repeat": false,
+      "hit": [
+        "扩展"
+      ]
+    },
+    "sensevoice": {
+      "text": "hi拓",
+      "ms": 385,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160542.wav",
+    "dur": 2.47,
+    "qwen3-0.6b": {
+      "text": "嗨，作者。",
+      "ms": 2440,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "嗨，作者。",
+      "ms": 3957,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "嗨，科长。",
+      "ms": 2401,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "hi good",
+      "ms": 226,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160548.wav",
+    "dur": 3.75,
+    "qwen3-0.6b": {
+      "text": "嗨嗨嗨！作者。",
+      "ms": 2570,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "嗨，嗨，嗨！作者。",
+      "ms": 5683,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "嗨嗨嗨破解版",
+      "ms": 2399,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "hi hi hi boys",
+      "ms": 795,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160607.wav",
+    "dur": 8.62,
+    "qwen3-0.6b": {
+      "text": "太太太太，我要制作一些快速的AI生成的文本。",
+      "ms": 5008,
+      "repeat": false,
+      "hit": [
+        "文本"
+      ]
+    },
+    "qwen3-1.7b": {
+      "text": "哎哎哎哎哎！我要注册一些快速的扩展，aiti，aiti，aiti。",
+      "ms": 10728,
+      "repeat": false,
+      "hit": [
+        "aiti",
+        "扩展"
+      ]
+    },
+    "nano": {
+      "text": "快快拍iPad，我要注册一些快快卡，禁止ID的IP地址。",
+      "ms": 7132,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "快怕他ip排在我要更多一些快特送据 i i",
+      "ms": 794,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160621.wav",
+    "dur": 8.53,
+    "qwen3-0.6b": {
+      "text": "AITI、Hi、CMD、Helper、Hi、Folder、Line、Review。",
+      "ms": 2940,
+      "repeat": false,
+      "hit": [
+        "aiti"
+      ]
+    },
+    "qwen3-1.7b": {
+      "text": "Aiti, hi, cmd, help, hi, folder, line, review.",
+      "ms": 7823,
+      "repeat": false,
+      "hit": [
+        "aiti"
+      ]
+    },
+    "nano": {
+      "text": "IE TI DMB ALBA TI BORDER PLAN REVIEW",
+      "ms": 1860,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "i high c d al high border plan review",
+      "ms": 345,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160712.wav",
+    "dur": 3.07,
+    "qwen3-0.6b": {
+      "text": "这次没说术语有。",
+      "ms": 1252,
+      "repeat": true,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "这次没说数据。",
+      "ms": 2581,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "这次没说数名员工。",
+      "ms": 2870,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "这次没说数频的",
+      "ms": 275,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160720.wav",
+    "dur": 4.09,
+    "qwen3-0.6b": {
+      "text": "但还是输出了大量的名词。",
+      "ms": 1226,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "但还是付出了大量，努力。",
+      "ms": 3998,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "但还是付出了大量的工资。",
+      "ms": 3348,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "但还是付出了大量的的词",
+      "ms": 772,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160734.wav",
+    "dur": 0.43,
+    "qwen3-0.6b": {
+      "text": "",
+      "ms": 1149,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "",
+      "ms": 1862,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "",
+      "ms": 1334,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "",
+      "ms": 341,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160911.wav",
+    "dur": 14.67,
+    "qwen3-0.6b": {
+      "text": "",
+      "ms": 1560,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "",
+      "ms": 1351,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "",
+      "ms": 1159,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "",
+      "ms": 1181,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_161238.wav",
+    "dur": 2.64,
+    "qwen3-0.6b": {
+      "text": "我现在可以用。",
+      "ms": 2190,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "我现在可以用。",
+      "ms": 3634,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "我现在不一定要。",
+      "ms": 2131,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "what you like you",
+      "ms": 393,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_161248.wav",
+    "dur": 3.16,
+    "qwen3-0.6b": {
+      "text": "",
+      "ms": 1051,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "你就是AI。",
+      "ms": 3953,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "你给我搜AI发明。",
+      "ms": 2762,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "你给我啊",
+      "ms": 436,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_161325.wav",
+    "dur": 4.44,
+    "qwen3-0.6b": {
+      "text": "嗨，这个扩展如何安装？",
+      "ms": 2839,
+      "repeat": false,
+      "hit": [
+        "扩展"
+      ]
+    },
+    "qwen3-1.7b": {
+      "text": "嗨，这个扩展如何安装？",
+      "ms": 4806,
+      "repeat": false,
+      "hit": [
+        "扩展"
+      ]
+    },
+    "nano": {
+      "text": "PAI这个扩展如何安装部署？",
+      "ms": 3777,
+      "repeat": false,
+      "hit": [
+        "扩展"
+      ]
+    },
+    "sensevoice": {
+      "text": "hi这个拓长如何安装不",
+      "ms": 805,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_161334.wav",
+    "dur": 3.58,
+    "qwen3-0.6b": {
+      "text": "AITI这种扩展如何安装？部署。",
+      "ms": 3655,
+      "repeat": false,
+      "hit": [
+        "aiti",
+        "扩展"
+      ]
+    },
+    "qwen3-1.7b": {
+      "text": "hi，这个扩展如何安装部署？",
+      "ms": 5062,
+      "repeat": false,
+      "hit": [
+        "扩展"
+      ]
+    },
+    "nano": {
+      "text": "PAI这个扩展如何安装部署？",
+      "ms": 3079,
+      "repeat": false,
+      "hit": [
+        "扩展"
+      ]
+    },
+    "sensevoice": {
+      "text": "快这个扩展如何安装不符",
+      "ms": 405,
+      "repeat": false,
+      "hit": [
+        "扩展"
+      ]
+    }
+  },
+  {
+    "file": "vad_20260905_161339.wav",
+    "dur": 5.46,
+    "qwen3-0.6b": {
+      "text": "",
+      "ms": 1082,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "",
+      "ms": 2217,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "",
+      "ms": 1882,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "",
+      "ms": 979,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_161344.wav",
+    "dur": 1.71,
+    "qwen3-0.6b": {
+      "text": "",
+      "ms": 1181,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "",
+      "ms": 1949,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "我不会唱。",
+      "ms": 937,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "",
+      "ms": 195,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_161351.wav",
+    "dur": 4.61,
+    "qwen3-0.6b": {
+      "text": "",
+      "ms": 1121,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "",
+      "ms": 2250,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "",
+      "ms": 1885,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "",
+      "ms": 900,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_161359.wav",
+    "dur": 9.73,
+    "qwen3-0.6b": {
+      "text": "",
+      "ms": 714,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "",
+      "ms": 1123,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "",
+      "ms": 984,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "",
+      "ms": 406,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_161427.wav",
+    "dur": 3.58,
+    "qwen3-0.6b": {
+      "text": "我现在这个爱的扩展如何安装？",
+      "ms": 2423,
+      "repeat": false,
+      "hit": [
+        "扩展"
+      ]
+    },
+    "qwen3-1.7b": {
+      "text": "我现在这个爱的扩展无可动摇。",
+      "ms": 4986,
+      "repeat": false,
+      "hit": [
+        "扩展"
+      ]
+    },
+    "nano": {
+      "text": "我现在这个pad拓展无法安装。",
+      "ms": 2769,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "我亲们这个ad的特展无可重要",
+      "ms": 531,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_161442.wav",
+    "dur": 5.29,
+    "qwen3-0.6b": {
+      "text": "你确定了我女儿可能学的是孩子学的那款AI？",
+      "ms": 2450,
+      "repeat": false,
+      "hit": []
+    },
+    "qwen3-1.7b": {
+      "text": "你确定吗？我怎么知道去还是去？",
+      "ms": 6172,
+      "repeat": false,
+      "hit": []
+    },
+    "nano": {
+      "text": "你确定你模拟的这个选一台机子，也是跟虚拟机打开？",
+      "ms": 6795,
+      "repeat": false,
+      "hit": []
+    },
+    "sensevoice": {
+      "text": "你确定你 morning看的还是",
+      "ms": 848,
+      "repeat": false,
+      "hit": []
+    }
+  }
+]

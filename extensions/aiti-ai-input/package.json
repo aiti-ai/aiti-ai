@@ -1,0 +1,47 @@
+{
+  "name": "@aiti-ai/aiti-ai-input",
+  "version": "0.4.2",
+  "type": "module",
+  "aiti": {
+    "kind": "ext",
+    "tier": "full",
+    "systemDeps": {
+      "linux-apt": [
+        "python3-venv"
+      ],
+      "windows": [
+        {
+          "winget": "Python.Python.3.12"
+        }
+      ],
+      "darwin": [
+        "python@3.12"
+      ]
+    },
+    "services": [
+      {
+        "name": "asr",
+        "port": 8767,
+        "phase": "asr",
+        "cmd": "powershell -File start-stream.ps1 | bash start-stream.sh"
+      }
+    ]
+  },
+  "description": "语音输入扩展（实时流式 ASR + 2-pass 离线精修 + 服务端 VAD 切句）—— JSX + vite 构建 client bundle",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "你还没打完的字，它已经替你想到一半了。",
+  "aitiConfigs": {
+    "configFiles": [
+      "user-hotwords.json",
+      "asr-config.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}

@@ -1,0 +1,91 @@
+[
+  {
+    "file": "vad_20260905_155613.wav",
+    "dur": 7.92,
+    "qwen3-1.7b": {
+      "text": "国务院发展研究中心市场经济研究所副所长邓玉松认为。",
+      "ms": 21802,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_155847.wav",
+    "dur": 13.56,
+    "qwen3-1.7b": {
+      "text": "我们现在来说说我们这边专业术语：Aitai Devtools, AIT AI, CMD CMD, Plan Plan, Review.",
+      "ms": 3304,
+      "repeat": false,
+      "hit": [
+        "devtools"
+      ]
+    }
+  },
+  {
+    "file": "vad_20260905_155902.wav",
+    "dur": 9.21,
+    "qwen3-1.7b": {
+      "text": "我再说一遍，我们有 aiti folder file plan view sandbox devtools nano。",
+      "ms": 14485,
+      "repeat": false,
+      "hit": [
+        "aiti",
+        "devtools"
+      ]
+    }
+  },
+  {
+    "file": "vad_20260905_155917.wav",
+    "dur": 11.09,
+    "qwen3-1.7b": {
+      "text": "我们现在有大量的专业术语，包括 aiti、ai input session、this service manager。",
+      "ms": 17102,
+      "repeat": false,
+      "hit": [
+        "aiti"
+      ]
+    }
+  },
+  {
+    "file": "vad_20260905_155928.wav",
+    "dur": 5.63,
+    "qwen3-1.7b": {
+      "text": "Processor AIT is else it's a DRM.",
+      "ms": 8908,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_155937.wav",
+    "dur": 2.22,
+    "qwen3-1.7b": {
+      "text": "Hi, DevTools.",
+      "ms": 4790,
+      "repeat": false,
+      "hit": [
+        "devtools"
+      ]
+    }
+  },
+  {
+    "file": "vad_20260905_155952.wav",
+    "dur": 1.96,
+    "qwen3-1.7b": {
+      "text": "我用了几段。",
+      "ms": 3618,
+      "repeat": false,
+      "hit": []
+    }
+  },
+  {
+    "file": "vad_20260905_160002.wav",
+    "dur": 2.99,
+    "qwen3-1.7b": {
+      "text": "还是大量直接出去审核。",
+      "ms": 1074,
+      "repeat": false,
+      "hit": []
+    }
+  }
+]
