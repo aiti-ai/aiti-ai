@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "strict": false,
+    "noImplicitAny": false,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "allowJs": false,
+    "baseUrl": ".",
+    "paths": {
+      "react": ["client/src/host-shim.ts"],
+      "react/jsx-runtime": ["client/src/jsx-runtime.ts"],
+      "react/jsx-dev-runtime": ["client/src/jsx-runtime.ts"]
+    }
+  },
+  "include": ["client/src/**/*.ts", "client/src/**/*.tsx"]
+}
