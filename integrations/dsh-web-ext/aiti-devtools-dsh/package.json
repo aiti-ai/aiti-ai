@@ -1,0 +1,45 @@
+{
+  "name": "@aiti-ai/aiti-devtools-dsh",
+  "version": "0.8.1",
+  "description": "aiti-devtools DSH adapter: in-process bridge mounted at /aiti on ctx.webServer (launcher/cockpit/bridge/mcp assets + REST/SSE), 16 aiti_* tools via ctx.tools.register, and agent/pre-step placeholder rewrite ([元素N]→describe+source tag). Client face renders the candidates bar in conversation.input.overlay.",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "license": "MIT",
+  "files": [
+    "dist",
+    "lib",
+    "src",
+    "cordis.patch.yml"
+  ],
+  "scripts": {
+    "build": "node tools/build.mjs"
+  },
+  "dependencies": {
+    "@aiti-ai/aiti-devtools-agent": "^0.1.1",
+    "@aiti-ai/aiti-devtools-core": "^0.3.4"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-llm": "*",
+    "@deepseek-ai/dsh-tools": "*",
+    "@deepseek-ai/dsh-user-questions": "*",
+    "@deepseek-ai/schemastery": "*"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  }
+}

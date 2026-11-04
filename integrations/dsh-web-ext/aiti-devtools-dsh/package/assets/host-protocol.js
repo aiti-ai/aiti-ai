@@ -1,0 +1,664 @@
+/**
+ * aiti-devtools 宿主协议层（浏览器端模块，公共库 aiti-devtools-core）
+ *
+ * AI 窗 ↔ launcher（页面宿主）的 postMessage 协议统一实现，无 UI 依赖：
+ *   - aiHost/postToHost：parent/opener 检测 + 发消息
+ *   - 协议分发：dbg_ai_boot / dbg_ai_element / dbg_ai_error / dbg_user_message / dbg_ai_inspect_on/off
+ *   - 候选状态：元素/错误/异步作答 → [元素N]/[回答N]/[错误N] 占位符（localStorage 持久化 + 去重 + ack）
+ *   - 发送文本：候选 → AI 易读描述（describeText，适配端可覆盖）
+ *
+ * 适配端（aiti-client.mjs / cockpit 等）只负责：
+ *   - 渲染（候选区 / 消息框 / 输入框 slot）
+ *   - 占位符插入方式（React textarea setter / 普通 input）
+ *   - describe/brief/detailRows 覆盖（自定义发送描述，默认已是全量版）
+ *
+ * 描述公共库（唯一来源，适配端直接用 hp.*，勿复制）：
+ *   describe(el, sourcePageId)  候选 → AI 易读发送描述（tag/尺寸/xpath/selector/class/id/aria/样式/框架/调用处/pageId/url）
+ *   brief(el)                   候选区紧凑显示（tag/text/调用处）
+ *   detailRows(el, sourcePageId) 详情页 [k,v] 行数组
+ *   filterPayload(el)           结构化 payload（agent 收 elements 数据，按 include 筛选）
+ *   clipUrl(u, max)             URL 裁剪（去 hash、query 前 2 参、限长）
+ *   stripFromText(text, items)  从文本摘掉占位符
+ *
+ * 用法：
+ *   <script src="./host-protocol.js"></script>
+ *   <script>
+ *     const hp = window.AitiHostProtocol.create({
+ *       onPicked: (list) => { /* 候选变化 → 渲染 *\/ },
+ *       onBoot: (t) => { /* 目标页变化 *\/ },
+ *       onHostMsg: (kind, text, meta) => { /* 消息流 *\/ },
+ *       onInspect: (on) => {},
+ *       insertPlaceholder: (el) => { /* 把 el.tag 插入输入框（默认 textarea/input） *\/ },
+ *       describe: (el) => { /* 候选 → 发送文本（默认基础版） *\/ },
+ *     });
+ *     hp.sendReady();                        // 握手（launcher flush boot/候选 + 探测）
+ *     hp.getPicked();                        // 当前候选
+ *     hp.describeAll();                      // 全部候选的发送文本（preSend 用）
+ *     hp.stripFromText(text, items);         // 从文本摘掉占位符
+ *   </script>
+ */
+(function (global) {
+  'use strict';
+
+  function createHostProtocol(handlers) {
+    var h = handlers || {};
+    var PICKED_KEY = '__aiti_picked';
+
+    // ---------------- 候选状态（元素/错误/异步作答 → [元素N]/[回答N]/[错误N]） ----------------
+    // 恢复：localStorage 持久化（key=同域同键），AI 窗刷新/重开后 create 即恢复候选（此前 load() 是
+    // 死代码从未调用——刷新即丢全部候选，宿主重发仅覆盖错误/元素重发在途的）。恢复走 setPicked：
+    // 触发 onPicked（适配端 syncPicked → 上报 host）+ 重新编号。dismissed 指纹在内存，不拦恢复。
+    var picked = [];
+    try {
+      var __restored = load();
+      if (__restored.length) setPicked(__restored);
+    } catch (e) {}
+    var listeners = new Set();
+    var dismissedElFps = new Map();  // 已清除元素指纹 → 清除时刻（旧消息延迟重发不复活；新点选 ts 晚则复活）
+    var dismissedErrKeys = new Set(); // 已清除错误 key（message 前 80 字符）
+    var debugTarget = { pageId: null, instanceId: null, frameId: null, bridge: null, targetUrl: null, title: null };
+    var lastBootKey = '';
+
+    // load：读 localStorage 并去重（同错误 key / 同元素指纹只留 1 个）——历史残留/重复恢复不再累积（实测输入框 [错误1] [错误1] 重复）
+    function load() {
+      var arr = [];
+      try { arr = JSON.parse(global.localStorage.getItem(PICKED_KEY)) || []; } catch (e) { return []; }
+      var seenE = {}, seenF = {};
+      return (arr || []).filter(function (el) {
+        if (!el || typeof el !== 'object') return false;
+        if (isErrCandidate(el)) {
+          var k = String(el.message || '').slice(0, 80);
+          if (seenE[k]) return false;
+          seenE[k] = 1;
+          return true;
+        }
+        // 元素指纹：优先候选 __elfp（同元素重复点选 → 同一候选，刷新内容不新增编号）；
+        // 旧数据无 __elfp → 内容指纹（xpath/selector + text；不含 tag——tag 是 [元素N] 编号，编号不同会让去重失效）
+        var fp = el.__elfp ? String(el.__elfp) : (String(el.xpath || el.selector || '') + '|' + String(el.text || '').slice(0, 40));
+        if (!fp || seenF[fp]) return false;
+        seenF[fp] = 1;
+        return true;
+      });
+    }
+    /** 错误候选判定：kind==='error'，或「有 message 无 answer」的错误形状。
+     *  形状判定自愈旧数据——曾因 dbg_ai_error 处的 Object.assign({kind:'error'}, p) 被
+     *  payload.kind（错误类型：resource/console.error…）覆盖，kind!=='error' 导致：
+     *  派生标签按元素走显示 [元素N]（点开无信息）、去重/清除判定失效（清空后宿主重发即复活、重复累积）。 */
+    function isErrCandidate(el) {
+      return !!(el && typeof el === 'object' && (el.kind === 'error' || (el.message !== undefined && el.answer === undefined)));
+    }
+    function deriveTags(next) {
+      var errNo = 0, elNo = 0, ansNo = 0;
+      (next || []).forEach(function (el) {
+        if (isErrCandidate(el)) {
+          if (el.kind !== 'error') { el.errKind = el.errKind || el.kind || null; el.kind = 'error'; } // 旧数据自愈：原错误类型挪到 errKind
+          errNo++; el.no = errNo; el.tag = '[错误' + errNo + ']';
+        }
+        else if (el && el.answer !== undefined) { ansNo++; el.no = ansNo; el.tag = '[回答' + ansNo + ']'; }
+        else {
+          // 真标签保留到 realTag：tag 字段被占位符 [元素N] 占用（输入框匹配/摘除/发送替换都按占位符），
+          // 真标签（div/button…）供 describe/filterPayload/detailRows/brief 发送与展示——AI 不再收到 <[元素1]>
+          if (el && el.tag && !/^\[元素\d+\]$/.test(String(el.tag))) el.realTag = el.tag;
+          elNo++; el.no = elNo; el.tag = '[元素' + elNo + ']';
+        }
+      });
+      return next;
+    }
+    function setPicked(next) {
+      picked = deriveTags(next);
+      try { global.localStorage.setItem(PICKED_KEY, JSON.stringify(picked)); } catch (e) {}
+      if (h.onPicked) h.onPicked(picked);
+      listeners.forEach(function (l) { try { l(picked); } catch (e) {} });
+    }
+    function subscribe(fn) { listeners.add(fn); return function () { listeners.delete(fn); }; }
+    function getPicked() { return picked; }
+
+    function elementFp(p) {
+      return (p.xpath || p.selector || '') + '|' + (p.tag || '') + '|' + String(p.text || '').slice(0, 40);
+    }
+
+    // ---------------- aiHost / postToHost ----------------
+    function aiHost() {
+      try {
+        if (global.opener && !global.opener.closed) return global.opener; // 新窗口模式
+        if (global.parent !== global) return global.parent;               // 内嵌 iframe 模式
+      } catch (e) {}
+      return null;
+    }
+    function postToHost(type, payload) {
+      var host = aiHost();
+      if (!host) return;
+      try { host.postMessage({ __dbg: 1, type: type, payload: payload || {} }, '*'); } catch (e) {}
+    }
+
+    // ---------------- 协议分发 ----------------
+    function handle(m) {
+      var p = m.payload || {};
+      var kind = '', text = '', meta = '';
+      switch (m.type) {
+        case 'dbg_ai_boot': {
+          var bootKey = (p.pageId || '—') + '|' + (p.targetUrl || '') + '|' + (p.frameTick || 0);
+          if (bootKey === lastBootKey) return; // 去重（launcher ready 握手多发）；frameTick=帧树变化重发
+          lastBootKey = bootKey;
+          // 显式赋值（含空串→null）：boot 每次带实时页面上下文，避免旧值残留/空串不覆盖导致 url 错页
+          debugTarget.pageId = (p.pageId != null) ? p.pageId : debugTarget.pageId;
+          debugTarget.instanceId = (p.instanceId != null) ? p.instanceId : debugTarget.instanceId;
+          debugTarget.frameId = (p.frameId != null) ? p.frameId : debugTarget.frameId;
+          debugTarget.bridge = (p.bridge != null) ? p.bridge : debugTarget.bridge;
+          debugTarget.targetUrl = (p.targetUrl != null) ? p.targetUrl : debugTarget.targetUrl;
+          debugTarget.title = (p.title != null) ? p.title : debugTarget.title;
+          if (Array.isArray(p.frames)) debugTarget.frames = p.frames; // 帧树（AI 窗选择 iframe 用）
+          if (h.onBoot) h.onBoot(debugTarget);
+          return;
+        }
+        case 'dbg_ai_element': {
+          var fp = m.fp || elementFp(p);
+          var elfp = String(p.__elfp || elementFp(p)); // 元素指纹（稳定）——合并判定；fp 是事件指纹（唯一）——ack 幂等
+          var exist = null;
+          for (var ei = picked.length - 1; ei >= 0; ei--) {
+            var ex = picked[ei];
+            if (ex && ex.__elfp === elfp && !isErrCandidate(ex) && ex.answer === undefined) { exist = ex; break; }
+          }
+          if (exist) {
+            // 同一元素重复确认 → 刷新内容，编号/占位符不变（[元素1] 还是 [元素1]）
+            var kFp = exist.__fp, kTag = exist.tag, kNo = exist.no, kInc = exist.include;
+            Object.assign(exist, p, { __fp: kFp, tag: kTag, no: kNo, __elfp: elfp, kind: 'element', include: kInc });
+            setPicked(picked.slice());
+            if (h.insertPlaceholder) h.insertPlaceholder(exist); // 已含同占位符不重复插（适配端防重）
+          } else {
+            // 无已有候选：已清除的元素——旧消息延迟重发不复活，新点选（ts 晚于清除时刻）复活
+            var revive = true;
+            if (dismissedElFps.has(elfp)) {
+              var dmAt = dismissedElFps.get(elfp) || 0;
+              if (m.ts && m.ts > dmAt) dismissedElFps.delete(elfp);
+              else revive = false;
+            }
+            if (revive) {
+              var cand = Object.assign({}, p, { __fp: fp, __elfp: elfp, kind: 'element' }); // 哨兵最后写（防 payload 同名字段覆盖——同 dbg_ai_error 的坑）
+              setPicked(picked.concat([cand]));
+              if (h.insertPlaceholder) h.insertPlaceholder(cand);
+            }
+          }
+          postToHost('dbg_ai_element_ack', { fp: fp }); // 宿主停止定时重发（无论是否新候选）
+          return;
+        }
+        case 'dbg_ai_error': {
+          var key = String(p.message || '').slice(0, 80);
+          var hasErr = picked.some(function (x) { return isErrCandidate(x) && String(x.message || '').slice(0, 80) === key; });
+          if (!hasErr && !dismissedErrKeys.has(key)) {
+            // kind 哨兵【最后】写：payload.kind 是错误类型（resource/console.error…）→ 挪到 errKind。
+            // 曾写 Object.assign({kind:'error'}, p)——p.kind 覆盖哨兵，候选被当元素（见 isErrCandidate 注释）
+            var cand2 = Object.assign({}, p, { kind: 'error' });
+            if (p.kind && p.kind !== 'error') cand2.errKind = p.kind;
+            setPicked(picked.concat([cand2]));
+            if (h.insertPlaceholder) h.insertPlaceholder(cand2);
+            if (h.onHostMsg) h.onHostMsg('⚠ 页面错误', (p.message || '') + (p.stack ? '\n' + p.stack : ''), 'from page');
+          }
+          postToHost('dbg_ai_error_ack', { key: key }); // 宿主停止定时重发
+          return;
+        }
+        case 'dbg_user_message': {
+          kind = '💬 宿主';
+          text = p.kind === 'scene_report'
+            ? '📸 现场快照：错误 ' + (((p.report && p.report.errors) || []).length) + ' 条 · 条件 ' + JSON.stringify((p.report && p.report.conditions) || {}).slice(0, 120)
+            : p.kind === 'element_report' ? '📋 元素报告：' + ((p.report && p.report.instruction) || '') : (p.text || '');
+          meta = 'from page';
+          if (h.onHostMsg) h.onHostMsg(kind, text, meta);
+          if (h.onUserMessage) h.onUserMessage(p);
+          return;
+        }
+        case 'dbg_ai_inspect_on': debugTarget.inspectOn = true; if (h.onInspect) h.onInspect(true); if (h.onHostMsg) h.onHostMsg('🖱️ Inspector', '点选模式已开启——在页面点击元素', 'launcher'); return;
+        case 'dbg_ai_inspect_off': debugTarget.inspectOn = false; if (h.onInspect) h.onInspect(false); if (h.onHostMsg) h.onHostMsg('🖱️ Inspector', '点选模式已关闭', 'launcher'); return;
+        case 'dbg_ai_open_file': {
+          // launcher 预览窗口「🖥 前端」→ AI 窗转发：pi-web 页内 AI 窗执行 openFileFrontend（经宿主 aiti_open_file 打开文件标签页）
+          if (h.onAiOpenFile) h.onAiOpenFile(p);
+          return;
+        }
+        case 'dbg_copy': {
+          // 复制转发协议：iframe/子窗 Clipboard API 不可用（无焦点/权限）→ 请求宿主复制。
+          // 宿主（AI 窗 pi-web 页 / launcher 宿主窗）执行 navigator.clipboard.writeText 并回 dbg_copy_ack
+          if (h.onCopy) h.onCopy(p);
+          return;
+        }
+        case 'dbg_ai_status': {
+          // AI 窗桥连接状态上报（bridge-client onStatus → host-protocol 透传宿主）——宿主据此自动重载 AI 窗（断线自愈）
+          if (h.onAiStatus) h.onAiStatus(p.state || 'unknown', p.text || '', p);
+          return;
+        }
+        case 'dbg_bridge_event': {
+          // 宿主页面事件（page_log/page_network/page_error/open_file/user_answer…）→ 桥。
+          // 桥的唯一浏览器端点是本 AI 窗：适配端用 BridgeClient.postEvent(type, payload, debugTarget.pageId) 上报
+          // （debugTarget.pageId = boot 注册的宿主页身份，桥侧按其 instanceId 入环形缓冲，page_logs/page_network 可查）
+          if (h.onBridgeEvent) h.onBridgeEvent(p.type, p.payload || {}, debugTarget);
+          return;
+        }
+        default: return;
+      }
+    }
+    global.addEventListener('message', function (e) {
+      var m = e.data;
+      if (!m || m.__dbg !== 1) return;
+      handle(m);
+    });
+
+    // ---------------- 候选描述公共库（唯一来源：独立桥 AI 窗与 pi-web 扩展 client 共用，勿在适配端复制） ----------------
+    // 发送文本（describe）/紧凑显示（brief）/详情行（detailRows）/结构化 payload（filterPayload）/字段筛选（inc）/URL 裁剪（clipUrl）
+    /** 详情页字段筛选（勾选）：el.include[f] !== false 才发（默认全选） */
+    function inc(el, fld) { return !el.include || el.include[fld] !== false; }
+    /** URL 裁剪：去 hash、query 只留前 2 个参数、总长 ≤ max——防巨型参数/跟踪参数撑爆上下文 */
+    function clipUrl(u, max) {
+      max = max || 120;
+      if (!u) return '';
+      var s = String(u);
+      try {
+        var p = new global.URL(s);
+        p.hash = '';
+        var out = p.origin + p.pathname;
+        if (p.search) {
+          var q = p.search.slice(1).split('&').filter(Boolean).slice(0, 2);
+          if (q.length) out += '?' + q.join('&');
+        }
+        return out.length > max ? out.slice(0, max) + '…' : out;
+      } catch (e) { return s.length > max ? s.slice(0, max) + '…' : s; }
+    }
+    /** 候选目标帧身份：优先 el.pageId（launcher enrichElPayload / client aiPickPayload 已补） */
+    function elementPageId(el) { return el.pageId || (el.frame && el.frame.pageId) || null; }
+
+    /** 候选 → AI 易读发送描述（默认全量版；适配端可传 h.describe 整体替换） */
+    function describe(el, sourcePageId) {
+      if (h.describe) return h.describe(el, sourcePageId);
+      if (isErrCandidate(el)) {
+        var elines = ['⚠ 页面错误'];
+        if (el.errKind) elines.push('  · 类型: ' + String(el.errKind));
+        if (el.message) elines.push('  · 消息: ' + String(el.message));
+        if (el.stack) elines.push('  · 堆栈: ' + String(el.stack).split('\n').slice(0, 6).join('\n    '));
+        if (el.frameId) elines.push('  · frameId: ' + el.frameId);
+        // frame 来源页：完整 pageId（host 元素由来源标注 [发自:] 覆盖，不重复）
+        if (el.frameId && el.frameId !== 'host') {
+          var einst = sourcePageId ? String(sourcePageId).split('/')[0] : null;
+          if (einst) elines.push('  · 来源页: ' + einst + '/' + el.frameId);
+          else if (el.pageId) elines.push('  · 来源页: ' + el.pageId);
+        }
+        if (el.at) elines.push('  · 时间: ' + el.at);
+        return elines.join('\n');
+      }
+      if (el.answer !== undefined) return String(el.answer); // 文本候选（异步作答结果）
+      // 尊重 include（详情页勾选）：取消的字段不出现在发送文本——与 filterPayload 一致
+      var lines = [];
+      var head = '';
+      if (inc(el, 'tag')) head += '<' + (el.realTag || el.tag || '?') + '>';
+      if (el.text && inc(el, 'text')) head += ' ' + String(el.text).trim().slice(0, 80);
+      if (head) lines.push(head);
+      if (el.rect && inc(el, 'rect')) lines.push('  · 尺寸: ' + el.rect.w + '×' + el.rect.h + 'px' + (el.rect.x !== undefined ? ' @(' + el.rect.x + ',' + el.rect.y + ')' : ''));
+      // 文档坐标（滚动无关）+ 滚动偏移：坐标系上下文——rect 是视口坐标，docRect=rect+scroll；滚动后视口坐标失效，文档坐标仍可定位
+      if (el.docRect && inc(el, 'docRect')) lines.push('  · 文档位置: (' + el.docRect.x + ',' + el.docRect.y + ')' + (el.scroll ? '（滚动偏移 ' + el.scroll.x + ',' + el.scroll.y + '）' : ''));
+      if (el.xpath && inc(el, 'xpath')) lines.push('  · xpath: ' + el.xpath);
+      if (el.selector && inc(el, 'selector')) lines.push('  · selector: ' + el.selector);
+      if (el.attributes && inc(el, 'attributes')) {
+        var cls = String(el.attributes.class || '').trim().split(/\s+/).filter(Boolean).slice(0, 3);
+        if (cls.length) lines.push('  · class: .' + cls.join('.'));
+        if (el.attributes.id) lines.push('  · id: #' + el.attributes.id);
+        var aria = Object.keys(el.attributes).filter(function (k) { return /^aria-|^data-/.test(k); }).slice(0, 5);
+        if (aria.length) lines.push('  · ' + aria.map(function (k) { return k + '=' + String(el.attributes[k]).slice(0, 60); }).join(' '));
+      }
+      if (el.computed && inc(el, 'computed')) {
+        var c = el.computed;
+        var ck = ['display', 'position', 'width', 'height', 'flexDirection', 'gap', 'padding', 'margin', 'fontSize', 'fontWeight', 'color', 'backgroundColor', 'border', 'borderRadius', 'opacity', 'boxShadow', 'zIndex', 'overflow'];
+        var parts = [];
+        ck.forEach(function (k) { if (c[k]) parts.push(k + ': ' + c[k]); });
+        if (parts.length) lines.push('  · 样式: ' + parts.join('; ').slice(0, 300));
+      }
+      var f = el.framework || {};
+      // 兼容两种 payload 形态：富载荷（framework 嵌套）与 hover 轻载荷（component/file/usedAt 顶层）
+      var fwName = f.framework || null;
+      var comp = f.component || el.component || null;
+      var fFile = f.file || el.file || null;
+      var fLine = f.line || el.line || null;
+      if (fwName && inc(el, 'framework')) lines.push('  · 框架: ' + fwName);
+      if (comp && inc(el, 'component')) lines.push('  · 组件: ' + comp);
+      if (fFile && inc(el, 'file')) lines.push('  · 组件源码: ' + fFile + (fLine ? ':' + fLine : ''));
+      var ua = f.usedAt || el.usedAt || null;
+      if (ua && (ua.file || ua.component) && inc(el, 'usedAt')) {
+        var uaT = ua.file ? ua.file + (ua.line ? ':' + ua.line : '') : '';
+        if (ua.component) uaT = (uaT ? uaT + '（' + ua.component + '）' : String(ua.component));
+        lines.push('  · 调用处: ' + uaT);
+      }
+      // 目标帧身份：pageId 必带——agent 可直接 page_exec 传该 pageId 操作元素所在帧；
+      // url 仅 iframe（frame 选区）元素带——宿主页元素 url 与来源标注 [发自:] 重复，不重复发
+      var pid = elementPageId(el);
+      if (pid) lines.push('  · pageId: ' + pid);
+      var inFrame = !!pid && !String(pid).endsWith('/host');
+      if (inFrame && el.frame && el.frame.url && inc(el, 'frame')) lines.push('  · url: ' + clipUrl(el.frame.url, 120));
+      if (el.bridge) lines.push('  · bridge: ' + el.bridge);
+      return lines.join('\n') || JSON.stringify(el).slice(0, 200);
+    }
+    /** 候选区紧凑显示：tag/text + 调用处（有则） */
+    function brief(el) {
+      if (h.brief) return h.brief(el);
+      if (isErrCandidate(el)) return ('⚠ ' + String(el.message || '')).slice(0, 30);
+      if (el.answer !== undefined) return String(el.answer).slice(0, 30);
+      var d = '<' + (el.realTag || el.tag || '?') + '>';
+      if (el.text) d += ' ' + String(el.text).trim().slice(0, 20);
+      var ua = (el.framework || {}).usedAt || el.usedAt;
+      if (ua && (ua.file || ua.component)) d += ' · ' + (ua.file ? ua.file.split('/').pop() + (ua.line ? ':' + ua.line : '') : String(ua.component));
+      return d;
+    }
+    /** 结构化 payload（agent 收 elements 数据）：完整字段，按 include 筛选 */
+    function filterPayload(el) {
+      if (el.answer !== undefined) { var o = { answer: el.answer }; if (el.kind) o.answerKind = el.kind; return o; }
+      var out = {};
+      if (el.tag && inc(el, 'tag')) out.tag = el.realTag || el.tag;
+      if (el.text && inc(el, 'text')) out.text = el.text;
+      if (el.xpath && inc(el, 'xpath')) out.xpath = el.xpath;
+      if (el.selector && inc(el, 'selector')) out.selector = el.selector;
+      if (el.rect && inc(el, 'rect')) out.rect = el.rect;
+      if (el.docRect && inc(el, 'docRect')) out.docRect = el.docRect;
+      if (el.scroll && inc(el, 'scroll')) out.scroll = el.scroll;
+      if (el.attributes && inc(el, 'attributes')) out.attributes = el.attributes;
+      if (el.computed && inc(el, 'computed')) out.computed = el.computed;
+      var f = el.framework || {};
+      if (f.framework && inc(el, 'framework')) out.framework = f.framework;
+      // 兼容两种 payload 形态：富载荷（framework 嵌套）与 hover 轻载荷（component/file/line/usedAt 顶层）
+      var fFile2 = f.file || el.file || null;
+      var fLine2 = f.line || el.line || null;
+      if (fFile2 && inc(el, 'file')) out.file = fFile2;
+      if (fLine2 && inc(el, 'file')) out.line = fLine2;
+      var comp2 = f.component || el.component || null;
+      if (comp2 && inc(el, 'component')) out.component = comp2;
+      var uaF = f.usedAt || el.usedAt || null;
+      if (uaF && (uaF.file || uaF.component) && inc(el, 'usedAt')) out.usedAt = uaF;
+      if (el.pageId) out.pageId = el.pageId;
+      if (el.frame && (el.frame.url || el.frame.title) && inc(el, 'frame')) out.frame = { url: el.frame.url, title: el.frame.title };
+      return out;
+    }
+    /** 详情信息行（详情页显示）：[k, v] 行数组 */
+    function detailRows(el, sourcePageId) {
+      if (h.detailRows) return h.detailRows(el, sourcePageId);
+      if (isErrCandidate(el)) {
+        var erows = [];
+        erows.push(['类型', el.errKind ? String(el.errKind) : '页面错误']);
+        if (el.message) erows.push(['消息', String(el.message).slice(0, 500)]);
+        if (el.stack) erows.push(['堆栈', String(el.stack).slice(0, 600)]);
+        if (el.frameId) erows.push(['frameId', String(el.frameId)]);
+        // frame 来源页：完整 pageId（host 由来源标注 [发自:] 覆盖，详情只展示 frame 的）
+        if (el.frameId && el.frameId !== 'host' && sourcePageId) {
+          erows.push(['来源页', String(sourcePageId).split('/')[0] + '/' + el.frameId]);
+        }
+        if (el.at) erows.push(['时间', String(el.at)]);
+        return erows;
+      }
+      if (el.answer !== undefined) return [['回答', String(el.answer).slice(0, 300)], ['类型', el.kind === 'pick_element' ? '点选元素' : (el.kind || '文本')]];
+      var f = el.framework || {};
+      var rows = [];
+      rows.push(['标签', '<' + (el.realTag || el.tag || '?') + '>']);
+      if (el.text) rows.push(['文本', String(el.text).slice(0, 120)]);
+      if (el.xpath) rows.push(['xpath', el.xpath]);
+      if (el.selector) rows.push(['selector', el.selector]);
+      var cls = el.attributes ? String(el.attributes.class || '').trim() : '';
+      if (cls) rows.push(['class', '.' + cls.split(/\s+/).filter(Boolean).join('.')]);
+      if (el.attributes && el.attributes.id) rows.push(['id', '#' + el.attributes.id]);
+      if (el.rect) rows.push(['尺寸', el.rect.w + '×' + el.rect.h + (el.rect.x !== undefined ? ' @(' + el.rect.x + ',' + el.rect.y + ')' : '')]);
+      if (el.docRect) rows.push(['文档位置', '(' + el.docRect.x + ',' + el.docRect.y + ')' + (el.scroll ? '（滚动偏移 ' + el.scroll.x + ',' + el.scroll.y + '）' : '')]);
+      if (el.pageId && !String(el.pageId).endsWith('/host')) rows.push(['来源页', el.pageId]);
+      // 兼容两种 payload 形态：富载荷（framework 嵌套）与 hover 轻载荷（component/file/usedAt 顶层）
+      var comp = f.component || el.component || null;
+      var fFile = f.file || el.file || null;
+      var fLine = f.line || el.line || null;
+      if (comp) rows.push(['组件', comp]);
+      if (fFile) rows.push(['组件源码', fFile + (fLine ? ':' + fLine : '')]);
+      var ua2 = f.usedAt || el.usedAt || null;
+      if (ua2 && (ua2.file || ua2.component)) {
+        // 无 file（构建未注入源码路径）时仍显示调用组件名，如：RouterView / 或 file:line（组件）
+        var uaTxt = ua2.file ? ua2.file + (ua2.line ? ':' + ua2.line : '') : '';
+        if (ua2.component) uaTxt = (uaTxt ? uaTxt + '（' + ua2.component + '）' : String(ua2.component));
+        rows.push(['调用处', uaTxt]);
+      }
+      return rows;
+    }
+    /** 全部候选的发送文本（preSend 替换占位符时用：按 tag 顺序匹配） */
+    function describeAll() {
+      return picked.map(function (el) { return describe(el); });
+    }
+    /** 复制文本（公共）：Clipboard API → execCommand 兜底——iframe/无权限时 resolve(false)（调用端转发宿主 dbg_copy） */
+    function copyText(text) {
+      return new Promise(function (resolve) {
+        if (!text) return resolve(false);
+        var done = function (ok) { resolve(!!ok); };
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(String(text)).then(function () { done(true); }, function () { fallback(); });
+            return;
+          }
+        } catch (e) {}
+        fallback();
+        function fallback() {
+          try {
+            var ta = document.createElement('textarea');
+            ta.value = String(text);
+            ta.style.position = 'fixed'; ta.style.opacity = '0';
+            document.body.appendChild(ta); ta.select();
+            var ok = document.execCommand('copy');
+            document.body.removeChild(ta);
+            done(ok);
+          } catch (e) { done(false); }
+        }
+      });
+    }
+    /** 绝对路径判定（公共）：Unix /xxx 或 Windows 盘符 C:\\ / C:/（排除 URL/相对路径/空值） */
+    function isAbsPath(f) {
+      if (!f || typeof f !== 'string' || !f.trim()) return false;
+      if (/^[a-zA-Z]:[\\/]/.test(f)) return true;
+      return f.startsWith('/');
+    }
+    /** 文件存在性查询（公共）：GET file-stat（根路径优先，apiBase 前缀兜底——basePath 部署下 apiUrl 加前缀可能 404）
+     *  返回 {exists,isFile,isDirectory} | null（非法/网络失败） */
+    function checkFileStat(path, apiBase) {
+      if (!isAbsPath(path)) return Promise.resolve(null);
+      var q = '?path=' + encodeURIComponent(path);
+      var urls = ['/api/extensions/aiti-devtools/file-stat' + q];
+      if (apiBase) urls.push(String(apiBase).replace(/\/+$/, '') + '/api/extensions/aiti-devtools/file-stat' + q);
+      return new Promise(function (resolve) {
+        var seen = {}, idx = 0;
+        (function next() {
+          var u = urls[idx++];
+          if (!u || seen[u]) return resolve(null);
+          seen[u] = 1;
+          fetch(u, { cache: 'no-store' }).then(function (r) {
+            if (!r.ok) return next();
+            return r.json().then(function (d) {
+              if (d && typeof d.exists === 'boolean') resolve(d);
+              else next();
+            }, next);
+          }).catch(next);
+        })();
+      });
+    }
+    /** 详情行文件信息（公共）：按行标签提取文件路径/行号——组件源码（framework 嵌套或顶层）与调用处（usedAt）。
+     *  两端（pi-web DetailDialog / cockpit showElDetail）共用，避免重复实现 */
+    function rowFileInfo(el, label) {
+      if (!el || typeof el !== 'object') return null;
+      var f = el.framework || {};
+      var ua = f.usedAt || el.usedAt || {};
+      if (label === '组件源码') return { file: f.file || el.file || null, line: f.line || el.line || null };
+      if (label === '调用处') return { file: ua.file || null, line: ua.line || null };
+      return null;
+    }
+    /** 详情行是否文件行（公共）：组件源码 / 调用处 */
+    function isFileRow(label) { return label === '组件源码' || label === '调用处'; }
+    /** 从文本摘掉占位符（[元素N]/[回答N]/[错误N] + 前导空白） */
+    function stripFromText(text, items) {
+      var v = String(text || '');
+      (items && items.length ? items : picked).forEach(function (el) {
+        var tag = (el && el.tag) || '';
+        if (!tag || v.indexOf(tag) < 0) return;
+        var esc = tag.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        v = v.replace(new RegExp('\\s*' + esc), '');
+      });
+      return v;
+    }
+    /** 移除候选（用户清除）——同步记录已清除指纹 + 时刻（旧消息延迟重发不复活；新点选 ts 晚则复活） */
+    function removeCandidate(el) {
+      if (isErrCandidate(el)) dismissedErrKeys.add(String(el.message || '').slice(0, 80)); // 按消息 key 记录（错误候选无 __fp）
+      else if (el.__elfp || el.__fp) dismissedElFps.set(el.__elfp || el.__fp, Date.now());
+      setPicked(picked.filter(function (x) { return x !== el; }));
+    }
+
+    // ---------------- 握手 ----------------
+    function sendReady() {
+      postToHost('dbg_ai_ready', { mode: global.opener ? 'popup' : 'iframe' });
+      postToHost('dbg_ai_pull_boot', {});
+      postToHost('dbg_ai_pull_errors', {});
+    }
+
+    // ---------------- 桥连接公共块（AI 窗代注册宿主页；唯一来源，适配端勿复制） ----------------
+    // 页面不连桥：AI 窗是桥的唯一浏览器端点。本段把「AI 窗自身身份 + 宿主页身份上报 + 连接参数」下沉公共库——
+    // cockpit（aiwin.js）与 pi-web（aiti-client.mjs）等所有适配端共用。
+    var aiInstanceId = null;      // AI 窗连桥自标识（role=ai；桥用它关联 aiPageReg 注册表）
+    var lastReportedPage = null;  // 幂等去重；失败重置 → 适配端周期重试（refreshSessions 时调 reportAiPage）
+    var lastReportedSelf = null;  // AI 主窗口自注册（xxx/ai）幂等去重；失败重置 → onReady/周期重试
+    // 打开 URL 参数身份（pageId/targetUrl/title——launcher 拼 AI 窗地址携带）兑底无宿主 boot 场景
+    var urlIdent = { pageId: null, url: null, title: null };
+    try {
+      (global.location.search || '').replace(/[?&]([^=&]+)=([^&]*)/g, function (_, k, v) {
+        if (!k) return;
+        var val = decodeURIComponent(v.replace(/\+/g, ' '));
+        if (k === 'pageId') urlIdent.pageId = val;
+        else if (k === 'targetUrl' || k === 'url') urlIdent.url = val;
+        else if (k === 'title') urlIdent.title = val;
+      });
+    } catch (e) {}
+    /** 宿主页身份（debugTarget 优先，urlIdent 兕底）——桥连接参数/页面合成记录共用 */
+    function hostIdentity() {
+      var t = null;
+      if (debugTarget && debugTarget.pageId) t = debugTarget;
+      else if (urlIdent.pageId) t = { pageId: urlIdent.pageId, targetUrl: urlIdent.url || null, title: urlIdent.title || null };
+      return (t && t.pageId) ? t : null;
+    }
+    /** AI 窗自标识（首次生成后稳定；连桥 instanceId 参数用）
+     *  稳定性：与 launcher ctx.pageIdentity（__dbg_page_id）同模式——localStorage 按 session 参数分 key
+     *  持久化，刷新/重连复用同一 instanceId（pageId=ai-xxx/ai 不变，boundPageId 绑定不因重连过期）；
+     *  不同 session 各自独立。 */
+    function getAiInstanceId() {
+      if (aiInstanceId) return aiInstanceId;
+      var ls = null; try { ls = global.localStorage; } catch (e) {}
+      var sid = (global.location && global.location.search ? global.location.search.match(/[?&]session=([^&#]+)/) : null);
+      var skey = '__aiti_ai_instance' + (sid && sid[1] ? '_' + String(sid[1]).slice(0, 12) : '');
+      if (ls) { try { aiInstanceId = ls.getItem(skey) || ''; } catch (e) {} }
+      if (!aiInstanceId) {
+        aiInstanceId = 'ai-' + Math.random().toString(36).slice(2, 10);
+        if (ls) { try { ls.setItem(skey, aiInstanceId); } catch (e) {} }
+      }
+      return aiInstanceId;
+    }
+    /** 通用页面身份注册（POST /bridge/<which>/page；返回 Promise<b>，b.ok=false 或异常时调用方重置去重 key 供重试） */
+    function postPageReg(base, which, payload) {
+      if (!global.fetch || !base) return Promise.resolve(null);
+      return global.fetch(base + '/bridge/' + which + '/page', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }).then(function (r) { return r.json().catch(function () { return null; }); }).catch(function () { return null; });
+    }
+    function reportAiPage(base) {
+      var BC = global.BridgeClient;
+      if (!BC || !BC.isConnected || !BC.isConnected() || !aiInstanceId) return;
+      var t = hostIdentity();
+      if (!t) return;
+      if (lastReportedPage === t.pageId) return;
+      lastReportedPage = t.pageId;
+      postPageReg(base, 'ai', { instanceId: aiInstanceId, pageId: t.pageId, title: t.title || null, url: t.targetUrl || null }).then(function (b) {
+        if (!b || !b.ok) lastReportedPage = null; // 注册失败 → 下轮重试
+      });
+    }
+    function resetAiPageReport() { lastReportedPage = null; } // 桥重连后置调（onReady）
+    var activeListenerSet = false;
+    /** AI 主窗口自注册（POST /bridge/self/page → 桥 aiSelfReg 表）——无宿主也能被 CDP 管理（xxx/ai） */
+    function reportSelfPage(base) {
+      var BC = global.BridgeClient;
+      if (!BC || !BC.isConnected || !BC.isConnected()) return;
+      if (lastReportedSelf === 'ok') return; // 已注册成功（幂等）
+      // 首次注册时设 visibilitychange 监听
+      if (!activeListenerSet) { activeListenerSet = true; setupActiveListener(base); }
+      postPageReg(base, 'self', {
+        instanceId: getAiInstanceId(), url: topUrlSelf(), title: (document.title || '').slice(0, 120),
+      }).then(function (b) {
+        lastReportedSelf = (b && b.ok) ? 'ok' : null; // 失败 → 下轮重试
+      });
+    }
+    function resetSelfPageReport() { lastReportedSelf = null; } // 桥重连后置调（onReady）
+    /** AI 主窗口当前地址（同源顶层取 location.href） */
+    function topUrlSelf() {
+      try {
+        var t = null;
+        try { t = (window.self === window.top) ? window.location.href : window.top.location.href; } catch (e) {}
+        if (t) return String(t).slice(0, 500);
+        return String(window.location.href).slice(0, 500);
+      } catch (e) { return ''; }
+    }
+    /** 活跃通知（POST /bridge/self/active）：用户切到此 tab 时通知桥，设 activeBoundPageId */
+    function reportActive(base) {
+      var BC = global.BridgeClient;
+      if (!BC || !BC.isConnected || !BC.isConnected()) return;
+      var sid = (global.location && global.location.search ? global.location.search.match(/[?&]session=([^&#]+)/) : null);
+      if (!sid) return;
+      var sessionId = decodeURIComponent(sid[1]);
+      var instanceId = getAiInstanceId();
+      if (!instanceId) return;
+      global.fetch(base + '/bridge/self/active', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ instanceId: instanceId, sessionId: sessionId }),
+      }).catch(function () {});
+    }
+    /** 注册 visibilitychange 监听：页面可见时通知桥活跃切换 */
+    function setupActiveListener(base) {
+      try {
+        global.document.addEventListener('visibilitychange', function () {
+          if (global.document.visibilityState === 'visible') {
+            reportActive(base);
+          }
+        });
+      } catch (e) {}
+    }
+    /** 轻量 CDP 执行（self）：加载 cdp-core（window.__AitiCdpCore）执行命令——复用注入 client 同源实现，零复制 */
+    function selfExec(cmd, args) {
+      var core = global.__AitiCdpCore;
+      if (!core || !core.exec) return Promise.resolve({ error: 'cdp-core 未加载（self-exec 需要 <script src=cdp-core.js>）' });
+      return Promise.resolve(core.exec(cmd, args)).then(function (r) {
+        if (r && r.result && typeof r.result.then === 'function') return r.result.then(function (v) { return { ok: true, result: v }; });
+        return r;
+      }).catch(function (err) { return { ok: false, result: { error: String((err && err.message) || err) } }; });
+    }
+    /** 桥连接公共参数（AI 窗身份 + exec 转发宿主执行；适配端 connect 时展开）——未入 UI 状态，仅参数 */
+    function bridgeConnectParams() {
+      return {
+        role: 'ai', instanceId: getAiInstanceId(), token: 'dev',
+        useForward: true, // 桥 exec → postMessage 转发宿主执行（bridge-client 内置；结果自动回桥）
+      };
+    }
+    /** 宿主页合成记录（桥里无 session 只是 SSE 未连——用宿主身份补一条，适配端面板不再「无页面」） */
+    function hostPageRecord() {
+      var t = hostIdentity();
+      if (!t) return null;
+      return { pageId: t.pageId, instanceId: t.instanceId || null, frameId: t.frameId || null,
+        url: t.targetUrl || null, title: t.title || null, bridge: t.bridge || null,
+        active: true, fromHost: true, lastSeen: Date.now() };
+    }
+
+    return {
+      sendReady: sendReady, postToHost: postToHost,
+      getPicked: getPicked, subscribe: subscribe, setPicked: setPicked, removeCandidate: removeCandidate,
+      getDebugTarget: function () { return debugTarget; },
+      describe: describe, describeAll: describeAll, brief: brief, detailRows: detailRows,
+      filterPayload: filterPayload, clipUrl: clipUrl, stripFromText: stripFromText,
+      copyText: copyText, isAbsPath: isAbsPath, checkFileStat: checkFileStat,
+      rowFileInfo: rowFileInfo, isFileRow: isFileRow,
+      getHostWin: aiHost,
+      // 桥连接公共块（AI 窗代注册宿主页）
+      hostIdentity: hostIdentity, getAiInstanceId: getAiInstanceId,
+      reportAiPage: reportAiPage, resetAiPageReport: resetAiPageReport,
+      reportSelfPage: reportSelfPage, resetSelfPageReport: resetSelfPageReport, selfExec: selfExec,
+      reportActive: reportActive, bridgeConnectParams: bridgeConnectParams, hostPageRecord: hostPageRecord,
+    };
+  }
+
+  global.AitiHostProtocol = { create: createHostProtocol };
+})(window);

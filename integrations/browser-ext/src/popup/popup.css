@@ -1,0 +1,31 @@
+:root {
+  --bg: #0f172a; --panel: #1e293b; --panel2: #111827; --border: #334155;
+  --text: #e2e8f0; --muted: #94a3b8; --accent: #4f46e5; --accent-2: #6366f1; --green: #34d399;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); font-size: 13px; width: 320px; }
+.wrap { padding: 14px 16px; }
+.head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.logo { font-weight: 700; font-size: 14px; }
+.rows { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.row { display: flex; align-items: baseline; gap: 8px; }
+.k { color: var(--muted); flex-shrink: 0; width: 48px; }
+.v { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.mono { font-family: ui-monospace, SFMono-Regular, monospace; }
+.actions { display: flex; gap: 8px; }
+.btn {
+  flex: 1; background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 7px 10px; cursor: pointer; font: inherit; white-space: nowrap;
+}
+.btn:hover { background: var(--panel); border-color: var(--accent-2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-2); }
+.foot { margin-top: 10px; font-size: 11px; color: var(--muted); min-height: 14px; }
+/* 开关 */
+.switch { position: relative; display: inline-block; width: 36px; height: 20px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.slider { position: absolute; inset: 0; background: var(--border); border-radius: 999px; transition: .2s; cursor: pointer; }
+.slider::before { content: ''; position: absolute; width: 16px; height: 16px; left: 2px; top: 2px; background: #fff; border-radius: 50%; transition: .2s; }
+.switch input:checked + .slider { background: var(--green); }
+.switch input:checked + .slider::before { transform: translateX(16px); }
