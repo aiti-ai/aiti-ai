@@ -1,0 +1,13 @@
+# 依赖（部署时由 tools/deploy.mjs 在目标扩展目录安装运行时依赖；构建前 pnpm i 装 dev 依赖）
+node_modules/
+
+# 构建产物（client/src/index.js 源码 + tools/build-client.mjs 构建 → 产物，勿手改）
+client/aiti-cmd-client.mjs
+
+# 锁文件（依赖版本以 package.json devDependencies + deploy 脚本安装为准）
+package-lock.json
+pnpm-lock.yaml
+
+# 杂项
+*.log
+.DS_Store
