@@ -5,6 +5,8 @@
  * path keeps working as a fallback.
  */
 
+import { apiUrl } from "./base-path.ts";
+
 let activeSubscriptionPromise: Promise<boolean> | null = null;
 
 // Standard base64url → Uint8Array conversion for applicationServerKey.
@@ -32,7 +34,7 @@ export async function setupPushSubscription(locale: string): Promise<boolean> {
 
   const attempt = (async () => {
     try {
-      const configResponse = await fetch("/api/push/config");
+      const configResponse = await fetch(apiUrl("/api/push/config"));
       if (!configResponse.ok) return false;
       const { publicKey } = await configResponse.json() as { publicKey?: string };
       if (!publicKey) return false;
@@ -46,7 +48,7 @@ export async function setupPushSubscription(locale: string): Promise<boolean> {
         });
       }
 
-      const response = await fetch("/api/push/subscribe", {
+      const response = await fetch(apiUrl("/api/push/subscribe"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ subscription: subscription.toJSON(), locale }),

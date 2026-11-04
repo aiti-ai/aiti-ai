@@ -622,9 +622,9 @@ test("the container starts loading and remembers the selection per project", () 
   // the servers' changes through the MCP route; and the Test request, which writes no file.
   assert.doesNotMatch(source, /method:/);
   assert.deepEqual([...helperSource.matchAll(/method: "([A-Z]+)"/g)].map((match) => match[1]), ["PUT", "POST", "POST"]);
-  assert.match(helperSource, /fetchImpl\("\/api\/tools\/settings", \{\n\s*method: "PUT",/);
-  assert.match(helperSource, /fetchImpl\("\/api\/mcp", \{\n\s*method: "POST",/);
-  assert.match(helperSource, /fetchImpl\("\/api\/mcp\/test", \{\n\s*method: "POST",/);
+  assert.match(helperSource, /fetchImpl\(apiUrl\("\/api\/tools\/settings"\), \{\n\s*method: "PUT",/);
+  assert.match(helperSource, /fetchImpl\(apiUrl\("\/api\/mcp"\), \{\n\s*method: "POST",/);
+  assert.match(helperSource, /fetchImpl\(apiUrl\("\/api\/mcp\/test"\), \{\n\s*method: "POST",/);
   assert.doesNotMatch(source, /style=\{/);
 });
 

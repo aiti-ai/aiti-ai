@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { apiUrl } from "@/lib/base-path";
 import { useI18n } from "@/hooks/useI18n";
 import type { NewSessionContext, NewSessionTarget, ProjectChoice } from "@/lib/new-session-context";
 import { focusIfLost } from "@/lib/stacked-dialog";
@@ -31,7 +32,7 @@ interface Props {
 let homeDirCheck: Promise<string> | null = null;
 let homeDirFound = "";
 function loadHomeDir(): Promise<string> {
-  homeDirCheck ??= fetch("/api/home")
+  homeDirCheck ??= fetch(apiUrl("/api/home"))
     .then((response) => response.json())
     .then((data: { home?: string }) => {
       homeDirFound = data.home ?? "";

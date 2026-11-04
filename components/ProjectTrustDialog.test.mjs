@@ -319,7 +319,7 @@ test("a listing that failed names why, or gives its diagnostic when there is not
 test("the dialog fetches the listing when it opens, and gives up after a timeout", () => {
   assert.equal(MCP_LISTING_TIMEOUT_MS, 10_000);
   const effect = source.slice(source.indexOf("useEffect(() => {"), source.indexOf("}, [cwd]);"));
-  assert.match(effect, /fetch\(`\/api\/project-trust\?cwd=\$\{encodeURIComponent\(cwd\)\}`, \{ signal: controller\.signal, cache: "no-store" \}\)/);
+  assert.match(effect, /fetch\(apiUrl\(`\/api\/project-trust\?cwd=\$\{encodeURIComponent\(cwd\)\}`\), \{ signal: controller\.signal, cache: "no-store" \}\)/);
   assert.match(effect, /window\.setTimeout\(\(\) => \{\s*timedOut = true;\s*controller\.abort\(\);\s*\}, MCP_LISTING_TIMEOUT_MS\)/);
   // A late answer for a closed dialog or an earlier cwd is dropped.
   assert.match(effect, /return \(\) => \{\s*active = false;\s*window\.clearTimeout\(timer\);\s*controller\.abort\(\);\s*\};/);

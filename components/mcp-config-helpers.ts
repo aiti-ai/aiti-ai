@@ -1,3 +1,4 @@
+import { apiUrl } from "@/lib/base-path";
 import type {
   CodemodeInlineBudgetSetting,
   CodemodeMode,
@@ -835,7 +836,7 @@ function isMcpResponse(value: unknown): value is McpResponse {
 
 /** The URL of the overview: the global file alone without a project. */
 export function mcpOverviewUrl(cwd: string | null): string {
-  return cwd ? `/api/mcp?cwd=${encodeURIComponent(cwd)}` : "/api/mcp";
+  return apiUrl(cwd ? `/api/mcp?cwd=${encodeURIComponent(cwd)}` : "/api/mcp");
 }
 
 async function requestMcpOverview(cwd: string | null, fetchImpl: FetchLike, signal?: AbortSignal): Promise<McpLoadResult> {
@@ -936,7 +937,7 @@ async function requestToolSettingsChange<T>(
 ): Promise<{ ok: true; stored: T } | { ok: false; error: McpLoadFailure }> {
   let response: Awaited<ReturnType<FetchLike>>;
   try {
-    response = await fetchImpl("/api/tools/settings", {
+    response = await fetchImpl(apiUrl("/api/tools/settings"), {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(change),
@@ -1198,7 +1199,7 @@ export const MCP_ACTION_TIMEOUT_MS = 15_000;
 async function requestMcpAction(body: Record<string, unknown>, fetchImpl: FetchLike, signal: AbortSignal): Promise<McpActionResult> {
   let response: Awaited<ReturnType<FetchLike>>;
   try {
-    response = await fetchImpl("/api/mcp", {
+    response = await fetchImpl(apiUrl("/api/mcp"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -1470,7 +1471,7 @@ function isMcpTestResponse(value: unknown): value is McpTestResponse {
 async function requestMcpTest(body: Record<string, unknown>, fetchImpl: FetchLike, signal: AbortSignal): Promise<McpTestRequestResult> {
   let response: Awaited<ReturnType<FetchLike>>;
   try {
-    response = await fetchImpl("/api/mcp/test", {
+    response = await fetchImpl(apiUrl("/api/mcp/test"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),

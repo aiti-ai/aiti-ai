@@ -7,6 +7,7 @@ import type {
   McpSignInFlowInfo,
   McpSignInPhase,
 } from "@/lib/api-types";
+import { apiUrl } from "@/lib/base-path";
 import {
   mcpTestBlock,
   mcpWriteBlock,
@@ -325,7 +326,7 @@ function signInRequest(
 }
 
 function flowUrl(flowId: string): string {
-  return `/api/mcp/sign-in/${encodeURIComponent(flowId)}`;
+  return apiUrl(`/api/mcp/sign-in/${encodeURIComponent(flowId)}`);
 }
 
 /**
@@ -346,7 +347,7 @@ export function postMcpSignIn(
   signal?: AbortSignal,
   timeoutMs: number = MCP_SIGN_IN_REQUEST_TIMEOUT_MS,
 ): Promise<McpSignInRequestResult> {
-  return signInRequest("/api/mcp/sign-in", {
+  return signInRequest(apiUrl("/api/mcp/sign-in"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ scope: server.scope, name: server.name, ...(cwd ? { cwd } : {}) }),

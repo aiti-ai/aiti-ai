@@ -128,7 +128,7 @@ async function fetchEntries(dirPath: string, showHidden = false): Promise<FileNo
 // Sends the target the operator was shown, so a link pointed elsewhere since
 // the listing is refused instead of granting a directory nobody looked at.
 async function allowOutsideLink(linkPath: string, target: string): Promise<void> {
-  const res = await fetch(`/api/files/${encodeFilePathForApi(linkPath)}?type=allow-link`, {
+  const res = await fetch(apiUrl(`/api/files/${encodeFilePathForApi(linkPath)}?type=allow-link`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ target }),

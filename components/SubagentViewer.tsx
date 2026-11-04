@@ -1,5 +1,6 @@
 "use client";
 
+import { apiUrl } from "@/lib/base-path";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MessageView } from "./MessageView";
 import { StatusIcon, statusColor } from "./AgentSessionPanel";
@@ -21,7 +22,7 @@ const TAIL = 100;
 function contextUrl(sessionId: string, before?: string): string {
   const params = new URLSearchParams({ deferThinking: "1", deferMedia: "1", tail: String(TAIL) });
   if (before) params.set("before", before);
-  return `/api/sessions/${encodeURIComponent(sessionId)}/context?${params}`;
+  return apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}/context?${params}`);
 }
 
 function toTranscript(page: Partial<SubagentTranscript>): SubagentTranscript {
@@ -62,7 +63,7 @@ export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile }
     const controller = new AbortController();
     (async () => {
       try {
-        const res = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+        const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(sessionId)}`), {
           signal: controller.signal,
           cache: "no-store",
         });

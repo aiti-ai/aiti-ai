@@ -167,9 +167,9 @@ function ToolbarIconButton({
 }
 
 function sessionListUrl(summary: boolean, force: boolean): string {
-  if (summary) return "/api/sessions?summary=1";
-  if (force) return "/api/sessions?force=1";
-  return "/api/sessions";
+  if (summary) return apiUrl("/api/sessions?summary=1");
+  if (force) return apiUrl("/api/sessions?force=1");
+  return apiUrl("/api/sessions");
 }
 
 /** How a pick in the sidebar opens a session. */
@@ -730,7 +730,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   // label (Explorer / Finder / generic) and disable itself when unavailable.
   useEffect(() => {
     let cancelled = false;
-    fetch("/api/open-in-explorer")
+    fetch(apiUrl("/api/open-in-explorer"))
       .then((res) => res.ok ? res.json() as Promise<FileManagerAvailability> : null)
       .then((data) => { if (!cancelled && data) setFileManager(data); })
       .catch(() => {});
@@ -746,7 +746,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     const dir = selectedCwd ?? selectedCwdProp;
     if (!dir) return;
     try {
-      const res = await fetch("/api/open-in-explorer", {
+      const res = await fetch(apiUrl("/api/open-in-explorer"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: dir }),
@@ -1101,7 +1101,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     }
     let cancelled = false;
     setWorktreeLoadingCwd(selectedCwd);
-    fetch(`/api/worktrees?cwd=${encodeURIComponent(selectedCwd)}`)
+    fetch(apiUrl(`/api/worktrees?cwd=${encodeURIComponent(selectedCwd)}`))
       .then((r) => r.json())
       .then((d: { projectRoot?: string; projectKey?: string; isGit?: boolean; isTopLevel?: boolean; currentWorktreePath?: string | null; worktrees?: WorktreeEntry[]; error?: string }) => {
         if (cancelled) return;
@@ -1174,7 +1174,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     setCustomPathValidating(true);
     setCustomPathError(null);
     try {
-      const res = await fetch("/api/cwd/validate", {
+      const res = await fetch(apiUrl("/api/cwd/validate"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: path }),
@@ -1225,7 +1225,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   }, []);
   const handleDefaultCwd = useCallback(async (purpose: "files" | "new-session" = "files") => {
     try {
-      const res = await fetch("/api/default-cwd", { method: "POST" });
+      const res = await fetch(apiUrl("/api/default-cwd"), { method: "POST" });
       const data = await res.json() as { cwd?: string; error?: string };
       // Select it like any other directory, so validation, project identity and
       // the file allow-list all go through /api/cwd/validate. It is not a path
@@ -1244,7 +1244,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   // listed even when nobody moves there. The picker moves there itself.
   const createWorktree = useCallback(async (project: ProjectChoice, branch: string): Promise<{ path: string } | { error: string }> => {
     try {
-      const res = await fetch("/api/worktrees", {
+      const res = await fetch(apiUrl("/api/worktrees"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: project.root, branch }),
@@ -1271,7 +1271,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
   // and the picker asks before retrying with force.
   const handleRemoveWorktree = useCallback(async (project: ProjectChoice, path: string, force: boolean): Promise<WorktreeRemoval> => {
     try {
-      const res = await fetch("/api/worktrees", {
+      const res = await fetch(apiUrl("/api/worktrees"), {
         method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ cwd: project.root, path, force }),
@@ -1783,7 +1783,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     // skill-invoked session stays a no-op instead of persisting raw XML.)
     if (renameValue === title || name === (session.name ?? "")) return;
     try {
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, {
+      await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -1818,7 +1818,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     setConfirmDeleteRootId((current) => (current === session.id ? null : current));
     try {
       // The server deletes the family's subagent sessions with it.
-      await fetch(`/api/sessions/${encodeURIComponent(session.id)}`, { method: "DELETE" });
+      await fetch(apiUrl(`/api/sessions/${encodeURIComponent(session.id)}`), { method: "DELETE" });
       onSessionDeleted?.(session.id);
       void loadSessions();
     } catch {
@@ -1889,7 +1889,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     forkingIdsRef.current.add(source.id);
     const selectedAtClick = selectedSessionIdRef.current;
     try {
-      const res = await fetch(`/api/sessions/${encodeURIComponent(source.id)}/fork`, {
+      const res = await fetch(apiUrl(`/api/sessions/${encodeURIComponent(source.id)}/fork`), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: "{}",
@@ -2184,7 +2184,7 @@ export function SessionSidebar({ selectedSessionId, selectedSession, onSelectSes
     const ids = archivedFamilyIds(treeSelectionInput, { projectKey: project.key });
     const deleteOne = async (sessionId: string) => {
       try {
-        await fetch(`/api/sessions/\${encodeURIComponent(sessionId)}`, { method: "DELETE" });
+        await fetch(apiUrl(`/api/sessions/\${encodeURIComponent(sessionId)}`), { method: "DELETE" });
         onSessionDeleted?.(sessionId);
       } catch {
         // 该行保留；下次刷新见真章。

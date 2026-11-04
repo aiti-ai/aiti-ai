@@ -131,7 +131,7 @@ test("trusting from Settings › MCP reloads, in place, the other mounted sectio
     ), load);
   }
   // Agents: only the model list (GET /api/models leaves out an untrusted project's extensions).
-  assert.match(agents, /const response = await fetch\(\`\/api\/models\`, \{[\s\S]*?body: JSON\.stringify\(\{ cwd \}\)[\s\S]*?\}, \[cwd, trustKey\]\);/); // 合并：models 读取已 POST 化（cwd 不进 URL）
+  assert.match(agents, /const response = await fetch\(apiUrl\(`\/api\/models`\), \{[\s\S]*?body: JSON\.stringify\(\{ cwd \}\)[\s\S]*?\}, \[cwd, trustKey\]\);/); // 合并：models 读取已 POST 化（cwd 不进 URL）
   // Models reads models.json, auth and enabledModels, none of which follows trust.
   // Extension takeover renders in place of the native panel (same cwd prop — project-scope
   // enabledModels parity); the native fallback stays.

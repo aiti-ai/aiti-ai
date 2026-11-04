@@ -54,7 +54,7 @@ test("the bar shows the project and the worktree in use as two menu buttons", ()
   // The home folder shows as ~, asked for once per page (the bar mounts
   // again with every move).
   assert.match(source, /homeDir=\{homeDir\}/);
-  assert.match(source, /homeDirCheck \?\?= fetch\("\/api\/home"\)/);
+  assert.match(source, /homeDirCheck \?\?= fetch\(apiUrl\("\/api\/home"\)\)/);
   assert.match(source, /const \[homeDir, setHomeDir\] = useState\(\(\) => homeDirFound\);/);
   assert.match(source, /if \(homeDirFound\) return;\s*let cancelled = false;/);
   // The side padding is the header row's (ChatWindow), on phones too.

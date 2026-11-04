@@ -193,7 +193,7 @@ function SkillDetail({
       try {
         const params = new URLSearchParams({ cwd, filePath: skill.filePath });
         if (documentPath !== rootDocument) params.set("document", documentPath);
-        const response = await fetch(`/api/skills/content?${params}`, { signal: controller.signal });
+        const response = await fetch(apiUrl(`/api/skills/content?${params}`), { signal: controller.signal });
         const data = (await response.json()) as Partial<SkillContentResponse> & { error?: string };
         if (!response.ok || data.error || typeof data.content !== "string") {
           throw new Error(data.error ?? `HTTP ${response.status}`);
@@ -843,7 +843,7 @@ export function SkillsConfig({
     setSaveError(null);
     setGroupStatus(null);
     try {
-      const res = await fetch("/api/skills", {
+      const res = await fetch(apiUrl("/api/skills"), {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ filePaths, disableModelInvocation }),
