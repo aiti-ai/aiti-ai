@@ -204,7 +204,8 @@ function appendApiVariants(entries, cfg, pName) {
 // 生效模型清单解析（store 兜底/runtime 覆盖）用工作区共享实现：部署时拷到扩展目录，仓内测试回退相对路径
 let resolveProviderModels;
 try { ({ resolveProviderModels } = require("./effective-models.cjs")); }
-catch { ({ resolveProviderModels } = require("../shared/effective-models.cjs")); }
+catch { try { ({ resolveProviderModels } = require("./vendor/effective-models.cjs")); }
+  catch { ({ resolveProviderModels } = require("../shared/effective-models.cjs")); } }  // 源码仓→vendor/（d6b635c1 后共享层退役）；部署态第一跳已命中
 
 // 组合模型（combo:true provider）标注：🧩 成员构成 + 引擎路由标记（不直接探测）
 function markComboEntries(entries, provCfg, pName) {

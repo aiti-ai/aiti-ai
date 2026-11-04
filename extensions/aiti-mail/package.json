@@ -1,0 +1,17 @@
+{
+  "name": "@aiti-ai/aiti-mail",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "aiti-mail · pi-web 通用邮件发送出口（零依赖 SMTP 客户端 + node:sqlite 发送记录）",
+  "scripts": {
+    "test": "node --test tools/smtp.test.mjs",
+    "deploy": "node tools/deploy.mjs",
+    "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
+  },
+  "aitiConfigs": {
+    "configFiles": [
+      "config.json"
+    ]
+  },
+  "aitiExtProtocol": "1.0"
+}
