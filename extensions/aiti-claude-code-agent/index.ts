@@ -1195,7 +1195,16 @@ async function quotaView(force: boolean): Promise<Response> {
     return Response.json(v);
   };
   const creds = readClaudeCreds();
-  if (!creds) return fail("no-auth", "未找到 Claude 登录凭据（~/.claude/.credentials.json）");
+  if (!creds) {
+    // 2.1.318 起凭据迁 keyring（auth 有效但无文件可读）——区分「真没登录」与「登录了但额度查询拿不到 token」
+    const loggedIn = await claudeAuthReady();
+    return fail(
+      "no-auth",
+      loggedIn
+        ? "已登录但凭据在系统 keyring（2.1.318+），额度查询无可读 token——跑一次 `claude setup-token` 导出后自愈"
+        : "未找到 Claude 登录凭据（~/.claude/.credentials.json）",
+    );
+  }
   try {
     const v = await fetchClaudeQuota({ token: (creds as { token: string }).token, ...((creds as { expiresAt?: number }).expiresAt !== undefined ? { expiresAt: (creds as { expiresAt?: number }).expiresAt } : {}) });
     quotaCache = { at: Date.now(), ttl: QUOTA_TTL_MS, value: v };
@@ -1215,6 +1224,29 @@ function quotaRoute(req: Request, ctx: { path: string[]; method: string; searchP
     try { force = new URL(req.url).searchParams.get("force") === "1"; } catch { /* 相对 URL 兜底 */ }
   }
   return quotaView(force);
+}
+
+/** GET /login/status 的登录态裁决（agent-manager extReportsAuthState 语义）。
+ *  三级：凭据文件 / env token / `claude auth status`（2.1.318 起凭据迁 keyring，
+ *  文件探测失效——CLI 是唯一可信源；60s 缓存防 manager 扫描放大 spawn）。 */
+let authStatusCache: { at: number; ready: boolean } | null = null;
+async function claudeAuthReady(): Promise<boolean> {
+  if (readClaudeCreds()) return true;
+  if (process.env.CLAUDE_CODE_OAUTH_TOKEN || process.env.ANTHROPIC_AUTH_TOKEN || process.env.ANTHROPIC_API_KEY) return true;
+  if (authStatusCache && Date.now() - authStatusCache.at < 60_000) return authStatusCache.ready;
+  let ready = false;
+  try {
+    const { execFile } = await import("node:child_process");
+    const { promisify } = await import("node:util");
+    const out = await promisify(execFile)("claude", ["auth", "status"], { timeout: 8_000 })
+      .then((r: { stdout: string }) => String(r.stdout || ""))
+      .catch((e: { stdout?: string }) => String(e?.stdout || ""));
+    let parsed: { loggedIn?: unknown } | null = null;
+    try { parsed = JSON.parse(out) as { loggedIn?: unknown }; } catch { /* 非 JSON 输出走正则 */ }
+    ready = parsed?.loggedIn === true || /\bloggedIn"?\s*[:=]\s*true\b/i.test(out);
+  } catch { /* CLI 缺席/异常 = missing */ }
+  authStatusCache = { at: Date.now(), ready };
+  return ready;
 }
 
 export default {
@@ -1346,6 +1378,9 @@ export default {
         label: "Claude Code",
         modes: ["paste"],
         accountQuota: true, // 支持账号额度查询（agent-manager 聚合 GET /login/quota）
+        // 2026-11-05 claude 2.1.318：凭据迁出明文文件（keyring 域，路径不可 stat）——
+        // fs 探测表会误报 missing；改由本扩展 /login/status 端点裁决（claude auth status 兜底）。
+        extReportsAuthState: true,
         dependencyHint: "claude CLI（npm i -g @anthropic-ai/claude-code）",
         auth: [
           { kind: "file", path: [".claude", ".credentials.json"], label: "~/.claude/.credentials.json" },
@@ -1379,6 +1414,10 @@ export default {
       if (recycled) return recycled;
       const quota = quotaRoute(req, ctx);
       if (quota) return quota;
+      // agent-manager 优先语义（extReportsAuthState）：先于 loginApi（其对未知 /login/* 返 404）
+      if (ctx?.path?.[0] === "login" && ctx?.path?.[1] === "status" && String(ctx.method ?? "GET").toUpperCase() === "GET") {
+        return Response.json({ state: (await claudeAuthReady()) ? "ready" : "missing" });
+      }
       return loginApi ? await loginApi(req, ctx) : null;
     },
 
