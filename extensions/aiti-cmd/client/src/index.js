@@ -38,7 +38,7 @@ const btnStyle = {
 };
 const rowStyle = { display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" };
 const inputStyle = {
-  flex: 1, borderWidth: "1px", borderStyle: "solid", borderColor: "var(--border)", borderRadius: 6,
+  flex: 1, border: "1px solid var(--border)", borderRadius: 6,
   padding: "5px 10px", fontSize: 13, background: "var(--bg)", color: "var(--text)",
   fontFamily: "inherit",
 };
