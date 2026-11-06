@@ -25,12 +25,16 @@ import { ensureRdpWasm, wasmCachePath } from "./rdp-wasm-assets.js";
 import * as win from "./win.js";
 import * as mac from "./mac.js";
 
+<<<<<<< Updated upstream
 export const LIB_VERSION = "0.3.1"; // 单例 key 用：lib 逻辑变更时 bump，reload 即换新实例
 
 /** 平台分派：Windows/macOS 语义映射见 docs/aiti-ui-env-{windows-support,macos-support}-plan.md */
 export const IS_WIN = process.platform === "win32";
 export const IS_MAC = process.platform === "darwin";
 export const IS_UNIX = !IS_WIN && !IS_MAC;
+=======
+export const LIB_VERSION = "0.1.32"; // 单例 key 用：lib 逻辑变更时 bump，reload 即换新实例
+>>>>>>> Stashed changes
 
 export type UeMode = "prefer-desktop" | "prefer-headless" | "always-desktop" | "always-headless";
 export type UeTarget = "desktop" | "headless";
@@ -1133,14 +1137,15 @@ export function vncWebPort(): number { return envNumber("UI_ENV_VNC_WEB_PORT", 6
 
 export interface SysVncEntry {
   id: string;        // "sys-<pid>" 或 "port-<p>"
-  kind: string;      // x11vnc | vncserver | unknown
-  display: string;   // :N
-  port: number;      // RFB 端口
+  kind: string;      // x11vnc | vncserver | rdp | unknown
+  display: string;   // :N（RDP 为空串）
+  port: number;      // RFB 端口（RDP 为 3389）
   pid?: number;
   ours: boolean;     // 本扩展自管（自动排除，不列入）
   stoppable: boolean;// 是否由本用户控制（可停止）
   listening: boolean;// 端口是否真的在监听（-loop 父进程等可能进程在但端口无监听 → 不可连）
   cmd?: string;
+<<<<<<< Updated upstream
   passwordResettable?: boolean; // 本扩展能否重设该 VNC server 密码（不能时看 passwordNote）
   passwordNote?: string;        // 不能重设的原因 / 重设后的生效条件
 }
@@ -1166,6 +1171,13 @@ async function rfbPortsToPids(): Promise<Map<number, number[]>> {
   return map;
 }
 
+=======
+  protocol: "vnc" | "rdp"; // 协议（vnc=可 noVNC 直连，rdp=需 RDP 客户端）
+}
+
+/** 探测系统 VNC/RDP server：x11vnc / Xvnc / RDP（xrdp/gnome-remote-desktop）进程 + 监听 5900-5910 的未识别端口。
+ *  本扩展自启的 x11vnc（命令行含 /tmp/ui-env-<n>）自动排除。 */
+>>>>>>> Stashed changes
 export async function systemVncScan(): Promise<SysVncEntry[]> {
   if (IS_WIN) return win.winSystemVncScan(configDir);
   if (IS_MAC) return mac.macSystemVncScan();
@@ -1178,9 +1190,9 @@ export async function systemVncScan(): Promise<SysVncEntry[]> {
     return null;
   };
   const push = (e: SysVncEntry) => {
+    seenPorts.add(e.port); // 先标记端口（含 ours）——防止后续端口扫描把本扩展端口当 unknown 重复列出
     if (e.ours) return; // 本扩展自管的排除
-    if (seenPorts.has(e.port)) return;
-    seenPorts.add(e.port);
+    if (seenPorts.has(e.port) && list.some((x) => x.port === e.port)) return;
     list.push(e);
   };
   const pushVerified = async (e: SysVncEntry) => {
@@ -1197,6 +1209,7 @@ export async function systemVncScan(): Promise<SysVncEntry[]> {
     if (prog === "x11vnc") {
       const display = (cmd.match(/-display\s+(:\d+)/) || [])[1] || ":?";
       const rfb = (cmd.match(/-rfbport\s+(\d+)/) || [])[1];
+<<<<<<< Updated upstream
       // 无 -rfbport 时 x11vnc 取「5900 起第一个空闲端口」——以 ss 实际监听 pid 为准；
       // 猜 5900+displayNum 会把别的进程（如 QEMU 虚拟机 VNC）的端口误认成它的（2026-09-15 修）。
       const actual = portOfPid(pid);
@@ -1213,24 +1226,46 @@ export async function systemVncScan(): Promise<SysVncEntry[]> {
             ? "该 x11vnc 用 -passwd 明文参数启动，改密码需改启动命令后重启"
             : "该 x11vnc 未使用密码文件（无 -rfbauth），无密码可重设；如需密码请以其启动配置为准"),
       });
+=======
+      const port = rfb ? Number(rfb) : (display !== ":?" ? 5900 + Number(display.slice(1) || 0) : 0);
+      await pushVerified({ id: "sys-" + pid, kind: "x11vnc", display, port, pid, ours, stoppable: user === process.env.USER, cmd: cmd.slice(0, 110), protocol: "vnc" });
+>>>>>>> Stashed changes
       continue;
     }
     if (prog && (prog.startsWith("Xvnc") || prog.startsWith("Xtightvnc") || prog.startsWith("Xtigervnc")) && /:\d+/.test(cmd)) {
       const display = (cmd.match(/(?:\s)(:\d+)/) || [])[1] || ":?";
       const dnum = Number(String(display).slice(1) || 0);
+<<<<<<< Updated upstream
       await pushVerified({ id: "sys-" + pid, kind: "vncserver", display, port: portOfPid(pid) ?? 5900 + dnum, pid, ours: false, stoppable: user === process.env.USER, cmd: cmd.slice(0, 110),
         passwordResettable: user === process.env.USER,
         passwordNote: user === process.env.USER
           ? "写 ~/.vnc/passwd（标准 vncpasswd 格式）；重启该 vncserver 会话后生效"
           : `该 vncserver 属用户 ${user}，非当前用户，无权限改` });
+=======
+      await pushVerified({ id: "sys-" + pid, kind: "vncserver", display, port: 5900 + dnum, pid, ours: false, stoppable: user === process.env.USER, cmd: cmd.slice(0, 110), protocol: "vnc" });
+      continue;
+    }
+    // RDP：xrdp / gnome-remote-desktop
+    if (prog === "xrdp" || prog === "xrdp-sesman" || prog === "gnome-remote-de" || prog === "gnome-remote-desktop-daemon") {
+      await pushVerified({ id: "sys-" + pid, kind: "rdp", display: "", port: 3389, pid, ours: false, stoppable: user === process.env.USER, cmd: cmd.slice(0, 110), protocol: "rdp" });
+      continue;
+>>>>>>> Stashed changes
     }
   }
   // 监听 5900-5910 的未识别 VNC（进程没匹配到）
   for (let p = 5900; p <= 5910; p++) {
     if (await portListening(p) && !seenPorts.has(p)) {
+<<<<<<< Updated upstream
       await pushVerified({ id: "port-" + p, kind: "unknown", display: `:${p - 5900}`, port: p, ours: false, stoppable: false,
         passwordResettable: false, passwordNote: "未识别到已知 VNC server 进程（可能是其它实现），密码请在其自身配置里改" });
+=======
+      await pushVerified({ id: "port-" + p, kind: "unknown", display: `:${p - 5900}`, port: p, ours: false, stoppable: false, protocol: "vnc" });
+>>>>>>> Stashed changes
     }
+  }
+  // RDP 端口 3389（进程未匹配到也扫——gnome-remote-desktop 可能名字不固定）
+  if (await portListening(3389) && !seenPorts.has(3389)) {
+    list.push({ id: "port-3389", kind: "rdp", display: "", port: 3389, ours: false, stoppable: false, listening: true, protocol: "rdp" });
   }
   return list;
 }
@@ -1521,7 +1556,15 @@ export async function vncCreate(id: string | undefined, displayNum = envDisplayN
     }
     ins[instId] = inst;
     saveInstances(ins);
-    await sleep(700);
+    // 等 x11vnc + bridge 真正 ready（端口在听）再返回——固定 sleep 700ms 在系统
+    // 负载高时 x11vnc 还没 bind，vncStatus() 立刻查端口得 tcp:false → 面板 RFB 灰色
+    // 像「没启动」。轮询最多 ~3s，已 ready 则秒回。
+    const needPorts = !isSys ? [rfbPort, webPort] : [webPort];
+    for (let i = 0; i < 15; i++) {
+      const ok = await Promise.all(needPorts.map((p) => portListening(p)));
+      if (ok.every(Boolean)) break;
+      await sleep(200);
+    }
     return inst;
   } finally {
     vncCreateLock = null;
