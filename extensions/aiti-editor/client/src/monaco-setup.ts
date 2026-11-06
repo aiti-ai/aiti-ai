@@ -350,9 +350,23 @@ export function loadMonaco(): Promise<any> {
   const w = window as any;
   if (w.monaco) return Promise.resolve(w.monaco);
   if (monacoPromise) return monacoPromise;
+  monacoAttempts = 0; // 新链路从零计数（fail 到上限时已清 monacoPromise；手动「重试加载」走这里）
   const vs = apiUrl("/api/extensions/aiti-editor/assets/monaco/vs");
   monacoPromise = new Promise((resolve, reject) => {
     const attempt = () => {
+      // 重试前清 AMD loader 的模块失败缓存：vscode loader 对加载失败的模块留【永久失败
+      // 记录】，再 require 同一模块会立即命中缓存（不再发任何请求）——不清则退避重试与
+      // 「重试加载」按钮全部无效。2026-09-25 实测：assets 同步空窗期（deploy rmSync+cpSync
+      // 间的 404 窗口）一次失败即永久卡死，唯一自救曾是刷新页面；require.reset() 后同页
+      // 重载立即成功。reset 代价 = 已成功模块重新请求（HTTP 缓存兜底，近零成本）。
+      if (monacoAttempts > 0) {
+        try {
+          if (typeof w.require?.reset === "function") {
+            w.require.reset();
+            w.require.config({ paths: { vs } }); // reset 重建管理器 → paths 必须重配
+          }
+        } catch { /* reset 失败不阻塞重试 */ }
+      }
       // 跨扩展安全（修双 loader 竞态）：aiti-git-review 等共用同一份 vs assets。
       // loader 注入经 ensureLoaderExecuted 全局握手去重（绝不二次注入执行）；
       // AMD 的 require/config/require(["vs/editor/editor.main"]) 幂等，直接复用。

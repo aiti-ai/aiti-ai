@@ -7,7 +7,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { apiUrl, editorBase, ensureEditorTicket, ticketedEditorPath, extSvc } from "./host-shim";
 import { getCtx, editorRefHolder } from "./env";
-import { ENCODINGS, encDisplay, formatSize, mdSlug, sourceLinesForText, isDarkTheme } from "./lib";
+import { ENCODINGS, encDisplay, formatSize, mdSlug, sourceLinesForText, isDarkTheme, describeMonacoError } from "./lib";
 import { detectLanguage, mdFenceDescriptors } from "./registry";
 import { markdownPreviewHtml, markdownRenderHtml } from "./markdown";
 import { previewKindOf, defaultViewModeOf, previewModeItems } from "./preview";
@@ -628,8 +628,9 @@ export function EditorApp(props: Record<string, any>) {
         }
       });
     }).catch((e: any) => {
-      // Monaco 加载失败 → 独立错误态 + 可重试
-      if (!cancelled) setMonacoErr(String(e && e.message || e));
+      // Monaco 加载失败 → 独立错误态 + 可重试（describeMonacoError 把 AMD loader 的
+      // "[object Event]" 类不可读错误转成可读文案，2026-09-25）
+      if (!cancelled) setMonacoErr(describeMonacoError(e));
     });
     return () => { cancelled = true; };
   }, [status.phase, meta, language, bumpPreview, bumpChg, monacoRetry]);
@@ -2047,6 +2048,7 @@ useEffect(() => {
                 display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12,
                 background: "rgba(0,0,0,0.35)", color: "#f87171", fontSize: 13, padding: 16, textAlign: "center" }}>
               <div>Monaco 编辑器加载失败<br />{monacoErr}</div>
+              <div style={{ color: "var(--text-dim,#888)", fontSize: 12 }}>重试会自动清除加载缓存；若反复失败请刷新页面（或检查网络）</div>
               <button
                 type="button"
                 onClick={() => { setMonacoErr(null); setMonacoRetry((n) => n + 1); }}
