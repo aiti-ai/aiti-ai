@@ -80,7 +80,7 @@ check "jad 反编译" 'curl -s -X POST http://127.0.0.1:'$PORT_HTTP'/api/jad -H 
 
 say "attach 幂等（premain 已挂载 → attach 跳过）"
 P=$(cat /tmp/e2e.pid)
-check "attach 返回" 'java --add-modules jdk.attach -cp /home/pi/workspace/pi-work/pi-web-ext/aiti-testagent/attach-tool AttachTool '$P' '$AGENT_JAR' "conf='$CONF'" 2>&1' 'attached'
+check "attach 返回" 'java --add-modules jdk.attach -cp /home/pi/workspace/pi-work/TestAgent/TestAgent/target/testagent-1.0.jar AttachTool '$P' '$AGENT_JAR' "conf='$CONF'" 2>&1' 'attached'
 sleep 1
 check "already attached 标记" 'grep -ac "already attached" /tmp/e2e.log' '1'
 check "无第二 reload 监听" 'grep -ac "for refreshing configuration" /tmp/e2e.log' '1'
