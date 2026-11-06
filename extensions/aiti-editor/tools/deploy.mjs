@@ -12,7 +12,7 @@
  * 用法：node tools/deploy.mjs
  * 生效：POST /api/extensions/reload（或重启 pi-web）；client 刷新页面即新
  */
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, statSync, closeSync, openSync, writeFileSync, rmSync } from "node:fs";
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, statSync, closeSync, openSync, writeFileSync, rmSync, renameSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -74,14 +74,31 @@ function syncMonaco(extDir) {
     console.log("[deploy] monaco assets 已是最新（" + fp + "）→ 跳过");
     return;
   }
-  const out = resolve(extDir, "monaco", "vs");
-  mkdirSync(resolve(extDir, "monaco"), { recursive: true });
-  rmSync(out, { recursive: true, force: true });
-  cpSync(SRC_VS, out, { recursive: true, force: true });
+  const parent = resolve(extDir, "monaco");
+  const out = resolve(parent, "vs");
+  mkdirSync(parent, { recursive: true });
+  // 原子替换（2026-09-25）：旧实现 rmSync(out)+cpSync（整目录删后逐文件拷）存在秒级
+  // 404 空窗——同步期间页面任何 Monaco 模块请求落空，且 vscode AMD loader 对失败模块
+  // 留永久失败记录（刷新前所有 require 立即命中缓存失败），用户侧表现为「Monaco 编辑器
+  // 加载失败 [object Event] 且重试无效」。先拷临时目录，再两次 rename（毫秒级窗口）。
+  // rename 失败（如 Windows 文件被占用）时回退旧的 rm+cp 路径。
+  const tmp = resolve(parent, ".vs-tmp-" + process.pid);
+  const old = resolve(parent, ".vs-old-" + process.pid);
+  rmSync(tmp, { recursive: true, force: true });
+  rmSync(old, { recursive: true, force: true });
+  cpSync(SRC_VS, tmp, { recursive: true, force: true });
+  try {
+    try { renameSync(out, old); } catch { /* out 不存在（首次）→ 跳过 */ }
+    renameSync(tmp, out);
+  } catch {
+    rmSync(out, { recursive: true, force: true });
+    cpSync(SRC_VS, out, { recursive: true, force: true });
+  }
+  try { rmSync(old, { recursive: true, force: true }); } catch { /* 删除失败不影响结果 */ }
   const fd = openSync(stamp, "w");
   writeFileSync(fd, fp); closeSync(fd);
   const mb = (statSync(out).size / 1048576).toFixed(0);
-  console.log(`[deploy] monaco vs → ${out} (${mb}MB) · fp=${fp}`);
+  console.log(`[deploy] monaco vs → ${out} (${mb}MB · 原子替换) · fp=${fp}`);
 }
 
 for (const extDir of targets) {
