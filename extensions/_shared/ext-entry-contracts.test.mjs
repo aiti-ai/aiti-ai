@@ -42,14 +42,19 @@ const VALID_SLOTS = new Set([
 ]);
 
 function listExts() {
-  return readdirSync(extRoot, { withFileTypes: true })
+  // 并发套件里 sync-mirror 测试会临时创建/删除夹具扩展目录——ENOENT 视为已消失，跳过
+  const dirs = readdirSync(extRoot, { withFileTypes: true })
     .filter((e) => e.isDirectory() && e.name !== "_shared" && e.name !== "node_modules")
-    .map((e) => e.name)
-    .filter((n) => existsSync(join(extRoot, n, "package.json")));
+    .map((e) => e.name);
+  return dirs.filter((n) => {
+    try { return existsSync(join(extRoot, n, "package.json")); } catch { return false; }
+  });
 }
 
 function* clientFiles(dir) {
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
+  let entries;
+  try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return; }
+  for (const e of entries) {
     const p = join(dir, e.name);
     if (e.isDirectory()) {
       if (e.name === "node_modules" || e.name === "dist" || e.name === "vendor") continue;
