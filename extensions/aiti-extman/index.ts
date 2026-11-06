@@ -744,14 +744,11 @@ export default {
           featureId?: string;
           enabled?: boolean;
           value?: boolean | string;
-<<<<<<< Updated upstream
           /** set-pin：capability | source */
           scope?: string;
           /** set-pin：能力名或扩展 id */
           key?: string;
           /** set-dev-priority：开关值 */
-=======
->>>>>>> Stashed changes
           trust?: boolean;
           publisherHint?: string;
           fingerprint?: string;
@@ -840,7 +837,6 @@ export default {
             await reg.reload();
             return json({ ok: true, ...enrichedStatus() });
           }
-<<<<<<< Updated upstream
           // 依赖与能力模型 P2：pin（能力生效提供者 / 同 id 多来源）与 dev 调试优先开关。
           // 变更后 reload 让裁决生效（与 enable/disable 同模式）。
           if (body.action === "set-pin") {
@@ -859,8 +855,6 @@ export default {
             await reg.reload();
             return json({ ok: true, devPriority: body.value === true, ...enrichedStatus() });
           }
-=======
->>>>>>> Stashed changes
           // 功能管理：逐项启停/设置扩展声明的 feature（core 持久化 + 注入过滤，无需 reload）。
           if (body.action === "set-feature") {
             if (!body.id?.trim() || !body.featureId?.trim()) return json({ error: "id and featureId required" }, 400);
@@ -870,15 +864,9 @@ export default {
             if (!entry || entry.loaded !== true || !feature) {
               return json({ error: `扩展 ${body.id} 未加载或未声明功能 ${body.featureId}` }, 400);
             }
-<<<<<<< Updated upstream
             // string/textlist feature → 写值（value 缺省为空串）；boolean feature → 启停（enabled 缺省 true）
             let value: boolean | string;
             if (feature.type === "string" || feature.type === "textlist") {
-=======
-            // string feature → 写值（value 缺省为空串）；boolean feature → 启停（enabled 缺省 true）
-            let value: boolean | string;
-            if (feature.type === "string") {
->>>>>>> Stashed changes
               value = (body.value !== undefined && typeof body.value !== "boolean") ? String(body.value) : String(body.value ?? "");
               reg.setFeatureValue(body.id, body.featureId, value);
             } else {
