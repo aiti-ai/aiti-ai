@@ -54,21 +54,19 @@ export function SidebarEntry() {
       });
     };
 
-    // 30s 兜底：broker 健康时不发请求（仅续约定时器）；断连/静默超时才拉快照兜底。
-    // 健康时钟修复后（宿主 broker 将 heartbeat 投递给 frameListeners）运行集稳定时恒健康，
-    // 兜底极少触发；30s 间隔进一步压降后端 /api/agent/running 请求叠加（多标签页・多设备）。
+    // 兜底轮询：SSE 静默/断连 → 30s 快拍恢复；SSE 健康 → 60s 慢对账（同宿主
+    // SessionSidebar RUNNING_RECONCILE_POLL_MS 既有拍子）。对账不是无脑覆盖：快照走
+    // 捕获时间门控（store.applyRunningSnapshot）+ 内容差异写入，稳态零请求落地零渲染——
+    // 它兑的是「变更帧在传输层被丢一帧且永不重放」的窗口（如总线白名单竞态）：心跳
+    // 只能证明传输活着，内容对账才能纠偏陈旧运行集（2026-11-06「结束后运行状态
+    // 很久不刷新」修复，丢帧场景 ≤60s 自愈）。
     const poll = async () => {
       if (stopped || document.visibilityState !== "visible") return;
-      if (isRunningSseHealthy()) {
-        if (stopped) return;
-        clearTimer();
-        timer = setTimeout(() => void poll(), 30000);
-        return;
-      }
+      const healthy = isRunningSseHealthy();
       await refreshRunning();
       if (stopped) return;
       clearTimer();
-      timer = setTimeout(() => void poll(), 30000);
+      timer = setTimeout(() => void poll(), healthy ? 60000 : 30000);
     };
 
     const onVisibilityChange = () => {
