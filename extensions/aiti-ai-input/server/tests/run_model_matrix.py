@@ -17,8 +17,8 @@ import asyncio, glob, json, sys, time, urllib.request
 import numpy as np
 import websockets
 
-PORT_BASE = "http://127.0.0.1:20341/api/extensions/aiti-ai-input"
-WSS = "wss://pi.example.com:57442/aiti-ai-input/asr/ws/vad"
+PORT_BASE = "http://127.0.0.1:3002/api/extensions/aiti-ai-input"
+WSS = "wss://pi.example.com:8443/aiti-ai-input/asr/ws/vad"
 CWD = "/home/pi/workspace/aiti-ai"
 WAVS = [
     "/home/pi/.pi/web/data/aiti-ai-input/recordings/vad_20260905_161442.wav",  # 5.3s
