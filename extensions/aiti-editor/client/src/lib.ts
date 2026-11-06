@@ -259,3 +259,23 @@ export function loadVendorGlobal(url: string, globalName: string, factory?: (g: 
   p.catch(() => { delete _vendorPromises[key]; });
   return p;
 }
+
+// ── Monaco 加载错误可读化 ──
+// vscode AMD loader 对脚本加载失败会把原始 Event 直接 String() 进 Error.message
+//（"[object Event]"），丢失 URL 等一切细节（2026-09-25 排障实测）。这里把该形态
+// 转成可读文案；普通 Error 原样透传 message；Event 本体则尽量提取失败 src。
+export function describeMonacoError(err: unknown): string {
+  const e = err as any;
+  const src = e && typeof e === "object" && e.target && (e.target.src || e.target.href);
+  if (typeof Event !== "undefined" && e instanceof Event) {
+    return "脚本加载失败" + (src ? "：" + String(src).slice(-140) : "（网络中断 / 404 / 被拦截）");
+  }
+  const msg = e && typeof e.message === "string" ? e.message : (typeof err === "string" ? err : "");
+  if (/\[object Event\]/.test(msg)) {
+    // loader 把 Event 字符串化塞进 Error.message，URL 已丢失 → 通用文案 + 自助指引
+    return "脚本加载失败（网络中断 / 404 / 被拦截），已自动清除加载缓存，可重试；若仍失败请刷新页面";
+  }
+  if (msg) return msg;
+  if (src) return "脚本加载失败：" + String(src).slice(-140);
+  return String(err ?? "未知错误");
+}
