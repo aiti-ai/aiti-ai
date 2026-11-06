@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 (globalThis as { __smBootAt?: number }).__smBootAt = Date.now();
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { readTagData, writeTagData } from "./tags-store.ts";
+import { handleWorkspaceUpload, handleCapabilities } from "./workspace-upload.ts";
 import { noteAssembledRows } from "./activity-bus.ts";
 import { parseSessionFile } from "../lib/session-file.ts";
 import {
@@ -1074,6 +1075,13 @@ async function archiveEndpoint(req: Request, ctx: ExtApiCtx, sub: string | undef
 
 export async function api(req: Request, ctx: ExtApiCtx): Promise<Response | null> {
   const [action, sub, ...rest] = ctx.path;
+  // workspace 上传（方案 docs/session-manager-workspace-upload-plan.md）：POST body 是
+  // 二进制流（服务端流式落盘），必须在通用 bodyJson 之前拦截——Request body 单次流。
+  if (action === "workspace") {
+    if (req.method === "POST" && sub === "upload") return handleWorkspaceUpload(req, ctx);
+    if (req.method === "GET" && sub === "capabilities") return handleCapabilities();
+    return json({ error: "unknown workspace action" }, 404);
+  }
   // Parse the body exactly once — archiveEndpoint consumes it too, and a
   // Request body is a single-use stream (a second read yields null).
   const body = (req.method === "POST" || req.method === "PUT") ? await bodyJson(req) : null;
