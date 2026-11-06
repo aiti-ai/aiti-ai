@@ -24,7 +24,7 @@ if [ -n "${TESTAGENT_JAR:-}" ]; then
 elif [ -f "$SCRIPT_DIR/testagent-1.0.jar" ]; then
   AGENT_JAR="$SCRIPT_DIR/testagent-1.0.jar"
 else
-  AGENT_JAR="/home/wind/workspace/pi-work/TestAgent/TestAgent/target/testagent-1.0.jar"
+  AGENT_JAR="/home/pi/workspace/pi-work/TestAgent/TestAgent/target/testagent-1.0.jar"
 fi
 CONF="${TESTAGENT_CONF:-/tmp/testagent-conf}"
 ENABLED="${TESTAGENT_ENABLE:-0}"

@@ -717,7 +717,7 @@ let selectedFrame = null; // 当前选中帧 { pageId, frameId, title, url }（�
 let bootFrameRows = []; // 宿主 boot 帧树（launcher 直报；桥未展开时本地渲染用）
 let collapsedFrames = new Set(); // 已折叠的父帧（默认全展开）
 let pendingFrames = null; // 宿主帧树上报到桥未确认 { pageId, frames } → onSessions 轮询重试
-// 短路径：取最后 2 段（如 /home/wind/workspace/pi-work → workspace/pi-work）
+// 短路径：取最后 2 段（如 /home/pi/workspace/pi-work → workspace/pi-work）
 function shortCwd(cwd) {
   const s = String(cwd || '').replace(/[\\/]+$/, '');
   const parts = s.split(/[\\/]/).filter(Boolean);
