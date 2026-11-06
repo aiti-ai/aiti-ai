@@ -67,6 +67,7 @@ e2e_*.mjs
 
 # ported extension packages (extensions/) build artifacts
 extensions/**/node_modules/
+integrations/**/node_modules/
 extensions/**/dist/
 extensions/**/*.tsbuildinfo
 
