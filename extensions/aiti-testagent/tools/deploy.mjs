@@ -31,7 +31,8 @@ for (const dir of targets) {
   for (const f of ["package.json", "index.ts", "icon.svg"]) cpSync(resolve(root, f), resolve(dir, f));
   cpSync(resolve(root, "lib"), resolve(dir, "lib"), { recursive: true });
   cpSync(resolve(root, "dist"), resolve(dir, "dist"), { recursive: true });
-  cpSync(resolve(root, "attach-tool"), resolve(dir, "attach-tool"), { recursive: true }); // AttachTool.class（attachJava -cp 指向部署目录内）
+  // AttachTool 已并入 agent fat jar（主模块源码反射版，随 target 1.8 编译进包；
+  // shade 不 relocate 默认包）——agent jar 拷贝即覆盖，无需独立 attach jar/目录
   // agent jar（打包布局：testagent-1.0.jar 与 mcp-testagent.cjs 同目录 = resolveAgentJar 第一候选）。
   // 源 = 仓库工作区 mvn 产物（shaded 胖包，含 json 依赖；TESTAGENT_JAR 可指定）。
   // 不存在时跳过不阻断——Linux 侧常由环境 jar 兜底；缺失时 attach/startup 会报 jar 不存在。
@@ -46,6 +47,8 @@ for (const dir of targets) {
   } catch (e) {
     console.log("[deploy] agent jar 拷贝失败（不阻断）: " + (e && e.message));
   }
+  // AttachTool 已并入 agent fat jar（主模块源码反射版，随 target 1.8 编译进包；
+  // shade 不 relocate 默认包）——agent jar 拷贝即覆盖，无需独立 attach jar/目录
   console.log("[deploy] → " + dir);
 }
 
