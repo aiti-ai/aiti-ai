@@ -46,7 +46,7 @@
   } catch { /* noop */ }
 })();
 
-import { __setCtx, t, apiUrl, useState, useEffect } from "./host-shim";
+import { __setCtx, t, apiUrl, useState, useEffect, getExtService } from "./host-shim";
 import { buildAtText, openNewSession } from "../../../_shared/new-session-cwd";
 import {
   refreshSessions, refreshWorkspaces, onTagsChangedFrame, onSessionCreatedFrame, onSessionActivityFrame, onOmpRebindFrame, subscribeRunningFrames, panelOpen, kanbanOpen,
@@ -63,7 +63,7 @@ import { __setCtx as setAitiFolderCtx } from "../../../aiti-folder/client/src/ho
 import { TopbarTags, RowActions } from "./topbar";
 import { ConfirmDialogHost } from "./confirm-dialog";
 import { RelatedDocsHost } from "./related-docs";
-import { ToastHost } from "./toast";
+import { ToastHost, showToast } from "./toast";
 import { TagPopoverHost, SidebarRowTags } from "./tag-ui";
 import { SidebarEntry, ToolbarSearch } from "./entries";
 import { SidebarDock } from "./sidebar-dock";
@@ -81,6 +81,7 @@ const rowMenuRef = createLazyModule(() => import("./row-menu"));
 const archiveMenuRef = createLazyModule(() => import("./archive-menu"));
 const moveDialogRef = createLazyModule(() => import("./move-dialog"));
 const workspaceManageRef = createLazyModule(() => import("./workspace-manage"));
+const workspaceUploadRef = createLazyModule(() => import("./workspace-upload"));
 
 // dock 双 face：同一内容组件两处注册，各自经 useGate 门控——状态机保证至多一个 face 渲染。
 // 浮窗 face = SessionsPanel（全功能管理面板）；停靠 face = PanelDockFace（DockBody 包
@@ -147,6 +148,83 @@ function MoveDialogHostLazy() {
   useEffect(() => { void moveDialogRef.load(); }, []);
   const Impl = mod?.MoveDialogHost as React.ComponentType | undefined;
   return Impl ? <Impl /> : null;
+}
+
+// 工作区上传（方案 docs/session-manager-workspace-upload-plan.md）：同管理入口的懒 chunk 范式
+// —— hooks 无条件调用（Rules of Hooks），active 门控收起态不 import，只渲染轻量触发按钮。
+function WorkspaceUploadEntryLazy(props: { onSelect: (root: string) => void; onClose: () => void }) {
+  const [open, setOpen] = useState(false);
+  const dialog = lazyExtView({ active: open, load: workspaceUploadRef, pick: "UploadDialog", props: { onSelect: props.onSelect, onCloseDialog: () => setOpen(false) } });
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        style={{
+          display: "flex", alignItems: "center", gap: 7,
+          width: "100%", padding: "8px 10px", background: "none", border: "none",
+          color: "var(--text-muted)", cursor: "pointer", textAlign: "left", fontSize: 11,
+        }}
+        title={t("sm.uploadWorkspaceTitle")}
+      >
+        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" />
+          <line x1="12" y1="3" x2="12" y2="15" />
+        </svg>
+        {t("sm.uploadWorkspace")}
+      </button>
+    );
+  }
+  return <>{dialog}</>;
+}
+
+// 新建会话条上传按钮（newSessionSelectors 插槽：渲染在 Workspace select 之后、Branch/Worktree 与
+// Backend 之前——紧贴工作区下拉，方案 session-manager-workspace-upload-plan.md §12.1）。
+// 样式对齐该行 Workspace/Backend select 盒子（bg-hover + border 圆角 + fontSize 12）。
+// onSelect 走宿主 "pi-web.newSession" 服务 setCwd（把新会话 Workspace 切到解压目录）；服务缺席（旧宿主）降级 toast。
+function NewSessionUploadButton(props: { cwd: string | null; isMobile: boolean }) {
+  const [open, setOpen] = useState(false);
+  const dialog = lazyExtView({
+    active: open,
+    load: workspaceUploadRef,
+    pick: "UploadDialog",
+    props: {
+      onCloseDialog: () => setOpen(false),
+      onSelect: (root: string) => {
+        try {
+          const svc = getExtService<{ setCwd?: (path: string) => void }>("pi-web.newSession");
+          if (svc?.setCwd) svc.setCwd(root);
+          else showToast(t("sm.uploadSwitchHint"));
+        } catch { showToast(t("sm.uploadSwitchHint")); }
+      },
+    },
+  });
+  return (
+    <>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+        title={t("sm.uploadWorkspaceTitle")}
+        aria-label={t("sm.uploadWorkspace")}
+        style={{
+          display: "inline-flex", alignItems: "center", gap: 5,
+          padding: "4px 8px",
+          background: "var(--bg-hover)", border: "1px solid var(--border)", borderRadius: 8,
+          color: "var(--text)", font: "inherit", fontSize: 12,
+          cursor: "pointer",
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)" }}>
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+          <polyline points="17 8 12 3 7 8" />
+          <line x1="12" y1="3" x2="12" y2="15" />
+        </svg>
+        {!props.isMobile && <span>{t("sm.uploadWorkspace")}</span>}
+      </button>
+      {dialog}
+    </>
+  );
 }
 
 // 工作区管理：触发按钮轻量常驻（workspacePickerActions 渲染型条目），弹窗体懒 chunk
@@ -339,12 +417,20 @@ export default function register(ctx: Record<string, unknown>) {
   ctx.registerItems?.("sessionRowMeta", [{ id: "session-tags", render: SidebarRowTags }]);
   ctx.registerItems?.("sessionRowActions", [{ id: "actions", render: RowActions }]);
   // 管理工作区列表（CWD picker 下拉底部）：选择/隐藏/删除（移动全部或归档）
-  ctx.registerItems?.("workspacePickerActions", [{ id: "manage", render: WorkspaceManageEntryLazy }]);
-  // 新建会话「分支 / Worktree」选择器（欢迎页 Workspace×Backend 之间；方案
-  // docs/pi-web-new-session-branch-worktree-plan.md）：渲染插槽 + preparer 注册面成对注册——
-  // 选择阶段零副作用（只暂存意图），全部写操作在 preparer（发送首条消息时）执行。
-  // 旧宿主无这两个插槽消费方 → registerItems 条目无人渲染/调用，静默无害（版本错配降级）。
-  ctx.registerItems?.("newSessionSelectors", [{ id: "picker", render: NewSessionPicker }]);
+  // 上传工作区（同插槽，放管理之上——高频动作优先，方案 session-manager-workspace-upload-plan.md）
+  ctx.registerItems?.("workspacePickerActions", [
+    { id: "upload", render: WorkspaceUploadEntryLazy },
+    { id: "manage", render: WorkspaceManageEntryLazy },
+  ]);
+  // 新建会话条（ChatWindow Workspace×Backend flex 行，方案 session-manager-workspace-upload-plan.md §12.1）：
+  // 上传按钮注册为 newSessionSelectors 首条目——渲染序 = Workspace select 之后紧贴下拉（用户指定位置），
+  // Branch/Worktree 选择器与 Backend 之前；上传完成后经宿主 "pi-web.newSession" 服务 setCwd 切换 Workspace
+  // （旧宿主无服务降级 toast）。注：右上角 newSessionContextBar 侧的 newSessionContextTrailing 插槽已撤
+  // （bar 实际渲染在版本信息旁，用户不可理解；宿主插槽机制保留，扩展端不再注册）。
+  ctx.registerItems?.("newSessionSelectors", [
+    { id: "upload", render: NewSessionUploadButton },
+    { id: "picker", render: NewSessionPicker },
+  ]);
   ctx.registerItems?.("newSessionPreparers", [{ id: "picker", meta: { prepare: newSessionPrepare } }]);
 
   // 跨扩展唤起归档查看器通道：sm:open-archived { detail: { id: <sid> } }。

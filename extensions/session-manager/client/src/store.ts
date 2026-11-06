@@ -199,19 +199,30 @@ export function useSharedFilter(): string[] {
 }
 export { notifyFilter, toggleSharedFilter };
 
-/* ── running 状态源治理（2026-09-07「运行中状态丢失」修复）──
+/* ── running 状态源治理（2026-09-07「运行中状态丢失」修复；2026-11-06 二次修订）──
  * store.running 被三类源写入：
  *   1. SSE 帧（/api/agent/running/events，entries.tsx）——服务端每次运行集变化才广播，权威且最新；
  *   2. refreshSessionsInner 的 runRes 快照（/api/agent/running，与列表并行拉）；
- *   3. entries.tsx 的 15s 兜底轮询（refreshRunning）。
- * 后两者是「请求时点」快照——若请求发出早、响应落地晚（在某个运行帧之后才回来），
- * 就会用旧时点快照覆盖 SSE 已更新的运行集 → 亮着的运行中转圈熄灭（session 明明在跑
- * 却不标 running，用户实测「运行中状态丢失」）。
- * 治理：SSE 帧永远权威（总是落地）；快照只在「SSE 尚未递送过运行帧」（初始快照，保证
- * 刷新后转圈即恢复）或「SSE 静默超时」（断线兜底）时才准落地。 */
-let runningSseDelivered = false; // 是否收到过运行帧（此后快照不再覆盖，SSE 为主导）
-let runningSseFreshAt = 0;       // 最近一次运行帧/心跳时刻（快照兜底的静默判断）
+ *   3. entries.tsx 的兜底轮询（SSE 静默 30s 快拍 / 健康 60s 慢对账）。
+ *
+ * 快照落地规则（2026-11-06 版）：**捕获时间门控**——快照仅当「捕获后没有运行帧落地过」
+ * 且「内容确有差异」才写入（dedupeFetch 2.5s 微缓存留同量 slack）。帧永远权威；快照
+ * 只要不比帧旧就准落地。
+ *
+ * 历史：初版用「SSE 健康时钟」门控（心跳 45s 窗口内 → 快照一律跳过）。实测暴露致命盲区
+ * （2026-11-06 用户多轮报「结束后运行状态很久不刷新」）：心跳只证明传输活着，不证明变更帧
+ * 没丢——总线白名单竞态（宿主 broker 重建连接时旧适配器先摘 topic、新适配器后补订阅，窗口内
+ * 重推的白名单缺 running → 服务端静默过滤该 topic，帧整窗丢失且永不重放）之下，心跳照发、
+ * 健康恒真、快照被门死、手动刷新同样被门死 → store.running 陈旧到下一次 transport 重连
+ * （可能数小时）。捕获时间门控 + 健康 60s 慢对账（同宿主 SessionSidebar
+ * RUNNING_RECONCILE_POLL_MS 既有拍子）后，任何丢帧场景 ≤60s 自愈。 */
+let runningSseDelivered = false; // 是否收到过运行帧（SSE 通道可用性判据，仅用于轮询节拍）
+let runningSseFreshAt = 0;       // 最近一次运行帧/心跳时刻（SSE 健康判断，仅用于轮询节拍）
 export const RUNNING_SSE_FRESH_MS = 45_000;
+/** 最近一次「运行帧落地」时刻：捕获时间门控的比较基准。 */
+let lastRunningFrameAppliedAt = 0;
+/** 快照数据可能比捕获时刻旧的最大幅度（dedupeFetch 微缓存 TTL 同款）。 */
+const RUNNING_SNAPSHOT_MAX_AGE_MS = 2_500;
 // 宿主共享 broker 投递给 frameListeners 的「心跳帧」type（与 pi-web lib/agent-running-events.ts
 // 的 HEARTBEAT_FRAME_TYPE 对齐）。只推进健康时钟，不透传给业务 handler。
 export const HEARTBEAT_FRAME_TYPE = "piwe:heartbeat";
@@ -220,6 +231,7 @@ export const HEARTBEAT_FRAME_TYPE = "piwe:heartbeat";
 export function applyRunningFrame(ids: string[]): boolean {
   runningSseDelivered = true;
   runningSseFreshAt = Date.now();
+  lastRunningFrameAppliedAt = runningSseFreshAt;
   const next = new Set(ids);
   const changed = next.size !== store.running.size
     || [...next].some((id) => !store.running.has(id));
@@ -227,18 +239,19 @@ export function applyRunningFrame(ids: string[]): boolean {
   return changed;
 }
 
-/** /api/agent/running 快照：仅当 SSE 未权威、已静默超时、或后端广播 offline 时才落地；
- *  返回「是否实际写入且内容变化」（供调用方据此 emit）。
- *  SSE 权威且未静默且后端在线 → 快照是旧时点，跳过（防覆盖运行中标志）；
- *  后端断连窗口（runningBackendOffline）→ 允许快照兜底，直接落地。 */
-export function applyRunningSnapshot(ids: string[]): boolean {
-  if (runningSseDelivered && !runningBackendOffline && Date.now() - runningSseFreshAt < RUNNING_SSE_FRESH_MS) {
-    return false;
+/** /api/agent/running 快照：捕获时间门控（2026-11-06 版，语义见「running 状态源治理」块注释）。
+ *  @param fetchedAt 调用方发起本次快照请求**之前**捕获的时刻（Date.now()）；dedupeFetch
+ *  可能合流到更早的在途请求/微缓存，故数据最多比 fetchedAt 旧 RUNNING_SNAPSHOT_MAX_AGE_MS。
+ *  跳过条件：捕获时刻往前 slack 窗口内落地过运行帧（帧比快照数据新 → 旧盖新，弃）。
+ *  返回「是否实际写入且内容变化」（供调用方据此 emit）；内容无变化不写入不 emit。 */
+export function applyRunningSnapshot(ids: string[], fetchedAt: number): boolean {
+  if (lastRunningFrameAppliedAt > fetchedAt - RUNNING_SNAPSHOT_MAX_AGE_MS) {
+    return false; // 捕获窗口内有过帧：快照数据可能陈于帧（防旧盖新），弃
   }
   const next = new Set(ids);
   const changed = next.size !== store.running.size
     || [...next].some((id) => !store.running.has(id));
-  if (!changed) return false; // 内容未变：不写入不 emit（避免断连窗口每 15s 无谓重渲染）
+  if (!changed) return false; // 内容未变：不写入不 emit（稳态对账零重渲染）
   store.running = next;
   return true;
 }
@@ -722,6 +735,8 @@ export async function refreshSessions(opts?: { force?: boolean; refresh?: boolea
   return sessionsInFlight;
 }
 async function refreshSessionsInner(opts?: { refresh?: boolean }): Promise<void> {
+  // 快照捕获时刻（发起请求前取）：applyRunningSnapshot 的旧盖新判据（dedupe 合流 slack 内建）
+  const runningFetchedAt = Date.now();
   try {
     // Merged live + archived list (extension endpoint); running from core.
     // 增量同步（payload 方案 §9）：带 since=<rev> → 304 / patch {up,rm} / 全量降级。
@@ -747,8 +762,7 @@ async function refreshSessionsInner(opts?: { refresh?: boolean }): Promise<void>
       sessionsEtag = res.headers.get("etag") ?? sessionsEtag;
       if (runRes.ok) {
         const r = await runRes.json();
-        // 快照仅在 SSE 未权威/已静默时落地——避免旧时点快照覆盖 SSE 新运行集
-        if (applyRunningSnapshot(r.runningSessionIds ?? [])) emit();
+        if (applyRunningSnapshot(r.runningSessionIds ?? [], fetchedAt)) emit();
       }
       return;
     }
@@ -824,8 +838,8 @@ async function refreshSessionsInner(opts?: { refresh?: boolean }): Promise<void>
     reconcileLocalNames(); // 乐观改名套回（防在途旧响应盖回；服务端一致即确认清除）
     if (runRes.ok) {
       const r = await runRes.json();
-      // 快照门控（同上）：SSE 权威且未静默时跳过，防旧数据覆盖；emit 由下方列表变更统一触发
-      applyRunningSnapshot(r.runningSessionIds ?? []);
+      // emit 由下方列表变更统一触发；快照仅在比帧新时才可能写入（内容差异才写）
+      applyRunningSnapshot(r.runningSessionIds ?? [], runningFetchedAt);
     }
     emit();
   } catch { /* keep last */ }
@@ -835,13 +849,15 @@ async function refreshSessionsInner(opts?: { refresh?: boolean }): Promise<void>
 // 供侧边栏/工具栏运行徽标用——它们只需要 running 集合，拉全量列表是浪费。
 // 返回是否成功拿到快照（false = 请求/解析失败；调用方据此决定是否标记通道基线）。
 export async function refreshRunning(): Promise<boolean> {
+  // 快照捕获时刻（发起请求前取）：语义同 refreshSessionsInner
+  const fetchedAt = Date.now();
   try {
     // dedupeFetch：与 refreshSessionsInner 的并行快照/宿主兜底快照同窗口合流
     const res = await dedupeFetch(apiUrl("/api/agent/running"), { cache: "no-store" });
     if (!res.ok) return false;
     const r = await res.json();
-    // 快照门控：SSE 权威且未静默时跳过（兜底轮询不做旧数据覆盖）；仅实际落地才 emit
-    if (applyRunningSnapshot(r.runningSessionIds ?? [])) emit();
+    // 捕获时间门控：比帧旧则弃；内容无变化不 emit（健康 60s 慢对账稳态零渲染）
+    if (applyRunningSnapshot(r.runningSessionIds ?? [], fetchedAt)) emit();
     return true;
   } catch { return false; /* keep last */ }
 }
