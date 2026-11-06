@@ -7,7 +7,7 @@ import tempfile
 import wave
 import numpy as np
 
-ZH = "/home/wind/.cache/modelscope/models/iic--SenseVoiceSmall/snapshots/master/example/zh.mp3"
+ZH = "/home/pi/.cache/modelscope/models/iic--SenseVoiceSmall/snapshots/master/example/zh.mp3"
 
 # 1) 载入 zh.mp3 → 16k mono PCM（torchaudio 缺 torchcodec，改用 ffmpeg 解码）
 _tmp_wav = tempfile.mktemp(suffix=".wav")

@@ -2,7 +2,7 @@
 import asyncio, json, subprocess, tempfile, os, wave
 import numpy as np
 
-ZH = "/home/wind/.cache/modelscope/models/iic--SenseVoiceSmall/snapshots/master/example/zh.mp3"
+ZH = "/home/pi/.cache/modelscope/models/iic--SenseVoiceSmall/snapshots/master/example/zh.mp3"
 _tmp = tempfile.mktemp(suffix=".wav")
 subprocess.run(["ffmpeg", "-y", "-i", ZH, "-ar", "16000", "-ac", "1", "-f", "wav", _tmp], check=True, capture_output=True)
 with wave.open(_tmp, "rb") as w:
@@ -19,8 +19,8 @@ async def main():
     # 2) 经 pi-web dev middleware
     targets = [
         ("direct-8767", "ws://127.0.0.1:8767/ws/stream"),
-        ("piweb-dev-proxy", "ws://127.0.0.1:30142/dev/aiti-ai-input/asr/ws/stream"),
-        ("piweb-prod-proxy", "ws://127.0.0.1:20341/aiti-ai-input/asr/ws/stream"),
+        ("piweb-dev-proxy", "ws://127.0.0.1:3001/dev/aiti-ai-input/asr/ws/stream"),
+        ("piweb-prod-proxy", "ws://127.0.0.1:3002/aiti-ai-input/asr/ws/stream"),
     ]
     for name, url in targets:
         print(f"\n=== {name}: {url} ===")
