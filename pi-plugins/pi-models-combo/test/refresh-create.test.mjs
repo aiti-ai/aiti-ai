@@ -9,7 +9,7 @@ import http from "node:http";
 
 import { freeP, Tester } from "./util.mjs";
 
-const SDK = process.env.PMC_SDK_DIST || "/home/wind/workspace/pi-prod/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
+const SDK = process.env.PMC_SDK_DIST || "/home/pi/workspace/pi-prod/node_modules/@earendil-works/pi-coding-agent/dist/index.js";
 // jiti 与 SDK 环境绑定（默认 48 形态）：PMC_SDK_DIST / PMC_JITI 可覆盖；都不可解析 → 干净跳过（非报错）
 const req = createRequire(SDK);
 const JITI_MJS = process.env.PMC_JITI || (() => { try { return req.resolve("jiti/lib/jiti.mjs"); } catch { return ""; } })();
