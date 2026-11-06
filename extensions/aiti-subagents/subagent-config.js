@@ -30,7 +30,7 @@ const KEYS = [
   {
     key: "globalConcurrencyLimit", type: "positiveInt", def: 20,
     label: "单 run 内并发上限",
-    desc: "同一 run 内同时运行的子代理数量；超出者在启动处排队，等活跃兄弟完成再启动（排队不耗模型配额）。保护上游 AI 限流。缺省 20；env PI_SUBAGENTS_MAX_CONCURRENT 可覆盖缺省。",
+    desc: "同一 run 内同时运行的子代理数量；超出者在启动处排队，等活跃兄弟完成再启动（排队不耗模型配额）。保护上游 AI 限流。缺省 20；工作流调用可逐 workflow 覆盖。",
   },
   {
     key: "maxSubagentSpawnsPerRun", type: "positiveInt", def: 64,
