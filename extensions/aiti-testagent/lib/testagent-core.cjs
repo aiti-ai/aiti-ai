@@ -122,6 +122,11 @@ const BASE = currentBase();
 
 /** TestAgent HTTP JSON API 调用。port/basePath 缺省用 BASE+DEFAULT_BASEPATH（常驻实例）。
  *  extraHeaders：tunnel/bridge 转发头（X-TA-Endpoint 等，方案 docs/tunnel-bridge-plan.md §5.5）。 */
+/** API 调用空闲超时（S9）：默认 150s —— 覆盖 watch/profile 的 120s 上限 + 余量，且高于桥 fwd-timeout 默认 30s
+ *  （经桥时 504 先到）；此前无超时，桥挂起时工具调用无限悬挂。env TESTAGENT_API_TIMEOUT_MS 可覆盖。 */
+const API_TIMEOUT_MS = Math.max(1000, Number(process.env.TESTAGENT_API_TIMEOUT_MS) || 150000);
+const API_MAX_RESP_BYTES = 64 * 1024 * 1024;
+
 function api(method, path, body, port, basePath, extraHeaders, baseOverride) {
   const bp = basePath !== undefined ? basePath : DEFAULT_BASEPATH;
   const base = baseOverride ? String(baseOverride).replace(/\/$/, "") : (port ? `http://127.0.0.1:${port}` : currentBase());
@@ -130,12 +135,20 @@ function api(method, path, body, port, basePath, extraHeaders, baseOverride) {
     const u = new URL(base + prefix + path);
     const headers = extraHeaders ? Object.assign({}, extraHeaders, body ? { "Content-Type": "application/json" } : {})
       : (body ? { "Content-Type": "application/json" } : {});
-    const req = http.request(u, { method, headers }, (res) => {
+    const req = http.request(u, { method, headers, timeout: API_TIMEOUT_MS }, (res) => {
       let data = "";
-      res.on("data", (c) => (data += c));
+      res.on("data", (c) => {
+        data += c;
+        if (data.length > API_MAX_RESP_BYTES) req.destroy(new Error("响应超过 64MB 上限"));
+      });
       res.on("end", () => resolve({ status: res.statusCode, data: safeParse(data) }));
     });
-    req.on("error", (e) => resolve({ status: 0, data: { ok: false, error: "连接失败: " + e.message + "（目标 JVM 是否挂载了 TestAgent？先 ta_attach）" } }));
+    // timeout = socket 空闲超时：须主动 destroy 才会走 error 分支（resolve 幂等，二次调用无副作用）
+    req.on("timeout", () => req.destroy(new Error(`API 空闲超时（${API_TIMEOUT_MS}ms，TESTAGENT_API_TIMEOUT_MS 可调）`)));
+    req.on("error", (e) => resolve({
+      status: 0,
+      data: { ok: false, error: "连接失败: " + e.message + "（目标 JVM 是否挂载了 TestAgent？先 ta_attach）" },
+    }));
     if (body) req.write(JSON.stringify(body));
     req.end();
   });
@@ -325,9 +338,21 @@ async function ownsByPidTree(owner, pid, force) {
   return (await descendantPids(p, force)).includes(o);
 }
 
+/** AttachTool 入口（ta_attach 用）：直接用 agent fat jar——AttachTool 类随主模块 target 1.8
+ *  编译进 fat jar（默认包，shade 不 relocate），-cp 一个文件即可；旧包裸目录（attach-tool/）
+ *  兜底——新旧包与新旧 MCP 混用时仍可用；都没有则报清晰错误。 */
+function resolveAttachEntry() {
+  if (fs.existsSync(AGENT_JAR)) return { cp: AGENT_JAR };
+  const dir = path.join(__dirname, "..", "attach-tool"); // 旧包布局：AttachTool.class 裸目录
+  if (fs.existsSync(path.join(dir, "AttachTool.class"))) return { cp: dir };
+  return null;
+}
+
 function runAttach(pid, argsStr) {
   return new Promise((resolve) => {
-    const javaArgs = ["--add-modules", "jdk.attach", "-cp", path.join(__dirname, "..", "attach-tool"),
+    const entry = resolveAttachEntry();
+    if (!entry) { resolve({ ok: false, error: "找不到 agent jar（attach 以 -cp agent jar 直呼内含 AttachTool）——请确认 TESTAGENT_JAR 或包布局完整" }); return; }
+    const javaArgs = ["--add-modules", "jdk.attach", "-cp", entry.cp,
       "AttachTool", String(pid), AGENT_JAR, argsStr];
     execFile(resolveJavaBin(), javaArgs, { encoding: "utf8", timeout: 30000, windowsHide: true },
       (err, stdout, stderr) => {
@@ -504,6 +529,46 @@ async function listeningPorts(pid) {
 }
 
 const withTimeout = (p, ms) => Promise.race([p, new Promise((res) => setTimeout(() => res({ status: -1, data: {} }), ms))]);
+
+/** S8（tunnel-network-legacy-solutions.md）：从端点 /api/download 流式下载文件到 MCP 本机——
+ *  AI 拿大文件闭环（ta_heapdump/ta_profile 落盘后取回分析，不再只有路径没有内容）。
+ *  直连端点（port）才流式；经桥（endpoint）时端点只回元数据 JSON + 直连提示，此处原样透传。
+ *  本地落盘上限 256MB（防误下整盘；再大走共享目录/scp）。 */
+function downloadFile(opts) {
+  const port = opts.port;
+  const remotePath = String(opts.path || "");
+  const bp = opts.basePath !== undefined ? opts.basePath : DEFAULT_BASEPATH;
+  const base = String(opts.baseOverride || "").replace(/\/$/, "") || (port ? `http://127.0.0.1:${port}` : currentBase());
+  const prefix = bp && bp !== "/" ? (bp.startsWith("/") ? bp : "/" + bp) : "";
+  const u = new URL(base + prefix + "/api/download?path=" + encodeURIComponent(remotePath) + (opts.meta ? "&meta=1" : ""));
+  const headers = opts.headers || {};
+  return new Promise((resolve) => {
+    const req = http.request(u, { method: "GET", headers, timeout: API_TIMEOUT_MS }, (res) => {
+      const ctype = String(res.headers["content-type"] || "");
+      if (opts.meta || ctype.includes("application/json") || res.statusCode !== 200) {
+        let data = "";
+        res.on("data", (c) => (data += c));
+        res.on("end", () => resolve({ status: res.statusCode, data: safeParse(data) }));
+        return;
+      }
+      const baseName = path.basename(String(res.headers["x-ta-file"] || remotePath.split(/[\\/]/).pop() || "download"));
+      const outPath = opts.dest || path.join(os.tmpdir(), "testagent-dl-" + baseName);
+      const ws = fs.createWriteStream(outPath);
+      let size = 0;
+      res.on("data", (c) => {
+        size += c.length;
+        if (size > 256 * 1024 * 1024) req.destroy(new Error("下载超过 256MB 本地上限（大文件请用共享目录/scp 取回）"));
+        else ws.write(c);
+      });
+      res.on("end", () => ws.end());
+      ws.on("finish", () => resolve({ status: res.statusCode, data: { ok: true, savedTo: outPath, sizeBytes: size, source: remotePath } }));
+      ws.on("error", (e) => resolve({ status: res.statusCode, data: { ok: false, error: "本地写文件失败: " + e.message } }));
+    });
+    req.on("timeout", () => req.destroy(new Error(`下载空闲超时（${API_TIMEOUT_MS}ms，TESTAGENT_API_TIMEOUT_MS 可调）`)));
+    req.on("error", (e) => resolve({ status: 0, data: { ok: false, error: "下载失败: " + e.message + "（直连端点 port 模式才可流式；经桥请看元数据里的 hint）" } }));
+    req.end();
+  });
+}
 
 /** Windows 真 JDK 解析（结果缓存一次）。PATH 上的 Oracle javapath `java.exe` 是桩启动器，
  *  它另起真正 JVM 时不继承 CREATE_NO_WINDOW → 即便 spawn windowsHide:true 仍会弹出可见控制台窗口
@@ -716,9 +781,13 @@ async function probeTa(port) {
   for (const bp of ["/testagent", "/"]) {
     try {
       const r = await withTimeout(api("GET", "/api/ping", null, port, bp), 1500);
-      if (r.status === 200) return { port, basePath: bp, online: true, degraded: false };
-      // TestAgent 风格 JSON 错误响应（如类缺失 5xx）也证明 agent 在线
-      if (r.status >= 400 && r.data && typeof r.data === "object" && ("ok" in r.data || "error" in r.data)) {
+      // 必须校验 agent 特征：RuoYi 系框架对未知路径返回 HTTP 200 + body{code:401}（应用端口被误判为 agent 端口的实测根因），
+      // 只看状态码会把宿主应用端口误认成 TestAgent API——必须 pong:true 结构同时成立。
+      const body = r.data && typeof r.data === "object" ? r.data : null;
+      const pong = body && body.ok === true && body.data && typeof body.data === "object" && body.data.pong === true;
+      if (r.status === 200 && pong) return { port, basePath: bp, online: true, degraded: false };
+      // TestAgent 风格 JSON 错误响应（如类缺失 5xx）也证明 agent 在线（同样要求 ok/error 键而非宿主 401 文案）
+      if (r.status >= 400 && body && ("ok" in body || "error" in body) && !("code" in body && "msg" in body && body.code === 401)) {
         return { port, basePath: bp, online: true, degraded: true };
       }
     } catch {}
@@ -875,7 +944,7 @@ async function ensureConnected(opts = {}) {
     : `发现 ${fresh.length} 个候选 Java 进程，请指定 pid：` + fresh.map((p) => p.pid).join(", "), candidates: fresh };
 }
 
-module.exports = { withTimeout, removeBridgeEndpoint, issueRegToken, listRegTokens, revokeRegToken, api, safeParse, discoverJavaProcesses, discoverSessions, attachJava, pingAgent, waitForReady, ensureConnected, buildProcessTable, listeningPorts, probeTa, endpointHeaders, fetchEndpoints, fetchBridgeEndpoints, bridgeTunnel, tunnelAction, startBridge, bridgeReady, resolveJavaBin, BASE, AGENT_JAR, DEFAULT_BASEPATH, SESSIONS_DIR,
+module.exports = { withTimeout, removeBridgeEndpoint, issueRegToken, listRegTokens, revokeRegToken, api, downloadFile, safeParse, discoverJavaProcesses, discoverSessions, attachJava, pingAgent, waitForReady, ensureConnected, buildProcessTable, listeningPorts, probeTa, endpointHeaders, fetchEndpoints, fetchBridgeEndpoints, bridgeTunnel, tunnelAction, startBridge, bridgeReady, resolveJavaBin, BASE, AGENT_JAR, DEFAULT_BASEPATH, SESSIONS_DIR,
   // 跨平台机制（进程表/端口表 + 解析器，测试钉死外部命令输出格式）
   IS_WIN, IS_MAC, TMP_DIR, DEFAULT_CONF_DIR, CONF_DIR_ARG, agentPath, execOut, procTable, sockTable,
   parseCimRows, parsePsArgs, parseNetstatListening, parseSsListening, parseLsofListening, isJavaProc, descendantPids, ownsByPidTree,

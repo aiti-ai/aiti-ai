@@ -39,7 +39,16 @@ EOF
 chmod +x /tmp/e2e-mcp-run.sh; rm -f /tmp/e2e-mcp.log
 setsid /tmp/e2e-mcp-run.sh < /dev/null &
 for i in $(seq 1 50); do sleep 1; curl -s --max-time 1 http://127.0.0.1:$PORT_HTTP/api/ping >/dev/null 2>&1 && break; done
-for i in $(seq 1 8); do sleep 1; curl -s --max-time 1 http://127.0.0.1:$PORT_APP/existing >/dev/null 2>&1 && break; done
+# 应用就绪硬门（2026-11-06 破案）：spring-test 带 Quartz 启动可达 ~90s，原 8s 窗口纯竞态——
+# 日志停在 Quartz 初始化、Tomcat 未绑端口，ta_ping/ta_discover 只打 agent（JVM 早期就绪）照样绿，
+# ta_code/curl 跑在半启动应用上 → 空断言。120s 轮询 + 硬门，超时明确报错。
+APP_READY=0
+for i in $(seq 1 120); do
+  sleep 1
+  R=$(curl -s --max-time 2 http://127.0.0.1:$PORT_APP/existing 2>/dev/null)
+  if [ -n "$R" ]; then APP_READY=1; break; fi
+done
+[ "$APP_READY" = "1" ] || { echo "✗ spring-test 应用 120s 未就绪（看 /tmp/e2e-mcp.log 尾部）"; exit 1; }
 
 say "MCP 协议（initialize/tools/list/tools/call）"
 # 用 printf 生成 JSON-RPC 消息（避 bash 嵌套转义）
@@ -53,9 +62,22 @@ printf '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"ta_code"
 
 check "initialize" "node $MCP_SERVER < /tmp/e2e-mcp-1.json" 'protocolVersion'
 check "tools/list 含 ta_code" "node $MCP_SERVER < /tmp/e2e-mcp-2.json" 'ta_code'
+check "tools/list 含 ta_download" "node $MCP_SERVER < /tmp/e2e-mcp-2.json" 'ta_download'
 check "ta_ping" "node $MCP_SERVER < /tmp/e2e-mcp-3.json" 'pong'
 check "ta_metrics" "node $MCP_SERVER < /tmp/e2e-mcp-5.json" 'heapUsedMB'
 check "ta_discover" "node $MCP_SERVER < /tmp/e2e-mcp-6.json" 'attached'
+# ta_download（S8 AI 闭环）：meta 元数据 + 真下载字节一致
+printf '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"ta_download","arguments":{"port":%d,"path":"%s","meta":true}}}' "$PORT_HTTP" "$APP_JAR" > /tmp/e2e-mcp-8.json
+check "ta_download meta 元数据" "node $MCP_SERVER < /tmp/e2e-mcp-8.json" 'sizeBytes'
+printf '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"ta_download","arguments":{"port":%d,"path":"%s"}}}' "$PORT_HTTP" "$APP_JAR" > /tmp/e2e-mcp-9.json
+node $MCP_SERVER < /tmp/e2e-mcp-9.json > /tmp/e2e-mcp-9.out 2>/dev/null
+python3 -c "
+import json,os,sys
+inner=json.loads(json.loads(open('/tmp/e2e-mcp-9.out').read())['result']['content'][0]['text'])
+d=inner.get('data',{})
+real=os.path.getsize('$APP_JAR')
+sys.exit(0 if d.get('ok') and d.get('sizeBytes')==real and os.path.exists(d.get('savedTo','')) else 1)" \
+  && { PASS=$((PASS+1)); echo "  ✅ ta_download 真下载字节一致"; } || { FAIL=$((FAIL+1)); echo "  ❌ ta_download 下载字节不一致（$(head -c 120 /tmp/e2e-mcp-9.out)）"; }
 node $MCP_SERVER < /tmp/e2e-mcp-7.json > /dev/null 2>&1   # ta_code：执行（注册 controller，结果由 HTTP 断言验证）
 sleep 1
 check "MCP 新建 controller HTTP 生效" "curl -s http://127.0.0.1:$PORT_APP/mcp" 'mcp-ok'

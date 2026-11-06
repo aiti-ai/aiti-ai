@@ -190,3 +190,142 @@ test("真机链路：自己监听的端口能反查到本进程 pid（表 + 缓�
     srv.close();
   }
 });
+
+// ---------------- probeTa：端口探测的 agent 特征校验（修复：RuoYi 系宿主对未知路径
+// 返回 HTTP 200 + body{code:401}，只看状态码会把宿主端口误判为 agent API——carbon 实测） ----------------
+
+test("probeTa：宿主形态（HTTP 200 + body{code:401}）不得误判为 agent", async () => {
+  const hits = [];
+  const srv = net.createServer((sock) => {
+    sock.on("data", () => {});
+    hits.push(1);
+  });
+  // 用真 HTTP 桩而非裸 socket，保证响应体可被 coreApi 解析
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ msg: "请求访问：/testagent/api/ping，认证失败，无法访问系统资源", code: 401 }));
+  });
+  await new Promise((res) => server.listen(0, "127.0.0.1", res));
+  const port = server.address().port;
+  const r = await core.probeTa(port);
+  assert.equal(r, null, "宿主 401-in-200 形态不得被识别为 TestAgent");
+  server.close();
+});
+
+test("probeTa：agent 形态（pong:true）识别成功", async () => {
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true, data: { pong: true, time: Date.now() } }));
+  });
+  await new Promise((res) => server.listen(0, "127.0.0.1", res));
+  const port = server.address().port;
+  const r = await core.probeTa(port);
+  assert.ok(r, "agent pong 形态应识别");
+  assert.equal(r.online, true);
+  assert.equal(r.degraded, false);
+  assert.equal(r.basePath, "/testagent");
+  server.close();
+});
+
+test("probeTa：TestAgent 风格错误响应（4xx+{error}）→ degraded 识别", async () => {
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    res.writeHead(500, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "class not found" }));
+  });
+  await new Promise((res) => server.listen(0, "127.0.0.1", res));
+  const port = server.address().port;
+  const r = await core.probeTa(port);
+  assert.ok(r, "agent 风格错误响应应识别");
+  assert.equal(r.online, true);
+  assert.equal(r.degraded, true);
+  server.close();
+});
+
+test("probeTa：宿主 401 文案形态（4xx+{code,msg}）不误判", async () => {
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    res.writeHead(401, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ msg: "认证失败", code: 401 }));
+  });
+  await new Promise((res) => server.listen(0, "127.0.0.1", res));
+  const port = server.address().port;
+  const r = await core.probeTa(port);
+  assert.equal(r, null, "宿主 4xx+{code,msg} 文案不得识别为 TestAgent");
+  server.close();
+});
+
+// ---------------- S8 downloadFile / S9 api 超时（审查补全 2026-11-06） ----------------
+
+test("downloadFile：二进制流式落盘，字节一致（S8）", async () => {
+  const http = await import("node:http");
+  const fs = await import("node:fs");
+  const os = await import("node:os");
+  const path = await import("node:path");
+  const payload = Buffer.from(Array.from({ length: 50000 }, (_, i) => i % 251));
+  const server = http.createServer((req, res) => {
+    if (req.url.includes("/api/download")) {
+      res.writeHead(200, { "Content-Type": "application/octet-stream", "X-TA-File": "dump.bin" });
+      res.end(payload);
+    } else { res.writeHead(404); res.end(); }
+  });
+  await new Promise((res) => server.listen(0, "127.0.0.1", res));
+  const port = server.address().port;
+  const dest = path.join(os.tmpdir(), `ta-dl-test-${Date.now()}.bin`);
+  const r = await core.downloadFile({ port, path: "/tmp/dump.bin", dest });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.ok, true);
+  assert.equal(r.data.sizeBytes, payload.length);
+  assert.equal(fs.readFileSync(r.data.savedTo).equals(payload), true, "落盘字节应与源一致");
+  fs.rmSync(r.data.savedTo, { force: true });
+  server.close();
+});
+
+test("downloadFile：meta=true 走 JSON 元数据分支不落盘（S8）", async () => {
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    if (req.url.includes("meta=1")) {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, data: { path: "/tmp/x.hprof", sizeBytes: 123, exists: true } }));
+    } else { res.writeHead(500); res.end(); }
+  });
+  await new Promise((res) => server.listen(0, "127.0.0.1", res));
+  const r = await core.downloadFile({ port: server.address().port, path: "/tmp/x.hprof", meta: true });
+  assert.equal(r.status, 200);
+  assert.equal(r.data.data.sizeBytes, 123);
+  server.close();
+});
+
+test("downloadFile：404 → JSON 错误透传不落盘（S8）", async () => {
+  const http = await import("node:http");
+  const server = http.createServer((req, res) => {
+    res.writeHead(404, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: false, error: "文件不存在" }));
+  });
+  await new Promise((res) => server.listen(0, "127.0.0.1", res));
+  const r = await core.downloadFile({ port: server.address().port, path: "/nope" });
+  assert.equal(r.status, 404);
+  assert.equal(r.data.ok, false);
+  assert.match(r.data.error, /文件不存在/);
+  server.close();
+});
+
+test("api()：空闲超时兜底（S9）——永不响应的端点在 TESTAGENT_API_TIMEOUT_MS 内返回 status 0", async () => {
+  const http = await import("node:http");
+  const server = http.createServer(() => { /* 接受连接但永不响应 */ });
+  await new Promise((res) => server.listen(0, "127.0.0.1", res));
+  // 重载 core 捕获小超时（API_TIMEOUT_MS 在模块加载时读 env）
+  delete require2.cache[require2.resolve("./testagent-core.cjs")];
+  process.env.TESTAGENT_API_TIMEOUT_MS = "600";
+  const coreFast = require2("./testagent-core.cjs");
+  const t0 = Date.now();
+  const r = await coreFast.api("GET", "/api/ping", null, server.address().port, "");
+  const ms = Date.now() - t0;
+  assert.equal(r.status, 0);
+  assert.match(r.data.error, /空闲超时/);
+  assert.ok(ms < 5000, `应在秒级返回而非悬挂（实际 ${ms}ms）`);
+  delete process.env.TESTAGENT_API_TIMEOUT_MS;
+  server.close();
+});

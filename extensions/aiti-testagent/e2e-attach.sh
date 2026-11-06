@@ -5,7 +5,7 @@
 set -u
 APP_JAR="${APP_JAR:-/home/pi/workspace/aiti-ai/TestAgent/tests/spring-test/target/spring-test-1.0.jar}"
 AGENT_JAR="${TESTAGENT_JAR:-/home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/testagent-1.0.jar}"
-ATTACH_CP="${ATTACH_CP:-/home/pi/workspace/aiti-ai/pi-web-ext/aiti-testagent/attach-tool}"
+ATTACH_CP="${ATTACH_CP:-/home/pi/workspace/aiti-ai/TestAgent/TestAgent/target/testagent-1.0.jar}"
 pick_port() { python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 PORT_HTTP=$(pick_port)          # attach 后 agent 默认端口
 PORT_APP=$(pick_port)
