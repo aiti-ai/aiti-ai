@@ -19,8 +19,8 @@ async def main():
     # 2) 经 pi-web dev middleware
     targets = [
         ("direct-8767", "ws://127.0.0.1:8767/ws/stream"),
-        ("piweb-dev-proxy", "ws://127.0.0.1:30142/dev/aiti-ai-input/asr/ws/stream"),
-        ("piweb-prod-proxy", "ws://127.0.0.1:20341/aiti-ai-input/asr/ws/stream"),
+        ("piweb-dev-proxy", "ws://127.0.0.1:3001/dev/aiti-ai-input/asr/ws/stream"),
+        ("piweb-prod-proxy", "ws://127.0.0.1:3002/aiti-ai-input/asr/ws/stream"),
     ]
     for name, url in targets:
         print(f"\n=== {name}: {url} ===")
