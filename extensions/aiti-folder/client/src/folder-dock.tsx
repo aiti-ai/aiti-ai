@@ -339,10 +339,10 @@ function FolderTitleSwitcher(props: { path: string; hasParent: boolean; onPick: 
       <button
         type="button" onClick={() => setOpen((v) => !v)} title={props.path}
         aria-label={"切换目录：" + props.path} aria-expanded={open ? "true" : "false"}
-        style={{ display: "inline-flex", alignItems: "center", gap: 4, minWidth: 0, maxWidth: 170, padding: "2px 4px", background: "none", border: "none", borderRadius: 5, color: "var(--text-muted, #999)", cursor: "pointer", fontSize: 11, fontWeight: 600, letterSpacing: "0.04em", textTransform: "uppercase", fontFamily: "inherit" }}
+        style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0, maxWidth: 170, padding: "2px 4px 2px 0", background: "none", border: "none", borderRadius: 5, color: "var(--text, #222)", cursor: "pointer", fontSize: 13, fontWeight: 500, fontFamily: "inherit" }}
       >
-        <FolderIcon open={true} />
-        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</span>
+        <FolderIcon open={true} size={13} />
+        <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", lineHeight: 1 }}>{name}</span>
         <CaretIcon />
       </button>
       {open ? (

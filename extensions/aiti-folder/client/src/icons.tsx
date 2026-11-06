@@ -21,9 +21,9 @@ export function FileLangDot({ name }: { name: string }) {
   return <span style={{ width:6, height:6, borderRadius:2, background:c, flexShrink:0, display:"inline-block" }} />;
 }
 
-export function FolderIcon({ open }: { open?: boolean }) {
+export function FolderIcon({ open, size }: { open?: boolean; size?: number }) {
   return (
-    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}>
+    <svg width={size ?? 14} height={size ?? 14} viewBox="0 0 24 24" fill="none" stroke="var(--text-dim)" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" style={{flexShrink:0}}>
       <path d={ open ? "m6 14 1.5-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.54 6a2 2 0 0 1-1.95 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" : "M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" } />
     </svg>
   );
