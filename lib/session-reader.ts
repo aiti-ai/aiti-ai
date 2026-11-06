@@ -767,11 +767,18 @@ function sessionInfoFromScan(s: SessionFileInfo, pathToId: Map<string, string>) 
   {
     cacheSessionPath(s.id, s.path);
     const originSessionId = s.parentSessionPath ? pathToId.get(sessionPathKey(s.parentSessionPath)) : undefined;
-    let subagent = null;
+    let subagent: ReturnType<typeof readSubagentRun> = null;
+    let side: ScannedSide | null = null;
     if (s.parentSessionPath) {
+      const relationEntries = readSessionRelationEntries(s.path);
       try {
-        subagent = readSubagentRun(readSessionRelationEntries(s.path), s.id, s.path);
+        subagent = readSubagentRun(relationEntries, s.id, s.path);
       } catch { /* malformed or concurrently removed session */ }
+      // Merge note (#1469 side chats): the side relation rides the same relation
+      // entries as the subagent one (upstream reads both in resolveScannedSessionRelation).
+      if (!side && !subagent) {
+        try { side = readSideRelation(relationEntries); } catch { /* malformed */ }
+      }
       // External subagent (pi-subagents ecosystem artifact): the header has no
       // parentSession and no SUBAGENT_META_TYPE entry; the parentSessionPath /
       // externalSubagent inferred from the on-disk path is the source of truth
@@ -807,9 +814,11 @@ function sessionInfoFromScan(s: SessionFileInfo, pathToId: Map<string, string>) 
       ...(s.lastRun ? { lastRun: s.lastRun } : {}),
       ...(subagent
         ? { relation: { kind: "subagent" as const, parentSessionId: subagent.parentSessionId, profile: subagent.profile, description: subagent.description, status: subagent.status } }
-        : s.parentSessionPath
-          ? { relation: { kind: "fork" as const, ...(originSessionId ? { originSessionId } : {}) } }
-          : {}),
+        : side
+          ? { relation: { kind: "side" as const, ...side } }
+          : s.parentSessionPath
+            ? { relation: { kind: "fork" as const, ...(originSessionId ? { originSessionId } : {}) } }
+            : {}),
       transient: false,
     };
   }

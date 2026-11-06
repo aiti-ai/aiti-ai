@@ -230,7 +230,12 @@ export async function POST(
     {
       const uploadType = request.nextUrl.searchParams.get("type");
       if ((uploadType === "upload-check" || uploadType === "upload") && segments.length > 0) {
-        urlDir = segments.join("/");
+        // Must rebuild through filePathFromApiSegments: Next.js catch-all segments
+        // arrive without the leading slash, so a plain join() turns Unix absolute
+        // paths relative ("home/x" → "path must be absolute" 400). Windows drive
+        // paths ("D:/x") survive by accident — that is why this only broke on
+        // Unix instances (48/mac).
+        urlDir = filePathFromApiSegments(segments);
         segments = [uploadType, ...segments];
       }
     }

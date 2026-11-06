@@ -5,6 +5,7 @@ import { apiUrl } from "@/lib/base-path";
 import { useI18n } from "@/hooks/useI18n";
 import type { NewSessionContext, NewSessionTarget, ProjectChoice } from "@/lib/new-session-context";
 import { focusIfLost } from "@/lib/stacked-dialog";
+import { ExtSlot } from "./ExtSlots";
 import { ProjectWorktreePicker, type ProjectWorktreeControl, type ProjectWorktreePickerHandle } from "./ProjectWorktreePicker";
 
 /** The bar's two controls. A move names the one it came from, which takes focus in the bar that replaces this one. */
@@ -110,6 +111,10 @@ export function NewSessionContextBar({
         onRefreshWorktrees={onRefreshWorktrees}
         onCreateWorktree={onCreateWorktree}
       />
+      {/* Trailing extension button(s) (aiti fork: session-manager's upload-workspace shortcut). Data-only extra
+          (slot-extra red line); moving the fresh composer after an upload goes through the "pi-web.newSession"
+          client service. Unregistered = zero render and zero regression (same pattern as workspacePickerActions). */}
+      <ExtSlot name="newSessionContextTrailing" extra={{ cwd: context?.cwd ?? null, mobile }} />
     </div>
   );
 }

@@ -31,7 +31,13 @@ const upstreamStructSkip = source.includes("renderChatToolbarActions(")
 test("keeps action icons inline in medium mobile sidebars", { skip: upstreamStructSkip }, () => {
   assert.match(mobileHookSource, /NARROW_MOBILE_QUERY = "\(max-width: 480px\)"/);
   assert.match(source, /const isNarrowMobile = useIsNarrowMobile\(\);/);
-  assert.match(source, /\{!isNarrowMobile && renderChatToolbarActions\(true\)\}/);
+  // 合并修正（2026-11）：上游 medium 行内平铺组（renderChatToolbarActions/
+  // renderDebugButton/renderMainFileToggle for !isNarrowMobile）已删——fork 自绘
+  // 顶栏（renderTopbarItem + 测量溢出）覆盖所有宽度档，重复渲染曾把 Debug/文件
+  // 面板开关在桌面/medium 堆叠两次（同 topbar-dedup.test 防的 auto-merge 双堆
+  // 叠）。窄屏 Agents+More 组保留。
+  assert.doesNotMatch(source, /\{!isNarrowMobile && renderChatToolbarActions\(true\)\}/);
+  assert.doesNotMatch(source, /\{renderMainFileToggle\(true\)\}/);
   assert.match(source, /\{isNarrowMobile && \([\s\S]*?data-mobile-toolbar-more="true"/);
 });
 
