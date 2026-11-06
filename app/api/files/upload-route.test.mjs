@@ -40,6 +40,58 @@ async function upload(directory, strategy = "overwrite", names = ["important.txt
   }), { params: Promise.resolve({ path: ["upload"] }) });
 }
 
+// 上游 wire 形态：directory 编码进 URL 路径段（lib/file-upload-client uploadFiles/upload-check）。
+// 回归：catch-all 段不含首斜杠，直接 join 会把 Unix 绝对路径变相对（"home/…" → "path must be absolute" 400），
+// Windows 盘符路径侥幸存活——必须经 filePathFromApiSegments 还原。
+async function uploadViaUrlPath(directory, type = "upload", names = ["important.txt"]) {
+  const form = new FormData();
+  for (const name of names) form.append("files", new File(["replacement"], name));
+  const encoded = encodeFilePathForApi(directory);
+  const segments = encoded.split("/").filter(Boolean).map((s) => decodeURIComponent(s));
+  return POST(new NextRequest(
+    `http://localhost/api/files/${encoded}?type=${type}&conflict=skip${type === "upload" ? "&ensure=1" : ""}`,
+    { method: "POST", headers: { host: "localhost" }, body: form },
+  ), { params: Promise.resolve({ path: segments }) });
+}
+
+test("url-path directory form restores the leading slash for unix absolute paths (upload)", async () => {
+  const { directory } = fixture();
+  const response = await uploadViaUrlPath(directory, "upload", ["important.txt", "fresh.txt"]);
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { uploaded: ["fresh.txt"], skipped: ["important.txt"], errors: [] });
+  assert.equal(fs.readFileSync(path.join(directory, "fresh.txt"), "utf8"), "replacement");
+  assert.equal(fs.readFileSync(path.join(directory, "important.txt"), "utf8"), "original contents");
+});
+
+test("url-path directory form restores the leading slash for unix absolute paths (upload-check)", async () => {
+  const { directory } = fixture();
+  const form = new FormData(); // upload-check 无文件也不需要 body 文件，但 POST 需要 multipart 或 JSON
+  const encoded = encodeFilePathForApi(directory);
+  const segments = encoded.split("/").filter(Boolean).map((s) => decodeURIComponent(s));
+  const response = await POST(new NextRequest(
+    `http://localhost/api/files/${encoded}?type=upload-check&conflict=skip`,
+    { method: "POST", headers: { host: "localhost", "content-type": "application/json" }, body: JSON.stringify({ fileNames: ["important.txt"] }) },
+  ), { params: Promise.resolve({ path: segments }) });
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.conflicts, ["important.txt"]);
+});
+
+test("windows drive-letter directory in url path stays absolute", async () => {
+  const fixtureRoot = path.dirname(fixture().directory);
+  globalThis.__piAllowedRootsCache = { roots: new Set(["D:/workspace/proj"]), expiresAt: Date.now() + 60_000 };
+  const form = new FormData();
+  form.append("files", new File(["replacement"], "important.txt"));
+  const response = await POST(new NextRequest(
+    "http://localhost/api/files/D:/workspace/proj?type=upload&conflict=skip&ensure=1",
+    { method: "POST", headers: { host: "localhost" }, body: form },
+  ), { params: Promise.resolve({ path: ["D:", "workspace", "proj"] }) });
+  // Linux 测试机上该目录不存在 → 404/403，但绝不能再是 "path must be absolute"（回归锚点）
+  const body = await response.json();
+  assert.notEqual(body.error, "path must be absolute");
+  void fixtureRoot;
+});
+
 for (const partial of [false, true]) {
   test(`failed overwrite preserves original and cleans staging (partial write: ${partial})`, async (t) => {
     const { directory, destination } = fixture();

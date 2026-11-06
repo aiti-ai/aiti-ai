@@ -895,7 +895,7 @@ export const enLocale: LocalePlugin = {
     "chat.agentPlaceholder": "Agent is running…",
     "chat.steerPlaceholder": "Enter to queue; Enter again to steer",
     "chat.queueOnlyPlaceholder": "Enter to queue; sent after this turn",
-    "chat.messagePlaceholder": "Message… / commands · @ files",
+    "chat.messagePlaceholder": "Message… / cmds @ files",
     "chat.sideChat": "Side chat",
     "chat.sideChatHint": "Ask this in a side chat. The run keeps going.",
     "chat.steer": "Steer",

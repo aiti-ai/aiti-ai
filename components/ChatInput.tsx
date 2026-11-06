@@ -3255,9 +3255,19 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       const nativeEvent = e.nativeEvent;
       const enterKey = e.key === "Enter" && !e.shiftKey && !e.repeat;
-      const sendShortcut = isMobile || enterSendMode === "ctrlEnter"
-        ? enterKey && (e.ctrlKey || e.metaKey)
-        : enterKey;
+      // Fork (ada119b4): WeChat-style send — on a phone the bare Enter sends
+      // (the soft keyboard shows a Send key via enterKeyHint="send"), there is
+      // no Ctrl on a phone keyboard. Desktop follows the Enter/Ctrl+Enter
+      // preference (#1001). NB the operator precedence: isMobile must short-
+      // circuit BEFORE the ctrlEnter ternary — the upstream form
+      // `isMobile || enterSendMode === "ctrlEnter" ? enterKey && (ctrl||meta) : enterKey`
+      // binds as `(isMobile || mode==="ctrlEnter") ? (enterKey && (ctrl||meta)) : enterKey`,
+      // which demands Ctrl on a phone and silently turns Enter into a newline.
+      const sendShortcut = isMobile
+        ? enterKey
+        : enterSendMode === "ctrlEnter"
+          ? enterKey && (e.ctrlKey || e.metaKey)
+          : enterKey;
       // Popup menus and the IME guard take plain Enter in either send mode on a
       // desktop keyboard. Mobile keyboards insert a line break on Enter, so they
       // keep using the send shortcut there.
@@ -3927,7 +3937,7 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
           } catch { /* parse failure stays silent — same lenient semantics as the desktop import */ }
         }}
       />}
-      <div style={{ maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
+      <div style={{ ...(compact ? undefined : { display: "flex", flexDirection: "column", minHeight: 0, width: "100%" }), maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
         <MissingCwdBanner cwd={missingCwd} />
         <ModelErrorBanner error={modelError} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
@@ -3977,6 +3987,9 @@ const ChatInputInner = forwardRef<ChatInputHandle, Props>(function ChatInput({
         {!extOwnsQueuePanel && effectiveBottomMode === "full" && (queueCount > 0 || trashCount > 0) && (
           <div style={{
             position: "relative",
+            display: "flex",
+            flexDirection: "column",
+            minHeight: 72, // the header and one whole row
             marginBottom: 8,
             border: "1px solid var(--border)",
             borderRadius: 6,

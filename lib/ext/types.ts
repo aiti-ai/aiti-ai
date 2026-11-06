@@ -410,6 +410,10 @@ export type ExtSlotName =
                     //   sole-owner so there is no core fallback)
   | "workspacePickerActions" // Action area at the bottom of the CWD picker dropdown (session-manager: manage the workspace list —
                     //   select/hide/delete; the core only renders the dropdown list, all management UI lives in the extension)
+  | "newSessionContextTrailing" // Trailing extension button(s) after the new-session Workspace×Backend boxes (NewSessionContextBar;
+                    //   session-manager: upload-workspace shortcut — upload an archive, extract, and move the fresh composer there).
+                    //   extra only carries data { cwd, mobile } (slot-extra red line); moving the composer after upload goes
+                    //   through the "pi-web.newSession" client service (setCwd), not through extra callbacks.
   | "modelSelector"  // Chat input model button takeover (e.g. the model-wizard extension): once registered it replaces the native
                       //   ModelSelector; unregistered, the core's native dropdown is the fallback (same springboard pattern as fileViewer)
   | "modelSelectorFooter" // Action area at the bottom of the model-selector dropdown (the model-wizard extension: manage-models
@@ -491,6 +495,14 @@ export type ExtSlotName =
 // and extensions add more via augmentation; both sides consume by structural contract
 // (extensions live out of repo — see the queue extension's client types).
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+/** newSessionContextTrailing slot props (trailing extension button(s) after the new-session Workspace×Backend boxes). */
+export interface NewSessionContextTrailingProps {
+  /** The fresh composer's current target cwd (null when the bar has no cwd yet). */
+  cwd: string | null;
+  /** The bar renders its mobile layout. */
+  mobile: boolean;
+}
+
 /** workspacePickerActions slot props (action area at the bottom of the CWD picker dropdown). */
 export interface WorkspacePickerActionsProps {
   /** Currently visible project list (already filtered by the hidden list; key = stable workspace key, root = display path). */
@@ -750,6 +762,9 @@ export interface ExtSlotContractMap {
   queuePanel: { props: QueuePanelProps };
   /** Action area at the bottom of the CWD picker dropdown (session-manager: manage the workspace list). */
   workspacePickerActions: { props: WorkspacePickerActionsProps };
+  /** Trailing extension button(s) after the new-session Workspace×Backend boxes (session-manager: upload-workspace shortcut).
+   *  Moving the fresh composer after upload goes through the "pi-web.newSession" client service (setCwd). */
+  newSessionContextTrailing: { props: NewSessionContextTrailingProps };
   /** Chat input model button takeover (the model-wizard extension). */
   modelSelector: { props: ModelSelectorSlotProps };
   /** Action area at the bottom of the model-selector dropdown (the model-wizard extension's manage-models entry). */
