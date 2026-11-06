@@ -6,9 +6,12 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, mkdirSync, rmSync, existsSync, readdirSync, statSync, writeFileSync } from "fs";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, existsSync, readdirSync, statSync, writeFileSync } from "fs";
 import { spawnSync } from "child_process";
-import { tmpdir } from "os";
+import { tmpdir as osTmpdir } from "os";
+// macOS /var → /private/var 符号链接：服务端落位路径走 realpath，断言基准须同口径
+// （Linux 上 realpathSync 恒等，零影响；否则 e2e 路径断言逐字比较必挂）
+const tmpdir = () => realpathSync(osTmpdir());
 import { join } from "path";
 import { rmRf } from "../../_shared/test-rm-rf.mjs";
 
