@@ -194,7 +194,14 @@ export function subscribeRunningEvents(listener: Listener): () => void {
           armFrameWatchdog();
         };
         if (b!.dead) return;
-        try { b!.es?.close(); } catch { /* noop */ }
+        // 交换后关旧（2026-11-06「运行状态陈旧」修复）：总线适配器 close() 会把它的话题从
+        // 总线客户端 broker 的白名单并集摘除，而新适配器的重新订阅是异步的——若先关旧，
+        // 这个窗口内任何一次白名单重推（订阅者 churn / hello 重发）都会 POST 出不含
+        // "running" 的并集 → 服务端开始静默过滤 running 帧（变更帧永不重放）→ 页面
+        // "运行状态陈旧直到下一次重连"（journal 实锤：14:59:47 首条 POST 缺 running）。
+        // 先建新后关旧 → 并集全程含 running，重推无缺口；过渡期双适配器重叠投递无害
+        // （applyRunningFrame Set 幂等，列表刷新合流节流）。原 EventSource 回退分支同理。
+        const prevSource = b!.es;
         // Unified SSE convergence for page events: when the bus capability is present (the
         // event-bus extension is deployed) → go through the single bus
         // (dispatch type "running", same transport-level named heartbeat contract); otherwise →
@@ -203,6 +210,9 @@ export function subscribeRunningEvents(listener: Listener): () => void {
         const source: EventSource | BusEventSource = busSource
           ?? new EventSource(apiUrl("/api/agent/running/events"));
         b!.es = source;
+        if (prevSource && prevSource !== source) {
+          try { prevSource.close(); } catch { /* noop */ }
+        }
         markFrame(); // seed the liveness baseline at connect so the watchdog's first pass doesn't misjudge
         // named event heartbeat (one frame every 30s from the server): dedicated to subscriber liveness checks
         source.addEventListener("heartbeat", () => {

@@ -258,10 +258,11 @@ test("the toolbar row is the chat bar's cells, and gives up labels only where th
   // the open search take its accent line.
   // 合并适配：36px 收敛为 var(--top-bar-height)（上游 #1225 令牌化，同基线）。
   assert.match(sidebarStyles, /\.sidebar-header \{\s*display: flex;\s*flex: none;\s*align-items: stretch;\s*height: var\(--top-bar-height\);\s*box-sizing: border-box;\s*border-bottom: 1px solid var\(--border\);\s*\}/);
-  // 合并适配：分隔线两种形态皆可——上游真 borderBottom，或本地 inset boxShadow（border 不占布局，36px 基线更准）。
+  // 合并适配：分隔线两种形态皆可——上游真 borderBottom，或本地 inset boxShadow（border 不占布局）；
+  // 高度 2026-11 起收敛为 var(--top-bar-height)（上游 57078bb5 令牌化，桌面 36px 不变 / 手机 44px 触控）。
   assert.match(
     appShellSource,
-    /(?:borderBottom: "1px solid var\(--border\)", height: "calc\(36px \+ env\(safe-area-inset-top\)\)"|boxShadow: "inset 0 -1px 0 var\(--border\)",\s*height: "calc\(36px \+ env\(safe-area-inset-top\)\)")/,
+    /(?:borderBottom: "1px solid var\(--border\)", height: "calc\(var\(--top-bar-height\) \+ env\(safe-area-inset-top\)\)"|boxShadow: "inset 0 -1px 0 var\(--border\)",[\s\S]*?height: "calc\(var\(--top-bar-height\) \+ env\(safe-area-inset-top\)\)")/,
   );
   assert.match(appShellSource, /paddingTop: "env\(safe-area-inset-top\)"/);
   assert.match(globalStyles, /^\* \{\s*box-sizing: border-box;/m);

@@ -3044,6 +3044,25 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // The folder picker answers later: its pick runs the newest closure, guard included.
   const pickNewSessionContextRef = useRef(handlePickNewSessionContext);
   pickNewSessionContextRef.current = handlePickNewSessionContext;
+  // ── "pi-web.newSession" host service (slot-extra red line: data only in extra, callbacks live here):
+  //    extensions move the fresh composer to a cwd (session-manager's upload-workspace trailing button
+  //    on the new-session bar). Goes through handleNewSession directly — the same final action as the
+  //    sidebar's startNewSessionIn (draft parking/restore + composer remount), without depending on
+  //    sidebarControlRef (null while an extension takes over sidebarContent). Getter delegates to the
+  //    latest closure (same ref pattern as hostUiRef); registers once on mount; absent on older hosts.
+  const newSessionSvcRef = useRef({ setCwd: (_path: string) => {} });
+  newSessionSvcRef.current.setCwd = (path: string) => {
+    if (typeof path !== "string" || !path) return;
+    const tempId = typeof crypto.randomUUID === "function"
+      ? crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+    handleNewSession(tempId, path, null, { carryComposer: true });
+  };
+  useEffect(() => {
+    return registerExtClientService("pi-web", "pi-web.newSession", {
+      get setCwd() { return newSessionSvcRef.current.setCwd; },
+    });
+  }, []);
   const handleOpenFolderForNewSession = useCallback((opener: HTMLElement | null) => {
     sidebarControlRef.current?.openFolderForNewSession((target) => pickNewSessionContextRef.current(target, "project"), opener);
   }, []);
@@ -4698,7 +4717,8 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
           background: open ? "var(--bg-selected)" : "none",
           border: "none",
           borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
-          ...(mobile ? { borderRight: "1px solid var(--border)" } : { borderLeft: "1px solid var(--border)" }),
+          borderLeft: mobile ? "none" : "1px solid var(--border)",
+          borderRight: mobile ? "1px solid var(--border)" : "none",
           color: open ? "var(--text)" : "var(--text-muted)",
           cursor: "pointer", flexShrink: 0, transition: "color 0.1s, background 0.1s",
         }}
@@ -4959,7 +4979,11 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
             // exactly 36px, isomorphic with buttons/icon slots/extensions.
             borderBottom: "none",
             boxShadow: "inset 0 -1px 0 var(--border)",
-            height: "calc(36px + env(safe-area-inset-top))",
+            // Upstream's --top-bar-height (36px desktop / 44px phone, 57078bb5):
+            // the fork buttons already size to it via TOP_BAR_ICON_BUTTON_SIZE,
+            // so the container tracks the same variable — a phone gets the full
+            // 44px touch height instead of square buttons clipped to 36px.
+            height: "calc(var(--top-bar-height) + env(safe-area-inset-top))",
             paddingTop: "env(safe-area-inset-top)",
             background: "var(--bg-panel)",
             overflowX: "hidden",
@@ -5052,6 +5076,12 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               {!isMobile && <span>{translate("trust.resourcesNotLoaded")}</span>}
             </button>
           )}
+          {/* The upstream mobile-toolbar tier (Agents beside More + the actions
+              overlay). Narrow phones only: its content is entirely narrow-gated,
+              and an unconditional flex:1 container would sit EMPTY between the
+              fork's own toolbar row and the right cluster on desktop/medium —
+              half the free space as blank top bar (found live on 1440px). */}
+          {isNarrowMobile && (
           <div
             data-mobile-toolbar="true"
             style={{
@@ -5063,7 +5093,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
               height: "100%",
             }}
           >
-          {isNarrowMobile && renderAgentsButton(true)}
+          {renderAgentsButton(true)}
           {isNarrowMobile && (
             <button
               type="button"
@@ -5121,13 +5151,18 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
                   }}
                 >
                   {renderChatToolbarActions(true)}
-                  {renderDebugButton(true)}
                 </div>
               )}
-              {!isNarrowMobile && renderChatToolbarActions(true)}
-              {!isNarrowMobile && renderDebugButton(true)}
-              {renderMainFileToggle(true)}
+              {/* Upstream's medium-band inline row (renderChatToolbarActions/
+                 renderDebugButton/renderMainFileToggle for !isNarrowMobile) is NOT
+                 rendered: this fork's custom-drawn top bar (renderTopbarItem with
+                 measured ⋯ overflow) already covers every band, the narrow tier
+                 above covers ≤480px, and the fork re-homed the file toggle (top
+                 right corner) and the Debug entry (right cluster, f19b7398) as
+                 single owners — rendering the upstream row again stacked them
+                 twice on desktop and medium widths. */}
           </div>
+          )}
           {/* Session stats — right-aligned in top bar */}
           {showChat && (sessionStats || contextUsage) && (() => {
              const tokens = sessionStats?.tokens;

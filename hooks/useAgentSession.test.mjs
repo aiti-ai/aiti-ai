@@ -858,7 +858,12 @@ test("sizes the message tail from the rendered bottom composer", () => {
   assert.match(chatWindowSource, /bottomComposerScrollFrameRef = useRef<number \| null>\(null\)/);
   assert.match(chatWindowSource, /distanceFromBottom <= Math\.abs\(nextHeight - previousHeight\) \+ 1/);
   assert.match(chatWindowSource, /scrollToBottom\("auto"\)/);
-  assert.match(chatWindowSource, /<div ref=\{bottomComposerRef\} className="relative( shrink-0)?"?>/);
+  // 合并修正（2026-11）：上游 #1429 把底部 composer 容器改为可收缩 flex 列
+  // （relative flex min-h-0 flex-col，与 fieldset/内层列同链）；曾保留的旧形态
+  // relative shrink-0 是合并丢链的错误融合结果，不再接受（同
+  // ChatWindow.extension-request 钉的 C 类纪律）。
+  assert.match(chatWindowSource, /<div ref=\{bottomComposerRef\} className="relative flex min-h-0 flex-col">/);
+  assert.doesNotMatch(chatWindowSource, /bottomComposerRef\} className="relative shrink-0"/);
   assert.match(chatWindowSource, /height: bottomComposerHeight/);
 });
 

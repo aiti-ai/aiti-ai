@@ -274,6 +274,9 @@ function getUserInputText(message: AgentMessage): string | null {
     const text = message.content.trim();
     return text.length > 0 ? text : null;
   }
+  // Non-pi backends (e.g. echo agents) deliver {role, text, ts} frames with no
+  // content blocks at all — treat missing content as empty input, never crash.
+  if (!Array.isArray(message.content)) return null;
   const text = message.content
     .filter((block) => block.type === "text")
     .map((block) => block.text)
@@ -2124,7 +2127,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
 
       
 
-      <div ref={bottomComposerRef} className="relative shrink-0">
+      <div ref={bottomComposerRef} className="relative flex min-h-0 flex-col">
         {!isEmptyNew && (
           <div
             style={{

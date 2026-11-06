@@ -15,12 +15,18 @@ Typecheck: `node_modules/.bin/tsc --noEmit` · Lint: `npm run lint`
 - First run `lsof -nP -iTCP:30141 -sTCP:LISTEN` and reuse a healthy Pi Web process. A second `next dev` on another port is no workaround: both contend for `.next/dev/lock`.
 - A browser-only `Module ... factory is not available` overlay usually means that tab has a stale Turbopack/HMR graph, not a broken server or source. Use the browser's explicit reload, then compare the server log and a direct HTTP/API request.
 - Restart only when the failure reproduces from a fresh page and the server-side checks fail too: stop that exact dev process gracefully, move `.next` into a `mktemp -d` backup, restart with `npm run dev`.
+- Turbopack panic (`/tmp/next-panic-*.log`, e.g. "CJS module can't be async") leaves the incremental graph poisoned: pages reload-loop or render with the custom top bar / composer half-dressed (stretches of blank toolbar), while `tsc --noEmit` passes. A plain service restart does NOT clear it — stop the process, move `.next` away, restart, and wait for the full rebuild before judging (early reloads during rebuild are HMR churn, not a loop). Also beware viewport inheritance when auditing from a fresh browser page: a page opened without the emulation override runs at the window's own width, and every x-coordinate measured past that width is a phantom.
+- Do not trust `grep rescue` on served HTML: `rescue-hook.js` is injected into every page as a build-error probe; its mention appears on healthy pages too.
 - Never fall back to `next dev --webpack`: the dev graph can fail on `undici` imports such as `node:console`. Development uses Turbopack.
 - `next dev` may append a generated `BEGIN:nextjs-agent-rules` block to `AGENTS.md`. It is tooling output: check `git status` and keep it out of unrelated commits.
 
 ### Upgrading pi
 
 pi's packages up to 1.2.0 depend on each other with `^` ranges (1.3.0 pins them exactly), and the published pi-web's dependencies resolve afresh on install (no lockfile ships). Install every `@earendil-works/*` package the tree holds, the SDK's own dependencies included (`pi-codemode`, `pi-mcp`, `pi-telemetry`, …), with `npm install --save-exact`, so npm reuses those exact versions for the SDK's ranges. `lib/pi-packages.test.mjs` fails on any pi package that is not pinned that way; pi-web 0.12.0 pinned four, and installs after pi 1.2.0 paired pi-coding-agent 1.1.0 with pi-codemode 1.2.0.
+
+### Merging upstream (MUST READ before any origin/main merge)
+
+This fork carries intentional divergences (custom-drawn top bar, WeChat-style mobile send, mobile composer v4, provider names …). Four regression classes have already shipped to users from past merges (duplicated buttons, a collapsed composer, a Send key that inserted newlines). Before merging origin/main, read `docs/upstream-merge-guardrails.md` and follow its SOP: whole-commit conflict resolution (never mix hunks of one upstream commit), the single-owner table, then the post-merge checks — full test run plus `node scripts/check-upstream-merge.mjs --base <old-tip> --upstream origin/main`, triaging every reported line as fork-intentional or merge-loss. The guard pins (`AppShell.topbar-dedup`, `ChatInput.composer-shrink-chain`, `ChatInput.mobile-send`) go red on reintroduction — a red pin means the merge is wrong, not the test.
 
 ---
 

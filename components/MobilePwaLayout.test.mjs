@@ -40,7 +40,9 @@ test("tracks the visual viewport while the software keyboard is open", () => {
   // Top/bottom insets stay inline (top bars + panel bottom).
   assert.match(appShellSource, /paddingTop: "env\(safe-area-inset-top\)"/);
   assert.match(appShellSource, /paddingBottom: "env\(safe-area-inset-bottom\)"/);
-  assert.match(appShellSource, /height: "calc\(36px \+ env\(safe-area-inset-top\)\)"/);
+  // 合并适配（2026-11）：顶栏高度收敛为 var(--top-bar-height)（上游 57078bb5 令牌化，
+  // 桌面 36px 不变 / 手机 44px 触控高度）；safe-area 叠加语义不变。
+  assert.match(appShellSource, /height: "calc\(var\(--top-bar-height\) \+ env\(safe-area-inset-top\)\)"/);
   assert.match(appShellSource, /\/\* Right panel tab bar[\s\S]*?height: "calc\((36px|var\(--top-bar-height\)) \+ env\(safe-area-inset-top\)\)"/);
   assert.match(appShellSource, /height: "var\(--app-viewport-height, 100dvh\)"/);
   assert.match(viewportHookSource, /window\.visualViewport/);

@@ -59,6 +59,35 @@ export function normalizeToolCalls(msg: AgentMessage): AgentMessage {
 }
 
 /**
+ * Synthesize `content` for wire frames that carry plain `text` instead of
+ * content blocks (echo agents, minimal external backends: `{role, text, ts}`).
+ * The render layer (turn-views, ChatWindow input history, MessageView) assumes
+ * user content is string|blocks and assistant content is always an array with
+ * model/provider — a missing `content` crashed the whole chat with
+ * "Cannot read properties of undefined". User keeps the string form (allowed
+ * by UserMessage); assistant gets a single text block + placeholder identity.
+ */
+function normalizeMissingContent(msg: AgentMessage): AgentMessage {
+  // Wire frames from external backends are untyped ({role, text, ts}); go via
+  // unknown — AgentMessage union members don't carry an index signature.
+  const m = msg as unknown as Record<string, unknown>;
+  if (m.content !== undefined && m.content !== null) return msg;
+  if (typeof m.text !== "string") return msg;
+  if (msg.role === "user") {
+    return { ...msg, content: m.text } as AgentMessage;
+  }
+  if (msg.role === "assistant") {
+    return {
+      ...msg,
+      content: [{ type: "text", text: m.text }],
+      model: typeof m.model === "string" ? m.model : "(external)",
+      provider: typeof m.provider === "string" ? m.provider : "(external)",
+    } as AgentMessage;
+  }
+  return msg;
+}
+
+/**
  * Normalize raw SDK-shaped messages coming from non-file channels (bridged/
  * attach `get_messages`, provider handles) into pi-web render shape.
  *
@@ -70,7 +99,8 @@ export function normalizeToolCalls(msg: AgentMessage): AgentMessage {
  * Idempotent: already-normalized messages pass through unchanged.
  */
 export function normalizeRawMessages(messages: unknown[]): AgentMessage[] {
-  return (Array.isArray(messages) ? messages : []).map((m) => normalizeToolCalls(m as AgentMessage));
+  return (Array.isArray(messages) ? messages : []).map((m) =>
+    normalizeToolCalls(normalizeMissingContent(m as AgentMessage)));
 }
 
 export function normalizeStreamingToolCalls(msg: AgentMessage): AgentMessage {
