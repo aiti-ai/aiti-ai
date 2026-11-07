@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ui-env",
-  "version": "0.1.3",
+  "version": "0.1.6",
   "description": "pi-web 扩展：UI 环境管理（桌面/无头虚拟屏）——4 态模式裁决新启动 MCP/应用的显示环境 + Xvfb/openbox/AT-SPI/VNC-on-web",
   "type": "module",
   "aiti": {
@@ -60,5 +60,6 @@
       "vnc-rfb-passwd"
     ]
   },
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "contentHash": "ce50a70df2a63f65"
 }
