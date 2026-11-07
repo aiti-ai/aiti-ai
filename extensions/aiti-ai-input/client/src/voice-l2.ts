@@ -288,7 +288,7 @@ try {
       background: "rgba(17,24,39,.96)", borderRadius: "14px", border: "1px solid #374151", zIndex: "2147483647",
       boxShadow: "0 10px 30px rgba(0,0,0,.35)", color: "#e5e7eb", fontSize: "15px", display: "flex", alignItems: "center",
     } as Partial<CSSStyleDeclaration>);
-    l2Cand('<span style="color:#9ca3af">🎙 ' + (streaming ? "实时识别中…" : "识别中…") + '</span>');
+    l2Cand('<span style="color:#9ca3af">' + (streaming ? "实时识别中…" : "识别中…") + '</span>');
     // 音频图：显式锁 16k context（浏览器内部重采样硬件流）——曾依赖默认采样率 + 线性重采样，
     //   16k 原生麦克风设备下 Chrome 回调内容标称错位 → 时长膨胀 3 倍（慢放人声）→ VAD 切不出句/识别全空；
     //   部分手机浏览器对该字典参数抛错 → 回退无参数创建（l2Resample16k 兼容任意 srcRate）。
@@ -472,7 +472,7 @@ try {
           l2Pass2Texts[segIdx] = text;
           // 分句精修完成：候选从「待精修」更新为「✓ 精修」预览
           const joined = l2SentTexts.map((t, i) => l2Pass2Texts[i] || t).filter(Boolean).join(" ");
-          l2Cand('<span style="color:#9ca3af">🎙 已识别（逐句精修）</span><div style="font-size:12.5px;color:#d1d5db;margin-top:4px;white-space:pre-wrap">' + esc(joined) + '</div>');
+          l2Cand('<span style="color:#9ca3af">已识别（逐句精修）</span><div style="font-size:12.5px;color:#d1d5db;margin-top:4px;white-space:pre-wrap">' + esc(joined) + '</div>');
         }
       } finally { l2Pass2RefillBusy--; }
     })();
@@ -494,7 +494,7 @@ try {
         // 不上屏：只进候选（待输入）——断句伪实时预览；精修在途/finished 由分句精修更新
         l2SentTexts[segIdx] = text;
         const joined = l2SentTexts.map((t, i) => l2Pass2Texts[i] || t).filter(Boolean).join(" ");
-        l2Cand('<span style="color:#9ca3af">🎙 已识别（待精修）</span><div style="font-size:12.5px;color:#d1d5db;margin-top:4px;white-space:pre-wrap">' + esc(joined) + '</div>');
+        l2Cand('<span style="color:#9ca3af">已识别（待精修）</span><div style="font-size:12.5px;color:#d1d5db;margin-top:4px;white-space:pre-wrap">' + esc(joined) + '</div>');
       }
       // 成功提交：推进到快照终点（不重叠下一句）
       if (gen === l2Gen) l2SentIdx = Math.max(l2SentIdx, endIdx);
@@ -527,7 +527,7 @@ try {
         if (!r.ok) throw new Error("http" + r.status);
         const d = await r.json();
         const text = (d && d.text ? String(d.text) : "").trim();
-        if (gen === l2Gen) { l2Commit(text); if (text) l2Cand('<b style="color:#10b981">✓ ' + esc(text) + '</b>'); }
+        if (gen === l2Gen) { l2Commit(text); if (text) l2Cand('<b style="color:#10b981">' + esc(text) + '</b>'); }
         return text;
       } catch (e) {
         clearTimeout(to);
@@ -548,7 +548,7 @@ try {
         let m: any; try { m = JSON.parse(ev.data); } catch { return; }
         if (m.type === "ready") {
           l2StreamReady = true;
-          l2Cand('<span style="color:#9ca3af">🎙 实时识别中…</span>');
+          l2Cand('<span style="color:#9ca3af">实时识别中…</span>');
         } else if (m.type === "partial") {
           const t = String(m.text || "").trim();
           if (t) l2Cand('<span style="color:#e5e7eb">' + esc(t) + '<span style="color:#10b981">▌</span></span>');
@@ -583,7 +583,7 @@ try {
         let m: any; try { m = JSON.parse(ev.data); } catch { return; }
         if (m.type === "ready") {
           l2VadWsOn = true;
-          l2Cand('<span style="color:#9ca3af">🎙 实时识别中…</span>');
+          l2Cand('<span style="color:#9ca3af">实时识别中…</span>');
         } else if (m.type === "seg_quick") {
           // VAD 检出句 → 服务端 SenseVoice 秒出（伪实时候选）
           const q = String(m.quick || "").trim();
@@ -592,7 +592,7 @@ try {
           l2VadSegs[idx] = l2VadSegs[idx] || { quick: "", refined: "" };
           l2VadSegs[idx].quick = q;
           const joined = l2VadSegs.map((s) => s.quick || s.refined || "").filter(Boolean).join(" ");
-          l2Cand('<span style="color:#9ca3af">🎙 已识别（服务端精修中）</span><div style="font-size:12.5px;color:#d1d5db;margin-top:4px;white-space:pre-wrap">' + esc(joined) + '</div>');
+          l2Cand('<span style="color:#9ca3af">已识别（服务端精修中）</span><div style="font-size:12.5px;color:#d1d5db;margin-top:4px;white-space:pre-wrap">' + esc(joined) + '</div>');
         } else if (m.type === "seg_refined") {
           // 该句 Qwen3 精修完成 → 更新候选
           const r = String(m.refined || "").trim();
@@ -601,7 +601,7 @@ try {
           l2VadSegs[idx] = l2VadSegs[idx] || { quick: "", refined: "" };
           l2VadSegs[idx].refined = r;
           const joined = l2VadSegs.map((s) => s.refined || s.quick || "").filter(Boolean).join(" ");
-          l2Cand('<span style="color:#9ca3af">🎙 已识别（逐句精修）</span><div style="font-size:12.5px;color:#d1d5db;margin-top:4px;white-space:pre-wrap">' + esc(joined) + '</div>');
+          l2Cand('<span style="color:#9ca3af">已识别（逐句精修）</span><div style="font-size:12.5px;color:#d1d5db;margin-top:4px;white-space:pre-wrap">' + esc(joined) + '</div>');
         } else if (m.type === "done") {
           try { console.log("[AI input] VAD done 到达：gen匹配=" + (gen === l2Gen) + " 段数=" + (Array.isArray(m.segments) ? m.segments.length : -1)); } catch {}
           if (l2VadDone || gen !== l2Gen) return;
@@ -609,7 +609,7 @@ try {
           const segs = Array.isArray(m.segments) ? m.segments as Array<{ quick?: string; refined?: string }> : [];
           const final = segs.map((s) => (s.refined || s.quick || "").trim()).filter(Boolean).join(" ");
           if (final) {
-            l2Cand('<b style="color:#10b981">✓ ' + esc(final) + '</b>');
+            l2Cand('<b style="color:#10b981">' + esc(final) + '</b>');
             l2Commit(final);
           } else {
             l2ScheduleDismiss(gen, 300);
@@ -635,18 +635,18 @@ try {
     if (gen !== l2Gen || l2Committed) { l2ScheduleDismiss(gen, 300); return; }
     if (l2Pass2Enabled && text) {
       // 实时开着但 2-pass 精修仍要：松手立即精修（PASS2_DELAY_MS=0），不等流式粗糙文本
-      l2Cand('<span style="color:#e5e7eb">' + esc(text) + '</span><div style="font-size:12px;color:#9ca3af;margin-top:3px">✍ 二次识别…</div>');
+      l2Cand('<span style="color:#e5e7eb">' + esc(text) + '</span><div style="font-size:12px;color:#9ca3af;margin-top:3px">二次识别…</div>');
       l2DismissTimer = setTimeout(async () => {
         if (gen !== l2Gen || l2Committed) return;
         const refined = await l2RunPass2(gen);
         if (gen !== l2Gen) return;
         const final = refined || text;
-        l2Cand('<b style="color:#10b981">✓ ' + esc(final) + '</b>');
+        l2Cand('<b style="color:#10b981">' + esc(final) + '</b>');
         l2Commit(final);
         l2ScheduleDismiss(gen, 1600);
       }, PASS2_DELAY_MS);
     } else {
-      l2Cand('<b style="color:#10b981">✓ ' + esc(text) + '</b>');
+      l2Cand('<b style="color:#10b981">' + esc(text) + '</b>');
       l2Commit(text);
       l2ScheduleDismiss(gen, 1600);
     }
@@ -745,7 +745,7 @@ try {
           l2SplitFinalizing = true; // 精修在途：safetyTimer 6s 后不再走 webm 兑底（避免二次上屏）
           // 组装最终文本 = 逐句 2-pass 精修结果（按句序），未完成/失败的句用 quick 结果兑底
           // ——与「整段再精修一遍」不同：每句独立精修，输入短 → 快且准；长录音不再整段一次吃满。
-          l2Cand('<span style="color:#9ca3af">✍ 2-pass 精修中…</span>');
+          l2Cand('<span style="color:#9ca3af">2-pass 精修中…</span>');
           // 等所有在途分句精修收尾（每句独立请求，串行 Qwen3）；最多额外等 12s
           const waitt = Date.now() + 12000;
           while (l2Pass2RefillBusy > 0 && Date.now() < waitt) {
@@ -761,7 +761,7 @@ try {
           }
           const final = segs.join(" ");
           if (final) {
-            l2Cand('<b style="color:#10b981">✓ ' + esc(final) + '</b>');
+            l2Cand('<b style="color:#10b981">' + esc(final) + '</b>');
             l2Commit(final);   // l2Committed 在此才置 true（l2Commit 内部）——真正上屏
             l2ScheduleDismiss(gen, 1600);
           } else {
@@ -775,7 +775,7 @@ try {
         const final = refined || (await l2WebmFallback(gen));
         if (!final) { /* 精修失败（服务未起）→ webmFallback 也到旧模型兑底，兜底 */ }
         if (gen === l2Gen && final) {
-          l2Cand('<b style="color:#10b981">✓ ' + esc(final) + '</b>');
+          l2Cand('<b style="color:#10b981">' + esc(final) + '</b>');
           l2Commit(final);
           l2ScheduleDismiss(gen, 1600);
         } else if (gen === l2Gen) {
@@ -831,10 +831,10 @@ try {
     if (gen !== l2Gen || !d || !l2CandPanel) return;
     if (d.running) return; // 服务正常（流式自行建立）
     if (d.starting) {
-      l2Cand('<span style="color:#fbbf24">🔄 ASR 服务未运行，已自动拉起…</span>' +
+      l2Cand('<span style="color:var(--warn, #fbbf24)">ASR 服务未运行，已自动拉起…</span>' +
         '<div style="font-size:12px;color:#9ca3af;margin-top:3px">本次走兜底识别；启动日志见 ⚡命令 面板</div>');
     } else {
-      l2Cand('<span style="color:#f87171">⚠ ASR 服务不可用（' + esc(d.error || "未知") + '）</span>' +
+      l2Cand('<span style="color:var(--danger, #f87171)">ASR 服务不可用（' + esc(d.error || "未知") + '）</span>' +
         '<div style="font-size:12px;color:#9ca3af;margin-top:3px">本次走兜底识别；可在 ⚡命令 面板手动启动</div>');
     }
   };

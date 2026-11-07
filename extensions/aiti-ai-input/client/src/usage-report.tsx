@@ -30,7 +30,7 @@ const CARD: Record<string, string> = {
 };
 const KPI_LABEL: Record<string, string> = { fontSize: 11, color: "var(--text-muted,#767676)" };
 const KPI_VALUE: Record<string, string> = { fontSize: 17, fontWeight: 600, marginTop: 2 };
-const PALETTE = ["#2563eb", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#06b6d4"];
+const PALETTE = ["#2563eb", "#10b981", "var(--warn, #f59e0b)", "var(--danger, #ef4444)", "#8b5cf6", "#06b6d4"];
 const MODE_LABEL: Record<string, string> = { quick: "分句快识（quick）", final: "整段精修（final）", vad: "真流式会话（vad）", other: "其它/旧数据" };
 
 const mins = (s?: number) => (s || 0) / 60;
@@ -238,7 +238,7 @@ function renderUsageReport(face?: string) {
         <button onClick={() => void onReset()} style={{
           padding: "4px 10px", border: "1px solid var(--border,#e0e0e0)", borderRadius: 8,
           background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", cursor: "pointer", fontSize: 12,
-        }}>🗑 清空用量</button>
+        }}>清空用量</button>
         <span style={{ ...KPI_LABEL, fontSize: 11 }}>时长按 16k/16bit 估算；数据存 state 层，只保留 90 天</span>
       </div>
     </div>

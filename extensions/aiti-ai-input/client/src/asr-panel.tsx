@@ -195,8 +195,8 @@ function CloudProviderForm(o: {
         </div>
       )}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <button disabled={saving} onClick={onSave} style={ST.btn(ST.btnPrimary())}>{saving ? "保存中…" : "💾 保存"}</button>
-        <button disabled={testing} onClick={onTest} style={ST.btn()}>{testing ? "测试中…" : "🩺 测试连接"}</button>
+        <button disabled={saving} onClick={onSave} style={ST.btn(ST.btnPrimary())}>{saving ? "保存中…" : "保存"}</button>
+        <button disabled={testing} onClick={onTest} style={ST.btn()}>{testing ? "测试中…" : "测试连接"}</button>
         <button disabled={loading} onClick={onRefresh} style={ST.btn()} title="刷新整面板（配置/用量）">
           {loading ? "刷新中…" : "⟳ 刷新"}
         </button>
@@ -204,8 +204,8 @@ function CloudProviderForm(o: {
       {test ? (
         <div style={{ fontSize: 12, lineHeight: 1.6, color: test.ok ? "var(--accent,#2563eb)" : "var(--color-danger,#dc2626)" }}>
           {test.ok
-            ? `✓ 连通（${test.ms ?? "?"}ms）${test.text ? ` · 识别到：${test.text}` : ""}${test.note ? ` · ${test.note}` : ""}`
-            : `✕ ${test.error || "失败"}${test.ms !== undefined ? `（${test.ms}ms）` : ""}${test.hint ? ` · ${test.hint}` : ""}`}
+            ? `连通（${test.ms ?? "?"}ms）${test.text ? ` · 识别到：${test.text}` : ""}${test.note ? ` · ${test.note}` : ""}`
+            : `${test.error || "失败"}${test.ms !== undefined ? `（${test.ms}ms）` : ""}${test.hint ? ` · ${test.hint}` : ""}`}
         </div>
       ) : (
         <div style={{ ...ST.muted(), fontSize: 11.5 }}>测试＝服务端发 1s 静音音频走一遍当前引擎，不录音也能验证 key 与网络。</div>
@@ -272,7 +272,7 @@ function BuiltinEngineCard(o: {
       </div>
       <div style={{ display: "flex", gap: 8, marginTop: 2 }}>
         <button disabled={ctlBusy} onClick={() => onControl("start")} style={ST.btn(ST.btnPrimary())}>▶ 启动</button>
-        <button disabled={ctlBusy} onClick={() => onControl("stop")} style={ST.btn(ST.btnDanger())}>⏹ 停止</button>
+        <button disabled={ctlBusy} onClick={() => onControl("stop")} style={ST.btn(ST.btnDanger())}>停止</button>
         <button disabled={ctlBusy} onClick={() => onControl("restart")} style={ST.btn()}>⟳ 重启</button>
         <button disabled={loading} onClick={onRefresh} style={ST.btn()} title="刷新整面板（状态/配置/用量/热词）">
           {loading ? "刷新中…" : "⟳ 刷新"}
@@ -313,7 +313,7 @@ function HotwordsCard(o: {
           />
           <FeatRow editing={editing} feats={feats} setEditing={setEditing} setDraftCount={setDraftCount}
             fid="asr.hotwords.includeUser" label="提取包含 · 用户输入"
-            display={<>{f.asrHotwordsIncludeUser !== false ? "✓ 开" : "✕ 关"}</>}
+            display={<>{f.asrHotwordsIncludeUser !== false ? "开" : "关"}</>}
             editor={<>
               <button onClick={() => setFeature("asr.hotwords.includeUser", f.asrHotwordsIncludeUser !== false ? false : true)} style={ST.btn(ST.btnPrimary())}>{f.asrHotwordsIncludeUser !== false ? "关闭" : "开启"}</button>
               <button onClick={() => setEditing(null)} style={ST.btn()}>✕</button>
@@ -321,7 +321,7 @@ function HotwordsCard(o: {
           />
           <FeatRow editing={editing} feats={feats} setEditing={setEditing} setDraftCount={setDraftCount}
             fid="asr.hotwords.includeAi" label="提取包含 · AI 输入"
-            display={<>{f.asrHotwordsIncludeAi !== false ? "✓ 开" : "✕ 关"}</>}
+            display={<>{f.asrHotwordsIncludeAi !== false ? "开" : "关"}</>}
             editor={<>
               <button onClick={() => setFeature("asr.hotwords.includeAi", f.asrHotwordsIncludeAi !== false ? false : true)} style={ST.btn(ST.btnPrimary())}>{f.asrHotwordsIncludeAi !== false ? "关闭" : "开启"}</button>
               <button onClick={() => setEditing(null)} style={ST.btn()}>✕</button>
@@ -335,7 +335,7 @@ function HotwordsCard(o: {
           {eff && eff.count > 0 ? (
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <button onClick={() => setShowEff(!showEff)} style={{ ...ST.btn(), padding: "3px 10px", fontSize: 12 }}>{showEff ? "▾ 收起" : "▸ 查看详情"}</button>
-              <button onClick={copyEff} style={{ ...ST.btn(), padding: "3px 10px", fontSize: 12 }}>📋 复制</button>
+              <button onClick={copyEff} style={{ ...ST.btn(), padding: "3px 10px", fontSize: 12 }}>复制</button>
             </div>
           ) : null}
           {showEff && eff ? (
@@ -363,8 +363,8 @@ function UserHotwordsCard(o: {
         <textarea value={words} onChange={(e) => onWords(e.target.value)}
           placeholder={"例如：aiti-devtools 开放时间 hotword"} spellCheck={false} style={{ ...ST.input(), height: 70, minHeight: 48 }} />
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <button onClick={onSave} style={ST.btn(ST.btnPrimary())}>💾 保存</button>
-          <button onClick={onExport} style={ST.btn()}>⬇ 导出</button>
+          <button onClick={onSave} style={ST.btn(ST.btnPrimary())}>保存</button>
+          <button onClick={onExport} style={ST.btn()}>导出</button>
           <label style={{ ...ST.btn(), cursor: "pointer" }}>⬆ 导入
             <input type="file" accept=".txt,.json,text/plain,application/json" onChange={onImport} style={{ display: "none" }} />
           </label>
@@ -389,11 +389,11 @@ function CommonFeatCard(o: {
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
         <span style={{ fontWeight: 600, fontSize: 13 }}>通用配置（与引擎无关）</span>
         <button onClick={onEnv} title="ASR 环境变量（config.env：设备/精度/GPU 伪装等；仅自建服务读取）"
-          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted,#767676)", fontSize: 12, lineHeight: 1, padding: "2px 6px" }}>⚙️ 环境变量</button>
+          style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted,#767676)", fontSize: 12, lineHeight: 1, padding: "2px 6px" }}>环境变量</button>
       </div>
       <FeatRow editing={editing} feats={feats} setEditing={setEditing} setDraftCount={setDraftCount}
         fid="asr.streaming" label="实时流式识别（🎤 主链路）"
-        display={<>{f.asrStreaming !== false ? "✓ 开" : "✕ 关"}</>}
+        display={<>{f.asrStreaming !== false ? "开" : "关"}</>}
         editor={<>
           <button onClick={() => setFeature("asr.streaming", f.asrStreaming !== false ? false : true)} style={ST.btn(ST.btnPrimary())}>{f.asrStreaming !== false ? "关闭" : "开启"}</button>
           <button onClick={() => setEditing(null)} style={ST.btn()}>✕</button>
@@ -401,7 +401,7 @@ function CommonFeatCard(o: {
       />
       <FeatRow editing={editing} feats={feats} setEditing={setEditing} setDraftCount={setDraftCount}
         fid="asr.vad" label="VAD 自动断句（停顿自动切句）"
-        display={<>{f.asrVad !== false ? "✓ 开" : "✕ 关"}</>}
+        display={<>{f.asrVad !== false ? "开" : "关"}</>}
         editor={<>
           <button onClick={() => setFeature("asr.vad", f.asrVad !== false ? false : true)} style={ST.btn(ST.btnPrimary())}>{f.asrVad !== false ? "关闭" : "开启"}</button>
           <button onClick={() => setEditing(null)} style={ST.btn()}>✕</button>
@@ -409,7 +409,7 @@ function CommonFeatCard(o: {
       />
       <FeatRow editing={editing} feats={feats} setEditing={setEditing} setDraftCount={setDraftCount}
         fid="asr.split" label="伪实时分句（停顿即出句，逐句上屏）"
-        display={<>{f.asrSplit !== false ? "✓ 开" : "✕ 关"}</>}
+        display={<>{f.asrSplit !== false ? "开" : "关"}</>}
         editor={<>
           <button onClick={() => setFeature("asr.split", f.asrSplit !== false ? false : true)} style={ST.btn(ST.btnPrimary())}>{f.asrSplit !== false ? "关闭" : "开启"}</button>
           <button onClick={() => setEditing(null)} style={ST.btn()}>✕</button>
@@ -441,7 +441,7 @@ function CommonFeatCard(o: {
       />
       <FeatRow editing={editing} feats={feats} setEditing={setEditing} setDraftCount={setDraftCount}
         fid="asr.pass2" label="二次识别精修（2-pass，仅支持该能力的引擎生效）"
-        display={<>{f.asrPass2 !== false ? "✓ 开" : "✕ 关"}</>}
+        display={<>{f.asrPass2 !== false ? "开" : "关"}</>}
         editor={<>
           <button onClick={() => setFeature("asr.pass2", f.asrPass2 !== false ? false : true)} style={ST.btn(ST.btnPrimary())}>{f.asrPass2 !== false ? "关闭" : "开启"}</button>
           <button onClick={() => setEditing(null)} style={ST.btn()}>✕</button>
@@ -495,8 +495,8 @@ function UsageCard(o: {
         </div>
       )}
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <button onClick={onReport} style={ST.btn(ST.btnPrimary())}>📊 详细报表</button>
-        <button onClick={onReset} style={ST.btn()}>🗑 清空用量</button>
+        <button onClick={onReport} style={ST.btn(ST.btnPrimary())}>详细报表</button>
+        <button onClick={onReset} style={ST.btn()}>清空用量</button>
         <span style={{ ...ST.muted(), fontSize: 11 }}>时长按 16k/16bit 估算；真流式会话结束计 1 次</span>
       </div>
     </div>
@@ -926,7 +926,7 @@ function AsrEnvSlot({ onClose }: { onClose: () => void }) {
           </div>
         )}
         <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-          <button onClick={() => void onSave()} disabled={saving || loading} style={ST.btn(ST.btnPrimary())}>{saving ? "保存中…" : "💾 保存"}</button>
+          <button onClick={() => void onSave()} disabled={saving || loading} style={ST.btn(ST.btnPrimary())}>{saving ? "保存中…" : "保存"}</button>
           {msg ? <span style={{ fontSize: 12, color: msg.includes("失败") || msg.includes("非法") ? "var(--color-danger,#dc2626)" : "var(--accent,#2563eb)" }}>{msg}</span> : null}
         </div>
       </div>
