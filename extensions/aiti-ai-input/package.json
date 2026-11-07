@@ -48,10 +48,11 @@
   "contentHash": "29583e2f8231bfd2",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-ai-input.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-ai-input"
   },
   "homepage": "https://github.com/aiti-ai/aiti-ai-input#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-ai-input/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
