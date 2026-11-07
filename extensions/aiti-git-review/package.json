@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-git-review",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "type": "module",
   "description": "Git 代码审核扩展（Monaco diff 工作区 + 标注流水线）—— JSX + vite 构建 client bundle",
   "scripts": {
