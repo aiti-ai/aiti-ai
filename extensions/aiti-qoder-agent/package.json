@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-qoder-agent",
-  "version": "0.4.2",
+  "version": "0.4.4",
   "description": "Qoder CLI backend — stream-json driving + account credits via quota API (agentKey: qoder)",
   "soul": "别人走 ACP 大路，它偏要走签名的独木桥——因为风景在对面。",
   "scripts": {
