@@ -23,10 +23,11 @@
   "contentHash": "abab0275eca12c0f",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-onlyoffice.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-onlyoffice"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-onlyoffice#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-onlyoffice/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
