@@ -34,9 +34,9 @@ function useDialogOpen(): boolean {
 
 const STATE_BADGE: Record<string, { text: string; color: string; bg: string }> = {
   "available-new": { text: "可导入", color: "#1d4ed8", bg: "rgba(59,130,246,.14)" },
-  changed: { text: "有更新", color: "#b45309", bg: "rgba(245,158,11,.16)" },
-  unchanged: { text: "无变化", color: "#6b7280", bg: "rgba(107,114,128,.14)" },
-  "source-gone": { text: "源已消失", color: "#6b7280", bg: "rgba(107,114,128,.14)" },
+  changed: { text: "有更新", color: "#b45309", bg: "color-mix(in srgb, var(--warn, #f59e0b) 16%, transparent)" },
+  unchanged: { text: "无变化", color: "var(--text-muted, #6b7280)", bg: "rgba(107,114,128,.14)" },
+  "source-gone": { text: "源已消失", color: "var(--text-muted, #6b7280)", bg: "rgba(107,114,128,.14)" },
 };
 
 /** 勾选默认值：新/有更新全选，无变化不选。 */
@@ -152,7 +152,7 @@ export function ImportDialogSlot() {
         <div style={{ flex: 1, minHeight: 0, overflowY: "auto", display: "flex", flexDirection: "column", gap: 8, paddingRight: 2 }}>
           {error && <div style={{ fontSize: 12, color: "#dc2626" }}>扫描失败：{error}</div>}
           {result && (
-            <div style={{ fontSize: 12, color: result.ok ? "#059669" : "#dc2626", padding: "6px 8px", borderRadius: 6, background: result.ok ? "rgba(16,185,129,.1)" : "rgba(220,38,38,.08)" }}>
+            <div style={{ fontSize: 12, color: result.ok ? "#059669" : "#dc2626", padding: "6px 8px", borderRadius: 6, background: result.ok ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 10%, transparent)" : "rgba(220,38,38,.08)" }}>
               {result.text}
             </div>
           )}
@@ -251,7 +251,7 @@ function DraftRow({ s, d, checked, toggle }: { s: any; d: any; checked: Set<stri
           {showModels ? "▾" : "▸"} 👁 {d.modelsCount} 模型
         </button>
         {d.conflict === "override" && (
-          <span style={{ fontSize: 11, color: "#b45309", background: "rgba(245,158,11,.14)", padding: "1px 6px", borderRadius: 999 }} title={"将覆盖字段：" + d.overrideFields.join(", ")}>
+          <span style={{ fontSize: 11, color: "#b45309", background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", padding: "1px 6px", borderRadius: 999 }} title={"将覆盖字段：" + d.overrideFields.join(", ")}>
             覆盖 {d.overrideFields.join("/")}
           </span>
         )}
