@@ -68,13 +68,19 @@ function RocketIcon({ size = 14 }: { size?: number }) {
 /** 重返快速上手页（footer 按钮 / 引导卡按钮 / 应用中心卡共用）。
  *  cwd 解析链见 quickstart-logic.resolveQuickstartCwd；导航走宿主服务，失败静默（toast 兜底）。 */
 export async function openQuickstart(): Promise<void> {
+  let sessionCwd: string | null = null;
+  try {
+    // 会话视图里点「重返」→ 落当前项目的快速上手页（快照同步读，session 摘要含 cwd）
+    const sessSvc = extSvc<{ get: () => { session?: { cwd?: string } | null } | null }>("pi-web.session");
+    sessionCwd = sessSvc?.get?.()?.session?.cwd ?? null;
+  } catch { /* ignore */ }
   let home: string | null = null;
   try {
     const homeSvc = extSvc<{ ensure: () => Promise<string | null> }>("pi-web.home");
     if (homeSvc?.ensure) home = await homeSvc.ensure();
   } catch { /* ignore */ }
   const search = typeof window !== "undefined" ? window.location.search : "";
-  const cwd = resolveQuickstartCwd(search, home);
+  const cwd = resolveQuickstartCwd(search, home, sessionCwd);
   if (!cwd) {
     try { extSvc<{ show: (msg: string) => void }>("pi-web.toast")?.show?.(t("qs.toast.noCwd")); } catch { /* ignore */ }
     return;
