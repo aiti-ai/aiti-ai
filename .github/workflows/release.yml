@@ -125,8 +125,8 @@ jobs:
       matrix:
         include:
           - { os: linux, arch: x64, runner: ubuntu-latest }
-          - { os: darwin, arch: x64, runner: macos-13 }   # Intel
-          - { os: darwin, arch: arm64, runner: macos-14 } # Apple Silicon
+          - { os: darwin, arch: x64, runner: macos-13 }     # Intel
+          - { os: darwin, arch: arm64, runner: macos-latest } # Apple Silicon（macos-14 标签分配失败过）
           - { os: win32, arch: x64, runner: windows-latest }
     runs-on: ${{ matrix.runner }}
     steps:

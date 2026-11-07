@@ -96,7 +96,9 @@ if (FROM_TGZ && existsSync(abs(FROM_TGZ))) {
 if (!existsSync(tgzPath)) throw new Error(`npm tgz 缺失: ${tgzPath}`);
 
 // ---- 2) 解包 → app/（npm pack 顶层目录固定 package/）+ 注入 lock 供闭包 npm ci ----
-run(`tar xzf ${JSON.stringify(tgzPath)} -C ${JSON.stringify(stage)}`, stage, "解包 npm tgz");
+// windows 显式用 System32 bsdtar：PATH 里 Git Bash 的 GNU tar 把 "D:\..." 当远程主机（host:path 语义）
+const TAR = OS === "win32" ? `${process.env.SystemRoot || "C:\\Windows"}\\System32\\tar.exe` : "tar";
+run(`${TAR} xzf ${JSON.stringify(tgzPath)} -C ${JSON.stringify(stage)}`, stage, "解包 npm tgz");
 const appDir = join(stage, "aiti-web");
 cpSync(join(stage, "package"), appDir, { recursive: true });
 rmSync(join(stage, "package"), { recursive: true, force: true });
