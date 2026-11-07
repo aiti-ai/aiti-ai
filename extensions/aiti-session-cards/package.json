@@ -16,10 +16,11 @@
   "contentHash": "f05bb2abfe922903",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-session-cards.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-session-cards"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-session-cards#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-session-cards/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
