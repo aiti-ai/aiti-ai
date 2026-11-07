@@ -34,7 +34,9 @@
     "package.json",
     "!extensions/_shared",
     "!extensions/_shared/**",
-    "package-lock.json"
+    "package-lock.json",
+    "!extensions/.local-pkgs",
+    "!extensions/.build-root"
   ],
   "scripts": {
     "postinstall": "node bin/prepare-terminal.js && patch-package",
