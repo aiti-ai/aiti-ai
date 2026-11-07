@@ -7,7 +7,7 @@
  *
  *   node tools/lazy-loading-metrics.mjs [baseUrl] [timeoutMs]
  *
- * 默认 baseUrl = http://127.0.0.1:3001/dev（dev 实例）。生产传 https://example.com。
+ * 默认 baseUrl = http://127.0.0.1:3001/dev（dev 实例）。生产传 https://pi.example.com。
  * 依赖：无（Node 内置 fetch；页面侧注入采集脚本经 CDP 不可用时降级为 bundle 字节求和）。
  */
 const base = (process.argv[2] || "http://127.0.0.1:3001/dev").replace(/\/$/, "");
