@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-agent-manager",
-  "version": "0.2.4",
+  "version": "0.2.7",
   "description": "统一 Agent 管理界面 —— 聚合 6 家外部 agent 登录态 + 登录操作代理 + 多账号档（备份/别名/一键切换/自动保险）",
   "soul": "六家 agent 登录态，一屏看尽；多账号穿换，一键切换。",
   "scripts": {
@@ -15,5 +15,6 @@
   "dependencies": {
     "@aiti-ai/ext-shared": "^0.1.3"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "contentHash": "2fd39f7d710ca224"
 }
