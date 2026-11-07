@@ -8,7 +8,7 @@
  *
  * 用法：
  *   node bin/aiti-bridge.mjs                  # 默认 127.0.0.1:8777，资产取仓库 dist/
- *   node bin/aiti-bridge.mjs --port 20341 --host 0.0.0.0 --assets /path/to/assets
+ *   node bin/aiti-bridge.mjs --port 3002 --host 0.0.0.0 --assets /path/to/assets
  *   node bin/aiti-bridge.mjs --assets-extra /path/to/client-dir   # 追加挂载（如 aiti-client-opencode.js）
  * 环境变量：AITI_BRIDGE_PORT / AITI_BRIDGE_HOST / AITI_BRIDGE_DATA_DIR（消息 session 存储）
  * stdio shim 注册：--register-shim [targets] / --unregister-shim（固定名 aiti 条目，URL 走 env AITI_BRIDGE_URL）
@@ -19,12 +19,13 @@ const { createBridge, startHttpServer, registerMcp, unregisterMcp, registerAitiS
   const here0 = dirname(fileURLToPath(import.meta.url));
   const coreDir = resolve(here0, '..', '..', 'aiti-devtools-core');
   const srcTs = resolve(coreDir, 'src', 'index.ts');
-  return import(here0.includes('node_modules') || !existsSync(srcTs) ? resolve(coreDir, 'dist', 'index.js') : srcTs);
+  // Windows 必须走 file:// URL（裸 D:\... 绝对路径会被 ESM 当作 "d:" scheme 拒收）
+  return import(pathToFileURL(here0.includes('node_modules') || !existsSync(srcTs) ? resolve(coreDir, 'dist', 'index.js') : srcTs).href);
 })();
 import { createServer } from 'node:http';
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { homedir } from 'node:os';
 
 const root = resolve(fileURLToPath(new URL('..', import.meta.url))); // packages/aiti-bridge

@@ -26,7 +26,7 @@ function sandbox() {
 function run(args, home, expectCode = 0) {
   let out = "", code = 0;
   try {
-    out = execFileSync("node", [REGISTER, ...args], { env: { ...process.env, HOME: home }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    out = execFileSync("node", [REGISTER, ...args], { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); // USERPROFILE 必须同沙箱——Windows 的 os.homedir() 只读它（2026-11-07 实证：漏了会写真家目录）
   } catch (e) {
     out = (e.stdout || "") + (e.stderr || "");
     code = e.status;

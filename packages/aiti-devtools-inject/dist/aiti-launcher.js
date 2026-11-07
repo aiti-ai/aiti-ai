@@ -1,5 +1,4 @@
 /* aiti-devtools launcher · 单文件注入版（构建产物，勿手改）*/
-"use strict";
 (() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropSymbols = Object.getOwnPropertySymbols;
@@ -22,7 +21,7 @@
   var VERSION = "0.2.1";
   var DEFAULTS = {
     endpoint: "",
-    // AI 桥前缀（aiUrl 为空时的后备，如 'http://localhost:30141/api/dbg'）
+    // AI 桥前缀（aiUrl 为空时的后备，如 'http://localhost:3000/api/dbg'）
     sessionId: "",
     dbgToken: "",
     aiUrl: "",
@@ -618,8 +617,7 @@
   }
 
   // dbg:dbg-client
-  var MINI_DBG_CLIENT = `"use strict";
-(() => {
+  var MINI_DBG_CLIENT = `(() => {
   var __defProp = Object.defineProperty;
   var __getOwnPropSymbols = Object.getOwnPropertySymbols;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
@@ -6319,7 +6317,7 @@
           if (e.key === "Enter") send.click();
         });
       } else {
-        let refreshAskSend2 = function() {
+        let refreshAskSend = function() {
           var hasSel = sel.custom || (multiple ? Object.keys(sel.idxs).length > 0 : sel.v !== null);
           var hasCmt = !!(commentInp && commentInp.value.trim());
           if (sendBtn) sendBtn.disabled = !(hasSel || hasCmt);
@@ -6328,7 +6326,6 @@
             if (multiple) footSend.textContent = "✅ 发送所选（" + Object.keys(sel.idxs).length + "）";
           }
         };
-        var refreshAskSend = refreshAskSend2;
         var optBtns = optWrap.querySelectorAll(".dbg-ask-opt");
         Array.prototype.forEach.call(optBtns, function(o) {
           o.addEventListener("click", function() {
@@ -6346,7 +6343,7 @@
                 } catch (e) {
                 }
               }
-              refreshAskSend2();
+              refreshAskSend();
               return;
             }
             sel.custom = false;
@@ -6368,7 +6365,7 @@
                 x.classList.toggle("dbg-on", x === o);
               });
             }
-            refreshAskSend2();
+            refreshAskSend();
             if (!(kind === "choose" && multiple)) {
               setTimeout(finishAskCustom, 0);
             }
@@ -6376,14 +6373,14 @@
         });
         if (sendBtn) sendBtn.addEventListener("click", finishAskCustom);
         if (commentInp) {
-          commentInp.addEventListener("input", refreshAskSend2);
+          commentInp.addEventListener("input", refreshAskSend);
           commentInp.addEventListener("keydown", function(e) {
             if (e.key !== "Enter") return;
             if (sendBtn && !sendBtn.disabled) sendBtn.click();
             else if (footSend) footSend.click();
           });
         }
-        refreshAskSend2();
+        refreshAskSend();
       }
       body.appendChild(ctl);
       if (it.rejectable !== false && kind !== "presence") {

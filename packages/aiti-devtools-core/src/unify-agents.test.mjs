@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const SANDBOX = mkdtempSync(join(tmpdir(), "aiti-uni-"));
-process.env.HOME = SANDBOX; // 必须在 import 之前
+process.env.HOME = SANDBOX; process.env.USERPROFILE = SANDBOX; // 必须在 import 之前（Windows homedir() 读 USERPROFILE）
 delete process.env.AITI_SHIM_PATH;
 
 const { registerAitiShim, autoRegisterAitiShim, resolveShimPathAuto, registerMcp } = await import("./mcp-config.ts");
@@ -65,14 +65,14 @@ test("autoRegisterAitiShim：AITI_SHIM_PATH 指向假 shim → 注册成功且�
 test("autoRegisterAitiShim：无 env 且候选不存在 → 返回 null 不抛错、零改写", () => {
   mk(PI_CFG, JSON.stringify({ mcpServers: { keep: { command: "x" } } }, null, 2));
   const before = readFileSync(PI_CFG, "utf8");
-  const saved = process.env.HOME;
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
   const isolated = mkdtempSync(join(tmpdir(), "aiti-uni-noshim-"));
-  process.env.HOME = isolated; // 让"常见仓库位置"候选也落空
+  process.env.HOME = process.env.USERPROFILE = isolated; // 让"常见仓库位置"候选也落空（Windows homedir() 读 USERPROFILE）
   try {
     const r = autoRegisterAitiShim({ targets: ["pi"], log: QUIET });
     assert.equal(r, null, "无 shim → null");
     assert.equal(readFileSync(PI_CFG, "utf8"), before, "原配置零改写");
-  } finally { process.env.HOME = saved; }
+  } finally { process.env.HOME = saved.HOME; process.env.USERPROFILE = saved.USERPROFILE; }
 });
 
 test("autoRegisterAitiShim：幂等（二次调用零改写）+ 配置损坏时不抛错", () => {
