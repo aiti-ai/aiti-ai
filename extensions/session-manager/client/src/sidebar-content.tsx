@@ -65,6 +65,9 @@ const DOCK_STACK_SERVICE = "aiti-float.dockstack";
 /** 应用中心（aiti-app-center）：DockStack 全折叠空白的填充物（docs/aiti-app-center-plan.md）。
  *  软依赖——服务缺席（扩展禁用/旧部署）时空白照旧，其余零影响。 */
 const APP_CENTER_SERVICE = "aiti-app-center.api";
+/** 快速上手（aiti-quickstart）：全折叠空白的引导卡（filler 组合上半，应用中心在下）。
+ *  软依赖同 app-center——缺席/禁用/用户 ✕ 关闭（renderQuickstart 返回 null）→ 回退现状。 */
+const QUICKSTART_SERVICE = "aiti-quickstart.api";
 
 /** aiti-ai-schedule 面板 itemKey（schedule-app SCHED_KEY 同源契约）。本地常量而非跨扩展
  *  import：只为一个字符串内联整个 schedule-app 模块图不值得（DirectoryBrowser 先例是
@@ -150,11 +153,12 @@ export function SidebarContentDock(props: Record<string, any>) {
   /* ── DockStack 服务（aiti-float；上/下线事件驱动重渲染，缺席降级直排 §3.8）── */
   const [, force] = useState(0);
   useEffect(() => {
-    const off = onExtServiceChange((key, phase) => { if (key === DOCK_STACK_SERVICE || key === APP_CENTER_SERVICE) force((v) => v + 1); });
+    const off = onExtServiceChange((key, phase) => { if (key === DOCK_STACK_SERVICE || key === APP_CENTER_SERVICE || key === QUICKSTART_SERVICE) force((v) => v + 1); });
     return off;
   }, []);
   const stackApi = getExtService<{ DockStack: (p: any) => unknown }>(DOCK_STACK_SERVICE);
   const appCenterApi = getExtService<{ renderAppCenter: () => unknown }>(APP_CENTER_SERVICE);
+  const quickstartApi = getExtService<{ renderQuickstart: () => unknown }>(QUICKSTART_SERVICE);
 
   /* ── 头部工具条状态 ── */
   const [searchOpen, setSearchOpen] = useState(false);
@@ -347,6 +351,8 @@ export function SidebarContentDock(props: Record<string, any>) {
   useEffect(() => { void ensureMaterialized("aiti-folder"); }, []);
   // 应用中心（懒扩展）：挂载即物化——DockStack 全折叠空白需要它随时可渲染（bundle 纯 UI 无重依赖）
   useEffect(() => { void ensureMaterialized("aiti-app-center"); }, []);
+  // 快速上手（懒扩展）：同上——引导卡随时可渲染（缺席/关闭态 renderQuickstart 返回 null，filler 自然回退）
+  useEffect(() => { void ensureMaterialized("aiti-quickstart"); }, []);
   // [开页方案 §1 F4，2026-09-12] 子代理舰队 / 定时任务区块不再在此处物化：
   // 二者的 sidebarExplorerDock 声明已由宿主登记为 manifest 静态条目，DockStack 会渲染
   // 「静态壳」（标题+折叠态），用户展开/点击时才 ctx.ensureMaterialized —— 开页零拉取
@@ -569,8 +575,8 @@ export function SidebarContentDock(props: Record<string, any>) {
               onClick={() => { void doRefresh(); }}
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center",
-                background: refreshState === "done" ? "rgba(74,222,128,0.18)" : "var(--bg-hover)",
-                border: `1px solid ${refreshState === "done" ? "rgba(74,222,128,0.4)" : "var(--border)"}`,
+                background: refreshState === "done" ? "color-mix(in srgb, var(--ok, #4ade80) 18%, transparent)" : "var(--bg-hover)",
+                border: `1px solid ${refreshState === "done" ? "color-mix(in srgb, var(--ok, #4ade80) 40%, transparent)" : "var(--border)"}`,
                 color: refreshState === "done" ? "var(--ok, #4ade80)" : "var(--text-muted)",
                 cursor: "pointer", width: 32, height: 32, borderRadius: 7, padding: 0, flexShrink: 0,
                 transition: "background 0.3s, color 0.3s, border-color 0.3s",
@@ -636,13 +642,22 @@ export function SidebarContentDock(props: Record<string, any>) {
       </div>
 
       {/* DockStack：统一区块栈（aiti-float 服务；缺席降级 = 常驻区块直排 + slot 原样渲染）。
-          slotExtra：文件夹 faces（aiti-folder 动态注册）所需宿主回调/会话 cwd 透传 */}
+          slotExtra：文件夹 faces（aiti-folder 动态注册）所需宿主回调/会话 cwd 透传。
+          filler 组合（v3 快速上手）：引导卡在上（flexShrink 0）、应用中心在下（flex:1 内滚）——
+          spacer 为 flex column，二者同屏共存；各自缺席/关闭态自然回退（双缺席 = 现状空白）。 */}
       {stackApi ? (
         <stackApi.DockStack
           blocks={blocks}
           dockSlot="sidebarExplorerDock"
           staticShell={StaticDockShell}
-          filler={appCenterApi ? () => appCenterApi.renderAppCenter() : undefined}
+          filler={(appCenterApi || quickstartApi)
+            ? () => (
+                <>
+                  {quickstartApi ? quickstartApi.renderQuickstart() : null}
+                  {appCenterApi ? appCenterApi.renderAppCenter() : null}
+                </>
+              )
+            : undefined}
           slotExtra={{
             cwd: cwdState,
             // fileName/folderName 兜底（2026-09-15 修复）：文件夹树回调只给路径（aiti-folder
