@@ -11,10 +11,11 @@
   "contentHash": "b129acab81e97a46",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-ctx-meter.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-ctx-meter"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-ctx-meter#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-ctx-meter/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
