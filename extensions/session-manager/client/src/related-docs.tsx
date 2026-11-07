@@ -12,7 +12,7 @@
 import { useState, useEffect } from "react";
 import { t, openFile } from "./host-shim";
 import { fetchRelatedDocs } from "./store";
-import { ensureReadability } from "./helpers";
+import { ensureReadability, SIc } from "./helpers";
 
 const relatedState = {
   open: null as null | { sessionId: string; title: string },
@@ -105,7 +105,7 @@ export function RelatedDocsHost() {
                 onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-hover)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
               >
-                <span style={{ flexShrink: 0, fontSize: 13 }}>📄</span>
+                <span style={{ flexShrink: 0, display: "flex" }}><SIc name="fileText" size={13} /></span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
                   <div style={{ fontSize: 10, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{String(d.relpath || "")}</div>

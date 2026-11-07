@@ -16,7 +16,7 @@ import { createPortal } from "react-dom";
 import { t, apiUrl } from "./host-shim";
 import { store, useStore, displayCwd, moveBatchSession, archiveBatchSession, markPendingRemoval, clearPendingRemoval, ensureTags, togglePinProject, movePinnedProject, unpinProject } from "./store";
 import { orderProjects, pinnedProjectKeys } from "./sidebar/pure";
-import { ghostBtn, miniBtn, ensureReadability } from "./helpers";
+import { ghostBtn, miniBtn, ensureReadability, SIc } from "./helpers";
 import { MoveCwdPicker } from "./move-cwd-picker";
 
 /** 与核心 lib/workspace-hide.ts 共享的隐藏列表契约（两端硬编码同一字符串）。 */
@@ -233,7 +233,7 @@ export function ManageDialog(props: WorkspaceManageProps & { onCloseDialog: () =
                   <button type="button" disabled={pinning}
                     onClick={withPinBusy(() => togglePinProject(p.key))}
                     style={{ ...(miniBtn as React.CSSProperties), color: isPinned ? "var(--accent)" : "var(--text-dim)" }}
-                    title={isPinned ? t("sm.unpinProject") : t("sm.pinProject")}>📌</button>
+                    title={isPinned ? t("sm.unpinProject") : t("sm.pinProject")}><SIc name="pin" size={12} /></button>
                   {isPinned && (
                     <>
                       <button type="button" disabled={pinning || pinAt <= 0}
