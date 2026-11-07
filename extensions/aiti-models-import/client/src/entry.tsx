@@ -30,6 +30,12 @@ export default function register(ctx: Record<string, unknown>) {
   ctx.registerItems?.("toolbar", [{ id: "aiti-models-import-open", render: ImportButton, meta: { label: "导入模型配置", icon: "icons/import.svg" } }]);
   ctx.registerItems?.("dialogs", [{ id: "aiti-models-import-dialog", render: ImportDialogSlot, meta: { label: "模型配置导入" } }]);
 
+  // 跨扩展打开服务（quickstart 引导卡「从 Agent 导入…」消费；ext-services 拍板正路）。
+  // 消费方探测式软依赖：本扩展缺席/旧版无服务 → 对方不渲染入口。
+  try {
+    ctx.registerExtService?.("aiti-models-import.open", { open: () => setDialogOpen(true) });
+  } catch { /* ignore */ }
+
   // 首启判定：每页面加载至多一次 /status；firstRun 且有可用来源 → 自动弹（关过/导过即不再弹）
   try {
     const base = typeof (ctx as any).apiUrl === "function" ? (ctx as any).apiUrl("/api/extensions/aiti-models-import/status") : "/api/extensions/aiti-models-import/status";
