@@ -18,10 +18,11 @@
   "contentHash": "3b651c7201060f1b",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-word-docx-preview.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-word-docx-preview"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-word-docx-preview#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-word-docx-preview/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
