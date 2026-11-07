@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-extman",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "aiti 扩展管理器（pi-web 扩展）",
   "homepage": "https://aiti.pw/extensions/aiti-extman.html",
   "dependencies": {
@@ -16,5 +16,12 @@
   "soul": "管扩展的，也该是个扩展。",
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "2b0e00b1e8d7f2d5"
+  "contentHash": "5eba665f2b43045b",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-extman.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-extman/issues"
+  }
 }
