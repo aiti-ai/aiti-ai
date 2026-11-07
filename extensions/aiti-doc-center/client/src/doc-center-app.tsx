@@ -71,7 +71,7 @@ function sortTags<T extends { source?: string }>(tags: T[] | undefined): T[] {
   return (tags ?? []).slice().sort((a, b) => (SOURCE_TIER[a.source ?? "path"] ?? 4) - (SOURCE_TIER[b.source ?? "path"] ?? 4));
 }
 const SOURCE_COLORS: Record<string, string> = {
-  frontmatter: "#10b981", inline: "#a78bfa", path: "#64748b", ui: "#3b82f6", db: "#f59e0b", plan: "#f59e0b", session: "#06b6d4",
+  frontmatter: "#10b981", inline: "#a78bfa", path: "#64748b", ui: "#3b82f6", db: "var(--warn, #f59e0b)", plan: "var(--warn, #f59e0b)", session: "#06b6d4",
 };
 const chipStyle = (color: string): React.CSSProperties => ({
   fontSize: 10, padding: "1px 6px", borderRadius: 5, cursor: "pointer",
@@ -98,9 +98,9 @@ function Snippet({ text }: { text?: string }) {
 /** 方案状态（§2.2）：返回 [后缀, 徽标文案, 颜色]；未标注返回 null。 */
 function planStatusOf(tags: { key: string }[], planTag: string): [string, string, string] | null {
   for (const t of tags ?? []) {
-    if (t.key === planTag + "/已实施") return ["已实施", "✅ 已实施", "#10b981"];
-    if (t.key === planTag + "/评审中") return ["评审中", "📋 评审中", "#f59e0b"];
-    if (t.key === planTag + "/已过时") return ["已过时", "🗄 已过时", "#8a8a8a"];
+    if (t.key === planTag + "/已实施") return ["已实施", "已实施", "#10b981"];
+    if (t.key === planTag + "/评审中") return ["评审中", "评审中", "var(--warn, #f59e0b)"];
+    if (t.key === planTag + "/已过时") return ["已过时", "已过时", "#8a8a8a"];
   }
   return null;
 }
@@ -138,7 +138,7 @@ function TagTreePanel({ tree, pickedSet, onPick, planTag, dirMode, onRename }: {
       const selected = pickedSet.has(n.key);
       const plan = isPlan(n.key);
       const sessionSrc = n.src === "session";
-      const color = plan ? "#f59e0b" : sessionSrc ? "#06b6d4" : selected ? "var(--text)" : "var(--text-muted)";
+      const color = plan ? "var(--warn, #f59e0b)" : sessionSrc ? "#06b6d4" : selected ? "var(--text)" : "var(--text-muted)";
       return (
         <div key={n.key}>
           <div onClick={() => onPick(dirMode ? n.key : selected ? "" : n.key)}
@@ -152,7 +152,7 @@ function TagTreePanel({ tree, pickedSet, onPick, planTag, dirMode, onRename }: {
                   <Ic size={11} paths={ICONS.chevR} /></span>
               : <span style={{ width: 11, flexShrink: 0 }} />}
             <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {depth === 0 && plan ? "📋 " : sessionSrc ? "◎ " : ""}{dirMode ? n.key : n.display}
+              {depth === 0 && plan ? "◫ " : sessionSrc ? "◎ " : ""}{dirMode ? n.key : n.display}
             </span>
             <span style={{ marginLeft: "auto", fontSize: 10, opacity: 0.7, flexShrink: 0 }}>{n.count}</span>
             {!dirMode && onRename && (
@@ -180,7 +180,7 @@ function TagCloud({ tags, pickedSet, onToggle, query, limit = 32 }: {
       {shown.map((f: any) => {
         const on = pickedSet.has(f.key);
         const size = 10 + Math.min(7, Math.round(Math.sqrt(f.count) / 1.6));
-        const color = on ? "#6366f1" : f.src === "plan" ? "#f59e0b" : f.src === "session" ? "#06b6d4" : "var(--text)";
+        const color = on ? "#6366f1" : f.src === "plan" ? "var(--warn, #f59e0b)" : f.src === "session" ? "#06b6d4" : "var(--text)";
         return (
           <span key={f.key} title={f.key + " · " + f.count + " 篇"} onClick={() => onToggle(f.key)}
             style={{ fontSize: size, lineHeight: 1.35, cursor: "pointer", color,
@@ -381,7 +381,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
   const secHead: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.4, margin: "10px 0 4px" };
   const listRow: React.CSSProperties = { border: "1px solid var(--border)", borderRadius: 8, padding: "7px 10px", cursor: "pointer", background: "transparent" };
   const viewTabs: { id: View; label: string }[] = [
-    { id: "tags", label: "🏷 tags" }, { id: "dir", label: "📁 目录" }, { id: "time", label: "🕒 时间" }, { id: "session", label: "🧵 会话" },
+    { id: "tags", label: "tags" }, { id: "dir", label: "目录" }, { id: "time", label: "时间" }, { id: "session", label: "会话" },
   ];
   // workspace 过滤 + 收集控件（浮窗在标题栏、embedded 在搜索行复用同一份——v3.1 三层工具条收敛）
   const wsControls = (
@@ -399,7 +399,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
             cursor: "pointer", border: "1px solid " + (under ? "#6366f1" : "var(--border)"),
             background: under ? "rgba(99,102,241,.14)" : "transparent", color: under ? "#6366f1" : "var(--text-muted)",
             maxWidth: 180, whiteSpace: "nowrap" }}>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>📁 {under ? under.split("/").filter(Boolean).pop() : "全部"}</span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{under ? under.split("/").filter(Boolean).pop() : "全部"}</span>
         </button>
       </span>
       {scanP?.running && (
@@ -514,7 +514,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
                 background: view === "dir" ? (dirFilter ? "rgba(99,102,241,.14)" : "transparent") : (tagSel.length ? "rgba(99,102,241,.14)" : "transparent"),
                 color: view === "dir" ? (dirFilter ? "#6366f1" : "var(--text-muted)") : (tagSel.length ? "#6366f1" : "var(--text-muted)"),
                 whiteSpace: "nowrap" }}>
-              {view === "dir" ? "📁 目录" : "🏷 标签"}{view === "dir" ? (dirFilter ? " (1)" : "") : (tagSel.length ? ` (${tagSel.length})` : "")} ▾
+              {view === "dir" ? "目录" : "标签"}{view === "dir" ? (dirFilter ? " (1)" : "") : (tagSel.length ? ` (${tagSel.length})` : "")} ▾
             </button>
           </span>
         )}
@@ -544,11 +544,11 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
                 ))}
                 {dirFilter && (
                   <span title={dirFilter} style={{ fontSize: 10.5, padding: "1px 6px", borderRadius: 5, background: "#6366f122", color: "#6366f1", display: "inline-flex", alignItems: "center", gap: 3, maxWidth: "100%", minWidth: 0 }}>
-                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>📁 {dirFilter}</span>
+                    <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dirFilter}</span>
                     <span onClick={() => setDirFilter("")} title="移除" style={{ cursor: "pointer", fontWeight: 700, flexShrink: 0 }}>×</span>
                   </span>
                 )}
-                <span onClick={() => { setTagSel([]); setDirFilter(""); }} title="清除全部过滤" style={{ fontSize: 10.5, color: "#3b82f6", cursor: "pointer", marginLeft: "auto", flexShrink: 0 }}>✕ 清除</span>
+                <span onClick={() => { setTagSel([]); setDirFilter(""); }} title="清除全部过滤" style={{ fontSize: 10.5, color: "#3b82f6", cursor: "pointer", marginLeft: "auto", flexShrink: 0 }}>清除</span>
               </div>
             )}
             {view === "tags" && flatTags.length > 0 && (
@@ -654,7 +654,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
                 <button title={(sel.sessions[0].archived ? "打开创建/触达此文档的会话（已归档：在 All Sessions 归档查看器打开）" : "打开创建/触达此文档的会话（最近：" + (sel.sessions[0].name || String(sel.sessions[0].session_id).slice(0, 8)) + (sel.sessions.length > 1 ? "，共 " + sel.sessions.length + " 个，见下方关联会话）" : "）"))}
                   onClick={() => openSessionById(String(sel.sessions[0].session_id), !!sel.sessions[0].archived)}
                   style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, cursor: "pointer", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)" }}>
-                  <Ic size={11} paths={ICONS.chat} />{sel.sessions[0].archived ? "📦 会话" : "会话"}
+                  <Ic size={11} paths={ICONS.chat} />{sel.sessions[0].archived ? "会话" : "会话"}
                 </button>
               )}
             </div>
@@ -809,7 +809,7 @@ function WsMenu({ currentCwd, under, onPick, onClose }: { currentCwd: string; un
       {currentCwd && row(currentCwd, "● 当前：" + base(currentCwd))}
       {pinned.length > 0 && <div style={secHead}>已选</div>}
       {pinned.map((p) => row(p, base(p), { unpin: true }))}
-      {tracked.length > 0 && <div style={secHead}>🧲 git-trace 追踪仓库</div>}
+      {tracked.length > 0 && <div style={secHead}>git-trace 追踪仓库</div>}
       {tracked.slice(0, 12).map((w) => row(w.path, base(w.path), { docs: w.docs, tracked: true }))}
       {tracked.length > 12 && <div style={{ padding: "4px 10px", fontSize: 10.5, color: "var(--text-muted)" }}>…其余 {tracked.length - 12} 个（输入框过滤即将支持）</div>}
       {showAll ? others.map((w) => row(w.path, base(w.path), { docs: w.docs })).concat(
@@ -972,7 +972,7 @@ export function DockDocs() {
   const docked = useGate(DOCS_KEY, { dock: "right-panel" });
   if (!docked) return null;
   return (
-    <DockBody itemKey={DOCS_KEY} zone="right-panel" title="📚 文档" chrome="tab">
+    <DockBody itemKey={DOCS_KEY} zone="right-panel" title="文档" chrome="tab">
       <DocCenterPageSlot embedded />
     </DockBody>
   );
