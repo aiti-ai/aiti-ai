@@ -288,7 +288,7 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
           {btn("delete", <SIc name="trash" size={15} />, t("sm.archiveDelete") ?? "直接删除", ensureReadability("var(--danger, #f87171)"))}
         </div>
         {err && (
-          <div style={{ marginTop: 10, padding: "6px 10px", borderRadius: 6, background: "rgba(239,68,68,0.08)", color: ensureReadability("var(--danger, #f87171)"), fontSize: 11 }}>{err}</div>
+          <div style={{ marginTop: 10, padding: "6px 10px", borderRadius: 6, background: "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)", color: ensureReadability("var(--danger, #f87171)"), fontSize: 11 }}>{err}</div>
         )}
       </div>
     </div>
@@ -411,7 +411,7 @@ function renderExtViewer(props: any, face?: string) {
           </span>
         </div>
         {openErr && (
-          <div style={{ padding: "6px 12px", background: "rgba(239,68,68,0.08)", borderBottom: "1px solid var(--border)", color: ensureReadability("var(--danger, #f87171)"), fontSize: 11 }}>
+          <div style={{ padding: "6px 12px", background: "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)", borderBottom: "1px solid var(--border)", color: ensureReadability("var(--danger, #f87171)"), fontSize: 11 }}>
             {openErr}
           </div>
         )}
@@ -1130,7 +1130,7 @@ export function SessionsPanel(props: any) {
       </div>
     </div>
   );
-  const HEAT_COLORS = ["var(--bg-hover)", "rgba(16,185,129,0.25)", "rgba(16,185,129,0.45)", "rgba(16,185,129,0.7)", "#10b981"];
+  const HEAT_COLORS = ["var(--bg-hover)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 25%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 45%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 70%, transparent)", "var(--ok, #10b981)"];
   const heatmapGrid = (points: any[], onPick: (date: string) => void) => (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(26, 1fr)", gap: 2, maxHeight: 120, overflowY: "auto" }}>
       {points.map((p) => (
@@ -1141,7 +1141,7 @@ export function SessionsPanel(props: any) {
           style={{
             aspectRatio: "1", borderRadius: 2, cursor: p.messages > 0 ? "pointer" : "default",
             background: HEAT_COLORS[p.level],
-            border: p.messages > 0 && p.level === 0 ? "1px solid rgba(16,185,129,0.3)" : "none",
+            border: p.messages > 0 && p.level === 0 ? "1px solid color-mix(in srgb, var(--ok, var(--ok, #10b981)) 30%, transparent)" : "none",
           }}
         />
       ))}
@@ -1342,9 +1342,9 @@ export function SessionsPanel(props: any) {
                   }
                   style={{
                     fontSize: 9, padding: "0 5px", borderRadius: 7, flexShrink: 0, lineHeight: "14px",
-                    background: sess.lastRun.status === "failed" ? "rgba(239,68,68,0.14)" : sess.lastRun.status === "aborted" ? "rgba(148,163,184,0.16)" : "rgba(245,158,11,0.16)",
+                    background: sess.lastRun.status === "failed" ? "color-mix(in srgb, var(--danger, #ef4444) 14%, transparent)" : sess.lastRun.status === "aborted" ? "rgba(148,163,184,0.16)" : "color-mix(in srgb, var(--warn, #f59e0b) 16%, transparent)",
                     color: sess.lastRun.status === "failed" ? "var(--danger, #ef4444)" : sess.lastRun.status === "aborted" ? "var(--text-dim)" : "var(--warn, #f59e0b)",
-                    border: `1px solid ${sess.lastRun.status === "failed" ? "rgba(239,68,68,0.35)" : sess.lastRun.status === "aborted" ? "rgba(148,163,184,0.35)" : "rgba(245,158,11,0.35)"}`,
+                    border: `1px solid ${sess.lastRun.status === "failed" ? "color-mix(in srgb, var(--danger, #ef4444) 35%, transparent)" : sess.lastRun.status === "aborted" ? "rgba(148,163,184,0.35)" : "color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent)"}`,
                   }}
                 >
                   {sess.lastRun.status === "failed" ? t("sm.runFailed") : sess.lastRun.status === "aborted" ? t("sm.runAborted") : t("sm.runInterrupted")}
@@ -1694,7 +1694,7 @@ export function SessionsPanel(props: any) {
           <button
             onClick={() => { setStatsOpen((v) => !v); setFilterOpen(false); }}
             title={t("sm.stats")}
-            style={{ ...ghostBtn, fontSize: 11, background: statsOpen ? "rgba(16,185,129,0.18)" : undefined } as React.CSSProperties}
+            style={{ ...ghostBtn, fontSize: 11, background: statsOpen ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 18%, transparent)" : undefined } as React.CSSProperties}
           >📊</button>
           {archStatus && archStatus.candidates.length > 0 && (
             <button
@@ -1795,7 +1795,7 @@ export function SessionsPanel(props: any) {
 
         {/* §14.3 stats drawer */}
         {statsOpen && (
-          <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", background: "rgba(16,185,129,0.05)" }}>
+          <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 5%, transparent)" }}>
             {!stats ? <div style={{ color: "var(--text-muted)", fontSize: 12 }}>…</div> : (
               <div>
                 {/* 4 stat cards */}
@@ -1815,7 +1815,7 @@ export function SessionsPanel(props: any) {
                         <div key={m.model} style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 2, fontSize: 10 }}>
                           <span style={{ minWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)" }}>{m.model}</span>
                           <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--bg-hover)", overflow: "hidden" }}>
-                            <div style={{ width: `${Math.round((m.messages / max) * 100)}%`, height: "100%", background: "#10b981" }} />
+                            <div style={{ width: `${Math.round((m.messages / max) * 100)}%`, height: "100%", background: "var(--ok, #10b981)" }} />
                           </div>
                           <span style={{ color: "var(--text-muted)" }}>{String(m.messages)}</span>
                         </div>
@@ -1842,7 +1842,7 @@ export function SessionsPanel(props: any) {
 
         {/* §14.4 batch bar */}
         {selection.size > 0 && (
-          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 12px", borderBottom: "1px solid var(--border)", background: "rgba(245,158,11,0.08)" }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)" }}>
             <span style={{ fontSize: 11, color: ensureReadability("var(--warn, #f59e0b)") }}>{t("sm.selectedCount", { count: selection.size })}</span>
             <button disabled={batchBusy} onClick={() => void batchArchive()} style={ghostBtn}>{`${t("sm.archive")}`}</button>
             <button disabled={batchBusy} onClick={() => setBatchMoveOpen(true)} style={ghostBtn}>{`${t("sm.moveBatch") ?? "移动到…"}`}</button>
@@ -1963,7 +1963,7 @@ export function SessionsPanel(props: any) {
         </div>
         {/* M1: external source strip — discovered/stale cards (加载/同步入口) */}
         {(s.sources ?? []).some((x: any) => x.status === "discovered" || x.status === "stale") && (
-          <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap", padding: "5px 12px", borderBottom: "1px solid var(--border)", background: "rgba(16,185,129,0.04)" }}>
+          <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap", padding: "5px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 4%, transparent)" }}>
             {s.sources.filter((src: any) => src.status === "discovered" || src.status === "stale").map((src: any) => {
               const m = AGENT_META[src.agent] ?? AGENT_META.default;
               const busy = rowBusy.has("src:" + src.agent);

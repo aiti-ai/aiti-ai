@@ -108,7 +108,7 @@ export function ConfirmDialogHost() {
         </div>
         <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{message}</div>
         {err && (
-          <div style={{ padding: "6px 9px", borderRadius: 6, fontSize: 11, background: "rgba(239,68,68,0.08)", color: ensureReadability("var(--danger, #f87171)") }}>{err}</div>
+          <div style={{ padding: "6px 9px", borderRadius: 6, fontSize: 11, background: "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)", color: ensureReadability("var(--danger, #f87171)") }}>{err}</div>
         )}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           {!info && (

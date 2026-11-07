@@ -82,7 +82,7 @@ export const AGENT_META: Record<string, { short: string; color: string; icon?: s
   amp: { short: "Am", color: "#e11d48" },
   factory: { short: "Fx", color: "#8b5cf6" },
   antigravity: { short: "Ag", color: "#1a73e8" },
-  default: { short: "Ai", color: "#64748b" },
+  default: { short: "Ai", color: "var(--text-muted, #64748b)" },
 };
 
 /** Small colored agent badge (e.g. [CC]) — pi rows render nothing. */
@@ -108,7 +108,7 @@ export function defaultColorForClient(name: string) {
   if (hit) return hit;
   let h = 0;
   for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-  const palette = ["var(--danger, #ef4444)", "#f97316", "var(--warn, #f59e0b)", "var(--ok, #22c55e)", "#10b981", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899", "#64748b"];
+  const palette = ["var(--danger, #ef4444)", "#f97316", "var(--warn, #f59e0b)", "var(--ok, #22c55e)", "var(--ok, #10b981)", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899", "#64748b"];
   return palette[h % palette.length];
 }
 
@@ -174,7 +174,7 @@ export function highlight(text: string, q: string) {
   const term = escapeHtml(q.trim());
   if (!term) return safe;
   const re = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
-  return safe.replace(re, "<mark style='background:rgba(245,158,11,0.35);color:inherit;border-radius:2px;padding:0 1px'>$1</mark>");
+  return safe.replace(re, "<mark style='background:color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent);color:inherit;border-radius:2px;padding:0 1px'>$1</mark>");
 }
 
 /* §14.2.2 date presets (filter by session.modified). */

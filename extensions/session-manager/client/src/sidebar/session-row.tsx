@@ -237,7 +237,7 @@ function SessionItem({
         paddingRight: 8,
         cursor: confirmDelete || renaming || removing ? "default" : "pointer",
         background: confirmDelete
-          ? "rgba(239,68,68,0.06)"
+          ? "color-mix(in srgb, var(--danger, #ef4444) 6%, transparent)"
           : isSelected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
         borderLeft: confirmDelete
           ? "2px solid var(--danger, #ef4444)"
@@ -517,9 +517,9 @@ function SessionItem({
                     transition: "background 0.12s, color 0.12s, border-color 0.12s",
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = "rgba(239,68,68,0.08)";
+                    e.currentTarget.style.background = "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)";
                     e.currentTarget.style.color = "var(--danger, #ef4444)";
-                    e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
+                    e.currentTarget.style.borderColor = "color-mix(in srgb, var(--danger, #ef4444) 35%, transparent)";
                   }}
                   onMouseLeave={(e) => {
                     e.currentTarget.style.background = "var(--bg-hover)";
