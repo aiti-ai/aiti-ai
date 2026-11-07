@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ai-usage",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/session-manager.html",
   "description": "AI token 用量统计扩展（provider/model/key/session 四维报表，日/月双粒度）",
