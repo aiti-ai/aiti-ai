@@ -6,5 +6,6 @@
   "scripts": {
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});fs.copyFileSync('client/src/aiti-ctx-meter-client.mjs','dist/aiti-ctx-meter-client.mjs')\""
   },
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "license": "MIT"
 }
