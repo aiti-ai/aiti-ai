@@ -125,6 +125,11 @@ rl.on("line", (line) => {
       break;
     }
     case "session/resume": {
+      // __rejectRuntimeModel：3.17+ 语义——runtimeModel 键已移除，strict schema 拒 unknown key
+      if (script.some((e) => e && e.__rejectRuntimeModel) && msg.params && msg.params.runtimeModel !== undefined) {
+        write({ id: msg.id, error: { code: -32603, message: 'ZodError: [{"code":"unrecognized_keys","path":["runtimeModel"]}]' } });
+        break;
+      }
       activeSid = (msg.params && msg.params.sessionId) || activeSid;
       // __resumeTodos：快照 todos 种子（真机 resume 响应快照同构，含 todos）
       const todosEntry = script.find((e) => e && e.__resumeTodos);
@@ -148,7 +153,16 @@ rl.on("line", (line) => {
       break;
     }
     case "session/setModel":
-    case "session/setMode": write({ id: msg.id, result: {} }); break;
+    case "session/setMode": {
+      // __reasoningRequired：3.17+ 语义——声明档位的模型裸发 setModel（无 options）→ -32603
+      if (msg.method === "session/setModel" && script.some((e) => e && e.__reasoningRequired) && !(msg.params?.options?.reasoningLevel)) {
+        const m = msg.params?.model || {};
+        write({ id: msg.id, error: { code: -32603, message: "Reasoning level is required for " + (m.providerId || "?") + "/" + (m.modelId || "?") } });
+        break;
+      }
+      write({ id: msg.id, result: {} });
+      break;
+    }
     case "session/close": write({ id: msg.id, result: { closed: true } }); break;
     case "session/fork": {
       // turnIndex=999 → 运行中拒绝（映射人话）；否则返回子会话 id（log 里断言 target 形状）
@@ -462,6 +476,45 @@ test("app-server 通道：resume 携带 runtimeModel（provider 注入时，源�
   assert.deepEqual(resume.params.runtimeModel.provider.models, [{ modelId: "GLM-5.3-Flash", contextWindow: 1000000 }, { modelId: "GLM-5.3", contextWindow: 1000000 }]);
   assert.ok(typeof resume.params.runtimeModel.revision === "string");
   assert.ok(typeof resume.params.runtimeModel.generatedAt === "number");
+  await s.session.dispose();
+});
+
+test("app-server 通道：3.17+ 裸发 setModel 命中 Reasoning required → 补 options.reasoningLevel 重试", async () => {
+  const s = await setup({
+    script: [{ __reasoningRequired: true }, ev("turn.completed", { resultType: "success", tokenCount: 2, duration: 1 })],
+    modelRef: "bigmodel/GLM-5.3-Flash",
+  });
+  const outcome = await s.session.prompt("hi");
+  assert.equal(outcome.tokenCount, 2);
+  const lines = await readLog(s.logFile);
+  const sets = lines.filter((l) => l.method === "session/setModel");
+  assert.ok(sets.length >= 2, "应有两段 setModel（裸发被拒 + options 重试）");
+  assert.equal(sets[0].params.options, undefined, "首发不带顶层 options");
+  assert.equal(sets[0].params.model.options, undefined, "首发 model 内无 options");
+  const last = sets[sets.length - 1].params;
+  assert.equal(last.options, undefined, "options 挂 model 内而非请求顶层");
+  assert.equal(last.model.options?.reasoningLevel, "enabled");
+  assert.equal(last.persistAsWorkspaceLastUsed, false);
+  await s.session.dispose();
+});
+
+test("app-server 通道：3.17+ resume 拒 runtimeModel（unknown key）→ 无 runtimeModel 重试 + setModel 对齐", async () => {
+  const s = await setup({
+    script: [{ __rejectRuntimeModel: true }, ev("turn.completed", { resultType: "success", tokenCount: 3, duration: 1 })],
+    sessId: "sess_existing",
+    modelRef: "bigmodel/GLM-5.3-Flash",
+    provider: { providerId: "bigmodel", baseURL: "https://open.bigmodel.cn/api/anthropic", apiKey: "test-key", models: [{ modelId: "GLM-5.3-Flash", contextWindow: 1000000 }] },
+  });
+  const outcome = await s.session.prompt("hi");
+  assert.equal(outcome.tokenCount, 3);
+  const lines = await readLog(s.logFile);
+  const resumes = lines.filter((l) => l.method === "session/resume");
+  assert.equal(resumes.length, 2, "resume 应重试一次");
+  assert.ok(resumes[0].params.runtimeModel, "首发带 runtimeModel（旧 CLI 绕 -32031）");
+  assert.equal(resumes[1].params.runtimeModel, undefined, "重试不带 runtimeModel（3.17+ 已移除该键）");
+  const sets = lines.filter((l) => l.method === "session/setModel");
+  assert.ok(sets.length >= 1, "重试路径应补 setModel 对齐模型");
+  assert.deepEqual(sets.at(-1).params.model, { providerId: "bigmodel", modelId: "GLM-5.3-Flash" });
   await s.session.dispose();
 });
 
