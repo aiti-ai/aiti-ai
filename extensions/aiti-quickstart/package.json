@@ -1,0 +1,17 @@
+{
+  "name": "@aiti-ai/aiti-quickstart",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "快速上手 —— 空白态引导扩展：新建会话欢迎页 widget（上手步骤/快捷操作/示例提示词，走宿主 newSessionWidgets 插槽可 ⚙ 自定义）+ 左栏 DockStack 全折叠空白引导卡（经 aiti-quickstart.api 服务交付 session-manager 编排器，与应用中心同屏共存）+ 侧栏底部「快速上手」按钮（应用中心可钉进常用区，点击重返 quickstart 欢迎页）",
+  "scripts": {
+    "build:client": "vite build --config vite.config.ts",
+    "watch": "vite build --watch --config vite.config.ts",
+    "deploy": "node tools/deploy.mjs"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "soul": "空白不可怕，第一句从这里开始。",
+  "aitiExtProtocol": "1.0",
+  "license": "MIT"
+}
