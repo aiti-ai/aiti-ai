@@ -217,7 +217,7 @@ function renderMailPanel(face) {
                   h("td", { style: tdStyle, title: r.ts }, new Date(r.ts).toLocaleString()),
                   h("td", { style: tdStyle }, r.to_addr),
                   h("td", { style: Object.assign({}, tdStyle, { maxWidth: 200, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }), title: r.subject }, r.subject),
-                  h("td", { style: Object.assign({}, tdStyle, { color: r.status === "ok" ? "#10b981" : "#ef4444" }), title: r.error || "" }, r.status === "ok" ? "ok" : "error"),
+                  h("td", { style: Object.assign({}, tdStyle, { color: r.status === "ok" ? "#10b981" : "var(--danger, #ef4444)" }), title: r.error || "" }, r.status === "ok" ? "ok" : "error"),
                   h("td", { style: tdStyle }, r.duration_ms != null ? r.duration_ms + "ms" : ""),
                   h("td", { style: tdStyle }, r.source || ""));
               }))),
@@ -238,7 +238,7 @@ function renderMailPanel(face) {
       msg && h("div", { role: "alert",
         style: { marginBottom: 8, padding: "6px 10px", borderRadius: 6, fontSize: 12,
           background: msg.kind === "ok" ? "rgba(16,185,129,.12)" : "rgba(239,68,68,.12)",
-          color: msg.kind === "ok" ? "#10b981" : "#ef4444" } }, msg.text),
+          color: msg.kind === "ok" ? "#10b981" : "var(--danger, #ef4444)" } }, msg.text),
       bodyEl));
   // dock v3 分面：float = 浮窗壳（float 契约）；dock = 右栏 tab（embedded 铺满，TabBar ✕ 关闭）
   if (floating) {
