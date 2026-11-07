@@ -4,7 +4,7 @@
 import { resolve, dirname as dirname2, join as join2 } from "node:path";
 import { createRequire } from "node:module";
 import { readFileSync as readFileSync2 } from "node:fs";
-import { homedir as homedir2 } from "node:os";
+import { homedir } from "node:os";
 import z from "@deepseek-ai/schemastery";
 import { createUserMessage } from "@deepseek-ai/dsh-llm";
 
@@ -13,7 +13,6 @@ import { randomBytes, randomInt } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdirSync, appendFileSync, readdirSync, readFileSync, existsSync, statSync, rmSync, writeFileSync, renameSync } from "node:fs";
 import { join, dirname } from "node:path";
-import { homedir } from "node:os";
 import { readFileSync as readFileSync3 } from "node:fs";
 import { join as join3 } from "node:path";
 var ID_TTL = parseInt(process.env.AITI_BRIDGE_TTL || "600000", 10);
@@ -27,6 +26,8 @@ function createBridge(dataDir = "", opts = {}) {
   const BRIDGE_NAME = opts.name || "aiti-mcp";
   const DISPLAY_NAME = opts.name || "aiti-devtools";
   const TAG = "[" + BRIDGE_NAME + "]";
+  const busPublish = opts.busPublish || null;
+  const BUS_CONN_TTL = parseInt(process.env.AITI_BUS_CONN_TTL || "150000", 10);
   const idRegistry = /* @__PURE__ */ new Map();
   const pages = /* @__PURE__ */ new Map();
   const pendingRequests = /* @__PURE__ */ new Map();
@@ -334,6 +335,19 @@ function createBridge(dataDir = "", opts = {}) {
       }
     }
     for (const [k, v] of lastEventPush) if (now - v.ts > 36e5) lastEventPush.delete(k);
+    for (const [iid, p] of [...pages]) {
+      if (p.writer?.viaBus && now - (p.writer.lastSeen || 0) > BUS_CONN_TTL) {
+        pages.delete(iid);
+        console.log(TAG + " 总线型页面连接超时摘除：" + iid);
+      }
+    }
+    for (const w of [...aiConns]) {
+      if (w?.viaBus && now - (w.lastSeen || 0) > BUS_CONN_TTL) {
+        aiConns.delete(w);
+        aiPageReg.delete(w);
+        aiSelfReg.delete(w);
+      }
+    }
     pruneSessionDirs(now);
   };
   const sweepTimer = setInterval(agentSweep, SWEEP_MS);
@@ -603,6 +617,13 @@ ${String(pl.stack).slice(0, 400)}` : "");
     if (hit.size > 1) return { multiple: [...hit.keys()] };
     return { notFound: true };
   }
+  const withDevice = (row, dev, label) => {
+    if (dev && typeof dev === "object") {
+      row.device = dev;
+      row.deviceLabel = label || [dev.browser || "?", dev.os || "", dev.screen || ""].filter(Boolean).join(" · ");
+    }
+    return row;
+  };
   function listSessions(boundPageId) {
     const out = [];
     const seen = /* @__PURE__ */ new Set();
@@ -631,6 +652,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           frameParent: isHost ? null : fi && fi.parentId || null,
           root: isHost || !(fi && fi.parentId)
         };
+        withDevice(row, page.device, page.deviceLabel);
         seen.add(row.pageId);
         addMine(row);
         out.push(row);
@@ -658,6 +680,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         if (seen.has(rec.pageId)) continue;
         seen.add(rec.pageId);
         const aiRow1 = { instanceId: rec.instanceId, frameId: null, pageId: rec.pageId, url: rec.url || null, title: rec.title || null, frameworks: null, active: true, viaAI: true, lastSeen: rec.lastSeen };
+        withDevice(aiRow1, rec.device, rec.deviceLabel);
         addMine(aiRow1);
         out.push(aiRow1);
         continue;
@@ -685,6 +708,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           frameParent: isHost ? null : f && f.parentId || null,
           root: isHost || !(f && f.parentId)
         };
+        withDevice(frRow, rec.device, rec.deviceLabel);
         addMine(frRow);
         out.push(frRow);
       }
@@ -694,6 +718,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       if (seen.has(selfPageId)) continue;
       seen.add(selfPageId);
       const selfRow = { instanceId: rec.instanceId, frameId: "ai", pageId: selfPageId, url: rec.url || null, title: rec.title ? rec.title + " · AI 主窗口" : "AI 主窗口", frameworks: null, active: true, viaAI: true, self: true, lastSeen: rec.lastSeen };
+      withDevice(selfRow, rec.device, rec.deviceLabel);
       addMine(selfRow);
       out.push(selfRow);
     }
@@ -702,11 +727,11 @@ ${String(pl.stack).slice(0, 400)}` : "");
   const TOOLS = [
     {
       name: "page_exec",
-      description: "在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。危险命令/浏览器受限操作会自动弹用户确认；Page.captureScreenshot 截屏会先弹准备卡展示截取意图（args.reason，请务必用一句话说明想截什么），用户调整好页面才开始截屏，截完再弹预览确认（大图自动落盘返回文件路径）。调试会话中从被调试页面（inject）发出的消息统一带 [发自: <pageId> · <url>] 来源标注——把 pageId 值传给 pageId 参数即操作该页面。\n\niframe 支持：Page.getFrameTree 查看 frame 树（iframe src/name/title，同域含 url/readyState）；Runtime.evaluate 传 contextId（iframe 索引从 1 起，同域可 eval）进 iframe 上下文执行。",
+      description: "在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。危险命令/浏览器受限操作会自动弹用户确认；Page.captureScreenshot 截屏会先弹准备卡展示截取意图（args.reason，请务必用一句话说明想截什么），用户调整好页面才开始截屏，截完再弹预览确认（大图自动落盘返回文件路径）；确认卡倒计时可用 args.timeout（ms）调整（默认 280000，服务端安全网自动同步 +30s 余量）。调试会话中从被调试页面（inject）发出的消息统一带 [发自: <pageId> · <url>] 来源标注——把 pageId 值传给 pageId 参数即操作该页面。\n\niframe 支持：Page.getFrameTree 查看 frame 树（iframe src/name/title，同域含 url/readyState）；Runtime.evaluate 传 contextId（iframe 索引从 1 起，同域可 eval）进 iframe 上下文执行。",
       inputSchema: { type: "object", properties: {
         cmd: { type: "string" },
         args: { type: "object" },
-        pageId: { type: "string", description: "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 30142/host）；也可 /bridge/sessions 查询" }
+        pageId: { type: "string", description: "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 3001/host）；也可 /bridge/sessions 查询" }
       }, required: ["cmd"] }
     },
     { name: "page_snapshot", description: "拉取已连接页面基础现场（URL/选区/模拟条件）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
@@ -717,7 +742,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       fields: { type: "array", items: { type: "object", properties: { selector: { type: "string", description: "CSS 选择器（优先）" }, label: { type: "string", description: "弹窗内文本匹配（label[for]/包裹/文本包含）" }, value: { type: "string", description: "要填的值" } }, required: ["value"] }, description: "要填的字段列表" },
       button: { type: "string", description: "回填后点击的按钮文本（如『保存』『确定』）" }
     } } },
-    { name: "bridge_status", description: "查询已连接页面（sessions：含 pageId/url/title/frameworks）与挂起请求。用户提到页面标题或 URL 时，按 title/url 匹配 pageId（如 refresh『某标题页面』或『某个 url 页面』）。", inputSchema: { type: "object", properties: {} } },
+    { name: "bridge_status", description: "查询已连接页面（sessions：含 pageId/url/title/frameworks + device/deviceLabel——浏览器·OS·屏幕·dpr·在线·语言·时区等设备信息，便于区分多台机器/标签页）与挂起请求。用户提到页面标题或 URL 时，按 title/url 匹配 pageId（如 refresh『某标题页面』或『某个 url 页面』）。", inputSchema: { type: "object", properties: {} } },
     {
       name: "page_logs",
       description: "从目标页面拉取本地缓冲的 console 日志（log/debug/info/warn/error 全量，CDP Runtime.evaluate 读取 window.__dbg.__consoleRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。页面报错排查首选：先查 warn/error 再逐步放开。返回 {logs:[{ts,level,text,count}], bufferSize}。",
@@ -742,7 +767,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
       } }
     },
     // ---- 用户交互型工具：AI 与人在页面上协作（AI 提问 → 人在 AI 窗口/页面作答或拒绝 → 结果回 AI） ----
-    // 统一机制：prompt 显示给人看；timeout 服务器端强制（默认 2min，超时返回“用户无响应/不在线”）；
+    // 统一机制：prompt 显示给人看；timeout 为可选——不传=永久等待（面板常驻直到用户操作，不读秒不超时）；
+    //   传了才显示读秒倒计时（可暂停）且服务器强制到点返回“用户无响应/不在线”；
     //   交互消息到达时页面走浏览器 Notification（+标题闪烁/提示音）通知用户；人可拒绝（rejectable）。
     // 响应信封：{ status:'answered'|'rejected'|'timeout'|'error', value?, reason?, error?, tookMs, timeoutMs }
     {
@@ -750,7 +776,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       description: "请当前页面的人类用户点选一个页面元素（自动进入 Inspector 点选模式、收起 AI 窗口、弹点选面板；用户可确认选中或拒绝）。返回元素载荷 {tag,rect,xpath,text,attributes,framework,selector}。",
       inputSchema: { type: "object", properties: {
         prompt: { type: "string", description: "给用户看的说明（为什么需要点选这个元素）" },
-        timeout: { type: "number", description: "等待超时 ms（默认 120000，范围 5000-600000）" },
+        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
         rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
         async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
         pageId: { type: "string", description: "目标页面完整 ID（instanceId/frameId）" }
@@ -761,7 +787,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       description: "在 AI 窗口内向人类用户提一个是/否问题（如“确认执行此操作？”“是否继续？”），用户点 ✅/❌ 作答，并可附「补充说明」自由文本（value.comment）；另有固定选项「都不适合」→ 自定义回答（approved:null, custom）。返回 {status, approved, comment?, custom?, reason?}。",
       inputSchema: { type: "object", properties: {
         prompt: { type: "string", description: "问题内容" },
-        timeout: { type: "number", description: "等待超时 ms（默认 120000）" },
+        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
         rejectable: { type: "boolean", description: "是否允许用户以“暂时无法处理”拒绝（默认 true）" },
         async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送（不阻塞本调用）；缺省=同步等待" },
         pageId: { type: "string" }
@@ -774,7 +800,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
         prompt: { type: "string" },
         choices: { type: "array", items: { type: "string" }, description: "选项列表（2-8 个）" },
         multiple: { type: "boolean", description: "是否允许多选（默认 false；true 时返回 indexes/labels）" },
-        timeout: { type: "number" },
+        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
         rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
         async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
         pageId: { type: "string" }
@@ -786,7 +812,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       inputSchema: { type: "object", properties: {
         prompt: { type: "string" },
         defaultValue: { type: "string", description: "预填默认值（可选）" },
-        timeout: { type: "number" },
+        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout" },
         rejectable: { type: "boolean", description: "是否允许用户拒绝（默认 true）" },
         async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
         pageId: { type: "string" }
@@ -797,7 +823,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       description: "探测人类用户是否在场/在线（AI 需要用户配合长任务前先确认），用户点「我在/稍后」，可附「补充说明」（value.comment）。返回 {status, present, comment?}；超时即视为不在线。",
       inputSchema: { type: "object", properties: {
         prompt: { type: "string", description: "询问文案（默认“你在吗？需要你配合继续开发”）" },
-        timeout: { type: "number", description: "默认 60000" },
+        timeout: { type: "number", description: "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户作答；传了才显示读秒倒计时（可暂停），到点返回 status:'timeout'（视为不在线）——需要快速探测在场/限时等待时才显式传" },
         async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
         pageId: { type: "string" }
       }, required: [] }
@@ -808,6 +834,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       inputSchema: { type: "object", properties: {
         title: { type: "string", description: "通知标题" },
         body: { type: "string", description: "通知内容" },
+        timeout: { type: "number", description: "可选：通知卡自动关闭时限 ms（5000-600000）。不传=常驻直到用户关闭" },
         async: { type: "boolean", description: "true=异步：立即返回已异步发出，用户作答结果经 AI 消息窗发送；缺省=同步等待" },
         pageId: { type: "string" }
       }, required: ["body"] }
@@ -1155,15 +1182,22 @@ ${String(pl.stack).slice(0, 400)}` : "");
         "Storage.localStorageClear",
         "Storage.localStorageSet"
       ]);
-      setTimeout(() => settlePending(requestId, false, { error: "页面执行超时" + (SLOW_EXEC_CMDS.has(cmd) ? "（用户未完成确认/选择）" : "") }), SLOW_EXEC_CMDS.has(cmd) ? 3e5 : 15e3);
+      const slowNet = (function() {
+        if (!SLOW_EXEC_CMDS.has(cmd)) return 15e3;
+        if (cmd === "Page.captureScreenshot") {
+          const n = parseInt(args && args.timeout, 10);
+          if (n > 0) return Math.min(Math.max(n + 3e4, 6e4), 36e5);
+        }
+        return 3e5;
+      })();
+      setTimeout(() => settlePending(requestId, false, { error: "页面执行超时" + (SLOW_EXEC_CMDS.has(cmd) ? "（用户未完成确认/选择）" : "") }), slowNet);
     });
   }
-  const INTERACTION_DEFAULT_TIMEOUT_MS = 12e4;
   const INTERACTION_MAX_TIMEOUT_MS = 6e5;
   const INTERACTION_MIN_TIMEOUT_MS = 5e3;
   const clampTimeout = (ms) => {
     const n = parseInt(ms, 10);
-    if (!n || n <= 0) return INTERACTION_DEFAULT_TIMEOUT_MS;
+    if (!n || n <= 0) return 0;
     return Math.min(Math.max(n, INTERACTION_MIN_TIMEOUT_MS), INTERACTION_MAX_TIMEOUT_MS);
   };
   const interactionTimers = /* @__PURE__ */ new Map();
@@ -1242,7 +1276,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           rec.signal = signal;
           signal.addEventListener("abort", rec.onAbort, { once: true });
         }
-        console.log(TAG + " interaction → kind=" + payload.kind + " · " + String(payload.prompt || "").slice(0, 60) + " → pageId=" + pageId + " · timeout=" + ms + (payload.agentId ? " · agent=" + payload.agentId : ""));
+        console.log(TAG + " interaction → kind=" + payload.kind + " · " + String(payload.prompt || "").slice(0, 60) + " → pageId=" + pageId + " · timeout=" + (ms > 0 ? ms + "ms" : "∞（永久等待）") + (payload.agentId ? " · agent=" + payload.agentId : ""));
       }
       const noExecutor = () => {
         clearInteractionTimer(requestId);
@@ -1275,7 +1309,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           for (const w of aiConns) w.write({ type: "interaction", requestId, interaction: payload, pageId, via: "ai" });
         } else return noExecutor();
       }
-      if (!isAsync) {
+      if (!isAsync && ms > 0) {
         const st = { timer: null, deadline: Date.now() + ms, remaining: ms, paused: false, pausedAt: null, pausedMs: 0, ms, t0, resolve: resolve2 };
         interactionTimers.set(requestId, st);
         st.timer = setTimeout(() => {
@@ -1298,12 +1332,12 @@ ${String(pl.stack).slice(0, 400)}` : "");
           serverInfo: { name: DISPLAY_NAME, version: "0.2" },
           instructions: [
             "aiti-devtools：页面内 AI 调试助手（浏览器桥）。",
-            "工作流：页面发来的消息通常带 pageId。没有也可以先用 bridge_status 发现已连接页面（返回 sessions，含 pageId/url/title/frameworks）→ 把 pageId 传给目标工具。",
-            "pageId 格式为 instanceId/frameId（如 30142/host）；也可直接传 url 或页面标题；命中多个时需具体 pageId 指定。",
+            "工作流：页面发来的消息通常带 pageId。没有也可以先用 bridge_status 发现已连接页面（返回 sessions，含 pageId/url/title/frameworks/device——deviceLabel 一行的浏览器·屏幕·在线·语言可快速识别是哪台机器哪个标签）→ 把 pageId 传给目标工具。",
+            "pageId 格式为 instanceId/frameId（如 3001/host）；也可直接传 url 或页面标题；命中多个时需具体 pageId 指定。",
             "page_exec：在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。args 为命令参数对象。危险命令（导航/下载/对话框等）会自动弹用户确认。截屏（Page.captureScreenshot）务必在 args 带 reason（一句话向用户说明想截什么，页面会先弹准备卡展示该说明、用户调整好页面才开始截屏）。",
             "page_snapshot：拉取目标页面基础现场（URL/选区/模拟条件）。",
             "page_logs / page_network：排查页面报错/请求失败首选——page_logs 查 console（可 level/since/limit 过滤，先看 warn/error）；page_network 查 ajax/fetch 完成态（status≥400 或 errorOnly:true 只看失败）。两者均读页面本地缓冲（CDP Runtime.evaluate 按需拉取，不再实时上报）。",
-            "user_confirm / user_choose / user_input / user_pick_element / user_presence：AI 与人类用户在页面上协作——prompt 给用户看，默认同步等待（timeout ms，默认 120000），响应信封 {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}。传 async:true 可立即返回（结果经 AI 消息窗送达）。",
+            "user_confirm / user_choose / user_input / user_pick_element / user_presence：AI 与人类用户在页面上协作——prompt 给用户看，默认同步等待且永久等待（不传 timeout：面板常驻直到用户作答，无读秒；仅在确需限时催促时传 timeout ms，面板显示读秒倒计时可暂停，到点返回 status:'timeout'），响应信封 {status:'answered'|'rejected'|'timeout'|'error', value?, reason?, tookMs, timeoutMs}。传 async:true 可立即返回（结果经 AI 消息窗送达）。",
             "user_notify：非阻塞浏览器通知，不等待回答。",
             "常见用法：页面报错→page_logs(level:warn/error) 或 page_network(errorOnly:true)；操作页面→page_exec(cmd:'Runtime.evaluate', args:{expression:'...'})；定位元素→page_snapshot 后再 page_exec 或请用户 user_pick_element。"
           ].join("\n")
@@ -1497,10 +1531,10 @@ ${String(pl.stack).slice(0, 400)}` : "");
           return interact({ kind: "input", prompt: String(a.prompt || "请输入"), defaultValue: String(a.defaultValue || ""), rejectable: a.rejectable !== false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_presence") {
-          return interact({ kind: "presence", prompt: String(a.prompt || "你在吗？需要你配合继续开发"), rejectable: false, async: a.async === true }, a.timeout || 6e4);
+          return interact({ kind: "presence", prompt: String(a.prompt || "你在吗？需要你配合继续开发"), rejectable: false, async: a.async === true }, a.timeout);
         }
         if (params.name === "user_notify") {
-          const notif = { kind: "notify", title: String(a.title || "🤖 AI 有一条消息"), body: String(a.body || a.prompt || "") };
+          const notif = { kind: "notify", title: String(a.title || "🤖 AI 有一条消息"), body: String(a.body || a.prompt || ""), timeoutMs: clampTimeout(a.timeout) };
           const rid = "notify_" + Date.now();
           for (const w of aiConns) w.write({ type: "interaction", requestId: rid, interaction: notif, pageId });
           const pg = pages.get(parsePageId(pageId || LEGACY_TOKEN).instanceId);
@@ -1750,8 +1784,8 @@ ${String(pl.stack).slice(0, 400)}` : "");
       }
       const prev = aiPageReg.get(hit) || {};
       const fr = Array.isArray(msg.frames) ? msg.frames : prev.frames || null;
-      aiPageReg.set(hit, { instanceId: String(msg.instanceId), pageId: String(msg.pageId), title: msg.title || prev.title || null, url: msg.url || prev.url || null, frames: fr, lastSeen: Date.now() });
-      console.log(TAG + " AI 宿主页注册：" + msg.pageId + " · " + (msg.title || "") + (fr && fr.length ? " · frames=" + fr.length : ""));
+      aiPageReg.set(hit, { instanceId: String(msg.instanceId), pageId: String(msg.pageId), title: msg.title || prev.title || null, url: msg.url || prev.url || null, frames: fr, device: msg.device && typeof msg.device === "object" ? msg.device : prev.device || null, deviceLabel: msg.deviceLabel || prev.deviceLabel || null, lastSeen: Date.now() });
+      console.log(TAG + " AI 宿主页注册：" + msg.pageId + " · " + (msg.title || "") + (fr && fr.length ? " · frames=" + fr.length : "") + (msg.device ? " · " + (msg.deviceLabel || msg.device.browser) : ""));
       return json({ ok: true, pageId: msg.pageId });
     }
     if (endpoint === "bridge" && sub === "self" && path[2] === "page" && req.method === "POST") {
@@ -1764,9 +1798,9 @@ ${String(pl.stack).slice(0, 400)}` : "");
       }
       if (!hit) return json({ ok: false, error: "no such ai conn：" + msg.instanceId }, 404);
       const prev = aiSelfReg.get(hit) || {};
-      aiSelfReg.set(hit, { instanceId: String(msg.instanceId), url: msg.url || prev.url || null, title: msg.title || prev.title || null, lastSeen: Date.now() });
+      aiSelfReg.set(hit, { instanceId: String(msg.instanceId), url: msg.url || prev.url || null, title: msg.title || prev.title || null, device: msg.device && typeof msg.device === "object" ? msg.device : prev.device || null, deviceLabel: msg.deviceLabel || prev.deviceLabel || null, lastSeen: Date.now() });
       bindAgentFromAiSelf(aiSelfReg.get(hit));
-      console.log(TAG + " AI 主窗口 self 注册：" + msg.instanceId + "/ai · " + (msg.title || ""));
+      console.log(TAG + " AI 主窗口 self 注册：" + msg.instanceId + "/ai · " + (msg.title || "") + (msg.device ? " · " + (msg.deviceLabel || msg.device.browser) : ""));
       return json({ ok: true, pageId: String(msg.instanceId) + "/ai" });
     }
     if (endpoint === "bridge" && sub === "self" && path[2] === "active" && req.method === "POST") {
@@ -1929,13 +1963,22 @@ ${String(pl.stack).slice(0, 400)}` : "");
           pages.delete(instanceId);
         }
         const initialFrame = searchParams.get("frameId") || "host";
+        let pageDevice = null, pageDeviceLabel = null;
+        try {
+          const d = searchParams.get("device");
+          if (d) pageDevice = JSON.parse(d);
+        } catch (e) {
+        }
+        pageDeviceLabel = searchParams.get("deviceLabel") || null;
         pages.set(instanceId, {
           writer,
           url: searchParams.get("url") || null,
           title: searchParams.get("title") || null,
           frameworks: searchParams.get("frameworks") || null,
           frames: /* @__PURE__ */ new Set([initialFrame]),
-          frameInfo: /* @__PURE__ */ new Map()
+          frameInfo: /* @__PURE__ */ new Map(),
+          device: pageDevice,
+          deviceLabel: pageDeviceLabel
         });
         const rec = idRegistry.get(instanceId);
         if (rec) rec.lastSeen = Date.now();
@@ -1943,6 +1986,89 @@ ${String(pl.stack).slice(0, 400)}` : "");
       }
       writer.write({ type: "ready", bridge: "/api/extensions/aiti-devtools/mcp", instanceId, token: LEGACY_TOKEN, role });
       return response;
+    }
+    if (endpoint === "bridge" && sub === "attach-bus" && req.method === "POST") {
+      if (!busPublish) return json({ ok: false, error: "bus not wired" }, 501);
+      const msg = await req.json().catch(() => null);
+      const instanceId = msg && (msg.instanceId || msg.token) || LEGACY_TOKEN;
+      const role = msg && msg.role || "page";
+      if (role !== "ai" && !validInstance(instanceId)) return json({ ok: false, error: "bad instanceId" }, 401);
+      if (!checkSecret(instanceId, msg && msg.secret || null)) return json({ ok: false, error: "bad secret" }, 401);
+      const topic = "bridge-" + instanceId;
+      const writer = {
+        viaBus: true,
+        lastSeen: Date.now(),
+        // 帧契约：{ type: "bridge-<instanceId>", msg: <桥原消息> }——帧 type 即 topic（与
+        // 客户端订阅白名单一致，publish(type, data) 的 data 展开会覆盖同名键，故桥消息只能放 msg）；
+        // 永远返回 true：投递由总线管理（白名单过滤 + SSE 转发）；断线重连由客户端订阅状态回调驱动
+        write(obj) {
+          try {
+            busPublish(topic, { msg: obj });
+            return true;
+          } catch {
+            return false;
+          }
+        },
+        end() {
+        }
+      };
+      if (role === "ai") {
+        aiConns.add(writer);
+        aiPageReg.set(writer, { instanceId, pageId: null, title: msg && msg.title || null, url: msg && msg.url || null, frames: null, lastSeen: Date.now() });
+        aiSelfReg.set(writer, { instanceId, url: msg && msg.url || null, title: msg && msg.title || null, lastSeen: Date.now() });
+        bindAgentFromAiSelf(aiSelfReg.get(writer));
+        console.log(TAG + " AI 控制台已连接（总线）：instanceId=" + instanceId);
+      } else {
+        const existing = pages.get(instanceId);
+        if (existing) {
+          try {
+            existing.writer.end();
+          } catch {
+          }
+          pages.delete(instanceId);
+        }
+        let pageDevice = null;
+        try {
+          if (msg && msg.device) pageDevice = typeof msg.device === "string" ? JSON.parse(msg.device) : msg.device;
+        } catch (e) {
+        }
+        pages.set(instanceId, {
+          writer,
+          url: msg && msg.url || null,
+          title: msg && msg.title || null,
+          frameworks: msg && msg.frameworks || null,
+          frames: /* @__PURE__ */ new Set([msg && msg.frameId || "host"]),
+          frameInfo: /* @__PURE__ */ new Map(),
+          device: pageDevice,
+          deviceLabel: msg && msg.deviceLabel || null
+        });
+        const rec = idRegistry.get(instanceId);
+        if (rec) rec.lastSeen = Date.now();
+        console.log(TAG + " 页面已连接（总线）：instanceId=" + instanceId);
+      }
+      writer.write({ type: "ready", bridge: "/api/extensions/aiti-devtools/mcp", instanceId, token: LEGACY_TOKEN, role, via: "bus" });
+      return json({ ok: true, topic, via: "bus" });
+    }
+    if (endpoint === "bridge" && sub === "bus-heartbeat" && req.method === "POST") {
+      const msg = await req.json().catch(() => null);
+      const instanceId = msg && (msg.instanceId || msg.token) || LEGACY_TOKEN;
+      const role = msg && msg.role || "page";
+      if (!checkSecret(instanceId, msg && msg.secret || null)) return json({ ok: false, error: "bad secret" }, 401);
+      if (role === "ai") {
+        for (const w of aiConns) {
+          if (w.viaBus && aiSelfReg.get(w)?.instanceId === instanceId) {
+            w.lastSeen = Date.now();
+            return json({ ok: true });
+          }
+        }
+        return json({ ok: false, error: "unknown conn" }, 404);
+      }
+      const p = pages.get(instanceId);
+      if (!p || !p.writer.viaBus) return json({ ok: false, error: "unknown conn" }, 404);
+      p.writer.lastSeen = Date.now();
+      const rec = idRegistry.get(instanceId);
+      if (rec) rec.lastSeen = Date.now();
+      return json({ ok: true });
     }
     if (endpoint === "bridge" && sub === "interaction" && req.method === "POST") {
       const msg = await req.json().catch(() => null);
@@ -2318,7 +2444,6 @@ async function readBody(req) {
   for await (const c of req) chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c));
   return Buffer.concat(chunks);
 }
-var HOME = homedir();
 var ASSET_NAMES = ["aiti-launcher.js", "bridge-client.js", "cockpit.html", "aiwin.js", "host-protocol.js"];
 function loadAssets(assetsDir) {
   const dir = assetsDir || new URL("../assets/", import.meta.url).pathname;
@@ -2371,7 +2496,7 @@ function resolveCoreAssetsDir() {
     return resolve(dirname2(entry), "..", "assets");
   } catch (e) {
     logger.warn("aiti-devtools-dsh: cannot resolve @aiti-ai/aiti-devtools-core/assets: " + e.message);
-    return join2(homedir2(), ".dsh", "aiti");
+    return join2(homedir(), ".dsh", "aiti");
   }
 }
 function isBridgePath(path, prefix) {
@@ -2440,7 +2565,7 @@ function bridgeNodeHandler(bridge, staticFiles, prefix) {
 function apply(ctx, config) {
   const logger2 = ctx.logger;
   const prefix = (config.prefix || DEFAULT_PREFIX).replace(/\/+$/, "");
-  const dataDir = config.dataDir || process.env.AITI_BRIDGE_DATA_DIR || join2(homedir2(), ".dsh", "aiti");
+  const dataDir = config.dataDir || process.env.AITI_BRIDGE_DATA_DIR || join2(homedir(), ".dsh", "aiti");
   const bridge = createBridge(dataDir, { name: config.name });
   const staticFiles = loadAssets(config.assetsDir || resolveCoreAssetsDir());
   try {
