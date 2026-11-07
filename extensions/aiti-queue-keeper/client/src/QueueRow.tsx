@@ -321,7 +321,7 @@ export function QueueRow({ kind, text, images, hasImages, hasFiles, index, total
         onClick={() => doRemove(false)}
         style={{ ...iconBtn, color: "var(--text-dim)" }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.color = "#ef4444";
+          e.currentTarget.style.color = "var(--danger, #ef4444)";
           e.currentTarget.style.background = "rgba(239,68,68,0.12)";
         }}
         onMouseLeave={(e) => {
