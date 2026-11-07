@@ -19,5 +19,13 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "9f2a5aa229e68df7"
+  "contentHash": "9f2a5aa229e68df7",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-prompts.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-prompts#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-prompts/issues"
+  }
 }
