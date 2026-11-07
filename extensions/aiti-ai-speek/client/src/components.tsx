@@ -115,7 +115,7 @@ function ensureStyles() {
   .aisp-drift button{font-size:10px;padding:2px 6px;border:1px solid var(--accent,#3b82f6);border-radius:99px;background:color-mix(in srgb,var(--accent,#3b82f6) 10%,transparent);color:var(--accent,#3b82f6);cursor:pointer;white-space:nowrap;}
   .aisp-drift button:hover{background:color-mix(in srgb,var(--accent,#3b82f6) 22%,transparent);}
   .aisp-queue .aisp-ab-jump{color:var(--accent,#3b82f6);border-bottom:1px dotted var(--accent,#3b82f6);cursor:pointer;}
-  .aisp-toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:2147483200;max-width:min(540px,calc(100vw - 24px));padding:8px 14px;border-radius:8px;background:rgba(239,68,68,.95);color:#fff;font-size:12px;line-height:1.5;box-shadow:0 8px 24px rgba(0,0,0,.25);cursor:pointer;}
+  .aisp-toast{position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:2147483200;max-width:min(540px,calc(100vw - 24px));padding:8px 14px;border-radius:8px;background:color-mix(in srgb, var(--danger, #ef4444) 95%, transparent);color:#fff;font-size:12px;line-height:1.5;box-shadow:0 8px 24px rgba(0,0,0,.25);cursor:pointer;}
 
   `;
   document.head.appendChild(el);
