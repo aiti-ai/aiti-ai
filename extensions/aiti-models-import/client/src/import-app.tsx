@@ -236,7 +236,7 @@ function DraftRow({ s, d, checked, toggle }: { s: any; d: any; checked: Set<stri
           {d.baseUrl} · {d.api}
         </span>
         <span style={{ fontSize: 11, color: d.hasKey ? "#059669" : "var(--text-muted)" }}>
-          {d.hasKey ? "🔑key" + d.keyHint : d.apiKeyEnv ? "env:" + d.apiKeyEnv : "无 key"}
+          {d.hasKey ? "key" + d.keyHint : d.apiKeyEnv ? "env:" + d.apiKeyEnv : "无 key"}
         </span>
         <button
           onClick={() => setShowModels(!showModels)}
