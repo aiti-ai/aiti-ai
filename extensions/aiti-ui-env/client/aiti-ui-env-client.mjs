@@ -23,9 +23,9 @@ const C = {
   muted: "var(--text-muted)",
   dim: "var(--text-dim)",
   accent: "var(--accent)",
-  ok: "#22c55e",
-  bad: "#ef4444",
-  warn: "#f59e0b",
+  ok: "var(--ok, #22c55e)",
+  bad: "var(--danger, #ef4444)",
+  warn: "var(--warn, #f59e0b)",
   mono: "var(--font-mono, monospace)",
 };
 
@@ -348,7 +348,7 @@ export default function register(ctx) {
       /* ── DISPLAY 号配置（默认 auto 随机；可指定固定数字） ── */
       h("div", { style: card({ marginBottom: 12 }) },
         h("div", { style: secTitle() },
-          h("span", { style: accentBar("#f59e0b") }), "DISPLAY 号配置",
+          h("span", { style: accentBar("var(--warn, #f59e0b)") }), "DISPLAY 号配置",
           d.randomDisplayFeature === false ? h("span", { style: chip(C.dim) }, "feature 关：不随机") : null,
           d.envOverrides?.UI_ENV_DISPLAY_NUM ? h("span", { style: chip(C.warn) }, "env 覆盖：UI_ENV_DISPLAY_NUM=" + d.envOverrides.UI_ENV_DISPLAY_NUM) : null),
         h("div", { style: { display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
@@ -388,7 +388,7 @@ export default function register(ctx) {
             ? h("button", {
                 key: "stop", onClick: () => { if (window.confirm("确定停止虚拟屏？将关闭 VNC 与虚拟桌面上的所有程序（仅虚拟屏，不动真实桌面）。")) headlessAction("stop"); }, disabled: headlessBusy,
                 title: "停止 Xvfb+openbox+dbus+AT-SPI 及 VNC 实例（仅虚拟屏，不碰真实桌面）",
-                style: { ...btn({ color: "#f87171", borderColor: "rgba(239,68,68,0.45)", background: "rgba(239,68,68,0.12)" }), cursor: headlessBusy ? "wait" : "pointer" },
+                style: { ...btn({ color: "var(--danger, #f87171)", borderColor: "rgba(239,68,68,0.45)", background: "rgba(239,68,68,0.12)" }), cursor: headlessBusy ? "wait" : "pointer" },
               }, headlessBusy ? "停止中…" : "■ 停止虚拟屏")
             : h("button", {
                 key: "start", onClick: () => headlessAction("start"), disabled: headlessBusy,
@@ -402,7 +402,7 @@ export default function register(ctx) {
       /* ── VNC 卡（扩展 VNC / 系统 VNC，自由切换） ── */
       h("div", { style: card({}) },
         h("div", { style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" } },
-          h("span", { style: accentBar("#22c55e") }),
+          h("span", { style: accentBar("var(--ok, #22c55e)") }),
           h("span", { style: { fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.monitorPlay), "VNC-on-web"),
           h("button", { onClick: () => setVncTab("own"), style: { ...btn({}), ...(vncTab === "own" ? { color: "#a5b4fc", borderColor: "rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) } }, "扩展 VNC"),
           h("button", { onClick: () => { setVncTab("sys"); if (!sysVnc) loadSysVnc(); }, style: { ...btn({}), ...(vncTab === "sys" ? { color: "#a5b4fc", borderColor: "rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) } }, "系统 VNC"),
@@ -420,7 +420,7 @@ export default function register(ctx) {
           sysVnc === null ? h("div", { style: { fontSize: 11, color: C.dim, padding: "6px 0" } }, "扫描系统 VNC 中…") :
           sysVnc.length === 0 ? h("div", { style: { fontSize: 11, color: C.dim, padding: "6px 0" } }, "未发现系统 VNC server（本扩展自启的已排除）。点「刷新」重扫。") :
             sysVnc.map((v) => h("div", { key: v.id, style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid " + C.border, flexWrap: "wrap" } },
-              h("span", { style: { fontSize: 11, fontWeight: 600, fontFamily: C.mono, color: v.protocol === "rdp" ? "#f59e0b" : C.text } }, v.kind),
+              h("span", { style: { fontSize: 11, fontWeight: 600, fontFamily: C.mono, color: v.protocol === "rdp" ? "var(--warn, #f59e0b)" : C.text } }, v.kind),
               v.display ? h("span", { style: chip(C.muted) }, v.display) : null,
               h("span", { style: chip(v.port ? (v.listening ? C.ok : C.warn) : C.dim, v.port ? "rgba(34,197,94,0.10)" : undefined) }, v.listening ? "port " + v.port : "port " + v.port + "·未监听"),
               v.pid ? h("span", { style: { fontSize: 10, color: C.dim } }, "pid " + v.pid + (v.stoppable ? "" : "（非本用户，不可停）")) : null,
@@ -439,7 +439,7 @@ export default function register(ctx) {
         /* ── 扩展 VNC 视图：多实例列表 ── */
         vncInsts.length === 0 ? h("div", { style: { fontSize: 11, color: C.dim, padding: "6px 0" } }, "无实例（点 ▶ 启动创建；端口每次随机分配，避免与桌面/其他服务冲突）") :
           vncInsts.map((inst) => h("div", { key: inst.id, style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid " + C.border, flexWrap: "wrap" } },
-            h("span", { style: { fontSize: 11, fontWeight: 600, color: inst.id === "default" ? "#a5b4fc" : C.text, fontFamily: C.mono } }, inst.id === "default" ? "★ default" : inst.id),
+            h("span", { style: { fontSize: 11, fontWeight: 600, color: inst.id === "default" ? "#a5b4fc" : C.text, fontFamily: C.mono } }, inst.id === "default" ? "default" : inst.id),
             inst.sys ? h("span", { style: chip(C.warn) }, "系统:" + inst.sys.port) : h("span", { style: chip(C.muted) }, ":" + inst.displayNum),
             h("span", { style: chip(inst.tcp ? C.ok : C.dim, inst.tcp ? "rgba(34,197,94,0.10)" : undefined) }, "RFB :" + inst.rfbPort),
             h("span", { style: chip(inst.web ? C.ok : C.dim, inst.web ? "rgba(34,197,94,0.10)" : undefined) }, "Web :" + inst.webPort),
