@@ -14,7 +14,9 @@ fork ships them as **63+ bundled extensions** that come with the package — `np
 and the whole workbench is there, no per-extension installs.
 
 The engine stays pi (shared JSONL sessions, same local configuration), so everything upstream
-documents still applies. Docs, the product map, and the story behind the fork live at
+documents still applies.
+
+The origin story is worth a read: two 15-year-old projects — [TestAgent](https://aiti.pw/extensions/aiti-testagent.html), a Java runtime debugger, and [JustDB](https://justdb.ai), a database IDE — met the AI era, daily development moved onto pi-web, feature by feature it drifted from upstream, and aiti began as its own distribution. Built for real daily use first (commute-time coding, spare-device development, making every spare token count): full story at [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html). Docs, the product map, and the story behind the fork live at
 [aiti.pw](https://aiti.pw/) ([source](https://github.com/aiti-ai/aiti-docs)).
 
 [中文文档](./docs/README.zh-CN.md) covers the same in Chinese.

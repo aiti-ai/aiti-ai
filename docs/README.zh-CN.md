@@ -8,7 +8,9 @@
 
 上游 [pi-web](https://github.com/agegr/pi-web) 是很优秀的 pi 本地界面——但做一个完整的 AI 开发工作台，光有界面不够：还需要扩展运行时、围绕 git 与队列的会话工具、把本地端口分享出去的服务隧道、页面级调试注入，以及 AI ↔ 页面 ↔ IDE 的深度协作。上游架构留不出这些层的空间，所以本 fork 把它们做成 **63+ 个内置扩展随包分发**——`npm i -g @aiti-ai/pi-web`，整个工作台开箱即用，无需逐个装扩展。
 
-引擎仍是 pi（共享 JSONL 会话与本机配置），上游文档描述的一切照常适用。文档、产品矩阵与 fork 背后的故事见 [aiti.pw](https://aiti.pw/)（[源码](https://github.com/aiti-ai/aiti-docs)）。
+引擎仍是 pi（共享 JSONL 会话与本机配置），上游文档描述的一切照常适用。
+
+项目缘起值得一读：两个十几年的老项目——[TestAgent](https://aiti.pw/extensions/aiti-testagent.html)（Java 运行时调试工具）与 [JustDB](https://justdb.ai)（数据库 IDE）——遇上 AI 时代，日常开发搬上了 pi-web，功能一个一个加着加着就与上游越走越远，aiti 便以自己的发行版开始了。一切源于真实日常使用：通勤路上写代码、spare 设备接着干、把每一个闲散 token 都用在刀刃上。完整故事见 [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html)。文档、产品矩阵与 fork 背后的故事见 [aiti.pw](https://aiti.pw/)（[源码](https://github.com/aiti-ai/aiti-docs)）。
 
 ![AITI Web 展示包含结构化 Markdown、工具调用和项目导航的 pi 会话](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
 
