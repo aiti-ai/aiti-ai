@@ -36,6 +36,7 @@ const VALID_SLOTS = new Set([
   "sidebarExplorerDock", "rightFileDock", "sidebarTasks", "composerAffix",
   "modelInfoLead", "compactLead", "sessionRequestCard", "newSessionSelectors",
   "newSessionPreparers", "newSessionWidgets",
+  "noWorkspaceGuide",  // v3 新增：fresh 首屏整页引导替换槽（AppShell 消费；aiti-quickstart 首用）
   // 跨 bundle 生态槽：宿主 ExtSlotName 类型联合未收录（types 缺口，运行时字符串键注册表不受影响），
   // 消费方 = aiti-model-wizard 的会话信息聚合（getExtUiItems 跨 bundle 读）。见 aiti-provider-usage。
   "sessionInfoPanel",
@@ -57,9 +58,13 @@ function* clientFiles(dir) {
   for (const e of entries) {
     const p = join(dir, e.name);
     if (e.isDirectory()) {
-      if (e.name === "node_modules" || e.name === "dist" || e.name === "vendor") continue;
+      // assets/ + chunk-*.mjs = vite 构建产物（vendor 库内部 feature: 字符串会
+      // 造成契约扫描假阳性）——契约检查只看手写源码
+      if (e.name === "node_modules" || e.name === "dist" || e.name === "vendor" || e.name === "assets") continue;
       yield* clientFiles(p);
-    } else if (/\.(tsx?|js|mjs)$/.test(e.name) && !/\.test\.(mjs|js)$/.test(e.name) && !/\.min\.(js|mjs)$/.test(e.name)) {
+    } else if (/\.(tsx?|js|mjs)$/.test(e.name) && !/\.test\.(mjs|js)$/.test(e.name) && !/\.min\.(js|mjs)$/.test(e.name) && !/-chunk-[A-Za-z0-9_-]+\.mjs$/.test(e.name)) {
+      // -chunk-<hash>.mjs = vite 构建产物（vendor 库内部的 feature: 字符串会造成
+      // 契约扫描假阳性）——契约检查只看手写源码
       yield p;
     }
   }
