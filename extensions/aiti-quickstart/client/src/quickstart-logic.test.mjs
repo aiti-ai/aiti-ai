@@ -73,7 +73,8 @@ test("readSidebarDismissed/writeSidebarDismissed：roundtrip + false 清键", ()
 test("WIDGET_METAS：3 枚、布局与方案一致、尺寸在宿主 clamp 范围内", () => {
   assert.deepEqual(logic.WIDGET_METAS.map((m) => m.id), ["guide", "shortcuts", "examples"]);
   const byId = new Map(logic.WIDGET_METAS.map((m) => [m.id, m]));
-  assert.deepEqual(byId.get("guide"), { id: "guide", areas: ["top"], defaultArea: "top", w: 8, h: 2, priority: 0 });
+  // guide h=1：w8 独占整行，h2 曾把 recent/shortcuts 挤到第三行致 top 区内滚裁切
+  assert.deepEqual(byId.get("guide"), { id: "guide", areas: ["top"], defaultArea: "top", w: 8, h: 1, priority: 0 });
   assert.deepEqual(byId.get("shortcuts"), { id: "shortcuts", areas: ["top"], defaultArea: "top", w: 4, h: 1, priority: 10 });
   assert.deepEqual(byId.get("examples"), { id: "examples", areas: ["bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 });
   for (const m of logic.WIDGET_METAS) {
@@ -214,8 +215,9 @@ test("manifest 基本字段：id/client/sidebarFooter/图标/协议/v2 新增面
   assert.ok(existsSync(resolve(extRoot, "..", "_shared", "icons", "rocket.svg")), "_shared/icons/rocket.svg 缺失");
   assert.equal(pkg.aitiExtProtocol, "1.0");
   assert.ok(pkg.name.startsWith("@aiti-ai/aiti-quickstart"));
-  // v2：server API + workspacePickerActions 静态条目 + 上传软依赖
-  assert.equal(typeof manifest.api, "function", "manifest.api（server 端点）必须导出");
+  // v2：server API（宿主 registry 经 ext.ext.server.api 调用——必须 server.api 形）+ workspacePickerActions + 上传软依赖
+  assert.equal(typeof manifest.server?.api, "function", "manifest.server.api（server 端点）必须导出");
+  assert.equal(manifest.api, undefined, "顶层 api 导出不被宿主识别（registry 读 ext.ext.server.api）——禁止回退");
   assert.equal(manifest.ui.workspacePickerActions.length, 1);
   assert.equal(manifest.ui.workspacePickerActions[0].id, "acquire");
   assert.ok(Array.isArray(manifest.optionalDependsOn) && manifest.optionalDependsOn.includes("session-manager"));
