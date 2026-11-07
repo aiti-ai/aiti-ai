@@ -77,7 +77,7 @@ export default function register(ctx) {
     revealDir: tr("export.revealDir") || "定位目录",
     openFolder: tr("files.openFolder") || "打开文件夹", // 右侧 FolderViewer（display-only，不影响 cwd）
     copy: tr("chat.copy") || "复制",
-    copied: tr("chat.copied") || "✓ 已复制",
+    copied: tr("chat.copied") || "已复制",
   };
 
   /**
@@ -434,7 +434,7 @@ export default function register(ctx) {
             // hover 高亮：优先 provider 给的精确匹配文本（match），无则退回 label（截断时可能匹配不到，自然降级不高亮）
             onMouseEnter: (e) => { if (view && view.element) highlightSegment(view, a.match || a.label); },
             onMouseLeave: () => { if (view) clearHighlight(view); },
-            style: { ...actionBtnStyle, color: a.danger ? "#ef4444" : a.unavailable ? "var(--text-muted)" : "var(--accent)", borderColor: a.danger ? "#fca5a5" : a.unavailable ? "var(--border)" : undefined, opacity: a.unavailable ? 0.75 : undefined },
+            style: { ...actionBtnStyle, color: a.danger ? "var(--danger, #ef4444)" : a.unavailable ? "var(--text-muted)" : "var(--accent)", borderColor: a.danger ? "#fca5a5" : a.unavailable ? "var(--border)" : undefined, opacity: a.unavailable ? 0.75 : undefined },
           }, typeIcon(a.type), a.unavailable ? " ❌" : null, a.danger ? " ⚠" : null, " " + a.label),
         ),
       ));
@@ -1192,7 +1192,7 @@ export default function register(ctx) {
           key: "copy", type: "button",
           onClick: (e2) => { e2.stopPropagation(); try { navigator.clipboard.writeText(text); } catch (err) {} },
           title: T.copy,
-          style: { ...actionBtnStyle, color: copied ? "#22c55e" : "var(--accent)", background: "color-mix(in srgb, " + (copied ? "#22c55e" : "var(--accent)") + " 10%, transparent)" },
+          style: { ...actionBtnStyle, color: copied ? "var(--ok, #22c55e)" : "var(--accent)", background: "color-mix(in srgb, " + (copied ? "var(--ok, #22c55e)" : "var(--accent)") + " 10%, transparent)" },
         }, copied ? T.copied : T.copy));
         // provider 动作
         for (const a of externalActions) {
@@ -1200,7 +1200,7 @@ export default function register(ctx) {
             key: a.id, type: "button",
             onClick: (e2) => { e2.stopPropagation(); a.onClick(text, el); closeLayer(); },
             title: a.title || "",
-            style: { ...actionBtnStyle, color: a.danger ? "#ef4444" : "var(--accent)", borderColor: a.danger ? "#fca5a5" : "var(--border)" },
+            style: { ...actionBtnStyle, color: a.danger ? "var(--danger, #ef4444)" : "var(--accent)", borderColor: a.danger ? "#fca5a5" : "var(--border)" },
           }, typeIcon(a.type || "command"), a.label));
         }
 
