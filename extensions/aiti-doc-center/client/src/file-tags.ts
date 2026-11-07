@@ -5,7 +5,7 @@
  * 面板 = 零依赖 DOM 浮层（挂 body，data-ext-float 契约：拖拽/缩放/持久化由 aiti-float 接管；
  * 未装时回退普通居中浮层）。样式走内联 + CSS vars，与扩展体系同视觉语言。
  */
-import { apiUrl } from "./host-shim";
+import { apiUrl, t } from "./host-shim";
 
 const EV_OPEN = "aiti-doc-center:file-tags";
 const PANEL_ID = "aiti-doc-center-file-tags-panel";
@@ -25,21 +25,21 @@ function el(tag: string, style: Partial<CSSStyleDeclaration> & Record<string, an
 function renderTags(host: HTMLElement, path: string, tags: Array<{ key: string; display: string; source: string }>): void {
   host.textContent = "";
   if (!tags.length) {
-    host.appendChild(el("div", { fontSize: "11px", color: "var(--text-dim,#999)", padding: "4px 0" }, "（无标签）"));
+    host.appendChild(el("div", { fontSize: "11px", color: "var(--text-dim,#999)", padding: "4px 0" }, t("dc.ftEmpty")));
   }
-  for (const t of tags) {
+  for (const tg of tags) {
     const chip = el("span", {
       display: "inline-flex", alignItems: "center", gap: "4px",
       padding: "1px 8px", borderRadius: "9px", fontSize: "10.5px", margin: "2px 4px 2px 0",
       background: "color-mix(in srgb, var(--accent,#6366f1) 12%, transparent)",
       color: "var(--accent,#6366f1)", border: "1px solid color-mix(in srgb, var(--accent,#6366f1) 40%, transparent)",
-    }, t.display || t.key);
-    if (t.source === "db") chip.title = "手工 tag（仅存文档中心）";
-    else chip.title = "文件来源：" + t.source;
+    }, tg.display || tg.key);
+    if (tg.source === "db") chip.title = t("dc.ftManual");
+    else chip.title = t("dc.ftFileSource", { src: tg.source });
     const x = el("span", { cursor: "pointer", fontWeight: "700" }, "✕");
     x.addEventListener("click", async (e) => {
       e.stopPropagation();
-      await api("/file-tags", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, tags: [t.key] }) });
+      await api("/file-tags", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ path, tags: [tg.key] }) });
       refresh(host, path);
     });
     chip.appendChild(x);
@@ -53,7 +53,7 @@ async function refresh(host: HTMLElement, path: string): Promise<void> {
     renderTags(host, path, Array.isArray(d?.tags) ? d.tags : []);
   } catch {
     host.textContent = "";
-    host.appendChild(el("div", { fontSize: "11px", color: "#dc2626", padding: "4px 0" }, "加载失败（文档中心未就绪？）"));
+    host.appendChild(el("div", { fontSize: "11px", color: "#dc2626", padding: "4px 0" }, t("dc.ftLoadFail")));
   }
 }
 
@@ -76,7 +76,7 @@ function openPanel(path: string): void {
   panel.setAttribute("data-ext-float-w", "300");
 
   const head = el("div", { display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px", fontWeight: "700", fontSize: "12.5px" });
-  head.appendChild(el("span", { flex: "1" }, "标签"));
+  head.appendChild(el("span", { flex: "1" }, t("dc.ftTagsLabel")));
   const close = el("span", { cursor: "pointer", padding: "0 4px", color: "var(--text-dim,#999)" }, "✕");
   close.addEventListener("click", () => { panel!.style.display = "none"; });
   head.appendChild(close);
@@ -94,11 +94,11 @@ function openPanel(path: string): void {
     flex: "1", minWidth: "0", padding: "4px 8px", borderRadius: "6px", fontSize: "11.5px",
     border: "1px solid var(--border,#ddd)", background: "var(--bg,#fff)", color: "var(--text,#222)",
   }) as HTMLInputElement;
-  input.placeholder = "新增标签（回车确认；/ 分层级）";
+  input.placeholder = t("dc.ftAddPh");
   const add = el("button", {
     flexShrink: "0", padding: "4px 10px", borderRadius: "6px", fontSize: "11.5px", cursor: "pointer",
     border: "1px solid var(--accent,#6366f1)", background: "var(--accent,#6366f1)", color: "#fff",
-  }, "添加");
+  }, t("dc.ftAdd"));
   const submit = async () => {
     const v = input.value.trim();
     if (!v) return;
@@ -129,7 +129,7 @@ export function registerEditorFileTags(): (() => void) | null {
     unreg = (window as any).__aitiEditor.registerAction({
       id: "aiti-doc-center-file-tags",
       label: "🏷",
-      title: "标签（文档中心：查看/增删，非 md 文件打 tag 后进索引）",
+      title: t("dc.ftActionTitle"),
       match: (fp: string) => !!fp,
       onClick: (fp: string) => openPanel(fp),
     });
