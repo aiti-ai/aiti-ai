@@ -1070,9 +1070,9 @@ class ZcodeHandle {
   private recordInteractionCustom(ev: Record<string, unknown>, decision: "pending" | "accept" | "decline", answer?: { answers?: Record<string, string | string[]>; message?: string }): void {
     const kind = String(ev.kind ?? "generic");
     const toolName = typeof ev.toolName === "string" ? ev.toolName : "";
-    const title = kind === "plan_approval" ? "📋 方案审批" : kind === "ask_user" ? "❓ 提问" : `🤔 交互请求${toolName ? `（${toolName}）` : ""}`;
-    const label = decision === "pending" ? "⏳ 等待处理"
-      : decision === "accept" ? `✅ 已同意${answer?.message ? `（${answer.message}）` : ""}`
+    const title = kind === "plan_approval" ? "方案审批" : kind === "ask_user" ? "提问" : `交互请求${toolName ? `（${toolName}）` : ""}`;
+    const label = decision === "pending" ? "等待处理"
+      : decision === "accept" ? `已同意${answer?.message ? `（${answer.message}）` : ""}`
         : `⛔ 已拒绝${answer?.message ? `（${answer.message}）` : ""}`;
     const answers = answer?.answers && Object.keys(answer.answers).length
       ? `\n回答: ${JSON.stringify(answer.answers).slice(0, 200)}`
