@@ -14,7 +14,7 @@ import { ddnsBadge, modeOf, fmtAddr } from "../lib-shared";
 export function NoAuthBadge({ t }: { t: (key: string) => string }) {
   return (
     <span title={t("services.noAuthWarnHint")}
-      style={{ padding: "1px 7px", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", borderRadius: 4, color: "var(--danger, #f87171)", fontWeight: 600, flexShrink: 0, fontSize: 10 }}>
+      style={{ padding: "1px 7px", background: "color-mix(in srgb, var(--danger, #f87171) 15%, transparent)", border: "1px solid color-mix(in srgb, var(--danger, #f87171) 45%, transparent)", borderRadius: 4, color: "var(--danger, #f87171)", fontWeight: 600, flexShrink: 0, fontSize: 10 }}>
       ⚠ {t("services.exposeProviderNone")}
     </span>
   );

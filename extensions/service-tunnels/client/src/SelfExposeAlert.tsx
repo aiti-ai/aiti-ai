@@ -117,8 +117,8 @@ export function SelfExposeAlert({ onOpenServices }: {
         style={{
           display: "flex", alignItems: "center", gap: 8,
           padding: "5px 12px", flexShrink: 0,
-          background: "rgba(248,113,113,0.12)",
-          borderBottom: "1px solid rgba(248,113,113,0.5)",
+          background: "color-mix(in srgb, var(--danger, #f87171) 12%, transparent)",
+          borderBottom: "1px solid color-mix(in srgb, var(--danger, #f87171) 50%, transparent)",
           fontSize: 12, color: "var(--danger, #f87171)", cursor: "pointer",
         }}
       >
