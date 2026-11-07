@@ -680,13 +680,13 @@ cwd,
     auto: boolean,
     requestId: string,
   ): void {
-    const label = decision === "pending" ? "⏳ 等待授权"
-      : decision === "allow" ? (auto ? "✅ 已自动允许（信任策略）" : "✅ 已人工允许")
+    const label = decision === "pending" ? "等待授权"
+      : decision === "allow" ? (auto ? "已自动允许（信任策略）" : "已人工允许")
       : decision === "deny" ? "⛔ 已拒绝"
-      : "🚫 已取消（回合中止）";
+      : "已取消（回合中止）";
     const inputStr = summarizeToolInput(input);
     this.pushOrEmitCustom({
-      customType: "🔐 工具授权",
+      customType: "工具授权",
       content: `${toolName}${inputStr ? ` — ${inputStr}` : ""}\n\n${label}`,
       details: { requestId, toolName, input, decision, auto },
     });
