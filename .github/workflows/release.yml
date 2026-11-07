@@ -70,15 +70,13 @@ jobs:
             --file "@aiti-ai/aiti-bridge=$BRIDGE_TGZ" \
             --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
             --file "justget=$PWD/vendor/npm/justget-0.2.4.tgz" \
-            --omit service-tunnels
+            --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.76.tgz" \
+            --file "@aiti-ti/ddns=$PWD/vendor/npm/aiti-ti-ddns-0.2.0.tgz"
+          # service-tunnels 0.3.76：vendor 自 开发机已发布形态——exports 含 ./i18n ./ui-shared
+          # （registry.npmjs.org 上的同名 0.3.9 是旧 exports，子路径 import 会挂），服务端自引用的
+          # service-tunnels/i18n 等由它解析
           npm install --prefix extensions/.build-root --legacy-peer-deps --no-audit --no-fund --loglevel=error
           ln -s .build-root/node_modules extensions/node_modules
-          # service-tunnels：依赖名（无 scope）≠ 仓内源包名（@aiti-ai/service-tunnels，exports null），
-          # 安装形态对不上——symlink 仓内源目录（物理子路径 service-tunnels/i18n 等全开）。
-          # 注意 extensions/node_modules 本身是 → .build-root/node_modules 的 symlink，写穿透后
-          # 落点在 .build-root/node_modules/——相对目标须上跳两级才到 extensions/service-tunnels
-          ln -sfn ../../service-tunnels extensions/node_modules/service-tunnels
-          test -e extensions/node_modules/service-tunnels/package.json   # 悬空即 fail-fast
 
       - name: Build extension dists (platform-agnostic JS, walk-up resolve)
         run: |
