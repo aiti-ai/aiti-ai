@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-zcode-agent",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "ZCode (智谱桌面端内嵌 CLI runtime) session backend driver (--json + --resume)",
   "soul": "GLM 套餐在哪儿跑，面板就在哪儿看。",
   "scripts": {
@@ -20,5 +20,13 @@
     "vite": "^6.4.3"
   },
   "license": "MIT",
-  "contentHash": "d1c9b4e4c134efd6"
+  "contentHash": "43b6d175d7589fd0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-zcode-agent.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-zcode-agent#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-zcode-agent/issues"
+  }
 }
