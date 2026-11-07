@@ -434,7 +434,7 @@ export function VoiceAffixButton() {
     Object.assign(pill.style, {
       position: "fixed", zIndex: "2147483000", left: "50%", top: "calc(100vh - 170px)",
       transform: "translateX(-50%)", width: cancel ? "240px" : "220px", height: "52px",
-      borderRadius: "26px", background: cancel ? "#f59e0b" : "#ef4444", color: "#fff",
+      borderRadius: "26px", background: cancel ? "var(--warn, #f59e0b)" : "var(--danger, #ef4444)", color: "#fff",
       display: "inline-flex", alignItems: "center", justifyContent: "center", gap: "8px",
       fontSize: "14px", lineHeight: "52px", whiteSpace: "nowrap", textAlign: "center",
       boxShadow: "0 6px 24px rgba(0,0,0,0.25)",
@@ -469,7 +469,7 @@ export function VoiceAffixButton() {
       id="aiti-voice-affix"
       data-composer-affix="1"
       aria-label="按住说话"
-      title="🎤 按住说话"
+      title="按住说话"
       style={{
         width: 32,
         height: 32,
@@ -480,7 +480,7 @@ export function VoiceAffixButton() {
         background: "none",
         border: "none",
         borderRadius: 9,
-        color: rec ? (rec.cancel ? "#f59e0b" : "#ef4444") : "var(--text-muted)",
+        color: rec ? (rec.cancel ? "var(--warn, #f59e0b)" : "var(--danger, #ef4444)") : "var(--text-muted)",
         cursor: "pointer",
         touchAction: "none",
         userSelect: "none",
