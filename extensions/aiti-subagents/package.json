@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-subagents",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "description": "子代理扩展（pi-subagents 的 pi-web 适配版）",
   "soul": "主 agent 负责思考，脏活累活分给专职的它。",
   "scripts": {
@@ -12,5 +12,5 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "3705752471b41232"
+  "contentHash": "3aec43327445524d"
 }
