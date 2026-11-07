@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-queue-keeper",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "队列面板接管扩展（pi-web 去 fork 化 P3）：把 ChatInput 内队列增强 UI（横幅/行操作/拖拽排序/回收站/撤销条/导入导出/通知）外迁为扩展，core 回到上游同形兜底 banner。",
   "soul": "排队不可怕，可怕的是排完队忘了自己要说什么。",
