@@ -6,8 +6,8 @@
   },
   "soul": "AI 说得再好，抄起来也挺费劲。",
   "description": "消息智能 —— 点击消息段落/标题/行内 code 弹层动作条（引用回复、复制、文件打开定位、子句与行高亮），其他扩展可注册 provider 追加动作",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "48a0b31d8668a295"
+  "contentHash": "ba73a19a30faee07"
 }
