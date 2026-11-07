@@ -21,7 +21,7 @@
   var VERSION = "0.2.1";
   var DEFAULTS = {
     endpoint: "",
-    // AI 桥前缀（aiUrl 为空时的后备，如 'http://localhost:30141/api/dbg'）
+    // AI 桥前缀（aiUrl 为空时的后备，如 'http://localhost:3000/api/dbg'）
     sessionId: "",
     dbgToken: "",
     aiUrl: "",

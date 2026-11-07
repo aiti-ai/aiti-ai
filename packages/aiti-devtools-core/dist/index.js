@@ -719,7 +719,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       inputSchema: { type: "object", properties: {
         cmd: { type: "string" },
         args: { type: "object" },
-        pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\u5B8C\u6574 ID\u2014\u2014\u6765\u81EA AI \u6D88\u606F\u7684 [\u53D1\u81EA: xxx]\uFF08\u5982 30142/host\uFF09\uFF1B\u4E5F\u53EF /bridge/sessions \u67E5\u8BE2" }
+        pageId: { type: "string", description: "\u76EE\u6807\u9875\u9762\u5B8C\u6574 ID\u2014\u2014\u6765\u81EA AI \u6D88\u606F\u7684 [\u53D1\u81EA: xxx]\uFF08\u5982 3001/host\uFF09\uFF1B\u4E5F\u53EF /bridge/sessions \u67E5\u8BE2" }
       }, required: ["cmd"] }
     },
     { name: "page_snapshot", description: "\u62C9\u53D6\u5DF2\u8FDE\u63A5\u9875\u9762\u57FA\u7840\u73B0\u573A\uFF08URL/\u9009\u533A/\u6A21\u62DF\u6761\u4EF6\uFF09\u3002pageId \u7F3A\u7701=\u6700\u65B0 AI \u4E3B\u7A97\u53E3\uFF08self:true\uFF09\uFF1B\u663E\u5F0F pageId \u4F18\u5148\u3002", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
@@ -1321,7 +1321,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           instructions: [
             "aiti-devtools\uFF1A\u9875\u9762\u5185 AI \u8C03\u8BD5\u52A9\u624B\uFF08\u6D4F\u89C8\u5668\u6865\uFF09\u3002",
             "\u5DE5\u4F5C\u6D41\uFF1A\u9875\u9762\u53D1\u6765\u7684\u6D88\u606F\u901A\u5E38\u5E26 pageId\u3002\u6CA1\u6709\u4E5F\u53EF\u4EE5\u5148\u7528 bridge_status \u53D1\u73B0\u5DF2\u8FDE\u63A5\u9875\u9762\uFF08\u8FD4\u56DE sessions\uFF0C\u542B pageId/url/title/frameworks/device\u2014\u2014deviceLabel \u4E00\u884C\u7684\u6D4F\u89C8\u5668\xB7\u5C4F\u5E55\xB7\u5728\u7EBF\xB7\u8BED\u8A00\u53EF\u5FEB\u901F\u8BC6\u522B\u662F\u54EA\u53F0\u673A\u5668\u54EA\u4E2A\u6807\u7B7E\uFF09\u2192 \u628A pageId \u4F20\u7ED9\u76EE\u6807\u5DE5\u5177\u3002",
-            "pageId \u683C\u5F0F\u4E3A instanceId/frameId\uFF08\u5982 30142/host\uFF09\uFF1B\u4E5F\u53EF\u76F4\u63A5\u4F20 url \u6216\u9875\u9762\u6807\u9898\uFF1B\u547D\u4E2D\u591A\u4E2A\u65F6\u9700\u5177\u4F53 pageId \u6307\u5B9A\u3002",
+            "pageId \u683C\u5F0F\u4E3A instanceId/frameId\uFF08\u5982 3001/host\uFF09\uFF1B\u4E5F\u53EF\u76F4\u63A5\u4F20 url \u6216\u9875\u9762\u6807\u9898\uFF1B\u547D\u4E2D\u591A\u4E2A\u65F6\u9700\u5177\u4F53 pageId \u6307\u5B9A\u3002",
             "page_exec\uFF1A\u5728\u5DF2\u8FDE\u63A5\u9875\u9762\u6267\u884C\u7C7B CDP \u547D\u4EE4\uFF08DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser \u57DF\uFF09\u3002args \u4E3A\u547D\u4EE4\u53C2\u6570\u5BF9\u8C61\u3002\u5371\u9669\u547D\u4EE4\uFF08\u5BFC\u822A/\u4E0B\u8F7D/\u5BF9\u8BDD\u6846\u7B49\uFF09\u4F1A\u81EA\u52A8\u5F39\u7528\u6237\u786E\u8BA4\u3002\u622A\u5C4F\uFF08Page.captureScreenshot\uFF09\u52A1\u5FC5\u5728 args \u5E26 reason\uFF08\u4E00\u53E5\u8BDD\u5411\u7528\u6237\u8BF4\u660E\u60F3\u622A\u4EC0\u4E48\uFF0C\u9875\u9762\u4F1A\u5148\u5F39\u51C6\u5907\u5361\u5C55\u793A\u8BE5\u8BF4\u660E\u3001\u7528\u6237\u8C03\u6574\u597D\u9875\u9762\u624D\u5F00\u59CB\u622A\u5C4F\uFF09\u3002",
             "page_snapshot\uFF1A\u62C9\u53D6\u76EE\u6807\u9875\u9762\u57FA\u7840\u73B0\u573A\uFF08URL/\u9009\u533A/\u6A21\u62DF\u6761\u4EF6\uFF09\u3002",
             "page_logs / page_network\uFF1A\u6392\u67E5\u9875\u9762\u62A5\u9519/\u8BF7\u6C42\u5931\u8D25\u9996\u9009\u2014\u2014page_logs \u67E5 console\uFF08\u53EF level/since/limit \u8FC7\u6EE4\uFF0C\u5148\u770B warn/error\uFF09\uFF1Bpage_network \u67E5 ajax/fetch \u5B8C\u6210\u6001\uFF08status\u2265400 \u6216 errorOnly:true \u53EA\u770B\u5931\u8D25\uFF09\u3002\u4E24\u8005\u5747\u8BFB\u9875\u9762\u672C\u5730\u7F13\u51B2\uFF08CDP Runtime.evaluate \u6309\u9700\u62C9\u53D6\uFF0C\u4E0D\u518D\u5B9E\u65F6\u4E0A\u62A5\uFF09\u3002",
@@ -2695,16 +2695,16 @@ async function probeBridge(bridgeBase, timeoutMs = 1500) {
 
 // src/mcp-config.ts
 import { homedir } from "node:os";
-import { join as join2 } from "node:path";
-import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync as renameSync2, mkdirSync as mkdirSync2 } from "node:fs";
-var HOME = homedir();
+import { join as join2, dirname as dirname2 } from "node:path";
+import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync as renameSync2, mkdirSync as mkdirSync2, rmSync as rmSync2 } from "node:fs";
+var homeDir = () => homedir();
 var MCP_TARGETS = {
   // pi 实际读取 getAgentDir()/mcp.json（getAgentDir = $PI_CODING_AGENT_DIR，默认 ~/.pi/agent）；
   // ~/.config/mcp/mcp.json 是历史误记——默认 pi 不读它（探针实证 2026-09-10，见执行记录 P17）
-  pi: [{ path: () => join2(process.env.PI_CODING_AGENT_DIR || join2(HOME, ".pi", "agent"), "mcp.json"), key: "mcpServers" }],
-  zcode: [{ path: () => join2(HOME, ".zcode", "cli", "config.json"), key: "mcpServers", keyPath: ["mcp", "servers"] }],
+  pi: [{ path: () => join2(process.env.PI_CODING_AGENT_DIR || join2(homeDir(), ".pi", "agent"), "mcp.json"), key: "mcpServers" }],
+  zcode: [{ path: () => join2(homeDir(), ".zcode", "cli", "config.json"), key: "mcpServers", keyPath: ["mcp", "servers"] }],
   opencode: [{
-    path: () => join2(HOME, ".config", "opencode", "opencode.json"),
+    path: () => join2(homeDir(), ".config", "opencode", "opencode.json"),
     key: "mcpServers",
     keyPath: ["mcp"],
     shimEntry: (shimPath) => ({ type: "local", command: ["node", shimPath], enabled: true }),
@@ -2714,18 +2714,18 @@ var MCP_TARGETS = {
     // D23：http 类型对 opencode 非法
   }],
   claude: [
-    { path: () => join2(HOME, ".claude.json"), key: "mcpServers" },
+    { path: () => join2(homeDir(), ".claude.json"), key: "mcpServers" },
     { path: (p) => join2(p, ".mcp.json"), key: "mcpServers", project: true }
   ],
   // CodeBuddy Code（腾讯 cbc）：用户级 ~/.codebuddy/.mcp.json（官方 mcp.md：.mcp.json 推荐 /
   // mcp.json 已废弃；条目形状 mcpServers+stdio 与 claude 同构，2026-09-11 cbc mcp add 实测钉死）。
   // 项目级 .mcp.json 与 claude 同文件（claude 目标已覆盖），不重复注册。
-  codebuddy: [{ path: () => join2(HOME, ".codebuddy", ".mcp.json"), key: "mcpServers" }],
-  cursor: [{ path: () => join2(HOME, ".cursor", "mcp.json"), key: "mcpServers" }],
-  windsurf: [{ path: () => join2(HOME, ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers" }],
+  codebuddy: [{ path: () => join2(homeDir(), ".codebuddy", ".mcp.json"), key: "mcpServers" }],
+  cursor: [{ path: () => join2(homeDir(), ".cursor", "mcp.json"), key: "mcpServers" }],
+  windsurf: [{ path: () => join2(homeDir(), ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers" }],
   vscode: [{ path: (p) => join2(p, ".vscode", "mcp.json"), key: "servers", project: true }],
   zed: [
-    { path: () => join2(HOME, ".config", "zed", "settings.json"), key: "mcp" },
+    { path: () => join2(homeDir(), ".config", "zed", "settings.json"), key: "mcp" },
     { path: (p) => join2(p, ".zed", "settings.json"), key: "mcp", project: true }
   ]
 };
@@ -2835,19 +2835,27 @@ function patchFile(path, key, serverName, url, dryRun, log, keyPath, httpEntry) 
   return { changed: true };
 }
 function writeAtomic(path, cfg) {
-  try {
-    const tmp = path + ".tmp";
-    const bak = path + ".bak";
+  const tmp = path + ".tmp";
+  const bak = path + ".bak";
+  mkdirSync2(dirname2(path), { recursive: true });
+  writeFileSync2(tmp, JSON.stringify(cfg, null, 2) + "\n");
+  if (existsSync2(path)) {
     try {
       renameSync2(path, bak);
     } catch {
     }
-    mkdirSync2(path.split("/").slice(0, -1).join("/"), { recursive: true });
-    writeFileSync2(tmp, JSON.stringify(cfg, null, 2) + "\n");
+  }
+  try {
     renameSync2(tmp, path);
   } catch (e) {
+    if (existsSync2(bak) && !existsSync2(path)) {
+      try {
+        renameSync2(bak, path);
+      } catch {
+      }
+    }
     try {
-      renameSync2(path, path);
+      rmSync2(tmp, { force: true });
     } catch {
     }
     throw e;
@@ -2871,7 +2879,7 @@ function listPlannedWrites(opts) {
     }
   }
   for (const p of opts.configPaths || []) {
-    const abs = p.replace(/^~(?=\/|$)/, HOME);
+    const abs = p.replace(/^~(?=\/|$)/, homeDir());
     let matched = null;
     for (const [t, files] of Object.entries(MCP_TARGETS)) {
       for (const f of files) {
@@ -2923,7 +2931,7 @@ function unregisterMcp(opts) {
   const log = opts.log || ((l) => console.log(l));
   const results = [];
   let changed = false;
-  const files = new Map([...(opts.configPaths || []).map((p) => [p.replace(/^~(?=\/|$)/, HOME), void 0])]);
+  const files = new Map([...(opts.configPaths || []).map((p) => [p.replace(/^~(?=\/|$)/, homeDir()), void 0])]);
   if (!files.size) {
     for (const t of Object.keys(MCP_TARGETS)) {
       for (const f of MCP_TARGETS[t]) {
@@ -3039,14 +3047,14 @@ function unregisterAitiShim(opts) {
 function resolveShimPathAuto(cwdCandidates) {
   const installedCandidates = [
     process.env.AITI_WEB_ROOT && join2(process.env.AITI_WEB_ROOT, "node_modules"),
-    join2(HOME, ".pi", "web", "node_modules"),
-    join2(HOME, ".pi", "web-dev", "node_modules")
+    join2(homeDir(), ".pi", "web", "node_modules"),
+    join2(homeDir(), ".pi", "web-dev", "node_modules")
   ].filter((p) => !!p).map((nm) => join2(nm, "@aiti-ai", "aiti-bridge", "bin", "aiti-mcp-shim.cjs"));
   const candidates = [
     process.env.AITI_SHIM_PATH,
     ...installedCandidates,
     ...cwdCandidates || [],
-    join2(HOME, "workspace", "pi-work", "packages", "aiti-bridge", "bin", "aiti-mcp-shim.cjs")
+    join2(homeDir(), "workspace", "pi-work", "packages", "aiti-bridge", "bin", "aiti-mcp-shim.cjs")
   ].filter((p) => !!p);
   for (const p of candidates) {
     try {
