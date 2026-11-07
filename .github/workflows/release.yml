@@ -55,17 +55,21 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=8192
 
-      - name: Build shared build root (extensions/.build-root)
+      - name: Build shared build root (outside extensions/ — must not enter the package)
         run: |
           set -e
-          mkdir -p extensions/.local-pkgs
-          (cd extensions/_shared && npm pack --pack-destination ../.local-pkgs)
-          (cd packages/aiti-bridge && npm pack --pack-destination ../../extensions/.local-pkgs)
-          (cd packages/aiti-devtools-core && npm pack --pack-destination ../../extensions/.local-pkgs)
-          SHARED_TGZ=$(ls extensions/.local-pkgs/aiti-ai-ext-shared-*.tgz | head -1)
-          BRIDGE_TGZ=$(ls extensions/.local-pkgs/aiti-ai-aiti-bridge-*.tgz | head -1)
-          CORE_TGZ=$(ls extensions/.local-pkgs/aiti-ai-aiti-devtools-core-*.tgz | head -1)
-          node scripts/collect-extension-deps.mjs --out extensions/.build-root/package.json \
+          # 脚手架全部放 /tmp：.build-root 的 package.json 含 CI 绝对路径 file: 依赖，
+          # 若落在 extensions/ 下会被打进主包、且用户机 reconcile 会把它当扩展读 deps → ENOENT
+          BUILD=/tmp/aiti-build-root
+          PKGS=/tmp/aiti-local-pkgs
+          mkdir -p "$PKGS"
+          (cd extensions/_shared && npm pack --pack-destination "$PKGS")
+          (cd packages/aiti-bridge && npm pack --pack-destination "$PKGS")
+          (cd packages/aiti-devtools-core && npm pack --pack-destination "$PKGS")
+          SHARED_TGZ=$(ls "$PKGS"/aiti-ai-ext-shared-*.tgz | head -1)
+          BRIDGE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-bridge-*.tgz | head -1)
+          CORE_TGZ=$(ls "$PKGS"/aiti-ai-aiti-devtools-core-*.tgz | head -1)
+          node scripts/collect-extension-deps.mjs --out "$BUILD/package.json" \
             --file "@aiti-ai/ext-shared=$SHARED_TGZ" \
             --file "@aiti-ai/aiti-bridge=$BRIDGE_TGZ" \
             --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
@@ -75,8 +79,8 @@ jobs:
           # service-tunnels 0.3.76：vendor 自 开发机已发布形态——exports 含 ./i18n ./ui-shared
           # （registry.npmjs.org 上的同名 0.3.9 是旧 exports，子路径 import 会挂），服务端自引用的
           # service-tunnels/i18n 等由它解析
-          npm install --prefix extensions/.build-root --legacy-peer-deps --no-audit --no-fund --loglevel=error
-          ln -s .build-root/node_modules extensions/node_modules
+          npm install --prefix "$BUILD" --legacy-peer-deps --no-audit --no-fund --loglevel=error
+          ln -s "$BUILD/node_modules" extensions/node_modules
 
       - name: Build extension dists (platform-agnostic JS, walk-up resolve)
         run: |
@@ -87,9 +91,9 @@ jobs:
             bc=$(node -p "try{require('./$pj').scripts?.['build:client']||''}catch{}" 2>/dev/null || echo "")
             [ -n "$bc" ] && [ "$bc" != "true" ] || continue
             echo "::group::build ${ext}"
-            # 每扩展 node_modules → 共享根（穿透 symlink）：build-client.mjs 的
+            # 每扩展 node_modules → 共享根（/tmp 构建根）：build-client.mjs 的
             # node_modules/vite/bin/vite.js 探测直接命中，require 解析同点命中
-            ln -sfn "$PWD/extensions/.build-root/node_modules" "${ext}node_modules"
+            ln -sfn /tmp/aiti-build-root/node_modules "${ext}node_modules"
             if (cd "$ext" && npm run build:client); then
               echo "::endgroup::"
             else
