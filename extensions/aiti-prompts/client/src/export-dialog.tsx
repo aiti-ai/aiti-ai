@@ -218,7 +218,7 @@ export function ExportPromptsDialog(props: Record<string, any>) {
           </div>
 
           {error ? (
-            <span style={{ fontSize: 12, color: "#f87171" }}>{error}</span>
+            <span style={{ fontSize: 12, color: "var(--danger, #f87171)" }}>{error}</span>
           ) : prompts === null ? (
             <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("exportPrompts.loading")}</span>
           ) : filtered.length === 0 ? (
@@ -247,7 +247,7 @@ export function ExportPromptsDialog(props: Record<string, any>) {
           </select>
           <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("exportPrompts.selected", { count: String(selected.size) })}</span>
           <span style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}>
-            {status && <span style={{ fontSize: 11, color: status.ok ? "#4ade80" : "#f87171" }}>{status.text}</span>}
+            {status && <span style={{ fontSize: 11, color: status.ok ? "var(--ok, #4ade80)" : "var(--danger, #f87171)" }}>{status.text}</span>}
             <button type="button" style={smallBtn} onClick={() => setFormat(format === "md" ? "json" : "md")}>{format === "md" ? "MD" : "JSON"}</button>
             <button type="button" onClick={exportSelected} disabled={busy} style={{ ...smallBtn, color: "var(--text)", fontWeight: 600 }}>{busy ? t("exportPrompts.busy") : t("exportPrompts.button", { count: String(filtered.filter(({ oi }) => selected.has(oi)).length) })}</button>
           </span>
