@@ -562,7 +562,7 @@ export default function register(ctx) {
               h("label", { style: { fontSize: 12, opacity: 0.8 } }, "正文手册（可空；可让 AI 帮你写）"),
               h("textarea", { value: skillForm.body, onInput: (e) => setSkillForm((f) => ({ ...f, body: e.target.value })), placeholder: "SKILL.md 正文（任务说明、API、输出格式…）。留空则先建骨架，再用「AI 帮我新增/修改 skill」补全。", style: { ...inputStyle(), minHeight: 90, resize: "vertical", lineHeight: 1.5 } }),
               // 操作
-              skillMsg ? h("div", { style: { fontSize: 12, padding: "7px 10px", borderRadius: 6, background: skillMsg.status === "ok" ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: skillMsg.status === "ok" ? "#16a34a" : "#dc2626" } }, skillMsg.msg) : null,
+              skillMsg ? h("div", { style: { fontSize: 12, padding: "7px 10px", borderRadius: 6, background: skillMsg.status === "ok" ? "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: skillMsg.status === "ok" ? "#16a34a" : "#dc2626" } }, skillMsg.msg) : null,
               h("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
                 h("button", { onClick: () => saveUserSkill(), disabled: savingSkill, style: btnStyle("primary") }, savingSkill ? "保存中…" : "保存"),
                 h("button", { onClick: () => { setShowSkillForm(false); setSelHelper(helpers && helpers.find((h) => h.id === "skill-manage") || null); }, style: { ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.bot), "让 AI 写"),
@@ -662,7 +662,7 @@ export default function register(ctx) {
               // 对话轮次指示
               (_state.sessionId || turns.length) ? h("div", { style: { marginTop: 5, fontSize: 10, opacity: 0.55 } }, "已" + (_state.sessionId ? "在同一 AI 会话延续（上下文完整）" : "迭代 " + (turns.length + 1) + " 轮·追问带手工上下文")) : null,
               // 落地状态
-              landing ? h("div", { style: { marginTop: 8, fontSize: 12, padding: "7px 10px", borderRadius: 6, background: landing.status === "ok" ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: landing.status === "ok" ? "#16a34a" : "#dc2626" } }, landing.msg) : null,
+              landing ? h("div", { style: { marginTop: 8, fontSize: 12, padding: "7px 10px", borderRadius: 6, background: landing.status === "ok" ? "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: landing.status === "ok" ? "#16a34a" : "#dc2626" } }, landing.msg) : null,
             ) : null,
           )) : null,
           // ===== 历史 tab =====

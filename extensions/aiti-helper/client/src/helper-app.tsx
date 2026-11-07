@@ -1091,7 +1091,7 @@ export function AiHelperDialog(props: Record<string, any>) {
               <input value={skillForm.summary} onInput={(e: any) => setSkillForm((f) => ({ ...f, summary: e.target.value }))} placeholder="这个 skill 能做什么" style={inputStyle()} />
               <label style={{ fontSize: 12, opacity: 0.8 }}>正文手册（可空；可让 AI 帮你写）</label>
               <textarea value={skillForm.body} onInput={(e: any) => setSkillForm((f) => ({ ...f, body: e.target.value }))} placeholder="SKILL.md 正文（任务说明、API、输出格式…）。留空则先建骨架，再用「AI 帮我新增/修改 skill」补全。" style={{ ...inputStyle(), minHeight: 90, resize: "vertical", lineHeight: 1.5 }} />
-              {skillMsg ? <div style={{ fontSize: 12, padding: "7px 10px", borderRadius: 6, background: skillMsg.status === "ok" ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: skillMsg.status === "ok" ? "#16a34a" : "#dc2626" }}>{skillMsg.msg}</div> : null}
+              {skillMsg ? <div style={{ fontSize: 12, padding: "7px 10px", borderRadius: 6, background: skillMsg.status === "ok" ? "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: skillMsg.status === "ok" ? "#16a34a" : "#dc2626" }}>{skillMsg.msg}</div> : null}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
                 <button onClick={() => saveUserSkill()} disabled={savingSkill} style={btnStyle("primary")}>{savingSkill ? "保存中…" : "保存"}</button>
                 <button onClick={() => { setShowSkillForm(false); setSelHelper(helpers && helpers.find((x) => x.id === "skill-manage") || null); }} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}>
@@ -1260,7 +1260,7 @@ export function AiHelperDialog(props: Record<string, any>) {
                   ) : null}
                   {/* 落地状态 */}
                   {landing ? (
-                    <div style={{ marginTop: 8, fontSize: 12, padding: "7px 10px", borderRadius: 6, background: landing.status === "ok" ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: landing.status === "ok" ? "#16a34a" : "#dc2626" }}>{landing.msg}</div>
+                    <div style={{ marginTop: 8, fontSize: 12, padding: "7px 10px", borderRadius: 6, background: landing.status === "ok" ? "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: landing.status === "ok" ? "#16a34a" : "#dc2626" }}>{landing.msg}</div>
                   ) : null}
                 </div>
               ) : null}
