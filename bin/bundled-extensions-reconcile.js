@@ -37,7 +37,9 @@ function listExtensionDirs(pkgDir) {
   const root = path.join(pkgDir, "extensions");
   let entries;
   try { entries = fs.readdirSync(root, { withFileTypes: true }); } catch { return []; }
-  return entries.filter((e) => e.isDirectory()).map((e) => path.join(root, e.name));
+  // 点目录（.build-root 等构建脚手架）不是扩展——其 package.json 可含 CI 绝对路径的
+  // file: 依赖（共享构建根），union 进来会在用户机 ENOENT
+  return entries.filter((e) => e.isDirectory() && !e.name.startsWith(".")).map((e) => path.join(root, e.name));
 }
 
 function readDeps(extDir) {
