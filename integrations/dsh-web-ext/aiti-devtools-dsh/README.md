@@ -42,7 +42,7 @@ dsh-web-ext/
 ## 加载（DSH web profile）
 
 ```bash
-node /home/pi/workspace/deepseek-harness/apps/cli/lib/bin.js plugin --profile web add @aiti-ai/aiti-devtools-dsh@^0.6.6
+node /home/pi/workspace/deepseek-harness/apps/cli/lib/bin.js plugin --profile web add @aiti-ai/aiti-devtools-dsh@^0.8.2
 sudo systemctl restart dsh.service
 ```
 
@@ -56,9 +56,14 @@ npm publish --access public # @aiti-ai/aiti-devtools-dsh（registry = npm.exampl
 
 ## 状态
 
-- **已落地并端到端验证**（0.6.6，2026-08-23）：占位符方案 + agent/pre-step 替换 + 候选条两区 +
-  详情弹窗 + 发送后自动清理。见 `../PLAN.md` §17.1。
-- **版本**：0.6.6。
+- **已落地并端到端验证**（0.8.2，2026-11-07 复检全过）：占位符方案 + agent/pre-step 替换 + 候选条两区 +
+  详情弹窗 + 发送后自动清理 + 交互卡 + 错误候选自动捕获 + 模型真实调用
+  aiti_hello/aiti_inbox/bridge_status/page_snapshot/page_exec（改写出的 pageId 直接被模型用）。
+  见 `../PLAN.md` §17.1。首次落地验证 0.6.6（2026-08-23）。
+- **版本**：0.8.2（内嵌 core 0.3.10；profile 根级 core 同步 ^0.3.10——升级后 launcher/cockpit 资产与仓库 HEAD 对齐）。
+- **升级注意**：npm 安装用 `--legacy-peer-deps`（npm 11 arborist 对 peerDependencies `*` 会崩 `Cannot read
+  properties of null`）；profile 根级 core 是独立依赖行，升级 dsh 包后须显式
+  `plugin --profile web add @aiti-ai/aiti-devtools-core@^0.3.10`，否则 runtime 解析到的还是旧版。
 
 ## 相关包
 
