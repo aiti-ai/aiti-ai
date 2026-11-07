@@ -661,7 +661,7 @@ function renderArchivedViewer(props: any, face?: string) {
   const archInner = (<>
         <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 12px", borderBottom: "1px solid var(--border)" }}>
           <ViewerTitle
-            prefix={<><span style={{ flexShrink: 0 }}>📦</span>{agentBadge(data?.session?.agent)}</>}
+            prefix={<><span style={{ flexShrink: 0, display: "flex" }}><SIc name="archive" size={13} /></span>{agentBadge(data?.session?.agent)}</>}
             name={data?.session?.name ?? data?.meta?.name}
             firstMessage={(() => { const f = data?.meta?.firstMessage ?? data?.session?.firstMessage ?? ""; return f === "(no messages)" ? "" : f; })()}
             fallback={sessionId.slice(0, 8)}
@@ -1130,7 +1130,7 @@ export function SessionsPanel(props: any) {
       </div>
     </div>
   );
-  const HEAT_COLORS = ["var(--bg-hover)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 25%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 45%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 70%, transparent)", "var(--ok, #10b981)"];
+  const HEAT_COLORS = ["var(--bg-hover)", "color-mix(in srgb, var(--ok, #10b981) 25%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 45%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 70%, transparent)", "var(--ok, #10b981)"];
   const heatmapGrid = (points: any[], onPick: (date: string) => void) => (
     <div style={{ display: "grid", gridTemplateColumns: "repeat(26, 1fr)", gap: 2, maxHeight: 120, overflowY: "auto" }}>
       {points.map((p) => (
@@ -1141,7 +1141,7 @@ export function SessionsPanel(props: any) {
           style={{
             aspectRatio: "1", borderRadius: 2, cursor: p.messages > 0 ? "pointer" : "default",
             background: HEAT_COLORS[p.level],
-            border: p.messages > 0 && p.level === 0 ? "1px solid color-mix(in srgb, var(--ok, var(--ok, #10b981)) 30%, transparent)" : "none",
+            border: p.messages > 0 && p.level === 0 ? "1px solid color-mix(in srgb, var(--ok, #10b981) 30%, transparent)" : "none",
           }}
         />
       ))}
@@ -1295,7 +1295,7 @@ export function SessionsPanel(props: any) {
       </div>
       {/* M1: external-agent badge */}
       {sess.planFirst && (
-        <span title="方案先行：已绑定方案文档（aiti-plan-first）" style={{ flexShrink: 0, fontSize: 10, color: "#3fb950", border: "1px solid #3fb95055", borderRadius: 4, padding: "0 4px", lineHeight: 1.5 }}>📋</span>
+        <span title="方案先行：已绑定方案文档（aiti-plan-first）" style={{ flexShrink: 0, display: "flex", alignItems: "center", color: "var(--ok, #3fb950)", border: "1px solid color-mix(in srgb, var(--ok, #3fb950) 33%, transparent)", borderRadius: 4, padding: "2px 4px", lineHeight: 1.5 }}><SIc name="clipboardList" size={10} /></span>
       )}
       {agentBadge(sess.agent)}
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1439,7 +1439,7 @@ export function SessionsPanel(props: any) {
               collapsePanelIfCovering(); // 同行点击：仅小屏全屏浮窗会盖住查看器，那时才让位
             }}
             style={{ ...miniBtn, opacity: 0.45, fontSize: 10, flexShrink: 0, color: ensureReadability("var(--ok, #22c55e)") }}
-          >⬇</button>
+          ><SIc name="arrowDown" size={10} /></button>
         </>
       )}
       {/* 「⋯」更多菜单：编辑/生成名字/移动等低频操作。归档/彻底删除已收进行内 📦 ▾（ArchiveMenu），此处不再重复。
@@ -1481,18 +1481,18 @@ export function SessionsPanel(props: any) {
           };
           if (extChildIds.length) {
             items.push({
-              key: "ext-hide-all", icon: "🚫", label: t("sm.extFlatTogether", { count: extChildIds.length }) ?? `从列表移除（连同 ${extChildIds.length} 个子会话）`,
+              key: "ext-hide-all", icon: <SIc name="ban" size={13} />, label: t("sm.extFlatTogether", { count: extChildIds.length }) ?? `从列表移除（连同 ${extChildIds.length} 个子会话）`,
               disabled: isBusy(sess.id),
               onClick: () => void extHideRun([String(sess.id), ...extChildIds]),
             });
             items.push({
-              key: "ext-hide-self", icon: "🔒", label: t("sm.extFlatKeep") ?? "从列表移除（仅自己）",
+              key: "ext-hide-self", icon: <SIc name="lock" size={13} />, label: t("sm.extFlatKeep") ?? "从列表移除（仅自己）",
               disabled: isBusy(sess.id),
               onClick: () => void extHideRun([String(sess.id)]),
             });
           } else {
             items.push({
-              key: "ext-hide", icon: "🚫", label: t("sm.extRemove") ?? "从列表移除",
+              key: "ext-hide", icon: <SIc name="ban" size={13} />, label: t("sm.extRemove") ?? "从列表移除",
               disabled: isBusy(sess.id),
               onClick: () => void extHideRun([String(sess.id)]),
             });
@@ -1500,7 +1500,7 @@ export function SessionsPanel(props: any) {
         } else if (sess.archived) {
           const isExtArchived = (sess as { archiveRef?: string }).archiveRef === "__ext__";
           items.push({
-            key: "reopen", icon: "📂", label: t("sm.reopen") ?? "重开（恢复并打开）",
+            key: "reopen", icon: <SIc name="folder" size={13} />, label: t("sm.reopen") ?? "重开（恢复并打开）",
             disabled: isBusy(sess.id),
             onClick: () => {
               if (isBusy(sess.id)) return;
@@ -1539,7 +1539,7 @@ export function SessionsPanel(props: any) {
             },
           });
           if (!isExtArchived) items.push({
-            key: "delete", icon: "🗑️", danger: true, label: t("sm.deleteArchive") ?? "彻底删除",
+            key: "delete", icon: <SIc name="trash" size={13} />, danger: true, label: t("sm.deleteArchive") ?? "彻底删除",
             disabled: isBusy(sess.id),
             onClick: () => {
               if (isBusy(sess.id)) return;
@@ -1694,8 +1694,8 @@ export function SessionsPanel(props: any) {
           <button
             onClick={() => { setStatsOpen((v) => !v); setFilterOpen(false); }}
             title={t("sm.stats")}
-            style={{ ...ghostBtn, fontSize: 11, background: statsOpen ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 18%, transparent)" : undefined } as React.CSSProperties}
-          >📊</button>
+            style={{ ...ghostBtn, fontSize: 11, background: statsOpen ? "color-mix(in srgb, var(--ok, #10b981) 18%, transparent)" : undefined } as React.CSSProperties}
+          ><SIc name="chartColumn" size={11} /></button>
           {archStatus && archStatus.candidates.length > 0 && (
             <button
               onClick={() => void runArchiveNow()}
@@ -1795,7 +1795,7 @@ export function SessionsPanel(props: any) {
 
         {/* §14.3 stats drawer */}
         {statsOpen && (
-          <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 5%, transparent)" }}>
+          <div style={{ padding: "10px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--ok, #10b981) 5%, transparent)" }}>
             {!stats ? <div style={{ color: "var(--text-muted)", fontSize: 12 }}>…</div> : (
               <div>
                 {/* 4 stat cards */}
@@ -1963,7 +1963,7 @@ export function SessionsPanel(props: any) {
         </div>
         {/* M1: external source strip — discovered/stale cards (加载/同步入口) */}
         {(s.sources ?? []).some((x: any) => x.status === "discovered" || x.status === "stale") && (
-          <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap", padding: "5px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 4%, transparent)" }}>
+          <div style={{ display: "flex", gap: 5, alignItems: "center", flexWrap: "wrap", padding: "5px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--ok, #10b981) 4%, transparent)" }}>
             {s.sources.filter((src: any) => src.status === "discovered" || src.status === "stale").map((src: any) => {
               const m = AGENT_META[src.agent] ?? AGENT_META.default;
               const busy = rowBusy.has("src:" + src.agent);

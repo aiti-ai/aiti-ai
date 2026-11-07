@@ -14,6 +14,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { apiUrl, t, getExtProvides, renderSlot } from "../host-shim";
 import { formatRelativeTime, skillExpansionToCommand, SESSION_LIST_ITEM_HEIGHT, type SessionInfo, type SessionTreeNode } from "./pure";
 import { RunningSessionIndicator, UnreadSessionIndicator, RunOutcomeIndicator, dispatchSessionRowContextMenu } from "./parts";
+import { SIc } from "../helpers";
 // 薄壳拆分（§5.1）：row-menu/move-dialog 在懒 chunk——行「⋮」点击时才 import（点开
 // 一次后浏览器模块缓存，后续零延迟）。buildLivePiRowMenuItems/openRowMenu/showMoveDialog
 // 均从已加载模块调用。
@@ -354,7 +355,7 @@ function SessionItem({
                 <span
                   title={t("sm.pinned") ?? "已置顶"}
                   style={{ flexShrink: 0, fontSize: 9, lineHeight: 1.5 }}
-                >📌</span>
+                ><SIc name="pin" size={10} /></span>
               )}
               {/* 移除进行中标注（面板归档/删除/从列表移除 → 左栏同步，后台刷新慢） */}
               {removing && (
