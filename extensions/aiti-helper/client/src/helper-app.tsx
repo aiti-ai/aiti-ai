@@ -832,7 +832,7 @@ export function AiHelperDialog(props: Record<string, any>) {
       });
       const d = await r.json();
       if (!d.ok) { setSkillMsg({ status: "err", msg: d.error || "保存失败" }); return; }
-      setSkillMsg({ status: "ok", msg: "✅ 已保存到 data 目录（归属 " + (d.skill?.owner || "aiti-helper") + "）" });
+      setSkillMsg({ status: "ok", msg: "已保存到 data 目录（归属 " + (d.skill?.owner || "aiti-helper") + "）" });
       // 刷新帮助点列表（新 skill 立即出现）
       const hr = await fetch(apiUrl("/api/extensions/aiti-helper/helpers"), { cache: "no-store" });
       const hd = await hr.json();
@@ -1062,12 +1062,12 @@ export function AiHelperDialog(props: Record<string, any>) {
                           fontFamily: "ui-monospace, SFMono-Regular, monospace", color: "inherit" }}>{n}</code>
                       ))}
                     </div>
-                    {pend ? <div style={{ fontSize: 11, opacity: 0.7 }}>💡 默认关：点「执行」经本 skill 建的任务会话会自动带上这些工具（会话级，用完即还原，不全局开启）。</div> : null}
+                    {pend ? <div style={{ fontSize: 11, opacity: 0.7 }}>默认关：点「执行」经本 skill 建的任务会话会自动带上这些工具（会话级，用完即还原，不全局开启）。</div> : null}
                   </div>
                 );
               })() : null}
               {skillLoading ? <div style={{ fontSize: 12, opacity: 0.6 }}>加载说明…</div> : null}
-              {viewingSkill.err ? <div style={{ color: "#ef4444", fontSize: 12 }}>⚠️ {viewingSkill.err}</div> : null}
+              {viewingSkill.err ? <div style={{ color: "var(--danger, #ef4444)", fontSize: 12 }}>⚠️ {viewingSkill.err}</div> : null}
               {viewingSkill.body ? <pre style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", padding: "12px 14px", background: "var(--bg-subtle,#f5f5f5)", color: "inherit", borderRadius: 8, fontSize: 12, lineHeight: 1.6, border: "1px solid var(--border,#e0e0e0)", maxHeight: 320, overflow: "auto", margin: 0 }}>{viewingSkill.body}</pre> : null}
             </div>
           ) : showSkillForm ? (
@@ -1093,7 +1093,7 @@ export function AiHelperDialog(props: Record<string, any>) {
               <textarea value={skillForm.body} onInput={(e: any) => setSkillForm((f) => ({ ...f, body: e.target.value }))} placeholder="SKILL.md 正文（任务说明、API、输出格式…）。留空则先建骨架，再用「AI 帮我新增/修改 skill」补全。" style={{ ...inputStyle(), minHeight: 90, resize: "vertical", lineHeight: 1.5 }} />
               {skillMsg ? <div style={{ fontSize: 12, padding: "7px 10px", borderRadius: 6, background: skillMsg.status === "ok" ? "rgba(16,185,129,.12)" : "rgba(239,68,68,.12)", color: skillMsg.status === "ok" ? "#16a34a" : "#dc2626" }}>{skillMsg.msg}</div> : null}
               <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
-                <button onClick={() => saveUserSkill()} disabled={savingSkill} style={btnStyle("primary")}>{savingSkill ? "保存中…" : "💾 保存"}</button>
+                <button onClick={() => saveUserSkill()} disabled={savingSkill} style={btnStyle("primary")}>{savingSkill ? "保存中…" : "保存"}</button>
                 <button onClick={() => { setShowSkillForm(false); setSelHelper(helpers && helpers.find((x) => x.id === "skill-manage") || null); }} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}>
                   <Ic size={13} paths={ICONS.bot} />让 AI 写
                 </button>
@@ -1105,7 +1105,7 @@ export function AiHelperDialog(props: Record<string, any>) {
               {restoreNote ? <div style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, background: "rgba(37,99,235,.10)", border: "1px solid rgba(37,99,235,.3)", color: "inherit" }}>↩ {restoreNote}</div> : null}
               {bgActive && bgActive.length ? (
                 <div style={{ fontSize: 11, padding: "5px 10px", borderRadius: 6, background: "rgba(245,158,11,.10)", border: "1px solid rgba(245,158,11,.35)", color: "inherit", display: "flex", flexDirection: "column", gap: 2 }}>
-                  <span>🕘 {bgActive.length} 个后台任务执行中</span>
+                  <span>{bgActive.length} 个后台任务执行中</span>
                   {bgActive.slice(0, 3).map((t: any) => (
                     <button key={t.sessionId} onClick={() => restoreActive(t)} title="接回此会话的实时进度"
                       style={{ textAlign: "left", background: "none", border: "none", color: "inherit", cursor: "pointer", fontSize: 11, padding: 0, opacity: 0.8 }}>
@@ -1184,12 +1184,12 @@ export function AiHelperDialog(props: Record<string, any>) {
                   style={{ padding: "6px 15px", borderRadius: 8, cursor: "pointer",
                     border: "1px solid var(--accent,#2563eb)", background: loading ? "rgba(37,99,235,.08)" : "rgba(37,99,235,.12)",
                     color: "inherit", fontSize: 13, fontWeight: 500, opacity: (loading || !input.trim()) ? 0.5 : 1, display: "inline-flex", alignItems: "center", gap: 5 }}>
-                  {loading ? "⏳ 执行中…" : (<><SparkIcon size={13} />执行</>)}
+                  {loading ? "执行中…" : (<><SparkIcon size={13} />执行</>)}
                 </button>
               </div>
               {/* 流式监听 monitor（loading 中显示 AI 实时进度） */}
               {loading && monitor ? (() => {
-                const sl: Record<string, string> = { connecting: "🔌 正在连接 AI 会话…", thinking: "🤔 AI 思考中…", tool: "🔧 调用工具…", done: "✅ 完成", reconnecting: "🔄 重新连接…", degraded: "⚠ 无实时推送（任务仍在执行）" };
+                const sl: Record<string, string> = { connecting: "正在连接 AI 会话…", thinking: "AI 思考中…", tool: "调用工具…", done: "完成", reconnecting: "重新连接…", degraded: "无实时推送（任务仍在执行）" };
                 return (
                   <div style={{ border: "1px solid var(--border,#e0e0e0)", borderRadius: 8, background: "var(--bg-subtle,#f5f5f5)", padding: "8px 10px", display: "flex", flexDirection: "column", gap: 6 }}>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, fontWeight: 500 }}>
@@ -1225,7 +1225,7 @@ export function AiHelperDialog(props: Record<string, any>) {
                 </div>
               ) : null}
               {/* 错误 */}
-              {err ? <div style={{ color: "#ef4444", fontSize: 12, padding: "7px 10px", background: "rgba(239,68,68,.1)", borderRadius: 6 }}>❌ {err}</div> : null}
+              {err ? <div style={{ color: "var(--danger, #ef4444)", fontSize: 12, padding: "7px 10px", background: "rgba(239,68,68,.1)", borderRadius: 6 }}>❌ {err}</div> : null}
               {/* 结果预览 */}
               {result ? (
                 <div>
@@ -1235,7 +1235,7 @@ export function AiHelperDialog(props: Record<string, any>) {
                     border: "1px solid var(--border,#e0e0e0)", maxHeight: 220, overflow: "auto", margin: 0 }}>{result}</pre>
                   {/* 操作行 */}
                   <div style={{ display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" }}>
-                    {selHelper?.action ? <button onClick={() => doLand(result, selHelper, _state.historyId)} style={btnStyle("primary")}>{selHelper.action.type === "fill" ? "📝 回填弹窗" : "📥 入库"}</button> : null}
+                    {selHelper?.action ? <button onClick={() => doLand(result, selHelper, _state.historyId)} style={btnStyle("primary")}>{selHelper.action.type === "fill" ? "回填弹窗" : "入库"}</button> : null}
                     <button onClick={() => adoptChat(result)} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.msg} />填入聊天框</button>
                     <button onClick={() => copyResult(result)} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.copy} />复制</button>
                     <button onClick={retry} style={{ ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.refresh} />重来</button>
@@ -1277,7 +1277,7 @@ export function AiHelperDialog(props: Record<string, any>) {
                    style={{ border: "1px solid var(--border,#e0e0e0)", borderRadius: 8, padding: "8px 10px", cursor: "pointer", background: "var(--bg-subtle,#f5f5f5)" }}>
                    <div style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
                      <span style={{ fontSize: 10, opacity: 0.6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{(rec.contextLabel || rec.helperId || "自由发挥") + (rec.turn && rec.turn > 1 ? " · 第" + rec.turn + "轮" : "") + " · " + fmtTime(rec.at)}</span>
-                     <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 9, border: "1px solid " + (rec.landed ? "rgba(22,163,74,.5)" : "rgba(220,38,38,.4)"), color: rec.landed ? "#16a34a" : "#dc2626" }}>{rec.landed ? "✓ 已落地" : "未落地"}</span>
+                     <span style={{ fontSize: 10, padding: "1px 7px", borderRadius: 9, border: "1px solid " + (rec.landed ? "rgba(22,163,74,.5)" : "rgba(220,38,38,.4)"), color: rec.landed ? "#16a34a" : "#dc2626" }}>{rec.landed ? "已落地" : "未落地"}</span>
                    </div>
                    <div style={{ fontSize: 12, fontWeight: 500, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", lineHeight: 1.4 }}>💬 {(rec.message || "（早期记录无输入）").slice(0, 200)}</div>
                    <div style={{ fontSize: 11, opacity: 0.75, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" }}>{(rec.result || "").slice(0, 200)}</div>
