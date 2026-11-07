@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-recovery",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "description": "恢复 UI 扩展（队列恢复对话框 + 重启恢复向导）——pi-web 去 fork 化 B3 外迁",
   "scripts": {
