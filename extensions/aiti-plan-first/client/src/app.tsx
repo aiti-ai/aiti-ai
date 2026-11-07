@@ -940,7 +940,7 @@ function MainView(props: { status: any; remind: any; onBind: (abs: string, rel?:
               if (!sc || sc.ok || !sc.all || sc.all.length <= 1) return null;
               const st = sc.all;
               return (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", marginBottom: 6, border: "1px solid rgba(245,158,11,.4)", background: "rgba(245,158,11,.08)", borderRadius: 6, fontSize: 11 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", marginBottom: 6, border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 40%, transparent)", background: "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)", borderRadius: 6, fontSize: 11 }}>
                   <span style={{ color: "#f59e09", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>⚠ {st.length} 个 方案/* 状态 tag（{st.join("、")}）</span>
                   <button
                     title={"保留「" + st[st.length - 1] + "」，移除 " + st.slice(0, -1).join("、") + "（POST /doctags 写回 front-matter）"}
@@ -949,7 +949,7 @@ function MainView(props: { status: any; remind: any; onBind: (abs: string, rel?:
                         .then((r) => { if (r && r.ok) refresh(); })
                         .catch(() => { });
                     }}
-                    style={{ marginLeft: "auto", flexShrink: 0, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: "pointer", border: "1px solid rgba(245,158,11,.5)", background: "transparent", color: "#f59e09" }}
+                    style={{ marginLeft: "auto", flexShrink: 0, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: "pointer", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", background: "transparent", color: "#f59e09" }}
                   >修复</button>
                 </div>
               );
