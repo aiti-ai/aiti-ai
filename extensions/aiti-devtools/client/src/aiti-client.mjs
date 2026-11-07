@@ -356,7 +356,7 @@ export default function register(ctx) {
               insertPlaceholder(cand);
             }
           }
-          setBridgeLog("💬 用户" + (pv.status === "rejected" ? "拒绝：" + (pv.reason || "") : (pv.status === "answered" ? "回答：" + (pv.answer || "") : "超时")));
+          setBridgeLog("用户" + (pv.status === "rejected" ? "拒绝：" + (pv.reason || "") : (pv.status === "answered" ? "回答：" + (pv.answer || "") : "超时")));
         },
       });
       refreshSessions();
@@ -366,7 +366,7 @@ export default function register(ctx) {
 
   // ---------- 状态：桥 + sessions + 执行结果 ----------
   let bridgeStatus = "桥未连";
-  let bridgeColor = "#f87171";
+  let bridgeColor = "var(--danger, #f87171)";
   const bridgeListeners = new Set();
   let sessionsRows = [];
   const sessionsListeners = new Set();
@@ -389,7 +389,7 @@ export default function register(ctx) {
         if (rec) list.push(rec);
       }
       setSessions(list);
-      if (debugTarget.pageId) setBridgeStatus("🔗 桥已连 · 目标 " + debugTarget.pageId, "#4ade80");
+      if (debugTarget.pageId) setBridgeStatus("桥已连 · 目标 " + debugTarget.pageId, "var(--ok, #4ade80)");
     }).catch(() => {});
   }
 
@@ -435,7 +435,7 @@ export default function register(ctx) {
     const exec = async () => {
       if (!cmd.trim() || busy) return;
       const pid = targetId || target.pageId;
-      if (!pid) { setExecOut("⚠ 未选目标（boot 自动带 / 从页面列表选）"); return; }
+      if (!pid) { setExecOut("未选目标（boot 自动带 / 从页面列表选）"); return; }
       setBusy(true); setExecOut("执行中…");
       try {
         const parts = cmd.trim().split(/\s+/);
@@ -692,7 +692,7 @@ export default function register(ctx) {
       style: { ...topbarBtnStyle, background: active ? "#4f46e5" : "none", color: active ? "#fff" : "var(--text-muted)", borderRadius: active ? 6 : 0, borderRight: active ? "none" : "1px solid var(--border)" },
       onMouseEnter: (e) => { if (!active) e.currentTarget.style.color = "var(--text)"; },
       onMouseLeave: (e) => { if (!active) e.currentTarget.style.color = "var(--text-muted)"; },
-      title: "🎯 点选页面元素（通知宿主 inspect；选中元素进候选 [元素N]）",
+      title: "点选页面元素（通知宿主 inspect；选中元素进候选 [元素N]）",
     },
       // lucide：非 active crosshair（点选准星）· active square（停止）——与系统内建线条图标同风格
       active
@@ -808,7 +808,7 @@ export default function register(ctx) {
                   h("label", { key: fld, style: { display: "inline-flex", alignItems: "center", gap: 3, fontSize: 11, color: "var(--text)", cursor: "pointer" } },
                     h("input", { type: "checkbox", checked: el.include[fld] !== false, onChange: () => toggle(fld) }), label))),
             ),
-        h("p", { style: { ...smallStyle } }, "📂 后台打开经 MCP 桥 open_file（IDE 由 AITI_OPEN_CMD 环境变量指定，无则用系统默认编辑程序）；🖥 前端打开在 pi-web 文件标签页在线查看。文件经存在性校验，存在才显示打开按钮；查询通道：AI 窗直连扩展 file-stat（bridge 通道）/ 桥 file_stat 工具（ai 通道）。"),
+        h("p", { style: { ...smallStyle } }, "后台打开经 MCP 桥 open_file（IDE 由 AITI_OPEN_CMD 环境变量指定，无则用系统默认编辑程序）；🖥 前端打开在 pi-web 文件标签页在线查看。文件经存在性校验，存在才显示打开按钮；查询通道：AI 窗直连扩展 file-stat（bridge 通道）/ 桥 file_stat 工具（ai 通道）。"),
       ),
     );
   }
@@ -853,7 +853,7 @@ export default function register(ctx) {
           stripTagsFromInput(tags);
           setPicked([]);
         },
-        style: { ...btnStyle, padding: "1px 8px", marginLeft: "auto", color: "#ef4444" },
+        style: { ...btnStyle, padding: "1px 8px", marginLeft: "auto", color: "var(--danger, #ef4444)" },
       }, "清空"),
     );
   }
@@ -895,7 +895,7 @@ export default function register(ctx) {
       // 可见性：最终发送文本（转换后 + 前缀）打控制台 + AITI 面板日志，便于验证/排查
       const logSent = (t) => {
         try { console.log("[aiti] 发送 →\n" + t); } catch (e) {}
-        try { setBridgeLog("✉️ 发送: " + String(t).replace(/\s+/g, " ").slice(0, 140)); } catch (e) {}
+        try { setBridgeLog("发送: " + String(t).replace(/\s+/g, " ").slice(0, 140)); } catch (e) {}
       };
       // 无候选：纯文本消息（发送/steer/followup）同样带来源标注——之前仅候选引用时才加，同页消息有的带 pageId 有的不带
       // 孤儿占位符兑底：候选已被清除/失效或跨窗口编号过期时，文本里残留的 [元素N]/[回答N]/[错误N]/[选择N]
