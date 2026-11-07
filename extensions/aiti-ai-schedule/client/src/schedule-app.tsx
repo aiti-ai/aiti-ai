@@ -68,7 +68,7 @@ function statusBadge(t: any): [string, string] {
   if (!t.triggerEnabled && t.enabled) return ["待触发(调度关)", "var(--warn, #f59e0b)"];
   if (!t.enabled) return t.autoApprove === false ? ["待确认", "var(--warn, #f59e0b)"] : ["已停用", "#8a8a8a"];
   if (t.running) return ["执行中…", "#3b82f6"];
-  return ["启用", "#10b981"];
+  return ["启用", "var(--ok, #10b981)"];
 }
 function scheduleHuman(t: any): string { return Array.isArray(t.schedule) ? t.schedule.join(" · ") : String(t.schedule); }
 const btnStyle = (bg: string, color: string): React.CSSProperties => ({
@@ -415,7 +415,7 @@ function SchedHelp() {
 
 // ---------- 模型下拉选择器（对齐 pi-web ModelSelector「新建 session 同款」：provider 分组 + 搜索过滤 + 缺省/默认模型 + 可用性提示点） ----------
 const AVAIL_DOT: Record<string, [string, string]> = {
-  ok: ["#10b981", "可用"],
+  ok: ["var(--ok, #10b981)", "可用"],
   rl: ["var(--warn, #f59e0b)", "限流(429)"],
   err: ["var(--danger, #ef4444)", "不可用"],
   unprobed: ["#9ca3af", "未探测"],
@@ -789,7 +789,7 @@ function CcChannelPicker({ anchor, onPick, onClose }: {
             title={s.session_key}
             style={{ padding: "5px 8px", fontSize: 12, cursor: "pointer", display: "flex", flexDirection: "column", gap: 1, borderBottom: "1px solid var(--border)" }}>
             <span style={{ display: "flex", alignItems: "center", gap: 6, overflow: "hidden" }}>
-              {s.active && <span style={{ width: 6, height: 6, borderRadius: 999, background: "#10b981", flexShrink: 0 }} />}
+              {s.active && <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--ok, #10b981)", flexShrink: 0 }} />}
               <span style={{ fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sessionLabel(s)}</span>
             </span>
             {s.last_message?.content && (
@@ -1072,7 +1072,7 @@ function RunsPanel({ onClose }: { onClose: () => void }) {
                 <tr key={r.id}>
                   <td style={tdStyle} title={r.at}>{new Date(r.at).toLocaleString()}</td>
                   <td style={tdStyle}>{r.name}</td>
-                  <td style={{ ...tdStyle, color: r.status === "ok" ? "#10b981" : r.status === "error" ? "var(--danger, #ef4444)" : r.status === "missed" ? "var(--warn, #f59e0b)" : "inherit" }}>
+                  <td style={{ ...tdStyle, color: r.status === "ok" ? "var(--ok, #10b981)" : r.status === "error" ? "var(--danger, #ef4444)" : r.status === "missed" ? "var(--warn, #f59e0b)" : "inherit" }}>
                     {r.status}{r.retry ? "·重试" : ""}
                   </td>
                   <td style={tdStyle}>{r.ms != null ? r.ms + "ms" : ""}</td>
@@ -1080,11 +1080,11 @@ function RunsPanel({ onClose }: { onClose: () => void }) {
                     title={r.error || r.text || ""}>
                     {r.error ? "⚠ " + r.error : (r.text || "")}
                     {r.ccSent && (
-                      <span style={{ color: ccOk ? "#10b981" : "var(--danger, #ef4444)", marginLeft: 6 }}
+                      <span style={{ color: ccOk ? "var(--ok, #10b981)" : "var(--danger, #ef4444)", marginLeft: 6 }}
                         title={ccOk ? "IM 已送达" : "IM 送达失败：" + r.ccSent}>{ccOk ? "已送达" : "送达失败"}</span>
                     )}
                     {r.mailSent && (
-                      <span style={{ color: mailOk ? "#10b981" : "var(--danger, #ef4444)", marginLeft: 6 }}
+                      <span style={{ color: mailOk ? "var(--ok, #10b981)" : "var(--danger, #ef4444)", marginLeft: 6 }}
                         title={mailOk ? "邮件已送达" : "邮件送达失败：" + r.mailSent}>{mailOk ? "已送达" : "送达失败"}</span>
                     )}
                   </td>
@@ -1218,7 +1218,7 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
           <Ic size={15} paths={ICONS.clock} />定时任务与计划
         </span>
         {config && (
-          <span style={{ fontSize: 11.5, color: config.active ? "#10b981" : "var(--warn, #f59e0b)", cursor: "pointer", marginLeft: 4 }}
+          <span style={{ fontSize: 11.5, color: config.active ? "var(--ok, #10b981)" : "var(--warn, #f59e0b)", cursor: "pointer", marginLeft: 4 }}
             onClick={() => act("/config")} title="点击切换运行时暂停（env 门控不变）">
             {config.active ? "● 触发开" : "● 已暂停"}
           </span>
@@ -1263,7 +1263,7 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
                     </div>
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       {isAi && task.autoApprove === false && task.enabled === false && (
-                        <button style={btnStyle("rgba(16,185,129,.15)", "#10b981")} onClick={() => act("/plans/" + task.id + "/approve")} title="批准该 AI 创建的计划生效">批准</button>
+                        <button style={btnStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 15%, transparent)", "var(--ok, #10b981)")} onClick={() => act("/plans/" + task.id + "/approve")} title="批准该 AI 创建的计划生效">批准</button>
                       )}
                       <button style={btnStyle("var(--bg-hover)", "var(--text)")}
                         onClick={() => act(isAi ? "/plans/" + task.id + "/run" : "/schedules/" + encodeURIComponent(task.id) + "/run")}
