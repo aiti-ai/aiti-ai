@@ -19,10 +19,11 @@
   "contentHash": "e1569c522adc7d07",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-agent-manager.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-agent-manager"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-agent-manager#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-agent-manager/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
