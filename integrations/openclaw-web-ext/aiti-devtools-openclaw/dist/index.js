@@ -1,6 +1,6 @@
 /**
  * @aiti-ai/aiti-devtools-openclaw —— aiti-devtools 宿主 adapter（OpenClaw 插件）v0.2
- * 由 tools/build.mjs 生成（2026-08-24T05:29:18.327Z）；工具定义源：桥 MCP tools/list（16 个）。
+ * 由 tools/build.mjs 生成（2026-11-07T07:47:30.782Z）；工具定义源：桥 MCP tools/list（16 个）。
  *
  * v0.3 能力：
  *   1. api.registerTool × 16（aiti_ 前缀）；execute → POST {bridge}/bridge/agent/tools/call（REST 直连，无 MCP）
@@ -23,7 +23,7 @@ const TOOLS = [
  {
   "ocName": "aiti_page_exec",
   "name": "page_exec",
-  "description": "在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。危险命令/浏览器受限操作会自动弹用户确认；Page.captureScreenshot 截屏会弹确认卡+浏览器选择器（大图自动落盘返回文件路径）。调试会话中从被调试页面（inject）发出的消息统一带 [发自: <pageId> · <url>] 来源标注——把 pageId 值传给 pageId 参数即操作该页面。\n\niframe 支持：Page.getFrameTree 查看 frame 树（iframe src/name/title，同域含 url/readyState）；Runtime.evaluate 传 contextId（iframe 索引从 1 起，同域可 eval）进 iframe 上下文执行。",
+  "description": "在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。危险命令/浏览器受限操作会自动弹用户确认；Page.captureScreenshot 截屏会先弹准备卡展示截取意图（args.reason，请务必用一句话说明想截什么），用户调整好页面才开始截屏，截完再弹预览确认（大图自动落盘返回文件路径）；确认卡倒计时可用 args.timeout（ms）调整（默认 280000，服务端安全网自动同步 +30s 余量）。调试会话中从被调试页面（inject）发出的消息统一带 [发自: <pageId> · <url>] 来源标注——把 pageId 值传给 pageId 参数即操作该页面。\n\niframe 支持：Page.getFrameTree 查看 frame 树（iframe src/name/title，同域含 url/readyState）；Runtime.evaluate 传 contextId（iframe 索引从 1 起，同域可 eval）进 iframe 上下文执行。",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -35,7 +35,7 @@ const TOOLS = [
     },
     "pageId": {
      "type": "string",
-     "description": "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 30142/host）；也可 /bridge/sessions 查询"
+     "description": "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 3001/host）；也可 /bridge/sessions 查询"
     }
    },
    "required": [
@@ -46,7 +46,7 @@ const TOOLS = [
  {
   "ocName": "aiti_page_snapshot",
   "name": "page_snapshot",
-  "description": "拉取已连接页面基础现场（URL/选区/模拟条件）",
+  "description": "拉取已连接页面基础现场（URL/选区/模拟条件）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -119,7 +119,7 @@ const TOOLS = [
  {
   "ocName": "aiti_bridge_status",
   "name": "bridge_status",
-  "description": "查询已连接页面（sessions：含 pageId/url/title/frameworks）与挂起请求。用户提到页面标题或 URL 时，按 title/url 匹配 pageId（如 refresh『某标题页面』或『某个 url 页面』）。",
+  "description": "查询已连接页面（sessions：含 pageId/url/title/frameworks + device/deviceLabel——浏览器·OS·屏幕·dpr·在线·语言·时区等设备信息，便于区分多台机器/标签页）与挂起请求。用户提到页面标题或 URL 时，按 title/url 匹配 pageId（如 refresh『某标题页面』或『某个 url 页面』）。",
   "inputSchema": {
    "type": "object",
    "properties": {}
@@ -128,7 +128,7 @@ const TOOLS = [
  {
   "ocName": "aiti_page_logs",
   "name": "page_logs",
-  "description": "从目标页面拉取本地缓冲的 console 日志（log/debug/info/warn/error 全量，CDP Runtime.evaluate 读取 window.__dbg.__consoleRing）。页面报错排查首选：先查 warn/error 再逐步放开。返回 {logs:[{ts,level,text,count}], bufferSize}。",
+  "description": "从目标页面拉取本地缓冲的 console 日志（log/debug/info/warn/error 全量，CDP Runtime.evaluate 读取 window.__dbg.__consoleRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。页面报错排查首选：先查 warn/error 再逐步放开。返回 {logs:[{ts,level,text,count}], bufferSize}。",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -157,7 +157,7 @@ const TOOLS = [
  {
   "ocName": "aiti_page_network",
   "name": "page_network",
-  "description": "从目标页面拉取本地缓冲的 ajax/fetch 请求完成态（CDP Runtime.evaluate 读取 window.__dbg.__netRing）。失败排查：status 传 400 或 errorOnly:true。注意：不含静态资源加载（那是 CDP Network 的能力）。返回 {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}。",
+  "description": "从目标页面拉取本地缓冲的 ajax/fetch 请求完成态（CDP Runtime.evaluate 读取 window.__dbg.__netRing）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。失败排查：status 传 400 或 errorOnly:true。注意：不含静态资源加载（那是 CDP Network 的能力）。返回 {requests:[{kind,method,url,status,statusText,durationMs,size,error,ts}], bufferSize}。",
   "inputSchema": {
    "type": "object",
    "properties": {
@@ -199,7 +199,7 @@ const TOOLS = [
     },
     "timeout": {
      "type": "number",
-     "description": "等待超时 ms（默认 60000，范围 5000-300000）"
+     "description": "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout"
     },
     "rejectable": {
      "type": "boolean",
@@ -232,7 +232,7 @@ const TOOLS = [
     },
     "timeout": {
      "type": "number",
-     "description": "等待超时 ms（默认 60000）"
+     "description": "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout"
     },
     "rejectable": {
      "type": "boolean",
@@ -273,7 +273,8 @@ const TOOLS = [
      "description": "是否允许多选（默认 false；true 时返回 indexes/labels）"
     },
     "timeout": {
-     "type": "number"
+     "type": "number",
+     "description": "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout"
     },
     "rejectable": {
      "type": "boolean",
@@ -308,7 +309,8 @@ const TOOLS = [
      "description": "预填默认值（可选）"
     },
     "timeout": {
-     "type": "number"
+     "type": "number",
+     "description": "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户操作，无读秒；传了才显示读秒倒计时（可暂停），到点自动返回 timeout"
     },
     "rejectable": {
      "type": "boolean",
@@ -340,7 +342,7 @@ const TOOLS = [
     },
     "timeout": {
      "type": "number",
-     "description": "默认 30000"
+     "description": "可选超时 ms（5000-600000）。不传=永久等待：面板常驻直到用户作答；传了才显示读秒倒计时（可暂停），到点返回 status:'timeout'（视为不在线）——需要快速探测在场/限时等待时才显式传"
     },
     "async": {
      "type": "boolean",
@@ -367,6 +369,10 @@ const TOOLS = [
     "body": {
      "type": "string",
      "description": "通知内容"
+    },
+    "timeout": {
+     "type": "number",
+     "description": "可选：通知卡自动关闭时限 ms（5000-600000）。不传=常驻直到用户关闭"
     },
     "async": {
      "type": "boolean",
