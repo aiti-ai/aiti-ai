@@ -428,13 +428,13 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
 
       {/* 无认证暴露 → 红色告警框（与页面顶部 🔴 条幅同源） */}
       {self?.unauthenticated && (
-        <div style={{ border: "1px solid var(--danger, #f87171)", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "var(--danger, #f87171)" }}>
+        <div style={{ border: "1px solid var(--danger, #f87171)", borderRadius: 8, padding: "8px 10px", background: "color-mix(in srgb, var(--danger, #f87171) 8%, transparent)", fontSize: 12, color: "var(--danger, #f87171)" }}>
           🔴 {t("services.selfNoAuth")} — {t("services.selfNoAuthSummary")}
         </div>
       )}
 
       {warnNonLoopback && (
-        <div style={{ border: "1px solid var(--danger, #f87171)", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "var(--danger, #f87171)" }}>
+        <div style={{ border: "1px solid var(--danger, #f87171)", borderRadius: 8, padding: "8px 10px", background: "color-mix(in srgb, var(--danger, #f87171) 8%, transparent)", fontSize: 12, color: "var(--danger, #f87171)" }}>
           ⚠ {t("services.selfWarning")}
         </div>
       )}
@@ -448,7 +448,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
           </span>
         </div>
         {exposing && exposeUrls.length > 0 && (
-          <div style={{ border: self?.unauthenticated ? "1px solid rgba(248,113,113,0.45)" : "1px solid rgba(22,163,74,0.3)", background: self?.unauthenticated ? "rgba(248,113,113,0.06)" : "rgba(22,163,74,0.06)", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
+          <div style={{ border: self?.unauthenticated ? "1px solid color-mix(in srgb, var(--danger, #f87171) 45%, transparent)" : "1px solid rgba(22,163,74,0.3)", background: self?.unauthenticated ? "color-mix(in srgb, var(--danger, #f87171) 6%, transparent)" : "rgba(22,163,74,0.06)", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: self?.unauthenticated ? "var(--danger, #f87171)" : "#16a34a", marginBottom: 5 }}>{t("services.selfExposeUrls")}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {exposeUrls.map((u) => (
