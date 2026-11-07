@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-word-docx-preview",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Word 文档预览（docx-preview 高保真只读）",
   "main": "index.ts",
   "scripts": {
