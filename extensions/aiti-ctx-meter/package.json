@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ctx-meter",
-  "version": "0.1.4",
+  "version": "0.1.7",
   "description": "输入区上下文比例条指示器（context % + 会话面板入口）",
   "soul": "上下文还剩多少，看一眼电池就知道。",
   "scripts": {
