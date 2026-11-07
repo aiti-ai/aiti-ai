@@ -23,5 +23,13 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "88b686aeaa52a01d"
+  "contentHash": "88b686aeaa52a01d",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-cmd.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-cmd#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-cmd/issues"
+  }
 }
