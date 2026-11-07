@@ -100,7 +100,7 @@ export const APP_OVERRIDES: Record<string, { category?: string; keywords?: strin
   "aiti-devtools": { category: "debug", keywords: ["devtools", "调试", "注入"] },
   "aiti-debug-inject": { category: "debug", keywords: ["inject", "注入"] },
   "aiti-ui-env": { category: "debug", keywords: ["ui", "虚拟屏", "vnc"] },
-  "aiti-wintrace": { category: "debug", keywords: ["wintrace", "native"] },
+  "aiti-testagent-native": { category: "debug", keywords: ["testagent-native", "tan", "native"] },
   "aiti-testagent": { category: "debug", keywords: ["java", "testagent"] },
   "aiti-cpu-meter": { category: "debug", keywords: ["cpu", "监控"] },
   "aiti-bridge-probe": { category: "debug", keywords: ["bridge", "探针"] },
