@@ -80,7 +80,7 @@ function fmtDuration(ms?: number): string {
 function statusMeta(status?: RunStatus): string {
   return ({
     pending: "#a0a0a0", running: "#00d4ff",
-    completed: "#10b981", failed: "var(--danger, #ef4444)", cancelled: "#a0a0a0",
+    completed: "var(--ok, #10b981)", failed: "var(--danger, #ef4444)", cancelled: "#a0a0a0",
   } as Record<string, string>)[status as string] || "#888";
 }
 
@@ -459,7 +459,7 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
             <span style={{ fontWeight: 600, fontSize: 12, width: 90, flexShrink: 0 }}>{a.name}</span>
             <span
               title={a.runner ? runnerCurrentLabel(a.runner) : "内置 pi 执行器"}
-              style={{ fontSize: 9, padding: "0 5px", borderRadius: 6, flexShrink: 0, background: !a.runner ? "rgba(0,212,255,0.1)" : a.runner.type === "external-job" ? "rgba(16,185,129,0.15)" : "rgba(168,85,247,0.15)", color: !a.runner ? "#00d4ff" : a.runner.type === "external-job" ? "#10b981" : "#a855f7" }}
+              style={{ fontSize: 9, padding: "0 5px", borderRadius: 6, flexShrink: 0, background: !a.runner ? "rgba(0,212,255,0.1)" : a.runner.type === "external-job" ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 15%, transparent)" : "rgba(168,85,247,0.15)", color: !a.runner ? "#00d4ff" : a.runner.type === "external-job" ? "var(--ok, #10b981)" : "#a855f7" }}
             >
               {!a.runner
                 ? "pi"
@@ -468,7 +468,7 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
                   : ({ "claude-code": "CC", "claude-code-writer": "CC✎", "codex-exec": "codex", "codex-exec-writer": "codex✎", "cursor-agent": "cursor", "cursor-agent-writer": "cursor✎" } as Record<string, string>)[a.runner.adapter || ""] || a.runner.adapter}
             </span>
             <span style={{ flex: 1, fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{a.description || "(无描述)"}</span>
-            {a.isUserDefined && <span style={{ fontSize: 9, padding: "0 5px", borderRadius: 6, background: "rgba(16,185,129,0.15)", color: "#10b981", flexShrink: 0 }}>{"自定义"}</span>}
+            {a.isUserDefined && <span style={{ fontSize: 9, padding: "0 5px", borderRadius: 6, background: "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 15%, transparent)", color: "var(--ok, #10b981)", flexShrink: 0 }}>{"自定义"}</span>}
             {!a.isUserDefined && a.runner?.type === "external-cli" && (() => {
               const backend = ({ "claude-code": "claude", "claude-code-writer": "claude", "codex-exec": "codex", "codex-exec-writer": "codex", "cursor-agent": "cursor", "cursor-agent-writer": "cursor" } as Record<string, string>)[a.runner?.adapter || ""];
               const ready = backend && backends.some((b) => b.key === backend);
@@ -477,7 +477,7 @@ function AgentsManagerBody({ embedded }: { embedded?: boolean }) {
                   disabled={!ready}
                   title={ready ? `执行替换为 pi-web 后端 ${backend}（同名覆盖，删除自定义即恢复 fork 直启）` : `pi-web 后端 ${backend || "?"} 未就绪`}
                   onClick={() => takeOver(a.name)}
-                  style={{ background: ready ? "rgba(16,185,129,0.12)" : "none", border: `1px solid ${ready ? "rgba(16,185,129,0.4)" : "var(--border)"}`, color: ready ? "#10b981" : "var(--text-dim)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: ready ? "pointer" : "not-allowed", flexShrink: 0, opacity: ready ? 1 : 0.55 }}
+                  style={{ background: ready ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)" : "none", border: `1px solid ${ready ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 40%, transparent)" : "var(--border)"}`, color: ready ? "var(--ok, #10b981)" : "var(--text-dim)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: ready ? "pointer" : "not-allowed", flexShrink: 0, opacity: ready ? 1 : 0.55 }}
                 >
                   {"接管"}
                 </button>
@@ -813,7 +813,7 @@ function FleetBody(props?: { dockItemKey?: string }) {
         </button>
         <button onClick={() => setCfgOpen(true)} title="并发配置（单 run 并发 / 累计预算 / 跨 run 活跃顶层 async 数）" style={{ background: "none", border: "1px solid var(--border)", color: "var(--text-muted)", borderRadius: 4, padding: "1px 8px", fontSize: 11, cursor: "pointer" }}>{"并发"}</button>
         <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          <span style={{ width: 6, height: 6, borderRadius: 3, background: "#10b981", display: "inline-block" }} />
+          <span style={{ width: 6, height: 6, borderRadius: 3, background: "var(--ok, #10b981)", display: "inline-block" }} />
           {"SSE 实时"}
         </span>
       </div>
@@ -933,7 +933,7 @@ function SteerRow({ runId, active }: { runId: string; active: boolean }) {
       >
         {sending ? "…" : "发送"}
       </button>
-      {msg && <span style={{ fontSize: 11, color: msg.startsWith("✓") ? "#10b981" : "var(--danger, #ef4444)", flexShrink: 0 }}>{msg}</span>}
+      {msg && <span style={{ fontSize: 11, color: msg.startsWith("✓") ? "var(--ok, #10b981)" : "var(--danger, #ef4444)", flexShrink: 0 }}>{msg}</span>}
     </div>
   );
 }
@@ -1031,8 +1031,8 @@ function InspectorDialog() {
           {isForkDetail && (run as { bridge?: { attached?: boolean; error?: string; state?: { isStreaming?: boolean; model?: { provider?: string; id?: string }; pendingMessageCount?: number }; recentMessages?: { role: string; text: string }[] } }).bridge && (() => {
             const bridge = (run as { bridge?: { attached?: boolean; error?: string; state?: { isStreaming?: boolean; model?: { provider?: string; id?: string }; pendingMessageCount?: number }; recentMessages?: { role: string; text: string }[] } }).bridge!;
             return bridge.attached ? (
-              <div style={{ marginTop: 4, padding: "6px 8px", background: "rgba(16,185,129,0.08)", borderRadius: 6, fontSize: 11 }}>
-                <div style={{ color: "#10b981" }}>{`🟢 /web RPC 已连接 · ${bridge.state?.isStreaming ? "流式执行中" : "空闲"} · ${bridge.state?.model?.provider ?? ""}/${bridge.state?.model?.id ?? ""} · 待投递 ${bridge.state?.pendingMessageCount ?? 0}`}</div>
+              <div style={{ marginTop: 4, padding: "6px 8px", background: "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 8%, transparent)", borderRadius: 6, fontSize: 11 }}>
+                <div style={{ color: "var(--ok, #10b981)" }}>{`🟢 /web RPC 已连接 · ${bridge.state?.isStreaming ? "流式执行中" : "空闲"} · ${bridge.state?.model?.provider ?? ""}/${bridge.state?.model?.id ?? ""} · 待投递 ${bridge.state?.pendingMessageCount ?? 0}`}</div>
                 {(bridge.recentMessages || []).slice(-3).map((m, i) => (
                   <div key={i} style={{ color: "var(--text-muted)", marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{`[${m.role}] ${m.text.slice(0, 120)}`}</div>
                 ))}
