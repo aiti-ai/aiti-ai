@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-acp-agent",
-  "version": "0.3.3",
+  "version": "0.3.6",
   "type": "module",
   "description": "Generic ACP driver — one adapter for all Agent Client Protocol agents",
   "scripts": {
@@ -20,5 +20,6 @@
   "dependencies": {
     "@aiti-ai/ext-shared": "^0.1.7"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "contentHash": "d58a50726e8570c9"
 }
