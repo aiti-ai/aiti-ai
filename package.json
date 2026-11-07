@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/pi-web",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "description": "Web UI for the pi coding agent",
   "homepage": "https://github.com/agegr/pi-web#readme",
   "repository": {
@@ -29,7 +29,9 @@
     "public",
     "next.config.ts",
     "patches",
-    "package.json"
+    "package.json",
+    "!extensions/_shared",
+    "!extensions/_shared/**"
   ],
   "scripts": {
     "postinstall": "node bin/prepare-terminal.js && patch-package",
