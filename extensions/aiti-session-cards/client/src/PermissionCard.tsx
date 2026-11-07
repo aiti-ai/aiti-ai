@@ -86,7 +86,7 @@ export default function PermissionCard({ request, respond }: SessionRequestCardP
               <button key={String(o.optionId ?? o.kind ?? o.name)} type="button" disabled={busy}
                 onClick={() => void answer(deny ? "decline" : "accept", o.optionId)}
                 style={{ padding: "5px 14px", borderRadius: 7, border: deny ? "1px solid #ef444466" : "none",
-                  background: deny ? "none" : "#22c55e", color: deny ? "#ef4444" : "#fff",
+                  background: deny ? "none" : "var(--ok, #22c55e)", color: deny ? "var(--danger, #ef4444)" : "#fff",
                   cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
                 {permissionOptionLabel(o)}
               </button>
@@ -95,12 +95,12 @@ export default function PermissionCard({ request, respond }: SessionRequestCardP
           : (<>
             <button type="button" disabled={busy} onClick={() => void answer("decline")}
               style={{ padding: "5px 14px", borderRadius: 7, border: "1px solid #ef444466",
-                background: "none", color: "#ef4444", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                background: "none", color: "var(--danger, #ef4444)", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
               拒绝
             </button>
             <button type="button" disabled={busy} onClick={() => void answer("accept")}
               style={{ padding: "5px 14px", borderRadius: 7, border: "none",
-                background: "#22c55e", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
+                background: "var(--ok, #22c55e)", color: "#fff", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>
               允许
             </button>
           </>)}
