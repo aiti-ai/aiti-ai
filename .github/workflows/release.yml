@@ -21,13 +21,14 @@ permissions:
 
 jobs:
   prepare:
-    # 平台无关构建层：.next + 扩展 dist 只构建一次（产物是纯 JS，平台 matrix 直接复用）
+    # 平台无关构建层：.next + 扩展 dist 只构建一次（产物是纯 JS，平台 matrix 直接复用）。
+    # 依赖策略：registry.npmjs.org 解析到内网 IP（GH runner 不可达），@aiti-ai/* 与 justget/
+    # service-tunnels 新版在 npmjs 缺失/过旧——扩展依赖走「共享构建根 + 本地 vendor
+    # tgz（vendor/npm/ + 仓内 pack）」：扩展目录零 install，Node/vite walk-up 命中
+    # extensions/node_modules（开发机开发模式同款）。官方源补齐后 vendor 可退役。
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
-    env:
-      # @aiti-ai/* 尚未上官方源（等 granular token）——先走测试源；官方发布后可删除
-      npm_config_registry: https://registry.npmjs.org/
     steps:
       - uses: actions/checkout@v4
 
@@ -46,8 +47,7 @@ jobs:
           node-version: 22
           cache: npm
 
-      - name: Install deps (main package)
-        # npm install 而非 ci：lock resolved 指向官方源而 @aiti-ai/* 走测试源（见 env 注释）
+      - name: Install deps (main package — all public on npmjs)
         run: npm install --no-audit --no-fund --loglevel=error
 
       - name: Build .next
@@ -55,7 +55,26 @@ jobs:
         env:
           NODE_OPTIONS: --max-old-space-size=8192
 
-      - name: Build extension dists (49 bundles, platform-agnostic JS)
+      - name: Build shared build root (extensions/.build-root)
+        run: |
+          set -e
+          mkdir -p extensions/.local-pkgs
+          (cd extensions/_shared && npm pack --pack-destination ../.local-pkgs)
+          (cd packages/aiti-bridge && npm pack --pack-destination ../../extensions/.local-pkgs)
+          (cd packages/aiti-devtools-core && npm pack --pack-destination ../../extensions/.local-pkgs)
+          SHARED_TGZ=$(ls extensions/.local-pkgs/aiti-ai-ext-shared-*.tgz | head -1)
+          BRIDGE_TGZ=$(ls extensions/.local-pkgs/aiti-ai-aiti-bridge-*.tgz | head -1)
+          CORE_TGZ=$(ls extensions/.local-pkgs/aiti-ai-aiti-devtools-core-*.tgz | head -1)
+          node scripts/collect-extension-deps.mjs --out extensions/.build-root/package.json \
+            --file "@aiti-ai/ext-shared=$SHARED_TGZ" \
+            --file "@aiti-ai/aiti-bridge=$BRIDGE_TGZ" \
+            --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
+            --file "justget=$PWD/vendor/npm/justget-0.2.4.tgz" \
+            --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.9.tgz"
+          npm install --prefix extensions/.build-root --legacy-peer-deps --no-audit --no-fund --loglevel=error
+          ln -s .build-root/node_modules extensions/node_modules
+
+      - name: Build extension dists (platform-agnostic JS, walk-up resolve)
         run: |
           failed=""
           for ext in extensions/*/; do
@@ -64,7 +83,7 @@ jobs:
             bc=$(node -p "try{require('./$pj').scripts?.['build:client']||''}catch{}" 2>/dev/null || echo "")
             [ -n "$bc" ] && [ "$bc" != "true" ] || continue
             echo "::group::build ${ext}"
-            if (cd "$ext" && npm install --no-audit --no-fund --loglevel=error && npm run build:client); then
+            if (cd "$ext" && npm run build:client); then
               echo "::endgroup::"
             else
               echo "::endgroup::"
@@ -74,7 +93,9 @@ jobs:
           if [ -n "$failed" ]; then echo "::error::extension build failed:$failed"; exit 1; fi
 
       - name: npm pack (authoritative files filter)
-        run: npm pack --pack-destination dist-tgz
+        run: |
+          rm -f extensions/node_modules   # 构建 symlink，勿入包（files 排除为双保险）
+          npm pack --pack-destination dist-tgz
 
       - uses: actions/upload-artifact@v4
         with:
@@ -100,9 +121,6 @@ jobs:
           - { os: darwin, arch: arm64, runner: macos-14 } # Apple Silicon
           - { os: win32, arch: x64, runner: windows-latest }
     runs-on: ${{ matrix.runner }}
-    env:
-      # 同 prepare：@aiti-ai/* 依赖暂走测试源
-      npm_config_registry: https://registry.npmjs.org/
     steps:
       - uses: actions/checkout@v4
 
