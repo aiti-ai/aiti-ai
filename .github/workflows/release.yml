@@ -74,8 +74,11 @@ jobs:
           npm install --prefix extensions/.build-root --legacy-peer-deps --no-audit --no-fund --loglevel=error
           ln -s .build-root/node_modules extensions/node_modules
           # service-tunnels：依赖名（无 scope）≠ 仓内源包名（@aiti-ai/service-tunnels，exports null），
-          # 安装形态对不上——直接 symlink 仓内源目录（物理子路径 service-tunnels/i18n 等全开）
-          ln -s ../service-tunnels extensions/node_modules/service-tunnels
+          # 安装形态对不上——symlink 仓内源目录（物理子路径 service-tunnels/i18n 等全开）。
+          # 注意 extensions/node_modules 本身是 → .build-root/node_modules 的 symlink，写穿透后
+          # 落点在 .build-root/node_modules/——相对目标须上跳两级才到 extensions/service-tunnels
+          ln -sfn ../../service-tunnels extensions/node_modules/service-tunnels
+          test -e extensions/node_modules/service-tunnels/package.json   # 悬空即 fail-fast
 
       - name: Build extension dists (platform-agnostic JS, walk-up resolve)
         run: |
@@ -86,6 +89,9 @@ jobs:
             bc=$(node -p "try{require('./$pj').scripts?.['build:client']||''}catch{}" 2>/dev/null || echo "")
             [ -n "$bc" ] && [ "$bc" != "true" ] || continue
             echo "::group::build ${ext}"
+            # 每扩展 node_modules → 共享根（穿透 symlink）：build-client.mjs 的
+            # node_modules/vite/bin/vite.js 探测直接命中，require 解析同点命中
+            ln -sfn "$PWD/extensions/.build-root/node_modules" "${ext}node_modules"
             if (cd "$ext" && npm run build:client); then
               echo "::endgroup::"
             else
