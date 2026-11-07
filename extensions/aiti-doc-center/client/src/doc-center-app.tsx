@@ -730,7 +730,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
                     <div title={(s.name ? s.name + "\n" : "") + "session " + String(s.session_id) + (s.archived ? "（已归档：点击在 All Sessions 归档查看器打开）" : "")}
                       onClick={() => openSessionById(String(s.session_id), !!s.archived)}
                       style={{ flex: 1, minWidth: 0, fontSize: 10.5, color: "#3b82f6", cursor: "pointer", padding: "1.5px 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                      {s.archived ? <span style={{ fontSize: 10, marginRight: 3 }}>📦</span> : null}{s.name || String(s.session_id).slice(0, 8)}
+                      {s.archived ? <span style={{ fontSize: 10, marginRight: 3, display: "inline-flex", verticalAlign: "-1px" }}><svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg></span> : null}{s.name || String(s.session_id).slice(0, 8)}
                     </div>
                     <span style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>{s.op_count} 次触达</span>
                     <span title="复制 session id" onClick={(e) => { e.stopPropagation(); try { navigator.clipboard.writeText(String(s.session_id)); } catch { /* ignore */ } }}
