@@ -61,7 +61,7 @@ function warningStrip(messages: string[]): HTMLElement {
 /** 错误态（含「尝试其他编辑器」提示位——打开方式菜单在宿主工具条 ▦） */
 function errorPane(title: string, detail: string): HTMLElement {
   const el = document.createElement("div");
-  el.style.cssText = "flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#f87171;font-size:13px;padding:16px;text-align:center;";
+  el.style.cssText = "flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--danger, #f87171);font-size:13px;padding:16px;text-align:center;";
   const t = document.createElement("div"); t.textContent = title;
   const d = document.createElement("div"); d.style.cssText = "color:var(--text-dim,#888);font-size:12px;word-break:break-all;max-width:80%;"; d.textContent = detail;
   const hint = document.createElement("div"); hint.style.cssText = "color:var(--text-dim,#888);font-size:12px;";
@@ -304,7 +304,7 @@ export function renderLegacySheetView(host: any, ctx: { filePath: string }): { e
       btn.type = "button";
       btn.textContent = "转为 .xlsx 并打开";
       btn.title = "后台转换为同名 -fromxls.xlsx 副本（不覆盖原文件与已有文件）并自动打开";
-      btn.style.cssText = "flex-shrink:0;padding:2px 10px;font-size:11px;font-weight:600;border:1px solid #f59e0b;border-radius:6px;background:#fff;cursor:pointer;color:#92400e;";
+      btn.style.cssText = "flex-shrink:0;padding:2px 10px;font-size:11px;font-weight:600;border:1px solid var(--warn, #f59e0b);border-radius:6px;background:#fff;cursor:pointer;color:#92400e;";
       btn.onclick = async () => {
         btn.disabled = true;
         btn.textContent = "转换中…";
