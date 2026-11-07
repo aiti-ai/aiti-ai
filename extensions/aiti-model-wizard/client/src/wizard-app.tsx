@@ -271,6 +271,8 @@ function SettingsDialog({ onClose }: { onClose: () => void }) {
     setCatBusy(false);
   };
   const r = cfg && cfg.reminder, cat = cfg && cfg.catalog, pr = cfg && cfg.probe, ts = cfg && cfg.test;
+  // label 样式（原与 SetNum 共享同名局部变量；SetNum 抽模块级组件后本组件需自持——缺失会 ReferenceError: lbl is not defined）
+  const lbl = { fontSize: 11, color: "var(--text-subtle,#666)", display: "block", marginBottom: 3 } as any;
   const panel = (
     <>
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
