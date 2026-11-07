@@ -109,9 +109,9 @@ const C = {
   muted: "var(--text-muted, #9aa4b2)",
   dim: "var(--text-dim, #6b7280)",
   accent: "var(--accent, #6aa1ff)",
-  warn: "#f59e0b",
-  ok: "#22c55e",
-  bad: "#ef4444",
+  warn: "var(--warn, #f59e0b)",
+  ok: "var(--ok, #22c55e)",
+  bad: "var(--danger, #ef4444)",
 };
 
 // lucide inbox 图标（与系统内建线条图标同风格）
@@ -370,10 +370,10 @@ function Card({ item, onDone }: { item: PendingItem; onDone: () => void }) {
       ))}
       <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
         <button onClick={apply} disabled={!!busy} style={{ ...btnStyle, borderColor: C.accent, color: C.accent }}>
-          {busy === "apply" ? "…" : "✓ 采认选中"}
+          {busy === "apply" ? "…" : "采认选中"}
         </button>
         <button onClick={discard} disabled={!!busy} style={btnStyle}>
-          {busy === "discard" ? "…" : "✗ 全部丢弃"}
+          {busy === "discard" ? "…" : "全部丢弃"}
         </button>
       </div>
     </div>
@@ -397,7 +397,7 @@ function PlanToggle({ sessionId, dir, st, onBusy }: { sessionId?: string; dir: s
     setBusy("");
     fireRefresh();
   };
-  const label = nonActive ? (st?.status === "pending" ? "📚 待采认" : st?.status === "kept" ? "📚 已保留" : "📚 已提取") : active ? (busy ? "…" : "⏹ 结束并结算") : busy ? "…" : "▶ 开启 plan";
+  const label = nonActive ? (st?.status === "pending" ? "待采认" : st?.status === "kept" ? "已保留" : "已提取") : active ? (busy ? "…" : "结束并结算") : busy ? "…" : "▶ 开启 plan";
   return (
     <button
       onClick={doToggle}
@@ -527,11 +527,11 @@ function SettleDialog(_props: { currentSession?: SessionInfo }) {
         </div>
         <div style={{ display: "flex", gap: 8, padding: "10px 16px", borderTop: "1px solid " + C.border, flexShrink: 0 }}>
           {total > 0 ? (
-            <button onClick={() => doSettle("apply")} disabled={!!busy} style={{ ...btnStyle, borderColor: C.accent, color: C.accent }}>{busy === "apply" ? "…" : "✓ 采认选中并关闭沙箱"}</button>
+            <button onClick={() => doSettle("apply")} disabled={!!busy} style={{ ...btnStyle, borderColor: C.accent, color: C.accent }}>{busy === "apply" ? "…" : "采认选中并关闭沙箱"}</button>
           ) : null}
-          <button onClick={() => doSettle("keep")} disabled={!!busy} style={{ ...btnStyle, borderColor: C.warn, color: C.warn }}>{busy === "keep" ? "…" : "💾 仅保存（保留沙箱）"}</button>
-          <button onClick={doDiscard} disabled={!!busy} style={btnStyle}>{busy === "discard" ? "…" : "✗ 全部丢弃"}</button>
-          <button onClick={() => setHistoryOpen(true)} style={{ ...btnStyle, marginLeft: "auto" }}>{"📚 沙箱历史"}</button>
+          <button onClick={() => doSettle("keep")} disabled={!!busy} style={{ ...btnStyle, borderColor: C.warn, color: C.warn }}>{busy === "keep" ? "…" : "仅保存（保留沙箱）"}</button>
+          <button onClick={doDiscard} disabled={!!busy} style={btnStyle}>{busy === "discard" ? "…" : "全部丢弃"}</button>
+          <button onClick={() => setHistoryOpen(true)} style={{ ...btnStyle, marginLeft: "auto" }}>{"沙箱历史"}</button>
         </div>
       </div>
     </div>
@@ -748,7 +748,7 @@ function HistoryBody({ currentSession }: { currentSession: SessionInfo }) {
                 <span style={{ fontSize: 11, fontWeight: 700, color: STATUS_COLOR[item.status] || C.muted }}>{"● " + (STATUS_LABEL[item.status] || item.status)}</span>
                 <span style={{ fontSize: 12, color: C.muted }}>{"tier=" + item.tier}</span>
                 <span style={{ fontSize: 11.5, color: C.muted }}>{"+" + (d.added?.length || 0) + "/~" + (d.modified?.length || 0) + "/-" + (d.deleted?.length || 0)}</span>
-                <button onClick={() => setExpanded(isOpen ? null : item.sandboxDir)} style={{ ...btnStyle, marginLeft: "auto", padding: "2px 8px" }}>{isOpen ? "收起" : "📂 提取文件"}</button>
+                <button onClick={() => setExpanded(isOpen ? null : item.sandboxDir)} style={{ ...btnStyle, marginLeft: "auto", padding: "2px 8px" }}>{isOpen ? "收起" : "提取文件"}</button>
               </div>
               <div style={{ fontSize: 12, color: C.text, marginTop: 4 }}>{item.summary || "(无说明)"}</div>
               {isOpen ? (
@@ -763,8 +763,8 @@ function HistoryBody({ currentSession }: { currentSession: SessionInfo }) {
                 </div>
               ) : null}
               <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-                <button onClick={() => doReuse(item)} style={{ ...btnStyle, padding: "3px 10px" }}>{"♻ 重用"}</button>
-                <button onClick={() => doDiscard(item)} style={{ ...btnStyle, padding: "3px 10px" }}>{"✗ 销毁"}</button>
+                <button onClick={() => doReuse(item)} style={{ ...btnStyle, padding: "3px 10px" }}>{"重用"}</button>
+                <button onClick={() => doDiscard(item)} style={{ ...btnStyle, padding: "3px 10px" }}>{"销毁"}</button>
               </div>
             </div>
           );
