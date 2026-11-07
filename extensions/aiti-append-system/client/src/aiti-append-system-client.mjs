@@ -104,7 +104,7 @@ function ToolbarButton() {
     className: "aas-toolbar-btn",
     title: "追加系统提示词（全局 / 项目）",
     onClick: () => { try { window.__aitiAppendSystemOpen && window.__aitiAppendSystemOpen(); } catch (e) {} },
-  }, "📝 提示词");
+  }, "提示词");
 }
 
 // ---------- 主面板（dock v3：双面 face 参数化——pages=float 浮窗 / rightFileDock=右栏 tab） ----------
@@ -198,14 +198,14 @@ function renderAAS(props, face) {
   const aasContent = h(Fragment, null,
       // ── 标题栏（首个子元素 = float 拖拽把手；仅浮窗态——停靠 chrome 已带标题/✕）──
       floating ? h("div", { className: "aas-head" },
-        h("span", { className: "aas-title" }, "📝 追加系统提示词"),
+        h("span", { className: "aas-title" }, "追加系统提示词"),
         h("span", { className: "aas-sub" }, "pi 会话启动时追加进 system prompt · 保存后新会话生效"),
         h("button", { className: "aas-x", title: "关闭", onClick: () => setOpen(false) }, "✕"),
       ) : null,
       // ── tabs ──
       h("div", { className: "aas-tabs" },
-        h("div", { className: "aas-tab" + (tab === "global" ? " on" : ""), onClick: () => switchTab("global") }, "🌐 全局"),
-        h("div", { className: "aas-tab" + (tab === "project" ? " on" : ""), onClick: () => switchTab("project") }, "📁 项目" + (cwd ? "" : "（无项目）")),
+        h("div", { className: "aas-tab" + (tab === "global" ? " on" : ""), onClick: () => switchTab("global") }, "全局"),
+        h("div", { className: "aas-tab" + (tab === "project" ? " on" : ""), onClick: () => switchTab("project") }, "项目" + (cwd ? "" : "（无项目）")),
       ),
       // ── 编辑区 ──
       h("div", { className: "aas-body" },
@@ -228,16 +228,16 @@ function renderAAS(props, face) {
           h("button", {
             className: "aas-btn primary", disabled: busy || tabDisabled || !dirty,
             onClick: () => save("write"), title: "覆盖写入该文件",
-          }, busy ? "…" : "💾 保存"),
+          }, busy ? "…" : "保存"),
           h("button", {
             className: "aas-btn", disabled: busy || tabDisabled || !curDraft.trim(),
             onClick: () => save("append"), title: "把当前文本追加到现有内容末尾（不覆盖）",
-          }, "➕ 追加保存"),
+          }, "追加保存"),
           h("button", {
             className: "aas-btn danger", disabled: busy || tabDisabled || !hasContent,
             onClick: () => { if (confirmClear) { setDraft(""); save("write"); } else setConfirmClear(true); },
             title: "清空内容并删除文件（回到未设置）",
-          }, confirmClear ? "确认删除？" : "🗑 清空"),
+          }, confirmClear ? "确认删除？" : "清空"),
           h("span", { className: "aas-count" }, curDraft.length + " 字符" + (dirty ? " · 未保存" : "")),
         ),
         msg ? h("div", { className: "aas-msg " + msg.kind, style: { marginTop: 8 } }, msg.text) : null,
