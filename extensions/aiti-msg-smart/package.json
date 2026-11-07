@@ -12,10 +12,11 @@
   "contentHash": "ba73a19a30faee07",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-msg-smart.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-msg-smart"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-msg-smart#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-msg-smart/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
