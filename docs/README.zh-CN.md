@@ -14,13 +14,18 @@
 
 ### 内置扩展（精选）
 
-- **会话工作区**——浏览/继续/分支/导出对话；git worktree；项目文件工具
-- **aiti-devtools**——面向任意本地 Web 应用的页面注入式 AI 调试（元素检查/控制台/网络/AI 操作）
-- **aiti-git-ops / aiti-git-review / aiti-git-trace**——git 图谱、提交、带标注的代码审核、AI 变更追踪
-- **session-manager**——跨项目会话管理器（看板/标签/归档/fork 分支工具）
-- **service-tunnels**——把本地端口通过 DNS/隧道带认证地分享出去
-- **aiti-extman**——扩展管理器：运行时安装/启停扩展（含从 npm 安装）
-- **……以及约 60 个更多**：队列管家、恢复、模型向导、用量报表、邮件、文档中心、UI 环境（VNC）、语音输入输出等。
+上游界面全部保留；以下功能以 bundled 扩展形式随包开箱即用。
+
+- **会话与队列**——`session-manager`（跨项目 All Sessions 管理器：看板/标签/归档/全文搜索/fork 工具）、`queue-keeper`（排队消息编辑/导出/导入/插队）、`aiti-recovery`（中断会话重启恢复向导）、`aiti-draft-keeper`、`aiti-session-cards`（审批/授权卡）
+- **Git 工具链**——`aiti-git-ops`（提交图谱、AI 分组提交计划+断点回滚、worktree、分支面板）、`aiti-git-review`（Monaco diff 工作区+行标注+AI 预审）、`aiti-git-trace`（AI 变更追踪时间线）
+- **页面注入调试（aiti-devtools）**——在任意本地 Web 应用内进行 AI 调试：FAB/HUD、8 域 42 命令类 CDP 命令集、Inspector、以及让 AI agent 与页面对话的 MCP 桥
+- **多 Agent 后端**——Claude Code、Codex、Cursor、CodeBuddy、Qoder、ZCode、OpenCode、Kimi、Gemini、Copilot、iFlow 等（CLI+ACP 双驱动），统一登录管理、子代理舰队、自定义 Agent 注册
+- **模型与用量**——模型向导（目录搜索/多 key 轮转/聚合）、可用性探测+429 限流识别、余额配额与用量报表
+- **运维基础设施**——`service-tunnels`（本地端口 DNS/隧道分享+认证）、扩展管理器（在线注册表）、配置版本化+崩溃自检、备份、事件总线、VNC UI 环境、邮件、IM 渠道、文档中心
+- **阅读与交互**——消息智能（点击引用/滚动导航/锚点）、语音输入输出、弹窗浮动、上下文比例条、Prompt 收藏库、方案先行、文档查看器（docx/xlsx/pdf/pptx），以及约 40 个更多
+
+工作台之外，[aiti 生态](https://aiti.pw/)还提供 Vite/Vue/Next/React/Svelte 页面注入 SDK、Chrome 与 IDE 扩展、MCP 桥/server（任意 AI agent 直达 IDE 窗口），以及一键 Docker 镜像（core/full）。
+
 
 ## 功能
 
