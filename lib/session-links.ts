@@ -15,10 +15,8 @@ export function sessionDeepLink(sessionId: string): string {
   return `?session=${encodeURIComponent(sessionId)}`;
 }
 
-/** A same-instance fresh-composer link; cwd wins over any remembered session. */
-export function newSessionDeepLink(cwd: string): string {
-  return `?cwd=${encodeURIComponent(cwd)}`;
-}
+// [URL 规范] 无 newSessionDeepLink：cwd（本地路径）不进 URL——工作区选择走
+// tab-session 记忆与 host 服务（pi-web.newSession.setCwd），URL 只承载会话身份。
 
 export interface ActivationEvent {
   button: number;
