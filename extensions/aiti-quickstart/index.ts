@@ -51,7 +51,7 @@ export default {
     // 点击/渲染触发物化后由 client 同 id 注册条目接管。meta 仅数据（无 onClick 函数），
     // title 用 zh 字面（与 extman sidebarFooter 静态条目同约定），client 接管后走 t() 多语。
     newSessionWidgets: [
-      { id: "guide", meta: { title: "快速上手", areas: ["top"], defaultArea: "top", w: 8, h: 1, priority: 0 } },
+      { id: "guide", meta: { title: "快速上手", areas: ["top"], defaultArea: "top", w: 8, h: 1, priority: -1 } },
       { id: "shortcuts", meta: { title: "快捷操作", areas: ["top"], defaultArea: "top", w: 4, h: 1, priority: 10 } },
       { id: "examples", meta: { title: "试试这样问", areas: ["bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 } },
     ],
