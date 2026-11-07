@@ -6,5 +6,6 @@
   "aitiExtProtocol": "1.0",
   "dependencies": {
     "@aiti-ai/ext-shared": "^0.1.7"
-  }
+  },
+  "license": "MIT"
 }
