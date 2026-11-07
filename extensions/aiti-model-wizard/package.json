@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-model-wizard",
-  "version": "0.1.5",
+  "version": "0.1.8",
   "type": "module",
   "description": "模型添加开机向导扩展——JSX + vite 构建 client bundle",
   "scripts": {
@@ -21,5 +21,6 @@
     ]
   },
   "aitiExtProtocol": "1.0",
-  "license": "MIT"
+  "license": "MIT",
+  "contentHash": "73d9b202da5c8f79"
 }
