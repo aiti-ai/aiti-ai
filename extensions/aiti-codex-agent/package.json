@@ -20,10 +20,11 @@
   "contentHash": "df1b963f71517751",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-codex-agent.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-codex-agent"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-codex-agent#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-codex-agent/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
