@@ -1,31 +1,51 @@
 /**
- * aiti-quickstart —— 快速上手（空白态引导扩展）。
+ * aiti-quickstart —— 快速上手（空白态引导 + 工作区获取）。
  *
- * 纯 client 扩展，覆盖 pi-web 两个「完全空白」面：
- *   1) 新建会话欢迎页：newSessionWidgets 插槽 3 枚 widget（上手步骤 / 快捷操作 /
- *      示例提示词）——宿主网格布局 + ⚙ 自定义面板统一管理，本扩展只出内容；
- *   2) 左栏 DockStack 全折叠空白：引导卡经 client 服务 `aiti-quickstart.api`
- *      交付 session-manager 编排器（可选消费），与 aiti-app-center 同屏共存
- *      （引导卡在上、应用抽屉在下；✕ 关闭持久化，关闭后回退现状）。
+ * 覆盖 pi-web「完全空白」面 + 初次使用全流程（v2 Workspace Hub，方案
+ * docs/aiti-quickstart-hub-plan.md）：
+ *   1) 新建会话欢迎页：newSessionWidgets 插槽 3 枚 widget——guide 是状态机开始卡
+ *      （fresh=获取工作区/配置模型大按钮流；hasWorkspace=上次工作区+配置模型引导；
+ *      full=v1 四步卡），shortcuts/examples 照旧；
+ *   2) 左栏 DockStack 全折叠空白：引导卡经 client 服务 `aiti-quickstart.api` 交付
+ *      session-manager 编排器（可选消费），与 aiti-app-center 同屏共存；无 cwd 态
+ *      引导卡出「获取工作区/配置模型」两按钮；
+ *   3) 工作区获取（checkout 专项）：server API
+ *      `POST /api/extensions/aiti-quickstart/workspace/clone`（git clone --progress，
+ *      staging+never-overwrite 落位，stderr 进度 → aiti-event-bus topic 帧）、
+ *      `GET workspace/history`（获取记录 + ~/workspace 目录扫描合并——覆盖既往
+ *      zip 上传无历史的工作区）、`POST workspace/forget`；Hub 对话框四入口
+ *      （Git 克隆/上传压缩包（session-manager service 复用）/本地目录/新建空目录），
+ *      workspacePickerActions 静态条目 → Workspace 下拉可达。
+ *
+ * [URL 规范] cwd 不进 URL：重返走 tab-session/window.__piWebCwd/最近项目解析，
+ * 导航 = pi-web.newSession.setCwd。
  *
  * 常用「重返」入口：manifest sidebarFooter 静态条目 → 宿主底部行标准按钮 +
- * 应用中心自动收编为可钉住卡片（静态条目物化转发）；物化后同 id 注册条目接管
- * （render 按钮 + onClick → pi-web.newSession.setCwd 落空白欢迎页）。
+ * 应用中心自动收编为可钉住卡片；物化后同 id 注册条目接管。
  *
- * 消费方 session-manager（optionalDependsOn）；方案：aiti-ai docs（quickstart 引导方案）。
+ * 软依赖：session-manager（filler 消费 + upload 复用）、aiti-event-bus（clone 进度帧）、
+ * aiti-model-wizard（配置模型深链，client 服务缺席降级）。
  */
+import { api } from "./server/api.ts";
+
 export default {
   id: "aiti-quickstart",
   name: "快速上手",
-  version: "0.1.0",
+  version: "0.2.0",
   icon: "icons/rocket.svg",
   client: "dist/aiti-quickstart-client.mjs",
 
   // 应用中心分类：会话与项目（分类解析链第一优先级，无需 APP_OVERRIDES 兜底）
   category: "session",
 
+  // server API（工作区获取：clone/history/forget）——挂 /api/extensions/aiti-quickstart/*
+  api,
+
+  // 软依赖：缺席各自降级（filler 消费 / 上传复用）；无硬依赖
+  optionalDependsOn: ["session-manager"],
+
   ui: {
-    clientImmediately: false, // 懒扩展：静态条目（footer/欢迎页）+ session-manager ensureMaterialized 双物化路径
+    clientImmediately: false, // 懒扩展：静态条目（footer/欢迎页/下拉动作）+ session-manager ensureMaterialized 双物化路径
     // 静态条目（懒加载 v2）：物化前由宿主渲染标准形（底部行按钮 / widget 区网格单元），
     // 点击/渲染触发物化后由 client 同 id 注册条目接管。meta 仅数据（无 onClick 函数），
     // title 用 zh 字面（与 extman sidebarFooter 静态条目同约定），client 接管后走 t() 多语。
@@ -35,6 +55,8 @@ export default {
       { id: "examples", meta: { title: "试试这样问", areas: ["bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 } },
     ],
     sidebarFooter: [{ id: "quickstart-open", label: "快速上手", title: "快速上手：回到欢迎页引导", icon: "icons/rocket.svg" }],
+    // Workspace 下拉底部动作区（上传/管理旁）：获取工作区 Hub 入口（日常可达，不只首用）
+    workspacePickerActions: [{ id: "acquire", label: "获取工作区…", title: "获取工作区：Git 克隆 / 上传 / 本地目录 / 新建", icon: "icons/rocket.svg" }],
     i18n: {
       "zh-CN": {
         "qs.guideTitle": "快速上手",
@@ -62,6 +84,41 @@ export default {
         "qs.footer.label": "快速上手",
         "qs.footer.title": "快速上手：回到欢迎页引导",
         "qs.toast.noCwd": "未找到工作目录，请先在左栏选择项目",
+        // v2 开始卡 / Hub
+        "qs.start.title": "开始使用",
+        "qs.start.subtitle": "三步开始：获取工作区 → 配置模型 → 发第一条消息",
+        "qs.start.recent": "上次工作区",
+        "qs.start.acquire": "获取工作区…",
+        "qs.start.acquireHint": "Git 克隆 / 上传压缩包 / 本地目录 / 新建空目录",
+        "qs.start.configureModel": "配置模型…",
+        "qs.start.modelMissing": "尚未配置可用模型",
+        "qs.start.modelOk": "模型已就绪",
+        "qs.start.step.workspace": "① 获取工作区",
+        "qs.start.step.model": "② 配置模型",
+        "qs.start.step.msg": "③ 输入消息开始",
+        "qs.open.hub": "获取工作区…",
+        "qs.hub.title": "获取工作区",
+        "qs.hub.close": "关闭",
+        "qs.hub.recent": "最近",
+        "qs.hub.recentEmpty": "还没有工作区记录",
+        "qs.hub.tab.clone": "Git 克隆",
+        "qs.hub.tab.upload": "上传压缩包",
+        "qs.hub.tab.local": "本地目录",
+        "qs.hub.tab.new": "新建空目录",
+        "qs.hub.clone.url": "仓库地址（https://…/repo.git 或 git@host:path）",
+        "qs.hub.clone.branch": "分支（可选）",
+        "qs.hub.clone.dir": "目标目录（可选，默认 ~/workspace/<仓库名>）",
+        "qs.hub.clone.depth": "浅克隆（--depth 1，只取最新提交）",
+        "qs.hub.clone.go": "开始克隆",
+        "qs.hub.clone.needGit": "未找到 git——请先安装 git 再使用克隆",
+        "qs.hub.clone.ok": "克隆完成：{root}",
+        "qs.hub.upload.fallback": "未安装 session-manager——请用 Workspace 下拉的「上传工作区」",
+        "qs.hub.local.browse": "浏览目录…",
+        "qs.hub.local.selected": "已选：{path}",
+        "qs.hub.new.go": "创建并使用",
+        "qs.hub.new.created": "已创建：{root}",
+        "qs.hub.forget": "移除记录",
+        "qs.hub.err.parse": "无法识别的仓库地址（支持 https…git / git@host:path / git:<url> / 本地路径）",
       },
       en: {
         "qs.guideTitle": "Quickstart",
@@ -89,6 +146,41 @@ export default {
         "qs.footer.label": "Quickstart",
         "qs.footer.title": "Quickstart: back to the welcome-page guide",
         "qs.toast.noCwd": "No working directory found — pick a project in the sidebar first",
+        // v2 start card / hub
+        "qs.start.title": "Get started",
+        "qs.start.subtitle": "Three steps: get a workspace → configure a model → send your first message",
+        "qs.start.recent": "Recent workspaces",
+        "qs.start.acquire": "Get a workspace…",
+        "qs.start.acquireHint": "Git clone / upload archive / local directory / new empty folder",
+        "qs.start.configureModel": "Configure models…",
+        "qs.start.modelMissing": "No usable model configured yet",
+        "qs.start.modelOk": "Models ready",
+        "qs.start.step.workspace": "① Get a workspace",
+        "qs.start.step.model": "② Configure models",
+        "qs.start.step.msg": "③ Send your first message",
+        "qs.open.hub": "Get a workspace…",
+        "qs.hub.title": "Get a workspace",
+        "qs.hub.close": "Close",
+        "qs.hub.recent": "Recent",
+        "qs.hub.recentEmpty": "No workspace history yet",
+        "qs.hub.tab.clone": "Git clone",
+        "qs.hub.tab.upload": "Upload archive",
+        "qs.hub.tab.local": "Local directory",
+        "qs.hub.tab.new": "New empty folder",
+        "qs.hub.clone.url": "Repository URL (https://…/repo.git or git@host:path)",
+        "qs.hub.clone.branch": "Branch (optional)",
+        "qs.hub.clone.dir": "Target directory (optional, default ~/workspace/<repo>)",
+        "qs.hub.clone.depth": "Shallow clone (--depth 1, latest commit only)",
+        "qs.hub.clone.go": "Clone",
+        "qs.hub.clone.needGit": "git not found — install git to use clone",
+        "qs.hub.clone.ok": "Cloned: {root}",
+        "qs.hub.upload.fallback": "session-manager not installed — use “Upload workspace” in the Workspace dropdown",
+        "qs.hub.local.browse": "Browse…",
+        "qs.hub.local.selected": "Selected: {path}",
+        "qs.hub.new.go": "Create & use",
+        "qs.hub.new.created": "Created: {root}",
+        "qs.hub.forget": "Forget",
+        "qs.hub.err.parse": "Unrecognized repository URL (https…git / git@host:path / git:<url> / local path)",
       },
     },
   },

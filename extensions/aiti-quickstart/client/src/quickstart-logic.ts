@@ -1,9 +1,13 @@
 /**
  * aiti-quickstart · quickstart-logic —— 纯逻辑层（零 JSX、零 ctx，可单测）。
  *
- * 内容：widget 元数据常量（manifest 静态条目与 client 注册条目共用同一份，杜绝漂移）、
- * 侧栏引导卡关闭态存取（localStorage）、openQuickstart 的目标 cwd 解析链
- * （URL ?cwd → home 兜底 → null 放弃）。
+ * 内容：
+ *   - widget 元数据常量（manifest 静态条目与 client 注册条目共用，杜绝漂移）；
+ *   - 侧栏引导卡关闭态存取（localStorage）；
+ *   - openQuickstart 目标 cwd 解析链（**URL 规范：cwd 不进 URL**——来源 =
+ *     tab-session 记忆 → window.__piWebCwd → 最近项目 → home 兜底）；
+ *   - v2 工作区获取：git URL 解析（arg-array 安全）/ 目录名防覆盖顺延 /
+ *     初次使用状态机 / 获取历史 + 目录扫描合并。
  */
 
 export const EXT_ID = "aiti-quickstart";
@@ -63,26 +67,197 @@ export function writeSidebarDismissed(dismissed: boolean): void {
 
 /* ── openQuickstart 目标 cwd 解析链 ── */
 
+export interface QuickstartCwdSource {
+  /** 当前标签页 tab-session 记忆的 composer cwd（pi-web:tab-open-session kind:"new"；欢迎页态）。 */
+  tabCwd: string | null;
+  /** 当前会话 cwd（window.__piWebCwd；会话视图态）。 */
+  sessionCwd: string | null;
+  /** 最近项目根（/api/sessions 派生 top1；见 topRecentRoot）。 */
+  recentRoot: string | null;
+  /** home 兜底（宿主共享单例 pi-web.home.ensure() 结果）。 */
+  home: string | null;
+}
+
 /**
- * 解析「重返快速上手页」的目标 cwd：
- *   1) URL query `?cwd=`（AppShell 全程维护该参数——会话视图/欢迎页都带）；
- *   2) 当前会话的项目目录（pi-web.session.get().session.cwd，调用方同步取好传入——
- *      会话视图里点「重返」落当前项目的快速上手页，而非 home）；
- *   3) 兜底 home（宿主共享单例 pi-web.home.ensure() 的结果，由调用方异步取好传入）；
- *   4) 都没有 → null（调用方 toast 提示后放弃，不导航）。
+ * 解析「重返快速上手页」的目标 cwd。**cwd 不进 URL（pi-web URL 规范）**——
+ * 来源全部是内存/存储态：tab-session 记忆 → 当前会话 cwd → 最近项目 → home。
  */
-export function resolveQuickstartCwd(search: string, home: string | null, sessionCwd?: string | null): string | null {
-  let fromUrl: string | null = null;
-  try {
-    fromUrl = new URLSearchParams(search || "").get("cwd");
-  } catch {
-    fromUrl = null;
-  }
-  const cwd = (fromUrl && fromUrl.trim())
-    || (sessionCwd && sessionCwd.trim())
-    || (home && home.trim())
+export function resolveQuickstartCwd(src: QuickstartCwdSource): string | null {
+  const cwd = (src.tabCwd && src.tabCwd.trim())
+    || (src.sessionCwd && src.sessionCwd.trim())
+    || (src.recentRoot && src.recentRoot.trim())
+    || (src.home && src.home.trim())
     || "";
   return cwd || null;
+}
+
+/** 从 /api/sessions 行派生最近项目根 top1（与宿主 getRecentProjects 同语义：projectRoot ?? cwd，去重按 modified 降序）。 */
+export function topRecentRoot(sessions: Array<{ cwd?: string; projectRoot?: string | null; modified?: string | number | null }>): string | null {
+  const best = new Map<string, number>();
+  for (const s of Array.isArray(sessions) ? sessions : []) {
+    const root = (s.projectRoot && String(s.projectRoot).trim()) || (s.cwd && String(s.cwd).trim()) || "";
+    if (!root) continue;
+    const t = typeof s.modified === "number" ? s.modified : (s.modified ? Date.parse(String(s.modified)) : 0);
+    const prev = best.get(root) ?? -1;
+    if (t > prev) best.set(root, t);
+  }
+  let top: { root: string; t: number } | null = null;
+  for (const [root, t] of best) if (!top || t > top.t) top = { root, t };
+  return top?.root ?? null;
+}
+
+/* ── v2：git URL 解析（clone）── */
+
+export interface ParsedGitUrl {
+  /** 传给 git clone 的实际 URL/路径。 */
+  ref: string;
+  /** #fragment 指定的分支（https 形态）。 */
+  branch?: string;
+  /** 从 URL 尾段派生的目录名（[A-Za-z0-9._-] 清洗）。 */
+  name: string;
+  /** 本地路径形态（非远程）。 */
+  local: boolean;
+}
+
+function nameFromGitUrl(url: string): string {
+  const clean = url.replace(/[\\/]+$/, "").replace(/\.git$/, "");
+  const tail = clean.split(/[\\/]/).pop() ?? clean;
+  return tail.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^-+/, "") || "workspace";
+}
+
+/** git clone 前导控制字符/引号拒绝（URL 永远走 arg-array，但仍拒绝以 - 开头的选项注入面）。 */
+function isUnsafeGitArg(s: string): boolean {
+  return /^-/.test(s) || /[\u0000-\u001f\u007f]/.test(s);
+}
+
+/**
+ * 解析 git 来源（参照 aiti-extman parseInstallSource 的 git 分支形状 + 本地路径放宽）：
+ *   - `https://host/…/repo.git[#branch]`（github/gitlab 无 .git 亦可）
+ *   - `git@host:path(/repo.git)`
+ *   - `git:<url>[#branch]`
+ *   - 本地绝对路径（`/…`、`~/…`、盘符）——内网/测试友好
+ * 返回 null = 不识别（调用方 400）。分支/URL 均过 isUnsafeGitArg（防选项注入）。
+ */
+export function parseGitUrl(source: string): ParsedGitUrl | null {
+  const s = (source ?? "").trim();
+  if (!s) return null;
+
+  const gitPrefix = s.match(/^git:(.+?)(?:#([^#]+))?$/);
+  if (gitPrefix) {
+    const ref = gitPrefix[1];
+    const branch = gitPrefix[2];
+    if (isUnsafeGitArg(ref) || (branch && isUnsafeGitArg(branch))) return null;
+    return { ref, branch: branch || undefined, name: nameFromGitUrl(ref), local: !/^[a-z]+:\/\//i.test(ref) };
+  }
+
+  if (/^git@[\w.-]+:/.test(s)) {
+    if (isUnsafeGitArg(s)) return null;
+    return { ref: s, name: nameFromGitUrl(s), local: false };
+  }
+
+  if (/^https?:\/\//i.test(s) && (/\.git(?:#|$|\/)/.test(s) || /github\.com\//i.test(s) || /gitlab\.com\//i.test(s))) {
+    const hash = s.indexOf("#");
+    const url = hash > 0 ? s.slice(0, hash) : s;
+    const branch = hash > 0 ? s.slice(hash + 1) : undefined;
+    if (isUnsafeGitArg(url) || (branch && isUnsafeGitArg(branch))) return null;
+    return { ref: url, branch: branch || undefined, name: nameFromGitUrl(url), local: false };
+  }
+
+  // 本地路径（绝对 / ~ 展开 / 盘符）——存在性由 git 自身报错
+  if (/^\//.test(s) || /^~[\\/]/.test(s) || /^[A-Za-z]:[\\/]/.test(s)) {
+    if (isUnsafeGitArg(s)) return null;
+    return { ref: s, name: nameFromGitUrl(s), local: true };
+  }
+
+  return null;
+}
+
+/* ── v2：目录名防覆盖顺延（upload pickFinalName 同款语义） ── */
+
+/** 冲突顺延：name → name-2 → name-3…（永不覆盖；exists 由调用方注入便于单测）。 */
+export function pickFinalName(base: string, exists: (name: string) => boolean): string {
+  if (!exists(base)) return base;
+  for (let i = 2; i < 10_000; i++) {
+    const candidate = `${base}-${i}`;
+    if (!exists(candidate)) return candidate;
+  }
+  return `${base}-${Date.now()}`;
+}
+
+/* ── v2：初次使用状态机 ── */
+
+export type OnboardingState = "fresh" | "hasWorkspace" | "full";
+
+export interface OnboardingInput {
+  /** 当前欢迎页 cwd（宿主 slot extra 提供；null = 未选工作区）。 */
+  cwd: string | null;
+  /** 最近项目根数（/api/sessions 派生；0 = 无任何历史）。 */
+  recentRootCount: number;
+  /** 可用模型数（POST /api/models 的 modelList.length）。 */
+  modelCount: number;
+}
+
+/**
+ * 初次使用三态：
+ *   - fresh：无 cwd 且无历史（真首次）→ 大按钮流（获取工作区 / 配置模型）；
+ *   - hasWorkspace：有 cwd 或有历史，但模型未配置 → 上次工作区 + 配置模型引导；
+ *   - full：工作区 + 模型齐备 → v1 四步卡。
+ */
+export function deriveOnboardingState(input: OnboardingInput): OnboardingState {
+  const hasWorkspace = Boolean(input.cwd && input.cwd.trim()) || input.recentRootCount > 0;
+  const hasModel = input.modelCount > 0;
+  if (!hasWorkspace) return "fresh";
+  return hasModel ? "full" : "hasWorkspace";
+}
+
+/* ── v2：获取历史 + 目录扫描合并 ── */
+
+export type WorkspaceSource = "clone" | "upload" | "local" | "new" | "scan";
+
+export interface WorkspaceRecord {
+  id: string;
+  source: WorkspaceSource;
+  root: string;
+  name: string;
+  /** epoch ms。 */
+  time: number;
+  /** clone 来源 URL（仅 clone）。 */
+  url?: string;
+}
+
+/**
+ * 历史 + 目录扫描合并：按 root 去重（记录优先于扫描——记录带来源语义），
+ * 记录在前、扫描按 time 降序殿后；各截 topLimit。
+ */
+export function mergeWorkspaceHistory(
+  recorded: WorkspaceRecord[],
+  scanned: Array<{ root: string; time: number }>,
+  topLimit = 8,
+): WorkspaceRecord[] {
+  const seen = new Set<string>();
+  const out: WorkspaceRecord[] = [];
+  for (const r of Array.isArray(recorded) ? recorded : []) {
+    const root = String(r?.root ?? "").trim();
+    if (!root || seen.has(root)) continue;
+    seen.add(root);
+    const name = String(r?.name ?? "").trim() || (root.split(/[\\/]/).filter(Boolean).pop() ?? root);
+    out.push({ ...r, root, name });
+  }
+  const scannedSorted = [...(Array.isArray(scanned) ? scanned : [])]
+    .filter((s) => s?.root && !seen.has(s.root))
+    .sort((a, b) => (b.time ?? 0) - (a.time ?? 0));
+  for (const s of scannedSorted) {
+    if (seen.has(s.root)) continue;
+    seen.add(s.root);
+    out.push({
+      id: `scan:${s.root}`,
+      source: "scan",
+      root: s.root,
+      name: s.root.split(/[\\/]/).filter(Boolean).pop() ?? s.root,
+      time: s.time ?? 0,
+    });
+  }
+  return out.slice(0, Math.max(1, topLimit));
 }
 
 /** 组合 id 判定（宿主插槽 id 形态 = "extId:itemId"）。 */
