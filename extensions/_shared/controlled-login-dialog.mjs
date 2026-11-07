@@ -57,8 +57,8 @@ const STYLES = `
 .clg-copied { color: #16a34a; font-size: 11.5px; }
 .clg-status { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 8px; font-size: 12.5px; flex-wrap: wrap; }
 .clg-status.waiting { background: rgba(37,99,235,.08); color: var(--accent,#2563eb); }
-.clg-status.success { background: rgba(34,197,94,.12); color: #16a34a; }
-.clg-status.failed, .clg-status.timeout, .clg-status.cancelled { background: rgba(239,68,68,.08); color: #dc2626; }
+.clg-status.success { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); color: #16a34a; }
+.clg-status.failed, .clg-status.timeout, .clg-status.cancelled { background: color-mix(in srgb, var(--danger, #ef4444) 8%, transparent); color: #dc2626; }
 .clg-spin { width: 14px; height: 14px; flex-shrink: 0; border: 2px solid color-mix(in srgb, currentColor 25%, transparent); border-top-color: currentColor;
   border-radius: 50%; animation: clg-rotate .9s linear infinite; }
 @keyframes clg-rotate { to { transform: rotate(360deg); } }
