@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-codex-agent",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "OpenAI Codex CLI driver (exec --json + resume)",
   "soul": "Codex 在哪儿跑，面板就在哪儿看。",
   "scripts": {
