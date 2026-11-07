@@ -15,10 +15,11 @@
   "contentHash": "3aec43327445524d",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-subagents.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-subagents"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-subagents#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-subagents/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
