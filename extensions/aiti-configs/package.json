@@ -17,10 +17,11 @@
   "contentHash": "cf437ef1b6ea24fb",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-configs.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-configs"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-configs#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-configs/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
