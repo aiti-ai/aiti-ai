@@ -125,7 +125,7 @@ function renderAcpDialog(face?: string) {
             <div style={{ padding: "16px 0", color: "var(--text-dim)", fontSize: 12, textAlign: "center" }}>No ACP agents found on PATH.</div>
           ) : agents.map((a) => (
             <div key={a.name} style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 0", borderBottom: "1px solid var(--border)", fontSize: 12 }}>
-              <span style={{ width: 7, height: 7, borderRadius: "50%", background: a.registered ? "#22c55e" : "#ef444455", flexShrink: 0 }} />
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: a.registered ? "var(--ok, #22c55e)" : "#ef444455", flexShrink: 0 }} />
               <strong style={{ minWidth: 100, color: "var(--text)" }}>{a.name}</strong>
               <span style={{ color: "var(--text-muted)", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 {a.bin + (a.args?.length ? " " + a.args.join(" ") : "")}
@@ -137,7 +137,7 @@ function renderAcpDialog(face?: string) {
                 <button
                   onClick={() => void doRemove(a.name)}
                   title={`Remove ${a.name}`} aria-label={`Remove ${a.name}`}
-                  style={{ background: "none", border: "none", color: "#ef4444", cursor: "pointer", fontSize: 13, padding: "0 2px" }}
+                  style={{ background: "none", border: "none", color: "var(--danger, #ef4444)", cursor: "pointer", fontSize: 13, padding: "0 2px" }}
                 >✕</button>
               )}
             </div>
