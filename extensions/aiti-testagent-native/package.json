@@ -1,0 +1,25 @@
+{
+  "name": "@aiti-ai/aiti-testagent-native",
+  "version": "0.1.8",
+  "type": "module",
+  "description": "testagent-native 面板 —— TestAgent Native（Windows 原生进程活体操控）可视面（broker 进程/会话/挂钩/事件流）",
+  "scripts": {
+    "build:client": "node tools/build-client.mjs",
+    "watch": "node tools/build-client.mjs --watch"
+  },
+  "devDependencies": {
+    "vite": "^6.4.3"
+  },
+  "aitiExtProtocol": "1.0",
+  "license": "MIT",
+  "contentHash": "152e65602a879a1b",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-testagent-native"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  }
+}
