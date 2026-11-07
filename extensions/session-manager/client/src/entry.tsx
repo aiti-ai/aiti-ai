@@ -152,6 +152,51 @@ function MoveDialogHostLazy() {
 
 // 工作区上传（方案 docs/session-manager-workspace-upload-plan.md）：同管理入口的懒 chunk 范式
 // —— hooks 无条件调用（Rules of Hooks），active 门控收起态不 import，只渲染轻量触发按钮。
+
+// 上传能力服务化（v2 Workspace Hub 复用）：跨扩展 open 通道。模块级 pending 回调 +
+// window 事件（`sm:open-upload-dialog`）通知常驻宿主组件 UploadDialogServiceHost
+// （dialogs 插槽注册）拉起既有 UploadDialog；成功/关闭回调解耦，上传零重实现。
+let uploadSvcPending: { onSelect: (root: string) => void; onClose: () => void } | null = null;
+export function openWorkspaceUploadDialog(cb: { onSelect: (root: string) => void; onClose: () => void }): void {
+  uploadSvcPending = cb;
+  try { window.dispatchEvent(new CustomEvent("sm:open-upload-dialog")); } catch { /* ignore */ }
+}
+function consumeUploadSvcPending(): { onSelect: (root: string) => void; onClose: () => void } | null {
+  const cb = uploadSvcPending;
+  uploadSvcPending = null;
+  return cb;
+}
+
+/** dialogs 插槽常驻组件：上传服务宿主（空闲返回 null；`sm:open-upload-dialog` 事件
+ *  拉起既有 UploadDialog lazy chunk——第三方 open() 的唯一渲染面）。 */
+function UploadDialogServiceHost() {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const onOpen = () => {
+      if (consumeUploadSvcPending()) setOpen(true);
+    };
+    try { window.addEventListener("sm:open-upload-dialog", onOpen); } catch { /* ignore */ }
+    return () => { try { window.removeEventListener("sm:open-upload-dialog", onOpen); } catch { /* ignore */ } };
+  }, []);
+  const dialog = lazyExtView({
+    active: open,
+    load: workspaceUploadRef,
+    pick: "UploadDialog",
+    props: {
+      onCloseDialog: () => setOpen(false),
+      onSelect: (root: string) => {
+        setOpen(false);
+        try {
+          const svc = getExtService<{ setCwd?: (path: string) => void }>("pi-web.newSession");
+          if (svc?.setCwd) svc.setCwd(root);
+          else showToast(t("sm.uploadSwitchHint"));
+        } catch { showToast(t("sm.uploadSwitchHint")); }
+      },
+    },
+  });
+  return open ? <>{dialog}</> : null;
+}
+
 function WorkspaceUploadEntryLazy(props: { onSelect: (root: string) => void; onClose: () => void }) {
   const [open, setOpen] = useState(false);
   const dialog = lazyExtView({ active: open, load: workspaceUploadRef, pick: "UploadDialog", props: { onSelect: props.onSelect, onCloseDialog: () => setOpen(false) } });
@@ -434,8 +479,9 @@ export default function register(ctx: Record<string, unknown>) {
   ctx.registerItems?.("newSessionPreparers", [{ id: "picker", meta: { prepare: newSessionPrepare } }]);
 
   // 上传能力服务化（v2 Workspace Hub 复用，aiti-quickstart soft-depend）：UploadDialog
-  // 开关提为模块级 store（extman openExtmanPanel 范式）——第三方 open({onSelect,onClose})
+  // 开关提为模块级 store（window 事件 + 常驻宿主组件）——第三方 open({onSelect,onClose})
   // 直接驱动既有弹窗，上传零重实现。服务缺席（本扩展禁用）时消费方降级提示。
+  ctx.registerItems?.("dialogs", [{ id: "upload-dialog-service", render: UploadDialogServiceHost }]);
   const disposeUploadSvc = typeof ctx.registerExtService === "function"
     ? ctx.registerExtService("session-manager.uploadWorkspace", { open: openWorkspaceUploadDialog })
     : null;
