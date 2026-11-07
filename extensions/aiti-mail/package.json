@@ -15,5 +15,13 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "12c93eb2d778f527"
+  "contentHash": "12c93eb2d778f527",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-mail.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-mail#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-mail/issues"
+  }
 }
