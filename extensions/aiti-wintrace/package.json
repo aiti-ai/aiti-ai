@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-wintrace",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "type": "module",
   "description": "wintrace 面板 —— Windows 原生 API/COM 追踪可视面（broker 进程/会话/挂钩/事件流）",
   "scripts": {
