@@ -236,7 +236,7 @@ async function runTool(name: string, args: any): Promise<any> {
     }
     case "configs_commit": {
       const r = await core.gitCommit(c, getCtx(), args && args.message);
-      if (!r.ok) return toolResult("❌ 提交失败: " + (r as any).out, true);
+      if (!r.ok) return toolResult("提交失败: " + (r as any).out, true);
       return toolResult(JSON.stringify({ ok: true, noop: r.noop, hash: r.hash, message: r.message, changed: r.changed }, null, 2));
     }
     case "configs_restore": {
@@ -250,14 +250,14 @@ async function runTool(name: string, args: any): Promise<any> {
       const r = await core.restore(c, getCtx(), version);
       if (!r.ok) {
         console.error("[aiti-configs·restore] ❌ 恢复失败: " + (r.error || JSON.stringify(r.steps)));
-        return toolResult("❌ 恢复失败: " + (r.error || JSON.stringify(r.steps)), true);
+        return toolResult("恢复失败: " + (r.error || JSON.stringify(r.steps)), true);
       }
       return toolResult(JSON.stringify({ ok: r.ok, steps: r.steps, tag: r.tag, version: r.version, error: r.error, selfcheck: r.selfcheck && { ok: r.selfcheck.ok, bad: r.selfcheck.bad } }, null, 2), false);
     }
     case "configs_selfcheck": {
       const sc = await core.selfcheck(c, getCtx());
       if (!sc.ok) {
-        return toolResult("❌ 自检未通过（" + (sc.bad || []).length + " 项）\n" + (sc.bad || []).map((b: any) => b.name + ": " + (b.detail || "")).join("; "), true);
+        return toolResult("自检未通过（" + (sc.bad || []).length + " 项）\n" + (sc.bad || []).map((b: any) => b.name + ": " + (b.detail || "")).join("; "), true);
       }
       return toolResult(JSON.stringify({ ok: sc.ok, rows: sc.rows, bad: sc.bad }, null, 2), false);
     }
@@ -284,7 +284,7 @@ async function runTool(name: string, args: any): Promise<any> {
       if (a === "add") {
         if (!args || !args.name) return toolResult("需要 name（tag 名，如 good-v1）", true);
         const r = await core.gitTag(c, getCtx(), String(args.name));
-        return toolResult(r.ok ? "✅ 已打 tag: " + args.name : "打 tag 失败：" + r.out, !r.ok);
+        return toolResult(r.ok ? "已打 tag: " + args.name : "打 tag 失败：" + r.out, !r.ok);
       }
       if (a === "del") {
         if (!args || !args.name) return toolResult("需要 name", true);
@@ -302,7 +302,7 @@ async function runTool(name: string, args: any): Promise<any> {
         if (!r.ok) return toolResult("生成密钥失败：" + r.error, true);
         return toolResult(r.existed
           ? "ℹ️ 密钥已存在（" + r.keyFile + "），保留原密钥未覆盖——历史密文可继续解密。如需更换请先删除该文件。"
-          : "✅ 已生成密文密钥（" + r.keyFile + "，600 权限，git 永不跟踪）。请立即备份该文件——密钥丢失则密文永远无法恢复！开启 encrypt.enabled 后仓内为密文。");
+          : "已生成密文密钥（" + r.keyFile + "，600 权限，git 永不跟踪）。请立即备份该文件——密钥丢失则密文永远无法恢复！开启 encrypt.enabled 后仓内为密文。");
       }
       const exists = keyFile && require("node:fs").existsSync(keyFile);
       return toolResult(JSON.stringify({ ok: true, enabled: !!en.enabled, algo: en.algo || "aes-256-gcm", keyFile, keyExists: exists, patterns: en.patterns || [] }, null, 2));
