@@ -111,7 +111,7 @@ function AttachedTable({ rows, busyPid, onOpenWeb, onCloseWeb }: { rows: Session
                     title={t("at.openTip")}
                     style={{ ...ghostBtn, color: "var(--accent)", fontWeight: 600, opacity: busyPid ? 0.5 : 1 }}
                   >
-                    {busy && busyPid === `open:${s.pid}` ? "…" : `🖥 ${t("at.open")}`}
+                    {busy && busyPid === `open:${s.pid}` ? "…" : `${t("at.open")}`}
                   </button>
                 ) : null}
                 {s.web?.enrolled && onCloseWeb ? (
@@ -244,9 +244,9 @@ function renderTAPanel(face?: string) {
           bridgeWs: st!.ws, regToken: mode === "self" ? selfCfg.regToken : extCfg.regToken,
         } : {}),
       });
-      if (r.ok) { setMsg(`✓ ${t("at.attachOk")} — pid=${r.session?.pid} httpPort=${r.session?.httpPort}${r.onBridge ? "（已上桥）" : ""}`); setTick((v) => v + 1); }
-      else setMsg(`✗ ${r.error || t("at.attachFail")}`);
-    } catch (e) { setMsg(`✗ ${(e as Error)?.message ?? String(e)}`); }
+      if (r.ok) { setMsg(`${t("at.attachOk")} — pid=${r.session?.pid} httpPort=${r.session?.httpPort}${r.onBridge ? "（已上桥）" : ""}`); setTick((v) => v + 1); }
+      else setMsg(`${r.error || t("at.attachFail")}`);
+    } catch (e) { setMsg(`${(e as Error)?.message ?? String(e)}`); }
     finally { setBusyPid(""); }
   };
 
@@ -261,7 +261,7 @@ function renderTAPanel(face?: string) {
       if (!r.ok) { setBridgeMsg("✗ " + (r.error || "保存失败")); return; }
       applyBridgeInfo(r);
       const st = r.status ?? {};
-      setBridgeMsg(st.online ? `✓ 桥在线 ${st.url}（在线端点 ${st.endpointCount}/${st.endpoints.length}）` : "✗ 桥未就绪（查看系统临时目录下的 ta-bridge-*.log）");
+      setBridgeMsg(st.online ? `桥在线 ${st.url}（在线端点 ${st.endpointCount}/${st.endpoints.length}）` : "桥未就绪（查看系统临时目录下的 ta-bridge-*.log）");
     } catch (e) { setBridgeMsg("✗ " + ((e as Error)?.message ?? String(e))); }
   };
 
@@ -272,18 +272,18 @@ function renderTAPanel(face?: string) {
       if (!r.ok) { setBridgeMsg("✗ " + (r.error || "失败")); return; }
       setBridgeInfo((d) => ({ ...d, jto: { ...((d as Record<string, unknown>)?.jto ?? {}), enabled: r.enabled } }));
       setBridgeMsg(enabled
-        ? "✓ 已写入 JAVA_TOOL_OPTIONS 自动挂载（Linux/macOS = shell rc 标记块，Windows = 用户级环境变量）—— 之后新起的 Java 进程自动挂 agent 连桥（对已运行的进程不生效）"
-        : "✓ 已移除 JAVA_TOOL_OPTIONS 自动挂载段（用户其他参数保留）");
+        ? "已写入 JAVA_TOOL_OPTIONS 自动挂载（Linux/macOS = shell rc 标记块，Windows = 用户级环境变量）—— 之后新起的 Java 进程自动挂 agent 连桥（对已运行的进程不生效）"
+        : "已移除 JAVA_TOOL_OPTIONS 自动挂载段（用户其他参数保留）");
     } catch (e) { setBridgeMsg("✗ " + ((e as Error)?.message ?? String(e))); }
   };
 
   /** 打开桥操作台：挂桥 httpPort（vhost）→ 可带 ?endpoint= 直达指定端点（免手动下拉）；带 ?bridge-token= 自动登录 */
   const doOpenBridgeConsole = async (endpointId?: string) => {
     const st = (bridgeInfo?.status ?? null) as { configured?: boolean; url?: string } | null;
-    if (!st?.configured) { setBridgeMsg("✗ 桥未配置"); return; }
+    if (!st?.configured) { setBridgeMsg("桥未配置"); return; }
     let port = Number((st.url || "").match(/:(\d+)/)?.[1] ?? 0);
     if (!port && mode === "self") port = Number(selfCfg.httpPort) || 0;
-    if (!port) { setBridgeMsg("✗ 无法解析桥 HTTP 端口"); return; }
+    if (!port) { setBridgeMsg("无法解析桥 HTTP 端口"); return; }
     const useToken = mode === "self" ? selfCfg.useToken : extCfg.useToken;
     setBridgeMsg("打开操作台中…");
     const win = window.open("", "_blank"); // 同步开窗（用户手势栈内防拦截）
@@ -292,7 +292,7 @@ function renderTAPanel(face?: string) {
       if (!r.ok) { if (win && !win.closed) win.close(); setBridgeMsg("✗ " + (r.error || t("at.openFail"))); return; }
       const url = r.url + (useToken ? (r.url.includes("?") ? "&" : "?") + "bridge-token=" + encodeURIComponent(useToken) : "")
         + (endpointId ? (r.url.includes("?") ? "&" : "?") + "endpoint=" + encodeURIComponent(endpointId) : "");
-      setBridgeMsg(`🖥 桥操作台${endpointId ? "（直达端点 " + endpointId.slice(0, 12) + "…）" : ""}：${r.url}${r.degraded ? t("at.degraded") : ""}${r.synced ? "" : t("at.syncWarn")}`);
+      setBridgeMsg(`桥操作台${endpointId ? "（直达端点 " + endpointId.slice(0, 12) + "…）" : ""}：${r.url}${r.degraded ? t("at.degraded") : ""}${r.synced ? "" : t("at.syncWarn")}`);
       if (win && !win.closed) win.location.href = url;
       else {
         try { await navigator.clipboard.writeText(url); setBridgeMsg((m) => m + "（弹窗被拦截：URL 已复制）"); }
@@ -310,7 +310,7 @@ function renderTAPanel(face?: string) {
     setTaInfo(null); setMsg("");
     try {
       const r = await api("POST", "/ta/call", { url: taInput.trim(), token: taTokenInput.trim(), path: "/api/ping" });
-      if (r.ok) { setTaInfo({ online: true }); setMsg(`✓ TA 直连在线：${taInput.trim()}（pong）`); }
+      if (r.ok) { setTaInfo({ online: true }); setMsg(`TA 直连在线：${taInput.trim()}（pong）`); }
       else setTaInfo({ online: false, status: r.status });
     } catch (e) { setTaInfo({ online: false }); setMsg("✗ " + ((e as Error)?.message ?? String(e))); }
   };
@@ -322,8 +322,8 @@ function renderTAPanel(face?: string) {
     const win = window.open("", "_blank"); // 必须同步调用（用户手势栈内）
     try {
       const r = await api("POST", "/web-open", { pid: s.pid });
-      if (!r.ok) { if (win && !win.closed) win.close(); setMsg(`✗ ${r.error || t("at.openFail")}`); return; }
-      setMsg(`🖥 ${t("at.open")}: ${r.url}${r.degraded ? t("at.degraded") : ""}${r.synced ? "" : t("at.syncWarn")}`);
+      if (!r.ok) { if (win && !win.closed) win.close(); setMsg(`${r.error || t("at.openFail")}`); return; }
+      setMsg(`${t("at.open")}: ${r.url}${r.degraded ? t("at.degraded") : ""}${r.synced ? "" : t("at.syncWarn")}`);
       if (win && !win.closed) win.location.href = r.url;
       else {
         try { await navigator.clipboard.writeText(r.url); setMsg((m) => m + "（弹窗被拦截：URL 已复制）"); }
@@ -332,7 +332,7 @@ function renderTAPanel(face?: string) {
       setTick((v) => v + 1);
     } catch (e) {
       try { if (win && !win.closed) win.close(); } catch {}
-      setMsg(`✗ ${(e as Error)?.message ?? String(e)}`);
+      setMsg(`${(e as Error)?.message ?? String(e)}`);
     } finally { setBusyPid(""); }
   };
 
@@ -341,9 +341,9 @@ function renderTAPanel(face?: string) {
     setBusyPid(`close:${s.pid}`); setMsg("");
     try {
       const r = await api("POST", "/web-close", { port: s.httpPort });
-      setMsg(r.ok ? `⛓✕ ${t("at.webClose")}: port=${s.httpPort}` : `✗ ${r.error || "失败"}`);
+      setMsg(r.ok ? `${t("at.webClose")}: port=${s.httpPort}` : `${r.error || "失败"}`);
       setTick((v) => v + 1);
-    } catch (e) { setMsg(`✗ ${(e as Error)?.message ?? String(e)}`); }
+    } catch (e) { setMsg(`${(e as Error)?.message ?? String(e)}`); }
     finally { setBusyPid(""); }
   };
 
@@ -365,18 +365,18 @@ function renderTAPanel(face?: string) {
     setMsg("");
     try {
       const r = await api("POST", "/tunnel-remove", { ...bridgeApiTarget(), endpointId });
-      if (r.ok) { setMsg(`✕ 已移除 ${endpointId.slice(0, 10)}`); setTick((v) => v + 1); }
-      else setMsg(`✗ ${r.error || "移除失败"}`);
-    } catch (e) { setMsg(`✗ ${(e as Error)?.message ?? String(e)}`); }
+      if (r.ok) { setMsg(`已移除 ${endpointId.slice(0, 10)}`); setTick((v) => v + 1); }
+      else setMsg(`${r.error || "移除失败"}`);
+    } catch (e) { setMsg(`${(e as Error)?.message ?? String(e)}`); }
   };
 
   const doInvite = async () => {
     setMsg("");
     try {
       const r = await api("POST", "/reg-token", { ...bridgeApiTarget(), ttlSec: 300 });
-      if (r.ok && r.data?.token) setMsg(`🎟 邀请票据（${r.data.ttlSec}s 内有效）：${r.data.token} —— 发给对方，对方用 -Dtestagent.bridge.token=${r.data.token} 上桥`);
+      if (r.ok && r.data?.token) setMsg(`邀请票据（${r.data.ttlSec}s 内有效）：${r.data.token} —— 发给对方，对方用 -Dtestagent.bridge.token=${r.data.token} 上桥`);
       else setMsg("✗ " + (r.error || "签发失败"));
-    } catch (e) { setMsg(`✗ ${(e as Error)?.message ?? String(e)}`); }
+    } catch (e) { setMsg(`${(e as Error)?.message ?? String(e)}`); }
   };
 
   const doTunnelStatus = async (endpointId: string) => {
@@ -385,7 +385,7 @@ function renderTAPanel(face?: string) {
       const r = await api("POST", "/tunnel", { ...bridgeApiTarget(), action: "status", endpointId });
       const d = r.data || {};
       setMsg(`⇄ ${endpointId.slice(0, 10)}：state=${d.state || "?"}${d.endpointId ? " id=" + d.endpointId : ""}${d.lastError ? " lastError=" + d.lastError : ""}`);
-    } catch (e) { setMsg(`✗ ${(e as Error)?.message ?? String(e)}`); }
+    } catch (e) { setMsg(`${(e as Error)?.message ?? String(e)}`); }
   };
 
   const header = (
@@ -416,9 +416,9 @@ function renderTAPanel(face?: string) {
       count={bridgeEndpoints.length}
     >
       {!bridgeSt.online ? (
-        <div style={{ fontSize: 12, color: "#f87171", padding: "4px 8px" }}>{"桥不可达（自建桥保存时自动拉起；查看宿主日志，系统临时目录下 ta-bridge-*.log）"}</div>
+        <div style={{ fontSize: 12, color: "var(--danger, #f87171)", padding: "4px 8px" }}>{"桥不可达（自建桥保存时自动拉起；查看宿主日志，系统临时目录下 ta-bridge-*.log）"}</div>
       ) : identityWarn ? (
-        <div style={{ fontSize: 12, color: "#f87171", background: "rgba(248,113,113,.08)", border: "1px solid rgba(248,113,113,.3)", borderRadius: 6, padding: "6px 8px" }}>{`⚠ 端口上是另一个不同配置的 TaBridge（instanceId=${bridgeSt.bridgeInstanceId}，期望=${bridgeSt.instanceId}）——本面板未接管，请换端口或先停旧桥`}</div>
+        <div style={{ fontSize: 12, color: "var(--danger, #f87171)", background: "rgba(248,113,113,.08)", border: "1px solid rgba(248,113,113,.3)", borderRadius: 6, padding: "6px 8px" }}>{`端口上是另一个不同配置的 TaBridge（instanceId=${bridgeSt.bridgeInstanceId}，期望=${bridgeSt.instanceId}）——本面板未接管，请换端口或先停旧桥`}</div>
       ) : (
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
@@ -485,9 +485,9 @@ function renderTAPanel(face?: string) {
           title="挂载桥端口到 pi-web 域（service-tunnels proxy 无认证）并打开完整操作台；右上角端点下拉切换目标，MCP 同源路由"
           style={{ ...ghostBtn, color: "var(--accent)", fontWeight: 600 }}
         >
-          {"🖥 打开操作台"}
+          {"打开操作台"}
         </button>
-        <button onClick={doInvite} disabled={!bridgeSt?.configured} title="签发 5 分钟临时注册票据（发给受邀者 -Dtestagent.bridge.token 上桥用，过期自动作废）" style={ghostBtn}>{"🎟 邀请"}</button>
+        <button onClick={doInvite} disabled={!bridgeSt?.configured} title="签发 5 分钟临时注册票据（发给受邀者 -Dtestagent.bridge.token 上桥用，过期自动作废）" style={ghostBtn}>{"邀请"}</button>
         <button onClick={doSaveBridge} style={ghostBtn}>{mode === "self" ? "保存并启动" : "保存并连接"}</button>
       </div>
       {/* 行 2：按模式配置 */}
@@ -516,7 +516,7 @@ function renderTAPanel(face?: string) {
           title="写/删 JAVA_TOOL_OPTIONS 自动挂载（Linux/macOS = ~/.bashrc 标记块，Windows = 用户级环境变量）：让之后新起的 Java 进程自动挂 agent 并连桥（httpPort 随机）——设好后等 ta client 自动注册即可"
           style={{ ...ghostBtn, color: (bridgeInfo as { jto?: { enabled?: boolean } } | null)?.jto?.enabled ? "var(--accent)" : "var(--text-muted)", fontWeight: 600 }}
         >
-          {(bridgeInfo as { jto?: { enabled?: boolean } } | null)?.jto?.enabled ? "🔘 JAVA_OPTS 自动挂载：开" : "⚪ JAVA_OPTS 自动挂载：关"}
+          {(bridgeInfo as { jto?: { enabled?: boolean } } | null)?.jto?.enabled ? "JAVA_OPTS 自动挂载：开" : "⚪ JAVA_OPTS 自动挂载：关"}
         </button>
         <span style={{ color: "var(--text-dim)" }}>
           {(bridgeInfo as { jto?: { enabled?: boolean } } | null)?.jto?.enabled ? "新 Java 进程自动挂 agent 连桥，等注册即可（含 maven/gradle 等，注意开销）" : "开启后之后新起的 Java 进程默认连桥（Linux/macOS 写 shell rc，Windows 写用户级环境变量）"}
@@ -537,9 +537,9 @@ function renderTAPanel(face?: string) {
     <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "12px 16px", display: "flex", flexDirection: "column", gap: 14 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 8, padding: "10px 12px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg)" }}>
         {connRow}
-        {taInfo ? <div style={{ fontSize: 11, color: taInfo.online ? "var(--text-dim)" : "#f87171" }}>{taInfo.online ? "✓ TA 在线" : "✗ TA 不在线（HTTP " + (taInfo.status ?? "-") + "）"}</div> : null}
+        {taInfo ? <div style={{ fontSize: 11, color: taInfo.online ? "var(--text-dim)" : "var(--danger, #f87171)" }}>{taInfo.online ? "TA 在线" : "TA 不在线（HTTP " + (taInfo.status ?? "-") + "）"}</div> : null}
       </div>
-      {err ? <div style={{ color: "#f87171", fontSize: 12 }}>{err}</div> : null}
+      {err ? <div style={{ color: "var(--danger, #f87171)", fontSize: 12 }}>{err}</div> : null}
       {msg ? <div style={{ fontSize: 12, color: "var(--text-dim)" }}>{msg}</div> : null}
       <Section title={t("at.attached")} count={attached.length}>
         <AttachedTable rows={attached} busyPid={busyPid} onOpenWeb={doOpenWeb} onCloseWeb={doCloseWeb} />

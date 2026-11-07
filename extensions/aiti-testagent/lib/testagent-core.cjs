@@ -145,6 +145,9 @@ function api(method, path, body, port, basePath, extraHeaders, baseOverride) {
     });
     // timeout = socket 空闲超时：须主动 destroy 才会走 error 分支（resolve 幂等，二次调用无副作用）
     req.on("timeout", () => req.destroy(new Error(`API 空闲超时（${API_TIMEOUT_MS}ms，TESTAGENT_API_TIMEOUT_MS 可调）`)));
+    // 绝对死线（S9 补强）：慢滴流响应不会触发空闲超时——总时长超 5×空闲超时即放弃
+    const deadline = setTimeout(() => req.destroy(new Error(`API 总超时（${API_TIMEOUT_MS * 5}ms 无完成）`)), API_TIMEOUT_MS * 5);
+    req.on("close", () => clearTimeout(deadline));
     req.on("error", (e) => resolve({
       status: 0,
       data: { ok: false, error: "连接失败: " + e.message + "（目标 JVM 是否挂载了 TestAgent？先 ta_attach）" },
