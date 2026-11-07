@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/pi-web",
-  "version": "0.15.4",
+  "version": "0.15.5",
   "description": "Web UI for the pi coding agent",
   "homepage": "https://github.com/agegr/pi-web#readme",
   "repository": {
@@ -22,6 +22,8 @@
     "extensions",
     "!extensions/*/node_modules",
     "!extensions/*/node_modules/**",
+    "!extensions/node_modules",
+    "!extensions/node_modules/**",
     ".next",
     "!.next/cache",
     "!.next/dev",
