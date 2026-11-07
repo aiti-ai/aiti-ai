@@ -75,6 +75,24 @@ function startServer({ port, hostname, openBrowser }) {
   const pkgDir = path.join(__dirname, "..");
   const nextDir = path.join(pkgDir, ".next");
 
+  // v3 bundled 扩展依赖 reconcile：主包随包分发 extensions/，但其各自声明的运行时
+  // 依赖 npm 不随主包安装——首启动（及依赖集变化后）一次性装进共享根
+  // <webRoot>/node_modules（jiti walk-up 解析），与 docker 部署的 webRoot reconcile
+  // 同语义。指纹匹配时零开销直通；失败不阻塞启动（扩展各自降级，下次启动重试）。
+  // AITI_SKIP_BUNDLED_RECONCILE=1 可跳过（CI/离线场景）。
+  if (process.env.AITI_SKIP_BUNDLED_RECONCILE !== "1") {
+    try {
+      const t0 = Date.now();
+      const { reconcileBundledExtensions } = require("./bundled-extensions-reconcile");
+      const res = reconcileBundledExtensions(pkgDir);
+      if (res && res.installed) {
+        console.log(`[pi-web] bundled 扩展依赖已 reconcile（${res.count} 个扩展，${((Date.now() - t0) / 1000).toFixed(1)}s）`);
+      }
+    } catch (error) {
+      console.warn(`[pi-web] bundled 扩展依赖 reconcile 失败（不影响启动；缺失依赖的扩展将降级）: ${error.message}`);
+    }
+  }
+
   // Resolve next's CLI entry directly to avoid relying on .bin symlinks (which
   // may not exist when installed via npx).
   let nextBin;
