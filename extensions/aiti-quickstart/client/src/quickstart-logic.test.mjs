@@ -26,12 +26,20 @@ const logic = await import("./quickstart-logic.ts");
 const manifest = (await import(pathToFileURL(resolve(extRoot, "index.ts")).href)).default;
 const pkg = JSON.parse(readFileSync(resolve(extRoot, "package.json"), "utf8"));
 
-/* ── resolveQuickstartCwd：?cwd → home 兜底 → null ── */
+/* ── resolveQuickstartCwd：?cwd → 会话 cwd → home 兜底 → null ── */
 
 test("resolveQuickstartCwd：URL ?cwd 优先", () => {
   assert.equal(logic.resolveQuickstartCwd("?cwd=/home/x/proj&foo=1", "/home"), "/home/x/proj");
   assert.equal(logic.resolveQuickstartCwd("?other=1", "/home"), "/home");
   assert.equal(logic.resolveQuickstartCwd("", "/home"), "/home");
+});
+
+test("resolveQuickstartCwd：会话 cwd 次级、home 兜底", () => {
+  assert.equal(logic.resolveQuickstartCwd("?other=1", "/home", "/sess/cwd"), "/sess/cwd"); // 无 ?cwd → 会话 cwd
+  assert.equal(logic.resolveQuickstartCwd("?other=1", null, "/sess/cwd"), "/sess/cwd");
+  assert.equal(logic.resolveQuickstartCwd("?cwd=/url/cwd", "/home", "/sess/cwd"), "/url/cwd"); // URL 仍优先
+  assert.equal(logic.resolveQuickstartCwd("?other=1", "/home", ""), "/home"); // 会话 cwd 空 → home
+  assert.equal(logic.resolveQuickstartCwd("?other=1", null, null), null);
 });
 
 test("resolveQuickstartCwd：空白/缺失回退与放弃", () => {
