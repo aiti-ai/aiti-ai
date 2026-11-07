@@ -1,16 +1,18 @@
 /**
  * aiti-quickstart · client 入口。
  *
- * register(ctx) 装配三组注册：
+ * register(ctx) 装配（v2）：
  *   - newSessionWidgets ×3：同 id 接管 manifest 静态条目（meta 共用 quickstart-logic
- *     WIDGET_METAS，title 走 t() 多语；render 分发到组件层）；
- *   - sidebarFooter「快速上手」：同 id 接管静态条目——物化前静态条目点击经宿主
- *     staticClickForwarder 物化本扩展并转发到此 onClick（extman 同款范式）；
- *   - client 服务 `aiti-quickstart.api`（renderQuickstart）：session-manager 编排器
- *     消费，作 DockStack filler 渲染进全折叠空白（与 aiti-app-center 同屏共存）。
+ *     WIDGET_METAS，title 走 t() 多语；render 分发到组件层——guide 为状态机开始卡）；
+ *   - sidebarFooter「快速上手」：同 id 接管静态条目（extman 范式）；
+ *   - workspacePickerActions「获取工作区…」：Workspace 下拉底部动作区（Hub 入口）；
+ *   - dialogs `aiti-quickstart-hub`：Hub 对话框（window 事件/服务双通道打开）；
+ *   - client 服务：`aiti-quickstart.api`（renderQuickstart → session-manager filler）、
+ *     `aiti-quickstart.open`（跨扩展开 Hub）。
  */
 import { __setCtx, regSvc, t } from "./host-shim";
-import { QuickstartFiller, QuickstartFooterButton, openQuickstart, renderWidget } from "./quickstart";
+import { QuickstartFiller, QuickstartFooterButton, WorkspacePickerAcquireEntry, openQuickstart, renderWidget } from "./quickstart";
+import { WorkspaceHubRoot } from "./workspace-hub";
 import { SERVICE_KEY, FOOTER_ITEM_ID, WIDGET_METAS, WIDGET_TITLE_KEYS } from "./quickstart-logic";
 
 export default function register(ctx: Record<string, unknown>): () => void {
@@ -38,10 +40,19 @@ export default function register(ctx: Record<string, unknown>): () => void {
     meta: { label: t("qs.footer.label"), title: t("qs.footer.title"), icon: "icons/rocket.svg", onClick: () => { void openQuickstart(); } },
   }]);
 
-  // session-manager 编排器 filler 交付面（renderQuickstart 供 filler 组合消费）
-  const dispose = regSvc(SERVICE_KEY, { renderQuickstart: () => <QuickstartFiller /> });
+  // Workspace 下拉底部动作区「获取工作区…」（静态条目同 id 接管；不设 onClick——
+  // 该插槽宿主直接渲染条目组件，点击行为在组件内）
+  ctx.registerItems?.("workspacePickerActions", [{ id: "acquire", render: WorkspacePickerAcquireEntry }]);
+
+  // Hub 对话框（dialogs 插槽：自绘 portal，宿主 ExtSlot 渲染面；aiti-float 浮动契约在组件根）
+  ctx.registerItems?.("dialogs", [{ id: "aiti-quickstart-hub", render: () => <WorkspaceHubRoot /> }]);
+
+  // 跨扩展服务：filler 交付面 + Hub 打开（ai-helper 等未来消费）
+  const disposeApi = regSvc(SERVICE_KEY, { renderQuickstart: () => <QuickstartFiller /> });
+  const disposeOpen = regSvc("aiti-quickstart.open", { open: () => { try { window.dispatchEvent(new CustomEvent("aiti-quickstart:open-hub")); } catch { /* ignore */ } } });
 
   return () => {
-    try { dispose?.(); } catch { /* ignore */ }
+    try { disposeApi?.(); } catch { /* ignore */ }
+    try { disposeOpen?.(); } catch { /* ignore */ }
   };
 }
