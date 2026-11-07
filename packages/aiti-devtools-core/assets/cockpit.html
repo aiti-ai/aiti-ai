@@ -373,7 +373,7 @@
       </div>
     </div>
     <div class="set-block">
-      <div class="label">🧩 页面注入（动态：本地连 127.0.0.1:8777，非本地连 https://8777.pi.example.com:57442）</div>
+      <div class="label">🧩 页面注入（动态：本地连 127.0.0.1:8777，非本地连 https://8777.pi.example.com:8443）</div>
       <div class="codebox" id="injectCode"></div>
       <button class="btn" onclick="copyText('injectCode')">📋 复制</button>
     </div>
@@ -427,7 +427,7 @@
 'use strict';
 const $ = (id) => document.getElementById(id);
 const base = location.origin + (location.pathname.startsWith('/aiti/') ? '/aiti' : '');
-const REMOTE_BRIDGE = 'https://8777.pi.example.com:57442/aiti';
+const REMOTE_BRIDGE = 'https://8777.pi.example.com:8443/aiti';
 
 function toast(text) { const t = $('toast'); t.textContent = text; t.classList.add('show'); setTimeout(() => t.classList.remove('show'), 1600); }
 function esc(s) { const d = document.createElement('div'); d.textContent = s == null ? '' : String(s); return d.innerHTML; }
