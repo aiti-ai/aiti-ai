@@ -232,7 +232,7 @@ function TabOverview() {
   const platforms: Record<string, number> = {};
   projects.forEach((p: any) => (p.platforms || []).forEach((pl: any) => { platforms[pl.type] = (platforms[pl.type] || 0) + 1; }));
   const inst = state.install || {};
-  const statusColor = running ? (s.sockAlive ? "#22c55e" : "#eab308") : "#ef4444";
+  const statusColor = running ? (s.sockAlive ? "var(--ok, #22c55e)" : "var(--warn, #eab308)") : "var(--danger, #ef4444)";
   const stat = (label: string, value: any, color?: string) => (
     <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 4, minWidth: 120 }}>
       <span style={{ fontSize: 11, color: C.muted }}>{label}</span>
@@ -248,9 +248,9 @@ function TabOverview() {
         <span style={{ fontSize: 12, color: C.muted }}>{`${s.version || "?"} · pid ${s.pid || "-"}`}</span>
         <span style={{ marginLeft: "auto", display: "flex", gap: 6, flexWrap: "wrap" }}>
           {!running
-            ? <button style={{ ...btnStyle, background: "#22c55e", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("start", "启动")}><Ic size={13} paths={ICON.play} />启动</button>
-            : <button style={{ ...btnStyle, background: "#ef4444", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("stop", "停止")}>⏹ 停止</button>}
-          {running && <button style={btnStyle} disabled={state.busy} onClick={() => op("restart", "重启")}>🔄 重启</button>}
+            ? <button style={{ ...btnStyle, background: "var(--ok, #22c55e)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("start", "启动")}><Ic size={13} paths={ICON.play} />启动</button>
+            : <button style={{ ...btnStyle, background: "var(--danger, #ef4444)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("stop", "停止")}>停止</button>}
+          {running && <button style={btnStyle} disabled={state.busy} onClick={() => op("restart", "重启")}>重启</button>}
           <button style={btnStyle} disabled={state.busy} title="热应用 config.toml" onClick={() => ccAction("reload-cc", "reload")}><Ic size={13} paths={ICON.save} />reload</button>
           {running && <button style={btnStyle} disabled={state.busy} title="自动重启（保留 pid）" onClick={() => ccAction("restart-cc", "重启")}><Ic size={13} paths={ICON.refresh} />自重启</button>}
         </span>
@@ -267,7 +267,7 @@ function TabOverview() {
       {inst && (
         <div style={{ ...cardStyle, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
           <span style={{ fontSize: 12, fontWeight: 700 }}><Ic size={12} paths={ICON.package} /> 版本</span>
-          <span style={chip(inst.current ? "rgba(99,102,241,0.12)" : "rgba(239,68,68,0.12)", inst.current ? C.accent : "#ef4444")}>{`当前 ${inst.current || "未安装"}`}</span>
+          <span style={chip(inst.current ? "rgba(99,102,241,0.12)" : "rgba(239,68,68,0.12)", inst.current ? C.accent : "var(--danger, #ef4444)")}>{`当前 ${inst.current || "未安装"}`}</span>
           {inst.latest && <span style={chip("rgba(14,165,233,0.12)", "#0ea5e9")}>{`最新 ${inst.latest}`}</span>}
           {inst.needUpdate && <span style={{ fontSize: 11, color: "#ea580c" }}><Ic size={12} paths={ICON.upRight} /> 有新版本</span>}
           <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={() => setState({ tab: "install" })}>去安装</button>
@@ -307,7 +307,7 @@ function TabInstall() {
     try {
       const r = await fetch(API("/api/extensions/aiti-channels/install"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ tag: target || undefined, systemBin: true }) });
       const d = await r.json();
-      setState({ busy: false, error: d.error ? "安装失败：" + d.error : null, msg: d.ok ? `✅ 已安装 ${d.version}（${d.triple}）到托管目录，sudo 可用时已同步系统 bin` : null });
+      setState({ busy: false, error: d.error ? "安装失败：" + d.error : null, msg: d.ok ? `已安装 ${d.version}（${d.triple}）到托管目录，sudo 可用时已同步系统 bin` : null });
       await refreshInstall(); await refreshStatus();
     } catch (e2: any) { setState({ busy: false, error: "安装失败：" + e2.message }); }
   };
@@ -344,8 +344,8 @@ function TabInstall() {
             <span style={{ fontSize: 12 }}>{"版本：" + (target || "自动获取最新")}</span>
           </div>
           {isLatest
-            ? <button type="button" style={{ ...btnStyle, background: "rgba(34,197,94,0.12)", color: "#16a34a", border: "1px solid rgba(34,197,94,0.3)" }} disabled>✓ 已是最新</button>
-            : <button type="submit" style={{ ...btnStyle, background: C.accent, color: "#fff", border: "none" }} disabled={state.busy || !latest}>{state.busy ? "下载中…" : "⬇ 安装 / 更新"}</button>}
+            ? <button type="button" style={{ ...btnStyle, background: "rgba(34,197,94,0.12)", color: "#16a34a", border: "1px solid rgba(34,197,94,0.3)" }} disabled>已是最新</button>
+            : <button type="submit" style={{ ...btnStyle, background: C.accent, color: "#fff", border: "none" }} disabled={state.busy || !latest}>{state.busy ? "下载中…" : "安装 / 更新"}</button>}
         </div>
         <div style={{ fontSize: 10, color: C.muted }}>版本自动取最新发布版（无需手动输入）；下载较大（约 50MB 二进制），耗时取决于网络；进度看服务端日志。</div>
       </form>
@@ -415,7 +415,7 @@ function TabConfig() {
     try {
       const r = await fetch(API("/api/extensions/aiti-channels/instance"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ op: "create", id: ni.id, name: ni.name || ni.id, dataDir: ni.dataDir }) });
       const d = await r.json();
-      setState({ busy: false, error: d.error ? "创建失败：" + d.error : null, msg: d.ok ? "✅ 实例已创建，填写下方表单生成配置" : null, curInstance: d.ok ? ni.id : state.curInstance, newInst: { id: "", name: "", dataDir: "" } });
+      setState({ busy: false, error: d.error ? "创建失败：" + d.error : null, msg: d.ok ? "实例已创建，填写下方表单生成配置" : null, curInstance: d.ok ? ni.id : state.curInstance, newInst: { id: "", name: "", dataDir: "" } });
       await refreshInstances(); await refreshStatusInst();
     } catch (e: any) { setState({ busy: false, error: "创建失败：" + e.message }); }
   };
@@ -443,7 +443,7 @@ function TabConfig() {
           bridge: { port: s.bridgePort },
           projects: [{ name: "", agent: "piweb", work_dir: "", platforms: [{ type: "dingtalk", client_id: "", client_secret: "", agent_id: "" }] }],
         },
-        msg: `✅ 配置「${s.name}」已建（端口 ${s.managementPort}/${s.bridgePort} 自动分配）。填 workspace 路径 + IM 凭证，然后点 🚀 生成并启动`,
+        msg: `配置「${s.name}」已建（端口 ${s.managementPort}/${s.bridgePort} 自动分配）。填 workspace 路径 + IM 凭证，然后点 🚀 生成并启动`,
       });
       await refreshInstances(); await refreshStatusInst();
     } catch (e: any) { setState({ busy: false, error: "添加配置失败：" + e.message }); }
@@ -512,12 +512,12 @@ function TabConfig() {
       {/* 实例选择 + 新建 */}
       <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-          <span style={{ fontSize: 13, fontWeight: 700 }}>🧩 实例</span>
+          <span style={{ fontSize: 13, fontWeight: 700 }}>实例</span>
           <select value={state.curInstance} onChange={(e) => { setState({ curInstance: e.target.value }); void refreshStatusInst(); }} style={{ ...inp, flex: 1, maxWidth: 220, cursor: "pointer" }}>
             {(state.instances || []).map((i: any) => <option key={i.id} value={i.id}>{`${i.id}${i.name && i.name !== i.id ? " · " + i.name : ""}`}</option>)}
           </select>
           <span style={{ fontSize: 11, color: C.muted }}>{running ? `● 运行中 ${instStatus.version || ""}` : "○ 未运行"}</span>
-          <button style={{ ...btnStyle, background: "#22c55e", color: "#fff", border: "none" }} disabled={state.busy} onClick={startInst}>
+          <button style={{ ...btnStyle, background: "var(--ok, #22c55e)", color: "#fff", border: "none" }} disabled={state.busy} onClick={startInst}>
             <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={13} paths={running ? ICON.refresh : ICON.play} />{running ? "重启" : "启动"}</span>
           </button>
           <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={() => refreshInstances()}><Ic size={13} paths={ICON.refresh} />刷新</button>
@@ -531,7 +531,7 @@ function TabConfig() {
         <div style={{ display: "flex", flexDirection: "column", gap: 6, borderTop: C.border, paddingTop: 8 }}>
           {!state.addCfg.open ? (
             <button style={{ ...btnStyle, alignSelf: "flex-start", background: "rgba(99,102,241,0.1)", color: C.accent, border: "1px solid rgba(99,102,241,0.3)" }} onClick={() => addCfgOpen(true)}>
-              ➕ 添加配置（多 workspace × 多 IM，一键建）
+              添加配置（多 workspace × 多 IM，一键建）
             </button>
           ) : (
             <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
@@ -545,7 +545,7 @@ function TabConfig() {
       </div>
       {/* 全局配置 */}
       <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontSize: 13, fontWeight: 700 }}>⚙️ 全局（management / bridge / log）</div>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>全局（management / bridge / log）</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           {field("management 端口", String(f.management.port || ""), (v) => up({ management: { ...f.management, port: v } }), "如 9820")}
           {field("management token（Web UI 登录）", f.management.token || "", (v) => up({ management: { ...f.management, token: v } }), "自动生成/留空")}
@@ -556,13 +556,13 @@ function TabConfig() {
       <div style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span style={{ fontSize: 13, fontWeight: 700 }}><Ic size={12} paths={ICON.folder} />{" 项目（" + state.configForm.projects.length + "）"}</span>
-          <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={addProj}>➕ 添加项目</button>
+          <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={addProj}>添加项目</button>
         </div>
         {state.configForm.projects.map((pj: any, pi: number) => (
           <div key={pi} style={{ display: "flex", flexDirection: "column", gap: 6, border: C.border, borderRadius: 10, padding: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: C.accent }}>{`项目 ${pi + 1}`}</span>
-              <button style={{ ...btnStyle, marginLeft: "auto", color: "#ef4444", border: "1px solid rgba(239,68,68,0.3)" }} onClick={() => delProj(pi)}>🗑 删除</button>
+              <button style={{ ...btnStyle, marginLeft: "auto", color: "var(--danger, #ef4444)", border: "1px solid rgba(239,68,68,0.3)" }} onClick={() => delProj(pi)}>删除</button>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {field("项目名", pj.name, (v) => upProj(pi, { name: v }), "如 atest")}
@@ -592,7 +592,7 @@ function TabConfig() {
               <div key={pli} style={{ display: "flex", flexDirection: "column", gap: 4, border: "1px dashed var(--border, rgba(127,127,127,0.25))", borderRadius: 8, padding: 8 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 10, fontWeight: 700, color: "#0ea5e9" }}><Ic size={11} paths={ICON.plug} />{" 平台 " + (pli + 1)}{sch ? " · " + sch.label : ""}</span>
-                  <button style={{ ...btnStyle, marginLeft: "auto", color: "#ef4444", padding: "3px 8px" }} onClick={() => delPlat(pi, pli)} aria-label="删除"><Ic size={11} paths={ICON.x} /></button>
+                  <button style={{ ...btnStyle, marginLeft: "auto", color: "var(--danger, #ef4444)", padding: "3px 8px" }} onClick={() => delPlat(pi, pli)} aria-label="删除"><Ic size={11} paths={ICON.x} /></button>
                 </div>
                 <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                   <div style={{ display: "flex", flexDirection: "column", gap: 3, flex: 1, minWidth: 100 }}>
@@ -618,14 +618,14 @@ function TabConfig() {
                       {sch.guide.steps.map((s: string, si: number) => <li key={si}>{s}</li>)}
                     </ol>
                     {sch.guide.link && <div style={{ marginTop: 4 }}>官网入口：<a href={sch.guide.link.url} target="_blank" rel="noreferrer" style={{ color: "#0ea5e9" }}>{sch.guide.link.label}</a></div>}
-                    {sch.guide.note && <div style={{ marginTop: 2, color: "#f59e0b" }}>💡 {sch.guide.note}</div>}
+                    {sch.guide.note && <div style={{ marginTop: 2, color: "var(--warn, #f59e0b)" }}>💡 {sch.guide.note}</div>}
                   </details>
                 )}
                 {/* 扫码授权（feishu；需实例已启动，management 可达） */}
                 {sch?.wizard === "feishu" && (
                   <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                     {!wizHere || wizHere.status === "done" || wizHere.status === "error" || wizHere.status === "begin" ? (
-                      <button style={{ ...btnStyle, alignSelf: "flex-start", color: "#0ea5e9", border: "1px solid rgba(14,165,233,0.3)" }} disabled={state.busy} onClick={() => startWiz(pi, pli)}>📱 扫码授权（自动获取 AppID/Secret）</button>
+                      <button style={{ ...btnStyle, alignSelf: "flex-start", color: "#0ea5e9", border: "1px solid rgba(14,165,233,0.3)" }} disabled={state.busy} onClick={() => startWiz(pi, pli)}>扫码授权（自动获取 AppID/Secret）</button>
                     ) : wizHere.status === "pending" ? (
                       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", fontSize: 11 }}>
                         <a href={wizHere.qrUrl} target="_blank" rel="noreferrer" style={{ color: "#0ea5e9" }}>打开授权页并扫码确认</a>
@@ -633,20 +633,20 @@ function TabConfig() {
                         <button style={{ ...btnStyle, padding: "2px 8px" }} onClick={stopWiz}>取消</button>
                       </div>
                     ) : null}
-                    {wizHere?.status === "done" && <div style={{ fontSize: 10, color: "#16a34a" }}>✅ 授权成功，凭证已自动填入上方字段</div>}
+                    {wizHere?.status === "done" && <div style={{ fontSize: 10, color: "#16a34a" }}>授权成功，凭证已自动填入上方字段</div>}
                     {wizHere?.status === "error" && <div style={{ fontSize: 10, color: "#ea580c" }}>{"授权失败：" + wizHere.err + "（可手填凭证）"}</div>}
                   </div>
                 )}
               </div>
               );
             })}
-            <button style={{ ...btnStyle, color: "#0ea5e9", border: "1px solid rgba(14,165,233,0.3)" }} onClick={() => addPlat(pi)}>➕ 添加平台</button>
+            <button style={{ ...btnStyle, color: "#0ea5e9", border: "1px solid rgba(14,165,233,0.3)" }} onClick={() => addPlat(pi)}>添加平台</button>
           </div>
         ))}
       </div>
       {/* 操作 */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button style={{ ...btnStyle, background: "#22c55e", color: "#fff", border: "none" }} disabled={state.busy} onClick={genStart}><Ic size={13} paths={ICON.play} />🚀 生成并启动（配置写入 + 拉起实例）</button>
+        <button style={{ ...btnStyle, background: "var(--ok, #22c55e)", color: "#fff", border: "none" }} disabled={state.busy} onClick={genStart}><Ic size={13} paths={ICON.play} />生成并启动（配置写入 + 拉起实例）</button>
         <button style={btnStyle} disabled={state.busy} onClick={genAndSave}><Ic size={13} paths={ICON.save} />仅生成配置</button>
         <button style={btnStyle} onClick={() => setState({ tab: "log" })}><Ic size={13} paths={ICON.list} />查看日志</button>
       </div>
@@ -701,7 +701,7 @@ function TabChannels() {
   const list = Object.values(agg);
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={sectionTitle}>{`🔌 渠道（${list.length}）`}</div>
+      <div style={sectionTitle}>{`渠道（${list.length}）`}</div>
       {list.length === 0 && <div style={{ ...cardStyle, color: C.muted, fontSize: 12 }}>未配置平台 — 到 📝配置 在 [[projects.platforms]] 添加</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {list.map((c: any) => (
@@ -731,7 +731,7 @@ function TabSessions() {
     try {
       const r = await fetch(API("/api/extensions/aiti-channels/send"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(f) });
       const d = await r.json();
-      setState({ busy: false, error: d.error ? "发送失败：" + d.error : null, msg: d.ok ? "✅ 消息已发送并记录日志" : null, sendForm: d.ok ? { project: "", session_key: "", message: "" } : f });
+      setState({ busy: false, error: d.error ? "发送失败：" + d.error : null, msg: d.ok ? "消息已发送并记录日志" : null, sendForm: d.ok ? { project: "", session_key: "", message: "" } : f });
       await refreshMsgLog();
     } catch (e2: any) { setState({ busy: false, error: "发送失败：" + e2.message }); }
   };
@@ -739,7 +739,7 @@ function TabSessions() {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       {/* 发消息表单 */}
       <form onSubmit={send} style={{ ...cardStyle, display: "flex", flexDirection: "column", gap: 8 }}>
-        <div style={{ fontSize: 13, fontWeight: 700 }}>💬 发消息（socket API → IM）</div>
+        <div style={{ fontSize: 13, fontWeight: 700 }}>发消息（socket API → IM）</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <input placeholder="项目名（如 autoai）" value={f.project} onChange={(e) => setState({ sendForm: { ...f, project: e.target.value } })} style={{ ...inp, flex: 1 }} />
           <input placeholder="session_key（点下方会话填充）" value={f.session_key} onChange={(e) => setState({ sendForm: { ...f, session_key: e.target.value } })} style={{ ...inp, flex: 1.5 }} />
@@ -779,7 +779,7 @@ function TabMsgLog() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <div style={sectionTitle}>{`📜 消息日志（${logs.length}）`}</div>
+        <div style={sectionTitle}>{`消息日志（${logs.length}）`}</div>
         <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={() => refreshMsgLog()}>⟳ 刷新</button>
       </div>
       {logs.length === 0 && <div style={{ ...cardStyle, color: C.muted, fontSize: 12 }}>暂无消息记录 — 经本面板/aiti-im-send 发出的消息都会记录</div>}
@@ -790,10 +790,10 @@ function TabMsgLog() {
               <span style={{ fontSize: 11, color: C.muted, fontFamily: "monospace" }}>{(l.ts || "").replace("T", " ").slice(0, 19)}</span>
               <span style={chip("rgba(99,102,241,0.12)", C.accent)}>{l.project || "-"}</span>
               <span style={{ fontSize: 10, color: C.muted, fontFamily: "monospace", wordBreak: "break-all" }}>{(l.session_key || "").slice(0, 30)}</span>
-              <span style={{ marginLeft: "auto", ...chip(l.result === "ok" ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)", l.result === "ok" ? "#16a34a" : "#ef4444") }}>{l.result || "-"}</span>
+              <span style={{ marginLeft: "auto", ...chip(l.result === "ok" ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)", l.result === "ok" ? "#16a34a" : "var(--danger, #ef4444)") }}>{l.result || "-"}</span>
             </div>
             <div style={{ fontSize: 12, color: C.text }}>{l.message || "(空消息)"}</div>
-            {l.file && <div style={{ fontSize: 10, color: "#0ea5e9", fontFamily: "monospace" }}>{`📎 ${l.file}`}</div>}
+            {l.file && <div style={{ fontSize: 10, color: "#0ea5e9", fontFamily: "monospace" }}>{`${l.file}`}</div>}
           </div>
         ))}
       </div>
@@ -807,7 +807,7 @@ function TabLog() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <div style={sectionTitle}>📋 cc-connect 运行日志</div>
+        <div style={sectionTitle}>cc-connect 运行日志</div>
         <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={() => refreshLog()}>⟳ 刷新</button>
       </div>
       <pre style={{ margin: 0, maxHeight: "70vh", overflowY: "auto", background: "rgba(0,0,0,0.05)", borderRadius: 10, padding: 12, fontSize: 11, lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
@@ -824,7 +824,7 @@ function TabOriginal() {
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
       <div style={{ ...cardStyle, marginBottom: 8, fontSize: 12, color: C.muted, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 13 }}>🖥️ cc-connect 原生管理台（独立子域 iframe，共享登录态，含实时聊天）</span>
+        <span style={{ fontSize: 13 }}>cc-connect 原生管理台（独立子域 iframe，共享登录态，含实时聊天）</span>
         {url && <a href={url} target="_blank" rel="noreferrer" style={{ ...btnStyle, textDecoration: "none", marginLeft: "auto" }}>↗ 新窗打开</a>}
       </div>
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
@@ -858,7 +858,7 @@ function NavButtons({ vertical }: { vertical: boolean }) {
 function TopBar() {
   const s = state.status || {};
   const running = !!s.running;
-  const statusColor = running ? (s.sockAlive ? "#22c55e" : "#eab308") : "#ef4444";
+  const statusColor = running ? (s.sockAlive ? "var(--ok, #22c55e)" : "var(--warn, #eab308)") : "var(--danger, #ef4444)";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 12px", borderBottom: C.border, background: "rgba(255,255,255,0.92)", backdropFilter: "blur(8px)", flexShrink: 0, flexWrap: "wrap" }}>
       <span title={running ? "运行中" : "未运行"} style={{ width: 10, height: 10, borderRadius: "50%", background: statusColor, flexShrink: 0 }} />
@@ -867,15 +867,15 @@ function TopBar() {
       <span style={{ fontSize: 11, color: C.muted }}>{running ? `pid ${s.pid || ""}` : "未运行"}</span>
       <span style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
         {!running
-          ? <button style={{ ...btnStyle, background: "#22c55e", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("start", "启动")}><Ic size={13} paths={ICON.play} />启动</button>
-          : <button style={{ ...btnStyle, background: "#ef4444", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("stop", "停止")}>⏹ 停止</button>}
-        {running && <button style={btnStyle} disabled={state.busy} onClick={() => op("restart", "重启")}>🔄 重启</button>}
-        <button style={btnStyle} disabled={state.busy} title="热应用 config.toml（POST /api/v1/reload）" onClick={() => ccAction("reload-cc", "reload")}>💾 reload</button>
-        {running && <button style={btnStyle} disabled={state.busy} title="自动重启（进程替换保留 pid）" onClick={() => ccAction("restart-cc", "重启")}>♻ 自重启</button>}
+          ? <button style={{ ...btnStyle, background: "var(--ok, #22c55e)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("start", "启动")}><Ic size={13} paths={ICON.play} />启动</button>
+          : <button style={{ ...btnStyle, background: "var(--danger, #ef4444)", color: "#fff", border: "none" }} disabled={state.busy} onClick={() => op("stop", "停止")}>停止</button>}
+        {running && <button style={btnStyle} disabled={state.busy} onClick={() => op("restart", "重启")}>重启</button>}
+        <button style={btnStyle} disabled={state.busy} title="热应用 config.toml（POST /api/v1/reload）" onClick={() => ccAction("reload-cc", "reload")}>reload</button>
+        {running && <button style={btnStyle} disabled={state.busy} title="自动重启（进程替换保留 pid）" onClick={() => ccAction("restart-cc", "重启")}>自重启</button>}
         <button style={btnStyle} disabled={state.loading} onClick={() => { refreshStatus(); refreshSessions(); refreshMsgLog(); refreshInstall(); }}>⟳</button>
         <button style={{ ...btnStyle, padding: "4px 10px" }} onClick={() => setState({ open: false })}>✕</button>
       </span>
-      {(state.error || state.msg) && <div style={{ width: "100%", fontSize: 11, color: state.error ? "#ef4444" : "#16a34a" }}>{state.error || state.msg}</div>}
+      {(state.error || state.msg) && <div style={{ width: "100%", fontSize: 11, color: state.error ? "var(--danger, #ef4444)" : "#16a34a" }}>{state.error || state.msg}</div>}
     </div>
   );
 }
@@ -884,7 +884,7 @@ function TopBar() {
 function ChannelsPanel() {
   const leftNav = state.nav === "left";
   return (
-    <div style={{ position: "fixed", inset: 0, zIndex: 2147483646, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}>
+    <div style={{ position: "fixed", inset: 0, zIndex: 2147483000, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.35)" }}>
       <div style={panelBox(state)}>
         <TopBar />
         <div style={{ flex: 1, display: "flex", minHeight: 0 }}>
