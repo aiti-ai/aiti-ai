@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-backup",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "description": "pi-web 数据备份扩展（state 层快照：硬链接增量 + 保留轮转 + 源严格只读；与 aiti-configs 互补）",
   "type": "module",
   "scripts": {
