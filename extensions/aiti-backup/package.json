@@ -6,5 +6,6 @@
   "scripts": {
     "deploy": "node tools/deploy.mjs"
   },
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "license": "MIT"
 }
