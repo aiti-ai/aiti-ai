@@ -558,10 +558,10 @@ async function runTool(name: string, args: any): Promise<any> {
         const baseUrl = String((args && args.baseUrl) || "").trim();
         if (!baseUrl) return toolResult("需要 baseUrl", true);
         const r = await core.detectApi(baseUrl, (args && args.apiKey) || "", { timeoutMs: 10000, extraHeaders: sanitizeHeaders(args && args.headers) });
-        const lines = ["🔍 自动探测 " + baseUrl + "："];
+        const lines = ["自动探测 " + baseUrl + "："];
         for (const pr of r.probes.slice(0, 10)) lines.push("  " + pr.api + " " + pr.url + " → " + pr.status + " " + pr.hint);
         if (r.ok) {
-          lines.push("✅ 命中：" + r.api + " · 真实地址 " + r.baseUrl + "（" + r.hint + "）");
+          lines.push("命中：" + r.api + " · 真实地址 " + r.baseUrl + "（" + r.hint + "）");
           lines.push("→ 用 aiti_model_wizard_test baseUrl=" + r.baseUrl + " api=" + r.api + " apiKey=<token> 测试连接");
         } else lines.push("❌ " + r.hint);
         return toolResult(lines.join("\n"));
@@ -578,7 +578,7 @@ async function runTool(name: string, args: any): Promise<any> {
           const all = provider ? core.getProviderKeys(configDir, c, provider) : [];
           const targets = a.allKeys ? all : all.filter((k: any) => k.name === a.keyName);
           if (!targets.length) {
-            return toolResult("❌ 没找到可测的 key：provider=" + (provider || "<未传>") + (a.keyName ? " keyName=" + a.keyName : "") + "（先用 model_wizard_keys action=list 确认）");
+            return toolResult("没找到可测的 key：provider=" + (provider || "<未传>") + (a.keyName ? " keyName=" + a.keyName : "") + "（先用 model_wizard_keys action=list 确认）");
           }
           const rows: string[] = [];
           for (const k of targets) {
@@ -626,7 +626,7 @@ async function runTool(name: string, args: any): Promise<any> {
           ? "；⚠️ 以下模型在所有源都查不到参数（已落裸条目，pi 按 128k/16k 硬默认用）：" + r.missingParams.map((m) => m.id).join(", ")
           + "——建议引导用户用 ai-helper 的 model-params-fill skill（上网查权威数据 → 写入 ~/.pi/agent/models-store.json → 回填参数面板）补全"
           : "";
-        return toolResult("✅ 已保存 provider=" + r.provider + " · " + r.modelCount + " 个模型" + keyTxt + " → " + r.file + "（" + catTxt + auxTxt + missTxt + "；刷新页面模型即生效；多 key 已写入 models.json 供轮转/分 key 检查）");
+        return toolResult("已保存 provider=" + r.provider + " · " + r.modelCount + " 个模型" + keyTxt + " → " + r.file + "（" + catTxt + auxTxt + missTxt + "；刷新页面模型即生效；多 key 已写入 models.json 供轮转/分 key 检查）");
       }
       case "model_wizard_combo_save": {
         const a = args || {};
@@ -642,7 +642,7 @@ async function runTool(name: string, args: any): Promise<any> {
           const r = core.comboSaveProviderData(data, a, storeData, runtime);
           if (!r.ok) return toolResult("保存失败：" + r.error, true);
           core.saveModelsJson(configDir, c, data);
-          return toolResult("✅ 已保存聚合组=" + r.provider + " · " + r.modelCount + " 个虚拟模型 → " + "(models.json)；刷新页面后新会话即生效（pi-models-combo 引擎自动接管路由）。可在 🧙 面板 ☰ 功能菜单 →「🧩 聚合」管理，或左树选中聚合组查看。");
+          return toolResult("已保存聚合组=" + r.provider + " · " + r.modelCount + " 个虚拟模型 → " + "(models.json)；刷新页面后新会话即生效（pi-models-combo 引擎自动接管路由）。可在 🧙 面板 ☰ 功能菜单 →「🧩 聚合」管理，或左树选中聚合组查看。");
         } catch (e: any) {
           return toolResult("保存失败：" + ((e && e.message) || e), true);
         }
@@ -667,14 +667,14 @@ async function runTool(name: string, args: any): Promise<any> {
           const kept = cur.filter((k) => k.name !== name);
           if (kept.length === cur.length) return toolResult("没找到 name=" + name + "（现有：" + (cur.map((k) => k.name).join(", ") || "无") + "）", true);
           const r = core.setProviderKeys(configDir, c, provider, kept);
-          return r.ok ? toolResult("🗑 已删除 " + provider + " 的 key[" + name + "]" + (kept.length ? "（剩 " + kept.length + " 个）" : "（已无多 key）")) : toolResult("删除失败：" + r.error, true);
+          return r.ok ? toolResult("已删除 " + provider + " 的 key[" + name + "]" + (kept.length ? "（剩 " + kept.length + " 个）" : "（已无多 key）")) : toolResult("删除失败：" + r.error, true);
         }
         if (action === "set") {
           const keys = Array.isArray(args && args.keys) ? (args.keys as any[]).map((k: any) => typeof k === "string" ? { name: "key", key: k } : k) : [];
           if (!keys.length) return toolResult("set 需要 keys 数组 [{name,key,rpm?}]（空数组=清空多 key）", true);
           const r = core.setProviderKeys(configDir, c, provider, keys);
           if (!r.ok) return toolResult("设置失败：" + r.error, true);
-          return toolResult("✅ 已设置 " + provider + " 的 " + r.keys.length + " 个 key（" + r.keys.map((k) => k.name + "=" + k.key).join(", ") + "）" + (r.modelsSynced ? " · models.json apiKey 已同步为第一个 key" : ""));
+          return toolResult("已设置 " + provider + " 的 " + r.keys.length + " 个 key（" + r.keys.map((k) => k.name + "=" + k.key).join(", ") + "）" + (r.modelsSynced ? " · models.json apiKey 已同步为第一个 key" : ""));
         }
         return toolResult("未知 action=" + action + "（list/set/remove）", true);
       }
@@ -684,7 +684,7 @@ async function runTool(name: string, args: any): Promise<any> {
         const r = core.deleteProvider(configDir, c, delId);
         if (!r.ok) return toolResult("删除失败：" + r.error, true);
         core.removeReminderProvider(configDir, r.provider);
-        return toolResult("🗑 已删除 provider=" + r.provider);
+        return toolResult("已删除 provider=" + r.provider);
       }
       default: return toolResult("unknown tool: " + name, true);
     }
@@ -725,7 +725,7 @@ export default {
 
   ui: {
     toolbar: [
-      { id: "aiti-model-wizard-open", label: "🧙 模型", title: "aiti-model-wizard：添加 AI 提供商/模型（目录搜索 / 反向匹配 / 自动探测）" },
+      { id: "aiti-model-wizard-open", label: "模型", title: "aiti-model-wizard：添加 AI 提供商/模型（目录搜索 / 反向匹配 / 自动探测）" },
     ],
     dialogs: [{ id: "aiti-model-wizard-dialog", label: "aiti-model-wizard" }],
     banners: [{ id: "aiti-model-wizard-banner", label: "aiti-model-wizard：无模型引导" }],

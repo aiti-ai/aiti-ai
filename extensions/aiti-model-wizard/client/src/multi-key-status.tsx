@@ -225,7 +225,7 @@ function StatusProviders({ status }: { status: ProviderStatus[] }) {
             <div className="amw-st-head">
               <span style={{ whiteSpace: "nowrap" }}>{p.provider}</span>
               <span className={"amw-chip " + (p.isCombo ? "is-combo" : "is-key")}>
-                {p.isCombo ? "🧩 聚合" : "多key"}
+                {p.isCombo ? "聚合" : "多key"}
               </span>
               <span className="amw-st-sub">
                 {p.isCombo && p.built === false ? (
@@ -250,7 +250,7 @@ function StatusProviders({ status }: { status: ProviderStatus[] }) {
               <div className="amw-hint" style={{ padding: "4px 2px" }}
                 title={p.configError ? `成员解析失败：${p.configError}` : undefined}>
                 {p.configError
-                  ? `⚠ 无法构建：${p.configError}`
+                  ? `无法构建：${p.configError}`
                   : `${p.configModels ?? 0} 个虚拟模型 · 首次请求后自动构建槽位`}
               </div>
             ) : (
