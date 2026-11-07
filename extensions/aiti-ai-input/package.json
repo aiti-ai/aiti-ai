@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ai-input",
-  "version": "0.4.9",
+  "version": "0.4.10",
   "type": "module",
   "aiti": {
     "kind": "ext",
@@ -45,5 +45,5 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "60cf18ed7aa63298"
+  "contentHash": "29583e2f8231bfd2"
 }
