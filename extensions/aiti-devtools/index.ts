@@ -226,7 +226,7 @@ export default {
         bridge.registerAgent(key, { agentId: key, id: info.sessionId, open: false, capabilities: {} });
         // 进程内推送 sink：人发消息/异步 user_* 作答 → 直推会话（模型立即看到）
         bridge.setAgentSink(key, (text, kind) => {
-          const label = kind === "user_answer" ? "💬 你的交互请求有人作答（来自 aiti-devtools）" : "💬 人发来消息（来自 aiti-devtools）";
+          const label = kind === "user_answer" ? "你的交互请求有人作答（来自 aiti-devtools）" : "人发来消息（来自 aiti-devtools）";
           void info.steer(String(label + "：" + text).slice(0, 800)).catch(() => {});
         });
         console.log("[aiti-devtools] agent 会话接入（进程内）：" + key);
