@@ -237,15 +237,15 @@ export async function handleClone(body: Record<string, unknown> | null, ctx: Ext
   const git = whichBin("git");
   if (!git) return json({ ok: false, error: "未找到 git——请先安装 git（clone 功能依赖它）" }, 400);
 
-  // 目标：dir 缺省 ~/workspace/<urlName>；父目录必须可建（mkdirSync recursive）。
+  // 目标：**dir 语义 = 目标父目录**（Hub 表单「目标目录」缺省 ~/workspace，最终目录 =
+  // <dir>/<仓库名>，冲突 -2/-3 顺延）；缺省 ~/workspace/<urlName>。父目录必须可建。
   let parent: string;
   let baseName: string;
   if (dir) {
     if (!isAbsolute(dir)) return json({ ok: false, error: "目标目录必须为绝对路径" }, 400);
     parent = resolve(dir);
-    baseName = basename(parent);
-    parent = resolve(parent, "..");
-    if (!baseName || baseName === "." || baseName === "..") return json({ ok: false, error: "非法目标目录" }, 400);
+    if (parent === resolve("/") || !isAbsolute(parent)) return json({ ok: false, error: "不能放到文件系统根目录" }, 400);
+    baseName = url.replace(/[\\/]+$/, "").replace(/\.git$/, "").split(/[\\/]/).pop()?.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^-+/, "") || "workspace";
   } else {
     parent = join(homedir(), "workspace");
     baseName = url.replace(/[\\/]+$/, "").replace(/\.git$/, "").split(/[\\/]/).pop()?.replace(/[^A-Za-z0-9._-]/g, "-").replace(/^-+/, "") || "workspace";

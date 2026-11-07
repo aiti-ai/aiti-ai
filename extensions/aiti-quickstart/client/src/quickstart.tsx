@@ -26,8 +26,8 @@ const cardStyle: Record<string, unknown> = {
   height: "100%",
   display: "flex",
   flexDirection: "column",
-  gap: 8,
-  padding: "10px 12px",
+  gap: 6,
+  padding: "8px 11px",
   border: "1px solid var(--border, #3a3a3a)",
   borderRadius: 10,
   boxSizing: "border-box",
@@ -49,8 +49,8 @@ const chipBase: Record<string, unknown> = {
   gap: 5,
   border: "1px solid var(--border, #3a3a3a)",
   borderRadius: 999,
-  padding: "3px 10px",
-  fontSize: 11.5,
+  padding: "2px 9px",
+  fontSize: 11,
   color: "var(--text-muted, #999)",
   background: "none",
   cursor: "pointer",
@@ -328,11 +328,11 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
             {t("qs.start.configureModel")}
           </button>
         </div>
-        <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "6px 14px", alignContent: "center" }}>
+        <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "4px 12px", alignContent: "center" }}>
           {FULL_STEP_KEYS.slice(2).map((key, i) => (
             <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 18, height: 18, borderRadius: 999, fontSize: 11, fontWeight: 600, color: "var(--accent, #2563eb)", border: "1px solid var(--accent, #2563eb)" }}>{i + 3}</span>
-              <span style={{ fontSize: 12, color: "var(--text-muted, #999)", lineHeight: 1.5, minWidth: 0 }}>{t(key)}</span>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0, width: 16, height: 16, borderRadius: 999, fontSize: 10.5, fontWeight: 600, color: "var(--accent, #2563eb)", border: "1px solid var(--accent, #2563eb)" }}>{i + 3}</span>
+              <span style={{ fontSize: 11.5, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0 }}>{t(key)}</span>
             </div>
           ))}
         </div>
@@ -344,15 +344,15 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
   return (
     <div style={cardStyle}>
       {head}
-      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "6px 14px", alignContent: "center" }}>
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "4px 12px", alignContent: "center" }}>
         {FULL_STEP_KEYS.map((key, i) => (
           <div key={key} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             <span style={{
               display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
-              width: 18, height: 18, borderRadius: 999, fontSize: 11, fontWeight: 600,
+              width: 16, height: 16, borderRadius: 999, fontSize: 10.5, fontWeight: 600,
               color: "var(--accent, #2563eb)", border: "1px solid var(--accent, #2563eb)",
             }}>{i + 1}</span>
-            <span style={{ fontSize: 12, color: "var(--text-muted, #999)", lineHeight: 1.5, minWidth: 0 }}>{t(key)}</span>
+            <span style={{ fontSize: 11.5, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0 }}>{t(key)}</span>
           </div>
         ))}
       </div>
@@ -365,7 +365,7 @@ export function ShortcutsWidget() {
   return (
     <div style={cardStyle}>
       <div style={titleStyle}>{t("qs.shortcutsTitle")}</div>
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexWrap: "wrap", gap: 6, alignContent: "center" }}>
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexWrap: "wrap", gap: 4, alignContent: "center" }}>
         {SHORTCUT_KEYS.map((key) => (
           <span key={key} style={{ ...chipBase, cursor: "default", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 11 }}>
             {t(key)}
