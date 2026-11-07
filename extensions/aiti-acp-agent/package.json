@@ -21,5 +21,13 @@
     "@aiti-ai/ext-shared": "^0.1.7"
   },
   "license": "MIT",
-  "contentHash": "5ec75b180c86c161"
+  "contentHash": "5ec75b180c86c161",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-acp-agent.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-acp-agent#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-acp-agent/issues"
+  }
 }
