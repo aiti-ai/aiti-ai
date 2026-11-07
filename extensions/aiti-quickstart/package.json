@@ -20,10 +20,11 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-quickstart.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-quickstart"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-quickstart#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-quickstart/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
