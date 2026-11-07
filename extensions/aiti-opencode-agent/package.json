@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-opencode-agent",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "OpenCode CLI session backend for pi-web multi-agent frontend (oneshot run -s --format json)",
   "soul": "OpenCode 会话在 pi-web 里打开、续聊、回放。",
   "aitiExtProtocol": "1.0",
