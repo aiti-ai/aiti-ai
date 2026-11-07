@@ -1,12 +1,35 @@
-# Pi Web
+# AITI Web
 
 [中文文档](./docs/README.zh-CN.md) | [日本語](./docs/README.ja.md) | [Русский](./docs/README.ru.md)
 
-Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi). Pi Web uses the same local configuration and session files as pi, so you can browse and resume conversations, run agent turns, configure models and resources, and inspect project files from a browser.
+**AITI Web** (`@aiti-ai/pi-web`) is a browser workbench for the [pi coding agent](https://github.com/earendil-works/pi) — and the base of the [aiti](https://aiti.pw/) tooling ecosystem: page-injected debugging tools, an MCP bridge for AI agents, and a growing library of bundled extensions.
 
-**[Try the interactive demo →](https://agegr.github.io/pi-web/)** The real Pi Web UI runs entirely in your browser, with sample sessions, files and models. There is nothing to install; replies are pre-written and no model is called.
+### Why this fork?
 
-![Pi Web displaying a pi session with structured Markdown, tool calls, and project navigation](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+Upstream [pi-web](https://github.com/agegr/pi-web) is an excellent local UI for pi — but building a full
+AI development workbench needs more than a UI: an extension runtime, session tooling around git and
+queues, service tunnels for sharing local ports, page-level debugging injection, and deep
+AI ↔ page ↔ IDE collaboration. Upstream's architecture didn't leave room for those layers, so this
+fork ships them as **63+ bundled extensions** that come with the package — `npm i -g @aiti-ai/pi-web`
+and the whole workbench is there, no per-extension installs.
+
+The engine stays pi (shared JSONL sessions, same local configuration), so everything upstream
+documents still applies. Docs, the product map, and the story behind the fork live at
+[aiti.pw](https://aiti.pw/) ([source](https://github.com/aiti-ai/aiti-docs)).
+
+[中文文档](./docs/README.zh-CN.md) covers the same in Chinese.
+
+![AITI Web displaying a pi session with structured Markdown, tool calls, and project navigation](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+
+### What's bundled (highlights)
+
+- **Session workspace** — browse/resume/branch/export conversations; git worktrees; project file tools
+- **aiti-devtools** — page-injected AI debugging for any local web app (element inspection, console, network, AI actions)
+- **aiti-git-ops / aiti-git-review / aiti-git-trace** — git graph, commits, code review with annotations, AI change tracking
+- **session-manager** — cross-project session manager with kanban, tags, archives, and fork/branch tooling
+- **service-tunnels** — expose local ports over DNS/tunnels with auth
+- **aiti-extman** — extension manager: install/enable/disable extensions at runtime (including from npm)
+- **…and ~60 more**: queue keeper, recovery, model wizard, usage reports, mail, docs center, UI environments (VNC), speech I/O, and more.
 
 ## Features
 
@@ -22,7 +45,7 @@ Local browser UI for the [pi coding agent](https://github.com/earendil-works/pi)
 Pi Web requires Node.js 22.19.0 or newer. Check your version with `node --version`, then run:
 
 ```bash
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 The CLI opens a browser after the server is ready. If it does not, open [http://127.0.0.1:30141](http://127.0.0.1:30141). Pi Web listens only on `127.0.0.1` by default.
@@ -32,7 +55,7 @@ If no model provider is configured yet, open the **Models** panel to sign in or 
 To install the `pi-web` command globally:
 
 ```bash
-npm install -g @agegr/pi-web@latest
+npm install -g @aiti-ai/pi-web@latest
 pi-web
 ```
 
@@ -46,7 +69,7 @@ pi-web open [--port N]  # open a running server in the browser
 pi-web update [--check] # update a global npm install
 ```
 
-To update, run `pi-web stop`, then `pi-web update` (or run the same install command again). To uninstall, run `npm uninstall -g @agegr/pi-web`.
+To update, run `pi-web stop`, then `pi-web update` (or run the same install command again). To uninstall, run `npm uninstall -g @aiti-ai/pi-web`.
 
 ## Configuration
 
@@ -95,7 +118,7 @@ On macOS or Linux:
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 On Windows PowerShell:
@@ -104,7 +127,7 @@ On Windows PowerShell:
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 ## Notes
@@ -149,7 +172,7 @@ Server-side Pi extensions with detached work can prevent automatic idle
 session eviction through the versioned global registry:
 
 ```js
-const liveness = globalThis[Symbol.for("@agegr/pi-web/session-liveness/v1")];
+const liveness = globalThis[Symbol.for("@aiti-ai/pi-web/session-liveness/v1")];
 const release = liveness?.version === 1
   ? liveness.register({
       name: "my-extension",
