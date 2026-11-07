@@ -14,15 +14,16 @@
  *    trace 未装/未启用时事件无人消费，静默无害）。菜单展开面低频 → 长显不接 feature。
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { t, apiUrl } from "./host-shim";
-import { ensureReadability, sessionTitle } from "./helpers";
+import { ensureReadability, sessionTitle, SIc } from "./helpers";
 import { refreshSessions, applySessionNameLocal } from "./store";
 import { showRelatedDocs } from "./related-docs";
 import { showToast } from "./toast";
 
 export type MenuItem = {
   key: string;
-  icon: string;
+  icon: ReactNode;
   label: string;
   danger?: boolean;
   disabled?: boolean;
@@ -114,15 +115,15 @@ export function buildLivePiRowMenuItems(opts: {
   const items: MenuItem[] = [];
   if (opts.pin) {
     items.push({
-      key: "pin", icon: "📌",
+      key: "pin", icon: <SIc name="pin" size={13} />,
       label: opts.pin.pinned ? (t("sm.unpin") ?? "取消置顶") : (t("sm.pin") ?? "置顶"),
       onClick: opts.pin.onToggle,
     });
   }
-  items.push({ key: "rename", icon: "✏️", label: t("sm.rename") ?? "重命名", onClick: startRename });
+  items.push({ key: "rename", icon: <SIc name="pencil" size={13} />, label: t("sm.rename") ?? "重命名", onClick: startRename });
   if (!running) {
     items.push({
-      key: "autoname", icon: "✨", label: t("sm.autoName") ?? "生成名字",
+      key: "autoname", icon: <SIc name="sparkles" size={13} />, label: t("sm.autoName") ?? "生成名字",
       disabled: opts.autoNameBusy ?? isAutoNameBusy(sess.id),
       onClick: () => {
         void (async () => {
@@ -136,9 +137,9 @@ export function buildLivePiRowMenuItems(opts: {
         })();
       },
     });
-    items.push({ key: "move", icon: "📁", label: t("sm.move") ?? "移动到…", onClick: onMove });
+    items.push({ key: "move", icon: <SIc name="folder" size={13} />, label: t("sm.move") ?? "移动到…", onClick: onMove });
   }
-  items.push({ key: "related-docs", icon: "📄", label: t("sm.relatedDocs") ?? "相关文档", onClick: () => showRelatedDocs(sess.id, sessionTitle(sess)) });
+  items.push({ key: "related-docs", icon: <SIc name="fileText" size={13} />, label: t("sm.relatedDocs") ?? "相关文档", onClick: () => showRelatedDocs(sess.id, sessionTitle(sess)) });
   items.push({ key: "timeline", icon: "⎇", label: t("sm.timeline") ?? "时间线", onClick: () => openSessionTimeline(sess.id) });
   return items;
 }
@@ -234,11 +235,11 @@ export function RowMenuHost() {
             display: "flex", gap: 7, alignItems: "center", padding: "5px 9px",
             fontSize: 11, border: "none", background: "none", textAlign: "left",
             cursor: it.disabled ? "default" : "pointer", borderRadius: 6,
-            color: it.danger ? ensureReadability("#f87171") : "var(--text)", whiteSpace: "nowrap",
+            color: it.danger ? ensureReadability("var(--danger, #f87171)") : "var(--text)", whiteSpace: "nowrap",
             opacity: it.disabled ? 0.4 : 1,
           }}
         >
-          <span style={{ width: 14, textAlign: "center" }}>{it.icon}</span>
+          <span style={{ width: 14, display: "flex", justifyContent: "center" }}>{it.icon}</span>
           {it.label}
         </button>
       ))}

@@ -214,12 +214,12 @@ export default function register(ctx) {
 
   /** Client-side copy of the tag lib's defaultColorFor (display-only reset). */
   function defaultColorForClient(name) {
-    const map = { todo: "#f59e0b", bugfix: "#ef4444", bug: "#ef4444", urgent: "#ef4444", feature: "#22c55e", review: "#8b5cf6", docs: "#3b82f6", test: "#06b6d4", refactor: "#64748b", chore: "#64748b" };
+    const map = { todo: "var(--warn, #f59e0b)", bugfix: "var(--danger, #ef4444)", bug: "var(--danger, #ef4444)", urgent: "var(--danger, #ef4444)", feature: "var(--ok, #22c55e)", review: "#8b5cf6", docs: "#3b82f6", test: "#06b6d4", refactor: "#64748b", chore: "#64748b" };
     const hit = map[name.trim().toLowerCase()];
     if (hit) return hit;
     let h = 0;
     for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-    const palette = ["#ef4444", "#f97316", "#f59e0b", "#22c55e", "#10b981", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899", "#64748b"];
+    const palette = ["var(--danger, #ef4444)", "#f97316", "var(--warn, #f59e0b)", "var(--ok, #22c55e)", "#10b981", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899", "#64748b"];
     return palette[h % palette.length];
   }
 
@@ -366,7 +366,7 @@ export default function register(ctx) {
         display: "flex", alignItems: "center", justifyContent: "center",
         width: 26, height: 26, padding: 0, flexShrink: 0,
         background: "none", border: "none", cursor: "pointer",
-        color: fav ? "#f59e0b" : "var(--text-dim)",
+        color: fav ? "var(--warn, #f59e0b)" : "var(--text-dim)",
       },
     }, fav ? "★" : "☆");
   }
@@ -579,7 +579,7 @@ export default function register(ctx) {
         },
       },
         h("div", { style: { display: "flex", gap: 8, alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--border)" } },
-          h("strong", { style: { fontSize: 13 } }, `📦 ${sessionId.slice(0, 8)}`),
+          h("strong", { style: { fontSize: 13 } }, `${sessionId.slice(0, 8)}`),
           h("span", { style: { fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } }, data?.meta?.cwd ?? ""),
           h("span", { style: { marginLeft: "auto", display: "flex", gap: 6 } },
             h("a", {
@@ -593,7 +593,7 @@ export default function register(ctx) {
             h("button", { onClick: close, style: ghostBtn }, t("sm.close")),
           ),
         ),
-        err ? h("div", { style: { padding: 20, color: "#f87171", fontSize: 12 } }, err)
+        err ? h("div", { style: { padding: 20, color: "var(--danger, #f87171)", fontSize: 12 } }, err)
           : !data ? h("div", { style: { padding: 20, color: "var(--text-dim)", fontSize: 12 } }, t("sm.empty"))
           : h("div", { style: { flex: 1, overflowY: "auto", padding: "10px 12px" } }, data.messages.map(msgBlock)),
       ),
@@ -1070,7 +1070,7 @@ export default function register(ctx) {
             void deleteArchivedSession(sess.id).finally(() => markDone(sess.id));
           }
         },
-        style: { ...miniBtn, opacity: isBusy(sess.id) ? 0.8 : 0.45, fontSize: 10, flexShrink: 0, color: "#f87171" },
+        style: { ...miniBtn, opacity: isBusy(sess.id) ? 0.8 : 0.45, fontSize: 10, flexShrink: 0, color: "var(--danger, #f87171)" },
       }, isBusy(sess.id) ? "⟳" : "🗑"),
     );
 
@@ -1142,7 +1142,7 @@ export default function register(ctx) {
               borderColor: activeFilterCount ? "#6366f1" : undefined,
               color: activeFilterCount ? "#a5b4fc" : undefined,
             },
-          }, `⚙${activeFilterCount ? " " + activeFilterCount : ""}`),
+          }, `${activeFilterCount ? " " + activeFilterCount : ""}`),
           /* §14.3 stats drawer trigger */
           h("button", {
             onClick: () => { setStatsOpen((v) => !v); setFilterOpen(false); },
@@ -1153,8 +1153,8 @@ export default function register(ctx) {
             onClick: () => void runArchiveNow(),
             disabled: archBusy,
             title: archStatus.candidates.map((c) => c.sessionId.slice(0, 8)).join(", "),
-            style: { ...ghostBtn, color: "#f59e0b", borderColor: "#f59e0b55", whiteSpace: "nowrap", fontSize: 10 },
-          }, archBusy ? "…" : `🗜 ${archStatus.candidates.length}`),
+            style: { ...ghostBtn, color: "var(--warn, #f59e0b)", borderColor: "#f59e0b55", whiteSpace: "nowrap", fontSize: 10 },
+          }, archBusy ? "…" : `${archStatus.candidates.length}`),
           archStatus && archStatus.cacheBytes > 0 && h("button", {
             onClick: async () => {
               const res = await fetch(apiUrl("/api/extensions/session-manager/archive/cache?clear=1"));
@@ -1162,7 +1162,7 @@ export default function register(ctx) {
             },
             title: t("sm.clearCache"),
             style: { ...ghostBtn, fontSize: 10, whiteSpace: "nowrap" },
-          }, `🗑 ${(archStatus.cacheBytes / 1048576).toFixed(1)}M`),
+          }, `${(archStatus.cacheBytes / 1048576).toFixed(1)}M`),
           h("button", { onClick: () => panelOpen.onClose(), style: ghostBtn }, t("sm.close")),
         ),
         /* §14.2 filter menu (model / date / sort / role) */
@@ -1196,7 +1196,7 @@ export default function register(ctx) {
               },
             }, p.label())),
             datePreset.startsWith("day:") && h("span", { style: { fontSize: 11, color: "#a5b4fc", background: "rgba(99,102,241,0.25)", padding: "1px 7px", borderRadius: 8, cursor: "pointer" }, onClick: () => setDatePreset("") },
-              `📅 ${datePreset.slice(4)} ✖`),
+              `${datePreset.slice(4)} ✖`),
           ),
           /* sort */
           h("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
@@ -1275,11 +1275,11 @@ export default function register(ctx) {
         selection.size > 0 && h("div", {
           style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 12px", borderBottom: "1px solid var(--border)", background: "rgba(245,158,11,0.08)" },
         },
-          h("span", { style: { fontSize: 11, color: "#f59e0b" } }, t("sm.selectedCount", { count: selection.size })),
-          h("button", { disabled: batchBusy, onClick: () => void batchArchive(), style: ghostBtn }, `📦 ${t("sm.archive")}`),
-          h("button", { disabled: batchBusy, onClick: () => void batchFavorite(), style: ghostBtn }, `★ ${t("sm.favorite")}`),
-          h("button", { disabled: batchBusy, onClick: () => void batchDelete(), style: { ...ghostBtn, color: "#f87171" } }, `🗑 ${t("sm.deleteArchive")}`),
-          h("button", { onClick: () => setSelection(new Set()), style: { ...ghostBtn, marginLeft: "auto" } }, "✖ 清除"),
+          h("span", { style: { fontSize: 11, color: "var(--warn, #f59e0b)" } }, t("sm.selectedCount", { count: selection.size })),
+          h("button", { disabled: batchBusy, onClick: () => void batchArchive(), style: ghostBtn }, `${t("sm.archive")}`),
+          h("button", { disabled: batchBusy, onClick: () => void batchFavorite(), style: ghostBtn }, `${t("sm.favorite")}`),
+          h("button", { disabled: batchBusy, onClick: () => void batchDelete(), style: { ...ghostBtn, color: "var(--danger, #f87171)" } }, `${t("sm.deleteArchive")}`),
+          h("button", { onClick: () => setSelection(new Set()), style: { ...ghostBtn, marginLeft: "auto" } }, "清除"),
         ),
 
         /* tag filter chips — §4.2 counts (incl. descendants) + expandable parents */
@@ -1289,12 +1289,12 @@ export default function register(ctx) {
             onClick: () => setModelFilter(""),
             title: `${t("sm.clearAll")}`,
             style: { padding: "1px 8px", borderRadius: 9, fontSize: 10, cursor: "pointer", background: "rgba(99,102,241,0.25)", color: "#a5b4fc", border: "1px solid #6366f1" },
-          }, `🤖 ${modelFilter} ✖`),
+          }, `${modelFilter} ✖`),
           datePreset && h("span", {
             onClick: () => setDatePreset(""),
             title: `${t("sm.clearAll")}`,
             style: { padding: "1px 8px", borderRadius: 9, fontSize: 10, cursor: "pointer", background: "rgba(99,102,241,0.25)", color: "#a5b4fc", border: "1px solid #6366f1" },
-          }, `📅 ${datePreset.startsWith("day:") ? datePreset.slice(4) : DATE_PRESETS.find((p) => p.key === datePreset)?.label() ?? datePreset} ✖`),
+          }, `${datePreset.startsWith("day:") ? datePreset.slice(4) : DATE_PRESETS.find((p) => p.key === datePreset)?.label() ?? datePreset} ✖`),
           roleFilter && h("span", {
             onClick: () => setRoleFilter(""),
             title: `${t("sm.clearAll")}`,
@@ -1316,16 +1316,16 @@ export default function register(ctx) {
               color: archivedOnly ? "#a78bfa" : "var(--text-dim)",
               border: `1px solid ${archivedOnly ? "#a78bfa" : "var(--border)"}`,
             },
-          }, `📦 ${t("sm.archived")}${archivedCount ? " " + archivedCount : ""}`),
+          }, `${t("sm.archived")}${archivedCount ? " " + archivedCount : ""}`),
           h("span", {
             onClick: () => setFavOnly((v) => !v),
             style: {
               padding: "1px 8px", borderRadius: 9, fontSize: 10, cursor: "pointer",
               background: favOnly ? "rgba(245,158,11,0.25)" : "none",
-              color: favOnly ? "#f59e0b" : "var(--text-dim)",
-              border: `1px solid ${favOnly ? "#f59e0b" : "var(--border)"}`,
+              color: favOnly ? "var(--warn, #f59e0b)" : "var(--text-dim)",
+              border: `1px solid ${favOnly ? "var(--warn, #f59e0b)" : "var(--border)"}`,
             },
-          }, `★ ${t("sm.favorite")}`),
+          }, `${t("sm.favorite")}`),
           data.tags.filter((t) => !t.parentId || !byId.has(t.parentId))
             .sort((a, b) => a.name.localeCompare(b.name))
             .map((root) => chipRow(root, 0)),
@@ -1683,7 +1683,7 @@ export default function register(ctx) {
           h("button", {
             onClick: () => setFilterVisible((v) => !v),
             style: { ...ghostBtn, color: filterTags.length ? "var(--accent)" : "var(--text-muted)" },
-          }, `⚙ ${t("sm.filter")}` + (filterTags.length ? ` (${filterTags.length})` : "")),
+          }, `${t("sm.filter")}` + (filterTags.length ? ` (${filterTags.length})` : "")),
           h("button", { onClick: () => kanbanOpen.onClose(), style: ghostBtn }, t("sm.close")),
         ),
       ),
@@ -1883,7 +1883,7 @@ export default function register(ctx) {
       session && h("button", {
         title: fav ? t("sm.unfavorite") : t("sm.favorite"),
         onClick: () => void act(fav ? "unfavorite" : "favorite", { sessionId: session.id }),
-        style: { background: "none", border: "none", cursor: "pointer", color: fav ? "#f59e0b" : "var(--text-dim)", fontSize: 12, padding: 0 },
+        style: { background: "none", border: "none", cursor: "pointer", color: fav ? "var(--warn, #f59e0b)" : "var(--text-dim)", fontSize: 12, padding: 0 },
       }, fav ? "★" : "☆"),
       /* §3.4: chips are clickable — add to the panel filter（上限 2 个 + 计数：窄顶栏行也能保持 tag 区可见） */
       (isNewSession ? pending : tagIds).slice(0, 2).map((tidOrPath) => {
@@ -1902,7 +1902,7 @@ export default function register(ctx) {
         });
       }),
       (isNewSession ? pending : tagIds).length > 2 && h("span", { style: { fontSize: 10, color: "var(--text-dim)" } }, `+${(isNewSession ? pending : tagIds).length - 2}`),
-      isNewSession && h("span", { style: { fontSize: 10, color: "#f59e0b" } }, "新建会话"),
+      isNewSession && h("span", { style: { fontSize: 10, color: "var(--warn, #f59e0b)" } }, "新建会话"),
       editing ? (
         h("span", { ref: editRef, style: { position: "relative", display: "inline-flex" } },
           h("input", {
@@ -2008,7 +2008,7 @@ export default function register(ctx) {
           width: 32, height: 32, padding: 0,
           background: "var(--bg-hover)", border: "1px solid var(--border)",
           borderRadius: 7, cursor: "pointer", flexShrink: 0,
-          color: fav ? "#f59e0b" : "var(--text-muted)",
+          color: fav ? "var(--warn, #f59e0b)" : "var(--text-muted)",
         },
       }, fav ? "★" : "☆"),
       h(TagEditPopover, { sessionId: session.id }),

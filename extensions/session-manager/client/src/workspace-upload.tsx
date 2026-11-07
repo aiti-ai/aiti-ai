@@ -197,7 +197,7 @@ export function UploadDialog(props: UploadWorkspaceProps) {
               </div>
             </div>
           )}
-          {error && <div style={{ fontSize: 11, color: "#f87171", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{error}</div>}
+          {error && <div style={{ fontSize: 11, color: "var(--danger, #f87171)", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{error}</div>}
         </div>
 
         {/* 动作行 */}
