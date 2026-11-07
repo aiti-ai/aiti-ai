@@ -144,7 +144,7 @@ export function MoveToDialog(props: {
         </div>
         <div style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}>
           {loading ? <div style={{ padding: "12px", fontSize: 12, color: "var(--text-dim)" }}>正在加载…</div> : null}
-          {error ? <div style={{ padding: "12px", fontSize: 12, color: "#f87171" }}>{error}</div> : null}
+          {error ? <div style={{ padding: "12px", fontSize: 12, color: "var(--danger, #f87171)" }}>{error}</div> : null}
           {(!loading && !error && dirs.length === 0) ? <div style={{ padding: "12px", fontSize: 12, color: "var(--text-dim)" }}>无子目录</div> : null}
           {(!loading && !error) ? dirs.map((d: any) => (
             <button key={d.path} onClick={() => loadBrowse(d.path)} title={d.path} style={rowStyle}>
@@ -156,7 +156,7 @@ export function MoveToDialog(props: {
         </div>
         {/* 底部 */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "8px 12px", borderTop: "1px solid var(--border)", background: "var(--bg)", flexShrink: 0 }}>
-          {msg ? <div style={{ fontSize: 11, color: msg.err ? "#f87171" : "#4ade80" }}>{msg.err || msg.ok}</div> : null}
+          {msg ? <div style={{ fontSize: 11, color: msg.err ? "var(--danger, #f87171)" : "var(--ok, #4ade80)" }}>{msg.err || msg.ok}</div> : null}
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ flex: 1, minWidth: 0, fontFamily: "var(--font-mono,ui-monospace,monospace)", fontSize: 11, color: "var(--text-dim,#888)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={browsePath}>→ 目标目录: {browsePath || "/"}</span>
             <button onClick={() => { if (!busy) onClose(); }} style={{ height: 28, padding: "0 12px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer", fontSize: 12 }}>取消</button>

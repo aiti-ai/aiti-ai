@@ -775,15 +775,15 @@ const loadDmp = (): Promise<any> => {
           if (!r.ok) {
             const d = await r.json().catch(() => ({} as any));
             loading.textContent = d.error || "转换失败 (" + r.status + ")";
-            loading.style.color = "#f87171";
+            loading.style.color = "var(--danger, #f87171)";
             return;
           }
           const ct = r.headers.get("content-type") || "";
-          if (!ct.includes("pdf")) { loading.textContent = "转换结果异常（非 PDF）"; loading.style.color = "#f87171"; return; }
+          if (!ct.includes("pdf")) { loading.textContent = "转换结果异常（非 PDF）"; loading.style.color = "var(--danger, #f87171)"; return; }
           blobUrl = URL.createObjectURL(await r.blob());
           frame.src = blobUrl;
         } catch (e: any) {
-          if (!dead) { loading.textContent = String((e && e.message) || e); loading.style.color = "#f87171"; }
+          if (!dead) { loading.textContent = String((e && e.message) || e); loading.style.color = "var(--danger, #f87171)"; }
         }
       })();
       return {

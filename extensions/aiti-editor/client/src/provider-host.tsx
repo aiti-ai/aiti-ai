@@ -228,7 +228,7 @@ export function ThirdPartyProviderHost(props: {
           if (!saveHandlerRef.current) { showToast("warn", "编辑器实例未就绪，请稍后再试"); return; }
           void saveHandlerRef.current("saveAs");
         } : undefined}
-        dot={{ title: dirty ? "有未保存修改" : "已同步", color: dirty ? "#f59e0b" : "var(--border,#e0e0e0)" }}
+        dot={{ title: dirty ? "有未保存修改" : "已同步", color: dirty ? "var(--warn, #f59e0b)" : "var(--border,#e0e0e0)" }}
         nav={nav}
         modes={{
           items: [
@@ -258,7 +258,7 @@ export function ThirdPartyProviderHost(props: {
       <div style={{ flex: "1 1 auto", minHeight: 0, minWidth: 0, position: "relative", overflow: "hidden" }}>
         <div ref={containerRef} style={{ position: "absolute", inset: 0, overflow: "hidden" }} />
         {hostErr && (
-          <div style={{ position: "absolute", inset: 0, zIndex: 300, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: "var(--bg,#fff)", color: "#f87171", fontSize: 13, padding: 16, textAlign: "center" }}>
+          <div style={{ position: "absolute", inset: 0, zIndex: 300, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, background: "var(--bg,#fff)", color: "var(--danger, #f87171)", fontSize: 13, padding: 16, textAlign: "center" }}>
             <div>{"编辑器渲染失败"}<br />{hostErr}</div>
             {chain.length > 1 && (
               <button type="button" onClick={() => {
