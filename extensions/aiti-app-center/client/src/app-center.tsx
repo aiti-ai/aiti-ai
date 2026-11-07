@@ -274,7 +274,7 @@ function ToggleRow(props: { app: AppDescriptor; onToggle: (app: AppDescriptor) =
     >
       <span aria-hidden style={{
         width: 7, height: 7, flexShrink: 0, borderRadius: "50%",
-        background: on ? "var(--ok, #4ade80)" : "var(--text-dim, #666)", boxShadow: on ? "0 0 0 2px rgba(74,222,128,0.18)" : "none",
+        background: on ? "var(--ok, #4ade80)" : "var(--text-dim, #666)", boxShadow: on ? "0 0 0 2px color-mix(in srgb, var(--ok, #4ade80) 18%, transparent)" : "none",
       }} />
       <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
         <span style={{ fontSize: 12, color: "var(--text, #ddd)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.label}</span>
@@ -393,12 +393,12 @@ function InfoSheet(props: {
                 <span style={bodyRow}>{t("info.disableConfirm", { ext: app.extName ?? app.extId })}</span>
                 <span style={{ ...bodyRow, color: "var(--text-dim, #888)" }}>{t("info.disableHint")}</span>
                 <span style={{ display: "flex", gap: 6 }}>
-                  <button type="button" style={{ ...chipBtn, color: "var(--danger, #ef4444)", borderColor: "rgba(239,68,68,0.5)" }} onClick={props.onConfirmDisable}>{t("info.disableYes")}</button>
+                  <button type="button" style={{ ...chipBtn, color: "var(--danger, #ef4444)", borderColor: "color-mix(in srgb, var(--danger, #ef4444) 50%, transparent)" }} onClick={props.onConfirmDisable}>{t("info.disableYes")}</button>
                   <button type="button" style={chipBtn} onClick={props.onAskDisable}>{t("info.disableNo")}</button>
                 </span>
               </>
             ) : (
-              <button type="button" style={{ ...chipBtn, color: "var(--danger, #ef4444)", borderColor: "rgba(239,68,68,0.35)" }} onClick={props.onAskDisable}>{t("info.disable")}</button>
+              <button type="button" style={{ ...chipBtn, color: "var(--danger, #ef4444)", borderColor: "color-mix(in srgb, var(--danger, #ef4444) 35%, transparent)" }} onClick={props.onAskDisable}>{t("info.disable")}</button>
             )}
             {error ? <span style={{ ...bodyRow, color: "var(--danger, #ef4444)" }}>{error}</span> : null}
             <button type="button" style={chipBtn} onClick={props.onOpenExtman}>{t("info.openExtman")}</button>
