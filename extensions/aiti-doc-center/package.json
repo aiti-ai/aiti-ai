@@ -20,10 +20,11 @@
   "contentHash": "83dd41170ea755e8",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-doc-center.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-doc-center"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-doc-center#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-doc-center/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
