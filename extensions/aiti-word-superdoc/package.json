@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-word-superdoc",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "Word 文档编辑器（SuperDoc：ProseMirror docx 双向）",
   "main": "index.ts",
   "scripts": {
