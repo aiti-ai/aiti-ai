@@ -670,7 +670,7 @@ function renderUiEnvDialog(face?: string) {
                 {headless.available ? (
                   <button onClick={async () => { if (await uiConfirm({ message: "确定停止虚拟屏？将关闭 VNC 与虚拟桌面上的所有程序（仅虚拟屏，不动真实桌面）。", danger: true })) headlessAction("stop"); }} disabled={busy}
                     title="停止 Xvfb+openbox+dbus+AT-SPI 及 VNC 实例（仅虚拟屏，不碰真实桌面）"
-                    style={{ ...btn({ color: "var(--danger, #f87171)", borderColor: "rgba(239,68,68,0.45)", background: "rgba(239,68,68,0.12)" }), cursor: busy ? "wait" : "pointer" }}>
+                    style={{ ...btn({ color: "var(--danger, #f87171)", borderColor: "color-mix(in srgb, var(--danger, #ef4444) 45%, transparent)", background: "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)" }), cursor: busy ? "wait" : "pointer" }}>
                     {busyWhat === "headless" ? "停止中…" : "■ 停止虚拟屏"}
                   </button>
                 ) : (
@@ -692,8 +692,8 @@ function renderUiEnvDialog(face?: string) {
               <span style={{ fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.monitorPlay} />VNC-on-web</span>
               <button onClick={() => setVncTab("own")} style={{ ...btn(), ...(vncTab === "own" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>扩展 VNC</button>
               <button onClick={() => { setVncTab("sys"); if (!sysVnc) loadSysVnc(); }} style={{ ...btn(), ...(vncTab === "sys" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>系统 VNC</button>
-              <span style={chip(vnc.tcpRunning ? C.ok : C.dim, vnc.tcpRunning ? "rgba(34,197,94,0.12)" : undefined)}>{vnc.tcpRunning ? <Ic size={11} paths={ICONS.check} /> : <Ic size={11} paths={ICONS.x} />} RFB</span>
-              <span style={chip(vnc.webRunning ? C.ok : C.dim, vnc.webRunning ? "rgba(34,197,94,0.12)" : undefined)}>{vnc.webRunning ? <Ic size={11} paths={ICONS.check} /> : <Ic size={11} paths={ICONS.x} />} Web</span>
+              <span style={chip(vnc.tcpRunning ? C.ok : C.dim, vnc.tcpRunning ? "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)" : undefined)}>{vnc.tcpRunning ? <Ic size={11} paths={ICONS.check} /> : <Ic size={11} paths={ICONS.x} />} RFB</span>
+              <span style={chip(vnc.webRunning ? C.ok : C.dim, vnc.webRunning ? "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)" : undefined)}>{vnc.webRunning ? <Ic size={11} paths={ICONS.check} /> : <Ic size={11} paths={ICONS.x} />} Web</span>
               {vncTab === "sys" ? (
                 <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                   <button style={btn()} onClick={loadSysVnc} disabled={sysBusy}>刷新</button>
@@ -721,7 +721,7 @@ function renderUiEnvDialog(face?: string) {
                   <div key={v.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid " + C.border, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 11, fontWeight: 600, fontFamily: C.mono }}>{v.kind}</span>
                     <span style={chip(C.muted)}>{v.display}</span>
-                    <span style={chip(v.port ? (v.listening ? C.ok : C.warn) : C.dim, v.port ? "rgba(34,197,94,0.10)" : undefined)}>{v.listening ? "port " + v.port : "port " + v.port + "·未监听"}</span>
+                    <span style={chip(v.port ? (v.listening ? C.ok : C.warn) : C.dim, v.port ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : undefined)}>{v.listening ? "port " + v.port : "port " + v.port + "·未监听"}</span>
                     {v.pid ? <span style={{ fontSize: 10, color: C.dim }}>{"pid " + v.pid + (v.stoppable ? "" : "（非本用户，不可停）")}</span> : null}
                     <span style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
                       <button style={btn()} onClick={() => openSys(v)} disabled={sysBusy || !v.listening} title={v.listening ? "" : "端口无监听（-loop 等待中/未运行），无法连接"}>{v.listening ? "打开" : "不可连"}</button>
@@ -739,8 +739,8 @@ function renderUiEnvDialog(face?: string) {
                   <div key={inst.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid " + C.border, flexWrap: "wrap" }}>
                     <span style={{ fontSize: 11, fontWeight: 600, color: inst.id === "default" ? "#a5b4fc" : C.text, fontFamily: C.mono }}>{inst.id === "default" ? "default" : inst.id}</span>
                     {inst.sys ? <span style={chip(C.warn)}>{inst.sys.host && inst.sys.host !== "127.0.0.1" ? `${inst.sys.host}:${inst.sys.port}` : "系统:" + inst.sys.port}</span> : <span style={chip(C.muted)}>{" :" + inst.displayNum}</span>}
-                    <span style={chip(inst.tcp ? C.ok : C.dim, inst.tcp ? "rgba(34,197,94,0.10)" : undefined)}>{"RFB :" + inst.rfbPort}</span>
-                    <span style={chip(inst.web ? C.ok : C.dim, inst.web ? "rgba(34,197,94,0.10)" : undefined)}>{"Web :" + inst.webPort}</span>
+                    <span style={chip(inst.tcp ? C.ok : C.dim, inst.tcp ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : undefined)}>{"RFB :" + inst.rfbPort}</span>
+                    <span style={chip(inst.web ? C.ok : C.dim, inst.web ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : undefined)}>{"Web :" + inst.webPort}</span>
                     <span style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
                       <button style={btn()} onClick={() => { openViewSafe(buildVncUrl, inst.id).catch(() => {}); }}>打开</button>
                       <button style={btn()} onClick={() => { buildVncUrl(inst.id).then((u) => copyText(u)).catch(() => setErr("会话建立失败")); }}>复制</button>
@@ -770,7 +770,7 @@ function renderUiEnvDialog(face?: string) {
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
               <span style={accentBar("#38bdf8")} />
               <span style={{ fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.monitorPlay} />RDP-on-web</span>
-              <span style={chip((rdpInsts[0] || {}).web ? C.ok : C.dim, (rdpInsts[0] || {}).web ? "rgba(34,197,94,0.12)" : undefined)}>{(rdpInsts[0] || {}).web ? <Ic size={11} paths={ICONS.check} /> : <Ic size={11} paths={ICONS.x} />} Web</span>
+              <span style={chip((rdpInsts[0] || {}).web ? C.ok : C.dim, (rdpInsts[0] || {}).web ? "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)" : undefined)}>{(rdpInsts[0] || {}).web ? <Ic size={11} paths={ICONS.check} /> : <Ic size={11} paths={ICONS.x} />} Web</span>
               <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
                 <ConnForm trigger="▶ 启动 (host:port)" defaultHost="127.0.0.1" defaultPort="3389" busy={busy} onStart={startRdp} />
                 <button style={btn()} onClick={() => rdpAction("stop")} disabled={busy}>■ 停默认</button>
@@ -781,7 +781,7 @@ function renderUiEnvDialog(face?: string) {
                 <div key={inst.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid " + C.border, flexWrap: "wrap" }}>
                   <span style={{ fontSize: 11, fontWeight: 600, color: inst.id === "default" ? "#38bdf8" : C.text, fontFamily: C.mono }}>{inst.id === "default" ? "default" : inst.id}</span>
                   {inst.sys ? <span style={chip(C.warn)}>{"系统:" + inst.sys.port}</span> : <span style={chip(C.muted)}>{inst.host + ":" + inst.port}</span>}
-                  <span style={chip(inst.web ? C.ok : C.warn, inst.web ? "rgba(34,197,94,0.10)" : "rgba(245,158,11,0.14)")}>{inst.web ? "Web :" + inst.webPort : "断开 :" + inst.webPort}</span>
+                  <span style={chip(inst.web ? C.ok : C.warn, inst.web ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)")}>{inst.web ? "Web :" + inst.webPort : "断开 :" + inst.webPort}</span>
                   <span style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
                     {/* 断开（bridge 进程没了）不再禁用：点击先按原参数重建 bridge 再打开——禁用无反馈是「点了没反应」的体验黑洞 */}
                     <button style={btn()} onClick={async () => {
@@ -844,14 +844,14 @@ function renderUiEnvDialog(face?: string) {
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 }}>
               {Object.entries(install.tools || {}).map(([k, v]: [string, any]) => (
-                <span key={k} style={chip(v ? C.ok : C.bad, v ? "rgba(34,197,94,0.10)" : "rgba(239,68,68,0.10)")}>{v ? <Ic size={11} paths={ICONS.check} /> : <Ic size={11} paths={ICONS.x} />}{k}</span>
+                <span key={k} style={chip(v ? C.ok : C.bad, v ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 10%, transparent)")}>{v ? <Ic size={11} paths={ICONS.check} /> : <Ic size={11} paths={ICONS.x} />}{k}</span>
               ))}
             </div>
             <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 6 }}>
               {Object.entries(install.units || {}).map(([k, v]: [string, any]) => (
                 <span key={k} style={chip(
                   v === "active" ? C.ok : (v === "missing" ? C.dim : C.bad),
-                  v === "active" ? "rgba(34,197,94,0.10)" : undefined,
+                  v === "active" ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : undefined,
                 )}>{k + ": " + v}</span>
               ))}
             </div>
@@ -877,7 +877,7 @@ function renderUiEnvDialog(face?: string) {
                   <div style={{ fontSize: 10.5, color: C.ok, marginBottom: 4 }}>全部组件已就绪 ✓</div>
                 ) : (
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 6 }}>
-                    {(deps.coreMissing || []).map((i: any) => <span key={"c-" + i.bin} style={chip(C.bad, "rgba(239,68,68,0.10)")}><Ic size={10} paths={ICONS.x} />{i.label}（必需）</span>)}
+                    {(deps.coreMissing || []).map((i: any) => <span key={"c-" + i.bin} style={chip(C.bad, "color-mix(in srgb, var(--danger, #ef4444) 10%, transparent)")}><Ic size={10} paths={ICONS.x} />{i.label}（必需）</span>)}
                     {(deps.uiMissing || []).map((i: any) => <span key={"u-" + i.bin} style={chip(C.warn)}><Ic size={10} paths={ICONS.x} />{i.label}（可选）</span>)}
                   </div>
                 )}

@@ -388,7 +388,7 @@ export default function register(ctx) {
             ? h("button", {
                 key: "stop", onClick: () => { if (window.confirm("确定停止虚拟屏？将关闭 VNC 与虚拟桌面上的所有程序（仅虚拟屏，不动真实桌面）。")) headlessAction("stop"); }, disabled: headlessBusy,
                 title: "停止 Xvfb+openbox+dbus+AT-SPI 及 VNC 实例（仅虚拟屏，不碰真实桌面）",
-                style: { ...btn({ color: "var(--danger, #f87171)", borderColor: "rgba(239,68,68,0.45)", background: "rgba(239,68,68,0.12)" }), cursor: headlessBusy ? "wait" : "pointer" },
+                style: { ...btn({ color: "var(--danger, #f87171)", borderColor: "color-mix(in srgb, var(--danger, #ef4444) 45%, transparent)", background: "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)" }), cursor: headlessBusy ? "wait" : "pointer" },
               }, headlessBusy ? "停止中…" : "■ 停止虚拟屏")
             : h("button", {
                 key: "start", onClick: () => headlessAction("start"), disabled: headlessBusy,
@@ -406,8 +406,8 @@ export default function register(ctx) {
           h("span", { style: { fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.monitorPlay), "VNC-on-web"),
           h("button", { onClick: () => setVncTab("own"), style: { ...btn({}), ...(vncTab === "own" ? { color: "#a5b4fc", borderColor: "rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) } }, "扩展 VNC"),
           h("button", { onClick: () => { setVncTab("sys"); if (!sysVnc) loadSysVnc(); }, style: { ...btn({}), ...(vncTab === "sys" ? { color: "#a5b4fc", borderColor: "rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) } }, "系统 VNC"),
-          h("span", { style: chip(vnc.tcpRunning ? C.ok : C.dim, vnc.tcpRunning ? "rgba(34,197,94,0.12)" : undefined) }, vnc.tcpRunning ? Ic(11, ICONS.check) : Ic(11, ICONS.x), " RFB"),
-          h("span", { style: chip(vnc.webRunning ? C.ok : C.dim, vnc.webRunning ? "rgba(34,197,94,0.12)" : undefined) }, vnc.webRunning ? Ic(11, ICONS.check) : Ic(11, ICONS.x), " Web"),
+          h("span", { style: chip(vnc.tcpRunning ? C.ok : C.dim, vnc.tcpRunning ? "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)" : undefined) }, vnc.tcpRunning ? Ic(11, ICONS.check) : Ic(11, ICONS.x), " RFB"),
+          h("span", { style: chip(vnc.webRunning ? C.ok : C.dim, vnc.webRunning ? "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)" : undefined) }, vnc.webRunning ? Ic(11, ICONS.check) : Ic(11, ICONS.x), " Web"),
           vncTab === "sys" ? h("span", { style: { marginLeft: "auto", display: "flex", gap: 6 } },
             h("button", { style: btn({}), onClick: loadSysVnc, disabled: sysBusy }, "刷新")) :
             h("span", { style: { marginLeft: "auto", display: "flex", gap: 6 } },
@@ -422,7 +422,7 @@ export default function register(ctx) {
             sysVnc.map((v) => h("div", { key: v.id, style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid " + C.border, flexWrap: "wrap" } },
               h("span", { style: { fontSize: 11, fontWeight: 600, fontFamily: C.mono, color: v.protocol === "rdp" ? "var(--warn, #f59e0b)" : C.text } }, v.kind),
               v.display ? h("span", { style: chip(C.muted) }, v.display) : null,
-              h("span", { style: chip(v.port ? (v.listening ? C.ok : C.warn) : C.dim, v.port ? "rgba(34,197,94,0.10)" : undefined) }, v.listening ? "port " + v.port : "port " + v.port + "·未监听"),
+              h("span", { style: chip(v.port ? (v.listening ? C.ok : C.warn) : C.dim, v.port ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : undefined) }, v.listening ? "port " + v.port : "port " + v.port + "·未监听"),
               v.pid ? h("span", { style: { fontSize: 10, color: C.dim } }, "pid " + v.pid + (v.stoppable ? "" : "（非本用户，不可停）")) : null,
               h("span", { style: { marginLeft: "auto", display: "flex", gap: 5 } },
                 v.protocol === "rdp"
@@ -441,8 +441,8 @@ export default function register(ctx) {
           vncInsts.map((inst) => h("div", { key: inst.id, style: { display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid " + C.border, flexWrap: "wrap" } },
             h("span", { style: { fontSize: 11, fontWeight: 600, color: inst.id === "default" ? "#a5b4fc" : C.text, fontFamily: C.mono } }, inst.id === "default" ? "default" : inst.id),
             inst.sys ? h("span", { style: chip(C.warn) }, "系统:" + inst.sys.port) : h("span", { style: chip(C.muted) }, ":" + inst.displayNum),
-            h("span", { style: chip(inst.tcp ? C.ok : C.dim, inst.tcp ? "rgba(34,197,94,0.10)" : undefined) }, "RFB :" + inst.rfbPort),
-            h("span", { style: chip(inst.web ? C.ok : C.dim, inst.web ? "rgba(34,197,94,0.10)" : undefined) }, "Web :" + inst.webPort),
+            h("span", { style: chip(inst.tcp ? C.ok : C.dim, inst.tcp ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : undefined) }, "RFB :" + inst.rfbPort),
+            h("span", { style: chip(inst.web ? C.ok : C.dim, inst.web ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : undefined) }, "Web :" + inst.webPort),
             h("span", { style: { marginLeft: "auto", display: "flex", gap: 5 } },
               h("button", { style: btn({}), onClick: () => { buildVncUrl(inst.id).then((u) => window.open(u, "_blank")).catch(() => setErr("会话建立失败")); } }, "打开"),
               h("button", { style: btn({}), onClick: () => { buildVncUrl(inst.id).then((u) => copyText(u)).catch(() => setErr("会话建立失败")); } }, "复制"),
@@ -484,13 +484,13 @@ export default function register(ctx) {
         ),
         h("div", { style: { display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 8 } },
           Object.entries(install.tools || {}).map(([k, v]) =>
-            h("span", { key: k, style: chip(v ? C.ok : C.bad, v ? "rgba(34,197,94,0.10)" : "rgba(239,68,68,0.10)") }, v ? Ic(11, ICONS.check) : Ic(11, ICONS.x), k))),
+            h("span", { key: k, style: chip(v ? C.ok : C.bad, v ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 10%, transparent)") }, v ? Ic(11, ICONS.check) : Ic(11, ICONS.x), k))),
         h("div", { style: { display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 6 } },
           Object.entries(install.units || {}).map(([k, v]) =>
             h("span", {
               key: k, style: chip(
                 v === "active" ? C.ok : (v === "missing" ? C.dim : C.bad),
-                v === "active" ? "rgba(34,197,94,0.10)" : undefined,
+                v === "active" ? "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)" : undefined,
               ),
             }, k + ": " + v))),
         h("div", { style: { fontSize: 10, color: C.dim, lineHeight: 1.6, marginTop: 6 } },
@@ -507,7 +507,7 @@ export default function register(ctx) {
           deps.allInstalled
             ? h("div", { style: { fontSize: 10.5, color: C.ok, marginBottom: 4 } }, "全部组件已就绪 ✓")
             : h("div", { style: { display: "flex", flexWrap: "wrap", gap: 5, marginBottom: 6 } },
-                ...(deps.coreMissing || []).map((i) => h("span", { key: "c-" + i.bin, style: chip(C.bad, "rgba(239,68,68,0.10)") }, Ic(10, ICONS.x), i.label, "（必需）")),
+                ...(deps.coreMissing || []).map((i) => h("span", { key: "c-" + i.bin, style: chip(C.bad, "color-mix(in srgb, var(--danger, #ef4444) 10%, transparent)") }, Ic(10, ICONS.x), i.label, "（必需）")),
                 ...(deps.uiMissing || []).map((i) => h("span", { key: "u-" + i.bin, style: chip(C.warn) }, Ic(10, ICONS.x), i.label, "（可选）"))),
           !deps.allInstalled && deps.sudo && deps.pkgMgr
             ? h("button", {
