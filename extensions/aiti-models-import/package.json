@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-models-import",
-  "version": "0.1.4",
+  "version": "0.1.7",
   "description": "其他 agent models 配置导入（首启弹窗 + 变更检测 + 经 aiti-model-wizard saveBatch 落盘）",
   "type": "module",
   "scripts": {
@@ -15,5 +15,6 @@
     "vite": "^6.4.3"
   },
   "aitiExtProtocol": "1.0",
-  "license": "MIT"
+  "license": "MIT",
+  "contentHash": "cb64f6efd122ad35"
 }
