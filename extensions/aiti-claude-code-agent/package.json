@@ -20,10 +20,11 @@
   "contentHash": "0a95672da24a1d17",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-claude-code-agent.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-claude-code-agent"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-claude-code-agent#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-claude-code-agent/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
