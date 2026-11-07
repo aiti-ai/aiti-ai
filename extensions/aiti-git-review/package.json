@@ -22,5 +22,13 @@
     "@aiti-ai/ext-shared": "^0.1.3"
   },
   "license": "MIT",
-  "contentHash": "6a9ae03b6b59f404"
+  "contentHash": "6a9ae03b6b59f404",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-git-review.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-git-review#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-git-review/issues"
+  }
 }
