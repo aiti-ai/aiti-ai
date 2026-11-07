@@ -71,7 +71,7 @@ function sortTags<T extends { source?: string }>(tags: T[] | undefined): T[] {
   return (tags ?? []).slice().sort((a, b) => (SOURCE_TIER[a.source ?? "path"] ?? 4) - (SOURCE_TIER[b.source ?? "path"] ?? 4));
 }
 const SOURCE_COLORS: Record<string, string> = {
-  frontmatter: "#10b981", inline: "#a78bfa", path: "#64748b", ui: "#3b82f6", db: "var(--warn, #f59e0b)", plan: "var(--warn, #f59e0b)", session: "#06b6d4",
+  frontmatter: "var(--ok, #10b981)", inline: "#a78bfa", path: "#64748b", ui: "#3b82f6", db: "var(--warn, #f59e0b)", plan: "var(--warn, #f59e0b)", session: "#06b6d4",
 };
 const chipStyle = (color: string): React.CSSProperties => ({
   fontSize: 10, padding: "1px 6px", borderRadius: 5, cursor: "pointer",
@@ -98,7 +98,7 @@ function Snippet({ text }: { text?: string }) {
 /** 方案状态（§2.2）：返回 [后缀, 徽标文案, 颜色]；未标注返回 null。 */
 function planStatusOf(tags: { key: string }[], planTag: string): [string, string, string] | null {
   for (const t of tags ?? []) {
-    if (t.key === planTag + "/已实施") return ["已实施", "已实施", "#10b981"];
+    if (t.key === planTag + "/已实施") return ["已实施", "已实施", "var(--ok, #10b981)"];
     if (t.key === planTag + "/评审中") return ["评审中", "评审中", "var(--warn, #f59e0b)"];
     if (t.key === planTag + "/已过时") return ["已过时", "已过时", "#8a8a8a"];
   }
@@ -665,7 +665,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
               const st = [...new Set((sel.tags || []).map((t: any) => String(t.key ?? "")).filter((k) => k.startsWith("方案/")))];
               if (st.length <= 1) return null;
               return (
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "5px 8px", border: "1px solid rgba(245,158,11,.4)", background: "rgba(245,158,11,.08)", borderRadius: 6, fontSize: 11 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "5px 8px", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 40%, transparent)", background: "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)", borderRadius: 6, fontSize: 11 }}>
                   <span style={{ color: "#f59e09", minWidth: 0 }}>⚠ {st.length} 个 方案/* 状态 tag（{st.join("、")}）</span>
                   <button title={"保留「" + st[0] + "」，移除 " + st.slice(1).join("、") + "（写回 front-matter；正文内联 #tag 需手动删）"}
                     onClick={async () => {
@@ -675,7 +675,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
                         if (liveRef.current) setSel(d.doc || null);
                       } catch { /* ignore */ }
                     }}
-                    style={{ marginLeft: "auto", flexShrink: 0, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: "pointer", border: "1px solid rgba(245,158,11,.5)", background: "transparent", color: "#f59e09" }}>
+                    style={{ marginLeft: "auto", flexShrink: 0, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, fontWeight: 700, cursor: "pointer", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", background: "transparent", color: "#f59e09" }}>
                     一键修复
                   </button>
                 </div>
@@ -795,7 +795,7 @@ function WsMenu({ currentCwd, under, onPick, onClose }: { currentCwd: string; un
   const row = (p: string, label: string, opts?: { docs?: number; tracked?: boolean; unpin?: boolean }) => (
     <div key={p} onClick={() => pick(p)} style={{ ...rowStyle, background: under === p ? "rgba(99,102,241,.14)" : "transparent" }}>
       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{under === p ? "✓ " : ""}{label}</span>
-      {opts?.tracked ? <span title="aiti-git-trace 追踪动过的仓库" style={{ fontSize: 10, color: "#10b981", flexShrink: 0 }}>🧲</span> : null}
+      {opts?.tracked ? <span title="aiti-git-trace 追踪动过的仓库" style={{ fontSize: 10, color: "var(--ok, #10b981)", flexShrink: 0 }}>🧲</span> : null}
       {typeof opts?.docs === "number" && opts.docs > 0 ? <span style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>{opts.docs}</span> : null}
       {opts?.unpin ? <span onClick={(e) => unpin(p, e)} title="从已选移除" style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0, padding: "0 2px" }}>✕</span> : null}
     </div>
@@ -859,7 +859,7 @@ function SessionView({ onOpen, onOpenSession, selectedId }: { onOpen: (id: numbe
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 6, border: "1px solid " + (openSid === s.sid ? "#6366f1" : "var(--border)"), opacity: s.live ? 1 : 0.6 }}>
             <span onClick={() => openSession(s.sid)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
               <Ic size={11} paths={ICONS.chevR} style={{ flexShrink: 0, transform: openSid === s.sid ? "rotate(90deg)" : "none", transition: "transform .12s" }} />
-              <span title={s.running ? "运行中" : "空闲"} style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: s.running ? "#10b981" : "var(--text-muted)", boxShadow: s.running ? "0 0 4px #10b981" : "none" }} />
+              <span title={s.running ? "运行中" : "空闲"} style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: s.running ? "var(--ok, #10b981)" : "var(--text-muted)", boxShadow: s.running ? "0 0 4px var(--ok, #10b981)" : "none" }} />
               {s.favorite ? <span title="收藏" style={{ flexShrink: 0, fontSize: 11 }}>⭐</span> : null}
               {planBindings[s.sid] ? (
                 <span title={"方案先行：已绑定 " + (planBindings[s.sid].planRel || "")} style={{ flexShrink: 0, fontSize: 10, color: "#3fb950", border: "1px solid #3fb95055", borderRadius: 4, padding: "0 4px", lineHeight: 1.5 }}>📋</span>
