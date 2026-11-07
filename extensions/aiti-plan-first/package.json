@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-plan-first",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "方案先行提醒扩展——结合 aiti-git-trace 事件感知：md 变更绑定向导 + 大改未跟方案提醒 + 一键插入「更新方案文档：@file」",
   "scripts": {
