@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-codex-agent",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "OpenAI Codex CLI driver (exec --json + resume)",
   "soul": "Codex 在哪儿跑，面板就在哪儿看。",
   "scripts": {
@@ -17,5 +17,5 @@
     "@aiti-ai/ext-shared": "^0.1.7"
   },
   "license": "MIT",
-  "contentHash": "4199359296714c5c"
+  "contentHash": "df1b963f71517751"
 }
