@@ -186,7 +186,7 @@ export default function CaptchaRequestCard({ request, respond }: SessionRequestC
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <span style={{ fontSize: 14 }}>🔐</span>
+        <span style={{ display: "flex", color: "var(--warn, #fbbf24)" }}><svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
         <strong style={{ fontSize: 13, color: "var(--text)" }}>套餐通道安全验证</strong>
         <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-dim)" }}>
           {req.reason === "captcha-retry" ? "重试验证" : "模型请求"}
