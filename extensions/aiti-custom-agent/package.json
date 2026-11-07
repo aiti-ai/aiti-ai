@@ -20,10 +20,11 @@
   "contentHash": "8c835e3529b740e9",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-custom-agent.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-custom-agent"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-custom-agent#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-custom-agent/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
