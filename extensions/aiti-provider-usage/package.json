@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-provider-usage",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "type": "module",
   "description": "Provider 余额/配额查询扩展（15+ 家适配器 + 会话信息面板剩余额度区块）——pi-web 去 fork 化 B1 外迁",
   "scripts": {
