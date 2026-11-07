@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-float",
-  "version": "0.5.4",
+  "version": "0.5.5",
   "type": "module",
   "description": "弹窗浮动增强器（data-ext-float 契约）—— 拖拽/缩放/持久化/置前/自动最大化按钮/小屏全屏/遮罩自动去除/小屏系统返回关闭",
   "scripts": {
