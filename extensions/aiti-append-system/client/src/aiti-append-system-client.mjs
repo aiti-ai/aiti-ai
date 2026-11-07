@@ -61,8 +61,8 @@ const STYLES = `
 .aas-pathrow { display: flex; align-items: center; gap: 8px; padding: 8px 2px; flex-wrap: wrap; }
 .aas-path { font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text-muted,#777); word-break: break-all; }
 .aas-badge { padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; flex-shrink: 0; }
-.aas-badge.on { background: rgba(34,197,94,.15); color: #16a34a; }
-.aas-badge.off { background: rgba(148,163,184,.18); color: #64748b; }
+.aas-badge.on { background: color-mix(in srgb, var(--ok, #22c55e) 15%, transparent); color: #16a34a; }
+.aas-badge.off { background: rgba(148,163,184,.18); color:var(--text-muted, #64748b); }
 .aas-ta { flex: 1; min-height: 0; width: 100%; box-sizing: border-box; resize: none; padding: 10px 12px; border: 1px solid var(--border,#d8d8d8); border-radius: 8px;
   background: var(--bg,#fff); color: var(--text,#1a1a1a); font: 12.5px/1.7 ui-monospace, SFMono-Regular, Menlo, monospace; outline: none; }
 .aas-ta:focus { border-color: var(--accent,#2563eb); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent,#2563eb) 18%, transparent); }
@@ -75,11 +75,11 @@ const STYLES = `
 .aas-btn.primary { background: var(--accent,#2563eb); border-color: var(--accent,#2563eb); color: #fff; }
 .aas-btn.primary:hover { background: var(--accent-hover,#1d4ed8); }
 .aas-btn.danger { color: #dc2626; }
-.aas-btn.danger:hover { background: rgba(239,68,68,.1); }
+.aas-btn.danger:hover { background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent); }
 .aas-count { margin-left: auto; color: var(--text-dim,#999); font-size: 11.5px; }
 .aas-msg { width: 100%; padding: 6px 10px; border-radius: 8px; font-size: 12px; }
-.aas-msg.ok { background: rgba(34,197,94,.12); color: #16a34a; }
-.aas-msg.err { background: rgba(239,68,68,.1); color: #dc2626; }
+.aas-msg.ok { background: color-mix(in srgb, var(--ok, #22c55e) 12%, transparent); color: #16a34a; }
+.aas-msg.err { background: color-mix(in srgb, var(--danger, #ef4444) 10%, transparent); color: #dc2626; }
 .aas-hint { padding: 8px 2px; color: var(--text-muted,#888); font-size: 12px; }
 `;
 let stylesInjected = false;
