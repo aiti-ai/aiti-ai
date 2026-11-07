@@ -24,10 +24,11 @@
   "contentHash": "82dea58be6aac4bf",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-ai-speek.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-ai-speek"
   },
   "homepage": "https://github.com/aiti-ai/aiti-ai-speek#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-ai-speek/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
