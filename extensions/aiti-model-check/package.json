@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-model-check",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "description": "模型可用性管理 UI—— JSX + vite 构建 client bundle",
   "scripts": {
