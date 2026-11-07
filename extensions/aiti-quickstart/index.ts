@@ -52,9 +52,9 @@ export default {
     // 点击/渲染触发物化后由 client 同 id 注册条目接管。meta 仅数据（无 onClick 函数），
     // title 用 zh 字面（与 extman sidebarFooter 静态条目同约定），client 接管后走 t() 多语。
     newSessionWidgets: [
-      { id: "guide", meta: { title: "快速上手", areas: ["top"], defaultArea: "top", w: 8, h: 1, priority: -1 } },
-      { id: "shortcuts", meta: { title: "快捷操作", areas: ["top"], defaultArea: "top", w: 4, h: 1, priority: 10 } },
-      { id: "examples", meta: { title: "试试这样问", areas: ["bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 } },
+      { id: "guide", meta: { title: "快速上手", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: -1 } },
+      { id: "shortcuts", meta: { title: "快捷操作", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: 10 } },
+      { id: "examples", meta: { title: "试试这样问", areas: ["top", "bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 } },
     ],
     sidebarFooter: [{ id: "quickstart-open", label: "快速上手", title: "快速上手：回到欢迎页引导", icon: "icons/rocket.svg" }],
     // Workspace 下拉底部动作区（上传/管理旁）：获取工作区 Hub 入口（日常可达，不只首用）
@@ -94,6 +94,9 @@ export default {
         "qs.start.acquireHint": "Git 克隆 / 上传压缩包 / 本地目录 / 新建空目录",
         "qs.start.configureModel": "配置模型…",
         "qs.start.modelMissing": "尚未配置可用模型",
+        "qs.start.importModels": "从 Agent 导入…",
+        "qs.start.importModelsTitle": "从其他 Agent 导入模型配置（codex / zcode / opencode…）",
+        "qs.start.importModelsHint": "本机其他 Agent 已配好的模型一键导入",
         "qs.start.modelOk": "模型已就绪",
         "qs.start.step.workspace": "① 获取工作区",
         "qs.start.step.model": "② 配置模型",
@@ -156,6 +159,9 @@ export default {
         "qs.start.acquireHint": "Git clone / upload archive / local directory / new empty folder",
         "qs.start.configureModel": "Configure models…",
         "qs.start.modelMissing": "No usable model configured yet",
+        "qs.start.importModels": "Import from agents…",
+        "qs.start.importModelsTitle": "Import model configs from other agents on this machine (codex / zcode / opencode…)",
+        "qs.start.importModelsHint": "One-click import of models already configured in local agents",
         "qs.start.modelOk": "Models ready",
         "qs.start.step.workspace": "① Get a workspace",
         "qs.start.step.model": "② Configure models",

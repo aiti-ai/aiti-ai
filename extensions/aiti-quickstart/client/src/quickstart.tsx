@@ -17,7 +17,7 @@
  *
  * extra 只读数据（slot-extra 红线）：widget 收 { cwd, isMobile, area }；动作全走服务。
  */
-import { useState, useEffect, t, extSvc } from "./host-shim";
+import { useState, useEffect, t, extSvc, apiUrl, onExtServiceChange } from "./host-shim";
 import { readSidebarDismissed, writeSidebarDismissed, resolveQuickstartCwd, topRecentRoot, deriveOnboardingState, splitKbdHint, type OnboardingState } from "./quickstart-logic";
 
 /* ── 公共样式（CSS vars 带兜底，照 app-center 卡片写法） ── */
@@ -115,7 +115,7 @@ async function fetchHome(): Promise<string | null> {
     if (svc?.ensure) return await svc.ensure();
   } catch { /* ignore */ }
   try {
-    const res = await fetch("api/home");
+    const res = await fetch(apiUrl("/api/home"));
     const d = (await res.json()) as { home?: string };
     return typeof d.home === "string" ? d.home : null;
   } catch {
@@ -126,7 +126,7 @@ async function fetchHome(): Promise<string | null> {
 /** 最近项目根 top1（/api/sessions → topRecentRoot；失败 null）。 */
 async function fetchRecentRoot(): Promise<string | null> {
   try {
-    const res = await fetch("api/sessions", { headers: { accept: "application/json" } });
+    const res = await fetch(apiUrl("/api/sessions"), { headers: { accept: "application/json" } });
     const d = (await res.json()) as { sessions?: Array<{ cwd?: string; projectRoot?: string | null; modified?: string }> };
     return topRecentRoot(d.sessions ?? []);
   } catch {
@@ -182,10 +182,10 @@ export function openModelConfig(): void {
 
 /* ── 状态采集 hook（开始卡 / filler v2 共用） ── */
 
-interface Vitals { cwd: string | null; recentRootCount: number; modelCount: number; ready: boolean }
+interface Vitals { cwd: string | null; recentRootCount: number; modelCount: number; ready: boolean; modelsOk: boolean }
 
 function useVitals(cwdFromExtra?: string | null): Vitals {
-  const [vitals, setVitals] = useState<Vitals>({ cwd: cwdFromExtra ?? null, recentRootCount: 0, modelCount: 0, ready: false });
+  const [vitals, setVitals] = useState<Vitals>({ cwd: cwdFromExtra ?? null, recentRootCount: 0, modelCount: 0, ready: false, modelsOk: false });
   useEffect(() => {
     let alive = true;
     const scan = async () => {
@@ -193,8 +193,9 @@ function useVitals(cwdFromExtra?: string | null): Vitals {
       const cwd = (cwdFromExtra && cwdFromExtra.trim()) || readTabCwd() || readSessionCwd();
       let recentRootCount = 0;
       let modelCount = 0;
+      let modelsOk = false;
       try {
-        const res = await fetch("api/sessions", { headers: { accept: "application/json" } });
+        const res = await fetch(apiUrl("/api/sessions"), { headers: { accept: "application/json" } });
         const d = (await res.json()) as { sessions?: Array<{ cwd?: string; projectRoot?: string | null }> };
         const roots = new Set<string>();
         for (const s of d.sessions ?? []) {
@@ -204,11 +205,16 @@ function useVitals(cwdFromExtra?: string | null): Vitals {
         recentRootCount = roots.size;
       } catch { /* ignore */ }
       try {
-        const res = await fetch("api/models", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: cwd ?? undefined }) });
+        const res = await fetch(apiUrl("/api/models"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: cwd ?? undefined }) });
         const d = (await res.json()) as { modelList?: unknown[] };
-        modelCount = Array.isArray(d.modelList) ? d.modelList.length : 0;
+        // modelsOk = 检测成功（响应含 modelList 数组）——失败时 UI 不得断言「尚未配置」
+        // （2026-11-07 用户抓包：裸相对 fetch 在无尾斜杠 /dev 下 404 → 恒 0 → 瞎说；已改 apiUrl）
+        if (res.ok && Array.isArray(d.modelList)) {
+          modelCount = d.modelList.length;
+          modelsOk = true;
+        }
       } catch { /* ignore */ }
-      if (alive) setVitals({ cwd: cwd ?? null, recentRootCount, modelCount, ready: true });
+      if (alive) setVitals({ cwd: cwd ?? null, recentRootCount, modelCount, ready: true, modelsOk });
     };
     void scan();
     const refresh = () => { void scan(); };
@@ -242,7 +248,7 @@ function useRecentRoots(): Array<{ root: string; name: string }> {
     let alive = true;
     const scan = async () => {
       try {
-        const res = await fetch("api/sessions", { headers: { accept: "application/json" } });
+        const res = await fetch(apiUrl("/api/sessions"), { headers: { accept: "application/json" } });
         const d = (await res.json()) as { sessions?: Array<{ cwd?: string; projectRoot?: string | null; modified?: string }> };
         const best = new Map<string, number>();
         for (const s of d.sessions ?? []) {
@@ -273,6 +279,7 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
   const isMobile = props.isMobile === true;
   const vitals = useVitals(props.cwd ?? null);
   const recents = useRecentRoots(); // hooks 顶层调用（hasWorkspace 分支内用）
+  const importReady = useImportServiceReady();
   const state: OnboardingState = vitals.ready
     ? deriveOnboardingState({ cwd: vitals.cwd, recentRootCount: vitals.recentRootCount, modelCount: vitals.modelCount })
     : "full"; // 数据未到先渲染 full（v1 形态），到位后切换——零闪烁成本可接受
@@ -309,6 +316,17 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
               <span style={{ fontSize: 10, color: "var(--text-dim, #888)" }}>{t("qs.start.modelMissing")}</span>
             </span>
           </button>
+          {importReady ? (
+            <button type="button" style={{ ...primaryBtn, flex: isMobile ? undefined : 1, maxWidth: 280 }} onClick={openModelsImport} title={t("qs.start.importModelsTitle")}
+              onMouseEnter={(e: any) => { e.currentTarget.style.background = "var(--bg-selected, #2a2a2a)"; }}
+              onMouseLeave={(e: any) => { e.currentTarget.style.background = "none"; }}>
+              <ImportIcon />
+              <span style={{ display: "inline-flex", flexDirection: "column", alignItems: "flex-start", lineHeight: 1.3 }}>
+                <span>{t("qs.start.importModels")}</span>
+                <span style={{ fontSize: 10, color: "var(--text-dim, #888)" }}>{t("qs.start.importModelsHint")}</span>
+              </span>
+            </button>
+          ) : null}
         </div>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 6, flexShrink: 0 }}>
           <StepChip label={t("qs.start.step.workspace")} />
@@ -333,12 +351,22 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
               {r.name}
             </button>
           ))}
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-dim, #888)" }}>
-            ● {t("qs.start.modelMissing")}
-          </span>
-          <button type="button" style={{ ...chipBase, borderColor: "var(--accent, #2563eb)", color: "var(--accent, #2563eb)" }} onClick={openModelConfig}>
-            {t("qs.start.configureModel")}
-          </button>
+          {vitals.modelsOk && vitals.modelCount === 0 ? (
+            <>
+              <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, color: "var(--text-dim, #888)" }}>
+                ● {t("qs.start.modelMissing")}
+              </span>
+              <button type="button" style={{ ...chipBase, borderColor: "var(--accent, #2563eb)", color: "var(--accent, #2563eb)" }} onClick={openModelConfig}>
+                {t("qs.start.configureModel")}
+              </button>
+              {importReady ? (
+                <button type="button" style={{ ...chipBase, borderColor: "var(--accent, #2563eb)", color: "var(--accent, #2563eb)" }} onClick={openModelsImport} title={t("qs.start.importModelsTitle")}>
+                  <ImportIcon />
+                  <span>{t("qs.start.importModels")}</span>
+                </button>
+              ) : null}
+            </>
+          ) : null}
         </div>
         <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: "4px 12px", alignContent: "center" }}>
           {FULL_STEP_KEYS.slice(2).map((key, i) => (
@@ -379,9 +407,46 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
       <div style={{ display: "flex", flexWrap: "wrap", gap: 6, flexShrink: 0, paddingTop: 2, borderTop: "1px dashed var(--border, #3a3a3a)" }}>
         {actionChip(<FolderPlusIcon />, t("qs.open.hub"), openWorkspaceHub, "hub")}
         {actionChip(<GearIcon />, t("qs.start.configureModel"), openModelConfig, "model")}
+        {importReady ? actionChip(<ImportIcon />, t("qs.start.importModels"), openModelsImport, "import") : null}
       </div>
     </div>
   );
+}
+
+/** lucide import（托盘+下箭头）——与 aiti-models-import toolbar 同款（从其他 Agent 导入模型配置）。 */
+function ImportIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="m7 10 5 5 5-5" />
+      <path d="M12 15V3" />
+    </svg>
+  );
+}
+
+/** aiti-models-import.open 服务探测（缺席 → null，入口不渲染）。 */
+function modelsImportService(): { open: () => void } | null {
+  try {
+    const svc = extSvc<{ open?: unknown }>("aiti-models-import.open");
+    if (svc && typeof svc.open === "function") return svc as { open: () => void };
+  } catch { /* ignore */ }
+  return null;
+}
+
+/** 导入服务在位 hook：渲染时现查 + 上/下线事件驱动重渲染——懒扩展物化时序竞争
+ *  （aiti-models-import 物化可能晚于 filler/卡片首渲染，无监听则探测定格 null 永不出现）。 */
+function useImportServiceReady(): boolean {
+  const [, force] = useState(0);
+  useEffect(() => {
+    const off = onExtServiceChange((k) => { if (k === "aiti-models-import.open") force((v) => v + 1); });
+    return () => { try { off?.(); } catch { /* ignore */ } };
+  }, []);
+  return modelsImportService() !== null;
+}
+
+/** 从其他 Agent 导入模型配置（aiti-models-import 的 ImportDialog，零重实现）。 */
+function openModelsImport(): void {
+  try { modelsImportService()?.open(); } catch { /* ignore */ }
 }
 
 /** lucide settings-2 风格齿轮（配置模型动作 chip；不引图库，内联同款线图）。 */
@@ -404,13 +469,14 @@ const kbdStyle: Record<string, unknown> = {
   color: "var(--text, #ddd)", background: "var(--bg-hover, #232323)", lineHeight: 1.6,
 };
 
-/** 快捷操作卡（top，w4 h1）：kbd 胶囊 + 描述 双列行式（2026-11-07 统一化：
- *  原 mono 大芯片 2×2 堆与 guide 步骤行风格脱节、留白松散——改为行式后同构）。 */
-export function ShortcutsWidget() {
+/** 快捷操作卡（w8 全宽，与快速上手同行宽——2026-11-07 用户拍板）：kbd 胶囊 + 描述行式；
+ *  桌面单行 4 列（全宽放得下）、手机 1 列。与 guide 步骤行同节奏。 */
+export function ShortcutsWidget(props: { cwd?: string | null; isMobile?: boolean; area?: string }) {
+  const isMobile = props.isMobile === true;
   return (
     <div style={cardStyle}>
       <div style={titleStyle}>{t("qs.shortcutsTitle")}</div>
-      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px", alignContent: "center" }}>
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(4, minmax(0, 1fr))", gap: "4px 12px", alignContent: "center" }}>
         {SHORTCUT_KEYS.map((key) => {
           const { kbd, desc } = splitKbdHint(t(key));
           return (
@@ -463,6 +529,74 @@ export function renderWidget(id: string, props: Record<string, unknown>): unknow
   }
 }
 
+/* ── 主区 fresh 首屏（宿主 noWorkspaceGuide 插槽；替代「开始使用」装饰占位） ── */
+
+/** 全新首屏引导（无 cwd 无会话）：标题 + 三大按钮（获取工作区/配置模型/从 Agent 导入）
+ *  + ①②③ 步骤。无 cwd 态 widget 区不存在（宿主占位无 composer），本组件即 fresh 首屏主体。 */
+export function FreshGuidePage(props: { isMobile?: boolean }) {
+  const isMobile = props.isMobile === true;
+  const vitals = useVitals(null);
+  const importReady = useImportServiceReady();
+  const recents = useRecentRoots();
+  const bigBtn = (icon: unknown, label: string, hint: string, onClick: () => void, key: string, accent = false) => (
+    <button key={key} type="button"
+      style={{
+        display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 6,
+        flex: isMobile ? undefined : 1, minWidth: isMobile ? undefined : 160,
+        padding: "12px 14px", border: `1px solid var(--border, #3a3a3a)`, borderRadius: 12,
+        background: accent ? "var(--bg-hover, #232323)" : "none",
+        color: "var(--text, #ddd)", cursor: "pointer", fontFamily: "inherit", textAlign: "left",
+        transition: "border-color 0.12s, background 0.12s",
+      }}
+      onClick={onClick}
+      onMouseEnter={(e: any) => { e.currentTarget.style.borderColor = "var(--accent, #2563eb)"; }}
+      onMouseLeave={(e: any) => { e.currentTarget.style.borderColor = "var(--border, #3a3a3a)"; }}>
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13.5, fontWeight: 600 }}>
+        {icon}{label}
+      </span>
+      <span style={{ fontSize: 11, color: "var(--text-dim, #888)", lineHeight: 1.5 }}>{hint}</span>
+    </button>
+  );
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 18, padding: "8px 4px", fontFamily: "inherit" }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 20, fontWeight: 600, color: "var(--text, #ddd)" }}>
+          <RocketIcon size={22} />{t("qs.start.title")}
+        </div>
+        <div style={{ fontSize: 13, color: "var(--text-muted, #999)" }}>{t("qs.start.subtitle")}</div>
+      </div>
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 10 }}>
+        {bigBtn(<FolderPlusIcon size={16} />, t("qs.start.acquire"), t("qs.start.acquireHint"), openWorkspaceHub, "hub", true)}
+        {bigBtn(<GearIcon />, t("qs.start.configureModel"), vitals.modelsOk && vitals.modelCount > 0 ? t("qs.start.modelOk") : t("qs.start.modelMissing"), openModelConfig, "model")}
+        {importReady ? bigBtn(<ImportIcon size={16} />, t("qs.start.importModels"), t("qs.start.importModelsHint"), openModelsImport, "import") : null}
+      </div>
+      {recents.length > 0 ? (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          <span style={{ fontSize: 11, color: "var(--text-dim, #888)" }}>{t("qs.start.recent")}</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {recents.map((r) => (
+              <button key={r.root} type="button" title={r.root} style={chipBase}
+                onClick={() => { try { extSvc<{ setCwd: (p: string) => void }>("pi-web.newSession")?.setCwd?.(r.root); } catch { /* ignore */ } }}
+                onMouseEnter={(e: any) => { e.currentTarget.style.borderColor = "var(--accent, #2563eb)"; e.currentTarget.style.color = "var(--accent, #2563eb)"; }}
+                onMouseLeave={(e: any) => { e.currentTarget.style.borderColor = "var(--border, #3a3a3a)"; e.currentTarget.style.color = "var(--text-muted, #999)"; }}>
+                {r.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+        {[t("qs.start.step.workspace"), t("qs.start.step.model"), t("qs.start.step.msg")].map((label, i) => (
+          <span key={label} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted, #999)" }}>
+            <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 18, height: 18, borderRadius: 999, fontSize: 11, fontWeight: 600, color: "var(--accent, #2563eb)", border: "1px solid var(--accent, #2563eb)" }}>{i + 1}</span>
+            {label}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ── 侧栏空白引导卡（DockStack filler v2） ── */
 
 const FILLER_STEP_KEYS = ["qs.filler.step1", "qs.filler.step2", "qs.filler.step3"] as const;
@@ -472,6 +606,7 @@ const FILLER_STEP_KEYS = ["qs.filler.step1", "qs.filler.step2", "qs.filler.step3
 export function QuickstartFiller() {
   const [dismissed, setDismissed] = useState(() => readSidebarDismissed());
   const vitals = useVitals(null);
+  const importReady = useImportServiceReady();
   if (dismissed) return null;
 
   const noWorkspace = !vitals.ready
@@ -511,6 +646,14 @@ export function QuickstartFiller() {
             onMouseLeave={(e: any) => { e.currentTarget.style.borderColor = "var(--border, #3a3a3a)"; e.currentTarget.style.color = "var(--text-muted, #999)"; }}>
             {t("qs.start.configureModel")}
           </button>
+          {importReady ? (
+            <button type="button" style={chipBase} onClick={openModelsImport} title={t("qs.start.importModelsTitle")}
+              onMouseEnter={(e: any) => { e.currentTarget.style.borderColor = "var(--accent, #2563eb)"; e.currentTarget.style.color = "var(--accent, #2563eb)"; }}
+              onMouseLeave={(e: any) => { e.currentTarget.style.borderColor = "var(--border, #3a3a3a)"; e.currentTarget.style.color = "var(--text-muted, #999)"; }}>
+              <ImportIcon />
+              <span>{t("qs.start.importModels")}</span>
+            </button>
+          ) : null}
         </div>
       ) : (
         <>
