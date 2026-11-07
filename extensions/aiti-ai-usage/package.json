@@ -21,9 +21,10 @@
   "contentHash": "a7e9c3c22a03432a",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-ai-usage.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-ai-usage"
   },
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-ai-usage/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
