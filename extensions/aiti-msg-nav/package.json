@@ -11,5 +11,6 @@
     "vite": "^6.4.3"
   },
   "soul": "千楼万楼的聊天记录，电梯比楼梯好用。",
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "license": "MIT"
 }
