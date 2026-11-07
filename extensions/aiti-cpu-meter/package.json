@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-cpu-meter",
-  "version": "0.2.3",
+  "version": "0.2.6",
   "description": "主线程流畅度检测器（读秒 + 0-100 流畅度分 + 颜色分层 + 最小化 + 可注入任意站点：内部版/外部版双产物 + service-tunnels 注入）",
   "soul": "主线程一卡，读秒就停；流畅度一分，忙闲立见——挂在工作页角落，收工点开看平均。",
   "scripts": {
@@ -8,5 +8,6 @@
     "deploy": "node tools/deploy.mjs"
   },
   "aitiExtProtocol": "1.0",
-  "license": "MIT"
+  "license": "MIT",
+  "contentHash": "ef686052ab79eefb"
 }
