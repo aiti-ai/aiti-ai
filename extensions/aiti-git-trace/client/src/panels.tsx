@@ -801,7 +801,7 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
         <button style={btnStyle} title={t("gt.timeline.load")} onClick={() => { load(); if (view === "overview") setFilesTick((x) => x + 1); }}>↻</button>
         <button style={btnStyle} title={t("gt.tl.cleanAllTip")} onClick={() => setCleanArm({})}><svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
         {planRel && (
-          <span title={"方案绑定：" + planRel} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "2px 8px", borderRadius: 6, background: "rgba(245,158,11,.12)", color: "#f59e09", border: "1px solid rgba(245,158,11,.35)", whiteSpace: "nowrap", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", flexShrink: 0 }}>
+          <span title={"方案绑定：" + planRel} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "2px 8px", borderRadius: 6, background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "#f59e09", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent)", whiteSpace: "nowrap", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", flexShrink: 0 }}>
             {planRel}
           </span>
         )}
@@ -838,7 +838,7 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
           </label>
         )}
         {view === "overview" && fileFilter && (
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "2px 8px", borderRadius: 6, background: "rgba(245,158,11,.12)", color: "#f59e09", border: "1px solid rgba(245,158,11,.35)", whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "2px 8px", borderRadius: 6, background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "#f59e09", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent)", whiteSpace: "nowrap", maxWidth: 260, overflow: "hidden", textOverflow: "ellipsis" }}>
             📄 {fileFilter.split("/").pop()}
             <button onClick={() => setFileFilter(null)} title="清除单文件过滤" style={{ background: "transparent", border: "none", color: "inherit", cursor: "pointer", padding: 0, fontWeight: 700 }}>×</button>
           </span>
