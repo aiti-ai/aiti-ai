@@ -1263,7 +1263,7 @@ function ScheduleDialog({ onClose, initialEditing, embedded, dockItemKey }: { on
                     </div>
                     <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
                       {isAi && task.autoApprove === false && task.enabled === false && (
-                        <button style={btnStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 15%, transparent)", "var(--ok, #10b981)")} onClick={() => act("/plans/" + task.id + "/approve")} title="批准该 AI 创建的计划生效">批准</button>
+                        <button style={btnStyle("color-mix(in srgb, var(--ok, #10b981) 15%, transparent)", "var(--ok, #10b981)")} onClick={() => act("/plans/" + task.id + "/approve")} title="批准该 AI 创建的计划生效">批准</button>
                       )}
                       <button style={btnStyle("var(--bg-hover)", "var(--text)")}
                         onClick={() => act(isAi ? "/plans/" + task.id + "/run" : "/schedules/" + encodeURIComponent(task.id) + "/run")}
