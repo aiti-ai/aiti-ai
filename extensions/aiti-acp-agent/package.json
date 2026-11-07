@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-acp-agent",
-  "version": "0.3.0",
+  "version": "0.3.2",
   "type": "module",
   "description": "Generic ACP driver — one adapter for all Agent Client Protocol agents",
   "scripts": {
