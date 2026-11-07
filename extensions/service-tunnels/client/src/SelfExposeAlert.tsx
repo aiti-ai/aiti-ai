@@ -119,7 +119,7 @@ export function SelfExposeAlert({ onOpenServices }: {
           padding: "5px 12px", flexShrink: 0,
           background: "rgba(248,113,113,0.12)",
           borderBottom: "1px solid rgba(248,113,113,0.5)",
-          fontSize: 12, color: "#f87171", cursor: "pointer",
+          fontSize: 12, color: "var(--danger, #f87171)", cursor: "pointer",
         }}
       >
         <span style={{ fontSize: 13, flexShrink: 0 }}>🔴</span>
@@ -133,7 +133,7 @@ export function SelfExposeAlert({ onOpenServices }: {
           onClick={(e) => { e.stopPropagation(); setDismissed(true); }}
           title={t("services.selfNoAuthDismiss")}
           aria-label={t("services.selfNoAuthDismiss")}
-          style={{ flexShrink: 0, background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 14, padding: "0 2px" }}
+          style={{ flexShrink: 0, background: "none", border: "none", color: "var(--danger, #f87171)", cursor: "pointer", fontSize: 14, padding: "0 2px" }}
         >
           ×
         </button>
@@ -149,7 +149,7 @@ export function SelfExposeAlert({ onOpenServices }: {
             onClick={(e) => e.stopPropagation()}
             style={{ width: 480, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}
           >
-            <div style={{ fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 8 }}>🔴 {t("services.selfNoAuth")}</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--danger, #f87171)", marginBottom: 8 }}>🔴 {t("services.selfNoAuth")}</div>
             <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }}>{t("services.selfNoAuthBody")}</div>
             <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7, marginTop: 8 }}>
               {t("services.selfNoAuthSuggest").split("\n").map((line, i) => <div key={i}>• {line}</div>)}

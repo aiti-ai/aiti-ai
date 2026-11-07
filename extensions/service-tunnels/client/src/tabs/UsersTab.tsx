@@ -81,7 +81,7 @@ function SitesManageSection({ t, isMobile, sites, protectedSites, providers, onA
     <div style={{ margin: "0 0 14px", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-panel)" }}>
       <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }}>{t("services.sitesManage")}</div>
       <div style={{ fontSize: 11, color: "var(--text-dim)", margin: "2px 0 6px" }}>{t("services.sitesManageHint")}</div>
-      {error && <div style={{ fontSize: 11, color: "#f87171", margin: "4px 0" }}>{error}</div>}
+      {error && <div style={{ fontSize: 11, color: "var(--danger, #f87171)", margin: "4px 0" }}>{error}</div>}
       {sites === null ? (
         <div style={{ fontSize: 11, color: "var(--text-dim)", padding: "4px 0" }}>{t("services.loading")}</div>
       ) : (
@@ -108,14 +108,14 @@ function SitesManageSection({ t, isMobile, sites, protectedSites, providers, onA
                   disabled={isProtected || busy}
                   title={isProtected ? t("services.sitesProtectedHint") : t("services.sitesRemoveHint")}
                   onClick={() => { setConfirmDel(confirmDel === s.name ? null : s.name); setError(null); }}
-                  style={{ ...btn, color: isProtected ? "var(--text-dim)" : "#f87171", cursor: isProtected ? "not-allowed" : "pointer", opacity: isProtected ? 0.5 : 1 }}
+                  style={{ ...btn, color: isProtected ? "var(--text-dim)" : "var(--danger, #f87171)", cursor: isProtected ? "not-allowed" : "pointer", opacity: isProtected ? 0.5 : 1 }}
                 >
                   {t("services.sitesRemove")}
                 </button>
                 {confirmDel === s.name && !isProtected && (
                   <span style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", width: isMobile ? "100%" : undefined }}>
                     <span style={{ fontSize: 10, color: "var(--text-dim)", flex: 1, minWidth: 120 }}>{t("services.sitesRemoveConfirm", { name: s.name })}</span>
-                    <button onClick={() => remove(s.name)} disabled={busy} style={{ ...btn, color: "#f87171", fontWeight: 600 }}>{busy ? t("services.updating") : t("services.sitesRemoveConfirmGo")}</button>
+                    <button onClick={() => remove(s.name)} disabled={busy} style={{ ...btn, color: "var(--danger, #f87171)", fontWeight: 600 }}>{busy ? t("services.updating") : t("services.sitesRemoveConfirmGo")}</button>
                     <button onClick={() => setConfirmDel(null)} style={btn}>{t("services.exposeAbort")}</button>
                   </span>
                 )}
@@ -527,7 +527,7 @@ export function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Re
           {t("services.usersEditing")} · <span style={{ fontFamily: "var(--font-mono)" }}>{selected.site}</span> / <span style={{ fontFamily: "var(--font-mono)" }}>{selected.provider}</span>
           <span style={{ marginLeft: 6, color: "var(--text-dim)", fontWeight: 400 }}>({users.length})</span>
         </div>
-        {error && <div style={{ fontSize: 11, color: "#f87171", margin: "6px 0" }}>{error}</div>}
+        {error && <div style={{ fontSize: 11, color: "var(--danger, #f87171)", margin: "6px 0" }}>{error}</div>}
 
         {/* 添加用户:3 个输入即可,site/provider 由点选的行确定;小屏纵向堆叠 */}
         <div style={{ display: "flex", alignItems: "center", gap: 6, margin: "10px 0 10px", flexWrap: "wrap", flexDirection: isMobile ? "column" : "row" }}>
@@ -598,13 +598,13 @@ export function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Re
                 <span style={{ fontSize: 10, color: "#16a34a", flexShrink: 0 }} title={t("services.bioFaceOn")}>🙂 {t("services.bioFaceOn")}</span>
               )}
               {u.biometrics?.facePending && !u.biometrics?.face && (
-                <span style={{ fontSize: 10, color: "#f59e0b", flexShrink: 0 }} title={t("services.bioFacePendingHint")}>🙂 {t("services.bioFacePending")}</span>
+                <span style={{ fontSize: 10, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title={t("services.bioFacePendingHint")}>🙂 {t("services.bioFacePending")}</span>
               )}
               {u.biometrics?.voice && (
                 <span style={{ fontSize: 10, color: "#16a34a", flexShrink: 0 }} title={t("services.bioVoiceOn")}>🎙 {t("services.bioVoiceOn")}</span>
               )}
               {u.biometrics?.voicePending && !u.biometrics?.voice && (
-                <span style={{ fontSize: 10, color: "#f59e0b", flexShrink: 0 }} title={t("services.bioVoicePendingHint")}>🎙 {t("services.bioVoicePending")}</span>
+                <span style={{ fontSize: 10, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title={t("services.bioVoicePendingHint")}>🎙 {t("services.bioVoicePending")}</span>
               )}
               <span style={{ flex: 1 }} />
               {totpProviders.includes(selected.provider) && (
@@ -619,10 +619,10 @@ export function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Re
                   {u.biometrics?.face ? (
                     <>
                       <button onClick={() => enrollBiometric(u.name, "face")} style={btn} title={t("services.bioFaceRerecordHint")}>{t("services.bioFaceRerecordFace")}</button>
-                      <button onClick={() => disableBiometric(u.name, "face")} style={{ ...btn, color: "#f87171" }} title={t("services.bioFaceOffHint")}>{t("services.bioFaceOff")}</button>
+                      <button onClick={() => disableBiometric(u.name, "face")} style={{ ...btn, color: "var(--danger, #f87171)" }} title={t("services.bioFaceOffHint")}>{t("services.bioFaceOff")}</button>
                     </>
                   ) : u.biometrics?.facePending ? (
-                    <button onClick={() => setPendingAction({ name: u.name })} style={{ ...btn, borderColor: "#f59e0b", color: "#f59e0b" }} title={t("services.bioFacePendingHint")}>{t("services.bioFacePending")}</button>
+                    <button onClick={() => setPendingAction({ name: u.name })} style={{ ...btn, borderColor: "var(--warn, #f59e0b)", color: "var(--warn, #f59e0b)" }} title={t("services.bioFacePendingHint")}>{t("services.bioFacePending")}</button>
                   ) : (
                     <button onClick={() => enrollBiometric(u.name, "face")} style={btn} title={t("services.bioFaceHint")}>{t("services.bioFaceEnroll")}</button>
                   )}
@@ -636,7 +636,7 @@ export function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Re
                 </>
               )}
               <button onClick={() => setPwUser(pwUser === u.name ? null : u.name)} style={btn}>{t("services.userSetPassword")}</button>
-              <button onClick={() => removeUser(u.name)} style={{ ...btn, color: "#f87171" }}>{t("services.userRemove")}</button>
+              <button onClick={() => removeUser(u.name)} style={{ ...btn, color: "var(--danger, #f87171)" }}>{t("services.userRemove")}</button>
             </div>
             {pwUser === u.name && (
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 6 }}>
@@ -747,7 +747,7 @@ export function AuthUsersSection({ t, isMobile }: { t: (key: string, params?: Re
       {/* 站点管理：先建/删认证域，再按 站点×认证 维护用户 */}
       <SitesManageSection t={t} isMobile={isMobile} sites={sitesList} protectedSites={protectedSites} providers={siteProviders} onAdd={addSite} onRemove={removeSite} />
       <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }}>{t("services.usersPickCombo")}</div>
-      {summaryError && <div style={{ fontSize: 11, color: "#f87171", margin: "0 0 6px" }}>{summaryError}</div>}
+      {summaryError && <div style={{ fontSize: 11, color: "var(--danger, #f87171)", margin: "0 0 6px" }}>{summaryError}</div>}
       {rows === null ? (
         <div style={{ fontSize: 11, color: "var(--text-dim)", padding: "8px 4px" }}>{t("services.loading")}</div>
       ) : rows.length === 0 ? (

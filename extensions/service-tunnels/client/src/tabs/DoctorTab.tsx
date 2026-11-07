@@ -87,7 +87,7 @@ export function DoctorTab({ t }: { t: T }) {
     if (report) copyText(report.markdown || report.text || "").catch(() => {});
   };
 
-  const toneColor = (tone: string) => (tone === "ok" ? "#16a34a" : tone === "bad" ? "#f87171" : tone === "warn" ? "#d97706" : "var(--text-dim)");
+  const toneColor = (tone: string) => (tone === "ok" ? "#16a34a" : tone === "bad" ? "var(--danger, #f87171)" : tone === "warn" ? "#d97706" : "var(--text-dim)");
 
   return (
     <div>
@@ -95,12 +95,12 @@ export function DoctorTab({ t }: { t: T }) {
         <button onClick={start} disabled={running} style={{ padding: "5px 14px", background: running ? "var(--bg-hover)" : "var(--accent)", border: "none", borderRadius: 6, color: running ? "var(--text-dim)" : "#fff", cursor: running ? "default" : "pointer", fontSize: 12, fontWeight: 600 }}>
           {t("ui.doctor.start")}
         </button>
-        <button onClick={stop} disabled={!running} style={{ padding: "5px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: running ? "#f87171" : "var(--text-dim)", cursor: running ? "pointer" : "default", fontSize: 12 }}>
+        <button onClick={stop} disabled={!running} style={{ padding: "5px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: running ? "var(--danger, #f87171)" : "var(--text-dim)", cursor: running ? "pointer" : "default", fontSize: 12 }}>
           {t("ui.doctor.stop")}
         </button>
         {running && <span style={{ fontSize: 11, color: "var(--text-dim)" }}>{t("ui.doctor.running")}{mock ? " (mock)" : ""}</span>}
       </div>
-      {error && <div style={{ fontSize: 11, color: "#f87171", marginBottom: 8 }}>{t("services.exposeFailed")}: {error}</div>}
+      {error && <div style={{ fontSize: 11, color: "var(--danger, #f87171)", marginBottom: 8 }}>{t("services.exposeFailed")}: {error}</div>}
 
       {/* 事件流（共享层 netcheckEventView 单源渲染） */}
       <div ref={boxRef} style={{ maxHeight: "42vh", overflowY: "auto", border: "1px solid var(--border)", borderRadius: 8, padding: "8px 10px", background: "var(--bg-panel)", fontFamily: "var(--font-mono)", fontSize: 11, lineHeight: 1.8 }}>
