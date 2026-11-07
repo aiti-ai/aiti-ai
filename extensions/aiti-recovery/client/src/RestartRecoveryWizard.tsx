@@ -153,7 +153,7 @@ export function RestartRecoveryWizard() {
     transition: "background 0.12s, border-color 0.12s, color 0.12s, opacity 0.12s",
     whiteSpace: "nowrap",
   };
-  const btnDanger: React.CSSProperties = { ...btnBase, color: "#ef4444", background: "transparent", border: "1px solid color-mix(in srgb, #ef4444 35%, var(--border))" };
+  const btnDanger: React.CSSProperties = { ...btnBase, color: "var(--danger, #ef4444)", background: "transparent", border: "1px solid color-mix(in srgb, var(--danger, #ef4444) 35%, var(--border))" };
   const btnPrimary: React.CSSProperties = { ...btnBase, color: "var(--accent)", background: "color-mix(in srgb, var(--accent) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--accent) 45%, var(--border))" };
   const btnPrimarySolid: React.CSSProperties = { ...btnBase, color: "#fff", background: "var(--accent)", border: "1px solid var(--accent)" };
   const dim = (s: React.CSSProperties, off: boolean): React.CSSProperties => ({ ...s, opacity: off ? 0.45 : 1, cursor: off ? "not-allowed" : "pointer" });
@@ -476,9 +476,9 @@ export function RestartRecoveryWizard() {
             <div style={{
               display: "flex", alignItems: "center", gap: 6, fontSize: 12,
               padding: "5px 9px", borderRadius: 7,
-              background: status.ok ? "color-mix(in srgb, #22c55e 9%, transparent)" : "color-mix(in srgb, #ef4444 9%, transparent)",
-              color: status.ok ? "#16a34a" : "#ef4444",
-              border: `1px solid ${status.ok ? "color-mix(in srgb, #22c55e 30%, transparent)" : "color-mix(in srgb, #ef4444 30%, transparent)"}`,
+              background: status.ok ? "color-mix(in srgb, var(--ok, #22c55e) 9%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 9%, transparent)",
+              color: status.ok ? "#16a34a" : "var(--danger, #ef4444)",
+              border: `1px solid ${status.ok ? "color-mix(in srgb, var(--ok, #22c55e) 30%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 30%, transparent)"}`,
             }}>
               {status.text}
             </div>
