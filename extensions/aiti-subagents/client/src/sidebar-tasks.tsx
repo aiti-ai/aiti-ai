@@ -92,7 +92,7 @@ export function SidebarTasksSection() {
       )}
       {running.map((r, i) => (
         <button key={"r" + (r.id ?? i)} type="button" style={rowStyle} onClick={() => openByFile(r.sessionFile)} title={r.task || r.agent || ""}>
-          <span style={{ width: 7, height: 7, borderRadius: 99, background: "#f59e0b", flexShrink: 0, animation: "pi-spin 1s linear infinite" }} />
+          <span style={{ width: 7, height: 7, borderRadius: 99, background: "var(--warn, #f59e0b)", flexShrink: 0, animation: "pi-spin 1s linear infinite" }} />
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>
             {r.agent || "subagent"} · {r.task || "…"}
           </span>
