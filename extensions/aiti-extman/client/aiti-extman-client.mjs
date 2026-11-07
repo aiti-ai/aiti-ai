@@ -596,7 +596,7 @@ function PublisherCell({ publisher }) {
         : H("span", { style: { fontSize: 12, fontWeight: 600, color: "var(--text)" } }, name),
       H("span", { style: chipStyle("var(--text-muted)", "var(--bg-hover)") }, publisherSourceLabel(publisher.source)),
       trusted
-        ? H("span", { style: chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)") }, "✓ " + T("ext.trusted"))
+        ? H("span", { style: chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)") }, "✓ " + T("ext.trusted"))
         : H("span", { style: chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)") }, "⚠ " + T("ext.notTrusted")),
     ),
     !publisher.name && publisher.fingerprint && H("div", { style: { fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)" } },
@@ -1134,7 +1134,7 @@ function LocalDetail({ id, entry }) {
     H("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, minWidth: 0, flexWrap: "wrap" } },
       H("div", { style: { display: "flex", alignItems: "center", gap: 8, minWidth: 180, flex: 1 } },
         id === SELF_ID
-          ? H("span", { title: T("ext.selfProtected"), style: chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)") }, "🔒 " + T("ext.selfProtected"))
+          ? H("span", { title: T("ext.selfProtected"), style: chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)") }, "🔒 " + T("ext.selfProtected"))
           : H(Toggle, {
               enabled, loading: busy,
               onToggle: () => void runOp(enabled ? "disable" : "enable", { id }),
@@ -1196,7 +1196,7 @@ function LocalDetail({ id, entry }) {
                 H("span", { style: { fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)" } }, "×" + ids.length),
                 isContext
                   ? H("span", { style: chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)") }, "⚠ " + T("ext.context"))
-                  : H("span", { style: chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)") }, T("ext.global")),
+                  : H("span", { style: chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)") }, T("ext.global")),
               ),
               items.map((it) => {
                 const label = (it.label || it.title || it.id) + "";
@@ -1237,7 +1237,7 @@ function LocalDetail({ id, entry }) {
       H("div", { style: sectionTitle }, T("ext.serverCaps")),
       H("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
         (entry.serverHooks || []).map((hk) => H("span", { key: hk, style: { ...chipStyle("var(--text-muted)", "var(--bg-hover)"), fontFamily: "var(--font-mono)" } }, hk + "()")),
-        (entry.agentHooks || []).map((hk) => H("span", { key: "a:" + hk, style: { ...chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)"), fontFamily: "var(--font-mono)" } }, "agent:" + hk + "()")),
+        (entry.agentHooks || []).map((hk) => H("span", { key: "a:" + hk, style: { ...chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)"), fontFamily: "var(--font-mono)" } }, "agent:" + hk + "()")),
         !(entry.serverHooks || []).length && !(entry.agentHooks || []).length && H("span", { style: { fontSize: 12, color: "var(--text-dim)" } }, T("ext.noDeps"))),
       entry.provides && entry.provides.length ? H("div", { style: { display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" } },
         H("span", { style: { fontSize: 11, color: "var(--text-dim)" } }, T("ext.provides")),
