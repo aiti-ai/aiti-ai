@@ -22,6 +22,7 @@ export default defineConfig({
       // 正则精确匹配（字符串 alias 是前缀匹配，find 'react' 会吞掉 'react/jsx-runtime'）
       { find: /^react\/jsx-dev-runtime$/, replacement: fileURLToPath(new URL("client/src/jsx-runtime.ts", import.meta.url)) },
       { find: /^react\/jsx-runtime$/, replacement: fileURLToPath(new URL("client/src/jsx-runtime.ts", import.meta.url)) },
+      { find: /^react-dom$/, replacement: fileURLToPath(new URL("client/src/host-shim.ts", import.meta.url)) },
       { find: /^react$/, replacement: fileURLToPath(new URL("client/src/host-shim.ts", import.meta.url)) },
     ],
   },
