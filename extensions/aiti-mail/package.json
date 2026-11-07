@@ -18,10 +18,11 @@
   "contentHash": "12c93eb2d778f527",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-mail.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-mail"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-mail#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-mail/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
