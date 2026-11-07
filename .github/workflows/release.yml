@@ -25,6 +25,9 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.ver.outputs.version }}
+    env:
+      # @aiti-ai/* 尚未上官方源（等 granular token）——先走测试源；官方发布后可删除
+      npm_config_registry: https://registry.npmjs.org/
     steps:
       - uses: actions/checkout@v4
 
@@ -44,7 +47,8 @@ jobs:
           cache: npm
 
       - name: Install deps (main package)
-        run: npm ci --no-audit --no-fund --loglevel=error
+        # npm install 而非 ci：lock resolved 指向官方源而 @aiti-ai/* 走测试源（见 env 注释）
+        run: npm install --no-audit --no-fund --loglevel=error
 
       - name: Build .next
         run: npm run build
@@ -96,6 +100,9 @@ jobs:
           - { os: darwin, arch: arm64, runner: macos-14 } # Apple Silicon
           - { os: win32, arch: x64, runner: windows-latest }
     runs-on: ${{ matrix.runner }}
+    env:
+      # 同 prepare：@aiti-ai/* 依赖暂走测试源
+      npm_config_registry: https://registry.npmjs.org/
     steps:
       - uses: actions/checkout@v4
 
