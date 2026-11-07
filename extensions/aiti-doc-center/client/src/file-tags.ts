@@ -76,7 +76,7 @@ function openPanel(path: string): void {
   panel.setAttribute("data-ext-float-w", "300");
 
   const head = el("div", { display: "flex", alignItems: "center", gap: "6px", marginBottom: "6px", fontWeight: "700", fontSize: "12.5px" });
-  head.appendChild(el("span", { flex: "1" }, "🏷 标签"));
+  head.appendChild(el("span", { flex: "1" }, "标签"));
   const close = el("span", { cursor: "pointer", padding: "0 4px", color: "var(--text-dim,#999)" }, "✕");
   close.addEventListener("click", () => { panel!.style.display = "none"; });
   head.appendChild(close);
