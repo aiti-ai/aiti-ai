@@ -309,7 +309,7 @@ export function FileToolbar(props: {
       {/* 弹性占位：把右侧按钮簇推到最右 */}
       <span style={{ flex: "1 1 auto", minWidth: 8 }} />
       {/* 通知（可收缩：行宽不够时自身省略号收敛，绝不把右侧按钮簇/⋮ 顶出可视区） */}
-      {notice && <span style={{ color: notice.kind === "err" ? "#f87171" : notice.kind === "ok" ? "#4ade80" : "#f59e0b", marginRight: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: compact ? 90 : 160, flexShrink: 1, minWidth: 0 }}>{notice.text}</span>}
+      {notice && <span style={{ color: notice.kind === "err" ? "var(--danger, #f87171)" : notice.kind === "ok" ? "var(--ok, #4ade80)" : "var(--warn, #f59e0b)", marginRight: 8, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: compact ? 90 : 160, flexShrink: 1, minWidth: 0 }}>{notice.text}</span>}
       {/* 模式切换（编辑/分栏/预览等）：普通宽度内联 tabs；很小屏（< MODE_DROPDOWN_AT）变下拉进一步省空间 */}
       {modes && !tiny && (
         <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
@@ -384,7 +384,7 @@ export function FileToolbar(props: {
                   <button type="button" title={it.isDefault ? "当前默认（点击无变化）" : "设为 " + it.displayName + " 为默认（持久化）"}
                     onClick={(e) => { e.stopPropagation(); if (!it.isDefault) { openWith.onSetDefault(it.id); setOwOpen(false); } }}
                     style={{ flexShrink: 0, border: "none", background: "transparent", cursor: "pointer", fontSize: 13,
-                      color: it.isDefault ? "#f59e0b" : "var(--text-muted,#aaa)", padding: "0 2px", lineHeight: 1 }}>
+                      color: it.isDefault ? "var(--warn, #f59e0b)" : "var(--text-muted,#aaa)", padding: "0 2px", lineHeight: 1 }}>
                     {it.isDefault ? "★" : "☆"}
                   </button>
                 </div>
