@@ -22,10 +22,11 @@
   "contentHash": "13ff22117562410a",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-plan-first.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-plan-first"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-plan-first#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-plan-first/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
