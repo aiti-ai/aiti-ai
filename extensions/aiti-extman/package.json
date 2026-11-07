@@ -19,9 +19,10 @@
   "contentHash": "5eba665f2b43045b",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-extman.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-extman"
   },
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-extman/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
