@@ -53,9 +53,11 @@ function builtinWidgetItems(t: (key: string) => string): NewSessionWidgetItem[] 
     normalizeWidgetItem({
       id: "builtin:recent",
       title: t("nsw.recentTitle"),
-      defaultArea: "top",
+      // 默认放底部（composer 下方——历史记录与「发第一条消息」的场景更贴近，2026-11-07 用户拍板）；
+      // areas 未限制（normalize 空数组 → 双区），⚙ 面板可挪回顶部；老用户显式 pref 优先、不受影响。
+      defaultArea: "bottom",
       priority: 0,
-      w: 4,
+      w: 8,
       h: 1,
     }),
   ];
