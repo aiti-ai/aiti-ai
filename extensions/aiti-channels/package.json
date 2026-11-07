@@ -24,5 +24,12 @@
     "justget": "^0.2.4",
     "yauzl": "^2.10.0"
   },
-  "contentHash": "3eb577d108737615"
+  "contentHash": "3eb577d108737615",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-channels.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-channels/issues"
+  }
 }
