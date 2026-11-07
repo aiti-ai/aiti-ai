@@ -38,7 +38,7 @@ const PKG = "@aiti-ai/grdpwasm";
 const PKG_NAME = "grdpwasm";
 const PKG_PATH_ENC = "@aiti-ai%2fgrdpwasm";
 const MIN_WASM_BYTES = 1_000_000;
-const REGISTRIES = ["https://registry.npmjs.org", "https://npm.example.com"];
+const REGISTRIES = ["https://registry.npmjs.org", "https://registry.npmjs.org"];
 /** 原始文件 CDN（需版本号）；tarball 镜像（版本号来自 /latest 动态拼） */
 const RAW_CDNS = (ver: string) => [
   `https://cdn.jsdelivr.net/npm/${PKG}@${ver}/static/main.wasm`,

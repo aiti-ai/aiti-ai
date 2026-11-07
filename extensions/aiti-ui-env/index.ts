@@ -71,10 +71,10 @@ const VNC_VIEW_HTML = `<!doctype html>
   #bar button { background: #1f2937; color: #e2e8f0; border: 1px solid #374151; border-radius: 6px;
     padding: 3px 10px; font-size: 12px; cursor: pointer; }
   #bar button:hover { background: #374151; }
-  #status { color: #94a3b8; margin-right: 4px; }
+  #status { color:var(--text-dim, #94a3b8); margin-right: 4px; }
   #deg, #pct { min-width: 38px; text-align: center; color: #a5b4fc;
     font-variant-numeric: tabular-nums; opacity: .9; }
-  #hint { color: #64748b; font-size: 11px; margin-left: auto; }
+  #hint { color:var(--text-muted, #64748b); font-size: 11px; margin-left: auto; }
   #bar button.on { background: #3b5b8f; border-color: #6ea8fe; color: #fff; }
   /* 快捷键条 / 虚拟键盘面板（公共件） */
   #shortcuts { display: flex; flex-wrap: wrap; gap: 4px; padding: 5px 8px;
@@ -104,12 +104,12 @@ const VNC_VIEW_HTML = `<!doctype html>
   #clip button.on { background: #b45309; border-color: var(--warn, #f59e0b); color: #fff; }
   /* 剪贴板面板内联提示（输入框上方）：贴近操作点，比顶部状态栏显眼（发送/获取/输入的结果都落这里） */
   #clipmsg { font-size: 11px; line-height: 1.5; padding: 5px 8px; border-radius: 6px;
-    background: #0b1220; border: 1px solid #1f2937; border-left-width: 3px; color: #94a3b8;
+    background: #0b1220; border: 1px solid #1f2937; border-left-width: 3px; color:var(--text-dim, #94a3b8);
     max-height: 76px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
   #clipmsg[hidden] { display: none; }
-  #clipmsg.err { color: #fca5a5; border-color: #7f1d1d; border-left-color: var(--danger, #ef4444); background: rgba(239, 68, 68, .08); }
-  #clipmsg.warn { color: var(--warn, #fbbf24); border-color: #78350f; border-left-color: var(--warn, #f59e0b); background: rgba(245, 158, 11, .08); }
-  #clipmsg.ok { color: #86efac; border-color: #14532d; border-left-color: var(--ok, #22c55e); background: rgba(34, 197, 94, .08); }
+  #clipmsg.err { color: #fca5a5; border-color: #7f1d1d; border-left-color: var(--danger, #ef4444); background: color-mix(in srgb, var(--danger, #ef4444) 8%, transparent); }
+  #clipmsg.warn { color: var(--warn, #fbbf24); border-color: #78350f; border-left-color: var(--warn, #f59e0b); background: color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent); }
+  #clipmsg.ok { color: #86efac; border-color: #14532d; border-left-color: var(--ok, #22c55e); background: color-mix(in srgb, var(--ok, #22c55e) 8%, transparent); }
   #stage { position: relative; flex: 1; overflow: hidden; touch-action: none; background: #000; }
   #box { position: absolute; left: 50%; top: 50%; transform-origin: center; }
   #box canvas { display: block; image-rendering: auto; }
@@ -160,7 +160,7 @@ const VNC_VIEW_HTML = `<!doctype html>
 <div id="clip" hidden>
   <div style="display:flex; align-items:center;">
     <strong style="font-size:12px;">剪贴板互通</strong>
-    <span style="color:#64748b; font-size:11px; margin-left:8px;">远程复制自动进本地剪贴板；下方编辑后可发送到远程</span>
+    <span style="color:var(--text-muted, #64748b); font-size:11px; margin-left:8px;">远程复制自动进本地剪贴板；下方编辑后可发送到远程</span>
     <button id="clipclose" style="margin-left:auto;" title="关闭">✕</button>
   </div>
   <div id="clipmsg" hidden></div>
@@ -170,7 +170,7 @@ const VNC_VIEW_HTML = `<!doctype html>
     <button id="clipsend" title="写入远程剪贴板：本机目标直写 X/系统剪贴板（Unicode 安全，远程 Ctrl+V 即可）；远程主机/虚拟机等无法直写时自动回退 VNC 协议通道">发送到远程</button>
     <button id="cliptype" title="逐字键入到远程（键盘事件兜底：QEMU 虚拟机、x11vnc 刚连接、无剪贴板通道时可用；仅 ASCII，中文/emoji 跳过；再点一次停止）">输入到远程</button>
   </div>
-  <div style="color:#64748b; font-size:11px;">发送到远程 = 写目标机剪贴板（支持中文，远程 Ctrl+V）；输入到远程 = 逐字敲键（剪贴板不可用时兜底，仅 ASCII）</div>
+  <div style="color:var(--text-muted, #64748b); font-size:11px;">发送到远程 = 写目标机剪贴板（支持中文，远程 Ctrl+V）；输入到远程 = 逐字敲键（剪贴板不可用时兜底，仅 ASCII）</div>
 </div>
 <div id="settings" hidden>
   <div style="display:flex; align-items:center;">
@@ -183,7 +183,7 @@ const VNC_VIEW_HTML = `<!doctype html>
   <div class="cfgrow">
     <span>画质</span><select id="cfgquality"></select>
     <span>压缩</span><select id="cfgzcomp"></select>
-    <span style="color:#64748b; font-size:10px;">0=最好/最慢 · 即时生效</span>
+    <span style="color:var(--text-muted, #64748b); font-size:10px;">0=最好/最慢 · 即时生效</span>
   </div>
   <div style="display:flex; gap:6px; justify-content:flex-end;">
     <button id="dcbtn">断开</button><button id="rcbtn">重连</button>
