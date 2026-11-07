@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-git-trace",
-  "version": "0.2.3",
+  "version": "0.2.6",
   "type": "module",
   "description": "编外 AI 变更追踪扩展（.git/aiti 追踪仓 + 关注路径 + 回撤/部分回滚）—— JSX + vite 构建 client bundle",
   "scripts": {
