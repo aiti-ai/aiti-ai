@@ -69,6 +69,10 @@ nginx `opencode.conf`（`opencode.pi.example.com` → 127.0.0.1:19870，用户 `
 
 ## E2E 验证（2026-08-24，opencode 1.1.51 / glm-4.7 / 真实 Chrome）
 
+> **2026-11-07 复检（0.3.1 / opencode 1.19.5）**：插件重建携 core 0.3.10（补 mcp-config writeAtomic/HOME 惰性修复）
+> 重部署 + serve 重启；web UI 经 8443 代理注入复验（aiti-client script 注入 + 桥 AI 连接上线）✅。构建坑：
+> npm 11 arborist 对 peerDeps 崩，用 `npm install --legacy-peer-deps`；devDep `@opencode-ai/plugin` 与 CLI 对齐 1.19.5。
+
 - **工具**：`aiti_bridge_status` / `aiti_page_exec`（真实改 Chrome 页面标题）✅
 - **推送**：cockpit/桥 push → 插件注入 → 模型主动调工具作答 → idle → answer 回桥 ✅
 - **候选条**（web UI，经反代注入）：chip 渲染 / 详情弹窗（字段筛选/后台打开）/ ✕ / 清空 ✅
