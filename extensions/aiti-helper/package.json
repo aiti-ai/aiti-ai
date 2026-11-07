@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-helper",
-  "version": "0.5.0",
+  "version": "0.5.3",
   "type": "module",
   "description": "AI 帮助点聚合 + AI 输入弹窗—— JSX + vite 构建 client bundle",
   "scripts": {
