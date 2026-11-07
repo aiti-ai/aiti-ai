@@ -17,10 +17,11 @@
   "contentHash": "c808f6cc16472856",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-queue-keeper.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-queue-keeper"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-queue-keeper#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-queue-keeper/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
