@@ -21,10 +21,11 @@
   "contentHash": "73f95b6faa03ab4c",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-provider-usage.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-provider-usage"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-provider-usage#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-provider-usage/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
