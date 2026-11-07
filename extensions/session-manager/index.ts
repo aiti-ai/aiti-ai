@@ -39,7 +39,9 @@ const ext = {
   // 缺席/禁用 → chip 防御性隐藏（refs 404 门控），本扩展其余功能零影响。
   // aiti-app-center（应用中心，docs/aiti-app-center-plan.md）：DockStack 全折叠空白的填充物；
   // 缺席 → 空白照旧（无应用中心），其余零影响。
-  optionalDependsOn: ["aiti-git-ops", "aiti-app-center"],
+  // aiti-quickstart（快速上手）：全折叠空白的引导卡（filler 组合上半，应用中心在下）；
+  // 缺席/禁用/用户关闭 → 回退现状，其余零影响。
+  optionalDependsOn: ["aiti-git-ops", "aiti-app-center", "aiti-quickstart"],
 
   // 功能级硬依赖（依赖与能力模型；sidebar 统一 dock 方案评审 5 拍板）：左栏整块接管
   // 的 DockStack 区块栈容器由 aiti-float 提供（cap "aiti-float.dockstack"）。硬语义 =

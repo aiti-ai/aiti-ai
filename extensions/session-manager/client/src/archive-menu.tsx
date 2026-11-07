@@ -411,7 +411,7 @@ export function ArchiveMenuHost() {
           </>
         )}
         {err && !sub && (
-          <div style={{ padding: "5px 9px", borderRadius: 6, fontSize: 10, background: "rgba(239,68,68,0.08)", color: ensureReadability("var(--danger, #f87171)") }}>{err}</div>
+          <div style={{ padding: "5px 9px", borderRadius: 6, fontSize: 10, background: "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)", color: ensureReadability("var(--danger, #f87171)") }}>{err}</div>
         )}
       </div>
 
@@ -482,7 +482,7 @@ export function ArchiveMenuHost() {
             </span>
           </button>
           {err && (
-            <div style={{ padding: "5px 9px", borderRadius: 6, fontSize: 10, background: "rgba(239,68,68,0.08)", color: ensureReadability("var(--danger, #f87171)") }}>{err}</div>
+            <div style={{ padding: "5px 9px", borderRadius: 6, fontSize: 10, background: "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)", color: ensureReadability("var(--danger, #f87171)") }}>{err}</div>
           )}
         </div>
       )}

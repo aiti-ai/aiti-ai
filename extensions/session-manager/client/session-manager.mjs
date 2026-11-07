@@ -219,7 +219,7 @@ export default function register(ctx) {
     if (hit) return hit;
     let h = 0;
     for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
-    const palette = ["var(--danger, #ef4444)", "#f97316", "var(--warn, #f59e0b)", "var(--ok, #22c55e)", "#10b981", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899", "#64748b"];
+    const palette = ["var(--danger, #ef4444)", "#f97316", "var(--warn, #f59e0b)", "var(--ok, #22c55e)", "var(--ok, #10b981)", "#06b6d4", "#3b82f6", "#6366f1", "#8b5cf6", "#d946ef", "#ec4899", "#64748b"];
     return palette[h % palette.length];
   }
 
@@ -302,7 +302,7 @@ export default function register(ctx) {
     const term = escapeHtml(q.trim());
     if (!term) return safe;
     const re = new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
-    return safe.replace(re, "<mark style='background:rgba(245,158,11,0.35);color:inherit;border-radius:2px;padding:0 1px'>$1</mark>");
+    return safe.replace(re, "<mark style='background:color-mix(in srgb, var(--warn, #f59e0b) 35%, transparent);color:inherit;border-radius:2px;padding:0 1px'>$1</mark>");
   }
 
   /* §14.2.2 date presets (filter by session.modified). */
@@ -882,7 +882,7 @@ export default function register(ctx) {
         h("div", { style: { fontSize: 10, color: "var(--text-dim)" } }, label),
       ),
     );
-    const HEAT_COLORS = ["var(--bg-hover)", "rgba(16,185,129,0.25)", "rgba(16,185,129,0.45)", "rgba(16,185,129,0.7)", "#10b981"];
+    const HEAT_COLORS = ["var(--bg-hover)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 25%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 45%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 70%, transparent)", "var(--ok, #10b981)"];
     const heatmapGrid = (points, onPick) => h("div", { style: { display: "grid", gridTemplateColumns: "repeat(26, 1fr)", gap: 2, maxHeight: 120, overflowY: "auto" } },
       points.map((p) => h("div", {
         key: p.date,
@@ -891,7 +891,7 @@ export default function register(ctx) {
         style: {
           aspectRatio: "1", borderRadius: 2, cursor: p.messages > 0 ? "pointer" : "default",
           background: HEAT_COLORS[p.level],
-          border: p.messages > 0 && p.level === 0 ? "1px solid rgba(16,185,129,0.3)" : "none",
+          border: p.messages > 0 && p.level === 0 ? "1px solid color-mix(in srgb, var(--ok, var(--ok, #10b981)) 30%, transparent)" : "none",
         },
       })),
     );
@@ -1147,7 +1147,7 @@ export default function register(ctx) {
           h("button", {
             onClick: () => { setStatsOpen((v) => !v); setFilterOpen(false); },
             title: t("sm.stats"),
-            style: { ...ghostBtn, fontSize: 11, background: statsOpen ? "rgba(16,185,129,0.18)" : undefined },
+            style: { ...ghostBtn, fontSize: 11, background: statsOpen ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 18%, transparent)" : undefined },
           }, "📊"),
           archStatus && archStatus.candidates.length > 0 && h("button", {
             onClick: () => void runArchiveNow(),
@@ -1231,7 +1231,7 @@ export default function register(ctx) {
         ),
 
         /* §14.3 stats drawer */
-        statsOpen && h("div", { style: { padding: "10px 12px", borderBottom: "1px solid var(--border)", background: "rgba(16,185,129,0.05)" } },
+        statsOpen && h("div", { style: { padding: "10px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 5%, transparent)" } },
           !stats ? h("div", { style: { color: "var(--text-dim)", fontSize: 12 } }, "…") : h("div", null,
             /* 4 stat cards */
             h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },
@@ -1249,7 +1249,7 @@ export default function register(ctx) {
                   return h("div", { key: m.model, style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 2, fontSize: 10 } },
                     h("span", { style: { minWidth: 90, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-muted)" } }, m.model),
                     h("div", { style: { flex: 1, height: 6, borderRadius: 3, background: "var(--bg-hover)", overflow: "hidden" } },
-                      h("div", { style: { width: `${Math.round((m.messages / max) * 100)}%`, height: "100%", background: "#10b981" } }),
+                      h("div", { style: { width: `${Math.round((m.messages / max) * 100)}%`, height: "100%", background: "var(--ok, #10b981)" } }),
                     ),
                     h("span", { style: { color: "var(--text-dim)" } }, String(m.messages)),
                   );
@@ -1273,7 +1273,7 @@ export default function register(ctx) {
 
         /* §14.4 batch bar */
         selection.size > 0 && h("div", {
-          style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 12px", borderBottom: "1px solid var(--border)", background: "rgba(245,158,11,0.08)" },
+          style: { display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)" },
         },
           h("span", { style: { fontSize: 11, color: "var(--warn, #f59e0b)" } }, t("sm.selectedCount", { count: selection.size })),
           h("button", { disabled: batchBusy, onClick: () => void batchArchive(), style: ghostBtn }, `${t("sm.archive")}`),
@@ -1321,7 +1321,7 @@ export default function register(ctx) {
             onClick: () => setFavOnly((v) => !v),
             style: {
               padding: "1px 8px", borderRadius: 9, fontSize: 10, cursor: "pointer",
-              background: favOnly ? "rgba(245,158,11,0.25)" : "none",
+              background: favOnly ? "color-mix(in srgb, var(--warn, #f59e0b) 25%, transparent)" : "none",
               color: favOnly ? "var(--warn, #f59e0b)" : "var(--text-dim)",
               border: `1px solid ${favOnly ? "var(--warn, #f59e0b)" : "var(--border)"}`,
             },
