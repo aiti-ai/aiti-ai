@@ -33,7 +33,8 @@
     "patches",
     "package.json",
     "!extensions/_shared",
-    "!extensions/_shared/**"
+    "!extensions/_shared/**",
+    "package-lock.json"
   ],
   "scripts": {
     "postinstall": "node bin/prepare-terminal.js && patch-package",
