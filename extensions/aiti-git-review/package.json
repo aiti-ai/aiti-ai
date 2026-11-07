@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-git-review",
-  "version": "0.2.3",
+  "version": "0.2.6",
   "type": "module",
   "description": "Git 代码审核扩展（Monaco diff 工作区 + 标注流水线）—— JSX + vite 构建 client bundle",
   "scripts": {
@@ -21,5 +21,6 @@
   "dependencies": {
     "@aiti-ai/ext-shared": "^0.1.3"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "contentHash": "6b25cef280d65ae8"
 }
