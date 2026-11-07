@@ -126,7 +126,7 @@ function buildMenu(x: number, y: number, fp: string, chain: any[], we: any): Men
     star.textContent = isDefault ? "★" : "☆";
     star.title = isDefault ? "当前默认（点击无变化）" : "设为 " + (p.displayName || p.id) + " 为默认（持久化）";
     star.style.cssText = "flex-shrink:0;border:none;background:transparent;cursor:pointer;font-size:13px;padding:0 2px;line-height:1;"
-      + (isDefault ? "color:#f59e0b;" : "color:var(--text-muted,#aaa);");
+      + (isDefault ? "color:var(--warn, #f59e0b);" : "color:var(--text-muted,#aaa);");
     star.addEventListener("click", (ev) => {
       ev.stopPropagation();
       if (!isDefault) {

@@ -1268,7 +1268,7 @@ useEffect(() => {
     if (document.getElementById("aiti-editor-chg-css")) return;
     const s = document.createElement("style");
     s.id = "aiti-editor-chg-css";
-    s.textContent = ".aiti-ed-chg-bar{background:#22c55e;width:3px!important;border-radius:2px;margin-left:3px;}"
+    s.textContent = ".aiti-ed-chg-bar{background:var(--ok, #22c55e);width:3px!important;border-radius:2px;margin-left:3px;}"
       + ".aiti-ed-chg-line{background:rgba(34,197,94,.08)!important;}";
     document.head.appendChild(s);
   }, []);
@@ -1684,7 +1684,7 @@ useEffect(() => {
           style={{ fontSize: 10, fontFamily: "var(--font-mono, ui-monospace, monospace)", color: gitIsNewFile ? "#16a34a" : "#7c3aed",
             border: "1px solid " + (gitIsNewFile ? "rgba(22,163,74,.35)" : "rgba(124,58,237,.35)"), borderRadius: 4, padding: "1px 6px",
             background: gitViewActive ? (gitIsNewFile ? "rgba(22,163,74,.12)" : "rgba(124,58,237,.12)") : "transparent", cursor: "pointer", whiteSpace: "nowrap" }}>
-          {gitIsNewFile ? "✚ 新文件" : "⇋ HEAD" + (counts ? " " + counts : "")}
+          {gitIsNewFile ? "新文件" : "⇋ HEAD" + (counts ? " " + counts : "")}
         </button>
         <select value={gitView} onChange={(e) => setGitView(e.target.value)}
           title="git 变更视图（工作区 vs HEAD；默认「最新」显示最终版）"
@@ -1798,8 +1798,8 @@ useEffect(() => {
         {isMediaFile && mediaDuration != null && isFinite(mediaDuration) ? (<><span>·</span><span style={{ flexShrink: 0 }}>{fmtMediaDuration(mediaDuration)}</span></>) : null}
         {live ? (
           <span title="文件变化实时同步中——agent 追写内容会自动刷新预览"
-            style={{ display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0, color: "#4ade80" }}>
-            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "#4ade80", animation: "aitiLivePulse 1.6s ease-in-out infinite" }} />
+            style={{ display: "inline-flex", alignItems: "center", gap: 3, flexShrink: 0, color: "var(--ok, #4ade80)" }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--ok, #4ade80)", animation: "aitiLivePulse 1.6s ease-in-out infinite" }} />
             <span>实时</span>
           </span>
         ) : null}
@@ -1868,7 +1868,7 @@ useEffect(() => {
     let body: any;
     if (fileType === "archive") {
       body = archiveErr
-        ? <div style={{ color: "#f87171", fontSize: 13, padding: 20 }}>{archiveErr}</div>
+        ? <div style={{ color: "var(--danger, #f87171)", fontSize: 13, padding: 20 }}>{archiveErr}</div>
         : !archiveFiles
           ? <div style={{ color: "var(--text-dim,#888)", fontSize: 13, textAlign: "center", padding: 40 }}>正在加载压缩包内容…</div>
           : archiveFiles.length === 0
@@ -1974,7 +1974,7 @@ useEffect(() => {
         about={aboutProp}
         onSave={!isReadOnly ? () => doSave(false) : undefined}
         onSaveAs={!isReadOnly ? () => doSaveAsText() : undefined}
-        dot={{ title: dirty ? "\u6709\u672A\u4FDD\u5B58\u4FEE\u6539" : "\u5DF2\u540C\u6B65", color: dirty ? "#f59e0b" : "var(--border,#e0e0e0)" }}
+        dot={{ title: dirty ? "\u6709\u672A\u4FDD\u5B58\u4FEE\u6539" : "\u5DF2\u540C\u6B65", color: dirty ? "var(--warn, #f59e0b)" : "var(--border,#e0e0e0)" }}
         nav={navProps}
         closeActions={closeActions}
         notice={notice}
@@ -2022,7 +2022,7 @@ useEffect(() => {
         </div>
       )}
       {status.phase === "error" && (
-        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "#f87171", fontSize: 13, padding: 16, textAlign: "center" }}>
+        <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--danger, #f87171)", fontSize: 13, padding: 16, textAlign: "center" }}>
           <div>
             {"aiti-editor \u63A5\u7BA1\u5931\u8D25"}<br />{String(status.error)}
             <div style={{ marginTop: 10 }}>
@@ -2046,7 +2046,7 @@ useEffect(() => {
           {!isBinaryView && monacoErr && (
             <div style={{ position: "absolute", inset: 0, zIndex: 600,
                 display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12,
-                background: "rgba(0,0,0,0.35)", color: "#f87171", fontSize: 13, padding: 16, textAlign: "center" }}>
+                background: "rgba(0,0,0,0.35)", color: "var(--danger, #f87171)", fontSize: 13, padding: 16, textAlign: "center" }}>
               <div>Monaco 编辑器加载失败<br />{monacoErr}</div>
               <div style={{ color: "var(--text-dim,#888)", fontSize: 12 }}>重试会自动清除加载缓存；若反复失败请刷新页面（或检查网络）</div>
               <button
@@ -2094,7 +2094,7 @@ useEffect(() => {
                 </div>
               )}
               {gitBase && (gitBase as any).error && (
-                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "#f87171", fontSize: 12, padding: 16, textAlign: "center" }}>
+                <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--danger, #f87171)", fontSize: 12, padding: 16, textAlign: "center" }}>
                   {(gitBase as any).error}
                 </div>
               )}
@@ -2137,7 +2137,7 @@ useEffect(() => {
                   fontSize: 11, fontFamily: "var(--font-mono, ui-monospace, monospace)", color: "#16a34a",
                   border: "1px solid rgba(22,163,74,.4)", borderRadius: 999, padding: "4px 12px",
                   background: "var(--bg,#fff)", boxShadow: "0 3px 10px rgba(0,0,0,.15)" }}>
-                {"✚ 新文件"}
+                {"新文件"}
               </span>
             ) : (
               <button type="button" onClick={gotoMdChg}
@@ -2289,7 +2289,7 @@ useEffect(() => {
           </span>
           <span style={{ flexShrink: 0, fontFamily: "var(--font-mono, ui-monospace, monospace)" }}
             title={meta ? meta.size + " 字节" : ""}>{formatSize(meta ? meta.size : 0)}</span>
-          {isReadOnly && <span style={{ color: "#f59e0b", flexShrink: 0 }}>超 1MB 只读</span>}
+          {isReadOnly && <span style={{ color: "var(--warn, #f59e0b)", flexShrink: 0 }}>超 1MB 只读</span>}
           <span style={{ flex: "1 1 auto" }} />
           <span style={{ flexShrink: 0 }}>{language}</span>
           {/* 编码徽标（点击弹编码菜单；向上弹出） */}
@@ -2298,7 +2298,7 @@ useEffect(() => {
               type="button"
               onClick={() => setShowEnc(!showEnc)}
               style={{ ...T.btn, padding: "2px 7px", fontSize: 11, fontFamily: "var(--font-mono, ui-monospace, monospace)",
-                color: (meta && meta.encoding && meta.encoding !== "utf-8") ? "#f59e0b" : "var(--text-dim,#888)" }}
+                color: (meta && meta.encoding && meta.encoding !== "utf-8") ? "var(--warn, #f59e0b)" : "var(--text-dim,#888)" }}
               title={"\u7F16\u7801\uFF1A" + ((meta && encDisplay(meta.encoding, meta.hasBOM)) || "UTF-8") + "\uFF08\u70B9\u51FB\u4EE5\u7F16\u7801\u91CD\u65B0\u6253\u5F00 / \u4FDD\u5B58\uFF09"}
             >{(meta && encDisplay(meta.encoding, meta.hasBOM)) || "UTF-8"}</button>
             {showEnc && (
