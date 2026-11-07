@@ -32,7 +32,7 @@ export function VoiceTagBar() {
     <div style={{
       display: "flex", alignItems: "center", gap: 6, width: "100%",
       padding: "5px 10px", fontSize: 11, borderRadius: 8, marginBottom: 4, lineHeight: 1.45,
-      background: "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--ok, var(--ok, #10b981)) 25%, transparent)", color: "var(--text)",
+      background: "color-mix(in srgb, var(--ok, #10b981) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--ok, #10b981) 25%, transparent)", color: "var(--text)",
     }}>
       <span style={{ flexShrink: 0, display: "inline-flex" }}>
         <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden>
