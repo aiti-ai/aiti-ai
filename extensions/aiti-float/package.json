@@ -14,5 +14,13 @@
   "soul": "面板只管标一个属性，浮起来的一切交给它。",
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "efde622e243e2a3d"
+  "contentHash": "efde622e243e2a3d",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-float.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-float#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-float/issues"
+  }
 }
