@@ -11,10 +11,11 @@
   "contentHash": "8e1b2845988fa161",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-debug-inject.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-debug-inject"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-debug-inject#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-debug-inject/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
