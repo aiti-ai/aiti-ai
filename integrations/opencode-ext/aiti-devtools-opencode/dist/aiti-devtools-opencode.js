@@ -209,8 +209,8 @@ function wrapToolResult(r) {
 
 // node_modules/@aiti-ai/aiti-devtools-core/dist/index.js
 import { homedir } from "node:os";
-import { join as join2 } from "node:path";
-import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync as renameSync2, mkdirSync as mkdirSync2 } from "node:fs";
+import { join as join2, dirname as dirname2 } from "node:path";
+import { existsSync as existsSync2, readFileSync as readFileSync2, writeFileSync as writeFileSync2, renameSync as renameSync2, mkdirSync as mkdirSync2, rmSync as rmSync2 } from "node:fs";
 var ID_TTL = parseInt(process.env.AITI_BRIDGE_TTL || "600000", 10);
 var AGENT_TTL = parseInt(process.env.AITI_AGENT_TTL || "3600000", 10);
 var BROADCAST_TTL = parseInt(process.env.AITI_BROADCAST_TTL || "600000", 10);
@@ -273,14 +273,14 @@ function rewriteMessage(text, picked, opts = {}) {
   const finalText = withSourceTag(out, opts);
   return { text: finalText, usedTags, usedAny };
 }
-var HOME = homedir();
+var homeDir = () => homedir();
 var MCP_TARGETS = {
   // pi 实际读取 getAgentDir()/mcp.json（getAgentDir = $PI_CODING_AGENT_DIR，默认 ~/.pi/agent）；
   // ~/.config/mcp/mcp.json 是历史误记——默认 pi 不读它（探针实证 2026-09-10，见执行记录 P17）
-  pi: [{ path: () => join2(process.env.PI_CODING_AGENT_DIR || join2(HOME, ".pi", "agent"), "mcp.json"), key: "mcpServers" }],
-  zcode: [{ path: () => join2(HOME, ".zcode", "cli", "config.json"), key: "mcpServers", keyPath: ["mcp", "servers"] }],
+  pi: [{ path: () => join2(process.env.PI_CODING_AGENT_DIR || join2(homeDir(), ".pi", "agent"), "mcp.json"), key: "mcpServers" }],
+  zcode: [{ path: () => join2(homeDir(), ".zcode", "cli", "config.json"), key: "mcpServers", keyPath: ["mcp", "servers"] }],
   opencode: [{
-    path: () => join2(HOME, ".config", "opencode", "opencode.json"),
+    path: () => join2(homeDir(), ".config", "opencode", "opencode.json"),
     key: "mcpServers",
     keyPath: ["mcp"],
     shimEntry: (shimPath) => ({ type: "local", command: ["node", shimPath], enabled: true }),
@@ -290,18 +290,18 @@ var MCP_TARGETS = {
     // D23：http 类型对 opencode 非法
   }],
   claude: [
-    { path: () => join2(HOME, ".claude.json"), key: "mcpServers" },
+    { path: () => join2(homeDir(), ".claude.json"), key: "mcpServers" },
     { path: (p) => join2(p, ".mcp.json"), key: "mcpServers", project: true }
   ],
   // CodeBuddy Code（腾讯 cbc）：用户级 ~/.codebuddy/.mcp.json（官方 mcp.md：.mcp.json 推荐 /
   // mcp.json 已废弃；条目形状 mcpServers+stdio 与 claude 同构，2026-09-11 cbc mcp add 实测钉死）。
   // 项目级 .mcp.json 与 claude 同文件（claude 目标已覆盖），不重复注册。
-  codebuddy: [{ path: () => join2(HOME, ".codebuddy", ".mcp.json"), key: "mcpServers" }],
-  cursor: [{ path: () => join2(HOME, ".cursor", "mcp.json"), key: "mcpServers" }],
-  windsurf: [{ path: () => join2(HOME, ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers" }],
+  codebuddy: [{ path: () => join2(homeDir(), ".codebuddy", ".mcp.json"), key: "mcpServers" }],
+  cursor: [{ path: () => join2(homeDir(), ".cursor", "mcp.json"), key: "mcpServers" }],
+  windsurf: [{ path: () => join2(homeDir(), ".codeium", "windsurf", "mcp_config.json"), key: "mcpServers" }],
   vscode: [{ path: (p) => join2(p, ".vscode", "mcp.json"), key: "servers", project: true }],
   zed: [
-    { path: () => join2(HOME, ".config", "zed", "settings.json"), key: "mcp" },
+    { path: () => join2(homeDir(), ".config", "zed", "settings.json"), key: "mcp" },
     { path: (p) => join2(p, ".zed", "settings.json"), key: "mcp", project: true }
   ]
 };
@@ -374,19 +374,27 @@ function resolveContainer(cfg, keyPath) {
   return cur;
 }
 function writeAtomic(path, cfg) {
-  try {
-    const tmp = path + ".tmp";
-    const bak = path + ".bak";
+  const tmp = path + ".tmp";
+  const bak = path + ".bak";
+  mkdirSync2(dirname2(path), { recursive: true });
+  writeFileSync2(tmp, JSON.stringify(cfg, null, 2) + "\n");
+  if (existsSync2(path)) {
     try {
       renameSync2(path, bak);
     } catch {
     }
-    mkdirSync2(path.split("/").slice(0, -1).join("/"), { recursive: true });
-    writeFileSync2(tmp, JSON.stringify(cfg, null, 2) + "\n");
+  }
+  try {
     renameSync2(tmp, path);
   } catch (e) {
+    if (existsSync2(bak) && !existsSync2(path)) {
+      try {
+        renameSync2(bak, path);
+      } catch {
+      }
+    }
     try {
-      renameSync2(path, path);
+      rmSync2(tmp, { force: true });
     } catch {
     }
     throw e;
@@ -410,7 +418,7 @@ function listPlannedWrites(opts) {
     }
   }
   for (const p of opts.configPaths || []) {
-    const abs = p.replace(/^~(?=\/|$)/, HOME);
+    const abs = p.replace(/^~(?=\/|$)/, homeDir());
     let matched = null;
     for (const [t, files] of Object.entries(MCP_TARGETS)) {
       for (const f of files) {
@@ -505,14 +513,14 @@ function registerAitiShim(opts) {
 function resolveShimPathAuto(cwdCandidates) {
   const installedCandidates = [
     process.env.AITI_WEB_ROOT && join2(process.env.AITI_WEB_ROOT, "node_modules"),
-    join2(HOME, ".pi", "web", "node_modules"),
-    join2(HOME, ".pi", "web-dev", "node_modules")
+    join2(homeDir(), ".pi", "web", "node_modules"),
+    join2(homeDir(), ".pi", "web-dev", "node_modules")
   ].filter((p) => !!p).map((nm) => join2(nm, "@aiti-ai", "aiti-bridge", "bin", "aiti-mcp-shim.cjs"));
   const candidates = [
     process.env.AITI_SHIM_PATH,
     ...installedCandidates,
     ...cwdCandidates || [],
-    join2(HOME, "workspace", "pi-work", "packages", "aiti-bridge", "bin", "aiti-mcp-shim.cjs")
+    join2(homeDir(), "workspace", "pi-work", "packages", "aiti-bridge", "bin", "aiti-mcp-shim.cjs")
   ].filter((p) => !!p);
   for (const p of candidates) {
     try {
