@@ -22,10 +22,11 @@
   "contentHash": "fdedd892ecddaf8d",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-model-check.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-model-check"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-model-check#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-model-check/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
