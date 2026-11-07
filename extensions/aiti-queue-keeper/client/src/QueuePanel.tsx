@@ -571,7 +571,7 @@ export function QueuePanel(props: QueuePanelProps) {
                     <button
                       onClick={() => void handlePurgeTrashItem(item.id)}
                       style={{
-                        flexShrink: 0, border: "1px solid var(--danger, #ef4444)", background: "rgba(239,68,68,0.12)",
+                        flexShrink: 0, border: "1px solid var(--danger, #ef4444)", background: "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)",
                         color: "var(--danger, #ef4444)", borderRadius: 6, padding: "2px 8px", fontSize: 11, cursor: "pointer", whiteSpace: "nowrap",
                       }}
                     >
@@ -624,7 +624,7 @@ export function QueuePanel(props: QueuePanelProps) {
               <button
                 onClick={() => void handlePurgeAllTrash()}
                 style={{
-                  border: "1px solid var(--danger, #ef4444)", background: "rgba(239,68,68,0.12)", color: "var(--danger, #ef4444)",
+                  border: "1px solid var(--danger, #ef4444)", background: "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", color: "var(--danger, #ef4444)",
                   borderRadius: 6, padding: "3px 10px", fontSize: 11.5, cursor: "pointer", whiteSpace: "nowrap",
                 }}
               >
