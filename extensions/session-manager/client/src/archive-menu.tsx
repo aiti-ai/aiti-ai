@@ -24,10 +24,11 @@
  *   （React 元素是对象，相加得到 "[object Object][object Object]"——2026-09-21 qoder 行实测）。
  */
 import { useState, useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import { t } from "./host-shim";
 import { act, archiveSessions, archiveExtSession, deleteLiveSession, hideExtSession, collectSubtreeIds, useStore, markPendingRemoval, clearPendingRemoval } from "./store";
 import { showConfirm } from "./confirm-dialog";
-import { ensureReadability } from "./helpers";
+import { ensureReadability, SIc } from "./helpers";
 
 type Mode = "resolved" | "unresolved" | "direct" | "delete";
 /* 内容自适应宽度：弹层容器 width:auto 贴合内容（不再固定 172/224，避免手机上近半屏宽 + 右侧大片空白）；
@@ -105,7 +106,7 @@ export function ArchiveMenu({ sessionId }: { sessionId: string }) {
         border: "1px solid var(--border)", borderRadius: 7, cursor: "pointer",
         color: open ? "var(--text)" : "var(--text-muted)",
       }}
-    >📦</button>
+    ><SIc name="archive" size={14} /></button>
   );
 }
 
@@ -270,7 +271,7 @@ export function ArchiveMenuHost() {
     } finally { setBusy(false); }
   };
 
-  const item = (mode: Mode, icon: string, label: string, color: string, danger: boolean) => (
+  const item = (mode: Mode, icon: ReactNode, label: string, color: string, danger: boolean) => (
     <button
       onClick={() => void run(mode)}
       disabled={busy}
@@ -278,12 +279,12 @@ export function ArchiveMenuHost() {
         display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "6px 9px",
         fontSize: 11, border: "none", background: sub === mode ? "var(--bg-hover)" : "none", textAlign: "left", borderRadius: 6,
         cursor: busy ? "default" : "pointer", whiteSpace: "nowrap",
-        color: danger ? ensureReadability("#f87171") : "var(--text)", opacity: busy ? 0.5 : 1,
+        color: danger ? ensureReadability("var(--danger, #f87171)") : "var(--text)", opacity: busy ? 0.5 : 1,
       }}
       onMouseEnter={(e) => { if (!busy) { e.currentTarget.style.background = "var(--bg-hover)"; if (hasKids) openSubMenu(mode); } }}
       onMouseLeave={(e) => { if (sub !== mode) e.currentTarget.style.background = "none"; }}
     >
-      <span style={{ fontSize: 13 }}>{icon}</span>
+      <span style={{ display: "flex", alignItems: "center" }}>{icon}</span>
       <span style={{ flex: 1 }}>{label}</span>
       {hasKids && <span style={{ fontSize: 10, color, fontWeight: 700, opacity: 0.9 }}>{busy ? "…" : "›"}</span>}
     </button>
@@ -391,7 +392,7 @@ export function ArchiveMenuHost() {
                 style={{
                   display: "flex", alignItems: "center", gap: 7, width: "100%", padding: "6px 9px",
                   fontSize: 11, border: "none", background: "none", textAlign: "left", borderRadius: 6,
-                  cursor: busy ? "default" : "pointer", whiteSpace: "nowrap", color: ensureReadability("#f59e0b"), opacity: busy ? 0.5 : 1,
+                  cursor: busy ? "default" : "pointer", whiteSpace: "nowrap", color: ensureReadability("var(--warn, #f59e0b)"), opacity: busy ? 0.5 : 1,
                 }}
                 onMouseEnter={(e) => { if (!busy) e.currentTarget.style.background = "var(--bg-hover)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
@@ -403,14 +404,14 @@ export function ArchiveMenuHost() {
           </>
         ) : (
           <>
-            {item("resolved", "✅", t("sm.archiveResolved") ?? "已解决归档", ensureReadability("#22c55e"), false)}
-            {item("unresolved", "❓", t("sm.archiveUnresolved") ?? "未解决归档", ensureReadability("#64748b"), false)}
-            {item("direct", "📦", t("sm.archiveDirect") ?? "直接归档", ensureReadability("#f59e0b"), false)}
-            {item("delete", "🗑️", t("sm.archiveDelete") ?? "彻底删除", ensureReadability("#f87171"), true)}
+            {item("resolved", <SIc name="checkCircle" size={13} />, t("sm.archiveResolved") ?? "已解决归档", ensureReadability("var(--ok, #22c55e)"), false)}
+            {item("unresolved", <SIc name="helpCircle" size={13} />, t("sm.archiveUnresolved") ?? "未解决归档", ensureReadability("#64748b"), false)}
+            {item("direct", <SIc name="archive" size={13} />, t("sm.archiveDirect") ?? "直接归档", ensureReadability("var(--warn, #f59e0b)"), false)}
+            {item("delete", <SIc name="trash" size={13} />, t("sm.archiveDelete") ?? "彻底删除", ensureReadability("var(--danger, #f87171)"), true)}
           </>
         )}
         {err && !sub && (
-          <div style={{ padding: "5px 9px", borderRadius: 6, fontSize: 10, background: "rgba(239,68,68,0.08)", color: ensureReadability("#f87171") }}>{err}</div>
+          <div style={{ padding: "5px 9px", borderRadius: 6, fontSize: 10, background: "rgba(239,68,68,0.08)", color: ensureReadability("var(--danger, #f87171)") }}>{err}</div>
         )}
       </div>
 
@@ -435,7 +436,7 @@ export function ArchiveMenuHost() {
             style={{
               display: "flex", width: "100%", padding: "6px 9px",
               fontSize: 11, border: "none", background: "none", textAlign: "left", borderRadius: 6,
-              cursor: busy ? "default" : "pointer", color: isDelete ? ensureReadability("#f87171") : "var(--text)",
+              cursor: busy ? "default" : "pointer", color: isDelete ? ensureReadability("var(--danger, #f87171)") : "var(--text)",
               opacity: busy ? 0.5 : 1, flexDirection: "column", alignItems: "stretch", gap: 1,
             }}
             onMouseEnter={(e) => { if (!busy) e.currentTarget.style.background = "var(--bg-hover)"; }}
@@ -481,7 +482,7 @@ export function ArchiveMenuHost() {
             </span>
           </button>
           {err && (
-            <div style={{ padding: "5px 9px", borderRadius: 6, fontSize: 10, background: "rgba(239,68,68,0.08)", color: ensureReadability("#f87171") }}>{err}</div>
+            <div style={{ padding: "5px 9px", borderRadius: 6, fontSize: 10, background: "rgba(239,68,68,0.08)", color: ensureReadability("var(--danger, #f87171)") }}>{err}</div>
           )}
         </div>
       )}

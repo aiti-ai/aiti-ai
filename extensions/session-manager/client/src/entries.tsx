@@ -217,7 +217,7 @@ function SidebarSessionsMenu(props: { anchor: DOMRect; onClose: () => void }) {
   };
   const runDot = (isRunning: boolean) => ({
     width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
-    background: isRunning ? "#22c55e" : "var(--text-dim)", opacity: isRunning ? 1 : 0.5,
+    background: isRunning ? "var(--ok, #22c55e)" : "var(--text-dim)", opacity: isRunning ? 1 : 0.5,
   });
 
   return createPortal(
@@ -233,7 +233,7 @@ function SidebarSessionsMenu(props: { anchor: DOMRect; onClose: () => void }) {
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 10px 6px", fontSize: 11, color: "var(--text-muted)" }}>
-        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "#22c55e", flexShrink: 0 }} />
+        <span style={{ width: 7, height: 7, borderRadius: "50%", background: "var(--ok, #22c55e)", flexShrink: 0 }} />
         <span style={{ fontWeight: 600, letterSpacing: "0.02em" }}>{t("sm.runningSessions")}</span>
         <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-dim)" }}>{runningShown.length}{completedShown.length > 0 ? ` +${completedShown.length}` : ""}</span>
       </div>

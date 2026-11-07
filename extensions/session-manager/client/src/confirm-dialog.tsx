@@ -108,7 +108,7 @@ export function ConfirmDialogHost() {
         </div>
         <div style={{ fontSize: 12, color: "var(--text-muted)", lineHeight: 1.6, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{message}</div>
         {err && (
-          <div style={{ padding: "6px 9px", borderRadius: 6, fontSize: 11, background: "rgba(239,68,68,0.08)", color: ensureReadability("#f87171") }}>{err}</div>
+          <div style={{ padding: "6px 9px", borderRadius: 6, fontSize: 11, background: "rgba(239,68,68,0.08)", color: ensureReadability("var(--danger, #f87171)") }}>{err}</div>
         )}
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           {!info && (
@@ -126,7 +126,7 @@ export function ConfirmDialogHost() {
             disabled={busy}
             style={{
               padding: "6px 14px", fontSize: 12, fontWeight: 700, borderRadius: 8, border: "none",
-              background: info ? "var(--bg-hover)" : (danger ? ensureReadability("#f87171") : "#6366f1"),
+              background: info ? "var(--bg-hover)" : (danger ? ensureReadability("var(--danger, #f87171)") : "#6366f1"),
               color: info ? "var(--text)" : "#fff",
               cursor: busy ? "default" : "pointer",
               opacity: busy ? 0.5 : 1,

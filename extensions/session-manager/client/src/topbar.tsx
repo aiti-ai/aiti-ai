@@ -10,7 +10,7 @@ import {
   loadPendingMap, savePendingMap, toggleSharedFilter,
   EMPTY_TAGS,
 } from "./store";
-import { byIdMap, tagPath, sessionTagIds } from "./helpers";
+import { byIdMap, tagPath, sessionTagIds, SIc } from "./helpers";
 import { TagChip, TagPicker, TagEditPopover } from "./tag-ui";
 // 薄壳拆分（§5.1）：archive-menu 弹层在懒 chunk——触发按钮轻量自绘（视觉与 archive-menu
 // 版本一致），点击时 import 懒 chunk 再 openArchiveMenuAt（同 rect 语义）。
@@ -32,7 +32,7 @@ function ArchiveMenuLazy({ sessionId }: { sessionId: string }) {
         background: "var(--bg-hover)", border: "1px solid var(--border)", borderRadius: 7,
         cursor: "pointer", color: "var(--text-muted)",
       }}
-    >📦</button>
+    ><SIc name="archive" size={14} /></button>
   );
 }
 import { useFeature } from "./features";
@@ -183,7 +183,7 @@ export function TopbarTags(props: any) {
         <button
           title={fav ? t("sm.unfavorite") : t("sm.favorite")}
           onClick={() => void act(fav ? "unfavorite" : "favorite", { sessionId: session.id })}
-          style={{ background: "none", border: "none", cursor: "pointer", color: fav ? "#f59e0b" : "var(--text-dim)", fontSize: 12, padding: 0 }}
+          style={{ background: "none", border: "none", cursor: "pointer", color: fav ? "var(--warn, #f59e0b)" : "var(--text-dim)", fontSize: 12, padding: 0 }}
         >{fav ? "★" : "☆"}</button>
       )}
       {/* §3.4: chips are clickable — add to the panel filter（上限 2 个 + 计数：窄顶栏行也能保持 tag 区可见） */}
@@ -209,7 +209,7 @@ export function TopbarTags(props: any) {
       {(isNewSession ? pending : tagIds).length > 2 && (
         <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{`+${(isNewSession ? pending : tagIds).length - 2}`}</span>
       )}
-      {isNewSession && <span style={{ fontSize: 10, color: "#f59e0b" }}>新建会话</span>}
+      {isNewSession && <span style={{ fontSize: 10, color: "var(--warn, #f59e0b)" }}>新建会话</span>}
       {editing ? (
         <span ref={editRef} style={{ position: "relative", display: "inline-flex" }}>
           <input
@@ -265,7 +265,7 @@ export function TopbarTags(props: any) {
               background: "none", border: "none", cursor: "pointer",
               color: "var(--text-dim)", fontSize: 11, padding: "0 3px",
             }}
-          >⚙</button>
+          ><SIc name="settings" size={12} /></button>
           {pickPos && (
             <TagPicker
               position={pickPos}
@@ -328,7 +328,7 @@ export function RowActions(props: any) {
             width: 32, height: 32, padding: 0,
             background: "var(--bg-hover)", border: "1px solid var(--border)",
             borderRadius: 7, cursor: "pointer", flexShrink: 0,
-            color: fav ? "#f59e0b" : "var(--text-muted)",
+            color: fav ? "var(--warn, #f59e0b)" : "var(--text-muted)",
           }}
         >{fav ? "★" : "☆"}</button>
       )}

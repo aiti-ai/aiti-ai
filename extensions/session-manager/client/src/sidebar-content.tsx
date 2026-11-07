@@ -571,7 +571,7 @@ export function SidebarContentDock(props: Record<string, any>) {
                 display: "flex", alignItems: "center", justifyContent: "center",
                 background: refreshState === "done" ? "rgba(74,222,128,0.18)" : "var(--bg-hover)",
                 border: `1px solid ${refreshState === "done" ? "rgba(74,222,128,0.4)" : "var(--border)"}`,
-                color: refreshState === "done" ? "#4ade80" : "var(--text-muted)",
+                color: refreshState === "done" ? "var(--ok, #4ade80)" : "var(--text-muted)",
                 cursor: "pointer", width: 32, height: 32, borderRadius: 7, padding: 0, flexShrink: 0,
                 transition: "background 0.3s, color 0.3s, border-color 0.3s",
               }}
@@ -595,7 +595,7 @@ export function SidebarContentDock(props: Record<string, any>) {
                   <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                 </svg>
               ) : refreshState === "done" ? (
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ stroke: "var(--ok, #4ade80)" }}>
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               ) : (
