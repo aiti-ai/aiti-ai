@@ -11,10 +11,11 @@
   "contentHash": "0bbda346bca0bfcc",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-attach-agent.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-attach-agent"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-attach-agent#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-attach-agent/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
