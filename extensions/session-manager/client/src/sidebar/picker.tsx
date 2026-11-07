@@ -8,6 +8,7 @@ import { useEffect, useState, type ReactNode, type RefObject } from "react";
 import { t, renderSlot } from "../host-shim";
 import { displayCwd, type RecentProject } from "./pure";
 import { AnimatedDropdown, PathLabel, showProjectActivity, isSmallScreen } from "./parts";
+import { SIc } from "../helpers";
 
 export interface PickerProps {
   /** 右端插槽（如分支指示；点击冒泡由插槽内容自行阻断，不触发项目下拉） */
@@ -336,7 +337,7 @@ function ProjectRow(props: {
             background: "none", border: "none", cursor: "pointer",
             color: pinned ? "var(--accent)" : "var(--text-dim)",
           }}
-        >📌</button>
+        ><SIc name="pin" size={12} /></button>
       )}
     </div>
   );
