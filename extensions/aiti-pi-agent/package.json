@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-pi-agent",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "Spawn pi --mode rpc subprocesses as sessions — multi-agent frontend main path",
   "soul": "All Sessions 里最正统的一条路——pi 自己驱动自己。",
   "aitiExtProtocol": "1.0",
