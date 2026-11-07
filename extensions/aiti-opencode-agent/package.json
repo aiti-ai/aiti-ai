@@ -11,10 +11,11 @@
   "contentHash": "8775ebae0c9f2ee6",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-opencode-agent.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-opencode-agent"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-opencode-agent#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-opencode-agent/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
