@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-channels",
-  "version": "0.1.3",
+  "version": "0.1.6",
   "description": "pi-web 扩展：IM 渠道接入 + cc-connect 大前端外壳——托管 cc-connect 进程（无 systemd）+ 面板（概览/项目/通道/会话/配置/管理台内嵌 cc-connect 原生 Web UI）+ socket API 出站发消息",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/aiti-channels.html",
@@ -23,5 +23,6 @@
     "@aiti-ai/ext-shared": "^0.1.3",
     "justget": "^0.2.4",
     "yauzl": "^2.10.0"
-  }
+  },
+  "contentHash": "52099bd8167a1763"
 }
