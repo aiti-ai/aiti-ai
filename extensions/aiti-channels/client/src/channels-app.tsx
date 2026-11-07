@@ -267,7 +267,7 @@ function TabOverview() {
       {inst && (
         <div style={{ ...cardStyle, display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
           <span style={{ fontSize: 12, fontWeight: 700 }}><Ic size={12} paths={ICON.package} /> 版本</span>
-          <span style={chip(inst.current ? "rgba(99,102,241,0.12)" : "rgba(239,68,68,0.12)", inst.current ? C.accent : "var(--danger, #ef4444)")}>{`当前 ${inst.current || "未安装"}`}</span>
+          <span style={chip(inst.current ? "rgba(99,102,241,0.12)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", inst.current ? C.accent : "var(--danger, #ef4444)")}>{`当前 ${inst.current || "未安装"}`}</span>
           {inst.latest && <span style={chip("rgba(14,165,233,0.12)", "#0ea5e9")}>{`最新 ${inst.latest}`}</span>}
           {inst.needUpdate && <span style={{ fontSize: 11, color: "#ea580c" }}><Ic size={12} paths={ICON.upRight} /> 有新版本</span>}
           <button style={{ ...btnStyle, marginLeft: "auto" }} onClick={() => setState({ tab: "install" })}>去安装</button>
@@ -344,7 +344,7 @@ function TabInstall() {
             <span style={{ fontSize: 12 }}>{"版本：" + (target || "自动获取最新")}</span>
           </div>
           {isLatest
-            ? <button type="button" style={{ ...btnStyle, background: "rgba(34,197,94,0.12)", color: "#16a34a", border: "1px solid rgba(34,197,94,0.3)" }} disabled>已是最新</button>
+            ? <button type="button" style={{ ...btnStyle, background: "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)", color: "#16a34a", border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 30%, transparent)" }} disabled>已是最新</button>
             : <button type="submit" style={{ ...btnStyle, background: C.accent, color: "#fff", border: "none" }} disabled={state.busy || !latest}>{state.busy ? "下载中…" : "安装 / 更新"}</button>}
         </div>
         <div style={{ fontSize: 10, color: C.muted }}>版本自动取最新发布版（无需手动输入）；下载较大（约 50MB 二进制），耗时取决于网络；进度看服务端日志。</div>
@@ -562,7 +562,7 @@ function TabConfig() {
           <div key={pi} style={{ display: "flex", flexDirection: "column", gap: 6, border: C.border, borderRadius: 10, padding: 10 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: C.accent }}>{`项目 ${pi + 1}`}</span>
-              <button style={{ ...btnStyle, marginLeft: "auto", color: "var(--danger, #ef4444)", border: "1px solid rgba(239,68,68,0.3)" }} onClick={() => delProj(pi)}>删除</button>
+              <button style={{ ...btnStyle, marginLeft: "auto", color: "var(--danger, #ef4444)", border: "1px solid color-mix(in srgb, var(--danger, #ef4444) 30%, transparent)" }} onClick={() => delProj(pi)}>删除</button>
             </div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
               {field("项目名", pj.name, (v) => upProj(pi, { name: v }), "如 atest")}
@@ -757,7 +757,7 @@ function TabSessions() {
             <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
               <span style={chip("rgba(99,102,241,0.12)", C.accent)}>{s.project || "-"}</span>
               <span style={chip("rgba(14,165,233,0.12)", "#0ea5e9")}>{s.platform || "im"}</span>
-              {s.active && <span style={chip("rgba(34,197,94,0.12)", "#16a34a")}>活跃</span>}
+              {s.active && <span style={chip("color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)", "#16a34a")}>活跃</span>}
               {s.chat_name && <span style={{ fontSize: 11, color: C.muted, marginLeft: "auto" }}>{s.chat_name}</span>}
             </div>
             <div style={{ fontSize: 10, color: C.muted, fontFamily: "monospace", wordBreak: "break-all" }}>{s.session_key || s.id || ""}</div>
@@ -790,7 +790,7 @@ function TabMsgLog() {
               <span style={{ fontSize: 11, color: C.muted, fontFamily: "monospace" }}>{(l.ts || "").replace("T", " ").slice(0, 19)}</span>
               <span style={chip("rgba(99,102,241,0.12)", C.accent)}>{l.project || "-"}</span>
               <span style={{ fontSize: 10, color: C.muted, fontFamily: "monospace", wordBreak: "break-all" }}>{(l.session_key || "").slice(0, 30)}</span>
-              <span style={{ marginLeft: "auto", ...chip(l.result === "ok" ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)", l.result === "ok" ? "#16a34a" : "var(--danger, #ef4444)") }}>{l.result || "-"}</span>
+              <span style={{ marginLeft: "auto", ...chip(l.result === "ok" ? "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)", l.result === "ok" ? "#16a34a" : "var(--danger, #ef4444)") }}>{l.result || "-"}</span>
             </div>
             <div style={{ fontSize: 12, color: C.text }}>{l.message || "(空消息)"}</div>
             {l.file && <div style={{ fontSize: 10, color: "#0ea5e9", fontFamily: "monospace" }}>{`${l.file}`}</div>}
