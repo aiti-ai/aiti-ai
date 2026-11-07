@@ -11,7 +11,7 @@
  *     `aiti-quickstart.open`（跨扩展开 Hub）。
  */
 import { __setCtx, regSvc, t } from "./host-shim";
-import { QuickstartFiller, WorkspacePickerAcquireEntry, openQuickstart, renderWidget } from "./quickstart";
+import { QuickstartFiller, WorkspacePickerAcquireEntry, FreshGuidePage, openQuickstart, renderWidget } from "./quickstart";
 import { WorkspaceHubRoot } from "./workspace-hub";
 import { SERVICE_KEY, FOOTER_ITEM_ID, WIDGET_METAS, WIDGET_TITLE_KEYS } from "./quickstart-logic";
 
@@ -50,6 +50,10 @@ export default function register(ctx: Record<string, unknown>): () => void {
 
   // Hub 对话框（dialogs 插槽：自绘 portal，宿主 ExtSlot 渲染面；aiti-float 浮动契约在组件根）
   ctx.registerItems?.("dialogs", [{ id: "aiti-quickstart-hub", render: () => <WorkspaceHubRoot /> }]);
+
+  // 宿主 noWorkspaceGuide 插槽（fresh 首屏整页引导——替代「开始使用」装饰占位；
+  // 懒物化时序：宿主 ExtSlot 渲染 hasExtRender 条目，session-manager ensureMaterialized 拉起后接管）
+  ctx.registerItems?.("noWorkspaceGuide", [{ id: "fresh", render: (props: Record<string, unknown>) => <FreshGuidePage {...(props as any)} /> }]);
 
   // 跨扩展服务：filler 交付面 + Hub 打开（ai-helper 等未来消费）
   const disposeApi = regSvc(SERVICE_KEY, { renderQuickstart: () => <QuickstartFiller /> });

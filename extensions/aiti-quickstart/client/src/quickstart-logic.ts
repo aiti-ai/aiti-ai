@@ -44,11 +44,13 @@ export const WIDGET_METAS: QuickstartWidgetMeta[] = [
   // guide priority -1（非 0）：宿主 builtin:recent 同为 p0 且注册序在前——recent(w4)
   // 先占行1 后 guide(w8) 掉行2、shortcuts 掉行3，三行叠加超 top 区 min(300px,38vh)
   // 内滚上限 → 快捷操作卡裁切需滚动（2026-11-07 用户实测）。-1 让 guide 先占行1
-  // 独占整行，recent+shortcuts 同行2（总高 ~199 << 上限）。
-  // h=1：宿主网格 gridAutoRows: minmax(64px,auto)，行高按 guide 内容自动撑开。
-  { id: "guide", areas: ["top"], defaultArea: "top", w: 8, h: 1, priority: -1 },
-  { id: "shortcuts", areas: ["top"], defaultArea: "top", w: 4, h: 1, priority: 10 },
-  { id: "examples", areas: ["bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 },
+  // 独占整行；h=1：宿主网格 gridAutoRows: minmax(64px,auto)，行高按内容自动撑开。
+  // areas 全开双区（2026-11-07 用户问「能否移动」）：⚙ 面板可跨 top/bottom 挪动，
+  // defaultArea 保持各自语义默认（挪动后 pref 持久化）。
+  { id: "guide", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: -1 },
+  // shortcuts w8（2026-11-07 用户拍板：与快速上手同宽整行）；单行 4 列 kbd 行式。
+  { id: "shortcuts", areas: ["top", "bottom"], defaultArea: "top", w: 8, h: 1, priority: 10 },
+  { id: "examples", areas: ["top", "bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 },
 ];
 
 /* ── 引导卡关闭态（localStorage 单一事实源；无事件广播——filler 重渲染时现读） ── */
