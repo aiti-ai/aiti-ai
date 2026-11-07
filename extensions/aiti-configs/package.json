@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-configs",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "type": "module",
   "description": "配置版本化 + 崩溃自检扩展（安全盾 UI）—— JSX + vite 构建 client bundle",
   "scripts": {
@@ -14,5 +14,5 @@
   "soul": "AI 敢乱改，因为身后有一整个 git 当后悔药。",
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "7d473fba7939e5fb"
+  "contentHash": "cf437ef1b6ea24fb"
 }
