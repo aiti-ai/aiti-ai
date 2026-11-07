@@ -15,8 +15,7 @@
  * 打开通道：window 事件 `aiti-quickstart:open-hub`（openWorkspaceHub 派发；
  * entry.tsx 同时注册跨扩展服务 `aiti-quickstart.open`）。
  */
-import { useState, useEffect, t, extSvc } from "./host-shim";
-import { createPortal } from "react-dom";
+import { useState, useEffect, t, extSvc, createPortal } from "./host-shim";
 import { parseGitUrl } from "./quickstart-logic";
 
 /* ── 服务面（全部软依赖，缺席降级） ── */
@@ -191,7 +190,7 @@ function CloneTab(props: { onEnter: (root: string, source: "clone", extra?: { ur
     try {
       const res = await fetch("api/extensions/aiti-quickstart/workspace/clone", {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ url: parsed.ref, branch: parsed.branch ?? branch.trim() || undefined, dir: dir.trim() || undefined, depth: depth ? 1 : undefined }),
+        body: JSON.stringify({ url: parsed.ref, branch: parsed.branch ?? (branch.trim() || undefined), dir: dir.trim() || undefined, depth: depth ? 1 : undefined }),
       });
       const d = (await res.json()) as { ok?: boolean; root?: string; url?: string; error?: string; jobId?: string };
       if (!res.ok || !d.ok) { setError(d.error ?? `HTTP ${res.status}`); setBusy(false); setProgress(null); return; }

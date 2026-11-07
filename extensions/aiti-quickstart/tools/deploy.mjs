@@ -46,6 +46,12 @@ for (const extDir of targets) {
     copyFileSync(resolve(root, f), resolve(extDir, f));
     console.log("[deploy] " + f + " → " + resolve(extDir, f));
   }
+  // server/（TS 直跑：宿主 jiti 加载 index.ts → import "./server/api.ts"——目录整拷保同构）
+  mkdirSync(resolve(extDir, "server"), { recursive: true });
+  for (const f of ["api.ts", "clone.ts", "types.ts"]) {
+    copyFileSync(resolve(root, "server", f), resolve(extDir, "server", f));
+    console.log("[deploy] server/" + f + " → " + resolve(extDir, "server", f));
+  }
   copyFileSync(resolve(root, "dist/aiti-quickstart-client.mjs"), resolve(extDir, "dist/aiti-quickstart-client.mjs"));
   console.log("[deploy] client → " + resolve(extDir, "dist/aiti-quickstart-client.mjs"));
   // 条目统一线图库（清单须覆盖引用全集，缺文件 throw）

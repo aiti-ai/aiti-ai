@@ -93,3 +93,9 @@ export function t(key: string, params?: Record<string, unknown>): string {
   const fn = _ctx?.t as ((key: string, params?: Record<string, unknown>) => string) | undefined;
   return typeof fn === "function" ? fn(key, params) : key;
 }
+
+/** createPortal(children, container) —— React portal 委托（宿主 ctx.createPortal）。 */
+export function createPortal(children: unknown, container: Element | DocumentFragment): unknown {
+  const fn = _ctx?.createPortal as ((c: unknown, el: Element | DocumentFragment) => unknown) | undefined;
+  return typeof fn === "function" ? fn(children, container) : null;
+}
