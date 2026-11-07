@@ -322,7 +322,7 @@ export function QueueRow({ kind, text, images, hasImages, hasFiles, index, total
         style={{ ...iconBtn, color: "var(--text-dim)" }}
         onMouseEnter={(e) => {
           e.currentTarget.style.color = "var(--danger, #ef4444)";
-          e.currentTarget.style.background = "rgba(239,68,68,0.12)";
+          e.currentTarget.style.background = "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)";
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.color = "var(--text-dim)";
