@@ -62,9 +62,22 @@ printf '{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"ta_code"
 
 check "initialize" "node $MCP_SERVER < /tmp/e2e-mcp-1.json" 'protocolVersion'
 check "tools/list 含 ta_code" "node $MCP_SERVER < /tmp/e2e-mcp-2.json" 'ta_code'
+check "tools/list 含 ta_download" "node $MCP_SERVER < /tmp/e2e-mcp-2.json" 'ta_download'
 check "ta_ping" "node $MCP_SERVER < /tmp/e2e-mcp-3.json" 'pong'
 check "ta_metrics" "node $MCP_SERVER < /tmp/e2e-mcp-5.json" 'heapUsedMB'
 check "ta_discover" "node $MCP_SERVER < /tmp/e2e-mcp-6.json" 'attached'
+# ta_download（S8 AI 闭环）：meta 元数据 + 真下载字节一致
+printf '{"jsonrpc":"2.0","id":8,"method":"tools/call","params":{"name":"ta_download","arguments":{"port":%d,"path":"%s","meta":true}}}' "$PORT_HTTP" "$APP_JAR" > /tmp/e2e-mcp-8.json
+check "ta_download meta 元数据" "node $MCP_SERVER < /tmp/e2e-mcp-8.json" 'sizeBytes'
+printf '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"ta_download","arguments":{"port":%d,"path":"%s"}}}' "$PORT_HTTP" "$APP_JAR" > /tmp/e2e-mcp-9.json
+node $MCP_SERVER < /tmp/e2e-mcp-9.json > /tmp/e2e-mcp-9.out 2>/dev/null
+python3 -c "
+import json,os,sys
+inner=json.loads(json.loads(open('/tmp/e2e-mcp-9.out').read())['result']['content'][0]['text'])
+d=inner.get('data',{})
+real=os.path.getsize('$APP_JAR')
+sys.exit(0 if d.get('ok') and d.get('sizeBytes')==real and os.path.exists(d.get('savedTo','')) else 1)" \
+  && { PASS=$((PASS+1)); echo "  ✅ ta_download 真下载字节一致"; } || { FAIL=$((FAIL+1)); echo "  ❌ ta_download 下载字节不一致（$(head -c 120 /tmp/e2e-mcp-9.out)）"; }
 node $MCP_SERVER < /tmp/e2e-mcp-7.json > /dev/null 2>&1   # ta_code：执行（注册 controller，结果由 HTTP 断言验证）
 sleep 1
 check "MCP 新建 controller HTTP 生效" "curl -s http://127.0.0.1:$PORT_APP/mcp" 'mcp-ok'
