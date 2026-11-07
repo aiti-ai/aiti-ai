@@ -14,7 +14,7 @@
  * 部署：node tools/deploy.mjs         （拷主 bundle + 全部 hash 分块）
  */
 import { useState, useEffect } from "react";
-import { __setCtx, getCtx } from "./host-shim";
+import { __setCtx, getCtx, regSvc } from "./host-shim";
 import { fetchNewModelsOnce, api } from "./wizard-lib";
 
 let heavyPromise: Promise<any> | null = null;
@@ -208,6 +208,18 @@ function SettingsModelsFace(props: { currentSession?: unknown; cwd?: string | nu
 export default function register(ctx: Record<string, unknown>) {
   // 重要：必须在任何 JSX 组件渲染前调用（host-shim 模块级持 ctx；重 chunk 经 getCtx 读取）
   __setCtx(ctx);
+
+  // 跨扩展打开服务（薄壳启动即注册，实现懒加载重 chunk）：aiti-model-check「跳转向导」/
+  // aiti-models-import「配置模型」等消费方在向导重 chunk 未首载时（没点过 🧙）也能打开——
+  // 此前这两个服务只在 WizardDialog 挂载后才存在，消费方只能报「未找到模型向导」。
+  // 重 chunk 首载后 WizardDialog 挂载会以直连实现同 key 覆盖升级（registerExtClientService 无条件覆盖）。
+  try {
+    const lazyOpen = (tab?: string, provider?: string | null) => {
+      loadHeavy().then((m: any) => m.openWizardFromShell(tab, provider)).catch(() => {});
+    };
+    regSvc("aiti-model-wizard.open", () => lazyOpen());
+    regSvc("aiti-model-wizard.openTab", (t?: string, p?: string | null) => lazyOpen(t, p));
+  } catch { /* 旧宿主无 registerExtService 时忽略（消费方有 window 全局兜底） */ }
 
   ctx.registerItems?.("toolbar", [{ id: "aiti-model-wizard-open", render: WizardButtonShell, meta: { label: "模型向导", icon: "icons/sparkles.svg" } }]);
   // 模型选择器下拉底部动作区：「管理模型」入口（薄壳启动即注册——不依赖重 chunk，
