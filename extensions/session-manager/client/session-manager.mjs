@@ -882,7 +882,7 @@ export default function register(ctx) {
         h("div", { style: { fontSize: 10, color: "var(--text-dim)" } }, label),
       ),
     );
-    const HEAT_COLORS = ["var(--bg-hover)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 25%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 45%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 70%, transparent)", "var(--ok, #10b981)"];
+    const HEAT_COLORS = ["var(--bg-hover)", "color-mix(in srgb, var(--ok, #10b981) 25%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 45%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 70%, transparent)", "var(--ok, #10b981)"];
     const heatmapGrid = (points, onPick) => h("div", { style: { display: "grid", gridTemplateColumns: "repeat(26, 1fr)", gap: 2, maxHeight: 120, overflowY: "auto" } },
       points.map((p) => h("div", {
         key: p.date,
@@ -891,7 +891,7 @@ export default function register(ctx) {
         style: {
           aspectRatio: "1", borderRadius: 2, cursor: p.messages > 0 ? "pointer" : "default",
           background: HEAT_COLORS[p.level],
-          border: p.messages > 0 && p.level === 0 ? "1px solid color-mix(in srgb, var(--ok, var(--ok, #10b981)) 30%, transparent)" : "none",
+          border: p.messages > 0 && p.level === 0 ? "1px solid color-mix(in srgb, var(--ok, #10b981) 30%, transparent)" : "none",
         },
       })),
     );
@@ -1147,7 +1147,7 @@ export default function register(ctx) {
           h("button", {
             onClick: () => { setStatsOpen((v) => !v); setFilterOpen(false); },
             title: t("sm.stats"),
-            style: { ...ghostBtn, fontSize: 11, background: statsOpen ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 18%, transparent)" : undefined },
+            style: { ...ghostBtn, fontSize: 11, background: statsOpen ? "color-mix(in srgb, var(--ok, #10b981) 18%, transparent)" : undefined },
           }, "📊"),
           archStatus && archStatus.candidates.length > 0 && h("button", {
             onClick: () => void runArchiveNow(),
@@ -1231,7 +1231,7 @@ export default function register(ctx) {
         ),
 
         /* §14.3 stats drawer */
-        statsOpen && h("div", { style: { padding: "10px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 5%, transparent)" } },
+        statsOpen && h("div", { style: { padding: "10px 12px", borderBottom: "1px solid var(--border)", background: "color-mix(in srgb, var(--ok, #10b981) 5%, transparent)" } },
           !stats ? h("div", { style: { color: "var(--text-dim)", fontSize: 12 } }, "…") : h("div", null,
             /* 4 stat cards */
             h("div", { style: { display: "flex", gap: 8, flexWrap: "wrap" } },

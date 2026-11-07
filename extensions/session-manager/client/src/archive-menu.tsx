@@ -335,7 +335,7 @@ export function ArchiveMenuHost() {
                   onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
                 >
                   <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <span style={{ fontSize: 13 }}>🚫</span>
+                    <span style={{ display: "flex" }}><SIc name="ban" size={13} /></span>
                     <span style={{ fontWeight: 700 }}>
                       {t("sm.extChildrenTogetherBtn", { count }) ?? `同时移除 ${count} 个子会话`}
                     </span>
@@ -357,7 +357,7 @@ export function ArchiveMenuHost() {
                   onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
                 >
                   <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
-                    <span style={{ fontSize: 13 }}>🔒</span>
+                    <span style={{ display: "flex" }}><SIc name="lock" size={13} /></span>
                     <span>
                       {t("sm.extChildrenKeepBtn") ?? "只移除主会话"}
                     </span>
@@ -380,7 +380,7 @@ export function ArchiveMenuHost() {
                 onMouseEnter={(e) => { if (!busy) e.currentTarget.style.background = "var(--bg-hover)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
               >
-                <span style={{ fontSize: 13 }}>🚫</span>
+                <span style={{ display: "flex" }}><SIc name="ban" size={13} /></span>
                 <span style={{ flex: 1 }}>{t("sm.extRemove") ?? "从列表移除"}</span>
               </button>
             )}
@@ -397,7 +397,7 @@ export function ArchiveMenuHost() {
                 onMouseEnter={(e) => { if (!busy) e.currentTarget.style.background = "var(--bg-hover)"; }}
                 onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
               >
-                <span style={{ fontSize: 13 }}>📦</span>
+                <span style={{ display: "flex" }}><SIc name="archive" size={13} /></span>
                 <span style={{ flex: 1 }}>{t("sm.extTrueArchive") ?? "真归档（从源移除，可放回）"}</span>
               </button>
             )}
@@ -468,7 +468,7 @@ export function ArchiveMenuHost() {
             onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
           >
             <span style={{ display: "flex", alignItems: "center", gap: 7 }}>
-              <span style={{ fontSize: 13 }}>🔒</span>
+              <span style={{ display: "flex" }}><SIc name="lock" size={13} /></span>
               <span>
                 {isDelete
                   ? (t("sm.childrenKeepBtnDelete") ?? "只删除主会话")
