@@ -1,6 +1,6 @@
 # AITI Web
 
-[English](../README.md) | [中文文档](./README.zh-CN.md) | [日本語](./README.ja.md)
+[English](https://github.com/aiti-ai/aiti-ai/blob/main/README.md) | [中文文档](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.zh-CN.md) | [日本語](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ja.md)
 
 **AITI Web** (`@aiti-ai/pi-web`) — браузерный рабочий стол для [агента pi](https://github.com/earendil-works/pi) и основа экосистемы инструментов [aiti](https://aiti.pw/): инструменты отладки с внедрением в страницы, MCP-мост для AI-агентов и растущая библиотека встроенных расширений.
 
@@ -123,7 +123,7 @@ npx @aiti-ai/pi-web@latest
 - **Доступ к файловой системе**: Pi Web должен иметь доступ для чтения к каталогу данных агента и рабочим каталогам, записанным в сессиях. При совместном использовании существующих сессий запускайте Pi Web в той же файловой среде, что и pi.
 - **Общие настройки**: панель Models использует хранилища моделей, настроек и учётных данных pi, поэтому изменения видны в обоих интерфейсах.
 - **Граница доступа к файлам**: файловый браузер ограничен рабочими каталогами, выбранными в Pi Web, и уже известными корнями проектов или сессий; это не универсальный файловый менеджер.
-- **Git worktree**: условия отображения переключателя, создание рабочих деревьев и их удаление описаны в документе [Worktrees in Pi Web](./worktrees.md).
+- **Git worktree**: условия отображения переключателя, создание рабочих деревьев и их удаление описаны в документе [Worktrees in Pi Web](https://github.com/aiti-ai/aiti-ai/blob/main/docs/worktrees.md).
 
 ## Разработка
 
@@ -142,9 +142,9 @@ npm run lint
 
 Не запускайте `next build` или `npm run build` во время обычной разработки. Эти команды записывают данные в `.next/` и могут помешать работе сервера разработки; выполняйте сборку только при подготовке релиза.
 
-Прежде чем браться за новую функцию, прочитайте [Contributing](../CONTRIBUTING.md): там описано, какие изменения входят в рамки проекта, и что проверить перед pull request.
+Прежде чем браться за новую функцию, прочитайте [Contributing](https://github.com/aiti-ai/aiti-ai/blob/main/CONTRIBUTING.md): там описано, какие изменения входят в рамки проекта, и что проверить перед pull request.
 
-Руководства для участников: [Internationalization](./i18n.md) и [Release process](./release.md).
+Руководства для участников: [Internationalization](https://github.com/aiti-ai/aiti-ai/blob/main/docs/i18n.md) и [Release process](https://github.com/aiti-ai/aiti-ai/blob/main/docs/release.md).
 
 ## Структура репозитория
 
@@ -159,8 +159,8 @@ docs/            Тематические руководства для поль
 demo/            Статическое демо для GitHub Pages (см. demo/README.md)
 ```
 
-Описание архитектуры и подробная карта файлов приведены в [AGENTS.md](../AGENTS.md).
+Описание архитектуры и подробная карта файлов приведены в [AGENTS.md](https://github.com/aiti-ai/aiti-ai/blob/main/AGENTS.md).
 
 ## Лицензия
 
-[MIT](../LICENSE)
+[MIT](https://github.com/aiti-ai/aiti-ai/blob/main/LICENSE)
