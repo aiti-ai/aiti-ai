@@ -35,9 +35,10 @@
   "contentHash": "f320e361394bd56f",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/service-tunnels.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/service-tunnels"
   },
   "bugs": {
-    "url": "https://github.com/aiti-ai/service-tunnels/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
