@@ -24,6 +24,12 @@ execute 直调桥 REST `POST /bridge/agent/tools/call {tool, args, agentId:'open
 
 ## 状态（2026-08-23/24 · 全部计划功能完成）
 
+> **2026-11-07 复检（v0.6.8，openclaw 2026.10.10）**：dist 自活桥 tools/list 重新生成（pageId 兜底/截屏确认链/
+> 设备信息/永久等待四组工具描述更新，51 行）+ build.mjs 版本号改随生成写入；网关重启后真实 turn 全链路复验——
+> 会话自动上线（`会话上线 agent:main:dashboard:… → openclaw/…`）→ before_prompt_build → 模型调
+> `aiti_bridge_status` → 答复已回桥（桥 JSONL agent_answer 落盘）✅。dingtalk 插件加载失败是第三方包
+> （built with OpenClaw 2026.7.1-2）需 `openclaw plugins update dingtalk`，与本插件无关。
+
 ### P2 · client 面（伴生 AI 窗）—— ✅ 浏览器 E2E 验证
 
 - **nginx `/aiti/` 代理**（`/etc/nginx/conf.d/openclaw.conf`）：`oc.pi.example.com:8443/aiti/*` → 独立桥 8777（带 Authelia；同源页 cookie 正常携带）。子路径：`/aiti/aiti-launcher.js`、`/aiti/cockpit.html`、`/aiti/bridge/*`、`/aiti/mcp` 全 200。

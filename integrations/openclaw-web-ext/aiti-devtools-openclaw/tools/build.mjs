@@ -522,7 +522,7 @@ writeFileSync(mf, JSON.stringify(manifest, null, 2) + '\n');
 
 const pf = resolve(root, 'package.json');
 const pkg = JSON.parse(readFileSync(pf, 'utf8'));
-pkg.version = '0.6.3';
+pkg.version = '0.6.8';
 writeFileSync(pf, JSON.stringify(pkg, null, 2) + '\n');
 
 console.log('built: dist/index.js（%d tools，v0.6 占位符改写）', defs.length);
