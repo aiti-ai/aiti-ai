@@ -12,5 +12,13 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "13afbc1002e438ea"
+  "contentHash": "13afbc1002e438ea",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-testagent.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-testagent#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-testagent/issues"
+  }
 }
