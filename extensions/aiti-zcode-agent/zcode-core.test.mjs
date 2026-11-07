@@ -137,6 +137,72 @@ test("ZCODE_PLATFORM_BASE_URL: 平台根与 desktop 同款（引擎拉 configs/m
 });
 
 // ============================================================================
+// provider runtime 闸 env（3.17+ CLI 启动必需；桌面端同款注入，2026-11-07）
+// 真机复现：无注入 → 「无法定位 CLI ZCode Built-in Provider Config：…/glm/provider/…, /config/provider/…」
+// ============================================================================
+
+test("providerRuntimeEnv: 无 runtime / 文件皆缺 → 空注入（旧 CLI 行为不变）", () => {
+  assert.deepEqual(core.providerRuntimeEnv(undefined), {});
+  const env = core.providerRuntimeEnv(join(ROOT, "nope", "resources", "glm", "zcode.cjs"));
+  assert.equal(env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, undefined);
+  assert.equal(env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE, undefined);
+});
+
+test("providerRuntimeEnv: runtime 同包 config 优先 + personal 落 zcodeHome/v2", () => {
+  const rt = join(ROOT, "appimg", "resources", "glm", "zcode.cjs");
+  const bundled = join(ROOT, "appimg", "resources", "config", "provider", "zcode-builtin.json");
+  mkdirSync(dirname(bundled), { recursive: true });
+  writeFileSync(bundled, "{}");
+  const personal = join(process.env.AITI_ZCODE_HOME, "v2", "provider_config.json");
+  mkdirSync(dirname(personal), { recursive: true });
+  writeFileSync(personal, "{}");
+  const env = core.providerRuntimeEnv(rt);
+  assert.equal(env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, bundled);
+  assert.equal(env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE, personal);
+  rmSync(join(ROOT, "appimg"), { recursive: true, force: true });
+  rmSync(dirname(personal), { recursive: true, force: true });
+});
+
+test("providerRuntimeEnv: 无同包 → v2 runtime 刷新副本回退（精确版本 > 最高版本；<plat>-<arch> 目录式）", () => {
+  const platDir = join(process.env.AITI_ZCODE_HOME, "v2", "runtime", "provider",
+    `${process.platform === "win32" ? "windows" : process.platform}-${process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch}`);
+  const mk = (ver) => {
+    const f = join(platDir, ver, "endpoint-abc", "zcode-builtin.json");
+    mkdirSync(dirname(f), { recursive: true });
+    writeFileSync(f, "{}");
+    return f;
+  };
+  mk("3.16.3");
+  const v317 = mk("3.17.2");
+  const rt = join(ROOT, "appimg2", "resources", "glm", "zcode.cjs"); // 同包 config 不存在
+  assert.equal(core.providerRuntimeEnv(rt, {}, "3.17.2").ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, v317);
+  assert.equal(core.providerRuntimeEnv(rt).ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, v317);
+  rmSync(join(process.env.AITI_ZCODE_HOME, "v2", "runtime"), { recursive: true, force: true });
+});
+
+test("providerRuntimeEnv: passthrough 显式键不覆盖（spawn.env / memberEnv 可改）", () => {
+  const env = core.providerRuntimeEnv(undefined, {
+    ZCODE_BUILTIN_PROVIDER_CONFIG_FILE: "/x/builtin.json",
+    ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: "/x/personal.json",
+  });
+  assert.equal(env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, undefined);
+  assert.equal(env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE, undefined);
+});
+
+test("buildTurnEnv: runtimeCjsPath 透传注入 provider 闸 env", () => {
+  const rt = join(ROOT, "appimg3", "resources", "glm", "zcode.cjs");
+  const bundled = join(ROOT, "appimg3", "resources", "config", "provider", "zcode-builtin.json");
+  mkdirSync(dirname(bundled), { recursive: true });
+  writeFileSync(bundled, "{}");
+  const env = core.buildTurnEnv({
+    modelRef: "zai/GLM-5.3", providerId: "zai", apiKey: "k.s",
+    passthroughEnv: {}, runtimeCjsPath: rt,
+  });
+  assert.equal(env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, bundled);
+  rmSync(join(ROOT, "appimg3"), { recursive: true, force: true });
+});
+
+// ============================================================================
 // 凭据链路：解密 → 换 key → 缓存（注入 fetch，零网络）
 // ============================================================================
 
