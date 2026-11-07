@@ -1,14 +1,26 @@
-# Pi Web
+# AITI Web
 
 [English](../README.md) | [日本語](./README.ja.md) | [Русский](./README.ru.md)
 
-[pi 编程智能体](https://github.com/earendil-works/pi)的本地浏览器界面。Pi Web 与 pi 共用本机配置和会话文件，可在浏览器中查找和继续对话、运行智能体、配置模型与资源，并查看项目文件。
+**AITI Web**（`@aiti-ai/pi-web`）是 [pi 编程智能体](https://github.com/earendil-works/pi)的浏览器工作台，也是 [aiti](https://aiti.pw/) 工具生态的基座：页面注入式 AI 调试工具、面向 AI agent 的 MCP 桥，以及持续增长的内置扩展库。
 
-**[在线体验演示 →](https://agegr.github.io/pi-web/)**：真实的 Pi Web 界面直接在浏览器里运行，带有示例会话、文件和模型。无需安装；回复都是预设内容，不会调用任何模型。
+### 为什么要 fork？
 
-中文微信群：请查看 [GitHub Discussions 帖子](https://github.com/agegr/pi-web/discussions/271)。
+上游 [pi-web](https://github.com/agegr/pi-web) 是很优秀的 pi 本地界面——但做一个完整的 AI 开发工作台，光有界面不够：还需要扩展运行时、围绕 git 与队列的会话工具、把本地端口分享出去的服务隧道、页面级调试注入，以及 AI ↔ 页面 ↔ IDE 的深度协作。上游架构留不出这些层的空间，所以本 fork 把它们做成 **63+ 个内置扩展随包分发**——`npm i -g @aiti-ai/pi-web`，整个工作台开箱即用，无需逐个装扩展。
 
-![Pi Web 展示包含结构化 Markdown、工具调用和项目导航的 pi 会话](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+引擎仍是 pi（共享 JSONL 会话与本机配置），上游文档描述的一切照常适用。文档、产品矩阵与 fork 背后的故事见 [aiti.pw](https://aiti.pw/)（[源码](https://github.com/aiti-ai/aiti-docs)）。
+
+![AITI Web 展示包含结构化 Markdown、工具调用和项目导航的 pi 会话](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+
+### 内置扩展（精选）
+
+- **会话工作区**——浏览/继续/分支/导出对话；git worktree；项目文件工具
+- **aiti-devtools**——面向任意本地 Web 应用的页面注入式 AI 调试（元素检查/控制台/网络/AI 操作）
+- **aiti-git-ops / aiti-git-review / aiti-git-trace**——git 图谱、提交、带标注的代码审核、AI 变更追踪
+- **session-manager**——跨项目会话管理器（看板/标签/归档/fork 分支工具）
+- **service-tunnels**——把本地端口通过 DNS/隧道带认证地分享出去
+- **aiti-extman**——扩展管理器：运行时安装/启停扩展（含从 npm 安装）
+- **……以及约 60 个更多**：队列管家、恢复、模型向导、用量报表、邮件、文档中心、UI 环境（VNC）、语音输入输出等。
 
 ## 功能
 
@@ -24,7 +36,7 @@
 Pi Web 要求 Node.js 22.19.0 或更高版本。先用 `node --version` 检查版本，然后运行：
 
 ```bash
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 服务就绪后，命令行会尝试自动打开浏览器。如果没有打开，请访问 [http://127.0.0.1:30141](http://127.0.0.1:30141)。Pi Web 默认仅监听 `127.0.0.1`。
@@ -34,7 +46,7 @@ npx @agegr/pi-web@latest
 如需全局安装 `pi-web` 命令：
 
 ```bash
-npm install -g @agegr/pi-web@latest
+npm install -g @aiti-ai/pi-web@latest
 pi-web
 ```
 
@@ -48,7 +60,7 @@ pi-web open [--port N]  # 在浏览器中打开正在运行的服务
 pi-web update [--check] # 更新全局 npm 安装
 ```
 
-更新时先运行 `pi-web stop`，再运行 `pi-web update`（也可以再次执行同一条安装命令）。卸载时运行 `npm uninstall -g @agegr/pi-web`。
+更新时先运行 `pi-web stop`，再运行 `pi-web update`（也可以再次执行同一条安装命令）。卸载时运行 `npm uninstall -g @aiti-ai/pi-web`。
 
 ## 配置
 
@@ -93,7 +105,7 @@ macOS 或 Linux：
 HTTP_PROXY=http://127.0.0.1:7890 \
 HTTPS_PROXY=http://127.0.0.1:7890 \
 NO_PROXY=localhost,127.0.0.1 \
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 Windows PowerShell：
@@ -102,7 +114,7 @@ Windows PowerShell：
 $env:HTTP_PROXY = "http://127.0.0.1:7890"
 $env:HTTPS_PROXY = "http://127.0.0.1:7890"
 $env:NO_PROXY = "localhost,127.0.0.1"
-npx @agegr/pi-web@latest
+npx @aiti-ai/pi-web@latest
 ```
 
 ## 注意事项
