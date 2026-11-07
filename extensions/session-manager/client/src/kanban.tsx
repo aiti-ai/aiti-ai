@@ -8,7 +8,7 @@ import {
   store, useStore, kanbanOpen, refreshSessions, ensureTags,
   useSharedFilter, toggleSharedFilter, clearSharedFilter, displayCwd, EMPTY_TAGS,
 } from "./store";
-import { byIdMap, tagPath, sessionTagIds, matchesTags, sessionTitle, fmtRelative, descendantsLocal, selectStyle, ghostBtn } from "./helpers";
+import { byIdMap, tagPath, sessionTagIds, matchesTags, sessionTitle, fmtRelative, descendantsLocal, selectStyle, ghostBtn, SIc } from "./helpers";
 import { StarButton, TagEditPopover } from "./tag-ui";
 import { openViewer } from "./store";
 import { act } from "./store";
@@ -99,7 +99,7 @@ export function KanbanPage(props: any) {
     >
       <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
         <span style={{ fontSize: 10, color: s.running.has(sess.id) ? "var(--accent)" : "var(--text-dim)" }}>
-          {s.running.has(sess.id) ? "⟳" : sess.archived ? "📦" : ""}
+          {s.running.has(sess.id) ? "⟳" : sess.archived ? <SIc name="archive" size={11} /> : ""}
         </span>
         <span style={{ flex: 1, fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{sessionTitle(sess)}</span>
         <StarButton
@@ -180,7 +180,7 @@ export function KanbanPage(props: any) {
           <button
             onClick={() => setFilterVisible((v) => !v)}
             style={{ ...ghostBtn, color: filterTags.length ? "var(--accent)" : "var(--text-muted)" } as React.CSSProperties}
-          >{`⚙ ${t("sm.filter")}${filterTags.length ? " " + filterTags.length : ""}`}</button>
+          >{`${t("sm.filter")}${filterTags.length ? " " + filterTags.length : ""}`}</button>
           <button onClick={() => kanbanOpen.onClose()} aria-label={t("sm.close")} title={t("sm.close")}
             style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px", flexShrink: 0 } as React.CSSProperties}>✕</button>
         </span>

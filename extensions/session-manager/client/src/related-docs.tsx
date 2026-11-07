@@ -73,7 +73,7 @@ export function RelatedDocsHost() {
         }}
       >
         <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "10px 12px", borderBottom: "1px solid var(--border)" }}>
-          <strong style={{ fontSize: 13, whiteSpace: "nowrap" }}>{`📄 ${t("sm.relatedDocs") ?? "相关文档"}`}</strong>
+          <strong style={{ fontSize: 13, whiteSpace: "nowrap" }}>{`${t("sm.relatedDocs") ?? "相关文档"}`}</strong>
           <span style={{ fontSize: 11, color: "var(--text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {open.title || open.sessionId.slice(0, 8)}
           </span>

@@ -771,7 +771,7 @@ export function SidebarList(props: SidebarDockProps) {
                 </div>
               )}
               {!loading && error && (
-                <div style={{ padding: "12px 14px", color: "#f87171", fontSize: 12 }}>
+                <div style={{ padding: "12px 14px", color: "var(--danger, #f87171)", fontSize: 12 }}>
                   {error}
                 </div>
               )}

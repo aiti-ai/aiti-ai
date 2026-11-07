@@ -240,7 +240,7 @@ function SessionItem({
           ? "rgba(239,68,68,0.06)"
           : isSelected ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "transparent",
         borderLeft: confirmDelete
-          ? "2px solid #ef4444"
+          ? "2px solid var(--danger, #ef4444)"
           : isSelected ? "2px solid var(--accent)" : "2px solid transparent",
         transition: "background 0.1s",
         opacity: removing ? 0.5 : 1,
@@ -260,7 +260,7 @@ function SessionItem({
               style={{
                 display: "flex", alignItems: "center", justifyContent: "center", gap: 4,
                 height: 30, padding: "0 11px",
-                background: "#ef4444", border: "none",
+                background: "var(--danger, #ef4444)", border: "none",
                 borderRadius: 6, color: "#fff",
                 cursor: "pointer", fontSize: 12, fontWeight: 600,
                 whiteSpace: "nowrap",
@@ -518,7 +518,7 @@ function SessionItem({
                   }}
                   onMouseEnter={(e) => {
                     e.currentTarget.style.background = "rgba(239,68,68,0.08)";
-                    e.currentTarget.style.color = "#ef4444";
+                    e.currentTarget.style.color = "var(--danger, #ef4444)";
                     e.currentTarget.style.borderColor = "rgba(239,68,68,0.35)";
                   }}
                   onMouseLeave={(e) => {

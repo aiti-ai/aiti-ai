@@ -253,7 +253,7 @@ export function ManageDialog(props: WorkspaceManageProps & { onCloseDialog: () =
                     {isHidden ? (t("sm.manageShow") ?? "显示") : (t("sm.manageHide") ?? "隐藏")}
                   </button>
                   <button type="button" onClick={() => confirmDelete(p.root, p.key)}
-                    style={{ ...(miniBtn as React.CSSProperties), color: "#f87171" }} title={t("sm.manageDelete")}>
+                    style={{ ...(miniBtn as React.CSSProperties), color: "var(--danger, #f87171)" }} title={t("sm.manageDelete")}>
                     🗑
                   </button>
                 </span>
@@ -343,8 +343,8 @@ export function ManageDialog(props: WorkspaceManageProps & { onCloseDialog: () =
               <button
                 onClick={() => void doMove()}
                 disabled={busy || !moving.target.trim()}
-                style={{ ...(ghostBtn as React.CSSProperties), color: ensureReadability("#22c55e"), borderColor: "#22c55e66" } as React.CSSProperties}
-              >{busy ? "…" : `📁 ${t("sm.moveConfirm") ?? "移动"}`}</button>
+                style={{ ...(ghostBtn as React.CSSProperties), color: ensureReadability("var(--ok, #22c55e)"), borderColor: "#22c55e66" } as React.CSSProperties}
+              >{busy ? "…" : `${t("sm.moveConfirm") ?? "移动"}`}</button>
             </div>
           </div>
         </div>,

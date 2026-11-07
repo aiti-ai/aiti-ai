@@ -75,7 +75,7 @@ export const markPendingRemoval = () => {};
 export const clearPendingRemoval = () => {};
 `;
 const CONFIRM_STUB = `export function showConfirm() {}\n`;
-const HELPERS_STUB = `export function ensureReadability(c) { return c; }\n`;
+const HELPERS_STUB = `export function ensureReadability(c) { return c; }\nexport const SIc = () => null;\n`;
 const ENTRY = `export * from "./archive-menu.tsx";\nexport { __setStore, __setKids } from "./store.ts";\n`;
 
 /** 镜像源文件 + stub 同级依赖 → esbuild 打包 → 动态 import。 */
