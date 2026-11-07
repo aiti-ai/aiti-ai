@@ -442,7 +442,7 @@ function renderTAPanel(face?: string) {
                 <td style={{ ...td, color: "var(--text-dim)" }}>{String(e.remoteIp ?? "")}</td>
                 <td style={{ ...td, maxWidth: 240, overflow: "hidden", textOverflow: "ellipsis" }} title={e.cmd}>{fmtCmd(e.cmd)}</td>
                 <td style={{ ...td, textAlign: "right", whiteSpace: "nowrap" }}>
-                  <button onClick={() => doOpenBridgeConsole(e.endpointId)} title="直达该端点操作台（?endpoint= 参数，X-TA-Endpoint 路由）" style={{ ...ghostBtn, marginRight: 4, color: "var(--accent)" }}>🖥</button>
+                  <button onClick={() => doOpenBridgeConsole(e.endpointId)} title="直达该端点操作台（?endpoint= 参数，X-TA-Endpoint 路由）" style={{ ...ghostBtn, marginRight: 4, color: "var(--accent)", display: "inline-flex", alignItems: "center" }}><svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg></button>
                   <button onClick={() => doTunnelStatus(e.endpointId)} title="经桥查该端点隧道状态" style={{ ...ghostBtn, marginRight: 4 }}>{"隧道"}</button>
                   {!e.online ? <button onClick={() => doRemoveEndpoint(e.endpointId)} title="移除离线条目（下次上线自动恢复同 id）" style={ghostBtn}>✕</button> : null}
                 </td>
