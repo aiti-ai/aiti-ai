@@ -1,12 +1,27 @@
-# Pi Web
+# AITI Web
 
 [English](../README.md) | [简体中文](./README.zh-CN.md) | [Русский](./README.ru.md)
 
-[pi コーディングエージェント](https://github.com/earendil-works/pi) のローカルブラウザー UI です。Pi Web は pi と同じローカル設定とセッションファイルを使用し、ブラウザーから会話の検索と再開、エージェントの実行、モデルやリソースの設定、プロジェクトファイルの確認を行えます。
+**AITI Web**（`@aiti-ai/pi-web`）は、[pi コーディングエージェント](https://github.com/earendil-works/pi) 向けのブラウザーワークベンチで、[aiti](https://aiti.pw/) ツールエコシステムの基盤です：ページインジェクション型 AI デバッグツール、AI エージェント向け MCP ブリッジ、そして拡大を続けるバンドル拡張機能ライブラリ。
 
-**[インタラクティブデモを試す →](https://agegr.github.io/pi-web/)**：実際の Pi Web UI がブラウザー内だけで動作し、サンプルのセッション、ファイル、モデルを確認できます。インストールは不要です。返信はあらかじめ用意された内容で、モデルは呼び出しません。
+### なぜフォークしたのか
 
-![構造化された Markdown、ツール呼び出し、プロジェクトナビゲーションとともに pi セッションを表示する Pi Web](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+上流の [pi-web](https://github.com/agegr/pi-web) は pi の優れたローカル UI ですが、完全な AI 開発ワークベンチには UI だけでは不十分です：拡張機能ランタイム、git とキューを取り巻くセッションツール、ローカルポートを共有するサービストンネル、ページレベルのデバッグインジェクション、AI ↔ ページ ↔ IDE の深い連携が必要です。上流のアーキテクチャではこれらの層のための余地がなかったため、このフォークではそれらを **63 以上のバンドル拡張機能**としてパッケージに同梱しています。`npm i -g @aiti-ai/pi-web` するだけでワークベンチ全体が揃い、拡張機能を個別にインストールする必要はありません。
+
+エンジンは pi のまま（JSONL セッションとローカル設定を共有）なので、上流のドキュメントの内容はそのまま適用されます。ドキュメント、プロダクトマップ、フォークの経緯は [aiti.pw](https://aiti.pw/) をご覧ください。
+
+![構造化された Markdown、ツール呼び出し、プロジェクトナビゲーションとともに pi セッションを表示する AITI Web](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
+
+### バンドル拡張機能（ハイライト）
+
+- **セッション & キュー** — `session-manager`（プロジェクト横断セッションマネージャー：カンバン/タグ/アーカイブ/全文検索/fork ツール）、`queue-keeper`（キューメッセージの編集/エクスポート/割り込み）、`aiti-recovery`（中断セッションの復旧ウィザード）ほか
+- **Git ツールチェーン** — `aiti-git-ops`（コミットグラフ、AI グループ化コミット計画、ワークツリー）、`aiti-git-review`（Monaco diff + 行アノテーション + AI プレビュー）、`aiti-git-trace`（AI 変更追跡タイムライン）
+- **ページインジェクションデバッグ（aiti-devtools）** — ローカル Web アプリ内での AI デバッグ：8 ドメイン 42 コマンドの CDP 風コマンドセット、Inspector、AI エージェントとページを繋ぐ MCP ブリッジ
+- **マルチエージェントバックエンド** — Claude Code、Codex、Cursor、Qoder、ZCode、OpenCode、Kimi、Gemini など（CLI + ACP ドライバー）、ログイン状態の統一管理、サブエージェント艦隊
+- **モデル & 使用量** — モデルウィザード（カタログ検索/マルチキーローテーション/集約）、429 検出付き可用性プローブ、残高・使用量レポート
+- **運用インフラ** — `service-tunnels`（DNS/トンネル経由のローカルポート共有 + 認証）、オンラインレジストリ付き拡張機能マネージャー、設定のバージョン管理 + クラッシュ自己診断、VNC UI 環境ほか約 40 機能
+
+ワークベンチに加え、[aiti エコシステム](https://aiti.pw/)は Vite/Vue/Next/React/Svelte 向けページインジェクション SDK、Chrome & IDE 拡張、MCP ブリッジ/サーバー（任意の AI エージェントから IDE ウィンドウへ）、ワンコマンドの Docker イメージ（core/full）を提供します。
 
 ## 機能
 
