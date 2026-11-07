@@ -23,13 +23,18 @@ documents still applies. Docs, the product map, and the story behind the fork li
 
 ### What's bundled (highlights)
 
-- **Session workspace** — browse/resume/branch/export conversations; git worktrees; project file tools
-- **aiti-devtools** — page-injected AI debugging for any local web app (element inspection, console, network, AI actions)
-- **aiti-git-ops / aiti-git-review / aiti-git-trace** — git graph, commits, code review with annotations, AI change tracking
-- **session-manager** — cross-project session manager with kanban, tags, archives, and fork/branch tooling
-- **service-tunnels** — expose local ports over DNS/tunnels with auth
-- **aiti-extman** — extension manager: install/enable/disable extensions at runtime (including from npm)
-- **…and ~60 more**: queue keeper, recovery, model wizard, usage reports, mail, docs center, UI environments (VNC), speech I/O, and more.
+The upstream UI remains; everything below ships as bundled extensions you get out of the box.
+
+- **Sessions & queues** — `session-manager` (cross-project All Sessions manager: kanban, tags, archives, full-text search, fork tooling), `queue-keeper` (edit/export/import/cut-in-line for queued messages), `aiti-recovery` (restart-recovery wizard for interrupted sessions), `aiti-draft-keeper`, `aiti-session-cards` (approval/permission cards)
+- **Git toolchain** — `aiti-git-ops` (commit graph, AI-grouped commit plans with rollback, worktrees, branch panel), `aiti-git-review` (Monaco diff workspace with line annotations and AI pre-review), `aiti-git-trace` (AI change tracking timeline)
+- **Page-injected debugging (aiti-devtools)** — AI debugging inside any local web app: FAB/HUD, an 8-domain 42-command CDP-like command set, Inspector, and the MCP bridge that lets AI agents talk to the page
+- **Multi-agent backends** — Claude Code, Codex, Cursor, CodeBuddy, Qoder, ZCode, OpenCode, Kimi, Gemini, Copilot, iFlow and more (CLI + ACP drivers), with unified login management, sub-agent fleets, and a custom-agent registry
+- **Models & usage** — model wizard (catalog search, multi-key rotation, aggregation), availability probing with 429 detection, provider balance/usage reports
+- **Ops infrastructure** — `service-tunnels` (expose local ports over DNS/tunnels with auth), extension manager with an online registry, config versioning + crash self-check, backups, event bus, VNC UI environments, mail, IM channels, docs center
+- **Reading & interaction** — message intelligence (click-to-quote, scroll nav, anchors), speech in/out, floating dialogs, context meter, prompt library, plan-first workflow, document viewers (docx/xlsx/pdf/pptx), and ~40 more
+
+Beyond the workbench, the [aiti ecosystem](https://aiti.pw/) adds page-injection SDKs for Vite/Vue/Next/React/Svelte, Chrome & IDE extensions, and MCP bridge/server so any AI agent can reach the IDE window — plus one-command Docker images (core/full).
+
 
 ## Features
 
