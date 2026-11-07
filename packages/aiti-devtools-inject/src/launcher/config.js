@@ -1,7 +1,7 @@
 // 配置（自 dbg-launcher.js 拆分，源区块：配置）
 export const VERSION = '0.2.1';
   export const DEFAULTS = {
-    endpoint: '',            // AI 桥前缀（aiUrl 为空时的后备，如 'http://localhost:30141/api/dbg'）
+    endpoint: '',            // AI 桥前缀（aiUrl 为空时的后备，如 'http://localhost:3000/api/dbg'）
     sessionId: '',
     dbgToken: '',
     aiUrl: '',               // AI 聊天界面 iframe 地址；空 = 不创建 AI iframe，走 endpoint/console

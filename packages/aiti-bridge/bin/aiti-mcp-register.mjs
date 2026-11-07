@@ -24,7 +24,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // core 加载：仓库检出用 src（TS 直跑，改动即生效）；装在 node_modules 里用 dist
@@ -32,7 +32,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const { registerAitiShim, unregisterAitiShim } = await (async () => {
   const coreDir = resolve(here, "..", "..", "aiti-devtools-core");
   const srcTs = resolve(coreDir, "src", "index.ts");
-  return import(here.includes("node_modules") || !existsSync(srcTs) ? resolve(coreDir, "dist", "index.js") : srcTs);
+  // Windows 必须走 file:// URL（裸 D:\... 绝对路径会被 ESM 当作 "d:" scheme 拒收）
+  return import(pathToFileURL(here.includes("node_modules") || !existsSync(srcTs) ? resolve(coreDir, "dist", "index.js") : srcTs).href);
 })();
 const LOCAL_SHIM = resolve(here, "aiti-mcp-shim.cjs");
 

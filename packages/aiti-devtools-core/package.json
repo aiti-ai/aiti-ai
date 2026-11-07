@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-core",
-  "version": "0.3.10",
+  "version": "0.3.11",
   "description": "aiti-devtools MCP server 核心（桥）：页面连接/SSE/工具执行/MCP JSON-RPC，供 pi-web 扩展与 pi 扩展 aiti-devtools-pi 共用",
   "type": "module",
   "main": "dist/index.js",
@@ -17,5 +17,15 @@
     "build": "esbuild src/index.ts --bundle --format=esm --outfile=dist/index.js --target=es2022 --platform=node",
     "test": "node test/endpoints.test.mjs && node test/connect.test.mjs && node test/mcp-config.test.mjs && node test/send-rewrite.test.mjs && node test/host-protocol-assets.test.mjs",
     "prepublishOnly": "npm run build"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-devtools-core"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "68c48ae54db0ed8e"
 }
