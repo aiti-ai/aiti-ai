@@ -19,5 +19,13 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "13ff22117562410a"
+  "contentHash": "13ff22117562410a",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-plan-first.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-plan-first#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-plan-first/issues"
+  }
 }
