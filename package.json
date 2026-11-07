@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/pi-web",
-  "version": "0.15.2",
+  "version": "0.15.3",
   "description": "Web UI for the pi coding agent",
   "homepage": "https://github.com/agegr/pi-web#readme",
   "repository": {
