@@ -46,7 +46,7 @@
   } catch { /* noop */ }
 })();
 
-import { __setCtx, t, apiUrl, useState, useEffect, getExtService } from "./host-shim";
+import { __setCtx, t, apiUrl, useState, useEffect, useRef, getExtService } from "./host-shim";
 import { buildAtText, openNewSession } from "../../../_shared/new-session-cwd";
 import {
   refreshSessions, refreshWorkspaces, onTagsChangedFrame, onSessionCreatedFrame, onSessionActivityFrame, onOmpRebindFrame, subscribeRunningFrames, panelOpen, kanbanOpen,
@@ -228,8 +228,33 @@ function WorkspaceUploadEntryLazy(props: { onSelect: (root: string) => void; onC
 // Backend 之前——紧贴工作区下拉，方案 session-manager-workspace-upload-plan.md §12.1）。
 // 样式对齐该行 Workspace/Backend select 盒子（bg-hover + border 圆角 + fontSize 12）。
 // onSelect 走宿主 "pi-web.newSession" 服务 setCwd（把新会话 Workspace 切到解压目录）；服务缺席（旧宿主）降级 toast。
+// v2 split button（2026-11-07）：主体=上传（点击开既有 UploadDialog），右侧 caret ▾ 下拉菜单——
+// 「获取工作区…」直达 aiti-quickstart Workspace Hub（服务探测，aiti-quickstart 缺席则不渲染下拉，
+// 按钮回退纯上传形态）。
+const AcquireIcon = ({ size = 12 }: { size?: number }) => (
+  // lucide folder-plus——与宿主「添加文件夹到侧栏」同款（系统图标语言：获取/添加一个工作区）
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)" }} aria-hidden="true">
+    <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+    <line x1="12" y1="10" x2="12" y2="16" />
+    <line x1="9" y1="13" x2="15" y2="13" />
+  </svg>
+);
+
 function NewSessionUploadButton(props: { cwd: string | null; isMobile: boolean }) {
   const [open, setOpen] = useState(false);
+  // split 下拉：aiti-quickstart.open 服务在位才提供「获取工作区…」；菜单开态 + 外点关
+  const acquireSvc = getExtService<{ open?: unknown }>("aiti-quickstart.open") as { open?: unknown } | null;
+  const hasAcquire = Boolean(acquireSvc && typeof acquireSvc.open === "function");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [menuOpen]);
   const dialog = lazyExtView({
     active: open,
     load: workspaceUploadRef,
@@ -245,28 +270,76 @@ function NewSessionUploadButton(props: { cwd: string | null; isMobile: boolean }
       },
     },
   });
+  const mainBtnStyle: Record<string, string | number> = {
+    display: "inline-flex", alignItems: "center", gap: 5,
+    padding: "4px 8px",
+    background: "var(--bg-hover)", border: "1px solid var(--border)",
+    color: "var(--text)", font: "inherit", fontSize: 12,
+    cursor: "pointer",
+  };
   return (
     <>
-      <button
-        type="button"
-        onClick={(e) => { e.stopPropagation(); setOpen(true); }}
-        title={t("sm.uploadWorkspaceTitle")}
-        aria-label={t("sm.uploadWorkspace")}
-        style={{
-          display: "inline-flex", alignItems: "center", gap: 5,
-          padding: "4px 8px",
-          background: "var(--bg-hover)", border: "1px solid var(--border)", borderRadius: 8,
-          color: "var(--text)", font: "inherit", fontSize: 12,
-          cursor: "pointer",
-        }}
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)" }}>
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-          <polyline points="17 8 12 3 7 8" />
-          <line x1="12" y1="3" x2="12" y2="15" />
-        </svg>
-        {!props.isMobile && <span>{t("sm.uploadWorkspace")}</span>}
-      </button>
+      <div ref={menuRef} style={{ position: "relative", display: "inline-flex", flexShrink: 0 }}>
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setOpen(true); }}
+          title={t("sm.uploadWorkspaceTitle")}
+          aria-label={t("sm.uploadWorkspace")}
+          style={{ ...mainBtnStyle, borderRadius: hasAcquire ? "8px 0 0 8px" : 8, borderRight: hasAcquire ? "none" : undefined }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)" }}>
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <polyline points="17 8 12 3 7 8" />
+            <line x1="12" y1="3" x2="12" y2="15" />
+          </svg>
+          {!props.isMobile && <span>{t("sm.uploadWorkspace")}</span>}
+        </button>
+        {hasAcquire ? (
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v); }}
+            title={t("sm.acquireWorkspaceTitle")}
+            aria-label={t("sm.acquireWorkspace")}
+            aria-expanded={menuOpen}
+            style={{ ...mainBtnStyle, borderRadius: "0 8px 8px 0", borderLeft: "1px solid var(--border)", padding: "4px 6px" }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, color: "var(--text-muted)", transition: "transform 0.15s", transform: menuOpen ? "rotate(180deg)" : "none" }} aria-hidden="true">
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+        ) : null}
+        {hasAcquire && menuOpen ? (
+          <div
+            role="menu"
+            style={{
+              position: "absolute", top: "calc(100% + 4px)", right: 0, zIndex: 50,
+              minWidth: 168, padding: 4, boxSizing: "border-box",
+              background: "var(--bg, #1a1a1a)", border: "1px solid var(--border)", borderRadius: 10,
+              boxShadow: "0 8px 28px rgba(0,0,0,0.45)", display: "flex", flexDirection: "column", gap: 2,
+            }}
+          >
+            <button
+              type="button"
+              role="menuitem"
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen(false);
+                try { (acquireSvc as { open: () => void }).open(); } catch { /* ignore */ }
+              }}
+              style={{
+                display: "flex", alignItems: "center", gap: 7, width: "100%",
+                padding: "6px 9px", background: "none", border: "none", borderRadius: 7,
+                color: "var(--text)", font: "inherit", fontSize: 12, cursor: "pointer", textAlign: "left",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = "var(--bg-selected, #2a2a2a)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+            >
+              <AcquireIcon />
+              <span>{t("sm.acquireWorkspace")}</span>
+            </button>
+          </div>
+        ) : null}
+      </div>
       {dialog}
     </>
   );
@@ -481,8 +554,7 @@ export default function register(ctx: Record<string, unknown>) {
   // 上传能力服务化（v2 Workspace Hub 复用，aiti-quickstart soft-depend）：UploadDialog
   // 开关提为模块级 store（window 事件 + 常驻宿主组件）——第三方 open({onSelect,onClose})
   // 直接驱动既有弹窗，上传零重实现。服务缺席（本扩展禁用）时消费方降级提示。
-  // dialogs 常驻条目（二分诊断摘除）：若侧栏恢复 = UploadDialogServiceHost 渲染是崩点
-  // ctx.registerItems?.("dialogs", [{ id: "upload-dialog-service", render: UploadDialogServiceHost }]);
+  ctx.registerItems?.("dialogs", [{ id: "upload-dialog-service", render: UploadDialogServiceHost }]);
   const disposeUploadSvc = typeof ctx.registerExtService === "function"
     ? ctx.registerExtService("session-manager.uploadWorkspace", { open: openWorkspaceUploadDialog })
     : null;
