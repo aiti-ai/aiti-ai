@@ -81,7 +81,7 @@ export const STYLES = `
   color: var(--accent-contrast, #fff); font-weight: 600;
 }
 .am-btn.is-primary:not(:disabled):hover { border-color: var(--accent-hover, #1d4ed8); background: var(--accent-hover, #1d4ed8); color: var(--accent-contrast, #fff); }
-.am-btn.is-danger { border-color: rgba(239, 68, 68, .35); background: rgba(239, 68, 68, .06); color: #ef4444; }
+.am-btn.is-danger { border-color: rgba(239, 68, 68, .35); background: rgba(239, 68, 68, .06); color: var(--danger, #ef4444); }
 .am-btn.is-danger:not(:disabled):hover { border-color: rgba(239, 68, 68, .5); background: rgba(239, 68, 68, .12); }
 .am-btn.is-ghost { border-color: transparent; background: transparent; }
 .am-btn.is-sm { height: 22px; padding: 0 8px; font-size: 11px; }
