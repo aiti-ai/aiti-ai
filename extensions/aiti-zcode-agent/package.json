@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-zcode-agent",
-  "version": "0.1.1",
+  "version": "0.1.3",
   "description": "ZCode (智谱桌面端内嵌 CLI runtime) session backend driver (--json + --resume)",
   "soul": "GLM 套餐在哪儿跑，面板就在哪儿看。",
   "scripts": {
