@@ -14,7 +14,7 @@
     "shell-quote": "^1.10.0"
   },
   "soul": "大脑留给思考，命令交给收藏夹。",
-  "version": "0.1.3",
+  "version": "0.1.4",
   "aitiConfigs": {
     "configFiles": [
       "commands.json",

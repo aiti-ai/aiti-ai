@@ -897,7 +897,7 @@ export default function register(ctx) {
       : { display: "flex", flexDirection: "column", gap: 4, flex: 1, minHeight: 0 } },
       h("div", { style: { ...smallStyle, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
         // 顶部状态：exit 用醒目底色 badge（被终止红 / 非零黄 / 正常绿），其余纯色文字
-        status === "exit" ? h("span", { style: { display: "inline-flex", alignItems: "center", flexShrink: 0, padding: "1px 8px", borderRadius: 6, fontWeight: 700, fontSize: 11, lineHeight: "16px", color: exitInfo?.signal ? "#fff" : exitInfo && (exitInfo.code ?? 0) !== 0 ? "#78350f" : "#064e3b", background: exitInfo?.signal ? "var(--danger, #ef4444)" : exitInfo && (exitInfo.code ?? 0) !== 0 ? "#fde68a" : "#d1fae5" } },
+        status === "exit" ? h("span", { style: { display: "inline-flex", alignItems: "center", flexShrink: 0, padding: "1px 8px", borderRadius: 6, fontWeight: 700, fontSize: 11, lineHeight: "16px", color: exitInfo?.signal ? "#fff" : exitInfo && (exitInfo.code ?? 0) !== 0 ? "var(--warn, #facc15)" : "var(--ok, #4ade80)", background: exitInfo?.signal ? "var(--danger, #ef4444)" : exitInfo && (exitInfo.code ?? 0) !== 0 ? "color-mix(in srgb, var(--warn, #facc15) 22%, transparent)" : "color-mix(in srgb, var(--ok, #4ade80) 18%, transparent)" } },
           isSmall
             ? (exitInfo?.signal ? "已停止" : exitInfo && (exitInfo.code ?? 0) !== 0 ? "已结束" : "已结束")
             : (exitInfo?.signal ? "会话已停止（被 " + exitInfo.signal + " 终止）" : exitInfo && (exitInfo.code ?? 0) !== 0 ? "会话已结束（退出码 " + exitInfo.code + "）" : "会话已结束"))
@@ -1099,7 +1099,7 @@ export default function register(ctx) {
     return h("div", { style: fs ? { position: "fixed", inset: 0, zIndex: 500, background: "var(--bg-panel)", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 4, boxSizing: "border-box" } : { display: "flex", flexDirection: "column", gap: 4, flex: 1, minHeight: 0 } },
       h("div", { style: { ...smallStyle, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
         // 顶部状态：exit 用醒目底色 badge（被终止/出错红 / 正常绿 / 已清理灰），其余纯色文字
-        status === "exit" ? h("span", { style: { display: "inline-flex", alignItems: "center", flexShrink: 0, padding: "1px 8px", borderRadius: 6, fontWeight: 700, fontSize: 11, lineHeight: "16px", color: exitInfo?.swept ? "var(--text)" : exitInfo?.isError ? "#fff" : "#064e3b", background: exitInfo?.swept ? "var(--bg-hover)" : exitInfo?.isError ? "var(--danger, #ef4444)" : "#d1fae5" } },
+        status === "exit" ? h("span", { style: { display: "inline-flex", alignItems: "center", flexShrink: 0, padding: "1px 8px", borderRadius: 6, fontWeight: 700, fontSize: 11, lineHeight: "16px", color: exitInfo?.swept ? "var(--text)" : exitInfo?.isError ? "#fff" : "var(--ok, #4ade80)", background: exitInfo?.swept ? "var(--bg-hover)" : exitInfo?.isError ? "var(--danger, #ef4444)" : "color-mix(in srgb, var(--ok, #4ade80) 18%, transparent)" } },
           isSmall
             ? (exitInfo?.swept ? "已结束" : exitInfo?.isError ? "已停止" : "完成")
             : (exitInfo?.swept ? "已结束（服务器已清理记录）" : exitInfo?.isError ? "命令已停止（出错/被终止）" : "命令已完成"))
