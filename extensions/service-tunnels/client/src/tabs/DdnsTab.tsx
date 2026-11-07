@@ -29,7 +29,7 @@ function TokenCell({ value, t }: { value: string | undefined; t: T }) {
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
       <span style={{ fontFamily: "var(--font-mono)" }}>{shown ? value || "—" : "••••••••"}</span>
-      <button onClick={() => setShown(!shown)} title={shown ? t("ui.ddns.hide") : t("ui.ddns.reveal")} style={{ ...btn, padding: "1px 6px", border: "none" }}>👁</button>
+      <button onClick={() => setShown(!shown)} title={shown ? t("ui.ddns.hide") : t("ui.ddns.reveal")} style={{ ...btn, padding: "1px 6px", border: "none", display: "inline-flex", alignItems: "center" }}><svg width={12} height={12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0"/><circle cx="12" cy="12" r="3"/></svg></button>
     </span>
   );
 }
