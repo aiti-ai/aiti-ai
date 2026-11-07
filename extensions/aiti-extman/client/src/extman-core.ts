@@ -168,9 +168,9 @@ export const chipStyle = (color: string, bg: string) => ({
 export function shortenPath(p: unknown) { return String(p ?? "").replace(/^\/(?:Users|home)\/[^/]+/, "~"); }
 
 export function statusDotColor(e: any) {
-  if (e.error) return "#ef4444";
+  if (e.error) return "var(--danger, #ef4444)";
   if (e.enabled === false) return "var(--text-dim)";
-  if (!e.loaded) return "#f59e0b";
+  if (!e.loaded) return "var(--warn, #f59e0b)";
   return "var(--accent)";
 }
 
