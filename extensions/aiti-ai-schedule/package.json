@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ai-schedule",
-  "version": "0.4.3",
+  "version": "0.4.6",
   "type": "module",
   "description": "aiti-ai-schedule · pi-web 常驻调度器（JSX + vite 构建 client bundle）",
   "scripts": {
@@ -12,5 +12,6 @@
     "vite": "^6.4.3"
   },
   "aitiExtProtocol": "1.0",
-  "license": "MIT"
+  "license": "MIT",
+  "contentHash": "c1e0063020eead33"
 }
