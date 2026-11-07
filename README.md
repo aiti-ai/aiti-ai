@@ -229,7 +229,7 @@ docs/            Focused user and contributor guides
 demo/            Static browser demo published to GitHub Pages (see demo/README.md)
 ```
 
-See [AGENTS.md](./AGENTS.md) for the architecture notes and detailed file map.
+See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for the full architecture map — including the bundled extension structure (anatomy, kinds, registration slots, loading & priority, runtime-dependency reconcile) — and [AGENTS.md](./AGENTS.md) for development notes.
 
 ## License
 
