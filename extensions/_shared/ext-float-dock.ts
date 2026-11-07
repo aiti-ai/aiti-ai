@@ -315,7 +315,7 @@ export function DockBody(props: {
     key: a.id, type: "button", title: a.title, "aria-label": a.title, disabled: a.disabled === true,
     style: {
       ...btnBase, position: "relative" as const,
-      color: a.done ? "#4ade80" : a.active ? "var(--accent, #2563eb)" : "var(--text-muted, #888)",
+      color: a.done ? "var(--ok, #4ade80)" : a.active ? "var(--accent, #2563eb)" : "var(--text-muted, #888)",
       opacity: a.disabled ? 0.5 : 1, cursor: a.disabled ? "default" : "pointer",
     },
     onClick: (e: any) => { if (a.disabled !== true) a.onClick(e); },
