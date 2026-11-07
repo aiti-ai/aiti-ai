@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-onlyoffice",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "description": "OnlyOffice DocumentServer 深度保真编辑档（Docker 后端）",
   "main": "index.ts",
   "scripts": {
