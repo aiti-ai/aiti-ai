@@ -1,6 +1,6 @@
 # AITI Web
 
-[English](../README.md) | [简体中文](./README.zh-CN.md) | [Русский](./README.ru.md)
+[English](https://github.com/aiti-ai/aiti-ai/blob/main/README.md) | [简体中文](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.zh-CN.md) | [Русский](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ru.md)
 
 **AITI Web**（`@aiti-ai/pi-web`）は、[pi コーディングエージェント](https://github.com/earendil-works/pi) 向けのブラウザーワークベンチで、[aiti](https://aiti.pw/) ツールエコシステムの基盤です：ページインジェクション型 AI デバッグツール、AI エージェント向け MCP ブリッジ、そして拡大を続けるバンドル拡張機能ライブラリ。
 
@@ -123,7 +123,7 @@ npx @aiti-ai/pi-web@latest
 - **ファイルシステムへのアクセス**：Pi Web はエージェントデータディレクトリと、セッションに記録された作業ディレクトリを読み取れる必要があります。既存の pi セッションを共有する場合は、pi と同じファイルシステム環境で Pi Web を実行してください。
 - **共有設定**：Models パネルは pi のモデル、設定、認証情報ストレージを使用するため、変更は両方のインターフェースに反映されます。
 - **ファイルアクセスの範囲**：ファイルブラウザーは、Pi Web で選択した作業ディレクトリと、既知のプロジェクトまたはセッションルートに限定されます。汎用のファイルシステムブラウザーではありません。
-- **Git worktree**：スイッチャーの表示条件、worktree の作成、削除時の動作については [Worktrees in Pi Web](./worktrees.md) を参照してください。
+- **Git worktree**：スイッチャーの表示条件、worktree の作成、削除時の動作については [Worktrees in Pi Web](https://github.com/aiti-ai/aiti-ai/blob/main/docs/worktrees.md) を参照してください。
 
 ## 開発
 
@@ -142,9 +142,9 @@ npm run lint
 
 通常の開発中は `next build` または `npm run build` を実行しないでください。`.next/` に書き込まれ、開発サーバーに影響する可能性があります。ビルドはリリース作業時にのみ実行してください。
 
-新機能に取りかかる前に、[Contributing](../CONTRIBUTING.md) で対象範囲とプルリクエスト前のチェック項目を確認してください。
+新機能に取りかかる前に、[Contributing](https://github.com/aiti-ai/aiti-ai/blob/main/CONTRIBUTING.md) で対象範囲とプルリクエスト前のチェック項目を確認してください。
 
-コントリビューター向けガイド：[Internationalization](./i18n.md) と [Release process](./release.md)。
+コントリビューター向けガイド：[Internationalization](https://github.com/aiti-ai/aiti-ai/blob/main/docs/i18n.md) と [Release process](https://github.com/aiti-ai/aiti-ai/blob/main/docs/release.md)。
 
 ## リポジトリ構成
 
@@ -159,8 +159,8 @@ docs/            ユーザーおよびコントリビューター向けの個別
 demo/            GitHub Pages で公開する静的デモ（demo/README.md を参照）
 ```
 
-アーキテクチャの説明と詳細なファイルマップについては [AGENTS.md](../AGENTS.md) を参照してください。
+アーキテクチャの説明と詳細なファイルマップについては [AGENTS.md](https://github.com/aiti-ai/aiti-ai/blob/main/AGENTS.md) を参照してください。
 
 ## ライセンス
 
-[MIT](../LICENSE)
+[MIT](https://github.com/aiti-ai/aiti-ai/blob/main/LICENSE)

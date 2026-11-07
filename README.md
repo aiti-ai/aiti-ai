@@ -1,6 +1,6 @@
 # AITI Web
 
-[中文文档](./docs/README.zh-CN.md) | [日本語](./docs/README.ja.md) | [Русский](./docs/README.ru.md)
+[中文文档](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.zh-CN.md) | [日本語](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ja.md) | [Русский](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.ru.md)
 
 **AITI Web** (`@aiti-ai/pi-web`) is a browser workbench for the [pi coding agent](https://github.com/earendil-works/pi) — and the base of the [aiti](https://aiti.pw/) tooling ecosystem: page-injected debugging tools, an MCP bridge for AI agents, and a growing library of bundled extensions.
 
@@ -19,7 +19,7 @@ documents still applies.
 The origin story is worth a read: two 15-year-old projects — [TestAgent](https://aiti.pw/extensions/aiti-testagent.html), a Java runtime debugger, and [JustDB](https://justdb.ai), a database IDE — met the AI era, daily development moved onto pi-web, feature by feature it drifted from upstream, and aiti began as its own distribution. Built for real daily use first (commute-time coding, spare-device development, making every spare token count): full story at [aiti.pw/guide/origin.html](https://aiti.pw/guide/origin.html). Docs, the product map, and the story behind the fork live at
 [aiti.pw](https://aiti.pw/) ([source](https://github.com/aiti-ai/aiti-docs)).
 
-[中文文档](./docs/README.zh-CN.md) covers the same in Chinese.
+[中文文档](https://github.com/aiti-ai/aiti-ai/blob/main/docs/README.zh-CN.md) covers the same in Chinese.
 
 ![AITI Web displaying a pi session with structured Markdown, tool calls, and project navigation](https://raw.githubusercontent.com/agegr/pi-web/main/docs/screenshot2.png)
 
@@ -143,7 +143,7 @@ npx @aiti-ai/pi-web@latest
 - **Filesystem access**: Pi Web must be able to read the agent data directory and the working directories recorded by its sessions. Run Pi Web in the same filesystem environment as pi when sharing existing sessions.
 - **Shared configuration**: the Models panel uses pi's model, settings, and credential storage, so changes are visible to both interfaces. An open session applies a saved edit of its model when you select the model again.
 - **File access boundary**: the file browser is limited to working directories selected in Pi Web and project or session roots it already knows about; it is not a general filesystem browser.
-- **Git worktrees**: see [Worktrees in Pi Web](./docs/worktrees.md) for switcher visibility, worktree creation, and removal behavior.
+- **Git worktrees**: see [Worktrees in Pi Web](https://github.com/aiti-ai/aiti-ai/blob/main/docs/worktrees.md) for switcher visibility, worktree creation, and removal behavior.
 
 ### Downstream Session Context Menu
 
@@ -214,9 +214,9 @@ npm run lint
 
 Do not run `next build` or `npm run build` during normal development. It writes to `.next/` and can interfere with the development server; leave builds for release work.
 
-Before starting on a feature, read [Contributing](./CONTRIBUTING.md) for what is in scope and the pull request checklist.
+Before starting on a feature, read [Contributing](https://github.com/aiti-ai/aiti-ai/blob/main/CONTRIBUTING.md) for what is in scope and the pull request checklist.
 
-Contributor guides: [Internationalization](./docs/i18n.md) and [Release process](./docs/release.md).
+Contributor guides: [Internationalization](https://github.com/aiti-ai/aiti-ai/blob/main/docs/i18n.md) and [Release process](https://github.com/aiti-ai/aiti-ai/blob/main/docs/release.md).
 
 ## Repository Layout
 
@@ -231,8 +231,8 @@ docs/            Focused user and contributor guides
 demo/            Static browser demo published to GitHub Pages (see demo/README.md)
 ```
 
-See **[ARCHITECTURE.md](./ARCHITECTURE.md)** for the full architecture map — including the bundled extension structure (anatomy, kinds, registration slots, loading & priority, runtime-dependency reconcile) — and [AGENTS.md](./AGENTS.md) for development notes.
+See **[ARCHITECTURE.md](https://github.com/aiti-ai/aiti-ai/blob/main/ARCHITECTURE.md)** for the full architecture map — including the bundled extension structure (anatomy, kinds, registration slots, loading & priority, runtime-dependency reconcile) — and [AGENTS.md](https://github.com/aiti-ai/aiti-ai/blob/main/AGENTS.md) for development notes.
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](https://github.com/aiti-ai/aiti-ai/blob/main/LICENSE)
