@@ -10,7 +10,6 @@
  */
 import { __setCtx, t } from "./host-shim";
 import { state, setState, setHostCaps, EXTMAN_KEY } from "./extman-core";
-import { seedDockDefault } from "../../../_shared/ext-float-dock";
 import { ExtManPanel, ExtManDockFace, SidebarFooterButton, openExtmanPanel } from "./extman-ui";
 
 function setHostIsMobile(v: boolean) { if (state.isMobile !== v) setState({ isMobile: v }); }
@@ -37,7 +36,17 @@ export default function register(ctx: Record<string, any>) {
     meta: { label: t("ext.shortLabel"), title: t("ext.title"), icon: "icons/wrench.svg", onClick: () => openExtmanPanel() },
   }]);
   ctx.registerItems?.("dialogs", [{ id: "aiti-extman-panel", render: (props: any) => <ExtManPanel {...(props || {})} /> }]);
-  // aiti-float dock v3（P1 批）：默认右栏 tab；注册 raw itemId（宿主拼 extId:itemId = EXTMAN_KEY）
-  seedDockDefault(EXTMAN_KEY, "right-panel");
+  // aiti-float dock：默认浮窗打开（可停靠能力保留：⇱ 菜单仍可手动入右栏 tab）；
+  // 注册 raw itemId（宿主拼 extId:itemId = EXTMAN_KEY）。
+  // 一次性迁移：旧版 seedDockDefault 曾把 "right-panel" 写成用户偏好——清掉让新默认（浮窗）生效；
+  // 值为 "float" 的明确偏好保留；迁移后用户重选的位置不再动（版本标记只跑一次）。
+  try {
+    const MIG = "pi-web:extman:dockpref-default-float:v1";
+    if (!localStorage.getItem(MIG)) {
+      const pk = `pi-web:ext-float:dockpref:v1:${EXTMAN_KEY}`;
+      if (localStorage.getItem(pk) === "right-panel") localStorage.removeItem(pk);
+      localStorage.setItem(MIG, "1");
+    }
+  } catch { /* ignore */ }
   ctx.registerItems?.("rightFileDock", [{ id: "panel", render: (props: any) => <ExtManDockFace {...(props || {})} />, meta: { title: "扩展" } }]);
 }

@@ -20,7 +20,7 @@ import { t, apiUrl } from "./host-shim";
 import { MdDesc, extDescVars } from "./md-desc";
 // aiti-float dock v3（P1 批）：渲染门控 useGate + 停靠容器 DockBody（extman-core 的 setState
 // 已把 patch.open 路由到 openFloat/closePanel，本文件所有 setState({open:…}) 调用点零改动）
-import { useGate, DockBody, seedDockDefault } from "../../../_shared/ext-float-dock";
+import { useGate, DockBody } from "../../../_shared/ext-float-dock";
 import { uiConfirm } from "../../../_shared/ui-dialogs";
 
 // ---------- 扩展协议徽标 / AI 升级（docs/pi-web-ext-protocol.md） ----------
@@ -694,7 +694,6 @@ export function ExtManPanel(props: any) {
         data-ext-float="1" data-ext-float-w={900} data-ext-float-h={660} data-ext-float-full="1"
         data-ext-float-key={EXTMAN_KEY}
         data-ext-float-dock="right-panel"
-        data-ext-float-dock-default="right-panel"
         /* 小屏全屏与最大化按钮都由 aiti-float 托管（自动注入 ⛶/❐，盒子 !important 接管） */
         style={{
           width: 900,
@@ -1819,7 +1818,7 @@ export function ExtManDockFace(props: any) {
   if (!docked) return null;
   return (
     <DockBody itemKey={EXTMAN_KEY} zone="right-panel" title="扩展管理" chrome="tab"
-      zones={["right-panel"]} defaultZone="right-panel">
+      zones={["right-panel"]}>
       <ExtManContent />
     </DockBody>
   );
