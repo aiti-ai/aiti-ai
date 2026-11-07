@@ -2,7 +2,7 @@
 
 This repo publishes three artifacts for each release:
 
-- npm package: `@agegr/pi-web`, published by GitHub Actions (`.github/workflows/publish.yml`) when a `v*` tag is pushed
+- npm package: `@aiti-ai/pi-web`, published by GitHub Actions (`.github/workflows/publish.yml`) when a `v*` tag is pushed
 - Docker image: `ghcr.io/agegr/pi-web`, tagged `<version>`, `<major>.<minor>` and `latest`, published by the same workflow on the same tag (see [docker.md](./docker.md))
 - GitHub Release: `agegr/pi-web`
 
@@ -12,7 +12,7 @@ Use this checklist from a clean `main` checkout.
 
 The publish workflow authenticates to npm with Trusted Publishing (OIDC). No npm token exists anywhere, so nothing expires or needs rotating.
 
-On npmjs.com, open `@agegr/pi-web` → Settings → Trusted Publisher → GitHub Actions and enter:
+On npmjs.com, open `@aiti-ai/pi-web` → Settings → Trusted Publisher → GitHub Actions and enter:
 
 - Organization or user: `agegr`
 - Repository: `pi-web`
@@ -46,7 +46,7 @@ Nothing is built locally, so a running dev server on 30141 is safe, and a local 
 Before bumping, confirm the next version is free (replace `<version>`):
 
 ```bash
-npm view @agegr/pi-web@<version> version --registry https://registry.npmjs.org/   # expect E404
+npm view @aiti-ai/pi-web@<version> version --registry https://registry.npmjs.org/   # expect E404
 git ls-remote --tags origin v<version>                                            # expect empty
 ```
 
@@ -107,12 +107,12 @@ Notes:
 
 - `gh run watch` can return a non-zero exit while the run is still going (it did on the long container build). Check `gh run view <run-id>` before treating it as a failure.
 
-- A newly published version may take a few minutes to show up. `npm view @agegr/pi-web@<version> version` can return E404 and `npm view @agegr/pi-web version` can show the previous version even though the workflow log printed `+ @agegr/pi-web@<version>`. This is registry propagation, not a failed publish: do not re-run the workflow. Poll the registry until the version appears:
+- A newly published version may take a few minutes to show up. `npm view @aiti-ai/pi-web@<version> version` can return E404 and `npm view @aiti-ai/pi-web version` can show the previous version even though the workflow log printed `+ @aiti-ai/pi-web@<version>`. This is registry propagation, not a failed publish: do not re-run the workflow. Poll the registry until the version appears:
 
 ```bash
 curl -s https://registry.npmjs.org/@agegr%2Fpi-web/<version> | head -c 80   # JSON once it exists, "version not found" before
-npm view @agegr/pi-web dist-tags --registry https://registry.npmjs.org/
-npm view @agegr/pi-web versions --json --registry https://registry.npmjs.org/
+npm view @aiti-ai/pi-web dist-tags --registry https://registry.npmjs.org/
+npm view @aiti-ai/pi-web versions --json --registry https://registry.npmjs.org/
 ```
 
 - The package carries a provenance statement linking it to the workflow run; the npm page shows it.
@@ -158,7 +158,7 @@ Write the release notes from those commits, not from memory. Include both Chines
 
 - Check commands, flags and setting names against `README.md` and the code before writing them down.
 - Thank outside contributors by name: `git log --format='%h %an | %s' v<previous>..v<version>` lists authors, and the previous release's notes show the style.
-- Open with the install/upgrade command (`npm install -g @agegr/pi-web@latest`), as earlier releases did.
+- Open with the install/upgrade command (`npm install -g @aiti-ai/pi-web@latest`), as earlier releases did.
 - Write the notes to a file outside the repo (for example `NOTES=$(mktemp)`), or pass them through stdin as shown below. A `release-notes.md` in the repo root is an untracked file in the next release's `git status`.
 
 Suggested structure:
@@ -182,7 +182,7 @@ Suggested structure:
 
 ### 内部调整
 
-- 发布 npm 包 `@agegr/pi-web@<version>`。
+- 发布 npm 包 `@aiti-ai/pi-web@<version>`。
 
 ## English
 
@@ -202,7 +202,7 @@ Prepared from commits in `v<previous>..v<version>`.
 
 ### Internal
 
-- Published npm package `@agegr/pi-web@<version>`.
+- Published npm package `@aiti-ai/pi-web@<version>`.
 ```
 
 ## 5. Create or Update the GitHub Release
@@ -244,8 +244,8 @@ EOF
 ```bash
 gh release view v<version> --repo agegr/pi-web
 gh run list --workflow publish.yml --limit 1
-npm view @agegr/pi-web@<version> version --registry https://registry.npmjs.org/
-npm view @agegr/pi-web dist-tags --registry https://registry.npmjs.org/
+npm view @aiti-ai/pi-web@<version> version --registry https://registry.npmjs.org/
+npm view @aiti-ai/pi-web dist-tags --registry https://registry.npmjs.org/
 git status --short --branch
 git log --oneline --decorate -3
 git ls-remote --tags origin
