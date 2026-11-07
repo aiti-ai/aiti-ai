@@ -21,7 +21,7 @@ export function severityColor(remaining: number | undefined, limit: number | und
   const ratio = remaining / limit;
   if (ratio >= 0.5) return "var(--ok, #16a34a)";
   if (ratio >= 0.2) return "var(--warn, #d97706)";
-  return "var(--danger, #ef4444)";
+  return "var(--danger, var(--danger, #ef4444))";
 }
 
 /** True when this window currently blocks usage (provider said so, or zero left). */
@@ -65,7 +65,7 @@ export function ProviderUsageReportView({ report }: { report: UsageReport }) {
               ? Math.min(100, Math.max(0, (bucket.remaining / bucket.limit) * 100))
               : undefined;
             const alarming = isBucketAlarming(bucket);
-            const color = alarming ? "var(--danger, #ef4444)" : severityColor(bucket.remaining, bucket.limit);
+            const color = alarming ? "var(--danger, var(--danger, #ef4444))" : severityColor(bucket.remaining, bucket.limit);
             return (
               <div key={bucket.id} style={{ display: "grid", gridTemplateColumns: "minmax(64px, auto) minmax(70px, 110px) minmax(0, 1fr)", columnGap: 10, alignItems: "center" }}>
                 <span style={{ fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bucket.label}</span>
