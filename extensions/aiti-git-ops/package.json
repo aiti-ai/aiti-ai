@@ -11,10 +11,11 @@
   "contentHash": "063748d5dfbc763f",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-git-ops.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-git-ops"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-git-ops#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-git-ops/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
