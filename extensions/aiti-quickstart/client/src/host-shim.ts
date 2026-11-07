@@ -24,6 +24,12 @@ export function extSvc<T = unknown>(key: string): T | undefined {
   return (_ctx as any)?.getExtService?.(key) as T | undefined;
 }
 
+/** DI 方案 P2：订阅跨扩展服务上/下线（ctx.onExtServiceChange 的 shim 封装；返回退订函数，旧宿主返回空退订） */
+export function onExtServiceChange(fn: (key: string, phase: string) => void): () => void {
+  const c = _ctx as any;
+  return typeof c?.onExtServiceChange === "function" ? c.onExtServiceChange(fn) : () => {};
+}
+
 /** DI 方案 P2：注册跨扩展客户端服务（ctx.registerExtService 的 shim 封装；返回 disposer，旧宿主返回 null） */
 export function regSvc(key: string, impl: unknown): (() => void) | null {
   const c = _ctx as any;

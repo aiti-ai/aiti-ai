@@ -15,7 +15,7 @@
  * 打开通道：window 事件 `aiti-quickstart:open-hub`（openWorkspaceHub 派发；
  * entry.tsx 同时注册跨扩展服务 `aiti-quickstart.open`）。
  */
-import { useState, useEffect, t, extSvc, createPortal } from "./host-shim";
+import { useState, useEffect, t, extSvc, createPortal, apiUrl } from "./host-shim";
 import { parseGitUrl } from "./quickstart-logic";
 
 /* ── 服务面（全部软依赖，缺席降级） ── */
@@ -24,7 +24,7 @@ interface HistoryEntry { id: string; source: string; root: string; name: string;
 
 async function fetchHistory(): Promise<HistoryEntry[]> {
   try {
-    const res = await fetch("api/extensions/aiti-quickstart/workspace/history", { headers: { accept: "application/json" } });
+    const res = await fetch(apiUrl("/api/extensions/aiti-quickstart/workspace/history"), { headers: { accept: "application/json" } });
     const d = (await res.json()) as { ok?: boolean; workspaces?: HistoryEntry[] };
     return Array.isArray(d.workspaces) ? d.workspaces : [];
   } catch {
@@ -48,7 +48,7 @@ function setCwd(root: string): void {
 function recordAndEnter(root: string, source: "clone" | "local" | "new", extra?: { url?: string }): void {
   // 服务端 clone 已记历史；local/new 在前端补一条（幂等：同 root 去重置顶）
   if (source !== "clone") {
-    void fetch("api/extensions/aiti-quickstart/workspace/history", {
+    void fetch(apiUrl("/api/extensions/aiti-quickstart/workspace/history"), {
       method: "PUT", headers: { "content-type": "application/json" },
       body: JSON.stringify({ action: "record", source, root, name: root.split(/[\\/]/).filter(Boolean).pop() ?? root, time: Date.now() }),
     }).catch(() => {});
@@ -144,7 +144,7 @@ export function WorkspaceHub() {
                       {h.name}
                     </button>
                     <button type="button" title={t("qs.hub.forget")} onClick={async () => {
-                      await fetch("api/extensions/aiti-quickstart/workspace/forget", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: h.id }) }).catch(() => {});
+                      await fetch(apiUrl("/api/extensions/aiti-quickstart/workspace/forget"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ id: h.id }) }).catch(() => {});
                       refreshHistory();
                     }}
                       style={{ border: "none", background: "none", padding: "3px 8px 3px 2px", cursor: "pointer", color: "var(--text-dim, #888)", fontSize: 10 }}>✕</button>
@@ -188,7 +188,7 @@ function CloneTab(props: { onEnter: (root: string, source: "clone", extra?: { ur
     setBusy(true);
     setProgress("…");
     try {
-      const res = await fetch("api/extensions/aiti-quickstart/workspace/clone", {
+      const res = await fetch(apiUrl("/api/extensions/aiti-quickstart/workspace/clone"), {
         method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ url: parsed.ref, branch: parsed.branch ?? (branch.trim() || undefined), dir: dir.trim() || undefined, depth: depth ? 1 : undefined }),
       });
@@ -267,7 +267,7 @@ function LocalTab(props: { onEnter: (root: string, source: "local") => void }) {
     const p = path.trim().replace(/^~(?=\/|$)/, "").trim();
     if (!p) { setError(t("qs.hub.err.parse")); return; }
     try {
-      const res = await fetch("api/cwd/validate", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: p.startsWith("/") ? p : p }) });
+      const res = await fetch(apiUrl("/api/cwd/validate"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ cwd: p }) });
       const d = (await res.json()) as { cwd?: string; error?: string };
       if (!res.ok || !d.cwd) { setError(d.error ?? `HTTP ${res.status}`); return; }
       props.onEnter(d.cwd, "local");
@@ -292,7 +292,7 @@ function NewTab(props: { onEnter: (root: string, source: "new") => void }) {
     setError(null);
     setBusy(true);
     try {
-      const res = await fetch("api/default-cwd", { method: "POST" });
+      const res = await fetch(apiUrl("/api/default-cwd"), { method: "POST" });
       const d = (await res.json()) as { cwd?: string; error?: string };
       if (!res.ok || !d.cwd) { setError(d.error ?? `HTTP ${res.status}`); setBusy(false); return; }
       props.onEnter(d.cwd, "new");
