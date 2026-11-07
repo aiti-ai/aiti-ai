@@ -214,7 +214,7 @@ function PublisherCell({ publisher }: { publisher: any }) {
         )}
         <span style={chipStyle("var(--text-muted)", "var(--bg-hover)")}>{publisherSourceLabel(publisher.source)}</span>
         {trusted
-          ? <span style={chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")}>✓ {t("ext.trusted")}</span>
+          ? <span style={chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)")}>✓ {t("ext.trusted")}</span>
           : <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>⚠ {t("ext.notTrusted")}</span>}
       </div>
       {!publisher.name && publisher.fingerprint && (
@@ -452,7 +452,7 @@ function CapDetail({ name }: { name: string }) {
         <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", fontFamily: "var(--font-mono)", overflowWrap: "anywhere" }}>{name}</span>
         {missing
           ? <span style={chipStyle("var(--danger, #ef4444)", "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)")}>✗ {t("ext.depMissing")}</span>
-          : <span style={chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")}>✓ {t("ext.cap.effective")}: {c.effective}</span>}
+          : <span style={chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)")}>✓ {t("ext.cap.effective")}: {c.effective}</span>}
         {c.pinnedTo && <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>{t("ext.depViaPin")}: {c.pinnedTo}</span>}
       </div>
       {!missing && (
@@ -479,7 +479,7 @@ function CapDetail({ name }: { name: string }) {
                 {p.version && <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>v{p.version}</span>}
                 <SourceTag source={p.source} />
                 {p.takeover && <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>takeover</span>}
-                {p.id === c.effective && <span style={{ marginLeft: "auto", flexShrink: 0, ...chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)") } as React.CSSProperties}>✓ {t("ext.cap.effective")}</span>}
+                {p.id === c.effective && <span style={{ marginLeft: "auto", flexShrink: 0, ...chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)") } as React.CSSProperties}>✓ {t("ext.cap.effective")}</span>}
               </div>
             ))}
           </div>
@@ -618,7 +618,7 @@ function ConflictDetail() {
               {c.version && <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>v{c.version}</span>}
               <span title={c.dir} style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{shortenPath(c.dir)}</span>
               {c.winner
-                ? <span style={chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")}>✓ {t("ext.conflict.winner")}</span>
+                ? <span style={chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)")}>✓ {t("ext.conflict.winner")}</span>
                 : <span style={chipStyle("var(--text-dim)", "var(--bg-hover)")}>{t("ext.conflict.shadowed")}</span>}
             </div>
           ))}
@@ -1185,7 +1185,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, minWidth: 0, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 180, flex: 1 }}>
           {id === SELF_ID
-            ? <span title={t("ext.selfProtected")} style={chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")}>🔒 {t("ext.selfProtected")}</span>
+            ? <span title={t("ext.selfProtected")} style={chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)")}>🔒 {t("ext.selfProtected")}</span>
             : <Toggle enabled={enabled} loading={busy}
                 onToggle={() => void runOp(enabled ? "disable" : "enable", { id })}
                 label={enabled ? t("ext.disable") : t("ext.enable")} />}
@@ -1233,7 +1233,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                 </span>
                 {c
                   ? <span style={chipStyle(c.color, c.bg)} title={entry.protocol.detail || ""}>{c.icon} {c.label}</span>
-                  : <span style={chipStyle("var(--ok, #10b981)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")} title={entry.protocol.detail || ""}>✓ {t("ext.protocolOk")}</span>}
+                  : <span style={chipStyle("var(--ok, #10b981)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)")} title={entry.protocol.detail || ""}>✓ {t("ext.protocolOk")}</span>}
                 {entry.protocol.needsUpgrade && (
                   <button type="button" style={{ ...btnStyle, background: "var(--accent)", color: "white", borderColor: "var(--accent)" } as React.CSSProperties}
                     title={t("ext.protocolUpgradeTitle", { id, from: entry.protocol.declared ?? "legacy", to: entry.protocol.current })}
@@ -1284,7 +1284,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                     <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)" }}>×{ids.length}</span>
                     {isContext
                       ? <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>⚠ {t("ext.context")}</span>
-                      : <span style={chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")}>{t("ext.global")}</span>}
+                      : <span style={chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)")}>{t("ext.global")}</span>}
                   </div>
                   {items.map((it: any) => {
                     const label = (it.label || it.title || it.id) + "";
@@ -1359,7 +1359,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                   return (
                     <span key={n} role="button" tabIndex={0}
                       onClick={() => setState({ view: "conflicts", selConflict: "takeover:" + n, selected: null, mobileView: state.isMobile ? "detail" : state.mobileView })}
-                      style={{ ...chipStyle(effective ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)" : "var(--text-dim)", effective ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)" : "var(--bg-hover)"), fontFamily: "var(--font-mono)", fontSize: 11, cursor: "pointer" }}>
+                      style={{ ...chipStyle(effective ? "color-mix(in srgb, var(--ok, #10b981) 90%, transparent)" : "var(--text-dim)", effective ? "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)" : "var(--bg-hover)"), fontFamily: "var(--font-mono)", fontSize: 11, cursor: "pointer" }}>
                       {n} · {effective ? t("ext.takeoverEffective") : t("ext.takeoverShadowed")}
                     </span>
                   );
@@ -1394,7 +1394,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                     // npmDepStates（服务端文件级探测，就近优先）：shared=共享根命中 / local=扩展本地 / missing=两边都没有
                     const st = entry.npmDepStates?.[d];
                     const mark = st === "shared" ? "✓" : st === "local" ? "●" : st === "missing" ? "✗" : "";
-                    const color = st === "shared" ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)" : st === "missing" ? "color-mix(in srgb, var(--danger, #ef4444) 90%, transparent)" : "var(--text-dim)";
+                    const color = st === "shared" ? "color-mix(in srgb, var(--ok, #10b981) 90%, transparent)" : st === "missing" ? "color-mix(in srgb, var(--danger, #ef4444) 90%, transparent)" : "var(--text-dim)";
                     const stateText = st === "shared" ? t("ext.depShared") : st === "local" ? t("ext.depLocal") : st === "missing" ? t("ext.depMissing") : "";
                     return <span key={d} style={{ color, whiteSpace: "nowrap" }} title={stateText ? d + " · " + stateText : d}>{mark ? mark + " " : ""}{d}</span>;
                   })}
@@ -1408,7 +1408,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
         <div style={sectionTitle}>{t("ext.serverCaps")}</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {(entry.serverHooks || []).map((hk: string) => <span key={hk} style={{ ...chipStyle("var(--text-muted)", "var(--bg-hover)"), fontFamily: "var(--font-mono)" }}>{hk}()</span>)}
-          {(entry.agentHooks || []).map((hk: string) => <span key={"a:" + hk} style={{ ...chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)"), fontFamily: "var(--font-mono)" }}>agent:{hk}()</span>)}
+          {(entry.agentHooks || []).map((hk: string) => <span key={"a:" + hk} style={{ ...chipStyle("color-mix(in srgb, var(--ok, #10b981) 90%, transparent)", "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)"), fontFamily: "var(--font-mono)" }}>agent:{hk}()</span>)}
           {!(entry.serverHooks || []).length && !(entry.agentHooks || []).length && <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("ext.noDeps")}</span>}
         </div>
         {entry.provides && entry.provides.length > 0 && (
