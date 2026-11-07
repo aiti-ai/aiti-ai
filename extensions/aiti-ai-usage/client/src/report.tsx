@@ -831,7 +831,7 @@ function KeysTab({ range, custom, filters }: { range: RangeKey; custom: CustomRa
               <td style={{ ...td, fontWeight: 500 }}>{r.keyName || "(direct)"}</td>
               <td style={{ ...td, textAlign: "right", fontWeight: 600 }}>{fmtN(r.reqs)}</td>
               <td style={{ ...td, textAlign: "right" }}>{fmtN(r.ok)}</td>
-              <td style={{ ...td, textAlign: "right", color: r.err429 > 0 ? "#f59e0b" : undefined }}>{fmtN(r.err429)}</td>
+              <td style={{ ...td, textAlign: "right", color: r.err429 > 0 ? "var(--warn, #f59e0b)" : undefined }}>{fmtN(r.err429)}</td>
               <td style={{ ...td, textAlign: "right" }}>{r.reqs ? Math.round(100 * r.err429 / r.reqs) : 0}%</td>
               <td style={{ ...td, textAlign: "right" }}>{r.input != null ? fmtN(r.input) : "—"}</td>
               <td style={{ ...td, textAlign: "right" }}>{r.output != null ? fmtN(r.output) : "—"}</td>
@@ -1841,7 +1841,7 @@ function TrendTab({ range, custom, filters }: { range: RangeKey; custom: CustomR
 // ---------------------------------------------------------------- 标签页：会话
 
 const STATE_COLOR: Record<string, string> = {
-  running: "#10b981", active: "#6366f1", idle: "#f59e0b", ended: "#6b7280", forked: "#a78bfa", archived: "#6b7280",
+  running: "#10b981", active: "#6366f1", idle: "var(--warn, #f59e0b)", ended: "#6b7280", forked: "#a78bfa", archived: "#6b7280",
 };
 
 function SessionsTab() {
@@ -1919,7 +1919,7 @@ function SessionsTab() {
 
 const Loading = () => <div style={{ padding: 32, textAlign: "center", color: "var(--text-dim)", fontSize: 12 }}>…</div>;
 const Empty = () => <div style={{ padding: 20, textAlign: "center", color: "var(--text-dim)", fontSize: 12 }}>{t("au.empty")}</div>;
-const Err = ({ msg }: { msg: string }) => <div style={{ padding: 24, color: "#f87171", fontSize: 12 }}>{msg}</div>;
+const Err = ({ msg }: { msg: string }) => <div style={{ padding: 24, color: "var(--danger, #f87171)", fontSize: 12 }}>{msg}</div>;
 const PickHint = () => <div style={{ padding: 24, textAlign: "center", color: "var(--text-dim)", fontSize: 12 }}>{t("au.range.pick")}</div>;
 
 // ---------------------------------------------------------------- 主面板
