@@ -64,9 +64,10 @@
   "contentHash": "8a565c15affee4bd",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-ui-env.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-ui-env"
   },
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-ui-env/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
