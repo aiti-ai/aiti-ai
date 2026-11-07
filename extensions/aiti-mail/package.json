@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-mail",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "type": "module",
   "description": "aiti-mail · pi-web 通用邮件发送出口（零依赖 SMTP 客户端 + node:sqlite 发送记录）",
   "scripts": {
