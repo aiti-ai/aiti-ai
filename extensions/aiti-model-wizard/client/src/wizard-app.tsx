@@ -636,7 +636,7 @@ function ParamPanel({ data, onClose, onSaved, dialogEl, embedded }: { data: any;
         ) : null}
         <div style={{ overflow: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 10 }}>
           <div className="amw-mono" style={{ fontSize: 11, color: "var(--text-subtle,#666)", wordBreak: "break-all" }}>{"provider: " + data.provider + " · api: " + (data.api || "—")}</div>
-          {data.crossFrom ? <div style={{ padding: "4px 8px", borderRadius: 8, background: "rgba(245,158,11,.12)", color: "#b45309", fontSize: 11 }}>{"本 provider 目录未收录该模型，参数借其它网关同 id 条目互证（来源：" + data.crossFrom + "）—— 价格以该网关为准"}</div> : null}
+          {data.crossFrom ? <div style={{ padding: "4px 8px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "#b45309", fontSize: 11 }}>{"本 provider 目录未收录该模型，参数借其它网关同 id 条目互证（来源：" + data.crossFrom + "）—— 价格以该网关为准"}</div> : null}
         {edit ? (
           <>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
@@ -1984,7 +1984,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   <input className="amw-input" disabled={k.enabled === false} style={{width: 56, flexShrink: 0}} type="number" min={1} placeholder="rpm" title="每分钟请求上限（可选）" value={row.rpm !== undefined ? row.rpm : (k.rpm || "")} onChange={(ev) => rowSet({ rpm: ev.target.value })} />
                   <input className="amw-input" disabled={k.enabled === false} style={{width: 72, flexShrink: 0}} placeholder="间隔ms·0=突发" title="等间距节流（默认匀速）三种填法：\n① 留空 = auto：按 rpm 自动折算（60000÷rpm，rpm30→每2s一个），默认\n② 0 = 关闭匀速：仅 rpm 滑动窗口（突发模式，允许瞬间打满配额）\n③ 数字 = 固定间隔毫秒（如 2000 = 每2s一个）\n与 rpm 同时生效，取最大等待" value={row.minIntervalMs !== undefined ? row.minIntervalMs : (k.minIntervalMs ?? "")} onChange={(ev) => rowSet({ minIntervalMs: ev.target.value })} />
                   <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0 }} title={dirty ? "保存修改（改名/换 key/改 rpm/改间隔，立即写入 models.json）" : "无改动"} disabled={e.busy || !dirty} onClick={() => editKeySave(p.provider, k)}>💾</button>
-                  <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0, ...(k.enabled === false ? { color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "rgba(245,158,11,.12)" } : {}) }}
+                  <button className="amw-btn" style={{ padding: "2px 8px", flexShrink: 0, ...(k.enabled === false ? { color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)" } : {}) }}
                     title={k.enabled === false ? "临时禁用中（不参与轮转，配置未删除）——点击重新启用" : "临时禁用此 key（不参与轮转，配置未删除，随时可一键启用）"}
                     disabled={e.busy} onClick={() => editKeyToggle(p.provider, k.name, k.enabled === false)}>
                     {k.enabled === false ? "▶" : "⏸"}
@@ -2011,7 +2011,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
     if (!cp) return null;
     const t = cp.phase === "probing"
       ? <span title="实测验证 maxTokens 上限…" style={{ color: "var(--warn, #f59e0b)" }}>⏳</span>
-      : cp.corrected ? <span title={cp.detail || "元数据虚报，已自动下调并回写"} style={{ color: "#10b981", fontWeight: 700 }}>↓</span>
+      : cp.corrected ? <span title={cp.detail || "元数据虚报，已自动下调并回写"} style={{ color: "var(--ok, #10b981)", fontWeight: 700 }}>↓</span>
       : cp.error || (!cp.skipped && !cp.corrected) ? <span title={cp.detail || cp.error || "实测失败"} style={{ color: "var(--danger, #ef4444)" }}>!</span>
       : null;
     return t;
@@ -2067,13 +2067,13 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               const isNew = availNew.includes(id);
               const mtags = isNew && nmd ? [nmd.contextWindow ? fmtTok(nmd.contextWindow) + " ctx" : "", nmd.reasoning ? "推理" : ""].filter(Boolean) : [];
               return (
-                <label key={id} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 8, border: isNew ? "1px solid rgba(34,197,94,.5)" : "1px solid var(--border,#e0e0e0)", cursor: "pointer", background: availChecked.includes(id) ? "rgba(37,99,235,.12)" : (isNew ? "rgba(34,197,94,.07)" : "var(--bg,#fff)") }}>
+                <label key={id} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 8, border: isNew ? "1px solid color-mix(in srgb, var(--ok, #22c55e) 50%, transparent)" : "1px solid var(--border,#e0e0e0)", cursor: "pointer", background: availChecked.includes(id) ? "rgba(37,99,235,.12)" : (isNew ? "color-mix(in srgb, var(--ok, #22c55e) 7%, transparent)" : "var(--bg,#fff)") }}>
                   <input type="checkbox" checked={availChecked.includes(id)} onChange={() => toggleEditAvail(p.provider, id)} style={{ margin: 0 }} />
                   <span style={{ fontFamily: "ui-monospace,monospace", fontSize: 11 }}>{id}</span>
                   <EyeBtn title={"查看 " + id + " 参数（目录反填，未配置也可看）"} onClick={() => viewModelParams(p.provider, id)} />
                   {capBadge(p.provider, id)}
-                  {mtags.length ? <span style={{ color: "#6b7280", fontSize: 9 }}>{mtags.join(" · ")}</span> : null}
-                  {isNew ? <span style={{ padding: "0 5px", borderRadius: 6, background: "rgba(34,197,94,.16)", color: "#15803d", fontSize: 9, fontWeight: 700 }}>新</span> : null}
+                  {mtags.length ? <span style={{ color: "var(--text-muted, #6b7280)", fontSize: 9 }}>{mtags.join(" · ")}</span> : null}
+                  {isNew ? <span style={{ padding: "0 5px", borderRadius: 6, background: "color-mix(in srgb, var(--ok, #22c55e) 16%, transparent)", color: "#15803d", fontSize: 9, fontWeight: 700 }}>新</span> : null}
                 </label>
               );
             }) : <span style={{ color: "var(--text-subtle,#999)", fontSize: 11 }}>（无匹配）</span>}
@@ -2085,7 +2085,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                 const mid = typeof id === "string" ? id : (id && id.id);
                 const mEn = !(typeof id === "object" && id && id.enabled === false);
                 return (
-                <span key={mid} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 8, border: mEn ? "1px solid var(--border,#e0e0e0)" : "1px dashed var(--warn, #f59e0b)", background: mEn ? "var(--bg-subtle,#f5f5f5)" : "rgba(245,158,11,.10)", fontSize: 11, fontFamily: "ui-monospace,monospace", ...(mEn ? {} : { color: "#b45309" }) }}>
+                <span key={mid} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "2px 8px", borderRadius: 8, border: mEn ? "1px solid var(--border,#e0e0e0)" : "1px dashed var(--warn, #f59e0b)", background: mEn ? "var(--bg-subtle,#f5f5f5)" : "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)", fontSize: 11, fontFamily: "ui-monospace,monospace", ...(mEn ? {} : { color: "#b45309" }) }}>
                   {mid}
                   {!mEn ? <span style={{ fontSize: 9, color: "#b45309", fontWeight: 700 }}>禁用</span> : null}
                   {capBadge(p.provider, mid)}
@@ -2807,7 +2807,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             </label>
           </div>
         ) : (
-          <div style={{ ...barStyle, background: "rgba(245,158,11,.14)", color: "#b45309" }}>
+          <div style={{ ...barStyle, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "#b45309" }}>
             <span style={{ flex: "1 1 auto" }}>尚未测试——保存后立即生效，建议先测一次</span>
             <button
               className="amw-btn"
@@ -2851,7 +2851,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
         <div className="amw-note is-ok">{"✅ " + cd.hint}</div>
         {rows.map((r, i) => (
           <div key={i} style={{ marginBottom: 4, fontSize: 12 }}>
-            <span style={{ padding: "2px 8px", borderRadius: 8, background: r.strong ? "rgba(37,99,235,.1)" : "rgba(245,158,11,.14)", color: r.strong ? "var(--accent,#2563eb)" : "#b45309", marginRight: 6 }}>{r.text}</span>
+            <span style={{ padding: "2px 8px", borderRadius: 8, background: r.strong ? "rgba(37,99,235,.1)" : "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: r.strong ? "var(--accent,#2563eb)" : "#b45309", marginRight: 6 }}>{r.text}</span>
             <span style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{r.src}</span>
           </div>
         ))}
@@ -2929,7 +2929,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", fontSize: 11, marginBottom: 3, alignItems: "center" }}>
                           {p.apiType ? <span className="amw-mono" style={{color: "var(--text-subtle,#666)"}}>{"api: " + p.apiType}</span> : null}
                           {p.doc ? <a href={LINK(p.doc)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title="打开官网/文档（新窗口）">官网/文档</a> : null}
-                          {p.signupUrl ? <a href={LINK(p.signupUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(34,197,94,.4)", background: "rgba(34,197,94,.06)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title="打开注册页（新窗口）">注册</a> : null}
+                          {p.signupUrl ? <a href={LINK(p.signupUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)", background: "color-mix(in srgb, var(--ok, #22c55e) 6%, transparent)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title="打开注册页（新窗口）">注册</a> : null}
                           {p.tokenUrl ? <a href={LINK(p.tokenUrl)} target="_blank" rel="noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title="打开取 token 页（新窗口）">取 token</a> : null}
                         </div>
                         {p.register ? <div style={{ fontSize: 11, color: "var(--text-subtle,#555)", margin: "2px 0" }}>{String(p.register).slice(0, 160)}</div> : null}
@@ -3013,7 +3013,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       <div style={{ fontSize: 10.5, color: "var(--text-subtle,#777)", margin: "0 0 5px", lineHeight: 1.4, height: 29, overflow: "hidden" }}>{(c.main.register || "点选下方套餐接入").slice(0, 110)}</div>
                       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 }}>
                         {c.main.doc ? <a href={LINK(c.main.doc)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid var(--border,#e0e0e0)", background: "var(--bg,#fff)", color: "var(--accent,#2563eb)", fontSize: 12, textDecoration: "none" }} title={"打开官网/文档（新窗口）"}>官网</a> : null}
-                        {c.main.signupUrl ? <a href={LINK(c.main.signupUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(34,197,94,.4)", background: "rgba(34,197,94,.06)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={"打开注册页（新窗口）"}>注册</a> : null}
+                        {c.main.signupUrl ? <a href={LINK(c.main.signupUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)", background: "color-mix(in srgb, var(--ok, #22c55e) 6%, transparent)", color: "#15803d", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={"打开注册页（新窗口）"}>注册</a> : null}
                         {c.main.tokenUrl ? <a href={LINK(c.main.tokenUrl)} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 7, border: "1px solid rgba(99,102,241,.4)", background: "rgba(99,102,241,.06)", color: "#4f46e5", fontSize: 12, fontWeight: 600, textDecoration: "none" }} title={"打开取 token 页（新窗口）"}>取 token</a> : null}
                       </div>
                       <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
@@ -3024,7 +3024,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                             title={pl.provider.baseUrl + "（" + pl.provider.apiType + "）"} onClick={() => pickPlan(pl)}>{pl.label}</button>
                         ))}
                         {aff && aff[c.id] && aff[c.id].link ? (
-                          <a key={"aff-" + c.id} href={aff[c.id].link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", fontSize: 11, fontWeight: 600, borderRadius: 7, background: "rgba(34,197,94,.08)", border: "1px solid rgba(34,197,94,.35)", color: "#15803d", textDecoration: "none" }} title={aff[c.id].note || "通过本链接注册，双方得免费额度（新窗口）"}>有礼</a>
+                          <a key={"aff-" + c.id} href={aff[c.id].link} target="_blank" rel="noopener noreferrer" style={{ display: "inline-flex", alignItems: "center", padding: "3px 10px", fontSize: 11, fontWeight: 600, borderRadius: 7, background: "color-mix(in srgb, var(--ok, #22c55e) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 35%, transparent)", color: "#15803d", textDecoration: "none" }} title={aff[c.id].note || "通过本链接注册，双方得免费额度（新窗口）"}>有礼</a>
                         ) : null}
                       </div>
                     </div>
@@ -3038,7 +3038,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             : results.map((p: any) => (
               <div key={p.id} className={"amw-card" + (sel && sel.id === p.id ? " is-on" : "")} onClick={() => pickProvider(p)}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <span style={{ fontWeight: 600 }}>{[p.cnName, p.name].filter(Boolean).join(" / ")}{p.hasCn ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(37,99,235,.1)", color: "var(--accent,#2563eb)", fontSize: 10 }}>国内</span> : null}{p.native ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(22,163,74,.12)", color: "#15803d", fontSize: 10 }}>pi 内置</span> : null}{p.matched && p.matched !== "text" ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(245,158,11,.14)", color: "#b45309", fontSize: 10 }}><Ic size={10} paths={ICONS.refresh} />{" 地址反向命中 " + p.reverseScore}</span> : null}</span>
+                  <span style={{ fontWeight: 600 }}>{[p.cnName, p.name].filter(Boolean).join(" / ")}{p.hasCn ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(37,99,235,.1)", color: "var(--accent,#2563eb)", fontSize: 10 }}>国内</span> : null}{p.native ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "rgba(22,163,74,.12)", color: "#15803d", fontSize: 10 }}>pi 内置</span> : null}{p.matched && p.matched !== "text" ? <span style={{ marginLeft: 6, padding: "1px 6px", borderRadius: 8, background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)", color: "#b45309", fontSize: 10 }}><Ic size={10} paths={ICONS.refresh} />{" 地址反向命中 " + p.reverseScore}</span> : null}</span>
                   <span className="amw-mono" style={{ color: "var(--text-subtle,#666)", fontSize: 11 }}>{p.matchedBaseUrl || p.baseUrl || ""}</span>
                 </div>
                 <div style={{ color: "var(--text-subtle,#555)", fontSize: 11, marginTop: 4, maxHeight: 30, overflow: "hidden" }}>{p.native ? "pi 内置 provider · " + p.modelCount + " 个模型 · 填 API Key 接入" : ([p.register || p.doc || ""].filter(Boolean)[0] || (p.models && p.models.length ? "已知模型 " + p.models.length + " 个" : "点击查看详情"))}</div>
@@ -3206,12 +3206,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     title={rtTip({ count1h: c1h, count24h: c24, byStatus: null, lastAt, lastStatus })}>{info.icon}{c24}</span>;
                 })()}
                 {p.combo ? <span className="amw-tag is-combo">🧩</span> : null}
-                {p.enabled === false ? <span className="amw-tag" style={{ color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "rgba(245,158,11,.14)" }} title="临时禁用中（配置未删除，点击详情页可重新启用）">禁用</span> : null}
+                {p.enabled === false ? <span className="amw-tag" style={{ color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)" }} title="临时禁用中（配置未删除，点击详情页可重新启用）">禁用</span> : null}
                 {(() => {
                   // 树上禁用 key 数徽标：不点详情也能看到有 key 处于禁用态
                   const dis = (p.keys || []).filter((k: any) => k && k.enabled === false).length;
                   if (!dis) return null;
-                  return <span style={{ fontSize: 9, flexShrink: 0, color: "#b45309", border: "1px solid rgba(245,158,11,.5)", background: "rgba(245,158,11,.12)", borderRadius: 5, padding: "0 4px", cursor: "default" }}
+                  return <span style={{ fontSize: 9, flexShrink: 0, color: "#b45309", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", borderRadius: 5, padding: "0 4px", cursor: "default" }}
                     title={dis + " 把 key 临时禁用中（详情页「多 Key 轮转」可启用）"}>🔑⏸{dis}</span>;
                 })()}
                 {p.authType === "oauth" ? <span className="amw-tag is-oauth">🔐</span> : null}
@@ -3230,7 +3230,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                     {!mEn ? <span style={{ fontSize: 9, color: "#b45309", flexShrink: 0 }} title="临时禁用中（未删除，详情页可重新启用）">⏸</span> : null}
                     {checkDot(p.provider, id)}
                     {probe?.phase === "probing" ? <span style={{ fontSize: 9, color: "var(--warn, #f59e0b)", flexShrink: 0 }} title="实测最大输出中">⏳</span> : null}
-                    {probe?.phase === "done" && !probe.error ? <span style={{ fontSize: 9, color: "#10b981", flexShrink: 0 }} title={probe.corrected ? "实测已校正 maxTokens" : "实测通过"}>{probe.corrected ? "↓" : "✓"}</span> : null}
+                    {probe?.phase === "done" && !probe.error ? <span style={{ fontSize: 9, color: "var(--ok, #10b981)", flexShrink: 0 }} title={probe.corrected ? "实测已校正 maxTokens" : "实测通过"}>{probe.corrected ? "↓" : "✓"}</span> : null}
                     {probe?.phase === "done" && probe.error ? <span style={{ fontSize: 9, color: "var(--danger, #ef4444)", flexShrink: 0 }} title={probe.error}>!</span> : null}
                   </button>
                 );
@@ -3357,7 +3357,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                   // 不提示的话"是否禁用"完全不可知（keys 由 /status 带出，maskKeyEntry 保留 enabled）
                   const dis = (p.keys || []).filter((k: any) => k && k.enabled === false).length;
                   if (!dis) return null;
-                  return <span className="amw-tag" style={{ color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "rgba(245,158,11,.14)" }}
+                  return <span className="amw-tag" style={{ color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)" }}
                     title={"有 " + dis + " 把 key 临时禁用中（不参与轮转，配置未删除）——展开下方「多 Key 轮转」可查看 / 一键启用"}>🔑⏸ {dis} 禁用</span>;
                 })()}
                 {(() => {
@@ -3423,7 +3423,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
             </button>
             {p.runtime ? null : <button className="amw-btn" style={{ padding: "3px 8px" }} title="刷新该 provider 的运行中代理（改 models.json / 多 key 后立即生效，不重启会话）" onClick={() => doRefreshProxies(p.provider)}><Ic size={12} paths={ICONS.refresh} /></button>}
             {p.runtime || p.authType === "oauth" ? null : (
-              <button className="amw-btn" style={{ padding: "3px 8px", ...(p.enabled === false ? { color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "rgba(245,158,11,.12)" } : {}) }}
+              <button className="amw-btn" style={{ padding: "3px 8px", ...(p.enabled === false ? { color: "#b45309", borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)" } : {}) }}
                 title={p.enabled === false ? "临时禁用中——模型已从列表隐藏、代理已停（配置未删除）。点击重新启用" : "临时禁用（不删除配置）：模型从列表隐藏、代理停止，随时可一键启用"}
                 onClick={() => doToggleProvider(p.provider, p.enabled === false)}>
                 {p.enabled === false ? "▶ 启用" : "禁用"}
@@ -3564,7 +3564,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
           </div>
         ) : null}
         {niRows.length ? (
-          <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 10, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.4)" }}>
+          <div style={{ marginBottom: 10, padding: "10px 12px", borderRadius: 10, background: "color-mix(in srgb, var(--ok, #22c55e) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--ok, #22c55e) 40%, transparent)" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
               <span style={{ fontWeight: 700, fontSize: 13, color: "#15803d", flex: 1 }}>{"发现 " + niTotal + " 个新模型"}</span>
               <button className="amw-btn" style={{ padding: "3px 10px", fontSize: 11 }} title="清除提醒，不再标注这些新模型" onClick={() => ackNew()}>知道了</button>
@@ -3599,7 +3599,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       <label key={id} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 11, padding: "2px 0 2px 2px", cursor: "pointer" }}>
                         <input type="checkbox" checked={isSel(name, id)} onChange={() => toggleSel(name, id, all)} />
                         <span className="amw-mono" style={{fontWeight: 600}}>{id}</span>
-                        {tags.length ? <span style={{ color: "#6b7280", fontSize: 10 }}>{tags.join(" · ")}</span> : null}
+                        {tags.length ? <span style={{ color: "var(--text-muted, #6b7280)", fontSize: 10 }}>{tags.join(" · ")}</span> : null}
                       </label>
                     );
                   })}
@@ -3802,7 +3802,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
                       : "ctx=" + fmtK(cw) + " · out=" + fmtK(ot)}
                       style={{ display: "flex", alignItems: "center", gap: 8, padding: "5px 8px", borderRadius: 8, background: "rgba(127,127,127,.06)", marginBottom: 4, flexWrap: small ? "wrap" : "nowrap",
                         ...(abnormal && rEn ? { boxShadow: "inset 0 0 0 1.5px rgba(217,119,6,.55)", background: "rgba(217,119,6,.06)" } : {}),
-                        ...(!rEn ? { boxShadow: "inset 0 0 0 1.5px rgba(245,158,11,.5)", background: "rgba(245,158,11,.08)" } : {}) }}>
+                        ...(!rEn ? { boxShadow: "inset 0 0 0 1.5px color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", background: "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)" } : {}) }}>
                       <ProviderAvatar id={r.provider} name={r.provider} size={20} radius={6} />
                       <span style={{ fontSize: 12, fontWeight: 600, flex: "0 0 auto", ...(!rEn ? { color: "#b45309" } : {}) }}>{r.provider}</span>
                       <span className="amw-mono" style={{ fontSize: 12, flex: 1, minWidth: small ? 140 : 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", ...(!rEn ? { color: "#b45309", textDecoration: "line-through", opacity: 0.7 } : {}) }} title={meta ? "ctx=" + (meta.contextWindow ?? "?") + " · out=" + (meta.maxTokens ?? "?") + " · keys=" + meta.keyCount : "已失效"}>{r.model}</span>
@@ -3915,7 +3915,7 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                   <span style={{ fontWeight: 650, fontSize: 13 }}>{cb.name}</span>
-                  {cb.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", border: "1px solid rgba(245,158,11,.5)", borderRadius: 999, padding: "0 8px", fontWeight: 700 }}>已禁用</span> : null}
+                  {cb.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 50%, transparent)", borderRadius: 999, padding: "0 8px", fontWeight: 700 }}>已禁用</span> : null}
                   <span className="amw-mono" style={{fontSize: 10, color: "var(--text-subtle,#999)"}}>{cb.providerId}</span>
                 </div>
                 <div style={{ fontSize: 11, color: "var(--text-subtle,#888)", marginTop: 3 }}>
@@ -3934,12 +3934,12 @@ export function App({ open, onClose, initialTab, initialProvider, embedded, vari
               <button className="amw-btn is-danger" style={{ padding: "3px 8px" }} title="删除聚合组" onClick={() => doDelete(cb.providerId)}><Ic size={12} paths={ICONS.trash} /></button>
             </div>
             {cb.models.map((m: any) => (
-              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 7, padding: "6px 8px", borderRadius: 8, background: "rgba(127,127,127,.06)", ...(m.enabled === false ? { opacity: 0.62, boxShadow: "inset 0 0 0 1.5px rgba(245,158,11,.45)" } : {}) }}>
+              <div key={m.id} style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", marginTop: 7, padding: "6px 8px", borderRadius: 8, background: "rgba(127,127,127,.06)", ...(m.enabled === false ? { opacity: 0.62, boxShadow: "inset 0 0 0 1.5px color-mix(in srgb, var(--warn, #f59e0b) 45%, transparent)" } : {}) }}>
                 <span className="amw-mono" style={{fontSize: 12, fontWeight: 700, color: m.enabled === false ? "#b45309" : "#4f46e5"}}>{cb.providerId}/{m.id}</span>
                 {m.enabled === false ? <span style={{ fontSize: 10, color: "#b45309", fontWeight: 700 }}>已禁用</span> : null}
                 <span style={{ color: "var(--text-subtle,#aaa)", fontSize: 11 }}>＝</span>
                 {(m.members || []).map((r: any, j: number) => (
-                  <span key={j} className="amw-mono" style={{ padding: "2px 8px", borderRadius: 999, background: r.enabled === false ? "rgba(245,158,11,.10)" : "rgba(127,127,127,.09)", border: r.enabled === false ? "1px dashed var(--warn, #f59e0b)" : "1px solid rgba(127,127,127,.18)", fontSize: 11, ...(r.enabled === false ? { color: "#b45309", textDecoration: "line-through" } : {}) }}>
+                  <span key={j} className="amw-mono" style={{ padding: "2px 8px", borderRadius: 999, background: r.enabled === false ? "color-mix(in srgb, var(--warn, #f59e0b) 10%, transparent)" : "rgba(127,127,127,.09)", border: r.enabled === false ? "1px dashed var(--warn, #f59e0b)" : "1px solid rgba(127,127,127,.18)", fontSize: 11, ...(r.enabled === false ? { color: "#b45309", textDecoration: "line-through" } : {}) }}>
                     {r.provider}/{r.model}{r.enabled === false ? " ⏸" : ""}{r.weight != null && r.weight !== 10 ? <b style={{ color: "#4f46e5" }}> ×{r.weight}</b> : null}
                     {Array.isArray(r.types) && r.types.length > 0
                       ? <span style={{ fontSize: 10, color: "#0891b2", fontWeight: 650 }}> [{r.types.map((x: string) => x === "text" ? "文本" : x === "vision" ? "图形" : "媒体").join("/")}]</span>

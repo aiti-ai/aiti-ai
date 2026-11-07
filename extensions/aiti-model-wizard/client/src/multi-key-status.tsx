@@ -370,23 +370,23 @@ export function MultiKeyStatusSummary({ onOpen, style }: { onOpen: () => void; s
   const { data, failed } = useProxyStatus();
   const sum = summaryOf(data);
   let bg = "rgba(148,163,184,.12)", fg = "var(--text-dim,#9ca3af)", txt = "运行状态…";
-  if (failed) { bg = "rgba(239,68,68,.12)"; fg = "#dc2626"; txt = "状态读取失败"; }
+  if (failed) { bg = "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)"; fg = "#dc2626"; txt = "状态读取失败"; }
   else if (data) {
     const keyIdx = buildKeyIndex(data.status);
     const anyFailing = data.status.some((p) =>
       (p.saturation?.length ?? 0) > 0) || [...keyIdx.values()].some((o) => o.health === "failing");
     const anyCooling = [...keyIdx.values()].some((o) => o.health === "cooling");
     if (data.status.length > 0 && anyFailing) {
-      bg = "rgba(239,68,68,.14)"; fg = "#dc2626";
+      bg = "color-mix(in srgb, var(--danger, #ef4444) 14%, transparent)"; fg = "#dc2626";
       txt = `${sum!.proxies} 代理 · 有 key 故障/限流`;
     } else if (data.status.length > 0 && anyCooling) {
-      bg = "rgba(245,158,11,.14)"; fg = "#b45309";
+      bg = "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)"; fg = "#b45309";
       txt = `${sum!.proxies} 代理 · 有槽位冷却中`;
     } else if (data.status.length > 0) {
-      bg = "rgba(34,197,94,.12)"; fg = "#16a34a";
+      bg = "color-mix(in srgb, var(--ok, #22c55e) 12%, transparent)"; fg = "#16a34a";
       txt = `${sum!.proxies} 代理` + (sum!.slots ? ` · ${sum!.slots} 槽位` : "") + (sum!.reqs > 0 ? ` · ${fmtN(sum!.ok)}✓/${fmtN(sum!.reqs)}` : "");
     } else if (data.loaded) { txt = "无聚合/多key 代理"; }
-    else if (data.present) { bg = "rgba(245,158,11,.14)"; fg = "#b45309"; txt = "引擎旧版·重启生效"; }
+    else if (data.present) { bg = "color-mix(in srgb, var(--warn, #f59e0b) 14%, transparent)"; fg = "#b45309"; txt = "引擎旧版·重启生效"; }
     else { txt = "引擎未加载"; }
   }
   return (
