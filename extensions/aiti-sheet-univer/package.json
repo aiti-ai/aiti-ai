@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-sheet-univer",
   "version": "0.1.0",
   "description": "Excel 表格编辑器（exceljs + Univer）",
-  "main": "index.js",
+  "main": "index.ts",
   "scripts": {
     "build": "vite build --config vite.config.ts",
     "deploy": "node tools/deploy.mjs"
