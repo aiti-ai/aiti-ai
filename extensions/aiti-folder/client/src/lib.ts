@@ -32,7 +32,7 @@ export function projectActivity(sessions: any[], running: Set<string>, unread: S
 }
 
 // ── git 状态 ──
-export const GIT_COLORS: Record<string, string> = { modified:"#d6a84b", added:"#4ade80", deleted:"#f87171", renamed:"#60a5fa", untracked:"#4ade80", conflict:"#f87171" };
+export const GIT_COLORS: Record<string, string> = { modified:"#d6a84b", added:"var(--ok, #4ade80)", deleted:"var(--danger, #f87171)", renamed:"#60a5fa", untracked:"var(--ok, #4ade80)", conflict:"var(--danger, #f87171)" };
 export const GIT_KEYS: Record<string, string> = { modified:"files.modified", added:"files.added", deleted:"files.deleted", renamed:"files.renamed", untracked:"files.untracked", conflict:"files.conflict" };
 export function buildGitByPath(files: any[]) { const m=new Map<string, any>(); for (const f of files) m.set(normSlash(f.filePath), f); return m; }
 export function buildChangedDirs(files: any[], cwd?: string) {

@@ -166,7 +166,7 @@ function EntryInfoModal(props: { path: string; onClose: () => void; t: TFn; onOp
     <div onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} style={{ position:"fixed", inset:0, zIndex:500, background:"rgba(0,0,0,0.35)", display:"flex", alignItems:"center", justifyContent:"center" }}>
       <div style={{ width:400, maxWidth:"92vw", padding:"16px 18px", borderRadius:12, background:"var(--bg,#fff)", border:"1px solid var(--border,#ddd)", boxShadow:"0 12px 40px rgba(0,0,0,0.25)", fontSize:13 }}>
         <div style={{ fontWeight:600, fontSize:14, marginBottom:10 }}>{tt("files.entryInfo")}</div>
-        {err ? <div style={{ color:"#f87171", fontSize:12 }}>{err}</div>
+        {err ? <div style={{ color:"var(--danger, #f87171)", fontSize:12 }}>{err}</div>
         : !info ? <div style={{ color:"var(--text-dim,#888)", fontSize:12 }}>…</div>
         : (
           <div style={{ display:"flex", flexDirection:"column", gap:7, fontSize:12 }}>
@@ -276,7 +276,7 @@ function TransferDialog(props: { path: string; cwd: string; root: string; mode?:
         </div>
         <div style={{ flex:1, overflowY:"auto", padding:"4px 0" }}>
           {loading ? <div style={{ padding:"12px", fontSize:12, color:"var(--text-dim)" }}>{tt("files.loading")}</div> : null}
-          {error ? <div style={{ padding:"12px", fontSize:12, color:"#f87171" }}>{error}</div> : null}
+          {error ? <div style={{ padding:"12px", fontSize:12, color:"var(--danger, #f87171)" }}>{error}</div> : null}
           {(!loading && !error && drives && drives.length>0) ? drives.map((d:any)=> <button key={d.path} onClick={()=>loadBrowse(d.path)} style={rowStyle}><FolderIcon open={false} /><span style={{fontSize:12}}>{d.name}</span></button>) : null}
           {(!loading && !error && dirs.length===0 && (!drives||drives.length===0)) ? <div style={{ padding:"12px", fontSize:12, color:"var(--text-dim)" }}>{tt("files.noSubdirs")}</div> : null}
           {(!loading && !error) ? dirs.map((d:any)=> (
@@ -289,7 +289,7 @@ function TransferDialog(props: { path: string; cwd: string; root: string; mode?:
         </div>
         {/* 底部：目标路径 + 操作 */}
         <div style={{ display:"flex", flexDirection:"column", gap:6, padding:"8px 12px", borderTop:"1px solid var(--border)", background:"var(--bg)", flexShrink:0 }}>
-          {msg ? <div style={{ fontSize:11, color: msg.err?"#f87171":"#4ade80" }}>{msg.err||msg.ok}</div> : null}
+          {msg ? <div style={{ fontSize:11, color: msg.err?"var(--danger, #f87171)":"var(--ok, #4ade80)" }}>{msg.err||msg.ok}</div> : null}
           <div style={{ display:"flex", alignItems:"center", gap:8 }}>
             <span style={{ flex:1, minWidth:0, fontFamily:"var(--font-mono,ui-monospace,monospace)", fontSize:11, color:"var(--text-dim,#888)", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }} title={browsePath}>→ {tt("files.moveTarget")}: {browsePath||"/"}</span>
             <button onClick={()=>{ if(!busy) onClose(); }} style={{ height:28, padding:"0 12px", border:"1px solid var(--border)", borderRadius:5, background:"var(--bg-panel)", color:"var(--text)", cursor:"pointer", fontSize:12 }}>{tt("files.cancel")}</button>
@@ -546,7 +546,7 @@ function DirOpsMenu(props: { dir: string; hovered: boolean; onChanged: (dir: str
               </button>
             ) : null,
           ])}
-          {msg ? <div style={{fontSize:10,color:msg.err?"#f87171":"#4ade80",padding:"2px 4px"}}>{msg.err?msg.err:(msg.ok||"")}</div> : null}
+          {msg ? <div style={{fontSize:10,color:msg.err?"var(--danger, #f87171)":"var(--ok, #4ade80)",padding:"2px 4px"}}>{msg.err?msg.err:(msg.ok||"")}</div> : null}
         </div>
       ) : null}
       <input ref={fileRef} type="file" multiple hidden onChange={e=>void doUpload(e,false)} />
@@ -603,8 +603,8 @@ function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpe
   return (
     <div data-fileops={1} onClick={e=>e.stopPropagation()} style={{ position:"absolute", right:4, top:1, display:"flex", alignItems:"center", gap:3, zIndex:40, visibility:visible?"visible":"hidden" }}>
       {onAtMention ? <button onClick={e=>{e.stopPropagation(); handleAt();}} title={tt("files.insertPath")} style={{ width:22, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-panel)", color:"var(--accent)", cursor:"pointer", fontSize:12, fontWeight:700, lineHeight:1, flexShrink:0 }}>@</button> : null}
-      {onTrash ? <button onClick={e=>{e.stopPropagation(); handleTrash();}} title={tt("files.trash")} style={{ width:22, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-panel)", color:"#ef4444", cursor:"pointer", fontSize:11, lineHeight:1, flexShrink:0 }}>🗑</button> : null}
-      <button onClick={()=>doDownload()} title={tt("files.download")} style={{ width:22, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-panel)", color:"var(--accent)", cursor:"pointer", fontSize:12, fontWeight:700, lineHeight:1, flexShrink:0 }}>⬇️</button>
+      {onTrash ? <button onClick={e=>{e.stopPropagation(); handleTrash();}} title={tt("files.trash")} style={{ width:22, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-panel)", color:"var(--danger, #ef4444)", cursor:"pointer", fontSize:11, lineHeight:1, flexShrink:0 }}>🗑</button> : null}
+      <button onClick={()=>doDownload()} title={tt("files.download")} style={{ width:22, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:"var(--bg-panel)", color:"var(--accent)", cursor:"pointer", fontSize:12, fontWeight:700, lineHeight:1, flexShrink:0 }}>️</button>
       <button onClick={toggle} title={tt("files.rename")+" / "+tt("files.download")+" / "+tt("files.insertPath")+" / "+tt("files.trash")} style={{ width:24, height:22, padding:0, display:"flex", alignItems:"center", justifyContent:"center", border:"1px solid var(--border)", borderRadius:4, background:open?"var(--bg-selected)":"var(--bg-panel)", color:open?"var(--accent)":"var(--text-dim)", cursor:"pointer", fontSize:14, fontWeight:700, lineHeight:1, flexShrink:0, transition:"color 0.12s, background 0.12s" }}>⋮</button>
       {open ? (
         <div style={{ position:"fixed", left:pos!.left, top:pos!.top, zIndex:400, minWidth:150, padding:6, background:"var(--bg,#fff)", border:"1px solid var(--border,#d0d0d0)", borderRadius:10, boxShadow:"0 4px 12px rgba(0,0,0,0.15)", fontSize:12, display:"flex", flexDirection:"column", gap:2 }}>
@@ -649,7 +649,7 @@ function FileOpsMenu(props: { filePath: string; cwd: string; root: string; onOpe
               </button>
             ) : null,
           ]}
-          {msg ? <div style={{fontSize:10,color:msg.err?"#f87171":"#4ade80",padding:"2px 4px"}}>{msg.err?msg.err:(msg.ok||"")}</div> : null}
+          {msg ? <div style={{fontSize:10,color:msg.err?"var(--danger, #f87171)":"var(--ok, #4ade80)",padding:"2px 4px"}}>{msg.err?msg.err:(msg.ok||"")}</div> : null}
         </div>
       ) : null}
       {infoOpen ? <EntryInfoModal path={filePath} onClose={()=>{ setInfoOpen(false); setOpen(false); }} t={tt} onOpenFolder={props.onOpenFolder} /> : null}
@@ -1324,9 +1324,9 @@ export function FolderBrowser(props: any) {
           </span> }) : null}
         {TBtn({ key:"term", onClick:()=>void openTerminal(root).then(err=>{ if (err) setUploadMsg({ err }); }), title:t("files.openTerminal"), children:<TerminalIcon/> })}
         {TBtn({ key:"nw", onClick:()=>openNewWindow("folder", root), title:t("files.openNewWindow"), children:<NewWindowIcon/> })}
-        {TBtn({ key:"rf", onClick:doRefresh, title:t("sidebar.refreshExplorer"), color:refreshDone?"#4ade80":"var(--text-dim)", bg:refreshDone?"rgba(74,222,128,0.18)":"transparent",
+        {TBtn({ key:"rf", onClick:doRefresh, title:t("sidebar.refreshExplorer"), color:refreshDone?"var(--ok, #4ade80)":"var(--text-dim)", bg:refreshDone?"rgba(74,222,128,0.18)":"transparent",
           children: refreshDone
-            ? <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="#4ade80" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+            ? <svg width={13} height={13} viewBox="0 0 24 24" fill="none" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" style={{ stroke: "var(--ok, #4ade80)" }}><polyline points="20 6 9 17 4 12"/></svg>
             : <svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg> })}
         {/* @ 将路径插入聊天：高频动作恒留外面（对齐文件行操作区），不收进 ⋯ 菜单 */}
         {onAtMention ? TBtn({ key:"at", onClick:()=>onAtMention(relTo(root,cwd),false), title:t("files.insertPath"), color:"var(--accent)", children:<span style={{fontSize:12,fontWeight:700,lineHeight:1}}>@</span> }) : null}
@@ -1382,10 +1382,10 @@ export function FolderBrowser(props: any) {
             </div>
           ) : null}
         </div>
-        {uploadMsg ? <span style={{fontSize:10,color:uploadMsg.err?"#f87171":(uploadMsg.ok?"#4ade80":"var(--text-muted)"),overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginLeft:2}} title={String(uploadMsg.err||"")}>{uploadMsg.err ? uploadMsg.err : (uploadMsg.ok ? uploadMsg.ok : ((uploadMsg.up||0)+"↑ / "+(uploadMsg.skip||0)+"跳 / "+(uploadMsg.err||0)+"错"))}</span> : null}
+        {uploadMsg ? <span style={{fontSize:10,color:uploadMsg.err?"var(--danger, #f87171)":(uploadMsg.ok?"var(--ok, #4ade80)":"var(--text-muted)"),overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",marginLeft:2}} title={String(uploadMsg.err||"")}>{uploadMsg.err ? uploadMsg.err : (uploadMsg.ok ? uploadMsg.ok : ((uploadMsg.up||0)+"↑ / "+(uploadMsg.skip||0)+"跳 / "+(uploadMsg.err||0)+"错"))}</span> : null}
       </div>)}
       {dockHoist && uploadMsg ? (
-        <div style={{ padding:"3px 8px", fontSize:10, borderBottom:"1px solid var(--border)", background:"var(--bg-panel)", color: uploadMsg.err ? "#f87171" : (uploadMsg.ok ? "#4ade80" : "var(--text-muted)"), overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flexShrink:0 }} title={String(uploadMsg.err||"")}>
+        <div style={{ padding:"3px 8px", fontSize:10, borderBottom:"1px solid var(--border)", background:"var(--bg-panel)", color: uploadMsg.err ? "var(--danger, #f87171)" : (uploadMsg.ok ? "var(--ok, #4ade80)" : "var(--text-muted)"), overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap", flexShrink:0 }} title={String(uploadMsg.err||"")}>
           {uploadMsg.err ? uploadMsg.err : (uploadMsg.ok ? uploadMsg.ok : ((uploadMsg.up||0)+"↑ / "+(uploadMsg.skip||0)+"跳 / "+(uploadMsg.err||0)+"错"))}
         </div>
       ) : null}
@@ -1473,7 +1473,7 @@ export function FolderBrowser(props: any) {
             {hasSearchQuery ? (
               <div style={{ paddingTop:3 }}>
                 {searchLoading ? <div role="status" style={{ padding:"6px 2px", fontSize:10, color:"var(--text-dim)" }}>{searchMode==="fulltext" ? t("sidebar.searchingDocs") : t("sidebar.searchingFiles")}</div> : null}
-                {!searchLoading && searchError ? <div role="alert" style={{ padding:"6px 2px", fontSize:10, color:"#f87171" }}>{t("i18n.networkError")}</div> : null}
+                {!searchLoading && searchError ? <div role="alert" style={{ padding:"6px 2px", fontSize:10, color:"var(--danger, #f87171)" }}>{t("i18n.networkError")}</div> : null}
                 {!searchLoading && !searchError && (searchMode==="files" ? searchPaths.length===0 : visibleDocs.length===0) ? <div style={{ padding:"6px 2px", fontSize:10, color:"var(--text-dim)" }}>{searchMode==="fulltext" ? t("sidebar.noMatchingDocs") : t("sidebar.noMatchingFiles")}</div> : null}
                 {!searchLoading && !searchError && searchMode==="files" && searchPaths.length>0 ? (
                   <div>
@@ -1512,8 +1512,8 @@ export function FolderBrowser(props: any) {
           <div style={{ padding:"0 4px 2px", borderBottom:"1px solid var(--border)" }}>
             <div style={{ display:"flex", alignItems:"center", gap:6, height:24, padding:"0 10px", fontSize:12 }}>
               <span style={{color:"var(--text-dim)"}}>{t("files.changedCount",{count:gitFiles.length})}</span>
-              <span style={{color:"#4ade80",fontFamily:"var(--font-mono)"}}>+{gitStats.additions}</span>
-              <span style={{color:"#f87171",fontFamily:"var(--font-mono)"}}>-{gitStats.deletions}</span>
+              <span style={{color:"var(--ok, #4ade80)",fontFamily:"var(--font-mono)"}}>+{gitStats.additions}</span>
+              <span style={{color:"var(--danger, #f87171)",fontFamily:"var(--font-mono)"}}>-{gitStats.deletions}</span>
             </div>
             {(() => {
               // 双列态（git-ops §4）：xy[0]（index）非空且非 ? → 已暂存桶，其余 → 工作区桶；
@@ -1545,7 +1545,7 @@ export function FolderBrowser(props: any) {
         ) : null}
         {/* 树（有搜索查询时隐藏，腾位给结果树；对齐 pi-web (!fileSearchOpen || !hasSearchQuery)） */}
         {!hasSearchQuery ? (loading ? <div style={{padding:"12px",fontSize:12,color:"var(--text-dim)"}}>{t("files.loading")}</div>
-        : error ? <div style={{padding:"12px",fontSize:12,color:"#f87171"}}>{error}</div>
+        : error ? <div style={{padding:"12px",fontSize:12,color:"var(--danger, #f87171)"}}>{error}</div>
         : roots.length===0 ? <div style={{padding:"12px",fontSize:12,color:"var(--text-dim)"}}>{t("files.noFiles")}</div>
         : roots.map((node:any)=> <TreeNode key={node.fullPath} node={node} depth={0} cwd={cwd||root} expanded={expanded} refreshKey={refreshKey} onToggle={toggle} onOpenFile={onOpenFile} onOpenFolder={onOpenFolder} onAtMention={onAtMention} onTrash={setPendingTrash} onChanged={doRefresh} gitByPath={gitByPath} changedDirs={changedDirs} highlightPath={highlightPath} t={t} root={root} showIgnored={showIgnored} />)) : null}
       </div>
@@ -1558,7 +1558,7 @@ export function FolderBrowser(props: any) {
             <div style={{ color:"var(--text-dim,#888)", fontSize:12 }}>{t("files.trashConfirmBody")}</div>
             <div style={{ display:"flex", gap:8, justifyContent:"flex-end" }}>
               <button type="button" onClick={()=>setPendingTrash(null)} disabled={trashBusy} style={{ height:28, padding:"0 12px", borderRadius:5, background:"transparent", border:"1px solid var(--border,#d0d0d0)", color:"var(--text,#222)", cursor:trashBusy?"default":"pointer", fontSize:12 }}>{t("files.cancel")}</button>
-              <button type="button" onClick={()=>void handleTrash()} disabled={trashBusy} style={{ height:28, padding:"0 12px", borderRadius:5, background:"#ef4444", border:"none", color:"#fff", cursor:trashBusy?"default":"pointer", fontSize:12, fontWeight:600, opacity:trashBusy?0.6:1 }}>{trashBusy?"…":t("files.trash")}</button>
+              <button type="button" onClick={()=>void handleTrash()} disabled={trashBusy} style={{ height:28, padding:"0 12px", borderRadius:5, background:"var(--danger, #ef4444)", border:"none", color:"#fff", cursor:trashBusy?"default":"pointer", fontSize:12, fontWeight:600, opacity:trashBusy?0.6:1 }}>{trashBusy?"…":t("files.trash")}</button>
             </div>
           </div>
         </div>
