@@ -33,7 +33,7 @@ function clearLoading(container: HTMLElement): void {
 /** 错误态（含「尝试其他编辑器」提示位——打开方式菜单在宿主工具条 ▦） */
 function errorPane(title: string, detail: string): HTMLElement {
   const el = document.createElement("div");
-  el.style.cssText = "flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:#f87171;font-size:13px;padding:16px;text-align:center;";
+  el.style.cssText = "flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;color:var(--danger, #f87171);font-size:13px;padding:16px;text-align:center;";
   const t = document.createElement("div"); t.textContent = title;
   const d = document.createElement("div"); d.style.cssText = "color:var(--text-dim,#888);font-size:12px;word-break:break-all;max-width:80%;"; d.textContent = detail;
   const hint = document.createElement("div"); hint.style.cssText = "color:var(--text-dim,#888);font-size:12px;";
