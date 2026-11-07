@@ -73,8 +73,9 @@ test("readSidebarDismissed/writeSidebarDismissed：roundtrip + false 清键", ()
 test("WIDGET_METAS：3 枚、布局与方案一致、尺寸在宿主 clamp 范围内", () => {
   assert.deepEqual(logic.WIDGET_METAS.map((m) => m.id), ["guide", "shortcuts", "examples"]);
   const byId = new Map(logic.WIDGET_METAS.map((m) => [m.id, m]));
-  // guide h=1：w8 独占整行，h2 曾把 recent/shortcuts 挤到第三行致 top 区内滚裁切
-  assert.deepEqual(byId.get("guide"), { id: "guide", areas: ["top"], defaultArea: "top", w: 8, h: 1, priority: 0 });
+  // guide p=-1 + h=1：先于 builtin:recent(p0) 占行1 独占整行——曾因同 p0 注册序在后
+  // 掉行2/3 三行叠加致 top 区内滚裁切（快捷操作卡显示不全）
+  assert.deepEqual(byId.get("guide"), { id: "guide", areas: ["top"], defaultArea: "top", w: 8, h: 1, priority: -1 });
   assert.deepEqual(byId.get("shortcuts"), { id: "shortcuts", areas: ["top"], defaultArea: "top", w: 4, h: 1, priority: 10 });
   assert.deepEqual(byId.get("examples"), { id: "examples", areas: ["bottom"], defaultArea: "bottom", w: 8, h: 1, priority: 20 });
   for (const m of logic.WIDGET_METAS) {
