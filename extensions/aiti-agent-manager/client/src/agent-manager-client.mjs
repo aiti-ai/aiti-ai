@@ -319,10 +319,10 @@ export function registerAgentManagerClient(ctx, config) {
     }
 
     function badge(authState, flowState) {
-      if (flowState === "logging-in") return h("span", { className: "am-badge is-logging" }, "🔄 登录中");
-      if (authState === "ready") return h("span", { className: "am-badge is-ready" }, "✅ 已登录");
-      if (authState === "missing") return h("span", { className: "am-badge is-missing" }, "⚠ 未登录");
-      return h("span", { className: "am-badge is-unknown" }, "❓ 未知");
+      if (flowState === "logging-in") return h("span", { className: "am-badge is-logging" }, "登录中");
+      if (authState === "ready") return h("span", { className: "am-badge is-ready" }, "已登录");
+      if (authState === "missing") return h("span", { className: "am-badge is-missing" }, "未登录");
+      return h("span", { className: "am-badge is-unknown" }, "未知");
     }
 
     // 保存账号档弹窗的提交
