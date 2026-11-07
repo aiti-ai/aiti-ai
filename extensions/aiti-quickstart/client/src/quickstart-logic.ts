@@ -66,17 +66,22 @@ export function writeSidebarDismissed(dismissed: boolean): void {
 /**
  * 解析「重返快速上手页」的目标 cwd：
  *   1) URL query `?cwd=`（AppShell 全程维护该参数——会话视图/欢迎页都带）；
- *   2) 兜底 home（宿主共享单例 pi-web.home.ensure() 的结果，由调用方异步取好传入）；
- *   3) 都没有 → null（调用方 toast 提示后放弃，不导航）。
+ *   2) 当前会话的项目目录（pi-web.session.get().session.cwd，调用方同步取好传入——
+ *      会话视图里点「重返」落当前项目的快速上手页，而非 home）；
+ *   3) 兜底 home（宿主共享单例 pi-web.home.ensure() 的结果，由调用方异步取好传入）；
+ *   4) 都没有 → null（调用方 toast 提示后放弃，不导航）。
  */
-export function resolveQuickstartCwd(search: string, home: string | null): string | null {
+export function resolveQuickstartCwd(search: string, home: string | null, sessionCwd?: string | null): string | null {
   let fromUrl: string | null = null;
   try {
     fromUrl = new URLSearchParams(search || "").get("cwd");
   } catch {
     fromUrl = null;
   }
-  const cwd = (fromUrl && fromUrl.trim()) || (home && home.trim()) || "";
+  const cwd = (fromUrl && fromUrl.trim())
+    || (sessionCwd && sessionCwd.trim())
+    || (home && home.trim())
+    || "";
   return cwd || null;
 }
 
