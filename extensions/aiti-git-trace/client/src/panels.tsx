@@ -154,7 +154,7 @@ function renderWatch(props?: any, face?: string): any { bindSession(props);
             </div>
           )}
           <div style={{ border: "1px dashed var(--border)", opacity: 0.75, borderRadius: 6, padding: "6px 10px", marginBottom: 8, fontSize: 12 }}>
-            🧪 {t("gt.watch.experimental")}
+            {t("gt.watch.experimental")}
           </div>
           <label style={{ display: "flex", gap: 6, alignItems: "center", marginBottom: 8 }}>
             <input type="checkbox" checked={!!config.autoDiscover} onChange={toggleAuto} />
@@ -192,7 +192,7 @@ function renderWatch(props?: any, face?: string): any { bindSession(props);
           {(config.paths || []).length === 0 ? <div style={{ opacity: 0.7 }}>{t("gt.watch.empty")}</div> : null}
           <div style={{ borderTop: "1px solid var(--border,#eee)", paddingTop: 8, marginTop: 4 }}>
             {!cleanupArm ? (
-              <button style={{ ...btnStyle, color: "#c62828", borderColor: "rgba(198,40,40,.5)" }} title={t("gt.watch.cleanupTip")} onClick={() => setCleanupArm(true)}>🧹 {t("gt.watch.cleanup")}</button>
+              <button style={{ ...btnStyle, color: "#c62828", borderColor: "rgba(198,40,40,.5)" }} title={t("gt.watch.cleanupTip")} onClick={() => setCleanupArm(true)}>{t("gt.watch.cleanup")}</button>
             ) : (
               <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                 <span style={{ fontSize: 11, color: "#c62828" }}>{t("gt.watch.cleanupConfirm")}</span>
@@ -245,7 +245,7 @@ function renderWatch(props?: any, face?: string): any { bindSession(props);
   // 右栏 tab face（chrome="tab"：无头行）
   if (face === "right") {
     return (
-      <DockBody itemKey={WATCH_KEY} zone="right-panel" title="⎇ 关注路径" chrome="tab"
+      <DockBody itemKey={WATCH_KEY} zone="right-panel" title="关注路径" chrome="tab"
         zones={watchZones} defaultZone={sidebarZoneOf(WATCH_KEY)}>{watchInner}</DockBody>
     );
   }
@@ -253,7 +253,7 @@ function renderWatch(props?: any, face?: string): any { bindSession(props);
     { id: "refresh", title: t("gt.common.refresh") || "刷新", icon: <RefreshSvg/>, visibility: "always", onClick: () => { requestDockCommand(WATCH_KEY, "refresh"); } },
   ];
   return (
-    <DockBody itemKey={WATCH_KEY} title="⎇ 关注路径" chrome="section" kind="dockable"
+    <DockBody itemKey={WATCH_KEY} title="关注路径" chrome="section" kind="dockable"
       zones={watchZones} defaultZone={sidebarZoneOf(WATCH_KEY)}
       headerActions={watchActions}>
       {watchInner}
@@ -669,7 +669,7 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
   function toggleFile(k: string) { setExpandedFiles((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k])); }
   // 总览「在评审中打开完整 diff」（§2）：文件级区间（服务端解析的 store base/target）→ git-review
   function viewRangeDiff(f: any, st: any) {
-    const label = "📄 " + (ovMultiRoot ? repoBase(f.root) + "/" : "") + f.path;
+    const label = (ovMultiRoot ? repoBase(f.root) + "/" : "") + f.path;
     const payload: any = { source: "trace", storeRoot: f.root, sessionId: sessionId || getSessionId(), base: st.base, target: st.target, label, files: [f.path] };
     const opener = extSvc<(o?: any) => void>("aiti-git-review.open") || (window as any).__aitiGitReviewOpen; // DI 方案 P2 双轨
     if (typeof opener === "function") { opener(payload); return; }
@@ -761,11 +761,11 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
   // 「这行是沙箱采认来的」）。样式与回撤区块同构（紫调区分）。
   const planRowsBlock = (
     <div style={{ border: "1px solid #b6a6e8", borderRadius: 6, overflow: "hidden" }}>
-      <div style={{ padding: "6px 10px", background: "rgba(122,98,220,.10)", fontWeight: 600, fontSize: 12, color: "#5b45b8" }}>📋 {planRows.length} 条方案采认记录</div>
+      <div style={{ padding: "6px 10px", background: "rgba(122,98,220,.10)", fontWeight: 600, fontSize: 12, color: "#5b45b8" }}>{planRows.length} 条方案采认记录</div>
       {planRows.map((op: any, i: number) => (
         <div key={String(op.t) + String(i)} style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-            <b style={{ color: op.kind === "plan-accept" ? "#0a7d33" : "#9a6700", flexShrink: 0 }}>{op.kind === "plan-accept" ? "✅ 采认" : "🗑 丢弃"}</b>
+            <b style={{ color: op.kind === "plan-accept" ? "#0a7d33" : "#9a6700", flexShrink: 0 }}>{op.kind === "plan-accept" ? "采认" : "丢弃"}</b>
             <span title={String(op.summary || "")} style={{ opacity: 0.9, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", flex: 1, minWidth: 0 }}>{String(op.summary || "")}</span>
             <span style={{ opacity: 0.5, fontSize: 11, flexShrink: 0 }}>{fmtTime(op.t)}</span>
           </div>
@@ -799,10 +799,10 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
           ))}
         </select>
         <button style={btnStyle} title={t("gt.timeline.load")} onClick={() => { load(); if (view === "overview") setFilesTick((x) => x + 1); }}>↻</button>
-        <button style={btnStyle} title={t("gt.tl.cleanAllTip")} onClick={() => setCleanArm({})}>🧹</button>
+        <button style={btnStyle} title={t("gt.tl.cleanAllTip")} onClick={() => setCleanArm({})}><svg width={13} height={13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
         {planRel && (
           <span title={"方案绑定：" + planRel} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: 11, padding: "2px 8px", borderRadius: 6, background: "rgba(245,158,11,.12)", color: "#f59e09", border: "1px solid rgba(245,158,11,.35)", whiteSpace: "nowrap", maxWidth: 160, overflow: "hidden", textOverflow: "ellipsis", flexShrink: 0 }}>
-            📋 {planRel}
+            {planRel}
           </span>
         )}
         <button title={t("gt.watch.title")} aria-label={t("gt.watch.title")} onClick={() => openPanel("watch")} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", padding: "0 4px", lineHeight: 1, display: "flex", alignItems: "center", flexShrink: 0 }}>
@@ -1096,13 +1096,13 @@ function renderTimeline(props?: any, face?: string): any { bindSession(props);
       { id: "refresh", title: "刷新", icon: <RefreshSvg/>, visibility: "always", onClick: () => { requestDockCommand(TIMELINE_KEY, "refresh"); } },
     ];
     return (
-      <DockBody itemKey={TIMELINE_KEY} title="⎇ 时间线" chrome="section" kind="dockable"
+      <DockBody itemKey={TIMELINE_KEY} title="时间线" chrome="section" kind="dockable"
         count={typeof hsTl.ops === "number" && hsTl.ops > 0 ? hsTl.ops : undefined}
         zones={tlZones} defaultZone="right-panel" headerActions={tlActions}>{tlInner}</DockBody>
     );
   }
   return (
-    <DockBody itemKey={TIMELINE_KEY} zone="right-panel" title="⎇ 时间线" chrome="tab" zones={tlZones} defaultZone="right-panel">{tlInner}</DockBody>
+    <DockBody itemKey={TIMELINE_KEY} zone="right-panel" title="时间线" chrome="tab" zones={tlZones} defaultZone="right-panel">{tlInner}</DockBody>
   );
 }
 
