@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-ai-schedule",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "type": "module",
   "description": "aiti-ai-schedule · pi-web 常驻调度器（JSX + vite 构建 client bundle）",
   "scripts": {
