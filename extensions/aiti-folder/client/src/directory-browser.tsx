@@ -37,7 +37,7 @@ export function DirectoryBrowser({ initialPath, onSelect, onCancel }: { initialP
         </div>
         <div style={{ flex:1, overflowY:"auto", padding:"4px 0" }}>
           {loading ? <div style={{ padding:"12px", fontSize:12, color:"var(--text-dim)" }}>{t("files.loading")}</div> : null}
-          {error ? <div style={{ padding:"12px", fontSize:12, color:"#f87171" }}>{error}</div> : null}
+          {error ? <div style={{ padding:"12px", fontSize:12, color:"var(--danger, #f87171)" }}>{error}</div> : null}
           {(!loading && !error && drives && drives.length>0) ? drives.map((d: any)=> <button key={d.path} onClick={()=>load(d.path)} style={rowStyle}><FolderIcon open={false} /><span style={{fontSize:12}}>{d.name}</span></button>) : null}
           {(!loading && !error && dirs.length===0 && (!drives||drives.length===0)) ? <div style={{ padding:"12px", fontSize:12, color:"var(--text-dim)" }}>{t("files.noSubdirs")}</div> : null}
           {(!loading && !error) ? dirs.map((d: any)=> (
