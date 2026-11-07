@@ -20,10 +20,11 @@
   "contentHash": "df9fe193a2cf8705",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-recovery.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-recovery"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-recovery#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-recovery/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
