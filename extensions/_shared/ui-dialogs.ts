@@ -65,8 +65,8 @@ const V = {
 const KIND_COLOR: Record<UiDialogKind, string> = {
   info: V.accent,
   success: "#10b981",
-  error: "#ef4444",
-  warn: "#f59e0b",
+  error: "var(--danger, #ef4444)",
+  warn: "var(--warn, #f59e0b)",
 };
 
 /** 线性 stroke 图标（24 viewBox），随色 */
