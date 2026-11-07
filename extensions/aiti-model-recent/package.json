@@ -20,10 +20,11 @@
   "contentHash": "6c84e6ba284653a7",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-model-recent.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-model-recent"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-model-recent#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-model-recent/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
