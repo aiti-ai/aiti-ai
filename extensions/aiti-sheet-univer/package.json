@@ -26,10 +26,11 @@
   "contentHash": "39890fa66397f528",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-sheet-univer.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-sheet-univer"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-sheet-univer#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-sheet-univer/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
