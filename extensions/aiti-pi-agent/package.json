@@ -8,5 +8,13 @@
     "@aiti-ai/ext-shared": "^0.1.3"
   },
   "license": "MIT",
-  "contentHash": "964b36459d30214e"
+  "contentHash": "964b36459d30214e",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-pi-agent.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-pi-agent#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-pi-agent/issues"
+  }
 }
