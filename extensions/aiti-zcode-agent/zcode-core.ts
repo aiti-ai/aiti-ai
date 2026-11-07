@@ -1056,6 +1056,25 @@ export async function extractAppimage(appImage: string, configDir: string, versi
       });
       const produced = findCjsUnderDir(join(work, "squashfs-root"));
       if (ok && produced) {
+        // 3.17+ provider 闸需要 <resources>/config/provider/zcode-builtin.json，glm-only pattern 不含
+        // → 缺失时二次 pattern 提取补齐（独立临时目录提取后并入，规避旧 runtime 重复提取行为不明）。
+        const cfg = join(work, "squashfs-root", "resources", "config", "provider", "zcode-builtin.json");
+        if (!existsSync(cfg)) {
+          const work2 = mkdtempSync(join(tmpdir(), "zcode-extract-cfg-"));
+          try {
+            const ok2 = await new Promise<boolean>((resolve) => {
+              const c2 = spawn(appImage, ["--appimage-extract", "resources/config/*"], { cwd: work2, stdio: "ignore" });
+              c2.once("error", () => resolve(false));
+              c2.once("exit", (code) => resolve(code === 0));
+            });
+            const srcCfg = join(work2, "squashfs-root", "resources", "config");
+            if (ok2 && existsSync(srcCfg)) {
+              cpSync(srcCfg, join(work, "squashfs-root", "resources", "config"), { recursive: true });
+            }
+          } finally {
+            rmSync(work2, { recursive: true, force: true });
+          }
+        }
         // 解压根 squashfs-root 整体改名为 <extRoot>/cache/runtime/ZCode-<ver>
         //（destRoot = cached 向上三级：zcode.cjs→glm→resources→ZCode-<ver>）
         const destRoot = join(cached, "..", "..", "..");
@@ -1318,6 +1337,67 @@ export function buildCliArgs(opts: {
   ];
 }
 
+/**
+ * 3.17+ CLI provider runtime 闸 spawn env（桌面端同款注入，2026-11-07）：
+ * CLI 启动 tui/app-server/agent-server/login/logout/裸跑时需要 builtin provider config，
+ * 缺省按入口相对扫描（<cliDir>/provider/ 与 <cliDir>/../../../../../config/provider/——npm 安装
+ * 布局假设）；AppImage 挂载/解压布局（resources/glm/zcode.cjs）两处皆不存在 →
+ * 「无法定位 CLI ZCode Built-in Provider Config」启动即崩（桌面端靠 env 直供跳过扫描，
+ * 挂载实例 env 实测：BUILTIN=~/.zcode/v2/runtime/…/endpoint-<hash>/zcode-builtin.json、
+ * PERSONAL=~/.zcode/v2/provider_config.json）。对齐注入：
+ *   ZCODE_BUILTIN_PROVIDER_CONFIG_FILE  = runtime 同包 <resources>/config/provider/zcode-builtin.json
+ *     （与所 spawn 的 CLI 版本精确对齐；缺失回退桌面刷新副本 v2/runtime/<plat>-<arch>/<ver>/endpoint-<hash>/）
+ *   ZCODE_PERSONAL_PROVIDER_CONFIG_FILE = <zcodeHome>/v2/provider_config.json
+ * 已在 passthrough 里的键不覆盖（spawn.env / launchOverride.memberEnv 显式值优先）。
+ */
+export function providerRuntimeEnv(
+  runtimeCjsPath: string | undefined,
+  passthrough: Record<string, string | undefined> = {},
+  appVersion?: string,
+): Record<string, string> {
+  const BUILTIN = "ZCODE_BUILTIN_PROVIDER_CONFIG_FILE";
+  const PERSONAL = "ZCODE_PERSONAL_PROVIDER_CONFIG_FILE";
+  const out: Record<string, string> = {};
+  if (runtimeCjsPath && !(BUILTIN in passthrough)) {
+    const bundled = join(dirname(runtimeCjsPath), "..", "config", "provider", "zcode-builtin.json");
+    if (existsSync(bundled)) out[BUILTIN] = bundled;
+    else {
+      const refreshed = refreshedProviderConfig(zcodeHome(), appVersion);
+      if (refreshed) out[BUILTIN] = refreshed;
+    }
+  }
+  if (!(PERSONAL in passthrough)) {
+    const personal = join(zcodeHome(), "v2", "provider_config.json");
+    if (existsSync(personal)) out[PERSONAL] = personal;
+  }
+  return out;
+}
+
+/** 桌面端 v2 runtime 刷新副本：runtime/provider/<plat>-<arch>/<ver>/endpoint-<hash>/zcode-builtin.json（ver 缺省取最高）。
+ *  目录名 = CLI fnt() 同式：linux-x86_64 / windows-x86_64 / darwin-aarch64…（平台与 arch 合成段）。 */
+function refreshedProviderConfig(zcodeHomeDir: string, appVersion?: string): string | null {
+  const plat = `${process.platform === "win32" ? "windows" : process.platform}-${process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : process.arch}`;
+  const platDir = join(zcodeHomeDir, "v2", "runtime", "provider", plat);
+  let vers: string[];
+  try {
+    vers = readdirSync(platDir);
+  } catch {
+    return null;
+  }
+  const pick = appVersion && vers.includes(appVersion)
+    ? appVersion
+    : vers.filter((v) => /^\d+(?:\.\d+)+$/.test(v)).sort(compareVersions).at(-1);
+  if (!pick) return null;
+  try {
+    const ep = readdirSync(join(platDir, pick)).find((d) => d.startsWith("endpoint-"));
+    if (!ep) return null;
+    const f = join(platDir, pick, ep, "zcode-builtin.json");
+    return existsSync(f) ? f : null;
+  } catch {
+    return null;
+  }
+}
+
 /** 组装治理后的 spawn env（§8.3；UA/指纹工具定义全由官方 CLI 自身构造）。 */
 export function buildTurnEnv(opts: {
   modelRef: string;
@@ -1327,9 +1407,12 @@ export function buildTurnEnv(opts: {
   passthroughEnv: Record<string, string | undefined>;
   /** 覆盖 ZCODE_BASE_URL（app-server 通道传平台根，缺省=provider baseURL 直连）。 */
   baseURL?: string;
+  /** runtime zcode.cjs 绝对路径：注入 3.17+ provider runtime 闸 env（providerRuntimeEnv）。 */
+  runtimeCjsPath?: string;
 }): Record<string, string> {
   return {
     ...opts.passthroughEnv,
+    ...providerRuntimeEnv(opts.runtimeCjsPath, opts.passthroughEnv, opts.appVersion),
     ZCODE_MODEL: opts.modelRef,
     // 动态通道（*-coding-plan/*-start-plan）走注册表端点；静态表只覆盖 bigmodel/zai。
     ZCODE_BASE_URL: opts.baseURL ?? baseUrlFor(opts.providerId) ?? PROVIDER_BASE_URL.bigmodel,
@@ -1386,7 +1469,8 @@ export const zcodeLoginDriver = {
   buildLogin: ({ runtime }: { runtime: string; consoleMode?: boolean }) => ({
     cmd: resolveNodeBin(),
     args: [runtime, "login", "--no-browser", "--json"],
-    env: cleanEnv(),
+    // login 也在 provider runtime 闸门内（3.17+ 裸跑即崩）→ 同款 env 注入
+    env: { ...cleanEnv(), ...providerRuntimeEnv(runtime) },
   }),
   extractUrl: extractZcodeLoginUrl,
   interpret: interpretZcodeLogin,

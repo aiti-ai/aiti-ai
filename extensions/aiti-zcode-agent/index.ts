@@ -693,6 +693,7 @@ class ZcodeHandle {
       apiKey: cred.apiKey,
       appVersion: runtime.appVersion,
       passthroughEnv: zcodeSpawnEnv(),
+      runtimeCjsPath: runtime.cjsPath,
       ...(gateway ? { baseURL: ZCODE_PLATFORM_BASE_URL } : {}),
     });
     const protoModels = buildZcodeCatalogRefs()
@@ -799,6 +800,7 @@ class ZcodeHandle {
       apiKey: cred.apiKey,
       appVersion: runtime.appVersion,
       passthroughEnv: zcodeSpawnEnv(),
+      runtimeCjsPath: runtime.cjsPath,
     });
 
     try {
