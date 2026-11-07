@@ -27,9 +27,10 @@
   "contentHash": "3eb577d108737615",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-channels.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-channels"
   },
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-channels/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
