@@ -66,7 +66,7 @@ function Dot({ ok }: { ok?: boolean }) {
   return (
     <span
       title={ok ? t("at.active") : t("at.inactive")}
-      style={{ display: "inline-block", width: 8, height: 8, borderRadius: 99, background: ok ? "#10b981" : "#6b7280", flexShrink: 0 }}
+      style={{ display: "inline-block", width: 8, height: 8, borderRadius: 99, background: ok ? "var(--ok, #10b981)" : "#6b7280", flexShrink: 0 }}
     />
   );
 }
@@ -418,7 +418,7 @@ function renderTAPanel(face?: string) {
       {!bridgeSt.online ? (
         <div style={{ fontSize: 12, color: "var(--danger, #f87171)", padding: "4px 8px" }}>{"桥不可达（自建桥保存时自动拉起；查看宿主日志，系统临时目录下 ta-bridge-*.log）"}</div>
       ) : identityWarn ? (
-        <div style={{ fontSize: 12, color: "var(--danger, #f87171)", background: "rgba(248,113,113,.08)", border: "1px solid rgba(248,113,113,.3)", borderRadius: 6, padding: "6px 8px" }}>{`端口上是另一个不同配置的 TaBridge（instanceId=${bridgeSt.bridgeInstanceId}，期望=${bridgeSt.instanceId}）——本面板未接管，请换端口或先停旧桥`}</div>
+        <div style={{ fontSize: 12, color: "var(--danger, #f87171)", background: "color-mix(in srgb, var(--danger, #f87171) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--danger, #f87171) 30%, transparent)", borderRadius: 6, padding: "6px 8px" }}>{`端口上是另一个不同配置的 TaBridge（instanceId=${bridgeSt.bridgeInstanceId}，期望=${bridgeSt.instanceId}）——本面板未接管，请换端口或先停旧桥`}</div>
       ) : (
         <table style={{ borderCollapse: "collapse", width: "100%" }}>
           <thead>
