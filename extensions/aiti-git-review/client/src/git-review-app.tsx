@@ -147,7 +147,7 @@ export function ReviewWork(props?: any) {
   if (traceErr) return (
     <div style={{ position: "fixed", inset: 0, background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", display: "flex", alignItems: "center", justifyContent: "center", font: "13px system-ui", zIndex: 2147483000 }}>
       <div style={{ maxWidth: 460, padding: 16, border: "1px solid var(--border,#ddd)", borderRadius: 10 }}>
-        <div style={{ color: "#f87171", marginBottom: 8 }}>❌ {traceErr}</div>
+        <div style={{ color: "var(--danger, #f87171)", marginBottom: 8 }}>❌ {traceErr}</div>
         <button onClick={() => { setTraceErr(""); setOpen(false); }} style={{ padding: "5px 12px", border: "1px solid var(--border,#d0d0d0)", borderRadius: 6, cursor: "pointer", background: "var(--bg,#fff)", color: "var(--text,#333)" }}>关闭</button>
       </div>
     </div>
@@ -170,7 +170,7 @@ export function DockReviewWork() {
   const docked = useGate("aiti-git-review:workspace", { dock: "right-panel" });
   if (!docked) return null;
   return (
-    <DockBody itemKey="aiti-git-review:workspace" zone="right-panel" title="👁️ 审查" chrome="tab">
+    <DockBody itemKey="aiti-git-review:workspace" zone="right-panel" title="审查" chrome="tab">
       <ReviewWork open onDock={() => present("aiti-git-review:workspace", "dock:right-panel")} />
     </DockBody>
   );

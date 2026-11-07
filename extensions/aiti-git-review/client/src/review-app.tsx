@@ -784,7 +784,7 @@ export function ReviewApp({ onClose, init, onExitToList }: {
     }
     setRollResults(Object.fromEntries(out.map((o) => [o.file, { status: o.status, result: o.result }])));
     rollResultsRef.current = Object.fromEntries(out.map((o) => [o.file, { status: o.status, result: o.result }]));
-    setRbMsg(failed ? "⚠ 程序回滚失败 " + failed + "/" + out.length + " 个文件（详见汇总回滚标记区）" : done ? "程序回滚完成 " + done + " 个文件（结果已写入汇总）" : "");
+    setRbMsg(failed ? "程序回滚失败 " + failed + "/" + out.length + " 个文件（详见汇总回滚标记区）" : done ? "程序回滚完成 " + done + " 个文件（结果已写入汇总）" : "");
     await api("/rollmarks", { method: "POST", ...jsonBody({ taskId: task.id, marks: out }) }).catch(() => {});
     const r = await api("/summary?task=" + task.id).then((x) => x.json()).catch(() => null);
     if (r && r.ok) { setSummary(r.summary || ""); setSrvSummary(r.summary || ""); }
@@ -948,7 +948,7 @@ export function ReviewApp({ onClose, init, onExitToList }: {
   const allAnnos = annotations.filter((a) => !a.resolved);
 
   if (busy) return <div style={overlay}><div style={{ color: "var(--text)" }}>正在打开审核任务…</div></div>;
-  if (err) return <div style={overlay}><div style={{ position: "relative", color: "#f87171", maxWidth: 420, padding: "10px 36px 10px 12px", borderRadius: 8, background: "var(--bg-panel)", border: "1px solid var(--border)" }}>{"❌ " + err}<button onClick={onClose} aria-label="关闭" title="关闭" style={{ position: "absolute", top: 6, right: 6, background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px" }}>✕</button></div></div>;
+  if (err) return <div style={overlay}><div style={{ position: "relative", color: "var(--danger, #f87171)", maxWidth: 420, padding: "10px 36px 10px 12px", borderRadius: 8, background: "var(--bg-panel)", border: "1px solid var(--border)" }}>{"❌ " + err}<button onClick={onClose} aria-label="关闭" title="关闭" style={{ position: "absolute", top: 6, right: 6, background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px" }}>✕</button></div></div>;
 
   const hi = hunks.length ? Math.min(hunkIdx, hunks.length - 1) : 0;
 
@@ -976,7 +976,7 @@ export function ReviewApp({ onClose, init, onExitToList }: {
         {/* trace 任务源标识（§6.3）：审的是 aiti-git-trace 编外仓 op 区间 */}
         {isTrace && (
           <span title="AI 变更追踪（aiti-git-trace 编外仓 op 区间）" style={{ fontSize: 10, color: "#0d9488", border: "1px solid rgba(13,148,136,.4)", borderRadius: 4, padding: "1px 5px", flexShrink: 0 }}>
-            {isMobile ? "⎇AI" : "⎇ AI 变更"}
+            {isMobile ? "AI" : "AI 变更"}
           </span>
         )}
         {/* 导航（核心操作，紧跟标题；chevron 线稿图标，与 dock 图标规范一致） */}
@@ -1035,7 +1035,7 @@ export function ReviewApp({ onClose, init, onExitToList }: {
         {/* ✍ 加注模式（点行加注；触屏唯一入口） */}
         <button
           onClick={() => setAnnoMode((v0) => !v0)}
-          style={{ ...segBtn, ...(annoMode ? { background: "#f59e0b", borderColor: "#f59e0b", color: "#fff" } : {}), fontSize: 13, padding: "3px 8px" }}
+          style={{ ...segBtn, ...(annoMode ? { background: "var(--warn, #f59e0b)", borderColor: "var(--warn, #f59e0b)", color: "#fff" } : {}), fontSize: 13, padding: "3px 8px" }}
           title={annoMode ? "加注模式已开：点击 diff 行加注（点此关闭）" : "加注模式：点击 diff 行加注（触屏用；桌面也可右键）"}
         >✍</button>
         {/* 视口开关（桌面）：高亮 = 显示中；隐藏时其余区域占满 */}
@@ -1069,10 +1069,10 @@ export function ReviewApp({ onClose, init, onExitToList }: {
           }}
           style={{ ...segBtn, fontSize: 12, padding: "3px 9px", color: "#fff", background: "#16a34a", borderColor: "#16a34a" }}
           title="打开标注/汇总面板并切到汇总页：核对汇总内容 → 📨 添加到当前会话 / 🚀 开启新会话 / 📋 复制"
-        >{isMobile ? "📤" : "📤 提交"}</button>
+        >{isMobile ? "📤" : "提交"}</button>
         {/* ☰ 列表：返回任务选择器（切任务/新建） */}
-        <button onClick={() => { try { onExitToList && onExitToList(); } catch {} }} style={{ ...segBtn, fontSize: 13, padding: "3px 8px" }} title="返回任务列表（新建/切换任务；当前任务已保存）">{isMobile ? "☰" : "☰列表"}</button>
-        <button onClick={onClose} style={{ ...segBtn, color: "#f87171", fontSize: 13, padding: "3px 8px" }} title="关闭">✕</button>
+        <button onClick={() => { try { onExitToList && onExitToList(); } catch {} }} style={{ ...segBtn, fontSize: 13, padding: "3px 8px" }} title="返回任务列表（新建/切换任务；当前任务已保存）">{isMobile ? "☰" : "列表"}</button>
+        <button onClick={onClose} style={{ ...segBtn, color: "var(--danger, #f87171)", fontSize: 13, padding: "3px 8px" }} title="关闭">✕</button>
         </div>
       </div>
 
@@ -1129,7 +1129,7 @@ export function ReviewApp({ onClose, init, onExitToList }: {
             </div>
           )}
           {hunks.length === 0 && diff && (
-            <div style={{ position: "absolute", top: 8, right: 8, color: "#f59e0b", fontSize: 11, background: "var(--bg,#fff)", padding: "2px 8px", borderRadius: 6, border: "1px solid var(--border)" }}>
+            <div style={{ position: "absolute", top: 8, right: 8, color: "var(--warn, #f59e0b)", fontSize: 11, background: "var(--bg,#fff)", padding: "2px 8px", borderRadius: 6, border: "1px solid var(--border)" }}>
               无变更行（纯新/删除文件）
             </div>
           )}
@@ -1209,7 +1209,7 @@ export function ReviewApp({ onClose, init, onExitToList }: {
               nodes.push(
                 <div key={"r" + i} style={{ display: "flex", alignItems: "flex-start", gap: 5, padding: "1px 4px 1px 6px", background: isAdd ? "rgba(74,222,128,.09)" : isDel ? "rgba(248,113,113,.09)" : "transparent" }}>
                   <span style={{ width: 26, flexShrink: 0, textAlign: "right", color: "var(--text-dim,#888)", userSelect: "none" }}>{line || ""}</span>
-                  <span style={{ width: 8, flexShrink: 0, color: isAdd ? "#4ade80" : isDel ? "#f87171" : "var(--text-dim,#888)", fontWeight: 700, userSelect: "none" }}>{isAdd ? "+" : isDel ? "−" : " "}</span>
+                  <span style={{ width: 8, flexShrink: 0, color: isAdd ? "var(--ok, #4ade80)" : isDel ? "var(--danger, #f87171)" : "var(--text-dim,#888)", fontWeight: 700, userSelect: "none" }}>{isAdd ? "+" : isDel ? "−" : " "}</span>
                   <span style={{ flex: 1, minWidth: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--text,#333)" }}>{s.text == null ? "" : String(s.text)}</span>
                 </div>
               );
@@ -1269,7 +1269,7 @@ export function ReviewApp({ onClose, init, onExitToList }: {
                         <span style={{ fontFamily: MONO, fontSize: 10.5, color: "var(--text-dim,#888)", flexShrink: 0 }}>
                           {"L" + (ln || "?") + (end && end > ln ? "-" + end : "") + (a.side === "old" ? "旧" : "")}
                         </span>
-                        {a.stale && <span style={{ color: "#f59e0b", fontSize: 10, border: "1px solid #f59e0b", borderRadius: 4, padding: "0 3px", flexShrink: 0 }} title="原文已删/行号已漂移，未找到适配行">漂移</span>}
+                        {a.stale && <span style={{ color: "var(--warn, #f59e0b)", fontSize: 10, border: "1px solid var(--warn, #f59e0b)", borderRadius: 4, padding: "0 3px", flexShrink: 0 }} title="原文已删/行号已漂移，未找到适配行">漂移</span>}
                         <span style={{ flex: 1 }} />
                         <span style={{ color: sevColor(a.severity), fontSize: 10, border: "1px solid " + sevColor(a.severity), borderRadius: 4, padding: "0 4px", flexShrink: 0 }}>
                           {sevLabel(a.severity) + (a.author === "ai" ? "·AI" : "")}
@@ -1277,8 +1277,8 @@ export function ReviewApp({ onClose, init, onExitToList }: {
                       </div>
                       <div style={{ color: "var(--text,#333)", fontSize: 12, lineHeight: 1.5, marginTop: 2, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{a.text}</div>
                       <div style={{ display: "flex", gap: 4, marginTop: 3 }}>
-                        {!a.resolved && <button onClick={() => updateAnnotation(a.id, { resolved: true })} style={miniBtn} title="标记解决">✓ 解决</button>}
-                        <button onClick={() => deleteAnnotation(a.id)} style={{ ...miniBtn, color: "#f87171" }} title="删除标注">🗑 删除</button>
+                        {!a.resolved && <button onClick={() => updateAnnotation(a.id, { resolved: true })} style={miniBtn} title="标记解决">解决</button>}
+                        <button onClick={() => deleteAnnotation(a.id)} style={{ ...miniBtn, color: "var(--danger, #f87171)" }} title="删除标注">删除</button>
                       </div>
                     </div>
                   );
@@ -1303,9 +1303,9 @@ export function ReviewApp({ onClose, init, onExitToList }: {
                 </label>
               )}
               <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <button onClick={sendCurrent} style={btnPrimary} title="把汇总发进当前会话预审">📨 添加到当前会话</button>
-                <button onClick={sendNew} style={btnPrimary} title="开启独立预审会话（自动跳转）">🚀 开启新会话</button>
-                <button onClick={() => { const txt = summary || genSummary(); try { navigator.clipboard.writeText(txt); } catch {} }} style={segBtn} title="复制汇总">📋 复制</button>
+                <button onClick={sendCurrent} style={btnPrimary} title="把汇总发进当前会话预审">添加到当前会话</button>
+                <button onClick={sendNew} style={btnPrimary} title="开启独立预审会话（自动跳转）">开启新会话</button>
+                <button onClick={() => { const txt = summary || genSummary(); try { navigator.clipboard.writeText(txt); } catch {} }} style={segBtn} title="复制汇总">复制</button>
               </div>
               {/* 回滚标记清单（点击取消标记） */}
               {isTrace && Object.keys(rolledBack).length > 0 && (
@@ -1360,7 +1360,7 @@ export function ReviewApp({ onClose, init, onExitToList }: {
       )}
 
       <div style={bottomBar}>
-        {(annoMode ? "✍ 加注模式：点击 diff 行加注" : isMobile ? "点 ✍ 开加注模式 → 点行评论" : "右键行加注（或 ✍ 加注模式）")
+        {(annoMode ? "加注模式：点击 diff 行加注" : isMobile ? "点 ✍ 开加注模式 → 点行评论" : "右键行加注（或 ✍ 加注模式）")
           + "（必须/建议/疑问） · 标注自动保存 · " + annotations.length + " 条标注"}
       </div>
     </div>
@@ -1459,7 +1459,7 @@ function ComposeBar({ line, side, file, onSubmit, onCancel }: {
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
         <span style={{ fontWeight: 600 }}>{"加注 @" + (side === "old" ? "旧" : "新") + "行 " + line + (file ? " · " + lastSeg(file) : "")}</span>
         <span style={{ flex: 1 }} />
-        <button onClick={() => onSubmit(sev, text)} style={{ ...miniBtn, color: "#4f8ef7", fontWeight: 600 }} title="提交">✓ 提交</button>
+        <button onClick={() => onSubmit(sev, text)} style={{ ...miniBtn, color: "#4f8ef7", fontWeight: 600 }} title="提交">提交</button>
         <button onClick={onCancel} style={miniBtn} title="取消">✕</button>
       </div>
       <div style={{ display: "flex", gap: 4, marginBottom: 8 }}>

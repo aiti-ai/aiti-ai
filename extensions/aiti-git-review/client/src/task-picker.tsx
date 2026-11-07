@@ -450,7 +450,7 @@ export function TaskPicker({ onClose, onOpenTask, presetRepo, fallbackRepo, onDo
           {onDock && (
             <button onClick={onDock} style={{ ...segBtn }} title="停靠到右栏（审查 tab）">⇱ 右栏</button>
           )}
-          <button onClick={onClose} style={{ ...segBtn, color: "#f87171" }} title="关闭">✕</button>
+          <button onClick={onClose} style={{ ...segBtn, color: "var(--danger, #f87171)" }} title="关闭">✕</button>
         </div>
         {/* 工作区：手输框在前，文件夹切换器在后（完整版 WorkspaceDropdown：历史项目 + 使用默认目录 + 自定义路径浏览）。
             默认 = 当前工作区（pages activeCwd/sessionCwd）或打开来源预设；下拉宽度独立于按钮、长路径显示全 */}
@@ -530,7 +530,7 @@ export function TaskPicker({ onClose, onOpenTask, presetRepo, fallbackRepo, onDo
             </>
           )}
         </div>
-        {err && <div style={{ color: "#f87171", fontSize: 12, marginBottom: 8 }}>❌ {err}</div>}
+        {err && <div style={{ color: "var(--danger, #f87171)", fontSize: 12, marginBottom: 8 }}>❌ {err}</div>}
         {/* 新建区：文件选择（树形 + 类型过滤 + 全选） + AI 预审选项 */}
         <div style={{ border: "1px solid var(--border,#eee)", borderRadius: 8, padding: 8, marginBottom: 10, maxHeight: "46%", display: "flex", flexDirection: "column", minHeight: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
@@ -613,7 +613,7 @@ export function TaskPicker({ onClose, onOpenTask, presetRepo, fallbackRepo, onDo
                   title="打开该审查会话的 op 时间线（aiti-git-trace）"
                 >⎇</button>
               )}
-              {task.boundSessionId && <span style={{ fontSize: 10, color: "#4ade80", border: "1px solid #4ade80", borderRadius: 4, padding: "0 4px", flexShrink: 0 }}>AI</span>}
+              {task.boundSessionId && <span style={{ fontSize: 10, color: "var(--ok, #4ade80)", border: "1px solid var(--ok, #4ade80)", borderRadius: 4, padding: "0 4px", flexShrink: 0 }}>AI</span>}
               <span style={{ flex: 1 }} />
               <span style={{ fontSize: 11, color: "var(--text-dim,#888)", flexShrink: 0 }}>{task.files + " 文件 · " + task.annotations + " 标注 · " + fmtTime(task.createdAt)}</span>
               <button
@@ -624,7 +624,7 @@ export function TaskPicker({ onClose, onOpenTask, presetRepo, fallbackRepo, onDo
                     if (d && d.ok) setTasks((ts) => (ts || []).filter((x) => x.id !== task.id));
                   }).catch(() => {});
                 }}
-                style={{ ...miniBtnStyle, color: "#f87171", fontSize: 12, flexShrink: 0, padding: "1px 5px" }}
+                style={{ ...miniBtnStyle, color: "var(--danger, #f87171)", fontSize: 12, flexShrink: 0, padding: "1px 5px" }}
                 title="删除此审查任务（标注库随任务删除）"
               >🗑</button>
             </div>
@@ -667,7 +667,7 @@ function TraceSection({ onOpenTask, fallbackRepo }: { onOpenTask: (taskId: strin
         if (d && d.ok) { setMsgs(d.messages || []); setInfo(d.ledger === "fixture" ? "（fixture 数据）" : ""); }
         else setInfo("❌ " + ((d && d.error) || "加载失败"));
       })
-      .catch(() => setInfo("❌ 加载失败"));
+      .catch(() => setInfo("加载失败"));
   };
   const toggle = (after: string) => {
     setPicked((p) => (p.includes(after) ? p.filter((x) => x !== after) : [...p, after].slice(-2)));
@@ -681,11 +681,11 @@ function TraceSection({ onOpenTask, fallbackRepo }: { onOpenTask: (taskId: strin
         if (d && d.ok && d.task) onOpenTask(d.task.id);
         else setInfo("❌ " + ((d && d.error) || "打开失败"));
       })
-      .catch(() => setInfo("❌ 打开失败"));
+      .catch(() => setInfo("打开失败"));
   };
   return (
     <details style={{ border: "1px solid var(--border,#eee)", borderRadius: 8, padding: "6px 8px", marginBottom: 10 }}>
-      <summary style={{ fontSize: 11, fontWeight: 600, color: "var(--text-dim,#888)", cursor: "pointer" }}>⎇ AI 变更追踪（trace · 审编外仓 op 区间）</summary>
+      <summary style={{ fontSize: 11, fontWeight: 600, color: "var(--text-dim,#888)", cursor: "pointer" }}>AI 变更追踪（trace · 审编外仓 op 区间）</summary>
       <div style={{ display: "flex", gap: 6, marginTop: 6, alignItems: "center", flexWrap: "wrap" }}>
         <input
           value={sid}

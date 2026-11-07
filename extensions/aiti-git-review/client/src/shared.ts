@@ -25,8 +25,8 @@ export function getCtx(): any { return _ctx; }
 export const lastSeg = (p: string) => { const s = String(p).split("/"); return s[s.length - 1]; };
 export const MONO = "var(--font-mono,ui-monospace,monospace)";
 export const statusIcon = (st: string) => (st === "A" ? "+" : st === "D" ? "-" : st === "R" ? "↻" : "~");
-export const statusColor = (st: string) => (st === "A" ? "#4ade80" : st === "D" ? "#f87171" : st === "R" ? "#fbbf24" : "#e0e0e0");
-export const sevColor = (s: string) => (s === "must" ? "#f87171" : s === "suggest" ? "#fbbf24" : s === "question" ? "#4f8ef7" : "#888");
+export const statusColor = (st: string) => (st === "A" ? "var(--ok, #4ade80)" : st === "D" ? "var(--danger, #f87171)" : st === "R" ? "var(--warn, #fbbf24)" : "#e0e0e0");
+export const sevColor = (s: string) => (s === "must" ? "var(--danger, #f87171)" : s === "suggest" ? "var(--warn, #fbbf24)" : s === "question" ? "#4f8ef7" : "#888");
 export const sevLabel = (s: string) => (s === "must" ? "必须" : s === "suggest" ? "建议" : s === "question" ? "疑问" : s);
 
 // 小屏断点（与 aiti-extman/configs 同）：宽≤640（高度变化如输入法弹起不翻转布局）
@@ -116,14 +116,14 @@ export function injectStyles() {
   const s = document.createElement("style");
   s.textContent = `
       .aiti-gr-anno-line { background: rgba(255, 200, 0, .07) !important; }
-      .aiti-gr-glyph-must { border-left: 3px solid #f87171 !important; }
-      .aiti-gr-glyph-suggest { border-left: 3px solid #fbbf24 !important; }
+      .aiti-gr-glyph-must { border-left: 3px solid var(--danger, #f87171) !important; }
+      .aiti-gr-glyph-suggest { border-left: 3px solid var(--warn, #fbbf24) !important; }
       .aiti-gr-glyph-question { border-left: 3px solid #4f8ef7 !important; }
-      .aiti-gr-glyph-must-ai { border-left: 4px dashed #f87171 !important; }
-      .aiti-gr-glyph-suggest-ai { border-left: 4px dashed #fbbf24 !important; }
+      .aiti-gr-glyph-must-ai { border-left: 4px dashed var(--danger, #f87171) !important; }
+      .aiti-gr-glyph-suggest-ai { border-left: 4px dashed var(--warn, #fbbf24) !important; }
       .aiti-gr-glyph-question-ai { border-left: 4px dashed #4f8ef7 !important; }
-      .aiti-gr-margin-must { background: #f87171; width: 3px !important; border-radius: 2px; }
-      .aiti-gr-margin-suggest { background: #fbbf24; width: 3px !important; border-radius: 2px; }
+      .aiti-gr-margin-must { background: var(--danger, #f87171); width: 3px !important; border-radius: 2px; }
+      .aiti-gr-margin-suggest { background: var(--warn, #fbbf24); width: 3px !important; border-radius: 2px; }
       .aiti-gr-margin-question { background: #4f8ef7; width: 3px !important; border-radius: 2px; }
       .aiti-gr-mark-line { background: rgba(180, 83, 9, .14) !important; }
       .aiti-gr-mark-deco { display: flex; align-items: center; justify-content: center; color: #b45309; font-size: 11px; font-weight: 700; cursor: pointer; }
@@ -131,7 +131,7 @@ export function injectStyles() {
       .aiti-gr-bubble-host { } /* 按需 add/remove（Monaco 接管 display，不用 CSS 显隐） */
       .aiti-gr-bubble {
         font: 11px/1.5 system-ui, sans-serif; color: var(--text,#333);
-        background: var(--bg,#fff); border: 1px solid var(--border,#d0d0d0); border-left: 3px solid #fbbf24;
+        background: var(--bg,#fff); border: 1px solid var(--border,#d0d0d0); border-left: 3px solid var(--warn, #fbbf24);
         border-radius: 8px; padding: 6px 9px; max-width: 380px; box-shadow: 0 4px 16px rgba(0,0,0,.15);
         white-space: pre-wrap; word-break: break-word; margin: 2px 0 6px 22px;
       }
