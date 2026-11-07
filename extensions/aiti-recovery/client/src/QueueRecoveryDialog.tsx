@@ -176,9 +176,9 @@ export function QueueRecoveryDialog({
   };
   const btnDanger: React.CSSProperties = {
     ...btnBase,
-    color: "#ef4444",
+    color: "var(--danger, #ef4444)",
     background: "transparent",
-    border: "1px solid color-mix(in srgb, #ef4444 35%, var(--border))",
+    border: "1px solid color-mix(in srgb, var(--danger, #ef4444) 35%, var(--border))",
   };
   const btnPrimary: React.CSSProperties = {
     ...btnBase,
@@ -578,9 +578,9 @@ export function QueueRecoveryDialog({
               fontSize: 12,
               padding: "5px 9px",
               borderRadius: 7,
-              background: status.ok ? "color-mix(in srgb, #22c55e 9%, transparent)" : "color-mix(in srgb, #ef4444 9%, transparent)",
-              color: status.ok ? "#16a34a" : "#ef4444",
-              border: `1px solid ${status.ok ? "color-mix(in srgb, #22c55e 30%, transparent)" : "color-mix(in srgb, #ef4444 30%, transparent)"}`,
+              background: status.ok ? "color-mix(in srgb, var(--ok, #22c55e) 9%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 9%, transparent)",
+              color: status.ok ? "#16a34a" : "var(--danger, #ef4444)",
+              border: `1px solid ${status.ok ? "color-mix(in srgb, var(--ok, #22c55e) 30%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 30%, transparent)"}`,
             }}>
               <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
                 {status.ok
