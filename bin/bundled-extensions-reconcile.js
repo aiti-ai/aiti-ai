@@ -99,7 +99,7 @@ function reconcileBundledExtensions(pkgDir) {
 
   fs.mkdirSync(sharedRoot, { recursive: true });
   const names = Object.keys(depsUnion).sort();
-  const shell = spawnSync("npm", ["install", "--prefix", sharedRoot, "--omit=dev", "--legacy-peer-deps", "--no-audit", "--no-fund", "--loglevel=error", ...names.map((n) => `${n}@${depsUnion[n]}`)], {
+  const shell = spawnSync("npm", ["install", "--prefix", path.dirname(sharedRoot), "--omit=dev", "--legacy-peer-deps", "--no-audit", "--no-fund", "--loglevel=error", ...names.map((n) => `${n}@${depsUnion[n]}`)], {
     encoding: "utf8", timeout: 10 * 60_000, shell: process.platform === "win32",
     env: { ...process.env, npm_config_update_notifier: "false" },
   });
