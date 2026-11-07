@@ -149,7 +149,7 @@ export function PortsTab({
                   ) : (
                     /* auth=none → 无认证告警,标红 */
                     <span title={t("services.noAuthWarnHint")}
-                      style={{ padding: "1px 7px", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", borderRadius: 4, color: "#f87171", fontWeight: 600, flexShrink: 0 }}>
+                      style={{ padding: "1px 7px", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", borderRadius: 4, color: "var(--danger, #f87171)", fontWeight: 600, flexShrink: 0 }}>
                       ⚠ {t("services.exposeProviderNone")}
                     </span>
                   )}
@@ -161,7 +161,7 @@ export function PortsTab({
                   </button>
                   {/* 列表页直接停止(tunnel 停隧道进程 / proxy 移除 binding+记录) */}
                   <button onClick={() => stopExpose(ex.name)} title={t("services.exposeStopHint")}
-                    style={{ flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "#f87171", cursor: "pointer", fontSize: 11 }}>
+                    style={{ flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--danger, #f87171)", cursor: "pointer", fontSize: 11 }}>
                     {t("services.exposeStop")}
                   </button>
                   {ex.accessLog && (
@@ -175,13 +175,13 @@ export function PortsTab({
                   <div style={{ fontSize: 10, color: "var(--text-muted)", marginBottom: 4 }}>access log{logsLoading ? " …" : ""}</div>
                   <pre style={{ maxHeight: 120, overflow: "auto", margin: 0, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, fontSize: 9, fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--text)" }}>{logsData.access || "(empty)"}</pre>
                   <div style={{ fontSize: 10, color: "var(--text-muted)", margin: "6px 0 4px" }}>error log</div>
-                  <pre style={{ maxHeight: 120, overflow: "auto", margin: 0, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, fontSize: 9, fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "#f87171" }}>{logsData.error || "(empty)"}</pre>
+                  <pre style={{ maxHeight: 120, overflow: "auto", margin: 0, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, fontSize: 9, fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--danger, #f87171)" }}>{logsData.error || "(empty)"}</pre>
                 </div>
               )}
             </div>
           )}
           {error ? (
-            <div style={{ fontSize: 13, color: "#f87171", padding: 12 }}>{error}</div>
+            <div style={{ fontSize: 13, color: "var(--danger, #f87171)", padding: 12 }}>{error}</div>
           ) : loading && !data ? (
             <div style={{ fontSize: 13, color: "var(--text-dim)", padding: 12 }}>{t("services.loading")}</div>
           ) : !data || (data.services ?? []).length === 0 ? (
@@ -286,7 +286,7 @@ export function PortsTab({
                         placeholder={t("ui.ports.renamePrompt")}
                         style={{ flex: 1, minWidth: 0, padding: "4px 8px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", fontSize: 12 }} />
                       <button onClick={() => { setRenameDraft(""); saveRename(s.port); }} title={t("ui.ports.renameHint")}
-                        style={{ flexShrink: 0, padding: "4px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "#f87171", cursor: "pointer", fontSize: 11 }}>{t("ui.ports.renameClear")}</button>
+                        style={{ flexShrink: 0, padding: "4px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--danger, #f87171)", cursor: "pointer", fontSize: 11 }}>{t("ui.ports.renameClear")}</button>
                       <button onClick={() => saveRename(s.port)}
                         style={{ flexShrink: 0, padding: "4px 12px", background: "var(--accent)", border: "none", borderRadius: 5, color: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>{t("ui.ports.renameSave")}</button>
                     </div>
@@ -391,7 +391,7 @@ export function PortsTab({
                   </button>
                   <button onClick={(ev) => { ev.stopPropagation(); openInNewTab(vhostUrl); }} title={vhostUrl} style={{ flexShrink: 0, padding: "4px 12px", background: "var(--accent)", border: "none", borderRadius: 6, color: "#fff", cursor: "pointer", fontSize: 11, fontWeight: 600 }}>{t("services.open")}</button>
                   <button onClick={(ev) => { ev.stopPropagation(); toggleInject(e.port, false); }} title={t("services.enrolledUnenrollHint")}
-                    style={{ flexShrink: 0, padding: "4px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "#f87171", cursor: "pointer", fontSize: 11 }}>
+                    style={{ flexShrink: 0, padding: "4px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--danger, #f87171)", cursor: "pointer", fontSize: 11 }}>
                     {t("services.enrolledUnenroll")}
                   </button>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
@@ -1009,7 +1009,7 @@ export function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose
         </select>
         {presetId !== "__last__" && (
           <button onClick={deletePreset} disabled={presetBusy} title={t("services.presetDeleteHint")}
-            style={{ flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "#f87171", cursor: "pointer", fontSize: 11 }}>
+            style={{ flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--danger, #f87171)", cursor: "pointer", fontSize: 11 }}>
             {t("services.presetDelete")}
           </button>
         )}
@@ -1289,7 +1289,7 @@ export function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose
           <SchemaForm specs={authSchemas[provider]} values={providerParams} onChange={(k, v) => setProviderParams((prev) => ({ ...prev, [k]: v }))} t={t} />
         </div>
       )}
-      {error && <div style={{ fontSize: 11, color: "#f87171", marginTop: 6 }}>{t("services.exposeFailed")}: {error}</div>}
+      {error && <div style={{ fontSize: 11, color: "var(--danger, #f87171)", marginTop: 6 }}>{t("services.exposeFailed")}: {error}</div>}
       {result && (result.url || result.localUrl || result.baseUrl || result.domainUrl || (result.altUrls ?? []).length > 0) && (
         <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 6, background: "var(--bg)", border: "1px solid var(--border)" }}>
           <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeResult")}</div>

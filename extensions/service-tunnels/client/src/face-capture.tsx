@@ -278,7 +278,7 @@ export function FaceCaptureModal({ name, provider, site, t, mode = "enroll", onC
         {modelStatus === "ready" && !camError && !saving && (
           <div style={{ fontSize: 10, fontFamily: "var(--font-mono, monospace)", color: diag.err ? "#ff8a80" : "var(--text-dim, #999)", marginTop: 6, lineHeight: 1.5 }}>
             {diag.err
-              ? `⚠ ${diag.err}`
+              ? `${diag.err}`
               : `人脸 ${diag.found ? "✓" : "—"} · 嘴开度 ${diag.mar ? diag.mar.toFixed(2) : "--"} · 阈值 ${diag.base ? diag.base.toFixed(2) : "--"} · 张嘴 ${progress}/3`}
             {!diag.err && diag.hist.length > 0 && (
               <span style={{ display: "inline-flex", gap: 2, marginLeft: 6, verticalAlign: "middle" }}>

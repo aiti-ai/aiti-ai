@@ -358,7 +358,7 @@ export async function serviceTunnelsMiddleware(request: Request): Promise<ExtMid
 <meta http-equiv="refresh" content="${refreshSec}">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${title}</title>
-<style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0d0d0d;color:#e5e5e5}.card{text-align:center;padding:26px 30px;border:1px solid #333;border-radius:10px;max-width:440px;line-height:1.7}code{color:#f87171;background:#1c1c1c;padding:1px 6px;border-radius:4px}strong{color:#f87171}</style></head>
+<style>body{font-family:system-ui,-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;background:#0d0d0d;color:#e5e5e5}.card{text-align:center;padding:26px 30px;border:1px solid #333;border-radius:10px;max-width:440px;line-height:1.7}code{color:var(--danger, #f87171);background:#1c1c1c;padding:1px 6px;border-radius:4px}strong{color:var(--danger, #f87171)}</style></head>
 <body><div class="card">
 <h3 style="margin-top:0">${title}</h3>
 ${hint}
