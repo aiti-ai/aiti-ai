@@ -675,7 +675,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
     { name: "page_exec", description: "在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。危险命令/浏览器受限操作会自动弹用户确认；Page.captureScreenshot 截屏会先弹准备卡展示截取意图（args.reason，请务必用一句话说明想截什么），用户调整好页面才开始截屏，截完再弹预览确认（大图自动落盘返回文件路径）；确认卡倒计时可用 args.timeout（ms）调整（默认 280000，服务端安全网自动同步 +30s 余量）。调试会话中从被调试页面（inject）发出的消息统一带 [发自: <pageId> · <url>] 来源标注——把 pageId 值传给 pageId 参数即操作该页面。\n\niframe 支持：Page.getFrameTree 查看 frame 树（iframe src/name/title，同域含 url/readyState）；Runtime.evaluate 传 contextId（iframe 索引从 1 起，同域可 eval）进 iframe 上下文执行。", 
       inputSchema: { type: "object", properties: {
         cmd: { type: "string" }, args: { type: "object" },
-        pageId: { type: "string", description: "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 30142/host）；也可 /bridge/sessions 查询" },
+        pageId: { type: "string", description: "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 3001/host）；也可 /bridge/sessions 查询" },
       }, required: ["cmd"] } },
     { name: "page_snapshot", description: "拉取已连接页面基础现场（URL/选区/模拟条件）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
     { name: "self_ui", description: "扫描目标页面（缺省 AI 主窗口 xxx/ai）当前打开的弹窗/dialog/表单字段/按钮清单——ai-helper 回填定位用。返回 {dialogs:[{title, fields:[{label,selector,type}], buttons}]}，无弹窗时 dialogs 为空数组。", inputSchema: { type: "object", properties: { pageId: { type: "string", description: "缺省用 AI 主窗口（xxx/ai）；也可指定其他页面" } } } },
@@ -1220,7 +1220,7 @@ export function createBridge(dataDir = "", opts: { name?: string; busPublish?: (
         instructions: [
           "aiti-devtools：页面内 AI 调试助手（浏览器桥）。",
           "工作流：页面发来的消息通常带 pageId。没有也可以先用 bridge_status 发现已连接页面（返回 sessions，含 pageId/url/title/frameworks/device——deviceLabel 一行的浏览器·屏幕·在线·语言可快速识别是哪台机器哪个标签）→ 把 pageId 传给目标工具。",
-          "pageId 格式为 instanceId/frameId（如 30142/host）；也可直接传 url 或页面标题；命中多个时需具体 pageId 指定。",
+          "pageId 格式为 instanceId/frameId（如 3001/host）；也可直接传 url 或页面标题；命中多个时需具体 pageId 指定。",
           "page_exec：在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。args 为命令参数对象。危险命令（导航/下载/对话框等）会自动弹用户确认。截屏（Page.captureScreenshot）务必在 args 带 reason（一句话向用户说明想截什么，页面会先弹准备卡展示该说明、用户调整好页面才开始截屏）。",
           "page_snapshot：拉取目标页面基础现场（URL/选区/模拟条件）。",
           "page_logs / page_network：排查页面报错/请求失败首选——page_logs 查 console（可 level/since/limit 过滤，先看 warn/error）；page_network 查 ajax/fetch 完成态（status≥400 或 errorOnly:true 只看失败）。两者均读页面本地缓冲（CDP Runtime.evaluate 按需拉取，不再实时上报）。",
