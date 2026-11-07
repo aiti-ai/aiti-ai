@@ -23,10 +23,11 @@
   "contentHash": "ada30fcc8ff4b66d",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-word-superdoc.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-word-superdoc"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-word-superdoc#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-word-superdoc/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
