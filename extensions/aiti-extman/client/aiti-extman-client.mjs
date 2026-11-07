@@ -86,9 +86,9 @@ const chipStyle = (color, bg) => ({
 function shortenPath(p) { return String(p ?? "").replace(/^\/(?:Users|home)\/[^/]+/, "~"); }
 
 function statusDotColor(e) {
-  if (e.error) return "#ef4444";
+  if (e.error) return "var(--danger, #ef4444)";
   if (e.enabled === false) return "var(--text-dim)";
-  if (!e.loaded) return "#f59e0b";
+  if (!e.loaded) return "var(--warn, #f59e0b)";
   return "var(--accent)";
 }
 
@@ -826,7 +826,7 @@ function ExtManPanel(props) {
           H("button", { type: "button", onClick: () => setState({ open: false }), style: btnStyle }, T("ext.close")),
         ),
       ),
-      state.error && H("div", { style: { padding: "8px 18px", fontSize: 12, color: "#ef4444", background: "rgba(239,68,68,0.06)", borderBottom: "1px solid var(--border)" } }, state.error),
+      state.error && H("div", { style: { padding: "8px 18px", fontSize: 12, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.06)", borderBottom: "1px solid var(--border)" } }, state.error),
       state.message && H("div", { style: { padding: "8px 18px", fontSize: 12, color: "#16a34a", background: "rgba(22,163,74,0.06)", borderBottom: "1px solid var(--border)" } }, state.message),
       state.openHint && H("div", { style: { padding: "8px 18px", fontSize: 12, color: "#d97706", background: "rgba(217,119,6,0.08)", borderBottom: "1px solid var(--border)" } }, state.openHint.text),
 
@@ -1142,14 +1142,14 @@ function LocalDetail({ id, entry }) {
             }),
         H(SourceTag, { source: entry.source }),
         !enabled && H("span", { style: chipStyle("var(--text-dim)", "rgba(120,120,120,0.12)") }, T("ext.disabled")),
-        entry.error && H("span", { style: chipStyle("#ef4444", "rgba(239,68,68,0.12)") }, "error"),
+        entry.error && H("span", { style: chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.12)") }, "error"),
         H("span", {
           title: id,
           style: { fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
         }, id),
       ),
       entry.source === "user" && entry.dir && id !== SELF_ID && H("button", {
-        type: "button", disabled: busy, style: { ...btnStyle, color: "#ef4444", background: "rgba(239,68,68,0.08)" },
+        type: "button", disabled: busy, style: { ...btnStyle, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.08)" },
         onClick: () => { if (window.confirm(T("ext.removeConfirm"))) void runOp("remove", { id }); },
       }, T("ext.remove")),
     ),
@@ -1251,7 +1251,7 @@ function LocalDetail({ id, entry }) {
 
     entry.error && H("div", {
       style: {
-        fontSize: 12, color: "#ef4444", whiteSpace: "pre-wrap",
+        fontSize: 12, color: "var(--danger, #ef4444)", whiteSpace: "pre-wrap",
         background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.25)",
         borderRadius: 6, padding: "8px 10px", fontFamily: "var(--font-mono)",
       },
@@ -1335,7 +1335,7 @@ function FeaturePanel({ id, features }) {
                   H("span", { style: { fontSize: 12, fontWeight: 600, color: "var(--text)" } }, f.label),
                   isString ? H("span", { style: chipStyle("#2563eb", "rgba(37,99,235,0.12)") }, "文本") : null,
                   !isString && f.default === false && H("span", { style: chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)") }, "默认关"),
-                  !isString && f.enabled === false && H("span", { style: chipStyle("#ef4444", "rgba(239,68,68,0.12)") }, T("ext.disabled")),
+                  !isString && f.enabled === false && H("span", { style: chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.12)") }, T("ext.disabled")),
                 ),
                 f.description && H("div", { style: { fontSize: 11, color: "var(--text-dim)", lineHeight: 1.45 } }, f.description),
                 isString
@@ -1618,7 +1618,7 @@ function AddPane() {
                 H("button", {
                   type: "button", disabled: busy,
                   onClick: () => void runOp("untrust", { name: key }),
-                  style: { ...btnStyle, padding: "3px 10px", fontSize: 11, color: "#ef4444", flexShrink: 0 },
+                  style: { ...btnStyle, padding: "3px 10px", fontSize: 11, color: "var(--danger, #ef4444)", flexShrink: 0 },
                 }, busy ? "…" : T("ext.untrustPublisher")),
               );
             })),
