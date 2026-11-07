@@ -344,7 +344,7 @@ async function runTool(name: string, args: any): Promise<any> {
       const state = core.loadState(configDir);
       const lm = core.loadModels(cfg);
       const pFilter = String(args && args.provider || "").trim();
-      const L = ["🔑 多 key 配置（models.json provider.apiKeys）："];
+      const L = ["多 key 配置（models.json provider.apiKeys）："];
       const providers = lm.ok ? [...new Set(lm.entries.map((e: any) => e.provider))] : [];
       let any = false;
       for (const p of providers) {
@@ -355,7 +355,7 @@ async function runTool(name: string, args: any): Promise<any> {
         const kTxt = keys.map((k: any) => {
           const km = state.models && Object.values(state.models).find((m: any) => m.provider === p && m.keys && m.keys[k.name]);
           const kk = km && km.keys[k.name];
-          const st = !kk ? "⚪ 未检" : kk.ok ? "✅ OK" : kk.status === 429 ? "🔴 429" + (kk.predictedAvailableAt ? " ~" + core.fmtPredict(kk.predictedAvailableAt) : "") : "⚠️ " + (kk.status || "err");
+          const st = !kk ? "⚪ 未检" : kk.ok ? "OK" : kk.status === 429 ? "🔴 429" + (kk.predictedAvailableAt ? " ~" + core.fmtPredict(kk.predictedAvailableAt) : "") : "⚠️ " + (kk.status || "err");
           return k.name + "=" + core.maskKey(k.key) + (k.rpm ? "(rpm" + k.rpm + ")" : "") + " " + st + (kk && kk.latencyMs != null ? " " + core.fmtDuration(kk.latencyMs) : "");
         }).join(" · ");
         L.push("  · " + p + "（" + keys.length + " 个 key）: " + kTxt);
@@ -369,13 +369,13 @@ async function runTool(name: string, args: any): Promise<any> {
       core.pruneState(state, lm.entries);
       const a = core.availability(state, lm.entries);
       const L = [];
-      if (a.noModels) L.push("🈳 无任何已配置模型 → 应引导用户添加（aiti_model_wizard_search / 模型向导）");
+      if (a.noModels) L.push("无任何已配置模型 → 应引导用户添加（aiti_model_wizard_search / 模型向导）");
       else if (a.allUnavailable) L.push("🔴 所有已配置模型都不可用（" + a.total + " 个：限流 " + a.rateLimited + " · 异常 " + a.errorCount + "）→ 需要换模型或等恢复");
       else L.push("🟢 有可用模型（总 " + a.total + "：可用 " + a.available + " · 限流 " + a.rateLimited + " · 异常 " + a.errorCount + " · 未探测 " + a.unprobed + "）");
       const bl = a.blockedExecutions;
       if (bl && bl.length) {
         const last = bl[bl.length - 1];
-        L.push("⚠️ 最近被阻断的执行（大量 429 导致任务中断）：" + core.fmtTime(last.at) + " · " + (last.provider + "/" + last.model) + " · " + last.count + " 次" + (last.marked ? "（已标记模型不可用）" : "（未达标记线）") + (last.errorSummary ? " · " + last.errorSummary.slice(0, 80) : ""));
+        L.push("最近被阻断的执行（大量 429 导致任务中断）：" + core.fmtTime(last.at) + " · " + (last.provider + "/" + last.model) + " · " + last.count + " 次" + (last.marked ? "（已标记模型不可用）" : "（未达标记线）") + (last.errorSummary ? " · " + last.errorSummary.slice(0, 80) : ""));
       } else {
         L.push("（还没有运行期阻断记录：执行中大量 429 导致任务中断时自动记录）");
       }
@@ -398,7 +398,7 @@ async function runTool(name: string, args: any): Promise<any> {
       core.saveState(configDir, state);
       notifyAvailability();
       const L = [];
-      L.push("⚠️ 已记录被阻断的执行：" + p + "/" + md + " · " + count + " 次 429/限流错误" + (blocked ? "（执行被阻断）" : "（未阻断）"));
+      L.push("已记录被阻断的执行：" + p + "/" + md + " · " + count + " 次 429/限流错误" + (blocked ? "（执行被阻断）" : "（未阻断）"));
       if (marked) L.push("🔴 已把该模型标记为不可用（" + count + " ≥ " + minCount + "，且确实阻断执行——大量出错才标记，临时出错不标记）");
       else L.push("⚪ 未标记模型（规则：需 " + count + " ≥ " + minCount + " 且执行被阻断；防止临时出错误标）");
       if (errorSummary) L.push("错误摘要：" + errorSummary);
@@ -436,7 +436,7 @@ async function runTool(name: string, args: any): Promise<any> {
       const limit = Math.min(parseInt(String(args && args.limit || "30"), 10) || 30, 200);
       const hist = core.readHistory(configDir, { provider: args && args.provider, model: args && args.model, limit });
       if (!hist.length) return toolResult("无探测历史（先调 model_probe 探测一次）");
-      const lines = ["📜 探测历史（" + hist.length + " 条" + (args && args.provider ? " · provider=" + args.provider : "") + (args && args.model ? " · model=" + args.model : "") + "）："];
+      const lines = ["探测历史（" + hist.length + " 条" + (args && args.provider ? " · provider=" + args.provider : "") + (args && args.model ? " · model=" + args.model : "") + "）："];
       for (const h of hist) {
         const icon = h.ok ? "✅" : h.status === 429 ? "🔴" : "⚠️";
         let extra = icon + " " + h.provider + "/" + h.model + " · " + core.fmtTime(h.ts) + " · HTTP " + (h.status || "net") + " · " + core.fmtDuration(h.latencyMs);
@@ -472,11 +472,11 @@ async function runTool(name: string, args: any): Promise<any> {
       const okList = Object.values(balances).filter((b: any) => b.ok);
       const unsupList = Object.values(balances).filter((b: any) => b.unsupported);
       const errList = Object.values(balances).filter((b: any) => !b.unsupported && !b.ok);
-      const L = ["💰 模型余额 / 套餐用量（provider 级" + (refresh ? "，刚现查" : "，缓存") + " " + core.fmtTime(Date.now()) + "）："];
+      const L = ["模型余额 / 套餐用量（provider 级" + (refresh ? "，刚现查" : "，缓存") + " " + core.fmtTime(Date.now()) + "）："];
       if (!Object.keys(balances).length) L.push("还没有余额记录，本工具已现查一次；多 provider 并行查询可能需几秒。");
-      if (okList.length) { L.push("✅ 可查 (" + okList.length + ")："); L.push(core.buildBalanceSummary(balances)); }
+      if (okList.length) { L.push("可查 (" + okList.length + ")："); L.push(core.buildBalanceSummary(balances)); }
       if (unsupList.length) { L.push("⚪ 无公开余额接口 (" + unsupList.length + ")："); L.push(core.buildBalanceSummary(balances)); }
-      if (errList.length) { L.push("⚠️ 查询失败 (" + errList.length + ")："); L.push(core.buildBalanceSummary(balances)); }
+      if (errList.length) { L.push("查询失败 (" + errList.length + ")："); L.push(core.buildBalanceSummary(balances)); }
       L.push("支持查余额/用量的 provider（端点依据 OpenClaw 源码 + 实测官网/官方 API）：DeepSeek /user/balance · Z.AI/智谱编码 /monitor/usage/quota/limit · OpenCode Zen /v1/usage · Moonshot-Kimi /v1/users/me/balance · OpenRouter /key · MiniMax /token_plan/remains · Venice /billing/balance");
       return toolResult(L.join("\n"));
     }

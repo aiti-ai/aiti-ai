@@ -272,7 +272,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
       const w = extSvc("aiti-model-wizard.openTab") || window.__aitiModelWizardOpenTab
         || extSvc("aiti-model-wizard.open") || window.__aitiModelWizardOpen;
       if (typeof w === "function") { onClose(); setTimeout(() => (w as any)("status"), 30); }
-      else { try { dep?.(null); } catch {} delete window.__aitiModelWizardCleanupEdit; setMsg("⚠️ 未找到模型向导（aiti-model-wizard 扩展未加载，先部署/reload）"); }
+      else { try { dep?.(null); } catch {} delete window.__aitiModelWizardCleanupEdit; setMsg("未找到模型向导（aiti-model-wizard 扩展未加载，先部署/reload）"); }
     } catch (e: any) { setMsg("打开模型管理失败：" + (e.message || e)); }
   };
 
@@ -307,7 +307,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
   // 并把结果显式反馈（发现 N 个 / 无新模型 / 失败）。
   const [nmChecking, setNmChecking] = useState(false); // 检查模型更新进行中（按钮转圈文案）
   const doNewModelsCheck = async (manual = false) => {
-    if (manual) { setNmChecking(true); setMsg("🔍 正在检查模型更新（拉各已配置 provider 的 /models 对比前日基线）…"); }
+    if (manual) { setNmChecking(true); setMsg("正在检查模型更新（拉各已配置 provider 的 /models 对比前日基线）…"); }
     try {
       const r = await fetch(apiUrl("/api/extensions/aiti-model-wizard/new-models/refresh"), {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ wait: true, force: !!manual }), cache: "no-store",
@@ -318,10 +318,10 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
         const parts = Object.entries(d.providers || {}).map(([p, v]: any) =>
           p + "：" + (v.newModels || []).slice(0, 5).join("、") + ((v.newModels || []).length > 5 ? " 等 " + v.newModels.length + " 个" : ""));
         setNmTip({ total: d.total, text: parts.join(" · ") });
-        if (manual) setMsg("✅ 检查模型更新：发现 " + d.total + " 个未启用的新模型（点「去启用」到已配置页查看）");
+        if (manual) setMsg("检查模型更新：发现 " + d.total + " 个未启用的新模型（点「去启用」到已配置页查看）");
       } else {
         setNmTip(null);
-        if (manual) setMsg("✅ 检查模型更新完成：没有发现新模型" + (d.scanned ? "（已重扫）" : "（距上次扫描 <5min，用现有快照）"));
+        if (manual) setMsg("检查模型更新完成：没有发现新模型" + (d.scanned ? "（已重扫）" : "（距上次扫描 <5min，用现有快照）"));
       }
     } catch (e: any) { setNmTip(null); if (manual) setMsg("检查模型更新失败：" + (e.message || e)); }
     finally { if (manual) setNmChecking(false); }
@@ -340,7 +340,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
           // 纯订阅 provider：只做订阅状态检查（无逐模型探针结果）
           setMsg(subs.map((s: any) => (s.ok ? "✅ " + s.provider + " 订阅" + (s.text ? " · " + s.text : "") : "❌ " + s.provider + " 订阅" + (s.label ? " · " + s.label : "") + (s.error ? " · " + s.error : ""))).join("；"));
         } else {
-          setMsg("✅ 已探测 " + d.probed + " 个模型（" + new Date().toLocaleTimeString("zh-CN", { hour12: false }) + "）" + (subs.length ? " · " + subs.map((s: any) => (s.ok ? "✅ " + s.provider : "❌ " + s.provider)).join(" ") : ""));
+          setMsg("已探测 " + d.probed + " 个模型（" + new Date().toLocaleTimeString("zh-CN", { hour12: false }) + "）" + (subs.length ? " · " + subs.map((s: any) => (s.ok ? "✅ " + s.provider : "❌ " + s.provider)).join(" ") : ""));
         }
         load(); void doNewModelsCheck();
       }
@@ -369,7 +369,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
 
   // 余额：现查（refresh=1）或读缓存，结果塞回 data.state.balances 供渲染
   const checkBal = async (refresh: boolean) => {
-    setBusy(true); setMsg(refresh ? "💰 查询余额/套餐用量中（并行 GET，几秒）…" : "加载余额…");
+    setBusy(true); setMsg(refresh ? "查询余额/套餐用量中（并行 GET，几秒）…" : "加载余额…");
     try {
       const r = await api("/balance" + (refresh ? "?refresh=1" : ""), { cache: "no-store" });
       const d = await r.json();
@@ -379,7 +379,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
         const st = (prev && prev.state && prev.state.balances) ? prev : { state: { models: (prev && prev.state && prev.state.models) || {} } };
         return { ...st, state: { ...st.state, balances: (d.balances || []).reduce((o: any, b: any) => { o[b.provider] = b; return o; }, st.state.balances || {}) } };
       });
-      setMsg(refresh ? "✅ 已查余额（" + new Date().toLocaleTimeString("zh-CN", { hour12: false }) + "）" : "（缓存）");
+      setMsg(refresh ? "已查余额（" + new Date().toLocaleTimeString("zh-CN", { hour12: false }) + "）" : "（缓存）");
     } catch (e: any) { setMsg("余额查询失败：" + (e.message || e)); }
     setBusy(false);
   };
@@ -393,7 +393,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
       const w = targetTab ? (extSvc("aiti-model-wizard.openTab") || window.__aitiModelWizardOpenTab || extSvc("aiti-model-wizard.open") || window.__aitiModelWizardOpen)
         : (extSvc("aiti-model-wizard.open") || window.__aitiModelWizardOpen);
       if (typeof w === "function") { onClose(); setTimeout(() => (w as any)(targetTab), 30); }
-      else setMsg("⚠️ 未找到模型向导（aiti-model-wizard 扩展未加载，先部署/reload）");
+      else setMsg("未找到模型向导（aiti-model-wizard 扩展未加载，先部署/reload）");
     } catch (e: any) { setMsg("打开模型向导失败：" + (e.message || e)); }
   };
 
@@ -414,7 +414,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
       const d = await (await api("/recover-notify", { method: "POST", ...jsonBody({ level, provider, model, value: next }) })).json();
       if (d && d.ok) {
         setData((prev: any) => (prev ? { ...prev, recover: d.recover } : prev));
-        setMsg(next ? "🔔 已开启" + (level === "model" ? "该模型" : "该 provider ") + "的限流到期提醒" : "🔕 已关闭" + (level === "model" ? "该模型" : "该 provider ") + "的限流到期提醒");
+        setMsg(next ? "已开启" + (level === "model" ? "该模型" : "该 provider ") + "的限流到期提醒" : "已关闭" + (level === "model" ? "该模型" : "该 provider ") + "的限流到期提醒");
       } else setMsg("开关保存失败：" + ((d && d.error) || "未知错误"));
     } catch (e: any) { setMsg("开关保存失败：" + (e.message || e)); }
   };
@@ -515,7 +515,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
       <div style={{ marginBottom: 8 }}>
         {pending.length ? (
           <div style={{ padding: "6px 10px", borderRadius: 8, marginBottom: 6, fontSize: 12, background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.4)", color: "#b45309" }}>
-            <div style={{ fontWeight: 700, marginBottom: 2 }}>{"⏰ 限流到期待验证 " + pending.length + " 个（已过记录的预计恢复时间；纯时间提示，尚未探测）："}</div>
+            <div style={{ fontWeight: 700, marginBottom: 2 }}>{"限流到期待验证 " + pending.length + " 个（已过记录的预计恢复时间；纯时间提示，尚未探测）："}</div>
             {pending.slice(0, 6).map((d: any) => (
               <div key={d.provider + "/" + d.model} style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 1 }}>
                 <span style={{ fontWeight: 600 }}>{d.provider + "/" + d.model}</span>
@@ -528,7 +528,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
         ) : null}
         <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap", fontSize: 11.5, color: "var(--text-subtle,#666)" }}>
           <span title="长期限流（已持续 ≥ 阈值）的模型在其记录的预计恢复时间到点时提醒；纯时间检查，不自动探测；逐模型/逐 provider 可用行尾 🔔 关闭">
-            {"🔔 限流到期提醒：" + (r.enabled ? "开" : "关（extman 功能管理）") + " · 阈值 " + thrTxt}
+            {"限流到期提醒：" + (r.enabled ? "开" : "关（extman 功能管理）") + " · 阈值 " + thrTxt}
           </span>
           {r.enabled && !notifOk ? (
             <button style={{ ...C.btn, padding: "1px 8px", fontSize: 11 }} onClick={() => { void askNotifyPermission(); }}
@@ -539,7 +539,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
           {notifOk ? <span title="页面开着时到期提醒会以系统通知弹出；面板「待验证」始终可见">浏览器通知已开</span> : null}
           {recent.length ? (
             <span title={recent.map((a: any) => fmtAgo(a.at) + " " + a.provider + "/" + a.model + "（限流 " + fmtRecoverDur(a.limitedMs) + "）").join("\n")}>
-              {"📜 最近提醒：" + recent.slice(0, 3).map((a: any) => a.model + "（" + fmtAgo(a.at) + "）").join(" · ")}
+              {"最近提醒：" + recent.slice(0, 3).map((a: any) => a.model + "（" + fmtAgo(a.at) + "）").join(" · ")}
             </span>
           ) : null}
         </div>
@@ -618,13 +618,13 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
         <div key={m.provider + "/" + m.model} style={{ padding: "7px 8px", borderBottom: "1px solid var(--border,#e0e0e0)" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {isProbing(m)
-              ? <span style={{ ...C.badge, background: "rgba(37,99,235,.15)", color: "#2563eb" }} title="正在探测…（每条最长 10s）">⏳ 测试中</span>
+              ? <span style={{ ...C.badge, background: "rgba(37,99,235,.15)", color: "#2563eb" }} title="正在探测…（每条最长 10s）">测试中</span>
               : m.runtimeOnly
                 ? <span style={{ ...C.badge, background: "rgba(156,163,175,.18)", color: "#6b7280" }} title="该模型不在当前配置里（可能已删除），但代理真实流量仍观测到 429">未配置</span>
                 : <span style={badge(m)}>{statusLabel(m)}</span>}
             {rtBadge(m)}
             {m.blockedAt ? <span style={{ ...C.badge, background: "rgba(220,38,38,.15)", color: "#dc2626" }} title={"运行中被大量 429 阻断标记为不可用（" + new Date(m.blockedAt).toLocaleString("zh-CN", { hour12: false }) + " · " + (m.blockedCount || 1) + " 次）"}>⛔ 运行阻断</span> : null}
-            {alertDue(m) ? <span style={{ ...C.badge, background: "rgba(245,158,11,.18)", color: "#b45309" }} title={"记录的预计恢复时间 " + new Date(m.alertAt).toLocaleString("zh-CN", { hour12: false }) + " 已到点（纯时间提示，未探测验证）——点「测」验证"}>⏰ 预计已恢复 · 待验证</span> : null}
+            {alertDue(m) ? <span style={{ ...C.badge, background: "rgba(245,158,11,.18)", color: "#b45309" }} title={"记录的预计恢复时间 " + new Date(m.alertAt).toLocaleString("zh-CN", { hour12: false }) + " 已到点（纯时间提示，未探测验证）——点「测」验证"}>预计已恢复 · 待验证</span> : null}
             <span style={{ fontWeight: 600, cursor: "pointer" }} title="看历史" onClick={() => { setHistFilter({ provider: m.provider, model: m.model }); setTab("history"); loadHist(m.provider, m.model); }}>{m.model}</span>
             {!m.runtimeOnly ? <EyeBtn title={"查看 " + m.model + " 模型信息（探测状态 / 参数 / 分 key）"} onClick={() => openInfo(m)} /> : null}
             {m.combo ? (
@@ -637,7 +637,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
             ) : null}
             {m.subscription ? (
               <>
-                <span style={{ ...C.badge, background: "rgba(99,102,241,.13)", color: "#4f46e5", cursor: "default" }} title="订阅/OAuth 登录型 provider（凭据在 auth.json，由模型向导「订阅服务」登录）">🔐 订阅</span>
+                <span style={{ ...C.badge, background: "rgba(99,102,241,.13)", color: "#4f46e5", cursor: "default" }} title="订阅/OAuth 登录型 provider（凭据在 auth.json，由模型向导「订阅服务」登录）">订阅</span>
                 <span style={{ fontSize: 11, color: "var(--text-subtle,#888)", cursor: "default" }} title="订阅 provider 由厂商/引擎接入（qoder WASM 加密 / github Copilot 模型 id 映射），不直接发标准探针；请在 provider 行点「检查订阅」看订阅状态">登录凭据驱动 · 不直接探测</span>
               </>
             ) : null}
@@ -738,16 +738,16 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
                     onClick={() => setExpanded((e) => ({ ...e, [p]: !e[p] }))} title="点击展开/收起">
                     <span style={{ width: 14, fontSize: 11, color: "var(--text-subtle,#666)" }}>{open ? "▾" : "▸"}</span>
                     <span style={{ fontWeight: 700 }}>{p}</span>
-                    {gSub ? <span style={{ ...C.badge, background: "rgba(99,102,241,.13)", color: "#4f46e5" }}>🔐 订阅</span> : null}
+                    {gSub ? <span style={{ ...C.badge, background: "rgba(99,102,241,.13)", color: "#4f46e5" }}>订阅</span> : null}
                     <span style={{ fontSize: 12 }}>({" "}{summaryNode}{" "})</span>
-                    {provBusy ? <span style={{ color: "#2563eb", fontSize: 12, fontWeight: 600 }}>⏳ 测试中…</span> : null}
+                    {provBusy ? <span style={{ color: "#2563eb", fontSize: 12, fontWeight: 600 }}>测试中…</span> : null}
                     {subSt ? (
                       <span style={{ color: subSt.ok ? (subSt.exhausted ? "#d97706" : "#15803d") : "#b91c1c", fontSize: 12, fontWeight: 600 }}
                         title={(subSt.error || subSt.text || "") + " · " + (subSt.checkedAt ? new Date(subSt.checkedAt).toLocaleString("zh-CN", { hour12: false }) : "")}>
                         {subSt.ok ? (subSt.exhausted ? "⚠️ " : "✅ ") : "❌ "}{(subSt.label || "订阅")}{subSt.ok && subSt.text ? " · " + subSt.text : ""}
                       </span>
                     ) : null}
-                    {earliest ? <span style={{ color: "#dc2626", fontSize: 12 }}>{"⏳ 最早恢复 " + fmtPredict(earliest)}</span> : null}
+                    {earliest ? <span style={{ color: "#dc2626", fontSize: 12 }}>{"最早恢复 " + fmtPredict(earliest)}</span> : null}
                     {rtN ? (
                       <span style={{ color: rt1h ? "#dc2626" : "#d97706", fontSize: 12, fontWeight: 600, cursor: "default" }}
                         title={"运行期错误观测（带外 · 多 key/聚合代理真实流量非 2xx/3xx，非主动探测）：" + rtN + " 个模型 24h 内有错误" + (rt1h ? "，近 1 小时 " + rt1h + " 次" : "") + "——可能仍故障中，建议重检"}>
@@ -788,7 +788,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
       .join(" · ");
     return (
       <div style={{ marginTop: 8, padding: "8px 10px", borderRadius: 8, background: "rgba(245,158,11,.06)", border: "1px solid rgba(245,158,11,.25)", fontSize: 11.5 }}>
-        <div style={{ fontWeight: 600, color: "#b45309", marginBottom: 4 }}>🔎 运行期错误观测（带外 · 多 key/聚合代理真实流量的非 2xx/3xx，带 key 归因；只提示不标记，权威确认请点「测」或 model_probe）：</div>
+        <div style={{ fontWeight: 600, color: "#b45309", marginBottom: 4 }}>运行期错误观测（带外 · 多 key/聚合代理真实流量的非 2xx/3xx，带 key 归因；只提示不标记，权威确认请点「测」或 model_probe）：</div>
         {list.slice(0, 8).map((m: any) => {
           const capped = m.count24h >= 80 ? "+" : "";
           const info = rtErrInfo(m.lastStatus);
@@ -839,7 +839,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
       const subModel = histFilter && Array.isArray(data.models)
         ? (data.models as any[]).find((m: any) => m.provider === histFilter.provider && m.model === histFilter.model && m.subscription)
         : null;
-      return <div style={C.msg}>{subModel ? "🔐 订阅模型走引擎接入，不逐模型探针（无逐模型历史）——看 provider 行「检查订阅」的订阅状态" : "暂无历史（先探测）"}</div>;
+      return <div style={C.msg}>{subModel ? "订阅模型走引擎接入，不逐模型探针（无逐模型历史）——看 provider 行「检查订阅」的订阅状态" : "暂无历史（先探测）"}</div>;
     }
     return (
       <div>
@@ -876,7 +876,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
         <div style={{ display: "flex", gap: 8, marginBottom: 10, alignItems: "center", flexWrap: "wrap" }}>
           <button style={{ ...C.btn, ...C.btnPrimary }} onClick={() => checkBal(true)} disabled={busy}><Ic size={13} paths={"icons/wand.svg"} />{" "}查全部余额</button>
           <button style={C.btn} onClick={() => checkBal(false)} disabled={busy}><Ic size={13} paths={"icons/search.svg"} />{" "}读缓存</button>
-          <span style={{ color: "var(--text-subtle,#666)" }}>{"✅ 可查 " + cnt((b) => b.ok && !b.exhausted) + " · ❌ 用满 " + cnt((b) => b.ok && b.exhausted) + " · ⚪ 无接口 " + cnt((b) => b.unsupported) + " · ⚠️ 失败 " + cnt((b) => !b.pending && !b.ok && !b.unsupported) + " · ⚪ 待查 " + cnt((b) => b.pending)}</span>
+          <span style={{ color: "var(--text-subtle,#666)" }}>{"可查 " + cnt((b) => b.ok && !b.exhausted) + " · ❌ 用满 " + cnt((b) => b.ok && b.exhausted) + " · ⚪ 无接口 " + cnt((b) => b.unsupported) + " · ⚠️ 失败 " + cnt((b) => !b.pending && !b.ok && !b.unsupported) + " · ⚪ 待查 " + cnt((b) => b.pending)}</span>
         </div>
         {list.length === 0 ? <div style={C.msg}>还没有余额记录 —— 点「查全部余额」</div> : null}
         {list.map((b, i) => {
@@ -944,7 +944,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
           {m.lastError ? infoRow("错误", <span style={{ color: "#dc2626" }}>{m.lastError}</span>) : null}
           {m.lastText && m.lastOk ? infoRow("响应", <span style={{ fontFamily: "ui-monospace,monospace", fontSize: 11 }}>{String(m.lastText).slice(0, 120)}</span>) : null}
           {m.combo ? infoRow("聚合", <span>{"🧩 " + (m.comboMembers || []).join(" + ") + "（引擎路由：粘性 + 权重，不直接探测）"}</span>) : null}
-          {m.subscription ? infoRow("订阅", "🔐 订阅登录型 provider（凭据在 auth.json，不直接探测；provider 行可「检查订阅」）") : null}
+          {m.subscription ? infoRow("订阅", "订阅登录型 provider（凭据在 auth.json，不直接探测；provider 行可「检查订阅」）") : null}
           {m.blockedAt ? infoRow("阻断", <span style={{ color: "#dc2626" }}>{new Date(m.blockedAt).toLocaleString("zh-CN", { hour12: false }) + " 因大量 429 被标记不可用（" + (m.blockedCount || 1) + " 次）"}</span>) : null}
           {kb ? <div style={{ marginTop: 2 }}>{kb}</div> : null}
           {rt && rt.count24h ? infoRow("运行观测", <span style={{ color: rt.count1h ? "#dc2626" : "#d97706" }}>{"近 1h " + rt.count1h + " 次 / 24h " + rt.count24h + " 次错误（代理真实流量）" + (rt.lastAt ? " · 最近 " + new Date(rt.lastAt).toLocaleString("zh-CN", { hour12: false }) + " HTTP " + (rt.lastStatus || "-") : "")}</span>) : null}
@@ -954,12 +954,12 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
             : info.error ? <div style={{ padding: "6px 9px", borderRadius: 8, background: "rgba(245,158,11,.1)", border: "1px solid rgba(245,158,11,.35)", color: "#b45309", fontSize: 12 }}>{"⚠️ " + info.error}</div>
             : p ? (
               <>
-                {info.crossFrom ? <div style={{ marginBottom: 4, fontSize: 11, color: "#b45309" }}>{"⚠️ 本 provider 未收录该模型，参数借其它网关同 id 条目互证（" + info.crossFrom + "）—— 价格以该网关为准"}</div> : null}
+                {info.crossFrom ? <div style={{ marginBottom: 4, fontSize: 11, color: "#b45309" }}>{"本 provider 未收录该模型，参数借其它网关同 id 条目互证（" + info.crossFrom + "）—— 价格以该网关为准"}</div> : null}
                 {infoRow("显示名", p.name || "-")}
                 {infoRow("上下文", fmtTokN(p.contextWindow) + (p.contextWindow ? " tokens" : ""))}
                 {infoRow("最大输出", fmtTokN(p.maxTokens) + (p.maxTokens ? " tokens" : ""))}
                 {infoRow("模态", (Array.isArray(p.input) ? p.input.join(" / ") : "-") + " → " + (Array.isArray(p.output) ? p.output.join(" / ") : "text"))}
-                {infoRow("推理", p.reasoning ? "✅ 支持推理" : "—")}
+                {infoRow("推理", p.reasoning ? "支持推理" : "—")}
                 {infoRow("价格", "输入 " + fmtUnitPrice(cost.input) + " · 输出 " + fmtUnitPrice(cost.output) + (cost.cacheRead != null ? " · 缓存读 " + fmtUnitPrice(cost.cacheRead) : "") + "（$/M tokens）")}
                 {info.baseUrl ? infoRow("端点", <span style={{ fontFamily: "ui-monospace,monospace" }}>{info.baseUrl + (info.api ? " · " + info.api : "")}</span>) : null}
                 {info.readOnly ? <div style={{ marginTop: 4, fontSize: 11, color: "var(--text-subtle,#666)" }}>只读 · 目录反填（该 provider 未写入 models.json，参数由引擎/目录管理）</div> : null}
@@ -973,10 +973,10 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
                   const viewParams = extSvc<(p: string, id: string) => void>("aiti-model-wizard.viewParams") || window.__aitiModelWizardViewParams; // DI 方案 P2 双轨
                   if (typeof viewParams === "function") { try { viewParams(info.provider, info.model); closeInfo(); return; } catch { /* 回退跳转 */ } }
                   gotoWizard("status");
-                }}>✎ 编辑参数</button>
+                }}>编辑参数</button>
             ) : null}
-            <button style={C.btn} onClick={() => { const pf = { provider: info.provider, model: info.model }; setHistFilter(pf); setTab("history"); closeInfo(); loadHist(pf.provider, pf.model); }}>🕘 检查历史</button>
-            <button style={C.btn} disabled={busy} onClick={() => { doProbe(info.provider, info.model); closeInfo(); }} title="立即重测该模型可用性">🩺 重新探测</button>
+            <button style={C.btn} onClick={() => { const pf = { provider: info.provider, model: info.model }; setHistFilter(pf); setTab("history"); closeInfo(); loadHist(pf.provider, pf.model); }}>检查历史</button>
+            <button style={C.btn} disabled={busy} onClick={() => { doProbe(info.provider, info.model); closeInfo(); }} title="立即重测该模型可用性">重新探测</button>
             <button style={{ ...C.btn, marginLeft: "auto" }} onClick={closeInfo}>关闭</button>
           </div>
         </div>
@@ -1005,7 +1005,7 @@ export function App({ open, onClose, embedded, onGotoWizard, onCleanupEdit, hide
       {msg ? <div style={C.msg}>{msg}</div> : null}
       {nmTip ? (
         <div style={{ padding: "6px 10px", borderRadius: 8, marginBottom: 8, fontSize: 12, background: "rgba(34,197,94,.1)", border: "1px solid rgba(34,197,94,.35)", color: "#15803d", display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          <span style={{ flex: 1, minWidth: 0 }}>{"✨ 检查时发现 " + nmTip.total + " 个未启用的新模型：" + nmTip.text}</span>
+          <span style={{ flex: 1, minWidth: 0 }}>{"检查时发现 " + nmTip.total + " 个未启用的新模型：" + nmTip.text}</span>
           <button style={{ ...C.btn, flexShrink: 0 }} onClick={() => gotoWizard("status")} title="打开模型向导 · 已配置页查看并启用">去启用</button>
           <button style={{ ...C.btn, flexShrink: 0, padding: "2px 8px" }} onClick={() => setNmTip(null)} aria-label="关闭">✕</button>
         </div>
