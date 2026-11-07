@@ -127,7 +127,7 @@ function ProviderRow({ entry, isCurrent }: { entry: OverviewEntry; isCurrent: bo
           {alarming && <ExhaustedBadge label={t("providerUsage.exhausted")} />}
           {isCurrent && <span style={{ fontSize: 10, color: "var(--text-dim)", whiteSpace: "nowrap" }}>{t("providerUsage.currentSession")}</span>}
         </span>
-        <span style={{ color: alarming ? "var(--danger, var(--danger, #ef4444))" : worst ? severityColor(worst.remaining, worst.limit) : "var(--text-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        <span style={{ color: alarming ? "var(--danger, #ef4444)" : worst ? severityColor(worst.remaining, worst.limit) : "var(--text-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {worst ? `${worst.label} ${formatBucket(worst, t)}` : fallbackMetric ? formatMetric(fallbackMetric) : ""}
         </span>
       </summary>
@@ -140,7 +140,7 @@ function ProviderRow({ entry, isCurrent }: { entry: OverviewEntry; isCurrent: bo
 
 function ExhaustedBadge({ label }: { label: string }) {
   return (
-    <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99, color: "var(--danger, var(--danger, #ef4444))", background: "color-mix(in srgb, var(--danger, var(--danger, #ef4444)) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--danger, var(--danger, #ef4444)) 35%, transparent)", whiteSpace: "nowrap" }}>
+    <span style={{ fontSize: 10, fontWeight: 700, padding: "1px 6px", borderRadius: 99, color: "var(--danger, #ef4444)", background: "color-mix(in srgb, var(--danger, #ef4444) 10%, transparent)", border: "1px solid color-mix(in srgb, var(--danger, #ef4444) 35%, transparent)", whiteSpace: "nowrap" }}>
       {label}
     </span>
   );
