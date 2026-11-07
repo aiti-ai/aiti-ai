@@ -1207,7 +1207,7 @@ export function ReviewApp({ onClose, init, onExitToList }: {
               const line = isDel ? s.oldLine : s.newLine;
               const annosHere = line ? fileAnnos.filter((a) => !a.resolved && a.side === side && (side === "old" ? a.oldLine === line : a.newLine === line)) : [];
               nodes.push(
-                <div key={"r" + i} style={{ display: "flex", alignItems: "flex-start", gap: 5, padding: "1px 4px 1px 6px", background: isAdd ? "rgba(74,222,128,.09)" : isDel ? "rgba(248,113,113,.09)" : "transparent" }}>
+                <div key={"r" + i} style={{ display: "flex", alignItems: "flex-start", gap: 5, padding: "1px 4px 1px 6px", background: isAdd ? "color-mix(in srgb, var(--ok, #4ade80) 9%, transparent)" : isDel ? "color-mix(in srgb, var(--danger, #f87171) 9%, transparent)" : "transparent" }}>
                   <span style={{ width: 26, flexShrink: 0, textAlign: "right", color: "var(--text-dim,#888)", userSelect: "none" }}>{line || ""}</span>
                   <span style={{ width: 8, flexShrink: 0, color: isAdd ? "var(--ok, #4ade80)" : isDel ? "var(--danger, #f87171)" : "var(--text-dim,#888)", fontWeight: 700, userSelect: "none" }}>{isAdd ? "+" : isDel ? "−" : " "}</span>
                   <span style={{ flex: 1, minWidth: 0, whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--text,#333)" }}>{s.text == null ? "" : String(s.text)}</span>
