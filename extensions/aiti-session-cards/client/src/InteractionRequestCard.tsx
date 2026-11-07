@@ -278,7 +278,7 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
               type="button"
               disabled={busy}
               onClick={() => setPlanFeedback("")}
-              className={`${buttonBase} border-[#f59e0b66] text-[#f59e0b] hover:bg-[#f59e0b11]`}
+              className={`${buttonBase} border-[#f59e0b66] text-[var(--warn, #f59e0b)] hover:bg-[#f59e0b11]`}
             >
               反馈修改意见
             </button>
@@ -288,7 +288,7 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
               disabled={busy || !planFeedback.trim()}
               title={!planFeedback.trim() ? "请填写反馈内容" : "作为拒绝理由回给 agent 继续修改方案"}
               onClick={() => void respondWith("accept", { message: planFeedback.trim() })}
-              className={`${buttonBase} border-[#f59e0b66] text-[#f59e0b] hover:bg-[#f59e0b11]`}
+              className={`${buttonBase} border-[#f59e0b66] text-[var(--warn, #f59e0b)] hover:bg-[#f59e0b11]`}
             >
               提交反馈
             </button>
@@ -300,7 +300,7 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
             disabled={busy}
             title="拒绝回答（agent 会收到拒绝）"
             onClick={() => void respondWith("decline")}
-            className={`${buttonBase} border-[#ef444466] text-[#ef4444] hover:bg-[#ef444411]`}
+            className={`${buttonBase} border-[#ef444466] text-[var(--danger, #ef4444)] hover:bg-[#ef444411]`}
           >
             跳过
           </button>
@@ -311,7 +311,7 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
             disabled={busy || !allAnswered}
             title={!allAnswered ? "请先完成所有问题的选择" : undefined}
             onClick={() => void respondWith("accept", { answers: picks, message: note.trim() || undefined })}
-            className={`${buttonBase} border-transparent bg-[#22c55e] text-white hover:bg-[#16a34a]`}
+            className={`${buttonBase} border-transparent bg-[var(--ok, #22c55e)] text-white hover:bg-[#16a34a]`}
           >
             提交回答
           </button>
@@ -323,7 +323,7 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
               disabled={busy}
               title="拒绝本次工具调用（agent 收到拒绝理由后继续）"
               onClick={() => void respondWith("decline")}
-              className={`${buttonBase} border-[#ef444466] text-[#ef4444] hover:bg-[#ef444411]`}
+              className={`${buttonBase} border-[#ef444466] text-[var(--danger, #ef4444)] hover:bg-[#ef444411]`}
             >
               拒绝
             </button>
@@ -332,7 +332,7 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
               disabled={busy}
               title="允许 agent 执行该工具并继续"
               onClick={() => void respondWith("accept")}
-              className={`${buttonBase} border-transparent bg-[#22c55e] text-white hover:bg-[#16a34a]`}
+              className={`${buttonBase} border-transparent bg-[var(--ok, #22c55e)] text-white hover:bg-[#16a34a]`}
             >
               允许
             </button>
@@ -343,7 +343,7 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
             type="button"
             disabled={busy}
             onClick={() => void respondWith("decline")}
-            className={`${buttonBase} border-[#ef444466] text-[#ef4444] hover:bg-[#ef444411]`}
+            className={`${buttonBase} border-[#ef444466] text-[var(--danger, #ef4444)] hover:bg-[#ef444411]`}
           >
             拒绝
           </button>
@@ -353,7 +353,7 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
             type="button"
             disabled={busy}
             onClick={() => void respondWith("accept")}
-            className={`${buttonBase} border-transparent bg-[#22c55e] text-white hover:bg-[#16a34a]`}
+            className={`${buttonBase} border-transparent bg-[var(--ok, #22c55e)] text-white hover:bg-[#16a34a]`}
           >
             批准方案
           </button>
@@ -388,7 +388,7 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
               disabled={busy || !openUrlTarget}
               title={openUrlTarget ?? undefined}
               onClick={() => openUrlTarget && window.open(openUrlTarget, "_blank", "noopener,noreferrer")}
-              className={`${buttonBase} border-transparent bg-[#22c55e] text-white hover:bg-[#16a34a]`}
+              className={`${buttonBase} border-transparent bg-[var(--ok, #22c55e)] text-white hover:bg-[#16a34a]`}
             >
               打开登录页
             </button>
@@ -400,7 +400,7 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
               type="button"
               disabled={busy}
               onClick={() => void respondWith("decline")}
-              className={`${buttonBase} border-[#ef444466] text-[#ef4444] hover:bg-[#ef444411]`}
+              className={`${buttonBase} border-[#ef444466] text-[var(--danger, #ef4444)] hover:bg-[#ef444411]`}
             >
               拒绝
             </button>
@@ -408,7 +408,7 @@ export default function InteractionRequestCard({ request, respond }: SessionRequ
               type="button"
               disabled={busy}
               onClick={() => void respondWith("accept")}
-              className={`${buttonBase} border-transparent bg-[#22c55e] text-white hover:bg-[#16a34a]`}
+              className={`${buttonBase} border-transparent bg-[var(--ok, #22c55e)] text-white hover:bg-[#16a34a]`}
             >
               接受
             </button>
