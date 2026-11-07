@@ -1,5 +1,5 @@
 {
-  "name": "@agegr/pi-web",
+  "name": "@aiti-ai/pi-web",
   "version": "0.15.0",
   "description": "Web UI for the pi coding agent",
   "homepage": "https://github.com/agegr/pi-web#readme",
@@ -20,12 +20,15 @@
   "files": [
     "bin",
     "extensions",
+    "!extensions/*/node_modules",
+    "!extensions/*/node_modules/**",
     ".next",
     "!.next/cache",
     "!.next/dev",
     "!.next/**/*.js.map",
     "public",
     "next.config.ts",
+    "patches",
     "package.json"
   ],
   "scripts": {
@@ -65,7 +68,8 @@
     "semver": "7.8.5",
     "typebox": "1.3.27",
     "undici": "8.12.3",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "patch-package": "^8.0.1"
   },
   "devDependencies": {
     "@lobehub/icons": "^5.6.0",
@@ -83,7 +87,6 @@
     "eslint-config-next": "16.4.4",
     "jiti": "^2.7.0",
     "mammoth": "^1.12.0",
-    "patch-package": "^8.0.1",
     "playwright": "^1.62.1",
     "postcss": "^8.5.26",
     "tailwindcss": "^4.2.2",
