@@ -466,8 +466,8 @@ export function registerCustomAgentClient(ctx, config) {
 						? h("span", { style: { color: "#16a34a", fontSize: 11 } }, "● 已注册")
 						: h("span", { style: { color: "#d97706", fontSize: 11 } }, "○ 未注册（探活失败或停用）")),
 					probe && (probe.ok
-						? h("span", { title: probe.detail, style: { color: "#16a34a", fontSize: 11 } }, "✓ 探活")
-						: h("span", { title: probe.detail, style: { color: "#dc2626", fontSize: 11 } }, "✗ 探活")),
+						? h("span", { title: probe.detail, style: { color: "#16a34a", fontSize: 11 } }, "探活")
+						: h("span", { title: probe.detail, style: { color: "#dc2626", fontSize: 11 } }, "探活")),
 					h("span", { style: { flex: 1 } }),
 					h("button", { disabled: busy != null, onClick: () => { setForm(formOf(m)); setView({ mode: "edit" }); } }, "编辑"),
 					h("button", { disabled: busy != null, onClick: () => { setForm(formOf(m, true)); setView({ mode: "edit" }); } }, "复制"),
