@@ -70,9 +70,12 @@ jobs:
             --file "@aiti-ai/aiti-bridge=$BRIDGE_TGZ" \
             --file "@aiti-ai/aiti-devtools-core=$CORE_TGZ" \
             --file "justget=$PWD/vendor/npm/justget-0.2.4.tgz" \
-            --file "service-tunnels=$PWD/vendor/npm/service-tunnels-0.3.9.tgz"
+            --omit service-tunnels
           npm install --prefix extensions/.build-root --legacy-peer-deps --no-audit --no-fund --loglevel=error
           ln -s .build-root/node_modules extensions/node_modules
+          # service-tunnels：依赖名（无 scope）≠ 仓内源包名（@aiti-ai/service-tunnels，exports null），
+          # 安装形态对不上——直接 symlink 仓内源目录（物理子路径 service-tunnels/i18n 等全开）
+          ln -s ../service-tunnels extensions/node_modules/service-tunnels
 
       - name: Build extension dists (platform-agnostic JS, walk-up resolve)
         run: |
