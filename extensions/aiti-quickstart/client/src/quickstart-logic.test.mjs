@@ -146,6 +146,18 @@ test("parseGitUrl：非法输入拒绝（空/不识别/选项注入/控制字符
   assert.equal(logic.parseGitUrl("git@h:x\u0000repo"), null);
 });
 
+/* ── v2：splitKbdHint（快捷操作卡行式布局） ── */
+
+test("splitKbdHint：首空格拆 kbd/描述、单符号与空串", () => {
+  assert.deepEqual(logic.splitKbdHint("Ctrl+Alt+N 新建会话"), { kbd: "Ctrl+Alt+N", desc: "新建会话" });
+  assert.deepEqual(logic.splitKbdHint("@ 引用文件"), { kbd: "@", desc: "引用文件" });
+  assert.deepEqual(logic.splitKbdHint("/ 命令菜单"), { kbd: "/", desc: "命令菜单" });
+  assert.deepEqual(logic.splitKbdHint("Enter 发送消息"), { kbd: "Enter", desc: "发送消息" });
+  assert.deepEqual(logic.splitKbdHint("@@."), { kbd: "@@.", desc: "" }); // 无空格
+  assert.deepEqual(logic.splitKbdHint("  "), { kbd: "", desc: "" });
+  assert.deepEqual(logic.splitKbdHint(undefined), { kbd: "", desc: "" });
+});
+
 /* ── v2：pickFinalName 防覆盖顺延 ── */
 
 test("pickFinalName：无冲突原样 / 冲突 -2 -3 / 极端全占用时间戳兜底", () => {

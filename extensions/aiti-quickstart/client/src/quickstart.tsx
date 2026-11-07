@@ -18,7 +18,7 @@
  * extra 只读数据（slot-extra 红线）：widget 收 { cwd, isMobile, area }；动作全走服务。
  */
 import { useState, useEffect, t, extSvc } from "./host-shim";
-import { readSidebarDismissed, writeSidebarDismissed, resolveQuickstartCwd, topRecentRoot, deriveOnboardingState, type OnboardingState } from "./quickstart-logic";
+import { readSidebarDismissed, writeSidebarDismissed, resolveQuickstartCwd, topRecentRoot, deriveOnboardingState, splitKbdHint, type OnboardingState } from "./quickstart-logic";
 
 /* ── 公共样式（CSS vars 带兜底，照 app-center 卡片写法） ── */
 const cardStyle: Record<string, unknown> = {
@@ -63,6 +63,18 @@ const primaryBtn: Record<string, unknown> = {
   background: "none", color: "var(--accent, #2563eb)", cursor: "pointer",
   fontSize: 12, fontFamily: "inherit", transition: "background 0.12s",
 };
+
+/** lucide folder-plus——与宿主「添加文件夹到侧栏」同款（系统图标语言：获取/添加一个工作区；
+ *  rocket 保留 guide 标题/footer 的品牌位，「获取工作区」动作统一用本图标）。 */
+function FolderPlusIcon({ size = 12 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z" />
+      <line x1="12" y1="10" x2="12" y2="16" />
+      <line x1="9" y1="13" x2="15" y2="13" />
+    </svg>
+  );
+}
 
 function RocketIcon({ size = 14 }: { size?: number }) {
   return (
@@ -340,7 +352,15 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
     );
   }
 
-  // full：v1 四步卡
+  // full：四步卡 + 初始化动作行（工作区/模型齐备后仍保留一键入口——重开 Hub / 配置模型）
+  const actionChip = (icon: unknown, label: string, onClick: () => void, key: string) => (
+    <button key={key} type="button" style={{ ...chipBase, color: "var(--text-muted, #999)" }} onClick={onClick}
+      onMouseEnter={(e: any) => { e.currentTarget.style.borderColor = "var(--accent, #2563eb)"; e.currentTarget.style.color = "var(--accent, #2563eb)"; }}
+      onMouseLeave={(e: any) => { e.currentTarget.style.borderColor = "var(--border, #3a3a3a)"; e.currentTarget.style.color = "var(--text-muted, #999)"; }}>
+      {icon}
+      <span>{label}</span>
+    </button>
+  );
   return (
     <div style={cardStyle}>
       {head}
@@ -356,21 +376,50 @@ export function GuideWidget(props: { cwd?: string | null; isMobile?: boolean; ar
           </div>
         ))}
       </div>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 6, flexShrink: 0, paddingTop: 2, borderTop: "1px dashed var(--border, #3a3a3a)" }}>
+        {actionChip(<FolderPlusIcon />, t("qs.open.hub"), openWorkspaceHub, "hub")}
+        {actionChip(<GearIcon />, t("qs.start.configureModel"), openModelConfig, "model")}
+      </div>
     </div>
   );
 }
 
-/** 快捷操作卡（top，w4 h1）：kbd 芯片换行排布。 */
+/** lucide settings-2 风格齿轮（配置模型动作 chip；不引图库，内联同款线图）。 */
+function GearIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      <path d="M20 7h-9" />
+      <path d="M14 17H5" />
+      <circle cx="17" cy="17" r="3" />
+      <circle cx="7" cy="7" r="3" />
+    </svg>
+  );
+}
+
+/** kbd 胶囊（mono 紧凑，快捷键语义）。 */
+const kbdStyle: Record<string, unknown> = {
+  display: "inline-flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+  border: "1px solid var(--border, #3a3a3a)", borderRadius: 6, padding: "1px 5px",
+  fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 10,
+  color: "var(--text, #ddd)", background: "var(--bg-hover, #232323)", lineHeight: 1.6,
+};
+
+/** 快捷操作卡（top，w4 h1）：kbd 胶囊 + 描述 双列行式（2026-11-07 统一化：
+ *  原 mono 大芯片 2×2 堆与 guide 步骤行风格脱节、留白松散——改为行式后同构）。 */
 export function ShortcutsWidget() {
   return (
     <div style={cardStyle}>
       <div style={titleStyle}>{t("qs.shortcutsTitle")}</div>
-      <div style={{ flex: 1, minHeight: 0, display: "flex", flexWrap: "wrap", gap: 4, alignContent: "center" }}>
-        {SHORTCUT_KEYS.map((key) => (
-          <span key={key} style={{ ...chipBase, cursor: "default", fontFamily: "var(--font-mono, ui-monospace, monospace)", fontSize: 11 }}>
-            {t(key)}
-          </span>
-        ))}
+      <div style={{ flex: 1, minHeight: 0, display: "grid", gridTemplateColumns: "1fr 1fr", gap: "4px 12px", alignContent: "center" }}>
+        {SHORTCUT_KEYS.map((key) => {
+          const { kbd, desc } = splitKbdHint(t(key));
+          return (
+            <div key={key} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              <kbd style={kbdStyle}>{kbd}</kbd>
+              <span style={{ fontSize: 11, color: "var(--text-muted, #999)", lineHeight: 1.45, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{desc}</span>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
@@ -455,7 +504,7 @@ export function QuickstartFiller() {
           <button type="button" style={primaryBtn} onClick={openWorkspaceHub}
             onMouseEnter={(e: any) => { e.currentTarget.style.background = "var(--bg-selected, #2a2a2a)"; }}
             onMouseLeave={(e: any) => { e.currentTarget.style.background = "none"; }}>
-            <RocketIcon size={12} />{t("qs.open.hub")}
+            <FolderPlusIcon size={12} />{t("qs.open.hub")}
           </button>
           <button type="button" style={chipBase} onClick={openModelConfig}
             onMouseEnter={(e: any) => { e.currentTarget.style.borderColor = "var(--accent, #2563eb)"; e.currentTarget.style.color = "var(--accent, #2563eb)"; }}
@@ -484,27 +533,6 @@ export function QuickstartFiller() {
   );
 }
 
-/* ── 侧栏底部按钮（sidebarFooter 注册条目；与内置 模型/技能/设置 同排同款） ── */
-
-/** 照 extman SidebarFooterButton 的标准形（flex:1 / height 32 / hover 反色）。 */
-export function QuickstartFooterButton() {
-  return (
-    <button type="button" title={t("qs.footer.title")} aria-label={t("qs.footer.label")}
-      onClick={() => { void openQuickstart(); }}
-      style={{
-        flex: 1, display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-        height: 32, padding: 0, background: "none", border: "none",
-        borderRadius: 9, color: "var(--text-muted)", cursor: "pointer",
-        fontSize: 12, transition: "background 0.12s, color 0.12s", fontFamily: "inherit",
-      }}
-      onMouseEnter={(e: any) => { e.currentTarget.style.background = "var(--bg-hover)"; e.currentTarget.style.color = "var(--text)"; }}
-      onMouseLeave={(e: any) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted)"; }}>
-      <RocketIcon size={14} />
-      <span>{t("qs.footer.label")}</span>
-    </button>
-  );
-}
-
 /* ── Workspace 下拉动作区入口（workspacePickerActions 注册条目） ── */
 
 /** WorkspacePickerActionsProps（宿主 lib/ext/types.ts:506-520）：extra 数据只读；点击开 Hub。 */
@@ -519,7 +547,7 @@ export function WorkspacePickerAcquireEntry() {
       }}
       onMouseEnter={(e: any) => { e.currentTarget.style.background = "var(--bg-hover, #232323)"; e.currentTarget.style.color = "var(--text, #ddd)"; }}
       onMouseLeave={(e: any) => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = "var(--text-muted, #999)"; }}>
-      <RocketIcon size={13} />
+      <FolderPlusIcon size={13} />
       <span>{t("qs.open.hub")}</span>
     </button>
   );
