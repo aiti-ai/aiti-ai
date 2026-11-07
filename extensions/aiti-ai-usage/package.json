@@ -18,5 +18,12 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "a7e9c3c22a03432a"
+  "contentHash": "a7e9c3c22a03432a",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai-usage.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai-usage/issues"
+  }
 }
