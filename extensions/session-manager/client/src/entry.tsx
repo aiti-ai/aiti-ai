@@ -433,6 +433,13 @@ export default function register(ctx: Record<string, unknown>) {
   ]);
   ctx.registerItems?.("newSessionPreparers", [{ id: "picker", meta: { prepare: newSessionPrepare } }]);
 
+  // 上传能力服务化（v2 Workspace Hub 复用，aiti-quickstart soft-depend）：UploadDialog
+  // 开关提为模块级 store（extman openExtmanPanel 范式）——第三方 open({onSelect,onClose})
+  // 直接驱动既有弹窗，上传零重实现。服务缺席（本扩展禁用）时消费方降级提示。
+  const disposeUploadSvc = typeof ctx.registerExtService === "function"
+    ? ctx.registerExtService("session-manager.uploadWorkspace", { open: openWorkspaceUploadDialog })
+    : null;
+
   // 跨扩展唤起归档查看器通道：sm:open-archived { detail: { id: <sid> } }。
   // 生产方：aiti-doc-center（归档会话在消息区不可打开——jsonl 已进 .pwarc 容器，
   // 宿主 pi-web:open-session 找不到静默失败；服务端 services.sessions.archivedIds()

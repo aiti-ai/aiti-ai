@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/session-manager",
-  "version": "0.2.7",
+  "version": "0.2.10",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/session-manager.html",
   "description": "会话管理扩展（全部会话面板/看板/标签）—— JSX + vite 构建 client bundle",
@@ -26,5 +26,6 @@
     ]
   },
   "aitiExtProtocol": "1.0",
-  "license": "MIT"
+  "license": "MIT",
+  "contentHash": "e923cee5e2213568"
 }
