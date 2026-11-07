@@ -17,5 +17,13 @@
     "@aiti-ai/ext-shared": "^0.1.7"
   },
   "license": "MIT",
-  "contentHash": "c149eaff7d2997e8"
+  "contentHash": "c149eaff7d2997e8",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-qoder-agent.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-qoder-agent#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-qoder-agent/issues"
+  }
 }
