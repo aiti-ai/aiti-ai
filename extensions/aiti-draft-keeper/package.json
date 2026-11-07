@@ -11,10 +11,11 @@
   "contentHash": "06cbcb96565318b3",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-draft-keeper.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-draft-keeper"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-draft-keeper#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-draft-keeper/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
