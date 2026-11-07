@@ -1720,7 +1720,7 @@ const renderCommandRow = (c, depth) =>
                 ),
                 // ⚡ 常用命令：tag 云卡片（点击执行；颜色随标签，尺寸随使用次数微放大）——放最后
                 commands.length > 0 && (() => {
-                  const CLOUD_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "var(--warn, #f59e0b)", "var(--danger, #ef4444)", "#8b5cf6", "#ec4899", "#14b8a6", "var(--warn, #eab308)", "#06b6d4"];
+                  const CLOUD_COLORS = ["#6366f1", "#0ea5e9", "var(--ok, #10b981)", "var(--warn, #f59e0b)", "var(--danger, #ef4444)", "#8b5cf6", "#ec4899", "#14b8a6", "var(--warn, #eab308)", "#06b6d4"];
                   const cloudColor = (s) => { let h = 0; const t = String(s || "?"); for (let i = 0; i < t.length; i++) h = (h * 31 + (t.codePointAt(i) || 0)) % 9973; return CLOUD_COLORS[h % CLOUD_COLORS.length]; };
                   const sorted = [...commands].sort((a, b) => (b.runCount || 0) - (a.runCount || 0) || String(a.name || a.cmd).localeCompare(String(b.name || b.cmd)));
                   const shown = sorted.slice(0, 30);
@@ -1800,9 +1800,9 @@ const renderCommandRow = (c, depth) =>
                 field("工作目录", h("input", { style: ctl({ fontFamily: "var(--font-mono)" }), value: editing.cwd || "", placeholder: "缺省 = 当前会话目录", onChange: (e) => set({ cwd: e.target.value }) })),
                 field("标签", h("input", { style: ctl(), value: editing.tags || "", placeholder: "逗号分隔，如 build, fe", onChange: (e) => set({ tags: e.target.value }) })),
                 field("命令", h("textarea", { id: "aiti-cmd-edit-cmd", autoFocus: !editing.id, style: ctl({ minHeight: 72, fontFamily: "var(--font-mono)", resize: "vertical" }), value: editing.cmd, placeholder: "pnpm build --filter {pkg}", onChange: (e) => set({ cmd: e.target.value }) }), "支持 {参数} 占位符，执行时填入", true),
-                field("沙箱", h("select", { style: ctl((editing.sandbox || "none") === "none" ? { borderColor: "var(--warn, #f59e0b)", background: "rgba(245,158,11,0.12)", color: "var(--warn, #f59e0b)" } : null), value: editing.sandbox || "none", onChange: (e) => set({ sandbox: e.target.value }) },
+                field("沙箱", h("select", { style: ctl((editing.sandbox || "none") === "none" ? { borderColor: "var(--warn, #f59e0b)", background: "color-mix(in srgb, var(--warn, #f59e0b) 12%, transparent)", color: "var(--warn, #f59e0b)" } : null), value: editing.sandbox || "none", onChange: (e) => set({ sandbox: e.target.value }) },
                   SANDBOX_ORDER.map((v) => h("option", { key: v, value: v }, SANDBOX[v].label)),
-                ), (() => { const m = SANDBOX[editing.sandbox || "none"] || SANDBOX.none; return h("span", { style: { fontSize: 13, lineHeight: 1.4, color: m.warn ? "var(--warn, #f59e0b)" : "#10b981" } }, m.hint); })()),
+                ), (() => { const m = SANDBOX[editing.sandbox || "none"] || SANDBOX.none; return h("span", { style: { fontSize: 13, lineHeight: 1.4, color: m.warn ? "var(--warn, #f59e0b)" : "var(--ok, #10b981)" } }, m.hint); })()),
                 field("执行确认", h("button", {
                   type: "button",
                   onClick: () => set({ confirm: !editing.confirm }),
@@ -1962,7 +1962,7 @@ const renderCommandRow = (c, depth) =>
           (info.params && info.params.length) ? h("span", {}, " · 参数: {" + info.params.join("}, {") + "}") : null,
           (info.danger && info.danger.length) ? h("span", {}, " · ⚠ 危险: " + info.danger.join("/")) : null,
         ),
-        info && info.exists === false && info.installSuggestion && h("div", { style: { ...smallStyle, marginBottom: 8, background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.35)", borderRadius: 6, padding: "6px 8px", color: "var(--danger, #ef4444)" } },
+        info && info.exists === false && info.installSuggestion && h("div", { style: { ...smallStyle, marginBottom: 8, background: "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)", border: "1px solid color-mix(in srgb, var(--danger, #ef4444) 35%, transparent)", borderRadius: 6, padding: "6px 8px", color: "var(--danger, #ef4444)" } },
           h("span", { style: { fontWeight: 600 } }, "安装建议："), h("code", { style: { fontSize: 13 } }, info.installSuggestion),
           h("button", { onClick: () => { try { navigator.clipboard.writeText(info.installSuggestion); } catch {} }, style: { ...btnStyle, padding: "1px 8px", fontSize: 13, marginLeft: 6 } }, "复制"),
         ),
