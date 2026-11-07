@@ -9,7 +9,7 @@
  * 状态徽标：方案/评审中|已实施|已过时（§2.2，静态层 front-matter）。
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { apiUrl, appendText, openFile, extSvc } from "./host-shim";
+import { apiUrl, appendText, openFile, extSvc, t } from "./host-shim";
 import { buildAtText, openNewSessionWithExtSvc } from "../../../_shared/new-session-cwd";
 import { usePresent, useGate, DockBody, openFloat, closePanel } from "../../../_shared/ext-float-dock";
 
@@ -142,7 +142,7 @@ function TagTreePanel({ tree, pickedSet, onPick, planTag, dirMode, onRename }: {
       return (
         <div key={n.key}>
           <div onClick={() => onPick(dirMode ? n.key : selected ? "" : n.key)}
-            title={sessionSrc ? "来自 All Sessions 会话标签继承" : plan ? "方案（plan-first 绑定派生）" : undefined}
+            title={sessionSrc ? t("dc.srcSessions") : plan ? t("dc.srcPlan") : undefined}
             style={{ display: "flex", alignItems: "center", gap: 4, padding: "3px 6px", marginLeft: depth * 10, borderRadius: 6,
               cursor: "pointer", background: selected ? "rgba(99,102,241,.14)" : "transparent",
               color, fontWeight: plan && depth === 0 ? 700 : 400 }}>
@@ -157,7 +157,7 @@ function TagTreePanel({ tree, pickedSet, onPick, planTag, dirMode, onRename }: {
             <span style={{ marginLeft: "auto", fontSize: 10, opacity: 0.7, flexShrink: 0 }}>{n.count}</span>
             {!dirMode && onRename && (
               <span onClick={(e) => { e.stopPropagation(); onRename(n.key); }}
-                title="重命名 tag（子 tag 一并迁移；文件 front-matter 同步改写）"
+                title={t("dc.renameTagTip")}
                 style={{ flexShrink: 0, fontSize: 10, opacity: 0.45, cursor: "pointer", padding: "0 2px" }}>✎</span>
             )}
           </div>
@@ -259,13 +259,13 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
     finally { if (liveRef.current) setLoading(false); }
   }, [q, tagSel, dirFilter, sort, under]);
   const renameTag = useCallback(async (key: string) => {
-    const nk = window.prompt("重命名 tag（子 tag 一并迁移；front-matter 来源同步改写文件）", key);
+    const nk = window.prompt(t("dc.renameTagPrompt"), key);
     if (!nk || nk === key) return;
     try {
       const d = await fetch(API("/tags/rename"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ key, newKey: nk }) }).then((r) => r.json());
       if (d?.ok) { void refreshTags(); void fetchPage(0, false); }
-      else window.alert("重命名失败：" + ((d && d.error) || "?"));
-    } catch (e: any) { window.alert("重命名失败：" + (e.message || e)); }
+      else window.alert(t("dc.renameFail") + ((d && d.error) || "?"));
+    } catch (e: any) { window.alert(t("dc.renameFail") + (e.message || e)); }
   }, [refreshTags, fetchPage]);
   // M5：标签清单导出（markdown 下载）
   const exportTags = useCallback(() => {
@@ -381,7 +381,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
   const secHead: React.CSSProperties = { fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: 0.4, margin: "10px 0 4px" };
   const listRow: React.CSSProperties = { border: "1px solid var(--border)", borderRadius: 8, padding: "7px 10px", cursor: "pointer", background: "transparent" };
   const viewTabs: { id: View; label: string }[] = [
-    { id: "tags", label: "tags" }, { id: "dir", label: "目录" }, { id: "time", label: "时间" }, { id: "session", label: "会话" },
+    { id: "tags", label: "tags" }, { id: "dir", label: t("dc.tabsDir") }, { id: "time", label: t("dc.tabsTime") }, { id: "session", label: t("dc.tabsSession") },
   ];
   // workspace 过滤 + 收集控件（浮窗在标题栏、embedded 在搜索行复用同一份——v3.1 三层工具条收敛）
   const wsControls = (
@@ -394,20 +394,20 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
           setWsRect({ left: Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8)), top: r.bottom + 4 });
           setWsOpen((v) => !v);
         }}
-          title={under ? "workspace：" + under + "（点击切换/移除已选）" : "workspace：全部（默认当前会话；点击选择并记忆）"}
+          title={under ? t("dc.wsTipUnder", { dir: under }) : t("dc.wsTipAll")}
           style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 6, fontSize: 11.5,
             cursor: "pointer", border: "1px solid " + (under ? "#6366f1" : "var(--border)"),
             background: under ? "rgba(99,102,241,.14)" : "transparent", color: under ? "#6366f1" : "var(--text-muted)",
             maxWidth: 180, whiteSpace: "nowrap" }}>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{under ? under.split("/").filter(Boolean).pop() : "全部"}</span>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis" }}>{under ? under.split("/").filter(Boolean).pop() : t("dc.all")}</span>
         </button>
       </span>
       {scanP?.running && (
-        <span style={{ fontSize: 11, color: "#3b82f6" }}>⟳ 收集中 {scanP.done}/{scanP.total}</span>
+        <span style={{ fontSize: 11, color: "#3b82f6" }}>⟳ {t("dc.collecting", { done: scanP.done, total: scanP.total })}</span>
       )}
-      <button onClick={collect} title="立即收集整理（增量扫描）"
+      <button onClick={collect} title={t("dc.collectTip")}
         style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 6, fontSize: 11.5, cursor: "pointer", background: "#3b82f6", border: "1px solid var(--border)", color: "#fff", whiteSpace: "nowrap" }}>
-        <Ic size={12} paths={ICONS.refresh} />收集
+        <Ic size={12} paths={ICONS.refresh} />{t("dc.collect")}
       </button>
     </>
   );
@@ -424,10 +424,10 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
         {/* 窄容器标签过滤层 = 左栏同款内容（tag 云 + 树）；过滤框吸顶 */}
         <div style={{ maxHeight: "min(60vh,460px)", overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", overflowX: "hidden" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "6px 8px", borderBottom: "1px solid var(--border)", position: "sticky", top: 0, background: "var(--bg)", zIndex: 1 }}>
-            <input value={tagSelQuery} onChange={(e) => setTagSelQuery(e.target.value)} placeholder="过滤标签…"
+            <input value={tagSelQuery} onChange={(e) => setTagSelQuery(e.target.value)} placeholder={t("dc.filterTagsPh")}
               style={{ flex: 1, minWidth: 0, boxSizing: "border-box", fontSize: 11.5, padding: "5px 8px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg)", color: "var(--text)", outline: "none" }} />
             {tagSel.length > 0 && (
-              <span onClick={() => setTagSel([])} title="清除全部已选标签" style={{ fontSize: 10.5, color: "#3b82f6", cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>✕ 清除({tagSel.length})</span>
+              <span onClick={() => setTagSel([])} title={t("dc.clearAllTags")} style={{ fontSize: 10.5, color: "#3b82f6", cursor: "pointer", flexShrink: 0, whiteSpace: "nowrap" }}>{t("dc.clearSel", { n: tagSel.length })}</span>
             )}
           </div>
           {flatTags.length > 0 && (
@@ -474,7 +474,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
         {stats && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{stats.docs} 篇 · {stats.tags} tags · {stats.links} 链接</span>}
         <span style={{ flex: 1 }} />
         {wsControls}
-        <button onClick={onClose} aria-label="关闭" title="关闭 (ESC)"
+        <button onClick={onClose} aria-label={t("dc.close")} title={t("dc.closeEsc")}
           style={{ padding: "3px 6px", borderRadius: 6, cursor: "pointer", background: "transparent", border: "1px solid var(--border)", color: "var(--text-muted)" }}>
           <Ic size={12} paths={ICONS.x} />
         </button>
@@ -485,7 +485,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0, flexWrap: "wrap" }}>
         <div style={{ position: "relative", flex: "1 1 260px", minWidth: 180 }}>
           <span style={{ position: "absolute", left: 8, top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)", display: "inline-flex" }}><Ic size={13} paths={ICONS.search} /></span>
-          <input value={qLive} onChange={(e) => setQLive(e.target.value)} placeholder="搜索文件名/标题/正文/tag…（空格 = AND，文件名命中优先）"
+          <input value={qLive} onChange={(e) => setQLive(e.target.value)} placeholder={t("dc.searchPh")}
             style={{ width: "100%", boxSizing: "border-box", padding: "5px 8px 5px 26px", borderRadius: 8, fontSize: 12.5, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }} />
         </div>
         <div style={{ display: "flex", gap: 2, background: "var(--bg-subtle,#f5f5f5)", borderRadius: 8, padding: 2 }}>
@@ -508,23 +508,23 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
               setTagSelRect({ left: Math.max(8, Math.min(r.left, window.innerWidth - w - 8)), top: r.bottom + 4 });
               setTagSelOpen((v) => !v);
             }}
-              title={view === "dir" ? "目录过滤（弹出）" : "标签过滤（弹出 tag 云）"}
+              title={view === "dir" ? t("dc.dirFilterTip") : t("dc.tagFilterTip")}
               style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 10px", borderRadius: 6, fontSize: 11.5,
                 cursor: "pointer", border: "1px solid " + (view === "dir" ? (dirFilter ? "#6366f1" : "var(--border)") : (tagSel.length ? "#6366f1" : "var(--border)")),
                 background: view === "dir" ? (dirFilter ? "rgba(99,102,241,.14)" : "transparent") : (tagSel.length ? "rgba(99,102,241,.14)" : "transparent"),
                 color: view === "dir" ? (dirFilter ? "#6366f1" : "var(--text-muted)") : (tagSel.length ? "#6366f1" : "var(--text-muted)"),
                 whiteSpace: "nowrap" }}>
-              {view === "dir" ? "目录" : "标签"}{view === "dir" ? (dirFilter ? " (1)" : "") : (tagSel.length ? ` (${tagSel.length})` : "")} ▾
+              {view === "dir" ? t("dc.dirLabel") : t("dc.tagsLabel")}{view === "dir" ? (dirFilter ? " (1)" : "") : (tagSel.length ? ` (${tagSel.length})` : "")} ▾
             </button>
           </span>
         )}
         <select value={sort} onChange={(e) => setSort(e.target.value)}
           style={{ padding: "4px 6px", borderRadius: 6, fontSize: 11.5, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)" }}>
-          <option value="smart">综合</option>
-          <option value="rel">相关度</option>
-          <option value="mtime">更新时间</option>
-          <option value="rank">权重</option>
-          <option value="title">标题</option>
+          <option value="smart">{t("dc.sortSmart")}</option>
+          <option value="rel">{t("dc.sortRel")}</option>
+          <option value="mtime">{t("dc.sortMtime")}</option>
+          <option value="rank">{t("dc.sortRank")}</option>
+          <option value="title">{t("dc.sortTitle")}</option>
         </select>
         {embedded && wsControls}
       </div>
@@ -539,23 +539,23 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
                 {sortTags(tagSel.map((k) => ({ key: k, display: (flatTags.find((f) => f.key === k) || { display: k }).display, source: "ui" }))).map((t: any) => (
                   <span key={t.key} style={{ fontSize: 10.5, padding: "1px 6px", borderRadius: 5, background: "#6366f122", color: "#6366f1", display: "inline-flex", alignItems: "center", gap: 3, minWidth: 0 }}>
                     #{t.display}
-                    <span onClick={() => setTagSel((s) => s.filter((x) => x !== t.key))} title="移除" style={{ cursor: "pointer", fontWeight: 700 }}>×</span>
+                    <span onClick={() => setTagSel((s) => s.filter((x) => x !== t.key))} title={t("dc.remove")} style={{ cursor: "pointer", fontWeight: 700 }}>×</span>
                   </span>
                 ))}
                 {dirFilter && (
                   <span title={dirFilter} style={{ fontSize: 10.5, padding: "1px 6px", borderRadius: 5, background: "#6366f122", color: "#6366f1", display: "inline-flex", alignItems: "center", gap: 3, maxWidth: "100%", minWidth: 0 }}>
                     <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{dirFilter}</span>
-                    <span onClick={() => setDirFilter("")} title="移除" style={{ cursor: "pointer", fontWeight: 700, flexShrink: 0 }}>×</span>
+                    <span onClick={() => setDirFilter("")} title={t("dc.remove")} style={{ cursor: "pointer", fontWeight: 700, flexShrink: 0 }}>×</span>
                   </span>
                 )}
-                <span onClick={() => { setTagSel([]); setDirFilter(""); }} title="清除全部过滤" style={{ fontSize: 10.5, color: "#3b82f6", cursor: "pointer", marginLeft: "auto", flexShrink: 0 }}>清除</span>
+                <span onClick={() => { setTagSel([]); setDirFilter(""); }} title={t("dc.clearFilters")} style={{ fontSize: 10.5, color: "#3b82f6", cursor: "pointer", marginLeft: "auto", flexShrink: 0 }}>{t("dc.clear")}</span>
               </div>
             )}
             {view === "tags" && flatTags.length > 0 && (
               <div style={{ borderBottom: "1px solid var(--border)", paddingBottom: 6, marginBottom: 6 }}>
                 <div style={{ fontSize: 10.5, fontWeight: 700, color: "var(--text-muted)", letterSpacing: 0.4, margin: "4px 4px 4px", display: "flex", alignItems: "center" }}>
-                  <span style={{ flex: 1 }}>tag 云（点击过滤）</span>
-                  <span onClick={exportTags} title="导出标签清单（markdown：标签→文档列表）" style={{ fontWeight: 400, cursor: "pointer", color: "#3b82f6" }}>⇩ 清单</span>
+                  <span style={{ flex: 1 }}>{t("dc.tagCloud")}</span>
+                  <span onClick={exportTags} title={t("dc.exportTagsTip")} style={{ fontWeight: 400, cursor: "pointer", color: "#3b82f6" }}>{t("dc.exportList")}</span>
                 </div>
                 <div style={{ padding: "0 4px" }}>
                   <TagCloud tags={flatTags} pickedSet={new Set(tagSel)}
@@ -582,7 +582,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
           ) : (
             <>
               <div style={{ fontSize: 11, color: "var(--text-muted)", marginBottom: 6 }}>
-                {loading ? "加载中…" : `${total} 篇${q.trim() ? "（相关度=融合分：bm25+权重）" : ""}`}
+                {loading ? t("dc.loading") : `${t("dc.docsCount", { n: total })}${q.trim() ? t("dc.relNote") : ""}`}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                 {items.map((it) => {
@@ -612,11 +612,11 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
                 {items.length < total && (
                   <button onClick={() => fetchPage(items.length, true)} disabled={loading}
                     style={{ padding: 6, borderRadius: 8, cursor: "pointer", border: "1px dashed var(--border)", background: "transparent", color: "var(--text-muted)", fontSize: 12 }}>
-                    {loading ? "加载中…" : `加载更多（${items.length}/${total}）`}
+                    {loading ? t("dc.loading") : t("dc.loadMore", { a: items.length, b: total })}
                   </button>
                 )}
                 {!loading && items.length === 0 && (
-                  <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 12.5 }}>无匹配文档</div>
+                  <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 12.5 }}>{t("dc.noMatch")}</div>
                 )}
               </div>
             </>
@@ -634,27 +634,27 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
             </div>
             <div style={{ color: "var(--text-muted)", fontSize: 10.5, margin: "3px 0 8px", wordBreak: "break-all" }}>{sel.relpath}</div>
             <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8 }}>
-              <button title="引用到当前会话输入框（@ 路径，不发送）" onClick={() => atCurrent(sel)}
+              <button title={t("dc.atCurrentTip")} onClick={() => atCurrent(sel)}
                 style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, cursor: "pointer", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)" }}>
-                <span style={{ fontWeight: 700, fontSize: 11.5 }}>@</span>引用
+                <span style={{ fontWeight: 700, fontSize: 11.5 }}>@</span>{t("dc.reference")}
               </button>
-              <button title="新建会话并预填引用（文档在当前工作区/其关注路径内则保持当前 workspace，否则切到文档所在目录）" onClick={() => atNewSession(sel)}
+              <button title={t("dc.atNewTip")} onClick={() => atNewSession(sel)}
                 style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, cursor: "pointer", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)" }}>
-                <span style={{ fontWeight: 700, fontSize: 11.5 }}>@</span>新会话
+                <span style={{ fontWeight: 700, fontSize: 11.5 }}>@</span>{t("dc.newSession")}
               </button>
-              <button title="在右侧文件标签页打开" onClick={() => openDoc(sel)}
+              <button title={t("dc.openTip")} onClick={() => openDoc(sel)}
                 style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, cursor: "pointer", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)" }}>
-                <Ic size={11} paths={ICONS.open} />打开
+                <Ic size={11} paths={ICONS.open} />{t("dc.open")}
               </button>
-              <button title="复制绝对路径" onClick={() => { try { navigator.clipboard.writeText(sel.root + "/" + sel.relpath); } catch { /* ignore */ } }}
+              <button title={t("dc.copyPathTip")} onClick={() => { try { navigator.clipboard.writeText(sel.root + "/" + sel.relpath); } catch { /* ignore */ } }}
                 style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, cursor: "pointer", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)" }}>
-                <Ic size={11} paths={ICONS.copy} />路径
+                <Ic size={11} paths={ICONS.copy} />{t("dc.path")}
               </button>
               {(sel.sessions || []).length > 0 && (
-                <button title={(sel.sessions[0].archived ? "打开创建/触达此文档的会话（已归档：在 All Sessions 归档查看器打开）" : "打开创建/触达此文档的会话（最近：" + (sel.sessions[0].name || String(sel.sessions[0].session_id).slice(0, 8)) + (sel.sessions.length > 1 ? "，共 " + sel.sessions.length + " 个，见下方关联会话）" : "）"))}
+                <button title={(sel.sessions[0].archived ? t("dc.sessTipArchived") : t(sel.sessions.length > 1 ? "dc.sessTipRecentN" : "dc.sessTipRecent", { name: sel.sessions[0].name || String(sel.sessions[0].session_id).slice(0, 8), n: sel.sessions.length }))}
                   onClick={() => openSessionById(String(sel.sessions[0].session_id), !!sel.sessions[0].archived)}
                   style={{ display: "inline-flex", alignItems: "center", gap: 3, padding: "2px 8px", borderRadius: 6, fontSize: 10.5, cursor: "pointer", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)" }}>
-                  <Ic size={11} paths={ICONS.chat} />{sel.sessions[0].archived ? "会话" : "会话"}
+                  <Ic size={11} paths={ICONS.chat} />{t("dc.session")}
                 </button>
               )}
             </div>
@@ -666,8 +666,8 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
               if (st.length <= 1) return null;
               return (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, padding: "5px 8px", border: "1px solid color-mix(in srgb, var(--warn, #f59e0b) 40%, transparent)", background: "color-mix(in srgb, var(--warn, #f59e0b) 8%, transparent)", borderRadius: 6, fontSize: 11 }}>
-                  <span style={{ color: "#f59e09", minWidth: 0 }}>⚠ {st.length} 个 方案/* 状态 tag（{st.join("、")}）</span>
-                  <button title={"保留「" + st[0] + "」，移除 " + st.slice(1).join("、") + "（写回 front-matter；正文内联 #tag 需手动删）"}
+                  <span style={{ color: "#f59e09", minWidth: 0 }}>{t("dc.dupStatus", { n: st.length, list: st.join("、") })}</span>
+                  <button title={t("dc.fixDupTip", { keep: st[0], rest: st.slice(1).join("、") })}
                     onClick={async () => {
                       try {
                         await fetch(API("/docs/" + sel.id + "/tags"), { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ remove: st.slice(1) }) });
@@ -682,9 +682,9 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
               );
             })()}
             <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
-              {sortTags(sel.tags).map((t: any) => (
-                <span key={t.source + t.key} title={"来源: " + t.source} style={chipStyle(SOURCE_COLORS[t.source] || "#64748b")}>
-                  #{t.display}
+              {sortTags(sel.tags).map((tg: any) => (
+                <span key={tg.source + tg.key} title={t("dc.source", { src: tg.source })} style={chipStyle(SOURCE_COLORS[tg.source] || "#64748b")}>
+                  #{tg.display}
                 </span>
               ))}
             </div>
@@ -704,7 +704,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
             )}
             {(sel.outlinks || []).length > 0 && (
               <>
-                <div style={secHead}>引用 ({sel.outlinks.length})</div>
+                <div style={secHead}>{t("dc.related", { n: sel.outlinks.length })}</div>
                 {(sel.outlinks as any[]).slice(0, 12).map((o, i) => (
                   <div key={i} onClick={() => openDetail(o.id)} style={{ fontSize: 11, cursor: "pointer", color: "#3b82f6", padding: "1.5px 0", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                     <Ic size={10} paths={ICONS.link} style={{ verticalAlign: -1, marginRight: 3 }} />{o.title || o.relpath}
@@ -733,7 +733,7 @@ function DocCenterDialog({ onClose, initialUnder, embedded }: { onClose: () => v
                       {s.archived ? <span style={{ fontSize: 10, marginRight: 3, display: "inline-flex", verticalAlign: "-1px" }}><svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="5" rx="1"/><path d="M4 8v11a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8"/><path d="M10 12h4"/></svg></span> : null}{s.name || String(s.session_id).slice(0, 8)}
                     </div>
                     <span style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>{s.op_count} 次触达</span>
-                    <span title="复制 session id" onClick={(e) => { e.stopPropagation(); try { navigator.clipboard.writeText(String(s.session_id)); } catch { /* ignore */ } }}
+                    <span title={t("dc.copySid")} onClick={(e) => { e.stopPropagation(); try { navigator.clipboard.writeText(String(s.session_id)); } catch { /* ignore */ } }}
                       style={{ fontSize: 10, color: "#3b82f6", cursor: "pointer", flexShrink: 0, padding: "0 2px" }}>⧉</span>
                   </div>
                 ))}
@@ -795,21 +795,21 @@ function WsMenu({ currentCwd, under, onPick, onClose }: { currentCwd: string; un
   const row = (p: string, label: string, opts?: { docs?: number; tracked?: boolean; unpin?: boolean }) => (
     <div key={p} onClick={() => pick(p)} style={{ ...rowStyle, background: under === p ? "rgba(99,102,241,.14)" : "transparent" }}>
       <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1, minWidth: 0 }}>{under === p ? "✓ " : ""}{label}</span>
-      {opts?.tracked ? <span title="aiti-git-trace 追踪动过的仓库" style={{ fontSize: 10, color: "var(--ok, #10b981)", flexShrink: 0 }}>🧲</span> : null}
+      {opts?.tracked ? <span title={t("dc.trackedTip")} style={{ fontSize: 10, color: "var(--ok, #10b981)", flexShrink: 0, display: "inline-flex", verticalAlign: "-1px" }}><svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round"><path d="m6 15-4-4 6.75-6.77a7.79 7.79 0 0 1 11 11L13 22l-4-4 6.39-6.36a2.14 2.14 0 0 0-3-3z"/><path d="m5 8 4 4"/><path d="m12 15 4 4"/></svg></span> : null}
       {typeof opts?.docs === "number" && opts.docs > 0 ? <span style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>{opts.docs}</span> : null}
-      {opts?.unpin ? <span onClick={(e) => unpin(p, e)} title="从已选移除" style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0, padding: "0 2px" }}>✕</span> : null}
+      {opts?.unpin ? <span onClick={(e) => unpin(p, e)} title={t("dc.unpinRow")} style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0, padding: "0 2px" }}>✕</span> : null}
     </div>
   );
   return (
     <div style={{ maxHeight: "min(60vh,480px)", overflowY: "auto", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 8, boxShadow: "0 6px 20px rgba(0,0,0,0.12)", overflowX: "hidden" }}>
       <div style={{ padding: "6px 10px", borderBottom: "1px solid var(--border)", fontSize: 10.5, color: "var(--text-muted)" }}>
-        workspace 过滤（默认当前会话；选择会记住）
+        {t("dc.wsFilterHead")}
       </div>
-      {row("", "全部 workspace")}
-      {currentCwd && row(currentCwd, "● 当前：" + base(currentCwd))}
-      {pinned.length > 0 && <div style={secHead}>已选</div>}
+      {row("", t("dc.wsAll"))}
+      {currentCwd && row(currentCwd, t("dc.wsCurrent", { name: base(currentCwd) }))}
+      {pinned.length > 0 && <div style={secHead}>{t("dc.pinnedHead")}</div>}
       {pinned.map((p) => row(p, base(p), { unpin: true }))}
-      {tracked.length > 0 && <div style={secHead}>git-trace 追踪仓库</div>}
+      {tracked.length > 0 && <div style={secHead}>{t("dc.trackedHead")}</div>}
       {tracked.slice(0, 12).map((w) => row(w.path, base(w.path), { docs: w.docs, tracked: true }))}
       {tracked.length > 12 && <div style={{ padding: "4px 10px", fontSize: 10.5, color: "var(--text-muted)" }}>…其余 {tracked.length - 12} 个（输入框过滤即将支持）</div>}
       {showAll ? others.map((w) => row(w.path, base(w.path), { docs: w.docs })).concat(
@@ -845,7 +845,7 @@ function SessionView({ onOpen, onOpenSession, selectedId }: { onOpen: (id: numbe
       setDocs(d.docs || []);
     } catch { setDocs([]); }
   };
-  if (sessions === null) return <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 12.5 }}>加载中…</div>;
+  if (sessions === null) return <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 12.5 }}>{t("dc.loading")}</div>;
   if (!sessions.length) return (
     <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)", fontSize: 12.5 }}>
       暂无会话关联——数据来自 aiti-git-trace 台账回填（每轮扫描有界补 3 个会话），AI 会话写过的文档会逐步出现
@@ -859,25 +859,25 @@ function SessionView({ onOpen, onOpenSession, selectedId }: { onOpen: (id: numbe
           <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "4px 8px", borderRadius: 6, border: "1px solid " + (openSid === s.sid ? "#6366f1" : "var(--border)"), opacity: s.live ? 1 : 0.6 }}>
             <span onClick={() => openSession(s.sid)} style={{ cursor: "pointer", display: "flex", alignItems: "center", gap: 6, flex: 1, minWidth: 0 }}>
               <Ic size={11} paths={ICONS.chevR} style={{ flexShrink: 0, transform: openSid === s.sid ? "rotate(90deg)" : "none", transition: "transform .12s" }} />
-              <span title={s.running ? "运行中" : "空闲"} style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: s.running ? "var(--ok, #10b981)" : "var(--text-muted)", boxShadow: s.running ? "0 0 4px var(--ok, #10b981)" : "none" }} />
-              {s.favorite ? <span title="收藏" style={{ flexShrink: 0, fontSize: 11 }}>⭐</span> : null}
+              <span title={s.running ? t("dc.running") : t("dc.idle")} style={{ width: 7, height: 7, borderRadius: "50%", flexShrink: 0, background: s.running ? "var(--ok, #10b981)" : "var(--text-muted)", boxShadow: s.running ? "0 0 4px var(--ok, #10b981)" : "none" }} />
+              {s.favorite ? <span title={t("dc.favorite")} style={{ flexShrink: 0, fontSize: 11 }}>⭐</span> : null}
               {planBindings[s.sid] ? (
-                <span title={"方案先行：已绑定 " + (planBindings[s.sid].planRel || "")} style={{ flexShrink: 0, fontSize: 10, color: "#3fb950", border: "1px solid #3fb95055", borderRadius: 4, padding: "0 4px", lineHeight: 1.5 }}>📋</span>
+                <span title={t("dc.planBound", { plan: planBindings[s.sid].planRel || "" })} style={{ flexShrink: 0, display: "flex", alignItems: "center", color: "var(--ok, #3fb950)", border: "1px solid color-mix(in srgb, var(--ok, #3fb950) 33%, transparent)", borderRadius: 4, padding: "2px 4px", lineHeight: 1.5 }}><svg width={10} height={10} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round"><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg></span>
               ) : null}
-              <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.sid + (s.archived ? "（已归档：消息区不可打开，↗ 在归档查看器打开）" : s.live ? "" : "（历史）")}>
+              <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.sid + (s.archived ? t("dc.archNote") : s.live ? "" : t("dc.histNote"))}>
                 {s.name}
-                {s.archived ? <span style={{ color: "#8b5cf6", fontSize: 10 }}>（归档）</span> : !s.live ? <span style={{ color: "var(--text-muted)", fontSize: 10 }}>（历史）</span> : null}
+                {s.archived ? <span style={{ color: "#8b5cf6", fontSize: 10 }}>{t("dc.archTag")}</span> : !s.live ? <span style={{ color: "var(--text-muted)", fontSize: 10 }}>{t("dc.histTag")}</span> : null}
               </span>
             </span>
             <span style={{ display: "flex", gap: 3, flexShrink: 0, overflow: "hidden" }}>
-              <span title={s.archived ? "已归档：在 All Sessions 归档查看器打开" : "打开此会话"} onClick={() => onOpenSession(s.sid, !!s.archived)}
+              <span title={s.archived ? t("dc.openSessArchived") : t("dc.openSess")} onClick={() => onOpenSession(s.sid, !!s.archived)}
                 style={{ fontSize: 10, color: s.archived ? "#8b5cf6" : "#3b82f6", cursor: "pointer", flexShrink: 0 }}>{s.archived ? "📦" : "↗"}</span>
               {(s.tags || []).slice(0, 3).map((t: string) => (
                 <span key={t} style={{ fontSize: 9.5, padding: "0 5px", borderRadius: 4, background: "rgba(6,182,212,.14)", color: "#06b6d4", whiteSpace: "nowrap" }}>#{t}</span>
               ))}
             </span>
-            <span style={{ fontSize: 10.5, color: "var(--text-muted)", flexShrink: 0 }}>{s.docs} 篇</span>
-            <span title="点击复制会话 id（去 All Sessions 面板打开）" onClick={() => { try { navigator.clipboard.writeText(s.sid); } catch { /* ignore */ } }}
+            <span style={{ fontSize: 10.5, color: "var(--text-muted)", flexShrink: 0 }}>{t("dc.docsN", { n: s.docs })}</span>
+            <span title={t("dc.sidCopyTip2")} onClick={() => { try { navigator.clipboard.writeText(s.sid); } catch { /* ignore */ } }}
               style={{ fontSize: 10, color: "#3b82f6", cursor: "pointer", flexShrink: 0 }}>⧉</span>
           </div>
           {openSid === s.sid && (
@@ -887,10 +887,10 @@ function SessionView({ onOpen, onOpenSession, selectedId }: { onOpen: (id: numbe
                   style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 6px", borderRadius: 5, cursor: "pointer",
                     border: "1px solid " + (selectedId === d.id ? "#6366f1" : "transparent") }}>
                   <span style={{ fontSize: 12, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.title || d.relpath}</span>
-                  <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>{d.opCount} 次触达</span>
+                  <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-muted)", flexShrink: 0 }}>{t("dc.touches", { n: d.opCount })}</span>
                 </div>
               ))}
-              {!docs.length && <div style={{ fontSize: 11, color: "var(--text-muted)", padding: 4 }}>该会话触达的 md 均不在当前扫描根内</div>}
+              {!docs.length && <div style={{ fontSize: 11, color: "var(--text-muted)", padding: 4 }}>{t("dc.sessDocsEmpty")}</div>}
             </div>
           )}
         </div>
@@ -909,7 +909,7 @@ function TimeView({ onOpen, planTag, selectedId }: { onOpen: (id: number) => voi
     fetch(API("/docs?sort=mtime&limit=300")).then((r) => r.json()).then((d) => { if (live) setItems(d.items || []); }).catch(() => {}).finally(() => { if (live) setLoading(false); });
     return () => { live = false; };
   }, []);
-  if (loading) return <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 12.5 }}>加载中…</div>;
+  if (loading) return <div style={{ padding: 24, color: "var(--text-muted)", fontSize: 12.5 }}>{t("dc.loading")}</div>;
   const groups = new Map<string, any[]>();
   for (const it of items) {
     const k = monthKey(it.mtimeMs);
@@ -938,7 +938,7 @@ function TimeView({ onOpen, planTag, selectedId }: { onOpen: (id: number) => voi
           </div>
         </div>
       ))}
-      {items.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>暂无文档</div>}
+      {items.length === 0 && <div style={{ padding: 40, textAlign: "center", color: "var(--text-muted)" }}>{t("dc.noDocs")}</div>}
     </div>
   );
 }
@@ -972,7 +972,7 @@ export function DockDocs() {
   const docked = useGate(DOCS_KEY, { dock: "right-panel" });
   if (!docked) return null;
   return (
-    <DockBody itemKey={DOCS_KEY} zone="right-panel" title="文档" chrome="tab">
+    <DockBody itemKey={DOCS_KEY} zone="right-panel" title={t("dc.docs")} chrome="tab">
       <DocCenterPageSlot embedded />
     </DockBody>
   );
