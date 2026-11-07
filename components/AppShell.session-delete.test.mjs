@@ -94,5 +94,5 @@ test("a delete completing while the user is still on it falls back to the empty 
   assert.deepEqual(state.setNewSessionCwd, ["/project-a"]);
   assert.ok(state.newSessionDraftId);
   assert.equal(state.sessionKey, 1, "chat remounts as a fresh composer");
-  assert.equal(state.routerReplaced, `?cwd=${encodeURIComponent("/project-a")}`);
+  assert.equal(state.routerReplaced, "/"); // [URL 规范] cwd 不进 URL：落裸应用路径，cwd 走 tab-session
 });

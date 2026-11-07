@@ -34,7 +34,7 @@ test("New session is remembered as this tab's selection", () => {
   const start = source.indexOf("  const handleNewSession = useCallback");
   const end = source.indexOf("  // Global keyboard shortcuts", start);
   const body = source.slice(start, end);
-  assert.ok(body.includes("replaceLocationIfChanged(router, `?cwd=${encodeURIComponent(cwd)}`")); // 合并：basePath 安全包装
+  assert.ok(body.includes("replaceLocationIfChanged(router, inAppPathname(\"/\")")); // [URL 规范] cwd 不进 URL：裸应用路径（basePath 安全包装）
 });
 
 test("deleting the current session forgets its tab memory", () => {

@@ -1602,9 +1602,8 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
         activeNewSessionDraftKeyRef.current = `new:${draftId}:${data.cwd}`;
         setNewSessionCwd(data.cwd);
         setInitialCwdStatus("ready");
-        if (!new URLSearchParams(window.location.search).get("cwd")) {
-          router.replace(`?cwd=${encodeURIComponent(data.cwd)}`, { scroll: false });
-        }
+        // [URL 规范] cwd 不进 URL（本地路径不入地址栏）：刷新恢复由 tab-session
+        // （pi-web:tab-open-session kind:"new"）承载，无需把工作区路径写回 query。
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
@@ -1953,7 +1952,9 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
     setSystemInfoLoading(false);
     setActiveTopPanel((panel) => panel === "debug" ? panel : null);
     if (isMobile) setSidebarOpen(false);
-    replaceLocationIfChanged(router, `?cwd=${encodeURIComponent(cwd)}`, { scroll: false });
+    // [URL 规范] 新会话页 URL 只留裸应用路径：清掉残留 ?session=（否则重载会
+    // 压过 tab-session 的 kind:"new" 记忆回开旧会话）；cwd 由 tab-session 承载。
+    replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
     // The fresh composer takes the caret once it renders (#1313), unless the
     // move came from the new-session bar, whose control keeps focus instead
     // (newSessionBarFocusRef), or a phone would raise the keyboard for it.
@@ -2438,7 +2439,8 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
       setSystemTools(null);
       setSystemInfoLoading(false);
       setActiveTopPanel((panel) => panel === "debug" ? panel : null);
-      replaceLocationIfChanged(router, cwd ? `?cwd=${encodeURIComponent(cwd)}` : inAppPathname("/"), { scroll: false });
+      // [URL 规范] cwd 不进 URL：落裸应用路径，cwd 由 tab-session 承载（下方 setNewSessionCwd）。
+      replaceLocationIfChanged(router, inAppPathname("/"), { scroll: false });
     }
   }, [invalidateWorkspaceRestore, router]);
 
@@ -3219,6 +3221,7 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
   // Extension slot items (flattened into the top-bar item list; ids reuse the
   // ext-ui-store extId:itemId convention)
   const toolbarExtItems = useExtSlotItems("toolbar");
+  const noWorkspaceGuideItems = useExtSlotItems("noWorkspaceGuide").filter(hasExtRender);
   const sessionTopbarExtItems = useExtSlotItems("sessionTopbar");
   // Declarative static entries (no render) that lazy extensions place in
   // sidebarFooter: the host renders a standard bottom button; clicks go through
@@ -6080,6 +6083,14 @@ const renderAgentsBadge = (badge: { count: number; running: boolean }, mobile: b
             activeCwd ? (
               <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-muted)", fontSize: 15 }}>
                  {translate("workspace.selectSession")}
+              </div>
+            ) : noWorkspaceGuideItems.length > 0 ? (
+              // [extension] no-workspace guide takes over the fresh first screen entirely (quickstart plan):
+              // items render centered; the built-in decoration only shows when no renderable item exists.
+              <div style={{ height: "100%", width: "100%", display: "flex", alignItems: "center", justifyContent: "center", padding: 24, overflowY: "auto" }}>
+                <div style={{ width: "min(620px, 100%)" }}>
+                  <ExtSlot name="noWorkspaceGuide" extra={{ isMobile }} />
+                </div>
               </div>
             ) : (
               <div style={{ position: "absolute", top: 12, left: 12, display: "flex", alignItems: "flex-start", gap: 8, userSelect: "none", pointerEvents: "none" }}>

@@ -463,6 +463,10 @@ export type ExtSlotName =
                     //   meta.prepare({cwd}) => { cwd? } rewrites the target directory / { abort } aborts creation —
                     //   ensureNewSession awaits them in order before the POST; errors go through the existing throw→notice
                     //   channel, drafts are kept by the draft-keeper (same plan §3)
+  | "noWorkspaceGuide" // Full replacement for the no-workspace placeholder (fresh first screen: no cwd, no session —
+                    //   the hardcoded "Get Started" decoration). Items render centered in the main area; with no items
+                    //   the built-in decoration stays (backward compatible). extra carries data only { isMobile }.
+                    //   Actions go through services (pi-web.newSession.setCwd etc.) — quickstart plan §fresh.
   | "newSessionWidgets" // Top/bottom widget area of the new-session welcome page (mobile/desktop widget semantics): one
                     //   registration surface, two render points (top/bottom); the registration meta declares allowed areas
                     //   (NewSessionWidgetMeta.areas) and grid size (w 1-8 / h 1-3; 4 columns mobile / 8 columns desktop) —
@@ -702,6 +706,13 @@ export interface NewSessionSelectorSlotProps {
   isMobile: boolean;
 }
 
+/** noWorkspaceGuide slot props — extra carries data only (slot-extra red line): the placeholder state has no
+ *  session data; actions go through host services (pi-web.newSession.setCwd etc.). Multiple items render stacked
+ *  (the host centers them); with zero renderable items the built-in "Get Started" decoration stays. */
+export interface NoWorkspaceGuideSlotProps {
+  isMobile: boolean;
+}
+
 /** newSessionWidgets slot props — extra carries data only (slot-extra red line): widgets render from the data,
  *  actions always go through services (e.g. `pi-web.session.open(id)` / `ctx.openFile`), never embedded callbacks. */
 export interface NewSessionWidgetSlotProps {
@@ -788,6 +799,7 @@ export interface ExtSlotContractMap {
   /** Extension picker row on the new-session welcome page (session-manager branch/worktree picker). */
   newSessionSelectors: { props: NewSessionSelectorSlotProps };
   /** Top/bottom widget area of the new-session welcome page (built-in recent sessions / extension widgets; mobile-desktop widget semantics). */
+  noWorkspaceGuide: { props: NoWorkspaceGuideSlotProps };
   newSessionWidgets: { props: NewSessionWidgetSlotProps };
   /** End of the assistant message content area (the git-trace extension: change-file lines captured by trace;
    *  git-trace message-files extension plan §3.2). */
