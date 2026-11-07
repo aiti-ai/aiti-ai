@@ -8,5 +8,13 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "f373d5aec6a0234c"
+  "contentHash": "f373d5aec6a0234c",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-backup.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-backup#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-backup/issues"
+  }
 }
