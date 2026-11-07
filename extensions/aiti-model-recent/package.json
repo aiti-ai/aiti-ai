@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-model-recent",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "type": "module",
   "description": "模型选择器「最近使用」数据提供方扩展——pi-web 去 fork 化 P4 外迁",
   "scripts": {
