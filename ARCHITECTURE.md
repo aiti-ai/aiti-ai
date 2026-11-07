@@ -183,7 +183,7 @@ repo:             npm run build          →  .next  (Next.js production build)
 npm pack          →  @aiti-ai/pi-web-<ver>.tgz (~16 MB)
                   files whitelist: bin, extensions (+dist, −node_modules), .next,
                   public, patches, next.config.ts
-npm publish       →  registry.npmjs.org (official) or registry.npmjs.org (staging)
+npm publish       →  registry.npmjs.org (official) or an internal staging registry
 docker/           →  core/full images; install the main package + pi plugins
 ```
 
