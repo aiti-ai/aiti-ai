@@ -17,5 +17,6 @@
       "user-skills"
     ]
   },
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "license": "MIT"
 }
