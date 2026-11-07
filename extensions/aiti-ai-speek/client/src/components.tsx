@@ -72,7 +72,7 @@ function ensureStyles() {
   .aisp-ctl:focus{outline:none;background:transparent;}
   .aisp-ctl:focus-visible{outline:2px solid var(--accent,#3b82f6);outline-offset:1px;background:var(--bg-hover,#eee);}
   .aisp-ctl:disabled{opacity:.4;cursor:default;}
-  .aisp-ctl.stop{color:#ef4444;}
+  .aisp-ctl.stop{color:var(--danger, #ef4444);}
   .aisp-sel{font-size:12px;padding:3px 6px;border:1px solid var(--border,#ddd);border-radius:6px;background:var(--bg,#fff);color:var(--text,#222);max-width:150px;}
   .aisp-queue{color:var(--text-dim,#999);white-space:nowrap;font-size:11px;}
   .aisp-badge{display:inline-flex;align-items:center;gap:3px;padding:1px 6px;border-radius:99px;background:color-mix(in srgb,var(--accent,#3b82f6) 14%,transparent);color:var(--accent,#3b82f6);font-size:11px;white-space:nowrap;}
@@ -103,7 +103,7 @@ function ensureStyles() {
   .aisp-pk-n{min-width:34px;color:var(--text-dim,#999);font-variant-numeric:tabular-nums;}
   .aisp-pk-n2{color:var(--text,#333);}
   .aisp-pk-item.on .aisp-pk-n{color:var(--accent,#3b82f6);}
-  .aisp-pk-star{color:#eab308;}
+  .aisp-pk-star{color:var(--warn, #eab308);}
   .aisp-pk-cur{margin-left:auto;font-size:10px;opacity:.8;}
   .aisp-pk-group{display:flex;flex-direction:column;gap:2px;}
   .aisp-pk-grpbtn{display:flex;align-items:center;gap:6px;padding:5px 8px;border:none;border-radius:6px;background:var(--bg-hover,#f4f4f5);cursor:pointer;font-size:12px;color:var(--text,#222);width:100%;text-align:left;}
@@ -537,7 +537,7 @@ export function PlaybackBar(props) {
           <button
             title="从当前页第一条可见消息开始读"
             onClick={(e) => { e.currentTarget.blur(); if (sessionId) { try { resolveDrift(); startFollowFromPageTop(sessionId); } catch { /* noop */ } } }}
-          >📄 读本页</button>
+          >读本页</button>
         </span>
       )}
       <button className="aisp-btn" title={t("speek.settings")} onClick={(e) => { e.currentTarget.blur(); openSettings(true); }}>
@@ -807,17 +807,17 @@ function SettingsDialog() {
         <div className="aisp-dlg-bd">
           <div className="aisp-row">
             <label title="edge-tts 是微软 Edge 的服务端语音合成，音质比浏览器 Web Speech 更自然；已安装时默认优先使用">后端引擎（edge-tts）</label>
-            <span className="aisp-badge" style={{ background: edgeOk ? "color-mix(in srgb,#16a34a 14%,transparent)" : "color-mix(in srgb,#ef4444 16%,transparent)", color: edgeOk ? "#16a34a" : "#ef4444" }}>
+            <span className="aisp-badge" style={{ background: edgeOk ? "color-mix(in srgb,#16a34a 14%,transparent)" : "color-mix(in srgb,var(--danger, #ef4444) 16%,transparent)", color: edgeOk ? "#16a34a" : "var(--danger, #ef4444)" }}>
               {edgeOk ? "● 已安装" : "○ 未安装"}
             </span>
           </div>
           {st.edgeStatus?.installHint && (
-            <div className="aisp-row" style={{ fontSize: 11, color: edgeOk ? "var(--text-dim,#888)" : "#ef4444", marginTop: -4 }}>
+            <div className="aisp-row" style={{ fontSize: 11, color: edgeOk ? "var(--text-dim,#888)" : "var(--danger, #ef4444)", marginTop: -4 }}>
               <span style={{ wordBreak: "break-all" }}>{st.edgeStatus.installHint}</span>
             </div>
           )}
           {edgeOk && st.edgeStatus?.featureOn === false && (
-            <div className="aisp-row" style={{ color: "#ef4444", fontSize: 11, marginTop: -4 }}>
+            <div className="aisp-row" style={{ color: "var(--danger, #ef4444)", fontSize: 11, marginTop: -4 }}>
               ⚠ tts.edge feature 未开启（可在扩展管理器开启；已装会自动开）
             </div>
           )}
@@ -851,7 +851,7 @@ function SettingsDialog() {
             </span>
           </div>
           {st.browserUnsupported && (
-            <div className="aisp-row" style={{ color: "#ef4444", fontSize: 11 }}>
+            <div className="aisp-row" style={{ color: "var(--danger, #ef4444)", fontSize: 11 }}>
               ⚠ 当前浏览器不支持本地朗读（Web Speech），已自动切换到服务端语音生成（edge-tts）。
             </div>
           )}
@@ -884,7 +884,7 @@ function SettingsDialog() {
             </span>
           </div>
           {s.engine === "edge" && !st.edgeAvailable && (
-            <div className="aisp-row" style={{ color: "#ef4444", fontSize: 11 }}>
+            <div className="aisp-row" style={{ color: "var(--danger, #ef4444)", fontSize: 11 }}>
               ⚠ edge-tts 后端未就绪（未装或 feature 未开启），将自动回落浏览器朗读。
             </div>
           )}
