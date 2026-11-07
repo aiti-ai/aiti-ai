@@ -32,9 +32,9 @@ const C = {
   muted: "var(--text-muted)",
   dim: "var(--text-dim)",
   accent: "var(--accent)",
-  ok: "#22c55e",
-  bad: "#ef4444",
-  warn: "#f59e0b",
+  ok: "var(--ok, #22c55e)",
+  bad: "var(--danger, #ef4444)",
+  warn: "var(--warn, #f59e0b)",
   mono: "var(--font-mono, monospace)",
 };
 
@@ -596,7 +596,7 @@ function renderUiEnvDialog(face?: string) {
           {/* ── DISPLAY 号配置（默认 auto 随机；可指定固定数字） ── */}
           <div style={card({ marginBottom: 12 })}>
             <div style={secTitle()}>
-              <span style={accentBar("#f59e0b")} />DISPLAY 号配置
+              <span style={accentBar("var(--warn, #f59e0b)")} />DISPLAY 号配置
               {d.randomDisplayFeature === false ? <span style={chip(C.dim)}>feature 关：不随机</span> : null}
               {d.envOverrides?.UI_ENV_DISPLAY_NUM ? <span style={chip(C.warn)}>{"env 覆盖：UI_ENV_DISPLAY_NUM=" + d.envOverrides.UI_ENV_DISPLAY_NUM}</span> : null}
             </div>
@@ -670,7 +670,7 @@ function renderUiEnvDialog(face?: string) {
                 {headless.available ? (
                   <button onClick={async () => { if (await uiConfirm({ message: "确定停止虚拟屏？将关闭 VNC 与虚拟桌面上的所有程序（仅虚拟屏，不动真实桌面）。", danger: true })) headlessAction("stop"); }} disabled={busy}
                     title="停止 Xvfb+openbox+dbus+AT-SPI 及 VNC 实例（仅虚拟屏，不碰真实桌面）"
-                    style={{ ...btn({ color: "#f87171", borderColor: "rgba(239,68,68,0.45)", background: "rgba(239,68,68,0.12)" }), cursor: busy ? "wait" : "pointer" }}>
+                    style={{ ...btn({ color: "var(--danger, #f87171)", borderColor: "rgba(239,68,68,0.45)", background: "rgba(239,68,68,0.12)" }), cursor: busy ? "wait" : "pointer" }}>
                     {busyWhat === "headless" ? "停止中…" : "■ 停止虚拟屏"}
                   </button>
                 ) : (
@@ -688,7 +688,7 @@ function renderUiEnvDialog(face?: string) {
           {/* ── VNC 卡（扩展 VNC / 系统 VNC，自由切换） ── */}
           <div style={card({})}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
-              <span style={accentBar("#22c55e")} />
+              <span style={accentBar("var(--ok, #22c55e)")} />
               <span style={{ fontSize: 12, fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}><Ic size={13} paths={ICONS.monitorPlay} />VNC-on-web</span>
               <button onClick={() => setVncTab("own")} style={{ ...btn(), ...(vncTab === "own" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>扩展 VNC</button>
               <button onClick={() => { setVncTab("sys"); if (!sysVnc) loadSysVnc(); }} style={{ ...btn(), ...(vncTab === "sys" ? { color: "#a5b4fc", border: "1px solid rgba(99,102,241,0.4)", background: "rgba(99,102,241,0.12)" } : {}) }}>系统 VNC</button>
@@ -700,7 +700,7 @@ function renderUiEnvDialog(face?: string) {
                 </span>
               ) : (
                 <span style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
-                  {isWindowsEnv() ? <button style={btn()} onClick={changeVncPassword} disabled={busy} title="设置/修改 VNC 密码（写入 UltraVNC 配置并重启 VNC 生效）">🔑 密码</button> : null}
+                  {isWindowsEnv() ? <button style={btn()} onClick={changeVncPassword} disabled={busy} title="设置/修改 VNC 密码（写入 UltraVNC 配置并重启 VNC 生效）">密码</button> : null}
                   <button style={btn()} onClick={() => vncAction("start")} disabled={busy}>▶ 启动/新实例</button>
                   <button style={btn()} onClick={() => vncAction("stop")} disabled={busy}>■ 停默认</button>
                 </span>
@@ -711,7 +711,7 @@ function renderUiEnvDialog(face?: string) {
             {vncTab === "sys" ? (
               <>
               <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6, flexWrap: "wrap" }}>
-                <ConnForm trigger="➕ 手动连接 host:port" defaultHost="127.0.0.1" defaultPort="5900"
+                <ConnForm trigger="手动连接 host:port" defaultHost="127.0.0.1" defaultPort="5900"
                   busy={sysBusy} onStart={connectVnc}
                   placeholder="外部/远程 VNC（如 192.168.1.20:5900）；也可连本机未扫描到的端口" />
               </div>
@@ -726,7 +726,7 @@ function renderUiEnvDialog(face?: string) {
                     <span style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
                       <button style={btn()} onClick={() => openSys(v)} disabled={sysBusy || !v.listening} title={v.listening ? "" : "端口无监听（-loop 等待中/未运行），无法连接"}>{v.listening ? "打开" : "不可连"}</button>
                       <button style={btn()} onClick={() => resetSysPassword(v)} disabled={sysBusy || !v.passwordResettable}
-                        title={v.passwordNote || "该 VNC server 的密码本扩展不能改"}>{v.passwordResettable ? "🔑 重设密码" : "🔑 不可改"}</button>
+                        title={v.passwordNote || "该 VNC server 的密码本扩展不能改"}>{v.passwordResettable ? "重设密码" : "不可改"}</button>
                       {v.stoppable && v.pid ? <button style={{ ...btn(), color: C.bad }} onClick={() => stopSys(v)} disabled={sysBusy}>停止</button> : null}
                     </span>
                   </div>
@@ -737,7 +737,7 @@ function renderUiEnvDialog(face?: string) {
               vncInsts.length === 0 ? <div style={{ fontSize: 11, color: C.dim, padding: "6px 0" }}>无实例（点 ▶ 启动创建；端口每次随机分配，避免与桌面/其他服务冲突）</div> :
                 vncInsts.map((inst: any) => (
                   <div key={inst.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid " + C.border, flexWrap: "wrap" }}>
-                    <span style={{ fontSize: 11, fontWeight: 600, color: inst.id === "default" ? "#a5b4fc" : C.text, fontFamily: C.mono }}>{inst.id === "default" ? "★ default" : inst.id}</span>
+                    <span style={{ fontSize: 11, fontWeight: 600, color: inst.id === "default" ? "#a5b4fc" : C.text, fontFamily: C.mono }}>{inst.id === "default" ? "default" : inst.id}</span>
                     {inst.sys ? <span style={chip(C.warn)}>{inst.sys.host && inst.sys.host !== "127.0.0.1" ? `${inst.sys.host}:${inst.sys.port}` : "系统:" + inst.sys.port}</span> : <span style={chip(C.muted)}>{" :" + inst.displayNum}</span>}
                     <span style={chip(inst.tcp ? C.ok : C.dim, inst.tcp ? "rgba(34,197,94,0.10)" : undefined)}>{"RFB :" + inst.rfbPort}</span>
                     <span style={chip(inst.web ? C.ok : C.dim, inst.web ? "rgba(34,197,94,0.10)" : undefined)}>{"Web :" + inst.webPort}</span>
@@ -779,7 +779,7 @@ function renderUiEnvDialog(face?: string) {
             {rdpInsts.length === 0 ? <div style={{ fontSize: 11, color: C.dim, padding: "6px 0" }}>无实例（点「▶ 启动」填 RDP 目标 host:port，如 127.0.0.1:3390）</div> :
               rdpInsts.map((inst: any) => (
                 <div key={inst.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid " + C.border, flexWrap: "wrap" }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: inst.id === "default" ? "#38bdf8" : C.text, fontFamily: C.mono }}>{inst.id === "default" ? "★ default" : inst.id}</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: inst.id === "default" ? "#38bdf8" : C.text, fontFamily: C.mono }}>{inst.id === "default" ? "default" : inst.id}</span>
                   {inst.sys ? <span style={chip(C.warn)}>{"系统:" + inst.sys.port}</span> : <span style={chip(C.muted)}>{inst.host + ":" + inst.port}</span>}
                   <span style={chip(inst.web ? C.ok : C.warn, inst.web ? "rgba(34,197,94,0.10)" : "rgba(245,158,11,0.14)")}>{inst.web ? "Web :" + inst.webPort : "断开 :" + inst.webPort}</span>
                   <span style={{ marginLeft: "auto", display: "flex", gap: 5 }}>
