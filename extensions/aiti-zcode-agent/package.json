@@ -23,10 +23,11 @@
   "contentHash": "43b6d175d7589fd0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-zcode-agent.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-zcode-agent"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-zcode-agent#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-zcode-agent/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
