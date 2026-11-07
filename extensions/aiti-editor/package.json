@@ -34,5 +34,13 @@
     ]
   },
   "aitiExtProtocol": "1.0",
-  "contentHash": "b83457ceaa94ee07"
+  "contentHash": "b83457ceaa94ee07",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-editor.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-editor#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-editor/issues"
+  }
 }
