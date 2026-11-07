@@ -101,15 +101,15 @@ const VNC_VIEW_HTML = `<!doctype html>
   #clip button { background: #1f2937; color: #e2e8f0; border: 1px solid #374151; border-radius: 6px;
     padding: 3px 10px; font-size: 12px; cursor: pointer; }
   #clip button:hover { background: #374151; }
-  #clip button.on { background: #b45309; border-color: #f59e0b; color: #fff; }
+  #clip button.on { background: #b45309; border-color: var(--warn, #f59e0b); color: #fff; }
   /* 剪贴板面板内联提示（输入框上方）：贴近操作点，比顶部状态栏显眼（发送/获取/输入的结果都落这里） */
   #clipmsg { font-size: 11px; line-height: 1.5; padding: 5px 8px; border-radius: 6px;
     background: #0b1220; border: 1px solid #1f2937; border-left-width: 3px; color: #94a3b8;
     max-height: 76px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
   #clipmsg[hidden] { display: none; }
-  #clipmsg.err { color: #fca5a5; border-color: #7f1d1d; border-left-color: #ef4444; background: rgba(239, 68, 68, .08); }
-  #clipmsg.warn { color: #fbbf24; border-color: #78350f; border-left-color: #f59e0b; background: rgba(245, 158, 11, .08); }
-  #clipmsg.ok { color: #86efac; border-color: #14532d; border-left-color: #22c55e; background: rgba(34, 197, 94, .08); }
+  #clipmsg.err { color: #fca5a5; border-color: #7f1d1d; border-left-color: var(--danger, #ef4444); background: rgba(239, 68, 68, .08); }
+  #clipmsg.warn { color: var(--warn, #fbbf24); border-color: #78350f; border-left-color: var(--warn, #f59e0b); background: rgba(245, 158, 11, .08); }
+  #clipmsg.ok { color: #86efac; border-color: #14532d; border-left-color: var(--ok, #22c55e); background: rgba(34, 197, 94, .08); }
   #stage { position: relative; flex: 1; overflow: hidden; touch-action: none; background: #000; }
   #box { position: absolute; left: 50%; top: 50%; transform-origin: center; }
   #box canvas { display: block; image-rendering: auto; }
@@ -139,14 +139,14 @@ const VNC_VIEW_HTML = `<!doctype html>
   <button id="zin" title="放大">＋</button><span id="pct">100%</span><button id="zout" title="缩小">－</button>
   <button id="reset" title="复位旋转与缩放">重置</button>
   <span style="width:8px"></span>
-  <button id="clipbtn" title="与远程互传剪贴板">📋 剪贴板</button>
+  <button id="clipbtn" title="与远程互传剪贴板">剪贴板</button>
   <button id="cad" title="发送 Ctrl+Alt+Del 到远程">CAD</button>
   <button id="fs" title="全屏">⛶</button>
   <button id="cfgbtn" title="设置：仅观看/共享/画质/压缩/自动重连">⚙</button>
   <span style="width:8px"></span>
-  <button id="vkbb" title="虚拟键盘（触屏友好，修饰键可锁定）">⌨ 虚拟</button>
-  <button id="syskbb" title="召喚系统原生软键盘（移动端输入法）">⌨ 系统</button>
-  <button id="scbb" title="快捷键条（Ctrl+Alt+T / Alt+Tab …）">⚡ 快捷键</button>
+  <button id="vkbb" title="虚拟键盘（触屏友好，修饰键可锁定）">虚拟</button>
+  <button id="syskbb" title="召喚系统原生软键盘（移动端输入法）">系统</button>
+  <button id="scbb" title="快捷键条（Ctrl+Alt+T / Alt+Tab …）">快捷键</button>
   <span id="hint">单指操作远程 · 双指捏合缩放 · 双指拖动平移 · Ctrl+滚轮缩放</span>
 </div>
 <div id="shortcuts" hidden></div>
@@ -166,9 +166,9 @@ const VNC_VIEW_HTML = `<!doctype html>
   <div id="clipmsg" hidden></div>
   <textarea id="cliptext" spellcheck="false"></textarea>
   <div style="display:flex; gap:6px; flex-wrap:wrap;">
-    <button id="clipfetch" title="读取远程当前剪贴板（远程复制只在内容变化时推送，页面后连或同内容重拷用此拉取）">⬇ 获取远程</button>
-    <button id="clipsend" title="写入远程剪贴板：本机目标直写 X/系统剪贴板（Unicode 安全，远程 Ctrl+V 即可）；远程主机/虚拟机等无法直写时自动回退 VNC 协议通道">⬆ 发送到远程</button>
-    <button id="cliptype" title="逐字键入到远程（键盘事件兜底：QEMU 虚拟机、x11vnc 刚连接、无剪贴板通道时可用；仅 ASCII，中文/emoji 跳过；再点一次停止）">⌨ 输入到远程</button>
+    <button id="clipfetch" title="读取远程当前剪贴板（远程复制只在内容变化时推送，页面后连或同内容重拷用此拉取）">获取远程</button>
+    <button id="clipsend" title="写入远程剪贴板：本机目标直写 X/系统剪贴板（Unicode 安全，远程 Ctrl+V 即可）；远程主机/虚拟机等无法直写时自动回退 VNC 协议通道">发送到远程</button>
+    <button id="cliptype" title="逐字键入到远程（键盘事件兜底：QEMU 虚拟机、x11vnc 刚连接、无剪贴板通道时可用；仅 ASCII，中文/emoji 跳过；再点一次停止）">输入到远程</button>
   </div>
   <div style="color:#64748b; font-size:11px;">发送到远程 = 写目标机剪贴板（支持中文，远程 Ctrl+V）；输入到远程 = 逐字敲键（剪贴板不可用时兜底，仅 ASCII）</div>
 </div>
@@ -629,13 +629,13 @@ function typeRemoteClip() {
   var i = 0;
   typing = { stop: false };
   btn.classList.add("on");
-  btn.textContent = "⏹ 停止输入";
+  btn.textContent = "停止输入";
   function end() {
     try { if (rfb && connOk) rfb.sendKey(SHIFT_KEYSYM, "ShiftLeft", false); } catch (e) {} // 防 Shift 卡住
     var done = i, stopped = !!(typing && typing.stop);
     typing = null;
     btn.classList.remove("on");
-    btn.textContent = "⌨ 输入到远程";
+    btn.textContent = "输入到远程";
     setClipMsg((stopped ? "已停止输入 " : "已键入 ") + done + "/" + keys.length + " 键" +
       (mapped.skipped ? "（跳过 " + mapped.skipped + " 个非 ASCII）" : ""), stopped ? "warn" : "ok");
   }
@@ -648,10 +648,10 @@ function typeRemoteClip() {
       rfb.sendKey(k.keysym, k.code, false);
       if (k.shift) rfb.sendKey(SHIFT_KEYSYM, "ShiftLeft", false);
     } catch (e) {}
-    setClipMsg("⌨ 输入到远程 " + i + "/" + keys.length + (mapped.skipped ? "（跳过 " + mapped.skipped + " 个非 ASCII）" : ""), "info");
+    setClipMsg("输入到远程 " + i + "/" + keys.length + (mapped.skipped ? "（跳过 " + mapped.skipped + " 个非 ASCII）" : ""), "info");
     setTimeout(step, k.code === "Enter" ? TYPE_INTERVAL + TYPE_ENTER_EXTRA : TYPE_INTERVAL);
   }
-  setClipMsg("⌨ 输入到远程 0/" + keys.length + "…", "info");
+  setClipMsg("输入到远程 0/" + keys.length + "…", "info");
   step();
 }
 $("cliptype").onclick = typeRemoteClip;
