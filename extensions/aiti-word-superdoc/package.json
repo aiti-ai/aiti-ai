@@ -2,7 +2,7 @@
   "name": "@aiti-ai/aiti-word-superdoc",
   "version": "0.1.0",
   "description": "Word 文档编辑器（SuperDoc：ProseMirror docx 双向）",
-  "main": "index.js",
+  "main": "index.ts",
   "scripts": {
     "build": "vite build --config vite.config.ts",
     "deploy": "node tools/deploy.mjs"
