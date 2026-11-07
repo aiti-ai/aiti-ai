@@ -237,7 +237,7 @@ function renderMailPanel(face) {
     h("div", { style: { flex: 1, minHeight: 0, overflowY: "auto", padding: 12 } },
       msg && h("div", { role: "alert",
         style: { marginBottom: 8, padding: "6px 10px", borderRadius: 6, fontSize: 12,
-          background: msg.kind === "ok" ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)",
+          background: msg.kind === "ok" ? "color-mix(in srgb, var(--ok, #10b981) 12%, transparent)" : "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)",
           color: msg.kind === "ok" ? "var(--ok, #10b981)" : "var(--danger, #ef4444)" } }, msg.text),
       bodyEl));
   // dock v3 分面：float = 浮窗壳（float 契约）；dock = 右栏 tab（embedded 铺满，TabBar ✕ 关闭）
