@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-codebuddy-agent",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "腾讯 CodeBuddy Code CLI (cbc) session backend driver (-p stream-json + --resume)",
   "soul": "腾讯 CodeBuddy 会话，哪儿都能接上聊。",
   "scripts": {
