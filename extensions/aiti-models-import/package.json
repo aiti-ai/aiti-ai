@@ -19,10 +19,11 @@
   "contentHash": "1e2d9ec195bd16de",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-models-import.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-models-import"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-models-import#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-models-import/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
