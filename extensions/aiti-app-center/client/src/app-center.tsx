@@ -274,7 +274,7 @@ function ToggleRow(props: { app: AppDescriptor; onToggle: (app: AppDescriptor) =
     >
       <span aria-hidden style={{
         width: 7, height: 7, flexShrink: 0, borderRadius: "50%",
-        background: on ? "#4ade80" : "var(--text-dim, #666)", boxShadow: on ? "0 0 0 2px rgba(74,222,128,0.18)" : "none",
+        background: on ? "var(--ok, #4ade80)" : "var(--text-dim, #666)", boxShadow: on ? "0 0 0 2px rgba(74,222,128,0.18)" : "none",
       }} />
       <span style={{ flex: 1, minWidth: 0, display: "flex", flexDirection: "column", gap: 1 }}>
         <span style={{ fontSize: 12, color: "var(--text, #ddd)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{app.label}</span>
@@ -362,7 +362,7 @@ function InfoSheet(props: {
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           <button type="button" style={{ ...chipBtn, color: pinned ? "var(--accent, #2563eb)" : "var(--text-muted, #999)" }}
-            onClick={() => props.onPin(app)}>{pinned ? `★ ${t("app.unpin")}` : `☆ ${t("app.pin")}`}</button>
+            onClick={() => props.onPin(app)}>{pinned ? `${t("app.unpin")}` : `${t("app.pin")}`}</button>
           <button type="button" style={{ ...chipBtn, color: "var(--text-dim, #888)" }}
             onClick={() => props.onHide(app)}>{t("info.hide")}</button>
         </div>
@@ -383,24 +383,24 @@ function InfoSheet(props: {
             {dependents.length > 0 ? (
               /* 硬依赖者非空 = 置灰不开洞（与 extman 硬阻止同口径），引导去扩展管理 */
               <>
-                <button type="button" disabled style={{ ...chipBtn, color: "#ef4444", opacity: 0.5, cursor: "not-allowed" }}>{t("info.disable")}</button>
+                <button type="button" disabled style={{ ...chipBtn, color: "var(--danger, #ef4444)", opacity: 0.5, cursor: "not-allowed" }}>{t("info.disable")}</button>
                 <span style={bodyRow}>{t("info.disableBlocked", { deps: dependents.join("、") })}</span>
               </>
             ) : busy ? (
-              <button type="button" disabled style={{ ...chipBtn, color: "#ef4444", opacity: 0.6 }}>{t("info.disableBusy")}</button>
+              <button type="button" disabled style={{ ...chipBtn, color: "var(--danger, #ef4444)", opacity: 0.6 }}>{t("info.disableBusy")}</button>
             ) : confirm ? (
               <>
                 <span style={bodyRow}>{t("info.disableConfirm", { ext: app.extName ?? app.extId })}</span>
                 <span style={{ ...bodyRow, color: "var(--text-dim, #888)" }}>{t("info.disableHint")}</span>
                 <span style={{ display: "flex", gap: 6 }}>
-                  <button type="button" style={{ ...chipBtn, color: "#ef4444", borderColor: "rgba(239,68,68,0.5)" }} onClick={props.onConfirmDisable}>{t("info.disableYes")}</button>
+                  <button type="button" style={{ ...chipBtn, color: "var(--danger, #ef4444)", borderColor: "rgba(239,68,68,0.5)" }} onClick={props.onConfirmDisable}>{t("info.disableYes")}</button>
                   <button type="button" style={chipBtn} onClick={props.onAskDisable}>{t("info.disableNo")}</button>
                 </span>
               </>
             ) : (
-              <button type="button" style={{ ...chipBtn, color: "#ef4444", borderColor: "rgba(239,68,68,0.35)" }} onClick={props.onAskDisable}>{t("info.disable")}</button>
+              <button type="button" style={{ ...chipBtn, color: "var(--danger, #ef4444)", borderColor: "rgba(239,68,68,0.35)" }} onClick={props.onAskDisable}>{t("info.disable")}</button>
             )}
-            {error ? <span style={{ ...bodyRow, color: "#ef4444" }}>{error}</span> : null}
+            {error ? <span style={{ ...bodyRow, color: "var(--danger, #ef4444)" }}>{error}</span> : null}
             <button type="button" style={chipBtn} onClick={props.onOpenExtman}>{t("info.openExtman")}</button>
           </div>
         ) : (
