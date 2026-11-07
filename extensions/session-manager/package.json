@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/session-manager",
-  "version": "0.2.3",
+  "version": "0.2.6",
   "type": "module",
   "homepage": "https://aiti.pw/extensions/session-manager.html",
   "description": "会话管理扩展（全部会话面板/看板/标签）—— JSX + vite 构建 client bundle",
