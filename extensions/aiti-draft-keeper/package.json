@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-draft-keeper",
-  "version": "0.1.0",
+  "version": "0.1.2",
   "description": "草稿持久化 + 恢复接管",
   "soul": "崩溃可以带走页面，带不走你打到一半的话。",
   "scripts": {
