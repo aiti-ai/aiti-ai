@@ -181,8 +181,21 @@ export function sourceLinesForText(source: string, text: string): { start: numbe
 }
 
 export function isDarkTheme(): boolean {
-  return document.documentElement.classList.contains("dark")
-    || window.matchMedia("(prefers-color-scheme: dark)").matches;
+  // 按宿主实际渲染色判断：读 body/html 计算背景的相对亮度（ITU-R BT.709），
+  // 天然兼容宿主全部主题（light/dark/mist/rose/pine）。此前 `html.dark ||
+  // prefers-color-scheme` 在宿主亮主题 + OS 暗色时误判，且 5 主题被折叠成二值。
+  for (const el of [document.body, document.documentElement]) {
+    try {
+      const bg = getComputedStyle(el).backgroundColor;
+      const m = bg.match(/^rgba?\((\d+)[,\s]+(\d+)[,\s]+(\d+)(?:[,\s/]+([\d.]+))?\)$/);
+      if (!m) continue;
+      const alpha = m[4] === undefined ? 1 : +m[4];
+      if (alpha < 0.5) continue; // 透明背景不作数，看上一层
+      const lum = (0.2126 * +m[1] + 0.7152 * +m[2] + 0.0722 * +m[3]) / 255;
+      return lum < 0.5;
+    } catch { /* getComputedStyle 不可用时走类名兜底 */ }
+  }
+  return document.documentElement.classList.contains("dark");
 }
 
 // 编码列表（VSCode 语义：显示 / 以编码重新打开 / 以编码保存）

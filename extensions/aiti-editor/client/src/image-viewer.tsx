@@ -391,7 +391,7 @@ export function ImageViewer(props: {
       )}
       {loadErr && (
         <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center",
-            color: "#f87171", fontSize: 13 }}>图片加载失败</div>
+            color: "var(--danger, #f87171)", fontSize: 13 }}>图片加载失败</div>
       )}
 
       {/* 底部工具条（小屏：maxWidth + 换行 + 安全区，缩放按钮不再被裁出屏幕） */}
@@ -418,7 +418,7 @@ export function ImageViewer(props: {
         {tbtn("⟳", "旋转 90°（R）", () => setRot((r) => (r + 90) % 360))}
         <div style={{ width: 1, height: 16, background: uiBorder, margin: "0 4px" }} />
         {tbtn(copyFb || "⧉", copyFb ? copyFb : "复制图片到剪贴板（PNG）", copyImage,
-          copyFb ? { color: "#4ade80", minWidth: 28, justifyContent: "center" } : undefined)}
+          copyFb ? { color: "var(--ok, #4ade80)", minWidth: 28, justifyContent: "center" } : undefined)}
         {downloadName ? (
           <a href={src} download={downloadName} title="下载原图（保存到本地）" aria-label="下载原图"
             style={{ border: "none", background: "transparent", color: uiFg, cursor: "pointer", fontSize: 13,
