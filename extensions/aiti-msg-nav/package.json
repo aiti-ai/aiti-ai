@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-msg-nav",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "type": "module",
   "description": "消息滚动导航扩展（到最早 / 到最新 / 上一个用户输入 / 下一个用户输入）—— JSX + vite 构建 client bundle",
   "scripts": {
