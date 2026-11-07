@@ -99,7 +99,7 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
   const aiBtn = document.createElement("button");
   aiBtn.type = "button";
   aiBtn.style.cssText = btnStyle + "background:var(--bg-selected,#e8edff);border-color:var(--accent,#7c8cf8);";
-  aiBtn.innerHTML = "🤖 AI 帮我安装（推荐）";
+  aiBtn.innerHTML = "AI 帮我安装（推荐）";
   aiBtn.title = "调起 aiti-helper 并自动选中「AI 帮我在服务器安装 LibreOffice」帮助点，AI 自动检测平台（Linux/Windows/macOS）、安装并验证";
   const aiTipText = document.createElement("span");
   aiTipText.style.cssText = "flex:1 1 200px;font-size:11px;color:var(--text-dim,#888);";
@@ -118,7 +118,7 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
       extId: "aiti-editor",
       extName: "aiti-editor",
     });
-    aiTipText.textContent = "✓ 已唤起 AI 助手并自动发起安装任务——切到 AI 助手弹窗查看进度；装完回本页点「重试转换」。";
+    aiTipText.textContent = "已唤起 AI 助手并自动发起安装任务——切到 AI 助手弹窗查看进度；装完回本页点「重试转换」。";
   };
   aiRow.append(aiBtn, aiTipText);
   el.appendChild(aiRow);
@@ -143,7 +143,7 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
   const dl = document.createElement("button");
   dl.type = "button";
   dl.style.cssText = btnStyle;
-  dl.innerHTML = "⬇ 下载到本机编辑";
+  dl.innerHTML = "下载到本机编辑";
   dl.title = "下载原文件，在你本地用 Office/WPS 编辑";
   dl.onclick = async () => {
     dl.disabled = true;
@@ -172,7 +172,7 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
   const venv = document.createElement("button");
   venv.type = "button";
   venv.style.cssText = btnStyle;
-  venv.innerHTML = "🖥 虚拟环境打开（远程查看）";
+  venv.innerHTML = "虚拟环境打开（远程查看）";
   venv.title = "在服务器的虚拟桌面用 LibreOffice 打开本文件，经浏览器 VNC 远程查看/编辑（需 aiti-ui-env 扩展）";
   venv.onclick = async () => {
     venv.disabled = true;
@@ -192,15 +192,15 @@ export function buildSofficeMissingPanel(opts: SofficePanelOpts): HTMLElement {
       // 4) 会话 cookie + 查看页路径
       const sess = await fetch(ui + "/vnc-session", { method: "POST" }).then((r) => r.json());
       if (!sess.ok || !sess.path) throw new Error("VNC 会话获取失败");
-      progress("✓ 已在虚拟环境打开，正在跳转远程查看…");
+      progress("已在虚拟环境打开，正在跳转远程查看…");
       window.open(apiUrl(sess.path), "_blank");
-      venv.textContent = "🖥 虚拟环境打开（远程查看）";
+      venv.textContent = "虚拟环境打开（远程查看）";
       venv.disabled = false;
     } catch (e) {
       const msg = String((e as Error).message || e);
       venv.textContent = msg.includes("404") || msg.includes("Failed to fetch")
-        ? "🖥 虚拟环境打开（需 aiti-ui-env 扩展）"
-        : "🖥 虚拟环境打开（重试）";
+        ? "虚拟环境打开（需 aiti-ui-env 扩展）"
+        : "虚拟环境打开（重试）";
       venv.title = msg;
       venv.disabled = false;
     }
