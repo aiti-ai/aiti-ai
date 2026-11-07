@@ -33,6 +33,9 @@ const ARCH = opt("--arch") || nodeArch;
 const REGISTRY = process.env.AITI_PACK_REGISTRY || "";
 const NODE_OPTIONS = process.env.NODE_OPTIONS || "--max-old-space-size=8192";
 
+// 全部路径统一绝对化——脚本后半段以临时 staging 为 cwd 跑命令，相对路径会被吞
+const abs = (p) => (p ? resolve(p) : p);
+
 const pkg = JSON.parse(readFileSync(join(REPO, "package.json"), "utf8"));
 const VERSION = pkg.version;
 
@@ -54,9 +57,9 @@ console.log(`[release] v${VERSION} ${OS}-${ARCH}  staging: ${stage}`);
 
 // ---- 1) 拿到平台无关的 npm tgz（含 .next + 扩展 dist）----
 let tgzPath;
-let lockPath = LOCK && existsSync(LOCK) ? LOCK : null;
-if (FROM_TGZ && existsSync(FROM_TGZ)) {
-  tgzPath = FROM_TGZ;
+let lockPath = LOCK ? abs(LOCK) : null;
+if (FROM_TGZ && existsSync(abs(FROM_TGZ))) {
+  tgzPath = abs(FROM_TGZ);
   if (!lockPath) throw new Error("--from-tgz 模式必须配 --lock（npm pack 硬排除 lock）");
   console.log(`[release] 复用 npm tgz: ${tgzPath}`);
 } else {
