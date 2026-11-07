@@ -265,6 +265,16 @@ export function mergeWorkspaceHistory(
   return out.slice(0, Math.max(1, topLimit));
 }
 
+/** 快捷键提示拆分："Ctrl+Alt+N 新建会话" → { kbd: "Ctrl+Alt+N", desc: "新建会话" }；
+ *  无空格（单符号已含语义，如 "@"）→ { kbd: s, desc: "" }。供快捷操作卡行式布局
+ *  （kbd 胶囊 + 描述文字，与 guide 步骤行节奏统一）。 */
+export function splitKbdHint(hint: string): { kbd: string; desc: string } {
+  const str = (hint ?? "").trim();
+  const i = str.indexOf(" ");
+  if (i <= 0) return { kbd: str, desc: "" };
+  return { kbd: str.slice(0, i), desc: str.slice(i + 1).trim() };
+}
+
 /** 组合 id 判定（宿主插槽 id 形态 = "extId:itemId"）。 */
 export function isQuickstartWidgetId(compositeId: string): boolean {
   return typeof compositeId === "string" && compositeId.startsWith(`${EXT_ID}:`);
