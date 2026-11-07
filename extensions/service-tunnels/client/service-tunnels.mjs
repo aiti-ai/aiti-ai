@@ -3130,7 +3130,7 @@ function NoAuthBadge({ t }) {
     "span",
     {
       title: t("services.noAuthWarnHint"),
-      style: { padding: "1px 7px", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", borderRadius: 4, color: "#f87171", fontWeight: 600, flexShrink: 0, fontSize: 10 },
+      style: { padding: "1px 7px", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", borderRadius: 4, color: "var(--danger, #f87171)", fontWeight: 600, flexShrink: 0, fontSize: 10 },
       children: [
         "\u26A0 ",
         t("services.exposeProviderNone")
@@ -3388,7 +3388,7 @@ function ServicesDialog({ onClose, onOpenFile, initialTab: initialTab2 = "ports"
                   "span",
                   {
                     title: t("services.noAuthWarnHint"),
-                    style: { padding: "1px 7px", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", borderRadius: 4, color: "#f87171", fontWeight: 600, flexShrink: 0 },
+                    style: { padding: "1px 7px", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", borderRadius: 4, color: "var(--danger, #f87171)", fontWeight: 600, flexShrink: 0 },
                     children: [
                       "\u26A0 ",
                       t("services.exposeProviderNone")
@@ -3414,7 +3414,7 @@ function ServicesDialog({ onClose, onOpenFile, initialTab: initialTab2 = "ports"
                 {
                   onClick: () => stopExpose(ex.name),
                   title: t("services.exposeStopHint"),
-                  style: { flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "#f87171", cursor: "pointer", fontSize: 11 },
+                  style: { flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--danger, #f87171)", cursor: "pointer", fontSize: 11 },
                   children: t("services.exposeStop")
                 }
               ),
@@ -3440,10 +3440,10 @@ function ServicesDialog({ onClose, onOpenFile, initialTab: initialTab2 = "ports"
             ] }),
             /* @__PURE__ */ jsx("pre", { style: { maxHeight: 120, overflow: "auto", margin: 0, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, fontSize: 9, fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--text)" }, children: logsData.access || "(empty)" }),
             /* @__PURE__ */ jsx("div", { style: { fontSize: 10, color: "var(--text-muted)", margin: "6px 0 4px" }, children: "error log" }),
-            /* @__PURE__ */ jsx("pre", { style: { maxHeight: 120, overflow: "auto", margin: 0, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, fontSize: 9, fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "#f87171" }, children: logsData.error || "(empty)" })
+            /* @__PURE__ */ jsx("pre", { style: { maxHeight: 120, overflow: "auto", margin: 0, padding: "4px 6px", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 5, fontSize: 9, fontFamily: "var(--font-mono)", whiteSpace: "pre-wrap", wordBreak: "break-all", color: "var(--danger, #f87171)" }, children: logsData.error || "(empty)" })
           ] })
         ] }),
-        error ? /* @__PURE__ */ jsx("div", { style: { fontSize: 13, color: "#f87171", padding: 12 }, children: error }) : loading && !data ? /* @__PURE__ */ jsx("div", { style: { fontSize: 13, color: "var(--text-dim)", padding: 12 }, children: t("services.loading") }) : !data || (data.services ?? []).length === 0 ? /* @__PURE__ */ jsx("div", { style: { fontSize: 13, color: "var(--text-dim)", padding: 20, textAlign: "center" }, children: t("services.none") }) : (data.services ?? []).map((s) => {
+        error ? /* @__PURE__ */ jsx("div", { style: { fontSize: 13, color: "var(--danger, #f87171)", padding: 12 }, children: error }) : loading && !data ? /* @__PURE__ */ jsx("div", { style: { fontSize: 13, color: "var(--text-dim)", padding: 12 }, children: t("services.loading") }) : !data || (data.services ?? []).length === 0 ? /* @__PURE__ */ jsx("div", { style: { fontSize: 13, color: "var(--text-dim)", padding: 20, textAlign: "center" }, children: t("services.none") }) : (data.services ?? []).map((s) => {
           const isOpen = expanded.has(s.port);
           const directUrls = s.addresses.map((addr) => ({ addr, url: directUrl(s.port, addr) }));
           const proxyExposes = (data?.exposes ?? []).filter((e) => e.port === s.port && (e.localUrl || e.baseUrl || e.domainUrl));
@@ -3599,7 +3599,7 @@ function ServicesDialog({ onClose, onOpenFile, initialTab: initialTab2 = "ports"
               {
                 onClick: () => toggleInject(e.port, false),
                 title: t("services.enrolledUnenrollHint"),
-                style: { flexShrink: 0, padding: "4px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "#f87171", cursor: "pointer", fontSize: 11 },
+                style: { flexShrink: 0, padding: "4px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--danger, #f87171)", cursor: "pointer", fontSize: 11 },
                 children: t("services.enrolledUnenroll")
               }
             )
@@ -3808,7 +3808,7 @@ function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, onStop, 
       ),
       field(t("services.exposeProvider"), ex.provider ? ex.provider : (
         /* auth=none → 标红告警(与列表行一致) */
-        /* @__PURE__ */ jsxs("span", { style: { color: "#f87171", fontWeight: 600 }, title: t("services.noAuthWarnHint"), children: [
+        /* @__PURE__ */ jsxs("span", { style: { color: "var(--danger, #f87171)", fontWeight: 600 }, title: t("services.noAuthWarnHint"), children: [
           "\u26A0 ",
           t("services.exposeProviderNone")
         ] })
@@ -3852,7 +3852,7 @@ function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, onStop, 
     ] }),
     /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderTop: "1px solid var(--border)", flexShrink: 0 }, children: [
       /* @__PURE__ */ jsx("span", { style: { fontSize: 10, color: "var(--text-dim)", flex: 1 }, children: t("services.exposeDetailHint") }),
-      /* @__PURE__ */ jsx("button", { onClick: onStop, style: { flexShrink: 0, padding: "5px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "#f87171", cursor: "pointer", fontSize: 12, fontWeight: 600 }, children: t("services.exposeStop") })
+      /* @__PURE__ */ jsx("button", { onClick: onStop, style: { flexShrink: 0, padding: "5px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--danger, #f87171)", cursor: "pointer", fontSize: 12, fontWeight: 600 }, children: t("services.exposeStop") })
     ] })
   ] }) });
 }
@@ -3874,7 +3874,7 @@ function LogFilesSection({ exposeName, t, onOpenFile }) {
   }, [exposeName]);
   return /* @__PURE__ */ jsxs("div", { style: { padding: "5px 0" }, children: [
     /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }, children: t("services.exposeLogFiles") }),
-    files === null ? /* @__PURE__ */ jsx("div", { style: { fontSize: 10, color: "var(--text-dim)" }, children: t("services.exposeLogFilesLoading") }) : err ? /* @__PURE__ */ jsx("div", { style: { fontSize: 10, color: "#f87171" }, children: err }) : files.length === 0 ? /* @__PURE__ */ jsx("div", { style: { fontSize: 10, color: "var(--text-dim)" }, children: t("services.exposeNoLogs") }) : /* @__PURE__ */ jsx("div", { style: { display: "flex", flexDirection: "column", gap: 3 }, children: files.map((f) => /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
+    files === null ? /* @__PURE__ */ jsx("div", { style: { fontSize: 10, color: "var(--text-dim)" }, children: t("services.exposeLogFilesLoading") }) : err ? /* @__PURE__ */ jsx("div", { style: { fontSize: 10, color: "var(--danger, #f87171)" }, children: err }) : files.length === 0 ? /* @__PURE__ */ jsx("div", { style: { fontSize: 10, color: "var(--text-dim)" }, children: t("services.exposeNoLogs") }) : /* @__PURE__ */ jsx("div", { style: { display: "flex", flexDirection: "column", gap: 3 }, children: files.map((f) => /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6 }, children: [
       onOpenFile ? /* @__PURE__ */ jsx(
         "button",
         {
@@ -3951,7 +3951,7 @@ function InfoModal({ kind, t, currentDomainSuffix, pagePort, basePath, onClose }
 }
 function ConfirmDialog({ title, body, confirmLabel, cancelLabel, onConfirm, onCancel }) {
   return /* @__PURE__ */ jsx("div", { style: { position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }, onClick: onCancel, children: /* @__PURE__ */ jsxs("div", { onClick: (e) => e.stopPropagation(), style: { width: 440, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }, children: [
-    /* @__PURE__ */ jsxs("div", { style: { fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 8 }, children: [
+    /* @__PURE__ */ jsxs("div", { style: { fontSize: 13, fontWeight: 600, color: "var(--danger, #f87171)", marginBottom: 8 }, children: [
       "\u26A0 ",
       title
     ] }),
@@ -4334,7 +4334,7 @@ function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onCha
             onClick: deletePreset,
             disabled: presetBusy,
             title: t("services.presetDeleteHint"),
-            style: { flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "#f87171", cursor: "pointer", fontSize: 11 },
+            style: { flexShrink: 0, padding: "3px 10px", background: "none", border: "1px solid var(--border)", borderRadius: 5, color: "var(--danger, #f87171)", cursor: "pointer", fontSize: 11 },
             children: t("services.presetDelete")
           }
         ),
@@ -4541,7 +4541,7 @@ function AuthExposeSection({ port, t, openInNewTab, exposes, onStopExpose, onCha
         /* @__PURE__ */ jsx("div", { style: { fontSize: 10, color: "var(--text-dim)", fontWeight: 600 }, children: t("services.authParams") }),
         /* @__PURE__ */ jsx(SchemaForm, { specs: authSchemas[provider], values: providerParams, onChange: (k, v) => setProviderParams((prev) => ({ ...prev, [k]: v })), t })
       ] }),
-      error && /* @__PURE__ */ jsxs("div", { style: { fontSize: 11, color: "#f87171", marginTop: 6 }, children: [
+      error && /* @__PURE__ */ jsxs("div", { style: { fontSize: 11, color: "var(--danger, #f87171)", marginTop: 6 }, children: [
         t("services.exposeFailed"),
         ": ",
         error
@@ -4674,7 +4674,7 @@ function SitesManageSection({ t, isMobile, sites, protectedSites, providers, onA
   return /* @__PURE__ */ jsxs("div", { style: { margin: "0 0 14px", padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-panel)" }, children: [
     /* @__PURE__ */ jsx("div", { style: { fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }, children: t("services.sitesManage") }),
     /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "var(--text-dim)", margin: "2px 0 6px" }, children: t("services.sitesManageHint") }),
-    error && /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "#f87171", margin: "4px 0" }, children: error }),
+    error && /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "var(--danger, #f87171)", margin: "4px 0" }, children: error }),
     sites === null ? /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "var(--text-dim)", padding: "4px 0" }, children: t("services.loading") }) : /* @__PURE__ */ jsxs(Fragment, { children: [
       sites.map((s) => {
         const isProtected = protectedSites.includes(s.name);
@@ -4707,13 +4707,13 @@ function SitesManageSection({ t, isMobile, sites, protectedSites, providers, onA
                 setConfirmDel(confirmDel === s.name ? null : s.name);
                 setError(null);
               },
-              style: { ...btn, color: isProtected ? "var(--text-dim)" : "#f87171", cursor: isProtected ? "not-allowed" : "pointer", opacity: isProtected ? 0.5 : 1 },
+              style: { ...btn, color: isProtected ? "var(--text-dim)" : "var(--danger, #f87171)", cursor: isProtected ? "not-allowed" : "pointer", opacity: isProtected ? 0.5 : 1 },
               children: t("services.sitesRemove")
             }
           ),
           confirmDel === s.name && !isProtected && /* @__PURE__ */ jsxs("span", { style: { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", width: isMobile ? "100%" : void 0 }, children: [
             /* @__PURE__ */ jsx("span", { style: { fontSize: 10, color: "var(--text-dim)", flex: 1, minWidth: 120 }, children: t("services.sitesRemoveConfirm", { name: s.name }) }),
-            /* @__PURE__ */ jsx("button", { onClick: () => remove(s.name), disabled: busy, style: { ...btn, color: "#f87171", fontWeight: 600 }, children: busy ? t("services.updating") : t("services.sitesRemoveConfirmGo") }),
+            /* @__PURE__ */ jsx("button", { onClick: () => remove(s.name), disabled: busy, style: { ...btn, color: "var(--danger, #f87171)", fontWeight: 600 }, children: busy ? t("services.updating") : t("services.sitesRemoveConfirmGo") }),
             /* @__PURE__ */ jsx("button", { onClick: () => setConfirmDel(null), style: btn, children: t("services.exposeAbort") })
           ] })
         ] }, s.name);
@@ -5104,7 +5104,7 @@ function AuthUsersSection({ t, isMobile }) {
           ")"
         ] })
       ] }),
-      error && /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "#f87171", margin: "6px 0" }, children: error }),
+      error && /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "var(--danger, #f87171)", margin: "6px 0" }, children: error }),
       /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6, margin: "10px 0 10px", flexWrap: "wrap", flexDirection: isMobile ? "column" : "row" }, children: [
         /* @__PURE__ */ jsx("input", { placeholder: t("services.userName"), value: name, onChange: (e) => setName(e.target.value), style: { ...input, flex: 1, width: isMobile ? "100%" : void 0, boxSizing: "border-box" } }),
         /* @__PURE__ */ jsx("input", { placeholder: t("services.userPassword"), type: "password", value: password, onChange: (e) => setPassword(e.target.value), style: { ...input, flex: 1, width: isMobile ? "100%" : void 0, boxSizing: "border-box" } }),
@@ -5187,7 +5187,7 @@ function AuthUsersSection({ t, isMobile }) {
             "\u{1F642} ",
             t("services.bioFaceOn")
           ] }),
-          u.biometrics?.facePending && !u.biometrics?.face && /* @__PURE__ */ jsxs("span", { style: { fontSize: 10, color: "#f59e0b", flexShrink: 0 }, title: t("services.bioFacePendingHint"), children: [
+          u.biometrics?.facePending && !u.biometrics?.face && /* @__PURE__ */ jsxs("span", { style: { fontSize: 10, color: "var(--warn, #f59e0b)", flexShrink: 0 }, title: t("services.bioFacePendingHint"), children: [
             "\u{1F642} ",
             t("services.bioFacePending")
           ] }),
@@ -5195,7 +5195,7 @@ function AuthUsersSection({ t, isMobile }) {
             "\u{1F399} ",
             t("services.bioVoiceOn")
           ] }),
-          u.biometrics?.voicePending && !u.biometrics?.voice && /* @__PURE__ */ jsxs("span", { style: { fontSize: 10, color: "#f59e0b", flexShrink: 0 }, title: t("services.bioVoicePendingHint"), children: [
+          u.biometrics?.voicePending && !u.biometrics?.voice && /* @__PURE__ */ jsxs("span", { style: { fontSize: 10, color: "var(--warn, #f59e0b)", flexShrink: 0 }, title: t("services.bioVoicePendingHint"), children: [
             "\u{1F399} ",
             t("services.bioVoicePending")
           ] }),
@@ -5204,12 +5204,12 @@ function AuthUsersSection({ t, isMobile }) {
           biometricProviders.includes(selected.provider) && /* @__PURE__ */ jsxs(Fragment, { children: [
             u.biometrics?.face ? /* @__PURE__ */ jsxs(Fragment, { children: [
               /* @__PURE__ */ jsx("button", { onClick: () => enrollBiometric(u.name, "face"), style: btn, title: t("services.bioFaceRerecordHint"), children: t("services.bioFaceRerecordFace") }),
-              /* @__PURE__ */ jsx("button", { onClick: () => disableBiometric(u.name, "face"), style: { ...btn, color: "#f87171" }, title: t("services.bioFaceOffHint"), children: t("services.bioFaceOff") })
-            ] }) : u.biometrics?.facePending ? /* @__PURE__ */ jsx("button", { onClick: () => setPendingAction({ name: u.name }), style: { ...btn, borderColor: "#f59e0b", color: "#f59e0b" }, title: t("services.bioFacePendingHint"), children: t("services.bioFacePending") }) : /* @__PURE__ */ jsx("button", { onClick: () => enrollBiometric(u.name, "face"), style: btn, title: t("services.bioFaceHint"), children: t("services.bioFaceEnroll") }),
+              /* @__PURE__ */ jsx("button", { onClick: () => disableBiometric(u.name, "face"), style: { ...btn, color: "var(--danger, #f87171)" }, title: t("services.bioFaceOffHint"), children: t("services.bioFaceOff") })
+            ] }) : u.biometrics?.facePending ? /* @__PURE__ */ jsx("button", { onClick: () => setPendingAction({ name: u.name }), style: { ...btn, borderColor: "var(--warn, #f59e0b)", color: "var(--warn, #f59e0b)" }, title: t("services.bioFacePendingHint"), children: t("services.bioFacePending") }) : /* @__PURE__ */ jsx("button", { onClick: () => enrollBiometric(u.name, "face"), style: btn, title: t("services.bioFaceHint"), children: t("services.bioFaceEnroll") }),
             u.biometrics?.voice ? /* @__PURE__ */ jsx("button", { onClick: () => disableBiometric(u.name, "voice"), style: btn, title: t("services.bioVoiceOffHint"), children: t("services.bioVoiceOff") }) : u.biometrics?.voicePending ? /* @__PURE__ */ jsx("button", { disabled: true, style: { ...btn, opacity: 0.6, cursor: "not-allowed" }, title: t("services.bioVoicePendingHint"), children: t("services.bioVoicePending") }) : /* @__PURE__ */ jsx("button", { onClick: () => enrollBiometric(u.name, "voice"), style: btn, title: t("services.bioVoiceHint"), children: t("services.bioVoiceEnroll") })
           ] }),
           /* @__PURE__ */ jsx("button", { onClick: () => setPwUser(pwUser === u.name ? null : u.name), style: btn, children: t("services.userSetPassword") }),
-          /* @__PURE__ */ jsx("button", { onClick: () => removeUser(u.name), style: { ...btn, color: "#f87171" }, children: t("services.userRemove") })
+          /* @__PURE__ */ jsx("button", { onClick: () => removeUser(u.name), style: { ...btn, color: "var(--danger, #f87171)" }, children: t("services.userRemove") })
         ] }),
         pwUser === u.name && /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6, marginTop: 6 }, children: [
           /* @__PURE__ */ jsx("input", { type: "password", placeholder: t("services.newPassword"), value: newPw, onChange: (e) => setNewPw(e.target.value), style: input }),
@@ -5323,7 +5323,7 @@ function AuthUsersSection({ t, isMobile }) {
     /* @__PURE__ */ jsx("div", { style: { fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 4 }, children: t("services.authUsers") }),
     /* @__PURE__ */ jsx(SitesManageSection, { t, isMobile, sites: sitesList, protectedSites, providers: siteProviders, onAdd: addSite, onRemove: removeSite }),
     /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }, children: t("services.usersPickCombo") }),
-    summaryError && /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "#f87171", margin: "0 0 6px" }, children: summaryError }),
+    summaryError && /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "var(--danger, #f87171)", margin: "0 0 6px" }, children: summaryError }),
     rows === null ? /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "var(--text-dim)", padding: "8px 4px" }, children: t("services.loading") }) : rows.length === 0 ? /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "var(--text-dim)", padding: "8px 4px" }, children: t("services.noUserCombos") }) : /* @__PURE__ */ jsxs("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12 }, children: [
       /* @__PURE__ */ jsx("thead", { children: /* @__PURE__ */ jsxs("tr", { children: [
         /* @__PURE__ */ jsx("th", { style: { textAlign: "left", padding: "6px 8px", borderBottom: "1px solid var(--border)", color: "var(--text-dim)", fontWeight: 600 }, children: t("services.usersSite") }),
@@ -5669,7 +5669,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
               onClick: () => doStopTunnel(u.tunnel),
               disabled: busy,
               title: t("services.selfStopTunnelHint"),
-              style: { ...btn, padding: "3px 8px", flexShrink: 0, color: "#f87171" },
+              style: { ...btn, padding: "3px 8px", flexShrink: 0, color: "var(--danger, #f87171)" },
               children: t("services.selfStopTunnel")
             }
           ),
@@ -5680,33 +5680,33 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
               onClick: () => onStopExpose(vhostStopName(u)),
               disabled: busy,
               title: t("services.selfStopVhostHint"),
-              style: { ...btn, padding: "3px 8px", flexShrink: 0, color: "#f87171" },
+              style: { ...btn, padding: "3px 8px", flexShrink: 0, color: "var(--danger, #f87171)" },
               children: t("services.exposeStop")
             }
           )
         ] }, u.url);
       }) })
     ] }),
-    self?.unauthenticated && /* @__PURE__ */ jsxs("div", { style: { border: "1px solid #f87171", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "#f87171" }, children: [
+    self?.unauthenticated && /* @__PURE__ */ jsxs("div", { style: { border: "1px solid var(--danger, #f87171)", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "var(--danger, #f87171)" }, children: [
       "\u{1F534} ",
       t("services.selfNoAuth"),
       " \u2014 ",
       t("services.selfNoAuthSummary")
     ] }),
-    warnNonLoopback && /* @__PURE__ */ jsxs("div", { style: { border: "1px solid #f87171", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "#f87171" }, children: [
+    warnNonLoopback && /* @__PURE__ */ jsxs("div", { style: { border: "1px solid var(--danger, #f87171)", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "var(--danger, #f87171)" }, children: [
       "\u26A0 ",
       t("services.selfWarning")
     ] }),
     /* @__PURE__ */ jsxs("div", { style: { border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }, children: [
       /* @__PURE__ */ jsxs("div", { style: { fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }, children: [
         t("services.selfExpose"),
-        /* @__PURE__ */ jsxs("span", { style: { marginLeft: 8, fontSize: 11, fontWeight: 400, color: exposing ? self?.unauthenticated ? "#f87171" : "#16a34a" : "var(--text-dim)" }, children: [
+        /* @__PURE__ */ jsxs("span", { style: { marginLeft: 8, fontSize: 11, fontWeight: 400, color: exposing ? self?.unauthenticated ? "var(--danger, #f87171)" : "#16a34a" : "var(--text-dim)" }, children: [
           "\u25CF ",
           exposing ? t("services.selfExposing") : t("services.selfNotExposing")
         ] })
       ] }),
       exposing && exposeUrls.length > 0 && /* @__PURE__ */ jsxs("div", { style: { border: self?.unauthenticated ? "1px solid rgba(248,113,113,0.45)" : "1px solid rgba(22,163,74,0.3)", background: self?.unauthenticated ? "rgba(248,113,113,0.06)" : "rgba(22,163,74,0.06)", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }, children: [
-        /* @__PURE__ */ jsx("div", { style: { fontSize: 11, fontWeight: 600, color: self?.unauthenticated ? "#f87171" : "#16a34a", marginBottom: 5 }, children: t("services.selfExposeUrls") }),
+        /* @__PURE__ */ jsx("div", { style: { fontSize: 11, fontWeight: 600, color: self?.unauthenticated ? "var(--danger, #f87171)" : "#16a34a", marginBottom: 5 }, children: t("services.selfExposeUrls") }),
         /* @__PURE__ */ jsx("div", { style: { display: "flex", flexDirection: "column", gap: 4 }, children: exposeUrls.map((u) => /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 11 }, children: [
           /* @__PURE__ */ jsx("span", { style: { flexShrink: 0, color: "var(--text-dim)", width: 96 }, children: u.labelKey ? t(u.labelKey, u.labelParams) : u.label }),
           u.noAuth && /* @__PURE__ */ jsx(NoAuthBadge, { t }),
@@ -5726,7 +5726,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
               onClick: () => onStopExpose(vhostStopName(u)),
               disabled: busy,
               title: t("services.selfStopVhostHint"),
-              style: { ...btn, padding: "3px 8px", flexShrink: 0, color: "#f87171" },
+              style: { ...btn, padding: "3px 8px", flexShrink: 0, color: "var(--danger, #f87171)" },
               children: t("services.exposeStop")
             }
           )
@@ -5787,7 +5787,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
         /* @__PURE__ */ jsx("div", { style: { fontSize: 10, color: "var(--text-dim)", fontWeight: 600 }, children: t("services.authParams") }),
         /* @__PURE__ */ jsx(SchemaForm, { specs: authSchemas[auth], values: providerParams, onChange: (k, v) => setProviderParams((prev) => ({ ...prev, [k]: v })), t })
       ] }),
-      err && /* @__PURE__ */ jsx("div", { style: { fontSize: 12, color: "#f87171", marginTop: 8 }, children: err })
+      err && /* @__PURE__ */ jsx("div", { style: { fontSize: 12, color: "var(--danger, #f87171)", marginTop: 8 }, children: err })
     ] }),
     /* @__PURE__ */ jsxs("label", { style: { display: "flex", alignItems: "flex-start", gap: 8, cursor: "pointer" }, title: t("services.selfAllowLocalHint"), children: [
       /* @__PURE__ */ jsx(
@@ -5841,18 +5841,18 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
       /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "var(--text-dim)", marginTop: 6 }, children: t("services.selfEnvNote") })
     ] }),
     confirmCountdown !== null && /* @__PURE__ */ jsx("div", { style: { position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }, children: /* @__PURE__ */ jsxs("div", { style: { width: 520, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }, children: [
-      /* @__PURE__ */ jsxs("div", { style: { fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 8 }, children: [
+      /* @__PURE__ */ jsxs("div", { style: { fontSize: 13, fontWeight: 600, color: "var(--danger, #f87171)", marginBottom: 8 }, children: [
         "\u26A0 ",
         t("services.lockoutTitle", { ttl: String(TTL_MS / 1e3) })
       ] }),
       /* @__PURE__ */ jsx("div", { style: { fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }, children: t("services.lockoutCountdown", { window: String(CONFIRM_WINDOW), ttl: String(TTL_MS / 1e3) }) }),
       /* @__PURE__ */ jsxs("div", { style: { marginTop: 10 }, children: [
         /* @__PURE__ */ jsxs("div", { style: { display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }, children: [
-          /* @__PURE__ */ jsxs("span", { style: { fontSize: 20, fontWeight: 700, color: confirmCountdown <= 10 ? "#f87171" : "var(--text)", fontVariantNumeric: "tabular-nums", minWidth: 40 }, children: [
+          /* @__PURE__ */ jsxs("span", { style: { fontSize: 20, fontWeight: 700, color: confirmCountdown <= 10 ? "var(--danger, #f87171)" : "var(--text)", fontVariantNumeric: "tabular-nums", minWidth: 40 }, children: [
             confirmCountdown,
             "s"
           ] }),
-          /* @__PURE__ */ jsx("div", { style: { flex: 1, height: 6, borderRadius: 3, background: "var(--bg-hover)", overflow: "hidden" }, children: /* @__PURE__ */ jsx("div", { style: { height: "100%", width: `${confirmCountdown / CONFIRM_WINDOW * 100}%`, background: confirmCountdown <= 10 ? "#f87171" : "var(--accent)", transition: "width 1s linear" } }) })
+          /* @__PURE__ */ jsx("div", { style: { flex: 1, height: 6, borderRadius: 3, background: "var(--bg-hover)", overflow: "hidden" }, children: /* @__PURE__ */ jsx("div", { style: { height: "100%", width: `${confirmCountdown / CONFIRM_WINDOW * 100}%`, background: confirmCountdown <= 10 ? "var(--danger, #f87171)" : "var(--accent)", transition: "width 1s linear" } }) })
         ] }),
         /* @__PURE__ */ jsx("div", { style: { fontSize: 10, color: "var(--text-dim)" }, children: t("services.lockoutAutoRestore") })
       ] }),
@@ -5872,14 +5872,14 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
           "button",
           {
             onClick: confirmDisableNow,
-            style: { ...btn, background: "#f87171", borderStyle: "none", color: "#fff", fontWeight: 600 },
+            style: { ...btn, background: "var(--danger, #f87171)", borderStyle: "none", color: "#fff", fontWeight: 600 },
             children: t("services.lockoutConfirm")
           }
         )
       ] })
     ] }) }),
     rejectDialog && /* @__PURE__ */ jsx("div", { style: { position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }, onClick: () => setRejectDialog(false), children: /* @__PURE__ */ jsxs("div", { onClick: (e) => e.stopPropagation(), style: { width: 460, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }, children: [
-      /* @__PURE__ */ jsxs("div", { style: { fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 8 }, children: [
+      /* @__PURE__ */ jsxs("div", { style: { fontSize: 13, fontWeight: 600, color: "var(--danger, #f87171)", marginBottom: 8 }, children: [
         "\u26A0 ",
         t("services.lockoutNoEntryTitle")
       ] }),
@@ -6014,7 +6014,7 @@ function SelfExposeAlert({ sessionLoadedKey, onOpenServices }) {
           background: "rgba(248,113,113,0.12)",
           borderBottom: "1px solid rgba(248,113,113,0.5)",
           fontSize: 12,
-          color: "#f87171",
+          color: "var(--danger, #f87171)",
           cursor: "pointer"
         },
         children: [
@@ -6035,7 +6035,7 @@ function SelfExposeAlert({ sessionLoadedKey, onOpenServices }) {
               },
               title: t("services.selfNoAuthDismiss"),
               "aria-label": t("services.selfNoAuthDismiss"),
-              style: { flexShrink: 0, background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 14, padding: "0 2px" },
+              style: { flexShrink: 0, background: "none", border: "none", color: "var(--danger, #f87171)", cursor: "pointer", fontSize: 14, padding: "0 2px" },
               children: "\xD7"
             }
           )
@@ -6053,7 +6053,7 @@ function SelfExposeAlert({ sessionLoadedKey, onOpenServices }) {
             onClick: (e) => e.stopPropagation(),
             style: { width: 480, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" },
             children: [
-              /* @__PURE__ */ jsxs("div", { style: { fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 8 }, children: [
+              /* @__PURE__ */ jsxs("div", { style: { fontSize: 13, fontWeight: 600, color: "var(--danger, #f87171)", marginBottom: 8 }, children: [
                 "\u{1F534} ",
                 t("services.selfNoAuth")
               ] }),

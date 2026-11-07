@@ -86,7 +86,7 @@ export function DdnsTab({ t }: { t: T }) {
 
   return (
     <div>
-      {error && <div style={{ fontSize: 11, color: "#f87171", margin: "0 0 8px" }}>{t("services.exposeFailed")}: {error}</div>}
+      {error && <div style={{ fontSize: 11, color: "var(--danger, #f87171)", margin: "0 0 8px" }}>{t("services.exposeFailed")}: {error}</div>}
       {isEmpty && (
         <div style={{ ...card, textAlign: "center", padding: "22px 12px" }}>
           <div style={{ fontSize: 24, marginBottom: 6 }}>🌐</div>
@@ -107,7 +107,7 @@ export function DdnsTab({ t }: { t: T }) {
                   <td style={{ ...td, fontFamily: "var(--font-mono)" }}>{k}</td>
                   <td style={td}>{v.provider}</td>
                   <td style={td}><TokenCell value={v.token} t={t} /></td>
-                  <td style={td}><button disabled={busy} style={{ ...btn, color: "#f87171" }}
+                  <td style={td}><button disabled={busy} style={{ ...btn, color: "var(--danger, #f87171)" }}
                     onClick={() => { const next = { ...reg, providerProfiles: { ...pps } }; delete next.providerProfiles![k]; save(next); }}>
                     {t("ui.ddns.del")}</button></td>
                 </tr>
@@ -135,7 +135,7 @@ export function DdnsTab({ t }: { t: T }) {
                   <td style={{ ...td, fontFamily: "var(--font-mono)" }}>{v.zone}</td>
                   <td style={{ ...td, fontFamily: "var(--font-mono)" }}>{v.record || "—"}</td>
                   <td style={{ ...td, fontFamily: "var(--font-mono)" }}>{v.txtName || "—"}</td>
-                  <td style={td}><button disabled={busy} style={{ ...btn, color: "#f87171" }}
+                  <td style={td}><button disabled={busy} style={{ ...btn, color: "var(--danger, #f87171)" }}
                     onClick={() => { const next = { ...reg, profiles: { ...profs } }; delete next.profiles![k]; save(next); }}>
                     {t("ui.ddns.del")}</button></td>
                 </tr>
@@ -165,7 +165,7 @@ export function DdnsTab({ t }: { t: T }) {
                   <td style={td}>{[
                     [e.ip, "A"], [e.aaaa, "AAAA"], [e.txt, "TXT(ip:port)"], [e.cname, "CNAME"], [e.txtUrl, "TXT(url)"],
                   ].filter(([on]) => on).map(([, l]) => l).join(" ") || "—"}</td>
-                  <td style={td}><button disabled={busy} style={{ ...btn, color: "#f87171" }}
+                  <td style={td}><button disabled={busy} style={{ ...btn, color: "var(--danger, #f87171)" }}
                     onClick={() => save({ ...reg, entries: entries.filter((_, j) => j !== i) })}>
                     {t("ui.ddns.del")}</button></td>
                 </tr>
@@ -184,7 +184,7 @@ export function DdnsTab({ t }: { t: T }) {
 
 function ErrLine({ msg }: { msg: string | null }) {
   if (!msg) return null;
-  return <div style={{ fontSize: 10, color: "#f87171", margin: "4px 0" }}>{msg}</div>;
+  return <div style={{ fontSize: 10, color: "var(--danger, #f87171)", margin: "4px 0" }}>{msg}</div>;
 }
 
 function AddProviderProfile({ t, providers, busy, onAdd }: {

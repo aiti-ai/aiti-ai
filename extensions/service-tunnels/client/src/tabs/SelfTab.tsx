@@ -408,14 +408,14 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
                   </button>
                   {u.tunnel && (
                     <button onClick={() => doStopTunnel(u.tunnel!)} disabled={busy} title={t("services.selfStopTunnelHint")}
-                      style={{ ...btn, padding: "3px 8px", flexShrink: 0, color: "#f87171" }}>
+                      style={{ ...btn, padding: "3px 8px", flexShrink: 0, color: "var(--danger, #f87171)" }}>
                       {t("services.selfStopTunnel")}
                     </button>
                   )}
                   {vhostStopName(u) && (
                     /* proxy 虚拟主机行:与 tunnel 行一致,外面直接可停止(移除 binding) */
                     <button onClick={() => onStopExpose(vhostStopName(u)!)} disabled={busy} title={t("services.selfStopVhostHint")}
-                      style={{ ...btn, padding: "3px 8px", flexShrink: 0, color: "#f87171" }}>
+                      style={{ ...btn, padding: "3px 8px", flexShrink: 0, color: "var(--danger, #f87171)" }}>
                       {t("services.exposeStop")}
                     </button>
                   )}
@@ -428,13 +428,13 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
 
       {/* 无认证暴露 → 红色告警框（与页面顶部 🔴 条幅同源） */}
       {self?.unauthenticated && (
-        <div style={{ border: "1px solid #f87171", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "#f87171" }}>
+        <div style={{ border: "1px solid var(--danger, #f87171)", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "var(--danger, #f87171)" }}>
           🔴 {t("services.selfNoAuth")} — {t("services.selfNoAuthSummary")}
         </div>
       )}
 
       {warnNonLoopback && (
-        <div style={{ border: "1px solid #f87171", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "#f87171" }}>
+        <div style={{ border: "1px solid var(--danger, #f87171)", borderRadius: 8, padding: "8px 10px", background: "rgba(248,113,113,0.08)", fontSize: 12, color: "var(--danger, #f87171)" }}>
           ⚠ {t("services.selfWarning")}
         </div>
       )}
@@ -443,13 +443,13 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
       <div style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "10px 12px", background: "var(--bg-panel)" }}>
         <div style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
           {t("services.selfExpose")}
-          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: exposing ? (self?.unauthenticated ? "#f87171" : "#16a34a") : "var(--text-dim)" }}>
+          <span style={{ marginLeft: 8, fontSize: 11, fontWeight: 400, color: exposing ? (self?.unauthenticated ? "var(--danger, #f87171)" : "#16a34a") : "var(--text-dim)" }}>
             ● {exposing ? t("services.selfExposing") : t("services.selfNotExposing")}
           </span>
         </div>
         {exposing && exposeUrls.length > 0 && (
           <div style={{ border: self?.unauthenticated ? "1px solid rgba(248,113,113,0.45)" : "1px solid rgba(22,163,74,0.3)", background: self?.unauthenticated ? "rgba(248,113,113,0.06)" : "rgba(22,163,74,0.06)", borderRadius: 6, padding: "8px 10px", marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: self?.unauthenticated ? "#f87171" : "#16a34a", marginBottom: 5 }}>{t("services.selfExposeUrls")}</div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: self?.unauthenticated ? "var(--danger, #f87171)" : "#16a34a", marginBottom: 5 }}>{t("services.selfExposeUrls")}</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
               {exposeUrls.map((u) => (
                 <div key={u.url} style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11 }}>
@@ -464,7 +464,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
                   </button>
                   {vhostStopName(u) && (
                     <button onClick={() => onStopExpose(vhostStopName(u)!)} disabled={busy} title={t("services.selfStopVhostHint")}
-                      style={{ ...btn, padding: "3px 8px", flexShrink: 0, color: "#f87171" }}>
+                      style={{ ...btn, padding: "3px 8px", flexShrink: 0, color: "var(--danger, #f87171)" }}>
                       {t("services.exposeStop")}
                     </button>
                   )}
@@ -642,7 +642,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
             <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 4 }}>{t("ui.ports.ipv6Hint")}</div>
           </div>
         )}
-        {err && <div style={{ fontSize: 12, color: "#f87171", marginTop: 8 }}>{err}</div>}
+        {err && <div style={{ fontSize: 12, color: "var(--danger, #f87171)", marginTop: 8 }}>{err}</div>}
       </div>
 
 
@@ -699,16 +699,16 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
       {confirmCountdown !== null && (
         <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }}>
           <div style={{ width: 520, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 8 }}>⚠ {t("services.lockoutTitle", { ttl: String(TTL_MS / 1000) })}</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--danger, #f87171)", marginBottom: 8 }}>⚠ {t("services.lockoutTitle", { ttl: String(TTL_MS / 1000) })}</div>
             <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }}>
               {t("services.lockoutCountdown", { window: String(CONFIRM_WINDOW), ttl: String(TTL_MS / 1000) })}
             </div>
             {/* 倒计时 + 进度条 */}
             <div style={{ marginTop: 10 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
-                <span style={{ fontSize: 20, fontWeight: 700, color: confirmCountdown <= 10 ? "#f87171" : "var(--text)", fontVariantNumeric: "tabular-nums", minWidth: 40 }}>{confirmCountdown}s</span>
+                <span style={{ fontSize: 20, fontWeight: 700, color: confirmCountdown <= 10 ? "var(--danger, #f87171)" : "var(--text)", fontVariantNumeric: "tabular-nums", minWidth: 40 }}>{confirmCountdown}s</span>
                 <div style={{ flex: 1, height: 6, borderRadius: 3, background: "var(--bg-hover)", overflow: "hidden" }}>
-                  <div style={{ height: "100%", width: `${(confirmCountdown / CONFIRM_WINDOW) * 100}%`, background: confirmCountdown <= 10 ? "#f87171" : "var(--accent)", transition: "width 1s linear" }} />
+                  <div style={{ height: "100%", width: `${(confirmCountdown / CONFIRM_WINDOW) * 100}%`, background: confirmCountdown <= 10 ? "var(--danger, #f87171)" : "var(--accent)", transition: "width 1s linear" }} />
                 </div>
               </div>
               <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.lockoutAutoRestore")}</div>
@@ -740,7 +740,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
               <span style={{ flex: 1 }} />
               <button
                 onClick={confirmDisableNow}
-                style={{ ...btn, background: "#f87171", border: "none", color: "#fff", fontWeight: 600 }}
+                style={{ ...btn, background: "var(--danger, #f87171)", border: "none", color: "#fff", fontWeight: 600 }}
               >
                 {t("services.lockoutConfirm")}
               </button>
@@ -754,7 +754,7 @@ function SelfTab({ self, t, openInNewTab, copy, copiedKey, onChanged, onGoManage
           <div onClick={(e) => e.stopPropagation()} style={{ position: "relative", width: 460, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
             <button onClick={() => setRejectDialog(false)} aria-label={t("services.close")} title={t("services.close")}
               style={{ position: "absolute", top: 8, right: 8, background: "none", border: "none", color: "var(--text-muted, #aaa)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px" }}>✕</button>
-            <div style={{ fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 8 }}>⚠ {t("services.lockoutNoEntryTitle")}</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: "var(--danger, #f87171)", marginBottom: 8 }}>⚠ {t("services.lockoutNoEntryTitle")}</div>
             <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }}>{t("services.lockoutNoEntry")}</div>
           </div>
         </div>

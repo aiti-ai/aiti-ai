@@ -14,7 +14,7 @@ import { ddnsBadge, modeOf, fmtAddr } from "../lib-shared";
 export function NoAuthBadge({ t }: { t: (key: string) => string }) {
   return (
     <span title={t("services.noAuthWarnHint")}
-      style={{ padding: "1px 7px", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", borderRadius: 4, color: "#f87171", fontWeight: 600, flexShrink: 0, fontSize: 10 }}>
+      style={{ padding: "1px 7px", background: "rgba(248,113,113,0.15)", border: "1px solid rgba(248,113,113,0.45)", borderRadius: 4, color: "var(--danger, #f87171)", fontWeight: 600, flexShrink: 0, fontSize: 10 }}>
       ⚠ {t("services.exposeProviderNone")}
     </span>
   );
@@ -200,7 +200,7 @@ export function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, o
           )}
           {field(t("services.exposeProvider"), ex.provider ? ex.provider : (
             /* auth=none → 标红告警(与列表行一致) */
-            <span style={{ color: "#f87171", fontWeight: 600 }} title={t("services.noAuthWarnHint")}>⚠ {t("services.exposeProviderNone")}</span>
+            <span style={{ color: "var(--danger, #f87171)", fontWeight: 600 }} title={t("services.noAuthWarnHint")}>⚠ {t("services.exposeProviderNone")}</span>
           ))}
           {/* proxy 模式无隧道（tunnelType 是创建时传的默认值，实际未建隧道） */}
           {(mode === "tunnel" || mode === "both") && field(t("services.exposeTunnelTool"), ex.tunnelType ?? "—")}
@@ -224,7 +224,7 @@ export function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, o
               <span style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
                 {b.profile && <span style={{ fontFamily: "var(--font-mono)" }}>{b.profile}:</span>}
                 {b.items.map((a, i) => (
-                  <span key={i} style={{ color: a.ok ? "#16a34a" : "#f87171" }}>{a.type}{a.ok ? " ✓" : " ✗"}</span>
+                  <span key={i} style={{ color: a.ok ? "#16a34a" : "var(--danger, #f87171)" }}>{a.type}{a.ok ? " ✓" : " ✗"}</span>
                 ))}
               </span>
             ));
@@ -263,7 +263,7 @@ export function ExposeDetailModal({ ex, t, onClose, onOpen, onCopy, copiedKey, o
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 16px", borderTop: "1px solid var(--border)", flexShrink: 0 }}>
           <span style={{ fontSize: 10, color: "var(--text-dim)", flex: 1 }}>{t("services.exposeDetailHint")}</span>
-          <button onClick={onStop} style={{ flexShrink: 0, padding: "5px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "#f87171", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>{t("services.exposeStop")}</button>
+          <button onClick={onStop} style={{ flexShrink: 0, padding: "5px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--danger, #f87171)", cursor: "pointer", fontSize: 12, fontWeight: 600 }}>{t("services.exposeStop")}</button>
         </div>
       </div>
     </div>
@@ -297,7 +297,7 @@ export function LogFilesSection({ exposeName, t, onOpenFile }: {
       {files === null ? (
         <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeLogFilesLoading")}</div>
       ) : err ? (
-        <div style={{ fontSize: 10, color: "#f87171" }}>{err}</div>
+        <div style={{ fontSize: 10, color: "var(--danger, #f87171)" }}>{err}</div>
       ) : files.length === 0 ? (
         <div style={{ fontSize: 10, color: "var(--text-dim)" }}>{t("services.exposeNoLogs")}</div>
       ) : (
@@ -404,7 +404,7 @@ export function ConfirmDialog({ title, body, confirmLabel, cancelLabel, onConfir
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 1100, background: "rgba(0,0,0,0.4)", display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onCancel}>
       <div onClick={(e) => e.stopPropagation()} style={{ width: 440, maxWidth: "calc(100vw - 32px)", background: "var(--bg)", border: "1px solid var(--border)", borderRadius: 10, padding: "14px 16px", boxShadow: "0 8px 32px rgba(0,0,0,0.2)" }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 8 }}>⚠ {title}</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--danger, #f87171)", marginBottom: 8 }}>⚠ {title}</div>
         <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.7 }}>{body}</div>
         <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end", flexWrap: "wrap" }}>
           <button onClick={onCancel} style={{ padding: "5px 14px", background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text-muted)", cursor: "pointer", fontSize: 12 }}>{cancelLabel}</button>
