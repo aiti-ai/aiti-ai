@@ -414,7 +414,7 @@ export default function register(ctx) {
         });
         const d = await r.json();
         if (!d.ok) { setSkillMsg({ status: "err", msg: d.error || "保存失败" }); return; }
-        setSkillMsg({ status: "ok", msg: "✅ 已保存到 data 目录（归属 " + (d.skill?.owner || "aiti-helper") + "）" });
+        setSkillMsg({ status: "ok", msg: "已保存到 data 目录（归属 " + (d.skill?.owner || "aiti-helper") + "）" });
         // 刷新帮助点列表（新 skill 立即出现）
         const hr = await fetch(ctx.apiUrl("/api/extensions/aiti-helper/helpers"), { cache: "no-store" });
         const hd = await hr.json();
@@ -532,7 +532,7 @@ export default function register(ctx) {
               ),
               viewingSkill.summary ? h("div", { style: { fontSize: 12, opacity: 0.75, background: "var(--bg-subtle,#f5f5f5)", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--border,#e0e0e0)" } }, viewingSkill.summary) : null,
               skillLoading ? h("div", { style: { fontSize: 12, opacity: 0.6 } }, "加载说明…") : null,
-              viewingSkill.err ? h("div", { style: { color: "#ef4444", fontSize: 12 } }, "⚠️ " + viewingSkill.err) : null,
+              viewingSkill.err ? h("div", { style: { color: "var(--danger, #ef4444)", fontSize: 12 } }, "⚠️ " + viewingSkill.err) : null,
               viewingSkill.body ? h("pre", { style: { whiteSpace: "pre-wrap", wordBreak: "break-word", padding: "12px 14px", background: "var(--bg-subtle,#f5f5f5)", color: "inherit", borderRadius: 8, fontSize: 12, lineHeight: 1.6, border: "1px solid var(--border,#e0e0e0)", maxHeight: 320, overflow: "auto", margin: 0 } }, viewingSkill.body) : null,
             )
           ) : showSkillForm ? (
@@ -564,7 +564,7 @@ export default function register(ctx) {
               // 操作
               skillMsg ? h("div", { style: { fontSize: 12, padding: "7px 10px", borderRadius: 6, background: skillMsg.status === "ok" ? "rgba(16,185,129,.12)" : "rgba(239,68,68,.12)", color: skillMsg.status === "ok" ? "#16a34a" : "#dc2626" } }, skillMsg.msg) : null,
               h("div", { style: { display: "flex", gap: 8, marginTop: 4 } },
-                h("button", { onClick: () => saveUserSkill(), disabled: savingSkill, style: btnStyle("primary") }, savingSkill ? "保存中…" : "💾 保存"),
+                h("button", { onClick: () => saveUserSkill(), disabled: savingSkill, style: btnStyle("primary") }, savingSkill ? "保存中…" : "保存"),
                 h("button", { onClick: () => { setShowSkillForm(false); setSelHelper(helpers && helpers.find((h) => h.id === "skill-manage") || null); }, style: { ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.bot), "让 AI 写"),
               ),
             )
@@ -625,9 +625,9 @@ export default function register(ctx) {
               style: { alignSelf: "flex-start", padding: "6px 15px", borderRadius: 8, cursor: "pointer",
                 border: "1px solid var(--accent,#2563eb)", background: loading ? "rgba(37,99,235,.08)" : "rgba(37,99,235,.12)",
                 color: "inherit", fontSize: 13, fontWeight: 500, opacity: (loading || !input.trim()) ? 0.5 : 1 },
-            }, loading ? "⏳ 生成中…" : [Ic(13, ICONS.sparkles), "生成"]),
+            }, loading ? "生成中…" : [Ic(13, ICONS.sparkles), "生成"]),
             // 错误
-            err ? h("div", { style: { color: "#ef4444", fontSize: 12, padding: "7px 10px", background: "rgba(239,68,68,.1)", borderRadius: 6 } }, "❌ " + err) : null,
+            err ? h("div", { style: { color: "var(--danger, #ef4444)", fontSize: 12, padding: "7px 10px", background: "rgba(239,68,68,.1)", borderRadius: 6 } }, "❌ " + err) : null,
             // 结果预览
             result ? h("div", null,
               h("div", { style: { fontSize: 11, opacity: 0.6, marginBottom: 5 } }, Ic(12, ICONS.copy), " 结果预览（审核后落地；关闭后可在历史找回）"),
@@ -636,7 +636,7 @@ export default function register(ctx) {
                 border: "1px solid var(--border,#e0e0e0)", maxHeight: 220, overflow: "auto", margin: 0 } }, result),
               // 操作行
               h("div", { style: { display: "flex", gap: 8, marginTop: 8, flexWrap: "wrap" } },
-                selHelper?.action ? h("button", { onClick: () => doLand(result, selHelper, _state.historyId), style: btnStyle("primary") }, selHelper.action.type === "fill" ? "📝 回填弹窗" : "📥 入库") : null,
+                selHelper?.action ? h("button", { onClick: () => doLand(result, selHelper, _state.historyId), style: btnStyle("primary") }, selHelper.action.type === "fill" ? "回填弹窗" : "入库") : null,
                 h("button", { onClick: () => adoptChat(result), style: { ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.msg), "填入聊天框"),
                 h("button", { onClick: () => copyResult(result), style: { ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.copy), "复制"),
                 h("button", { onClick: retry, style: { ...btnStyle(), display: "inline-flex", alignItems: "center", gap: 5 } }, Ic(13, ICONS.refresh), "重来"),
@@ -660,7 +660,7 @@ export default function register(ctx) {
                 }, "↪ 追问"),
               ),
               // 对话轮次指示
-              (_state.sessionId || turns.length) ? h("div", { style: { marginTop: 5, fontSize: 10, opacity: 0.55 } }, "💬 已" + (_state.sessionId ? "在同一 AI 会话延续（上下文完整）" : "迭代 " + (turns.length + 1) + " 轮·追问带手工上下文")) : null,
+              (_state.sessionId || turns.length) ? h("div", { style: { marginTop: 5, fontSize: 10, opacity: 0.55 } }, "已" + (_state.sessionId ? "在同一 AI 会话延续（上下文完整）" : "迭代 " + (turns.length + 1) + " 轮·追问带手工上下文")) : null,
               // 落地状态
               landing ? h("div", { style: { marginTop: 8, fontSize: 12, padding: "7px 10px", borderRadius: 6, background: landing.status === "ok" ? "rgba(16,185,129,.12)" : "rgba(239,68,68,.12)", color: landing.status === "ok" ? "#16a34a" : "#dc2626" } }, landing.msg) : null,
             ) : null,
@@ -679,7 +679,7 @@ export default function register(ctx) {
               },
                 h("div", { style: { display: "flex", alignItems: "center", gap: 8, justifyContent: "space-between" } },
                   h("span", { style: { fontSize: 10, opacity: 0.6, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 } }, (rec.contextLabel || rec.helperId || "自由发挥") + (rec.turn && rec.turn > 1 ? " · 第" + rec.turn + "轮" : "") + " · " + fmtTime(rec.at)),
-                  h("span", { style: { fontSize: 10, padding: "1px 7px", borderRadius: 9, border: "1px solid " + (rec.landed ? "rgba(22,163,74,.5)" : "rgba(220,38,38,.4)"), color: rec.landed ? "#16a34a" : "#dc2626" } }, rec.landed ? "✓ 已落地" : "未落地"),
+                  h("span", { style: { fontSize: 10, padding: "1px 7px", borderRadius: 9, border: "1px solid " + (rec.landed ? "rgba(22,163,74,.5)" : "rgba(220,38,38,.4)"), color: rec.landed ? "#16a34a" : "#dc2626" } }, rec.landed ? "已落地" : "未落地"),
                 ),
                 h("div", { style: { fontSize: 12, fontWeight: 500, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden", lineHeight: 1.4 } }, "💬 " + (rec.message || "（早期记录无输入）")),
                 h("div", { style: { fontSize: 11, opacity: 0.75, marginTop: 3, display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical", overflow: "hidden" } }, rec.result.slice(0, 200)),
