@@ -596,7 +596,7 @@ function PublisherCell({ publisher }) {
         : H("span", { style: { fontSize: 12, fontWeight: 600, color: "var(--text)" } }, name),
       H("span", { style: chipStyle("var(--text-muted)", "var(--bg-hover)") }, publisherSourceLabel(publisher.source)),
       trusted
-        ? H("span", { style: chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)") }, "✓ " + T("ext.trusted"))
+        ? H("span", { style: chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)") }, "✓ " + T("ext.trusted"))
         : H("span", { style: chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)") }, "⚠ " + T("ext.notTrusted")),
     ),
     !publisher.name && publisher.fingerprint && H("div", { style: { fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)" } },
@@ -826,7 +826,7 @@ function ExtManPanel(props) {
           H("button", { type: "button", onClick: () => setState({ open: false }), style: btnStyle }, T("ext.close")),
         ),
       ),
-      state.error && H("div", { style: { padding: "8px 18px", fontSize: 12, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.06)", borderBottom: "1px solid var(--border)" } }, state.error),
+      state.error && H("div", { style: { padding: "8px 18px", fontSize: 12, color: "var(--danger, #ef4444)", background: "color-mix(in srgb, var(--danger, #ef4444) 6%, transparent)", borderBottom: "1px solid var(--border)" } }, state.error),
       state.message && H("div", { style: { padding: "8px 18px", fontSize: 12, color: "#16a34a", background: "rgba(22,163,74,0.06)", borderBottom: "1px solid var(--border)" } }, state.message),
       state.openHint && H("div", { style: { padding: "8px 18px", fontSize: 12, color: "#d97706", background: "rgba(217,119,6,0.08)", borderBottom: "1px solid var(--border)" } }, state.openHint.text),
 
@@ -1134,7 +1134,7 @@ function LocalDetail({ id, entry }) {
     H("div", { style: { display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, minWidth: 0, flexWrap: "wrap" } },
       H("div", { style: { display: "flex", alignItems: "center", gap: 8, minWidth: 180, flex: 1 } },
         id === SELF_ID
-          ? H("span", { title: T("ext.selfProtected"), style: chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)") }, "🔒 " + T("ext.selfProtected"))
+          ? H("span", { title: T("ext.selfProtected"), style: chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)") }, "🔒 " + T("ext.selfProtected"))
           : H(Toggle, {
               enabled, loading: busy,
               onToggle: () => void runOp(enabled ? "disable" : "enable", { id }),
@@ -1142,14 +1142,14 @@ function LocalDetail({ id, entry }) {
             }),
         H(SourceTag, { source: entry.source }),
         !enabled && H("span", { style: chipStyle("var(--text-dim)", "rgba(120,120,120,0.12)") }, T("ext.disabled")),
-        entry.error && H("span", { style: chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.12)") }, "error"),
+        entry.error && H("span", { style: chipStyle("var(--danger, #ef4444)", "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)") }, "error"),
         H("span", {
           title: id,
           style: { fontFamily: "var(--font-mono)", fontSize: 13, fontWeight: 600, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
         }, id),
       ),
       entry.source === "user" && entry.dir && id !== SELF_ID && H("button", {
-        type: "button", disabled: busy, style: { ...btnStyle, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.08)" },
+        type: "button", disabled: busy, style: { ...btnStyle, color: "var(--danger, #ef4444)", background: "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)" },
         onClick: () => { if (window.confirm(T("ext.removeConfirm"))) void runOp("remove", { id }); },
       }, T("ext.remove")),
     ),
@@ -1196,7 +1196,7 @@ function LocalDetail({ id, entry }) {
                 H("span", { style: { fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)" } }, "×" + ids.length),
                 isContext
                   ? H("span", { style: chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)") }, "⚠ " + T("ext.context"))
-                  : H("span", { style: chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)") }, T("ext.global")),
+                  : H("span", { style: chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)") }, T("ext.global")),
               ),
               items.map((it) => {
                 const label = (it.label || it.title || it.id) + "";
@@ -1237,7 +1237,7 @@ function LocalDetail({ id, entry }) {
       H("div", { style: sectionTitle }, T("ext.serverCaps")),
       H("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
         (entry.serverHooks || []).map((hk) => H("span", { key: hk, style: { ...chipStyle("var(--text-muted)", "var(--bg-hover)"), fontFamily: "var(--font-mono)" } }, hk + "()")),
-        (entry.agentHooks || []).map((hk) => H("span", { key: "a:" + hk, style: { ...chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)"), fontFamily: "var(--font-mono)" } }, "agent:" + hk + "()")),
+        (entry.agentHooks || []).map((hk) => H("span", { key: "a:" + hk, style: { ...chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)"), fontFamily: "var(--font-mono)" } }, "agent:" + hk + "()")),
         !(entry.serverHooks || []).length && !(entry.agentHooks || []).length && H("span", { style: { fontSize: 12, color: "var(--text-dim)" } }, T("ext.noDeps"))),
       entry.provides && entry.provides.length ? H("div", { style: { display: "flex", gap: 6, alignItems: "baseline", flexWrap: "wrap" } },
         H("span", { style: { fontSize: 11, color: "var(--text-dim)" } }, T("ext.provides")),
@@ -1252,7 +1252,7 @@ function LocalDetail({ id, entry }) {
     entry.error && H("div", {
       style: {
         fontSize: 12, color: "var(--danger, #ef4444)", whiteSpace: "pre-wrap",
-        background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.25)",
+        background: "color-mix(in srgb, var(--danger, #ef4444) 6%, transparent)", border: "1px solid color-mix(in srgb, var(--danger, #ef4444) 25%, transparent)",
         borderRadius: 6, padding: "8px 10px", fontFamily: "var(--font-mono)",
       },
     }, entry.error),
@@ -1335,7 +1335,7 @@ function FeaturePanel({ id, features }) {
                   H("span", { style: { fontSize: 12, fontWeight: 600, color: "var(--text)" } }, f.label),
                   isString ? H("span", { style: chipStyle("#2563eb", "rgba(37,99,235,0.12)") }, "文本") : null,
                   !isString && f.default === false && H("span", { style: chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)") }, "默认关"),
-                  !isString && f.enabled === false && H("span", { style: chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.12)") }, T("ext.disabled")),
+                  !isString && f.enabled === false && H("span", { style: chipStyle("var(--danger, #ef4444)", "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)") }, T("ext.disabled")),
                 ),
                 f.description && H("div", { style: { fontSize: 11, color: "var(--text-dim)", lineHeight: 1.45 } }, f.description),
                 isString

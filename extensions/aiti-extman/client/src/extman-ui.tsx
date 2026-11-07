@@ -37,7 +37,7 @@ function protocolChipSpec(proto: any): { icon: string; label: string; color: str
   }
   const warn = { color: "#d97706", bg: "rgba(217,119,6,0.12)" };
   switch (state) {
-    case "incompatible": return { icon: "⛔", label: t("ext.protocolIncompatible"), color: "var(--danger, #ef4444)", bg: "rgba(239,68,68,0.12)" };
+    case "incompatible": return { icon: "⛔", label: t("ext.protocolIncompatible"), color: "var(--danger, #ef4444)", bg: "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)" };
     case "too_new": return { icon: "↑", label: t("ext.protocolTooNew"), ...warn };
     case "missing": return { icon: "⚠", label: t("ext.protocolMissing"), ...warn };
     case "invalid": return { icon: "⚠", label: t("ext.protocolInvalid"), ...warn };
@@ -214,7 +214,7 @@ function PublisherCell({ publisher }: { publisher: any }) {
         )}
         <span style={chipStyle("var(--text-muted)", "var(--bg-hover)")}>{publisherSourceLabel(publisher.source)}</span>
         {trusted
-          ? <span style={chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)")}>✓ {t("ext.trusted")}</span>
+          ? <span style={chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")}>✓ {t("ext.trusted")}</span>
           : <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>⚠ {t("ext.notTrusted")}</span>}
       </div>
       {!publisher.name && publisher.fingerprint && (
@@ -451,8 +451,8 @@ function CapDetail({ name }: { name: string }) {
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", fontFamily: "var(--font-mono)", overflowWrap: "anywhere" }}>{name}</span>
         {missing
-          ? <span style={chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.12)")}>✗ {t("ext.depMissing")}</span>
-          : <span style={chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)")}>✓ {t("ext.cap.effective")}: {c.effective}</span>}
+          ? <span style={chipStyle("var(--danger, #ef4444)", "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)")}>✗ {t("ext.depMissing")}</span>
+          : <span style={chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")}>✓ {t("ext.cap.effective")}: {c.effective}</span>}
         {c.pinnedTo && <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>{t("ext.depViaPin")}: {c.pinnedTo}</span>}
       </div>
       {!missing && (
@@ -479,7 +479,7 @@ function CapDetail({ name }: { name: string }) {
                 {p.version && <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>v{p.version}</span>}
                 <SourceTag source={p.source} />
                 {p.takeover && <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>takeover</span>}
-                {p.id === c.effective && <span style={{ marginLeft: "auto", flexShrink: 0, ...chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)") } as React.CSSProperties}>✓ {t("ext.cap.effective")}</span>}
+                {p.id === c.effective && <span style={{ marginLeft: "auto", flexShrink: 0, ...chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)") } as React.CSSProperties}>✓ {t("ext.cap.effective")}</span>}
               </div>
             ))}
           </div>
@@ -618,7 +618,7 @@ function ConflictDetail() {
               {c.version && <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)", flexShrink: 0 }}>v{c.version}</span>}
               <span title={c.dir} style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)", minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{shortenPath(c.dir)}</span>
               {c.winner
-                ? <span style={chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)")}>✓ {t("ext.conflict.winner")}</span>
+                ? <span style={chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")}>✓ {t("ext.conflict.winner")}</span>
                 : <span style={chipStyle("var(--text-dim)", "var(--bg-hover)")}>{t("ext.conflict.shadowed")}</span>}
             </div>
           ))}
@@ -809,7 +809,7 @@ function ExtManContent(): any {
           </div>
         )}
 
-        {state.error && <div style={{ padding: "8px 18px", fontSize: 12, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.06)", borderBottom: "1px solid var(--border)" }}>{state.error}</div>}
+        {state.error && <div style={{ padding: "8px 18px", fontSize: 12, color: "var(--danger, #ef4444)", background: "color-mix(in srgb, var(--danger, #ef4444) 6%, transparent)", borderBottom: "1px solid var(--border)" }}>{state.error}</div>}
         {/* 处理中反馈：启停/安装/重载都是服务端全量重载扩展（秒级），banner + spinner 让用户知道点击已生效 */}
         {state.applying && (
           <div style={{ padding: "8px 18px", fontSize: 12, color: "var(--accent)", background: "rgba(99,102,241,0.07)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
@@ -940,7 +940,7 @@ function ExtManContent(): any {
                             display: "flex", alignItems: "center", gap: 8, padding: "9px 10px",
                             borderRadius: 5, cursor: "pointer",
                             background: isSel ? "var(--bg-selected)" : hovered ? "var(--bg-hover)" : "none",
-                            boxShadow: e.enabled === false ? "inset 2px 0 0 rgba(239,68,68,0.55)" : undefined,
+                            boxShadow: e.enabled === false ? "inset 2px 0 0 color-mix(in srgb, var(--danger, #ef4444) 55%, transparent)" : undefined,
                           }}
                           onMouseEnter={() => { if (state.hoverLocal !== id) setState({ hoverLocal: id }); }}
                           onMouseLeave={() => { if (state.hoverLocal === id) setState({ hoverLocal: null }); }}>
@@ -955,7 +955,7 @@ function ExtManContent(): any {
                               {extIconSpan(e, 12, id)}
                               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>{extDisplayName(id, e.name) + (e.version ? " · v" + e.version : "")}</span>
                             {protoChip && <span key="proto" title={e.protocol?.detail || ""} style={chipStyle(protoChip.color, protoChip.bg)}>{protoChip.icon} {protoChip.label}</span>}
-                            {e.enabled === false && <span key="off-chip" style={chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.14)")}>{t("ext.disabled")}</span>}
+                            {e.enabled === false && <span key="off-chip" style={chipStyle("var(--danger, #ef4444)", "color-mix(in srgb, var(--danger, #ef4444) 14%, transparent)")}>{t("ext.disabled")}</span>}
                             </div>
                             {/* 第二行：纯英文包名（名字与包名相同时不重复显示） */}
                             <div style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
@@ -1185,13 +1185,13 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
       <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, minWidth: 0, flexWrap: "wrap" }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 180, flex: 1 }}>
           {id === SELF_ID
-            ? <span title={t("ext.selfProtected")} style={chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)")}>🔒 {t("ext.selfProtected")}</span>
+            ? <span title={t("ext.selfProtected")} style={chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")}>🔒 {t("ext.selfProtected")}</span>
             : <Toggle enabled={enabled} loading={busy}
                 onToggle={() => void runOp(enabled ? "disable" : "enable", { id })}
                 label={enabled ? t("ext.disable") : t("ext.enable")} />}
           <SourceTag source={entry.source} />
-          {!enabled && <span style={chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.14)")}>{t("ext.disabled")}</span>}
-          {entry.error && <span style={chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.12)")}>error</span>}
+          {!enabled && <span style={chipStyle("var(--danger, #ef4444)", "color-mix(in srgb, var(--danger, #ef4444) 14%, transparent)")}>{t("ext.disabled")}</span>}
+          {entry.error && <span style={chipStyle("var(--danger, #ef4444)", "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)")}>error</span>}
           <span title={id} style={{
             fontSize: 13, fontWeight: 600, color: "var(--text)",
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
@@ -1201,7 +1201,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
           )}
         </div>
         {entry.source === "user" && entry.dir && id !== SELF_ID && (
-          <button type="button" disabled={busy} style={{ ...btnStyle, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.08)" } as React.CSSProperties}
+          <button type="button" disabled={busy} style={{ ...btnStyle, color: "var(--danger, #ef4444)", background: "color-mix(in srgb, var(--danger, #ef4444) 8%, transparent)" } as React.CSSProperties}
             onClick={async () => { if (dependentsOf(id).length > 0 || (await uiConfirm({ message: t("ext.removeConfirm"), danger: true }))) void runOp("remove", { id }); }}>
             {t("ext.remove")}
           </button>
@@ -1233,7 +1233,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                 </span>
                 {c
                   ? <span style={chipStyle(c.color, c.bg)} title={entry.protocol.detail || ""}>{c.icon} {c.label}</span>
-                  : <span style={chipStyle("#10b981", "rgba(16,185,129,0.12)")} title={entry.protocol.detail || ""}>✓ {t("ext.protocolOk")}</span>}
+                  : <span style={chipStyle("var(--ok, #10b981)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")} title={entry.protocol.detail || ""}>✓ {t("ext.protocolOk")}</span>}
                 {entry.protocol.needsUpgrade && (
                   <button type="button" style={{ ...btnStyle, background: "var(--accent)", color: "white", borderColor: "var(--accent)" } as React.CSSProperties}
                     title={t("ext.protocolUpgradeTitle", { id, from: entry.protocol.declared ?? "legacy", to: entry.protocol.current })}
@@ -1284,7 +1284,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                     <span style={{ fontFamily: "var(--font-mono)", fontSize: 10, color: "var(--text-dim)" }}>×{ids.length}</span>
                     {isContext
                       ? <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>⚠ {t("ext.context")}</span>
-                      : <span style={chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)")}>{t("ext.global")}</span>}
+                      : <span style={chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)")}>{t("ext.global")}</span>}
                   </div>
                   {items.map((it: any) => {
                     const label = (it.label || it.title || it.id) + "";
@@ -1359,7 +1359,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                   return (
                     <span key={n} role="button" tabIndex={0}
                       onClick={() => setState({ view: "conflicts", selConflict: "takeover:" + n, selected: null, mobileView: state.isMobile ? "detail" : state.mobileView })}
-                      style={{ ...chipStyle(effective ? "rgba(16,185,129,0.9)" : "var(--text-dim)", effective ? "rgba(16,185,129,0.12)" : "var(--bg-hover)"), fontFamily: "var(--font-mono)", fontSize: 11, cursor: "pointer" }}>
+                      style={{ ...chipStyle(effective ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)" : "var(--text-dim)", effective ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)" : "var(--bg-hover)"), fontFamily: "var(--font-mono)", fontSize: 11, cursor: "pointer" }}>
                       {n} · {effective ? t("ext.takeoverEffective") : t("ext.takeoverShadowed")}
                     </span>
                   );
@@ -1394,7 +1394,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                     // npmDepStates（服务端文件级探测，就近优先）：shared=共享根命中 / local=扩展本地 / missing=两边都没有
                     const st = entry.npmDepStates?.[d];
                     const mark = st === "shared" ? "✓" : st === "local" ? "●" : st === "missing" ? "✗" : "";
-                    const color = st === "shared" ? "rgba(16,185,129,0.9)" : st === "missing" ? "rgba(239,68,68,0.9)" : "var(--text-dim)";
+                    const color = st === "shared" ? "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)" : st === "missing" ? "color-mix(in srgb, var(--danger, #ef4444) 90%, transparent)" : "var(--text-dim)";
                     const stateText = st === "shared" ? t("ext.depShared") : st === "local" ? t("ext.depLocal") : st === "missing" ? t("ext.depMissing") : "";
                     return <span key={d} style={{ color, whiteSpace: "nowrap" }} title={stateText ? d + " · " + stateText : d}>{mark ? mark + " " : ""}{d}</span>;
                   })}
@@ -1408,7 +1408,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
         <div style={sectionTitle}>{t("ext.serverCaps")}</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
           {(entry.serverHooks || []).map((hk: string) => <span key={hk} style={{ ...chipStyle("var(--text-muted)", "var(--bg-hover)"), fontFamily: "var(--font-mono)" }}>{hk}()</span>)}
-          {(entry.agentHooks || []).map((hk: string) => <span key={"a:" + hk} style={{ ...chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)"), fontFamily: "var(--font-mono)" }}>agent:{hk}()</span>)}
+          {(entry.agentHooks || []).map((hk: string) => <span key={"a:" + hk} style={{ ...chipStyle("color-mix(in srgb, var(--ok, var(--ok, #10b981)) 90%, transparent)", "color-mix(in srgb, var(--ok, var(--ok, #10b981)) 12%, transparent)"), fontFamily: "var(--font-mono)" }}>agent:{hk}()</span>)}
           {!(entry.serverHooks || []).length && !(entry.agentHooks || []).length && <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("ext.noDeps")}</span>}
         </div>
         {entry.provides && entry.provides.length > 0 && (
@@ -1436,7 +1436,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
       {entry.error && (
         <div style={{
           fontSize: 12, color: "var(--danger, #ef4444)", whiteSpace: "pre-wrap",
-          background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.25)",
+          background: "color-mix(in srgb, var(--danger, #ef4444) 6%, transparent)", border: "1px solid color-mix(in srgb, var(--danger, #ef4444) 25%, transparent)",
           borderRadius: 6, padding: "8px 10px", fontFamily: "var(--font-mono)",
         }}>{entry.error}</div>
       )}
@@ -1534,7 +1534,7 @@ function FeaturePanel({ id, features }: { id: string; features: any[] }) {
                       <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>{f.label}</span>
                       {isString && <span style={chipStyle("#2563eb", "rgba(37,99,235,0.12)")}>{f.type === "textlist" ? "环境变量" : "文本"}</span>}
                       {!isString && f.default === false && <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>默认关</span>}
-                      {!isString && f.enabled === false && <span style={chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.12)")}>{t("ext.disabled")}</span>}
+                      {!isString && f.enabled === false && <span style={chipStyle("var(--danger, #ef4444)", "color-mix(in srgb, var(--danger, #ef4444) 12%, transparent)")}>{t("ext.disabled")}</span>}
                     </div>
                     {f.description && <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.45 }}>{f.description}</div>}
                     {isString
