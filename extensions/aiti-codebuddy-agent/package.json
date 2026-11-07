@@ -14,10 +14,11 @@
   "contentHash": "77c6587eb2e62a50",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-codebuddy-agent.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-codebuddy-agent"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-codebuddy-agent#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-codebuddy-agent/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
