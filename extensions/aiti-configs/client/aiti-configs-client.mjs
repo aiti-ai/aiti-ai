@@ -71,7 +71,7 @@ export default function register(ctx) {
       try {
         const r = await api("/commit", { method: "POST", ...jsonBody({}) });
         const d = await r.json();
-        setMsg(d.noop ? "无可提交变更" : "✅ 已提交 " + d.hash + " · " + String(d.message || "").split("\n")[0]);
+        setMsg(d.noop ? "无可提交变更" : "已提交 " + d.hash + " · " + String(d.message || "").split("\n")[0]);
         load("status");
       } catch (e) { setMsg("提交失败：" + (e.message || e)); }
       setBusy(false);
@@ -82,7 +82,7 @@ export default function register(ctx) {
       try {
         const r = await api("/restore", { method: "POST", ...jsonBody({ version, confirm: "确认恢复" }) });
         const d = await r.json();
-        setMsg(d.ok ? "✅ 恢复完成（tag=" + d.tag + "）" : "❌ " + (d.error || d.hint || JSON.stringify(d.steps || "")));
+        setMsg(d.ok ? "恢复完成（tag=" + d.tag + "）" : "❌ " + (d.error || d.hint || JSON.stringify(d.steps || "")));
         if (d.ok) { load("log"); setDiff(null); }
       } catch (e) { setMsg("恢复失败：" + (e.message || e)); }
       setBusy(false);
@@ -109,7 +109,7 @@ export default function register(ctx) {
       try {
         const r = await api("/tag", { method: "POST", ...jsonBody({ name: name.trim() }) });
         const d = await r.json();
-        setMsg(d.ok ? "✅ 已打 tag: " + d.name : "失败：" + (d.error || ""));
+        setMsg(d.ok ? "已打 tag: " + d.name : "失败：" + (d.error || ""));
         load("log"); loadTags();
       } catch (e) { setMsg("打 tag 失败：" + (e.message || e)); }
       setBusy(false);
@@ -133,7 +133,7 @@ export default function register(ctx) {
       try {
         const r = await api("/snapshot", { method: "POST", ...jsonBody({}) });
         const d = await r.json();
-        setMsg(d.noop ? "已是最新（无变更可固化）" : "✅ 已固化现场：" + d.hash);
+        setMsg(d.noop ? "已是最新（无变更可固化）" : "已固化现场：" + d.hash);
         load("status"); load("log");
       } catch (e) { setMsg("快照失败：" + (e.message || e)); }
       setBusy(false);
@@ -151,7 +151,7 @@ export default function register(ctx) {
           h("button", { style: Object.assign({}, C.btn, C.btnPrimary, { display: "inline-flex", alignItems: "center", gap: 5 }), onClick: doCommit }, Ic(13, ICONS.package), "提交变更"),
           h("button", { style: C.btn, onClick: () => load("status") }, "↻ 刷新")),
         d.clean === true
-          ? h("div", { style: { color: "#16a34a", fontWeight: 600 } }, "✅ 工作区干净（无可提交变更）")
+          ? h("div", { style: { color: "#16a34a", fontWeight: 600 } }, "工作区干净（无可提交变更）")
           : (d.changed && d.changed.length
               ? h("div", {},
                   h("div", { style: { fontWeight: 600, marginBottom: 6 } }, "待提交 " + d.changed.length + " 个文件："),
@@ -160,7 +160,7 @@ export default function register(ctx) {
                     h("span", { style: C.mono }, c.path))))
               : null),
         d.skipped && d.skipped.length > 0
-          ? h("div", { style: { marginTop: 8, fontSize: 12, color: "#d97706" } }, "⏭ 拦截 " + d.skipped.length + " 项：" + d.skipped.map((s) => s.reason).slice(0, 5).join("；") + (d.skipped.length > 5 ? "…" : ""))
+          ? h("div", { style: { marginTop: 8, fontSize: 12, color: "#d97706" } }, "拦截 " + d.skipped.length + " 项：" + d.skipped.map((s) => s.reason).slice(0, 5).join("；") + (d.skipped.length > 5 ? "…" : ""))
           : null);
     };
 
@@ -193,7 +193,7 @@ export default function register(ctx) {
       const d = data || {};
       return h("div", {},
         h("div", { style: { fontWeight: 600, marginBottom: 6, color: d.ok ? "#16a34a" : "#dc2626" } },
-          d.ok ? "✅ 自检通过" : "❌ 自检未通过（" + ((d.bad || []).length) + " 项）"),
+          d.ok ? "自检通过" : "自检未通过（" + ((d.bad || []).length) + " 项）"),
         (d.rows || []).map((r, i) => h("div", { key: i, style: C.row },
           h("span", { style: { marginRight: 6, display: "inline-flex" } }, r.ok ? Ic(13, ICONS.check) : Ic(13, ICONS.x)),
           h("b", {}, r.name),
@@ -206,7 +206,7 @@ export default function register(ctx) {
       try {
         const r = await api("/key", { method: "POST", ...jsonBody({}) });
         const d = await r.json();
-        setMsg(d.ok ? "✅ 已生成密钥：" + d.keyFile + "（请立即备份！）" : "生成失败：" + d.error);
+        setMsg(d.ok ? "已生成密钥：" + d.keyFile + "（请立即备份！）" : "生成失败：" + d.error);
         load("config");
       } catch (e) { setMsg("生成失败：" + (e.message || e)); }
       setBusy(false);
@@ -221,7 +221,7 @@ export default function register(ctx) {
       const inp = { padding: "5px 8px", border: "1px solid var(--border,#e0e0e0)", borderRadius: 6, background: "var(--bg,#fff)", color: "var(--text,#1a1a1a)", fontSize: 12 };
       return h("div", {},
         h("div", { style: warn },
-          "⚠ 本仓包含 settings/models.json 等含 API Key 的敏感配置——", h("b", {}, "严禁配置为公开仓库（GitHub/Gitee 公开仓、任意公网可见仓）"), "！只能配私有/自建 git 仓；url 内嵌 token 仅存本机，不写日志不展示明文。"),
+          "本仓包含 settings/models.json 等含 API Key 的敏感配置——", h("b", {}, "严禁配置为公开仓库（GitHub/Gitee 公开仓、任意公网可见仓）"), "！只能配私有/自建 git 仓；url 内嵌 token 仅存本机，不写日志不展示明文。"),
         h("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 4, marginTop: 4 } }, "远端同步（remote）"),
         h("div", { style: { display: "flex", gap: 6, marginBottom: 6, alignItems: "center" } },
           h("input", { id: "cfg-remote-url", type: "text", placeholder: "git@github.com:user/private-configs.git 或 https://token@…", defaultValue: rc.url || "", style: Object.assign({ flex: 1 }, inp) })),
@@ -239,10 +239,10 @@ export default function register(ctx) {
           h("button", { style: C.btn, onClick: () => doSaveConfig({ remote: { url: "", push: false, autoPull: true } }) }, "清除 remote")),
         h("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 4, marginTop: 10 } }, "密文 commit（encrypt）"),
         h("div", { style: warn },
-          "🔑 开启后仓内为密文，push 到任何仓库（含公开仓）都安全；但密钥文件（" + (en.keyFile || "{repo}/.git/configs-key") + "）", h("b", {}, "丢失则永远无法恢复"), "！请备份密钥；密钥文件在 .git 下，git 永不跟踪、不入仓。"),
+          "开启后仓内为密文，push 到任何仓库（含公开仓）都安全；但密钥文件（" + (en.keyFile || "{repo}/.git/configs-key") + "）", h("b", {}, "丢失则永远无法恢复"), "！请备份密钥；密钥文件在 .git 下，git 永不跟踪、不入仓。"),
         h("div", { style: { display: "flex", gap: 14, marginBottom: 6, fontSize: 12, alignItems: "center" } },
           h("label", { style: { display: "flex", alignItems: "center", gap: 4 } }, h("input", { id: "cfg-enc-enabled", type: "checkbox", defaultChecked: en.enabled === true }), "启用密文 commit"),
-          h("span", { style: { color: es.keyExists === true ? "#16a34a" : "#dc2626" } }, es.keyExists === true ? "✅ 密钥已生成（" + (es.keyFile || "") + "）" : "❌ 密钥未生成（先点生成密钥）")),
+          h("span", { style: { color: es.keyExists === true ? "#16a34a" : "#dc2626" } }, es.keyExists === true ? "密钥已生成（" + (es.keyFile || "") + "）" : "密钥未生成（先点生成密钥）")),
         h("div", { style: { display: "flex", gap: 6, marginBottom: 6 } },
           h("input", { id: "cfg-enc-patterns", type: "text", defaultValue: (en.patterns || ["pi/agent/**"]).join(","), placeholder: "加密文件 glob（逗号分隔，如 pi/agent/**）", style: Object.assign({ flex: 1 }, inp) })),
         h("div", { style: { display: "flex", gap: 8, marginBottom: 8 } },

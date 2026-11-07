@@ -103,7 +103,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
     try {
       const r = await api("/commit", { method: "POST", ...jsonBody({}) });
       const d = await r.json();
-      setMsg(d.noop ? "无可提交变更" : "✅ 已提交 " + d.hash + " · " + String(d.message || "").split("\n")[0]);
+      setMsg(d.noop ? "无可提交变更" : "已提交 " + d.hash + " · " + String(d.message || "").split("\n")[0]);
       load("status");
     } catch (e: any) { setMsg("提交失败：" + (e.message || e)); }
     setBusy(false);
@@ -114,7 +114,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
     try {
       const r = await api("/restore", { method: "POST", ...jsonBody({ version, confirm: "确认恢复" }) });
       const d = await r.json();
-      setMsg(d.ok ? "✅ 恢复完成（tag=" + d.tag + "）" : "❌ " + (d.error || d.hint || JSON.stringify(d.steps || "")));
+      setMsg(d.ok ? "恢复完成（tag=" + d.tag + "）" : "❌ " + (d.error || d.hint || JSON.stringify(d.steps || "")));
       if (d.ok) { load("log"); setDiff(null); }
     } catch (e: any) { setMsg("恢复失败：" + (e.message || e)); }
     setBusy(false);
@@ -144,7 +144,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
     try {
       const r = await api("/tag", { method: "POST", ...jsonBody({ name: name.trim() }) });
       const d = await r.json();
-      setMsg(d.ok ? "✅ 已打 tag: " + d.name : "失败：" + (d.error || ""));
+      setMsg(d.ok ? "已打 tag: " + d.name : "失败：" + (d.error || ""));
       load("log"); loadTags();
     } catch (e: any) { setMsg("打 tag 失败：" + (e.message || e)); }
     setBusy(false);
@@ -165,7 +165,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
     try {
       const r = await api("/snapshot", { method: "POST", ...jsonBody({}) });
       const d = await r.json();
-      setMsg(d.noop ? "已是最新（无变更可固化）" : "✅ 已固化现场：" + d.hash);
+      setMsg(d.noop ? "已是最新（无变更可固化）" : "已固化现场：" + d.hash);
       load("status"); load("log");
     } catch (e: any) { setMsg("快照失败：" + (e.message || e)); }
     setBusy(false);
@@ -188,7 +188,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
           <button style={C.btn} onClick={() => load("status")}>↻ 刷新</button>
         </div>
         {d.clean === true ? (
-          <div style={{ color: "#16a34a", fontWeight: 600 }}>✅ 工作区干净（无可提交变更）</div>
+          <div style={{ color: "#16a34a", fontWeight: 600 }}>工作区干净（无可提交变更）</div>
         ) : (d.changed && d.changed.length ? (
           <div>
             <div style={{ fontWeight: 600, marginBottom: 6 }}>{"待提交 " + d.changed.length + " 个文件："}</div>
@@ -211,7 +211,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
         ) : null)}
         {d.skipped && d.skipped.length > 0 ? (
           <div style={{ marginTop: 8, fontSize: 12, color: "#d97706" }}>
-            {"⏭ 拦截 " + d.skipped.length + " 项：" + d.skipped.map((s: any) => s.reason).slice(0, 5).join("；") + (d.skipped.length > 5 ? "…" : "")}
+            {"拦截 " + d.skipped.length + " 项：" + d.skipped.map((s: any) => s.reason).slice(0, 5).join("；") + (d.skipped.length > 5 ? "…" : "")}
           </div>
         ) : null}
       </div>
@@ -277,7 +277,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
     return (
       <div>
         <div style={{ fontWeight: 600, marginBottom: 6, color: d.ok ? "#16a34a" : "#dc2626" }}>
-          {d.ok ? "✅ 自检通过" : "❌ 自检未通过（" + ((d.bad || []).length) + " 项）"}
+          {d.ok ? "自检通过" : "自检未通过（" + ((d.bad || []).length) + " 项）"}
         </div>
         {(d.rows || []).map((r: any, i: number) => (
           <div key={i} style={C.row}>
@@ -296,7 +296,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
     try {
       const r = await api("/key", { method: "POST", ...jsonBody({}) });
       const d = await r.json();
-      setMsg(d.ok ? "✅ 已生成密钥：" + d.keyFile + "（请立即备份！）" : "生成失败：" + d.error);
+      setMsg(d.ok ? "已生成密钥：" + d.keyFile + "（请立即备份！）" : "生成失败：" + d.error);
       load("config");
     } catch (e: any) { setMsg("生成失败：" + (e.message || e)); }
     setBusy(false);
@@ -338,7 +338,7 @@ function App({ open, onClose }: { open: boolean; onClose: () => void }) {
         </div>
         <div style={{ display: "flex", gap: 14, marginBottom: 6, fontSize: 12, alignItems: "center" }}>
           <label style={{ display: "flex", alignItems: "center", gap: 4 }}><input id="cfg-enc-enabled" type="checkbox" defaultChecked={en.enabled === true} />启用密文 commit</label>
-          <span style={{ color: es.keyExists === true ? "#16a34a" : "#dc2626" }}>{es.keyExists === true ? "✅ 密钥已生成（" + (es.keyFile || "") + "）" : "❌ 密钥未生成（先点生成密钥）"}</span>
+          <span style={{ color: es.keyExists === true ? "#16a34a" : "#dc2626" }}>{es.keyExists === true ? "密钥已生成（" + (es.keyFile || "") + "）" : "密钥未生成（先点生成密钥）"}</span>
         </div>
         <div style={{ display: "flex", gap: 6, marginBottom: 6 }}>
           <input id="cfg-enc-patterns" type="text" defaultValue={(en.patterns || ["pi/agent/**"]).join(",")} placeholder="加密文件 glob（逗号分隔，如 pi/agent/**）" style={{ flex: 1, ...inp }} />
