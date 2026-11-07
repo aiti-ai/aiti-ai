@@ -7,5 +7,6 @@
     "test": "node --test bus-core.test.mjs client-url.test.mjs stale-rebuild.test.mjs bus-id.test.mjs",
     "build:client": "node -e \"const fs=require('fs');fs.mkdirSync('dist',{recursive:true});for(const f of fs.readdirSync('client/src'))if(f.endsWith('.mjs'))fs.copyFileSync('client/src/'+f,'dist/'+f)\""
   },
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "license": "MIT"
 }
