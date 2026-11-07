@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-float",
-  "version": "0.5.8",
+  "version": "0.5.9",
   "type": "module",
   "description": "弹窗浮动增强器（data-ext-float 契约）—— 拖拽/缩放/持久化/置前/自动最大化按钮/小屏全屏/遮罩自动去除/小屏系统返回关闭",
   "scripts": {
@@ -14,5 +14,5 @@
   "soul": "面板只管标一个属性，浮起来的一切交给它。",
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "ce8f1c42a9e4bd20"
+  "contentHash": "efde622e243e2a3d"
 }
