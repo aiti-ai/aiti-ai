@@ -107,7 +107,7 @@ const topbarBtnStyle: any = {
   fontSize: 16, lineHeight: 1, transition: "color 0.12s",
 };
 const miniBtn: any = { ...btnStyle, padding: "1px 7px", fontSize: 11 };
-const miniBtnDanger: any = { ...miniBtn, color: "#ef4444" };
+const miniBtnDanger: any = { ...miniBtn, color: "var(--danger, #ef4444)" };
 const SOURCE_LABEL: Record<string, string> = { manual: "手动", input: "收藏输入", session: "会话" };
 
 // lucide 图标（与系统内建线条图标同风格）
@@ -158,7 +158,7 @@ const refresh = () => {
 const sendPrompt = async (text: string, mode: any, id?: string) => {
   if (!text || !text.trim()) return;
   sendChat && sendChat(text, mode);
-  showToast(mode === "steer" ? "✓ 已发送（steer 插队）" : "✓ 已发送（followUp 排队）");
+  showToast(mode === "steer" ? "已发送（steer 插队）" : "已发送（followUp 排队）");
   if (id) fetch(api("/prompts/" + id + "/touch"), { method: "POST" }).catch(() => {});
   refresh();
 };
@@ -174,13 +174,13 @@ const schedulePrompt = (p: any) => {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ ...prefill, schedule: "0 9 * * *", mode: "auto", enabled: false, autoApprove: false }),
   }).then((r) => r.json()).then((d: any) => {
-    if (d?.ok) showToast("✓ 已创建待确认计划「" + prefill.name + "」（默认每天9点，到 ⏰调度 页修改并批准）");
+    if (d?.ok) showToast("已创建待确认计划「" + prefill.name + "」（默认每天9点，到 ⏰调度 页修改并批准）");
     else showErr("创建失败：" + (d?.error || "未知错误"));
   }).catch((e) => showErr("创建失败：" + String(e)));
 };
 
 const copyPrompt = (text: string) => {
-  try { navigator.clipboard.writeText(text); showToast("✓ 已复制"); } catch { showErr("复制失败"); }
+  try { navigator.clipboard.writeText(text); showToast("已复制"); } catch { showErr("复制失败"); }
 };
 
 // ---------- 加载会话消息（当前会话 / 导入弹窗共用） ----------
@@ -386,7 +386,7 @@ function SaveDialog() {
           </span>
           <span style={{ fontSize: 12, color: "var(--text)" }}>{suggest ? "参与智能提示（aiti-ai-input 联想/补全）" : "不参与智能提示"}</span>
         </div>
-        {err && <p style={{ ...smallStyle, color: "#ef4444", margin: "8px 0 0" }}>{String(err)}</p>}
+        {err && <p style={{ ...smallStyle, color: "var(--danger, #ef4444)", margin: "8px 0 0" }}>{String(err)}</p>}
         <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
           <button onClick={doSave} style={{ ...btnStyle, background: "#4f46e5", color: "#fff", border: "none", flex: 1, padding: "7px 12px", fontWeight: 500 }}>{saved ? <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}><Ic size={13} paths={ICONS.check} />已保存</span> : "保存"}</button>
           <button onClick={() => setState({ save: null })} style={{ ...btnStyle, padding: "7px 16px" }}>取消</button>
@@ -396,7 +396,7 @@ function SaveDialog() {
             <div style={{ width: "min(320px, 90vw)", padding: 14, borderRadius: 10, background: "var(--bg-panel)", border: "1px solid var(--border)", color: "var(--text)", fontFamily: "inherit" }} onClick={(e) => e.stopPropagation()}>
               <b style={{ fontSize: 13, display: "block", marginBottom: 8 }}>{quickParent ? "＋ 新建子分组（在「" + groupPathOf(quickParent) + "」下）" : "＋ 新建分组"}</b>
               <input style={{ ...inputStyle, width: "100%", boxSizing: "border-box" }} value={newGroupName} placeholder="分组名（回车确认）" autoFocus onChange={(e) => setNewGroupName(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter") doQuickNew(); }} />
-              {err && <p style={{ ...smallStyle, color: "#ef4444", margin: "6px 0 0" }}>{String(err)}</p>}
+              {err && <p style={{ ...smallStyle, color: "var(--danger, #ef4444)", margin: "6px 0 0" }}>{String(err)}</p>}
               <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
                 <button onClick={doQuickNew} style={{ ...btnStyle, background: "#4f46e5", color: "#fff", border: "none", flex: 1 }} disabled={groupSaving}>{groupSaving ? "…" : "确认"}</button>
                 <button onClick={() => setQuickNew(false)} style={{ ...btnStyle }}>取消</button>
@@ -432,7 +432,7 @@ function SessionPicker() {
             : filtered.length === 0 ? <p style={smallStyle}>（无匹配会话）</p>
             : filtered.slice(0, 60).map((s) => (
               <div key={s.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, background: "var(--bg-hover)", border: "1px solid var(--border)", cursor: "pointer" }} onClick={() => loadSessionMessages(s.id, s.name || s.firstMessage || s.id)} title="点击加载该会话的 user 消息">
-                <span style={{ fontSize: 10, color: s.running ? "#4ade80" : "var(--text-dim)" }}>{s.running ? "●" : "○"}</span>
+                <span style={{ fontSize: 10, color: s.running ? "var(--ok, #4ade80)" : "var(--text-dim)" }}>{s.running ? "●" : "○"}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{s.name || s.firstMessage || s.id}</div>
                   <div style={{ fontSize: 10, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -465,7 +465,7 @@ function ImportDialog() {
     const r = await fetch(api("/import"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ data: { groups: data.groups || [], prompts: data.prompts || [] }, mode }) }).then((x) => x.json()).catch(() => ({ ok: false, error: "网络错误" }));
     setBusy(false);
     if (r && r.ok) {
-      showToast("✓ 导入完成：分组 +" + r.groups + " · prompt +" + r.prompts + (r.skippedPrompts ? "（跳过重复 " + r.skippedPrompts + "）" : ""));
+      showToast("导入完成：分组 +" + r.groups + " · prompt +" + r.prompts + (r.skippedPrompts ? "（跳过重复 " + r.skippedPrompts + "）" : ""));
       setJson("");
       refresh();
       close();
@@ -482,9 +482,9 @@ function ImportDialog() {
         <textarea style={{ ...inputStyle, minHeight: 160, fontFamily: "var(--font-mono)", marginBottom: 8 }} value={json} placeholder='{ "groups": [...], "prompts": [...] }' onChange={(e) => setJson(e.target.value)} />
         <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6 }}>
           <label style={{ fontSize: 11, color: "var(--text-muted)", display: "inline-flex", alignItems: "center", gap: 4 }}><input type="radio" checked={mode === "merge"} onChange={() => setMode("merge")} />合并（去重追加）</label>
-          <label style={{ fontSize: 11, color: "#ef4444", display: "inline-flex", alignItems: "center", gap: 4 }}><input type="radio" checked={mode === "replace"} onChange={() => setMode("replace")} />替换（清空现有）</label>
+          <label style={{ fontSize: 11, color: "var(--danger, #ef4444)", display: "inline-flex", alignItems: "center", gap: 4 }}><input type="radio" checked={mode === "replace"} onChange={() => setMode("replace")} />替换（清空现有）</label>
         </div>
-        {err && <p style={{ ...smallStyle, color: "#ef4444", marginBottom: 6 }}>{String(err)}</p>}
+        {err && <p style={{ ...smallStyle, color: "var(--danger, #ef4444)", marginBottom: 6 }}>{String(err)}</p>}
         <div style={{ display: "flex", gap: 8 }}>
           <button onClick={doImport} style={{ ...btnStyle, background: "#4f46e5", color: "#fff", border: "none", flex: 1 }} disabled={!json.trim() || busy}>{busy ? "导入中…" : "导入"}</button>
           <button onClick={close} style={btnStyle}>取消</button>
@@ -559,7 +559,7 @@ function PromptsPanel(props: Record<string, any>) {
     if (!state.currentMsgs || !entries.length) return;
     const d = await fetch(api("/extract"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: state.currentMsgs.sessionId, entryIds: entries, groupId: extractGroup || null }) }).then((r) => r.json()).catch(() => null);
     if (d && d.ok) {
-      showToast("✓ 已收藏 " + d.added.length + " 条" + (d.skipped ? "（跳过 " + d.skipped + " 条重复/空）" : ""));
+      showToast("已收藏 " + d.added.length + " 条" + (d.skipped ? "（跳过 " + d.skipped + " 条重复/空）" : ""));
       setState({ selectedEntries: new Set(), currentMsgs: null, tab: "library" });
       refresh();
     } else { showErr((d && d.error) || "提取失败"); }
@@ -596,7 +596,7 @@ function PromptsPanel(props: Record<string, any>) {
       </div>
       <button onClick={() => sendPrompt(p.text, "steer", p.id)} style={{ ...btnStyle, background: "#4f46e5", color: "#fff", border: "none", padding: smallScreen ? "2px 7px" : "5px 10px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }} title="发送（steer 插队：agent 忙时优先应答）"><Ic size={13} paths={ICONS.send} />插队</button>
       <button onClick={() => sendPrompt(p.text, "followUp", p.id)} style={{ ...btnStyle, background: "#0284c7", color: "#fff", border: "none", padding: smallScreen ? "2px 7px" : "5px 10px", flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }} title="发送（followUp 排队：agent 全部收尾后投递）"><Ic size={12} paths={ICONS.listOrdered} />排队</button>
-      <button onClick={() => schedulePrompt(p)} style={{ ...miniBtn, flexShrink: 0, display: "inline-flex" }} title="⏰ 定时执行：创建调度计划（预填本条 prompt）"><Ic size={12} paths={ICONS.clock} /></button>
+      <button onClick={() => schedulePrompt(p)} style={{ ...miniBtn, flexShrink: 0, display: "inline-flex" }} title="定时执行：创建调度计划（预填本条 prompt）"><Ic size={12} paths={ICONS.clock} /></button>
       <button onClick={() => copyPrompt(p.text)} style={{ ...miniBtn, flexShrink: 0, display: "inline-flex" }} title="复制"><Ic size={12} paths={ICONS.copy} /></button>
       <button onClick={() => setState({ save: { mode: "edit", id: p.id, name: p.name, text: p.text, groupId: p.groupId || "", tags: (p.tags || []).join(","), suggest: p.suggest !== false } })} style={{ ...miniBtn, flexShrink: 0, display: "inline-flex" }} title="编辑"><Ic size={12} paths={ICONS.pencil} /></button>
       <button onClick={async () => { if (await uiConfirm({ message: "删除 prompt「" + p.name + "」？", danger: true })) { fetch(api("/prompts/" + p.id), { method: "DELETE" }).then(() => setState({ refreshTick: state.refreshTick + 1 })); } }} style={{ ...miniBtnDanger, flexShrink: 0, display: "inline-flex" }} title="删除"><Ic size={12} paths={ICONS.trash} /></button>
@@ -654,7 +654,7 @@ function PromptsPanel(props: Record<string, any>) {
           </div>
         </div>
         {toast && <p style={{ ...smallStyle, color: "#16a34a", marginBottom: 6 }}>{toast}</p>}
-        {err && <p style={{ ...smallStyle, color: "#ef4444", marginBottom: 6 }}>{String(err)}</p>}
+        {err && <p style={{ ...smallStyle, color: "var(--danger, #ef4444)", marginBottom: 6 }}>{String(err)}</p>}
 
         {/* 收藏库 */}
         {tab === "library" && (
@@ -749,7 +749,7 @@ function PromptsPanel(props: Record<string, any>) {
         {/* 底部统计 */}
         <div style={{ display: "flex", alignItems: "center", gap: 8, borderTop: "1px solid var(--border)", paddingTop: 8, marginTop: 6, flexWrap: "wrap" }}>
           <span style={{ ...smallStyle, flex: 1 }}>{"共 " + prompts.length + " 条 · " + groups.length + " 分组"}</span>
-          <button onClick={() => { try { navigator.clipboard.writeText(JSON.stringify({ groups, prompts }, null, 2)); showToast("✓ 已导出 JSON（在导入弹窗粘贴即可恢复）"); } catch { showErr("导出失败"); } }} style={miniBtn} title="导出全部为 JSON（备份/迁移）"><Ic size={12} paths={ICONS.upload} />导出</button>
+          <button onClick={() => { try { navigator.clipboard.writeText(JSON.stringify({ groups, prompts }, null, 2)); showToast("已导出 JSON（在导入弹窗粘贴即可恢复）"); } catch { showErr("导出失败"); } }} style={miniBtn} title="导出全部为 JSON（备份/迁移）"><Ic size={12} paths={ICONS.upload} />导出</button>
           <button onClick={() => setState({ importOpen: true })} style={miniBtn} title="导入 JSON（合并或替换）"><Ic size={12} paths={ICONS.download} />导入</button>
         </div>
     </>
