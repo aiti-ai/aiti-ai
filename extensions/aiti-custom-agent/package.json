@@ -17,5 +17,13 @@
     "@aiti-ai/ext-shared": "^0.1.3"
   },
   "license": "MIT",
-  "contentHash": "8c835e3529b740e9"
+  "contentHash": "8c835e3529b740e9",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-custom-agent.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-custom-agent#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-custom-agent/issues"
+  }
 }
