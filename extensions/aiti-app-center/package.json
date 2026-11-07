@@ -17,10 +17,11 @@
   "contentHash": "1d66a833198452b7",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-app-center.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-app-center"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-app-center#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-app-center/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
