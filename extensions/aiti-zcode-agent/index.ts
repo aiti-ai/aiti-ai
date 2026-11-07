@@ -42,7 +42,7 @@ import {
   DEFAULT_MODEL_REF, START_PLAN_BASE_URL, ZCODE_CONTEXT_WINDOW, ZCODE_MODES, ZCODE_PLATFORM_BASE_URL,
   baseUrlFor, buildCliArgs, buildTurnEnv, buildZcodeCatalogRefs, channelFamily, detectPlanProvider, ensureCredential, ensureStartPlanCredential, execZcodeTurn, fetchCaptchaConfig,
   extractCliError, isChannelDriveable, parseModelRef, parseTurnOutput, resolveNodeBin, resolveRuntime,
-  isStartPlanChannel, planQuotaView, readPlanStatus, usageToReport, wireProviderId, zcodeHome, zcodeLoginDriver, humanizeZcodeError,
+  isStartPlanChannel, planQuotaView, readPlanStatus, usageToReport, wireProviderId, writeProviderConfigFile, zcodeHome, zcodeLoginDriver, humanizeZcodeError,
 } from "./zcode-core.ts";
 // 冷恢复工具行回放共享口径（权威源 pi-web-ext/_shared/seed-tool.ts；D18 四家归一）
 import { createSeedToolReplay } from "@aiti-ai/ext-shared/seed-tool";
@@ -684,9 +684,25 @@ class ZcodeHandle {
     const { providerId } = parseModelRef(modelRef)!;
     const { runtime, cred } = await this.resolveTurnRuntime(providerId);
     // desktop 同款：ZCODE_BASE_URL=平台根 → 引擎拉 configs 读 proxyEndpoint.mapping，
-    // 动态路由 provider 直连请求到 ultra 网关 + 在 provider 域握手签名（与 desktop 完全一致）。
-    // feature zcode.ultraGateway=false 回退直连（ZCODE_BASE_URL=provider baseURL，不做 mapping）。
-    const gateway = featureBool("zcode.ultraGateway", true);
+    // 动态路由 provider 直连请求到 ultra 网关 + 在 provider 域握手签名（与桌面完全一致）。
+    // 【3.17.2 起默认关】ultra 网关在独立 spawn 下对 api-key 型 personal registry provider
+    // 持续 server_error 重试循环（2026-11-07 真机实测；直连 open.bigmodel.cn 全链路通）。
+    // feature zcode.ultraGateway=true 可手动回到网关模式（ZCODE_BASE_URL=平台根，做 mapping）。
+    const gateway = featureBool("zcode.ultraGateway", false);
+    const protoModels = buildZcodeCatalogRefs()
+      .filter((m) => m.id.split("/")[0] === providerId)
+      .map((m) => ({ modelId: m.id.split("/")[1], label: m.label, contextWindow: ZCODE_CONTEXT_WINDOW }));
+    // 3.17+ registry 模型注册：自建 personal provider config（合并桌面配置；providerId 用 wire 形态
+    // ——app-server setModel 的 model.providerId 即 wireProviderId（start-plan 带 builtin: 前缀））
+    const wireId = wireProviderId(providerId);
+    const providerCfgFile = writeProviderConfigFile({
+      cacheDir: join(dirname(this.configDir), "cache"),
+      providerId: wireId,
+      baseURL: gateway ? ZCODE_PLATFORM_BASE_URL : (baseUrlFor(providerId) ?? START_PLAN_BASE_URL),
+      apiKey: cred.apiKey,
+      models: protoModels,
+      defaultModelRef: modelRef,
+    });
     const env = buildTurnEnv({
       modelRef,
       providerId,
@@ -694,11 +710,9 @@ class ZcodeHandle {
       appVersion: runtime.appVersion,
       passthroughEnv: zcodeSpawnEnv(),
       runtimeCjsPath: runtime.cjsPath,
+      personalProviderConfigFile: providerCfgFile,
       ...(gateway ? { baseURL: ZCODE_PLATFORM_BASE_URL } : {}),
     });
-    const protoModels = buildZcodeCatalogRefs()
-      .filter((m) => m.id.split("/")[0] === providerId)
-      .map((m) => ({ modelId: m.id.split("/")[1], label: m.label, contextWindow: ZCODE_CONTEXT_WINDOW }));
     this.as = new AppServerSession({
       connection: new (await import("./zcode-appserver.ts")).ZcodeAppServerConnection({
         nodeBin: resolveNodeBin(),
@@ -794,6 +808,17 @@ class ZcodeHandle {
     const attachPaths = attach.paths;
 
     const cliArgs = buildCliArgs({ mode: this.desiredMode ?? featureMode(), sessId: this.sessId, prompt: promptText, attachPaths });
+    const oneshotModels = buildZcodeCatalogRefs()
+      .filter((m) => m.id.split("/")[0] === providerId)
+      .map((m) => ({ modelId: m.id.split("/")[1], contextWindow: ZCODE_CONTEXT_WINDOW }));
+    const providerCfgFile = writeProviderConfigFile({
+      cacheDir: join(dirname(this.configDir), "cache"),
+      providerId: wireProviderId(providerId),
+      baseURL: baseUrlFor(providerId) ?? START_PLAN_BASE_URL,
+      apiKey: cred.apiKey,
+      models: oneshotModels,
+      defaultModelRef: modelRef,
+    });
     const env = buildTurnEnv({
       modelRef,
       providerId,
@@ -801,6 +826,7 @@ class ZcodeHandle {
       appVersion: runtime.appVersion,
       passthroughEnv: zcodeSpawnEnv(),
       runtimeCjsPath: runtime.cjsPath,
+      personalProviderConfigFile: providerCfgFile,
     });
 
     try {
@@ -1585,6 +1611,14 @@ export default {
       description: "手动提供编程套餐 API Key（跳过桌面端凭据 OAuth 链路）。一般留空。",
       value: "",
       placeholder: "留空使用桌面端登录凭据",
+    },
+    {
+      id: "zcode.ultraGateway",
+      type: "boolean" as const,
+      label: "Ultra 网关路由",
+      group: "ZCode CLI",
+      description: "app-server 走 zcode.z.ai 平台根动态路由（桌面端同款）。注意：宿主对未声明布尔 feature 默认 true——本项必须显式声明才可控。3.17.2 独立 spawn 下网关持续 server_error（2026-11-07 实测），默认直连 open.bigmodel.cn。",
+      default: false,
     },
     spawnEnvFeature("ZCode CLI"),
     spawnCommandFeature("ZCode CLI"),
