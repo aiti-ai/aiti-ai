@@ -26,10 +26,11 @@
   "contentHash": "88b686aeaa52a01d",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-cmd.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-cmd"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-cmd#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-cmd/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
