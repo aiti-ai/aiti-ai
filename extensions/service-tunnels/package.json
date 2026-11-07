@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/service-tunnels",
-  "version": "0.3.3",
+  "version": "0.3.7",
   "type": "module",
   "aiti": {
     "kind": "ext",
@@ -31,5 +31,6 @@
       "expose-inject.json"
     ]
   },
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "contentHash": "3ca2d2e26f79a16b"
 }
