@@ -11,10 +11,11 @@
   "contentHash": "964b36459d30214e",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-pi-agent.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-pi-agent"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-pi-agent#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-pi-agent/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
