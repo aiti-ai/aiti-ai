@@ -10,7 +10,7 @@
  * 用法：node tools/deploy.mjs
  * 生效：POST /api/extensions/reload（或重启 pi-web）；client no-store 刷新页面即新
  */
-import { copyFileSync, mkdirSync } from "node:fs";
+import { copyFileSync, cpSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
@@ -48,6 +48,10 @@ for (const extDir of targets) {
   }
   copyFileSync(resolve(root, "dist/aiti-quickstart-client.mjs"), resolve(extDir, "dist/aiti-quickstart-client.mjs"));
   console.log("[deploy] client → " + resolve(extDir, "dist/aiti-quickstart-client.mjs"));
+  // server/ 是运行时依赖（index.ts import "./server/api.ts"）——必须进正式清单；
+  // 此前缺失时宿主靠 dev-pack 兜底拷源码才跑起来，容器内 dev-pack 静默失败即炸（2026-11-07）
+  cpSync(resolve(root, "server"), resolve(extDir, "server"), { recursive: true });
+  console.log("[deploy] server/ → " + resolve(extDir, "server"));
   // 条目统一线图库（清单须覆盖引用全集，缺文件 throw）
   copyIcons(resolve(extDir, "icons"), ["rocket"], { log: (m) => console.log("[deploy] " + m) });
 }
