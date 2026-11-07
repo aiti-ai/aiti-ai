@@ -6,9 +6,12 @@
 //
 // 用法：
 //   node scripts/collect-extension-deps.mjs --out <path/package.json> \
-//     --file "@aiti-ai/ext-shared=<tgz>" --file "@aiti-ai/aiti-bridge=<tgz>" ...
+//     --file "@aiti-ai/ext-shared=<tgz>" --file "@aiti-ai/aiti-bridge=<tgz>" ... \
+//     --omit service-tunnels
 //
 // --file 可重复；overrides 只对 --file 列出的包生效（npmjs 有版面的包照常走 registry）。
+// --omit：从并集剔除（npm 不装）——依赖名与可安装形态对不上的包（如 service-tunnels：
+// 依赖写无 scope 名而仓内源 name 是 @aiti-ai/service-tunnels），由调用方以 symlink 兜住。
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
@@ -19,6 +22,10 @@ const ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), ".."), "exten
 const OUT = (() => {
   const i = process.argv.indexOf("--out");
   return i >= 0 ? resolve(process.argv[i + 1]) : null;
+})();
+const OMIT = (() => {
+  const i = process.argv.indexOf("--omit");
+  return i >= 0 ? process.argv[i + 1].split(",").map((s) => s.trim()) : [];
 })();
 const FILE_MAP = {};
 {
@@ -45,6 +52,7 @@ for (const d of readdirSync(ROOT)) {
     }
   }
 }
+for (const name of OMIT) delete union[name];
 
 const pkg = {
   name: "aiti-extensions-build-root",
