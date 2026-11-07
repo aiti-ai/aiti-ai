@@ -148,6 +148,149 @@ export const ZCODE_MODES = ["build", "edit", "plan", "yolo"] as const;
 /** --json 输出的上下文窗口（projection.contextWindow，1M 窗口套餐）。 */
 export const ZCODE_CONTEXT_WINDOW = 1_000_000;
 
+/** 3.17+ object 形态 session/setModel 必带 options.reasoningLevel（缺省 -32603 Reasoning level is required）。
+ *  GLM-5 系 builtin 档位词汇 = disabled/enabled（zcode-builtin modelMatch 规则实测）；agent 走 enabled（思考开，桌面同款）。 */
+export const ZCODE_REASONING_LEVEL = "enabled";
+
+/**
+ * 3.17+ app-server 模型注册 personal provider config 文档（2026-11-07 实测定型）。
+ *
+ * 背景：3.17.2 移除 `workspace/upsertModelProvider` 与 session/resume|send 的 runtimeModel 内联
+ * provider 通道，模型唯一来源 = Provider Registry。账号型（zhipu-account）provider 需桌面端
+ * ZCODE_OFFICIAL_ENDPOINT unix socket 解析，独立 spawn 全部缺位 → registry 空 →
+ * setModel「Provider Registry 中不存在 Model」→ send「Select a model before continuing」。
+ * 出路 = 自建 personal provider config 文件（ZCODE_PERSONAL_PROVIDER_CONFIG_FILE 指向）：
+ * 自定义 provider（inline apiKey，env-only 合规）+ manualProviderModelRules 模型卡 + defaultModelSelection。
+ *
+ * 实测 schema 坑（patch 插桩逐层排雷；缺任一项整个文件被静默 recovery 成空 registry）：
+ *   - providerRule.config.group 必填且 personal 只认 "standard-personal"（registry 层 lss 校验，比 zod 严）
+ *   - personal 规则无 builtinModelIds（被 omit）→ 模型清单靠 personalModelIds
+ *   - manualProviderModelRules[].config 必填且 enabled 必须 === true（模型可执行闸）、
+ *     properties.{contextWindow,supportsJsonSchemaOutput,supportsNativeWebSearch,
+ *     supportsMidConversationSystem,inputFormat{supportsImage,Video,Pdf}}、
+ *     optionSpecs.{reasoningLevel:{values,map},maxOutputTokens:{max}} 全必填
+ *   - modelConfigRules.providerModelRules: [] 键必带（空数组也要）
+ *   - reasoningLevel 档位词汇沿用 builtin：disabled/enabled
+ */
+export function providerConfigDocument(opts: {
+  providerId: string;
+  providerName?: string;
+  baseURL: string;
+  apiKey: string;
+  models: Array<{ modelId: string; contextWindow?: number }>;
+  /** 会话默认模型 "provider/model"（defaultModelSelection；app-server 每会话一进程，指向会话模型）。 */
+  defaultModelRef?: string;
+}): Record<string, unknown> {
+  const reasoningValues = ["disabled", "enabled"];
+  const modelCard = (m: { modelId: string; contextWindow?: number }) => ({
+    providerId: opts.providerId,
+    modelId: m.modelId,
+    config: {
+      enabled: true,
+      properties: {
+        contextWindow: m.contextWindow ?? ZCODE_CONTEXT_WINDOW,
+        supportsJsonSchemaOutput: false,
+        supportsNativeWebSearch: false,
+        supportsMidConversationSystem: true,
+        inputFormat: { supportsImage: true, supportsVideo: false, supportsPdf: true },
+      },
+      optionSpecs: {
+        reasoningLevel: { values: reasoningValues, map: "{}" },
+        maxOutputTokens: { max: 128_000 },
+      },
+    },
+  });
+  const [defProvider, defModel] = (opts.defaultModelRef ?? "").split("/");
+  const doc: Record<string, unknown> = {
+    schemaVersion: 1,
+    config: {
+      providerConfigRules: {
+        providerRules: [
+          {
+            providerId: opts.providerId,
+            ...(opts.providerName ? { providerName: opts.providerName } : {}),
+            config: {
+              group: "standard-personal",
+              personalModelIds: opts.models.map((m) => m.modelId),
+              access: { type: "zhipu-coding-plan-api-key", apiKey: opts.apiKey },
+              api: { type: "anthropic-messages", baseUrl: opts.baseURL },
+            },
+          },
+        ],
+      },
+      modelConfigRules: {
+        providerModelRules: [],
+        manualProviderModelRules: opts.models.map(modelCard),
+      },
+      ...(defProvider && defModel ? { defaultModelSelection: { providerId: defProvider, modelId: defModel } } : {}),
+    },
+  };
+  return doc;
+}
+
+/**
+ * 写 provider config 文件（0600，含 apiKey；tmp+rename 原子落盘）。
+ * 合并语义：读桌面 personal config（缺省 <zcodeHome>/v2/provider_config.json）→ 保留其它
+ * provider 的规则与模型卡 → 叠加/覆盖本 providerId 条目与 defaultModelSelection → 写缓存。
+ * 返回文件绝对路径（喂 ZCODE_PERSONAL_PROVIDER_CONFIG_FILE）。
+ */
+export function writeProviderConfigFile(opts: {
+  cacheDir: string;
+  providerId: string;
+  providerName?: string;
+  baseURL: string;
+  apiKey: string;
+  models: Array<{ modelId: string; contextWindow?: number }>;
+  defaultModelRef?: string;
+  desktopPersonalPath?: string;
+  log?: (m: string) => void;
+}): string {
+  const dir = join(opts.cacheDir, "provider-config");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${opts.providerId.replace(/[^A-Za-z0-9._-]/g, "_")}.json`);
+  // 合并既有 personal config（解析失败按空处理，不阻断）
+  let existing: { config?: Record<string, unknown> } = {};
+  const src = opts.desktopPersonalPath ?? join(zcodeHome(), "v2", "provider_config.json");
+  try {
+    const raw = JSON.parse(readFileSync(src, "utf8")) as { config?: Record<string, unknown> };
+    if (raw && typeof raw === "object" && raw.config && typeof raw.config === "object") existing = raw;
+  } catch { /* 无文件/坏文件 → 空白起 */ }
+  const old = existing.config as {
+    providerConfigRules?: { providerRules?: Array<{ providerId: string }> };
+    modelConfigRules?: { manualProviderModelRules?: Array<{ providerId: string }> };
+    providerOrder?: string[];
+  };
+  const oldProviderRules = old?.providerConfigRules?.providerRules ?? [];
+  const oldManualRules = old?.modelConfigRules?.manualProviderModelRules ?? [];
+  const mine = providerConfigDocument(opts) as {
+    config: {
+      providerConfigRules: { providerRules: Array<Record<string, unknown>> };
+      modelConfigRules: { manualProviderModelRules: Array<Record<string, unknown>> };
+      defaultModelSelection?: Record<string, unknown>;
+    };
+  };
+  const doc: Record<string, unknown> = {
+    schemaVersion: 1,
+    config: {
+      ...(Array.isArray(old?.providerOrder) && old!.providerOrder!.length ? { providerOrder: old!.providerOrder } : {}),
+      providerConfigRules: {
+        // 其它 provider 保留（含 account: 条目），本 providerId 覆盖
+        providerRules: [...oldProviderRules.filter((r) => r?.providerId !== opts.providerId), ...mine.config.providerConfigRules.providerRules],
+      },
+      modelConfigRules: {
+        providerModelRules: [],
+        manualProviderModelRules: [...oldManualRules.filter((r) => r?.providerId !== opts.providerId), ...mine.config.modelConfigRules.manualProviderModelRules],
+      },
+      defaultModelSelection: mine.config.defaultModelSelection,
+    },
+  };
+  const tmp = `${file}.tmp`;
+  writeFileSync(tmp, JSON.stringify(doc, null, 2), { mode: 0o600 });
+  renameSync(tmp, file);
+  opts.log?.(`[aiti-zcode-agent] provider config 已写 ${file}（provider=${opts.providerId}，models=${opts.models.length}）`);
+  return file;
+}
+
 /** 解析模型 ref："bigmodel/GLM-5.3" → { providerId, modelId }；通道须在已知集（seed ∪ 注册表 ∪ 套餐缓存），非法返回 null。 */
 export function parseModelRef(ref: string): { providerId: string; modelId: string } | null {
   const i = ref.indexOf("/");
@@ -1409,10 +1552,14 @@ export function buildTurnEnv(opts: {
   baseURL?: string;
   /** runtime zcode.cjs 绝对路径：注入 3.17+ provider runtime 闸 env（providerRuntimeEnv）。 */
   runtimeCjsPath?: string;
+  /** 自建 personal provider config 文件路径：覆盖 ZCODE_PERSONAL_PROVIDER_CONFIG_FILE
+   *  （3.17+ registry 模型注册；文件由 writeProviderConfigFile 合并桌面配置后生成）。 */
+  personalProviderConfigFile?: string;
 }): Record<string, string> {
   return {
     ...opts.passthroughEnv,
     ...providerRuntimeEnv(opts.runtimeCjsPath, opts.passthroughEnv, opts.appVersion),
+    ...(opts.personalProviderConfigFile ? { ZCODE_PERSONAL_PROVIDER_CONFIG_FILE: opts.personalProviderConfigFile } : {}),
     ZCODE_MODEL: opts.modelRef,
     // 动态通道（*-coding-plan/*-start-plan）走注册表端点；静态表只覆盖 bigmodel/zai。
     ZCODE_BASE_URL: opts.baseURL ?? baseUrlFor(opts.providerId) ?? PROVIDER_BASE_URL.bigmodel,

@@ -12,7 +12,7 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, statSync } from "node:fs";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -200,6 +200,77 @@ test("buildTurnEnv: runtimeCjsPath 透传注入 provider 闸 env", () => {
   });
   assert.equal(env.ZCODE_BUILTIN_PROVIDER_CONFIG_FILE, bundled);
   rmSync(join(ROOT, "appimg3"), { recursive: true, force: true });
+});
+
+// ============================================================================
+// 3.17+ personal provider config（registry 模型注册；2026-11-07 实测配方）
+// 全部必填字段缺任一项 → CLI 整体静默 recovery 成空 registry → setModel「不存在 Model」
+// ============================================================================
+
+test("providerConfigDocument: 3.17+ 全必填形状（group/personalModelIds/enabled/properties/optionSpecs/providerModelRules）", () => {
+  const doc = core.providerConfigDocument({
+    providerId: "bigmodel", providerName: "BigModel",
+    baseURL: "https://open.bigmodel.cn/api/anthropic", apiKey: "k.s",
+    models: [{ modelId: "GLM-5.3-Flash", contextWindow: 1000000 }, { modelId: "GLM-5.3" }],
+    defaultModelRef: "bigmodel/GLM-5.3-Flash",
+  });
+  const rule = doc.config.providerConfigRules.providerRules[0];
+  assert.equal(rule.providerId, "bigmodel");
+  assert.equal(rule.config.group, "standard-personal");                          // registry 层必填（比 zod 严）
+  assert.deepEqual(rule.config.personalModelIds, ["GLM-5.3-Flash", "GLM-5.3"]);  // 模型清单来源（builtinModelIds 被 omit）
+  assert.equal(rule.config.access.type, "zhipu-coding-plan-api-key");
+  assert.equal(rule.config.api.baseUrl, "https://open.bigmodel.cn/api/anthropic");
+  const m0 = doc.config.modelConfigRules.manualProviderModelRules[0];
+  assert.equal(m0.modelId, "GLM-5.3-Flash");
+  assert.equal(m0.config.enabled, true);                                         // 模型可执行闸（严格 === true）
+  assert.equal(m0.config.properties.contextWindow, 1000000);
+  assert.ok(m0.config.properties.inputFormat.supportsImage);
+  assert.deepEqual(doc.config.modelConfigRules.providerModelRules, []);          // 键必带（空数组也要）
+  assert.deepEqual(m0.config.optionSpecs.reasoningLevel.values, ["disabled", "enabled"]);
+  assert.equal(m0.config.optionSpecs.reasoningLevel.map, "{}");
+  assert.equal(m0.config.optionSpecs.maxOutputTokens.max, 128000);
+  assert.deepEqual(doc.config.defaultModelSelection, { providerId: "bigmodel", modelId: "GLM-5.3-Flash" });
+});
+
+test("writeProviderConfigFile: 合并桌面 personal config（保留其它 provider）+ 0600 + 同 providerId 覆盖不重复", () => {
+  const dir = join(ROOT, "cache-pc");
+  const desktop = join(ROOT, "desktop-provider_config.json");
+  writeFileSync(desktop, JSON.stringify({
+    schemaVersion: 1,
+    config: {
+      providerConfigRules: { providerRules: [{ providerId: "other", config: { group: "standard-personal" } }] },
+      modelConfigRules: { providerModelRules: [], manualProviderModelRules: [{ providerId: "other", modelId: "m1", config: { enabled: true, properties: {}, optionSpecs: {} } }] },
+    },
+  }));
+  const file = core.writeProviderConfigFile({
+    cacheDir: dir, providerId: "bigmodel", baseURL: "https://x", apiKey: "sec",
+    models: [{ modelId: "GLM-5.3-Flash", contextWindow: 1000000 }], defaultModelRef: "bigmodel/GLM-5.3-Flash",
+    desktopPersonalPath: desktop,
+  });
+  assert.equal(statSync(file).mode & 0o777, 0o600, "含 apiKey 必须 0600");
+  const doc = JSON.parse(readFileSync(file, "utf8"));
+  const rules = doc.config.providerConfigRules.providerRules;
+  assert.deepEqual(rules.map((r) => r.providerId).sort(), ["bigmodel", "other"]);
+  const manual = doc.config.modelConfigRules.manualProviderModelRules;
+  assert.deepEqual(manual.map((r) => `${r.providerId}/${r.modelId}`).sort(), ["bigmodel/GLM-5.3-Flash", "other/m1"]);
+  assert.equal(doc.config.defaultModelSelection.modelId, "GLM-5.3-Flash");
+  // 同 providerId 再写：覆盖不重复
+  const file2 = core.writeProviderConfigFile({
+    cacheDir: dir, providerId: "bigmodel", baseURL: "https://x2", apiKey: "sec2",
+    models: [{ modelId: "GLM-5.3-Flash" }], desktopPersonalPath: desktop,
+  });
+  assert.equal(file2, file);
+  const rules2 = JSON.parse(readFileSync(file, "utf8")).config.providerConfigRules.providerRules;
+  assert.equal(rules2.filter((r) => r.providerId === "bigmodel").length, 1);
+  assert.equal(rules2.find((r) => r.providerId === "bigmodel").config.api.baseUrl, "https://x2");
+});
+
+test("buildTurnEnv: personalProviderConfigFile 覆盖 ZCODE_PERSONAL_PROVIDER_CONFIG_FILE（自建合并文件优先）", () => {
+  const env = core.buildTurnEnv({
+    modelRef: "zai/GLM-5.3", providerId: "zai", apiKey: "k.s",
+    passthroughEnv: {}, personalProviderConfigFile: "/tmp/mine/provider_config.json",
+  });
+  assert.equal(env.ZCODE_PERSONAL_PROVIDER_CONFIG_FILE, "/tmp/mine/provider_config.json");
 });
 
 // ============================================================================

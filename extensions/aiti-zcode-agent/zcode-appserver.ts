@@ -72,6 +72,11 @@ export function toProtocolModel(modelRef: string): { providerId: string; modelId
   return { providerId: modelRef.slice(0, i), modelId: modelRef.slice(i + 1) };
 }
 
+/** 3.17+ object 形态 setModel 声明了 reasoningLevel 档位的模型必带 options.reasoningLevel
+ *  （缺省 -32603 "Reasoning level is required"；personal provider config 的模型卡声明
+ *  disabled/enabled 两档）。GLM-5 系 agent 走 enabled（思考开，桌面同款）。 */
+const ZCODE_REASONING_LEVEL = "enabled";
+
 /** UI 五档权限模式 → ZCode mode 枚举（plan/build/edit/yolo/auto）。 */
 export function toProtocolMode(mode: string | undefined): string | undefined {
   switch (mode) {
@@ -555,7 +560,7 @@ export class AppServerSession {
       // 下轮 resume 仍带 runtimeModel 再对齐。
       const createModel = this.opts.modelRef ? toProtocolModel(this.opts.modelRef) : null;
       if (createModel) {
-        await this.conn.request("session/setModel", { sessionId: this.zcodeSid, model: createModel, persistAsWorkspaceLastUsed: false }, { timeoutMs: 30_000 }).catch((e) =>
+        await this.setModelCompat(createModel, false).catch((e) =>
           this.log(`[aiti-zcode-agent] create 后 setModel 失败（本轮用 runtime 默认模型）: ${e instanceof Error ? e.message : String(e)}`));
       }
     } else if (!this.subscribed) {
@@ -563,18 +568,28 @@ export class AppServerSession {
       // 带 runtimeModel —— 服务端 xse 路径直接应用当前模型并清 restoreWarning；
       // 不带时历史模型若不在 catalog（env-only 通道常见）会设 restoreWarning → send 被 -32031 拒（2026-09-09 实测）。
       const runtimeModel = this.buildRuntimeModel();
+      // 3.17+ 移除 resume 的 runtimeModel 键（strict schema 拒 unknown key 直接 -32603）
+      // → 先带（旧 CLI 绕 -32031 restoreWarning 必需），命中 ZodError 形态失败再不带重试。
+      let resumedWithoutRuntimeModel = false;
       const resumed = await this.conn.request<JsonRecord>("session/resume", {
         sessionId: this.zcodeSid,
         ...(runtimeModel ? { runtimeModel } : {}),
-      }, { timeoutMs: 120_000 });
+      }, { timeoutMs: 120_000 }).catch(async (e: unknown) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!runtimeModel || !/ZodError|unrecognized|Invalid input/i.test(msg)) throw e;
+        this.log(`[aiti-zcode-agent] resume 带 runtimeModel 被拒（3.17+ 已移除该键），无 runtimeModel 重试: ${msg.slice(0, 120)}`);
+        resumedWithoutRuntimeModel = true;
+        return this.conn.request<JsonRecord>("session/resume", { sessionId: this.zcodeSid }, { timeoutMs: 120_000 });
+      });
       // resume 响应即快照同构（真机实证含 todos）→ 任务列表种子（跨进程复活/刷新恢复）
       this.seedTaskListFromSnapshot(resumed?.todos);
-      if (!runtimeModel) {
-        // 无 provider 信息（runtimeModel 构造不出）时旧的 setModel 兜底（env-only 下会 -32603 被 catch，无害）
+      if (!runtimeModel || resumedWithoutRuntimeModel) {
+        // 无 provider 信息（runtimeModel 构造不出 → 旧 CLI setModel 兜底）或 3.17+ 重试路径（
+        // runtimeModel 通道已废 → 显式 setModel 对齐模型，配套 personal provider config 的 registry 注册）
         const model = this.opts.modelRef ? toProtocolModel(this.opts.modelRef) : null;
         if (model) {
           // persistAsWorkspaceLastUsed:false —— env-only 模式无 config.json，持久化会报错（真机验证）
-          await this.conn.request("session/setModel", { sessionId: this.zcodeSid, model, persistAsWorkspaceLastUsed: false }, { timeoutMs: 30_000 }).catch((e) =>
+          await this.setModelCompat(model, false).catch((e) =>
             this.log(`[aiti-zcode-agent] resume 后 setModel 失败（不影响本轮）: ${e instanceof Error ? e.message : String(e)}`));
         }
       }
@@ -631,8 +646,12 @@ export class AppServerSession {
         models: p.models.map((m) => ({ modelId: m.modelId, ...(m.label ? { label: m.label } : {}), ...(m.contextWindow ? { contextWindow: m.contextWindow } : {}) })),
         ...(cleanHeaders ? { headers: cleanHeaders } : {}),
       },
-    }, { timeoutMs: 30_000 }).catch((e) =>
-      this.log(`[aiti-zcode-agent] upsertModelProvider 失败（继续，env 通道兜底）: ${e instanceof Error ? e.message : String(e)}`));
+    }, { timeoutMs: 30_000 }).catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      // 3.17+ 已移除该 RPC（-32601 Method not found）→ 常态静默（personal provider config 接管模型注册）
+      if (/Method not found/i.test(msg)) return;
+      this.log(`[aiti-zcode-agent] upsertModelProvider 失败（继续，env 通道兜底）: ${msg}`);
+    });
   }
 
   /**
@@ -672,6 +691,28 @@ export class AppServerSession {
     }
   }
 
+  /**
+   * setModel 双版本兼容发送：先裸发（旧 CLI 3.16- 无 options 即成功）；命中
+   * "Reasoning level is required"（3.17+ registry 模型声明档位）再补 options 重试。
+   * 注意 options 挂在 model 对象内（Nl = {providerId, modelId, options?}），不是请求顶层。
+   * 反向顺序（先带 options）在旧 CLI 上会被 strict schema 拒 unknown key，不可取。
+   */
+  private async setModelCompat(model: { providerId: string; modelId: string }, persistAsWorkspaceLastUsed: boolean): Promise<void> {
+    const base = { sessionId: this.zcodeSid, model, persistAsWorkspaceLastUsed };
+    try {
+      await this.conn.request("session/setModel", base, { timeoutMs: 30_000 });
+      return;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!/Reasoning level is required/i.test(msg)) throw e;
+    }
+    await this.conn.request("session/setModel", {
+      sessionId: this.zcodeSid,
+      model: { ...model, options: { reasoningLevel: ZCODE_REASONING_LEVEL } },
+      persistAsWorkspaceLastUsed,
+    }, { timeoutMs: 30_000 });
+  }
+
   /** 存储被外部改动（如 oneshot --attach 轮次写入同一会话）后，强制下次冷 resume 重读历史。 */
   async refreshFromStorage(): Promise<void> {
     if (!this.ready || !this.zcodeSid || !this.conn.isAlive()) return;
@@ -685,7 +726,7 @@ export class AppServerSession {
     const model = toProtocolModel(modelRef);
     if (!model) throw new Error(`非法模型 ref "${modelRef}"`);
     if (!this.ready || !this.zcodeSid) return; // 未就绪：仅记录，create/resume 时生效
-    await this.conn.request("session/setModel", { sessionId: this.zcodeSid, model, persistAsWorkspaceLastUsed: false }, { timeoutMs: 30_000 });
+    await this.setModelCompat(model, false);
   }
 
   /**
