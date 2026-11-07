@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-helper",
-  "version": "0.5.4",
+  "version": "0.5.7",
   "type": "module",
   "description": "AI 帮助点聚合 + AI 输入弹窗—— JSX + vite 构建 client bundle",
   "scripts": {
@@ -18,5 +18,6 @@
     ]
   },
   "aitiExtProtocol": "1.0",
-  "license": "MIT"
+  "license": "MIT",
+  "contentHash": "f81e124ead092f3f"
 }
