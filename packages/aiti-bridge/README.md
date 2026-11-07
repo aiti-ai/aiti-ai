@@ -35,9 +35,9 @@ node bin/aiti-mcp-register.mjs --unregister --targets pi
 ```bash
 AITI_BRIDGE_URL=http://127.0.0.1:8777      zcode    # 独立桥（裸 origin）
 AITI_BRIDGE_URL=http://127.0.0.1:8777/aiti claude   # 多写 /aiti 也行
-AITI_BRIDGE_URL=http://127.0.0.1:30142/dev pi      # pi-web dev（basePath）
-AITI_BRIDGE_URL=http://127.0.0.1:30142      …      # 裸 origin 自动探测 /dev /win /mac /wdev /mdev 变体
-AITI_BRIDGE_URL=http://127.0.0.1:20341      …      # pi-web prod
+AITI_BRIDGE_URL=http://127.0.0.1:3001/dev pi      # pi-web dev（basePath）
+AITI_BRIDGE_URL=http://127.0.0.1:3001      …      # 裸 origin 自动探测 /dev /win /mac /wdev /mdev 变体
+AITI_BRIDGE_URL=http://127.0.0.1:3002      …      # pi-web prod
 ```
 
 写法完全自由：裸 origin / 带 basePath / 完整端点 / 少写一个 `/mcp` 全部兼容（逐候选 POST initialize 探测命中即用）。
@@ -85,5 +85,5 @@ node --test tests/shim-session.test.mjs   # 会话生命周期 2
 node --test tests/shim-payload.test.mjs   # 载荷并发 4
 node --test tests/robustness.test.mjs     # 健壮性 4
 node --test tests/register-cli.test.mjs   # 注册 CLI 11
-node --test tests/shim-e2e.test.mjs       # e2e 12（需真实桥 8777 / pi-web 30142·20341）
+node --test tests/shim-e2e.test.mjs       # e2e 12（需真实桥 8777 / pi-web 3001·3002）
 ```

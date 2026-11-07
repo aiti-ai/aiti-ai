@@ -12,5 +12,15 @@
   "scripts": {
     "build": "node tools/build.mjs"
   },
-  "dependencies": {}
+  "dependencies": {},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-devtools-inject"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "a68f1afbaf4b660b"
 }

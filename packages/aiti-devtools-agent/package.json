@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-devtools-agent",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "aiti-devtools 多 agent 宿主接线框架：桥 HTTP/SSE 协议客户端 + AgentHost 契约 + 工具映射模板（pi / DSH / 其他 agent 复用）",
   "type": "module",
   "main": "dist/index.js",
@@ -24,5 +24,15 @@
     "typebox": {
       "optional": true
     }
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-devtools-agent"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "d3d6b1793c5ebc89"
 }

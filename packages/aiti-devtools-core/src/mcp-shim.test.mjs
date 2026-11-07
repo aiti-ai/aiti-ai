@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const SANDBOX = mkdtempSync(join(tmpdir(), "aiti-shim-reg-"));
-process.env.HOME = SANDBOX; // 必须在 import 模块之前（HOME 在模块加载时捕获）
+process.env.HOME = SANDBOX; process.env.USERPROFILE = SANDBOX; // 必须在 import 模块之前（HOME 在模块加载时捕获；Windows 的 os.homedir() 只读 USERPROFILE，漏了会写真家目录——2026-11-07 实证）
 
 const { registerAitiShim, unregisterAitiShim, registerMcp } = await import("./mcp-config.ts");
 

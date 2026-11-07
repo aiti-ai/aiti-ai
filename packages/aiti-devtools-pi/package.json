@@ -18,5 +18,15 @@
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "^0.35.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-devtools-pi"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "e7a16322e2b8c2cc"
 }

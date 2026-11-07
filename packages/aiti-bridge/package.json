@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-bridge",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "aiti-devtools 独立桥服务（常驻，不依赖 pi 生命周期）——页面连接/SSE/工具执行/MCP JSON-RPC + 静态资产 + stdio shim（env AITI_BRIDGE_URL 统一接入）；默认 127.0.0.1:8777",
   "type": "module",
   "bin": {
@@ -19,5 +19,15 @@
   },
   "dependencies": {
     "@aiti-ai/aiti-devtools-core": "^0.3.9"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-bridge"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "2ebcee3a9fa79567"
 }

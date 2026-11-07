@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const SANDBOX = mkdtempSync(join(tmpdir(), "aiti-targets-"));
-process.env.HOME = SANDBOX; // 必须在 import 之前
+process.env.HOME = SANDBOX; process.env.USERPROFILE = SANDBOX; // 必须在 import 之前（Windows homedir() 读 USERPROFILE）
 
 const { registerAitiShim, unregisterAitiShim, registerMcp, unregisterMcp, detectStructureKey } = await import("./mcp-config.ts");
 

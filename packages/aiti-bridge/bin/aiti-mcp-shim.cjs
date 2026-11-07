@@ -282,8 +282,8 @@ function statusText() {
       : "桥未连接。启动 agent 前请在 shell 设置 " + ENV_VAR + "，例如：",
     ...(endpoint ? [] : [
       "  AITI_BRIDGE_URL=http://127.0.0.1:8777            # 独立桥",
-      "  AITI_BRIDGE_URL=http://127.0.0.1:30142/dev       # pi-web dev（basePath 可带可不带）",
-      "  AITI_BRIDGE_URL=http://127.0.0.1:20341           # pi-web prod",
+      "  AITI_BRIDGE_URL=http://127.0.0.1:3001/dev       # pi-web dev（basePath 可带可不带）",
+      "  AITI_BRIDGE_URL=http://127.0.0.1:3002           # pi-web prod",
       "写完整 MCP 端点（…/mcp/mcp）也可以，shim 会识别。",
     ]),
   ];

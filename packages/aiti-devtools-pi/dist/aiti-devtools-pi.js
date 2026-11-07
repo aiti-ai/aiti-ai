@@ -729,7 +729,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
       inputSchema: { type: "object", properties: {
         cmd: { type: "string" },
         args: { type: "object" },
-        pageId: { type: "string", description: "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 30142/host）；也可 /bridge/sessions 查询" }
+        pageId: { type: "string", description: "目标页面完整 ID——来自 AI 消息的 [发自: xxx]（如 3001/host）；也可 /bridge/sessions 查询" }
       }, required: ["cmd"] }
     },
     { name: "page_snapshot", description: "拉取已连接页面基础现场（URL/选区/模拟条件）。pageId 缺省=最新 AI 主窗口（self:true）；显式 pageId 优先。", inputSchema: { type: "object", properties: { pageId: { type: "string" } } } },
@@ -1331,7 +1331,7 @@ ${String(pl.stack).slice(0, 400)}` : "");
           instructions: [
             "aiti-devtools：页面内 AI 调试助手（浏览器桥）。",
             "工作流：页面发来的消息通常带 pageId。没有也可以先用 bridge_status 发现已连接页面（返回 sessions，含 pageId/url/title/frameworks/device——deviceLabel 一行的浏览器·屏幕·在线·语言可快速识别是哪台机器哪个标签）→ 把 pageId 传给目标工具。",
-            "pageId 格式为 instanceId/frameId（如 30142/host）；也可直接传 url 或页面标题；命中多个时需具体 pageId 指定。",
+            "pageId 格式为 instanceId/frameId（如 3001/host）；也可直接传 url 或页面标题；命中多个时需具体 pageId 指定。",
             "page_exec：在已连接页面执行类 CDP 命令（DOM/CSS/Input/Page/Runtime/Storage/Performance/Browser 域）。args 为命令参数对象。危险命令（导航/下载/对话框等）会自动弹用户确认。截屏（Page.captureScreenshot）务必在 args 带 reason（一句话向用户说明想截什么，页面会先弹准备卡展示该说明、用户调整好页面才开始截屏）。",
             "page_snapshot：拉取目标页面基础现场（URL/选区/模拟条件）。",
             "page_logs / page_network：排查页面报错/请求失败首选——page_logs 查 console（可 level/since/limit 过滤，先看 warn/error）；page_network 查 ajax/fetch 完成态（status≥400 或 errorOnly:true 只看失败）。两者均读页面本地缓冲（CDP Runtime.evaluate 按需拉取，不再实时上报）。",

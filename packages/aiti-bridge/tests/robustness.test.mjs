@@ -93,7 +93,7 @@ test("并发注册：双进程同时写同一配置 → 最终文件合法、条
   const cfg = join(home, ".pi/agent/mcp.json"); // pi 目标 = getAgentDir()/mcp.json
   mkdirSync(join(cfg, ".."), { recursive: true });
   writeFileSync(cfg, JSON.stringify({ mcpServers: {} }, null, 2));
-  const run = (ver) => spawn("node", [REGISTER, "--targets", "pi", "--version", String(ver)], { env: { ...process.env, HOME: home }, stdio: "ignore" });
+  const run = (ver) => spawn("node", [REGISTER, "--targets", "pi", "--version", String(ver)], { env: { ...process.env, HOME: home, USERPROFILE: home }, stdio: "ignore" }); // USERPROFILE 同沙箱——Windows homedir() 只读它（漏了会写真家目录，2026-11-07 实证）
   const p2 = run(2), p3 = run(3);
   await Promise.all([once(p2, "exit"), once(p3, "exit")]);
   const obj = JSON.parse(readFileSync(cfg, "utf8")); // 合法 JSON（原子写未被竞态破坏）
@@ -131,7 +131,7 @@ test("bridge CLI：--register-shim 与 --name/--mcp-config 组合", () => {
   writeFileSync(cfg, JSON.stringify({ mcpServers: {} }, null, 2));
   let out = "";
   try {
-    out = execFileSync("node", [BRIDGE, "--port", "18901", "--register-shim", "--name", "aiti-custom", "--mcp-config", cfg], { env: { ...process.env, HOME: home }, encoding: "utf8", timeout: 8000, stdio: ["ignore", "pipe", "pipe"] });
+    out = execFileSync("node", [BRIDGE, "--port", "18901", "--register-shim", "--name", "aiti-custom", "--mcp-config", cfg], { env: { ...process.env, HOME: home, USERPROFILE: home }, encoding: "utf8", timeout: 8000, stdio: ["ignore", "pipe", "pipe"] }); // USERPROFILE 同沙箱（Windows homedir()）
   } catch (e) {
     out = (e.stdout || "") + (e.stderr || ""); // 桥常驻，timeout 杀掉属预期
   }

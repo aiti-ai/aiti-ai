@@ -18,5 +18,15 @@
     "webpack-dev-server": "^4.0.0 || ^5.0.0",
     "html-webpack-plugin": "^5.0.0"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-devtools-webpack"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "f091aec140e06f64"
 }

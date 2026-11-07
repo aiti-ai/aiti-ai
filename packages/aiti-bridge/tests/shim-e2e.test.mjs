@@ -1,7 +1,7 @@
 /**
  * aiti-mcp-shim 端到端测试（node --test；依赖本机真实服务）：
- *   独立桥 127.0.0.1:8777（systemd aiti-bridge）/ pi-web dev 30142（/dev basePath）/
- *   pi-web prod 20341。任一未启动则对应用例失败（视为环境问题非代码问题）。
+ *   独立桥 127.0.0.1:8777（systemd aiti-bridge）/ pi-web dev 3001（/dev basePath）/
+ *   pi-web prod 3002。任一未启动则对应用例失败（视为环境问题非代码问题）。
  *
  * 覆盖：AITI_BRIDGE_URL 各种写法（裸 origin / basePath / 完整端点 / 少写 /mcp）协商、
  * initialize 转发、通知静默转发、tools/list 透传 + aiti_shim_status 合并、
@@ -72,11 +72,11 @@ for (const t of [
   { label: "独立桥裸 origin（8777）", url: "http://127.0.0.1:8777", expect: "http://127.0.0.1:8777/aiti/mcp" },
   { label: "独立桥带 /aiti", url: "http://127.0.0.1:8777/aiti", expect: "http://127.0.0.1:8777/aiti/mcp" },
   { label: "独立桥完整端点（多写 /mcp）", url: "http://127.0.0.1:8777/aiti/mcp", expect: "http://127.0.0.1:8777/aiti/mcp" },
-  { label: "pi-web dev basePath（30142/dev）", url: "http://127.0.0.1:30142/dev", expect: "http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp/mcp" },
-  { label: "pi-web dev 完整端点", url: "http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp/mcp", expect: "http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp/mcp" },
-  { label: "pi-web dev 少写一个 /mcp", url: "http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp", expect: "http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp/mcp" },
-  { label: "pi-web dev 裸 origin（basePath 变体探测）", url: "http://127.0.0.1:30142", expect: "http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp/mcp" },
-  { label: "pi-web prod 裸 origin（20341）", url: "http://127.0.0.1:20341", expect: "http://127.0.0.1:20341/api/extensions/aiti-devtools/mcp/mcp" },
+  { label: "pi-web dev basePath（3001/dev）", url: "http://127.0.0.1:3001/dev", expect: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp" },
+  { label: "pi-web dev 完整端点", url: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp", expect: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp" },
+  { label: "pi-web dev 少写一个 /mcp", url: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp", expect: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp" },
+  { label: "pi-web dev 裸 origin（basePath 变体探测）", url: "http://127.0.0.1:3001", expect: "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp" },
+  { label: "pi-web prod 裸 origin（3002）", url: "http://127.0.0.1:3002", expect: "http://127.0.0.1:3002/api/extensions/aiti-devtools/mcp/mcp" },
 ]) {
   test("e2e 协商+全链路：" + t.label, async () => {
     const sh = startShim({ AITI_BRIDGE_URL: t.url });

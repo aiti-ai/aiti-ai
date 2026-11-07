@@ -23,5 +23,15 @@
   "license": "MIT",
   "scripts": {
     "build": "esbuild src/index.ts --bundle --format=esm --outfile=dist/index.js --target=es2022 --platform=node --external:@aiti-ai/aiti-devtools-core --external:vite && esbuild src/astro.ts --bundle --format=esm --outfile=dist/astro.js --target=es2022 --platform=node --external:@aiti-ai/aiti-devtools-core"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "packages/aiti-devtools-vite"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
+  },
+  "contentHash": "ab9842fe9570e5f2"
 }

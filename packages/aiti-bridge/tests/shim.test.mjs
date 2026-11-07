@@ -40,27 +40,27 @@ test("带 /aiti 或 /aiti/mcp 或 /bridge：剥回 origin 再生成候选", () =
 });
 
 test("pi-web basePath（如 /dev）：base 保留 basePath，候选含扩展端点", () => {
-  const n = normalizeInput("http://127.0.0.1:30142/dev");
-  assert.equal(n.base, "http://127.0.0.1:30142/dev");
+  const n = normalizeInput("http://127.0.0.1:3001/dev");
+  assert.equal(n.base, "http://127.0.0.1:3001/dev");
   const c = buildCandidates(n);
-  assert.equal(c[0], "http://127.0.0.1:30142/dev/aiti/mcp");
-  assert.ok(c.includes("http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp/mcp"));
+  assert.equal(c[0], "http://127.0.0.1:3001/dev/aiti/mcp");
+  assert.ok(c.includes("http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp"));
   // 非 裸 origin 不追加 basePath 变体
-  assert.ok(!c.includes("http://127.0.0.1:30142/win/api/extensions/aiti-devtools/mcp/mcp"));
+  assert.ok(!c.includes("http://127.0.0.1:3001/win/api/extensions/aiti-devtools/mcp/mcp"));
 });
 
 test("完整扩展端点（多写）：extBase 截到 aiti-devtools，候选第一即精确端点", () => {
-  const n = normalizeInput("http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp/mcp");
-  assert.equal(n.extBase, "http://127.0.0.1:30142/dev/api/extensions/aiti-devtools");
+  const n = normalizeInput("http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp");
+  assert.equal(n.extBase, "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools");
   const c = buildCandidates(n);
-  assert.equal(c[0], "http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp/mcp");
+  assert.equal(c[0], "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp");
 });
 
 test("扩展端点少写一个 /mcp：仍归一到 /mcp/mcp 精确端点", () => {
-  const n = normalizeInput("http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp");
+  const n = normalizeInput("http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp");
   const c = buildCandidates(n);
-  assert.equal(c[0], "http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp/mcp");
-  assert.ok(c.includes("http://127.0.0.1:30142/dev/api/extensions/aiti-devtools/mcp")); // 兜底候选也在
+  assert.equal(c[0], "http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp/mcp");
+  assert.ok(c.includes("http://127.0.0.1:3001/dev/api/extensions/aiti-devtools/mcp")); // 兜底候选也在
 });
 
 test("非 URL 输入：不抛异常，按原样作 base", () => {
