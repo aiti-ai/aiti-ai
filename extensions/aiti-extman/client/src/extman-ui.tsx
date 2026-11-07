@@ -37,7 +37,7 @@ function protocolChipSpec(proto: any): { icon: string; label: string; color: str
   }
   const warn = { color: "#d97706", bg: "rgba(217,119,6,0.12)" };
   switch (state) {
-    case "incompatible": return { icon: "⛔", label: t("ext.protocolIncompatible"), color: "#ef4444", bg: "rgba(239,68,68,0.12)" };
+    case "incompatible": return { icon: "⛔", label: t("ext.protocolIncompatible"), color: "var(--danger, #ef4444)", bg: "rgba(239,68,68,0.12)" };
     case "too_new": return { icon: "↑", label: t("ext.protocolTooNew"), ...warn };
     case "missing": return { icon: "⚠", label: t("ext.protocolMissing"), ...warn };
     case "invalid": return { icon: "⚠", label: t("ext.protocolInvalid"), ...warn };
@@ -419,7 +419,7 @@ function CapList({ q }: { q: string }) {
             onMouseEnter={(ev) => { if (!isSel) ev.currentTarget.style.background = "var(--bg-hover)"; }}
             onMouseLeave={(ev) => { if (!isSel) ev.currentTarget.style.background = "none"; }}>
             <span title={missing ? t("ext.depMissing") : t("ext.cap.effective") + ": " + (c.effective || "—")}
-              style={{ flexShrink: 0, width: 7, height: 7, borderRadius: "50%", background: missing ? "#ef4444" : "var(--accent)" }} />
+              style={{ flexShrink: 0, width: 7, height: 7, borderRadius: "50%", background: missing ? "var(--danger, #ef4444)" : "var(--accent)" }} />
             <div style={{ minWidth: 0, flex: 1 }}>
               <div title={name} style={{ fontFamily: "var(--font-mono)", fontSize: 12, fontWeight: isSel ? 600 : 500, color: missing ? "var(--text-dim)" : "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
               <div style={{ fontSize: 10, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 1 }}>
@@ -451,7 +451,7 @@ function CapDetail({ name }: { name: string }) {
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span style={{ fontSize: 15, fontWeight: 700, color: "var(--text)", fontFamily: "var(--font-mono)", overflowWrap: "anywhere" }}>{name}</span>
         {missing
-          ? <span style={chipStyle("#ef4444", "rgba(239,68,68,0.12)")}>✗ {t("ext.depMissing")}</span>
+          ? <span style={chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.12)")}>✗ {t("ext.depMissing")}</span>
           : <span style={chipStyle("rgba(16,185,129,0.9)", "rgba(16,185,129,0.12)")}>✓ {t("ext.cap.effective")}: {c.effective}</span>}
         {c.pinnedTo && <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>{t("ext.depViaPin")}: {c.pinnedTo}</span>}
       </div>
@@ -560,7 +560,7 @@ function ConflictList({ q }: { q: string }) {
           <div key={"t:" + n} onClick={() => setState({ selConflict: "takeover:" + n })} style={rowStyle("takeover:" + n)}
             onMouseEnter={(ev) => { if (state.selConflict !== "takeover:" + n) ev.currentTarget.style.background = "var(--bg-hover)"; }}
             onMouseLeave={(ev) => { if (state.selConflict !== "takeover:" + n) ev.currentTarget.style.background = "none"; }}>
-            <span title={conflict ? "⚠ conflict" : "superseded"} style={{ flexShrink: 0, width: 7, height: 7, borderRadius: "50%", background: conflict ? "#d97706" : "var(--text-dim)" }} />
+            <span title={conflict ? "conflict" : "superseded"} style={{ flexShrink: 0, width: 7, height: 7, borderRadius: "50%", background: conflict ? "#d97706" : "var(--text-dim)" }} />
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--text)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n}</div>
               <div style={{ fontSize: 10, color: "var(--text-dim)", marginTop: 1 }}>{t("ext.cap.effective")}: {c.effective || "—"}</div>
@@ -809,7 +809,7 @@ function ExtManContent(): any {
           </div>
         )}
 
-        {state.error && <div style={{ padding: "8px 18px", fontSize: 12, color: "#ef4444", background: "rgba(239,68,68,0.06)", borderBottom: "1px solid var(--border)" }}>{state.error}</div>}
+        {state.error && <div style={{ padding: "8px 18px", fontSize: 12, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.06)", borderBottom: "1px solid var(--border)" }}>{state.error}</div>}
         {/* 处理中反馈：启停/安装/重载都是服务端全量重载扩展（秒级），banner + spinner 让用户知道点击已生效 */}
         {state.applying && (
           <div style={{ padding: "8px 18px", fontSize: 12, color: "var(--accent)", background: "rgba(99,102,241,0.07)", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 8 }}>
@@ -934,7 +934,7 @@ function ExtManContent(): any {
                     const rowBusy = state.busyKey === "enable:" + id || state.busyKey === "disable:" + id;
                     return (
                       <div key={"l:" + id}>
-                        {showDivider && <div style={{ padding: "8px 8px 3px", fontSize: 10, fontWeight: 700, color: "#ef4444", textTransform: "uppercase", borderTop: "1px solid var(--border)", marginTop: 6 }}>{t("ext.disabled")}</div>}
+                        {showDivider && <div style={{ padding: "8px 8px 3px", fontSize: 10, fontWeight: 700, color: "var(--danger, #ef4444)", textTransform: "uppercase", borderTop: "1px solid var(--border)", marginTop: 6 }}>{t("ext.disabled")}</div>}
                         <div onClick={() => setState({ selected: { kind: "local", id }, error: null, message: null, mobileView: isMobile ? "detail" : state.mobileView })}
                           style={{
                             display: "flex", alignItems: "center", gap: 8, padding: "9px 10px",
@@ -955,7 +955,7 @@ function ExtManContent(): any {
                               {extIconSpan(e, 12, id)}
                               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0, flex: 1 }}>{extDisplayName(id, e.name) + (e.version ? " · v" + e.version : "")}</span>
                             {protoChip && <span key="proto" title={e.protocol?.detail || ""} style={chipStyle(protoChip.color, protoChip.bg)}>{protoChip.icon} {protoChip.label}</span>}
-                            {e.enabled === false && <span key="off-chip" style={chipStyle("#ef4444", "rgba(239,68,68,0.14)")}>{t("ext.disabled")}</span>}
+                            {e.enabled === false && <span key="off-chip" style={chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.14)")}>{t("ext.disabled")}</span>}
                             </div>
                             {/* 第二行：纯英文包名（名字与包名相同时不重复显示） */}
                             <div style={{ fontSize: 11, color: "var(--text-dim)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", marginTop: 2 }}>
@@ -1190,8 +1190,8 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
                 onToggle={() => void runOp(enabled ? "disable" : "enable", { id })}
                 label={enabled ? t("ext.disable") : t("ext.enable")} />}
           <SourceTag source={entry.source} />
-          {!enabled && <span style={chipStyle("#ef4444", "rgba(239,68,68,0.14)")}>{t("ext.disabled")}</span>}
-          {entry.error && <span style={chipStyle("#ef4444", "rgba(239,68,68,0.12)")}>error</span>}
+          {!enabled && <span style={chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.14)")}>{t("ext.disabled")}</span>}
+          {entry.error && <span style={chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.12)")}>error</span>}
           <span title={id} style={{
             fontSize: 13, fontWeight: 600, color: "var(--text)",
             overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
@@ -1201,7 +1201,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
           )}
         </div>
         {entry.source === "user" && entry.dir && id !== SELF_ID && (
-          <button type="button" disabled={busy} style={{ ...btnStyle, color: "#ef4444", background: "rgba(239,68,68,0.08)" } as React.CSSProperties}
+          <button type="button" disabled={busy} style={{ ...btnStyle, color: "var(--danger, #ef4444)", background: "rgba(239,68,68,0.08)" } as React.CSSProperties}
             onClick={async () => { if (dependentsOf(id).length > 0 || (await uiConfirm({ message: t("ext.removeConfirm"), danger: true }))) void runOp("remove", { id }); }}>
             {t("ext.remove")}
           </button>
@@ -1435,7 +1435,7 @@ function LocalDetail({ id, entry }: { id: string; entry: any }) {
 
       {entry.error && (
         <div style={{
-          fontSize: 12, color: "#ef4444", whiteSpace: "pre-wrap",
+          fontSize: 12, color: "var(--danger, #ef4444)", whiteSpace: "pre-wrap",
           background: "rgba(239,68,68,0.06)", border: "1px solid rgba(239,68,68,0.25)",
           borderRadius: 6, padding: "8px 10px", fontFamily: "var(--font-mono)",
         }}>{entry.error}</div>
@@ -1534,7 +1534,7 @@ function FeaturePanel({ id, features }: { id: string; features: any[] }) {
                       <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text)" }}>{f.label}</span>
                       {isString && <span style={chipStyle("#2563eb", "rgba(37,99,235,0.12)")}>{f.type === "textlist" ? "环境变量" : "文本"}</span>}
                       {!isString && f.default === false && <span style={chipStyle("rgba(217,119,6,0.9)", "rgba(217,119,6,0.12)")}>默认关</span>}
-                      {!isString && f.enabled === false && <span style={chipStyle("#ef4444", "rgba(239,68,68,0.12)")}>{t("ext.disabled")}</span>}
+                      {!isString && f.enabled === false && <span style={chipStyle("var(--danger, #ef4444)", "rgba(239,68,68,0.12)")}>{t("ext.disabled")}</span>}
                     </div>
                     {f.description && <div style={{ fontSize: 11, color: "var(--text-dim)", lineHeight: 1.45 }}>{f.description}</div>}
                     {isString
@@ -1793,7 +1793,7 @@ function AddPane() {
                   {x.url && <a href={x.url} target="_blank" rel="noopener noreferrer" title={x.url} style={{ color: "var(--accent)", fontSize: 11, textDecoration: "none", flexShrink: 0 }}>↗</a>}
                   <button type="button" disabled={busy}
                     onClick={() => void runOp("untrust", { name: key })}
-                    style={{ ...btnStyle, padding: "3px 10px", fontSize: 11, color: "#ef4444", flexShrink: 0 } as React.CSSProperties}>
+                    style={{ ...btnStyle, padding: "3px 10px", fontSize: 11, color: "var(--danger, #ef4444)", flexShrink: 0 } as React.CSSProperties}>
                     {busy ? "…" : t("ext.untrustPublisher")}
                   </button>
                 </div>
