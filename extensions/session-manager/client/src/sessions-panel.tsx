@@ -2,7 +2,8 @@
  * session-manager · 全部会话面板（SessionsPanel）+ 归档会话查看器（ArchivedViewer）。
  * 自手写版迁移，交互/性能优化点（T-1 双帧挂载 / T-2 淡入动画 / content-visibility）一比一保留。
  */
-import { useState, useEffect, useRef, useLayoutEffect } from "react";
+import { useState, useEffect, useRef, useLayoutEffect } from "react"
+import type { ReactNode } from "react";
 import { t, apiUrl, openFile } from "./host-shim";
 import {
   store, useStore, panelOpen, managerOpen, refreshSessions, refreshListChannels, ensureTags, collapsePanelIfCovering,
@@ -19,7 +20,7 @@ import {
 import {
   fmtRelative, byIdMap, tagPath, sessionTagIds, matchesTags, sessionTitle, highlight,
   getDatePresets, dateFilterMatches, roleBadge, descendantsLocal,
-  inputStyle, ghostBtn, miniBtn, agentBadge, AGENT_META, ensureReadability,
+  inputStyle, ghostBtn, miniBtn, agentBadge, AGENT_META, ensureReadability, SIc,
 } from "./helpers";
 import { StarButton, TagEditPopover, TagChip } from "./tag-ui";
 import { ArchiveMenu } from "./archive-menu";
@@ -122,7 +123,7 @@ function BatchMoveDialog(props: { ids: string[]; allSessions: any[]; onDone: () 
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "12px 14px 4px" }}>
-          <strong style={{ fontSize: 13, flex: 1 }}>📁 {t("sm.moveBatch") ?? "批量移动会话"}</strong>
+          <strong style={{ fontSize: 13, flex: 1, display: "flex", alignItems: "center", gap: 6 }}><SIc name="folder" size={13} />{t("sm.moveBatch") ?? "批量移动会话"}</strong>
           <button onClick={() => { if (!busy) props.onClose(); }} disabled={busy} title={t("sm.close") ?? "关闭"}
             style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: busy ? "default" : "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px" }}>✕</button>
         </div>
@@ -161,10 +162,10 @@ function BatchMoveDialog(props: { ids: string[]; allSessions: any[]; onDone: () 
             <div style={{ padding: "6px 8px", fontSize: 10, color: "var(--text-dim)" }}>{t("sm.moveBatchSkip") ?? `${rows.length - movables.length} 个会话不可移动（外部 agent/归档）已跳过`}</div>
           )}
         </div>
-        {results && <div style={{ padding: "4px 14px 8px", fontSize: 11, color: ensureReadability("#22c55e") }}>{results}</div>}
+        {results && <div style={{ padding: "4px 14px 8px", fontSize: 11, color: ensureReadability("var(--ok, #22c55e)") }}>{results}</div>}
         <div style={{ padding: "8px 14px 12px", borderTop: "1px solid var(--border)", display: "flex", gap: 8, justifyContent: "flex-end" }}>
           <button onClick={() => { if (!busy) props.onClose(); }} disabled={busy} style={ghostBtn}>{t("sm.close") ?? "关闭"}</button>
-          <button onClick={() => void submit()} disabled={busy || !defaultCwd.trim()} style={{ ...ghostBtn, color: ensureReadability("#22c55e"), borderColor: "#22c55e66" } as React.CSSProperties}>{busy ? "…" : `📁 ${t("sm.moveConfirm") ?? "移动"}`}</button>
+          <button onClick={() => void submit()} disabled={busy || !defaultCwd.trim()} style={{ ...ghostBtn, color: ensureReadability("var(--ok, #22c55e)"), borderColor: "#22c55e66" } as React.CSSProperties}>{busy ? "…" : `${t("sm.moveConfirm") ?? "移动"}`}</button>
         </div>
       </div>
     </div>
@@ -239,7 +240,7 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
     }
   };
 
-  const btn = (mode: "resolved" | "unresolved" | "direct" | "delete", icon: string, label: string, color: string) => (
+  const btn = (mode: "resolved" | "unresolved" | "direct" | "delete", icon: ReactNode, label: string, color: string) => (
     <button
       key={mode}
       onClick={() => void run(mode)}
@@ -252,7 +253,7 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
         color: "var(--text)", opacity: busy ? 0.6 : 1,
       }}
     >
-      <span style={{ fontSize: 16 }}>{icon}</span>
+      <span style={{ display: "flex", alignItems: "center", color }}>{icon}</span>
       <span style={{ flex: 1 }}>{label}</span>
       <span style={{ fontSize: 10, color, fontWeight: 700 }}>{busy ? "…" : "›"}</span>
     </button>
@@ -281,13 +282,13 @@ function ArchiveDialog(props: { ids: string[]; onClose: () => void }) {
           {isSingle ? props.ids[0].slice(0, 12) : `${props.ids.length} ${t("sm.selectedCount", { count: props.ids.length }) ?? "个会话"}`}
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {btn("resolved", "✅", t("sm.archiveResolved") ?? "已解决归档", ensureReadability("#22c55e"))}
-          {btn("unresolved", "❓", t("sm.archiveUnresolved") ?? "未解决归档", ensureReadability("#64748b"))}
-          {btn("direct", "📦", t("sm.archiveDirect") ?? "直接归档", ensureReadability("#f59e0b"))}
-          {btn("delete", "🗑️", t("sm.archiveDelete") ?? "直接删除", ensureReadability("#f87171"))}
+          {btn("resolved", <SIc name="checkCircle" size={15} />, t("sm.archiveResolved") ?? "已解决归档", ensureReadability("var(--ok, #22c55e)"))}
+          {btn("unresolved", <SIc name="helpCircle" size={15} />, t("sm.archiveUnresolved") ?? "未解决归档", ensureReadability("#64748b"))}
+          {btn("direct", <SIc name="archive" size={15} />, t("sm.archiveDirect") ?? "直接归档", ensureReadability("var(--warn, #f59e0b)"))}
+          {btn("delete", <SIc name="trash" size={15} />, t("sm.archiveDelete") ?? "直接删除", ensureReadability("var(--danger, #f87171)"))}
         </div>
         {err && (
-          <div style={{ marginTop: 10, padding: "6px 10px", borderRadius: 6, background: "rgba(239,68,68,0.08)", color: ensureReadability("#f87171"), fontSize: 11 }}>{err}</div>
+          <div style={{ marginTop: 10, padding: "6px 10px", borderRadius: 6, background: "rgba(239,68,68,0.08)", color: ensureReadability("var(--danger, #f87171)"), fontSize: 11 }}>{err}</div>
         )}
       </div>
     </div>
@@ -394,14 +395,14 @@ function renderExtViewer(props: any, face?: string) {
           />
           <span style={{ marginLeft: "auto", display: "flex", gap: 6, flexShrink: 0 }}>
             <button disabled={opening} onClick={() => void doOpenLive()} title="通过后端扩展接管此会话（需安装对应 ati-*-agent 扩展）" style={{ ...ghostBtn, color: ensureReadability("#a78bfa"), borderColor: "#a78bfa66" } as React.CSSProperties}>
-              {opening ? "…" : "⚡ 打开(接管)"}
+              {opening ? "…" : "打开(接管)"}
             </button>
             {data?.importedSessionId ? (
-              <button onClick={() => openPi(data.importedSessionId)} style={{ ...ghostBtn, color: ensureReadability("#22c55e"), borderColor: "#22c55e66" } as React.CSSProperties}>
+              <button onClick={() => openPi(data.importedSessionId)} style={{ ...ghostBtn, color: ensureReadability("var(--ok, #22c55e)"), borderColor: "#22c55e66" } as React.CSSProperties}>
                 ✓ 已导入 ↗ 打开
               </button>
             ) : (
-              <button disabled={importing} onClick={() => void doImport()} style={{ ...ghostBtn, color: ensureReadability("#22c55e"), borderColor: "#22c55e66" } as React.CSSProperties}>
+              <button disabled={importing} onClick={() => void doImport()} style={{ ...ghostBtn, color: ensureReadability("var(--ok, #22c55e)"), borderColor: "#22c55e66" } as React.CSSProperties}>
                 {importing ? t("sm.sources.loading") : t("sm.import.button")}
               </button>
             )}
@@ -410,11 +411,11 @@ function renderExtViewer(props: any, face?: string) {
           </span>
         </div>
         {openErr && (
-          <div style={{ padding: "6px 12px", background: "rgba(239,68,68,0.08)", borderBottom: "1px solid var(--border)", color: ensureReadability("#f87171"), fontSize: 11 }}>
+          <div style={{ padding: "6px 12px", background: "rgba(239,68,68,0.08)", borderBottom: "1px solid var(--border)", color: ensureReadability("var(--danger, #f87171)"), fontSize: 11 }}>
             {openErr}
           </div>
         )}
-        {err ? <div style={{ padding: 20, color: ensureReadability("#f87171"), fontSize: 12 }}>{err}</div>
+        {err ? <div style={{ padding: 20, color: ensureReadability("var(--danger, #f87171)"), fontSize: 12 }}>{err}</div>
           : !data ? <div style={{ padding: 20, color: "var(--text-muted)", fontSize: 12 }}>{t("sm.loading") ?? "…"}</div>
           : <ViewerMessages key={id} messages={data.messages} agent={data?.agent} />}
     </>
@@ -483,7 +484,7 @@ function FilesStrip(props: { files: string[] }) {
   const basename = (p: string) => p.split("/").pop() || p;
   return (
     <div style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center", padding: "6px 12px", borderBottom: "1px solid var(--border)" }}>
-      <span style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0, marginRight: 2 }}>{"📄"}</span>
+      <span style={{ fontSize: 10, color: "var(--text-muted)", flexShrink: 0, marginRight: 2, display: "flex" }}><SIc name="fileText" size={11} /></span>
       {shown.map((p) => (
         <button
           key={p}
@@ -672,8 +673,8 @@ function renderArchivedViewer(props: any, face?: string) {
               disabled={!!actBusy}
               onClick={() => { setActBusy("reopen"); void viewerAction("reopen", sessionId, data, props).finally(() => setActBusy(null)); }}
               title={t("sm.reopen") ?? "重开（恢复并打开）"}
-              style={{ ...ghostBtn, color: ensureReadability("#22c55e"), borderColor: "#22c55e66", opacity: actBusy && actBusy !== "reopen" ? 0.5 : 1 } as React.CSSProperties}
-            >{actBusy === "reopen" ? "…" : `📂 ${t("sm.reopenShort") ?? "重开"}`}</button>
+              style={{ ...ghostBtn, color: ensureReadability("var(--ok, #22c55e)"), borderColor: "#22c55e66", opacity: actBusy && actBusy !== "reopen" ? 0.5 : 1 } as React.CSSProperties}
+            >{actBusy === "reopen" ? "…" : `${t("sm.reopenShort") ?? "重开"}`}</button>
             <button
               disabled={!!actBusy}
               onClick={() => { setActBusy("restore"); void viewerAction("restore", sessionId, data, props).finally(() => setActBusy(null)); }}
@@ -685,14 +686,14 @@ function renderArchivedViewer(props: any, face?: string) {
                 disabled={!!actBusy}
                 onClick={() => void viewerAction("delete", sessionId, data, props, setActBusy)}
                 title={t("sm.archiveDelete") ?? "彻底删除"}
-                style={{ ...ghostBtn, color: ensureReadability("#f87171"), borderColor: "#f8717166", opacity: actBusy && actBusy !== "delete" ? 0.5 : 1 } as React.CSSProperties}
-              >{actBusy === "delete" ? "…" : `🗑️ ${t("sm.archiveDelete") ?? "彻底删除"}`}</button>
+                style={{ ...ghostBtn, color: ensureReadability("var(--danger, #f87171)"), borderColor: "#f8717166", opacity: actBusy && actBusy !== "delete" ? 0.5 : 1 } as React.CSSProperties}
+              >{actBusy === "delete" ? "…" : `${t("sm.archiveDelete") ?? "彻底删除"}`}</button>
             )}
             <button
               onClick={() => showRelatedDocs(sessionId, String(data?.meta?.cwd ?? "").split("/").pop() || sessionId.slice(0, 8))}
               title={t("sm.relatedDocs") ?? "相关文档"}
               style={{ ...ghostBtn } as React.CSSProperties}
-            >{`📄 ${t("sm.relatedDocsShort") ?? "文档"}`}</button>
+            >{`${t("sm.relatedDocsShort") ?? "文档"}`}</button>
             {data?.session?.archiveRef !== "__ext__" && (
               <>
                 <a
@@ -709,7 +710,7 @@ function renderArchivedViewer(props: any, face?: string) {
               style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px", flexShrink: 0 } as React.CSSProperties}>✕</button>}
           </span>
         </div>
-        {err ? <div style={{ padding: 20, color: ensureReadability("#f87171"), fontSize: 12 }}>{err}</div>
+        {err ? <div style={{ padding: 20, color: ensureReadability("var(--danger, #f87171)"), fontSize: 12 }}>{err}</div>
           : !data ? <div style={{ padding: 20, color: "var(--text-muted)", fontSize: 12 }}>{t("sm.empty")}</div>
           : <>
               {data.files?.length ? <FilesStrip files={data.files} /> : null}
@@ -1342,7 +1343,7 @@ export function SessionsPanel(props: any) {
                   style={{
                     fontSize: 9, padding: "0 5px", borderRadius: 7, flexShrink: 0, lineHeight: "14px",
                     background: sess.lastRun.status === "failed" ? "rgba(239,68,68,0.14)" : sess.lastRun.status === "aborted" ? "rgba(148,163,184,0.16)" : "rgba(245,158,11,0.16)",
-                    color: sess.lastRun.status === "failed" ? "#ef4444" : sess.lastRun.status === "aborted" ? "var(--text-dim)" : "#f59e0b",
+                    color: sess.lastRun.status === "failed" ? "var(--danger, #ef4444)" : sess.lastRun.status === "aborted" ? "var(--text-dim)" : "var(--warn, #f59e0b)",
                     border: `1px solid ${sess.lastRun.status === "failed" ? "rgba(239,68,68,0.35)" : sess.lastRun.status === "aborted" ? "rgba(148,163,184,0.35)" : "rgba(245,158,11,0.35)"}`,
                   }}
                 >
@@ -1367,7 +1368,7 @@ export function SessionsPanel(props: any) {
         {sess.lastRun?.status === "failed" && sess.lastRun.error && (
           <div
             title={sess.lastRun.error}
-            style={{ marginTop: 2, fontSize: 11, color: "#ef4444", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+            style={{ marginTop: 2, fontSize: 11, color: "var(--danger, #ef4444)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
           >
             {truncateRunErrorText(sess.lastRun.error, 60)}
           </div>
@@ -1437,7 +1438,7 @@ export function SessionsPanel(props: any) {
               openExtViewer(sess.id);
               collapsePanelIfCovering(); // 同行点击：仅小屏全屏浮窗会盖住查看器，那时才让位
             }}
-            style={{ ...miniBtn, opacity: 0.45, fontSize: 10, flexShrink: 0, color: ensureReadability("#22c55e") }}
+            style={{ ...miniBtn, opacity: 0.45, fontSize: 10, flexShrink: 0, color: ensureReadability("var(--ok, #22c55e)") }}
           >⬇</button>
         </>
       )}
@@ -1559,7 +1560,7 @@ export function SessionsPanel(props: any) {
               });
             },
           });
-          items.push({ key: "related-docs", icon: "📄", label: t("sm.relatedDocs") ?? "相关文档", onClick: () => showRelatedDocs(sess.id, sessionTitle(sess)) });
+          items.push({ key: "related-docs", icon: <SIc name="fileText" size={13} />, label: t("sm.relatedDocs") ?? "相关文档", onClick: () => showRelatedDocs(sess.id, sessionTitle(sess)) });
           // 已归档 pi 会话的台账仍在（归档不动 git-trace configDir）→ 时间线照常可看；外部镜像行不追踪，不给入口
           if (!isExtArchived) items.push({ key: "timeline", icon: "⎇", label: t("sm.timeline") ?? "时间线", onClick: () => openSessionTimeline(sess.id) });
         }
@@ -1658,7 +1659,7 @@ export function SessionsPanel(props: any) {
               } as React.CSSProperties}
             >
               {/* 路径名自身截断，✕ 永不裁剪（flexShrink:0）——长路径下也始终可见可点 */}
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{`📁 ${cwdFilter ? displayCwd(cwdFilter) : t("sm.dir.all")}`}</span>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 }}>{`${cwdFilter ? displayCwd(cwdFilter) : t("sm.dir.all")}`}</span>
               {cwdFilter && (
                 <span
                   onClick={(e) => { e.stopPropagation(); setCwdFilter(""); setPage(0); }}
@@ -1688,7 +1689,7 @@ export function SessionsPanel(props: any) {
               borderColor: activeFilterCount ? "var(--accent)" : undefined,
               color: activeFilterCount ? "var(--bg)" : undefined,
             } as React.CSSProperties}
-          >{`⚙${activeFilterCount ? " " + activeFilterCount : ""}`}</button>
+          >{`${activeFilterCount ? " " + activeFilterCount : ""}`}</button>
           {/* §14.3 stats drawer trigger */}
           <button
             onClick={() => { setStatsOpen((v) => !v); setFilterOpen(false); }}
@@ -1700,8 +1701,8 @@ export function SessionsPanel(props: any) {
               onClick={() => void runArchiveNow()}
               disabled={archBusy}
               title={archStatus.candidates.map((c: any) => c.sessionId.slice(0, 8)).join(", ")}
-              style={{ ...ghostBtn, color: ensureReadability("#f59e0b"), borderColor: "#f59e0b55", whiteSpace: "nowrap", fontSize: 10 } as React.CSSProperties}
-            >{archBusy ? "…" : `🗜 ${archStatus.candidates.length}`}</button>
+              style={{ ...ghostBtn, color: ensureReadability("var(--warn, #f59e0b)"), borderColor: "#f59e0b55", whiteSpace: "nowrap", fontSize: 10 } as React.CSSProperties}
+            >{archBusy ? "…" : `${archStatus.candidates.length}`}</button>
           )}
           {archStatus && archStatus.cacheBytes > 0 && (
             <button
@@ -1711,7 +1712,7 @@ export function SessionsPanel(props: any) {
               }}
               title={t("sm.clearCache")}
               style={{ ...ghostBtn, fontSize: 10, whiteSpace: "nowrap" } as React.CSSProperties}
-            >{`🗑 ${(archStatus.cacheBytes / 1048576).toFixed(1)}M`}</button>
+            >{`${(archStatus.cacheBytes / 1048576).toFixed(1)}M`}</button>
           )}
           <button onClick={() => panelOpen.onClose()} aria-label={t("sm.close")} title={t("sm.close")}
             style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", fontSize: 15, lineHeight: 1, padding: "2px 6px", flexShrink: 0 } as React.CSSProperties}>✕</button>
@@ -1751,7 +1752,7 @@ export function SessionsPanel(props: any) {
               ))}
               {datePreset.startsWith("day:") && (
                 <span style={{ fontSize: 11, color: "var(--accent)", background: "var(--bg-selected)", padding: "1px 7px", borderRadius: 8, cursor: "pointer" }} onClick={() => setDatePreset("")}>
-                  {`📅 ${datePreset.slice(4)} ✖`}
+                  {`${datePreset.slice(4)} ✖`}
                 </span>
               )}
             </div>
@@ -1842,12 +1843,12 @@ export function SessionsPanel(props: any) {
         {/* §14.4 batch bar */}
         {selection.size > 0 && (
           <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", padding: "6px 12px", borderBottom: "1px solid var(--border)", background: "rgba(245,158,11,0.08)" }}>
-            <span style={{ fontSize: 11, color: ensureReadability("#f59e0b") }}>{t("sm.selectedCount", { count: selection.size })}</span>
-            <button disabled={batchBusy} onClick={() => void batchArchive()} style={ghostBtn}>{`📦 ${t("sm.archive")}`}</button>
-            <button disabled={batchBusy} onClick={() => setBatchMoveOpen(true)} style={ghostBtn}>{`📁 ${t("sm.moveBatch") ?? "移动到…"}`}</button>
-            <button disabled={batchBusy} onClick={() => void batchFavorite()} style={ghostBtn}>{`★ ${t("sm.favorite")}`}</button>
-            <button disabled={batchBusy} onClick={() => void batchDelete()} style={{ ...ghostBtn, color: ensureReadability("#f87171") } as React.CSSProperties}>{`🗑 ${t("sm.archiveDelete")}`}</button>
-            <button onClick={() => setSelection(new Set())} style={{ ...ghostBtn, marginLeft: "auto" } as React.CSSProperties}>✖ 清除</button>
+            <span style={{ fontSize: 11, color: ensureReadability("var(--warn, #f59e0b)") }}>{t("sm.selectedCount", { count: selection.size })}</span>
+            <button disabled={batchBusy} onClick={() => void batchArchive()} style={ghostBtn}>{`${t("sm.archive")}`}</button>
+            <button disabled={batchBusy} onClick={() => setBatchMoveOpen(true)} style={ghostBtn}>{`${t("sm.moveBatch") ?? "移动到…"}`}</button>
+            <button disabled={batchBusy} onClick={() => void batchFavorite()} style={ghostBtn}>{`${t("sm.favorite")}`}</button>
+            <button disabled={batchBusy} onClick={() => void batchDelete()} style={{ ...ghostBtn, color: ensureReadability("var(--danger, #f87171)") } as React.CSSProperties}>{`${t("sm.archiveDelete")}`}</button>
+            <button onClick={() => setSelection(new Set())} style={{ ...ghostBtn, marginLeft: "auto" } as React.CSSProperties}>清除</button>
           </div>
         )}
 
@@ -1874,14 +1875,14 @@ export function SessionsPanel(props: any) {
               onClick={() => setModelFilter("")}
               title={t("sm.clearAll")}
               style={{ padding: "1px 8px", borderRadius: 9, fontSize: 10, cursor: "pointer", background: "var(--accent)", color: "var(--bg)", border: "1px solid var(--accent)" }}
-            >{`🤖 ${modelFilter} ✖`}</span>
+            >{`${modelFilter} ✖`}</span>
           )}
           {datePreset && (
             <span
               onClick={() => setDatePreset("")}
               title={t("sm.clearAll")}
               style={{ padding: "1px 8px", borderRadius: 9, fontSize: 10, cursor: "pointer", background: "var(--accent)", color: "var(--bg)", border: "1px solid var(--accent)" }}
-            >{`📅 ${datePreset.startsWith("day:") ? datePreset.slice(4) : getDatePresets().find((p) => p.key === datePreset)?.label() ?? datePreset} ✖`}</span>
+            >{`${datePreset.startsWith("day:") ? datePreset.slice(4) : getDatePresets().find((p) => p.key === datePreset)?.label() ?? datePreset} ✖`}</span>
           )}
           {roleFilter && (
             <span
@@ -1895,7 +1896,7 @@ export function SessionsPanel(props: any) {
               onClick={() => setCwdFilter("")}
               title={`${cwdFilter} · ${t("sm.clearAll")}`}
               style={{ padding: "1px 8px", borderRadius: 9, fontSize: 10, cursor: "pointer", background: "var(--accent)", color: "var(--bg)", border: "1px solid var(--accent)", fontFamily: "var(--font-mono)" }}
-            >{`📁 ${displayCwd(cwdFilter)} ✖`}</span>
+            >{`${displayCwd(cwdFilter)} ✖`}</span>
           )}
           <span
             onClick={() => clearSharedFilter()}
@@ -1913,7 +1914,7 @@ export function SessionsPanel(props: any) {
               color: archivedOnly ? "#fff" : "var(--text-muted)",
               border: `1px solid ${archivedOnly ? ensureReadability("#8b5cf6") : "var(--border)"}`,
             }}
-          >{`📦 ${t("sm.archived")}${archivedCount ? " " + archivedCount : ""}`}</span>
+          >{`${t("sm.archived")}${archivedCount ? " " + archivedCount : ""}`}</span>
           <span
             onClick={() => setFavOnly((v) => !v)}
             style={{
@@ -1922,7 +1923,7 @@ export function SessionsPanel(props: any) {
               color: favOnly ? "#fff" : "var(--text-muted)",
               border: `1px solid ${favOnly ? ensureReadability("#d97706") : "var(--border)"}`,
             }}
-          >{`★ ${t("sm.favorite")}`}</span>
+          >{`${t("sm.favorite")}`}</span>
           {data.tags.filter((n: any) => !n.parentId || !byId.has(n.parentId))
             .sort((a: any, b: any) => a.name.localeCompare(b.name))
             .flatMap((root: any) => chipRow(root, 0))}
@@ -1954,7 +1955,7 @@ export function SessionsPanel(props: any) {
                 <span style={{ fontSize: 9, fontWeight: 700 }}>{m.short}</span>
                 {src.label !== undefined && src.label !== src.agent ? src.label : ""}
                 {(s.sources ?? []).find((x: any) => x.agent === src.agent)?.status === "stale" && (
-                  <span style={{ color: ensureReadability("#f59e0b") }} title={t("sm.sources.staleHint")}>⟳</span>
+                  <span style={{ color: ensureReadability("var(--warn, #f59e0b)") }} title={t("sm.sources.staleHint")}>⟳</span>
                 )}
               </span>
             );
@@ -1979,16 +1980,16 @@ export function SessionsPanel(props: any) {
                   <span style={{ fontSize: 9, fontWeight: 700, padding: "0 5px", borderRadius: 6, color: m.color, background: m.color + "1f", border: `1px solid ${m.color}55` }}>{m.short}</span>
                   <span style={{ color: "var(--text)", whiteSpace: "nowrap" }}>{src.label}</span>
                   {src.status === "discovered" && (
-                    <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>{t("sm.sources.found", { count: src.count })}<button onClick={() => mk("activate")} disabled={busy} style={{ ...miniBtn, color: ensureReadability("#22c55e"), opacity: busy ? 0.7 : 1 }}>{busy ? t("sm.sources.loading") : t("sm.sources.load")}</button></span>
+                    <span style={{ color: "var(--text-muted)", whiteSpace: "nowrap" }}>{t("sm.sources.found", { count: src.count })}<button onClick={() => mk("activate")} disabled={busy} style={{ ...miniBtn, color: ensureReadability("var(--ok, #22c55e)"), opacity: busy ? 0.7 : 1 }}>{busy ? t("sm.sources.loading") : t("sm.sources.load")}</button></span>
                   )}
                   {src.status === "stale" && (
                     <span style={{ display: "inline-flex", gap: 3, alignItems: "center" }}>
-                      <span style={{ color: ensureReadability("#f59e0b"), whiteSpace: "nowrap" }}>{t("sm.sources.stale")}</span>
-                      <button onClick={() => mk("sync")} disabled={busy} style={{ ...miniBtn, color: ensureReadability("#f59e0b") }}>{busy ? t("sm.sources.loading") : t("sm.sources.sync")}</button>
+                      <span style={{ color: ensureReadability("var(--warn, #f59e0b)"), whiteSpace: "nowrap" }}>{t("sm.sources.stale")}</span>
+                      <button onClick={() => mk("sync")} disabled={busy} style={{ ...miniBtn, color: ensureReadability("var(--warn, #f59e0b)") }}>{busy ? t("sm.sources.loading") : t("sm.sources.sync")}</button>
                     </span>
                   )}
                   {src.status === "error" && (
-                    <span style={{ color: ensureReadability("#f87171"), cursor: "help" }} title={src.error ?? ""}>{t("sm.sources.error")}</span>
+                    <span style={{ color: ensureReadability("var(--danger, #f87171)"), cursor: "help" }} title={src.error ?? ""}>{t("sm.sources.error")}</span>
                   )}
                 </span>
               );
@@ -2002,7 +2003,7 @@ export function SessionsPanel(props: any) {
               onClick={() => setTagDocs((p) => ({ ...p, open: !p.open }))}
               style={{ cursor: "pointer", fontSize: 10, color: "var(--text-muted)", display: "inline-flex", gap: 5, alignItems: "center" }}
               title={t("sm.tagDocsTip")}
-            >📄 {t("sm.tagDocs", { count: tagDocs.docs.length })}<span style={{ opacity: 0.6 }}>{tagDocs.open ? "▾" : "▸"}</span></span>
+            ><SIc name="fileText" size={11} /> {t("sm.tagDocs", { count: tagDocs.docs.length })}<span style={{ opacity: 0.6 }}>{tagDocs.open ? "▾" : "▸"}</span></span>
             {tagDocs.open && (
               <div style={{ marginTop: 4 }}>
                 {tagDocs.docs.slice(0, 20).map((d) => (

@@ -23,7 +23,7 @@ export function StarButton({ sessionId, onToggle }: { sessionId: string; onToggl
         display: "flex", alignItems: "center", justifyContent: "center",
         width: 26, height: 26, padding: 0, flexShrink: 0,
         background: "none", border: "none", cursor: "pointer",
-        color: fav ? ensureReadability("#f59e0b") : "var(--text-muted)",
+        color: fav ? ensureReadability("var(--warn, #f59e0b)") : "var(--text-muted)",
       }}
     >{fav ? "★" : "☆"}</button>
   );

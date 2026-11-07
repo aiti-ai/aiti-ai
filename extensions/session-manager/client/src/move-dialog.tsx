@@ -114,8 +114,8 @@ function MoveDialog(props: { sess: any; onClose: () => void }) {
           <button
             onClick={() => void submit()}
             disabled={busy || !cwd.trim()}
-            style={{ ...ghostBtn, color: ensureReadability("#22c55e"), borderColor: "#22c55e66" } as React.CSSProperties}
-          >{busy ? "…" : `📁 ${t("sm.moveConfirm") ?? "移动"}`}</button>
+            style={{ ...ghostBtn, color: ensureReadability("var(--ok, #22c55e)"), borderColor: "#22c55e66" } as React.CSSProperties}
+          >{busy ? "…" : `${t("sm.moveConfirm") ?? "移动"}`}</button>
         </div>
       </div>
     </div>

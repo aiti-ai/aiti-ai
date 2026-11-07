@@ -223,7 +223,7 @@ export function RunOutcomeIndicator({ run }: { run: SessionLastRun }) {
     : aborted
       ? t("sm.runAborted")
       : t("sm.runInterrupted");
-  const color = failed ? "#ef4444" : aborted ? "var(--text-dim)" : "#f59e0b";
+  const color = failed ? "var(--danger, #ef4444)" : aborted ? "var(--text-dim)" : "var(--warn, #f59e0b)";
   return (
     <span
       title={label}

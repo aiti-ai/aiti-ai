@@ -137,8 +137,8 @@ export function SessionSearchDock({ open, query, refreshKey, children, selectedS
         <div role="status" className="px-3 py-2 text-xs text-text-muted">
           {failed || docState?.failed ? t("sidebar.sessionSearchFailed")
             : !docState?.sessions ? t("sidebar.sessionSearching")
-            : docState.matched === false ? `📄 ${docCondition.title} · ` + t("sidebar.sessionSearchEmpty")
-            : `📄 ${docCondition.title} · ` + t("sm.dockAdvDocCount", { count: docRows?.length ?? 0 })}
+            : docState.matched === false ? `${docCondition.title} · ` + t("sidebar.sessionSearchEmpty")
+            : `${docCondition.title} · ` + t("sm.dockAdvDocCount", { count: docRows?.length ?? 0 })}
         </div>
         {docState?.snippet ? (
           <div className="px-3 pb-2 text-xs text-text-muted wrap-anywhere"

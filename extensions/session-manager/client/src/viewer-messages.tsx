@@ -107,7 +107,7 @@ function CopyBtn(props: { text: string; visible: boolean }) {
       aria-label={t("sm.viewer.copy")}
       style={{
         background: "none", border: "none", cursor: "pointer", padding: "0 2px", lineHeight: 1, fontSize: 11,
-        color: copied ? ensureReadability("#22c55e") : "var(--text-dim)",
+        color: copied ? ensureReadability("var(--ok, #22c55e)") : "var(--text-dim)",
         opacity: props.visible || copied ? 1 : 0, transition: "opacity .12s",
       } as any}
     >{copied ? "✓" : "⧉"}</button>
@@ -183,7 +183,7 @@ function ToolCard(props: { m: ViewerMsg; q: string }) {
   const preview = firstLine(outText || inText || String(m.text ?? "")).slice(0, TOOL_PREVIEW_CHARS);
   const isErr = !!m.tool?.isError;
   const isOpen = open || !!props.q;
-  const errColor = ensureReadability("#f87171");
+  const errColor = ensureReadability("var(--danger, #f87171)");
 
   const renderBody = (label: string | null, body: string) => {
     if (!body) return null;
@@ -215,7 +215,7 @@ function ToolCard(props: { m: ViewerMsg; q: string }) {
         style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer", minWidth: 0, fontSize: 11, color: isErr ? errColor : "var(--text-muted)" } as any}
       >
         <span style={{ flexShrink: 0 }}>{isOpen ? "▾" : "▸"}</span>
-        <span style={{ flexShrink: 0, fontWeight: 600 }}>{`🛠 ${name || t("sm.viewer.toolResult")}`}</span>
+        <span style={{ flexShrink: 0, fontWeight: 600 }}>{`${name || t("sm.viewer.toolResult")}`}</span>
         <span style={{ flexShrink: 0, color: "var(--text-dim)" }}>{`· ${t("sm.viewer.lines", { n: lines })}`}</span>
         {!isOpen && preview && (
           <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)", fontFamily: "var(--font-mono)", fontSize: 10.5 } as any}>{preview}</span>
@@ -354,9 +354,9 @@ export function ViewerMessages(props: { messages: ViewerMsg[]; agent?: string })
           </span>
         )}
         <span style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-          <button onClick={() => toggleRole("user")} title={t("sm.viewer.filterUser")} aria-pressed={roles.user} style={chipBtn(roles.user, "#3b82f6")}>{`🧑 ${totals.user}`}</button>
-          <button onClick={() => toggleRole("assistant")} title={t("sm.viewer.filterAssistant")} aria-pressed={roles.assistant} style={chipBtn(roles.assistant, "#22c55e")}>{`🤖 ${totals.assistant}`}</button>
-          <button onClick={() => toggleRole("toolResult")} title={t("sm.viewer.filterTool")} aria-pressed={roles.toolResult} style={chipBtn(roles.toolResult, "#f59e0b")}>{`🛠 ${totals.toolResult}`}</button>
+          <button onClick={() => toggleRole("user")} title={t("sm.viewer.filterUser")} aria-pressed={roles.user} style={chipBtn(roles.user, "#3b82f6")}>{`${totals.user}`}</button>
+          <button onClick={() => toggleRole("assistant")} title={t("sm.viewer.filterAssistant")} aria-pressed={roles.assistant} style={chipBtn(roles.assistant, "var(--ok, #22c55e)")}>{`${totals.assistant}`}</button>
+          <button onClick={() => toggleRole("toolResult")} title={t("sm.viewer.filterTool")} aria-pressed={roles.toolResult} style={chipBtn(roles.toolResult, "var(--warn, #f59e0b)")}>{`${totals.toolResult}`}</button>
         </span>
         <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--text-dim)", whiteSpace: "nowrap", flexShrink: 0 }} title={statsText}>
           {t("sm.msgCount", { count: all.length })}
