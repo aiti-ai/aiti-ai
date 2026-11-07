@@ -17,5 +17,13 @@
   "soul": "目录树不是导航的终点，是操作的起点。",
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "58218ce443b728c5"
+  "contentHash": "58218ce443b728c5",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-folder.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-folder#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-folder/issues"
+  }
 }
