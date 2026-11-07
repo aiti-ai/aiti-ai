@@ -15,5 +15,13 @@
     "vite": "^6.4.3"
   },
   "aitiExtProtocol": "1.0",
-  "contentHash": "3b651c7201060f1b"
+  "contentHash": "3b651c7201060f1b",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-word-docx-preview.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-word-docx-preview#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-word-docx-preview/issues"
+  }
 }
