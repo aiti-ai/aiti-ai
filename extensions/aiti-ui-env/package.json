@@ -61,5 +61,12 @@
     ]
   },
   "aitiExtProtocol": "1.0",
-  "contentHash": "8a565c15affee4bd"
+  "contentHash": "8a565c15affee4bd",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ui-env.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ui-env/issues"
+  }
 }
