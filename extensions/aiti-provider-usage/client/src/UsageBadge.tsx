@@ -51,7 +51,7 @@ export function UsageBadge({ backendUsage }: { backendUsage: BackendUsage | null
           <span style={{ display: "inline-flex", alignItems: "center", gap: 5 }}>
             <span style={{
               fontWeight: 600,
-              color: creditsExhausted ? "#ef4444" : "var(--text)",
+              color: creditsExhausted ? "var(--danger, #ef4444)" : "var(--text)",
             }}>
               {creditsExhausted
                 ? "⊘ 配额耗尽"
