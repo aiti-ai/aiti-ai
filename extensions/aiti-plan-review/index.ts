@@ -408,7 +408,7 @@ async function extractKeep(sandboxDir: string, files: string[], deletions: strin
 		fs.writeFileSync(reviewPath(sandboxDir), JSON.stringify(review, null, 2));
 	}
 	// P2-2（lineage-closure）：部分提取不走「gate 失败整单回滚」承诺——如实明示降级语义
-	const lines = [`已提取 ${copied.length} 文件、${deleted.length} 删除到真实工作区，沙箱保留（可继续重用/再提取/销毁）。`, "⚠ 部分提取：不跑采认门禁、不做整体校验（与整单采认不同，出问题不自动回滚）。"];
+	const lines = [`已提取 ${copied.length} 文件、${deleted.length} 删除到真实工作区，沙箱保留（可继续重用/再提取/销毁）。`, "部分提取：不跑采认门禁、不做整体校验（与整单采认不同，出问题不自动回滚）。"];
 	if (failed.length) lines.push(`失败 ${failed.length} 项：`, ...failed.slice(0, 10));
 	return { ok: failed.length === 0, text: lines.join("\n") };
 }
