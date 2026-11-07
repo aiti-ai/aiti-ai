@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-folder",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "pi-web 文件夹浏览器扩展（fileViewer folder 接管 + pathPicker 目录选择器）—— JSX + vite 构建 client bundle",
   "type": "module",
   "scripts": {
@@ -17,5 +17,5 @@
   "soul": "目录树不是导航的终点，是操作的起点。",
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "71fd5f5815fc9c1f"
+  "contentHash": "58218ce443b728c5"
 }
