@@ -16,10 +16,11 @@
   "contentHash": "8bbf5758b927ef0d",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-msg-nav.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-msg-nav"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-msg-nav#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-msg-nav/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
