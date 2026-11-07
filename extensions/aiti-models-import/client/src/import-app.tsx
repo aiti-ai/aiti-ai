@@ -10,7 +10,7 @@
  *       成功后 dispatch "pi-web:models-changed" 让模型选择器即时刷新。
  */
 import { useEffect, useMemo, useState } from "react";
-import { apiUrl } from "./host-shim";
+import { apiUrl, extSvc } from "./host-shim";
 
 const api = (p: string, init?: RequestInit) =>
   fetch(apiUrl("/api/extensions/aiti-models-import" + p), { cache: "no-store", ...init });
@@ -109,6 +109,18 @@ export function ImportDialogSlot() {
     setDialogOpen(false);
   };
 
+  // 底部「配置模型」独立入口：关本弹窗 → 打开 🧙 模型向导（管理页）。
+  // 服务通道优先（薄壳启动即注册的懒实现 + WizardDialog 挂载后的直连实现），window 全局兑底（双轨过渡）。
+  const openModelWizard = () => {
+    const w = extSvc<() => void>("aiti-model-wizard.open") || (window as any).__aitiModelWizardOpen;
+    if (typeof w !== "function") {
+      setResult({ ok: false, text: "未找到模型向导（aiti-model-wizard 扩展未加载）——请先在扩展管理部署/启用 aiti-model-wizard。" });
+      return;
+    }
+    setDialogOpen(false);
+    setTimeout(() => { try { void w(); } catch { /* 打开失败不阻塞 */ } }, 30); // 先收本弹窗再开，避免两层弹窗叠加
+  };
+
   const toggle = (k: string) => {
     setChecked((prev) => {
       const next = new Set(prev);
@@ -171,6 +183,12 @@ export function ImportDialogSlot() {
         </div>
 
         <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 10, paddingTop: 10, borderTop: "1px solid var(--border)" }}>
+          <button onClick={openModelWizard} title="打开 🧙 模型向导（添加 / 管理 provider、模型、聚合与多 key）"
+            onMouseEnter={(e: any) => { e.currentTarget.style.borderColor = "var(--accent, #3b82f6)"; }}
+            onMouseLeave={(e: any) => { e.currentTarget.style.borderColor = "var(--border)"; }}
+            style={{ background: "none", border: "1px solid var(--border)", borderRadius: 6, color: "var(--text)", cursor: "pointer", fontSize: 12, padding: "6px 12px", transition: "border-color 0.12s" }}>
+            🧙 配置模型
+          </button>
           <div style={{ flex: 1, fontSize: 11, color: "var(--text-muted)" }}>
             {scan?.firstRun && !scan?.completed ? "首次启动引导：关闭后可从工具条「导入模型配置」再次打开" : ""}
           </div>
