@@ -1,6 +1,6 @@
 {
   "name": "@aiti-ai/aiti-msg-nav",
-  "version": "0.1.3",
+  "version": "0.1.6",
   "type": "module",
   "description": "消息滚动导航扩展（到最早 / 到最新 / 上一个用户输入 / 下一个用户输入）—— JSX + vite 构建 client bundle",
   "scripts": {
@@ -12,5 +12,6 @@
   },
   "soul": "千楼万楼的聊天记录，电梯比楼梯好用。",
   "aitiExtProtocol": "1.0",
-  "license": "MIT"
+  "license": "MIT",
+  "contentHash": "471b47862e5b9cdb"
 }
