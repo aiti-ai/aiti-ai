@@ -25,10 +25,11 @@
   "contentHash": "6a9ae03b6b59f404",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-git-review.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-git-review"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-git-review#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-git-review/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
