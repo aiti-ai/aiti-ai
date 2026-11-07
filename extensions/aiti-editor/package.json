@@ -37,10 +37,11 @@
   "contentHash": "b83457ceaa94ee07",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-editor.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-editor"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-editor#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-editor/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
