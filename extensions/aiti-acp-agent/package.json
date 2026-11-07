@@ -24,10 +24,11 @@
   "contentHash": "5ec75b180c86c161",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-acp-agent.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-acp-agent"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-acp-agent#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-acp-agent/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
