@@ -30,9 +30,10 @@
   "contentHash": "56198a006b467dac",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/session-manager.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/session-manager"
   },
   "bugs": {
-    "url": "https://github.com/aiti-ai/session-manager/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
