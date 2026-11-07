@@ -13,5 +13,13 @@
   },
   "aitiExtProtocol": "1.0",
   "license": "MIT",
-  "contentHash": "938c824462c38ad1"
+  "contentHash": "938c824462c38ad1",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aiti-ai/aiti-ai-schedule.git"
+  },
+  "homepage": "https://github.com/aiti-ai/aiti-ai-schedule#readme",
+  "bugs": {
+    "url": "https://github.com/aiti-ai/aiti-ai-schedule/issues"
+  }
 }
