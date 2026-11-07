@@ -25,10 +25,11 @@
   "contentHash": "e962084de569bd2f",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-model-wizard.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-model-wizard"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-model-wizard#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-model-wizard/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
