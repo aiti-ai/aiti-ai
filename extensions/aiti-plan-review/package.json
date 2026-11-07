@@ -18,10 +18,11 @@
   "contentHash": "1491b52d879dce5d",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aiti-ai/aiti-plan-review.git"
+    "url": "git+https://github.com/aiti-ai/aiti-ai.git",
+    "directory": "extensions/aiti-plan-review"
   },
-  "homepage": "https://github.com/aiti-ai/aiti-plan-review#readme",
+  "homepage": "https://github.com/aiti-ai/aiti-ai#readme",
   "bugs": {
-    "url": "https://github.com/aiti-ai/aiti-plan-review/issues"
+    "url": "https://github.com/aiti-ai/aiti-ai/issues"
   }
 }
