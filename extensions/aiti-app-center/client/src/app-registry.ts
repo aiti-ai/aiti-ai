@@ -70,6 +70,7 @@ export const APP_OVERRIDES: Record<string, { category?: string; keywords?: strin
   "aiti-draft-keeper": { category: "session", keywords: ["draft", "草稿"] },
   "aiti-recovery": { category: "session", keywords: ["recovery", "恢复"] },
   "aiti-session-cards": { category: "session", keywords: ["request", "请求卡"] },
+  "aiti-quickstart": { category: "session", keywords: ["quickstart", "上手", "指南", "guide", "welcome"] },
   // code 代码与 Git
   "aiti-editor": { category: "code", keywords: ["editor", "编辑"] },
   "aiti-git-ops": { category: "code", keywords: ["git", "分支"] },

@@ -12,5 +12,6 @@
     "vite": "^6.4.3"
   },
   "soul": "所有插件入口的家——折叠即开始菜单。",
-  "aitiExtProtocol": "1.0"
+  "aitiExtProtocol": "1.0",
+  "license": "MIT"
 }
