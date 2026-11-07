@@ -101,10 +101,12 @@ if (!existsSync(lockPath)) throw new Error(`package-lock.json 缺失: ${lockPath
 cpSync(lockPath, join(appDir, "package-lock.json"));
 
 // ---- 3) 生产依赖闭包（postinstall 的 patch-package 在闭包内生效；原生模块按当前平台绑定）----
+// npm install 而非 ci：lock 的 resolved 已脱敏指向官方源，@aiti-ai/* 上官方源前
+// 在 ci 严格模式下必 404；install 会在 registry 不可达时按 configured registry 重解析
 run(
-  "npm ci --omit=dev --no-audit --no-fund --loglevel=error" + (REGISTRY ? ` --registry ${REGISTRY}` : ""),
+  "npm install --omit=dev --no-audit --no-fund --loglevel=error" + (REGISTRY ? ` --registry ${REGISTRY}` : ""),
   appDir,
-  `npm ci --omit=dev（${OS}-${ARCH} 闭包）`,
+  `npm install --omit=dev（${OS}-${ARCH} 闭包）`,
 );
 
 // ---- 4) 自检：关键构件齐全（扩展 dist / .next / patches / 无 node_modules 嵌套残留）----
